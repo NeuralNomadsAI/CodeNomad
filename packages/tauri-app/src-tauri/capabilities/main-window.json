@@ -11,6 +11,7 @@
     "core:menu:default",
     "dialog:allow-open",
     "opener:allow-default-urls",
+    "opener:allow-open-url",
     "notification:allow-is-permission-granted",
     "notification:allow-request-permission",
     "notification:allow-notify",

@@ -26,6 +26,7 @@ const PreferencesSchema = z
   showUsageMetrics: z.boolean().default(true),
   autoCleanupBlankSessions: z.boolean().default(true),
   listeningMode: z.enum(["local", "all"]).default("local"),
+  logLevel: z.enum(["DEBUG", "INFO", "WARN", "ERROR"]).default("DEBUG"),
 
   // OS notifications
   osNotificationsEnabled: z.boolean().default(false),
@@ -39,6 +40,7 @@ const PreferencesSchema = z
 const RecentFolderSchema = z.object({
   path: z.string(),
   lastAccessed: z.number().nonnegative(),
+  projectName: z.string().optional(),
 })
 
 const OpenCodeBinarySchema = z.object({

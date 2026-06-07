@@ -4,6 +4,7 @@ import path from "path"
 import {
   FileSystemCreateFolderResponse,
   FileSystemEntry,
+  FileSystemFileContentResponse,
   FileSystemListResponse,
   FileSystemListingMetadata,
   WINDOWS_DRIVES_ROOT,
@@ -12,6 +13,7 @@ import {
 interface FileSystemBrowserOptions {
   rootDir: string
   unrestricted?: boolean
+  platform?: NodeJS.Platform
 }
 
 interface DirectoryReadOptions {
@@ -21,6 +23,7 @@ interface DirectoryReadOptions {
 }
 
 const WINDOWS_DRIVE_LETTERS = Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i))
+const MAX_READABLE_FILE_BYTES = 5 * 1024 * 1024
 
 export class FileSystemBrowser {
   private readonly root: string
@@ -32,7 +35,7 @@ export class FileSystemBrowser {
     this.root = path.resolve(options.rootDir)
     this.unrestricted = Boolean(options.unrestricted)
     this.homeDir = os.homedir()
-    this.isWindows = process.platform === "win32"
+    this.isWindows = (options.platform ?? process.platform) === "win32"
   }
 
   list(relativePath = ".", options: { includeFiles?: boolean } = {}): FileSystemEntry[] {
@@ -81,12 +84,42 @@ export class FileSystemBrowser {
     return { path: relativePath, absolutePath }
   }
 
+  writeFile(relativePath: string, contents: string): void {
+    if (this.unrestricted) {
+      throw new Error("writeFile is not available in unrestricted mode")
+    }
+    const resolved = this.toRestrictedAbsolute(relativePath)
+    fs.writeFileSync(resolved, contents, "utf-8")
+  }
+
   readFile(relativePath: string): string {
     if (this.unrestricted) {
       throw new Error("readFile is not available in unrestricted mode")
     }
     const resolved = this.toRestrictedAbsolute(relativePath)
     return fs.readFileSync(resolved, "utf-8")
+  }
+
+  readFileBase64(relativePath: string): string {
+    if (this.unrestricted) {
+      throw new Error("readFileBase64 is not available in unrestricted mode")
+    }
+    const resolved = this.toRestrictedAbsolute(relativePath)
+    return fs.readFileSync(resolved).toString("base64")
+  }
+
+  readFileContent(targetPath: string, options?: { encoding?: "utf-8" | "base64" }): FileSystemFileContentResponse {
+    const encoding = options?.encoding ?? "utf-8"
+    const resolved = this.unrestricted ? this.resolveUnrestrictedPath(targetPath) : this.toRestrictedAbsolute(targetPath)
+    const stats = fs.statSync(resolved)
+    if (!stats.isFile()) {
+      throw new Error("Selected path is not a file")
+    }
+    if (stats.size > MAX_READABLE_FILE_BYTES) {
+      throw new Error("Selected file is too large to attach")
+    }
+    const contents = encoding === "base64" ? fs.readFileSync(resolved).toString("base64") : fs.readFileSync(resolved, "utf-8")
+    return { path: targetPath, contents, encoding }
   }
 
   private listRestrictedWithMetadata(relativePath: string | undefined, includeFiles: boolean): FileSystemListResponse {
@@ -130,7 +163,7 @@ export class FileSystemBrowser {
       scope: "unrestricted",
       currentPath: resolvedPath,
       parentPath,
-      rootPath: this.homeDir,
+      rootPath: this.root,
       homePath: this.homeDir,
       displayPath: resolvedPath,
       pathKind: "absolute",
@@ -173,7 +206,7 @@ export class FileSystemBrowser {
       scope: "unrestricted",
       currentPath: WINDOWS_DRIVES_ROOT,
       parentPath: undefined,
-      rootPath: this.homeDir,
+      rootPath: this.root,
       homePath: this.homeDir,
       displayPath: "Drives",
       pathKind: "drives",
@@ -255,6 +288,19 @@ export class FileSystemBrowser {
     if (!input || input === "." || input === "./" || input === "/") {
       return "."
     }
+
+    if (path.isAbsolute(input)) {
+      const resolved = path.resolve(input)
+      const relativeToRoot = path.relative(this.root, resolved)
+      if (relativeToRoot === "") {
+        return "."
+      }
+      if (this.isOutsideRoot(relativeToRoot)) {
+        throw new Error("Access outside of root is not allowed")
+      }
+      return relativeToRoot.replace(/\\+/g, "/")
+    }
+
     let normalized = input.replace(/\\+/g, "/")
     if (normalized.startsWith("./")) {
       normalized = normalized.replace(/^\.\/+/, "")
@@ -285,15 +331,19 @@ export class FileSystemBrowser {
     const normalized = this.normalizeRelativePath(relativePath)
     const target = path.resolve(this.root, normalized)
     const relativeToRoot = path.relative(this.root, target)
-    if (relativeToRoot.startsWith("..") || path.isAbsolute(relativeToRoot) && relativeToRoot !== "") {
+    if (this.isOutsideRoot(relativeToRoot)) {
       throw new Error("Access outside of root is not allowed")
     }
     return target
   }
 
+  private isOutsideRoot(relativeToRoot: string) {
+    return relativeToRoot === ".." || relativeToRoot.startsWith(`..${path.sep}`) || path.isAbsolute(relativeToRoot)
+  }
+
   private resolveUnrestrictedPath(input: string | undefined): string {
     if (!input || input === "." || input === "./") {
-      return this.homeDir
+      return this.root
     }
 
     if (this.isWindows) {

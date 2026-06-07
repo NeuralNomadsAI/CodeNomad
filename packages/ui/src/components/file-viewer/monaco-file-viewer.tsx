@@ -9,6 +9,10 @@ interface MonacoFileViewerProps {
   scopeKey: string
   path: string
   content: string
+  wordWrap?: "on" | "off"
+  compactGutter?: boolean
+  onSave?: (content: string) => void
+  onContentChange?: (content: string) => void
 }
 
 export function MonacoFileViewer(props: MonacoFileViewerProps) {
@@ -33,6 +37,17 @@ export function MonacoFileViewer(props: MonacoFileViewerProps) {
     editor = null
   }
 
+  const saveContent = () => {
+    if (!editor || !props.onSave) return
+    props.onSave(editor.getValue())
+  }
+
+  const lineNumbersMinChars = (value: string) => {
+    if (!props.compactGutter) return 5
+    const lineCount = value.split(/\r\n|\r|\n/).length
+    return Math.max(3, String(lineCount).length + 1)
+  }
+
   onMount(() => {
     let cancelled = false
     void (async () => {
@@ -44,14 +59,26 @@ export function MonacoFileViewer(props: MonacoFileViewerProps) {
       editor = monaco.editor.create(host, {
         value: "",
         language: "plaintext",
-        readOnly: true,
+        readOnly: false,
         automaticLayout: true,
         lineNumbers: "on",
+        lineNumbersMinChars: lineNumbersMinChars(props.content),
+        glyphMargin: false,
+        folding: !props.compactGutter,
+        lineDecorationsWidth: props.compactGutter ? 8 : 10,
         minimap: { enabled: false },
         scrollBeyondLastLine: false,
         wordWrap: "off",
         renderWhitespace: "selection",
         fontSize: 13,
+      })
+
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, saveContent)
+
+      editor.onDidChangeModelContent(() => {
+        if (props.onContentChange) {
+          props.onContentChange(editor.getValue())
+        }
       })
 
       setReady(true)
@@ -67,6 +94,20 @@ export function MonacoFileViewer(props: MonacoFileViewerProps) {
   createEffect(() => {
     if (!ready() || !monaco || !editor) return
     monaco.editor.setTheme(isDark() ? "vs-dark" : "vs")
+  })
+
+  createEffect(() => {
+    if (!ready() || !editor) return
+    editor.updateOptions({ wordWrap: props.wordWrap === "on" ? "on" : "off" })
+  })
+
+  createEffect(() => {
+    if (!ready() || !editor) return
+    editor.updateOptions({
+      lineNumbersMinChars: lineNumbersMinChars(props.content),
+      folding: !props.compactGutter,
+      lineDecorationsWidth: props.compactGutter ? 8 : 10,
+    })
   })
 
   createEffect(() => {

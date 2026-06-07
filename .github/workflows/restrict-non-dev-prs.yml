@@ -1,0 +1,55 @@
+name: Restrict Non-Dev PRs
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  restrict-non-dev-prs:
+    if: ${{ github.event.pull_request.base.ref != 'dev' }}
+    runs-on: ubuntu-latest
+    env:
+      ALLOWED_ACTORS: ${{ vars.ALLOWED_NON_DEV_PR_ACTORS }}
+      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      BASE_REF: ${{ github.event.pull_request.base.ref }}
+    steps:
+      - name: Check allowed actor
+        id: auth
+        shell: bash
+        run: |
+          set -euo pipefail
+          normalized=",${ALLOWED_ACTORS},"
+          if [[ "$normalized" == *",${PR_AUTHOR},"* ]]; then
+            echo "authorized=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "authorized=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Comment on unauthorized PR
+        if: ${{ steps.auth.outputs.authorized != 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment "$PR_NUMBER" --body "Thanks for the contribution. PRs need to target \`dev\` branch. Please retarget this PR to the dev branch"
+
+      - name: Close unauthorized PR
+        if: ${{ steps.auth.outputs.authorized != 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr close "$PR_NUMBER"
+
+      - name: Fail unauthorized PR
+        if: ${{ steps.auth.outputs.authorized != 'true' }}
+        run: |
+          echo "PR author $PR_AUTHOR is not allowed to open PRs targeting $BASE_REF" >&2
+          exit 1

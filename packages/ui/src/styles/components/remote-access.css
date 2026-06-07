@@ -256,6 +256,55 @@
   cursor: pointer;
 }
 
+.remote-address-disclosure {
+  border: 1px solid var(--border-base);
+  border-radius: 12px;
+  background: var(--surface-primary);
+  overflow: hidden;
+}
+
+.remote-address-disclosure-trigger {
+  width: 100%;
+  min-height: 40px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.remote-address-disclosure-label {
+  grid-column: 2;
+  justify-self: center;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.remote-address-disclosure-chevron {
+  grid-column: 3;
+  justify-self: end;
+  width: 16px;
+  height: 16px;
+  color: var(--text-secondary);
+  transition: transform 0.2s ease;
+}
+
+.remote-address-disclosure-chevron.is-expanded {
+  transform: rotate(180deg);
+}
+
+.remote-address-disclosure-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 10px 10px;
+  border-top: 1px solid var(--border-base);
+}
+
 .remote-qr {
   margin-top: 12px;
   display: flex;

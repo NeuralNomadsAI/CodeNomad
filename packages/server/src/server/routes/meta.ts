@@ -1,6 +1,6 @@
 import { FastifyInstance } from "fastify"
 import { ServerMeta } from "../../api-types"
-import { resolveNetworkAddresses } from "../network-addresses"
+ 
 
 interface RouteDeps {
   serverMeta: ServerMeta
@@ -13,14 +13,12 @@ export function registerMetaRoutes(app: FastifyInstance, deps: RouteDeps) {
 function buildMetaResponse(meta: ServerMeta): ServerMeta {
   const localPort = resolveLocalPort(meta)
   const remote = resolveRemote(meta)
-  const addresses = remote && remote.port > 0 ? resolveNetworkAddresses({ host: meta.host, protocol: remote.protocol, port: remote.port }) : []
 
   return {
     ...meta,
     localPort,
     remotePort: remote?.port,
     listeningMode: meta.host === "0.0.0.0" || !isLoopbackHost(meta.host) ? "all" : "local",
-    addresses,
   }
 }
 

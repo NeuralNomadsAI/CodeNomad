@@ -76,6 +76,7 @@ const SessionRenameDialog: Component<SessionRenameDialogProps> = (props) => {
                     inputRef = element
                   }}
                   type="text"
+                  dir="auto"
                   value={title()}
                   onInput={(event) => setTitle(event.currentTarget.value)}
                   placeholder={t("sessionRenameDialog.input.placeholder")}

@@ -13,6 +13,7 @@ declare global {
     title?: string
     defaultPath?: string
     filters?: ElectronDialogFilter[]
+    multiple?: boolean
   }
 
   interface ElectronDialogResult {
@@ -27,26 +28,48 @@ declare global {
     getCliStatus?: () => Promise<unknown>
     restartCli?: () => Promise<unknown>
     openDialog?: (options: ElectronDialogOptions) => Promise<ElectronDialogResult>
+    getDirectoryPaths?: (paths: string[]) => Promise<string[]>
+    getPathForFile?: (file: File) => string | null
+    requestMicrophoneAccess?: () => Promise<{ granted: boolean }>
     setWakeLock?: (enabled: boolean) => Promise<{ enabled: boolean }>
 
     showNotification?: (payload: { title: string; body: string }) => Promise<{ ok: boolean; reason?: string }>
+    openRemoteWindow?: (payload: {
+      id: string
+      name: string
+      baseUrl: string
+      entryUrl?: string
+      proxySessionId?: string
+      skipTlsVerify: boolean
+    }) => Promise<{ ok: boolean }>
   }
 
-  interface TauriDialogModule {
-    open?: (options: Record<string, unknown>) => Promise<string | string[] | null>
-    save?: (options: Record<string, unknown>) => Promise<string | null>
+  interface File {
+    path?: string
+  }
+
+  interface FileSystemEntry {
+    isDirectory: boolean
+    isFile: boolean
+  }
+
+  interface DataTransferItem {
+    webkitGetAsEntry?: () => FileSystemEntry | null
   }
 
   interface TauriBridge {
-    invoke?: <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>
-    dialog?: TauriDialogModule
+    core?: {
+      invoke: <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>
+    }
   }
 
   interface Window {
-     __CODENOMAD_API_BASE__?: string
-     __CODENOMAD_EVENTS_URL__?: string
-     electronAPI?: ElectronAPI
-     __TAURI__?: TauriBridge
-     codenomadLogger?: LoggerControls
+      __CODENOMAD_API_BASE__?: string
+      __CODENOMAD_EVENTS_URL__?: string
+      __CODENOMAD_RUNTIME_HOST__?: "electron" | "tauri" | "web"
+      __CODENOMAD_WINDOW_CONTEXT__?: "local" | "remote"
+      electronAPI?: ElectronAPI
+      __TAURI__?: TauriBridge
+      codenomadLogger?: LoggerControls
    }
  }

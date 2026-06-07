@@ -1,3 +1,4 @@
+use crate::managed_node::resolve_bundled_node_binary;
 use dirs::home_dir;
 use parking_lot::Mutex;
 use regex::Regex;
@@ -5,21 +6,125 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::VecDeque;
 use std::env;
+#[cfg(windows)]
+use std::ffi::c_void;
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
+#[cfg(windows)]
+use std::mem::{size_of, zeroed};
 use std::net::TcpStream;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{webview::cookie::Cookie, AppHandle, Emitter, Manager, Url};
+
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+#[cfg(windows)]
+use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+#[cfg(windows)]
+use windows_sys::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+    SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+};
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+const MISSING_NODE_PREFIX: &str = "CODENOMAD_MISSING_NODE:";
+
+#[cfg(windows)]
+#[derive(Debug)]
+struct WindowsJobObject {
+    // The desktop wrapper may observe only a short-lived Node wrapper PID while the real
+    // server and workspace descendants continue running below it. KILL_ON_JOB_CLOSE gives
+    // Tauri an OS-owned handle for the whole subtree instead of relying on a single PID.
+    handle: HANDLE,
+}
+
+#[cfg(windows)]
+impl WindowsJobObject {
+    fn create() -> anyhow::Result<Self> {
+        let handle = unsafe { CreateJobObjectW(std::ptr::null_mut(), std::ptr::null()) };
+        if handle.is_null() {
+            return Err(anyhow::anyhow!(
+                "CreateJobObjectW failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { zeroed() };
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
+        let ok = unsafe {
+            SetInformationJobObject(
+                handle,
+                JobObjectExtendedLimitInformation,
+                &mut info as *mut _ as *mut c_void,
+                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        };
+        if ok == 0 {
+            let err = std::io::Error::last_os_error();
+            unsafe {
+                CloseHandle(handle);
+            }
+            return Err(anyhow::anyhow!("SetInformationJobObject failed: {}", err));
+        }
+
+        Ok(Self { handle })
+    }
+
+    fn assign_child(&self, child: &Child) -> anyhow::Result<()> {
+        let process_handle = child.as_raw_handle() as HANDLE;
+        let ok = unsafe { AssignProcessToJobObject(self.handle, process_handle) };
+        if ok == 0 {
+            return Err(anyhow::anyhow!(
+                "AssignProcessToJobObject failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+impl Drop for WindowsJobObject {
+    fn drop(&mut self) {
+        if !self.handle.is_null() {
+            unsafe {
+                CloseHandle(self.handle);
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+unsafe impl Send for WindowsJobObject {}
+
+#[cfg(windows)]
+unsafe impl Sync for WindowsJobObject {}
 
 fn log_line(message: &str) {
     println!("[tauri-cli] {message}");
 }
+
+#[cfg(windows)]
+fn configure_spawn(command: &mut Command) {
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn configure_spawn(_command: &mut Command) {}
 
 fn workspace_root() -> Option<PathBuf> {
     std::env::current_dir().ok().and_then(|mut dir| {
@@ -32,10 +137,52 @@ fn workspace_root() -> Option<PathBuf> {
     })
 }
 
-const SESSION_COOKIE_NAME: &str = "codenomad_session";
+const SESSION_COOKIE_NAME_PREFIX: &str = "codenomad_session";
 
 const CLI_STOP_GRACE_SECS: u64 = 30;
+#[cfg(windows)]
+const CLI_WINDOWS_FORCE_GRACE_MS: u64 = 2_000;
 
+#[cfg(unix)]
+fn configure_posix_process_group(command: &mut Command) {
+    // Ensure the CLI runs in its own process group so we can terminate wrapper
+    // processes (login shell/tsx) without leaving the server orphaned.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setpgid(0, 0) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(windows)]
+fn kill_process_tree_windows(pid: u32, force: bool) -> bool {
+    let mut args = vec!["/PID".to_string(), pid.to_string(), "/T".to_string()];
+    if force {
+        args.push("/F".to_string());
+    }
+
+    let mut command = Command::new("taskkill");
+    command.args(&args);
+    configure_spawn(&mut command);
+
+    match command.output() {
+        Ok(output) => {
+            if output.status.success() {
+                return true;
+            }
+
+            // If the PID is already gone, treat it as success.
+            let stdout = String::from_utf8_lossy(&output.stdout).to_lowercase();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
+            let combined = format!("{stdout}\n{stderr}");
+            combined.contains("not found") || combined.contains("no running instance")
+        }
+        Err(_) => false,
+    }
+}
 fn navigate_main(app: &AppHandle, url: &str) {
     if let Some(win) = app.webview_windows().get("main") {
         let mut display = url.to_string();
@@ -66,7 +213,11 @@ fn extract_cookie_value(set_cookie: &str, name: &str) -> Option<String> {
     Some(value.to_string())
 }
 
-fn exchange_bootstrap_token(base_url: &str, token: &str) -> anyhow::Result<Option<String>> {
+fn exchange_bootstrap_token(
+    base_url: &str,
+    token: &str,
+    cookie_name: &str,
+) -> anyhow::Result<Option<String>> {
     let parsed = Url::parse(base_url)?;
     let host = parsed.host_str().unwrap_or("127.0.0.1");
     let port = parsed.port_or_known_default().unwrap_or(80);
@@ -101,11 +252,11 @@ fn exchange_bootstrap_token(base_url: &str, token: &str) -> anyhow::Result<Optio
     for line in lines {
         // handle case-insensitive header name
         if let Some(value) = line.strip_prefix("Set-Cookie:") {
-            if let Some(session_id) = extract_cookie_value(value.trim(), SESSION_COOKIE_NAME) {
+            if let Some(session_id) = extract_cookie_value(value.trim(), cookie_name) {
                 return Ok(Some(session_id));
             }
         } else if let Some(value) = line.strip_prefix("set-cookie:") {
-            if let Some(session_id) = extract_cookie_value(value.trim(), SESSION_COOKIE_NAME) {
+            if let Some(session_id) = extract_cookie_value(value.trim(), cookie_name) {
                 return Ok(Some(session_id));
             }
         }
@@ -114,11 +265,16 @@ fn exchange_bootstrap_token(base_url: &str, token: &str) -> anyhow::Result<Optio
     Ok(None)
 }
 
-fn set_session_cookie(app: &AppHandle, base_url: &str, session_id: &str) -> anyhow::Result<()> {
+fn set_session_cookie(
+    app: &AppHandle,
+    base_url: &str,
+    cookie_name: &str,
+    session_id: &str,
+) -> anyhow::Result<()> {
     let parsed = Url::parse(base_url)?;
     let domain = parsed.host_str().unwrap_or("127.0.0.1").to_string();
 
-    let cookie = Cookie::build((SESSION_COOKIE_NAME, session_id))
+    let cookie = Cookie::build((cookie_name.to_string(), session_id.to_string()))
         .domain(domain)
         .path("/")
         .http_only(true)
@@ -130,6 +286,16 @@ fn set_session_cookie(app: &AppHandle, base_url: &str, session_id: &str) -> anyh
     }
 
     Ok(())
+}
+
+fn generate_auth_cookie_name() -> String {
+    let pid = std::process::id();
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+
+    format!("{SESSION_COOKIE_NAME_PREFIX}_{pid}_{timestamp}")
 }
 
 const DEFAULT_CONFIG_PATH: &str = "~/.config/codenomad/config.json";
@@ -286,6 +452,8 @@ impl Default for CliStatus {
 pub struct CliProcessManager {
     status: Arc<Mutex<CliStatus>>,
     child: Arc<Mutex<Option<Child>>>,
+    #[cfg(windows)]
+    job: Arc<Mutex<Option<WindowsJobObject>>>,
     ready: Arc<AtomicBool>,
     bootstrap_token: Arc<Mutex<Option<String>>>,
 }
@@ -295,6 +463,8 @@ impl CliProcessManager {
         Self {
             status: Arc::new(Mutex::new(CliStatus::default())),
             child: Arc::new(Mutex::new(None)),
+            #[cfg(windows)]
+            job: Arc::new(Mutex::new(None)),
             ready: Arc::new(AtomicBool::new(false)),
             bootstrap_token: Arc::new(Mutex::new(None)),
         }
@@ -317,6 +487,8 @@ impl CliProcessManager {
 
         let status_arc = self.status.clone();
         let child_arc = self.child.clone();
+        #[cfg(windows)]
+        let job_arc = self.job.clone();
         let ready_flag = self.ready.clone();
         let token_arc = self.bootstrap_token.clone();
         thread::spawn(move || {
@@ -324,6 +496,8 @@ impl CliProcessManager {
                 app.clone(),
                 status_arc.clone(),
                 child_arc,
+                #[cfg(windows)]
+                job_arc,
                 ready_flag,
                 token_arc,
                 dev,
@@ -343,16 +517,25 @@ impl CliProcessManager {
     }
 
     pub fn stop(&self) -> anyhow::Result<()> {
+        #[cfg(windows)]
+        let _job = self.job.lock().take();
+
         let mut child_opt = self.child.lock();
         if let Some(mut child) = child_opt.take() {
             log_line(&format!("stopping CLI pid={}", child.id()));
             #[cfg(unix)]
             unsafe {
-                libc::kill(child.id() as i32, libc::SIGTERM);
+                let pid = child.id() as i32;
+                // Prefer signaling the process group to avoid orphaning children
+                // when the CLI was launched via a wrapper shell.
+                let group_res = libc::kill(-pid, libc::SIGTERM);
+                if group_res != 0 {
+                    let _ = libc::kill(pid, libc::SIGTERM);
+                }
             }
             #[cfg(windows)]
             {
-                let _ = child.kill();
+                let _ = kill_process_tree_windows(child.id(), false);
             }
 
             let start = Instant::now();
@@ -360,6 +543,19 @@ impl CliProcessManager {
                 match child.try_wait() {
                     Ok(Some(_)) => break,
                     Ok(None) => {
+                        #[cfg(windows)]
+                        if start.elapsed() > Duration::from_millis(CLI_WINDOWS_FORCE_GRACE_MS) {
+                            log_line(&format!(
+                                "regular Windows shutdown still running after {}ms; escalating pid={}",
+                                CLI_WINDOWS_FORCE_GRACE_MS,
+                                child.id()
+                            ));
+                            if !kill_process_tree_windows(child.id(), true) {
+                                let _ = child.kill();
+                            }
+                            break;
+                        }
+
                         if start.elapsed() > Duration::from_secs(CLI_STOP_GRACE_SECS) {
                             log_line(&format!(
                                 "stop timed out after {}s; sending SIGKILL pid={}",
@@ -368,11 +564,17 @@ impl CliProcessManager {
                             ));
                             #[cfg(unix)]
                             unsafe {
-                                libc::kill(child.id() as i32, libc::SIGKILL);
+                                let pid = child.id() as i32;
+                                let group_res = libc::kill(-pid, libc::SIGKILL);
+                                if group_res != 0 {
+                                    let _ = libc::kill(pid, libc::SIGKILL);
+                                }
                             }
                             #[cfg(windows)]
                             {
-                                let _ = child.kill();
+                                if !kill_process_tree_windows(child.id(), true) {
+                                    let _ = child.kill();
+                                }
                             }
                             break;
                         }
@@ -381,6 +583,9 @@ impl CliProcessManager {
                     Err(_) => break,
                 }
             }
+        } else {
+            #[cfg(windows)]
+            log_line("tracked CLI process already exited; dropping Windows job object to reap descendants");
         }
 
         let mut status = self.status.lock();
@@ -401,6 +606,7 @@ impl CliProcessManager {
         app: AppHandle,
         status: Arc<Mutex<CliStatus>>,
         child_holder: Arc<Mutex<Option<Child>>>,
+        #[cfg(windows)] job_holder: Arc<Mutex<Option<WindowsJobObject>>>,
         ready: Arc<AtomicBool>,
         bootstrap_token: Arc<Mutex<Option<String>>>,
         dev: bool,
@@ -412,7 +618,8 @@ impl CliProcessManager {
             "resolved CLI entry runner={:?} entry={} host={}",
             resolution.runner, resolution.entry, host
         ));
-        let args = resolution.build_args(dev, &host);
+        let auth_cookie_name = Arc::new(generate_auth_cookie_name());
+        let args = resolution.build_args(dev, &host, auth_cookie_name.as_str());
         log_line(&format!("CLI args: {:?}", args));
         if dev {
             log_line("development mode: will prefer tsx + source if present");
@@ -423,24 +630,29 @@ impl CliProcessManager {
             log_line(&format!("using cwd={}", c.display()));
         }
 
-        let command_info = if supports_user_shell() {
+        let use_user_shell = supports_user_shell();
+
+        if !use_user_shell && which::which(&resolution.node_binary).is_err() {
+            return Err(anyhow::anyhow!(
+                "Node binary '{}' not found. CodeNomad desktop currently requires Node.js installed on the system, or set NODE_BINARY to a valid runtime path.",
+                resolution.node_binary
+            ));
+        }
+
+        let command_info = if use_user_shell {
             log_line("spawning via user shell");
             ShellCommandType::UserShell(build_shell_command_string(&resolution, &args)?)
         } else {
-            log_line("spawning directly with node");
+            log_line(if resolution.runner == Runner::Tsx {
+                "spawning directly with node + tsx"
+            } else {
+                "spawning directly with node"
+            });
             ShellCommandType::Direct(DirectCommand {
                 program: resolution.node_binary.clone(),
                 args: resolution.runner_args(&args),
             })
         };
-
-        if !supports_user_shell() {
-            if which::which(&resolution.node_binary).is_err() {
-                return Err(anyhow::anyhow!(
-                    "Node binary not found. Make sure Node.js is installed."
-                ));
-            }
-        }
 
         let child = match &command_info {
             ShellCommandType::UserShell(cmd) => {
@@ -448,11 +660,16 @@ impl CliProcessManager {
                 let mut c = Command::new(&cmd.shell);
                 c.args(&cmd.args)
                     .env("ELECTRON_RUN_AS_NODE", "1")
+                    .env_remove("npm_config_prefix")
+                    .env_remove("NPM_CONFIG_PREFIX")
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped());
+                configure_spawn(&mut c);
                 if let Some(ref cwd) = cwd {
                     c.current_dir(cwd);
                 }
+                #[cfg(unix)]
+                configure_posix_process_group(&mut c);
                 c.spawn()?
             }
             ShellCommandType::Direct(cmd) => {
@@ -462,15 +679,34 @@ impl CliProcessManager {
                     .env("ELECTRON_RUN_AS_NODE", "1")
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped());
+                configure_spawn(&mut c);
                 if let Some(ref cwd) = cwd {
                     c.current_dir(cwd);
                 }
+                #[cfg(unix)]
+                configure_posix_process_group(&mut c);
                 c.spawn()?
             }
         };
 
         let pid = child.id();
         log_line(&format!("spawned pid={pid}"));
+        #[cfg(windows)]
+        match WindowsJobObject::create().and_then(|job| {
+            job.assign_child(&child)?;
+            Ok(job)
+        }) {
+            Ok(job) => {
+                log_line(&format!("attached pid={pid} to Windows job object"));
+                *job_holder.lock() = Some(job);
+            }
+            Err(err) => {
+                log_line(&format!(
+                    "failed to attach pid={pid} to Windows job object; falling back to taskkill-only cleanup: {err}"
+                ));
+            }
+        }
+
         {
             let mut locked = status.lock();
             locked.pid = Some(pid);
@@ -487,6 +723,7 @@ impl CliProcessManager {
         let app_clone = app.clone();
         let ready_clone = ready.clone();
         let token_clone = bootstrap_token.clone();
+        let auth_cookie_name_clone = auth_cookie_name.clone();
 
         thread::spawn(move || {
             let stdout = child_clone
@@ -501,24 +738,41 @@ impl CliProcessManager {
                 .map(BufReader::new);
 
             if let Some(reader) = stdout {
-                Self::process_stream(
-                    reader,
-                    "stdout",
-                    &app_clone,
-                    &status_clone,
-                    &ready_clone,
-                    &token_clone,
-                );
+                let app = app_clone.clone();
+                let status = status_clone.clone();
+                let ready = ready_clone.clone();
+                let token = token_clone.clone();
+                let auth_cookie_name = auth_cookie_name_clone.clone();
+                thread::spawn(move || {
+                    Self::process_stream(
+                        reader,
+                        "stdout",
+                        &app,
+                        &status,
+                        &ready,
+                        &token,
+                        auth_cookie_name.as_str(),
+                    );
+                });
             }
+
             if let Some(reader) = stderr {
-                Self::process_stream(
-                    reader,
-                    "stderr",
-                    &app_clone,
-                    &status_clone,
-                    &ready_clone,
-                    &token_clone,
-                );
+                let app = app_clone.clone();
+                let status = status_clone.clone();
+                let ready = ready_clone.clone();
+                let token = token_clone.clone();
+                let auth_cookie_name = auth_cookie_name_clone.clone();
+                thread::spawn(move || {
+                    Self::process_stream(
+                        reader,
+                        "stderr",
+                        &app,
+                        &status,
+                        &ready,
+                        &token,
+                        auth_cookie_name.as_str(),
+                    );
+                });
             }
         });
 
@@ -526,6 +780,8 @@ impl CliProcessManager {
         let status_clone = status.clone();
         let ready_clone = ready.clone();
         let child_holder_clone = child_holder.clone();
+        #[cfg(windows)]
+        let job_holder_clone = job_holder.clone();
         thread::spawn(move || {
             let timeout = Duration::from_secs(60);
             thread::sleep(timeout);
@@ -537,7 +793,24 @@ impl CliProcessManager {
             locked.error = Some("CLI did not start in time".to_string());
             log_line("timeout waiting for CLI readiness");
             if let Some(child) = child_holder_clone.lock().as_mut() {
-                let _ = child.kill();
+                #[cfg(unix)]
+                unsafe {
+                    let pid = child.id() as i32;
+                    let group_res = libc::kill(-pid, libc::SIGKILL);
+                    if group_res != 0 {
+                        let _ = libc::kill(pid, libc::SIGKILL);
+                    }
+                }
+                #[cfg(windows)]
+                {
+                    if !kill_process_tree_windows(child.id(), true) {
+                        let _ = child.kill();
+                    }
+                }
+                #[cfg(not(any(unix, windows)))]
+                {
+                    let _ = child.kill();
+                }
             }
             let _ = app_clone.emit("cli:error", json!({"message": "CLI did not start in time"}));
             Self::emit_status(&app_clone, &locked);
@@ -563,6 +836,10 @@ impl CliProcessManager {
                             // Drop the handle after the process exits so other callers
                             // don't attempt to stop/kill a finished process.
                             *guard = None;
+                            #[cfg(windows)]
+                            {
+                                let _ = job_holder_clone.lock().take();
+                            }
                             Some(status)
                         }
                         None => None,
@@ -617,10 +894,11 @@ impl CliProcessManager {
         status: &Arc<Mutex<CliStatus>>,
         ready: &Arc<AtomicBool>,
         bootstrap_token: &Arc<Mutex<Option<String>>>,
+        auth_cookie_name: &str,
     ) {
         let mut buffer = String::new();
-        let local_url_regex = Regex::new(r"^Local\s+Connection\s+URL\s*:\s*(https?://\S+)").ok();
-        let http_regex = Regex::new(r":(\d{2,5})(?!.*:\d)").ok();
+        let local_url_regex =
+            Regex::new(r"^Local\s+Connection\s+URL\s*:\s*(https?://\S+)\s*$").ok();
         let token_prefix = "CODENOMAD_BOOTSTRAP_TOKEN:";
 
         loop {
@@ -647,43 +925,31 @@ impl CliProcessManager {
                             continue;
                         }
 
+                        if let Some(node_binary) = line.strip_prefix(MISSING_NODE_PREFIX) {
+                            let mut locked = status.lock();
+                            if locked.error.is_none() {
+                                locked.error = Some(format!(
+                                    "Node binary '{}' not found in the desktop shell environment. CodeNomad desktop currently requires Node.js installed on the system, or set NODE_BINARY to a valid runtime path.",
+                                    node_binary.trim()
+                                ));
+                            }
+                            continue;
+                        }
+
                         if let Some(url) = local_url_regex
                             .as_ref()
                             .and_then(|re| re.captures(line).and_then(|c| c.get(1)))
                             .map(|m| m.as_str().to_string())
                         {
-                            Self::mark_ready(app, status, ready, bootstrap_token, url);
+                            Self::mark_ready(
+                                app,
+                                status,
+                                ready,
+                                bootstrap_token,
+                                auth_cookie_name,
+                                url,
+                            );
                             continue;
-                        }
-
-                        if line.to_lowercase().contains("http server listening") {
-                            if let Some(port) = http_regex
-                                .as_ref()
-                                .and_then(|re| re.captures(line).and_then(|c| c.get(1)))
-                                .and_then(|m| m.as_str().parse::<u16>().ok())
-                            {
-                                Self::mark_ready(
-                                    app,
-                                    status,
-                                    ready,
-                                    bootstrap_token,
-                                    format!("http://localhost:{port}"),
-                                );
-                                continue;
-                            }
-
-                            if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
-                                if let Some(port) = value.get("port").and_then(|p| p.as_u64()) {
-                                    Self::mark_ready(
-                                        app,
-                                        status,
-                                        ready,
-                                        bootstrap_token,
-                                        format!("http://localhost:{}", port),
-                                    );
-                                    continue;
-                                }
-                            }
                         }
                     }
                 }
@@ -697,6 +963,7 @@ impl CliProcessManager {
         status: &Arc<Mutex<CliStatus>>,
         ready: &Arc<AtomicBool>,
         bootstrap_token: &Arc<Mutex<Option<String>>>,
+        auth_cookie_name: &str,
         base_url: String,
     ) {
         ready.store(true, Ordering::SeqCst);
@@ -720,9 +987,11 @@ impl CliProcessManager {
             if scheme.as_deref() != Some("http") {
                 navigate_main(app, &base_url);
             } else {
-                match exchange_bootstrap_token(&base_url, &token) {
+                match exchange_bootstrap_token(&base_url, &token, &auth_cookie_name) {
                     Ok(Some(session_id)) => {
-                        if let Err(err) = set_session_cookie(app, &base_url, &session_id) {
+                        if let Err(err) =
+                            set_session_cookie(app, &base_url, &auth_cookie_name, &session_id)
+                        {
                             log_line(&format!("failed to set session cookie: {err}"));
                             navigate_main(app, &format!("{base_url}/login"));
                         } else {
@@ -779,6 +1048,7 @@ struct CliEntry {
     runner: Runner,
     runner_path: Option<String>,
     node_binary: String,
+    node_args: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -789,9 +1059,8 @@ enum Runner {
 
 impl CliEntry {
     fn resolve(app: &AppHandle, dev: bool) -> anyhow::Result<Self> {
-        let node_binary = std::env::var("NODE_BINARY").unwrap_or_else(|_| "node".to_string());
-
         if dev {
+            let node_binary = std::env::var("NODE_BINARY").unwrap_or_else(|_| "node".to_string());
             if let Some(tsx_path) = resolve_tsx(app) {
                 if let Some(entry) = resolve_dev_entry(app) {
                     return Ok(Self {
@@ -799,43 +1068,66 @@ impl CliEntry {
                         runner: Runner::Tsx,
                         runner_path: Some(tsx_path),
                         node_binary,
+                        node_args: Vec::new(),
                     });
                 }
             }
         }
 
-        if let Some(entry) = resolve_dist_entry(app) {
+        if let Some(entry) = resolve_prod_entry(app) {
             return Ok(Self {
                 entry,
                 runner: Runner::Node,
                 runner_path: None,
-                node_binary,
+                node_binary: resolve_bundled_node_binary()?,
+                node_args: vec!["--experimental-specifier-resolution=node".to_string()],
             });
         }
 
         Err(anyhow::anyhow!(
-            "Unable to locate CodeNomad CLI build (dist/bin.js). Please build @neuralnomads/codenomad."
+            "Unable to locate the packaged CodeNomad server entrypoint (dist/bin.js). Please rebuild the desktop bundle."
         ))
     }
 
-    fn build_args(&self, dev: bool, host: &str) -> Vec<String> {
+    fn build_args(&self, dev: bool, host: &str, auth_cookie_name: &str) -> Vec<String> {
         let mut args = vec![
             "serve".to_string(),
             "--host".to_string(),
             host.to_string(),
+            "--auth-cookie-name".to_string(),
+            auth_cookie_name.to_string(),
             "--generate-token".to_string(),
+            "--unrestricted-root".to_string(),
         ];
 
         if dev {
-            // Dev: plain HTTP + Vite dev server proxy.
+            // Dev: keep loopback HTTP for the Vite proxy, but also enable HTTPS so
+            // remote proxy sessions can still spin up secure local windows.
+            let ui_dev_server = std::env::var("VITE_DEV_SERVER_URL")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .or_else(|| {
+                    std::env::var("ELECTRON_RENDERER_URL")
+                        .ok()
+                        .filter(|value| !value.trim().is_empty())
+                })
+                .unwrap_or_else(|| "http://localhost:3000".to_string());
+            let log_level = std::env::var("CLI_LOG_LEVEL")
+                .ok()
+                .map(|value| value.trim().to_lowercase())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "info".to_string());
+
             args.push("--https".to_string());
-            args.push("false".to_string());
+            args.push("true".to_string());
             args.push("--http".to_string());
             args.push("true".to_string());
+            args.push("--http-port".to_string());
+            args.push("0".to_string());
             args.push("--ui-dev-server".to_string());
-            args.push("http://localhost:3000".to_string());
+            args.push(ui_dev_server);
             args.push("--log-level".to_string());
-            args.push("debug".to_string());
+            args.push(log_level);
         } else {
             // Prod desktop: always keep loopback HTTP enabled.
             args.push("--https".to_string());
@@ -848,6 +1140,9 @@ impl CliEntry {
 
     fn runner_args(&self, cli_args: &[String]) -> Vec<String> {
         let mut args = VecDeque::new();
+        for arg in &self.node_args {
+            args.push_back(arg.clone());
+        }
         if self.runner == Runner::Tsx {
             if let Some(path) = &self.runner_path {
                 args.push_back(path.clone());
@@ -862,69 +1157,87 @@ impl CliEntry {
 }
 
 fn resolve_tsx(_app: &AppHandle) -> Option<String> {
-    let candidates = vec![
-        std::env::current_dir()
-            .ok()
+    let cwd = std::env::current_dir().ok();
+    let workspace = workspace_root();
+    let mut candidates = vec![
+        cwd.as_ref()
+            .map(|p| p.join("node_modules/tsx/dist/cli.mjs")),
+        cwd.as_ref()
+            .map(|p| p.join("node_modules/tsx/dist/cli.cjs")),
+        cwd.as_ref().map(|p| p.join("node_modules/tsx/dist/cli.js")),
+        cwd.as_ref()
+            .map(|p| p.join("../node_modules/tsx/dist/cli.mjs")),
+        cwd.as_ref()
+            .map(|p| p.join("../node_modules/tsx/dist/cli.cjs")),
+        cwd.as_ref()
+            .map(|p| p.join("../node_modules/tsx/dist/cli.js")),
+        cwd.as_ref()
+            .map(|p| p.join("../../node_modules/tsx/dist/cli.mjs")),
+        cwd.as_ref()
+            .map(|p| p.join("../../node_modules/tsx/dist/cli.cjs")),
+        cwd.as_ref()
+            .map(|p| p.join("../../node_modules/tsx/dist/cli.js")),
+        workspace
+            .as_ref()
+            .map(|p| p.join("node_modules/tsx/dist/cli.mjs")),
+        workspace
+            .as_ref()
+            .map(|p| p.join("node_modules/tsx/dist/cli.cjs")),
+        workspace
+            .as_ref()
             .map(|p| p.join("node_modules/tsx/dist/cli.js")),
-        std::env::current_exe().ok().and_then(|ex| {
-            ex.parent()
-                .map(|p| p.join("../node_modules/tsx/dist/cli.js"))
-        }),
     ];
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(Some(dir.join("../node_modules/tsx/dist/cli.mjs")));
+            candidates.push(Some(dir.join("../node_modules/tsx/dist/cli.cjs")));
+            candidates.push(Some(dir.join("../node_modules/tsx/dist/cli.js")));
+        }
+    }
 
     first_existing(candidates)
 }
 
 fn resolve_dev_entry(_app: &AppHandle) -> Option<String> {
+    let cwd = std::env::current_dir().ok();
+    let workspace = workspace_root();
     let candidates = vec![
-        std::env::current_dir()
-            .ok()
+        workspace
+            .as_ref()
             .map(|p| p.join("packages/server/src/index.ts")),
-        std::env::current_dir()
-            .ok()
-            .map(|p| p.join("../server/src/index.ts")),
+        cwd.as_ref().map(|p| p.join("packages/server/src/index.ts")),
+        cwd.as_ref().map(|p| p.join("../server/src/index.ts")),
+        cwd.as_ref().map(|p| p.join("../../server/src/index.ts")),
     ];
 
     first_existing(candidates)
 }
 
-fn resolve_dist_entry(_app: &AppHandle) -> Option<String> {
-    let base = workspace_root();
-    let mut candidates: Vec<Option<PathBuf>> = vec![
-        base.as_ref().map(|p| p.join("packages/server/dist/bin.js")),
-        base.as_ref()
-            .map(|p| p.join("packages/server/dist/index.js")),
-        base.as_ref().map(|p| p.join("server/dist/bin.js")),
-        base.as_ref().map(|p| p.join("server/dist/index.js")),
-    ];
+fn resolve_prod_entry(_app: &AppHandle) -> Option<String> {
+    let mut candidates = Vec::new();
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
+            candidates.push(Some(dir.join("resources/server/dist/bin.js")));
+
             let resources = dir.join("../Resources");
             candidates.push(Some(resources.join("server/dist/bin.js")));
-            candidates.push(Some(resources.join("server/dist/index.js")));
-            candidates.push(Some(resources.join("server/dist/server/bin.js")));
-            candidates.push(Some(resources.join("server/dist/server/index.js")));
             candidates.push(Some(resources.join("resources/server/dist/bin.js")));
-            candidates.push(Some(resources.join("resources/server/dist/index.js")));
-            candidates.push(Some(resources.join("resources/server/dist/server/bin.js")));
-            candidates.push(Some(
-                resources.join("resources/server/dist/server/index.js"),
-            ));
 
             let linux_resource_roots = [dir.join("../lib/CodeNomad"), dir.join("../lib/codenomad")];
             for root in linux_resource_roots {
                 candidates.push(Some(root.join("server/dist/bin.js")));
-                candidates.push(Some(root.join("server/dist/index.js")));
-                candidates.push(Some(root.join("server/dist/server/bin.js")));
-                candidates.push(Some(root.join("server/dist/server/index.js")));
                 candidates.push(Some(root.join("resources/server/dist/bin.js")));
-                candidates.push(Some(root.join("resources/server/dist/index.js")));
-                candidates.push(Some(root.join("resources/server/dist/server/bin.js")));
-                candidates.push(Some(root.join("resources/server/dist/server/index.js")));
             }
         }
     }
+
+    let base = workspace_root();
+    candidates.push(
+        base.as_ref()
+            .map(|p| p.join("packages/server/dist/bin.js")),
+    );
 
     first_existing(candidates)
 }
@@ -939,8 +1252,16 @@ fn build_shell_command_string(
     for arg in entry.runner_args(cli_args) {
         quoted.push(shell_escape(&arg));
     }
-    let command = format!("ELECTRON_RUN_AS_NODE=1 exec {}", quoted.join(" "));
-    let args = build_shell_args(&shell, &command);
+    let command = format!(
+        "if [ -x {} ] || command -v {} >/dev/null 2>&1; then ELECTRON_RUN_AS_NODE=1 exec {}; else printf '%s%s\\n' '{}' {}; exit 127; fi",
+        shell_escape(&entry.node_binary),
+        shell_escape(&entry.node_binary),
+        quoted.join(" "),
+        MISSING_NODE_PREFIX,
+        shell_escape(&entry.node_binary),
+    );
+    let wrapped_command = wrap_command_for_shell(&command, &shell);
+    let args = build_shell_args(&shell, &wrapped_command);
     log_line(&format!("user shell command: {} {:?}", shell, args));
     Ok(ShellCommand { shell, args })
 }
@@ -956,6 +1277,30 @@ fn default_shell() -> String {
     } else {
         "/bin/bash".to_string()
     }
+}
+
+fn wrap_command_for_shell(command: &str, shell: &str) -> String {
+    let shell_name = std::path::Path::new(shell)
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or("")
+        .to_lowercase();
+
+    if shell_name.contains("bash") {
+        return format!(
+            "if [ -f ~/.bashrc ]; then source ~/.bashrc >/dev/null 2>&1; fi; {}",
+            command
+        );
+    }
+
+    if shell_name.contains("zsh") {
+        return format!(
+            "if [ -f ~/.zshrc ]; then source ~/.zshrc >/dev/null 2>&1; fi; {}",
+            command
+        );
+    }
+
+    command.to_string()
 }
 
 fn shell_escape(input: &str) -> String {
@@ -979,8 +1324,8 @@ fn build_shell_args(shell: &str, command: &str) -> Vec<String> {
         .unwrap_or("")
         .to_lowercase();
 
-    if shell_name.contains("zsh") {
-        vec!["-l".into(), "-i".into(), "-c".into(), command.into()]
+    if shell_name.contains("zsh") || shell_name.contains("bash") {
+        vec!["-i".into(), "-l".into(), "-c".into(), command.into()]
     } else {
         vec!["-l".into(), "-c".into(), command.into()]
     }
@@ -995,9 +1340,18 @@ fn first_existing(paths: Vec<Option<PathBuf>>) -> Option<String> {
 }
 
 fn normalize_path(path: PathBuf) -> String {
-    if let Ok(clean) = path.canonicalize() {
-        clean.to_string_lossy().to_string()
+    let resolved = if let Ok(clean) = path.canonicalize() {
+        clean
     } else {
-        path.to_string_lossy().to_string()
+        path
+    };
+
+    let rendered = resolved.to_string_lossy().to_string();
+    if let Some(stripped) = rendered.strip_prefix("\\\\?\\UNC\\") {
+        format!("\\\\{}", stripped)
+    } else if let Some(stripped) = rendered.strip_prefix("\\\\?\\") {
+        stripped.to_string()
+    } else {
+        rendered
     }
 }

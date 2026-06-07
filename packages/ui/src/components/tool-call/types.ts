@@ -47,6 +47,7 @@ export interface ToolScrollHelpers {
   registerContainer(element: HTMLDivElement | null, options?: { disableTracking?: boolean }): void
   handleScroll(event: Event & { currentTarget: HTMLDivElement }): void
   renderSentinel(options?: { disableTracking?: boolean }): JSXElement | null
+  restoreAfterRender(): void
 }
 
 export interface ToolRendererContext {
@@ -74,12 +75,24 @@ export interface ToolRendererContext {
     forceCollapsed?: boolean
   }) => JSXElement | null
   scrollHelpers?: ToolScrollHelpers
+  onContentRendered?: () => void
+}
+
+export interface ToolSearchTextContext {
+  toolCall: ToolCallPart
+  toolState: ToolState | undefined
+  toolName: string
 }
 
 export interface ToolRenderer {
   tools: string[]
   getTitle?(context: ToolRendererContext): string | undefined
   getAction?(context: ToolRendererContext): string | undefined
+  /**
+   * Text that is visible or directly revealable through this renderer. Keep this
+   * in sync with custom renderBody output when adding specialized tool UIs.
+   */
+  getSearchText?(context: ToolSearchTextContext): string[]
   renderBody(context: ToolRendererContext): JSXElement | null
 }
 

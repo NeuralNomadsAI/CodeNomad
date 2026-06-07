@@ -19,9 +19,6 @@ export function formatCompactCount(value: number): string {
     return `${(value / 1_000_000).toFixed(1)}M`
   }
   if (value >= 10_000) {
-    return `${Math.round(value / 1_000)}K`
-  }
-  if (value >= 1_000) {
     const label = `${(value / 1_000).toFixed(1)}K`
     return label.replace(/\.0K$/, "K")
   }

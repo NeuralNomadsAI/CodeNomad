@@ -15,17 +15,17 @@ export const commandMessages = {
   "commands.newInstance.description": "打开文件夹选择器以创建新实例",
   "commands.newInstance.keywords": "folder, project, workspace, 文件夹, 项目, 工作区",
 
-  "commands.closeInstance.label": "关闭实例",
-  "commands.closeInstance.description": "停止当前实例的服务器",
-  "commands.closeInstance.keywords": "stop, quit, close, 停止, 退出, 关闭",
+  "commands.closeInstance.label": "关闭标签页",
+  "commands.closeInstance.description": "关闭当前顶层标签页",
+  "commands.closeInstance.keywords": "stop, quit, close, 停止, 退出, 关闭, 标签",
 
-  "commands.nextInstance.label": "下一个实例",
-  "commands.nextInstance.description": "切换到下一个实例标签页",
-  "commands.nextInstance.keywords": "switch, navigate, 切换, 导航",
+  "commands.nextInstance.label": "下一个标签页",
+  "commands.nextInstance.description": "切换到下一个顶层标签页",
+  "commands.nextInstance.keywords": "switch, navigate, 切换, 导航, 标签",
 
-  "commands.previousInstance.label": "上一个实例",
-  "commands.previousInstance.description": "切换到上一个实例标签页",
-  "commands.previousInstance.keywords": "switch, navigate, 切换, 导航",
+  "commands.previousInstance.label": "上一个标签页",
+  "commands.previousInstance.description": "切换到上一个顶层标签页",
+  "commands.previousInstance.keywords": "switch, navigate, 切换, 导航, 标签",
 
   "commands.newSession.label": "新建会话",
   "commands.newSession.description": "创建新的父会话",

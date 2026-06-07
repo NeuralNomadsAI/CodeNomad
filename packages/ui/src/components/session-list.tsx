@@ -1,8 +1,8 @@
 import { Component, For, Show, createSignal, createMemo, createEffect, JSX, onCleanup } from "solid-js"
 import type { SessionStatus } from "../types/session"
 import type { SessionThread } from "../stores/session-state"
-import { getSessionStatus } from "../stores/session-status"
-import { Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronDown, Search, Square, CheckSquare, MinusSquare, Split } from "lucide-solid"
+import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../stores/session-status"
+import { Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronDown, Search, Square, CheckSquare, MinusSquare, Split, RotateCw } from "lucide-solid"
 import KeyboardHint from "./keyboard-hint"
 import SessionRenameDialog from "./session-rename-dialog"
 import { keyboardRegistry } from "../lib/keyboard-registry"
@@ -14,15 +14,24 @@ import {
   ensureSessionParentExpanded,
   getVisibleSessionIds,
   isSessionParentExpanded,
+  loadMessages,
   loading,
   renameSession,
   sessions as sessionStateSessions,
   setActiveSessionFromList,
   toggleSessionParentExpanded,
+  loadMoreSessions,
+  searchSessions,
+  getSessionHasMore,
+  clearSessionSearch,
+  getSessionSearchQuery,
+  getSessionSearchThreads,
+  isSessionSearchLoading,
 } from "../stores/sessions"
 import { getGitRepoStatus, getWorktreeSlugForParentSession } from "../stores/worktrees"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
+import { useConfig } from "../stores/preferences"
 const log = getLogger("session")
 
 
@@ -46,6 +55,7 @@ function formatSessionStatus(status: SessionStatus): string {
 
 const SessionList: Component<SessionListProps> = (props) => {
   const { t } = useI18n()
+  const { preferences } = useConfig()
   const [renameTarget, setRenameTarget] = createSignal<{ id: string; title: string; label: string } | null>(null)
   const [isRenaming, setIsRenaming] = createSignal(false)
 
@@ -53,6 +63,79 @@ const SessionList: Component<SessionListProps> = (props) => {
   const normalizedQuery = createMemo(() => (props.enableFilterBar ? filterQuery().trim().toLowerCase() : ""))
 
   const [selectedSessionIds, setSelectedSessionIds] = createSignal<Set<string>>(new Set())
+  const [reloadingSessionIds, setReloadingSessionIds] = createSignal<Set<string>>(new Set())
+  const [now, setNow] = createSignal(Date.now())
+
+  createEffect(() => {
+    if (typeof window === "undefined") return
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    onCleanup(() => window.clearInterval(timer))
+  })
+
+  const [sentinelEl, setSentinelEl] = createSignal<HTMLDivElement | null>(null)
+
+  const hasMore = createMemo(() => {
+    if (normalizedQuery()) return false
+    return getSessionHasMore(props.instanceId)
+  })
+
+  const isFetchingSessions = createMemo(() => {
+    return loading().fetchingSessions.get(props.instanceId) ?? false
+  })
+
+  createEffect(() => {
+    const el = sentinelEl()
+    if (!el || !hasMore() || isFetchingSessions()) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0]
+        if (entry?.isIntersecting && hasMore() && !isFetchingSessions()) {
+          void loadMoreSessions(props.instanceId).catch((error) => {
+            log.error("Failed to load more sessions:", error)
+          })
+        }
+      },
+      { root: el.parentElement ?? null, rootMargin: "0px 0px 200px 0px" }
+    )
+
+    observer.observe(el)
+    onCleanup(() => observer.disconnect())
+  })
+
+  let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null
+  createEffect(() => {
+    const query = normalizedQuery()
+    if (!props.enableFilterBar) {
+      clearSessionSearch(props.instanceId)
+      return
+    }
+
+    if (searchDebounceTimer) {
+      clearTimeout(searchDebounceTimer)
+    }
+
+    if (!query) {
+      clearSessionSearch(props.instanceId)
+      return
+    }
+
+    // Always run server search in background for workspace-complete results.
+    // Client-side filtering (filteredThreads) shows instant results from loaded sessions.
+    const queryAtDispatch = query
+    searchDebounceTimer = setTimeout(() => {
+      void searchSessions(props.instanceId, queryAtDispatch)
+        .catch((error) => {
+          log.error("Failed to search sessions:", error)
+        })
+    }, 150)
+
+    onCleanup(() => {
+      if (searchDebounceTimer) {
+        clearTimeout(searchDebounceTimer)
+      }
+    })
+  })
 
   const normalizeSessionLabel = (sessionId: string) => {
     const session = sessionStateSessions().get(props.instanceId)?.get(sessionId)
@@ -70,6 +153,12 @@ const SessionList: Component<SessionListProps> = (props) => {
   const filteredThreads = createMemo<SessionThread[]>(() => {
     const query = normalizedQuery()
     if (!query) return props.threads
+
+    const searchQuery = getSessionSearchQuery(props.instanceId)
+    const searchLoading = isSessionSearchLoading(props.instanceId)
+    if (searchQuery === query && !searchLoading) {
+      return getSessionSearchThreads(props.instanceId)
+    }
 
     const next: SessionThread[] = []
     for (const thread of props.threads) {
@@ -157,6 +246,7 @@ const SessionList: Component<SessionListProps> = (props) => {
         variant: "warning",
         confirmLabel: t("sessionList.delete.confirmLabel"),
         cancelLabel: t("sessionList.delete.cancelLabel"),
+        dismissible: false,
       },
     )
     if (!confirmed) return
@@ -210,6 +300,32 @@ const SessionList: Component<SessionListProps> = (props) => {
     if (!session) return
     const label = session.title && session.title.trim() ? session.title : sessionId
     setRenameTarget({ id: sessionId, title: session.title ?? "", label })
+  }
+
+  const isSessionReloading = (sessionId: string) => reloadingSessionIds().has(sessionId)
+
+  const handleReloadSession = async (event: MouseEvent, sessionId: string) => {
+    event.stopPropagation()
+    if (isSessionReloading(sessionId)) return
+
+    setReloadingSessionIds((prev) => {
+      const next = new Set(prev)
+      next.add(sessionId)
+      return next
+    })
+
+    try {
+      await loadMessages(props.instanceId, sessionId, { force: true })
+    } catch (error) {
+      log.error(`Failed to reload session ${sessionId}:`, error)
+      showToastNotification({ message: t("sessionList.reload.error"), variant: "error" })
+    } finally {
+      setReloadingSessionIds((prev) => {
+        const next = new Set(prev)
+        next.delete(sessionId)
+        return next
+      })
+    }
   }
 
   const closeRenameDialog = () => {
@@ -285,6 +401,7 @@ const SessionList: Component<SessionListProps> = (props) => {
         variant: "warning",
         confirmLabel: t("sessionList.bulkDelete.confirmLabel"),
         cancelLabel: t("sessionList.bulkDelete.cancelLabel"),
+        dismissible: false,
       },
     )
 
@@ -370,7 +487,13 @@ const SessionList: Component<SessionListProps> = (props) => {
     const isActive = () => props.activeSessionId === rowProps.sessionId
     const title = () => session()?.title || t("sessionList.session.untitled")
     const status = () => getSessionStatus(props.instanceId, rowProps.sessionId)
+    const retry = () => getSessionRetry(props.instanceId, rowProps.sessionId)
     const statusLabel = () => {
+      const retryState = retry()
+      if (retryState) {
+        const seconds = getRetrySeconds(retryState.next, now())
+        return seconds > 0 ? t("sessionList.status.retryingIn", { seconds: String(seconds) }) : t("sessionList.status.retrying")
+      }
       switch (formatSessionStatus(status())) {
         case "working":
           return t("sessionList.status.working")
@@ -383,13 +506,34 @@ const SessionList: Component<SessionListProps> = (props) => {
     const needsPermission = () => Boolean(session()?.pendingPermission)
     const needsQuestion = () => Boolean((session() as any)?.pendingQuestion)
     const needsInput = () => needsPermission() || needsQuestion()
-    const statusClassName = () => (needsInput() ? "session-permission" : `session-${status()}`)
+    const statusClassName = () => {
+      if (needsInput()) return "session-permission"
+      const base = `session-${retry() ? "retrying" : status()}`
+      const fadeClass = getSessionIdleFadeClass(props.instanceId, rowProps.sessionId)
+      return fadeClass ? `${base} ${fadeClass}` : base
+    }
+    const showStatus = () =>
+      needsInput() ||
+      shouldShowSessionStatus(
+        props.instanceId,
+        rowProps.sessionId,
+        now(),
+        preferences().keepUnseenSubagentIdleStatus,
+      )
     const statusText = () =>
       needsPermission()
         ? t("sessionList.status.needsPermission")
         : needsQuestion()
           ? t("sessionList.status.needsInput")
           : statusLabel()
+    const statusTooltip = () => {
+      const retryState = retry()
+      if (!retryState) return undefined
+      return t("sessionList.status.retryTooltip", {
+        message: retryState.message,
+        attempt: String(retryState.attempt),
+      })
+    }
  
     const isSelected = () => selectedSessionIds().has(rowProps.sessionId)
 
@@ -444,7 +588,7 @@ const SessionList: Component<SessionListProps> = (props) => {
               </Show>
 
               {rowProps.isChild ? <Bot class="w-4 h-4 flex-shrink-0" /> : <User class="w-4 h-4 flex-shrink-0" />}
-              <span class="session-item-title session-item-title--clamp">{title()}</span>
+              <span class="session-item-title session-item-title--clamp" dir="auto">{title()}</span>
             </div>
           </div>
           <div class="session-item-row session-item-meta">
@@ -469,10 +613,16 @@ const SessionList: Component<SessionListProps> = (props) => {
                   <ChevronDown class={`w-3.5 h-3.5 transition-transform ${rowProps.expanded ? "" : "-rotate-90"}`} />
                 </span>
               </Show>
-              <span class={`status-indicator session-status session-status-list ${statusClassName()}`}>
-                {needsInput() ? <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" /> : <span class="status-dot" />}
-                {statusText()}
-              </span>
+              <Show when={showStatus()}>
+                <span
+                  class={`status-indicator session-status session-status-list ${statusClassName()} notranslate`}
+                  title={statusTooltip()}
+                  translate="no"
+                >
+                  {needsInput() ? <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" /> : <span class="status-dot" />}
+                  {statusText()}
+                </span>
+              </Show>
               <Show when={showWorktreeBadge()}>
                 <span class="status-indicator session-status-list worktree-indicator" title={`Worktree: ${worktreeSlug()}`}>
                   <Split class="w-3.5 h-3.5" aria-hidden="true" />
@@ -490,6 +640,21 @@ const SessionList: Component<SessionListProps> = (props) => {
                 title={t("sessionList.actions.copyId.title")}
               >
                 <Copy class="w-3 h-3" />
+              </span>
+              <span
+                class={`session-item-close opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
+                onClick={(event) => handleReloadSession(event, rowProps.sessionId)}
+                role="button"
+                tabIndex={0}
+                aria-label={t("sessionList.actions.reload.ariaLabel")}
+                title={t("sessionList.actions.reload.title")}
+              >
+                <Show
+                  when={!isSessionReloading(rowProps.sessionId)}
+                  fallback={<RotateCw class="w-3 h-3 animate-spin" />}
+                >
+                  <RotateCw class="w-3 h-3" />
+                </Show>
               </span>
               <span
                 class={`session-item-close opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
@@ -670,7 +835,9 @@ const SessionList: Component<SessionListProps> = (props) => {
         <div class="session-list-header p-3 border-b border-base">
           {props.headerContent ?? (
             <div class="flex items-center justify-between gap-3">
-              <h3 class="text-sm font-semibold text-primary">{t("sessionList.header.title")}</h3>
+              <h3 class="text-sm font-semibold text-primary notranslate" translate="no">
+                {t("sessionList.header.title")}
+              </h3>
               <KeyboardHint
                 shortcuts={[keyboardRegistry.get("session-prev")!, keyboardRegistry.get("session-next")!].filter(Boolean)}
               />
@@ -706,10 +873,22 @@ const SessionList: Component<SessionListProps> = (props) => {
                    </>
                  )
                }}
-            </For>
-          </div>
-        </Show>
-      </div>
+             </For>
+
+             <Show when={hasMore() || isFetchingSessions()}>
+               <div
+                 ref={(el) => setSentinelEl(el)}
+                 class="session-list-sentinel flex items-center justify-center py-3 text-text-weak text-xs"
+                 data-session-sentinel
+               >
+                 <Show when={isFetchingSessions()}>
+                   <span class="animate-pulse">{t("sessionList.loading.more")}</span>
+                 </Show>
+               </div>
+             </Show>
+           </div>
+         </Show>
+       </div>
 
       <Show when={props.showFooter !== false}>
         <div class="session-list-footer p-3 border-t border-base">

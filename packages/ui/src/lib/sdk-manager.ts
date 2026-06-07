@@ -8,7 +8,7 @@ class SDKManager {
     return `${instanceId}:${normalizeProxyPath(proxyPath)}`
   }
 
-  createClient(instanceId: string, proxyPath: string, _worktreeSlug = "root"): OpencodeClient {
+  createClient(instanceId: string, proxyPath: string): OpencodeClient {
     const key = this.key(instanceId, proxyPath)
     const existing = this.clients.get(key)
     if (existing) {

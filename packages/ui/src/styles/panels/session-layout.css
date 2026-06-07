@@ -6,6 +6,21 @@
   overflow: hidden;
 }
 
+.session-center-column {
+  container-name: session-center;
+  container-type: inline-size;
+  --session-center-width-step: wide;
+}
+
+/* Canonical session-center width steps: narrow < 768px, medium < 1280px, wide >= 1280px. */
+.session-center-column[data-session-center-width="narrow"] {
+  --session-center-width-step: narrow;
+}
+
+.session-center-column[data-session-center-width="medium"] {
+  --session-center-width-step: medium;
+}
+
 .session-list-container {
   @apply flex flex-col flex-1 min-h-0 relative;
   background-color: var(--surface-secondary);
@@ -26,10 +41,10 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 0;
+  inset-inline-start: 0;
   width: min(90vw, 360px);
   max-width: 360px;
-  border-right: 1px solid var(--border-base);
+  border-inline-end: 1px solid var(--border-base);
   box-shadow: var(--folder-card-shadow);
   transform: translateX(0);
   transition: transform 0.25s ease, opacity 0.2s ease;
@@ -40,6 +55,9 @@
   transform: translateX(-100%);
   opacity: 0;
   pointer-events: none;
+}
+[dir="rtl"] .session-sidebar-collapsed {
+  transform: translateX(100%);
 }
 
 .session-sidebar-backdrop {
@@ -54,7 +72,7 @@
 .session-sidebar-menu-button--floating {
   position: absolute;
   top: 1rem;
-  left: 1rem;
+  inset-inline-start: 1rem;
   z-index: 20;
 }
 
@@ -87,6 +105,32 @@
   color: var(--text-primary);
 }
 
+.session-header-left-slot {
+  @apply flex items-center gap-2 min-w-0;
+  flex: 0 0 auto;
+}
+
+.session-header-active-title {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-self: stretch;
+  padding-inline: 0.75rem;
+  border-inline: 1px solid color-mix(in oklab, var(--border-base) 72%, transparent);
+  color: var(--text-secondary);
+}
+
+.session-header-active-title-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.15;
+}
+
 .session-sidebar-shortcuts {
   @apply flex flex-col gap-1;
 }
@@ -102,6 +146,28 @@
 
 .session-sidebar-controls > * {
   @apply w-full;
+}
+
+.session-sidebar-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0.65rem;
+  border: 1px solid var(--border-base);
+  border-radius: 0.75rem;
+  background: var(--surface-base);
+  min-height: 2rem;
+  width: fit-content;
+  max-width: 100%;
+  margin-left: auto;
+}
+
+.session-sidebar-toggle-title {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 1.2;
 }
 
 .session-sidebar-controls .selector-trigger,
@@ -128,7 +194,7 @@ session-sidebar-controls .selector-trigger-primary {
 .mobile-fullscreen-exit-wrapper {
   position: fixed;
   top: calc(env(safe-area-inset-top, 0px) + 12px);
-  right: calc(env(safe-area-inset-right, 0px) + 12px);
+  inset-inline-end: calc(env(safe-area-inset-right, 0px) + 12px);
   z-index: 1250;
   pointer-events: none;
 }
@@ -143,11 +209,11 @@ session-sidebar-controls .selector-trigger-primary {
 }
 
 .session-resize-handle--left {
-  right: 0;
+  inset-inline-end: 0;
 }
 
 .session-resize-handle--right {
-  left: 0;
+  inset-inline-start: 0;
 }
 
 .session-resize-handle:hover {
@@ -160,13 +226,19 @@ session-sidebar-controls .selector-trigger-primary {
 }
 
 .session-resize-handle--left::before {
-  right: 0;
+  inset-inline-end: 0;
   transform: translateX(50%);
+}
+[dir="rtl"] .session-resize-handle--left::before {
+  transform: translateX(-50%);
 }
 
 .session-resize-handle--right::before {
-  left: 0;
+  inset-inline-start: 0;
   transform: translateX(-50%);
+}
+[dir="rtl"] .session-resize-handle--right::before {
+  transform: translateX(50%);
 }
 
 .session-list-header {
@@ -190,14 +262,14 @@ session-sidebar-controls .selector-trigger-primary {
 }
 
 .session-item-base {
-  @apply w-full flex flex-col gap-1 px-3 py-2.5 text-left transition-colors outline-none;
+  @apply w-full flex flex-col gap-1 px-3 py-2.5 text-start transition-colors outline-none;
   font-family: var(--font-family-sans);
   font-size: var(--font-size-sm);
 }
 
 
 .session-item-base.session-item-child {
-  padding-left: 2.25rem;
+  padding-inline-start: 2.25rem;
   position: relative;
 }
 
@@ -206,7 +278,7 @@ session-sidebar-controls .selector-trigger-primary {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 1.125rem;
+  inset-inline-start: 1.125rem;
   width: 1px;
   background-color: var(--text-secondary);
   opacity: 0.95;
@@ -221,7 +293,7 @@ session-sidebar-controls .selector-trigger-primary {
   content: "";
   position: absolute;
   top: 50%;
-  left: 1.125rem;
+  inset-inline-start: 1.125rem;
   width: 0.875rem;
   height: 1px;
   background-color: var(--text-secondary);
@@ -231,11 +303,11 @@ session-sidebar-controls .selector-trigger-primary {
 }
 
 .session-item-base.session-item-border-user {
-  border-left: 4px solid var(--message-user-border);
+  border-inline-start: 4px solid var(--message-user-border);
 }
 
 .session-item-base.session-item-border-assistant {
-  border-left: 4px solid var(--message-assistant-border);
+  border-inline-start: 4px solid var(--message-assistant-border);
 }
 
 .session-item-expander {
@@ -385,6 +457,7 @@ session-sidebar-controls .selector-trigger-primary {
 }
 
 .status-indicator.session-status.session-working,
+.status-indicator.session-status.session-retrying,
 .status-indicator.session-status.session-compacting,
 .status-indicator.session-status.session-idle {
   font-weight: var(--font-weight-medium);
@@ -395,6 +468,11 @@ session-sidebar-controls .selector-trigger-primary {
   --session-status-dot: var(--session-status-working-fg);
 }
 
+.status-indicator.session-status.session-retrying {
+  color: var(--status-error);
+  --session-status-dot: var(--status-error);
+}
+
 .status-indicator.session-status.session-compacting {
   color: var(--session-status-compacting-fg);
   --session-status-dot: var(--session-status-compacting-fg);
@@ -403,6 +481,10 @@ session-sidebar-controls .selector-trigger-primary {
 .status-indicator.session-status.session-idle {
   color: var(--session-status-idle-fg);
   --session-status-dot: var(--session-status-idle-fg);
+}
+
+.status-indicator.session-status.session-idle.session-status-fading {
+  animation: session-status-fade-out 5s ease-out forwards;
 }
 
 .status-indicator.session-status.session-permission {
@@ -421,6 +503,10 @@ session-sidebar-controls .selector-trigger-primary {
 
 .status-indicator.session-status.session-working.session-status-list {
   background-color: var(--session-status-working-bg);
+}
+
+.status-indicator.session-status.session-retrying.session-status-list {
+  background-color: var(--status-error-bg);
 }
 
 .status-indicator.session-status.session-compacting.session-status-list {
@@ -447,6 +533,26 @@ session-sidebar-controls .selector-trigger-primary {
   padding: 0.125rem 0.5rem;
   border-radius: 9999px;
   border: 1px solid transparent;
+}
+
+@keyframes session-status-fade-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+.status-indicator.session-yolo-mode {
+  color: var(--accent-primary);
+  background-color: color-mix(in oklab, var(--accent-primary) 14%, transparent);
+  border-color: color-mix(in oklab, var(--accent-primary) 28%, transparent);
+}
+
+.status-indicator.session-yolo-mode .status-dot {
+  background-color: var(--accent-primary);
 }
 
 @media (max-width: 768px) {

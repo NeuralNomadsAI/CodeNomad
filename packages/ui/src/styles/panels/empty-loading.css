@@ -3,8 +3,25 @@
   @apply flex-1 flex items-center justify-center p-12;
 }
 
+.empty-state--stream-placement {
+  @apply flex-none w-full;
+}
+
+.empty-state--no-padding {
+  @apply px-0 pb-0 pt-12;
+}
+
 .empty-state-content {
   @apply text-center max-w-sm;
+}
+
+.session-center-column[data-session-center-width="narrow"] .empty-state-logo {
+  height: 9rem;
+}
+
+.session-center-column[data-session-center-width="narrow"] .empty-state-brand-title {
+  font-size: 1.5rem;
+  line-height: 2rem;
 }
 
 .empty-state-content h3 {

@@ -46,7 +46,8 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     env:
-      NODE_VERSION: 20
+      NODE_VERSION: 22
+      PUBLISH_NPM_VERSION: 11.5.1
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -59,17 +60,24 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: https://registry.npmjs.org
 
-      - name: Ensure npm >=11.5.1
-        run: npm install -g npm@latest
+      - name: Prepare pinned npm CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          tool_dir="$RUNNER_TEMP/publish-npm"
+          mkdir -p "$tool_dir"
+          npm install --prefix "$tool_dir" "npm@${PUBLISH_NPM_VERSION}" --no-audit --no-fund
+          echo "PINNED_NPM_CLI=$tool_dir/node_modules/npm/bin/npm-cli.js" >> "$GITHUB_ENV"
+          node "$tool_dir/node_modules/npm/bin/npm-cli.js" --version
 
       - name: Install dependencies
-        run: npm ci --workspaces
+        run: node "$PINNED_NPM_CLI" ci --workspaces
 
       - name: Ensure rollup native binary
-        run: npm install @rollup/rollup-linux-x64-gnu --no-save
+        run: node "$PINNED_NPM_CLI" install @rollup/rollup-linux-x64-gnu --no-save
 
       - name: Build server package (includes UI bundling)
-        run: npm run build --workspace packages/server
+        run: node "$PINNED_NPM_CLI" run build --workspace packages/server
 
       - name: Set publish metadata
         shell: bash
@@ -83,7 +91,7 @@ jobs:
           echo "PACKAGE_NAME=${{ inputs.package_name }}" >> "$GITHUB_ENV"
 
       - name: Bump package version for publish
-        run: npm version ${VERSION} --workspaces --include-workspace-root --no-git-tag-version --allow-same-version
+        run: node "$PINNED_NPM_CLI" version ${VERSION} --workspaces --include-workspace-root --no-git-tag-version --allow-same-version
 
       - name: Set server package name for publish
         shell: bash
@@ -107,4 +115,4 @@ jobs:
           else
             echo "Using NPM_TOKEN authentication"
           fi
-          npm publish --workspace packages/server --access public --tag ${DIST_TAG} --provenance
+          node "$PINNED_NPM_CLI" publish --workspace packages/server --access public --tag ${DIST_TAG} --provenance

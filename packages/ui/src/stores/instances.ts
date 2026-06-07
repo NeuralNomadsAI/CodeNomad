@@ -1,9 +1,9 @@
 import { createSignal } from "solid-js"
 import type { Instance, LogEntry } from "../types/instance"
 import type { LspStatus } from "@opencode-ai/sdk/v2"
-import type { PermissionReply, PermissionRequestLike } from "../types/permission"
-import { getPermissionCreatedAt, getPermissionSessionId } from "../types/permission"
-import type { QuestionRequest } from "@opencode-ai/sdk/v2"
+import type { PermissionReply, PermissionRequest, PermissionSource } from "../types/permission"
+import { getPermissionSessionId, mergePermissionRequest } from "../types/permission"
+import type { QuestionRequest, QuestionSource } from "../types/question"
 import { getQuestionSessionId } from "../types/question"
 import { requestData } from "../lib/opencode-api"
 import { buildInstanceBaseUrl, sdkManager } from "../lib/sdk-manager"
@@ -17,27 +17,51 @@ import {
   fetchAgents,
   fetchProviders,
   clearInstanceDraftPrompts,
+  resetSessionPagination,
 } from "./sessions"
 import {
   ensureWorktreesLoaded,
   ensureWorktreeMapLoaded,
-  getOrCreateWorktreeClient,
-  getWorktreeSlugForSession,
+  getWorktrees,
   reloadWorktreeMap,
   reloadWorktrees,
 } from "./worktrees"
+import { getRootClient } from "./opencode-client"
+import { clearOpenCodeWorkspaceCache, getOpenCodeWorkspaceIdForSession, getOpenCodeWorkspaceIdForWorktree, syncOpenCodeWorkspaces } from "./opencode-workspaces"
 import { fetchCommands, clearCommands } from "./commands"
 import { serverSettings } from "./preferences"
-import { setSessionPendingPermission, setSessionPendingQuestion } from "./session-state"
+import { sessions, setSessionPendingPermission, setSessionPendingQuestion } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
 import { upsertPermissionV2, removePermissionV2, upsertQuestionV2, removeQuestionV2 } from "./message-v2/bridge"
+import {
+  clearRepliedPermissions,
+  hasRepliedPermission,
+  markPermissionReplied,
+  pruneRepliedPermissions,
+} from "./permission-replies"
+import {
+  clearAutoAcceptPermission,
+  drainAutoAcceptPermissions,
+  isPermissionAutoAcceptEnabled,
+  resolvePermissionAutoAcceptFamilyRoot,
+  setPermissionAutoAcceptFamilyRootResolver,
+  togglePermissionAutoAccept,
+} from "./permission-auto-accept"
 import { clearCacheForInstance } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { mergeInstanceMetadata, clearInstanceMetadata } from "./instance-metadata"
 import { showWorkspaceLaunchError } from "./launch-errors"
+import { activeSidecarToken } from "./sidecars"
+import { buildV2RequestLocations, type V2Location } from "./request-locations"
 
 const log = getLogger("api")
+
+setPermissionAutoAcceptFamilyRootResolver((instanceId, sessionId) => {
+  const instanceSessions = sessions().get(instanceId)
+  if (!instanceSessions) return sessionId
+  return resolvePermissionAutoAcceptFamilyRoot(sessionId, (id) => instanceSessions.get(id))
+})
 
 const [instances, setInstances] = createSignal<Map<string, Instance>>(new Map())
 
@@ -46,18 +70,47 @@ const [instanceLogs, setInstanceLogs] = createSignal<Map<string, LogEntry[]>>(ne
 const [logStreamingState, setLogStreamingState] = createSignal<Map<string, boolean>>(new Map())
 
 // Interruption queues (permissions + questions) per instance
-const [permissionQueues, setPermissionQueues] = createSignal<Map<string, PermissionRequestLike[]>>(new Map())
+const [permissionQueues, setPermissionQueues] = createSignal<Map<string, PermissionRequest[]>>(new Map())
 const [activePermissionId, setActivePermissionId] = createSignal<Map<string, string | null>>(new Map())
 const permissionSessionCounts = new Map<string, Map<string, number>>()
-// Track which worktree a permission was enqueued under (by permission request id).
-const permissionWorktreeSlugByInstance = new Map<string, Map<string, string>>()
+const permissionEnqueuedAt = new Map<string, number>()
+const permissionSourceByInstance = new Map<string, Map<string, PermissionSource>>()
 
 const [questionQueues, setQuestionQueues] = createSignal<Map<string, QuestionRequest[]>>(new Map())
-// Track which worktree a question was enqueued under (by question request id).
-const questionWorktreeSlugByInstance = new Map<string, Map<string, string>>()
 const [activeQuestionId, setActiveQuestionId] = createSignal<Map<string, string | null>>(new Map())
 const questionSessionCounts = new Map<string, Map<string, number>>()
 const questionEnqueuedAt = new Map<string, number>()
+const questionSourceByInstance = new Map<string, Map<string, QuestionSource>>()
+
+function ensurePermissionEnqueuedAt(permission: PermissionRequest): number {
+  const existing = permissionEnqueuedAt.get(permission.id)
+  if (existing) return existing
+  const now = Date.now()
+  permissionEnqueuedAt.set(permission.id, now)
+  return now
+}
+
+function setPermissionSource(instanceId: string, requestId: string, source: PermissionSource): void {
+  let sources = permissionSourceByInstance.get(instanceId)
+  if (!sources) {
+    sources = new Map()
+    permissionSourceByInstance.set(instanceId, sources)
+  }
+  sources.set(requestId, source)
+}
+
+function getPermissionSource(instanceId: string, requestId: string): PermissionSource {
+  return permissionSourceByInstance.get(instanceId)?.get(requestId) ?? "v2"
+}
+
+function deletePermissionSource(instanceId: string, requestId: string): void {
+  const sources = permissionSourceByInstance.get(instanceId)
+  if (!sources) return
+  sources.delete(requestId)
+  if (sources.size === 0) {
+    permissionSourceByInstance.delete(instanceId)
+  }
+}
 
 function ensureQuestionEnqueuedAt(request: QuestionRequest): number {
   const existing = questionEnqueuedAt.get(request.id)
@@ -67,9 +120,46 @@ function ensureQuestionEnqueuedAt(request: QuestionRequest): number {
   return now
 }
 
+function setQuestionSource(instanceId: string, requestId: string, source: QuestionSource): void {
+  let sources = questionSourceByInstance.get(instanceId)
+  if (!sources) {
+    sources = new Map()
+    questionSourceByInstance.set(instanceId, sources)
+  }
+  sources.set(requestId, source)
+}
+
+function getQuestionSource(instanceId: string, requestId: string): QuestionSource {
+  return questionSourceByInstance.get(instanceId)?.get(requestId) ?? "v2"
+}
+
+function deleteQuestionSource(instanceId: string, requestId: string): void {
+  const sources = questionSourceByInstance.get(instanceId)
+  if (!sources) return
+  sources.delete(requestId)
+  if (sources.size === 0) {
+    questionSourceByInstance.delete(instanceId)
+  }
+}
+
 type InterruptionKind = "permission" | "question"
 
 type ActiveInterruption = { kind: InterruptionKind; id: string } | null
+
+async function getV2RequestLocations(instanceId: string): Promise<V2Location[]> {
+  const instance = instances().get(instanceId)
+  const worktrees = getWorktrees(instanceId)
+  const workspaceBySlug = new Map<string, string>()
+
+  for (const worktree of worktrees) {
+    if (!worktree.slug || worktree.slug === "root") continue
+    const workspace = await getOpenCodeWorkspaceIdForWorktree(instanceId, worktree.slug)
+    if (!workspace) continue
+    workspaceBySlug.set(worktree.slug, workspace)
+  }
+
+  return buildV2RequestLocations(instance?.folder, worktrees, workspaceBySlug)
+}
 
 const [activeInterruption, setActiveInterruption] = createSignal<Map<string, ActiveInterruption>>(new Map())
 
@@ -77,6 +167,7 @@ function syncHasInstancesFlag() {
   const readyExists = Array.from(instances().values()).some((instance) => instance.status === "ready")
   setHasInstances(readyExists)
 }
+
 interface DisconnectedInstanceInfo {
   id: string
   folder: string
@@ -89,11 +180,12 @@ const MAX_LOG_ENTRIES = 1000
 const pendingDisposeRequests = new Map<string, Promise<boolean>>()
 const pendingRehydrations = new Map<string, Promise<void>>()
 
-function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor): Instance {
+function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectName?: string): Instance {
   const existing = instances().get(descriptor.id)
   return {
     id: descriptor.id,
     folder: descriptor.path,
+    projectName: descriptor.name ?? projectName ?? existing?.projectName,
     port: descriptor.port ?? existing?.port ?? 0,
     pid: descriptor.pid ?? existing?.pid ?? 0,
     proxyPath: descriptor.proxyPath,
@@ -109,6 +201,8 @@ function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor): Instanc
 }
 
 function ensureActiveInstanceSelected(): void {
+  if (activeSidecarToken()) return
+
   const current = activeInstanceId()
   const instanceMap = instances()
   if (current && instanceMap.has(current)) return
@@ -121,8 +215,8 @@ function ensureActiveInstanceSelected(): void {
   }
 }
 
-function upsertWorkspace(descriptor: WorkspaceDescriptor) {
-  const mapped = workspaceDescriptorToInstance(descriptor)
+function upsertWorkspace(descriptor: WorkspaceDescriptor, projectName?: string) {
+  const mapped = workspaceDescriptorToInstance(descriptor, projectName)
   if (instances().has(descriptor.id)) {
     updateInstance(descriptor.id, mapped)
   } else {
@@ -155,7 +249,7 @@ function attachClient(descriptor: WorkspaceDescriptor) {
     sdkManager.destroyClientsForInstance(descriptor.id)
   }
 
-  const client = sdkManager.createClient(descriptor.id, nextProxyPath, "root")
+  const client = sdkManager.createClient(descriptor.id, nextProxyPath)
   updateInstance(descriptor.id, {
     client,
     port: nextPort ?? 0,
@@ -175,6 +269,7 @@ function releaseInstanceResources(instanceId: string) {
   if (instance.client) {
     sdkManager.destroyClientsForInstance(instanceId)
   }
+  clearOpenCodeWorkspaceCache(instanceId)
   sseManager.seedStatus(instanceId, "disconnected")
 }
 
@@ -183,12 +278,37 @@ async function syncPendingPermissions(instanceId: string): Promise<void> {
   if (!instance?.client) return
 
   try {
-    const remote = await requestData<PermissionRequestLike[]>(
+    const syncStartedAt = Date.now()
+    const remote: Array<{ request: PermissionRequest; source: PermissionSource }> = []
+    const legacyRemote = await requestData<PermissionRequest[]>(
       instance.client.permission.list(),
       "permission.list",
-    )
+    ).catch((error) => {
+      log.warn("Failed to list legacy pending permissions", { instanceId, error })
+      return []
+    })
+    for (const permission of legacyRemote) {
+      setPermissionSource(instanceId, permission.id, "legacy")
+      remote.push({ request: permission, source: "legacy" })
+    }
 
-    const remoteIds = new Set(remote.map((item) => item.id))
+    for (const location of await getV2RequestLocations(instanceId)) {
+      const response = await requestData<{ location?: unknown; data: PermissionRequest[] }>(
+        instance.client.v2.permission.request.list({ location }),
+        "v2.permission.request.list",
+      )
+      log.info("v2.permission.request.list", { instanceId, location, resolvedLocation: response.location })
+      for (const permission of response.data) {
+        setPermissionSource(instanceId, permission.id, "v2")
+        remote.push({ request: permission, source: "v2" })
+      }
+    }
+
+    const remotePendingIds = new Set(remote.map((item) => item.request.id))
+    pruneRepliedPermissions(instanceId, remotePendingIds, syncStartedAt)
+
+    const pendingRemote = remote.filter((item) => !hasRepliedPermission(instanceId, item.request.id))
+    const remoteIds = new Set(pendingRemote.map((item) => item.request.id))
     const local = getPermissionQueue(instanceId)
 
     // Remove any stale local permissions missing from server.
@@ -200,10 +320,11 @@ async function syncPendingPermissions(instanceId: string): Promise<void> {
     }
 
     // Upsert all server-side pending permissions.
-    for (const permission of remote) {
-      addPermissionToQueue(instanceId, permission)
-      upsertPermissionV2(instanceId, permission)
+    for (const { request: permission, source } of pendingRemote) {
+      const queuedPermission = addPermissionToQueue(instanceId, permission, source) ?? permission
+      upsertPermissionV2(instanceId, queuedPermission)
     }
+    drainAutoAcceptPermissions(instanceId, getPermissionQueue(instanceId), sendPermissionResponse, hasPendingPermission)
   } catch (error) {
     log.warn("Failed to sync pending permissions", { instanceId, error })
   }
@@ -214,12 +335,32 @@ async function syncPendingQuestions(instanceId: string): Promise<void> {
   if (!instance?.client) return
 
   try {
-    const remote = await requestData<QuestionRequest[]>(
+    const remote: Array<{ request: QuestionRequest; source: QuestionSource }> = []
+    const legacyRemote = await requestData<QuestionRequest[]>(
       instance.client.question.list(),
       "question.list",
-    )
+    ).catch((error) => {
+      log.warn("Failed to list legacy pending questions", { instanceId, error })
+      return []
+    })
+    for (const request of legacyRemote) {
+      setQuestionSource(instanceId, request.id, "legacy")
+      remote.push({ request, source: "legacy" })
+    }
 
-    const remoteIds = new Set(remote.map((item) => item.id))
+    for (const location of await getV2RequestLocations(instanceId)) {
+      const response = await requestData<{ location?: unknown; data: QuestionRequest[] }>(
+        instance.client.v2.question.request.list({ location }),
+        "v2.question.request.list",
+      )
+      log.info("v2.question.request.list", { instanceId, location, resolvedLocation: response.location })
+      for (const request of response.data) {
+        setQuestionSource(instanceId, request.id, "v2")
+        remote.push({ request, source: "v2" })
+      }
+    }
+
+    const remoteIds = new Set(remote.map((item) => item.request.id))
     const local = getQuestionQueue(instanceId)
 
     // Remove any stale local requests missing from server.
@@ -231,9 +372,9 @@ async function syncPendingQuestions(instanceId: string): Promise<void> {
     }
 
     // Upsert all server-side pending questions.
-    for (const request of remote) {
+    for (const { request, source } of remote) {
       ensureQuestionEnqueuedAt(request)
-      addQuestionToQueue(instanceId, request)
+      addQuestionToQueue(instanceId, request, source)
       upsertQuestionV2(instanceId, request)
     }
   } catch (error) {
@@ -250,6 +391,8 @@ async function hydrateInstanceData(instanceId: string, options?: { force?: boole
       await ensureWorktreesLoaded(instanceId)
       await ensureWorktreeMapLoaded(instanceId)
     }
+    await syncOpenCodeWorkspaces(instanceId)
+    resetSessionPagination(instanceId)
     await fetchSessions(instanceId)
     await fetchAgents(instanceId)
     await fetchProviders(instanceId)
@@ -509,6 +652,7 @@ function removeInstance(id: string) {
   removeLogContainer(id)
   clearCommands(id)
   clearPermissionQueue(id)
+  clearRepliedPermissions(id)
   clearQuestionQueue(id)
   clearInstanceMetadata(id)
 
@@ -523,15 +667,51 @@ function removeInstance(id: string) {
   syncHasInstancesFlag()
 }
 
-async function createInstance(folder: string, _binaryPath?: string): Promise<string> {
+async function createInstance(folder: string, _binaryPath?: string, projectName?: string): Promise<string> {
   try {
-    const workspace = await serverApi.createWorkspace({ path: folder })
-    upsertWorkspace(workspace)
+    const workspace = await serverApi.createWorkspace({ path: folder, name: projectName })
+    upsertWorkspace(workspace, projectName)
     setActiveInstanceId(workspace.id)
     return workspace.id
   } catch (error) {
     log.error("Failed to create workspace", error)
     throw error
+  }
+}
+
+function normalizeInstanceFolderPath(folder: string): string {
+  const trimmed = folder.replace(/[\\/]+$/, "")
+  const windowsLike = /^(?:[A-Za-z]:[\\/]|[\\/]{2})/.test(trimmed)
+  if (!windowsLike) {
+    return trimmed
+  }
+
+  return trimmed.replace(/\\/g, "/").toLowerCase()
+}
+
+function getExistingInstanceForFolder(folder: string): Instance | null {
+  if (!folder) return null
+  const target = normalizeInstanceFolderPath(folder)
+  const matches = Array.from(instances().values()).filter((instance) => {
+    if (instance.status === "stopped") return false
+    return normalizeInstanceFolderPath(instance.folder) === target
+  })
+
+  if (matches.length === 0) return null
+
+  const activeId = activeInstanceId()
+  return matches.find((instance) => instance.id === activeId) ?? matches.find((instance) => instance.status === "ready") ?? matches[0] ?? null
+}
+
+function updateProjectNameForFolder(folder: string, projectName: string): void {
+  const name = projectName.trim()
+  if (!folder || !name) return
+  const target = normalizeInstanceFolderPath(folder)
+  for (const instance of instances().values()) {
+    if (instance.status === "stopped") continue
+    if (normalizeInstanceFolderPath(instance.folder) === target) {
+      updateInstance(instance.id, { projectName: name })
+    }
   }
 }
 
@@ -600,7 +780,7 @@ function clearLogs(id: string) {
 }
 
 // Permission management functions
-function getPermissionQueue(instanceId: string): PermissionRequestLike[] {
+function getPermissionQueue(instanceId: string): PermissionRequest[] {
   const queue = permissionQueues().get(instanceId)
   if (!queue) {
     return []
@@ -610,6 +790,10 @@ function getPermissionQueue(instanceId: string): PermissionRequestLike[] {
 
 function getPermissionQueueLength(instanceId: string): number {
   return getPermissionQueue(instanceId).length
+}
+
+function hasPendingPermission(instanceId: string, permissionId: string): boolean {
+  return getPermissionQueue(instanceId).some((permission) => permission.id === permissionId)
 }
 
 function getQuestionQueue(instanceId: string): QuestionRequest[] {
@@ -634,6 +818,15 @@ function getQuestionEnqueuedAtForInstance(instanceId: string, requestId: string)
   return questionEnqueuedAt.get(requestId) ?? Date.now()
 }
 
+function getPermissionEnqueuedAtForInstance(instanceId: string, permissionId: string): number {
+  const queue = getPermissionQueue(instanceId)
+  const match = queue.find((permission) => permission.id === permissionId)
+  if (match) {
+    return ensurePermissionEnqueuedAt(match)
+  }
+  return permissionEnqueuedAt.get(permissionId) ?? Date.now()
+}
+
 function computeActiveInterruption(instanceId: string): ActiveInterruption {
   const permissions = getPermissionQueue(instanceId)
   const questions = getQuestionQueue(instanceId)
@@ -643,7 +836,7 @@ function computeActiveInterruption(instanceId: string): ActiveInterruption {
   if (firstPermission && !firstQuestion) return { kind: "permission", id: firstPermission.id }
   if (firstQuestion && !firstPermission) return { kind: "question", id: firstQuestion.id }
 
-  const permTime = getPermissionCreatedAt(firstPermission)
+  const permTime = firstPermission ? ensurePermissionEnqueuedAt(firstPermission) : Number.MAX_SAFE_INTEGER
   const quesTime = firstQuestion ? ensureQuestionEnqueuedAt(firstQuestion) : Number.MAX_SAFE_INTEGER
   if (permTime <= quesTime) return { kind: "permission", id: firstPermission.id }
   return { kind: "question", id: firstQuestion!.id }
@@ -755,53 +948,67 @@ function clearQuestionSessionPendingCounts(instanceId: string): void {
   questionSessionCounts.delete(instanceId)
 }
 
-function addPermissionToQueue(instanceId: string, permission: PermissionRequestLike): void {
+function addPermissionToQueue(instanceId: string, permission: PermissionRequest, source: PermissionSource = "v2"): PermissionRequest | undefined {
   let inserted = false
+  let updated = false
+  let previousPermission: PermissionRequest | undefined
+  let queuedPermission = permission
+  setPermissionSource(instanceId, permission.id, source)
 
   setPermissionQueues((prev) => {
     const next = new Map(prev)
     const queue = next.get(instanceId) ?? []
+    const existingIndex = queue.findIndex((p) => p.id === permission.id)
 
-    if (queue.some((p) => p.id === permission.id)) {
+    if (existingIndex !== -1) {
+      previousPermission = queue[existingIndex]
+      queuedPermission = mergePermissionRequest(previousPermission, permission)
+      const updatedQueue = queue.slice()
+      updatedQueue[existingIndex] = queuedPermission
+      next.set(instanceId, updatedQueue.sort((a, b) => ensurePermissionEnqueuedAt(a) - ensurePermissionEnqueuedAt(b)))
+      updated = true
       return next
     }
 
-    const updatedQueue = [...queue, permission].sort((a, b) => getPermissionCreatedAt(a) - getPermissionCreatedAt(b))
+    ensurePermissionEnqueuedAt(queuedPermission)
+    const updatedQueue = [...queue, queuedPermission].sort((a, b) => ensurePermissionEnqueuedAt(a) - ensurePermissionEnqueuedAt(b))
     next.set(instanceId, updatedQueue)
     inserted = true
     return next
   })
 
-  if (!inserted) {
-    return
+  if (!inserted && !updated) {
+    return undefined
   }
 
   recomputeActiveInterruption(instanceId)
 
-  const sessionId = getPermissionSessionId(permission)
+  const previousSessionId = previousPermission ? getPermissionSessionId(previousPermission) : undefined
+  const sessionId = getPermissionSessionId(queuedPermission)
+  if (previousSessionId && previousSessionId !== sessionId) {
+    const remaining = decrementSessionPendingCount(instanceId, previousSessionId)
+    setSessionPendingPermission(instanceId, previousSessionId, remaining > 0)
+  }
+
   if (sessionId) {
-    incrementSessionPendingCount(instanceId, sessionId)
+    if (inserted || previousSessionId !== sessionId) {
+      incrementSessionPendingCount(instanceId, sessionId)
+    }
     setSessionPendingPermission(instanceId, sessionId, true)
 
-    // Record the worktree slug at the time the permission is enqueued.
-    // This is used to respond in the same worktree context even from the global permission center.
-    const slug = getWorktreeSlugForSession(instanceId, sessionId)
-    let byPermissionId = permissionWorktreeSlugByInstance.get(instanceId)
-    if (!byPermissionId) {
-      byPermissionId = new Map()
-      permissionWorktreeSlugByInstance.set(instanceId, byPermissionId)
-    }
-    byPermissionId.set(permission.id, slug)
   }
+
+  drainAutoAcceptPermissions(instanceId, [queuedPermission], sendPermissionResponse, hasPendingPermission)
+  return queuedPermission
 }
 
 function removePermissionFromQueue(instanceId: string, permissionId: string): void {
-  let removedPermission: PermissionRequestLike | null = null
+  let removedPermission: PermissionRequest | null = null
 
   setPermissionQueues((prev) => {
     const next = new Map(prev)
     const queue = next.get(instanceId) ?? []
-    const filtered: PermissionRequestLike[] = []
+    const filtered: PermissionRequest[] = []
 
     for (const item of queue) {
       if (item.id === permissionId) {
@@ -819,23 +1026,43 @@ function removePermissionFromQueue(instanceId: string, permissionId: string): vo
     return next
   })
 
-  const updatedQueue = getPermissionQueue(instanceId)
-
   recomputeActiveInterruption(instanceId)
+  permissionEnqueuedAt.delete(permissionId)
+  deletePermissionSource(instanceId, permissionId)
 
   const removed = removedPermission
   if (removed) {
-    // Use the id we were asked to remove (avoids type inference edge cases).
-    permissionWorktreeSlugByInstance.get(instanceId)?.delete(permissionId)
     const removedSessionId = getPermissionSessionId(removed)
     if (removedSessionId) {
+      clearAutoAcceptPermission(instanceId, removedSessionId, permissionId)
       const remaining = decrementSessionPendingCount(instanceId, removedSessionId)
       setSessionPendingPermission(instanceId, removedSessionId, remaining > 0)
     }
   }
 }
 
+function togglePermissionAutoAcceptForSession(instanceId: string, sessionId: string): void {
+  const willEnable = !isPermissionAutoAcceptEnabled(instanceId, sessionId)
+  togglePermissionAutoAccept(instanceId, sessionId)
+  if (!willEnable) return
+  drainAutoAcceptPermissionsForInstance(instanceId)
+}
+
+function drainAutoAcceptPermissionsForInstance(instanceId: string): void {
+  drainAutoAcceptPermissions(instanceId, getPermissionQueue(instanceId), sendPermissionResponse, hasPendingPermission)
+}
+
 function clearPermissionQueue(instanceId: string): void {
+  for (const permission of getPermissionQueue(instanceId)) {
+    const sessionId = getPermissionSessionId(permission)
+    if (sessionId) {
+      clearAutoAcceptPermission(instanceId, sessionId, permission.id)
+    }
+  }
+  for (const permission of getPermissionQueue(instanceId)) {
+    permissionEnqueuedAt.delete(permission.id)
+  }
+  permissionSourceByInstance.delete(instanceId)
   setPermissionQueues((prev) => {
     const next = new Map(prev)
     next.delete(instanceId)
@@ -847,12 +1074,12 @@ function clearPermissionQueue(instanceId: string): void {
     return next
   })
   clearSessionPendingCounts(instanceId)
-  permissionWorktreeSlugByInstance.delete(instanceId)
   recomputeActiveInterruption(instanceId)
 }
 
-function addQuestionToQueue(instanceId: string, request: QuestionRequest): void {
+function addQuestionToQueue(instanceId: string, request: QuestionRequest, source: QuestionSource = "v2"): void {
   let inserted = false
+  setQuestionSource(instanceId, request.id, source)
 
   setQuestionQueues((prev) => {
     const next = new Map(prev)
@@ -882,15 +1109,6 @@ function addQuestionToQueue(instanceId: string, request: QuestionRequest): void 
     incrementQuestionSessionPendingCount(instanceId, sessionId)
     setSessionPendingQuestion(instanceId, sessionId, true)
 
-    // Record the worktree slug at the time the question is enqueued.
-    // This is used to respond in the same worktree context even from the global permission center.
-    const slug = getWorktreeSlugForSession(instanceId, sessionId)
-    let byQuestionId = questionWorktreeSlugByInstance.get(instanceId)
-    if (!byQuestionId) {
-      byQuestionId = new Map()
-      questionWorktreeSlugByInstance.set(instanceId, byQuestionId)
-    }
-    byQuestionId.set(request.id, slug)
   }
 }
 
@@ -911,7 +1129,7 @@ function removeQuestionFromQueue(instanceId: string, requestId: string): void {
   })
 
   questionEnqueuedAt.delete(requestId)
-  questionWorktreeSlugByInstance.get(instanceId)?.delete(requestId)
+  deleteQuestionSource(instanceId, requestId)
   recomputeActiveInterruption(instanceId)
 
   if (removedSessionId) {
@@ -924,8 +1142,7 @@ function clearQuestionQueue(instanceId: string): void {
   for (const request of getQuestionQueue(instanceId)) {
     questionEnqueuedAt.delete(request.id)
   }
-  questionWorktreeSlugByInstance.delete(instanceId)
-
+  questionSourceByInstance.delete(instanceId)
   setQuestionQueues((prev) => {
     const next = new Map(prev)
     next.delete(instanceId)
@@ -960,18 +1177,29 @@ async function sendQuestionReply(
   }
 
   try {
-    const stored = questionWorktreeSlugByInstance.get(instanceId)?.get(requestId)
-    const fallback = sessionId ? getWorktreeSlugForSession(instanceId, sessionId) : "root"
-    const worktreeSlug = stored ?? fallback
-    const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+    const client = getRootClient(instanceId)
+    const source = getQuestionSource(instanceId, requestId)
 
-    await requestData(
-      client.question.reply({
-        requestID: requestId,
-        answers,
-      }),
-      "question.reply",
-    )
+    if (source === "legacy") {
+      const workspace = sessionId ? await getOpenCodeWorkspaceIdForSession(instanceId, sessionId) : null
+      await requestData(
+        client.question.reply({
+          requestID: requestId,
+          ...(workspace ? { workspace } : {}),
+          answers,
+        }),
+        "question.reply",
+      )
+    } else {
+      await requestData(
+        client.v2.session.question.reply({
+          sessionID: sessionId,
+          requestID: requestId,
+          questionV2Reply: { answers },
+        }),
+        "v2.session.question.reply",
+      )
+    }
 
     removeQuestionFromQueue(instanceId, requestId)
   } catch (error) {
@@ -987,17 +1215,27 @@ async function sendQuestionReject(instanceId: string, sessionId: string, request
   }
 
   try {
-    const stored = questionWorktreeSlugByInstance.get(instanceId)?.get(requestId)
-    const fallback = sessionId ? getWorktreeSlugForSession(instanceId, sessionId) : "root"
-    const worktreeSlug = stored ?? fallback
-    const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+    const client = getRootClient(instanceId)
+    const source = getQuestionSource(instanceId, requestId)
 
-    await requestData(
-      client.question.reject({
-        requestID: requestId,
-      }),
-      "question.reject",
-    )
+    if (source === "legacy") {
+      const workspace = sessionId ? await getOpenCodeWorkspaceIdForSession(instanceId, sessionId) : null
+      await requestData(
+        client.question.reject({
+          requestID: requestId,
+          ...(workspace ? { workspace } : {}),
+        }),
+        "question.reject",
+      )
+    } else {
+      await requestData(
+        client.v2.session.question.reject({
+          sessionID: sessionId,
+          requestID: requestId,
+        }),
+        "v2.session.question.reject",
+      )
+    }
 
     removeQuestionFromQueue(instanceId, requestId)
   } catch (error) {
@@ -1010,7 +1248,8 @@ async function sendPermissionResponse(
   instanceId: string,
   sessionId: string,
   requestId: string,
-  reply: PermissionReply
+  reply: PermissionReply,
+  message?: string,
 ): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance?.client) {
@@ -1018,21 +1257,37 @@ async function sendPermissionResponse(
   }
 
   try {
-    const stored = permissionWorktreeSlugByInstance.get(instanceId)?.get(requestId)
-    const fallback = sessionId ? getWorktreeSlugForSession(instanceId, sessionId) : "root"
-    const worktreeSlug = stored ?? fallback
-    const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+    const client = getRootClient(instanceId)
+    const source = getPermissionSource(instanceId, requestId)
 
-    await requestData(
-      client.permission.reply({
-        requestID: requestId,
-        reply,
-      }),
-      "permission.reply",
-    )
+    if (source === "legacy") {
+      const workspace = sessionId ? await getOpenCodeWorkspaceIdForSession(instanceId, sessionId) : null
+      await requestData(
+        client.permission.reply({
+          requestID: requestId,
+          ...(workspace ? { workspace } : {}),
+          reply,
+          ...(message ? { message } : {}),
+        }),
+        "permission.reply",
+      )
+    } else {
+      await requestData(
+        client.v2.session.permission.reply({
+          sessionID: sessionId,
+          requestID: requestId,
+          reply,
+          ...(message ? { message } : {}),
+        }),
+        "v2.session.permission.reply",
+      )
+    }
 
-    // Remove from queue after successful response
+    markPermissionReplied(instanceId, requestId)
+    // Remove from both local queues after successful response; the SSE replied event
+    // is still accepted, but the UI no longer depends on receiving it.
     removePermissionFromQueue(instanceId, requestId)
+    removePermissionV2(instanceId, requestId)
   } catch (error) {
     log.error("Failed to send permission response", error)
     throw error
@@ -1112,6 +1367,8 @@ export {
   updateInstance,
   removeInstance,
   createInstance,
+  getExistingInstanceForFolder,
+  updateProjectNameForFolder,
   stopInstance,
   getActiveInstance,
   addLog,
@@ -1125,8 +1382,13 @@ export {
   activePermissionId,
   getPermissionQueue,
   getPermissionQueueLength,
+  getPermissionEnqueuedAtForInstance,
   addPermissionToQueue,
   removePermissionFromQueue,
+  markPermissionReplied,
+  hasRepliedPermission,
+  togglePermissionAutoAcceptForSession,
+  drainAutoAcceptPermissionsForInstance,
   clearPermissionQueue,
   sendPermissionResponse,
   setActivePermissionIdForInstance,

@@ -3,6 +3,7 @@ import type { Instance } from "../types/instance"
 import { useOptionalInstanceMetadataContext } from "../lib/contexts/instance-metadata-context"
 import InstanceServiceStatus from "./instance-service-status"
 import { useI18n } from "../lib/i18n"
+import { useConfig } from "../stores/preferences"
 import { showConfirmDialog } from "../stores/alerts"
 import { disposeInstance } from "../stores/instances"
 import { showToastNotification } from "../lib/notifications"
@@ -18,6 +19,7 @@ const log = getLogger("actions")
 
 const InstanceInfo: Component<InstanceInfoProps> = (props) => {
   const { t } = useI18n()
+  const { isSecureEnvVar } = useConfig()
   const metadataContext = useOptionalInstanceMetadataContext()
   const isLoadingMetadata = metadataContext?.isLoading ?? (() => false)
   const instanceAccessor = metadataContext?.instance ?? (() => props.instance)
@@ -44,6 +46,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
       variant: "warning",
       confirmLabel: t("infoView.dispose.confirm.confirmLabel"),
       cancelLabel: t("infoView.dispose.confirm.cancelLabel"),
+      dismissible: false,
     })
 
     if (!confirmed) return
@@ -82,7 +85,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
       <div class="panel-body space-y-3">
         <div>
           <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">{t("instanceInfo.labels.folder")}</div>
-          <div class="text-xs text-primary font-mono break-all px-2 py-1.5 rounded border bg-surface-secondary border-base">
+          <div dir="ltr" class="text-xs text-primary font-mono break-all px-2 py-1.5 rounded border bg-surface-secondary border-base">
             {currentInstance().folder}
           </div>
         </div>
@@ -94,7 +97,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
                 <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">
                   {t("instanceInfo.labels.project")}
                 </div>
-                <div class="text-xs font-mono px-2 py-1.5 rounded border truncate bg-surface-secondary border-base text-primary">
+                <div dir="ltr" class="text-xs font-mono px-2 py-1.5 rounded border truncate bg-surface-secondary border-base text-primary">
                   {project().id}
                 </div>
               </div>
@@ -137,7 +140,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
             <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">
               {t("instanceInfo.labels.binaryPath")}
             </div>
-            <div class="text-xs font-mono break-all px-2 py-1.5 rounded border bg-surface-secondary border-base text-primary">
+            <div dir="ltr" class="text-xs font-mono break-all px-2 py-1.5 rounded border bg-surface-secondary border-base text-primary">
               {currentInstance().binaryPath}
             </div>
           </div>
@@ -151,12 +154,12 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
             <div class="space-y-1">
               <For each={environmentEntries()}>
                 {([key, value]) => (
-                  <div class="flex items-center gap-2 px-2 py-1.5 rounded border bg-surface-secondary border-base">
+                  <div dir="ltr" class="flex items-center gap-2 px-2 py-1.5 rounded border bg-surface-secondary border-base">
                     <span class="text-xs font-mono font-medium flex-1 text-primary" title={key}>
                       {key}
                     </span>
-                    <span class="text-xs font-mono flex-1 text-secondary" title={value}>
-                      {value}
+                    <span class="text-xs font-mono flex-1 text-secondary" title={isSecureEnvVar(key) ? t("envEditor.fields.secure.masked") : value}>
+                      {isSecureEnvVar(key) ? "***" : value}
                     </span>
                   </div>
                 )}

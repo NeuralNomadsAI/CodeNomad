@@ -19,10 +19,19 @@ import { InstanceEventBridge } from "./workspaces/instance-events"
 import { createLogger } from "./logger"
 import { launchInBrowser } from "./launcher"
 import { resolveUi } from "./ui/remote-ui"
-import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_USERNAME } from "./auth/manager"
+import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_COOKIE_NAME, DEFAULT_AUTH_USERNAME } from "./auth/manager"
 import { resolveHttpsOptions } from "./server/tls"
-import { resolveNetworkAddresses } from "./server/network-addresses"
+import { RemoteProxySessionManager } from "./server/remote-proxy"
+import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
+import { resolvePluginBaseUrl } from "./server/listener-base-url"
 import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
+import { SpeechService } from "./speech/service"
+import { SideCarManager } from "./sidecars/manager"
+import { PreviewManager } from "./previews/manager"
+import { ClientConnectionManager } from "./clients/connection-manager"
+import { PluginChannelManager } from "./plugins/channel"
+import { VoiceModeManager } from "./plugins/voice-mode"
+import { runCliUpgrade } from "./cli-upgrade"
 
 const require = createRequire(import.meta.url)
 
@@ -54,8 +63,10 @@ interface CliOptions {
   launch: boolean
   authUsername: string
   authPassword?: string
+  authCookieName: string
   generateToken: boolean
   dangerouslySkipAuth: boolean
+  upgrade?: string | boolean
 }
 
 const DEFAULT_HOST = "127.0.0.1"
@@ -100,6 +111,11 @@ function parseCliOptions(argv: string[]): CliOptions {
     )
     .addOption(new Option("--password <password>", "Password for server authentication").env("CODENOMAD_SERVER_PASSWORD"))
     .addOption(
+      new Option("--auth-cookie-name <name>", "Cookie name for server authentication")
+        .env("CODENOMAD_AUTH_COOKIE_NAME")
+        .default(DEFAULT_AUTH_COOKIE_NAME),
+    )
+    .addOption(
       new Option("--generate-token", "Emit a one-time bootstrap token for desktop")
         .env("CODENOMAD_GENERATE_TOKEN")
         .default(false),
@@ -112,6 +128,7 @@ function parseCliOptions(argv: string[]): CliOptions {
         .env("CODENOMAD_SKIP_AUTH")
         .default(false),
     )
+    .addOption(new Option("--upgrade [version]", "Upgrade the global CodeNomad CLI server package and exit"))
 
   program.parse(argv, { from: "user" })
   const parsed = program.opts<{
@@ -138,10 +155,13 @@ function parseCliOptions(argv: string[]): CliOptions {
     launch?: boolean
     username: string
     password?: string
+    authCookieName: string
     generateToken?: boolean
     dangerouslySkipAuth?: boolean
+    upgrade?: string | boolean
   }>()
 
+  const upgrade = parsed.upgrade
   const parseBooleanEnv = (value: string | undefined): boolean => {
     const normalized = (value ?? "").trim().toLowerCase()
     return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "y" || normalized === "on"
@@ -157,7 +177,7 @@ function parseCliOptions(argv: string[]): CliOptions {
   const httpsEnabled = parseBooleanEnv(parsed.https)
   const httpEnabled = parseBooleanEnv(parsed.http)
 
-  if (!httpsEnabled && !httpEnabled) {
+  if (upgrade === undefined && !httpsEnabled && !httpEnabled) {
     throw new InvalidArgumentError("At least one listener must be enabled (--https or --http)")
   }
 
@@ -184,8 +204,10 @@ function parseCliOptions(argv: string[]): CliOptions {
     launch: Boolean(parsed.launch),
     authUsername: parsed.username,
     authPassword: parsed.password,
+    authCookieName: parsed.authCookieName,
     generateToken: Boolean(parsed.generateToken),
     dangerouslySkipAuth: Boolean(parsed.dangerouslySkipAuth),
+    upgrade,
   }
 }
 
@@ -218,6 +240,12 @@ function programHasArg(argv: string[], flag: string): boolean {
 
 async function main() {
   const options = parseCliOptions(process.argv.slice(2))
+  if (options.upgrade !== undefined) {
+    const version = typeof options.upgrade === "string" ? options.upgrade : undefined
+    process.exitCode = await runCliUpgrade(version)
+    return
+  }
+
   const logger = createLogger({ level: options.logLevel, destination: options.logDestination, component: "app" })
   const workspaceLogger = logger.child({ component: "workspace" })
   const configLogger = logger.child({ component: "config" })
@@ -265,6 +293,7 @@ async function main() {
       configPath: configLocation.configYamlPath,
       username: options.authUsername,
       password: options.authPassword,
+      cookieName: options.authCookieName,
       generateToken: options.generateToken,
       dangerouslySkipAuth: options.dangerouslySkipAuth,
     },
@@ -302,8 +331,18 @@ async function main() {
     getServerBaseUrl: () => serverMeta.localUrl,
     nodeExtraCaCertsPath,
   })
-  const fileSystemBrowser = new FileSystemBrowser({ rootDir: options.rootDir, unrestricted: options.unrestrictedRoot })
+  const fileSystemBrowser = new FileSystemBrowser({
+    rootDir: options.rootDir,
+    unrestricted: options.unrestrictedRoot,
+  })
   const instanceStore = new InstanceStore(configLocation.instancesDir)
+  const speechService = new SpeechService(settings, logger.child({ component: "speech" }))
+  const sidecarManager = new SideCarManager({
+    settings,
+    eventBus,
+    logger: logger.child({ component: "sidecars" }),
+  })
+  const previewManager = new PreviewManager()
   const instanceEventBridge = new InstanceEventBridge({
     workspaceManager,
     eventBus,
@@ -355,11 +394,20 @@ async function main() {
       })
     : null
 
-  if (uiResolution.uiDevServerUrl && options.https) {
-    throw new InvalidArgumentError("UI dev proxy is only supported with --https=false --http=true")
-  }
-
   const remoteAccessEnabled = options.host === "0.0.0.0" || !isLoopbackHost(options.host)
+
+  const clientConnectionManager = new ClientConnectionManager(logger.child({ component: "client-connections" }))
+  const pluginChannel = new PluginChannelManager(logger.child({ component: "plugin-channel" }))
+  const remoteProxySessionManager = new RemoteProxySessionManager({
+    authManager,
+    logger: logger.child({ component: "remote-proxy" }),
+    httpsOptions: tlsResolution?.httpsOptions,
+  })
+  const voiceModeManager = new VoiceModeManager({
+    connections: clientConnectionManager,
+    channel: pluginChannel,
+    logger: logger.child({ component: "voice-mode" }),
+  })
 
   const httpsPortExplicit = programHasArg(process.argv.slice(2), "--https-port") || Boolean(process.env.CLI_HTTPS_PORT)
   const httpPortExplicit = programHasArg(process.argv.slice(2), "--http-port") || Boolean(process.env.CLI_HTTP_PORT)
@@ -388,7 +436,14 @@ async function main() {
         eventBus,
         serverMeta,
         instanceStore,
+        speechService,
+        sidecarManager,
+        previewManager,
         authManager,
+        clientConnectionManager,
+        pluginChannel,
+        voiceModeManager,
+        remoteProxySessionManager,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: uiResolution.uiDevServerUrl,
         logger,
@@ -408,7 +463,14 @@ async function main() {
         eventBus,
         serverMeta,
         instanceStore,
+        speechService,
+        sidecarManager,
+        previewManager,
         authManager,
+        clientConnectionManager,
+        pluginChannel,
+        voiceModeManager,
+        remoteProxySessionManager,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: undefined,
         logger,
@@ -429,28 +491,35 @@ async function main() {
   }
 
   const remoteStart = httpsStart ?? httpStart
-  const localProtocol: "http" | "https" = httpStart ? "http" : "https"
   const remoteProtocol: "http" | "https" = httpsStart ? "https" : "http"
 
-  // Use an explicit IPv4 loopback address for the "local" URL.
-  // On macOS, `localhost` often resolves to ::1 first, and it is possible to have
-  // another instance bound on IPv6 while this instance binds IPv4 (or vice versa),
-  // which can lead clients to talk to the wrong process.
-  const localUrl = `${localProtocol}://127.0.0.1:${localStart.port}`
   let remoteUrl: string | undefined
+  let remoteAddresses = [] as ReturnType<typeof resolveNetworkAddresses>
   if (remoteStart) {
     const wantsAll = options.host === "0.0.0.0" || !isLoopbackHost(options.host)
     let remoteHost = options.host
     if (wantsAll) {
       if (options.host === "0.0.0.0") {
-        const candidates = resolveNetworkAddresses({ host: options.host, protocol: remoteProtocol, port: remoteStart.port })
-        remoteHost = candidates.find((addr) => addr.scope === "external")?.ip ?? "localhost"
+        const resolved = resolveRemoteAddresses({ host: options.host, protocol: remoteProtocol, port: remoteStart.port })
+        remoteAddresses = resolved.userVisible
+        remoteUrl = resolved.primaryRemoteUrl ?? `${remoteProtocol}://localhost:${remoteStart.port}`
       }
     } else {
       remoteHost = "localhost"
     }
-    remoteUrl = `${remoteProtocol}://${remoteHost}:${remoteStart.port}`
+    if (!remoteUrl) {
+      remoteUrl = `${remoteProtocol}://${remoteHost}:${remoteStart.port}`
+    }
   }
+
+  // Prefer an explicit IPv4 loopback address only when one of the bound listeners
+  // accepts loopback. Concrete LAN bindings do not, so plugins need the reachable
+  // bound/listener URL instead of an unreachable 127.0.0.1 URL.
+  const localUrl = resolvePluginBaseUrl({
+    httpStart: httpStart ? { protocol: "http", bindHost: httpBindHost, port: httpStart.port } : null,
+    httpsStart: httpsStart ? { protocol: "https", bindHost: httpsBindHost, port: httpsStart.port } : null,
+    remoteUrl,
+  })
 
   serverMeta.localUrl = localUrl
   serverMeta.localPort = localStart.port
@@ -460,7 +529,9 @@ async function main() {
   serverMeta.listeningMode = options.host === "0.0.0.0" || !isLoopbackHost(options.host) ? "all" : "local"
 
   if (serverMeta.remotePort && remoteUrl) {
-    serverMeta.addresses = resolveNetworkAddresses({ host: options.host, protocol: remoteProtocol, port: serverMeta.remotePort })
+    serverMeta.addresses = remoteAddresses.length
+      ? remoteAddresses
+      : resolveNetworkAddresses({ host: options.host, protocol: remoteProtocol, port: serverMeta.remotePort })
   } else {
     serverMeta.addresses = []
   }
@@ -468,6 +539,16 @@ async function main() {
   console.log(`Local Connection URL : ${serverMeta.localUrl}`)
   if (serverMeta.remoteUrl) {
     console.log(`Remote Connection URL : ${serverMeta.remoteUrl}`)
+    const additionalRemoteUrls = serverMeta.addresses
+      .map((addr) => addr.remoteUrl)
+      .filter((url) => url !== serverMeta.remoteUrl)
+
+    if (additionalRemoteUrls.length > 0) {
+      console.log("Other Accessible URLs:")
+      for (const url of additionalRemoteUrls) {
+        console.log(`  - ${url}`)
+      }
+    }
   }
 
   if (options.launch) {
@@ -489,6 +570,18 @@ async function main() {
         instanceEventBridge.shutdown()
       } catch (error) {
         logger.warn({ err: error }, "Instance event bridge shutdown failed")
+      }
+
+      try {
+        await sidecarManager.shutdown()
+      } catch (error) {
+        logger.error({ err: error }, "SideCar manager shutdown failed")
+      }
+
+      try {
+        clientConnectionManager.shutdown()
+      } catch (error) {
+        logger.warn({ err: error }, "Client connection manager shutdown failed")
       }
 
       try {

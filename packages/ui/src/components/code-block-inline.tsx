@@ -1,7 +1,8 @@
 import { createSignal, onMount, Show, createEffect } from "solid-js"
 import type { Highlighter } from "shiki/bundle/full"
 import { useTheme } from "../lib/theme"
-import { getSharedHighlighter, escapeHtml } from "../lib/markdown"
+import { getSharedHighlighter } from "../lib/markdown"
+import { escapeHtml } from "../lib/text-render-utils"
 import { copyToClipboard } from "../lib/clipboard"
 import { useI18n } from "../lib/i18n"
 

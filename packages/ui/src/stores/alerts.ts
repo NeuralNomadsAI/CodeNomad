@@ -10,6 +10,8 @@ export type AlertDialogState = {
   variant?: AlertVariant
   confirmLabel?: string
   cancelLabel?: string
+  /** When false, prevents dismissal via Escape key or backdrop click. Default: true */
+  dismissible?: boolean
   onConfirm?: () => void
   onCancel?: () => void
 

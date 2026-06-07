@@ -55,4 +55,31 @@ describe("resolveUi local version preference", () => {
     assert.equal(result.uiStaticDir, bundledDir)
     assert.equal(result.uiVersion, "0.8.1")
   })
+
+  it("prefers bundled when bundled and downloaded versions are equal", async () => {
+    const bundledDir = path.join(tempRoot, "bundled")
+    const configDir = path.join(tempRoot, "config")
+    const currentDir = path.join(configDir, "ui", "current")
+
+    await mkdir(bundledDir, { recursive: true })
+    await mkdir(currentDir, { recursive: true })
+
+    writeFileSync(path.join(bundledDir, "index.html"), "<html>bundled</html>")
+    writeFileSync(path.join(bundledDir, "ui-version.json"), JSON.stringify({ uiVersion: "0.8.1" }))
+
+    writeFileSync(path.join(currentDir, "index.html"), "<html>current</html>")
+    writeFileSync(path.join(currentDir, "ui-version.json"), JSON.stringify({ uiVersion: "0.8.1" }))
+
+    const result = await resolveUi({
+      serverVersion: "0.8.1",
+      bundledUiDir: bundledDir,
+      autoUpdate: false,
+      configDir,
+      logger: noopLogger,
+    })
+
+    assert.equal(result.source, "bundled")
+    assert.equal(result.uiStaticDir, bundledDir)
+    assert.equal(result.uiVersion, "0.8.1")
+  })
 })

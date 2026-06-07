@@ -3,6 +3,7 @@ import { createStore, produce, reconcile } from "solid-js/store"
 import type { SetStoreFunction } from "solid-js/store"
 import { getLogger } from "../../lib/logger"
 import type { ClientPart, MessageInfo } from "../../types/message"
+import { mergePermissionRequest } from "../../types/permission"
 import { clearRecordDisplayCacheForMessages } from "./record-display-cache"
 import type {
   InstanceMessageState,
@@ -33,6 +34,7 @@ function createInitialState(instanceId: string): InstanceMessageState {
     sessions: {},
     sessionOrder: [],
     messages: {},
+    lastAssistantMessageIds: {},
     messageInfoVersion: {},
     pendingParts: {},
     sessionRevisions: {},
@@ -218,6 +220,7 @@ export interface InstanceMessageStore {
   getScrollSnapshot: (sessionId: string, scope: string) => ScrollSnapshot | undefined
   getSessionRevision: (sessionId: string) => number
   getSessionMessageIds: (sessionId: string) => string[]
+  getLastAssistantMessageId: (sessionId: string) => string | undefined
   // Index of the most recent message in the session that contains a compaction part.
   // Returns -1 if there has been no compaction.
   getLastCompactionMessageIndex: (sessionId: string) => number
@@ -233,6 +236,21 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   const TODO_TOOL_NAME = "todowrite"
 
   const messageInfoCache = new Map<string, MessageInfo>()
+
+  function findLastAssistantMessageId(messageIds: readonly string[]): string | undefined {
+    for (let index = messageIds.length - 1; index >= 0; index -= 1) {
+      const messageId = messageIds[index]
+      if (state.messages[messageId]?.role === "assistant") {
+        return messageId
+      }
+    }
+    return undefined
+  }
+
+  function recomputeLastAssistantMessageId(sessionId: string, messageIds?: readonly string[]) {
+    if (!sessionId) return
+    setState("lastAssistantMessageIds", sessionId, findLastAssistantMessageId(messageIds ?? state.sessions[sessionId]?.messageIds ?? []))
+  }
 
   function getLastCompactionMessageIndex(sessionId: string): number {
     if (!sessionId) return -1
@@ -306,6 +324,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return state.sessionRevisions[sessionId] ?? 0
   }
 
+  function getLastAssistantMessageIdValue(sessionId: string) {
+    return state.lastAssistantMessageIds[sessionId]
+  }
+
   function withUsageState(sessionId: string, updater: (draft: SessionUsageState) => void) {
     setState("usage", sessionId, (current) => {
       const draft = current
@@ -375,6 +397,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     })
 
     if (Array.isArray(input.messageIds) && !areMessageIdListsEqual(previousIds, nextMessageIds)) {
+      recomputeLastAssistantMessageId(input.id, nextMessageIds)
       bumpSessionRevision(input.id)
     }
   }
@@ -445,6 +468,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         messageIds: incomingIds,
         updatedAt: Date.now(),
       }))
+      recomputeLastAssistantMessageId(sessionId, incomingIds)
 
       Object.values(normalizedRecords).forEach((record) => {
         maybeUpdateLatestTodoFromRecord(record)
@@ -516,6 +540,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     insertMessageIntoSession(input.sessionId, input.id)
     flushPendingParts(input.id)
+    recomputeLastAssistantMessageId(input.sessionId)
     bumpSessionRevision(input.sessionId)
   }
 
@@ -586,10 +611,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       bufferPendingPart({ messageId: input.messageId, part: input.part, receivedAt: Date.now() })
       return
     }
-  
+
     const partId = ensurePartId(input.messageId, input.part, message.partIds.length)
     const cloned = clonePart(input.part)
-  
+
     setState(
       "messages",
       input.messageId,
@@ -730,6 +755,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         if (state.latestTodos[sessionId]?.messageId === messageId) {
           clearLatestTodoSnapshot(sessionId)
         }
+        recomputeLastAssistantMessageId(sessionId)
         bumpSessionRevision(sessionId)
       })
     })
@@ -792,6 +818,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       id: options.newId,
       isEphemeral: false,
       updatedAt: Date.now(),
+      partIds: options.clearParts ? [] : existing.partIds,
+      parts: options.clearParts ? {} : existing.parts,
     }
 
     setState("messages", options.newId, cloned)
@@ -814,7 +842,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       affectedSessions.add(session.id)
     })
 
-    affectedSessions.forEach((sessionId) => bumpSessionRevision(sessionId))
+    affectedSessions.forEach((sessionId) => {
+      recomputeLastAssistantMessageId(sessionId)
+      bumpSessionRevision(sessionId)
+    })
 
     const infoEntry = messageInfoCache.get(options.oldId)
     if (infoEntry) {
@@ -874,13 +905,37 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return messageInfoCache.get(messageId)
   }
 
-  function upsertPermission(entry: PermissionEntry) {
+  function mergePermissionEntry(entry: PermissionEntry): PermissionEntry {
+    const existing = state.permissions.queue.find((item) => item.permission.id === entry.permission.id)
+    if (!existing) return entry
+    return {
+      ...entry,
+      permission: mergePermissionRequest(existing.permission, entry.permission),
+      messageId: entry.messageId ?? existing.messageId,
+      partId: entry.partId ?? existing.partId,
+      enqueuedAt: Math.min(existing.enqueuedAt, entry.enqueuedAt),
+    }
+  }
+
+  function upsertPermission(input: PermissionEntry) {
+    const entry = mergePermissionEntry(input)
     const messageKey = entry.messageId ?? "__global__"
     const partKey = entry.partId ?? entry.permission?.id ?? "__global__"
 
     setState(
       "permissions",
       produce((draft) => {
+        Object.keys(draft.byMessage).forEach((existingMessageKey) => {
+          const partEntries = draft.byMessage[existingMessageKey]
+          Object.keys(partEntries).forEach((existingPartKey) => {
+            if (partEntries[existingPartKey].permission.id === entry.permission.id) {
+              delete partEntries[existingPartKey]
+            }
+          })
+          if (Object.keys(partEntries).length === 0) {
+            delete draft.byMessage[existingMessageKey]
+          }
+        })
         draft.byMessage[messageKey] = draft.byMessage[messageKey] ?? {}
         draft.byMessage[messageKey][partKey] = entry
         const existingIndex = draft.queue.findIndex((item) => item.permission.id === entry.permission.id)
@@ -889,9 +944,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         } else {
           draft.queue[existingIndex] = entry
         }
-        if (!draft.active || draft.active.permission.id === entry.permission.id) {
-          draft.active = entry
-        }
+        draft.queue.sort((left, right) => left.enqueuedAt - right.enqueuedAt)
+        draft.active = draft.queue[0] ?? null
       }),
     )
   }
@@ -1035,6 +1089,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       removedIds.forEach((id) => removeUsageEntry(draft, id))
     })
 
+    recomputeLastAssistantMessageId(sessionId, keptIds)
     bumpSessionRevision(sessionId)
   }
 
@@ -1126,6 +1181,12 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         return next
       })
 
+      setState("lastAssistantMessageIds", (prev) => {
+        const next = { ...prev }
+        delete next[sessionId]
+        return next
+      })
+
       setState("scrollState", (prev) => {
         const next = { ...prev }
         const prefix = `${sessionId}:`
@@ -1188,16 +1249,17 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
      setSessionRevert,
      getSessionRevert,
-     rebuildUsage,
-     getSessionUsage,
-     setScrollSnapshot,
-     getScrollSnapshot,
-     getSessionRevision: getSessionRevisionValue,
-       getSessionMessageIds: (sessionId: string) => state.sessions[sessionId]?.messageIds ?? [],
-       getLastCompactionMessageIndex,
-       getMessage: (messageId: string) => state.messages[messageId],
-       getLatestTodoSnapshot: (sessionId: string) => state.latestTodos[sessionId],
-       clearSession,
-       clearInstance,
-    }
-  }
+      rebuildUsage,
+      getSessionUsage,
+      setScrollSnapshot,
+      getScrollSnapshot,
+      getSessionRevision: getSessionRevisionValue,
+      getSessionMessageIds: (sessionId: string) => state.sessions[sessionId]?.messageIds ?? [],
+      getLastAssistantMessageId: getLastAssistantMessageIdValue,
+      getLastCompactionMessageIndex,
+      getMessage: (messageId: string) => state.messages[messageId],
+      getLatestTodoSnapshot: (sessionId: string) => state.latestTodos[sessionId],
+      clearSession,
+      clearInstance,
+     }
+   }

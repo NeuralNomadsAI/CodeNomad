@@ -1,4 +1,4 @@
-import { decodeHtmlEntities } from "../../lib/markdown"
+import { decodeHtmlEntities } from "../../lib/text-render-utils"
 
 function decodeTextSegment(segment: any): any {
   if (typeof segment === "string") {

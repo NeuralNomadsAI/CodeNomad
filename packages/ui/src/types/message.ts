@@ -9,7 +9,7 @@ import type {
   AssistantMessage as SDKAssistantMessageV2,
 } from "@opencode-ai/sdk/v2"
 
-import type { PermissionRequestLike } from "./permission"
+import type { PermissionRequest } from "./permission"
 
 // Re-export for other modules
 export type {
@@ -40,10 +40,11 @@ export interface RenderCache {
   html: string
   theme?: string
   mode?: string
+  wrap?: boolean
 }
 
 export interface PendingPermissionState {
-  permission: PermissionRequestLike
+  permission: PermissionRequest
   active: boolean
 }
 
@@ -77,6 +78,10 @@ export interface TextPart {
 
 export type MessageInfo = SDKMessage
 
+export function isHiddenSyntheticTextPart(part: ClientPart): boolean {
+  return Boolean(part && part.type === "text" && part.synthetic)
+}
+
 function hasTextSegment(segment: string | { text?: string }): boolean {
   if (typeof segment === "string") {
     return segment.trim().length > 0
@@ -91,6 +96,10 @@ function hasTextSegment(segment: string | { text?: string }): boolean {
 
 export function partHasRenderableText(part: ClientPart): boolean {
   if (!part || typeof part !== "object") {
+    return false
+  }
+
+  if (isHiddenSyntheticTextPart(part)) {
     return false
   }
 

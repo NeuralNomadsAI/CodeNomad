@@ -1,3 +1,5 @@
+import { invoke } from "@tauri-apps/api/core"
+import { listen } from "@tauri-apps/api/event"
 import { Show, createSignal, onCleanup, onMount } from "solid-js"
 import { render } from "solid-js/web"
 import iconUrl from "../../images/CodeNomad-Icon.png"
@@ -27,13 +29,6 @@ interface CliStatus {
   error?: string | null
 }
 
-interface TauriBridge {
-  invoke?: <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>
-  event?: {
-    listen: (event: string, handler: (payload: { payload: unknown }) => void) => Promise<() => void>
-  }
-}
-
 function pickPhraseKey(previous?: PhraseKey) {
   const filtered = phraseKeys.filter((key) => key !== previous)
   const source = filtered.length > 0 ? filtered : phraseKeys
@@ -44,17 +39,6 @@ function pickPhraseKey(previous?: PhraseKey) {
 function navigateTo(url?: string | null) {
   if (!url) return
   window.location.replace(url)
-}
-
-function getTauriBridge(): TauriBridge | null {
-  if (typeof window === "undefined") {
-    return null
-  }
-  const bridge = (window as { __TAURI__?: TauriBridge }).__TAURI__
-  if (!bridge || !bridge.event || !bridge.invoke) {
-    return null
-  }
-  return bridge
 }
 
 function annotateDocument() {
@@ -77,25 +61,22 @@ function LoadingApp() {
     setPhraseKey(pickPhraseKey())
     const unsubscribers: Array<() => void> = []
 
-    async function bootstrapTauri(tauriBridge: TauriBridge | null) {
-      if (!tauriBridge || !tauriBridge.event || !tauriBridge.invoke) {
-        return
-      }
+    async function bootstrapTauri() {
       try {
-        const readyUnlisten = await tauriBridge.event.listen("cli:ready", (event) => {
+        const readyUnlisten = await listen("cli:ready", (event) => {
           const payload = (event?.payload as CliStatus) || {}
           setError(null)
           setStatusKey(null)
           navigateTo(payload.url)
         })
-        const errorUnlisten = await tauriBridge.event.listen("cli:error", (event) => {
+        const errorUnlisten = await listen("cli:error", (event) => {
           const payload = (event?.payload as CliStatus) || {}
           if (payload.error) {
             setError(payload.error)
             setStatusKey("loadingScreen.status.issue")
           }
         })
-        const statusUnlisten = await tauriBridge.event.listen("cli:status", (event) => {
+        const statusUnlisten = await listen("cli:status", (event) => {
           const payload = (event?.payload as CliStatus) || {}
           if (payload.state === "error" && payload.error) {
             setError(payload.error)
@@ -109,7 +90,7 @@ function LoadingApp() {
         })
         unsubscribers.push(readyUnlisten, errorUnlisten, statusUnlisten)
 
-        const result = await tauriBridge.invoke<CliStatus>("cli_get_status")
+        const result = await invoke<CliStatus>("cli_get_status")
         if (result?.state === "ready" && result.url) {
           navigateTo(result.url)
         } else if (result?.state === "error" && result.error) {
@@ -123,7 +104,7 @@ function LoadingApp() {
     }
 
     if (isTauriHost()) {
-      void bootstrapTauri(getTauriBridge())
+      void bootstrapTauri()
     }
 
     onCleanup(() => {

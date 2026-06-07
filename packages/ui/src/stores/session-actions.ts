@@ -1,6 +1,7 @@
 import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
 import { instances } from "./instances"
-import { getOrCreateWorktreeClient, getWorktreeSlugForSession } from "./worktrees"
+import { getRootClient } from "./opencode-client"
+import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 
 import { addRecentModelPreference, getModelThinkingSelection, setAgentModelPreference } from "./preferences"
 import { providers, sessions, withSession } from "./session-state"
@@ -10,8 +11,14 @@ import { messageStoreBus } from "./message-v2/bus"
 import { removeMessagePartV2, removeMessageV2 } from "./message-v2/bridge"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
+import { clearConversationPlaybackForSession } from "./conversation-speech"
 
 const log = getLogger("actions")
+
+async function getSessionWorkspacePayload(instanceId: string, sessionId: string): Promise<{ workspace?: string }> {
+  const workspace = await getOpenCodeWorkspaceIdForSession(instanceId, sessionId)
+  return workspace ? { workspace } : {}
+}
 
 function getVariantKeysForModel(instanceId: string, model: { providerId: string; modelId: string }): string[] {
   if (!model.providerId || !model.modelId) return []
@@ -84,8 +91,7 @@ async function sendMessage(
     throw new Error("Instance not ready")
   }
 
-  const worktreeSlug = getWorktreeSlugForSession(instanceId, sessionId)
-  const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+  const client = getRootClient(instanceId)
 
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionId)
@@ -94,7 +100,7 @@ async function sendMessage(
   }
 
   const messageId = createId("msg")
-  const textPartId = createId("part")
+  const textPartId = createId("prt")
 
   const resolvedPrompt = resolvePastedPlaceholders(prompt, attachments)
 
@@ -110,7 +116,6 @@ async function sendMessage(
 
   const requestParts: any[] = [
     {
-      id: textPartId,
       type: "text" as const,
       text: resolvedPrompt,
     },
@@ -120,9 +125,8 @@ async function sendMessage(
     for (const att of attachments) {
       const source = att.source
       if (source.type === "file") {
-        const partId = createId("part")
+        const partId = createId("prt")
         requestParts.push({
-          id: partId,
           type: "file" as const,
           url: att.url,
           mime: source.mime,
@@ -148,9 +152,8 @@ async function sendMessage(
           continue
         }
 
-        const partId = createId("part")
+        const partId = createId("prt")
         requestParts.push({
-          id: partId,
           type: "text" as const,
           text: value,
         })
@@ -168,6 +171,8 @@ async function sendMessage(
   const store = messageStoreBus.getOrCreate(instanceId)
   const createdAt = Date.now()
 
+  clearConversationPlaybackForSession(instanceId, sessionId)
+
   store.upsertMessage({
     id: messageId,
     sessionId,
@@ -184,7 +189,6 @@ async function sendMessage(
   })
 
   const requestBody = {
-    messageID: messageId,
     parts: requestParts,
     ...(session.agent && { agent: session.agent }),
     ...(session.model.providerId &&
@@ -210,9 +214,11 @@ async function sendMessage(
 
   try {
     log.info("session.promptAsync", { instanceId, sessionId, requestBody })
+    const workspacePayload = await getSessionWorkspacePayload(instanceId, sessionId)
     await requestData(
       client.session.promptAsync({
         sessionID: sessionId,
+        ...workspacePayload,
         ...(requestBody as any),
       }),
       "session.promptAsync",
@@ -234,8 +240,7 @@ async function executeCustomCommand(
     throw new Error("Instance not ready")
   }
 
-  const worktreeSlug = getWorktreeSlugForSession(instanceId, sessionId)
-  const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+  const client = getRootClient(instanceId)
 
   const session = sessions().get(instanceId)?.get(sessionId)
   if (!session) {
@@ -268,6 +273,7 @@ async function executeCustomCommand(
   await requestData(
     client.session.command({
       sessionID: sessionId,
+      ...(await getSessionWorkspacePayload(instanceId, sessionId)),
       ...(body as any),
     }),
     "session.command",
@@ -280,8 +286,7 @@ async function runShellCommand(instanceId: string, sessionId: string, command: s
     throw new Error("Instance not ready")
   }
 
-  const worktreeSlug = getWorktreeSlugForSession(instanceId, sessionId)
-  const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+  const client = getRootClient(instanceId)
 
   const session = sessions().get(instanceId)?.get(sessionId)
   if (!session) {
@@ -293,6 +298,7 @@ async function runShellCommand(instanceId: string, sessionId: string, command: s
   await requestData(
     client.session.shell({
       sessionID: sessionId,
+      ...(await getSessionWorkspacePayload(instanceId, sessionId)),
       agent,
       command,
     }),
@@ -306,8 +312,7 @@ async function abortSession(instanceId: string, sessionId: string): Promise<void
     throw new Error("Instance not ready")
   }
 
-  const worktreeSlug = getWorktreeSlugForSession(instanceId, sessionId)
-  const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+  const client = getRootClient(instanceId)
 
   log.info("abortSession", { instanceId, sessionId })
 
@@ -316,6 +321,7 @@ async function abortSession(instanceId: string, sessionId: string): Promise<void
     await requestData(
       client.session.abort({
         sessionID: sessionId,
+        ...(await getSessionWorkspacePayload(instanceId, sessionId)),
       }),
       "session.abort",
     )
@@ -386,8 +392,7 @@ async function renameSession(instanceId: string, sessionId: string, nextTitle: s
     throw new Error("Instance not ready")
   }
 
-  const worktreeSlug = getWorktreeSlugForSession(instanceId, sessionId)
-  const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+  const client = getRootClient(instanceId)
 
   const session = sessions().get(instanceId)?.get(sessionId)
   if (!session) {
@@ -402,6 +407,7 @@ async function renameSession(instanceId: string, sessionId: string, nextTitle: s
   await requestData(
     client.session.update({
       sessionID: sessionId,
+      ...(await getSessionWorkspacePayload(instanceId, sessionId)),
       title: trimmedTitle,
     }),
     "session.update",
@@ -422,12 +428,12 @@ async function deleteMessagePart(instanceId: string, sessionId: string, messageI
     throw new Error("Instance not ready")
   }
 
-  const worktreeSlug = getWorktreeSlugForSession(instanceId, sessionId)
-  const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+  const client = getRootClient(instanceId)
 
   await requestData(
     client.part.delete({
       sessionID: sessionId,
+      ...(await getSessionWorkspacePayload(instanceId, sessionId)),
       messageID: messageId,
       partID: partId,
     }),
@@ -446,14 +452,14 @@ async function deleteMessage(instanceId: string, sessionId: string, messageId: s
     throw new Error("Instance not ready")
   }
 
-  const worktreeSlug = getWorktreeSlugForSession(instanceId, sessionId)
-  const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+  const client = getRootClient(instanceId)
 
   // The SDK generator does not currently expose a typed method for deleting a message,
   // but the API is available at DELETE /session/:sessionID/message/:messageID.
   await requestData(
     (client as any).client.delete({
       url: `/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(messageId)}`,
+      query: await getSessionWorkspacePayload(instanceId, sessionId),
     }),
     "session.message.delete",
   )

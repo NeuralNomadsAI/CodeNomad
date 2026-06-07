@@ -9,6 +9,7 @@ import { hasInstances, showFolderSelection } from "./ui"
 const log = getLogger("actions")
 
 const [supportInfo, setSupportInfo] = createSignal<SupportMeta | null>(null)
+const [availableUpdate, setAvailableUpdate] = createSignal<ServerMeta["update"] | null | undefined>(undefined)
 
 const UI_VERSION_STORAGE_KEY = "codenomad:lastSeenUiVersion"
 const DEV_RELEASE_STORAGE_KEY = "codenomad:lastSeenDevRelease"
@@ -82,6 +83,7 @@ async function refreshFromMeta() {
   try {
     const meta = await getServerMeta(true)
     setSupportInfo(meta.support ?? null)
+    setAvailableUpdate(meta.update ?? null)
     maybeNotifyUiUpdated(meta)
     maybeNotifyDevReleaseAvailable(meta)
     ensureMetaRefresh(meta)
@@ -92,6 +94,10 @@ async function refreshFromMeta() {
 
 export function useSupportInfo() {
   return supportInfo
+}
+
+export function useAvailableUpdate() {
+  return availableUpdate
 }
 
 function maybeNotifyUiUpdated(meta: ServerMeta) {

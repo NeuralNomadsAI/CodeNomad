@@ -41,6 +41,8 @@ export const remoteAccessMessages = {
   "remoteAccess.sections.addresses.help": "Launch or scan from another machine to hand over control.",
   "remoteAccess.addresses.loading": "Loading addresses…",
   "remoteAccess.addresses.none": "No addresses available yet.",
+  "remoteAccess.addresses.actions.showOther": "Show {count} other addresses",
+  "remoteAccess.addresses.actions.hideOther": "Hide other addresses",
   "remoteAccess.address.scope.network": "Network",
   "remoteAccess.address.scope.loopback": "Loopback",
   "remoteAccess.address.scope.internal": "Internal",

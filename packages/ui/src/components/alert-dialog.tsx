@@ -108,15 +108,15 @@ const AlertDialog: Component = () => {
             open
             modal
             onOpenChange={(open) => {
-              if (!open) {
+              // Only handle dismiss if dialog is dismissible (default: true)
+              if (!open && payload.dismissible !== false) {
                 dismiss(false, payload)
               }
             }}
           >
             <Dialog.Portal>
-              <Dialog.Overlay class="modal-overlay" />
-               <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-                 <Dialog.Content class="modal-surface w-full max-w-sm p-6 border border-base shadow-2xl" tabIndex={-1}>
+              <Dialog.Overlay class="modal-overlay z-[60]" />
+              <Dialog.Content class="modal-surface fixed left-1/2 top-1/2 z-[1310] w-full max-w-sm -translate-x-1/2 -translate-y-1/2 p-6 border border-base shadow-2xl" tabIndex={-1}>
                    <div class="flex items-start gap-3">
                      <div
                        class="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border text-base font-semibold"
@@ -140,10 +140,11 @@ const AlertDialog: Component = () => {
 
                     <Show when={isPrompt}>
                       <div class="mt-4">
-                        <label class="text-sm font-medium text-secondary">
+                        <label for="prompt-input" class="text-sm font-medium text-secondary">
                           {payload.inputLabel || t("alertDialog.prompt.inputLabel")}
                         </label>
                         <input
+                          id="prompt-input"
                           ref={(el) => {
                             promptInputRef = el
                           }}
@@ -184,11 +185,10 @@ const AlertDialog: Component = () => {
                      >
                        {confirmLabel}
                      </button>
-                   </div>
-                 </Dialog.Content>
-               </div>
-             </Dialog.Portal>
-           </Dialog>
+                    </div>
+                  </Dialog.Content>
+                </Dialog.Portal>
+              </Dialog>
          )
        }}
      </Show>

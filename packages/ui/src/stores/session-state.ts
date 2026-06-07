@@ -1,6 +1,6 @@
 import { batch, createSignal } from "solid-js"
 
-import type { Session, SessionStatus, Agent, Provider } from "../types/session"
+import { getIdleSinceForStatusTransition, type Session, type SessionStatus, type Agent, type Provider } from "../types/session"
 import { deleteSession, loadMessages } from "./session-api"
 import { showToastNotification } from "../lib/notifications"
 import { messageStoreBus } from "./message-v2/bus"
@@ -8,8 +8,11 @@ import { instances } from "./instances"
 import { showConfirmDialog } from "./alerts"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
-import { getOrCreateWorktreeClient, getWorktreeSlugForSession } from "./worktrees"
+import { getRootClient } from "./opencode-client"
+import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 import { tGlobal } from "../lib/i18n"
+import { computeThreadTotals, type ThreadTotals } from "../lib/thread-totals"
+import { applySessionPage, getDefaultSessionPaginationState, type SessionPaginationState } from "./session-pagination-model"
 
 const log = getLogger("session")
 
@@ -47,6 +50,7 @@ const [loading, setLoading] = createSignal({
 
 const [messagesLoaded, setMessagesLoaded] = createSignal<Map<string, Set<string>>>(new Map())
 const [sessionInfoByInstance, setSessionInfoByInstance] = createSignal<Map<string, Map<string, SessionInfo>>>(new Map())
+const [threadTotalsByInstance, setThreadTotalsByInstance] = createSignal<Map<string, Map<string, ThreadTotals>>>(new Map())
 
 const [expandedSessionParents, setExpandedSessionParents] = createSignal<Map<string, Set<string>>>(new Map())
 
@@ -59,6 +63,122 @@ type InstanceIndicatorCounts = {
 }
 
 const [instanceIndicatorCounts, setInstanceIndicatorCounts] = createSignal<Map<string, InstanceIndicatorCounts>>(new Map())
+
+const SESSION_PAGE_SIZE = 200
+
+type SessionSearchState = {
+  query: string
+  ids: string[]
+  loading: boolean
+  requestId: number
+}
+
+const [sessionPagination, setSessionPagination] = createSignal<Map<string, SessionPaginationState>>(new Map())
+const [sessionSearch, setSessionSearch] = createSignal<Map<string, SessionSearchState>>(new Map())
+
+function getSessionPaginationState(instanceId: string): SessionPaginationState {
+  return sessionPagination().get(instanceId) ?? getDefaultSessionPaginationState()
+}
+
+function getSessionListIds(instanceId: string): string[] {
+  return getSessionPaginationState(instanceId).ids
+}
+
+function getSessionFetchLimit(instanceId: string): number {
+  return Math.max(getSessionPaginationState(instanceId).ids.length, SESSION_PAGE_SIZE)
+}
+
+function getSessionNextCursor(instanceId: string): string | undefined {
+  return getSessionPaginationState(instanceId).nextCursor
+}
+
+function setSessionPage(instanceId: string, ids: string[], hasMore: boolean, reset = false, nextCursor?: string): void {
+  setSessionPagination((prev) => {
+    const next = new Map(prev)
+    next.set(instanceId, applySessionPage(prev.get(instanceId), ids, hasMore, reset, nextCursor))
+    return next
+  })
+}
+
+function getSessionHasMore(instanceId: string): boolean {
+  return getSessionPaginationState(instanceId).hasMore
+}
+
+function resetSessionPagination(instanceId: string): void {
+  setSessionPagination((prev) => {
+    const next = new Map(prev)
+    next.set(instanceId, getDefaultSessionPaginationState())
+    return next
+  })
+}
+
+function prependSessionListId(instanceId: string, sessionId: string): void {
+  setSessionPagination((prev) => {
+    const next = new Map(prev)
+    const current = prev.get(instanceId) ?? { ids: [], hasMore: true }
+    const ids = [sessionId, ...current.ids.filter((id) => id !== sessionId)]
+    next.set(instanceId, { ...current, ids })
+    return next
+  })
+}
+
+function removeSessionListId(instanceId: string, sessionId: string): void {
+  setSessionPagination((prev) => {
+    const next = new Map(prev)
+    const current = prev.get(instanceId) ?? { ids: [], hasMore: true }
+    const ids = current.ids.filter((id) => id !== sessionId)
+    next.set(instanceId, { ...current, ids })
+    return next
+  })
+}
+
+function beginSessionSearch(instanceId: string, query: string): number {
+  const current = sessionSearch().get(instanceId)
+  const requestId = (current?.requestId ?? 0) + 1
+  setSessionSearch((prev) => {
+    const next = new Map(prev)
+    next.set(instanceId, { query, ids: current?.ids ?? [], loading: true, requestId })
+    return next
+  })
+  return requestId
+}
+
+function isLatestSessionSearch(instanceId: string, query: string, requestId: number): boolean {
+  const current = sessionSearch().get(instanceId)
+  return Boolean(current && current.query === query && current.requestId === requestId)
+}
+
+function setSessionSearchResults(instanceId: string, query: string, ids: string[], requestId: number): boolean {
+  if (!isLatestSessionSearch(instanceId, query, requestId)) return false
+  setSessionSearch((prev) => {
+    const next = new Map(prev)
+    next.set(instanceId, { query, ids, loading: false, requestId })
+    return next
+  })
+  return true
+}
+
+function clearSessionSearch(instanceId: string): void {
+  setSessionSearch((prev) => {
+    const current = prev.get(instanceId)
+    const requestId = (current?.requestId ?? 0) + 1
+    const next = new Map(prev)
+    next.set(instanceId, { query: "", ids: [], loading: false, requestId })
+    return next
+  })
+}
+
+function getSessionSearchResultIds(instanceId: string): string[] {
+  return sessionSearch().get(instanceId)?.ids ?? []
+}
+
+function getSessionSearchQuery(instanceId: string): string {
+  return sessionSearch().get(instanceId)?.query ?? ""
+}
+
+function isSessionSearchLoading(instanceId: string): boolean {
+  return sessionSearch().get(instanceId)?.loading ?? false
+}
 
 function getIndicatorBucket(session: Pick<Session, "status" | "pendingPermission" | "pendingQuestion">): InstanceSessionIndicatorStatus | "idle" {
   if (session.pendingPermission || session.pendingQuestion) {
@@ -314,6 +434,52 @@ function setSessionPendingQuestion(instanceId: string, sessionId: string, pendin
   })
 }
 
+function markSessionIdleSeen(instanceId: string, sessionId: string): void {
+  withSession(instanceId, sessionId, (session) => {
+    if (session.status !== "idle") return false
+    if (typeof session.idleSince !== "number") return false
+    session.idleSince = null
+  })
+}
+
+function markViewedSessionIdleSeen(
+  instanceId: string,
+  sessionId: string,
+  keepUnseenSubagentIdleStatus: boolean,
+): void {
+  setSessions((prev) => {
+    const instanceSessions = prev.get(instanceId)
+    if (!instanceSessions) return prev
+
+    const viewedSession = instanceSessions.get(sessionId)
+    if (!viewedSession) return prev
+
+    const idsToClear = new Set<string>([sessionId])
+    if (viewedSession.parentId === null && !keepUnseenSubagentIdleStatus) {
+      for (const session of instanceSessions.values()) {
+        if (session.parentId === sessionId) idsToClear.add(session.id)
+      }
+    }
+
+    let changed = false
+    const updatedSessions = new Map(instanceSessions)
+    for (const id of idsToClear) {
+      const session = updatedSessions.get(id)
+      if (!session) continue
+      if (session.status !== "idle") continue
+      if (typeof session.idleSince !== "number") continue
+      updatedSessions.set(id, { ...session, idleSince: null })
+      changed = true
+    }
+
+    if (!changed) return prev
+
+    const next = new Map(prev)
+    next.set(instanceId, updatedSessions)
+    return next
+  })
+}
+
 function setActiveSession(instanceId: string, sessionId: string): void {
   setActiveSessionId((prev) => {
     const next = new Map(prev)
@@ -353,6 +519,10 @@ function setSessionStatus(instanceId: string, sessionId: string, status: Session
     if (session.status === status) return false
     const previous = session.status
     session.status = status
+    session.idleSince = getIdleSinceForStatusTransition(previous, status, session.idleSince)
+    if (status !== "working") {
+      session.retry = null
+    }
 
     // If a child session starts working, auto-expand its parent thread once.
     // Users can still collapse it afterwards; we only expand on the transition.
@@ -397,12 +567,64 @@ function getChildSessions(instanceId: string, parentId: string): Session[] {
   return allSessions.filter((s) => s.parentId === parentId)
 }
 
+function getDescendantSessions(instanceId: string, parentId: string): Session[] {
+  const allSessions = getSessions(instanceId)
+  const childrenByParent = new Map<string, Session[]>()
+
+  for (const session of allSessions) {
+    if (!session.parentId) continue
+    const children = childrenByParent.get(session.parentId)
+    if (children) {
+      children.push(session)
+    } else {
+      childrenByParent.set(session.parentId, [session])
+    }
+  }
+
+  const descendants: Session[] = []
+  const stack = [...(childrenByParent.get(parentId) ?? [])]
+  const seen = new Set<string>()
+
+  while (stack.length > 0) {
+    const session = stack.shift()
+    if (!session || seen.has(session.id)) continue
+    seen.add(session.id)
+    descendants.push(session)
+    stack.push(...(childrenByParent.get(session.id) ?? []))
+  }
+
+  descendants.sort((a, b) => (b.time.updated ?? 0) - (a.time.updated ?? 0))
+  return descendants
+}
+
 function getSessionFamily(instanceId: string, parentId: string): Session[] {
   const parent = sessions().get(instanceId)?.get(parentId)
   if (!parent) return []
 
-  const children = getChildSessions(instanceId, parentId)
+  const children = getDescendantSessions(instanceId, parentId)
   return [parent, ...children]
+}
+
+function getSessionRoot(instanceId: string, sessionId: string): Session | null {
+  const instanceSessions = sessions().get(instanceId)
+  if (!instanceSessions) return null
+  return getSessionRootFromMap(instanceSessions, sessionId)
+}
+
+function getSessionRootFromMap(instanceSessions: Map<string, Session>, sessionId: string): Session | null {
+  let current = instanceSessions.get(sessionId)
+  if (!current) return null
+
+  const seen = new Set<string>()
+  while (current.parentId) {
+    if (seen.has(current.id)) return null
+    seen.add(current.id)
+    const parent = instanceSessions.get(current.parentId)
+    if (!parent) return null
+    current = parent
+  }
+
+  return current
 }
 
 type SessionThreadCacheEntry = {
@@ -425,9 +647,9 @@ function getOrCreateSessionThreadCache(instanceId: string): SessionThreadCache {
   return cache
 }
 
-function getSessionThreads(instanceId: string): SessionThread[] {
+function buildSessionThreads(instanceId: string, rootIds: string[], childIds?: Set<string>): SessionThread[] {
   const instanceSessions = sessions().get(instanceId)
-  if (!instanceSessions || instanceSessions.size === 0) {
+  if (!instanceSessions || instanceSessions.size === 0 || rootIds.length === 0) {
     sessionThreadCache.delete(instanceId)
     return []
   }
@@ -435,31 +657,30 @@ function getSessionThreads(instanceId: string): SessionThread[] {
   const cache = getOrCreateSessionThreadCache(instanceId)
   const seenParents = new Set<string>()
 
-  const parents: Session[] = []
-  const childrenByParent = new Map<string, Session[]>()
+  const childrenByRoot = new Map<string, Session[]>()
 
   for (const session of instanceSessions.values()) {
-    if (session.parentId === null) {
-      parents.push(session)
-      continue
-    }
-
-    const parentId = session.parentId
-    if (!parentId) continue
-    const children = childrenByParent.get(parentId)
+    if (!session.parentId) continue
+    if (childIds && !childIds.has(session.id)) continue
+    const root = getSessionRootFromMap(instanceSessions, session.id)
+    if (!root) continue
+    const children = childrenByRoot.get(root.id)
     if (children) {
       children.push(session)
     } else {
-      childrenByParent.set(parentId, [session])
+      childrenByRoot.set(root.id, [session])
     }
   }
 
   const threads: SessionThread[] = []
 
-  for (const parent of parents) {
+  for (const parentId of rootIds) {
+    const parent = instanceSessions.get(parentId)
+    if (!parent || parent.parentId !== null) continue
+
     seenParents.add(parent.id)
 
-    const children = childrenByParent.get(parent.id) ?? []
+    const children = childrenByRoot.get(parent.id) ?? []
     if (children.length > 1) {
       children.sort((a, b) => (b.time.updated ?? 0) - (a.time.updated ?? 0))
     }
@@ -496,6 +717,35 @@ function getSessionThreads(instanceId: string): SessionThread[] {
   })
 
   return threads
+}
+
+function getSessionThreads(instanceId: string): SessionThread[] {
+  return buildSessionThreads(instanceId, getSessionListIds(instanceId))
+}
+
+function getSessionSearchThreads(instanceId: string): SessionThread[] {
+  const resultIds = getSessionSearchResultIds(instanceId)
+  if (resultIds.length === 0) return []
+
+  const instanceSessions = sessions().get(instanceId)
+  if (!instanceSessions) return []
+
+  const rootIds: string[] = []
+  const childIds = new Set<string>()
+
+  for (const sessionId of resultIds) {
+    const session = instanceSessions.get(sessionId)
+    if (!session) continue
+    if (session.parentId === null) {
+      rootIds.push(session.id)
+    } else {
+      childIds.add(session.id)
+      const root = getSessionRootFromMap(instanceSessions, session.id)
+      if (root && !rootIds.includes(root.id)) rootIds.push(root.id)
+    }
+  }
+
+  return buildSessionThreads(instanceId, rootIds, childIds)
 }
 
 function isSessionParentExpanded(instanceId: string, parentSessionId: string): boolean {
@@ -598,6 +848,29 @@ function getSessionInfo(instanceId: string, sessionId: string): SessionInfo | un
   return sessionInfoByInstance().get(instanceId)?.get(sessionId)
 }
 
+function getThreadTotals(instanceId: string, parentSessionId: string): ThreadTotals | undefined {
+  return threadTotalsByInstance().get(instanceId)?.get(parentSessionId)
+}
+
+function updateThreadTotalsForParent(instanceId: string, parentSessionId: string): void {
+  const family = getSessionFamily(instanceId, parentSessionId)
+  const totals = computeThreadTotals(family, sessionInfoByInstance().get(instanceId))
+
+  setThreadTotalsByInstance((prev) => {
+    const next = new Map(prev)
+    const instanceTotals = new Map(next.get(instanceId))
+    instanceTotals.set(parentSessionId, totals)
+    next.set(instanceId, instanceTotals)
+    return next
+  })
+}
+
+function updateThreadTotalsForSession(instanceId: string, sessionId: string): void {
+  const session = sessions().get(instanceId)?.get(sessionId)
+  if (!session) return
+  updateThreadTotalsForParent(instanceId, session.parentId ?? session.id)
+}
+
 async function isBlankSession(session: Session, instanceId: string, fetchIfNeeded = false): Promise<boolean> {
   const created = session.time?.created || 0
   const updated = session.time?.updated || 0
@@ -617,10 +890,10 @@ async function isBlankSession(session: Session, instanceId: string, fetchIfNeede
   }
   let messages: any[] = []
     try {
-      const worktreeSlug = getWorktreeSlugForSession(instanceId, session.id)
-      const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+      const client = getRootClient(instanceId)
+      const workspace = await getOpenCodeWorkspaceIdForSession(instanceId, session.id)
       messages = await requestData<any[]>(
-        client.session.messages({ sessionID: session.id }),
+        client.session.messages({ sessionID: session.id, ...(workspace ? { workspace } : {}) }),
         "session.messages",
       )
     } catch (error) {
@@ -673,6 +946,7 @@ async function cleanupBlankSessions(instanceId: string, excludeSessionId?: strin
         detail: tGlobal("sessionState.cleanup.deepConfirm.detail"),
         confirmLabel: tGlobal("sessionState.cleanup.deepConfirm.confirmLabel"),
         cancelLabel: tGlobal("sessionState.cleanup.deepConfirm.cancelLabel"),
+        dismissible: false,
       }
     )
     if (!confirmed) return
@@ -723,6 +997,10 @@ export {
   setMessagesLoaded,
   sessionInfoByInstance,
   setSessionInfoByInstance,
+  threadTotalsByInstance,
+  getThreadTotals,
+  updateThreadTotalsForParent,
+  updateThreadTotalsForSession,
   getSessionDraftPrompt,
   setSessionDraftPrompt,
   clearSessionDraftPrompt,
@@ -731,6 +1009,8 @@ export {
   withSession,
   setSessionPendingPermission,
   setSessionPendingQuestion,
+  markSessionIdleSeen,
+  markViewedSessionIdleSeen,
   setSessionStatus,
   setActiveSession,
  
@@ -742,8 +1022,11 @@ export {
   getSessions,
   getParentSessions,
   getChildSessions,
+  getDescendantSessions,
+  getSessionRoot,
   getSessionFamily,
   getSessionThreads,
+  getSessionSearchThreads,
   getVisibleSessionIds,
   isSessionParentExpanded,
   setSessionParentExpanded,
@@ -755,4 +1038,22 @@ export {
   getSessionInfo,
   isBlankSession,
   cleanupBlankSessions,
+  SESSION_PAGE_SIZE,
+  sessionPagination,
+  sessionSearch,
+  getSessionListIds,
+  getSessionFetchLimit,
+  getSessionNextCursor,
+  setSessionPage,
+  getSessionHasMore,
+  resetSessionPagination,
+  prependSessionListId,
+  removeSessionListId,
+  beginSessionSearch,
+  isLatestSessionSearch,
+  setSessionSearchResults,
+  clearSessionSearch,
+  getSessionSearchResultIds,
+  getSessionSearchQuery,
+  isSessionSearchLoading,
 }

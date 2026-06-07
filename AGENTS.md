@@ -47,3 +47,7 @@ Behavior for agents:
 ## Tooling Preferences
 - Use the `edit` tool for modifying existing files; prefer it over other editing methods.
 - Use the `write` tool only when creating new files from scratch.
+
+## Commit Message Guidelines
+- When creating commits, use detailed commit messages: a concise conventional-style subject followed by body paragraphs that explain the user-visible behavior change, the implementation approach, important edge cases or platform considerations, and the validation or test coverage added.
+- Prefer messages that explain why the change exists and how regressions are prevented, not just a list of touched files.

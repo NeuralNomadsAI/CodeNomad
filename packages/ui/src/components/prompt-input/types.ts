@@ -7,6 +7,7 @@ export type PromptInsertMode = "quote" | "code"
 
 export interface PromptInputApi {
   insertSelection(text: string, mode: PromptInsertMode): void
+  insertComment(text: string): void
   expandTextAttachment(attachmentId: string): void
   removeAttachment(attachmentId: string): void
   setPromptText(text: string, opts?: { focus?: boolean }): void
@@ -24,6 +25,7 @@ export interface PromptInputProps {
   // Phone/tablet layouts should keep the expanded prompt more compact.
   compactLayout?: boolean
   onSend: (prompt: string, attachments: Attachment[]) => Promise<void>
+  onCommand?: (commandName: string, args: string) => Promise<void>
   onRunShell?: (command: string) => Promise<void>
   disabled?: boolean
   escapeInDebounce?: boolean

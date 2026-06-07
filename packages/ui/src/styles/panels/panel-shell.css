@@ -77,7 +77,7 @@
 }
 
 .panel-list-item-content {
-  @apply flex-1 text-left px-4 py-3 flex items-center justify-between gap-3 outline-none transition-colors w-full min-w-0;
+  @apply flex-1 text-start px-4 py-3 flex items-center justify-between gap-3 outline-none transition-colors w-full min-w-0;
 }
 
 .panel-list-item-content:hover {

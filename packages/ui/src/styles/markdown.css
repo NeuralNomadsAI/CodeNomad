@@ -1,4 +1,23 @@
-@import "github-markdown-css/github-markdown-light.css" layer(github-markdown-base);
+@import "github-markdown-css/github-markdown-light.css"
+  layer(github-markdown-base);
+@import "katex/dist/katex.min.css" layer(katex-base);
+
+@layer katex-overrides {
+  .markdown-body .katex-display {
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0.25rem 0;
+  }
+
+  .markdown-body .katex {
+    font-size: 1.05em;
+  }
+
+  .markdown-body .katex .frac-line {
+    border-bottom-width: 0.1em !important;
+    border-color: currentColor !important;
+  }
+}
 
 @layer components {
   .markdown-body {
@@ -22,6 +41,21 @@
     font-size: inherit;
     line-height: inherit;
     color: inherit;
+  }
+
+  /* Auto-detect text direction per block element for RTL language support (e.g. Hebrew, Arabic) */
+  .markdown-body p,
+  .markdown-body li,
+  .markdown-body h1,
+  .markdown-body h2,
+  .markdown-body h3,
+  .markdown-body h4,
+  .markdown-body h5,
+  .markdown-body h6,
+  .markdown-body blockquote,
+  .markdown-body td,
+  .markdown-body th {
+    unicode-bidi: plaintext;
   }
 
   .markdown-body h1,
@@ -69,7 +103,10 @@
   }
 
   .markdown-body hr {
-    display: none;
+    height: 1px;
+    margin: 0.9rem 0;
+    background-color: var(--border-base);
+    border: 0;
   }
 
   .markdown-body strong {
@@ -121,6 +158,7 @@
     border-radius: 8px;
     padding: 0.75rem;
     margin: 1rem 0;
+    direction: ltr;
   }
 
   .markdown-body pre:not(.shiki) code,
@@ -129,16 +167,19 @@
   }
 
   .markdown-body blockquote {
-    border-left: 3px solid var(--border-base);
+    border-inline-start: 3px solid var(--border-base);
     color: var(--text-secondary);
     background-color: var(--surface-muted);
     padding: 0.5rem 1rem;
-    border-radius: 0 8px 8px 0;
+    border-start-start-radius: 0;
+    border-start-end-radius: 8px;
+    border-end-end-radius: 8px;
+    border-end-start-radius: 0;
   }
 
   .markdown-body ul,
   .markdown-body ol {
-    padding-left: 1.5rem;
+    padding-inline-start: 1.5rem;
     margin: 0.5rem 0;
   }
 
@@ -166,7 +207,7 @@
   .markdown-body td {
     border: 1px solid var(--border-base);
     padding: 0.5rem 0.75rem;
-    text-align: left;
+    text-align: start;
     color: var(--text-primary);
     background-color: transparent;
   }
@@ -220,8 +261,11 @@
     border-radius: 4px;
     cursor: pointer;
     color: var(--text-secondary);
-    transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
-    margin-left: auto;
+    transition:
+      background-color 150ms ease,
+      color 150ms ease,
+      border-color 150ms ease;
+    margin-inline-start: auto;
     font-size: var(--font-size-sm);
   }
 

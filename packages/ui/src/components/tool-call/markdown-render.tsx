@@ -31,10 +31,9 @@ export function createMarkdownContentRenderer(params: {
     const size = options.size || "default"
     const disableHighlight = options.disableHighlight || false
     const messageClass = `message-text tool-call-markdown${size === "large" ? " tool-call-markdown-large" : ""}`
-    const disableScrollTracking = options.disableScrollTracking || false
-    const registerRef = disableScrollTracking ? registerUntracked : registerTracked
-
     const state = params.toolState()
+    const disableScrollTracking = options.disableScrollTracking || (state?.status !== "running" && state?.status !== "pending")
+    const registerRef = disableScrollTracking ? registerUntracked : registerTracked
     const shouldDeferMarkdown = Boolean(state && (state.status === "running" || state.status === "pending") && disableHighlight)
     if (shouldDeferMarkdown) {
       return (
@@ -43,7 +42,7 @@ export function createMarkdownContentRenderer(params: {
           ref={registerRef}
           onScroll={disableScrollTracking ? undefined : params.scrollHelpers.handleScroll}
         >
-          <pre class="whitespace-pre-wrap break-words text-sm font-mono">{options.content}</pre>
+          <pre class="whitespace-pre-wrap break-words text-sm font-mono" dir="auto">{options.content}</pre>
           {params.scrollHelpers.renderSentinel({ disableTracking: disableScrollTracking })}
         </div>
       )

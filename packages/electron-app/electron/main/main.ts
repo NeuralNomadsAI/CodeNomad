@@ -1,17 +1,86 @@
 import { app, BrowserView, BrowserWindow, nativeImage, session, shell } from "electron"
 import http from "node:http"
 import https from "node:https"
-import { existsSync } from "fs"
+import { existsSync, mkdirSync, rmSync } from "fs"
 import { dirname, join } from "path"
 import { fileURLToPath } from "url"
 import { createApplicationMenu } from "./menu"
 import { setupCliIPC } from "./ipc"
+import { configureMediaPermissionHandlers } from "./permissions"
 import { CliProcessManager } from "./process-manager"
 
 const mainFilename = fileURLToPath(import.meta.url)
 const mainDirname = dirname(mainFilename)
 
 const isMac = process.platform === "darwin"
+
+function configureDevStoragePaths() {
+  if (app.isPackaged) {
+    return
+  }
+
+  const appName = "CodeNomad"
+
+  try {
+    app.setName(appName)
+
+    const userDataPath = join(app.getPath("appData"), appName)
+    const sessionDataPath = join(userDataPath, "session-data")
+
+    mkdirSync(userDataPath, { recursive: true })
+    mkdirSync(sessionDataPath, { recursive: true })
+
+    app.setPath("userData", userDataPath)
+    app.setPath("sessionData", sessionDataPath)
+  } catch (error) {
+    console.warn("[cli] failed to configure dev storage paths", error)
+  }
+}
+
+configureDevStoragePaths()
+
+function configurePackagedStoragePaths() {
+  if (!app.isPackaged) {
+    return
+  }
+
+  try {
+    const sessionDataPath = join(app.getPath("userData"), "session-data-v2")
+    mkdirSync(sessionDataPath, { recursive: true })
+    app.setPath("sessionData", sessionDataPath)
+  } catch (error) {
+    console.warn("[electron-startup] failed to configure packaged session data path", error)
+  }
+}
+
+configurePackagedStoragePaths()
+
+function cleanupPackagedChromiumStorage() {
+  if (!app.isPackaged) {
+    return
+  }
+
+  const roots = [app.getPath("sessionData"), app.getPath("userData"), join(app.getPath("userData"), "session-data")]
+  const names = ["Service Worker", "QuotaManager", "QuotaManager-journal"]
+
+  for (const root of roots) {
+    for (const name of names) {
+      const candidate = join(root, name)
+      if (!existsSync(candidate)) {
+        continue
+      }
+
+      try {
+        rmSync(candidate, { recursive: true, force: true })
+        console.info("[electron-startup] removed stale Chromium storage", candidate)
+      } catch (error) {
+        console.warn("[electron-startup] failed to remove stale Chromium storage", candidate, error)
+      }
+    }
+  }
+}
+
+cleanupPackagedChromiumStorage()
 
 const cliManager = new CliProcessManager()
 let mainWindow: BrowserWindow | null = null
@@ -20,6 +89,8 @@ let pendingCliUrl: string | null = null
 let pendingBootstrapToken: string | null = null
 let showingLoadingScreen = false
 let preloadingView: BrowserView | null = null
+const remoteWindowOrigins = new Map<number, Set<string>>()
+const insecureWindowOrigins = new Map<number, Set<string>>()
 
 if (isMac) {
   app.commandLine.appendSwitch("disable-spell-checking")
@@ -88,12 +159,30 @@ function loadLoadingScreen(window: BrowserWindow) {
       : window.loadFile(target.source)
 
   loader.catch((error) => {
+    if (isIgnorableNavigationError(error)) {
+      return
+    }
     console.error("[cli] failed to load loading screen:", error)
   })
 }
 
-function getAllowedRendererOrigins(): string[] {
+function isIgnorableNavigationError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false
+  }
+
+  const code = "code" in error ? String((error as { code?: unknown }).code ?? "") : ""
+  const message = "message" in error ? String((error as { message?: unknown }).message ?? "") : ""
+  return code === "ERR_ABORTED" || code === "ERR_FAILED" || message.includes("ERR_ABORTED") || message.includes("ERR_FAILED")
+}
+
+function getAllowedRendererOrigins(window?: BrowserWindow | null): string[] {
   const origins = new Set<string>()
+  if (window) {
+    for (const origin of remoteWindowOrigins.get(window.id) ?? []) {
+      origins.add(origin)
+    }
+  }
   const rendererCandidates = [currentCliUrl, process.env.VITE_DEV_SERVER_URL, process.env.ELECTRON_RENDERER_URL]
   for (const candidate of rendererCandidates) {
     if (!candidate) {
@@ -108,13 +197,13 @@ function getAllowedRendererOrigins(): string[] {
   return Array.from(origins)
 }
 
-function shouldOpenExternally(url: string): boolean {
+function shouldOpenExternally(url: string, window?: BrowserWindow | null): boolean {
   try {
     const parsed = new URL(url)
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       return true
     }
-    const allowedOrigins = getAllowedRendererOrigins()
+    const allowedOrigins = getAllowedRendererOrigins(window)
     return !allowedOrigins.includes(parsed.origin)
   } catch {
     return false
@@ -127,7 +216,7 @@ function setupNavigationGuards(window: BrowserWindow) {
   }
 
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (shouldOpenExternally(url)) {
+    if (shouldOpenExternally(url, window)) {
       handleExternal(url)
       return { action: "deny" }
     }
@@ -135,11 +224,52 @@ function setupNavigationGuards(window: BrowserWindow) {
   })
 
   window.webContents.on("will-navigate", (event, url) => {
-    if (shouldOpenExternally(url)) {
+    if (shouldOpenExternally(url, window)) {
       event.preventDefault()
       handleExternal(url)
     }
   })
+}
+
+function setWindowAllowedOrigin(window: BrowserWindow, url: string) {
+  try {
+    const origin = new URL(url).origin
+    remoteWindowOrigins.set(window.id, new Set([origin]))
+  } catch (error) {
+    console.warn("[cli] failed to store allowed origin", url, error)
+  }
+}
+
+function clearWindowAllowedOrigin(window: BrowserWindow) {
+  remoteWindowOrigins.delete(window.id)
+}
+
+function addWindowInsecureOrigin(window: BrowserWindow, url: string) {
+  try {
+    const origin = new URL(url).origin
+    insecureWindowOrigins.set(window.id, new Set([origin]))
+  } catch (error) {
+    console.warn("[cli] failed to store insecure origin", url, error)
+  }
+}
+
+function clearWindowInsecureOrigin(window: BrowserWindow) {
+  insecureWindowOrigins.delete(window.id)
+}
+
+function isInsecureOriginAllowed(url: string) {
+  try {
+    const targetOrigin = new URL(url).origin
+    for (const origins of insecureWindowOrigins.values()) {
+      if (origins.has(targetOrigin)) {
+        return true
+      }
+    }
+  } catch {
+    return false
+  }
+
+  return false
 }
 
 let cachedPreloadPath: string | null = null
@@ -203,28 +333,34 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       spellcheck: !isMac,
+      additionalArguments: ["--codenomad-window-context=local"],
     },
   })
 
-  setupNavigationGuards(mainWindow)
+  const window = mainWindow
+
+  setupNavigationGuards(window)
 
   if (isMac) {
-    mainWindow.webContents.session.setSpellCheckerEnabled(false)
+    window.webContents.session.setSpellCheckerEnabled(false)
   }
 
   showingLoadingScreen = true
   currentCliUrl = null
-  loadLoadingScreen(mainWindow)
+  clearWindowAllowedOrigin(window)
+  loadLoadingScreen(window)
 
   if (process.env.NODE_ENV === "development") {
-    mainWindow.webContents.openDevTools({ mode: "detach" })
+    window.webContents.openDevTools({ mode: "detach" })
   }
 
-  createApplicationMenu(mainWindow)
-  setupCliIPC(mainWindow, cliManager)
+  createApplicationMenu(window)
+  setupCliIPC(window, cliManager)
 
-  mainWindow.on("closed", () => {
+  window.on("closed", () => {
     destroyPreloadingView()
+    clearWindowAllowedOrigin(window)
+    clearWindowInsecureOrigin(window)
     mainWindow = null
     currentCliUrl = null
     pendingCliUrl = null
@@ -306,6 +442,9 @@ function startCliPreload(url: string) {
   })
 
   view.webContents.loadURL(url).catch((error) => {
+    if (isIgnorableNavigationError(error)) {
+      return
+    }
     console.error("[cli] failed to preload CLI view:", error)
     if (preloadingView === view) {
       destroyPreloadingView(view)
@@ -321,13 +460,78 @@ function finalizeCliSwap(url: string) {
     return
   }
 
+  const window = mainWindow
   showingLoadingScreen = false
   currentCliUrl = url
+  setWindowAllowedOrigin(window, url)
   pendingCliUrl = null
-  mainWindow.loadURL(url).catch((error) => console.error("[cli] failed to load CLI view:", error))
+  window.loadURL(url).catch((error) => {
+    if (isIgnorableNavigationError(error)) {
+      return
+    }
+    console.error("[cli] failed to load CLI view:", error)
+  })
 }
 
-const SESSION_COOKIE_NAME = "codenomad_session"
+function buildRemoteWindowTitle(name: string, baseUrl: string) {
+  return `${name} - ${baseUrl}`
+}
+
+function lockWindowTitle(window: BrowserWindow, title: string) {
+  window.setTitle(title)
+  window.webContents.on("page-title-updated", (event) => {
+    event.preventDefault()
+    window.setTitle(title)
+  })
+}
+
+function buildRemoteErrorHtml(name: string, baseUrl: string, message: string) {
+  const escapedName = name.replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[char] ?? char))
+  const escapedUrl = baseUrl.replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[char] ?? char))
+  const escapedMessage = message.replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[char] ?? char))
+  return `<!doctype html><html><head><meta charset="utf-8" /><title>${escapedName}</title><style>body{margin:0;background:#111827;color:#f9fafb;font-family:Inter,system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}main{max-width:560px;width:100%;background:rgba(17,24,39,.88);border:1px solid rgba(255,255,255,.08);border-radius:20px;padding:28px;box-shadow:0 25px 60px rgba(0,0,0,.45)}h1{margin:0 0 10px;font-size:1.5rem}p{margin:0 0 10px;color:#cbd5e1;line-height:1.5}code{display:block;margin-top:16px;padding:12px 14px;border-radius:12px;background:#0f172a;color:#bfdbfe;overflow:auto}</style></head><body><main><h1>${escapedName}</h1><p>Could not connect to the remote server.</p><p>${escapedMessage}</p><code>${escapedUrl}</code></main></body></html>`
+}
+
+async function openRemoteWindow(payload: { id: string; name: string; baseUrl: string; skipTlsVerify: boolean }) {
+  const targetUrl = new URL(payload.baseUrl)
+  const title = buildRemoteWindowTitle(payload.name, payload.baseUrl)
+  const window = new BrowserWindow({
+    width: 1400,
+    height: 900,
+    minWidth: 800,
+    minHeight: 600,
+    backgroundColor: "#1a1a1a",
+    icon: getIconPath(),
+    title,
+    webPreferences: {
+      preload: getPreloadPath(),
+      contextIsolation: true,
+      nodeIntegration: false,
+      spellcheck: !isMac,
+      additionalArguments: ["--codenomad-window-context=remote"],
+    },
+  })
+  lockWindowTitle(window, title)
+
+  setWindowAllowedOrigin(window, targetUrl.toString())
+  if (payload.skipTlsVerify) {
+    addWindowInsecureOrigin(window, targetUrl.toString())
+  }
+
+  setupNavigationGuards(window)
+  window.on("closed", () => {
+    clearWindowAllowedOrigin(window)
+    clearWindowInsecureOrigin(window)
+  })
+
+  try {
+    await window.loadURL(targetUrl.toString())
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(buildRemoteErrorHtml(payload.name, payload.baseUrl, message))}`)
+  }
+}
+
 let bootstrapExchangeInFlight = false
 
 function extractCookieValue(setCookieHeader: string | string[] | undefined, name: string): string | null {
@@ -350,6 +554,7 @@ function extractCookieValue(setCookieHeader: string | string[] | undefined, name
 }
 
 async function exchangeBootstrapToken(baseUrl: string, token: string): Promise<boolean> {
+  const sessionCookieName = cliManager.getAuthCookieName()
   const target = new URL("/api/auth/token", baseUrl)
   const body = JSON.stringify({ token })
 
@@ -380,14 +585,14 @@ async function exchangeBootstrapToken(baseUrl: string, token: string): Promise<b
     return false
   }
 
-  const sessionId = extractCookieValue(result.setCookie, SESSION_COOKIE_NAME)
+  const sessionId = extractCookieValue(result.setCookie, sessionCookieName)
   if (!sessionId) {
     return false
   }
 
   await session.defaultSession.cookies.set({
     url: baseUrl,
-    name: SESSION_COOKIE_NAME,
+    name: sessionCookieName,
     value: sessionId,
     httpOnly: true,
     path: "/",
@@ -489,6 +694,7 @@ app.whenReady().then(() => {
 
   if (isMac) {
     session.defaultSession.setSpellCheckerEnabled(false)
+    configureMediaPermissionHandlers(getAllowedRendererOrigins)
     app.on("browser-window-created", (_, window) => {
       window.webContents.session.setSpellCheckerEnabled(false)
     })
@@ -502,6 +708,17 @@ app.whenReady().then(() => {
   }
 
   createWindow()
+  ;(mainWindow as BrowserWindow & { __codenomadOpenRemoteWindow?: typeof openRemoteWindow }).__codenomadOpenRemoteWindow = openRemoteWindow
+
+  app.on("certificate-error", (event, _webContents, url, error, _certificate, callback) => {
+    if (isInsecureOriginAllowed(url)) {
+      event.preventDefault()
+      console.warn("[cli] allowing insecure remote certificate for", url, error)
+      callback(true)
+      return
+    }
+    callback(false)
+  })
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

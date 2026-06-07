@@ -15,6 +15,9 @@
   ring-color: var(--accent-primary);
 }
 
+.selector-trigger:disabled,
+.selector-trigger[aria-disabled="true"],
+.selector-trigger[data-disabled],
 .selector-trigger-disabled {
   @apply opacity-50 cursor-not-allowed;
 }
@@ -37,11 +40,11 @@
 }
 
 .selector-trigger-primary--align-left {
-  @apply text-left w-full;
+  @apply text-start w-full;
 }
 
 .selector-trigger-secondary {
-  @apply text-xs text-left truncate;
+  @apply text-xs text-start truncate w-full;
   color: var(--text-muted);
 }
 
@@ -213,13 +216,13 @@
 }
 
 .selector-section {
-  @apply px-3 py-2 border-b;
+  @apply px-3 py-1 border-b;
   border-color: var(--border-base);
   background-color: var(--surface-secondary);
 }
 
 .selector-section-title {
-  @apply text-xs font-medium;
+  @apply block text-[11px] font-medium truncate;
   color: var(--text-muted);
 }
 

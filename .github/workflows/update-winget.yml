@@ -1,0 +1,85 @@
+name: Update Winget
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+
+jobs:
+  update-winget:
+    name: Submit Winget manifest update
+    if: ${{ !github.event.release.draft && !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    env:
+      WINGET_PACKAGE_IDENTIFIER: ${{ vars.WINGET_PACKAGE_IDENTIFIER || 'NeuralNomadsAI.CodeNomad' }}
+      WINGET_FORK_OWNER: ${{ vars.WINGET_FORK_OWNER || 'pascalandr' }}
+      WINGET_WINDOWS_ASSET_NAME_TEMPLATE: ${{ vars.WINGET_WINDOWS_ASSET_NAME_TEMPLATE || 'CodeNomad-Tauri-windows-x64-{version}.zip' }}
+      WINGET_ASSET_WAIT_TIMEOUT_SECONDS: ${{ vars.WINGET_ASSET_WAIT_TIMEOUT_SECONDS || '900' }}
+      WINGET_ASSET_POLL_INTERVAL_SECONDS: ${{ vars.WINGET_ASSET_POLL_INTERVAL_SECONDS || '15' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Wait for Windows Tauri release asset
+        id: release_asset
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          args=(
+            --repo "${{ github.repository }}"
+            --release-id "${{ github.event.release.id }}"
+            --tag "${{ github.event.release.tag_name }}"
+            --asset-name-template "$WINGET_WINDOWS_ASSET_NAME_TEMPLATE"
+            --timeout-seconds "$WINGET_ASSET_WAIT_TIMEOUT_SECONDS"
+            --poll-interval-seconds "$WINGET_ASSET_POLL_INTERVAL_SECONDS"
+            --github-output "$GITHUB_OUTPUT"
+          )
+
+          node scripts/winget/resolve-release-asset.cjs "${args[@]}"
+
+      - name: Log resolved Winget asset metadata
+        run: |
+          echo "Resolved asset: ${{ steps.release_asset.outputs.asset_name }}"
+          echo "Resolved version: ${{ steps.release_asset.outputs.version }}"
+          echo "Resolved SHA-256: ${{ steps.release_asset.outputs.asset_sha256 }}"
+
+      - name: Validate fork configuration
+        env:
+          GH_TOKEN: ${{ secrets.WINGET_GITHUB_TOKEN }}
+          EXPECTED_OWNER: ${{ env.WINGET_FORK_OWNER }}
+        run: |
+          set -euo pipefail
+          token_owner="$(gh api user --jq '.login')"
+          fork_name="$(gh api "repos/$EXPECTED_OWNER/winget-pkgs" --jq '.full_name')"
+          parent_name="$(gh api "repos/$EXPECTED_OWNER/winget-pkgs" --jq '.parent.full_name')"
+          is_fork="$(gh api "repos/$EXPECTED_OWNER/winget-pkgs" --jq '.fork')"
+
+          if [ "$token_owner" != "$EXPECTED_OWNER" ]; then
+            echo "WINGET_GITHUB_TOKEN belongs to '$token_owner' but WINGET_FORK_OWNER is '$EXPECTED_OWNER'" >&2
+            exit 1
+          fi
+
+          if [ "$is_fork" != "true" ] || [ "$parent_name" != "microsoft/winget-pkgs" ]; then
+            echo "Configured fork must be $EXPECTED_OWNER/winget-pkgs forked from microsoft/winget-pkgs" >&2
+            exit 1
+          fi
+
+          echo "Validated fork: $fork_name"
+
+      - name: Submit update to Winget
+        uses: vedantmgoyal9/winget-releaser@v2
+        with:
+          identifier: ${{ env.WINGET_PACKAGE_IDENTIFIER }}
+          version: ${{ steps.release_asset.outputs.version }}
+          release-tag: ${{ github.event.release.tag_name }}
+          installers-regex: ${{ steps.release_asset.outputs.asset_regex }}
+          fork-user: ${{ env.WINGET_FORK_OWNER }}
+          token: ${{ secrets.WINGET_GITHUB_TOKEN }}

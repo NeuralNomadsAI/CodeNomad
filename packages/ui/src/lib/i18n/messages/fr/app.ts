@@ -1,9 +1,9 @@
 export const appMessages = {
   "app.launchError.title": "Impossible de lancer OpenCode",
-  "app.launchError.description": "Nous n'avons pas pu démarrer le binaire OpenCode sélectionné. Consultez la sortie d'erreur ci-dessous ou choisissez un autre binaire dans les Paramètres avancés.",
+  "app.launchError.description": "Nous n'avons pas pu démarrer le binaire OpenCode sélectionné. Consultez la sortie d'erreur ci-dessous ou choisissez un autre binaire dans les paramètres OpenCode.",
   "app.launchError.binaryPathLabel": "Chemin du binaire",
   "app.launchError.errorOutputLabel": "Sortie d'erreur",
-  "app.launchError.openAdvancedSettings": "Ouvrir les paramètres avancés",
+  "app.launchError.openAdvancedSettings": "Ouvrir les paramètres OpenCode",
   "app.launchError.close": "Fermer",
   "app.launchError.closeTitle": "Fermer (Esc)",
   "app.launchError.fallbackMessage": "Échec du lancement de l'espace de travail",

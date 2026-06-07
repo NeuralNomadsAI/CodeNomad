@@ -1,5 +1,6 @@
 import { Show, type Component, type JSX } from "solid-js"
 
+import { useI18n } from "../../../../../lib/i18n"
 import OverlayList from "./OverlayList"
 
 type SplitFilePanelList = {
@@ -24,12 +25,13 @@ interface SplitFilePanelProps {
 }
 
 const SplitFilePanel: Component<SplitFilePanelProps> = (props) => {
+  const { t } = useI18n()
   return (
     <div class="files-tab-container">
       <div class="files-tab-header">
         <div class="files-tab-header-row">
           <button type="button" class="files-toggle-button" onClick={props.onToggleList}>
-            {props.listOpen ? "Hide files" : "Show files"}
+            {props.listOpen ? t("instanceShell.filesShell.hideFiles") : t("instanceShell.filesShell.showFiles")}
           </button>
 
           {props.header}

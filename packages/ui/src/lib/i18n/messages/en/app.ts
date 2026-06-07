@@ -1,9 +1,9 @@
 export const appMessages = {
   "app.launchError.title": "Unable to launch OpenCode",
-  "app.launchError.description": "We couldn't start the selected OpenCode binary. Review the error output below or choose a different binary from Advanced Settings.",
+  "app.launchError.description": "We couldn't start the selected OpenCode binary. Review the error output below or choose a different binary from OpenCode settings.",
   "app.launchError.binaryPathLabel": "Binary path",
   "app.launchError.errorOutputLabel": "Error output",
-  "app.launchError.openAdvancedSettings": "Open Advanced Settings",
+  "app.launchError.openAdvancedSettings": "Open OpenCode Settings",
   "app.launchError.close": "Close",
   "app.launchError.closeTitle": "Close (Esc)",
   "app.launchError.fallbackMessage": "Failed to launch workspace",

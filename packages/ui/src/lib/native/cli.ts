@@ -1,11 +1,16 @@
-import { runtimeEnv } from "../runtime-env"
+import { invoke } from "@tauri-apps/api/core"
+import { canRestartCli, isElectronHost, isTauriHost } from "../runtime-env"
 import { getLogger } from "../logger"
 const log = getLogger("actions")
 
 
 export async function restartCli(): Promise<boolean> {
+  if (!canRestartCli()) {
+    return false
+  }
+
   try {
-    if (runtimeEnv.host === "electron") {
+    if (isElectronHost()) {
       const api = (window as typeof window & { electronAPI?: { restartCli?: () => Promise<unknown> } }).electronAPI
       if (api?.restartCli) {
         await api.restartCli()
@@ -14,10 +19,9 @@ export async function restartCli(): Promise<boolean> {
       return false
     }
 
-    if (runtimeEnv.host === "tauri") {
-      const tauri = (window as typeof window & { __TAURI__?: { invoke?: <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T> } }).__TAURI__
-      if (tauri?.invoke) {
-        await tauri.invoke("cli_restart")
+    if (isTauriHost()) {
+      if (typeof window.__TAURI__?.core?.invoke === "function") {
+        await invoke("cli_restart")
         return true
       }
       return false

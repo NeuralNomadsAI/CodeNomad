@@ -1,17 +1,15 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "CodeNomad",
-  "version": "0.1.0",
-  "identifier": "ai.opencode.client",
+  "version": "0.17.0",
+  "identifier": "ai.neuralnomads.codenomad.client",
   "build": {
     "beforeDevCommand": "npm run dev:bootstrap",
     "beforeBuildCommand": "npm run bundle:server",
     "frontendDist": "resources/ui-loading"
   },
-
- 
-
   "app": {
+    "enableGTKAppId": true,
     "withGlobalTauri": true,
     "windows": [
       {
@@ -33,18 +31,62 @@
     ],
     "security": {
       "assetProtocol": {
-        "scope": ["**"]
+        "scope": [
+          "**"
+        ]
       },
-      "capabilities": ["main-window-native-dialogs"]
+      "capabilities": [
+        "main-window-native-dialogs"
+      ]
     }
   },
   "bundle": {
     "active": true,
+    "linux": {
+      "appimage": {
+        "files": {
+          "/usr/share/applications/ai.neuralnomads.codenomad.client.desktop": "icons/linux/ai.neuralnomads.codenomad.client.desktop"
+        }
+      },
+      "deb": {
+        "files": {
+          "/usr/share/applications/ai.neuralnomads.codenomad.client.desktop": "icons/linux/ai.neuralnomads.codenomad.client.desktop",
+          "/usr/share/icons/hicolor/32x32/apps/codenomad-tauri.png": "icons/linux/32x32.png",
+          "/usr/share/icons/hicolor/48x48/apps/codenomad-tauri.png": "icons/linux/48x48.png",
+          "/usr/share/icons/hicolor/64x64/apps/codenomad-tauri.png": "icons/linux/64x64.png",
+          "/usr/share/icons/hicolor/128x128/apps/codenomad-tauri.png": "icons/linux/128x128.png",
+          "/usr/share/icons/hicolor/256x256/apps/codenomad-tauri.png": "icons/linux/256x256.png",
+          "/usr/share/icons/hicolor/512x512/apps/codenomad-tauri.png": "icons/linux/512x512.png"
+        }
+      },
+      "rpm": {
+        "files": {
+          "/usr/share/applications/ai.neuralnomads.codenomad.client.desktop": "icons/linux/ai.neuralnomads.codenomad.client.desktop",
+          "/usr/share/icons/hicolor/32x32/apps/codenomad-tauri.png": "icons/linux/32x32.png",
+          "/usr/share/icons/hicolor/48x48/apps/codenomad-tauri.png": "icons/linux/48x48.png",
+          "/usr/share/icons/hicolor/64x64/apps/codenomad-tauri.png": "icons/linux/64x64.png",
+          "/usr/share/icons/hicolor/128x128/apps/codenomad-tauri.png": "icons/linux/128x128.png",
+          "/usr/share/icons/hicolor/256x256/apps/codenomad-tauri.png": "icons/linux/256x256.png",
+          "/usr/share/icons/hicolor/512x512/apps/codenomad-tauri.png": "icons/linux/512x512.png"
+        }
+      }
+    },
     "resources": [
+      "resources/node",
       "resources/server",
       "resources/ui-loading"
     ],
-    "icon": ["icon.icns", "icon.ico", "icon.png"],
-    "targets": ["app", "appimage", "deb", "rpm", "nsis"]
+    "icon": [
+      "icon.icns",
+      "icon.ico",
+      "icon.png"
+    ],
+    "targets": [
+      "app",
+      "appimage",
+      "deb",
+      "rpm",
+      "nsis"
+    ]
   }
 }

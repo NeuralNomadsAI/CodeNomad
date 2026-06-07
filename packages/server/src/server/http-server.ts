@@ -3,11 +3,12 @@ import cors from "@fastify/cors"
 import fastifyStatic from "@fastify/static"
 import replyFrom from "@fastify/reply-from"
 import fs from "fs"
+import { connect as connectTcp, type Socket } from "net"
 import path from "path"
-import { fetch } from "undici"
+import { connect as connectTls, type TLSSocket } from "tls"
+import { fetch, type Headers } from "undici"
 import type { Logger } from "../logger"
 import { WorkspaceManager } from "../workspaces/manager"
-import { isValidWorktreeSlug, listWorktrees, resolveRepoRoot } from "../workspaces/git-worktrees"
 
 import type { SettingsService } from "../settings/service"
 import { FileSystemBrowser } from "../filesystem/browser"
@@ -15,18 +16,31 @@ import { EventBus } from "../events/bus"
 import { registerWorkspaceRoutes } from "./routes/workspaces"
 import { registerSettingsRoutes } from "./routes/settings"
 import { registerFilesystemRoutes } from "./routes/filesystem"
+import { registerConfigFileRoutes } from "./routes/config-files"
 import { registerMetaRoutes } from "./routes/meta"
 import { registerEventRoutes } from "./routes/events"
 import { registerStorageRoutes } from "./routes/storage"
 import { registerPluginRoutes } from "./routes/plugin"
 import { registerBackgroundProcessRoutes } from "./routes/background-processes"
 import { registerWorktreeRoutes } from "./routes/worktrees"
+import { registerSpeechRoutes } from "./routes/speech"
+import { registerRemoteServerRoutes } from "./routes/remote-servers"
+import { registerRemoteProxyRoutes } from "./routes/remote-proxy"
+import { registerSideCarRoutes } from "./routes/sidecars"
+import { registerPreviewRoutes } from "./routes/previews"
 import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import { BackgroundProcessManager } from "../background-processes/manager"
 import type { AuthManager } from "../auth/manager"
 import { registerAuthRoutes } from "./routes/auth"
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth"
+import type { SpeechService } from "../speech/service"
+import { ClientConnectionManager } from "../clients/connection-manager"
+import { PluginChannelManager } from "../plugins/channel"
+import { VoiceModeManager } from "../plugins/voice-mode"
+import type { SideCarManager } from "../sidecars/manager"
+import type { PreviewManager } from "../previews/manager"
+import type { RemoteProxySessionManager } from "./remote-proxy"
 
 interface HttpServerDeps {
   bindHost: string
@@ -41,7 +55,14 @@ interface HttpServerDeps {
   eventBus: EventBus
   serverMeta: ServerMeta
   instanceStore: InstanceStore
+  speechService: SpeechService
+  sidecarManager: SideCarManager
+  previewManager: PreviewManager
   authManager: AuthManager
+  clientConnectionManager: ClientConnectionManager
+  pluginChannel: PluginChannelManager
+  voiceModeManager: VoiceModeManager
+  remoteProxySessionManager: RemoteProxySessionManager
   uiStaticDir: string
   uiDevServerUrl?: string
   logger: Logger
@@ -183,14 +204,19 @@ export function createHttpServer(deps: HttpServerDeps) {
       publicPagePaths.add("/auth/token")
     }
 
-    if (publicApiPaths.has(pathname) || publicPagePaths.has(pathname)) {
+    const isLoopbackRemoteProxyDelete =
+      request.method === "DELETE" &&
+      pathname.startsWith("/api/remote-proxy/sessions/") &&
+      deps.authManager.isLoopbackRequest(request)
+
+    if (publicApiPaths.has(pathname) || publicPagePaths.has(pathname) || isLoopbackRemoteProxyDelete) {
       done()
       return
     }
 
     const session = deps.authManager.getSessionFromRequest(request)
 
-    const requiresAuthForApi = pathname.startsWith("/api/") || pathname.startsWith("/workspaces/")
+    const requiresAuthForApi = pathname.startsWith("/api/") || pathname.startsWith("/workspaces/") || pathname.startsWith("/sidecars/") || pathname.startsWith("/previews/")
     if (requiresAuthForApi && !session) {
       // Allow OpenCode plugin -> CodeNomad calls with per-instance basic auth.
       const pluginMatch = pathname.match(/^\/workspaces\/([^/]+)\/plugin(?:\/|$)/)
@@ -244,23 +270,52 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerWorkspaceRoutes(app, { workspaceManager: deps.workspaceManager })
   registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger })
   registerFilesystemRoutes(app, { fileSystemBrowser: deps.fileSystemBrowser })
+  registerConfigFileRoutes(app)
   registerMetaRoutes(app, { serverMeta: deps.serverMeta })
-  registerEventRoutes(app, { eventBus: deps.eventBus, registerClient: registerSseClient, logger: sseLogger })
+  registerEventRoutes(app, {
+    eventBus: deps.eventBus,
+    registerClient: registerSseClient,
+    logger: sseLogger,
+    connectionManager: deps.clientConnectionManager,
+  })
   registerWorktreeRoutes(app, { workspaceManager: deps.workspaceManager })
   registerStorageRoutes(app, {
     instanceStore: deps.instanceStore,
     eventBus: deps.eventBus,
     workspaceManager: deps.workspaceManager,
   })
-  registerPluginRoutes(app, { workspaceManager: deps.workspaceManager, eventBus: deps.eventBus, logger: proxyLogger })
+  registerRemoteServerRoutes(app, { logger: apiLogger })
+  registerRemoteProxyRoutes(app, { logger: proxyLogger, sessionManager: deps.remoteProxySessionManager })
+  registerSpeechRoutes(app, { speechService: deps.speechService })
+  registerSideCarRoutes(app, { sidecarManager: deps.sidecarManager })
+  registerPreviewRoutes(app, { previewManager: deps.previewManager })
+  registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger })
+  registerPreviewProxyRoutes(app, { previewManager: deps.previewManager, logger: proxyLogger })
+  setupSideCarWebSocketProxy(app, {
+    sidecarManager: deps.sidecarManager,
+    authManager: deps.authManager,
+    logger: proxyLogger,
+  })
+  setupPreviewWebSocketProxy(app, {
+    previewManager: deps.previewManager,
+    authManager: deps.authManager,
+    logger: proxyLogger,
+  })
+  registerPluginRoutes(app, {
+    workspaceManager: deps.workspaceManager,
+    eventBus: deps.eventBus,
+    logger: proxyLogger,
+    channel: deps.pluginChannel,
+    voiceModeManager: deps.voiceModeManager,
+  })
   registerBackgroundProcessRoutes(app, { backgroundProcessManager })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger })
 
 
   if (deps.uiDevServerUrl) {
-    setupDevProxy(app, deps.uiDevServerUrl, deps.authManager)
+    setupDevProxy(app, deps.uiDevServerUrl, deps.authManager, deps.previewManager, proxyLogger)
   } else {
-    setupStaticUi(app, deps.uiStaticDir, deps.authManager)
+    setupStaticUi(app, deps.uiStaticDir, deps.authManager, deps.previewManager, proxyLogger)
   }
 
   return {
@@ -327,70 +382,176 @@ interface InstanceProxyDeps {
   logger: Logger
 }
 
+interface SideCarProxyDeps {
+  sidecarManager: SideCarManager
+  logger: Logger
+}
+
+interface SideCarWebSocketProxyDeps extends SideCarProxyDeps {
+  authManager: AuthManager
+}
+
+interface PreviewProxyDeps {
+  previewManager: PreviewManager
+  logger: Logger
+}
+
+interface PreviewWebSocketProxyDeps extends PreviewProxyDeps {
+  authManager: AuthManager
+}
+
+function registerSideCarProxyRoutes(app: FastifyInstance, deps: SideCarProxyDeps) {
+  const proxyBaseHandler = async (
+    request: FastifyRequest<{ Params: { id: string } }>,
+    reply: FastifyReply,
+  ) => {
+    await proxySideCarRequest({
+      request,
+      reply,
+      sidecarManager: deps.sidecarManager,
+      logger: deps.logger,
+      pathSuffix: "",
+    })
+  }
+
+  const proxyWildcardHandler = async (
+    request: FastifyRequest<{ Params: { id: string; "*": string } }>,
+    reply: FastifyReply,
+  ) => {
+    await proxySideCarRequest({
+      request,
+      reply,
+      sidecarManager: deps.sidecarManager,
+      logger: deps.logger,
+      pathSuffix: request.params["*"] ?? "",
+    })
+  }
+
+  app.all("/sidecars/:id", proxyBaseHandler)
+  app.all("/sidecars/:id/*", proxyWildcardHandler)
+}
+
+function registerPreviewProxyRoutes(app: FastifyInstance, deps: PreviewProxyDeps) {
+  const proxyBaseHandler = async (
+    request: FastifyRequest<{ Params: { token: string } }>,
+    reply: FastifyReply,
+  ) => {
+    await proxyPreviewRequest({
+      request,
+      reply,
+      previewManager: deps.previewManager,
+      logger: deps.logger,
+      pathSuffix: "",
+    })
+  }
+
+  const proxyWildcardHandler = async (
+    request: FastifyRequest<{ Params: { token: string; "*": string } }>,
+    reply: FastifyReply,
+  ) => {
+    await proxyPreviewRequest({
+      request,
+      reply,
+      previewManager: deps.previewManager,
+      logger: deps.logger,
+      pathSuffix: request.params["*"] ?? "",
+    })
+  }
+
+  app.all("/previews/:token", proxyBaseHandler)
+  app.all("/previews/:token/*", proxyWildcardHandler)
+}
+
+function setupSideCarWebSocketProxy(app: FastifyInstance, deps: SideCarWebSocketProxyDeps) {
+  app.server.on("upgrade", (request, socket, head) => {
+    const rawUrl = request.url ?? "/"
+    const parsed = parseSideCarUpgradePath(rawUrl)
+    if (!parsed) {
+      return
+    }
+
+    void proxySideCarWebSocketUpgrade({
+      request,
+      socket: socket as Socket,
+      head,
+      sidecarId: parsed.sidecarId,
+      incomingPath: parsed.pathname,
+      search: parsed.search,
+      sidecarManager: deps.sidecarManager,
+      authManager: deps.authManager,
+      logger: deps.logger,
+    })
+  })
+}
+
+function setupPreviewWebSocketProxy(app: FastifyInstance, deps: PreviewWebSocketProxyDeps) {
+  app.server.on("upgrade", (request, socket, head) => {
+    const rawUrl = request.url ?? "/"
+    const parsed = parsePreviewUpgradePath(rawUrl)
+    if (!parsed) {
+      return
+    }
+
+    void proxyPreviewWebSocketUpgrade({
+      request,
+      socket: socket as Socket,
+      head,
+      token: parsed.token,
+      incomingPath: parsed.pathname,
+      search: parsed.search,
+      previewManager: deps.previewManager,
+      authManager: deps.authManager,
+      logger: deps.logger,
+    })
+  })
+}
+
 function registerInstanceProxyRoutes(app: FastifyInstance, deps: InstanceProxyDeps) {
   app.register(async (instance) => {
     instance.removeAllContentTypeParsers()
     instance.addContentTypeParser("*", (req, body, done) => done(null, body))
 
     const proxyBaseHandler = async (
-      request: FastifyRequest<{ Params: { id: string; slug: string } }>,
+      request: FastifyRequest<{ Params: { id: string } }>,
       reply: FastifyReply,
     ) => {
       await proxyWorkspaceRequest({
         request,
         reply,
         workspaceManager: deps.workspaceManager,
-        worktreeSlug: request.params.slug,
         pathSuffix: "",
         logger: deps.logger,
       })
     }
 
     const proxyWildcardHandler = async (
-      request: FastifyRequest<{ Params: { id: string; slug: string; "*": string } }>,
+      request: FastifyRequest<{ Params: { id: string; "*": string } }>,
       reply: FastifyReply,
     ) => {
       await proxyWorkspaceRequest({
         request,
         reply,
         workspaceManager: deps.workspaceManager,
-        worktreeSlug: request.params.slug,
         pathSuffix: request.params["*"] ?? "",
         logger: deps.logger,
       })
     }
 
-    instance.all("/workspaces/:id/worktrees/:slug/instance", proxyBaseHandler)
-    instance.all("/workspaces/:id/worktrees/:slug/instance/*", proxyWildcardHandler)
+    instance.all("/workspaces/:id/instance", proxyBaseHandler)
+    instance.all("/workspaces/:id/instance/*", proxyWildcardHandler)
   })
 }
 
 const INSTANCE_PROXY_HOST = "127.0.0.1"
-
-// Special-case OpenCode directory override.
-//
-// UI clients may need to scope certain requests to an arbitrary directory that is not
-// part of the Git worktree list. Since the OpenCode SDK does not reliably support
-// injecting per-request headers, we encode an override into the *path* and strip it
-// before proxying to the instance.
-//
-// Example proxied request path:
-//   /workspaces/:id/worktrees/:slug/instance/__dir/<base64url>/session/create
-//
-// The server will decode <base64url> -> absolute directory, validate it, then set
-// x-opencode-directory accordingly and forward the request to /session/create.
-const OPENCODE_DIR_OVERRIDE_PREFIX = "__dir/"
-const OPENCODE_DIR_OVERRIDE_MAX_LEN = 4096
 
 async function proxyWorkspaceRequest(args: {
   request: FastifyRequest
   reply: FastifyReply
   workspaceManager: WorkspaceManager
   logger: Logger
-  worktreeSlug: string
   pathSuffix?: string
 }) {
-  const { request, reply, workspaceManager, logger, worktreeSlug } = args
+  const { request, reply, workspaceManager, logger } = args
   const workspaceId = (request.params as { id: string }).id
   const workspace = workspaceManager.get(workspaceId)
 
@@ -467,48 +628,7 @@ async function proxyWorkspaceRequest(args: {
     return
   }
 
-  if (!isValidWorktreeSlug(worktreeSlug)) {
-    reply.code(400).send({ error: "Invalid worktree slug" })
-    return
-  }
-
-  let extracted: { overrideDirectory: string | null; forwardedSuffix: string | undefined }
-  try {
-    extracted = extractOpencodeDirectoryOverride(args.pathSuffix)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Invalid directory override"
-    reply.code(400).send({ error: message })
-    return
-  }
-  let directory: string | null = null
-  let forwardedSuffix = extracted.forwardedSuffix
-
-  if (extracted.overrideDirectory) {
-    try {
-      directory = validateAndNormalizeOverrideDirectory({
-        overrideDirectory: extracted.overrideDirectory,
-        workspaceRoot: workspace.path,
-      })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Invalid directory override"
-      reply.code(400).send({ error: message })
-      return
-    }
-  } else {
-    directory = await resolveWorktreeDirectory({
-      workspaceId,
-      workspacePath: workspace.path,
-      worktreeSlug,
-      logger,
-    })
-
-    if (!directory) {
-      reply.code(404).send({ error: "Worktree not found" })
-      return
-    }
-  }
-
-  const normalizedSuffix = normalizeInstanceSuffix(forwardedSuffix)
+  const normalizedSuffix = normalizeInstanceSuffix(args.pathSuffix)
   const queryIndex = (request.raw.url ?? "").indexOf("?")
   const search = queryIndex >= 0 ? (request.raw.url ?? "").slice(queryIndex) : ""
   const targetUrl = `http://${INSTANCE_PROXY_HOST}:${port}${normalizedSuffix}${search}`
@@ -524,13 +644,6 @@ async function proxyWorkspaceRequest(args: {
       if (instanceAuthHeader) {
         headers.authorization = instanceAuthHeader
       }
-
-      // OpenCode expects the *full* path; we send it via header to avoid query tampering.
-      const isNonASCII = /[^\x00-\x7F]/.test(directory)
-      const encodedDirectory = isNonASCII ? encodeURIComponent(directory) : directory
-
-      // Overwrite any client-provided value (case-insensitive headers are normalized by Node).
-      ;(headers as Record<string, unknown>)["x-opencode-directory"] = encodedDirectory
 
       if (logger.isLevelEnabled("trace")) {
         const outgoing: Record<string, unknown> = {}
@@ -551,8 +664,6 @@ async function proxyWorkspaceRequest(args: {
             workspaceId,
             method: request.method,
             targetUrl,
-            worktreeSlug,
-            directory,
             contentType: request.headers["content-type"],
             body: bodyToJson(request.body),
             headers: outgoing,
@@ -572,89 +683,6 @@ async function proxyWorkspaceRequest(args: {
   })
 }
 
-function extractOpencodeDirectoryOverride(pathSuffix: string | undefined): {
-  overrideDirectory: string | null
-  forwardedSuffix: string | undefined
-} {
-  if (!pathSuffix) {
-    return { overrideDirectory: null, forwardedSuffix: pathSuffix }
-  }
-
-  // Fastify wildcard param does not include a leading slash.
-  const trimmed = pathSuffix.replace(/^\/+/, "")
-  if (!trimmed.startsWith(OPENCODE_DIR_OVERRIDE_PREFIX)) {
-    return { overrideDirectory: null, forwardedSuffix: pathSuffix }
-  }
-
-  const rest = trimmed.slice(OPENCODE_DIR_OVERRIDE_PREFIX.length)
-  const slashIndex = rest.indexOf("/")
-  const encoded = (slashIndex >= 0 ? rest.slice(0, slashIndex) : rest).trim()
-  const remaining = slashIndex >= 0 ? rest.slice(slashIndex + 1) : ""
-
-  if (!encoded) {
-    throw new Error("Missing directory override")
-  }
-
-  if (encoded.length > OPENCODE_DIR_OVERRIDE_MAX_LEN) {
-    throw new Error("Directory override too large")
-  }
-
-  let overrideDirectory = ""
-  try {
-    overrideDirectory = decodeBase64Url(encoded)
-  } catch {
-    throw new Error("Invalid directory override")
-  }
-  const forwardedSuffix = remaining
-  return { overrideDirectory, forwardedSuffix }
-}
-
-function decodeBase64Url(input: string): string {
-  // base64url -> base64
-  const normalized = input.replace(/-/g, "+").replace(/_/g, "/")
-  const padding = normalized.length % 4 === 0 ? "" : "=".repeat(4 - (normalized.length % 4))
-  const base64 = `${normalized}${padding}`
-  return Buffer.from(base64, "base64").toString("utf-8")
-}
-
-function validateAndNormalizeOverrideDirectory(params: { overrideDirectory: string; workspaceRoot: string }): string {
-  const raw = params.overrideDirectory.trim()
-  if (!raw) {
-    throw new Error("Override directory is empty")
-  }
-
-  if (!path.isAbsolute(raw)) {
-    throw new Error("Override directory must be an absolute path")
-  }
-
-  if (!fs.existsSync(raw)) {
-    throw new Error(`Override directory does not exist: ${raw}`)
-  }
-
-  const stats = fs.statSync(raw)
-  if (!stats.isDirectory()) {
-    throw new Error(`Override path is not a directory: ${raw}`)
-  }
-
-  const normalizedOverride = fs.realpathSync(raw)
-  const normalizedRoot = fs.realpathSync(params.workspaceRoot)
-
-  if (!isSubpath(normalizedOverride, normalizedRoot)) {
-    throw new Error("Override directory must be within the workspace root")
-  }
-
-  return normalizedOverride
-}
-
-function isSubpath(candidate: string, root: string): boolean {
-  const rel = path.relative(root, candidate)
-  if (rel === "") return true
-  if (rel === "..") return false
-  if (rel.startsWith(`..${path.sep}`)) return false
-  if (path.isAbsolute(rel)) return false
-  return true
-}
-
 function normalizeInstanceSuffix(pathSuffix: string | undefined) {
   if (!pathSuffix || pathSuffix === "/") {
     return "/"
@@ -663,53 +691,13 @@ function normalizeInstanceSuffix(pathSuffix: string | undefined) {
   return trimmed.length === 0 ? "/" : `/${trimmed}`
 }
 
-type WorktreeCacheEntry = {
-  expiresAt: number
-  repoRoot: string
-  worktrees: Array<{ slug: string; directory: string }>
-}
-
-const WORKTREE_CACHE_TTL_MS = 2000
-const worktreeCache = new Map<string, WorktreeCacheEntry>()
-
-async function getCachedWorktrees(params: { workspaceId: string; workspacePath: string; logger: Logger }) {
-  const cached = worktreeCache.get(params.workspaceId)
-  const now = Date.now()
-  if (cached && cached.expiresAt > now) {
-    return cached
-  }
-
-  const { repoRoot } = await resolveRepoRoot(params.workspacePath, params.logger)
-  const worktrees = await listWorktrees({ repoRoot, workspaceFolder: params.workspacePath, logger: params.logger })
-  const entry: WorktreeCacheEntry = {
-    expiresAt: now + WORKTREE_CACHE_TTL_MS,
-    repoRoot,
-    worktrees: worktrees.map((wt) => ({ slug: wt.slug, directory: wt.directory })),
-  }
-  worktreeCache.set(params.workspaceId, entry)
-  return entry
-}
-
-async function resolveWorktreeDirectory(params: {
-  workspaceId: string
-  workspacePath: string
-  worktreeSlug: string
-  logger: Logger
-}): Promise<string | null> {
-  const { worktreeSlug } = params
-  const cached = await getCachedWorktrees({ workspaceId: params.workspaceId, workspacePath: params.workspacePath, logger: params.logger })
-  const match = cached.worktrees.find((wt) => wt.slug === worktreeSlug)
-  if (match) {
-    return match.directory
-  }
-
-  // If the slug is new (e.g., created moments ago), refresh once.
-  worktreeCache.delete(params.workspaceId)
-  const refreshed = await getCachedWorktrees({ workspaceId: params.workspaceId, workspacePath: params.workspacePath, logger: params.logger })
-  return refreshed.worktrees.find((wt) => wt.slug === worktreeSlug)?.directory ?? null
-}
-
-function setupStaticUi(app: FastifyInstance, uiDir: string, authManager: AuthManager) {
+function setupStaticUi(
+  app: FastifyInstance,
+  uiDir: string,
+  authManager: AuthManager,
+  previewManager: PreviewManager,
+  logger: Logger,
+) {
   if (!uiDir) {
     app.log.warn("UI static directory not provided; API endpoints only")
     return
@@ -719,6 +707,14 @@ function setupStaticUi(app: FastifyInstance, uiDir: string, authManager: AuthMan
     app.log.warn({ uiDir }, "UI static directory missing; API endpoints only")
     return
   }
+
+  app.addHook("preHandler", (request, reply, done) => {
+    const session = authManager.getSessionFromRequest(request)
+    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger)) {
+      return
+    }
+    done()
+  })
 
   app.register(fastifyStatic, {
     root: uiDir,
@@ -736,6 +732,10 @@ function setupStaticUi(app: FastifyInstance, uiDir: string, authManager: AuthMan
     }
 
     const session = authManager.getSessionFromRequest(request)
+    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger)) {
+      return
+    }
+
     if (!session && wantsHtml(request)) {
       reply.redirect("/login")
       return
@@ -749,7 +749,13 @@ function setupStaticUi(app: FastifyInstance, uiDir: string, authManager: AuthMan
   })
 }
 
-function setupDevProxy(app: FastifyInstance, upstreamBase: string, authManager: AuthManager) {
+function setupDevProxy(
+  app: FastifyInstance,
+  upstreamBase: string,
+  authManager: AuthManager,
+  previewManager: PreviewManager,
+  logger: Logger,
+) {
   app.log.info({ upstreamBase }, "Proxying UI requests to development server")
   app.setNotFoundHandler((request: FastifyRequest, reply: FastifyReply) => {
     const url = request.raw.url ?? ""
@@ -759,6 +765,10 @@ function setupDevProxy(app: FastifyInstance, upstreamBase: string, authManager: 
     }
 
     const session = authManager.getSessionFromRequest(request)
+    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger)) {
+      return
+    }
+
     if (!session && wantsHtml(request)) {
       reply.redirect("/login")
       return
@@ -766,6 +776,49 @@ function setupDevProxy(app: FastifyInstance, upstreamBase: string, authManager: 
 
     void proxyToDevServer(request, reply, upstreamBase)
   })
+}
+
+function proxyPreviewFallbackFromReferer(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  previewManager: PreviewManager,
+  logger: Logger,
+): boolean {
+  const rawUrl = request.raw.url ?? request.url ?? ""
+  const pathname = rawUrl.split("?")[0] ?? ""
+  if (!isPreviewFallbackPath(pathname)) {
+    return false
+  }
+
+  const refererHeader = request.headers.referer ?? request.headers.referrer
+  const referer = Array.isArray(refererHeader) ? refererHeader[0] : refererHeader
+  if (!referer) {
+    return false
+  }
+
+  const parsed = parsePreviewUpgradePath(referer)
+  if (!parsed) {
+    return false
+  }
+
+  void proxyPreviewAssetRequest({
+    request,
+    reply,
+    previewManager,
+    logger,
+    token: parsed.token,
+  })
+  return true
+}
+
+function isPreviewFallbackPath(pathname: string): boolean {
+  if (!pathname || pathname === "/") return false
+  if (pathname.startsWith("/api/") || pathname === "/api") return false
+  if (pathname.startsWith("/workspaces/")) return false
+  if (pathname.startsWith("/sidecars/")) return false
+  if (pathname.startsWith("/previews/")) return false
+  if (pathname.startsWith("/auth/") || pathname === "/login") return false
+  return true
 }
 
 async function proxyToDevServer(request: FastifyRequest, reply: FastifyReply, upstreamBase: string) {
@@ -810,4 +863,628 @@ function buildProxyHeaders(headers: FastifyRequest["headers"]): Record<string, s
     result[key] = Array.isArray(value) ? value.join(",") : value
   }
   return result
+}
+
+function buildFetchProxyHeaders(headers: FastifyRequest["headers"], targetOrigin: string): Record<string, string> {
+  const sanitized = sanitizeSideCarProxyRequestHeaders(
+    headers as Record<string, string | string[] | undefined>,
+    targetOrigin,
+  )
+  const result: Record<string, string> = {}
+  for (const [key, value] of Object.entries(sanitized)) {
+    if (!value) continue
+    if (key.toLowerCase() === "cookie") continue
+    result[key] = Array.isArray(value) ? value.join(",") : value
+  }
+  return result
+}
+
+function headersToRecord(headers: Headers): Record<string, string | string[] | undefined> {
+  const result: Record<string, string> = {}
+  headers.forEach((value, key) => {
+    result[key.toLowerCase()] = value
+  })
+  return result
+}
+
+function getHeaderValue(headers: Record<string, string | string[] | undefined>, key: string): string | undefined {
+  const value = headers[key.toLowerCase()]
+  return Array.isArray(value) ? value[0] : value
+}
+
+function shouldForwardRequestBody(method: string): boolean {
+  const normalized = method.toUpperCase()
+  return normalized !== "GET" && normalized !== "HEAD"
+}
+
+function isHtmlContentType(contentType: string): boolean {
+  const normalized = contentType.toLowerCase()
+  return normalized.includes("text/html") || normalized.includes("application/xhtml+xml")
+}
+
+function isCssContentType(contentType: string): boolean {
+  return contentType.toLowerCase().includes("text/css")
+}
+
+function rewritePreviewBodyUrls(body: string, publicBase: string, kind: "html" | "css"): string {
+  if (kind === "css") {
+    return rewriteCssPreviewUrls(body, publicBase)
+  }
+
+  return rewriteCssPreviewUrls(
+    body
+      .replace(/\b(src|href|action|poster|data)=(["'])\/(?!\/)([^"']*)\2/gi, (_match, attr: string, quote: string, pathValue: string) => {
+        return `${attr}=${quote}${publicBase}/${pathValue}${quote}`
+      })
+      .replace(/\bsrcset=(["'])([^"']*)\1/gi, (_match, quote: string, value: string) => {
+        return `srcset=${quote}${rewriteSrcsetPreviewUrls(value, publicBase)}${quote}`
+      }),
+    publicBase,
+  )
+}
+
+function rewriteCssPreviewUrls(body: string, publicBase: string): string {
+  return body.replace(/url\((\s*)(["']?)\/(?!\/)([^"')]+)\2(\s*)\)/gi, (_match, before: string, quote: string, pathValue: string, after: string) => {
+    return `url(${before}${quote}${publicBase}/${pathValue}${quote}${after})`
+  })
+}
+
+function rewriteSrcsetPreviewUrls(value: string, publicBase: string): string {
+  return value
+    .split(",")
+    .map((entry) => {
+      const trimmed = entry.trimStart()
+      if (!trimmed.startsWith("/") || trimmed.startsWith("//")) return entry
+      const leading = entry.slice(0, entry.length - trimmed.length)
+      return `${leading}${publicBase}${trimmed}`
+    })
+    .join(",")
+}
+
+async function proxySideCarRequest(args: {
+  request: FastifyRequest
+  reply: FastifyReply
+  sidecarManager: SideCarManager
+  logger: Logger
+  pathSuffix?: string
+}) {
+  const sidecarId = (args.request.params as { id?: string }).id ?? ""
+  const sidecar = await args.sidecarManager.get(sidecarId)
+  if (!sidecar) {
+    args.reply.code(404).send({ error: "SideCar not found" })
+    return
+  }
+
+  const pathname = (args.request.raw.url ?? args.request.url ?? "").split("?")[0] ?? ""
+  const queryIndex = (args.request.raw.url ?? args.request.url ?? "").indexOf("?")
+  const search = queryIndex >= 0 ? (args.request.raw.url ?? args.request.url ?? "").slice(queryIndex) : ""
+  const pathSuffix = args.pathSuffix ?? ""
+  const requestPath = pathSuffix ? `${args.sidecarManager.buildProxyBasePath(sidecarId)}/${pathSuffix.replace(/^\/+/, "")}` : args.sidecarManager.buildProxyBasePath(sidecarId)
+  const targetPath = args.sidecarManager.buildTargetPath(sidecarId, requestPath, search)
+  const targetOrigin = args.sidecarManager.buildTargetOrigin(sidecar)
+  const targetUrl = `${targetOrigin}${targetPath}`
+  args.logger.debug({ sidecarId: sidecar.id, targetUrl, pathname, prefixMode: sidecar.prefixMode }, "Proxying request to SideCar")
+
+  await proxyTargetRequest({
+    reply: args.reply,
+    logger: args.logger,
+    targetUrl,
+    targetOrigin,
+    logContext: { sidecarId: sidecar.id },
+    errorMessage: "SideCar proxy failed",
+    rewriteHeaders: (headers) => rewriteSideCarResponseHeaders(headers, sidecarId, targetOrigin, sidecar.prefixMode),
+  })
+}
+
+async function proxyPreviewRequest(args: {
+  request: FastifyRequest
+  reply: FastifyReply
+  previewManager: PreviewManager
+  logger: Logger
+  pathSuffix?: string
+}) {
+  const token = (args.request.params as { token?: string }).token ?? ""
+  const preview = args.previewManager.get(token)
+  if (!preview) {
+    args.reply.code(404).send({ error: "Preview not found" })
+    return
+  }
+
+  const rawUrl = args.request.raw.url ?? args.request.url ?? ""
+  const queryIndex = rawUrl.indexOf("?")
+  const search = queryIndex >= 0 ? rawUrl.slice(queryIndex) : ""
+  const pathSuffix = args.pathSuffix ?? ""
+  const requestPath = pathSuffix ? `${args.previewManager.buildProxyBasePath(token)}/${pathSuffix.replace(/^\/+/, "")}` : args.previewManager.buildProxyBasePath(token)
+  const targetUrl = args.previewManager.buildTargetUrl(token, requestPath, search)
+  if (!targetUrl) {
+    args.reply.code(404).send({ error: "Preview not found" })
+    return
+  }
+
+  args.logger.debug({ previewToken: token, targetUrl: targetUrl.toString() }, "Proxying request to preview")
+  await proxyPreviewTargetRequest({
+    request: args.request,
+    reply: args.reply,
+    logger: args.logger,
+    targetUrl: targetUrl.toString(),
+    targetOrigin: targetUrl.origin,
+    publicBase: args.previewManager.buildProxyBasePath(token),
+    logContext: { previewToken: token },
+    errorMessage: "Preview proxy failed",
+    rewriteHeaders: (headers) => rewritePreviewResponseHeaders(headers, token, targetUrl.origin),
+  })
+}
+
+async function proxyPreviewAssetRequest(args: {
+  request: FastifyRequest
+  reply: FastifyReply
+  previewManager: PreviewManager
+  logger: Logger
+  token: string
+}) {
+  const rawUrl = args.request.raw.url ?? args.request.url ?? ""
+  const queryIndex = rawUrl.indexOf("?")
+  const search = queryIndex >= 0 ? rawUrl.slice(queryIndex) : ""
+  const pathname = rawUrl.split("?")[0] ?? "/"
+  const targetUrl = args.previewManager.buildTargetUrl(args.token, pathname, search)
+  if (!targetUrl) {
+    args.reply.code(404).send({ error: "Preview not found" })
+    return
+  }
+
+  args.logger.debug({ previewToken: args.token, targetUrl: targetUrl.toString() }, "Proxying preview fallback asset")
+  await proxyPreviewTargetRequest({
+    request: args.request,
+    reply: args.reply,
+    logger: args.logger,
+    targetUrl: targetUrl.toString(),
+    targetOrigin: targetUrl.origin,
+    publicBase: args.previewManager.buildProxyBasePath(args.token),
+    logContext: { previewToken: args.token, previewFallback: true },
+    errorMessage: "Preview proxy failed",
+    rewriteHeaders: (headers) => rewritePreviewResponseHeaders(headers, args.token, targetUrl.origin),
+  })
+}
+
+async function proxyPreviewTargetRequest(args: {
+  request: FastifyRequest
+  reply: FastifyReply
+  logger: Logger
+  targetUrl: string
+  targetOrigin: string
+  publicBase: string
+  logContext: Record<string, unknown>
+  errorMessage: string
+  rewriteHeaders: (headers: Record<string, string | string[] | undefined>) => Record<string, string | string[] | undefined>
+}) {
+  try {
+    const response = await fetch(args.targetUrl, {
+      method: args.request.method,
+      headers: buildFetchProxyHeaders(args.request.headers, args.targetOrigin),
+      body: shouldForwardRequestBody(args.request.method) ? (args.request.raw as any) : undefined,
+      duplex: shouldForwardRequestBody(args.request.method) ? "half" : undefined,
+      redirect: "manual",
+    } as any)
+
+    const headers = args.rewriteHeaders(headersToRecord(response.headers))
+    const contentType = getHeaderValue(headers, "content-type") ?? response.headers.get("content-type") ?? ""
+    delete headers["content-length"]
+    delete headers["content-encoding"]
+
+    for (const [key, value] of Object.entries(headers)) {
+      if (value !== undefined) args.reply.header(key, value)
+    }
+    args.reply.code(response.status)
+
+    if (!response.body || args.request.method === "HEAD") {
+      args.reply.send()
+      return
+    }
+
+    if (isHtmlContentType(contentType) || isCssContentType(contentType)) {
+      const text = await response.text()
+      args.reply.send(rewritePreviewBodyUrls(text, args.publicBase, isCssContentType(contentType) ? "css" : "html"))
+      return
+    }
+
+    args.reply.send(Buffer.from(await response.arrayBuffer()))
+  } catch (error) {
+    args.logger.error({ ...args.logContext, err: error, targetUrl: args.targetUrl }, args.errorMessage)
+    if (!args.reply.sent) {
+      args.reply.code(502).send({ error: args.errorMessage })
+    }
+  }
+}
+
+async function proxyTargetRequest(args: {
+  reply: FastifyReply
+  logger: Logger
+  targetUrl: string
+  targetOrigin: string
+  logContext: Record<string, unknown>
+  errorMessage: string
+  rewriteHeaders: (headers: Record<string, string | string[] | undefined>) => Record<string, string | string[] | undefined>
+}) {
+  await args.reply.from(args.targetUrl, {
+    rewriteRequestHeaders: (_originalRequest, headers) =>
+      sanitizeSideCarProxyRequestHeaders(headers as Record<string, string | string[] | undefined>, args.targetOrigin),
+    rewriteHeaders: args.rewriteHeaders,
+    onError: (reply, { error }) => {
+      args.logger.error({ ...args.logContext, err: error, targetUrl: args.targetUrl }, args.errorMessage)
+      if (!reply.sent) {
+        reply.code(502).send({ error: args.errorMessage })
+      }
+    },
+  })
+}
+
+function parseSideCarUpgradePath(rawUrl: string): { sidecarId: string; pathname: string; search: string } | null {
+  let parsed: URL
+  try {
+    parsed = new URL(rawUrl, "http://localhost")
+  } catch {
+    return null
+  }
+
+  const match = parsed.pathname.match(/^\/sidecars\/([^/]+)(?:\/.*)?$/)
+  if (!match) {
+    return null
+  }
+
+  try {
+    return {
+      sidecarId: decodeURIComponent(match[1] ?? ""),
+      pathname: parsed.pathname,
+      search: parsed.search,
+    }
+  } catch {
+    return null
+  }
+}
+
+function parsePreviewUpgradePath(rawUrl: string): { token: string; pathname: string; search: string } | null {
+  let parsed: URL
+  try {
+    parsed = new URL(rawUrl, "http://localhost")
+  } catch {
+    return null
+  }
+
+  const match = parsed.pathname.match(/^\/previews\/([^/]+)(?:\/.*)?$/)
+  if (!match) {
+    return null
+  }
+
+  try {
+    return {
+      token: decodeURIComponent(match[1] ?? ""),
+      pathname: parsed.pathname,
+      search: parsed.search,
+    }
+  } catch {
+    return null
+  }
+}
+
+async function proxySideCarWebSocketUpgrade(args: {
+  request: import("http").IncomingMessage
+  socket: Socket
+  head: Buffer
+  sidecarId: string
+  incomingPath: string
+  search: string
+  sidecarManager: SideCarManager
+  authManager: AuthManager
+  logger: Logger
+}) {
+  const { request, socket, head, sidecarId, incomingPath, search, sidecarManager, authManager, logger } = args
+
+  if (!isWebSocketUpgradeRequest(request)) {
+    rejectUpgrade(socket, 400, "Bad Request")
+    return
+  }
+
+  const session = authManager.getSessionFromHeaders(request.headers)
+  if (!session) {
+    rejectUpgrade(socket, 401, "Unauthorized")
+    return
+  }
+
+  const sidecar = await sidecarManager.get(sidecarId)
+  if (!sidecar) {
+    rejectUpgrade(socket, 404, "Not Found")
+    return
+  }
+
+  const targetOrigin = sidecarManager.buildTargetOrigin(sidecar)
+  const targetPath = sidecarManager.buildTargetPath(sidecarId, incomingPath, search)
+  const targetUrl = new URL(`${targetOrigin}${targetPath}`)
+  logger.debug({ sidecarId, targetUrl: targetUrl.toString(), prefixMode: sidecar.prefixMode }, "Proxying websocket to SideCar")
+
+  proxyTargetWebSocketUpgrade({
+    request,
+    socket,
+    head,
+    targetUrl,
+    logger,
+    logContext: { sidecarId },
+    proxyLabel: "SideCar",
+  })
+}
+
+async function proxyPreviewWebSocketUpgrade(args: {
+  request: import("http").IncomingMessage
+  socket: Socket
+  head: Buffer
+  token: string
+  incomingPath: string
+  search: string
+  previewManager: PreviewManager
+  authManager: AuthManager
+  logger: Logger
+}) {
+  const { request, socket, head, token, incomingPath, search, previewManager, authManager, logger } = args
+
+  if (!isWebSocketUpgradeRequest(request)) {
+    rejectUpgrade(socket, 400, "Bad Request")
+    return
+  }
+
+  const session = authManager.getSessionFromHeaders(request.headers)
+  if (!session) {
+    rejectUpgrade(socket, 401, "Unauthorized")
+    return
+  }
+
+  const targetUrl = previewManager.buildTargetUrl(token, incomingPath, search)
+  if (!targetUrl) {
+    rejectUpgrade(socket, 404, "Not Found")
+    return
+  }
+
+  logger.debug({ previewToken: token, targetUrl: targetUrl.toString() }, "Proxying websocket to preview")
+  proxyTargetWebSocketUpgrade({
+    request,
+    socket,
+    head,
+    targetUrl,
+    logger,
+    logContext: { previewToken: token },
+    proxyLabel: "preview",
+    stripCookies: true,
+  })
+}
+
+function proxyTargetWebSocketUpgrade(args: {
+  request: import("http").IncomingMessage
+  socket: Socket
+  head: Buffer
+  targetUrl: URL
+  logger: Logger
+  logContext: Record<string, unknown>
+  proxyLabel: string
+  stripCookies?: boolean
+}) {
+  const { request, socket, head, targetUrl, logger, logContext, proxyLabel, stripCookies } = args
+  const { socket: upstream, readyEvent } = createSideCarUpstreamSocket(targetUrl)
+
+  const closeBoth = () => {
+    if (!socket.destroyed) {
+      socket.destroy()
+    }
+    if (!upstream.destroyed) {
+      upstream.destroy()
+    }
+  }
+
+  upstream.once("error", (error) => {
+    logger.error({ ...logContext, err: error, targetUrl: targetUrl.toString() }, `Failed to proxy ${proxyLabel} websocket`)
+    rejectUpgrade(socket, 502, "Bad Gateway")
+    if (!upstream.destroyed) {
+      upstream.destroy()
+    }
+  })
+
+  socket.once("error", (error) => {
+    logger.debug({ ...logContext, err: error }, `${proxyLabel} websocket client socket errored`)
+    if (!upstream.destroyed) {
+      upstream.destroy()
+    }
+  })
+
+  upstream.once(readyEvent, () => {
+    try {
+      upstream.write(buildSideCarWebSocketRequest(request, targetUrl, { stripCookies }))
+      if (head.length > 0) {
+        upstream.write(head)
+      }
+      upstream.pipe(socket)
+      socket.pipe(upstream)
+    } catch (error) {
+      logger.error({ ...logContext, err: error, targetUrl: targetUrl.toString() }, `Failed to forward ${proxyLabel} websocket upgrade`)
+      closeBoth()
+    }
+  })
+
+  upstream.once("close", () => {
+    if (!socket.destroyed) {
+      socket.end()
+    }
+  })
+
+  socket.once("close", () => {
+    if (!upstream.destroyed) {
+      upstream.end()
+    }
+  })
+}
+
+function createSideCarUpstreamSocket(targetUrl: URL): { socket: Socket | TLSSocket; readyEvent: "connect" | "secureConnect" } {
+  const port = Number(targetUrl.port || (targetUrl.protocol === "https:" ? 443 : 80))
+  if (targetUrl.protocol === "https:") {
+    return {
+      socket: connectTls({
+        host: targetUrl.hostname,
+        port,
+        servername: targetUrl.hostname,
+      }),
+      readyEvent: "secureConnect",
+    }
+  }
+  return {
+    socket: connectTcp(port, targetUrl.hostname),
+    readyEvent: "connect",
+  }
+}
+
+function buildSideCarWebSocketRequest(
+  request: import("http").IncomingMessage,
+  targetUrl: URL,
+  options?: { stripCookies?: boolean },
+): string {
+  const pathWithQuery = `${targetUrl.pathname}${targetUrl.search}`
+  const requestLine = `${request.method ?? "GET"} ${pathWithQuery} HTTP/${request.httpVersion}\r\n`
+  const headerLines: string[] = []
+  const rawHeaders = request.rawHeaders ?? []
+  const blockedHeaders = getBlockedSideCarRequestHeaders()
+
+  for (let index = 0; index < rawHeaders.length; index += 2) {
+    const key = rawHeaders[index]
+    const value = rawHeaders[index + 1]
+    if (!key || value === undefined) continue
+    const lower = key.toLowerCase()
+    if (blockedHeaders.has(lower)) continue
+    if (options?.stripCookies && lower === "cookie") continue
+    if (lower === "origin") {
+      headerLines.push(`Origin: ${targetUrl.origin}\r\n`)
+      continue
+    }
+    headerLines.push(`${key}: ${value}\r\n`)
+  }
+
+  const hostValue = targetUrl.port ? `${targetUrl.hostname}:${targetUrl.port}` : targetUrl.hostname
+  headerLines.push(`Host: ${hostValue}\r\n`)
+  headerLines.push("\r\n")
+
+  return requestLine + headerLines.join("")
+}
+
+function isWebSocketUpgradeRequest(request: import("http").IncomingMessage): boolean {
+  const upgrade = request.headers.upgrade
+  if (typeof upgrade !== "string" || upgrade.toLowerCase() !== "websocket") {
+    return false
+  }
+  const connection = request.headers.connection
+  const connectionValue = Array.isArray(connection) ? connection.join(",") : connection ?? ""
+  return connectionValue.toLowerCase().split(",").map((part) => part.trim()).includes("upgrade")
+}
+
+function rejectUpgrade(socket: Socket, statusCode: number, statusText: string) {
+  if (socket.destroyed) {
+    return
+  }
+  socket.write(`HTTP/1.1 ${statusCode} ${statusText}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`)
+  socket.destroy()
+}
+
+function rewriteSideCarResponseHeaders(
+  headers: Record<string, string | string[] | undefined>,
+  sidecarId: string,
+  targetOrigin: string,
+  prefixMode: "strip" | "preserve",
+) {
+  if (prefixMode === "preserve") {
+    return headers
+  }
+
+  const next = { ...headers }
+  const locationHeader = next.location
+  const location = Array.isArray(locationHeader) ? locationHeader[0] : locationHeader
+  if (!location) {
+    return next
+  }
+
+  const publicBase = `/sidecars/${encodeURIComponent(sidecarId)}`
+
+  if (location.startsWith("/")) {
+    next.location = `${publicBase}${location}`
+    return next
+  }
+
+  try {
+    const parsed = new URL(location)
+    if (parsed.origin === targetOrigin) {
+      next.location = `${publicBase}${parsed.pathname}${parsed.search}${parsed.hash}`
+    }
+  } catch {
+    // Relative redirects should continue to resolve against the public sidecar path.
+  }
+
+  return next
+}
+
+function rewritePreviewResponseHeaders(
+  headers: Record<string, string | string[] | undefined>,
+  token: string,
+  targetOrigin: string,
+) {
+  const next = { ...headers }
+  delete next["x-frame-options"]
+  delete next["content-security-policy"]
+  delete next["content-security-policy-report-only"]
+  delete next["set-cookie"]
+  delete next["set-cookie2"]
+
+  const locationHeader = next.location
+  const location = Array.isArray(locationHeader) ? locationHeader[0] : locationHeader
+  if (!location) {
+    return next
+  }
+
+  const publicBase = `/previews/${encodeURIComponent(token)}`
+  if (location.startsWith("/")) {
+    next.location = `${publicBase}${location}`
+    return next
+  }
+
+  try {
+    const parsed = new URL(location)
+    if (parsed.origin === targetOrigin) {
+      next.location = `${publicBase}${parsed.pathname}${parsed.search}${parsed.hash}`
+    }
+  } catch {
+    // Relative redirects should continue to resolve against the current preview path.
+  }
+
+  return next
+}
+
+function sanitizeSideCarProxyRequestHeaders(
+  headers: Record<string, string | string[] | undefined>,
+  targetOrigin: string,
+): Record<string, string | string[] | undefined> {
+  const blockedHeaders = getBlockedSideCarRequestHeaders()
+  const next: Record<string, string | string[] | undefined> = {}
+
+  for (const [key, value] of Object.entries(headers)) {
+    if (!value) continue
+    if (blockedHeaders.has(key.toLowerCase())) continue
+    next[key] = value
+  }
+
+  next.origin = targetOrigin
+  return next
+}
+
+function getBlockedSideCarRequestHeaders(): Set<string> {
+  return new Set([
+    "host",
+    "authorization",
+    "proxy-authorization",
+    "forwarded",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-port",
+    "x-forwarded-proto",
+  ])
 }

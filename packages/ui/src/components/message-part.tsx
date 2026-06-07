@@ -1,11 +1,12 @@
-import { Show, Match, Switch } from "solid-js"
-import ToolCall from "./tool-call"
+import { Match, Show, Suspense, Switch, lazy } from "solid-js"
 import { isItemExpanded, toggleItemExpanded } from "../stores/tool-call-state"
 import { Markdown } from "./markdown"
 import { useTheme } from "../lib/theme"
 import { partHasRenderableText, SDKPart, TextPart, ClientPart } from "../types/message"
 
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
+
+const LazyToolCall = lazy(() => import("./tool-call"))
 
 interface MessagePartProps {
   part: ClientPart
@@ -32,19 +33,7 @@ export default function MessagePart(props: MessagePartProps) {
   const shouldHideTextPart = () => {
     const part = props.part
     if (!part || part.type !== "text") return false
-
-    const isSynthetic = Boolean((part as any).synthetic)
-    if (!isSynthetic) return false
-
-    // Keep optimistic user prompts visible; hide other synthetic user helper parts.
-    if (props.messageType === "user") {
-      const primaryId = props.primaryUserTextPartId
-      if (!primaryId) return false
-      return part.id !== primaryId
-    }
-
-    // Hide synthetic assistant text.
-    return true
+    return Boolean((part as any).synthetic)
   }
 
 
@@ -133,17 +122,19 @@ export default function MessagePart(props: MessagePartProps) {
         <Show when={!shouldHideTextPart() && partHasRenderableText(props.part)}>
           <div
             class={canRenderMarkdown() ? markdownContainerClass() : textContainerClass()}
+            dir="auto"
             data-role={textContainerRole()}
             data-part-type="text"
             data-part-id={typeof (props.part as any)?.id === "string" ? (props.part as any).id : undefined}
           >
-            <Show when={canRenderMarkdown()} fallback={<span class="text-primary">{plainTextContent()}</span>}>
+            <Show when={canRenderMarkdown()} fallback={<span class="text-primary" dir="auto">{plainTextContent()}</span>}>
               <Markdown
                 part={createTextPartForMarkdown()}
                 instanceId={props.instanceId}
                 sessionId={props.sessionId}
                 isDark={isDark()}
                 size={isAssistantMessage() ? "tight" : "base"}
+                escapeRawHtml={props.messageType === "user"}
                 onRendered={props.onRendered}
               />
             </Show>
@@ -152,12 +143,14 @@ export default function MessagePart(props: MessagePartProps) {
       </Match>
 
       <Match when={partType() === "tool"}>
-        <ToolCall
-          toolCall={props.part as ToolCallPart}
-          toolCallId={props.part?.id}
-          instanceId={props.instanceId}
-          sessionId={props.sessionId}
-        />
+        <Suspense fallback={<div class="tool-call tool-call-loading" />}>
+          <LazyToolCall
+            toolCall={props.part as ToolCallPart}
+            toolCallId={props.part?.id}
+            instanceId={props.instanceId}
+            sessionId={props.sessionId}
+          />
+        </Suspense>
       </Match>
 
 

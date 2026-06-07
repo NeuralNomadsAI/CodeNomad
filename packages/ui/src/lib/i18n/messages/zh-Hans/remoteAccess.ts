@@ -41,6 +41,8 @@ export const remoteAccessMessages = {
   "remoteAccess.sections.addresses.help": "从另一台设备打开或扫描，以接管控制权。",
   "remoteAccess.addresses.loading": "正在加载地址…",
   "remoteAccess.addresses.none": "暂时没有可用地址。",
+  "remoteAccess.addresses.actions.showOther": "显示另外 {count} 个地址",
+  "remoteAccess.addresses.actions.hideOther": "隐藏其他地址",
   "remoteAccess.address.scope.network": "网络",
   "remoteAccess.address.scope.loopback": "回环",
   "remoteAccess.address.scope.internal": "内部",

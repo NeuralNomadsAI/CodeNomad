@@ -1,6 +1,6 @@
 {
   "name": "@codenomad/tauri-app",
-  "version": "0.12.2",
+  "version": "0.17.0",
   "private": true,
   "license": "MIT",
   "scripts": {
@@ -8,9 +8,11 @@
     "dev:ui": "npm run dev --workspace @codenomad/ui",
     "dev:prep": "node ./scripts/dev-prep.js",
     "dev:bootstrap": "npm run dev:prep && npm run dev:ui",
+    "sync:version": "node ./scripts/sync-tauri-version.js",
     "prebuild": "node ./scripts/prebuild.js",
     "bundle:server": "npm run prebuild",
-    "build": "tauri build"
+    "build": "tauri build",
+    "smoke:resources": "node ../../scripts/smoke-packaged-resources.cjs --resources src-tauri/resources --loading src-tauri/resources/ui-loading"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.9.4"

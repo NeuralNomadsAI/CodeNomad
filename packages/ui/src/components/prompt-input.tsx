@@ -1,9 +1,9 @@
-import { createSignal, Show, onMount, onCleanup, createEffect, on } from "solid-js"
-import { ArrowBigUp, ArrowBigDown } from "lucide-solid"
-import UnifiedPicker from "./unified-picker"
+import { Suspense, createEffect, createSignal, lazy, on, onCleanup, Show } from "solid-js"
+import { ArrowBigUp, ArrowBigDown, Loader2, Mic, Paperclip, Volume2, X } from "lucide-solid"
 import ExpandButton from "./expand-button"
 import { clearAttachments, removeAttachment } from "../stores/attachments"
 import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
+import { createPastedPlaceholderRegex, pastedDisplayCounterRegex } from "./prompt-input/attachmentPlaceholders"
 import Kbd from "./kbd"
 import { getActiveInstance } from "../stores/instances"
 import { agents, executeCustomCommand } from "../stores/sessions"
@@ -11,21 +11,79 @@ import { getCommands } from "../stores/commands"
 import { showAlertDialog } from "../stores/alerts"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
+import { serverApi } from "../lib/api-client"
+import { isDesktopHost, isLocalWindow } from "../lib/runtime-env"
 import { preferences } from "../stores/preferences"
 import type { ExpandState, PromptInputApi, PromptInputProps, PromptInsertMode, PromptMode } from "./prompt-input/types"
+import type { Attachment } from "../types/attachment"
+import type { FileSystemEntry } from "../../../server/src/api-types"
+import DirectoryBrowserDialog from "./directory-browser-dialog"
 import { usePromptState } from "./prompt-input/usePromptState"
 import { usePromptAttachments } from "./prompt-input/usePromptAttachments"
 import { usePromptPicker } from "./prompt-input/usePromptPicker"
 import { usePromptKeyDown } from "./prompt-input/usePromptKeyDown"
+import { usePromptVoiceInput } from "./prompt-input/usePromptVoiceInput"
+import {
+  canUseConversationMode,
+  clearConversationPlaybackForInstance,
+  isConversationModeEnabled,
+  toggleConversationMode,
+} from "../stores/conversation-speech"
 const log = getLogger("actions")
+const LazyUnifiedPicker = lazy(() => import("./unified-picker"))
+const DEFAULT_PROMPT_FIELD_HEIGHT = 104
+const MAX_PROMPT_FIELD_HEIGHT_RATIO = 0.6
+
+type ResizeDragState = {
+  pointerId: number
+  startY: number
+  startHeight: number
+  maxHeight: number
+}
+
+function getConsumedPastedTextAttachmentIds(text: string, attachments: Attachment[]): string[] {
+  if (!text || attachments.length === 0) return []
+
+  const usedCounters = new Set<string>()
+  for (const match of text.matchAll(createPastedPlaceholderRegex())) {
+    const counter = match?.[1]
+    if (counter) usedCounters.add(counter)
+  }
+
+  if (usedCounters.size === 0) return []
+
+  const consumed = new Set<string>()
+
+  for (const attachment of attachments) {
+    if (!attachment?.id) continue
+    if (attachment?.source?.type !== "text") continue
+    const display = attachment.display
+    if (typeof display !== "string") continue
+    const match = display.match(pastedDisplayCounterRegex)
+    if (!match?.[1]) continue
+    if (usedCounters.has(match[1])) {
+      consumed.add(attachment.id)
+    }
+  }
+
+  return Array.from(consumed)
+}
 
 export default function PromptInput(props: PromptInputProps) {
   const { t } = useI18n()
   const [, setIsFocused] = createSignal(false)
   const [mode, setMode] = createSignal<PromptMode>("normal")
   const [expandState, setExpandState] = createSignal<ExpandState>("normal")
+  const [inputHeight, setInputHeight] = createSignal<number | null>(null)
+  const [isResizing, setIsResizing] = createSignal(false)
+  const [isFileBrowserOpen, setIsFileBrowserOpen] = createSignal(false)
   const SELECTION_INSERT_MAX_LENGTH = 2000
+  const MAX_READABLE_PICKED_FILE_BYTES = 5 * 1024 * 1024
   let textareaRef: HTMLTextAreaElement | undefined
+  let fileInputRef: HTMLInputElement | undefined
+  let wrapperRef: HTMLDivElement | undefined
+  let fieldContainerRef: HTMLDivElement | undefined
+  let resizeDragState: ResizeDragState | undefined
 
   const getPlaceholder = () => {
     if (mode() === "shell") {
@@ -61,6 +119,8 @@ export default function PromptInput(props: PromptInputProps) {
     handleDragOver,
     handleDragLeave,
     handleDrop,
+    handleFileSelection,
+    handleFilePathAttachment,
     syncAttachmentCounters,
     handleExpandTextAttachment,
     handleRemoveAttachment,
@@ -71,6 +131,7 @@ export default function PromptInput(props: PromptInputProps) {
     prompt,
     setPrompt,
     getTextarea: () => textareaRef ?? null,
+    disabled: () => Boolean(props.disabled),
   })
 
   createEffect(() => {
@@ -82,6 +143,11 @@ export default function PromptInput(props: PromptInputProps) {
         } else {
           insertQuotedSelection(text)
         }
+      },
+      insertComment: (text: string) => {
+        const normalized = (text ?? "").replace(/\r/g, "").trim()
+        if (!normalized) return
+        insertBlockContent(`${normalized}\n\n`)
       },
       expandTextAttachment: (attachmentId: string) => {
         const attachment = attachments().find((a) => a.id === attachmentId)
@@ -164,6 +230,7 @@ export default function PromptInput(props: PromptInputProps) {
       draftLoadedNonce,
       () => {
         // Session switch resets (picker/counters/ignored positions) stay in the component.
+        setInputHeight(null)
         setIgnoredAtPositions(new Set<number>())
         setShowPicker(false)
         setPickerMode("mention")
@@ -190,14 +257,29 @@ export default function PromptInput(props: PromptInputProps) {
 
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       const activeElement = document.activeElement as HTMLElement | null
+      const targetElement = e.target instanceof HTMLElement ? e.target : null
 
-      const isInputElement =
-        activeElement?.tagName === "INPUT" ||
-        activeElement?.tagName === "TEXTAREA" ||
-        activeElement?.tagName === "SELECT" ||
-        Boolean(activeElement?.isContentEditable)
+      const isEditableElement = (element: HTMLElement | null) =>
+        element?.tagName === "INPUT" ||
+        element?.tagName === "TEXTAREA" ||
+        element?.tagName === "SELECT" ||
+        Boolean(element?.isContentEditable)
 
-      if (isInputElement) return
+      const isInteractiveElement = (element: HTMLElement | null) =>
+        Boolean(
+          element?.closest(
+            'button, a[href], summary, [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], [tabindex]:not([tabindex="-1"])',
+          ),
+        )
+
+      if (
+        isEditableElement(activeElement) ||
+        isEditableElement(targetElement) ||
+        isInteractiveElement(activeElement) ||
+        isInteractiveElement(targetElement)
+      ) {
+        return
+      }
 
       const isModifierKey = e.ctrlKey || e.metaKey || e.altKey
       if (isModifierKey) return
@@ -227,6 +309,61 @@ export default function PromptInput(props: PromptInputProps) {
     })
   })
 
+  function computeMaxFieldHeight(): number {
+    if (typeof window === "undefined") return DEFAULT_PROMPT_FIELD_HEIGHT
+
+    const sessionCenter = wrapperRef?.closest("[data-session-center-width]")
+    const availableHeight = sessionCenter?.getBoundingClientRect().height ?? window.innerHeight
+    const maxHeight = Math.floor(availableHeight * MAX_PROMPT_FIELD_HEIGHT_RATIO)
+    return Math.max(DEFAULT_PROMPT_FIELD_HEIGHT, maxHeight)
+  }
+
+  function handleResizeStart(event: PointerEvent) {
+    event.preventDefault()
+    const target = event.currentTarget as HTMLElement
+
+    resizeDragState = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startHeight: fieldContainerRef?.getBoundingClientRect().height ?? DEFAULT_PROMPT_FIELD_HEIGHT,
+      maxHeight: computeMaxFieldHeight(),
+    }
+
+    setIsResizing(true)
+
+    try {
+      target.setPointerCapture(event.pointerId)
+    } catch {
+      resizeDragState = undefined
+      setIsResizing(false)
+    }
+  }
+
+  function handleResizeMove(event: PointerEvent) {
+    if (!resizeDragState || resizeDragState.pointerId !== event.pointerId) return
+
+    event.preventDefault()
+    const deltaY = resizeDragState.startY - event.clientY
+    const nextHeight = Math.max(
+      DEFAULT_PROMPT_FIELD_HEIGHT,
+      Math.min(resizeDragState.maxHeight, resizeDragState.startHeight + deltaY),
+    )
+    setInputHeight(nextHeight)
+  }
+
+  function handleResizeEnd(event: PointerEvent) {
+    if (!resizeDragState || resizeDragState.pointerId !== event.pointerId) return
+
+    event.preventDefault()
+    resizeDragState = undefined
+    setIsResizing(false)
+    textareaRef?.focus()
+  }
+
+  onCleanup(() => {
+    resizeDragState = undefined
+  })
+
   async function handleSend() {
     const text = prompt().trim()
     const currentAttachments = attachments()
@@ -246,12 +383,18 @@ export default function PromptInput(props: PromptInputProps) {
       commandName.length > 0 &&
       getCommands(props.instanceId).some((cmd) => cmd.name === commandName)
 
-    const resolvedPrompt = isKnownSlashCommand ? text : resolvePastedPlaceholders(text, currentAttachments)
+    const resolvedCommandArgs = isKnownSlashCommand ? resolvePastedPlaceholders(commandArgs, currentAttachments) : ""
+    const resolvedPrompt = isKnownSlashCommand
+      ? resolvedCommandArgs
+        ? `${commandToken} ${resolvedCommandArgs}`
+        : commandToken
+      : resolvePastedPlaceholders(text, currentAttachments)
     const historyEntry = resolvedPrompt
 
     const refreshHistory = () => recordHistoryEntry(historyEntry)
 
     setExpandState("normal")
+    setInputHeight(null)
     clearPrompt()
     clearHistoryDraft()
     setMode("normal")
@@ -262,6 +405,10 @@ export default function PromptInput(props: PromptInputProps) {
       syncAttachmentCounters("")
       setIgnoredAtPositions(new Set<number>())
     } else {
+      const consumedIds = getConsumedPastedTextAttachmentIds(commandArgs, currentAttachments)
+      for (const attachmentId of consumedIds) {
+        removeAttachment(props.instanceId, props.sessionId, attachmentId)
+      }
       syncAttachmentCounters("")
       setIgnoredAtPositions(new Set<number>())
     }
@@ -281,7 +428,11 @@ export default function PromptInput(props: PromptInputProps) {
           await props.onSend(resolvedPrompt, [])
         }
       } else if (isKnownSlashCommand) {
-        await executeCustomCommand(props.instanceId, props.sessionId, commandName, commandArgs)
+        if (props.onCommand) {
+          await props.onCommand(commandName, resolvedCommandArgs)
+        } else {
+          await executeCustomCommand(props.instanceId, props.sessionId, commandName, resolvedCommandArgs)
+        }
       } else {
         await props.onSend(resolvedPrompt, currentAttachments)
       }
@@ -306,9 +457,92 @@ export default function PromptInput(props: PromptInputProps) {
   }
 
   function handleExpandToggle(nextState: "normal" | "expanded") {
+    setInputHeight(null)
     setExpandState(nextState)
     // Keep focus on textarea
     textareaRef?.focus()
+  }
+
+  function clearTextareaWithUndo() {
+    const textarea = textareaRef
+    if (!textarea || textarea.disabled) return false
+
+    textarea.focus()
+    textarea.setSelectionRange(0, textarea.value.length)
+
+    let cleared = false
+    try {
+      cleared = typeof document !== "undefined" && typeof document.execCommand === "function" && document.execCommand("delete")
+    } catch {
+      cleared = false
+    }
+    if (!cleared || textarea.value.length > 0) {
+      textarea.value = ""
+    }
+
+    textarea.dispatchEvent(new Event("input", { bubbles: true }))
+    return cleared
+  }
+
+  function handleClearPrompt() {
+    resetHistoryNavigation()
+    if (!clearTextareaWithUndo()) {
+      clearPrompt()
+    }
+    clearHistoryDraft()
+    setShowPicker(false)
+    setPickerMode("mention")
+    setAtPosition(null)
+    setSearchQuery("")
+    setIgnoredAtPositions(new Set<number>())
+    syncAttachmentCounters("")
+    textareaRef?.focus()
+  }
+
+  async function handleAttachFiles() {
+    if (props.disabled) return
+    if (isDesktopHost() && isLocalWindow()) {
+      fileInputRef?.click()
+      return
+    }
+    setIsFileBrowserOpen(true)
+  }
+
+  async function handleFileBrowserSelect(path: string, entry?: FileSystemEntry) {
+    if (props.disabled) return
+    if (typeof entry?.size === "number" && entry.size > MAX_READABLE_PICKED_FILE_BYTES) {
+      showAlertDialog(t("promptInput.attachFiles.tooLarge.one"), {
+        title: t("promptInput.attachFiles.skipped.title"),
+        variant: "warning",
+      })
+      textareaRef?.focus()
+      return
+    }
+    try {
+      const filePath = entry?.path ?? path
+      const displayPath = entry?.absolutePath ?? path
+      const response = await serverApi.readFileSystemFile(filePath, { encoding: "base64" })
+      handleFilePathAttachment(displayPath, response.contents, { encoding: response.encoding })
+      setIsFileBrowserOpen(false)
+    } catch (error) {
+      log.error("Failed to attach selected file:", error)
+      showAlertDialog(error instanceof Error ? error.message : String(error), {
+        title: t("promptInput.attachFiles.errorTitle"),
+        variant: "error",
+      })
+    } finally {
+      textareaRef?.focus()
+    }
+  }
+
+  function handleFileInputChange(event: Event) {
+    const input = event.currentTarget as HTMLInputElement
+    if (props.disabled) {
+      input.value = ""
+      return
+    }
+    handleFileSelection(input.files)
+    input.value = ""
   }
 
   function insertBlockContent(block: string) {
@@ -382,6 +616,8 @@ export default function PromptInput(props: PromptInputProps) {
     return hasText || attachments().length > 0
   }
 
+  const canClearPrompt = () => prompt().length > 0
+
   const shellHint = () =>
     mode() === "shell"
       ? { key: "Esc", text: t("promptInput.hints.shell.exit") }
@@ -411,12 +647,58 @@ export default function PromptInput(props: PromptInputProps) {
   })
 
   const shouldShowOverlay = () => prompt().length === 0
+  const voiceInput = usePromptVoiceInput({
+    prompt,
+    setPrompt,
+    getTextarea: () => textareaRef ?? null,
+    enabled: () => preferences().showPromptVoiceInput,
+    disabled: () => Boolean(props.disabled),
+  })
+  const showVoiceInput = () =>
+    preferences().showPromptVoiceInput &&
+    (voiceInput.canUseVoiceInput() || voiceInput.isRecording() || voiceInput.isTranscribing())
+  const conversationModeEnabled = () => isConversationModeEnabled(props.instanceId)
+  const showConversationToggle = () => showVoiceInput() || conversationModeEnabled()
+  const canToggleConversationMode = () => canUseConversationMode()
+  const conversationModeButtonTitle = () =>
+    conversationModeEnabled()
+      ? t("promptInput.conversationMode.disable.title")
+      : t("promptInput.conversationMode.enable.title")
 
   const instance = () => getActiveInstance()
+
+  let voiceButtonPressed = false
+
+  const beginVoicePress = (event?: PointerEvent | KeyboardEvent) => {
+    if (voiceButtonPressed || props.disabled || voiceInput.isTranscribing() || !voiceInput.canUseVoiceInput()) return
+    voiceButtonPressed = true
+    // Treat a mic press as barge-in: stop any active assistant speech before listening.
+    clearConversationPlaybackForInstance(props.instanceId)
+
+    if (event instanceof PointerEvent) {
+      const target = event.currentTarget
+      if (target instanceof HTMLElement) {
+        try {
+          target.setPointerCapture(event.pointerId)
+        } catch {
+          // no-op
+        }
+      }
+    }
+
+    void voiceInput.startRecording()
+  }
+
+  const endVoicePress = () => {
+    if (!voiceButtonPressed) return
+    voiceButtonPressed = false
+    voiceInput.stopRecording()
+  }
 
   return (
     <div class="prompt-input-container">
       <div
+        ref={wrapperRef}
         class={`prompt-input-wrapper relative ${isDragging() ? "border-2" : ""}`}
         style={
           isDragging()
@@ -428,27 +710,51 @@ export default function PromptInput(props: PromptInputProps) {
         onDrop={handleDrop}
       >
         <Show when={showPicker() && instance()}>
-          <UnifiedPicker
-            open={showPicker()}
-            mode={pickerMode()}
-            onClose={handlePickerClose}
-            onSelect={handlePickerSelect}
-            agents={instanceAgents()}
-            commands={getCommands(props.instanceId)}
-            instanceClient={instance()!.client}
-            searchQuery={searchQuery()}
-            textareaRef={textareaRef}
-            workspaceId={props.instanceId}
-          />
+          <Suspense fallback={null}>
+            <LazyUnifiedPicker
+              open={showPicker()}
+              mode={pickerMode()}
+              onClose={handlePickerClose}
+              onSelect={handlePickerSelect}
+              onSubmitWithoutSelection={() => {
+                handlePickerClose()
+                void handleSend()
+              }}
+              agents={instanceAgents()}
+              commands={getCommands(props.instanceId)}
+              instanceClient={instance()!.client}
+              searchQuery={searchQuery()}
+              textareaRef={textareaRef}
+              workspaceId={props.instanceId}
+            />
+          </Suspense>
         </Show>
 
-        <div class="flex flex-1 flex-col">
-          <div class={`prompt-input-field-container ${expandState() === "expanded" ? "is-expanded" : ""}`}>
+        <div class="prompt-input-main flex flex-1 flex-col">
+          <div
+            ref={fieldContainerRef}
+            class={`prompt-input-field-container ${expandState() === "expanded" ? "is-expanded" : ""} ${inputHeight() !== null ? "is-resized" : ""}`}
+            style={inputHeight() !== null ? { height: `${inputHeight()}px`, "min-height": `${inputHeight()}px` } : undefined}
+          >
+            <div
+              class={`prompt-resize-handle ${isResizing() ? "is-resizing" : ""}`}
+              onPointerDown={handleResizeStart}
+              onPointerMove={handleResizeMove}
+              onPointerUp={handleResizeEnd}
+              onPointerCancel={handleResizeEnd}
+              aria-hidden="true"
+              role="presentation"
+              title={t("promptInput.resizeHandle.title")}
+            />
 
-            <div class={`prompt-input-field ${expandState() === "expanded" ? "is-expanded" : ""}`}>
+            <div
+              class={`prompt-input-field ${expandState() === "expanded" ? "is-expanded" : ""}`}
+              style={inputHeight() !== null ? { height: `${inputHeight()}px`, "min-height": `${inputHeight()}px` } : undefined}
+            >
               <textarea
                 ref={textareaRef}
                 class={`prompt-input ${mode() === "shell" ? "shell-mode" : ""} ${expandState() === "expanded" ? "is-expanded" : ""}`}
+                dir="auto"
                 placeholder={getPlaceholder()}
                 value={prompt()}
                 onInput={handleInput}
@@ -462,45 +768,24 @@ export default function PromptInput(props: PromptInputProps) {
                 autocorrect="off"
                 autoCapitalize="off"
                 autocomplete="off"
+                style={inputHeight() !== null ? { height: `${inputHeight()}px`, "min-height": `${inputHeight()}px`, "overflow-y": "auto" } : undefined}
               />
-              <div class="prompt-nav-buttons">
+              <div class="prompt-expand-button-inline">
                 <ExpandButton
                   expandState={expandState}
                   onToggleExpand={handleExpandToggle}
                 />
-                <Show when={hasHistory()}>
-                  <button
-                    type="button"
-                    class="prompt-history-button"
-                    onClick={() =>
-                      selectPreviousHistory({
-                        force: true,
-                        isPickerOpen: showPicker(),
-                        getTextarea: () => textareaRef,
-                      })
-                    }
-                    disabled={!canHistoryGoPrevious()}
-                    aria-label={t("promptInput.history.previousAriaLabel")}
-                  >
-                    <ArrowBigUp class="h-5 w-5" aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    class="prompt-history-button"
-                    onClick={() =>
-                      selectNextHistory({
-                        force: true,
-                        isPickerOpen: showPicker(),
-                        getTextarea: () => textareaRef,
-                      })
-                    }
-                    disabled={!canHistoryGoNext()}
-                    aria-label={t("promptInput.history.nextAriaLabel")}
-                  >
-                    <ArrowBigDown class="h-5 w-5" aria-hidden="true" />
-                  </button>
-                </Show>
               </div>
+              <button
+                type="button"
+                class="prompt-clear-button prompt-clear-button-inline"
+                onClick={handleClearPrompt}
+                disabled={!canClearPrompt()}
+                aria-label={t("promptInput.clear.ariaLabel")}
+                title={t("promptInput.clear.title")}
+              >
+                <X class="h-4 w-4" aria-hidden="true" />
+              </button>
               <Show when={shouldShowOverlay()}>
                 <div class={`prompt-input-overlay keyboard-hints ${mode() === "shell" ? "shell-mode" : ""}`}>
                   <Show
@@ -520,7 +805,7 @@ export default function PromptInput(props: PromptInputProps) {
                               <Kbd>Enter</Kbd> {t("promptInput.overlay.send")} • <Kbd shortcut="cmd+enter" /> {t("promptInput.overlay.newLine")}
                             </>
                           </Show>
-                          {" "}• <Kbd>@</Kbd> {t("promptInput.overlay.filesAgents")} • <Kbd>↑↓</Kbd> {t("promptInput.overlay.history")}
+                          {" "}• <Kbd>↑↓</Kbd> {t("promptInput.overlay.history")}
                         </span>
                         <Show when={attachments().length > 0}>
                           <span class="prompt-overlay-text prompt-overlay-muted">{t("promptInput.overlay.attachments", { count: attachments().length })}</span>
@@ -555,6 +840,121 @@ export default function PromptInput(props: PromptInputProps) {
         </div>
 
         <div class="prompt-input-actions">
+          <div class="prompt-nav-buttons">
+            <div class="prompt-nav-column prompt-nav-column-left">
+              <Show when={showVoiceInput()}>
+                <button
+                  type="button"
+                  class={`prompt-voice-button prompt-nav-voice-button ${voiceInput.isRecording() ? "is-recording" : ""}`}
+                  onPointerDown={(event) => {
+                    event.preventDefault()
+                    beginVoicePress(event)
+                  }}
+                  onPointerUp={(event) => {
+                    event.preventDefault()
+                    endVoicePress()
+                  }}
+                  onPointerCancel={() => endVoicePress()}
+                  onLostPointerCapture={() => endVoicePress()}
+                  onKeyDown={(event) => {
+                    if (event.repeat) return
+                    if (event.key !== " " && event.key !== "Enter") return
+                    event.preventDefault()
+                    beginVoicePress(event)
+                  }}
+                  onKeyUp={(event) => {
+                    if (event.key !== " " && event.key !== "Enter") return
+                    event.preventDefault()
+                    endVoicePress()
+                  }}
+                  onBlur={() => endVoicePress()}
+                  disabled={!voiceInput.isRecording() && (props.disabled || voiceInput.isTranscribing() || !voiceInput.canUseVoiceInput())}
+                  aria-label={voiceInput.buttonTitle()}
+                  title={voiceInput.buttonTitle()}
+                >
+                  <Show
+                    when={voiceInput.isRecording()}
+                    fallback={
+                      <Show when={voiceInput.isTranscribing()} fallback={<Mic class="h-4 w-4" aria-hidden="true" />}>
+                        <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
+                      </Show>
+                    }
+                  >
+                    <Mic class="h-4 w-4" aria-hidden="true" />
+                  </Show>
+                </button>
+              </Show>
+              <Show when={showConversationToggle()}>
+                <button
+                  type="button"
+                  class={`prompt-voice-button prompt-nav-voice-button prompt-conversation-button ${conversationModeEnabled() ? "is-active" : ""}`}
+                  onClick={() => toggleConversationMode(props.instanceId)}
+                  disabled={!conversationModeEnabled() && !canToggleConversationMode()}
+                  aria-pressed={conversationModeEnabled()}
+                  aria-label={conversationModeButtonTitle()}
+                  title={conversationModeButtonTitle()}
+                >
+                  <Volume2 class="h-4 w-4" aria-hidden="true" />
+                </button>
+              </Show>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                class="sr-only"
+                tabindex="-1"
+                disabled={props.disabled}
+                onChange={handleFileInputChange}
+              />
+              <button
+                type="button"
+                class="prompt-attach-button"
+                onClick={handleAttachFiles}
+                disabled={props.disabled}
+                aria-label={t("promptInput.attachFiles.ariaLabel")}
+                title={t("promptInput.attachFiles.title")}
+              >
+                <Paperclip class="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
+            <div class="prompt-nav-column prompt-nav-column-right">
+              <Show when={hasHistory()}>
+                <button
+                  type="button"
+                  class="prompt-history-button"
+                  onClick={() =>
+                    selectPreviousHistory({
+                      force: true,
+                      isPickerOpen: showPicker(),
+                      getTextarea: () => textareaRef,
+                    })
+                  }
+                  disabled={!canHistoryGoPrevious()}
+                  aria-label={t("promptInput.history.previousAriaLabel")}
+                >
+                  <ArrowBigUp class="h-5 w-5" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  class="prompt-history-button"
+                  onClick={() =>
+                    selectNextHistory({
+                      force: true,
+                      isPickerOpen: showPicker(),
+                      getTextarea: () => textareaRef,
+                    })
+                  }
+                  disabled={!canHistoryGoNext()}
+                  aria-label={t("promptInput.history.nextAriaLabel")}
+                >
+                  <ArrowBigDown class="h-5 w-5" aria-hidden="true" />
+                </button>
+              </Show>
+            </div>
+          </div>
+        </div>
+
+        <div class="prompt-input-primary-actions">
           <button
             type="button"
             class="stop-button"
@@ -586,6 +986,18 @@ export default function PromptInput(props: PromptInputProps) {
           </button>
         </div>
       </div>
+
+      <DirectoryBrowserDialog
+        open={isFileBrowserOpen()}
+        mode="files"
+        title={t("promptInput.attachFiles.dialogTitle")}
+        onClose={() => {
+          setIsFileBrowserOpen(false)
+          textareaRef?.focus()
+        }}
+        onSelect={(path, entry) => void handleFileBrowserSelect(path, entry)}
+        initialPath={props.instanceFolder}
+      />
     </div>
   )
 }

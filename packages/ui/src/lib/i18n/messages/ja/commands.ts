@@ -15,17 +15,17 @@ export const commandMessages = {
   "commands.newInstance.description": "フォルダ選択を開いて新しいインスタンスを作成",
   "commands.newInstance.keywords": "フォルダ, プロジェクト, ワークスペース, folder, project, workspace",
 
-  "commands.closeInstance.label": "インスタンスを閉じる",
-  "commands.closeInstance.description": "現在のインスタンスのサーバーを停止",
-  "commands.closeInstance.keywords": "停止, 終了, 閉じる, stop, quit, close",
+  "commands.closeInstance.label": "タブを閉じる",
+  "commands.closeInstance.description": "現在のトップレベルタブを閉じる",
+  "commands.closeInstance.keywords": "閉じる, タブ, stop, quit, close",
 
-  "commands.nextInstance.label": "次のインスタンス",
-  "commands.nextInstance.description": "次のインスタンスタブへ切り替え",
-  "commands.nextInstance.keywords": "切り替え, 移動, switch, navigate",
+  "commands.nextInstance.label": "次のタブ",
+  "commands.nextInstance.description": "次のトップレベルタブへ切り替え",
+  "commands.nextInstance.keywords": "切り替え, 移動, タブ, switch, navigate",
 
-  "commands.previousInstance.label": "前のインスタンス",
-  "commands.previousInstance.description": "前のインスタンスタブへ切り替え",
-  "commands.previousInstance.keywords": "切り替え, 移動, switch, navigate",
+  "commands.previousInstance.label": "前のタブ",
+  "commands.previousInstance.description": "前のトップレベルタブへ切り替え",
+  "commands.previousInstance.keywords": "切り替え, 移動, タブ, switch, navigate",
 
   "commands.newSession.label": "新しいセッション",
   "commands.newSession.description": "新しい親セッションを作成",
