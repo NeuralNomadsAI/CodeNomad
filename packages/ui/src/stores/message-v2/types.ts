@@ -1,4 +1,5 @@
 import type { ClientPart } from "../../types/message"
+import type { PromptDisplayMetadata } from "../../lib/prompt-display-metadata"
 import type { PermissionRequest } from "../../types/permission"
 import type { QuestionRequest } from "../../types/question"
 
@@ -20,6 +21,7 @@ export interface MessageRecord {
   updatedAt: number
   revision: number
   isEphemeral?: boolean
+  clientPromptDisplayMetadata?: PromptDisplayMetadata
   partIds: string[]
   parts: Record<string, NormalizedPartRecord>
 }
@@ -145,6 +147,7 @@ export interface MessageUpsertInput {
   createdAt?: number
   updatedAt?: number
   isEphemeral?: boolean
+  clientPromptDisplayMetadata?: PromptDisplayMetadata
   bumpRevision?: boolean
 }
 
