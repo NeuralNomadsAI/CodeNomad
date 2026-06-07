@@ -121,6 +121,23 @@ export function isSelectablePrimaryAgent(agent: Agent): boolean {
   return !agent.hidden && agent.mode !== "subagent"
 }
 
+export function getSelectableAgentsForSession(
+  agentList: Agent[],
+  currentAgentName: string,
+  isChildSession: boolean,
+): Agent[] {
+  if (!isChildSession) {
+    return agentList.filter(isSelectablePrimaryAgent)
+  }
+
+  const visibleAgents = agentList.filter((agent) => !agent.hidden)
+  const currentHiddenAgent = agentList.find((agent) => agent.hidden && agent.name === currentAgentName)
+
+  return currentHiddenAgent && !visibleAgents.some((agent) => agent.name === currentHiddenAgent.name)
+    ? [...visibleAgents, currentHiddenAgent]
+    : visibleAgents
+}
+
 // Our client-specific Provider interface (simplified version of SDK Provider)
 export interface Provider {
   id: string

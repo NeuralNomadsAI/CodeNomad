@@ -1,4 +1,4 @@
-import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
+import { preparePromptDisplayText } from "../lib/prompt-display-metadata"
 import { instances } from "./instances"
 import { getRootClient } from "./opencode-client"
 import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
@@ -102,13 +102,13 @@ async function sendMessage(
   const messageId = createId("msg")
   const textPartId = createId("prt")
 
-  const resolvedPrompt = resolvePastedPlaceholders(prompt, attachments)
+  const preparedPrompt = preparePromptDisplayText(prompt, attachments)
 
   const optimisticParts: any[] = [
     {
       id: textPartId,
       type: "text" as const,
-      text: resolvedPrompt,
+      text: preparedPrompt.promptToSend,
       synthetic: true,
       renderCache: undefined,
     },
@@ -117,7 +117,7 @@ async function sendMessage(
   const requestParts: any[] = [
     {
       type: "text" as const,
-      text: resolvedPrompt,
+      text: preparedPrompt.promptToSend,
     },
   ]
 
@@ -182,6 +182,7 @@ async function sendMessage(
     createdAt,
     updatedAt: createdAt,
     isEphemeral: true,
+    clientPromptDisplayMetadata: preparedPrompt.displayMetadata,
   })
 
   withSession(instanceId, sessionId, () => {
