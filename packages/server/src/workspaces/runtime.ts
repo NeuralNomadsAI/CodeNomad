@@ -4,6 +4,7 @@ import path from "path"
 import { EventBus } from "../events/bus"
 import { LogLevel, WorkspaceLogEntry } from "../api-types"
 import { Logger } from "../logger"
+import { checkAndFixOpencodeSchema } from "./migration.js"
 import { buildSpawnSpec, buildWslSignalSpec } from "./spawn"
 
 const SENSITIVE_ENV_KEY = /(PASSWORD|TOKEN|SECRET)/i
@@ -53,6 +54,10 @@ export class WorkspaceRuntime {
 
   async launch(options: LaunchOptions): Promise<{ pid: number; port: number; exitPromise: Promise<ProcessExitInfo>; getLastOutput: () => string }> {
     this.validateFolder(options.folder)
+
+    // Run schema migration before spawning OpenCode to prevent
+    // NOT NULL constraint failures on session_message.seq (issue #31204)
+    checkAndFixOpencodeSchema(options.binaryPath)
 
     const logLevel = typeof options.logLevel === "string" ? options.logLevel.toUpperCase() : "DEBUG"
     const args = ["serve", "--port", "0", "--print-logs", "--log-level", logLevel]

@@ -1,5 +1,5 @@
 import path from "path"
-import { tool } from "@opencode-ai/plugin/tool"
+import { tool } from "@opencode-ai/plugin"
 import { createCodeNomadRequester, type CodeNomadConfig } from "./request.js"
 
 type BackgroundProcess = {

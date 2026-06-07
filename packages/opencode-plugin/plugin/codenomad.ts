@@ -1,14 +1,10 @@
-import type { PluginInput } from "@opencode-ai/plugin"
+import type { Plugin } from "@opencode-ai/plugin"
 import { createCodeNomadClient, getCodeNomadConfig } from "./lib/client.js"
 import { createBackgroundProcessTools } from "./lib/background-process.js"
 
 let voiceModeEnabled = false
 
-export async function CodeNomadPlugin(input: PluginInput): Promise<{
-  tool: ReturnType<typeof createBackgroundProcessTools>
-  "chat.message": CodeNomadChatMessageHook
-  event: CodeNomadEventHook
-}> {
+const CodeNomadPlugin: Plugin = async (input) => {
   const config = getCodeNomadConfig()
   const client = createCodeNomadClient(config)
   const backgroundProcessTools = createBackgroundProcessTools(config, { baseDir: input.directory })
@@ -34,27 +30,28 @@ export async function CodeNomadPlugin(input: PluginInput): Promise<{
     tool: {
       ...backgroundProcessTools,
     },
-    async "chat.message"(_input: { sessionID: string }, output: { message: { system?: string } }) {
-      if (!voiceModeEnabled) {
-        return
-      }
-
-      output.message.system = [output.message.system, buildVoiceModePrompt()].filter(Boolean).join("\n\n")
+    experimental: {
+      chat: {
+        system: {
+          transform: async (
+            _input: { sessionID?: string },
+            output: { system: string[] },
+          ) => {
+            if (!voiceModeEnabled) return
+            output.system.push(buildVoiceModePrompt())
+          },
+        },
+      },
     },
-    async event(input: { event: any }) {
+    async event(input) {
       const opencodeEvent = input?.event
       if (!opencodeEvent || typeof opencodeEvent !== "object") return
-
     },
   }
 }
 
-type CodeNomadChatMessageHook = (
-  _input: { sessionID: string },
-  output: { message: { system?: string } },
-) => Promise<void>
-
-type CodeNomadEventHook = (input: { event: any }) => Promise<void>
+export const server: Plugin = CodeNomadPlugin
+export default CodeNomadPlugin
 
 function buildVoiceModePrompt(): string {
   return [
