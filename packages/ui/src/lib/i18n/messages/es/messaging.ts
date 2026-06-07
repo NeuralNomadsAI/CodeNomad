@@ -16,6 +16,8 @@ export const messagingMessages = {
   "messageSection.empty.tips.askAboutCodebase": "Pregunta sobre tu codebase",
   "messageSection.empty.tips.attachFilesPrefix": "Adjunta archivos con",
   "messageSection.loading.messages": "Cargando mensajes...",
+  "messageSection.loadError.title": "No se pudieron cargar los mensajes",
+  "messageSection.loadError.reload": "Recargar mensajes",
   "messageSection.scroll.toFirstAriaLabel": "Desplazarse al primer mensaje",
   "messageSection.scroll.toLatestAriaLabel": "Desplazarse al último mensaje",
   "messageSection.scroll.enableHoldAriaLabel": "Activar pausa para respuestas largas del asistente",

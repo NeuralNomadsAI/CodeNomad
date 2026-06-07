@@ -16,6 +16,8 @@ export const messagingMessages = {
   "messageSection.empty.tips.askAboutCodebase": "コードベースについて質問",
   "messageSection.empty.tips.attachFilesPrefix": "次でファイルを添付:",
   "messageSection.loading.messages": "メッセージを読み込み中...",
+  "messageSection.loadError.title": "メッセージを読み込めませんでした",
+  "messageSection.loadError.reload": "メッセージを再読み込み",
   "messageSection.scroll.toFirstAriaLabel": "最初のメッセージへスクロール",
   "messageSection.scroll.toLatestAriaLabel": "最新のメッセージへスクロール",
   "messageSection.scroll.enableHoldAriaLabel": "長いアシスタント返信の保持を有効にする",

@@ -16,6 +16,8 @@ export const messagingMessages = {
   "messageSection.empty.tips.askAboutCodebase": "Спросите о своей кодовой базе",
   "messageSection.empty.tips.attachFilesPrefix": "Прикрепляйте файлы через",
   "messageSection.loading.messages": "Загрузка сообщений…",
+  "messageSection.loadError.title": "Не удалось загрузить сообщения",
+  "messageSection.loadError.reload": "Перезагрузить сообщения",
   "messageSection.scroll.toFirstAriaLabel": "Прокрутить к первому сообщению",
   "messageSection.scroll.toLatestAriaLabel": "Прокрутить к последнему сообщению",
   "messageSection.scroll.enableHoldAriaLabel": "Включить удержание для длинных ответов ассистента",

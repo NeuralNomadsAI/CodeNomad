@@ -16,6 +16,8 @@ export const messagingMessages = {
   "messageSection.empty.tips.askAboutCodebase": "שאל על בסיס הקוד שלך",
   "messageSection.empty.tips.attachFilesPrefix": "צרף קבצים עם",
   "messageSection.loading.messages": "טוען הודעות...",
+  "messageSection.loadError.title": "לא ניתן לטעון הודעות",
+  "messageSection.loadError.reload": "טען הודעות מחדש",
   "messageSection.scroll.toFirstAriaLabel": "גלול להודעה הראשונה",
   "messageSection.scroll.toLatestAriaLabel": "גלול להודעה האחרונה",
   "messageSection.scroll.enableHoldAriaLabel": "הפעל עצירה לתגובות עוזר ארוכות",

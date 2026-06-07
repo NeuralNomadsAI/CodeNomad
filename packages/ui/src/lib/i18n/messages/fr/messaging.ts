@@ -16,6 +16,8 @@ export const messagingMessages = {
   "messageSection.empty.tips.askAboutCodebase": "Parler de votre codebase",
   "messageSection.empty.tips.attachFilesPrefix": "Joindre des fichiers avec",
   "messageSection.loading.messages": "Chargement des messages...",
+  "messageSection.loadError.title": "Impossible de charger les messages",
+  "messageSection.loadError.reload": "Recharger les messages",
   "messageSection.scroll.toFirstAriaLabel": "Aller au premier message",
   "messageSection.scroll.toLatestAriaLabel": "Aller au dernier message",
   "messageSection.scroll.enableHoldAriaLabel": "Activer le maintien pour les longues réponses de l'assistant",

@@ -16,6 +16,8 @@ export const messagingMessages = {
   "messageSection.empty.tips.askAboutCodebase": "Ask about your codebase",
   "messageSection.empty.tips.attachFilesPrefix": "Attach files with",
   "messageSection.loading.messages": "Loading messages...",
+  "messageSection.loadError.title": "Could not load messages",
+  "messageSection.loadError.reload": "Reload messages",
   "messageSection.scroll.toFirstAriaLabel": "Scroll to first message",
   "messageSection.scroll.toLatestAriaLabel": "Scroll to latest message",
   "messageSection.scroll.enableHoldAriaLabel": "Enable hold for long assistant replies",
