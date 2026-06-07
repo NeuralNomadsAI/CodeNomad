@@ -1,11 +1,12 @@
 import { For, Show, Suspense, createMemo, createSignal, createEffect, lazy, onCleanup, type Component } from "solid-js"
-import type { PermissionRequestLike } from "../types/permission"
+import type { PermissionRequest } from "../types/permission"
 import { getPermissionCallId, getPermissionDisplayTitle, getPermissionKind, getPermissionMessageId, getPermissionSessionId } from "../types/permission"
 import { getQuestionCallId, getQuestionMessageId, getQuestionSessionId, type QuestionRequest } from "../types/question"
 import { useI18n } from "../lib/i18n"
 import {
   activeInterruption,
   getPermissionQueue,
+  getPermissionEnqueuedAtForInstance,
   getQuestionQueue,
   getQuestionEnqueuedAtForInstance,
   sendPermissionResponse,
@@ -32,7 +33,7 @@ type ResolvedToolCall = {
 
 function resolveToolCallFromPermission(
   instanceId: string,
-  permission: PermissionRequestLike,
+  permission: PermissionRequest,
 ): ResolvedToolCall | null {
   const sessionId = getPermissionSessionId(permission)
   const messageId = getPermissionMessageId(permission)
@@ -158,7 +159,7 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
     })
   }
 
-  async function handlePermissionDecision(permission: PermissionRequestLike, response: "once" | "always" | "reject", message?: string) {
+  async function handlePermissionDecision(permission: PermissionRequest, response: "once" | "always" | "reject", message?: string) {
     const permissionId = permission?.id
     if (!permissionId) return
 
@@ -168,7 +169,8 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
     setPermissionItemError(permissionId, null)
 
     try {
-      const sessionId = getPermissionSessionId(permission) || ""
+      const sessionId = getPermissionSessionId(permission)
+      if (!sessionId) throw new Error("Permission request is missing sessionID")
       await sendPermissionResponse(props.instanceId, sessionId, permissionId, response, message)
       if (rejectingPermissionId() === permissionId) {
         setRejectingPermissionId(null)
@@ -189,7 +191,7 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
   const active = createMemo(() => activeInterruption().get(props.instanceId) ?? null)
 
   type InterruptionItem =
-    | { kind: "permission"; id: string; sessionId: string; createdAt: number; payload: PermissionRequestLike }
+    | { kind: "permission"; id: string; sessionId: string; createdAt: number; payload: PermissionRequest }
     | { kind: "question"; id: string; sessionId: string; createdAt: number; payload: QuestionRequest }
 
   const orderedQueue = createMemo<InterruptionItem[]>(() => {
@@ -197,7 +199,7 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
       kind: "permission" as const,
       id: permission.id,
       sessionId: getPermissionSessionId(permission) || "",
-      createdAt: (permission as any)?.time?.created ?? Date.now(),
+      createdAt: getPermissionEnqueuedAtForInstance(props.instanceId, permission.id),
       payload: permission,
     }))
 
@@ -386,7 +388,7 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
                                             type="button"
                                             class="tool-call-permission-button"
                                             disabled={permissionSubmitting().has(item.id)}
-                                            onClick={() => void handlePermissionDecision(item.payload as PermissionRequestLike, "once")}
+                                            onClick={() => void handlePermissionDecision(item.payload as PermissionRequest, "once")}
                                           >
                                             {t("permissionApproval.actions.allowOnce")}
                                           </button>
@@ -394,7 +396,7 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
                                             type="button"
                                             class="tool-call-permission-button"
                                             disabled={permissionSubmitting().has(item.id)}
-                                            onClick={() => void handlePermissionDecision(item.payload as PermissionRequestLike, "always")}
+                                            onClick={() => void handlePermissionDecision(item.payload as PermissionRequest, "always")}
                                           >
                                             {t("permissionApproval.actions.alwaysAllow")}
                                           </button>
@@ -435,7 +437,7 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
                                           disabled={permissionSubmitting().has(item.id)}
                                           onClick={() =>
                                             void handlePermissionDecision(
-                                              item.payload as PermissionRequestLike,
+                                              item.payload as PermissionRequest,
                                               "reject",
                                               rejectReason().trim() || undefined,
                                             )

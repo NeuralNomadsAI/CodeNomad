@@ -24,10 +24,16 @@ import {
   getPermissionSessionId,
   getRequestIdFromPermissionReply,
 } from "../types/permission"
-import type { PermissionReplyEventPropertiesLike, PermissionRequestLike } from "../types/permission"
+import type { LegacyPermissionAskedEvent, LegacyPermissionRepliedEvent, PermissionRequest } from "../types/permission"
 import { getQuestionId, getQuestionSessionId, getRequestIdFromQuestionReply } from "../types/question"
-import type { QuestionRequest } from "../types/question"
-import type { EventQuestionReplied, EventQuestionRejected } from "@opencode-ai/sdk/v2"
+import type { LegacyQuestionAnsweredEvent, LegacyQuestionAskedEvent, QuestionRequest } from "../types/question"
+import type {
+  EventPermissionV2Asked,
+  EventPermissionV2Replied,
+  EventQuestionV2Asked,
+  EventQuestionV2Rejected,
+  EventQuestionV2Replied,
+} from "@opencode-ai/sdk/v2"
 import { showToastNotification, type ToastHandle, ToastVariant } from "../lib/notifications"
 import { sendOsNotification } from "../lib/os-notifications"
 import { preferences } from "./preferences"
@@ -716,9 +722,10 @@ function handleTuiToast(_instanceId: string, event: TuiToastEvent): void {
   })
 }
 
-function handlePermissionUpdated(instanceId: string, event: { type: string; properties?: PermissionRequestLike } | any): void {
-  const permission = event?.properties as PermissionRequestLike | undefined
+function handlePermissionUpdated(instanceId: string, event: EventPermissionV2Asked | LegacyPermissionAskedEvent): void {
+  const permission = event?.properties as PermissionRequest | undefined
   if (!permission) return
+  const source = event.type === "permission.v2.asked" ? "v2" : "legacy"
   const permissionId = getPermissionId(permission)
   if (permissionId && hasRepliedPermission(instanceId, permissionId)) {
     log.info(`[SSE] Ignoring stale permission request after local reply: ${permissionId}`)
@@ -726,7 +733,7 @@ function handlePermissionUpdated(instanceId: string, event: { type: string; prop
   }
 
   log.info(`[SSE] Permission request: ${permissionId} (${getPermissionKind(permission)})`)
-  const queuedPermission = addPermissionToQueue(instanceId, permission) ?? permission
+  const queuedPermission = addPermissionToQueue(instanceId, permission, source) ?? permission
   upsertPermissionV2(instanceId, queuedPermission)
 
   const sessionId = getPermissionSessionId(permission)
@@ -739,8 +746,8 @@ function handlePermissionUpdated(instanceId: string, event: { type: string; prop
   }
 }
 
-function handlePermissionReplied(instanceId: string, event: { type: string; properties?: PermissionReplyEventPropertiesLike } | any): void {
-  const properties = event?.properties as PermissionReplyEventPropertiesLike | undefined
+function handlePermissionReplied(instanceId: string, event: EventPermissionV2Replied | LegacyPermissionRepliedEvent): void {
+  const properties = event?.properties
   const requestId = getRequestIdFromPermissionReply(properties)
   if (!requestId) return
 
@@ -750,12 +757,13 @@ function handlePermissionReplied(instanceId: string, event: { type: string; prop
   removePermissionV2(instanceId, requestId)
 }
 
-function handleQuestionAsked(instanceId: string, event: { type: string; properties?: QuestionRequest } | any): void {
+function handleQuestionAsked(instanceId: string, event: EventQuestionV2Asked | LegacyQuestionAskedEvent): void {
   const request = event?.properties as QuestionRequest | undefined
   if (!request) return
+  const source = event.type === "question.asked" ? "legacy" : "v2"
 
   log.info(`[SSE] Question asked: ${getQuestionId(request)}`)
-  addQuestionToQueue(instanceId, request)
+  addQuestionToQueue(instanceId, request, source)
   upsertQuestionV2(instanceId, request)
 
   const sessionId = getQuestionSessionId(request)
@@ -770,9 +778,9 @@ function handleQuestionAsked(instanceId: string, event: { type: string; properti
 
 function handleQuestionAnswered(
   instanceId: string,
-  event: { type: string; properties?: EventQuestionReplied["properties"] | EventQuestionRejected["properties"] } | any,
+  event: EventQuestionV2Replied | EventQuestionV2Rejected | LegacyQuestionAnsweredEvent,
 ): void {
-  const properties = event?.properties as EventQuestionReplied["properties"] | EventQuestionRejected["properties"] | undefined
+  const properties = event?.properties
   const requestId = getRequestIdFromQuestionReply(properties)
   if (!requestId) return
 

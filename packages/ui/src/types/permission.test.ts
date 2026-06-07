@@ -1,49 +1,42 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { mergePermissionRequest, type PermissionRequestLike } from "./permission.ts"
+import { mergePermissionRequest, type PermissionRequest } from "./permission.ts"
 
 describe("mergePermissionRequest", () => {
-  it("preserves known routing metadata when duplicate payloads are sparse", () => {
-    const previous: PermissionRequestLike = {
+  it("preserves v2 source metadata when duplicate payload omits it", () => {
+    const previous: PermissionRequest = {
       id: "permission-1",
       sessionID: "session-1",
-      messageID: "message-1",
-      callID: "call-1",
+      action: "edit",
+      resources: ["file-a.ts"],
       metadata: {
-        callID: "metadata-call-1",
-        messageID: "metadata-message-1",
+        path: "file-a.ts",
       },
-      tool: {
-        callID: "tool-call-1",
+      source: {
+        type: "tool",
+        callID: "call-1",
         messageID: "tool-message-1",
       },
-      time: { created: 1_000 },
     }
 
-    const next: PermissionRequestLike = {
+    const next: PermissionRequest = {
       id: "permission-1",
-      sessionID: undefined,
-      messageID: undefined,
-      callID: undefined,
+      sessionID: "session-1",
+      action: "edit",
+      resources: ["file-b.ts"],
       metadata: {
-        callID: undefined,
+        diff: "diff --git a/file-b.ts b/file-b.ts",
       },
-      tool: {
-        callID: undefined,
-      },
-      time: { created: undefined },
-    } as PermissionRequestLike
+    }
 
     const merged = mergePermissionRequest(previous, next)
 
     assert.equal(merged.sessionID, "session-1")
-    assert.equal(merged.messageID, "message-1")
-    assert.equal(merged.callID, "call-1")
-    assert.equal(merged.metadata?.callID, "metadata-call-1")
-    assert.equal(merged.metadata?.messageID, "metadata-message-1")
-    assert.equal(merged.tool?.callID, "tool-call-1")
-    assert.equal(merged.tool?.messageID, "tool-message-1")
-    assert.equal(merged.time?.created, 1_000)
+    assert.deepEqual((merged as any).resources, ["file-b.ts"])
+    assert.equal(merged.metadata?.path, "file-a.ts")
+    assert.equal(merged.metadata?.diff, "diff --git a/file-b.ts b/file-b.ts")
+    assert.equal((merged as any).source?.callID, "call-1")
+    assert.equal((merged as any).source?.messageID, "tool-message-1")
   })
 })

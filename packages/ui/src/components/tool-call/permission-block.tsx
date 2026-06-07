@@ -1,5 +1,5 @@
 import { Show, createEffect, createSignal, type Accessor, type JSXElement } from "solid-js"
-import type { PermissionRequestLike } from "../../types/permission"
+import type { PermissionRequest } from "../../types/permission"
 import { getPermissionDisplayTitle, getPermissionKind } from "../../types/permission"
 import { getPermissionSessionId } from "../../types/permission"
 import { useI18n } from "../../lib/i18n"
@@ -10,11 +10,11 @@ import { getRelativePath } from "./utils"
 type PermissionResponse = "once" | "always" | "reject"
 
 export type PermissionToolBlockProps = {
-  permission: Accessor<PermissionRequestLike | undefined>
+  permission: Accessor<PermissionRequest | undefined>
   active: Accessor<boolean>
   submitting: Accessor<boolean>
   error: Accessor<string | null>
-  onRespond: (permission: PermissionRequestLike, sessionId: string, response: PermissionResponse, message?: string) => void | Promise<void>
+  onRespond: (permission: PermissionRequest, sessionId: string, response: PermissionResponse, message?: string) => void | Promise<void>
   onRejectReasonOpenChange?: (open: boolean) => void
   renderDiff: (payload: DiffPayload, options?: DiffRenderOptions) => JSXElement | null
   fallbackSessionId: Accessor<string>

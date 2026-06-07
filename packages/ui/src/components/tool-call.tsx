@@ -7,9 +7,9 @@ import { useGlobalCache } from "../lib/hooks/use-global-cache"
 import { useConfig } from "../stores/preferences"
 import { activeInterruption, sendPermissionResponse, sendQuestionReject, sendQuestionReply } from "../stores/instances"
 import { copyToClipboard } from "../lib/clipboard"
-import type { PermissionRequestLike } from "../types/permission"
+import type { PermissionRequest } from "../types/permission"
 import { getPermissionSessionId } from "../types/permission"
-import type { QuestionRequest } from "@opencode-ai/sdk/v2"
+import type { QuestionRequest } from "../types/question"
 import { useI18n } from "../lib/i18n"
 import { resolveToolRenderer } from "./tool-call/renderers"
 import { QuestionToolBlock } from "./tool-call/question-block"
@@ -119,7 +119,7 @@ function ToolCallDetails(props: {
   isDark: () => boolean
   t: ReturnType<typeof useI18n>["t"]
   store: () => ReturnType<typeof messageStoreBus.getOrCreate>
-  pendingPermission: () => { permission: PermissionRequestLike; active: boolean } | undefined
+  pendingPermission: () => { permission: PermissionRequest; active: boolean } | undefined
   pendingQuestion: () => { request: QuestionRequest; active: boolean } | undefined
   isPermissionActive: () => boolean
   isQuestionActive: () => boolean
@@ -226,12 +226,13 @@ function ToolCallDetails(props: {
     })
   })
 
-  async function handlePermissionResponse(permission: PermissionRequestLike, response: "once" | "always" | "reject", message?: string) {
+  async function handlePermissionResponse(permission: PermissionRequest, response: "once" | "always" | "reject", message?: string) {
     if (!permission) return
     setPermissionSubmitting(true)
     setPermissionError(null)
     try {
-      const sessionId = getPermissionSessionId(permission) || props.sessionId
+      const sessionId = getPermissionSessionId(permission)
+      if (!sessionId) throw new Error("Permission request is missing sessionID")
       await sendPermissionResponse(props.instanceId, sessionId, permission.id, response, message)
     } catch (error) {
       log.error("Failed to send permission response", error)
@@ -292,8 +293,7 @@ function ToolCallDetails(props: {
     setQuestionSubmitting(true)
     setQuestionError(null)
     try {
-      const sessionId = (request as any).sessionID ?? (request as any).sessionId ?? props.sessionId
-      await sendQuestionReply(props.instanceId, sessionId, request.id, normalized)
+      await sendQuestionReply(props.instanceId, request.sessionID, request.id, normalized)
     } catch (error) {
       log.error("Failed to send question reply", error)
       setQuestionError(error instanceof Error ? error.message : props.t("toolCall.question.errors.unableToReply"))
@@ -310,8 +310,7 @@ function ToolCallDetails(props: {
     setQuestionSubmitting(true)
     setQuestionError(null)
     try {
-      const sessionId = (request as any).sessionID ?? (request as any).sessionId ?? props.sessionId
-      await sendQuestionReject(props.instanceId, sessionId, request.id)
+      await sendQuestionReject(props.instanceId, request.sessionID, request.id)
     } catch (error) {
       log.error("Failed to reject question", error)
       setQuestionError(error instanceof Error ? error.message : props.t("toolCall.question.errors.unableToDismiss"))
@@ -648,6 +647,7 @@ export default function ToolCall(props: ToolCallProps) {
   const isPermissionActive = createMemo(() => {
     const pending = pendingPermission()
     if (!pending?.permission) return false
+    if (pending.active) return true
     const active = activeRequest()
     return active?.kind === "permission" && active.id === pending.permission.id
   })
@@ -655,6 +655,7 @@ export default function ToolCall(props: ToolCallProps) {
   const isQuestionActive = createMemo(() => {
     const pending = pendingQuestion()
     if (!pending?.request) return false
+    if (pending.active) return true
     const active = activeRequest()
     return active?.kind === "question" && active.id === pending.request.id
   })

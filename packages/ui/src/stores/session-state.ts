@@ -12,6 +12,7 @@ import { getRootClient } from "./opencode-client"
 import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 import { tGlobal } from "../lib/i18n"
 import { computeThreadTotals, type ThreadTotals } from "../lib/thread-totals"
+import { applySessionPage, getDefaultSessionPaginationState, type SessionPaginationState } from "./session-pagination-model"
 
 const log = getLogger("session")
 
@@ -63,13 +64,7 @@ type InstanceIndicatorCounts = {
 
 const [instanceIndicatorCounts, setInstanceIndicatorCounts] = createSignal<Map<string, InstanceIndicatorCounts>>(new Map())
 
-const SESSION_PAGE_SIZE = 100
-
-type SessionPaginationState = {
-  ids: string[]
-  nextStart: number
-  hasMore: boolean
-}
+const SESSION_PAGE_SIZE = 200
 
 type SessionSearchState = {
   query: string
@@ -82,7 +77,7 @@ const [sessionPagination, setSessionPagination] = createSignal<Map<string, Sessi
 const [sessionSearch, setSessionSearch] = createSignal<Map<string, SessionSearchState>>(new Map())
 
 function getSessionPaginationState(instanceId: string): SessionPaginationState {
-  return sessionPagination().get(instanceId) ?? { ids: [], nextStart: 0, hasMore: true }
+  return sessionPagination().get(instanceId) ?? getDefaultSessionPaginationState()
 }
 
 function getSessionListIds(instanceId: string): string[] {
@@ -93,20 +88,14 @@ function getSessionFetchLimit(instanceId: string): number {
   return Math.max(getSessionPaginationState(instanceId).ids.length, SESSION_PAGE_SIZE)
 }
 
-function getSessionNextStart(instanceId: string): number {
-  return getSessionPaginationState(instanceId).nextStart
+function getSessionNextCursor(instanceId: string): string | undefined {
+  return getSessionPaginationState(instanceId).nextCursor
 }
 
-function setSessionPage(instanceId: string, ids: string[], start: number, hasMore: boolean): void {
+function setSessionPage(instanceId: string, ids: string[], hasMore: boolean, reset = false, nextCursor?: string): void {
   setSessionPagination((prev) => {
     const next = new Map(prev)
-    const current = prev.get(instanceId) ?? { ids: [], nextStart: 0, hasMore: true }
-    const nextIds = start <= 0 ? ids : Array.from(new Set([...current.ids, ...ids]))
-    next.set(instanceId, {
-      ids: nextIds,
-      nextStart: start + ids.length,
-      hasMore,
-    })
+    next.set(instanceId, applySessionPage(prev.get(instanceId), ids, hasMore, reset, nextCursor))
     return next
   })
 }
@@ -118,7 +107,7 @@ function getSessionHasMore(instanceId: string): boolean {
 function resetSessionPagination(instanceId: string): void {
   setSessionPagination((prev) => {
     const next = new Map(prev)
-    next.set(instanceId, { ids: [], nextStart: 0, hasMore: true })
+    next.set(instanceId, getDefaultSessionPaginationState())
     return next
   })
 }
@@ -126,9 +115,9 @@ function resetSessionPagination(instanceId: string): void {
 function prependSessionListId(instanceId: string, sessionId: string): void {
   setSessionPagination((prev) => {
     const next = new Map(prev)
-    const current = prev.get(instanceId) ?? { ids: [], nextStart: 0, hasMore: true }
+    const current = prev.get(instanceId) ?? { ids: [], hasMore: true }
     const ids = [sessionId, ...current.ids.filter((id) => id !== sessionId)]
-    next.set(instanceId, { ...current, ids, nextStart: current.nextStart + (current.ids.includes(sessionId) ? 0 : 1) })
+    next.set(instanceId, { ...current, ids })
     return next
   })
 }
@@ -136,9 +125,9 @@ function prependSessionListId(instanceId: string, sessionId: string): void {
 function removeSessionListId(instanceId: string, sessionId: string): void {
   setSessionPagination((prev) => {
     const next = new Map(prev)
-    const current = prev.get(instanceId) ?? { ids: [], nextStart: 0, hasMore: true }
+    const current = prev.get(instanceId) ?? { ids: [], hasMore: true }
     const ids = current.ids.filter((id) => id !== sessionId)
-    next.set(instanceId, { ...current, ids, nextStart: Math.max(0, current.nextStart - (ids.length === current.ids.length ? 0 : 1)) })
+    next.set(instanceId, { ...current, ids })
     return next
   })
 }
@@ -578,12 +567,64 @@ function getChildSessions(instanceId: string, parentId: string): Session[] {
   return allSessions.filter((s) => s.parentId === parentId)
 }
 
+function getDescendantSessions(instanceId: string, parentId: string): Session[] {
+  const allSessions = getSessions(instanceId)
+  const childrenByParent = new Map<string, Session[]>()
+
+  for (const session of allSessions) {
+    if (!session.parentId) continue
+    const children = childrenByParent.get(session.parentId)
+    if (children) {
+      children.push(session)
+    } else {
+      childrenByParent.set(session.parentId, [session])
+    }
+  }
+
+  const descendants: Session[] = []
+  const stack = [...(childrenByParent.get(parentId) ?? [])]
+  const seen = new Set<string>()
+
+  while (stack.length > 0) {
+    const session = stack.shift()
+    if (!session || seen.has(session.id)) continue
+    seen.add(session.id)
+    descendants.push(session)
+    stack.push(...(childrenByParent.get(session.id) ?? []))
+  }
+
+  descendants.sort((a, b) => (b.time.updated ?? 0) - (a.time.updated ?? 0))
+  return descendants
+}
+
 function getSessionFamily(instanceId: string, parentId: string): Session[] {
   const parent = sessions().get(instanceId)?.get(parentId)
   if (!parent) return []
 
-  const children = getChildSessions(instanceId, parentId)
+  const children = getDescendantSessions(instanceId, parentId)
   return [parent, ...children]
+}
+
+function getSessionRoot(instanceId: string, sessionId: string): Session | null {
+  const instanceSessions = sessions().get(instanceId)
+  if (!instanceSessions) return null
+  return getSessionRootFromMap(instanceSessions, sessionId)
+}
+
+function getSessionRootFromMap(instanceSessions: Map<string, Session>, sessionId: string): Session | null {
+  let current = instanceSessions.get(sessionId)
+  if (!current) return null
+
+  const seen = new Set<string>()
+  while (current.parentId) {
+    if (seen.has(current.id)) return null
+    seen.add(current.id)
+    const parent = instanceSessions.get(current.parentId)
+    if (!parent) return null
+    current = parent
+  }
+
+  return current
 }
 
 type SessionThreadCacheEntry = {
@@ -616,17 +657,18 @@ function buildSessionThreads(instanceId: string, rootIds: string[], childIds?: S
   const cache = getOrCreateSessionThreadCache(instanceId)
   const seenParents = new Set<string>()
 
-  const childrenByParent = new Map<string, Session[]>()
+  const childrenByRoot = new Map<string, Session[]>()
 
   for (const session of instanceSessions.values()) {
-    const parentId = session.parentId
-    if (!parentId) continue
+    if (!session.parentId) continue
     if (childIds && !childIds.has(session.id)) continue
-    const children = childrenByParent.get(parentId)
+    const root = getSessionRootFromMap(instanceSessions, session.id)
+    if (!root) continue
+    const children = childrenByRoot.get(root.id)
     if (children) {
       children.push(session)
     } else {
-      childrenByParent.set(parentId, [session])
+      childrenByRoot.set(root.id, [session])
     }
   }
 
@@ -638,7 +680,7 @@ function buildSessionThreads(instanceId: string, rootIds: string[], childIds?: S
 
     seenParents.add(parent.id)
 
-    const children = childrenByParent.get(parent.id) ?? []
+    const children = childrenByRoot.get(parent.id) ?? []
     if (children.length > 1) {
       children.sort((a, b) => (b.time.updated ?? 0) - (a.time.updated ?? 0))
     }
@@ -698,7 +740,8 @@ function getSessionSearchThreads(instanceId: string): SessionThread[] {
       rootIds.push(session.id)
     } else {
       childIds.add(session.id)
-      if (!rootIds.includes(session.parentId)) rootIds.push(session.parentId)
+      const root = getSessionRootFromMap(instanceSessions, session.id)
+      if (root && !rootIds.includes(root.id)) rootIds.push(root.id)
     }
   }
 
@@ -979,6 +1022,8 @@ export {
   getSessions,
   getParentSessions,
   getChildSessions,
+  getDescendantSessions,
+  getSessionRoot,
   getSessionFamily,
   getSessionThreads,
   getSessionSearchThreads,
@@ -998,7 +1043,7 @@ export {
   sessionSearch,
   getSessionListIds,
   getSessionFetchLimit,
-  getSessionNextStart,
+  getSessionNextCursor,
   setSessionPage,
   getSessionHasMore,
   resetSessionPagination,
