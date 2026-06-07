@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js"
-import type { PermissionReply, PermissionRequestLike } from "../types/permission"
+import type { PermissionReply, PermissionRequest } from "../types/permission"
 import { getPermissionSessionId } from "../types/permission"
 import { getLogger } from "../lib/logger"
 
@@ -121,7 +121,7 @@ export function clearAutoAcceptSession(instanceId: string, sessionId: string) {
 
 export function drainAutoAcceptPermission(
   instanceId: string,
-  permission: PermissionRequestLike,
+  permission: PermissionRequest,
   responder: AutoAcceptResponder,
   isPending: PendingPermissionChecker,
 ) {
@@ -146,7 +146,7 @@ export function drainAutoAcceptPermission(
 
 export function drainAutoAcceptPermissions(
   instanceId: string,
-  permissions: PermissionRequestLike[],
+  permissions: PermissionRequest[],
   responder: AutoAcceptResponder,
   isPending: PendingPermissionChecker,
 ) {

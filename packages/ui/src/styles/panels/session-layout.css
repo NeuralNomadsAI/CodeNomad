@@ -105,6 +105,32 @@
   color: var(--text-primary);
 }
 
+.session-header-left-slot {
+  @apply flex items-center gap-2 min-w-0;
+  flex: 0 0 auto;
+}
+
+.session-header-active-title {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-self: stretch;
+  padding-inline: 0.75rem;
+  border-inline: 1px solid color-mix(in oklab, var(--border-base) 72%, transparent);
+  color: var(--text-secondary);
+}
+
+.session-header-active-title-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.15;
+}
+
 .session-sidebar-shortcuts {
   @apply flex flex-col gap-1;
 }

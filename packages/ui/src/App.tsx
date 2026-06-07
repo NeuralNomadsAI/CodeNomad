@@ -419,7 +419,7 @@ const App: Component = () => {
     clearActiveParentSession(instanceId)
 
     try {
-      await fetchSessions(instanceId, { start: 0, limit: getSessionFetchLimit(instanceId) })
+      await fetchSessions(instanceId, { reset: true, limit: getSessionFetchLimit(instanceId) })
     } catch (error) {
       log.error("Failed to refresh sessions after closing", error)
     }
