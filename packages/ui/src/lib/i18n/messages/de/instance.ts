@@ -89,7 +89,6 @@ export const instanceMessages = {
   "instanceShell.empty.description": "Senden Sie eine Nachricht, um eine neue Sitzung zu erstellen, oder wählen Sie eine bestehende Sitzung aus.",
 
   "instanceShell.rightPanel.title": "Status-Panel",
-  "instanceShell.rightPanel.tabs.changes": "Sitzungsänderungen",
   "instanceShell.rightPanel.tabs.gitChanges": "Git-Änderungen",
   "instanceShell.rightPanel.tabs.files": "Dateien",
   "instanceShell.rightPanel.tabs.status": "Status",
@@ -109,8 +108,6 @@ export const instanceMessages = {
   "instanceShell.rightPanel.toast.saveError": "Datei konnte nicht gespeichert werden",
   "instanceShell.rightPanel.sections.yoloMode": "Yolo-Modus",
   "instanceShell.rightPanel.sections.yoloMode.tooltip": "Genehmigt Berechtigungsanfragen für die aktuelle Sitzung automatisch. Nur verwenden, wenn Sie den ausgeführten Tools vertrauen.",
-  "instanceShell.rightPanel.sections.sessionChanges": "Sitzungsänderungen",
-  "instanceShell.rightPanel.sections.sessionChanges.tooltip": "In der aktuellen Sitzung geänderte Dateien. Zeigt Hinzufügungen und Löschungen für jede Datei.",
   "instanceShell.rightPanel.sections.plan": "Plan",
   "instanceShell.rightPanel.sections.plan.tooltip": "Die Roadmap des Agenten für diese Sitzung. Verfolgt Aufgaben, Unteraufgaben und deren Abschlussstatus.",
   "instanceShell.rightPanel.sections.backgroundProcesses": "Hintergrund-Shells",
@@ -121,12 +118,6 @@ export const instanceMessages = {
   "instanceShell.rightPanel.sections.lsp.tooltip": "Language Server Protocol Server, die Code-Intelligenz, Diagnose und sprachenspezifische Funktionen bereitstellen.",
   "instanceShell.rightPanel.sections.plugins": "Plugins",
   "instanceShell.rightPanel.sections.plugins.tooltip": "Plugins, die die Benutzeroberfläche und das Serververhalten anpassen.",
-
-  "instanceShell.sessionChanges.noSessionSelected": "Wählen Sie eine Sitzung aus, um Änderungen zu sehen.",
-  "instanceShell.sessionChanges.loading": "Sitzungsänderungen werden abgerufen...",
-  "instanceShell.sessionChanges.empty": "Noch keine Sitzungsänderungen.",
-  "instanceShell.sessionChanges.filesChanged": "{count} Dateien geändert",
-  "instanceShell.sessionChanges.actions.show": "Änderungen anzeigen",
 
   "instanceShell.gitChanges.noSessionSelected": "Wählen Sie eine Sitzung aus, um Git-Änderungen zu sehen.",
   "instanceShell.gitChanges.loading": "Git-Änderungen werden geladen...",

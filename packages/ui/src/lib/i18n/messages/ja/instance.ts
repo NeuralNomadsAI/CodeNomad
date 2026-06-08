@@ -89,7 +89,6 @@ export const instanceMessages = {
   "instanceShell.empty.description": "下にメッセージを送信して新しいセッションを作成するか、既存のセッションを選択して続行してください。",
 
   "instanceShell.rightPanel.title": "ステータスパネル",
-  "instanceShell.rightPanel.tabs.changes": "変更",
   "instanceShell.rightPanel.tabs.gitChanges": "Git 変更",
   "instanceShell.rightPanel.tabs.files": "ファイル",
   "instanceShell.rightPanel.tabs.status": "ステータス",
@@ -109,8 +108,6 @@ export const instanceMessages = {
   "instanceShell.rightPanel.toast.saveError": "ファイルの保存に失敗しました",
   "instanceShell.rightPanel.sections.yoloMode": "Yoloモード",
   "instanceShell.rightPanel.sections.yoloMode.tooltip": "現在のセッションの権限リクエストを自動承認します。実行中のツールを信頼できる場合にのみ使用してください。",
-  "instanceShell.rightPanel.sections.sessionChanges": "セッション変更",
-  "instanceShell.rightPanel.sections.sessionChanges.tooltip": "現在のセッションで変更されたファイル。各ファイルの追加と削除を表示します。",
   "instanceShell.rightPanel.sections.plan": "計画",
   "instanceShell.rightPanel.sections.plan.tooltip": "このセッションにおけるエージェントのロードマップ。タスクやサブタスク、および完了状況を追跡します。",
   "instanceShell.rightPanel.sections.backgroundProcesses": "バックグラウンドシェル",
@@ -121,12 +118,6 @@ export const instanceMessages = {
   "instanceShell.rightPanel.sections.lsp.tooltip": "Language Server Protocolサーバーがコードインテリジェンス、診断、言語固有の機能を提供します。",
   "instanceShell.rightPanel.sections.plugins": "プラグイン",
   "instanceShell.rightPanel.sections.plugins.tooltip": "UI とサーバーの動作をカスタマイズし、MCP や LSP 以外の機能も追加できるプラグイン。",
-
-  "instanceShell.sessionChanges.noSessionSelected": "変更を表示するにはセッションを選択してください。",
-  "instanceShell.sessionChanges.loading": "変更を取得中...",
-  "instanceShell.sessionChanges.empty": "まだ変更はありません。",
-  "instanceShell.sessionChanges.filesChanged": "{count} 個のファイルが変更されました",
-  "instanceShell.sessionChanges.actions.show": "変更を表示",
 
   "instanceShell.gitChanges.loading": "Git の変更を読み込み中...",
   "instanceShell.gitChanges.empty": "Git の変更はまだありません。",

@@ -42,7 +42,11 @@ export async function connectWorkspaceEvents(
 ): Promise<WorkspaceEventConnection> {
   const nativeDesktopTransportEnabled = readUseTauriNativeEventTransportPreference()
 
-  if (runtimeEnv.host === "tauri" && nativeDesktopTransportEnabled) {
+  if (
+    runtimeEnv.host === "tauri" &&
+    runtimeEnv.windowContext === "local" &&
+    nativeDesktopTransportEnabled
+  ) {
     try {
       const conn = await connectTauriWorkspaceEvents(
         callbacks,
@@ -53,6 +57,8 @@ export async function connectWorkspaceEvents(
     } catch (error) {
       log.warn("Failed to start native desktop event transport, falling back to browser EventSource", error)
     }
+  } else if (runtimeEnv.host === "tauri" && runtimeEnv.windowContext === "remote") {
+    log.info("Event transport: browser-eventsource forced for remote Tauri window")
   } else if (runtimeEnv.host === "tauri") {
     log.info("Event transport: browser-eventsource forced by settings")
   }
