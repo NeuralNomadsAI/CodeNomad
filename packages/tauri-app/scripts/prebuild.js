@@ -13,8 +13,7 @@ const serverDest = path.resolve(root, "src-tauri", "resources", "server")
 const uiLoadingDest = path.resolve(root, "src-tauri", "resources", "ui-loading")
 const resourcesRoot = path.resolve(root, "src-tauri", "resources")
 const { prepareBundledNodeRuntime } = require(path.join(workspaceRoot, "scripts", "prepare-node-runtime.cjs"))
-
-const sources = ["dist", "public", "node_modules", "package.json"]
+const { copyPackagedServerResources } = require(path.join(workspaceRoot, "scripts", "desktop-server-resources.cjs"))
 
 const serverInstallCommand =
   "npm install --omit=dev --ignore-scripts --workspaces=false --package-lock=false --install-strategy=shallow --fund=false --audit=false"
@@ -248,60 +247,6 @@ function ensureEsbuildPlatformBinary() {
   })
 }
 
-function copyServerArtifacts() {
-  fs.rmSync(serverDest, { recursive: true, force: true })
-  fs.mkdirSync(serverDest, { recursive: true })
-
-  for (const name of sources) {
-    const from = path.join(serverRoot, name)
-    const to = path.join(serverDest, name)
-    if (!fs.existsSync(from)) {
-      console.warn(`[prebuild] skipped missing ${from}`)
-      continue
-    }
-    fs.cpSync(from, to, { recursive: true, dereference: true })
-    console.log(`[prebuild] copied ${from} -> ${to}`)
-  }
-}
-
-function stripNodeModuleBins() {
-  const root = path.join(serverDest, "node_modules")
-  if (!fs.existsSync(root)) {
-    return
-  }
-
-  const stack = [root]
-  let removed = 0
-
-  while (stack.length > 0) {
-    const current = stack.pop()
-    if (!current) break
-
-    let entries
-    try {
-      entries = fs.readdirSync(current, { withFileTypes: true })
-    } catch {
-      continue
-    }
-
-    for (const entry of entries) {
-      const full = path.join(current, entry.name)
-      if (entry.name === ".bin") {
-        fs.rmSync(full, { recursive: true, force: true })
-        removed += 1
-        continue
-      }
-      if (entry.isDirectory()) {
-        stack.push(full)
-      }
-    }
-  }
-
-  if (removed > 0) {
-    console.log(`[prebuild] removed ${removed} node_modules/.bin directories`)
-  }
-}
-
 function copyUiLoadingAssets() {
   const loadingSource = path.join(uiDist, "loading.html")
   const assetsSource = path.join(uiDist, "assets")
@@ -332,10 +277,20 @@ function copyUiLoadingAssets() {
   ensureServerDependencies()
   ensureUiBuild()
   syncServerUiBundle()
-  copyServerArtifacts()
-  stripNodeModuleBins()
+  copyPackagedServerResources({
+    serverRoot,
+    serverDest,
+    log: (message) => console.log(`[prebuild] ${message}`),
+  })
   copyUiLoadingAssets()
   await prepareBundledNodeRuntime({ resourcesRoot })
+  execSync(
+    `${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(workspaceRoot, "scripts", "smoke-packaged-resources.cjs"))} --resources ${JSON.stringify(resourcesRoot)} --loading ${JSON.stringify(uiLoadingDest)}`,
+    {
+      cwd: workspaceRoot,
+      stdio: "inherit",
+    },
+  )
 })().catch((err) => {
   console.error("[prebuild] failed:", err)
   process.exit(1)

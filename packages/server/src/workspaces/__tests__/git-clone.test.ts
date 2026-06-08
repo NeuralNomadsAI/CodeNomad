@@ -160,30 +160,27 @@ describe("cloneGitRepository", () => {
     }
   })
 
-  it(
-    "supports destinations directly under a Windows drive root",
-    { skip: process.platform !== "win32" },
-    async () => {
-      const temp = mkdtempSync(path.join(tmpdir(), "codenomad-git-clone-"))
-      const sourceRepo = path.join(temp, "source.git")
-      const root = path.parse(process.cwd()).root
-      const destinationPath = path.join(root, `codenomad-git-clone-root-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+  it("supports destinations directly under a safe parent", async () => {
+    const temp = mkdtempSync(path.join(tmpdir(), "codenomad-git-clone-"))
+    const sourceRepo = path.join(temp, "source.git")
+    const root = path.parse(process.cwd()).root
+    const parentPath = process.platform === "win32" ? root : temp
+    const destinationPath = path.join(parentPath, `codenomad-git-clone-root-${Date.now()}-${Math.random().toString(36).slice(2)}`)
 
-      try {
-        createBareRepository(sourceRepo)
-        rmSync(destinationPath, { recursive: true, force: true })
+    try {
+      createBareRepository(sourceRepo)
+      rmSync(destinationPath, { recursive: true, force: true })
 
-        const result = await cloneGitRepository({
-          repositoryUrl: sourceRepo,
-          destinationPath,
-        })
+      const result = await cloneGitRepository({
+        repositoryUrl: sourceRepo,
+        destinationPath,
+      })
 
-        assert.equal(result.path, destinationPath)
-        assert.equal(existsSync(destinationPath), true)
-      } finally {
-        rmSync(destinationPath, { recursive: true, force: true })
-        rmSync(temp, { recursive: true, force: true })
-      }
-    },
-  )
+      assert.equal(result.path, destinationPath)
+      assert.equal(existsSync(destinationPath), true)
+    } finally {
+      rmSync(destinationPath, { recursive: true, force: true })
+      rmSync(temp, { recursive: true, force: true })
+    }
+  })
 })

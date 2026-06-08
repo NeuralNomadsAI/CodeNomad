@@ -14,6 +14,7 @@ export const folderSelectionMessages = {
   "folderSelection.recent.title": "Recent Folders",
   "folderSelection.recent.subtitle.one": "{count} folder available",
   "folderSelection.recent.subtitle.other": "{count} folders available",
+  "folderSelection.recent.rename": "Rename workspace",
   "folderSelection.recent.remove": "Remove from recent",
   "folderSelection.recent.openBadge": "Open",
   "folderSelection.recent.alreadyOpenTitle": "Project already open",
@@ -95,4 +96,13 @@ export const folderSelectionMessages = {
   "folderSelection.servers.certificateInstall.cancelLabel": "Cancel",
   "folderSelection.servers.certificateInstall.cancelled": "CodeNomad needs the local certificate to be trusted before it can open self-signed HTTPS remote windows.",
   "folderSelection.sidecars.button": "Open SideCar",
+
+  "projectRenameDialog.title": "Rename workspace",
+  "projectRenameDialog.description.withLabel": "Update the workspace name for \"{label}\".",
+  "projectRenameDialog.description.default": "Set a workspace name for this folder.",
+  "projectRenameDialog.input.label": "Workspace name",
+  "projectRenameDialog.input.placeholder": "Enter workspace name",
+  "projectRenameDialog.actions.cancel": "Cancel",
+  "projectRenameDialog.actions.rename": "Rename",
+  "projectRenameDialog.actions.renaming": "Renaming...",
 } as const

@@ -20,6 +20,13 @@ import {
   sessions as sessionStateSessions,
   setActiveSessionFromList,
   toggleSessionParentExpanded,
+  loadMoreSessions,
+  searchSessions,
+  getSessionHasMore,
+  clearSessionSearch,
+  getSessionSearchQuery,
+  getSessionSearchThreads,
+  isSessionSearchLoading,
 } from "../stores/sessions"
 import { getGitRepoStatus, getWorktreeSlugForParentSession } from "../stores/worktrees"
 import { getLogger } from "../lib/logger"
@@ -65,6 +72,71 @@ const SessionList: Component<SessionListProps> = (props) => {
     onCleanup(() => window.clearInterval(timer))
   })
 
+  const [sentinelEl, setSentinelEl] = createSignal<HTMLDivElement | null>(null)
+
+  const hasMore = createMemo(() => {
+    if (normalizedQuery()) return false
+    return getSessionHasMore(props.instanceId)
+  })
+
+  const isFetchingSessions = createMemo(() => {
+    return loading().fetchingSessions.get(props.instanceId) ?? false
+  })
+
+  createEffect(() => {
+    const el = sentinelEl()
+    if (!el || !hasMore() || isFetchingSessions()) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0]
+        if (entry?.isIntersecting && hasMore() && !isFetchingSessions()) {
+          void loadMoreSessions(props.instanceId).catch((error) => {
+            log.error("Failed to load more sessions:", error)
+          })
+        }
+      },
+      { root: el.parentElement ?? null, rootMargin: "0px 0px 200px 0px" }
+    )
+
+    observer.observe(el)
+    onCleanup(() => observer.disconnect())
+  })
+
+  let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null
+  createEffect(() => {
+    const query = normalizedQuery()
+    if (!props.enableFilterBar) {
+      clearSessionSearch(props.instanceId)
+      return
+    }
+
+    if (searchDebounceTimer) {
+      clearTimeout(searchDebounceTimer)
+    }
+
+    if (!query) {
+      clearSessionSearch(props.instanceId)
+      return
+    }
+
+    // Always run server search in background for workspace-complete results.
+    // Client-side filtering (filteredThreads) shows instant results from loaded sessions.
+    const queryAtDispatch = query
+    searchDebounceTimer = setTimeout(() => {
+      void searchSessions(props.instanceId, queryAtDispatch)
+        .catch((error) => {
+          log.error("Failed to search sessions:", error)
+        })
+    }, 150)
+
+    onCleanup(() => {
+      if (searchDebounceTimer) {
+        clearTimeout(searchDebounceTimer)
+      }
+    })
+  })
+
   const normalizeSessionLabel = (sessionId: string) => {
     const session = sessionStateSessions().get(props.instanceId)?.get(sessionId)
     const title = (session?.title ?? "").trim()
@@ -81,6 +153,12 @@ const SessionList: Component<SessionListProps> = (props) => {
   const filteredThreads = createMemo<SessionThread[]>(() => {
     const query = normalizedQuery()
     if (!query) return props.threads
+
+    const searchQuery = getSessionSearchQuery(props.instanceId)
+    const searchLoading = isSessionSearchLoading(props.instanceId)
+    if (searchQuery === query && !searchLoading) {
+      return getSessionSearchThreads(props.instanceId)
+    }
 
     const next: SessionThread[] = []
     for (const thread of props.threads) {
@@ -795,10 +873,22 @@ const SessionList: Component<SessionListProps> = (props) => {
                    </>
                  )
                }}
-            </For>
-          </div>
-        </Show>
-      </div>
+             </For>
+
+             <Show when={hasMore() || isFetchingSessions()}>
+               <div
+                 ref={(el) => setSentinelEl(el)}
+                 class="session-list-sentinel flex items-center justify-center py-3 text-text-weak text-xs"
+                 data-session-sentinel
+               >
+                 <Show when={isFetchingSessions()}>
+                   <span class="animate-pulse">{t("sessionList.loading.more")}</span>
+                 </Show>
+               </div>
+             </Show>
+           </div>
+         </Show>
+       </div>
 
       <Show when={props.showFooter !== false}>
         <div class="session-list-footer p-3 border-t border-base">

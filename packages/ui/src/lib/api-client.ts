@@ -3,6 +3,9 @@ import type {
   BackgroundProcessListResponse,
   BackgroundProcessOutputResponse,
   BinaryValidationResult,
+  ConfigFileContentRequest,
+  ConfigFileContentResponse,
+  ConfigFileListResponse,
   FileSystemEntry,
   FileSystemCreateFolderResponse,
   FileSystemFileContentResponse,
@@ -47,7 +50,7 @@ import { attachEventSourceHandlers } from "./event-source-handlers"
 const RUNTIME_BASE = typeof window !== "undefined" ? window.location?.origin : undefined
 const DEFAULT_BASE = typeof window !== "undefined" ? window.__CODENOMAD_API_BASE__ ?? RUNTIME_BASE : undefined
 const DEFAULT_EVENTS_PATH = typeof window !== "undefined" ? window.__CODENOMAD_EVENTS_URL__ ?? "/api/events" : "/api/events"
-const API_BASE = import.meta.env.VITE_CODENOMAD_API_BASE ?? DEFAULT_BASE
+const API_BASE = import.meta.env?.VITE_CODENOMAD_API_BASE ?? DEFAULT_BASE
 const EVENTS_URL = buildEventsUrl(API_BASE, DEFAULT_EVENTS_PATH)
 
 export const CODENOMAD_API_BASE = API_BASE
@@ -284,6 +287,19 @@ export const serverApi = {
   fetchAuthStatus(): Promise<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean }> {
     return request<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean }>("/api/auth/status")
   },
+  listConfigFiles(): Promise<ConfigFileListResponse> {
+    return request<ConfigFileListResponse>("/api/config-files")
+  },
+  readConfigFile(id: string): Promise<ConfigFileContentResponse> {
+    return request<ConfigFileContentResponse>(`/api/config-files/${encodeURIComponent(id)}/content`)
+  },
+  writeConfigFile(id: string, contents: string): Promise<void> {
+    const body: ConfigFileContentRequest = { contents }
+    return request(`/api/config-files/${encodeURIComponent(id)}/content`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    })
+  },
   setServerPassword(password: string): Promise<{ ok: boolean; username: string; passwordUserProvided: boolean }> {
     return request<{ ok: boolean; username: string; passwordUserProvided: boolean }>("/api/auth/password", {
       method: "POST",
@@ -332,8 +348,11 @@ export const serverApi = {
       `/api/workspaces/${encodeURIComponent(id)}/files/content?${params.toString()}`,
     )
   },
-  writeWorkspaceFile(id: string, relativePath: string, contents: string): Promise<void> {
+  writeWorkspaceFile(id: string, relativePath: string, contents: string, options?: { worktree?: string }): Promise<void> {
     const params = new URLSearchParams({ path: relativePath })
+    if (options?.worktree && options.worktree !== "root") {
+      params.set("worktree", options.worktree)
+    }
     return request(
       `/api/workspaces/${encodeURIComponent(id)}/files/content?${params.toString()}`,
       {
@@ -501,11 +520,15 @@ export const serverApi = {
       body: JSON.stringify({ ...identity, enabled }),
     })
   },
-  sendClientConnectionPong(payload: { clientId: string; connectionId: string; pingTs?: number }): Promise<void> {
-    return request<void>("/api/client-connections/pong", {
+  sendClientConnectionPong(payload: { clientId: string; connectionId: string; pingTs?: number }, signal?: AbortSignal): Promise<void> {
+    const init: RequestInit = {
       method: "POST",
       body: JSON.stringify(payload),
-    })
+    }
+    if (signal) {
+      init.signal = signal
+    }
+    return request<void>("/api/client-connections/pong", init)
   },
   fetchBackgroundProcessOutput(
     instanceId: string,

@@ -1,0 +1,176 @@
+export const commandMessages = {
+  "commandPalette.title": "कमाण्ड प्यालेट (Command Palette)",
+  "commandPalette.description": "कमाण्डहरू खोज्नुहोस् र कार्यान्वयन गर्नुहोस्",
+  "commandPalette.searchPlaceholder": "कमाण्ड टाइप गर्नुहोस् वा खोज्नुहोस्...",
+  "commandPalette.empty": "\"{query}\" को लागि कुनै कमाण्ड भेटिएन",
+  "commandPalette.category.customCommands": "अनुकूल कमाण्डहरू (Custom Commands)",
+  "commandPalette.category.instance": "उदाहरण (Instance)",
+  "commandPalette.category.session": "सत्र (Session)",
+  "commandPalette.category.agentModel": "एजेन्ट र मोडेल",
+  "commandPalette.category.inputFocus": "इनपुट र फोकस",
+  "commandPalette.category.system": "प्रणाली (System)",
+  "commandPalette.category.other": "अन्य",
+
+  "commands.newInstance.label": "नयाँ उदाहरण (New Instance)",
+  "commands.newInstance.description": "नयाँ उदाहरण सिर्जना गर्न फोल्डर चयनकर्ता खोल्नुहोस्",
+  "commands.newInstance.keywords": "फोल्डर, परियोजना, कार्यस्थान",
+
+  "commands.closeInstance.label": "ट्याब बन्द गर्नुहोस्",
+  "commands.closeInstance.description": "हालको शीर्ष-स्तरको ट्याब बन्द गर्नुहोस्",
+  "commands.closeInstance.keywords": "रोक्नुहोस्, बन्द गर्नुहोस्, ट्याब",
+
+  "commands.nextInstance.label": "अर्को ट्याब",
+  "commands.nextInstance.description": "अर्को शीर्ष-स्तरको ट्याबमा जानुहोस्",
+  "commands.nextInstance.keywords": "परिवर्तन, नेभिगेट, ट्याब",
+
+  "commands.previousInstance.label": "अघिल्लो ट्याब",
+  "commands.previousInstance.description": "अघिल्लो शीर्ष-स्तरको ट्याबमा फर्कनुहोस्",
+  "commands.previousInstance.keywords": "परिवर्तन, नेभिगेट, ट्याब",
+
+  "commands.newSession.label": "नयाँ सत्र (New Session)",
+  "commands.newSession.description": "नयाँ अभिभावक सत्र सिर्जना गर्नुहोस्",
+  "commands.newSession.keywords": "सिर्जना, सुरु",
+
+  "commands.closeSession.label": "सत्र बन्द गर्नुहोस्",
+  "commands.closeSession.description": "हालको अभिभावक सत्र बन्द गर्नुहोस्",
+  "commands.closeSession.keywords": "बन्द, रोक्नुहोस्",
+
+  "commands.scrubSessions.label": "सत्रहरू सफा गर्नुहोस् (Scrub Sessions)",
+  "commands.scrubSessions.description": "खाली सत्रहरू, काम पूरा गरेका एजेन्ट सत्रहरू, र अनावश्यक सत्रहरू हटाउनुहोस्।",
+  "commands.scrubSessions.keywords": "सफाई, खाली, सत्र, हटाउनुहोस्, मेटाउनुहोस्",
+
+  "commands.instanceInfo.label": "उदाहरण जानकारी (Instance Info)",
+  "commands.instanceInfo.description": "लग र स्थितिको लागि उदाहरण सिंहावलोकन खोल्नुहोस्",
+  "commands.instanceInfo.keywords": "जानकारी, लग, कन्सोल, आउटपुट",
+
+  "commands.nextSession.label": "अर्को सत्र",
+  "commands.nextSession.description": "अर्को सत्र ट्याबमा जानुहोस्",
+  "commands.nextSession.keywords": "परिवर्तन, नेभिगेट",
+
+  "commands.previousSession.label": "अघिल्लो सत्र",
+  "commands.previousSession.description": "अघिल्लो सत्र ट्याबमा फर्कनुहोस्",
+  "commands.previousSession.keywords": "परिवर्तन, नेभिगेट",
+
+  "commands.compactSession.label": "सत्र संक्षिप्त गर्नुहोस्",
+  "commands.compactSession.description": "हालको सत्रलाई संक्षेप र संक्षिप्त गर्नुहोस्",
+  "commands.compactSession.keywords": "संक्षेप, संक्षिप्त",
+  "commands.compactSession.errorFallback": "सत्र संक्षिप्त गर्न असफल भयो",
+  "commands.compactSession.alert.title": "संक्षिप्तीकरण असफल भयो",
+  "commands.compactSession.alert.message": "संक्षिप्तीकरण असफल भयो: {message}",
+
+  "commands.undoLastMessage.label": "अन्तिम सन्देश फिर्ता लिनुहोस् (Undo)",
+  "commands.undoLastMessage.description": "अन्तिम सन्देश उल्टाउनुहोस्",
+  "commands.undoLastMessage.keywords": "उल्टाउनुहोस्, फिर्ता",
+  "commands.undoLastMessage.none.title": "फिर्ता लिनको लागि कुनै कार्य छैन",
+  "commands.undoLastMessage.none.message": "फिर्ता लिनको लागि केहि छैन",
+  "commands.undoLastMessage.failed.title": "फिर्ता लिन असफल",
+  "commands.undoLastMessage.failed.message": "सन्देश उल्टाउन असफल भयो",
+
+  "commands.openModelSelector.label": "मोडेल चयनकर्ता खोल्नुहोस्",
+  "commands.openModelSelector.description": "फरक मोडेल छनौट गर्नुहोस्",
+  "commands.openModelSelector.keywords": "मोडेल, एआई",
+
+  "commands.selectModelVariant.label": "मोडेल संस्करण चयन गर्नुहोस्",
+  "commands.selectModelVariant.description": "हालको मोडेलको लागि सोच्ने प्रयास छनौट गर्नुहोस्",
+  "commands.selectModelVariant.keywords": "संस्करण, सोच, तर्क",
+
+  "commands.openAgentSelector.label": "एजेन्ट चयनकर्ता खोल्नुहोस्",
+  "commands.openAgentSelector.description": "फरक एजेन्ट छनौट गर्नुहोस्",
+  "commands.openAgentSelector.keywords": "एजेन्ट, मोड",
+
+  "commands.clearInput.label": "इनपुट सफा गर्नुहोस्",
+  "commands.clearInput.description": "प्रम्प्ट पाठ क्षेत्र सफा गर्नुहोस्",
+  "commands.clearInput.keywords": "सफा, रिसेट",
+
+  "commands.promptSubmitShortcut.label.default": "Enter: नयाँ लाइन, Cmd/Ctrl+Enter: प्रम्प्ट पठाउनुहोस्",
+  "commands.promptSubmitShortcut.label.swapped": "Enter: प्रम्प्ट पठाउनुहोस्, Cmd/Ctrl+Enter: नयाँ लाइन",
+  "commands.promptSubmitShortcut.description": "प्रम्प्ट इनपुटमा Enter र Cmd/Ctrl+Enter को व्यवहार बदल्नुहोस्",
+  "commands.promptSubmitShortcut.keywords": "enter, cmd, ctrl, पठाउनुहोस्, सर्टकट, प्रम्प्ट",
+
+  "commands.thinkingBlocks.label.show": "सोचाइ देखाउनुहोस् (Show Thinking)",
+  "commands.thinkingBlocks.label.hide": "सोचाइ लुकाउनुहोस् (Hide Thinking)",
+  "commands.thinkingBlocks.description": "एआईको सोचाइ खण्डहरू देखाउनुहोस् वा लुकाउनुहोस्",
+  "commands.thinkingBlocks.keywords": "सोच, तर्क, टगल, देखाउनुहोस्, लुकाउनुहोस्",
+
+  "commands.timelineToolCalls.label.show": "टाइमलाइन उपकरण कलहरू देखाउनुहोस्",
+  "commands.timelineToolCalls.label.hide": "टाइमलाइन उपकरण कलहरू लुकाउनुहोस्",
+  "commands.timelineToolCalls.description": "सन्देश टाइमलाइनमा उपकरण कल प्रविष्टिहरू टगल गर्नुहोस्",
+  "commands.timelineToolCalls.keywords": "टाइमलाइन, उपकरण, टगल",
+
+  "commands.keyboardShortcutHints.label.show": "किबोर्ड सर्टकट संकेतहरू देखाउनुहोस्",
+  "commands.keyboardShortcutHints.label.hide": "किबोर्ड सर्टकट संकेतहरू लुकाउनुहोस्",
+  "commands.keyboardShortcutHints.description": "UI मा किबोर्ड सर्टकट संकेतहरू देखाउनुहोस् वा लुकाउनुहोस्",
+  "commands.keyboardShortcutHints.description.disabledWeb": "WebUI मा असक्षम पारिएको छ",
+  "commands.keyboardShortcutHints.keywords": "सर्टकट, किबोर्ड, संकेत",
+
+  "commands.common.expanded": "विस्तार गरिएको (Expanded)",
+  "commands.common.collapsed": "संकुचित (Collapsed)",
+  "commands.common.visible": "देखिने",
+  "commands.common.hidden": "लुकेको",
+  "commands.common.enabled": "सक्षम",
+  "commands.common.disabled": "अक्षम",
+
+  "commands.thinkingBlocksDefault.label": "सोचाइ दृश्य: {state}",
+  "commands.thinkingBlocksDefault.description": "देखाइएको बेला एआई सोचाइ खण्डहरू संकुचित / विस्तार गर्नुहोस्",
+  "commands.thinkingBlocksDefault.keywords": "सोच, तर्क, विस्तार, संकुचित",
+
+  "commands.diffViewSplit.label": "विभाजित डिफ दृश्य (Split Diff View) प्रयोग गर्नुहोस्",
+  "commands.diffViewSplit.description": "उपकरण-कल डिफहरू छेउछाउमा देखाउनुहोस्",
+  "commands.diffViewSplit.keywords": "डिफ, विभाजित, दृश्य",
+
+  "commands.diffViewUnified.label": "एकीकृत डिफ दृश्य (Unified Diff View) प्रयोग गर्नुहोस्",
+  "commands.diffViewUnified.description": "उपकरण-कल डिफहरू भित्रै देखाउनुहोस्",
+  "commands.diffViewUnified.keywords": "डिफ, एकीकृत, दृश्य",
+
+  "commands.toolOutputsDefault.label": "उपकरण आउटपुट पूर्वनिर्धारित · {state}",
+  "commands.toolOutputsDefault.description": "उपकरण आउटपुटहरूको लागि पूर्वनिर्धारित विस्तार टगल गर्नुहोस्",
+  "commands.toolOutputsDefault.keywords": "उपकरण, आउटपुट, विस्तार, संकुचित",
+
+  "commands.diagnosticsDefault.label": "निदान (Diagnostics) पूर्वनिर्धारित · {state}",
+  "commands.diagnosticsDefault.description": "निदान आउटपुटको लागि पूर्वनिर्धारित विस्तार टगल गर्नुहोस्",
+  "commands.diagnosticsDefault.keywords": "निदान, विस्तार, संकुचित",
+
+  "commands.toolInputsVisibility.label": "उपकरण इनपुट दृश्यता · {state}",
+  "commands.toolInputsVisibility.description": "उपकरण कल इनपुट तर्कहरूको लागि पूर्वनिर्धारित दृश्यता सेट गर्नुहोस्",
+  "commands.toolInputsVisibility.keywords": "उपकरण, इनपुट, दृश्यता, लुकाउनुहोस्, देखाउनुहोस्",
+
+  "commands.tokenUsageDisplay.label": "टोकन प्रयोग प्रदर्शन · {state}",
+  "commands.tokenUsageDisplay.description": "सहायक सन्देशहरूको लागि टोकन र लागत तथ्याङ्क देखाउनुहोस् वा लुकाउनुहोस्",
+  "commands.tokenUsageDisplay.keywords": "टोकन, प्रयोग, लागत, तथ्याङ्क",
+
+  "commands.autoCleanupBlankSessions.label": "खाली सत्रहरू स्वतः सफा गर्नुहोस् · {state}",
+  "commands.autoCleanupBlankSessions.description": "नयाँ सत्रहरू सिर्जना गर्दा खाली सत्रहरू स्वतः सफा गर्नुहोस्",
+  "commands.autoCleanupBlankSessions.keywords": "स्वतः, सफा, खाली, सत्र, टगल",
+
+  "commands.showHelp.label": "मद्दत देखाउनुहोस्",
+  "commands.showHelp.description": "किबोर्ड सर्टकट र मद्दत प्रदर्शन गर्नुहोस्",
+  "commands.showHelp.keywords": "सर्टकट, मद्दत",
+
+  "commands.custom.argumentsPrompt.message": "/{name} को लागि तर्कहरू (Arguments)",
+  "commands.custom.argumentsPrompt.title": "अनुकूल कमाण्ड",
+  "commands.custom.argumentsPrompt.inputLabel": "तर्कहरू",
+  "commands.custom.argumentsPrompt.inputPlaceholder": "उदाहरण: foo bar",
+  "commands.custom.argumentsPrompt.confirmLabel": "चलाउनुहोस्",
+  "commands.custom.argumentsPrompt.cancelLabel": "रद्द गर्नुहोस्",
+  "commands.custom.argumentsPrompt.openFailed.message": "तर्क प्रम्प्ट खोल्न असफल भयो।",
+  "commands.custom.argumentsPrompt.openFailed.title": "कमाण्ड तर्कहरू",
+  "commands.custom.entries.descriptionFallback": "अनुकूल कमाण्ड",
+  "commands.custom.sessionRequired.message": "अनुकूल कमाण्ड चलाउनु अघि एक सत्र चयन गर्नुहोस्।",
+  "commands.custom.sessionRequired.title": "सत्र आवश्यक छ",
+  "commands.custom.runFailed.message": "अनुकूल कमाण्ड चलाउन असफल भयो। विवरणहरूको लागि कन्सोल जाँच गर्नुहोस्।",
+  "commands.custom.runFailed.title": "कमाण्ड असफल भयो",
+
+  "unifiedPicker.loading.searching": "खोज्दै...",
+  "unifiedPicker.loading.loadingWorkspace": "कार्यस्थान लोड गर्दै...",
+  "unifiedPicker.title.command": "कमाण्ड चयन गर्नुहोस्",
+  "unifiedPicker.title.mention": "एजेन्ट वा फाइल चयन गर्नुहोस्",
+  "unifiedPicker.empty": "कुनै परिणाम भेटिएन",
+  "unifiedPicker.sections.commands": "कमाण्डहरू",
+  "unifiedPicker.sections.agents": "एजेन्टहरू",
+  "unifiedPicker.sections.files": "फाइलहरू",
+  "unifiedPicker.sections.workspaceRoot": "कार्यस्थानको मूल (Workspace Root)",
+  "unifiedPicker.badge.subagent": "उप-एजेन्ट",
+  "unifiedPicker.footer.navigate": "नेभिगेट",
+  "unifiedPicker.footer.select": "चयन",
+  "unifiedPicker.footer.close": "बन्द",
+} as const

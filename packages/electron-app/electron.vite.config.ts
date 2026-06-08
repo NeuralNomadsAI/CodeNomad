@@ -80,9 +80,9 @@ export default defineConfig({
       port: 3000,
     },
     build: {
-      minify: false,
-      cssMinify: false,
-      sourcemap: true,
+      minify: true,
+      cssMinify: true,
+      sourcemap: false,
       outDir: resolve(__dirname, "dist/renderer"),
       rollupOptions: {
         input: {

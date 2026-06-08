@@ -103,7 +103,10 @@
   }
 
   .markdown-body hr {
-    display: none;
+    height: 1px;
+    margin: 0.9rem 0;
+    background-color: var(--border-base);
+    border: 0;
   }
 
   .markdown-body strong {

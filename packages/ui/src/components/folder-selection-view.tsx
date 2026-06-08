@@ -1,10 +1,11 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
 import { Component, createMemo, createSignal, Show, For, onMount, onCleanup, createEffect } from "solid-js"
-import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, Languages, ChevronDown, X, Globe, Loader2, GitBranch } from "lucide-solid"
+import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, Languages, ChevronDown, X, Globe, Loader2, GitBranch, Pencil } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
 import Kbd from "./kbd"
+import ProjectRenameDialog from "./project-rename-dialog"
 import { openNativeFolderDialog, supportsNativeDialogsInCurrentWindow } from "../lib/native/native-functions"
 import { useFolderDrop } from "../lib/hooks/use-folder-drop"
 import VersionPill from "./version-pill"
@@ -18,7 +19,7 @@ import { openExternalUrl } from "../lib/external-url"
 import { serverApi } from "../lib/api-client"
 import { canOpenRemoteWindows, isTauriHost } from "../lib/runtime-env"
 import { openRemoteServerWindow } from "../lib/native/remote-window"
-import { getExistingInstanceForFolder } from "../stores/instances"
+import { getExistingInstanceForFolder, updateProjectNameForFolder } from "../stores/instances"
 
 const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
 const GITHUB_URL = "https://github.com/NeuralNomadsAI/CodeNomad"
@@ -38,6 +39,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const {
     recentFolders,
     removeRecentFolder,
+    renameRecentFolderProject,
     preferences,
     updatePreferences,
     serverSettings,
@@ -53,6 +55,8 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const [isFolderBrowserOpen, setIsFolderBrowserOpen] = createSignal(false)
   const [isCloneDialogOpen, setIsCloneDialogOpen] = createSignal(false)
   const [isCloneDestinationBrowserOpen, setIsCloneDestinationBrowserOpen] = createSignal(false)
+  const [renameProjectTarget, setRenameProjectTarget] = createSignal<{ path: string; name: string; label: string } | null>(null)
+  const [isRenamingProject, setIsRenamingProject] = createSignal(false)
   const [cloneRepositoryUrl, setCloneRepositoryUrl] = createSignal("")
   const [cloneDestinationPath, setCloneDestinationPath] = createSignal("")
   const [cleanupCloneDestination, setCleanupCloneDestination] = createSignal(false)
@@ -66,6 +70,8 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const [serverDialogError, setServerDialogError] = createSignal<string | null>(null)
   const [isSavingServer, setIsSavingServer] = createSignal(false)
   const [connectingServerId, setConnectingServerId] = createSignal<string | null>(null)
+  let homeRootRef: HTMLDivElement | undefined
+  let actionsColumnRef: HTMLDivElement | undefined
   let recentListRef: HTMLDivElement | undefined
 
   type LanguageOption = { value: Locale; label: string }
@@ -78,6 +84,8 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     { value: "ja", label: "日本語" },
     { value: "zh-Hans", label: "简体中文" },
     { value: "he", label: "עברית" },
+    { value: "de", label: "Deutsch" },
+    { value: "ne", label: "नेपाली" },
   ]
 
   const selectedLanguageOption = () => languageOptions.find((opt) => opt.value === locale()) ?? languageOptions[0]
@@ -239,6 +247,28 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     window.addEventListener("keydown", handleKeyDown)
     onCleanup(() => {
       window.removeEventListener("keydown", handleKeyDown)
+    })
+  })
+
+  onMount(() => {
+    const syncActionsHeight = () => {
+      if (!homeRootRef || !actionsColumnRef) return
+      const height = actionsColumnRef.getBoundingClientRect().height
+      homeRootRef.style.setProperty("--folder-home-actions-height", `${Math.ceil(height)}px`)
+    }
+
+    syncActionsHeight()
+    window.addEventListener("resize", syncActionsHeight)
+
+    let observer: ResizeObserver | undefined
+    if (typeof ResizeObserver !== "undefined" && actionsColumnRef) {
+      observer = new ResizeObserver(syncActionsHeight)
+      observer.observe(actionsColumnRef)
+    }
+
+    onCleanup(() => {
+      window.removeEventListener("resize", syncActionsHeight)
+      observer?.disconnect()
     })
   })
 
@@ -490,6 +520,35 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     }
   }
 
+  function getProjectDisplayName(path: string, projectName?: string): string {
+    const trimmedName = projectName?.trim()
+    return trimmedName || splitFolderPath(path).baseName
+  }
+
+  function openProjectRename(path: string, projectName?: string, e?: Event) {
+    if (isLoading()) return
+    e?.stopPropagation()
+    const defaultName = getProjectDisplayName(path, projectName)
+    setRenameProjectTarget({ path, name: defaultName, label: defaultName })
+  }
+
+  function closeProjectRenameDialog() {
+    setRenameProjectTarget(null)
+  }
+
+  async function handleProjectRenameSubmit(nextName: string) {
+    const target = renameProjectTarget()
+    if (!target || !nextName.trim()) return
+    setIsRenamingProject(true)
+    try {
+      await renameRecentFolderProject(target.path, nextName)
+      updateProjectNameForFolder(target.path, nextName)
+      setRenameProjectTarget(null)
+    } finally {
+      setIsRenamingProject(false)
+    }
+  }
+
 
   function getDisplayPath(path: string): string {
     if (!path) return path
@@ -552,15 +611,15 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   return (
     <>
       <div
-        class="flex h-screen w-full items-start justify-center overflow-hidden py-6 px-4 sm:px-6 relative"
-        style="background-color: var(--surface-secondary)"
+        class="folder-home-root flex w-full items-start justify-center py-6 px-4 sm:px-6 relative"
+        ref={(el) => (homeRootRef = el)}
         onDragEnter={folderDrop.bind.onDragEnter}
         onDragOver={folderDrop.bind.onDragOver}
         onDragLeave={folderDrop.bind.onDragLeave}
         onDrop={folderDrop.bind.onDrop}
       >
         <div
-          class="w-full max-w-5xl h-full px-4 sm:px-8 pb-2 flex flex-col overflow-hidden"
+          class="folder-home-shell w-full max-w-5xl px-4 sm:px-8 pb-2 flex flex-col"
           aria-busy={isLoading() ? "true" : "false"}
         >
           <div class="absolute top-4" style="inset-inline-start: 1.5rem;">
@@ -640,9 +699,9 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
               </button>
             </Show>
           </div>
-          <div class="mb-6 text-center shrink-0">
+          <div class="folder-home-hero text-center shrink-0">
             <div class="mb-3 flex justify-center">
-              <img src={codeNomadLogo} alt={t("folderSelection.logoAlt")} class="h-32 w-auto sm:h-48" loading="lazy" />
+              <img src={codeNomadLogo} alt={t("folderSelection.logoAlt")} class="folder-home-logo w-auto" loading="lazy" />
             </div>
             <h1 class="mb-2 text-3xl font-semibold text-primary">CodeNomad</h1>
             <div class="mt-3 flex justify-center gap-2">
@@ -694,11 +753,11 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
             </div>
           </div>
 
-          <div class="flex-1 min-h-0 overflow-hidden flex flex-col gap-4">
-            <div class="flex-1 min-h-0 overflow-hidden flex flex-col lg:flex-row gap-4">
+          <div class="folder-home-content flex-1 min-h-0 flex flex-col gap-4">
+            <div class="folder-home-main flex-1 gap-4">
               {/* Right column: recent folders */}
-              <div class="order-1 lg:order-2 flex flex-col gap-4 flex-1 min-h-0 overflow-hidden">
-                <div class="panel flex flex-col flex-1 min-h-0">
+              <div class="folder-home-list-column order-1 lg:order-2 flex flex-col gap-4 flex-1 min-h-0">
+                <div class="folder-home-list-panel panel flex flex-col flex-1">
                   <div class="panel-header !gap-0 !p-0">
                     <div class={`grid ${canUseRemoteServerWindows() ? "grid-cols-2" : "grid-cols-1"} gap-0 overflow-hidden border border-base rounded-t-lg rounded-b-none`}>
                       <button
@@ -890,7 +949,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                       <div class="flex items-center gap-2 mb-1">
                                         <Folder class="w-4 h-4 flex-shrink-0 icon-muted" />
                                         <span class="text-sm font-medium truncate text-primary">
-                                          {splitFolderPath(folder.path).baseName}
+                                          {getProjectDisplayName(folder.path, folder.projectName)}
                                         </span>
                                         <Show when={existingInstance()}>
                                           <span class="rounded-full border border-base px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-secondary">
@@ -909,6 +968,14 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                       <kbd class="kbd">↵</kbd>
                                     </Show>
                                   </div>
+                                </button>
+                                <button
+                                  onClick={(e) => openProjectRename(folder.path, folder.projectName, e)}
+                                  disabled={isLoading()}
+                                  class="p-2 transition-all hover:bg-surface-hover opacity-70 hover:opacity-100 rounded"
+                                  title={t("folderSelection.recent.rename")}
+                                >
+                                  <Pencil class="w-3.5 h-3.5 transition-colors icon-muted" />
                                 </button>
                                 <button
                                   onClick={(e) => handleRemove(folder.path, e)}
@@ -930,7 +997,10 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
               </div>
 
               {/* Left column: version + browse + advanced settings */}
-              <div class="order-2 lg:order-1 flex flex-col gap-4 flex-1 min-h-0">
+              <div
+                class="folder-home-actions-column order-2 lg:order-1 flex flex-col gap-4 flex-1"
+                ref={(el) => (actionsColumnRef = el)}
+              >
               <div class="panel shrink-0">
                 <div class="panel-header hidden sm:block">
                   <h2 class="panel-title">{t("folderSelection.actions.title")}</h2>
@@ -1060,6 +1130,15 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
         initialPath={folders()[0]?.path}
         onClose={() => setIsFolderBrowserOpen(false)}
         onSelect={handleBrowserSelect}
+      />
+
+      <ProjectRenameDialog
+        open={Boolean(renameProjectTarget())}
+        currentName={renameProjectTarget()?.name ?? ""}
+        projectLabel={renameProjectTarget()?.label}
+        isSubmitting={isRenamingProject()}
+        onRename={handleProjectRenameSubmit}
+        onClose={closeProjectRenameDialog}
       />
 
       <DirectoryBrowserDialog
