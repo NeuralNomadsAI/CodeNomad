@@ -80,7 +80,6 @@ import {
   handleQuestionAnswered,
   handleQuestionAsked,
   handleSessionCompacted,
-  handleSessionDiff,
   handleSessionError,
   handleSessionIdle,
   handleSessionStatus,
@@ -95,7 +94,6 @@ sseManager.onMessageRemoved = handleMessageRemoved
 sseManager.onMessagePartRemoved = handleMessagePartRemoved
 sseManager.onSessionUpdate = handleSessionUpdate
 sseManager.onSessionCompacted = handleSessionCompacted
-sseManager.onSessionDiff = handleSessionDiff
 sseManager.onSessionError = handleSessionError
 sseManager.onSessionIdle = handleSessionIdle
 sseManager.onSessionStatus = handleSessionStatus

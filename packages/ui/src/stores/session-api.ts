@@ -7,7 +7,7 @@ import {
   type SessionStatus,
 } from "../types/session"
 import type { Message } from "../types/message"
-import type { SnapshotFileDiff, SessionV2Info, V2SessionsResponse } from "@opencode-ai/sdk/v2/client"
+import type { SessionV2Info, V2SessionsResponse } from "@opencode-ai/sdk/v2/client"
 
 import { instances } from "./instances"
 import { preferences, setAgentModelPreference } from "./preferences"
@@ -61,8 +61,6 @@ import { hydrateSessionMetadataWithClient } from "./session-metadata"
 
 const log = getLogger("api")
 
-const pendingSessionDiffFetches = new Map<string, Promise<void>>()
-
 function getErrorMessage(error: unknown): string {
   if (!error) return "Failed to load messages"
 
@@ -87,46 +85,6 @@ function getErrorMessage(error: unknown): string {
 async function getSessionWorkspacePayload(instanceId: string, sessionId: string): Promise<{ workspace?: string }> {
   const workspace = await getOpenCodeWorkspaceIdForSession(instanceId, sessionId)
   return workspace ? { workspace } : {}
-}
-
-async function loadSessionDiff(instanceId: string, sessionId: string, force = false): Promise<void> {
-  if (!instanceId || !sessionId) return
-
-  const key = `${instanceId}:${sessionId}`
-  if (!force) {
-    const existing = sessions().get(instanceId)?.get(sessionId)
-    if (existing?.diff !== undefined) return
-    const pending = pendingSessionDiffFetches.get(key)
-    if (pending) return pending
-  }
-
-  const promise = (async () => {
-    const instance = instances().get(instanceId)
-    if (!instance?.client) return
-
-    const client = getRootClient(instanceId)
-
-    try {
-      const diffs = await requestData<SnapshotFileDiff[]>(
-        client.session.diff({ sessionID: sessionId, ...(await getSessionWorkspacePayload(instanceId, sessionId)) }),
-        "session.diff",
-      )
-
-      if (!Array.isArray(diffs)) {
-        return
-      }
-
-      withSession(instanceId, sessionId, (session) => {
-        session.diff = diffs
-      })
-    } catch (error) {
-      log.warn("Failed to fetch session diff", { instanceId, sessionId, error })
-    }
-  })()
-
-  pendingSessionDiffFetches.set(key, promise)
-  void promise.finally(() => pendingSessionDiffFetches.delete(key))
-  return promise
 }
 
 interface SessionForkResponse {
@@ -474,7 +432,6 @@ function toClientSessionV2(instanceId: string, apiSession: SessionV2Info, existi
     },
     metadata: existingSession?.metadata,
     revert: existingSession?.revert,
-    diff: existingSession?.diff,
     pendingPermission: existingSession?.pendingPermission,
     pendingQuestion: existingSession?.pendingQuestion,
   }
@@ -851,10 +808,9 @@ async function fetchProviders(instanceId: string): Promise<void> {
 async function loadMessages(
   instanceId: string,
   sessionId: string,
-  options?: { force?: boolean; skipDiff?: boolean; skipChildren?: boolean },
+  options?: { force?: boolean; skipChildren?: boolean },
 ): Promise<void> {
   const force = options?.force ?? false
-  const skipDiff = options?.skipDiff ?? false
   const skipChildren = options?.skipChildren ?? false
 
   if (force) {
@@ -894,12 +850,6 @@ async function loadMessages(
   const session = instanceSessions?.get(sessionId)
   if (!session) {
     throw new Error("Session not found")
-  }
-
-  if (!skipDiff) {
-    void loadSessionDiff(instanceId, sessionId).catch((error) => {
-      log.warn("Failed to load session diff", { instanceId, sessionId, error })
-    })
   }
 
   setLoading((prev) => {
@@ -1048,7 +998,7 @@ async function loadMessages(
 
   if (!skipChildren && session.parentId === null) {
     for (const child of getDescendantSessions(instanceId, sessionId)) {
-      void loadMessages(instanceId, child.id, { skipDiff: true, skipChildren: true }).catch((error) =>
+      void loadMessages(instanceId, child.id, { skipChildren: true }).catch((error) =>
         log.error("Failed to load child session messages", {
           instanceId,
           sessionId: child.id,

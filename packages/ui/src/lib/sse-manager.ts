@@ -10,7 +10,6 @@ import type {
   EventLspUpdated,
 
   EventSessionCompacted,
-  EventSessionDiff,
   EventSessionError,
   EventSessionIdle,
   EventSessionUpdated,
@@ -77,7 +76,6 @@ type SSEEvent =
   | MessagePartDeltaEvent
   | EventSessionUpdated
   | EventSessionCompacted
-  | EventSessionDiff
   | EventSessionError
   | EventSessionIdle
   | EventSessionStatus
@@ -168,9 +166,6 @@ class SSEManager {
       case "session.status":
         this.onSessionStatus?.(instanceId, event as EventSessionStatus)
         break
-      case "session.diff":
-        this.onSessionDiff?.(instanceId, event as EventSessionDiff)
-        break
       case "permission.asked":
       case "permission.updated":
         this.onPermissionUpdated?.(instanceId, event as any)
@@ -234,7 +229,6 @@ class SSEManager {
   onTuiToast?: (instanceId: string, event: TuiToastEvent) => void
   onSessionIdle?: (instanceId: string, event: EventSessionIdle) => void
   onSessionStatus?: (instanceId: string, event: EventSessionStatus) => void
-  onSessionDiff?: (instanceId: string, event: EventSessionDiff) => void
   onPermissionUpdated?: (instanceId: string, event: EventPermissionV2Asked | LegacyPermissionAskedEvent) => void
   onPermissionReplied?: (instanceId: string, event: EventPermissionV2Replied | LegacyPermissionRepliedEvent) => void
   onQuestionAsked?: (instanceId: string, event: EventQuestionV2Asked | { type: "question.asked"; properties?: any }) => void

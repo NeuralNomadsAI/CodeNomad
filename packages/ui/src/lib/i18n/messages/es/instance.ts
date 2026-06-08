@@ -89,7 +89,6 @@ export const instanceMessages = {
   "instanceShell.empty.description": "Envía un mensaje abajo para crear una nueva sesión, o selecciona una sesión existente para continuar.",
 
   "instanceShell.rightPanel.title": "Panel de estado",
-  "instanceShell.rightPanel.tabs.changes": "Cambios",
   "instanceShell.rightPanel.tabs.gitChanges": "Cambios de Git",
   "instanceShell.rightPanel.tabs.files": "Archivos",
   "instanceShell.rightPanel.tabs.status": "Estado",
@@ -109,8 +108,6 @@ export const instanceMessages = {
   "instanceShell.rightPanel.toast.saveError": "Error al guardar el archivo",
   "instanceShell.rightPanel.sections.yoloMode": "Modo yolo",
   "instanceShell.rightPanel.sections.yoloMode.tooltip": "Aprueba automaticamente las solicitudes de permiso de la sesion actual. Usalo solo si confias en las herramientas que se estan ejecutando.",
-  "instanceShell.rightPanel.sections.sessionChanges": "Cambios de sesión",
-  "instanceShell.rightPanel.sections.sessionChanges.tooltip": "Archivos modificados en la sesión actual. Muestra las adiciones y eliminaciones de cada archivo.",
   "instanceShell.rightPanel.sections.plan": "Plan",
   "instanceShell.rightPanel.sections.plan.tooltip": "Hoja de ruta del agente para esta sesión. Realiza el seguimiento de tareas, subtareas y su estado de finalización.",
   "instanceShell.rightPanel.sections.backgroundProcesses": "Shells en segundo plano",
@@ -121,12 +118,6 @@ export const instanceMessages = {
   "instanceShell.rightPanel.sections.lsp.tooltip": "Servidores del Language Server Protocol (LSP) que proporcionan inteligencia de código, diagnósticos y funciones específicas del lenguaje.",
   "instanceShell.rightPanel.sections.plugins": "Plugins",
   "instanceShell.rightPanel.sections.plugins.tooltip": "Plugins que personalizan el comportamiento de la UI y del servidor, y añaden funciones más allá de MCP y LSP.",
-
-  "instanceShell.sessionChanges.noSessionSelected": "Selecciona una sesión para ver los cambios.",
-  "instanceShell.sessionChanges.loading": "Obteniendo cambios de la sesión...",
-  "instanceShell.sessionChanges.empty": "Aún no hay cambios.",
-  "instanceShell.sessionChanges.filesChanged": "{count} archivos cambiados",
-  "instanceShell.sessionChanges.actions.show": "Mostrar cambios",
 
   "instanceShell.gitChanges.loading": "Cargando cambios de Git...",
   "instanceShell.gitChanges.empty": "Aún no hay cambios de Git.",

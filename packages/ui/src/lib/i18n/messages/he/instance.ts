@@ -89,7 +89,6 @@ export const instanceMessages = {
   "instanceShell.empty.description": "שלח הודעה למטה כדי ליצור סשן חדש, או בחר סשן קיים כדי להמשיך.",
 
   "instanceShell.rightPanel.title": "לוח סטטוס",
-  "instanceShell.rightPanel.tabs.changes": "שינויי סשן",
   "instanceShell.rightPanel.tabs.gitChanges": "שינויי Git",
   "instanceShell.rightPanel.tabs.files": "קבצים",
   "instanceShell.rightPanel.tabs.status": "סטטוס",
@@ -109,8 +108,6 @@ export const instanceMessages = {
   "instanceShell.rightPanel.toast.saveError": "כשלון בשמירת הקובץ",
   "instanceShell.rightPanel.sections.yoloMode": "מצב Yolo",
   "instanceShell.rightPanel.sections.yoloMode.tooltip": "מאשר אוטומטית בקשות הרשאה עבור הסשן הנוכחי. השתמשו בזה רק אם אתם סומכים על הכלים שרצים.",
-  "instanceShell.rightPanel.sections.sessionChanges": "שינויי סשן",
-  "instanceShell.rightPanel.sections.sessionChanges.tooltip": "קבצים שהשתנו בסשן הנוכחי. מציג הוספות ומחיקות לכל קובץ.",
   "instanceShell.rightPanel.sections.plan": "תוכנית",
   "instanceShell.rightPanel.sections.plan.tooltip": "מפת הדרכים של הסוכן לסשן זה. עוקב אחר משימות, תת-משימות וסטטוס השלמתן.",
   "instanceShell.rightPanel.sections.backgroundProcesses": "מעטפות רקע",
@@ -121,12 +118,6 @@ export const instanceMessages = {
   "instanceShell.rightPanel.sections.lsp.tooltip": "שרתי Language Server Protocol המספקים בינת קוד, אבחון ותכונות ספציפיות לשפה.",
   "instanceShell.rightPanel.sections.plugins": "תוספים",
   "instanceShell.rightPanel.sections.plugins.tooltip": "תוספים המתאימים אישית את הממשק ואת התנהגות השרת, ומוסיפים תכונות מעבר ל-MCP ו-LSP.",
-
-  "instanceShell.sessionChanges.noSessionSelected": "בחר סשן לצפייה בשינויים.",
-  "instanceShell.sessionChanges.loading": "מאחזר שינויי סשן...",
-  "instanceShell.sessionChanges.empty": "אין שינויי סשן עדיין.",
-  "instanceShell.sessionChanges.filesChanged": "{count} קבצים שונו",
-  "instanceShell.sessionChanges.actions.show": "הצג שינויים",
 
   "instanceShell.filesShell.fileListTitle": "רשימת קבצים",
   "instanceShell.filesShell.mobileSelectorLabel": "בחר קובץ",

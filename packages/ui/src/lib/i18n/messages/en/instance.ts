@@ -89,7 +89,6 @@ export const instanceMessages = {
   "instanceShell.empty.description": "Send a message below to create a new session, or select an existing session to continue.",
 
   "instanceShell.rightPanel.title": "Status Panel",
-  "instanceShell.rightPanel.tabs.changes": "Session Changes",
   "instanceShell.rightPanel.tabs.gitChanges": "Git Changes",
   "instanceShell.rightPanel.tabs.files": "Files",
   "instanceShell.rightPanel.tabs.status": "Status",
@@ -109,8 +108,6 @@ export const instanceMessages = {
   "instanceShell.rightPanel.toast.saveError": "Failed to save file",
   "instanceShell.rightPanel.sections.yoloMode": "Yolo Mode",
   "instanceShell.rightPanel.sections.yoloMode.tooltip": "Automatically approves permission requests for the current session. Use it only when you trust the tools being run.",
-  "instanceShell.rightPanel.sections.sessionChanges": "Session Changes",
-  "instanceShell.rightPanel.sections.sessionChanges.tooltip": "Files modified in the current session. Shows additions and deletions for each file.",
   "instanceShell.rightPanel.sections.plan": "Plan",
   "instanceShell.rightPanel.sections.plan.tooltip": "The agent's roadmap for this session. Tracks tasks, subtasks, and their completion status.",
   "instanceShell.rightPanel.sections.backgroundProcesses": "Background Shells",
@@ -121,12 +118,6 @@ export const instanceMessages = {
   "instanceShell.rightPanel.sections.lsp.tooltip": "Language Server Protocol servers providing code intelligence, diagnostics, and language-specific features.",
   "instanceShell.rightPanel.sections.plugins": "Plugins",
   "instanceShell.rightPanel.sections.plugins.tooltip": "Plugins that customize the UI and server behavior, adding features beyond MCP and LSP.",
-
-  "instanceShell.sessionChanges.noSessionSelected": "Select a session to view changes.",
-  "instanceShell.sessionChanges.loading": "Fetching session changes...",
-  "instanceShell.sessionChanges.empty": "No session changes yet.",
-  "instanceShell.sessionChanges.filesChanged": "{count} files changed",
-  "instanceShell.sessionChanges.actions.show": "Show changes",
 
   "instanceShell.gitChanges.noSessionSelected": "Select a session to view git changes.",
   "instanceShell.gitChanges.loading": "Loading git changes...",
