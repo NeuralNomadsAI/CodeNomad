@@ -6,6 +6,7 @@ import {
   isAtBottom,
   isAutoFollowing,
   resolveAutoPinHoldElement,
+  shouldSuspendAutoPinToBottomForHold,
   transitionFollowMode,
   type FollowMode,
   type ScrollControllerMetrics,
@@ -167,6 +168,34 @@ describe("virtual follow behavior", () => {
     assert.deepEqual(targetChanged.effect, { type: "none" })
     assert.deepEqual(contentRendered.state.mode, { type: "following" })
     assert.deepEqual(contentRendered.effect, { type: "scroll-bottom", immediate: true, suppressHold: false })
+  })
+
+  it("allows escaped-mode streaming rejoin when only a future hold target is eligible", () => {
+    const suspend = shouldSuspendAutoPinToBottomForHold({
+      externalSuspend: false,
+      activeHoldTargetKey: null,
+      eligibleHoldTargetKey: "streaming-assistant-answer",
+    })
+
+    const next = transitionFollowMode({ type: "escaped" }, userScroll("down", false, !suspend))
+
+    assert.equal(suspend, false)
+    assert.deepEqual(next.mode, { type: "following" })
+    assert.deepEqual(next.effect, { type: "scroll-bottom", immediate: true, suppressHold: false })
+  })
+
+  it("keeps auto-pin suspended while a hold target is actively latched", () => {
+    const suspend = shouldSuspendAutoPinToBottomForHold({
+      externalSuspend: false,
+      activeHoldTargetKey: "streaming-assistant-answer",
+      eligibleHoldTargetKey: "streaming-assistant-answer",
+    })
+
+    const next = transitionFollowMode({ type: "holding", key: "streaming-assistant-answer" }, userScroll("down", false, !suspend))
+
+    assert.equal(suspend, true)
+    assert.deepEqual(next.mode, { type: "holding", key: "streaming-assistant-answer" })
+    assert.deepEqual(next.effect, { type: "none" })
   })
 
   it("key jumps can opt into follow or escape mode", () => {

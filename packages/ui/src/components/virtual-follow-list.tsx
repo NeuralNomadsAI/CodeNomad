@@ -1,6 +1,6 @@
 import { Show, createEffect, createMemo, createSignal, type Accessor, type JSX, on, onCleanup } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
-import { getHeldKey, isAutoFollowing, isAtBottom, resolveAutoPinHoldElement, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
+import { getHeldKey, isAutoFollowing, isAtBottom, resolveAutoPinHoldElement, shouldSuspendAutoPinToBottomForHold, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
 
 const DEFAULT_SCROLL_SENTINEL_MARGIN_PX = 48
 const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
@@ -197,8 +197,11 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const [activeKey, setActiveKey] = createSignal<string | null>(null)
   const activeHoldTargetKey = createMemo(() => getHeldKey(followMode()))
   const [didTriggerHoldForCurrentTarget, setDidTriggerHoldForCurrentTarget] = createSignal(false)
-  const holdLatchAwayFromBottom = () => holdTargetKey() !== null && !autoScroll()
-  const effectiveSuspendAutoPinToBottom = () => externalSuspendAutoPinToBottom() || activeHoldTargetKey() !== null || holdLatchAwayFromBottom()
+  const effectiveSuspendAutoPinToBottom = () => shouldSuspendAutoPinToBottomForHold({
+    externalSuspend: externalSuspendAutoPinToBottom(),
+    activeHoldTargetKey: activeHoldTargetKey(),
+    eligibleHoldTargetKey: holdTargetKey(),
+  })
 
   const scrollButtonsCount = createMemo(() => (showScrollTopButton() ? 1 : 0) + (showScrollBottomButton() ? 1 : 0))
   const itemElements = new Map<string, HTMLDivElement>()

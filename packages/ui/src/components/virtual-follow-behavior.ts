@@ -83,6 +83,14 @@ export function resolveAutoPinHoldElement(
   return resolved === undefined ? itemWrapper : resolved
 }
 
+export function shouldSuspendAutoPinToBottomForHold(state: {
+  externalSuspend: boolean
+  activeHoldTargetKey: string | null
+  eligibleHoldTargetKey?: string | null
+}) {
+  return state.externalSuspend || state.activeHoldTargetKey !== null
+}
+
 export function transitionFollowMode(mode: FollowMode, event: FollowEvent): FollowTransition {
   switch (event.type) {
     case "user-scroll": {
