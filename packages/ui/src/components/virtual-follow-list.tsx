@@ -1,6 +1,6 @@
 import { Show, createEffect, createMemo, createSignal, type Accessor, type JSX, on, onCleanup } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
-import { getHeldKey, isAutoFollowing, isAtBottom, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
+import { getHeldKey, isAutoFollowing, isAtBottom, resolveAutoPinHoldElement, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
 
 const DEFAULT_SCROLL_SENTINEL_MARGIN_PX = 48
 const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
@@ -108,9 +108,10 @@ export interface VirtualFollowListProps<T> {
 
   /**
    * Optional resolver for the specific element inside an item wrapper that
-   * should be measured for hold-target geometry.
+   * should be measured for hold-target geometry. Return null when the item has
+   * no eligible hold target; return undefined to fall back to the item wrapper.
    */
-  resolveAutoPinHoldElement?: (itemWrapper: HTMLDivElement, key: string) => HTMLElement | null | undefined
+  resolveAutoPinHoldElement?: HoldTargetElementResolver
 
   /**
    * Top-edge threshold for the hold target in pixels.
@@ -180,7 +181,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const [activeKey, setActiveKey] = createSignal<string | null>(null)
   const activeHoldTargetKey = createMemo(() => getHeldKey(followMode()))
   const [didTriggerHoldForCurrentTarget, setDidTriggerHoldForCurrentTarget] = createSignal(false)
-  const effectiveSuspendAutoPinToBottom = () => externalSuspendAutoPinToBottom() || activeHoldTargetKey() !== null
+  const holdLatchAwayFromBottom = () => holdTargetKey() !== null && !autoScroll()
+  const effectiveSuspendAutoPinToBottom = () => externalSuspendAutoPinToBottom() || activeHoldTargetKey() !== null || holdLatchAwayFromBottom()
 
   const scrollButtonsCount = createMemo(() => (showScrollTopButton() ? 1 : 0) + (showScrollBottomButton() ? 1 : 0))
   const itemElements = new Map<string, HTMLDivElement>()
@@ -208,6 +210,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let programmaticScrollUntil = 0
   let pendingBottomRepinAfterHold = false
   let pendingContentRenderedFrame: number | null = null
+  let heldAnchorKey: string | null = null
+  let heldAnchorElement: HTMLElement | null = null
+  let heldAnchorOffset: number | null = null
 
   const state: VirtualFollowListState = {
     autoScroll,
@@ -232,6 +237,11 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   function syncControllerResult(result: ScrollControllerResult) {
     setFollowMode(result.state.mode)
+    if (result.state.mode.type !== "holding") {
+      clearHeldAnchor()
+    } else if (heldAnchorKey !== null && heldAnchorKey !== result.state.mode.key) {
+      clearHeldAnchor()
+    }
     applyFollowEffect(result.effect)
   }
 
@@ -612,6 +622,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       suppressHoldUntilTargetChanges = false
     }
     syncControllerResult(result)
+    if (result.state.mode.type === "holding") {
+      captureHeldAnchor(result.state.mode.key)
+    }
   }
 
   function performScrollToBottom(immediate = true) {
@@ -707,12 +720,60 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     return props.getAnchorId ? props.getAnchorId(key) : key
   }
 
+  function resolveHoldTargetElement(key: string) {
+    const itemWrapper = itemElements.get(key)
+    return resolveAutoPinHoldElement(itemWrapper, key, props.resolveAutoPinHoldElement)
+  }
+
+  function clearHeldAnchor() {
+    heldAnchorKey = null
+    heldAnchorElement = null
+    heldAnchorOffset = null
+  }
+
+  function captureHeldAnchor(key = activeHoldTargetKey(), target?: HTMLElement | null) {
+    const element = scrollElement()
+    if (!element || !key) return false
+    const resolvedTarget = target ?? (
+      heldAnchorKey === key && heldAnchorElement && element.contains(heldAnchorElement)
+        ? heldAnchorElement
+        : resolveHoldTargetElement(key)
+    )
+    if (!resolvedTarget || !element.contains(resolvedTarget)) return false
+    const containerRect = element.getBoundingClientRect()
+    const targetRect = resolvedTarget.getBoundingClientRect()
+    heldAnchorKey = key
+    heldAnchorElement = resolvedTarget
+    heldAnchorOffset = targetRect.top - containerRect.top
+    return true
+  }
+
+  function restoreHeldAnchor() {
+    const key = activeHoldTargetKey()
+    const element = scrollElement()
+    if (!element || !key || heldAnchorKey !== key || heldAnchorOffset === null) return false
+    const target = heldAnchorElement
+    if (!target || !element.contains(target)) {
+      clearHeldAnchor()
+      return false
+    }
+
+    const containerRect = element.getBoundingClientRect()
+    const targetRect = target.getBoundingClientRect()
+    const currentOffset = targetRect.top - containerRect.top
+    const delta = currentOffset - heldAnchorOffset
+    if (Math.abs(delta) > 1) {
+      scrollToOffset((virtuaHandle()?.scrollOffset ?? element.scrollTop) + delta, false)
+    }
+    captureHeldAnchor(key, target)
+    return true
+  }
+
   function alignHoldTarget(key: string) {
     const element = scrollElement()
     if (!element) return
-    const itemWrapper = itemElements.get(key)
-    if (!itemWrapper) return
-    const target = props.resolveAutoPinHoldElement?.(itemWrapper, key) ?? itemWrapper
+    const target = resolveHoldTargetElement(key)
+    if (!target) return
     const containerRect = element.getBoundingClientRect()
     const targetRect = target.getBoundingClientRect()
     const relativeTop = targetRect.top - containerRect.top
@@ -720,6 +781,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     if (Math.abs(alignDelta) > 1) {
       scrollToOffset((virtuaHandle()?.scrollOffset ?? element.scrollTop) + alignDelta, false)
     }
+    captureHeldAnchor(key, target)
+    requestAnimationFrame(() => captureHeldAnchor(key, target))
   }
 
   function updateAutoPinHold() {
@@ -733,6 +796,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       if (targetKey !== heldKey) {
         dispatchFollowEvent({ type: "hold-target-changed", key: targetKey, canPinToBottom: !externalSuspendAutoPinToBottom() })
       }
+      if (heldAnchorKey !== heldKey || heldAnchorOffset === null) {
+        captureHeldAnchor(heldKey)
+      }
 
       return
     }
@@ -745,15 +811,15 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     if (suppressHoldUntilTargetChanges) return
 
     const itemWrapper = itemElements.get(targetKey)
-    if (!itemWrapper) return
-    const target = props.resolveAutoPinHoldElement?.(itemWrapper, targetKey) ?? itemWrapper
+    const target = resolveAutoPinHoldElement(itemWrapper, targetKey, props.resolveAutoPinHoldElement)
+    if (!target) return
 
     const containerRect = element.getBoundingClientRect()
     const targetRect = target.getBoundingClientRect()
     const relativeTop = targetRect.top - containerRect.top
     const exceedsViewport = targetRect.height > element.clientHeight
 
-    if (exceedsViewport && relativeTop < 0) {
+    if (exceedsViewport && relativeTop <= holdTargetTopThresholdPx()) {
       dispatchFollowEvent({ type: "hold-candidate", key: targetKey, shouldHold: true })
       setDidTriggerHoldForCurrentTarget(true)
     }
@@ -770,6 +836,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     updateAutoPinHold()
     if (activeHoldTargetKey() !== null) {
       if (autoScroll() && streamingActive()) pendingBottomRepinAfterHold = true
+      restoreHeldAnchor()
       updateScrollButtons()
       return
     }
@@ -818,6 +885,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     setDidTriggerHoldForCurrentTarget(false)
     suppressHoldUntilTargetChanges = false
     pendingBottomRepinAfterHold = false
+    clearHeldAnchor()
   }))
 
   createEffect(on(holdTargetKey, (nextTargetKey, prevTargetKey) => {

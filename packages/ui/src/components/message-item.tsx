@@ -37,6 +37,7 @@ interface MessageItemProps {
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   onFork?: (messageId?: string) => void
   showAgentMeta?: boolean
+  contentStartPartId?: string
   onContentRendered?: () => void
   showDeleteMessage?: boolean
   onDeleteHoverChange?: (state: DeleteHoverState) => void
@@ -158,6 +159,11 @@ export default function MessageItem(props: MessageItemProps) {
   }
 
   const messageParts = () => props.parts
+  const isAssistantTextBlock = () =>
+    !isUser() &&
+    messageParts().some(
+      (part) => part.type === "text" && !isHiddenSyntheticTextPart(part) && partHasRenderableText(part),
+    )
 
   // User messages can temporarily include synthetic helper parts (e.g. tool traces / file reads).
   // We only want to display the primary prompt text for the user message; other synthetic text
@@ -472,6 +478,8 @@ export default function MessageItem(props: MessageItemProps) {
       data-message-id={props.record.id}
       data-message-role={isUser() ? "user" : "assistant"}
       data-message-status={props.record.status}
+      data-message-content-start-part-id={props.contentStartPartId}
+      data-assistant-text-block={isAssistantTextBlock() ? "true" : undefined}
     >
       <header class={`message-item-header ${isUser() ? "pb-0.5" : "pb-0"}`}>
         <div class="message-item-header-row message-item-header-row--top" ref={(el) => (topRowEl = el)}>
