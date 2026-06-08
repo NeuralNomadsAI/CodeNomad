@@ -76,7 +76,7 @@ export const toolCallMessages = {
   "toolCall.permission.shortcuts.allowOnce": "Allow once",
   "toolCall.permission.shortcuts.alwaysAllow": "Always allow",
   "toolCall.permission.rejectReason.label": "Why deny this permission?",
-  "toolCall.permission.rejectReason.placeholder": "Tell CodeNomad what to do differently...",
+  "toolCall.permission.rejectReason.placeholder": "Optional feedback, e.g. use a safer command...",
   "toolCall.permission.rejectReason.hint": "The agent will see this feedback and can adjust its next action.",
   "toolCall.permission.errors.unableToUpdate": "Unable to update permission",
 
@@ -97,7 +97,7 @@ export const toolCallMessages = {
   "permissionApproval.actions.confirmDeny": "Confirm Deny",
   "permissionApproval.actions.cancel": "Cancel",
   "permissionApproval.rejectReason.label": "Why deny this permission?",
-  "permissionApproval.rejectReason.placeholder": "Tell CodeNomad what to do differently...",
+  "permissionApproval.rejectReason.placeholder": "Optional feedback, e.g. use a safer command...",
   "permissionApproval.rejectReason.hint": "The agent will see this feedback and can adjust its next action.",
   "permissionApproval.fallbackHint": "Load session for more information.",
   "permissionApproval.errors.unableToUpdatePermission": "Unable to update permission",

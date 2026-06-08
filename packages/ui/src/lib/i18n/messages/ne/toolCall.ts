@@ -76,7 +76,7 @@ export const toolCallMessages = {
   "toolCall.permission.shortcuts.allowOnce": "एक पटक अनुमति दिनुहोस्",
   "toolCall.permission.shortcuts.alwaysAllow": "सधैं अनुमति दिनुहोस्",
   "toolCall.permission.rejectReason.label": "यो अनुमति किन अस्वीकार गर्ने?",
-  "toolCall.permission.rejectReason.placeholder": "CodeNomad लाई के फरक गर्ने भन्नुहोस्...",
+  "toolCall.permission.rejectReason.placeholder": "वैकल्पिक प्रतिक्रिया, जस्तै अझ सुरक्षित आदेश प्रयोग गर्नुहोस्...",
   "toolCall.permission.rejectReason.hint": "एजेन्टले यो प्रतिक्रिया देख्नेछ र आफ्नो अर्को कार्य समायोजन गर्न सक्नेछ।",
   "toolCall.permission.errors.unableToUpdate": "अनुमति अपडेट गर्न असमर्थ",
 
@@ -97,7 +97,7 @@ export const toolCallMessages = {
   "permissionApproval.actions.confirmDeny": "अस्वीकार पुष्टि गर्नुहोस्",
   "permissionApproval.actions.cancel": "रद्द गर्नुहोस्",
   "permissionApproval.rejectReason.label": "यो अनुमति किन अस्वीकार गर्ने?",
-  "permissionApproval.rejectReason.placeholder": "CodeNomad लाई के फरक गर्ने भन्नुहोस्...",
+  "permissionApproval.rejectReason.placeholder": "वैकल्पिक प्रतिक्रिया, जस्तै अझ सुरक्षित आदेश प्रयोग गर्नुहोस्...",
   "permissionApproval.rejectReason.hint": "एजेन्टले यो प्रतिक्रिया देख्नेछ र आफ्नो अर्को कार्य समायोजन गर्न सक्नेछ।",
   "permissionApproval.fallbackHint": "थप जानकारीको लागि सत्र लोड गर्नुहोस्।",
   "permissionApproval.errors.unableToUpdatePermission": "अनुमति अपडेट गर्न असमर्थ",

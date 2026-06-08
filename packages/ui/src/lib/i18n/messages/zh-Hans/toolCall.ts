@@ -76,7 +76,7 @@ export const toolCallMessages = {
   "toolCall.permission.shortcuts.allowOnce": "仅允许一次",
   "toolCall.permission.shortcuts.alwaysAllow": "始终允许",
   "toolCall.permission.rejectReason.label": "为什么拒绝此权限？",
-  "toolCall.permission.rejectReason.placeholder": "告诉 CodeNomad 应该如何调整...",
+  "toolCall.permission.rejectReason.placeholder": "可选反馈，例如使用更安全的命令...",
   "toolCall.permission.rejectReason.hint": "代理会看到这条反馈，并可调整下一步操作。",
   "toolCall.permission.errors.unableToUpdate": "无法更新权限",
 
@@ -97,7 +97,7 @@ export const toolCallMessages = {
   "permissionApproval.actions.confirmDeny": "确认拒绝",
   "permissionApproval.actions.cancel": "取消",
   "permissionApproval.rejectReason.label": "为什么拒绝此权限？",
-  "permissionApproval.rejectReason.placeholder": "告诉 CodeNomad 应该如何调整...",
+  "permissionApproval.rejectReason.placeholder": "可选反馈，例如使用更安全的命令...",
   "permissionApproval.rejectReason.hint": "代理会看到这条反馈，并可调整下一步操作。",
   "permissionApproval.fallbackHint": "加载会话以查看更多信息。",
   "permissionApproval.errors.unableToUpdatePermission": "无法更新权限",

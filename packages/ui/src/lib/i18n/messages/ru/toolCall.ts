@@ -76,7 +76,7 @@ export const toolCallMessages = {
   "toolCall.permission.shortcuts.allowOnce": "Разрешить один раз",
   "toolCall.permission.shortcuts.alwaysAllow": "Всегда разрешать",
   "toolCall.permission.rejectReason.label": "Почему отказать в этом разрешении?",
-  "toolCall.permission.rejectReason.placeholder": "Подскажите CodeNomad, что сделать иначе...",
+  "toolCall.permission.rejectReason.placeholder": "Необязательный отзыв, например используйте более безопасную команду...",
   "toolCall.permission.rejectReason.hint": "Агент увидит этот отзыв и сможет скорректировать следующее действие.",
   "toolCall.permission.errors.unableToUpdate": "Не удалось обновить разрешение",
 
@@ -97,7 +97,7 @@ export const toolCallMessages = {
   "permissionApproval.actions.confirmDeny": "Подтвердить отказ",
   "permissionApproval.actions.cancel": "Отмена",
   "permissionApproval.rejectReason.label": "Почему отказать в этом разрешении?",
-  "permissionApproval.rejectReason.placeholder": "Подскажите CodeNomad, что сделать иначе...",
+  "permissionApproval.rejectReason.placeholder": "Необязательный отзыв, например используйте более безопасную команду...",
   "permissionApproval.rejectReason.hint": "Агент увидит этот отзыв и сможет скорректировать следующее действие.",
   "permissionApproval.fallbackHint": "Загрузите сессию для получения подробностей.",
   "permissionApproval.errors.unableToUpdatePermission": "Не удалось обновить разрешение",

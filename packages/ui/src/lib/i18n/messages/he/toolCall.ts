@@ -76,7 +76,7 @@ export const toolCallMessages = {
   "toolCall.permission.shortcuts.allowOnce": "אפשר פעם אחת",
   "toolCall.permission.shortcuts.alwaysAllow": "אפשר תמיד",
   "toolCall.permission.rejectReason.label": "למה לדחות את האישור הזה?",
-  "toolCall.permission.rejectReason.placeholder": "ספר ל-CodeNomad מה לעשות אחרת...",
+  "toolCall.permission.rejectReason.placeholder": "משוב אופציונלי, למשל השתמש בפקודה בטוחה יותר...",
   "toolCall.permission.rejectReason.hint": "הסוכן יראה את המשוב הזה ויוכל להתאים את הפעולה הבאה שלו.",
   "toolCall.permission.errors.unableToUpdate": "לא ניתן לעדכן אישור",
 
@@ -97,7 +97,7 @@ export const toolCallMessages = {
   "permissionApproval.actions.confirmDeny": "אשר דחייה",
   "permissionApproval.actions.cancel": "בטל",
   "permissionApproval.rejectReason.label": "למה לדחות את האישור הזה?",
-  "permissionApproval.rejectReason.placeholder": "ספר ל-CodeNomad מה לעשות אחרת...",
+  "permissionApproval.rejectReason.placeholder": "משוב אופציונלי, למשל השתמש בפקודה בטוחה יותר...",
   "permissionApproval.rejectReason.hint": "הסוכן יראה את המשוב הזה ויוכל להתאים את הפעולה הבאה שלו.",
   "permissionApproval.fallbackHint": "טען סשן לקבלת מידע נוסף.",
   "permissionApproval.errors.unableToUpdatePermission": "לא ניתן לעדכן אישור",

@@ -76,7 +76,7 @@ export const toolCallMessages = {
   "toolCall.permission.shortcuts.allowOnce": "Einmalig erlauben",
   "toolCall.permission.shortcuts.alwaysAllow": "Immer erlauben",
   "toolCall.permission.rejectReason.label": "Warum diese Berechtigung ablehnen?",
-  "toolCall.permission.rejectReason.placeholder": "Sagen Sie CodeNomad, was anders gemacht werden soll...",
+  "toolCall.permission.rejectReason.placeholder": "Optionales Feedback, z. B. einen sichereren Befehl verwenden...",
   "toolCall.permission.rejectReason.hint": "Der Agent sieht dieses Feedback und kann seine nächste Aktion anpassen.",
   "toolCall.permission.errors.unableToUpdate": "Berechtigung konnte nicht aktualisiert werden",
 
@@ -97,7 +97,7 @@ export const toolCallMessages = {
   "permissionApproval.actions.confirmDeny": "Ablehnung bestätigen",
   "permissionApproval.actions.cancel": "Abbrechen",
   "permissionApproval.rejectReason.label": "Warum diese Berechtigung ablehnen?",
-  "permissionApproval.rejectReason.placeholder": "Sagen Sie CodeNomad, was anders gemacht werden soll...",
+  "permissionApproval.rejectReason.placeholder": "Optionales Feedback, z. B. einen sichereren Befehl verwenden...",
   "permissionApproval.rejectReason.hint": "Der Agent sieht dieses Feedback und kann seine nächste Aktion anpassen.",
   "permissionApproval.fallbackHint": "Sitzung für weitere Informationen laden.",
   "permissionApproval.errors.unableToUpdatePermission": "Berechtigung konnte nicht aktualisiert werden",

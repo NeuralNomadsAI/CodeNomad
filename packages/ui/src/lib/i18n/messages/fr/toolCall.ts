@@ -76,7 +76,7 @@ export const toolCallMessages = {
   "toolCall.permission.shortcuts.allowOnce": "Autoriser une fois",
   "toolCall.permission.shortcuts.alwaysAllow": "Toujours autoriser",
   "toolCall.permission.rejectReason.label": "Pourquoi refuser cette autorisation ?",
-  "toolCall.permission.rejectReason.placeholder": "Indiquez à CodeNomad quoi faire différemment...",
+  "toolCall.permission.rejectReason.placeholder": "Retour facultatif, p. ex. utilise une commande plus sûre...",
   "toolCall.permission.rejectReason.hint": "L'agent verra ce retour et pourra ajuster sa prochaine action.",
   "toolCall.permission.errors.unableToUpdate": "Impossible de mettre à jour l'autorisation",
 
@@ -97,7 +97,7 @@ export const toolCallMessages = {
   "permissionApproval.actions.confirmDeny": "Confirmer le refus",
   "permissionApproval.actions.cancel": "Annuler",
   "permissionApproval.rejectReason.label": "Pourquoi refuser cette autorisation ?",
-  "permissionApproval.rejectReason.placeholder": "Indiquez à CodeNomad quoi faire différemment...",
+  "permissionApproval.rejectReason.placeholder": "Retour facultatif, p. ex. utilise une commande plus sûre...",
   "permissionApproval.rejectReason.hint": "L'agent verra ce retour et pourra ajuster sa prochaine action.",
   "permissionApproval.fallbackHint": "Chargez la session pour plus d'informations.",
   "permissionApproval.errors.unableToUpdatePermission": "Impossible de mettre à jour l'autorisation",

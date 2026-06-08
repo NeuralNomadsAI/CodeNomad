@@ -76,7 +76,7 @@ export const toolCallMessages = {
   "toolCall.permission.shortcuts.allowOnce": "一度だけ許可",
   "toolCall.permission.shortcuts.alwaysAllow": "常に許可",
   "toolCall.permission.rejectReason.label": "この許可を拒否する理由は？",
-  "toolCall.permission.rejectReason.placeholder": "CodeNomad に別の対応を伝えてください...",
+  "toolCall.permission.rejectReason.placeholder": "任意のフィードバック（例: より安全なコマンドを使う）...",
   "toolCall.permission.rejectReason.hint": "エージェントはこのフィードバックを見て、次の操作を調整できます。",
   "toolCall.permission.errors.unableToUpdate": "許可を更新できません",
 
@@ -97,7 +97,7 @@ export const toolCallMessages = {
   "permissionApproval.actions.confirmDeny": "拒否を確定",
   "permissionApproval.actions.cancel": "キャンセル",
   "permissionApproval.rejectReason.label": "この許可を拒否する理由は？",
-  "permissionApproval.rejectReason.placeholder": "CodeNomad に別の対応を伝えてください...",
+  "permissionApproval.rejectReason.placeholder": "任意のフィードバック（例: より安全なコマンドを使う）...",
   "permissionApproval.rejectReason.hint": "エージェントはこのフィードバックを見て、次の操作を調整できます。",
   "permissionApproval.fallbackHint": "詳しい情報を見るにはセッションを読み込んでください。",
   "permissionApproval.errors.unableToUpdatePermission": "許可を更新できません",
