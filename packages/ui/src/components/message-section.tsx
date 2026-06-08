@@ -1338,6 +1338,7 @@ export default function MessageSection(props: MessageSectionProps) {
           initialAutoScroll={initialAutoScroll}
           resetKey={() => props.sessionId}
           followToken={followToken}
+          autoPinHoldEnabled={holdLongAssistantRepliesEnabled}
           autoPinHoldTargetKey={autoPinHoldTargetKey}
           autoPinHoldTopThresholdPx={STREAMING_TEXT_HOLD_TOP_THRESHOLD_PX}
           resolveAutoPinHoldElement={(itemWrapper, key) => {

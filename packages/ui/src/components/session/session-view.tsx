@@ -99,6 +99,11 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     return true
   }
 
+  function forceSubmittedExchangeToBottom() {
+    scrollToBottomHandle?.()
+    scheduleScrollToBottom({ force: true })
+  }
+
   function getSeenIdleEntries(currentSession: Session, keepUnseenSubagentIdleStatus: boolean): Array<{ id: string; idleSince: number }> {
     const entries: Array<{ id: string; idleSince: number }> = []
 
@@ -277,10 +282,10 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   async function handleSendMessage(prompt: string, attachments: Attachment[]) {
     const messageCount = messageStore().getSessionMessageIds(props.sessionId).length
     setPendingSubmitBottomScrollTargetCount(messageCount + 2)
-    scheduleScrollToBottom({ force: true })
+    forceSubmittedExchangeToBottom()
     try {
       await sendMessage(props.instanceId, props.sessionId, prompt, attachments)
-      scheduleScrollToBottom({ force: true })
+      forceSubmittedExchangeToBottom()
       setPendingSubmitBottomScrollTargetCount(null)
     } catch (error) {
       setPendingSubmitBottomScrollTargetCount(null)

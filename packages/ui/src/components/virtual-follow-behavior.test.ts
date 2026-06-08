@@ -123,6 +123,27 @@ describe("virtual follow behavior", () => {
     assert.deepEqual(next.effect, { type: "scroll-bottom", immediate: true, suppressHold: true })
   })
 
+  it("prompt submission overrides a stale hold latch and returns to bottom follow", () => {
+    const controller = new VirtualScrollController(true)
+    controller.holdCandidate("old-assistant-answer", true)
+
+    const result = controller.jumpBottom(true, true)
+
+    assert.deepEqual(result.state.mode, { type: "following" })
+    assert.deepEqual(result.effect, { type: "scroll-bottom", immediate: true, suppressHold: true })
+    assert.equal(controller.isAutoFollowing(), true)
+  })
+
+  it("clears an existing hold latch when hold targeting is disabled", () => {
+    const controller = new VirtualScrollController(true)
+    controller.holdCandidate("old-assistant-answer", true)
+
+    const result = controller.clearHold(true, true, true)
+
+    assert.deepEqual(result.state.mode, { type: "following" })
+    assert.deepEqual(result.effect, { type: "scroll-bottom", immediate: true, suppressHold: true })
+  })
+
   it("key jumps can opt into follow or escape mode", () => {
     const follow = transitionFollowMode({ type: "escaped" }, { type: "jump-key", key: "a", block: "start", smooth: false, followAfter: true })
     const escape = transitionFollowMode({ type: "following" }, { type: "jump-key", key: "b", block: "center", smooth: true, followAfter: false })

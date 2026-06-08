@@ -65,6 +65,7 @@ export interface VirtualFollowListProps<T> {
   suspendMeasurements?: Accessor<boolean>
   streamingActive?: Accessor<boolean>
   isActive?: Accessor<boolean>
+  autoPinHoldEnabled?: Accessor<boolean>
 
   /**
    * When switching back to an inactive (cached) pane, the list historically
@@ -170,6 +171,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const initialAutoScroll = () => (props.initialAutoScroll ? props.initialAutoScroll() : true)
   const externalSuspendAutoPinToBottom = () => (props.suspendAutoPinToBottom ? props.suspendAutoPinToBottom() : false)
   const streamingActive = () => props.streamingActive?.() ?? false
+  const autoPinHoldEnabled = () => props.autoPinHoldEnabled?.() ?? true
   const holdTargetKey = () => (props.autoPinHoldTargetKey ? props.autoPinHoldTargetKey() : null)
   const holdTargetTopThresholdPx = () => props.autoPinHoldTopThresholdPx ?? DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX
 
@@ -291,6 +293,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         break
       case "hold-target-changed":
         result = scrollController.holdTargetChanged(event.key, event.canPinToBottom)
+        break
+      case "clear-hold":
+        result = scrollController.clearHold(event.follow, event.canPinToBottom, event.suppressHold)
         break
       case "set-follow":
         result = scrollController.setFollow(event.enabled)
@@ -804,6 +809,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     }
 
     if (!streamingActive()) return
+    if (!autoPinHoldEnabled()) return
     if (!autoScroll()) return
     if (externalSuspendAutoPinToBottom()) return
     if (!targetKey) return
@@ -902,6 +908,23 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       pendingBottomRepinAfterHold = false
       requestAnimationFrame(() => pinDomBottomAfterLayout())
     }
+  }, { defer: true }))
+
+  createEffect(on(autoPinHoldEnabled, (enabled) => {
+    if (enabled) return
+    setDidTriggerHoldForCurrentTarget(false)
+    suppressHoldUntilTargetChanges = false
+    pendingBottomRepinAfterHold = false
+    if (activeHoldTargetKey() !== null) {
+      dispatchFollowEvent({
+        type: "clear-hold",
+        follow: true,
+        canPinToBottom: !externalSuspendAutoPinToBottom(),
+        suppressHold: true,
+      })
+      return
+    }
+    clearHeldAnchor()
   }, { defer: true }))
 
   // Handle autoScroll (Follow) on items change

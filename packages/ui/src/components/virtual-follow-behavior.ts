@@ -18,6 +18,7 @@ export type FollowEvent =
   | { type: "content-grew"; canPinToBottom: boolean }
   | { type: "hold-candidate"; key: string; shouldHold: boolean }
   | { type: "hold-target-changed"; key: string | null; canPinToBottom: boolean }
+  | { type: "clear-hold"; follow: boolean; canPinToBottom: boolean; suppressHold: boolean }
   | { type: "set-follow"; enabled: boolean }
   | { type: "reset"; follow: boolean }
 
@@ -136,6 +137,18 @@ export function transitionFollowMode(mode: FollowMode, event: FollowEvent): Foll
     case "hold-target-changed":
       return { mode, effect: noFollowEffect }
 
+    case "clear-hold":
+      if (mode.type !== "holding") {
+        return { mode, effect: noFollowEffect }
+      }
+      return {
+        mode: event.follow ? { type: "following" } : { type: "escaped" },
+        effect:
+          event.follow && event.canPinToBottom
+            ? { type: "scroll-bottom", immediate: true, suppressHold: event.suppressHold }
+            : noFollowEffect,
+      }
+
     case "set-follow":
       return { mode: event.enabled ? { type: "following" } : { type: "escaped" }, effect: noFollowEffect }
 
@@ -236,6 +249,12 @@ export class VirtualScrollController {
 
   holdTargetChanged(key: string | null, canPinToBottom: boolean): ScrollControllerResult {
     const next = transitionFollowMode(this.state.mode, { type: "hold-target-changed", key, canPinToBottom })
+    this.state.mode = next.mode
+    return this.result(next.effect)
+  }
+
+  clearHold(follow: boolean, canPinToBottom: boolean, suppressHold: boolean): ScrollControllerResult {
+    const next = transitionFollowMode(this.state.mode, { type: "clear-hold", follow, canPinToBottom, suppressHold })
     this.state.mode = next.mode
     return this.result(next.effect)
   }
