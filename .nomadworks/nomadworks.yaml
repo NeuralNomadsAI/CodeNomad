@@ -1,0 +1,45 @@
+# NomadWorks repository configuration
+enabled: false
+team_mode: full
+
+defaults:
+  provider: cli-proxy-api-openai
+  model: gpt-5.5-high
+  # provider: openai
+  # model: gpt-5.4
+  # temperature: 0.2
+  # permissions: allow
+
+features:
+  debug_dumps: true # Dumps final agent configs to .nomadworks/generated/agents/ for verification
+  # debug_logs: false # Enable detailed console logging for the plugin
+  codemap_verification: true
+  keep_builtin_agents: true
+
+policies:
+  extract_defaults: none # Set to 'all' to write bundled policy defaults to .nomadworks/generated/policies/
+
+agents:
+  technical_architect:
+    enabled: true
+  workflow_runner:
+    enabled: true
+    provider: cli-proxy-api-openai
+    model: gpt-5.4-medium
+  developer:
+    enabled: true
+  product_manager:
+    enabled: true
+    provider: cli-proxy-api-openai
+    model: gpt-5.4-medium-1m
+  business_analyst:
+    enabled: true
+  ui_ux_designer:
+    enabled: true
+  qa_engineer:
+    enabled: true
+    provider: cli-proxy-api-openai
+    model: gpt-5.5-medium
+  tech_lead:
+    enabled: true
+
