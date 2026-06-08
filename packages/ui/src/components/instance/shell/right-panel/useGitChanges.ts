@@ -431,7 +431,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
       if (event.type !== "instance.event") return
       if (event.instanceId !== options.instanceId) return
       const eventType = (event.event as { type?: unknown } | undefined)?.type
-      if (eventType !== "session.updated" && eventType !== "session.diff") return
+      if (eventType !== "session.updated") return
       void passiveRefreshGitStatus({ forceReloadSelectedDiff: true })
     })
 

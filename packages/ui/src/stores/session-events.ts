@@ -8,7 +8,6 @@ import type {
 } from "../types/message"
 import type {
   EventSessionCompacted,
-  EventSessionDiff,
   EventSessionError,
   EventSessionIdle,
   EventSessionUpdated,
@@ -563,31 +562,6 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
   }
 }
 
-function handleSessionDiff(instanceId: string, event: EventSessionDiff): void {
-  const sessionId = event.properties?.sessionID
-  if (!sessionId) return
-
-  const diffs = event.properties?.diff
-  if (!Array.isArray(diffs)) return
-
-  const existing = sessions().get(instanceId)?.get(sessionId)
-  if (existing) {
-    withSession(instanceId, sessionId, (session) => {
-      session.diff = diffs
-    })
-    return
-  }
-
-  // A diff event can arrive before we have hydrated the session list.
-  // Best-effort: fetch the session record so the diff has somewhere to live.
-  void (async () => {
-    await fetchSessionInfo(instanceId, sessionId, (event as any)?.directory)
-    withSession(instanceId, sessionId, (session) => {
-      session.diff = diffs
-    })
-  })().catch((error) => log.warn("Failed to hydrate session for diff event", { instanceId, sessionId, error }))
-}
-
 function handleSessionIdle(instanceId: string, event: EventSessionIdle): void {
   const sessionId = event.properties?.sessionID
   if (!sessionId) return
@@ -799,7 +773,6 @@ export {
   handleQuestionAsked,
   handleQuestionAnswered,
   handleSessionCompacted,
-  handleSessionDiff,
   handleSessionError,
   handleSessionIdle,
   handleSessionStatus,

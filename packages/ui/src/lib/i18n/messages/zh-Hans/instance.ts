@@ -89,7 +89,6 @@ export const instanceMessages = {
   "instanceShell.empty.description": "在下方发送消息以创建新会话，或选择现有会话继续。",
 
   "instanceShell.rightPanel.title": "状态面板",
-  "instanceShell.rightPanel.tabs.changes": "更改",
   "instanceShell.rightPanel.tabs.gitChanges": "Git 更改",
   "instanceShell.rightPanel.tabs.files": "文件",
   "instanceShell.rightPanel.tabs.status": "状态",
@@ -109,8 +108,6 @@ export const instanceMessages = {
   "instanceShell.rightPanel.toast.saveError": "保存文件失败",
   "instanceShell.rightPanel.sections.yoloMode": "Yolo 模式",
   "instanceShell.rightPanel.sections.yoloMode.tooltip": "自动批准当前会话的权限请求。仅在你信任正在运行的工具时启用。",
-  "instanceShell.rightPanel.sections.sessionChanges": "会话更改",
-  "instanceShell.rightPanel.sections.sessionChanges.tooltip": "当前会话中修改的文件。显示每个文件的添加和删除。",
   "instanceShell.rightPanel.sections.plan": "计划",
   "instanceShell.rightPanel.sections.plan.tooltip": "代理的路线图。跟踪任务、子任务及其完成状态。",
   "instanceShell.rightPanel.sections.backgroundProcesses": "后台 Shell",
@@ -121,12 +118,6 @@ export const instanceMessages = {
   "instanceShell.rightPanel.sections.lsp.tooltip": "语言服务器协议服务器，提供代码智能、诊断和语言特定的功能。",
   "instanceShell.rightPanel.sections.plugins": "插件",
   "instanceShell.rightPanel.sections.plugins.tooltip": "自定义 UI 和服务器行为的插件，添加超出 MCP 和 LSP 的功能。",
-
-  "instanceShell.sessionChanges.noSessionSelected": "选择会话以查看更改。",
-  "instanceShell.sessionChanges.loading": "正在获取会话更改...",
-  "instanceShell.sessionChanges.empty": "暂无会话更改。",
-  "instanceShell.sessionChanges.filesChanged": "已更改 {count} 个文件",
-  "instanceShell.sessionChanges.actions.show": "显示更改",
 
   "instanceShell.gitChanges.loading": "正在加载 Git 更改...",
   "instanceShell.gitChanges.empty": "暂无 Git 更改。",

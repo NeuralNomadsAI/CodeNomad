@@ -89,7 +89,6 @@ export const instanceMessages = {
   "instanceShell.empty.description": "Отправьте сообщение ниже, чтобы создать новую сессию, или выберите существующую сессию, чтобы продолжить.",
 
   "instanceShell.rightPanel.title": "Панель состояния",
-  "instanceShell.rightPanel.tabs.changes": "Изменения",
   "instanceShell.rightPanel.tabs.gitChanges": "Изменения Git",
   "instanceShell.rightPanel.tabs.files": "Файлы",
   "instanceShell.rightPanel.tabs.status": "Статус",
@@ -109,8 +108,6 @@ export const instanceMessages = {
   "instanceShell.rightPanel.toast.saveError": "Не удалось сохранить файл",
   "instanceShell.rightPanel.sections.yoloMode": "Режим Yolo",
   "instanceShell.rightPanel.sections.yoloMode.tooltip": "Автоматически одобряет запросы разрешений для текущей сессии. Включайте только если доверяете запускаемым инструментам.",
-  "instanceShell.rightPanel.sections.sessionChanges": "Изменения сессии",
-  "instanceShell.rightPanel.sections.sessionChanges.tooltip": "Файлы, измененные в текущей сессии. Показывает добавления и удаления для каждого файла.",
   "instanceShell.rightPanel.sections.plan": "План",
   "instanceShell.rightPanel.sections.plan.tooltip": "Дорожная карта агента для этой сессии. Отслеживает задачи и их статус выполнения.",
   "instanceShell.rightPanel.sections.backgroundProcesses": "Фоновые оболочки",
@@ -121,12 +118,6 @@ export const instanceMessages = {
   "instanceShell.rightPanel.sections.lsp.tooltip": "Серверы протокола Language Server Protocol, обеспечивающие интеллектуальную поддержку кода и диагностику.",
   "instanceShell.rightPanel.sections.plugins": "Плагины",
   "instanceShell.rightPanel.sections.plugins.tooltip": "Плагины, настраивающие поведение интерфейса и сервера, добавляющие функции поверх MCP и LSP.",
-
-  "instanceShell.sessionChanges.noSessionSelected": "Выберите сессию, чтобы просмотреть изменения.",
-  "instanceShell.sessionChanges.loading": "Загрузка изменений...",
-  "instanceShell.sessionChanges.empty": "Пока нет изменений.",
-  "instanceShell.sessionChanges.filesChanged": "Изменено файлов: {count}",
-  "instanceShell.sessionChanges.actions.show": "Показать изменения",
 
   "instanceShell.gitChanges.loading": "Загрузка изменений Git...",
   "instanceShell.gitChanges.empty": "Изменений Git пока нет.",
