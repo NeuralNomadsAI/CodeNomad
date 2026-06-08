@@ -19,11 +19,13 @@ import {
   getDescendantSessions,
   isBlankSession,
   messagesLoaded,
+  getSessionMessagesLoadError,
   pruneDraftPrompts,
   providers,
   setActiveSessionId,
   setAgents,
   setMessagesLoaded,
+  setSessionMessagesLoadError,
   setProviders,
   setSessionInfoByInstance,
   setSessions,
@@ -61,6 +63,27 @@ import { hydrateSessionMetadataWithClient } from "./session-metadata"
 const log = getLogger("api")
 
 const pendingSessionDiffFetches = new Map<string, Promise<void>>()
+
+function getErrorMessage(error: unknown): string {
+  if (!error) return "Failed to load messages"
+
+  const cause = (error as any)?.cause
+  if (cause && cause !== error) {
+    const causeMessage = getErrorMessage(cause)
+    if (causeMessage) return causeMessage
+  }
+
+  const dataMessage = (error as any)?.data?.message
+  if (typeof dataMessage === "string" && dataMessage.trim()) return dataMessage
+
+  const errorMessage = (error as any)?.message
+  if (typeof errorMessage === "string" && errorMessage.trim()) return errorMessage
+
+  const errorText = (error as any)?.error
+  if (typeof errorText === "string" && errorText.trim()) return errorText
+
+  return "Failed to load messages"
+}
 
 async function getSessionWorkspacePayload(instanceId: string, sessionId: string): Promise<{ workspace?: string }> {
   const workspace = await getOpenCodeWorkspaceIdForSession(instanceId, sessionId)
@@ -851,6 +874,11 @@ async function loadMessages(
     return
   }
 
+  const previousError = getSessionMessagesLoadError(instanceId, sessionId)
+  if (previousError && !force) {
+    return
+  }
+
   const isLoading = loading().loadingMessages.get(instanceId)?.has(sessionId)
   if (isLoading) {
     return
@@ -882,6 +910,7 @@ async function loadMessages(
     next.loadingMessages.set(instanceId, loadingSet)
     return next
   })
+  setSessionMessagesLoadError(instanceId, sessionId, null)
 
   try {
     log.info(`[HTTP] GET /session.${"messages"} for instance ${instanceId}`, { sessionId })
@@ -893,6 +922,8 @@ async function loadMessages(
     if (!Array.isArray(apiMessages)) {
       return
     }
+
+    setSessionMessagesLoadError(instanceId, sessionId, null)
 
     // Treat empty sessions as loaded to avoid re-fetch loops.
     setMessagesLoaded((prev) => {
@@ -1001,6 +1032,7 @@ async function loadMessages(
 
   } catch (error) {
     log.error("Failed to load messages:", error)
+    setSessionMessagesLoadError(instanceId, sessionId, getErrorMessage(error))
     throw error
   } finally {
     setLoading((prev) => {

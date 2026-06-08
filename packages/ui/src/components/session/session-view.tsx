@@ -8,7 +8,7 @@ import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import { getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances } from "../../stores/instances"
-import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, markSessionIdleSeen, setActiveParentSession, setActiveSession, runShellCommand, abortSession } from "../../stores/sessions"
+import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, setActiveParentSession, setActiveSession, runShellCommand, abortSession } from "../../stores/sessions"
 import { clearSessionIdleFade, IDLE_STATUS_VISIBILITY_MS, getSessionStatus, isSessionBusy as getSessionBusyStatus, markSessionIdleFadeStarted } from "../../stores/session-status"
 import { deleteMessage } from "../../stores/session-actions"
 import { showAlertDialog } from "../../stores/alerts"
@@ -47,6 +47,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   const { preferences } = useConfig()
   const session = () => props.activeSessions.get(props.sessionId)
   const messagesLoading = createMemo(() => isSessionMessagesLoading(props.instanceId, props.sessionId))
+  const messagesLoadError = createMemo(() => getSessionMessagesLoadError(props.instanceId, props.sessionId))
   const messageStore = createMemo(() => messageStoreBus.getOrCreate(props.instanceId))
   const sessionBusy = createMemo(() => {
     const currentSession = session()
@@ -206,6 +207,14 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       loadMessages(props.instanceId, currentSession.id).catch((error) => log.error("Failed to load messages", error))
     }
   })
+
+  function handleReloadMessages() {
+    const currentSession = session()
+    if (!currentSession) return
+    loadMessages(props.instanceId, currentSession.id, { force: true }).catch((error) =>
+      log.error("Failed to reload messages", error),
+    )
+  }
 
   createEffect(
     on(
@@ -436,6 +445,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
                   instanceId={props.instanceId}
                   sessionId={activeSession.id}
                   loading={messagesLoading()}
+                  loadError={messagesLoadError()}
+                  onReloadMessages={handleReloadMessages}
                   sessionStreamingActive={sessionStreamingActive()}
                   onRevert={handleRevert}
                   onDeleteMessagesUpTo={handleDeleteMessagesUpTo}

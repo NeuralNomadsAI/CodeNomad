@@ -16,6 +16,8 @@ export const messagingMessages = {
   "messageSection.empty.tips.askAboutCodebase": "Fragen Sie nach Ihrem Code",
   "messageSection.empty.tips.attachFilesPrefix": "Dateien anhängen mit",
   "messageSection.loading.messages": "Nachrichten werden geladen...",
+  "messageSection.loadError.title": "Nachrichten konnten nicht geladen werden",
+  "messageSection.loadError.reload": "Nachrichten neu laden",
   "messageSection.scroll.toFirstAriaLabel": "Zur ersten Nachricht scrollen",
   "messageSection.scroll.toLatestAriaLabel": "Zur neuesten Nachricht scrollen",
   "messageSection.scroll.enableHoldAriaLabel": "Halten für lange Assistentenantworten aktivieren",

@@ -34,6 +34,7 @@ export interface MessageSectionProps {
   instanceId: string
   sessionId: string
   loading?: boolean
+  loadError?: string | null
   emptyStateVariant?: "messages" | "no-session"
   onRevert?: (messageId: string) => void
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
@@ -43,6 +44,7 @@ export interface MessageSectionProps {
   onSidebarToggle?: () => void
   forceCompactStatusLayout?: boolean
   onQuoteSelection?: (text: string, mode: "quote" | "code") => void
+  onReloadMessages?: () => void
   isActive?: boolean
   sessionStreamingActive?: boolean
 }
@@ -1421,7 +1423,7 @@ export default function MessageSection(props: MessageSectionProps) {
           )}
           renderBeforeItems={() => (
             <>
-              <Show when={!props.loading && visibleMessageIds().length === 0}>
+              <Show when={!props.loading && !props.loadError && visibleMessageIds().length === 0}>
                 <Show
                   when={emptyStateVariant() === "no-session"}
                   fallback={
@@ -1465,6 +1467,20 @@ export default function MessageSection(props: MessageSectionProps) {
                   <div class="spinner" />
                   <p>{t("messageSection.loading.messages")}</p>
                 </div>
+              </Show>
+
+              <Show when={!props.loading && props.loadError}>
+                {(loadError) => (
+                  <div class="message-load-error-state">
+                    <div class="message-load-error-card">
+                      <h3>{t("messageSection.loadError.title")}</h3>
+                      <p>{loadError()}</p>
+                      <button type="button" class="message-load-error-retry" onClick={() => props.onReloadMessages?.()}>
+                        {t("messageSection.loadError.reload")}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </Show>
             </>
           )}
