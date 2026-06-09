@@ -25,6 +25,7 @@ import type {
   WorkspaceEventPayload,
 } from "../../../server/src/api-types"
 import { getLogger } from "./logger"
+import { debugInfo } from "../stores/debug-log"
 
 const log = getLogger("sse")
 
@@ -110,6 +111,7 @@ class SSEManager {
     })
 
     serverEvents.onDisconnect(() => {
+      debugInfo("sse", "SSE transport disconnected → setting all instances to 'connecting'")
       setConnectionStatus((prev) => {
         const next = new Map(prev)
         for (const [id] of next) {
@@ -120,6 +122,7 @@ class SSEManager {
     })
 
     serverEvents.onOpen(() => {
+      debugInfo("sse", "SSE transport reconnected → clearing 'connecting' status")
       setConnectionStatus((prev) => {
         const next = new Map(prev)
         for (const [id, status] of next) {
@@ -134,6 +137,7 @@ class SSEManager {
     createRoot(() => {
       createEffect(() => {
         if (!isOnlineSignal()()) {
+          debugInfo("sse", "Browser offline → setting all instances to 'connecting'")
           setConnectionStatus((prev) => {
             const next = new Map(prev)
             for (const [id] of next) {
@@ -227,6 +231,8 @@ class SSEManager {
   }
 
   private updateConnectionStatus(instanceId: string, status: ConnectionStatus): void {
+    const shortId = instanceId.slice(0, 8)
+    debugInfo("sse", `connectionStatus ${shortId} → ${status}`)
     setConnectionStatus((prev) => {
       const next = new Map(prev)
       next.set(instanceId, status)
