@@ -107,6 +107,28 @@ class SSEManager {
       this.updateConnectionStatus(payload.instanceId, "connected")
       this.handleEvent(payload.instanceId, payload.event as SSEEvent)
     })
+
+    serverEvents.onDisconnect(() => {
+      setConnectionStatus((prev) => {
+        const next = new Map(prev)
+        for (const [id] of next) {
+          next.set(id, "connecting")
+        }
+        return next
+      })
+    })
+
+    serverEvents.onOpen(() => {
+      setConnectionStatus((prev) => {
+        const next = new Map(prev)
+        for (const [id, status] of next) {
+          if (status === "connecting") {
+            next.set(id, "connected")
+          }
+        }
+        return next
+      })
+    })
   }
 
   seedStatus(instanceId: string, status: ConnectionStatus) {

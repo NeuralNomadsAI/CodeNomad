@@ -19,6 +19,7 @@ function logSse(message: string, context?: Record<string, unknown>) {
 class ServerEvents {
   private handlers = new Map<WorkspaceEventType | "*", Set<(event: WorkspaceEventPayload) => void>>()
   private openHandlers = new Set<() => void>()
+  private disconnectHandlers = new Set<() => void>()
   private source: EventSource | null = null
   private retryDelay = RETRY_BASE_DELAY
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -70,6 +71,7 @@ class ServerEvents {
     const source = this.source
     this.source = null
     this._connected = false
+    this.disconnectHandlers.forEach((handler) => handler())
     logSse("Events stream disconnected, scheduling reconnect", { delayMs: this.retryDelay })
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
@@ -97,6 +99,11 @@ class ServerEvents {
   onOpen(handler: () => void): () => void {
     this.openHandlers.add(handler)
     return () => this.openHandlers.delete(handler)
+  }
+
+  onDisconnect(handler: () => void): () => void {
+    this.disconnectHandlers.add(handler)
+    return () => this.disconnectHandlers.delete(handler)
   }
 
   resetRetry() {
