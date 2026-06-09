@@ -408,6 +408,14 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     const messageId = typeof info.id === "string" ? info.id : undefined
     if (!sessionId || !messageId) return
 
+    // Flush any pending deltas for this message before applying the update.
+    // Deltas are buffered for up to 50ms; if message.updated arrives before
+    // the buffer flushes, the message could be marked complete/error with
+    // stale text mutations still pending. Flushing first preserves the
+    // server's event ordering: all delta content is applied, then the
+    // message status/metadata update runs on the complete content.
+    flushPendingDeltasForMessage(instanceId, messageId)
+
     const timeInfo = (info.time ?? {}) as { created?: number; updated?: number; end?: number }
     const nextUpdated =
       typeof timeInfo.end === "number" && timeInfo.end > 0
@@ -483,6 +491,24 @@ function clearPendingDeltasForPart(instanceId: string, messageId: string, partId
   }
   for (const key of keysToDelete) {
     pendingDeltas.delete(key)
+  }
+}
+
+function flushPendingDeltasForMessage(instanceId: string, messageId: string): void {
+  const prefix = `${instanceId}:${messageId}:`
+  for (const key of pendingDeltas.keys()) {
+    if (key.startsWith(prefix)) {
+      const pending = pendingDeltas.get(key)
+      if (pending) {
+        applyPartDeltaV2(instanceId, {
+          messageId: pending.messageId,
+          partId: pending.partId,
+          field: pending.field,
+          delta: pending.delta,
+        })
+        pendingDeltas.delete(key)
+      }
+    }
   }
 }
 
