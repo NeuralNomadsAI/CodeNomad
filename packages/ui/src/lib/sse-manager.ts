@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js"
+import { createSignal, createRoot, createEffect } from "solid-js"
 import {
   MessageUpdateEvent,
   MessageRemovedEvent,
@@ -17,6 +17,7 @@ import type {
   EventSessionStatus,
 } from "@opencode-ai/sdk"
 import { serverEvents } from "./server-events"
+import { isOnlineSignal } from "./network-status"
 import type {
   BackgroundProcess,
   InstanceStreamEvent,
@@ -127,6 +128,20 @@ class SSEManager {
           }
         }
         return next
+      })
+    })
+
+    createRoot(() => {
+      createEffect(() => {
+        if (!isOnlineSignal()()) {
+          setConnectionStatus((prev) => {
+            const next = new Map(prev)
+            for (const [id] of next) {
+              next.set(id, "connecting")
+            }
+            return next
+          })
+        }
       })
     })
   }
