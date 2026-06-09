@@ -111,6 +111,7 @@ class SSEManager {
     })
 
     serverEvents.onDisconnect(() => {
+      log.warn("SSE transport disconnected → setting all instances to 'connecting'")
       debugInfo("sse", "SSE transport disconnected → setting all instances to 'connecting'")
       setConnectionStatus((prev) => {
         const next = new Map(prev)
@@ -122,6 +123,7 @@ class SSEManager {
     })
 
     serverEvents.onOpen(() => {
+      log.warn("SSE transport reconnected → clearing 'connecting' status")
       debugInfo("sse", "SSE transport reconnected → clearing 'connecting' status")
       setConnectionStatus((prev) => {
         const next = new Map(prev)
@@ -137,6 +139,7 @@ class SSEManager {
     createRoot(() => {
       createEffect(() => {
         if (!isOnlineSignal()()) {
+          log.warn("Browser offline → setting all instances to 'connecting'")
           debugInfo("sse", "Browser offline → setting all instances to 'connecting'")
           setConnectionStatus((prev) => {
             const next = new Map(prev)
@@ -148,6 +151,8 @@ class SSEManager {
         }
       })
     })
+
+    log.info("sseManager initialized: listening for SSE disconnect, reconnect, and browser offline")
   }
 
   seedStatus(instanceId: string, status: ConnectionStatus) {
@@ -232,6 +237,7 @@ class SSEManager {
 
   private updateConnectionStatus(instanceId: string, status: ConnectionStatus): void {
     const shortId = instanceId.slice(0, 8)
+    log.info(`connectionStatus ${shortId} → ${status}`)
     debugInfo("sse", `connectionStatus ${shortId} → ${status}`)
     setConnectionStatus((prev) => {
       const next = new Map(prev)
