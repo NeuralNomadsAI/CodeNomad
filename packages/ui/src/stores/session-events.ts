@@ -18,6 +18,12 @@ import type { MessageStatus } from "./message-v2/types"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
 import {
+  enqueueDelta,
+  clearPendingDeltasForPart,
+  flushPendingDeltasForMessage,
+  setFlushCallback,
+} from "./delta-buffer"
+import {
   getPermissionId,
   getPermissionKind,
   getPermissionSessionId,
@@ -414,7 +420,7 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     // stale text mutations still pending. Flushing first preserves the
     // server's event ordering: all delta content is applied, then the
     // message status/metadata update runs on the complete content.
-    flushPendingDeltasForMessage(instanceId, messageId)
+    flushPendingDeltasForMessage(instanceId, messageId, applyPartDeltaV2)
 
     const timeInfo = (info.time ?? {}) as { created?: number; updated?: number; end?: number }
     const nextUpdated =
@@ -467,60 +473,12 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
   }
 }
 
-const DELTA_FLUSH_INTERVAL = 50
-
-const pendingDeltas = new Map<string, { instanceId: string; messageId: string; partId: string; field: string; delta: string }>()
-let deltaFlushTimer: ReturnType<typeof setTimeout> | null = null
-
-function enqueueDelta(instanceId: string, messageId: string, partId: string, field: string, delta: string) {
-  const key = `${instanceId}:${messageId}:${partId}:${field}`
-  const existing = pendingDeltas.get(key)
-  const accumulated = existing ? existing.delta + delta : delta
-  pendingDeltas.set(key, { instanceId, messageId, partId, field, delta: accumulated })
-  if (deltaFlushTimer === null) {
-    deltaFlushTimer = setTimeout(flushDeltas, DELTA_FLUSH_INTERVAL)
-  }
-}
-
-function clearPendingDeltasForPart(instanceId: string, messageId: string, partId: string) {
-  const keysToDelete: string[] = []
-  for (const key of pendingDeltas.keys()) {
-    if (key.startsWith(`${instanceId}:${messageId}:${partId}:`)) {
-      keysToDelete.push(key)
-    }
-  }
-  for (const key of keysToDelete) {
-    pendingDeltas.delete(key)
-  }
-}
-
-function flushPendingDeltasForMessage(instanceId: string, messageId: string): void {
-  const prefix = `${instanceId}:${messageId}:`
-  for (const key of pendingDeltas.keys()) {
-    if (key.startsWith(prefix)) {
-      const pending = pendingDeltas.get(key)
-      if (pending) {
-        applyPartDeltaV2(instanceId, {
-          messageId: pending.messageId,
-          partId: pending.partId,
-          field: pending.field,
-          delta: pending.delta,
-        })
-        pendingDeltas.delete(key)
-      }
-    }
-  }
-}
-
-function flushDeltas() {
-  deltaFlushTimer = null
-  if (pendingDeltas.size === 0) return
-  const batch = Array.from(pendingDeltas.values())
-  pendingDeltas.clear()
+// Delta buffer callback setup
+setFlushCallback((batch) => {
   for (const { instanceId, messageId, partId, field, delta } of batch) {
     applyPartDeltaV2(instanceId, { messageId, partId, field, delta })
   }
-}
+})
 
 function handleMessagePartDelta(instanceId: string, event: MessagePartDeltaEvent): void {
   const props = event.properties
