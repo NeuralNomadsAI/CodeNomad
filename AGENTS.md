@@ -15,6 +15,14 @@
 - Prefer composable primitives (signals, hooks, utilities) over deep inheritance or implicit global state.
 - When adding platform integrations (SSE, IPC, SDK), isolate them in thin adapters that surface typed events/actions.
 
+## PR Review Principles
+- **Check for regressions first.** Before approving any change, verify the existing behavior still works — run the test suite, test manually on both mobile and desktop, and confirm no unintended side effects in related subsystems.
+- **Look for better possible implementations.** Don't settle for the first working approach. Ask: is there a simpler way? Does the codebase already have a pattern for this? Would a different abstraction reduce future maintenance cost?
+- **Be the PR gatekeeper.** Every line merged becomes technical debt someone else will read. If it's unclear, fragile, or lacks tests, push back. The reviewer's job is to protect the codebase, not to be nice.
+- **Be ruthless about code quality.** Surface-level "LGTM" is negligence. Inspect: naming, error handling, edge cases, type safety, logging (is it useful or just noise?), performance (any unnecessary allocations or re-renders?), and whether the change respects existing architectural boundaries.
+- **Test before responding to review comments.** Never reply "works for me" or "this fixes it" without deploying the exact commit and verifying the behavior. Untested responses waste reviewer time and erode trust.
+- **UI and server must be built from the same version.** Version mismatches between UI and server cause subtle bugs (e.g., sessions disappearing). Always build both from the same commit before testing.
+
 ## Multi-Language Support (i18n)
 
 The UI uses a small custom i18n layer (no ICU/messageformat). When building features, never hardcode user-visible strings.
