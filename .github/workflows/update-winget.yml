@@ -1,17 +1,83 @@
 name: Update Winget
 
 on:
-  release:
-    types:
-      - published
+  workflow_call:
+    inputs:
+      release_tag:
+        description: "Stable release tag to inspect"
+        required: true
+        type: string
+      release_id:
+        description: "Optional numeric GitHub release id"
+        required: false
+        default: ""
+        type: string
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Stable release tag to inspect"
+        required: true
+        type: string
+      release_id:
+        description: "Optional numeric GitHub release id"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
 
 jobs:
+  resolve-release:
+    name: Resolve release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.release.outputs.release_id }}
+      release_tag: ${{ steps.release.outputs.release_tag }}
+      draft: ${{ steps.release.outputs.draft }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+    steps:
+      - name: Resolve release metadata
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_ID_INPUT: ${{ inputs.release_id }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$RELEASE_ID_INPUT" ]; then
+            release_api="repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID_INPUT}"
+          else
+            release_api="repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}"
+          fi
+
+          release_id="$(gh api "$release_api" --jq '.id')"
+          release_tag="$(gh api "$release_api" --jq '.tag_name')"
+          draft="$(gh api "$release_api" --jq '.draft')"
+          prerelease="$(gh api "$release_api" --jq '.prerelease')"
+
+          if [ -z "$release_id" ] || [ "$release_id" = "null" ]; then
+            echo "Unable to resolve release id for tag '$RELEASE_TAG'" >&2
+            exit 1
+          fi
+
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "draft=$draft" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+      - name: Log resolved release metadata
+        run: |
+          echo "Release tag: ${{ steps.release.outputs.release_tag }}"
+          echo "Release id: ${{ steps.release.outputs.release_id }}"
+          echo "Draft: ${{ steps.release.outputs.draft }}"
+          echo "Prerelease: ${{ steps.release.outputs.prerelease }}"
+
   update-winget:
     name: Submit Winget manifest update
-    if: ${{ !github.event.release.draft && !github.event.release.prerelease }}
+    needs: resolve-release
+    if: ${{ needs.resolve-release.outputs.draft != 'true' && needs.resolve-release.outputs.prerelease != 'true' }}
     runs-on: ubuntu-latest
     env:
       WINGET_PACKAGE_IDENTIFIER: ${{ vars.WINGET_PACKAGE_IDENTIFIER || 'NeuralNomadsAI.CodeNomad' }}
@@ -35,8 +101,8 @@ jobs:
         run: |
           args=(
             --repo "${{ github.repository }}"
-            --release-id "${{ github.event.release.id }}"
-            --tag "${{ github.event.release.tag_name }}"
+            --release-id "${{ needs.resolve-release.outputs.release_id }}"
+            --tag "${{ needs.resolve-release.outputs.release_tag }}"
             --asset-name-template "$WINGET_WINDOWS_ASSET_NAME_TEMPLATE"
             --timeout-seconds "$WINGET_ASSET_WAIT_TIMEOUT_SECONDS"
             --poll-interval-seconds "$WINGET_ASSET_POLL_INTERVAL_SECONDS"
@@ -79,7 +145,7 @@ jobs:
         with:
           identifier: ${{ env.WINGET_PACKAGE_IDENTIFIER }}
           version: ${{ steps.release_asset.outputs.version }}
-          release-tag: ${{ github.event.release.tag_name }}
+          release-tag: ${{ needs.resolve-release.outputs.release_tag }}
           installers-regex: ${{ steps.release_asset.outputs.asset_regex }}
           fork-user: ${{ env.WINGET_FORK_OWNER }}
           token: ${{ secrets.WINGET_GITHUB_TOKEN }}
