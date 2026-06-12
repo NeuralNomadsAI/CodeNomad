@@ -136,7 +136,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     activeSessions,
     activeSessionIdForInstance,
     activeSessionForInstance,
-    activeSessionDiffs,
     latestTodoState,
     tokenStats,
     backgroundProcessList,
@@ -759,7 +758,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             instance={props.instance}
             activeSessionId={activeSessionIdForInstance}
             activeSession={activeSessionForInstance}
-            activeSessionDiffs={activeSessionDiffs}
             latestTodoState={latestTodoState}
             backgroundProcessList={backgroundProcessList}
             onOpenBackgroundOutput={openBackgroundOutput}
@@ -828,7 +826,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           instance={props.instance}
           activeSessionId={activeSessionIdForInstance}
           activeSession={activeSessionForInstance}
-          activeSessionDiffs={activeSessionDiffs}
           latestTodoState={latestTodoState}
           backgroundProcessList={backgroundProcessList}
           onOpenBackgroundOutput={openBackgroundOutput}

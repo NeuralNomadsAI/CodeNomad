@@ -79,6 +79,8 @@ const App: Component = () => {
   const {
     preferences,
     recentFolders,
+    useTauriNativeEventTransport,
+    setUseTauriNativeEventTransport,
     serverSettings,
     recordWorkspaceLaunch,
     toggleShowThinkingBlocks,
@@ -456,6 +458,8 @@ const App: Component = () => {
 
   const { commands: paletteCommands, executeCommand } = useCommands({
     preferences,
+    useTauriNativeEventTransport,
+    setUseTauriNativeEventTransport,
     toggleAutoCleanupBlankSessions,
     toggleShowThinkingBlocks,
     toggleKeyboardShortcutHints,
