@@ -101,6 +101,8 @@ const [connectionStatus, setConnectionStatus] = createSignal<Map<string, Connect
 
 class SSEManager {
   constructor() {
+    log.info("sseManager initialized: listening for SSE disconnect and reconnect")
+
     serverEvents.on("instance.eventStatus", (event) => {
       const payload = event as InstanceStatusPayload
       this.updateConnectionStatus(payload.instanceId, payload.status)
@@ -117,6 +119,30 @@ class SSEManager {
       const payload = event as InstanceEventPayload
       this.updateConnectionStatus(payload.instanceId, "connected")
       this.handleEvent(payload.instanceId, payload.event as SSEEvent)
+    })
+
+    serverEvents.onDisconnect(() => {
+      log.info("SSE transport disconnected → setting all instances to 'connecting'")
+      setConnectionStatus((prev) => {
+        const next = new Map(prev)
+        for (const [id] of next) {
+          next.set(id, "connecting")
+        }
+        return next
+      })
+    })
+
+    serverEvents.onOpen(() => {
+      log.info("SSE transport reconnected → clearing 'connecting' status")
+      setConnectionStatus((prev) => {
+        const next = new Map(prev)
+        for (const [id, status] of next) {
+          if (status === "connecting") {
+            next.delete(id)
+          }
+        }
+        return next
+      })
     })
   }
 
