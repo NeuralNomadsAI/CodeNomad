@@ -1,6 +1,6 @@
 /**
  * Delta buffer for throttling SSE message.part.delta events.
- * 
+ *
  * Accumulates text deltas in a 50ms window to reduce UI churn from
  * high-frequency streaming chunks. Provides targeted flush/clear paths
  * so full part-update or message-complete events always win over stale
