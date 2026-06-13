@@ -97,7 +97,7 @@ Then open a pull request on GitHub targeting the `dev` branch.
 - [ ] One issue per PR (don't mix unrelated changes)
 - [ ] Type checking passes: `npm run typecheck` (root) or the workspace-specific script matching your change area
 - [ ] Tests pass (if applicable)
-- [ ] PR description explains the change and links the issue
+- [ ] PR description explains the change, includes relevant screenshots for UI changes, and links related issues when applicable
 
 ## Project Structure
 
@@ -124,7 +124,7 @@ Then open a pull request on GitHub targeting the `dev` branch.
 | `packages/ui/src/lib/i18n/messages/` | Translation files (en, es, fr, ja, ru, he, zh-Hans) |
 
 > For a comprehensive map of all six functional areas (server, UI, desktop, speech/audio, build, Cloudflare), SDK integration patterns, and feature traces, load the `codenomad-architecture-guide` skill:  
-> `.opencode/skills/codenomad-architecture-guide/SKILL.md` (available after [PR #493](https://github.com/NeuralNomadsAI/CodeNomad/pull/493) lands)
+> `.opencode/skills/codenomad-architecture-guide/SKILL.md`
 
 ### Styling
 
