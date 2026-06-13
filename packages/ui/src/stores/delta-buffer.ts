@@ -67,6 +67,15 @@ export function setFlushCallback(
   flushCallback = callback
 }
 
+export function resetDeltaBufferForTests() {
+  pendingDeltas.clear()
+  if (deltaFlushTimer !== null) {
+    clearTimeout(deltaFlushTimer)
+    deltaFlushTimer = null
+  }
+  flushCallback = null
+}
+
 let flushCallback: ((batch: Array<{ instanceId: string; messageId: string; partId: string; field: string; delta: string }>) => void) | null = null
 
 function flushDeltas() {
