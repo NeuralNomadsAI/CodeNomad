@@ -97,6 +97,18 @@ jobs:
       release_name: ${{ needs.prepare-release.outputs.release_name }}
     secrets: inherit
 
+  update-winget:
+    needs:
+      - prepare-release
+      - build-and-upload
+    if: ${{ !inputs.prerelease }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/update-winget.yml
+    with:
+      release_tag: ${{ needs.prepare-release.outputs.tag }}
+    secrets: inherit
+
   release-ui:
     needs: prepare-release
     if: ${{ inputs.release_ui }}
