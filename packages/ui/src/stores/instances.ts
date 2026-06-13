@@ -720,14 +720,11 @@ async function stopInstance(id: string) {
   if (!instance) return
 
   releaseInstanceResources(id)
-
-  try {
-    await serverApi.deleteWorkspace(id)
-  } catch (error) {
-    log.error("Failed to stop workspace", error)
-  }
-
   removeInstance(id)
+
+  serverApi.deleteWorkspace(id).catch((error) => {
+    log.error("Failed to stop workspace", error)
+  })
 }
 
 async function fetchLspStatus(instanceId: string): Promise<LspStatus[] | undefined> {
