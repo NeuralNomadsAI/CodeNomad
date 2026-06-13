@@ -73,7 +73,7 @@ export const toolCallMessages = {
   "toolCall.permission.actions.deny": "Deny",
   "toolCall.permission.shortcuts.allowOnce": "Allow once",
   "toolCall.permission.shortcuts.alwaysAllow": "Always allow",
-  "toolCall.permission.shortcuts.deny": "Deny",
+  "toolCall.permission.rejectReason.placeholder": "Optional feedback for Deny, e.g. use a safer command...",
   "toolCall.permission.errors.unableToUpdate": "Unable to update permission",
 
   "permissionApproval.title": "Requests",
@@ -90,6 +90,7 @@ export const toolCallMessages = {
   "permissionApproval.actions.allowOnce": "Allow Once",
   "permissionApproval.actions.alwaysAllow": "Always Allow",
   "permissionApproval.actions.deny": "Deny",
+  "permissionApproval.rejectReason.placeholder": "Optional feedback for Deny, e.g. use a safer command...",
   "permissionApproval.fallbackHint": "Load session for more information.",
   "permissionApproval.errors.unableToUpdatePermission": "Unable to update permission",
 

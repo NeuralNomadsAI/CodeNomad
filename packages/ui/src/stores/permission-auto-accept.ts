@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js"
-import type { PermissionReply, PermissionRequestLike } from "../types/permission"
+import type { PermissionReply, PermissionRequest } from "../types/permission"
 import { getPermissionSessionId } from "../types/permission"
 import { getLogger } from "../lib/logger"
 
@@ -9,9 +9,40 @@ const log = getLogger("api")
 
 type AutoAcceptResponder = (instanceId: string, sessionId: string, requestId: string, reply: PermissionReply) => Promise<void>
 type PendingPermissionChecker = (instanceId: string, requestId: string) => boolean
+type PermissionAutoAcceptSession = {
+  id: string
+  parentId?: string | null
+  revert?: unknown
+}
+type SessionLookup = (sessionId: string) => PermissionAutoAcceptSession | undefined
+type FamilyRootResolver = (instanceId: string, sessionId: string) => string
+
+let resolveFamilyRoot: FamilyRootResolver = (_instanceId, sessionId) => sessionId
+
+export function resolvePermissionAutoAcceptFamilyRoot(sessionId: string, getSession: SessionLookup): string {
+  let currentId = sessionId
+  let lastKnownId = sessionId
+  const seen = new Set<string>()
+
+  while (currentId && !seen.has(currentId)) {
+    seen.add(currentId)
+    const session = getSession(currentId)
+    if (!session) return lastKnownId
+    lastKnownId = session.id
+    if (session.revert) return session.id
+    if (!session.parentId) return session.id
+    currentId = session.parentId
+  }
+
+  return currentId || sessionId
+}
+
+export function setPermissionAutoAcceptFamilyRootResolver(resolver: FamilyRootResolver) {
+  resolveFamilyRoot = resolver
+}
 
 function makeKey(instanceId: string, sessionId: string) {
-  return `${instanceId}:${sessionId}`
+  return `${instanceId}:${resolveFamilyRoot(instanceId, sessionId)}`
 }
 
 function readInitialState() {
@@ -90,7 +121,7 @@ export function clearAutoAcceptSession(instanceId: string, sessionId: string) {
 
 export function drainAutoAcceptPermission(
   instanceId: string,
-  permission: PermissionRequestLike,
+  permission: PermissionRequest,
   responder: AutoAcceptResponder,
   isPending: PendingPermissionChecker,
 ) {
@@ -115,7 +146,7 @@ export function drainAutoAcceptPermission(
 
 export function drainAutoAcceptPermissions(
   instanceId: string,
-  permissions: PermissionRequestLike[],
+  permissions: PermissionRequest[],
   responder: AutoAcceptResponder,
   isPending: PendingPermissionChecker,
 ) {

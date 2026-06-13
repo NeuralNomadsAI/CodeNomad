@@ -13,10 +13,15 @@ import {
   getActiveParentSession,
   getActiveSession,
   getChildSessions,
+  getDescendantSessions,
+  getSessionRoot,
   getParentSessions,
   getSessionDraftPrompt,
   getSessionFamily,
   getSessionInfo,
+  getSessionMessagesLoadError,
+  getSessionSearchQuery,
+  getSessionSearchThreads,
   getSessionThreads,
   getThreadTotals,
   getSessions,
@@ -37,6 +42,11 @@ import {
   setSessionParentExpanded,
   setSessionStatus,
   toggleSessionParentExpanded,
+  clearSessionSearch,
+  getSessionFetchLimit,
+  getSessionHasMore,
+  isSessionSearchLoading,
+  resetSessionPagination,
 } from "./session-state"
 
 import { getDefaultModel } from "./session-models"
@@ -46,7 +56,8 @@ import {
   fetchAgents,
   fetchProviders,
   fetchSessions,
-  fetchSessionChildren,
+  loadMoreSessions,
+  searchSessions,
   forkSession,
   loadMessages,
 } from "./session-api"
@@ -69,7 +80,6 @@ import {
   handleQuestionAnswered,
   handleQuestionAsked,
   handleSessionCompacted,
-  handleSessionDiff,
   handleSessionError,
   handleSessionIdle,
   handleSessionStatus,
@@ -84,7 +94,6 @@ sseManager.onMessageRemoved = handleMessageRemoved
 sseManager.onMessagePartRemoved = handleMessagePartRemoved
 sseManager.onSessionUpdate = handleSessionUpdate
 sseManager.onSessionCompacted = handleSessionCompacted
-sseManager.onSessionDiff = handleSessionDiff
 sseManager.onSessionError = handleSessionError
 sseManager.onSessionIdle = handleSessionIdle
 sseManager.onSessionStatus = handleSessionStatus
@@ -111,16 +120,22 @@ export {
   fetchAgents,
   fetchProviders,
   fetchSessions,
-  fetchSessionChildren,
+  loadMoreSessions,
+  searchSessions,
   forkSession,
   getActiveParentSession,
   getActiveSession,
   getChildSessions,
+  getDescendantSessions,
+  getSessionRoot,
   getDefaultModel,
   getParentSessions,
   getSessionDraftPrompt,
   getSessionFamily,
   getSessionInfo,
+  getSessionMessagesLoadError,
+  getSessionSearchQuery,
+  getSessionSearchThreads,
   getSessionThreads,
   getThreadTotals,
   getSessions,
@@ -145,5 +160,10 @@ export {
   toggleSessionParentExpanded,
   updateSessionAgent,
   updateSessionModel,
+  clearSessionSearch,
+  getSessionFetchLimit,
+  getSessionHasMore,
+  isSessionSearchLoading,
+  resetSessionPagination,
 }
 export type { SessionInfo }

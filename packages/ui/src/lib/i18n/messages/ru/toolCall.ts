@@ -73,7 +73,7 @@ export const toolCallMessages = {
   "toolCall.permission.actions.deny": "Запретить",
   "toolCall.permission.shortcuts.allowOnce": "Разрешить один раз",
   "toolCall.permission.shortcuts.alwaysAllow": "Всегда разрешать",
-  "toolCall.permission.shortcuts.deny": "Запретить",
+  "toolCall.permission.rejectReason.placeholder": "Необязательный отзыв при отказе, например используйте более безопасную команду...",
   "toolCall.permission.errors.unableToUpdate": "Не удалось обновить разрешение",
 
   "permissionApproval.title": "Запросы",
@@ -90,6 +90,7 @@ export const toolCallMessages = {
   "permissionApproval.actions.allowOnce": "Разрешить один раз",
   "permissionApproval.actions.alwaysAllow": "Всегда разрешать",
   "permissionApproval.actions.deny": "Запретить",
+  "permissionApproval.rejectReason.placeholder": "Необязательный отзыв при отказе, например используйте более безопасную команду...",
   "permissionApproval.fallbackHint": "Загрузите сессию для получения подробностей.",
   "permissionApproval.errors.unableToUpdatePermission": "Не удалось обновить разрешение",
 

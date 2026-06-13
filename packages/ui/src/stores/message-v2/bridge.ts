@@ -1,5 +1,5 @@
-import type { PermissionRequestLike } from "../../types/permission"
-import { getPermissionCallId, getPermissionMessageId } from "../../types/permission"
+import type { PermissionRequest } from "../../types/permission"
+import { getPermissionCallId, getPermissionMessageId, getPermissionSessionId } from "../../types/permission"
 import type { QuestionRequest } from "../../types/question"
 import { getQuestionCallId, getQuestionMessageId } from "../../types/question"
 import type { Message, MessageInfo, ClientPart } from "../../types/message"
@@ -127,11 +127,11 @@ export function replaceMessageIdV2(instanceId: string, oldId: string, newId: str
   store.replaceMessageId({ oldId, newId, ...(options ?? {}) })
 }
 
-function extractPermissionMessageId(permission: PermissionRequestLike): string | undefined {
+function extractPermissionMessageId(permission: PermissionRequest): string | undefined {
   return getPermissionMessageId(permission)
 }
 
-function extractPermissionPartId(permission: PermissionRequestLike): string | undefined {
+function extractPermissionPartId(permission: PermissionRequest): string | undefined {
   const metadata = (permission as any).metadata || {}
   return (
     (permission as any).partID ||
@@ -142,7 +142,7 @@ function extractPermissionPartId(permission: PermissionRequestLike): string | un
   )
 }
 
-function extractPermissionCallId(permission: PermissionRequestLike): string | undefined {
+function extractPermissionCallId(permission: PermissionRequest): string | undefined {
   return getPermissionCallId(permission)
 }
 
@@ -166,7 +166,7 @@ function resolvePartIdFromCallId(store: ReturnType<typeof messageStoreBus.getOrC
   return undefined
 }
 
-export function upsertPermissionV2(instanceId: string, permission: PermissionRequestLike): void {
+export function upsertPermissionV2(instanceId: string, permission: PermissionRequest): void {
   if (!permission) return
   const store = messageStoreBus.getOrCreate(instanceId)
   const messageId = extractPermissionMessageId(permission)
@@ -179,7 +179,7 @@ export function upsertPermissionV2(instanceId: string, permission: PermissionReq
     permission,
     messageId,
     partId,
-    enqueuedAt: (permission as any).time?.created ?? Date.now(),
+    enqueuedAt: Date.now(),
   })
 }
 
@@ -193,7 +193,7 @@ export function reconcilePendingPermissionsV2(instanceId: string, sessionId?: st
     const permission = entry.permission
     if (!permission) continue
 
-    const permissionSessionId = (permission as any)?.sessionID ?? (permission as any)?.sessionId ?? undefined
+    const permissionSessionId = getPermissionSessionId(permission)
     if (sessionId && permissionSessionId && permissionSessionId !== sessionId) {
       continue
     }
@@ -237,7 +237,7 @@ export function upsertQuestionV2(instanceId: string, request: QuestionRequest): 
     request,
     messageId,
     partId,
-    enqueuedAt: (request as any).time?.created ?? Date.now(),
+    enqueuedAt: Date.now(),
   })
 }
 

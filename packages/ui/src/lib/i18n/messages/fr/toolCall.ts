@@ -73,7 +73,7 @@ export const toolCallMessages = {
   "toolCall.permission.actions.deny": "Refuser",
   "toolCall.permission.shortcuts.allowOnce": "Autoriser une fois",
   "toolCall.permission.shortcuts.alwaysAllow": "Toujours autoriser",
-  "toolCall.permission.shortcuts.deny": "Refuser",
+  "toolCall.permission.rejectReason.placeholder": "Retour facultatif pour Refuser, p. ex. utilise une commande plus sûre...",
   "toolCall.permission.errors.unableToUpdate": "Impossible de mettre à jour l'autorisation",
 
   "permissionApproval.title": "Demandes",
@@ -90,6 +90,7 @@ export const toolCallMessages = {
   "permissionApproval.actions.allowOnce": "Autoriser une fois",
   "permissionApproval.actions.alwaysAllow": "Toujours autoriser",
   "permissionApproval.actions.deny": "Refuser",
+  "permissionApproval.rejectReason.placeholder": "Retour facultatif pour Refuser, p. ex. utilise une commande plus sûre...",
   "permissionApproval.fallbackHint": "Chargez la session pour plus d'informations.",
   "permissionApproval.errors.unableToUpdatePermission": "Impossible de mettre à jour l'autorisation",
 

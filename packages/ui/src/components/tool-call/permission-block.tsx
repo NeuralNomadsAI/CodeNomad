@@ -1,25 +1,32 @@
-import { Show, type Accessor, type JSXElement } from "solid-js"
-import type { PermissionRequestLike } from "../../types/permission"
+import { Show, createEffect, createSignal, type Accessor, type JSXElement } from "solid-js"
+import type { PermissionRequest } from "../../types/permission"
 import { getPermissionDisplayTitle, getPermissionKind } from "../../types/permission"
 import { getPermissionSessionId } from "../../types/permission"
 import { useI18n } from "../../lib/i18n"
+import { PERMISSION_REJECT_REASON_MAX_LENGTH } from "./permission-constants"
 import type { DiffPayload, DiffRenderOptions } from "./types"
 import { getRelativePath } from "./utils"
 
 type PermissionResponse = "once" | "always" | "reject"
 
 export type PermissionToolBlockProps = {
-  permission: Accessor<PermissionRequestLike | undefined>
+  permission: Accessor<PermissionRequest | undefined>
   active: Accessor<boolean>
   submitting: Accessor<boolean>
   error: Accessor<string | null>
-  onRespond: (permission: PermissionRequestLike, sessionId: string, response: PermissionResponse) => void | Promise<void>
+  onRespond: (permission: PermissionRequest, sessionId: string, response: PermissionResponse, message?: string) => void | Promise<void>
   renderDiff: (payload: DiffPayload, options?: DiffRenderOptions) => JSXElement | null
   fallbackSessionId: Accessor<string>
 }
 
 export function PermissionToolBlock(props: PermissionToolBlockProps) {
   const { t } = useI18n()
+  const [rejectReason, setRejectReason] = createSignal("")
+
+  createEffect(() => {
+    props.permission()?.id
+    setRejectReason("")
+  })
 
   const diffPayload = () => {
     const permission = props.permission()
@@ -39,11 +46,15 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
     return { diffText: diffValue, filePath: diffPathRaw } satisfies DiffPayload
   }
 
-  const respond = (response: PermissionResponse) => {
+  const respond = (response: PermissionResponse, message?: string) => {
     const permission = props.permission()
     if (!permission) return
     const sessionId = getPermissionSessionId(permission) || props.fallbackSessionId()
-    props.onRespond(permission, sessionId, response)
+    props.onRespond(permission, sessionId, response, message)
+  }
+
+  const confirmReject = () => {
+    respond("reject", rejectReason().trim() || undefined)
   }
 
   return (
@@ -76,6 +87,19 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
             <Show when={!props.active()}>
               <p class="tool-call-permission-queued-text">{t("toolCall.permission.queuedText")}</p>
             </Show>
+            <div class="tool-call-permission-reject-reason">
+              <textarea
+                id={`permission-reject-reason-${permission().id}`}
+                class="tool-call-permission-reject-textarea"
+                value={rejectReason()}
+                rows={1}
+                maxLength={PERMISSION_REJECT_REASON_MAX_LENGTH}
+                placeholder={t("toolCall.permission.rejectReason.placeholder")}
+                aria-label={t("toolCall.permission.rejectReason.placeholder")}
+                disabled={props.submitting()}
+                onInput={(event) => setRejectReason(event.currentTarget.value)}
+              />
+            </div>
             <div class="tool-call-permission-actions">
               <div class="tool-call-permission-buttons">
                 <button
@@ -94,12 +118,7 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
                 >
                   {t("toolCall.permission.actions.alwaysAllow")}
                 </button>
-                <button
-                  type="button"
-                  class="tool-call-permission-button"
-                  disabled={props.submitting()}
-                  onClick={() => respond("reject")}
-                >
+                <button type="button" class="tool-call-permission-button" disabled={props.submitting()} onClick={confirmReject}>
                   {t("toolCall.permission.actions.deny")}
                 </button>
               </div>
@@ -109,8 +128,6 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
                   <span>{t("toolCall.permission.shortcuts.allowOnce")}</span>
                   <kbd class="kbd">A</kbd>
                   <span>{t("toolCall.permission.shortcuts.alwaysAllow")}</span>
-                  <kbd class="kbd">D</kbd>
-                  <span>{t("toolCall.permission.shortcuts.deny")}</span>
                 </div>
               </Show>
             </div>

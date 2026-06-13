@@ -73,7 +73,7 @@ export const toolCallMessages = {
   "toolCall.permission.actions.deny": "拒否",
   "toolCall.permission.shortcuts.allowOnce": "一度だけ許可",
   "toolCall.permission.shortcuts.alwaysAllow": "常に許可",
-  "toolCall.permission.shortcuts.deny": "拒否",
+  "toolCall.permission.rejectReason.placeholder": "拒否時の任意フィードバック（例: より安全なコマンドを使う）...",
   "toolCall.permission.errors.unableToUpdate": "許可を更新できません",
 
   "permissionApproval.title": "リクエスト",
@@ -90,6 +90,7 @@ export const toolCallMessages = {
   "permissionApproval.actions.allowOnce": "一度だけ許可",
   "permissionApproval.actions.alwaysAllow": "常に許可",
   "permissionApproval.actions.deny": "拒否",
+  "permissionApproval.rejectReason.placeholder": "拒否時の任意フィードバック（例: より安全なコマンドを使う）...",
   "permissionApproval.fallbackHint": "詳しい情報を見るにはセッションを読み込んでください。",
   "permissionApproval.errors.unableToUpdatePermission": "許可を更新できません",
 

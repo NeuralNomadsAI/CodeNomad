@@ -1,5 +1,9 @@
 import { createContext, createMemo, createSignal, onMount, useContext } from "solid-js"
 import type { Accessor, ParentComponent } from "solid-js"
+import {
+  readUseTauriNativeEventTransportPreference,
+  writeUseTauriNativeEventTransportPreference,
+} from "../lib/desktop-event-transport-preference"
 import { storage, type OwnerBucket } from "../lib/storage"
 import type { RemoteServerProfile } from "../../../server/src/api-types"
 import {
@@ -88,6 +92,7 @@ export interface OpenCodeBinary {
 export interface RecentFolder {
   path: string
   lastAccessed: number
+  projectName?: string
 }
 
 export type ThemePreference = "light" | "dark" | "system"
@@ -101,6 +106,7 @@ interface ServerConfigBucket {
   listeningMode?: ListeningMode
   logLevel?: ServerLogLevel
   environmentVariables?: Record<string, string>
+  secureEnvVars?: string[]
   opencodeBinary?: string
   speech?: Partial<SpeechSettings>
 }
@@ -252,9 +258,14 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
       if (!f || typeof f !== "object") return null
       const p = (f as any).path
       const lastAccessed = (f as any).lastAccessed
+      const projectName = (f as any).projectName
       if (typeof p !== "string") return null
       const ts = typeof lastAccessed === "number" ? lastAccessed : Date.now()
-      return { path: p, lastAccessed: ts }
+      return {
+        path: p,
+        lastAccessed: ts,
+        ...(typeof projectName === "string" && projectName.trim() ? { projectName: projectName.trim() } : {}),
+      }
     }),
     opencodeBinaries: cloneArray<OpenCodeBinary>(source.opencodeBinaries, (b) => {
       if (!b || typeof b !== "object") return null
@@ -310,7 +321,7 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
 
 function normalizeServerConfig(
   input?: ServerConfigBucket | null,
-): Required<Pick<ServerConfigBucket, "listeningMode" | "logLevel" | "environmentVariables" | "opencodeBinary">> & { speech: SpeechSettings } {
+): Required<Pick<ServerConfigBucket, "listeningMode" | "logLevel" | "environmentVariables" | "opencodeBinary" | "secureEnvVars">> & { speech: SpeechSettings } {
   const source = input ?? {}
   const listeningMode = source.listeningMode === "all" ? "all" : "local"
   const logLevel =
@@ -319,8 +330,14 @@ function normalizeServerConfig(
       : "DEBUG"
   const opencodeBinary = typeof source.opencodeBinary === "string" && source.opencodeBinary.trim() ? source.opencodeBinary : "opencode"
   const environmentVariables = normalizeRecord(source.environmentVariables)
+  const secureEnvVars = normalizeSecureEnvVars(source.secureEnvVars)
   const speech = normalizeSpeechSettings(source.speech)
-  return { listeningMode, logLevel, opencodeBinary, environmentVariables, speech }
+  return { listeningMode, logLevel, opencodeBinary, environmentVariables, secureEnvVars, speech }
+}
+
+function normalizeSecureEnvVars(input?: unknown): string[] {
+  if (!Array.isArray(input)) return []
+  return input.filter((item): item is string => typeof item === "string" && item.length > 0)
 }
 
 function getModelKey(model: { providerId: string; modelId: string }): string {
@@ -328,8 +345,13 @@ function getModelKey(model: { providerId: string; modelId: string }): string {
 }
 
 function buildRecentFolderList(folderPath: string, source: RecentFolder[]): RecentFolder[] {
+  const existing = source.find((f) => f.path === folderPath)
   const folders = source.filter((f) => f.path !== folderPath)
-  folders.unshift({ path: folderPath, lastAccessed: Date.now() })
+  folders.unshift({
+    path: folderPath,
+    lastAccessed: Date.now(),
+    ...(existing?.projectName ? { projectName: existing.projectName } : {}),
+  })
   return folders.slice(0, MAX_RECENT_FOLDERS)
 }
 
@@ -388,6 +410,9 @@ const [uiConfigBucket, setUiConfigBucket] = createSignal<UiConfigBucket>({})
 const [serverConfigBucket, setServerConfigBucket] = createSignal<ServerConfigBucket>({})
 const [uiStateBucket, setUiStateBucket] = createSignal<UiStateBucket>({})
 const [isLoaded, setIsLoaded] = createSignal(false)
+const [useTauriNativeEventTransport, setUseTauriNativeEventTransportSignal] = createSignal(
+  readUseTauriNativeEventTransportPreference(),
+)
 
 const uiSettings = createMemo<UiSettings>(() => normalizeUiSettings(uiConfigBucket().settings))
 const themePreference = createMemo<ThemePreference>(() => uiConfigBucket().theme ?? "system")
@@ -436,6 +461,23 @@ async function patchConfigOwner(owner: string, patch: unknown) {
   if (owner === "server") setServerConfigBucket(updated as any)
 }
 
+function setUseTauriNativeEventTransport(enabled: boolean): void {
+  if (useTauriNativeEventTransport() === enabled) {
+    return
+  }
+
+  setUseTauriNativeEventTransportSignal(enabled)
+  writeUseTauriNativeEventTransportPreference(enabled)
+
+  void import("../lib/server-events")
+    .then(({ serverEvents }) => {
+      serverEvents.restart("desktop transport preference changed")
+    })
+    .catch((error) => {
+      log.error("Failed to restart backend events stream after desktop transport preference change", error)
+    })
+}
+
 async function patchStateOwner(owner: string, patch: unknown) {
   await ensureLoaded()
   const updated = await storage.patchStateOwner(owner, patch)
@@ -469,15 +511,52 @@ function updateEnvironmentVariables(envVars: Record<string, string>): void {
   )
 }
 
-function addEnvironmentVariable(key: string, value: string): void {
+function addEnvironmentVariable(key: string, value: string, secure: boolean = true): void {
   const current = serverSettings().environmentVariables
   updateEnvironmentVariables({ ...current, [key]: value })
+
+  const secureList = serverSettings().secureEnvVars
+  const upperKey = key.toUpperCase()
+  const exists = secureList.some((name) => name.toUpperCase() === upperKey)
+
+  if (secure) {
+    if (!exists) {
+      const next = [...secureList, key]
+      void patchConfigOwner("server", { secureEnvVars: next }).catch((error) =>
+        log.error("Failed to add secure env var", error),
+      )
+    }
+  } else {
+    if (exists) {
+      const next = secureList.filter((name) => name.toUpperCase() !== upperKey)
+      void patchConfigOwner("server", { secureEnvVars: next }).catch((error) =>
+        log.error("Failed to remove secure env var", error),
+      )
+    }
+  }
 }
 
 function removeEnvironmentVariable(key: string): void {
   const current = serverSettings().environmentVariables
   const { [key]: removed, ...rest } = current
   updateEnvironmentVariables(rest)
+}
+
+function isSecureEnvVar(key: string): boolean {
+  const secureList = serverSettings().secureEnvVars
+  return secureList.some((name) => name.toUpperCase() === key.toUpperCase())
+}
+
+function toggleSecureEnvVar(key: string): void {
+  const secureList = serverSettings().secureEnvVars
+  const upperKey = key.toUpperCase()
+  const exists = secureList.some((name) => name.toUpperCase() === upperKey)
+  const next = exists
+    ? secureList.filter((name) => name.toUpperCase() !== upperKey)
+    : [...secureList, key]
+  void patchConfigOwner("server", { secureEnvVars: next }).catch((error) =>
+    log.error("Failed to update secure env vars", error),
+  )
 }
 
 function updateLastUsedBinary(path: string): void {
@@ -539,6 +618,18 @@ function addRecentFolder(folderPath: string): void {
 function removeRecentFolder(folderPath: string): void {
   const next = recentFolders().filter((f) => f.path !== folderPath)
   void patchStateOwner("ui", { recentFolders: next }).catch((error) => log.error("Failed to remove recent folder", error))
+}
+
+async function renameRecentFolderProject(folderPath: string, projectName: string): Promise<void> {
+  const name = projectName.trim()
+  if (!folderPath || !name) return
+  const next = recentFolders().map((folder) => (folder.path === folderPath ? { ...folder, projectName: name } : folder))
+  try {
+    await patchStateOwner("ui", { recentFolders: next })
+  } catch (error) {
+    log.error("Failed to rename recent folder", error)
+    throw error
+  }
 }
 
 async function saveRemoteServerProfile(input: RemoteServerProfileInput): Promise<RemoteServerProfile> {
@@ -714,6 +805,8 @@ void ensureLoaded().catch((error: unknown) => {
 interface ConfigContextValue {
   isLoaded: Accessor<boolean>
   preferences: typeof preferences
+  useTauriNativeEventTransport: typeof useTauriNativeEventTransport
+  setUseTauriNativeEventTransport: typeof setUseTauriNativeEventTransport
   updatePreferences: typeof updatePreferences
   themePreference: typeof themePreference
   setThemePreference: typeof setThemePreference
@@ -724,6 +817,8 @@ interface ConfigContextValue {
   updateEnvironmentVariables: typeof updateEnvironmentVariables
   addEnvironmentVariable: typeof addEnvironmentVariable
   removeEnvironmentVariable: typeof removeEnvironmentVariable
+  isSecureEnvVar: typeof isSecureEnvVar
+  toggleSecureEnvVar: typeof toggleSecureEnvVar
     updateLastUsedBinary: typeof updateLastUsedBinary
     updateLogLevel: typeof updateLogLevel
     updateSpeechSettings: typeof updateSpeechSettings
@@ -735,6 +830,7 @@ interface ConfigContextValue {
   uiState: typeof uiState
   addRecentFolder: typeof addRecentFolder
   removeRecentFolder: typeof removeRecentFolder
+  renameRecentFolderProject: typeof renameRecentFolderProject
   addOpenCodeBinary: typeof addOpenCodeBinary
   removeOpenCodeBinary: typeof removeOpenCodeBinary
   saveRemoteServerProfile: typeof saveRemoteServerProfile
@@ -772,6 +868,8 @@ const ConfigContext = createContext<ConfigContextValue>()
 const configContextValue: ConfigContextValue = {
   isLoaded,
   preferences,
+  useTauriNativeEventTransport,
+  setUseTauriNativeEventTransport,
   updatePreferences,
   themePreference,
   setThemePreference,
@@ -780,6 +878,8 @@ const configContextValue: ConfigContextValue = {
   updateEnvironmentVariables,
   addEnvironmentVariable,
   removeEnvironmentVariable,
+  isSecureEnvVar,
+  toggleSecureEnvVar,
   updateLastUsedBinary,
   updateLogLevel,
   updateSpeechSettings,
@@ -789,6 +889,7 @@ const configContextValue: ConfigContextValue = {
   uiState,
   addRecentFolder,
   removeRecentFolder,
+  renameRecentFolderProject,
   addOpenCodeBinary,
   removeOpenCodeBinary,
   saveRemoteServerProfile,
@@ -858,6 +959,8 @@ export function useConfig(): ConfigContextValue {
 
 export {
   preferences,
+  useTauriNativeEventTransport,
+  setUseTauriNativeEventTransport,
   uiState,
   serverSettings,
   recentFolders,
@@ -869,11 +972,14 @@ export {
   updateEnvironmentVariables,
   addEnvironmentVariable,
   removeEnvironmentVariable,
+  isSecureEnvVar,
+  toggleSecureEnvVar,
   updateLastUsedBinary,
   updateLogLevel,
   updateSpeechSettings,
   addRecentFolder,
   removeRecentFolder,
+  renameRecentFolderProject,
   addOpenCodeBinary,
   removeOpenCodeBinary,
   recordWorkspaceLaunch,

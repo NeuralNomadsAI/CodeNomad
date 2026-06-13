@@ -14,6 +14,7 @@ export const folderSelectionMessages = {
   "folderSelection.recent.title": "最近使ったフォルダ",
   "folderSelection.recent.subtitle.one": "{count} 件のフォルダ",
   "folderSelection.recent.subtitle.other": "{count} 件のフォルダ",
+  "folderSelection.recent.rename": "ワークスペース名を変更",
   "folderSelection.recent.remove": "履歴から削除",
   "folderSelection.recent.openBadge": "開いています",
   "folderSelection.recent.alreadyOpenTitle": "プロジェクトはすでに開いています",
@@ -95,4 +96,13 @@ export const folderSelectionMessages = {
   "folderSelection.servers.certificateInstall.cancelLabel": "キャンセル",
   "folderSelection.servers.certificateInstall.cancelled": "自己署名 HTTPS のリモートウィンドウを開くには、CodeNomad のローカル証明書を信頼する必要があります。",
   "folderSelection.sidecars.button": "Open SideCar",
+
+  "projectRenameDialog.title": "ワークスペース名を変更",
+  "projectRenameDialog.description.withLabel": "\"{label}\" のワークスペース名を更新します。",
+  "projectRenameDialog.description.default": "このフォルダのワークスペース名を設定します。",
+  "projectRenameDialog.input.label": "ワークスペース名",
+  "projectRenameDialog.input.placeholder": "ワークスペース名を入力",
+  "projectRenameDialog.actions.cancel": "キャンセル",
+  "projectRenameDialog.actions.rename": "名前を変更",
+  "projectRenameDialog.actions.renaming": "変更中...",
 } as const

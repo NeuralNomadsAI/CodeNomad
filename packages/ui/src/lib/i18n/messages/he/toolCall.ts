@@ -32,7 +32,7 @@ export const toolCallMessages = {
   "toolCall.diagnostics.severity.info.short": "מידע",
 
   "toolCall.renderer.toolName.shell": "מעטפת",
-  "toolCall.renderer.toolName.fetch": "Fetch",
+  "toolCall.renderer.toolName.fetch": "אחזור",
   "toolCall.renderer.toolName.invalid": "לא תקין",
   "toolCall.renderer.toolName.plan": "תוכנית",
   "toolCall.renderer.toolName.applyPatch": "החל תיקון",
@@ -73,14 +73,14 @@ export const toolCallMessages = {
   "toolCall.permission.actions.deny": "דחה",
   "toolCall.permission.shortcuts.allowOnce": "אפשר פעם אחת",
   "toolCall.permission.shortcuts.alwaysAllow": "אפשר תמיד",
-  "toolCall.permission.shortcuts.deny": "דחה",
+  "toolCall.permission.rejectReason.placeholder": "משוב אופציונלי בעת דחייה, למשל השתמש בפקודה בטוחה יותר...",
   "toolCall.permission.errors.unableToUpdate": "לא ניתן לעדכן אישור",
 
   "permissionApproval.title": "בקשות",
   "permissionApproval.empty": "אין בקשות ממתינות.",
   "permissionApproval.kind.permission": "אישור",
   "permissionApproval.kind.question": "שאלה",
-  "permissionApproval.questionCount.one": "שאלה אחת",
+  "permissionApproval.questionCount.one": "{count} שאלה",
   "permissionApproval.questionCount.other": "{count} שאלות",
   "permissionApproval.status.active": "פעיל",
   "permissionApproval.actions.closeAriaLabel": "סגור",
@@ -90,6 +90,7 @@ export const toolCallMessages = {
   "permissionApproval.actions.allowOnce": "אפשר פעם אחת",
   "permissionApproval.actions.alwaysAllow": "אפשר תמיד",
   "permissionApproval.actions.deny": "דחה",
+  "permissionApproval.rejectReason.placeholder": "משוב אופציונלי בעת דחייה, למשל השתמש בפקודה בטוחה יותר...",
   "permissionApproval.fallbackHint": "טען סשן לקבלת מידע נוסף.",
   "permissionApproval.errors.unableToUpdatePermission": "לא ניתן לעדכן אישור",
 
@@ -131,7 +132,7 @@ export const toolCallMessages = {
   "toolCall.status.unknown": "לא ידוע",
 
   "toolCall.applyPatch.action.preparing": "מכין apply_patch...",
-  "toolCall.applyPatch.title.withFileCount.one": "{tool} (קובץ אחד)",
+  "toolCall.applyPatch.title.withFileCount.one": "{tool} ({count} קובץ)",
   "toolCall.applyPatch.title.withFileCount.other": "{tool} ({count} קבצים)",
   "toolCall.applyPatch.fileFallback": "קובץ {number}",
 } as const

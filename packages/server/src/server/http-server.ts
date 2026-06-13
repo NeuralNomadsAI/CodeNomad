@@ -9,8 +9,6 @@ import { connect as connectTls, type TLSSocket } from "tls"
 import { fetch, type Headers } from "undici"
 import type { Logger } from "../logger"
 import { WorkspaceManager } from "../workspaces/manager"
-import { isValidWorktreeSlug, listWorktrees, resolveRepoRoot } from "../workspaces/git-worktrees"
-import { resolveWorktreeDirectory } from "../workspaces/worktree-directory"
 
 import type { SettingsService } from "../settings/service"
 import { FileSystemBrowser } from "../filesystem/browser"
@@ -514,64 +512,46 @@ function registerInstanceProxyRoutes(app: FastifyInstance, deps: InstanceProxyDe
     instance.addContentTypeParser("*", (req, body, done) => done(null, body))
 
     const proxyBaseHandler = async (
-      request: FastifyRequest<{ Params: { id: string; slug: string } }>,
+      request: FastifyRequest<{ Params: { id: string } }>,
       reply: FastifyReply,
     ) => {
       await proxyWorkspaceRequest({
         request,
         reply,
         workspaceManager: deps.workspaceManager,
-        worktreeSlug: request.params.slug,
         pathSuffix: "",
         logger: deps.logger,
       })
     }
 
     const proxyWildcardHandler = async (
-      request: FastifyRequest<{ Params: { id: string; slug: string; "*": string } }>,
+      request: FastifyRequest<{ Params: { id: string; "*": string } }>,
       reply: FastifyReply,
     ) => {
       await proxyWorkspaceRequest({
         request,
         reply,
         workspaceManager: deps.workspaceManager,
-        worktreeSlug: request.params.slug,
         pathSuffix: request.params["*"] ?? "",
         logger: deps.logger,
       })
     }
 
-    instance.all("/workspaces/:id/worktrees/:slug/instance", proxyBaseHandler)
-    instance.all("/workspaces/:id/worktrees/:slug/instance/*", proxyWildcardHandler)
+    instance.all("/workspaces/:id/instance", proxyBaseHandler)
+    instance.all("/workspaces/:id/instance/*", proxyWildcardHandler)
   })
 }
 
 const INSTANCE_PROXY_HOST = "127.0.0.1"
-
-// Special-case OpenCode directory override.
-//
-// UI clients may need to scope certain requests to an arbitrary directory that is not
-// part of the Git worktree list. Since the OpenCode SDK does not reliably support
-// injecting per-request headers, we encode an override into the *path* and strip it
-// before proxying to the instance.
-//
-// Example proxied request path:
-//   /workspaces/:id/worktrees/:slug/instance/__dir/<base64url>/session/create
-//
-// The server will decode <base64url> -> absolute directory, validate it, then set
-// x-opencode-directory accordingly and forward the request to /session/create.
-const OPENCODE_DIR_OVERRIDE_PREFIX = "__dir/"
-const OPENCODE_DIR_OVERRIDE_MAX_LEN = 4096
 
 async function proxyWorkspaceRequest(args: {
   request: FastifyRequest
   reply: FastifyReply
   workspaceManager: WorkspaceManager
   logger: Logger
-  worktreeSlug: string
   pathSuffix?: string
 }) {
-  const { request, reply, workspaceManager, logger, worktreeSlug } = args
+  const { request, reply, workspaceManager, logger } = args
   const workspaceId = (request.params as { id: string }).id
   const workspace = workspaceManager.get(workspaceId)
 
@@ -648,48 +628,7 @@ async function proxyWorkspaceRequest(args: {
     return
   }
 
-  if (!isValidWorktreeSlug(worktreeSlug)) {
-    reply.code(400).send({ error: "Invalid worktree slug" })
-    return
-  }
-
-  let extracted: { overrideDirectory: string | null; forwardedSuffix: string | undefined }
-  try {
-    extracted = extractOpencodeDirectoryOverride(args.pathSuffix)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Invalid directory override"
-    reply.code(400).send({ error: message })
-    return
-  }
-  let directory: string | null = null
-  let forwardedSuffix = extracted.forwardedSuffix
-
-  if (extracted.overrideDirectory) {
-    try {
-      directory = validateAndNormalizeOverrideDirectory({
-        overrideDirectory: extracted.overrideDirectory,
-        workspaceRoot: workspace.path,
-      })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Invalid directory override"
-      reply.code(400).send({ error: message })
-      return
-    }
-  } else {
-    directory = await resolveWorktreeDirectory({
-      workspaceId,
-      workspacePath: workspace.path,
-      worktreeSlug,
-      logger,
-    })
-
-    if (!directory) {
-      reply.code(404).send({ error: "Worktree not found" })
-      return
-    }
-  }
-
-  const normalizedSuffix = normalizeInstanceSuffix(forwardedSuffix)
+  const normalizedSuffix = normalizeInstanceSuffix(args.pathSuffix)
   const queryIndex = (request.raw.url ?? "").indexOf("?")
   const search = queryIndex >= 0 ? (request.raw.url ?? "").slice(queryIndex) : ""
   const targetUrl = `http://${INSTANCE_PROXY_HOST}:${port}${normalizedSuffix}${search}`
@@ -705,13 +644,6 @@ async function proxyWorkspaceRequest(args: {
       if (instanceAuthHeader) {
         headers.authorization = instanceAuthHeader
       }
-
-      // OpenCode expects the *full* path; we send it via header to avoid query tampering.
-      const isNonASCII = /[^\x00-\x7F]/.test(directory)
-      const encodedDirectory = isNonASCII ? encodeURIComponent(directory) : directory
-
-      // Overwrite any client-provided value (case-insensitive headers are normalized by Node).
-      ;(headers as Record<string, unknown>)["x-opencode-directory"] = encodedDirectory
 
       if (logger.isLevelEnabled("trace")) {
         const outgoing: Record<string, unknown> = {}
@@ -732,8 +664,6 @@ async function proxyWorkspaceRequest(args: {
             workspaceId,
             method: request.method,
             targetUrl,
-            worktreeSlug,
-            directory,
             contentType: request.headers["content-type"],
             body: bodyToJson(request.body),
             headers: outgoing,
@@ -751,89 +681,6 @@ async function proxyWorkspaceRequest(args: {
       }
     },
   })
-}
-
-function extractOpencodeDirectoryOverride(pathSuffix: string | undefined): {
-  overrideDirectory: string | null
-  forwardedSuffix: string | undefined
-} {
-  if (!pathSuffix) {
-    return { overrideDirectory: null, forwardedSuffix: pathSuffix }
-  }
-
-  // Fastify wildcard param does not include a leading slash.
-  const trimmed = pathSuffix.replace(/^\/+/, "")
-  if (!trimmed.startsWith(OPENCODE_DIR_OVERRIDE_PREFIX)) {
-    return { overrideDirectory: null, forwardedSuffix: pathSuffix }
-  }
-
-  const rest = trimmed.slice(OPENCODE_DIR_OVERRIDE_PREFIX.length)
-  const slashIndex = rest.indexOf("/")
-  const encoded = (slashIndex >= 0 ? rest.slice(0, slashIndex) : rest).trim()
-  const remaining = slashIndex >= 0 ? rest.slice(slashIndex + 1) : ""
-
-  if (!encoded) {
-    throw new Error("Missing directory override")
-  }
-
-  if (encoded.length > OPENCODE_DIR_OVERRIDE_MAX_LEN) {
-    throw new Error("Directory override too large")
-  }
-
-  let overrideDirectory = ""
-  try {
-    overrideDirectory = decodeBase64Url(encoded)
-  } catch {
-    throw new Error("Invalid directory override")
-  }
-  const forwardedSuffix = remaining
-  return { overrideDirectory, forwardedSuffix }
-}
-
-function decodeBase64Url(input: string): string {
-  // base64url -> base64
-  const normalized = input.replace(/-/g, "+").replace(/_/g, "/")
-  const padding = normalized.length % 4 === 0 ? "" : "=".repeat(4 - (normalized.length % 4))
-  const base64 = `${normalized}${padding}`
-  return Buffer.from(base64, "base64").toString("utf-8")
-}
-
-function validateAndNormalizeOverrideDirectory(params: { overrideDirectory: string; workspaceRoot: string }): string {
-  const raw = params.overrideDirectory.trim()
-  if (!raw) {
-    throw new Error("Override directory is empty")
-  }
-
-  if (!path.isAbsolute(raw)) {
-    throw new Error("Override directory must be an absolute path")
-  }
-
-  if (!fs.existsSync(raw)) {
-    throw new Error(`Override directory does not exist: ${raw}`)
-  }
-
-  const stats = fs.statSync(raw)
-  if (!stats.isDirectory()) {
-    throw new Error(`Override path is not a directory: ${raw}`)
-  }
-
-  const normalizedOverride = fs.realpathSync(raw)
-  const normalizedRoot = fs.realpathSync(params.workspaceRoot)
-
-  if (!isSubpath(normalizedOverride, normalizedRoot)) {
-    throw new Error("Override directory must be within the workspace root")
-  }
-
-  return normalizedOverride
-}
-
-function isSubpath(candidate: string, root: string): boolean {
-  const rel = path.relative(root, candidate)
-  if (rel === "") return true
-  if (rel === "..") return false
-  if (rel.startsWith(`..${path.sep}`)) return false
-  if (path.isAbsolute(rel)) return false
-  return true
 }
 
 function normalizeInstanceSuffix(pathSuffix: string | undefined) {

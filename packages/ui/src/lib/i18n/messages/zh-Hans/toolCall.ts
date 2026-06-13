@@ -73,7 +73,7 @@ export const toolCallMessages = {
   "toolCall.permission.actions.deny": "拒绝",
   "toolCall.permission.shortcuts.allowOnce": "仅允许一次",
   "toolCall.permission.shortcuts.alwaysAllow": "始终允许",
-  "toolCall.permission.shortcuts.deny": "拒绝",
+  "toolCall.permission.rejectReason.placeholder": "拒绝时的可选反馈，例如使用更安全的命令...",
   "toolCall.permission.errors.unableToUpdate": "无法更新权限",
 
   "permissionApproval.title": "请求",
@@ -90,6 +90,7 @@ export const toolCallMessages = {
   "permissionApproval.actions.allowOnce": "仅允许一次",
   "permissionApproval.actions.alwaysAllow": "始终允许",
   "permissionApproval.actions.deny": "拒绝",
+  "permissionApproval.rejectReason.placeholder": "拒绝时的可选反馈，例如使用更安全的命令...",
   "permissionApproval.fallbackHint": "加载会话以查看更多信息。",
   "permissionApproval.errors.unableToUpdatePermission": "无法更新权限",
 
