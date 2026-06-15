@@ -12,6 +12,7 @@ export const appMessages = {
   "app.stopInstance.title": "Detener instancia",
   "app.stopInstance.confirmLabel": "Detener",
   "app.stopInstance.cancelLabel": "Seguir ejecutándose",
+  "app.stopInstance.toast.error": "No se pudo detener el workspace.",
 
   "emptyState.logoAlt": "Logo de CodeNomad",
   "emptyState.brandTitle": "CodeNomad",

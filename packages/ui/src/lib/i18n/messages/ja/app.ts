@@ -12,6 +12,7 @@ export const appMessages = {
   "app.stopInstance.title": "インスタンスを停止",
   "app.stopInstance.confirmLabel": "停止",
   "app.stopInstance.cancelLabel": "実行を続ける",
+  "app.stopInstance.toast.error": "ワークスペースの停止に失敗しました。",
 
   "emptyState.logoAlt": "CodeNomad ロゴ",
   "emptyState.brandTitle": "CodeNomad",
