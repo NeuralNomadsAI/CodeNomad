@@ -12,6 +12,7 @@ export const appMessages = {
   "app.stopInstance.title": "停止实例",
   "app.stopInstance.confirmLabel": "停止",
   "app.stopInstance.cancelLabel": "继续运行",
+  "app.stopInstance.toast.error": "无法停止工作区。",
 
   "emptyState.logoAlt": "CodeNomad 徽标",
   "emptyState.brandTitle": "CodeNomad",
