@@ -7,7 +7,7 @@ import {
   type SessionStatus,
 } from "../types/session"
 import type { Message } from "../types/message"
-import type { SessionV2Info, V2SessionsResponse } from "@opencode-ai/sdk/v2/client"
+import type { Session as SessionV2Info, SessionListResponse as V2SessionsResponse } from "@opencode-ai/sdk/v2/client"
 
 import { instances } from "./instances"
 import { preferences, setAgentModelPreference } from "./preferences"
@@ -139,15 +139,30 @@ function hasMissingParentChain(session: SessionV2Info, loaded: Map<string, Sessi
 
 async function fetchV2Sessions(instanceId: string, options: V2SessionListOptions): Promise<V2SessionsResponse> {
   const client = getRootClient(instanceId)
-  return requestData<V2SessionsResponse>(client.v2.session.list(options), "v2.session.list")
+  // SDK exposes session directly on client (not under .v2) for older versions
+  // Use type assertion since SDK version may vary
+  const sdkOptions: any = {}
+  if (options.directory) sdkOptions.directory = options.directory
+  if (options.limit) sdkOptions.limit = options.limit
+  if (options.cursor) sdkOptions.start = options.cursor
+  return requestData<V2SessionsResponse>((client as any).session.list(sdkOptions), "session.list")
 }
 
 function getV2SessionItems(response: V2SessionsResponse): SessionV2Info[] {
-  return response.data
+  // Handle multiple response formats across SDK and OpenCode versions:
+  // - Direct array (when requestData unwraps the response)
+  // - { items: [...] } (OpenCode >=1.15.13)
+  // - { data: [...] } (legacy format)
+  const r = response as any
+  if (Array.isArray(r)) return r
+  if (Array.isArray(r?.items)) return r.items
+  if (Array.isArray(r?.data)) return r.data
+  return []
 }
 
 function getV2NextCursor(response: V2SessionsResponse): string | undefined {
-  const next = (response as any)?.cursor?.next
+  const r = response as any
+  const next = r?.cursor?.next ?? r?.next
   return typeof next === "string" && next.length > 0 ? next : undefined
 }
 
