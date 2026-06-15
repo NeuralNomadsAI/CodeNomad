@@ -4,9 +4,14 @@ import type { WorkspaceEventPayload } from "../../../../server/src/api-types"
 import type {
   DesktopEventsStartResult,
   DesktopEventTransportStartOptions,
+  DesktopEventTransportState,
   DesktopEventTransportStatusPayload,
 } from "../event-transport-contract"
-import type { WorkspaceEventConnection, WorkspaceEventTransportCallbacks } from "../event-transport"
+import type {
+  WorkspaceEventConnection,
+  WorkspaceEventTransportCallbacks,
+  WorkspaceEventTransportStatus,
+} from "../event-transport"
 import { getLogger } from "../logger"
 
 const log = getLogger("sse")
@@ -25,6 +30,14 @@ export function createTerminalErrorNotifier(callbacks: Pick<WorkspaceEventTransp
     raised = true
     callbacks.onError?.()
   }
+}
+
+export function mapDesktopEventTransportStatus(
+  state: DesktopEventTransportState,
+): WorkspaceEventTransportStatus {
+  if (state === "connected") return "connected"
+  if (state === "connecting") return "connecting"
+  return "disconnected"
 }
 
 export async function connectTauriWorkspaceEvents(
@@ -58,6 +71,8 @@ export async function connectTauriWorkspaceEvents(
 
   const handleStatusPayload = (payload: DesktopEventTransportStatusPayload) => {
     if (!payload || !matchesGeneration(payload.generation)) return
+
+    callbacks.onStatus?.(mapDesktopEventTransportStatus(payload.state))
 
     if (payload.state === "connected" && !opened) {
       opened = true

@@ -1,8 +1,7 @@
 import type { InstanceStreamStatus } from "../../../server/src/api-types"
+import type { WorkspaceEventTransportStatus } from "./event-transport"
 
 export type ConnectionStatus = InstanceStreamStatus
-
-export type WorkspaceEventTransportStatus = "connecting" | "connected" | "disconnected"
 
 export function deriveDisplayConnectionStatus(
   instanceStatus: ConnectionStatus | null,
