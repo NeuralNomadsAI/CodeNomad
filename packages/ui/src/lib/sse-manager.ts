@@ -24,13 +24,14 @@ import type {
 } from "@opencode-ai/sdk/v2"
 import type { LegacyPermissionAskedEvent, LegacyPermissionRepliedEvent } from "../types/permission"
 import { serverEvents } from "./server-events"
+import type { WorkspaceEventTransportStatus } from "./event-transport"
 import type {
   BackgroundProcess,
   InstanceStreamEvent,
-  InstanceStreamStatus,
   WorkspaceEventPayload,
 } from "../../../server/src/api-types"
 import { getLogger } from "./logger"
+import { deriveDisplayConnectionStatus, type ConnectionStatus } from "./connection-status"
 
 const log = getLogger("sse")
 
@@ -95,9 +96,8 @@ type SSEEvent =
   | ServerInstanceDisposedEvent
   | { type: string; properties?: Record<string, unknown> }
 
-type ConnectionStatus = InstanceStreamStatus
-
 const [connectionStatus, setConnectionStatus] = createSignal<Map<string, ConnectionStatus>>(new Map())
+const [transportStatus, setTransportStatus] = createSignal<WorkspaceEventTransportStatus>("connecting")
 
 class SSEManager {
   constructor() {
@@ -121,28 +121,9 @@ class SSEManager {
       this.handleEvent(payload.instanceId, payload.event as SSEEvent)
     })
 
-    serverEvents.onDisconnect(() => {
-      log.info("SSE transport disconnected → setting all instances to 'connecting'")
-      setConnectionStatus((prev) => {
-        const next = new Map(prev)
-        for (const [id] of next) {
-          next.set(id, "connecting")
-        }
-        return next
-      })
-    })
-
-    serverEvents.onOpen(() => {
-      log.info("SSE transport reconnected → clearing 'connecting' status")
-      setConnectionStatus((prev) => {
-        const next = new Map(prev)
-        for (const [id, status] of next) {
-          if (status === "connecting") {
-            next.delete(id)
-          }
-        }
-        return next
-      })
+    serverEvents.onTransportStatus((status) => {
+      log.info("SSE transport status changed", { status })
+      setTransportStatus(status)
     })
   }
 
@@ -266,7 +247,7 @@ class SSEManager {
   onConnectionLost?: (instanceId: string, reason: string) => void | Promise<void>
 
   getStatus(instanceId: string): ConnectionStatus | null {
-    return connectionStatus().get(instanceId) ?? null
+    return deriveDisplayConnectionStatus(connectionStatus().get(instanceId) ?? null, transportStatus())
   }
 
   getStatuses() {
