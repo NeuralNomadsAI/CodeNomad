@@ -14,7 +14,7 @@ import type { DeleteHoverState } from "../types/delete-hover"
 import { useSpeech } from "../lib/hooks/use-speech"
 import SpeechActionButton from "./speech-action-button"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
-import { formatElapsedClock, getMessageDurationMs, getMessageStartedAt } from "../lib/message-timing"
+import { getMessageDurationMs, getMessageStartedAt } from "../lib/message-timing"
 
 function DeleteUpToIcon() {
   return (
@@ -43,7 +43,7 @@ interface MessageItemProps {
 }
 
 export default function MessageItem(props: MessageItemProps) {
-  const { locale, t } = useI18n()
+  const { t } = useI18n()
   const [copied, setCopied] = createSignal(false)
   const [deletingMessage, setDeletingMessage] = createSignal(false)
   const [deletingUpTo, setDeletingUpTo] = createSignal(false)
@@ -107,7 +107,7 @@ export default function MessageItem(props: MessageItemProps) {
   let metaMeasureEl: HTMLSpanElement | undefined
   const [showMetaInline, setShowMetaInline] = createSignal(true)
 
-  const metaText = () => agentMeta()
+  const metaText = () => ""
 
   const updateMetaLayout = () => {
     const text = metaText()
@@ -142,7 +142,6 @@ export default function MessageItem(props: MessageItemProps) {
   const isUser = () => props.record.role === "user"
   const createdTimestamp = () => getMessageStartedAt(props.messageInfo, props.record.createdAt) ?? props.record.createdAt
   const totalDuration = () => getMessageDurationMs(props.messageInfo, props.record.status, props.record.createdAt)
-  const totalDurationLabel = () => (!isUser() ? formatElapsedClock(totalDuration(), locale()) : "")
 
   const timestamp = () => {
     const date = new Date(createdTimestamp())
@@ -356,8 +355,6 @@ export default function MessageItem(props: MessageItemProps) {
       ? "message-item-base bg-[var(--message-user-bg)] border-l-4 border-[var(--message-user-border)]"
       : "message-item-base assistant-message bg-[var(--message-assistant-bg)] border-l-4 border-[var(--message-assistant-border)]"
 
-  const speakerLabel = () => (isUser() ? t("messageItem.speaker.you") : t("messageItem.speaker.assistant"))
-
   const agentIdentifier = () => {
     if (isUser()) return ""
     const info = props.messageInfo
@@ -395,6 +392,35 @@ export default function MessageItem(props: MessageItemProps) {
       segments.push(t("messageItem.agentMeta.modelLabel", { model }))
     }
     return segments.join(" • ")
+  }
+
+  const speakerLabel = () => {
+    if (isUser()) return t("messageItem.speaker.you")
+    return agentMeta() || t("messageItem.speaker.assistant")
+  }
+
+  const workedDurationTooltip = () => {
+    if (isUser()) return ""
+    const duration = totalDuration()
+    if (typeof duration !== "number" || !Number.isFinite(duration) || duration <= 0) return ""
+
+    const formatWorkedFor = (count: number, unit: "second" | "minute" | "hour") => {
+      const suffix = count === 1 ? unit : `${unit}s`
+      return `Worked for ${count} ${suffix}`
+    }
+
+    const seconds = Math.max(1, Math.round(duration / 1000))
+    if (seconds < 60) {
+      return formatWorkedFor(seconds, "second")
+    }
+
+    const minutes = Math.max(1, Math.round(seconds / 60))
+    if (minutes < 60) {
+      return formatWorkedFor(minutes, "minute")
+    }
+
+    const hours = Math.max(1, Math.round(minutes / 60))
+    return formatWorkedFor(hours, "hour")
   }
 
   const actionMenuItems = (): ActionOverflowMenuItem[] => {
@@ -473,7 +499,7 @@ export default function MessageItem(props: MessageItemProps) {
       data-message-role={isUser() ? "user" : "assistant"}
       data-message-status={props.record.status}
     >
-      <header class={`message-item-header ${isUser() ? "pb-0.5" : "pb-0"}`}>
+      <header class="message-item-header pb-0">
         <div class="message-item-header-row message-item-header-row--top" ref={(el) => (topRowEl = el)}>
           <div class="message-header-left">
             <div class="message-speaker-primary" ref={(el) => (speakerPrimaryEl = el)}>
@@ -495,12 +521,9 @@ export default function MessageItem(props: MessageItemProps) {
                 />
               </Show>
 
-              <span class="message-speaker-label" data-role={isUser() ? "user" : "assistant"}>
+              <span class="message-speaker-label" data-role={isUser() ? "user" : "assistant"} title={workedDurationTooltip() || undefined}>
                 {speakerLabel()}
               </span>
-              <Show when={totalDurationLabel()}>
-                {(value) => <span class="message-duration">{value()}</span>}
-              </Show>
             </div>
 
             <Show when={metaText() && showMetaInline()}>
@@ -666,7 +689,7 @@ export default function MessageItem(props: MessageItemProps) {
 
       </header>
 
-      <div class="pt-1 whitespace-pre-wrap break-words leading-[1.1]" dir="auto">
+      <div class="pt-0 whitespace-pre-wrap break-words leading-[1.1]" dir="auto">
 
 
         <Show when={props.isQueued && isUser()}>
