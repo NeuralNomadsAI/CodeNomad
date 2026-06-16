@@ -1,6 +1,7 @@
 /* Message item base styles */
 .message-item-base {
   @apply flex flex-col gap-2 p-3 w-full;
+  background-color: var(--message-assistant-bg);
 
   /* Markdown rendering uses these to theme emphasis + headings per message role. */
   --markdown-accent: var(--message-user-border);
@@ -166,8 +167,8 @@
 .message-stream-block {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
-  margin-bottom: 0.35rem;
+  gap: 1px;
+  margin-bottom: 1px;
 }
 
 .message-step-start {
@@ -336,6 +337,10 @@
 
 .message-step-card {
   @apply flex flex-col gap-2 px-3 py-2;
+  background-color: var(--message-assistant-bg);
+  border-block-start: 1px solid var(--border-base);
+  border-block-end: 1px solid var(--border-base);
+  border-inline-end: 1px solid var(--border-base);
   color: inherit;
   border-radius: 0;
 }
@@ -343,15 +348,16 @@
 .message-compaction-card {
   @apply flex flex-col gap-1 px-3 py-2 text-xs;
   background-color: var(--message-assistant-bg);
+  border-block-start: 1px solid var(--border-base);
+  border-block-end: 1px solid var(--border-base);
+  border-inline-end: 1px solid var(--border-base);
 }
 
 .message-compaction-card--auto {
-  background-color: var(--session-status-compacting-bg);
   color: var(--session-status-compacting-fg);
 }
 
 .message-compaction-card--manual {
-  background-color: var(--message-user-bg);
   color: var(--text-primary);
 }
 
@@ -426,7 +432,10 @@
 .message-reasoning-card {
   --reasoning-border-color: var(--border-strong, var(--border-base));
   background-color: var(--message-assistant-bg);
-  border-inline-start: 4px solid var(--message-assistant-border);
+  border-inline-start: none;
+  border-block-start: none;
+  border-block-end: none;
+  border-inline-end: none;
   margin-top: 0;
   margin-bottom: 0;
   padding: 0;
@@ -499,12 +508,20 @@
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.5rem;
   min-width: 0;
   flex: 1 1 auto;
   font-size: 13px;
   font-weight: var(--font-weight-medium);
   color: var(--text-primary);
+}
+
+.message-reasoning-type {
+  flex: 0 0 auto;
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-muted);
 }
 
 .message-reasoning-disclosure {
@@ -518,15 +535,12 @@
 }
 
 .message-reasoning-title {
-  display: block;
+  @apply truncate;
   font-family: var(--font-family-sans);
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-sm);
   font-weight: var(--font-weight-normal);
   line-height: var(--line-height-normal);
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--text-primary);
   min-width: 0;
 }
 

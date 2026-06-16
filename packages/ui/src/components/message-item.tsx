@@ -352,8 +352,8 @@ export default function MessageItem(props: MessageItemProps) {
 
   const containerClass = () =>
     isUser()
-      ? "message-item-base bg-[var(--message-user-bg)] border-l-4 border-[var(--message-user-border)]"
-      : "message-item-base assistant-message bg-[var(--message-assistant-bg)] border-l-4 border-[var(--message-assistant-border)]"
+      ? "message-item-base border-l-4 border-[var(--message-user-border)]"
+      : "message-item-base assistant-message border-l-4 border-[var(--message-assistant-border)]"
 
   const agentIdentifier = () => {
     if (isUser()) return ""

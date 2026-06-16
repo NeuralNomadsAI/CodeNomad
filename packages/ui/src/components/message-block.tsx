@@ -1708,6 +1708,7 @@ function ReasoningCard(props: ReasoningCardProps) {
         >
           <span class="message-reasoning-disclosure" aria-hidden="true">{expanded() ? "▼" : "▶"}</span>
           <span class="message-reasoning-label">
+            <span class="message-reasoning-type">{t("messageBlock.reasoning.thinkingLabel")}</span>
             <span class="message-reasoning-title" title={reasoningMetaTooltip() || undefined}>
               {reasoningTitle()}
             </span>

@@ -36,7 +36,7 @@
   --message-user-bg: color-mix(in oklab, var(--surface-secondary) 88%, var(--message-user-border));
   --message-user-border: #2196f3;
   --message-assistant-bg: var(--message-tool-bg);
-  --message-assistant-border: #f59e0b;
+  --message-assistant-border: #d97706;
 
   --message-tool-bg: #eef2f7;
   --message-tool-border: #64748b;

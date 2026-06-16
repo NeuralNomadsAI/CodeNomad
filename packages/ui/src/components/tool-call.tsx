@@ -794,17 +794,19 @@ export default function ToolCall(props: ToolCallProps) {
     return getToolName(currentTool)
   }
 
-  const toolTypeLabel = createMemo(() => getToolName(toolName()))
+  const toolTypeLabel = createMemo(() => toolName())
 
   const headerTitleDetail = createMemo(() => {
     const rawTitle = renderToolTitle().trim()
     const typeLabel = toolTypeLabel().trim()
     if (!rawTitle) return ""
-    if (!typeLabel) return rawTitle
-    if (rawTitle === typeLabel) return ""
-    if (rawTitle.startsWith(`${typeLabel} `)) return rawTitle.slice(typeLabel.length).trimStart()
-    if (rawTitle.startsWith(`${typeLabel}[`)) return rawTitle.slice(typeLabel.length).trimStart()
-    if (rawTitle.startsWith(`${typeLabel} · `)) return rawTitle.slice(typeLabel.length + 3).trimStart()
+    const labels = [typeLabel, getToolName(toolName()).trim()].filter(Boolean)
+    for (const label of labels) {
+      if (rawTitle === label) return ""
+      if (rawTitle.startsWith(`${label} `)) return rawTitle.slice(label.length).trimStart()
+      if (rawTitle.startsWith(`${label}[`)) return rawTitle.slice(label.length).trimStart()
+      if (rawTitle.startsWith(`${label} · `)) return rawTitle.slice(label.length + 3).trimStart()
+    }
     return rawTitle
   })
 

@@ -4,7 +4,10 @@
 
 .tool-call-message {
   @apply flex flex-col gap-0 p-0 w-full;
-  background-color: var(--message-tool-bg);
+  background-color: var(--message-assistant-bg);
+  border-block-start: none;
+  border-block-end: none;
+  border-inline-end: none;
   border-inline-start: none;
   color: inherit;
 }
@@ -76,10 +79,10 @@
 }
 
 .tool-call {
-  @apply border overflow-hidden;
+  @apply overflow-hidden;
   /* Tokenized so dark mode doesn't get overly bright borders. */
-  --tool-call-border-color: var(--border-strong, var(--border-base));
-  border-color: var(--tool-call-border-color);
+  --tool-call-border-color: transparent;
+  border: none;
   color: inherit;
   --tool-call-line-unit: 1.4em;
   --tool-call-lines-compact: 15;
@@ -202,7 +205,7 @@
 .tool-call-summary-title {
   @apply truncate;
   font-family: var(--font-family-sans);
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-sm);
   font-weight: var(--font-weight-normal);
   line-height: var(--line-height-normal);
   color: var(--text-primary);
@@ -261,7 +264,7 @@
 
 .tool-call-details {
   @apply flex flex-col;
-  background-color: var(--message-tool-bg);
+  background-color: var(--message-assistant-bg);
   font-size: var(--font-size-xs);
 }
 
@@ -440,7 +443,7 @@
   border-radius: 0;
   margin: 0;
   padding: 1rem 1.25rem;
-  background-color: var(--message-tool-bg);
+  background-color: var(--message-assistant-bg);
 }
 
 .tool-call-permission.tool-call-permission-answered {
