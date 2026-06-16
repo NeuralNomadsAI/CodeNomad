@@ -1,4 +1,4 @@
-import { createSignal, Show, createEffect, createMemo, onCleanup, type Accessor } from "solid-js"
+import { createSignal, Show, createEffect, createMemo, onCleanup, type Accessor, type JSXElement } from "solid-js"
 import { ArrowRightSquare, Check, Copy, Hourglass, Loader2, Volume2, XCircle } from "lucide-solid"
 import { stringify as stringifyYaml } from "yaml"
 import { messageStoreBus } from "../stores/message-v2/bus"
@@ -80,6 +80,8 @@ interface ToolCallProps {
    * Users can still expand/collapse manually.
    */
   forceCollapsed?: boolean
+  headerPrefix?: JSXElement
+  headerMenuItems?: () => ActionOverflowMenuItem[]
  }
 
 function ToolStatusIndicator(props: { status: Accessor<string> }) {
@@ -793,9 +795,25 @@ export default function ToolCall(props: ToolCallProps) {
     return getToolName(currentTool)
   }
 
+  const toolTypeLabel = createMemo(() => getToolName(toolName()))
+
+  const headerTitleDetail = createMemo(() => {
+    const rawTitle = renderToolTitle().trim()
+    const typeLabel = toolTypeLabel().trim()
+    if (!rawTitle) return ""
+    if (!typeLabel) return rawTitle
+    if (rawTitle === typeLabel) return ""
+    if (rawTitle.startsWith(`${typeLabel} `)) return rawTitle.slice(typeLabel.length).trimStart()
+    if (rawTitle.startsWith(`${typeLabel}[`)) return rawTitle.slice(typeLabel.length).trimStart()
+    if (rawTitle.startsWith(`${typeLabel} · `)) return rawTitle.slice(typeLabel.length + 3).trimStart()
+    return rawTitle
+  })
+
   const headerText = createMemo(() => {
     // Keep this as a memo so copy always matches what's rendered.
-    return renderToolTitle()
+    const typeLabel = toolTypeLabel()
+    const detail = headerTitleDetail()
+    return [typeLabel, detail].filter(Boolean).join(" ")
   })
 
   const speechText = createMemo(() =>
@@ -857,6 +875,8 @@ export default function ToolCall(props: ToolCallProps) {
       })
     }
 
+    items.push(...(props.headerMenuItems?.() ?? []))
+
     return items
   }
 
@@ -877,14 +897,22 @@ export default function ToolCall(props: ToolCallProps) {
         data-part-id={toolCallIdentifier()}
       >
       <div class="tool-call-header" data-action-overflow={actionMenuItems().length > 1 ? "true" : undefined}>
+        <Show when={props.headerPrefix}>
+          {(prefix) => <span class="tool-call-header-prefix">{prefix()}</span>}
+        </Show>
         <button
           type="button"
           class="tool-call-header-toggle"
           onClick={toggle}
           aria-expanded={expanded()}
         >
-          <span class="tool-call-summary" data-tool-icon={getToolIcon(toolName())}>
-            {headerText()}
+          <span class="tool-call-disclosure" aria-hidden="true">{expanded() ? "▼" : "▶"}</span>
+          <span class="tool-call-summary">
+            <span class="tool-call-summary-icon" aria-hidden="true">{getToolIcon(toolName())}</span>
+            <span class="tool-call-summary-type">{toolTypeLabel()}</span>
+            <Show when={headerTitleDetail()}>
+              {(detail) => <span class="tool-call-summary-title">{detail()}</span>}
+            </Show>
           </span>
         </button>
 

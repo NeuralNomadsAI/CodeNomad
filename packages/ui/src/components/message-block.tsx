@@ -29,7 +29,6 @@ function DeleteUpToIcon() {
   )
 }
 
-const TOOL_ICON = "🔧"
 const USER_BORDER_COLOR = "var(--message-user-border)"
 const ASSISTANT_BORDER_COLOR = "var(--message-assistant-border)"
 const TOOL_BORDER_COLOR = "var(--message-tool-border)"
@@ -461,7 +460,6 @@ function ToolCallItem(props: ToolCallItemProps) {
   })
 
   const toolState = createMemo(() => toolPart()?.state as ToolState | undefined)
-  const toolName = createMemo(() => toolPart()?.tool || "")
   const messageVersion = createMemo(() => record()?.revision ?? 0)
   const partVersion = createMemo(() => partEntry()?.revision ?? 0)
 
@@ -480,39 +478,10 @@ function ToolCallItem(props: ToolCallItemProps) {
     return findTaskSessionLocation(id, props.instanceId)
   })
 
-  const handleGoToTaskSession = (event: MouseEvent) => {
-    event.preventDefault()
-    event.stopPropagation()
-    const location = taskLocation()
-    if (!location) return
-    navigateToTaskSession(location)
-  }
-
   const goToTaskSession = () => {
     const location = taskLocation()
     if (!location) return
     navigateToTaskSession(location)
-  }
-
-  const handleDeleteMessage = async (event: MouseEvent) => {
-    event.preventDefault()
-    event.stopPropagation()
-
-    if (!props.showDeleteMessage) return
-    if (deletingMessage()) return
-
-    setDeletingMessage(true)
-    try {
-      await deleteMessage(props.instanceId, props.sessionId, props.messageId)
-    } catch (error) {
-      showAlertDialog(t("messageItem.actions.deleteMessageFailedMessage"), {
-        title: t("messageItem.actions.deleteMessageFailedTitle"),
-        detail: error instanceof Error ? error.message : String(error),
-        variant: "error",
-      })
-    } finally {
-      setDeletingMessage(false)
-    }
   }
 
   const deleteUpTo = async () => {
@@ -526,12 +495,6 @@ function ToolCallItem(props: ToolCallItemProps) {
     } finally {
       setDeletingUpTo(false)
     }
-  }
-
-  const handleDeleteUpTo = async (event: MouseEvent) => {
-    event.preventDefault()
-    event.stopPropagation()
-    await deleteUpTo()
   }
 
   const actionMenuItems = (): ActionOverflowMenuItem[] => {
@@ -593,81 +556,6 @@ function ToolCallItem(props: ToolCallItemProps) {
     <Show when={toolPart()}>
       {(resolvedToolPart) => (
         <div class="delete-hover-scope" data-delete-part-hover={isDeleteOverlayActive() ? "true" : undefined}>
-          <div class="tool-call-header-label" data-action-overflow={actionMenuItems().length > 1 ? "true" : undefined}>
-            <div class="tool-call-header-meta">
-              <Show when={props.showDeleteMessage}>
-                <input
-                  class="message-select-checkbox"
-                  type="checkbox"
-                  checked={isSelectedForDeletion()}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                  }}
-                  onChange={(event) => {
-                    event.stopPropagation()
-                    const next = Boolean((event.currentTarget as HTMLInputElement).checked)
-                    props.onToggleSelectedMessage?.(props.messageId, next)
-                  }}
-                  aria-label={t("messageItem.selection.checkboxAriaLabel")}
-                  title={t("messageItem.selection.checkboxAriaLabel")}
-                />
-              </Show>
-
-              <span class="tool-call-icon">{TOOL_ICON}</span>
-              <span>{t("messageBlock.tool.header")}</span>
-              <span class="tool-name">{toolName() || t("messageBlock.tool.unknown")}</span>
-            </div>
-
-            <div class="tool-call-header-actions flex items-center gap-0">
-              <Show when={taskSessionId()}>
-                <button
-                  class="tool-call-header-button"
-                  type="button"
-                  disabled={!taskLocation()}
-                  onClick={handleGoToTaskSession}
-                  title={t("messageBlock.tool.goToSession.label")}
-                  aria-label={t("messageBlock.tool.goToSession.label")}
-                >
-                  <ExternalLink class="w-3.5 h-3.5" aria-hidden="true" />
-                </button>
-              </Show>
-
-              <Show when={props.showDeleteMessage}>
-                <button
-                  class="tool-call-header-button"
-                  type="button"
-                  disabled={!props.onDeleteMessagesUpTo || deletingUpTo()}
-                  onClick={handleDeleteUpTo}
-                  onMouseEnter={() => props.onDeleteHoverChange?.({ kind: "deleteUpTo", messageId: props.messageId })}
-                  onMouseLeave={() => props.onDeleteHoverChange?.({ kind: "none" })}
-                  title={t("messageItem.actions.deleteMessagesUpTo")}
-                  aria-label={t("messageItem.actions.deleteMessagesUpTo")}
-                >
-                  <DeleteUpToIcon />
-                </button>
-
-                <button
-                  class="tool-call-header-button"
-                  type="button"
-                  disabled={deletingMessage()}
-                  onClick={handleDeleteMessage}
-                  onMouseEnter={() => props.onDeleteHoverChange?.({ kind: "message", messageId: props.messageId })}
-                  onMouseLeave={() => props.onDeleteHoverChange?.({ kind: "none" })}
-                  title={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
-                  aria-label={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
-                >
-                  <Trash class="w-3.5 h-3.5" aria-hidden="true" />
-                </button>
-              </Show>
-            </div>
-            <ActionOverflowMenu
-              items={actionMenuItems()}
-              label={t("messageItem.actions.more")}
-              triggerClass="tool-call-header-button"
-              minItems={2}
-            />
-          </div>
-
           <Suspense fallback={<ToolCallFallback />}>
             <LazyToolCall
               toolCall={resolvedToolPart()}
@@ -678,6 +566,26 @@ function ToolCallItem(props: ToolCallItemProps) {
               instanceId={props.instanceId}
               sessionId={props.sessionId}
               onContentRendered={props.onContentRendered}
+              headerPrefix={props.showDeleteMessage ? (
+                <>
+                  <input
+                    class="message-select-checkbox"
+                    type="checkbox"
+                    checked={isSelectedForDeletion()}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                    }}
+                    onChange={(event) => {
+                      event.stopPropagation()
+                      const next = Boolean((event.currentTarget as HTMLInputElement).checked)
+                      props.onToggleSelectedMessage?.(props.messageId, next)
+                    }}
+                    aria-label={t("messageItem.selection.checkboxAriaLabel")}
+                    title={t("messageItem.selection.checkboxAriaLabel")}
+                  />
+                </>
+              ) : undefined}
+              headerMenuItems={actionMenuItems}
             />
           </Suspense>
         </div>

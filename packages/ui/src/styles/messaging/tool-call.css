@@ -3,7 +3,7 @@
 @import "./tool-call/task.css";
 
 .tool-call-message {
-  @apply flex flex-col gap-2 p-3 w-full;
+  @apply flex flex-col gap-0 p-0 w-full;
   background-color: var(--message-tool-bg);
   border-inline-start: 4px solid var(--message-tool-border);
   color: inherit;
@@ -95,7 +95,7 @@
 }
 
 .tool-call-header {
-  @apply flex items-stretch w-full;
+  @apply flex items-center w-full;
   background-color: transparent;
   color: var(--text-primary);
   border-bottom: 1px solid var(--tool-call-border-color);
@@ -106,23 +106,21 @@
 }
 
 .tool-call-header-toggle {
-  @apply flex items-center gap-2 p-2 w-full bg-transparent border-none cursor-pointer text-start;
+  @apply flex items-center gap-1.5 px-2 py-1.5 w-full bg-transparent border-none cursor-pointer text-start;
   font-family: var(--font-family-mono);
   font-size: 13px;
   border-radius: 0;
   color: var(--text-primary);
   flex: 1;
+  min-width: 0;
 }
 
 .tool-call-header-toggle::before {
-  content: "▶";
-  font-size: 11px;
-  margin-inline-end: 0.35rem;
-  color: var(--text-secondary);
+  content: none;
 }
 
 .tool-call-header-toggle[aria-expanded="true"]::before {
-  content: "▼";
+  content: none;
 }
 
 .tool-call-header-toggle:hover {
@@ -134,7 +132,7 @@
   background-color: transparent;
   border: none;
   color: var(--text-secondary);
-  padding: 0 0.5rem;
+  padding: 0 0.4rem;
   border-radius: 0;
   cursor: pointer;
 }
@@ -144,7 +142,7 @@
   background-color: transparent;
   border: none;
   color: var(--text-secondary);
-  padding: 0 0.5rem;
+  padding: 0 0.4rem;
   border-radius: 0;
   cursor: pointer;
 }
@@ -164,7 +162,7 @@
 }
 
 .tool-call-header > .action-overflow-trigger {
-  display: none;
+  display: inline-flex;
 }
 
 .session-center-column[data-session-center-width="narrow"] .tool-call-header[data-action-overflow="true"] > .tool-call-header-input,
@@ -180,25 +178,42 @@
   @apply inline-flex items-center justify-center;
   font-size: 0.95rem;
   color: var(--text-secondary);
-  padding: 0 0.5rem;
+  padding: 0 0.4rem;
+}
+
+.tool-call-header-prefix {
+  @apply inline-flex items-center justify-center;
+  padding-inline-start: 0.5rem;
+  flex: 0 0 auto;
+}
+
+.tool-call-disclosure {
+  @apply inline-flex items-center justify-center;
+  color: var(--text-secondary);
+  flex: 0 0 auto;
+  font-size: 11px;
+  width: 0.9rem;
 }
 
 .tool-call-summary {
-  @apply flex-1 text-start inline-flex items-center gap-2;
+  @apply flex-1 text-start inline-flex items-center gap-1.5 min-w-0;
   color: var(--text-primary);
 }
 
-.tool-call-summary::before {
-  content: attr(data-tool-icon);
+.tool-call-summary-icon {
+  flex: 0 0 auto;
 }
 
-.tool-call-summary[data-tool-icon=""]::before {
-  margin-inline-end: 0;
-  content: "";
+.tool-call-summary-type {
+  flex: 0 0 auto;
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
 }
 
-.tool-call-summary[data-tool-icon]:not([data-tool-icon=""])::before {
-  margin-inline-end: 0.35rem;
+.tool-call-summary-title {
+  @apply truncate;
+  color: var(--text-secondary);
+  min-width: 0;
 }
 
 /* ToolState uses status="completed"; keep "success" as a legacy alias. */
