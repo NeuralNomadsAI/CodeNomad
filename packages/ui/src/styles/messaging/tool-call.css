@@ -101,6 +101,8 @@
   @apply flex items-center w-full;
   background-color: transparent;
   color: var(--text-primary);
+  --message-action-right-inset: 0.75rem;
+  padding-inline-end: var(--message-action-right-inset);
 }
 
 .tool-call-header:hover {
@@ -148,20 +150,23 @@
   color: var(--text-primary);
 }
 
-.tool-call-header-input[aria-pressed="true"] {
-  color: var(--text-primary);
-}
-
 .tool-call-header > .action-overflow-trigger {
   display: inline-flex;
 }
 
-.session-center-column[data-session-center-width="narrow"] .tool-call-header[data-action-overflow="true"] > .tool-call-header-input,
+.tool-call-header > .action-overflow-trigger.action-overflow-narrow {
+  display: none;
+}
+
 .session-center-column[data-session-center-width="narrow"] .tool-call-header[data-action-overflow="true"] > .tool-call-header-copy:not(.action-overflow-trigger) {
   display: none;
 }
 
-.session-center-column[data-session-center-width="narrow"] .tool-call-header[data-action-overflow="true"] > .action-overflow-trigger {
+.session-center-column[data-session-center-width="narrow"] .tool-call-header[data-action-overflow="true"] > .action-overflow-trigger.action-overflow-wide {
+  display: none;
+}
+
+.session-center-column[data-session-center-width="narrow"] .tool-call-header[data-action-overflow="true"] > .action-overflow-trigger.action-overflow-narrow {
   display: inline-flex;
 }
 
@@ -169,9 +174,9 @@
   @apply inline-flex items-center justify-center;
   font-size: 0.95rem;
   color: var(--text-secondary);
-  min-width: 1.6rem;
-  height: 1.6rem;
-  padding: 0 0.3rem;
+  width: 1.25rem;
+  height: 1.25rem;
+  flex: 0 0 auto;
 }
 
 .tool-call-header-action {

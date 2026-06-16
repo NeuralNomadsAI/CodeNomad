@@ -42,9 +42,9 @@ import {
 import { resolveTitleForTool } from "./tool-call/tool-title"
 import { getLogger } from "../lib/logger"
 import { useSpeech } from "../lib/hooks/use-speech"
-import SpeechActionButton from "./speech-action-button"
 import { createFollowScroll } from "../lib/follow-scroll"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
+import SpeechActionButton from "./speech-action-button"
 
 const log = getLogger("session")
 
@@ -733,17 +733,6 @@ export default function ToolCall(props: ToolCallProps) {
     setOutputSectionOverride(null)
   })
 
-  const handleToggleInputVisibility = (event: MouseEvent) => {
-    event.preventDefault()
-    event.stopPropagation()
-    if (!expanded()) {
-      toggle()
-    }
-
-    const currentlyVisible = isToolInputVisible()
-    setToolInputVisibilityOverride(currentlyVisible ? "hidden" : "expanded")
-  }
-
   const renderer = createMemo(() => resolveToolRenderer(toolName()))
 
   const renderMarkdownStub: ToolRendererContext["renderMarkdown"] = () => null
@@ -840,7 +829,7 @@ export default function ToolCall(props: ToolCallProps) {
     await copyToClipboard(text)
   }
 
-  const actionMenuItems = (): ActionOverflowMenuItem[] => {
+  const actionMenuItems = (includePrimaryActions = false): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = []
 
     if (hasToolInput()) {
@@ -856,24 +845,26 @@ export default function ToolCall(props: ToolCallProps) {
       })
     }
 
-    items.push({
-      key: "copy",
-      label: t("toolCall.header.copyTitle"),
-      icon: <Copy class="w-3.5 h-3.5" aria-hidden="true" />,
-      onSelect: async () => {
-        const text = headerText()
-        if (!text) return
-        await copyToClipboard(text)
-      },
-    })
-
-    if (canSpeakToolCall()) {
+    if (includePrimaryActions) {
       items.push({
-        key: "speak",
-        label: speech.buttonTitle(),
-        icon: <Volume2 class="w-3.5 h-3.5" aria-hidden="true" />,
-        onSelect: () => void speech.toggle(),
+        key: "copy",
+        label: t("toolCall.header.copyTitle"),
+        icon: <Copy class="w-3.5 h-3.5" aria-hidden="true" />,
+        onSelect: async () => {
+          const text = headerText()
+          if (!text) return
+          await copyToClipboard(text)
+        },
       })
+
+      if (canSpeakToolCall()) {
+        items.push({
+          key: "speak",
+          label: speech.buttonTitle(),
+          icon: <Volume2 class="w-3.5 h-3.5" aria-hidden="true" />,
+          onSelect: () => void speech.toggle(),
+        })
+      }
     }
 
     items.push(...(props.headerMenuItems?.() ?? []))
@@ -897,7 +888,7 @@ export default function ToolCall(props: ToolCallProps) {
         data-message-id={props.messageId}
         data-part-id={toolCallIdentifier()}
       >
-      <div class="tool-call-header" data-action-overflow={actionMenuItems().length > 1 ? "true" : undefined}>
+      <div class="tool-call-header" data-action-overflow={actionMenuItems(true).length > 0 ? "true" : undefined}>
         <button
           type="button"
           class="tool-call-header-toggle"
@@ -910,25 +901,9 @@ export default function ToolCall(props: ToolCallProps) {
             <Show when={headerTitleDetail()}>
               {(detail) => <span class="tool-call-summary-title">{detail()}</span>}
             </Show>
+            <ToolStatusIndicator status={status} />
           </span>
         </button>
-
-        <Show when={hasToolInput()}>
-          <button
-            type="button"
-            class="tool-call-header-icon-button tool-call-header-input"
-            onClick={handleToggleInputVisibility}
-            aria-pressed={isToolInputVisible()}
-            aria-label={
-              isToolInputVisible()
-                ? t("toolCall.header.hideInputAriaLabel")
-                : t("toolCall.header.showInputAriaLabel")
-            }
-            title={isToolInputVisible() ? t("toolCall.header.hideInputTitle") : t("toolCall.header.showInputTitle")}
-          >
-            <ArrowRightSquare class="w-3.5 h-3.5" />
-          </button>
-        </Show>
 
         <button
           type="button"
@@ -957,11 +932,15 @@ export default function ToolCall(props: ToolCallProps) {
         <ActionOverflowMenu
           items={actionMenuItems()}
           label={t("messageItem.actions.more")}
-          triggerClass="tool-call-header-icon-button tool-call-header-copy"
-          minItems={2}
+          triggerClass="tool-call-header-icon-button tool-call-header-copy action-overflow-wide"
+          minItems={1}
         />
-
-        <ToolStatusIndicator status={status} />
+        <ActionOverflowMenu
+          items={actionMenuItems(true)}
+          label={t("messageItem.actions.more")}
+          triggerClass="tool-call-header-icon-button tool-call-header-copy action-overflow-narrow"
+          minItems={1}
+        />
       </div>
 
       <Show when={expanded()}>

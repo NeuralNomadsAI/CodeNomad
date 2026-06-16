@@ -2,6 +2,7 @@
 .message-item-base {
   @apply flex flex-col gap-2 p-3 w-full;
   background-color: var(--message-assistant-bg);
+  --message-action-right-inset: 0.75rem;
 
   /* Markdown rendering uses these to theme emphasis + headings per message role. */
   --markdown-accent: var(--message-user-border);
@@ -100,7 +101,7 @@
 }
 
 .message-item-actions {
-  @apply flex items-center gap-2;
+  @apply flex items-center gap-0;
   flex: 0 0 auto;
 }
 
@@ -109,12 +110,17 @@
 }
 
 .message-action-button {
-  @apply bg-transparent border-0 text-[var(--text-muted)] cursor-pointer px-2 py-0.5 rounded text-xs font-semibold leading-none transition-all duration-200 flex items-center justify-center h-6;
+  @apply inline-flex items-center justify-center bg-transparent border-0 cursor-pointer p-0 transition-all duration-200;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 0.25rem;
+  color: var(--text-secondary);
+  flex: 0 0 auto;
 }
 
 .message-action-button:hover {
-  background-color: var(--surface-hover);
-  color: var(--accent-primary);
+  background-color: transparent;
+  color: var(--text-primary);
 }
 
 .message-action-button:active {
@@ -122,6 +128,10 @@
 }
 
 .message-item-actions > .action-overflow-trigger {
+  display: inline-flex;
+}
+
+.message-item-actions > .action-overflow-trigger.action-overflow-narrow {
   display: none;
 }
 
@@ -129,12 +139,21 @@
   display: none;
 }
 
-.session-center-column[data-session-center-width="narrow"] .message-item-actions[data-action-overflow="true"] > .action-overflow-trigger {
+.session-center-column[data-session-center-width="narrow"] .message-item-actions[data-action-overflow="true"] > .action-overflow-trigger.action-overflow-wide {
+  display: none;
+}
+
+.session-center-column[data-session-center-width="narrow"] .message-item-actions[data-action-overflow="true"] > .action-overflow-trigger.action-overflow-narrow {
   display: inline-flex;
 }
 
 .message-timestamp {
   @apply text-[11px] text-[var(--text-muted)];
+}
+
+.message-timestamp-inline {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
 }
 
 .message-meta-timing {
@@ -152,6 +171,7 @@
 .assistant-message {
   /* gap: 0.25rem; */
   padding: 0.6rem 0.65rem;
+  padding-inline-end: var(--message-action-right-inset);
   margin-top: 0;
   margin-bottom: 0;
 
@@ -408,6 +428,17 @@
   @apply text-[11px] text-[var(--text-muted)] font-normal ms-auto;
 }
 
+.message-step-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-inline-start: auto;
+}
+
+.message-step-right .message-step-time {
+  margin-inline-start: 0;
+}
+
 .message-step-meta-inline {
   @apply inline-flex flex-wrap items-center gap-2 text-[11px] font-medium;
   color: var(--message-assistant-border);
@@ -431,6 +462,7 @@
 
 .message-reasoning-card {
   --reasoning-border-color: var(--border-strong, var(--border-base));
+  --message-action-right-inset: 0.75rem;
   background-color: var(--message-assistant-bg);
   border-inline-start: none;
   border-block-start: none;
@@ -480,18 +512,26 @@
   display: inline-flex;
   align-items: center;
   gap: 0;
-  padding: 0.25rem 0.4rem 0.25rem 0;
+  padding: 0.25rem var(--message-action-right-inset) 0.25rem 0;
 }
 
 .message-reasoning-actions > .action-overflow-trigger {
   display: inline-flex;
 }
 
+.message-reasoning-actions > .action-overflow-trigger.action-overflow-narrow {
+  display: none;
+}
+
 .session-center-column[data-session-center-width="narrow"] .message-reasoning-actions[data-action-overflow="true"] > .message-action-button:not(.action-overflow-trigger) {
   display: none;
 }
 
-.session-center-column[data-session-center-width="narrow"] .message-reasoning-actions[data-action-overflow="true"] > .action-overflow-trigger {
+.session-center-column[data-session-center-width="narrow"] .message-reasoning-actions[data-action-overflow="true"] > .action-overflow-trigger.action-overflow-wide {
+  display: none;
+}
+
+.session-center-column[data-session-center-width="narrow"] .message-reasoning-actions[data-action-overflow="true"] > .action-overflow-trigger.action-overflow-narrow {
   display: inline-flex;
 }
 
