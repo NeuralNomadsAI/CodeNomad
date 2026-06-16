@@ -166,8 +166,8 @@
 .message-stream-block {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  margin-bottom: 2px;
+  gap: 0.35rem;
+  margin-bottom: 0.35rem;
 }
 
 .message-step-start {
@@ -458,6 +458,7 @@
   background: none;
   border: none;
   padding: 0.35rem 0.6rem;
+  padding-inline-start: 0;
   font-family: var(--font-family-mono);
   font-size: 13px;
   color: inherit;
@@ -506,14 +507,6 @@
   color: var(--text-primary);
 }
 
-.message-reasoning-header-prefix {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding-inline-start: 0.5rem;
-  flex: 0 0 auto;
-}
-
 .message-reasoning-disclosure {
   display: inline-flex;
   align-items: center;
@@ -524,12 +517,13 @@
   width: 0.9rem;
 }
 
-.message-reasoning-icon {
-  flex: 0 0 auto;
-}
-
 .message-reasoning-title {
   display: block;
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-normal);
+  line-height: var(--line-height-normal);
+  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

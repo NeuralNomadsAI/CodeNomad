@@ -9,6 +9,11 @@
   flex: 0 0 auto;
 }
 
+.message-select-checkbox--action {
+  margin-inline-end: 0;
+  align-self: center;
+}
+
 .message-delete-mode-toolbar {
   position: absolute;
   left: 50%;

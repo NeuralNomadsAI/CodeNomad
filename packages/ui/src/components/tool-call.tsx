@@ -32,7 +32,6 @@ import {
   buildToolSpeechText,
   ensureMarkdownContent,
   getRelativePath,
-  getToolIcon,
   getToolName,
   isToolStateCompleted,
   isToolStateError,
@@ -80,7 +79,7 @@ interface ToolCallProps {
    * Users can still expand/collapse manually.
    */
   forceCollapsed?: boolean
-  headerPrefix?: JSXElement
+  headerAction?: JSXElement
   headerMenuItems?: () => ActionOverflowMenuItem[]
  }
 
@@ -897,9 +896,6 @@ export default function ToolCall(props: ToolCallProps) {
         data-part-id={toolCallIdentifier()}
       >
       <div class="tool-call-header" data-action-overflow={actionMenuItems().length > 1 ? "true" : undefined}>
-        <Show when={props.headerPrefix}>
-          {(prefix) => <span class="tool-call-header-prefix">{prefix()}</span>}
-        </Show>
         <button
           type="button"
           class="tool-call-header-toggle"
@@ -908,7 +904,6 @@ export default function ToolCall(props: ToolCallProps) {
         >
           <span class="tool-call-disclosure" aria-hidden="true">{expanded() ? "▼" : "▶"}</span>
           <span class="tool-call-summary">
-            <span class="tool-call-summary-icon" aria-hidden="true">{getToolIcon(toolName())}</span>
             <span class="tool-call-summary-type">{toolTypeLabel()}</span>
             <Show when={headerTitleDetail()}>
               {(detail) => <span class="tool-call-summary-title">{detail()}</span>}
@@ -951,6 +946,10 @@ export default function ToolCall(props: ToolCallProps) {
             isLoading={speech.isLoading()}
             isPlaying={speech.isPlaying()}
           />
+        </Show>
+
+        <Show when={props.headerAction}>
+          {(action) => <span class="tool-call-header-action">{action()}</span>}
         </Show>
 
         <ActionOverflowMenu

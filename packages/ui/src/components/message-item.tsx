@@ -503,24 +503,6 @@ export default function MessageItem(props: MessageItemProps) {
         <div class="message-item-header-row message-item-header-row--top" ref={(el) => (topRowEl = el)}>
           <div class="message-header-left">
             <div class="message-speaker-primary" ref={(el) => (speakerPrimaryEl = el)}>
-              <Show when={props.showDeleteMessage}>
-                <input
-                  class="message-select-checkbox"
-                  type="checkbox"
-                  checked={isSelectedForDeletion()}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                  }}
-                  onChange={(event) => {
-                    event.stopPropagation()
-                    const next = Boolean((event.currentTarget as HTMLInputElement).checked)
-                    props.onToggleSelectedMessage?.(props.record.id, next)
-                  }}
-                  aria-label={t("messageItem.selection.checkboxAriaLabel")}
-                  title={t("messageItem.selection.checkboxAriaLabel")}
-                />
-              </Show>
-
               <span class="message-speaker-label" data-role={isUser() ? "user" : "assistant"} title={workedDurationTooltip() || undefined}>
                 {speakerLabel()}
               </span>
@@ -547,6 +529,24 @@ export default function MessageItem(props: MessageItemProps) {
           >
             <Show when={isUser()}>
               <div class="message-action-group">
+                <Show when={props.showDeleteMessage}>
+                  <input
+                    class="message-select-checkbox message-select-checkbox--action"
+                    type="checkbox"
+                    checked={isSelectedForDeletion()}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                    }}
+                    onChange={(event) => {
+                      event.stopPropagation()
+                      const next = Boolean((event.currentTarget as HTMLInputElement).checked)
+                      props.onToggleSelectedMessage?.(props.record.id, next)
+                    }}
+                    aria-label={t("messageItem.selection.checkboxAriaLabel")}
+                    title={t("messageItem.selection.checkboxAriaLabel")}
+                  />
+                </Show>
+
                 <button
                   class="message-action-button"
                   onClick={handleCopy}
@@ -623,6 +623,24 @@ export default function MessageItem(props: MessageItemProps) {
             </Show>
             <Show when={!isUser()}>
               <div class="message-action-group">
+                <Show when={props.showDeleteMessage}>
+                  <input
+                    class="message-select-checkbox message-select-checkbox--action"
+                    type="checkbox"
+                    checked={isSelectedForDeletion()}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                    }}
+                    onChange={(event) => {
+                      event.stopPropagation()
+                      const next = Boolean((event.currentTarget as HTMLInputElement).checked)
+                      props.onToggleSelectedMessage?.(props.record.id, next)
+                    }}
+                    aria-label={t("messageItem.selection.checkboxAriaLabel")}
+                    title={t("messageItem.selection.checkboxAriaLabel")}
+                  />
+                </Show>
+
                 <button
                   class="message-action-button"
                   onClick={handleCopy}

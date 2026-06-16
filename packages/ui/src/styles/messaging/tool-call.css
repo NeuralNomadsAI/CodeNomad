@@ -5,7 +5,7 @@
 .tool-call-message {
   @apply flex flex-col gap-0 p-0 w-full;
   background-color: var(--message-tool-bg);
-  border-inline-start: 4px solid var(--message-tool-border);
+  border-inline-start: none;
   color: inherit;
 }
 
@@ -112,6 +112,7 @@
   color: var(--text-primary);
   flex: 1;
   min-width: 0;
+  padding-inline-start: 0;
 }
 
 .tool-call-header-toggle::before {
@@ -170,9 +171,10 @@
   padding: 0 0.3rem;
 }
 
-.tool-call-header-prefix {
+.tool-call-header-action {
   @apply inline-flex items-center justify-center;
-  padding-inline-start: 0.5rem;
+  width: 1.6rem;
+  height: 1.6rem;
   flex: 0 0 auto;
 }
 
@@ -189,34 +191,36 @@
   color: var(--text-primary);
 }
 
-.tool-call-summary-icon {
-  flex: 0 0 auto;
-}
-
 .tool-call-summary-type {
   flex: 0 0 auto;
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-primary);
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-muted);
 }
 
 .tool-call-summary-title {
   @apply truncate;
-  color: var(--text-secondary);
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-normal);
+  line-height: var(--line-height-normal);
+  color: var(--text-primary);
   min-width: 0;
 }
 
 /* ToolState uses status="completed"; keep "success" as a legacy alias. */
 .tool-call-status-completed,
 .tool-call-status-success {
-  border-inline-start: 3px solid var(--status-success);
+  border-inline-start: none;
 }
 
 .tool-call-status-error {
-  border-inline-start: 3px solid var(--status-error);
+  border-inline-start: none;
 }
 
 .tool-call-status-running {
-  border-inline-start: 3px solid var(--status-warning);
+  border-inline-start: none;
 }
 
 .tool-call-status-running .tool-call-status {
@@ -224,7 +228,7 @@
 }
 
 .tool-call-status-pending {
-  border-inline-start: 3px solid var(--accent-primary);
+  border-inline-start: none;
 }
 
 .tool-call-status-pending .tool-call-summary {

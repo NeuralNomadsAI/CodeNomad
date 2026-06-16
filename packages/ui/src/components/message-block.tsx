@@ -567,24 +567,22 @@ function ToolCallItem(props: ToolCallItemProps) {
               instanceId={props.instanceId}
               sessionId={props.sessionId}
               onContentRendered={props.onContentRendered}
-              headerPrefix={props.showDeleteMessage ? (
-                <>
-                  <input
-                    class="message-select-checkbox"
-                    type="checkbox"
-                    checked={isSelectedForDeletion()}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                    }}
-                    onChange={(event) => {
-                      event.stopPropagation()
-                      const next = Boolean((event.currentTarget as HTMLInputElement).checked)
-                      props.onToggleSelectedMessage?.(props.messageId, next)
-                    }}
-                    aria-label={t("messageItem.selection.checkboxAriaLabel")}
-                    title={t("messageItem.selection.checkboxAriaLabel")}
-                  />
-                </>
+              headerAction={props.showDeleteMessage ? (
+                <input
+                  class="message-select-checkbox message-select-checkbox--action"
+                  type="checkbox"
+                  checked={isSelectedForDeletion()}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                  }}
+                  onChange={(event) => {
+                    event.stopPropagation()
+                    const next = Boolean((event.currentTarget as HTMLInputElement).checked)
+                    props.onToggleSelectedMessage?.(props.messageId, next)
+                  }}
+                  aria-label={t("messageItem.selection.checkboxAriaLabel")}
+                  title={t("messageItem.selection.checkboxAriaLabel")}
+                />
               ) : undefined}
               headerMenuItems={actionMenuItems}
             />
@@ -1701,10 +1699,25 @@ function ReasoningCard(props: ReasoningCardProps) {
       data-part-id={typeof (props.part as any)?.id === "string" ? (props.part as any).id : undefined}
     >
       <div class="message-reasoning-header">
-        <Show when={props.showDeleteMessage}>
-          <span class="message-reasoning-header-prefix">
+        <button
+          type="button"
+          class="message-reasoning-toggle"
+          onClick={toggle}
+          aria-expanded={expanded()}
+          aria-label={expanded() ? t("messageBlock.reasoning.collapseAriaLabel") : t("messageBlock.reasoning.expandAriaLabel")}
+        >
+          <span class="message-reasoning-disclosure" aria-hidden="true">{expanded() ? "▼" : "▶"}</span>
+          <span class="message-reasoning-label">
+            <span class="message-reasoning-title" title={reasoningMetaTooltip() || undefined}>
+              {reasoningTitle()}
+            </span>
+          </span>
+        </button>
+
+        <div class="message-reasoning-actions" data-action-overflow={actionMenuItems().length > 1 ? "true" : undefined}>
+          <Show when={props.showDeleteMessage}>
             <input
-              class="message-select-checkbox"
+              class="message-select-checkbox message-select-checkbox--action"
               type="checkbox"
               checked={isSelectedForDeletion()}
               onClick={(event) => {
@@ -1718,25 +1731,8 @@ function ReasoningCard(props: ReasoningCardProps) {
               aria-label={t("messageItem.selection.checkboxAriaLabel")}
               title={t("messageItem.selection.checkboxAriaLabel")}
             />
-          </span>
-        </Show>
-        <button
-          type="button"
-          class="message-reasoning-toggle"
-          onClick={toggle}
-          aria-expanded={expanded()}
-          aria-label={expanded() ? t("messageBlock.reasoning.collapseAriaLabel") : t("messageBlock.reasoning.expandAriaLabel")}
-        >
-          <span class="message-reasoning-disclosure" aria-hidden="true">{expanded() ? "▼" : "▶"}</span>
-          <span class="message-reasoning-icon" aria-hidden="true">🧠</span>
-          <span class="message-reasoning-label">
-            <span class="message-reasoning-title" title={reasoningMetaTooltip() || undefined}>
-              {reasoningTitle()}
-            </span>
-          </span>
-        </button>
+          </Show>
 
-        <div class="message-reasoning-actions" data-action-overflow={actionMenuItems().length > 1 ? "true" : undefined}>
           <button
             type="button"
             class="message-action-button"
