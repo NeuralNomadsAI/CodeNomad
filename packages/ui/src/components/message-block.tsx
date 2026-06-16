@@ -1,5 +1,5 @@
 import { For, Index, Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, untrack, type Accessor } from "solid-js"
-import { ChevronsDownUp, ChevronsUpDown, ExternalLink, FoldVertical, ListStart, Trash, Volume2 } from "lucide-solid"
+import { Copy, ExternalLink, FoldVertical, ListStart, Trash, Volume2 } from "lucide-solid"
 import MessageItem from "./message-item"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { ClientPart, MessageInfo } from "../types/message"
@@ -17,9 +17,10 @@ import type { DeleteHoverState } from "../types/delete-hover"
 import { useSpeech } from "../lib/hooks/use-speech"
 import SpeechActionButton from "./speech-action-button"
 import { createFollowScroll } from "../lib/follow-scroll"
-import { formatElapsedClock, getMessageStartedAt, getPartStartedAt, inferReasoningDurationMs } from "../lib/message-timing"
+import { inferReasoningDurationMs } from "../lib/message-timing"
 import type { SessionSearchMatch } from "../lib/session-search"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
+import { copyToClipboard } from "../lib/clipboard"
 
 function DeleteUpToIcon() {
   return (
@@ -1488,7 +1489,7 @@ function ReasoningStreamOutput(props: {
 }
 
 function ReasoningCard(props: ReasoningCardProps) {
-  const { locale, t } = useI18n()
+  const { t } = useI18n()
   const [expanded, setExpanded] = createSignal(Boolean(props.defaultExpanded))
   const [deletingMessage, setDeletingMessage] = createSignal(false)
   const [deletingUpTo, setDeletingUpTo] = createSignal(false)
@@ -1505,14 +1506,6 @@ function ReasoningCard(props: ReasoningCardProps) {
     }
   })
 
-  const timestamp = () => {
-    const value = getPartStartedAt(props.part) ?? getMessageStartedAt(props.messageInfo) ?? Date.now()
-    const date = new Date(value)
-    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-  }
-
-  const durationLabel = () => formatElapsedClock(props.durationMs, locale())
-
   const agentIdentifier = () => {
     const info = props.messageInfo
     if (!info || info.role !== "assistant") return ""
@@ -1527,8 +1520,6 @@ function ReasoningCard(props: ReasoningCardProps) {
     if (modelID && providerID) return `${providerID}/${modelID}`
     return modelID
   }
-
-  const hasMeta = () => Boolean(props.showAgentMeta && (agentIdentifier() || modelIdentifier()))
 
   const reasoningText = () => {
     const part = props.part as any
@@ -1565,10 +1556,55 @@ function ReasoningCard(props: ReasoningCardProps) {
     return ""
   }
 
-  const toggle = () => setExpanded((prev) => !prev)
+  const extractedTitle = () => {
+    const firstLine = reasoningText()
+      .split(/\r?\n/)
+      .map((line: string) => line.trim())
+      .find((line: string) => line.length > 0)
+    if (!firstLine) return ""
 
-  const viewHideLabel = () =>
-    expanded() ? t("messageBlock.reasoning.indicator.hide") : t("messageBlock.reasoning.indicator.view")
+    const match = firstLine.match(/^\*\*([^*]+)\*\*/)
+    return match?.[1]?.trim() ?? ""
+  }
+
+  const thoughtDurationTitle = () => {
+    const duration = props.durationMs
+    if (typeof duration !== "number" || !Number.isFinite(duration) || duration <= 0) {
+      return t("messageBlock.reasoning.thoughtsFallback")
+    }
+
+    const seconds = Math.max(1, Math.round(duration / 1000))
+    if (seconds < 60) {
+      return seconds === 1
+        ? t("messageBlock.reasoning.thoughtFor.seconds.one", { count: String(seconds) })
+        : t("messageBlock.reasoning.thoughtFor.seconds.other", { count: String(seconds) })
+    }
+
+    const minutes = Math.max(1, Math.round(seconds / 60))
+    if (minutes < 60) {
+      return minutes === 1
+        ? t("messageBlock.reasoning.thoughtFor.minutes.one", { count: String(minutes) })
+        : t("messageBlock.reasoning.thoughtFor.minutes.other", { count: String(minutes) })
+    }
+
+    const hours = Math.max(1, Math.round(minutes / 60))
+    return hours === 1
+      ? t("messageBlock.reasoning.thoughtFor.hours.one", { count: String(hours) })
+      : t("messageBlock.reasoning.thoughtFor.hours.other", { count: String(hours) })
+  }
+
+  const reasoningTitle = () => extractedTitle() || thoughtDurationTitle()
+
+  const reasoningMetaTooltip = () => {
+    const parts: string[] = [thoughtDurationTitle()]
+    const agent = agentIdentifier()
+    const model = modelIdentifier()
+    if (agent) parts.push(t("messageBlock.step.agentLabel", { agent }))
+    if (model) parts.push(t("messageBlock.step.modelLabel", { model }))
+    return parts.join("\n")
+  }
+
+  const toggle = () => setExpanded((prev) => !prev)
 
   const speech = useSpeech({
     id: () => `${props.instanceId}:${props.sessionId}:${props.messageId}:${(props.part as any)?.id ?? "reasoning"}`,
@@ -1578,6 +1614,12 @@ function ReasoningCard(props: ReasoningCardProps) {
   const canSpeakReasoning = () => reasoningText().trim().length > 0 && speech.canUseSpeech()
 
   const canDeleteMessage = () => Boolean(props.showDeleteMessage) && !deletingMessage()
+
+  const handleCopyReasoning = async () => {
+    const text = reasoningText()
+    if (!text.trim()) return
+    await copyToClipboard(text)
+  }
 
   const deleteUpTo = async () => {
     if (!props.showDeleteMessage) return
@@ -1594,6 +1636,13 @@ function ReasoningCard(props: ReasoningCardProps) {
 
   const actionMenuItems = (): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = []
+
+    items.push({
+      key: "copy",
+      label: t("messageBlock.reasoning.copyTitle"),
+      icon: <Copy class="w-3.5 h-3.5" aria-hidden="true" />,
+      onSelect: handleCopyReasoning,
+    })
 
     if (canSpeakReasoning()) {
       items.push({
@@ -1646,37 +1695,31 @@ function ReasoningCard(props: ReasoningCardProps) {
     return items
   }
 
-  const handleDeleteMessage = async (event: MouseEvent) => {
-    event.preventDefault()
-    event.stopPropagation()
-    if (!props.showDeleteMessage) return
-    if (!canDeleteMessage()) return
-    setDeletingMessage(true)
-    try {
-      await deleteMessage(props.instanceId, props.sessionId, props.messageId)
-    } catch (error) {
-      showAlertDialog(t("messageItem.actions.deleteMessageFailedMessage"), {
-        title: t("messageItem.actions.deleteMessageFailedTitle"),
-        detail: error instanceof Error ? error.message : String(error),
-        variant: "error",
-      })
-    } finally {
-      setDeletingMessage(false)
-    }
-  }
-
-  const handleDeleteUpTo = async (event: MouseEvent) => {
-    event.preventDefault()
-    event.stopPropagation()
-    await deleteUpTo()
-  }
-
   return (
     <div
       class="delete-hover-scope message-reasoning-card"
       data-part-id={typeof (props.part as any)?.id === "string" ? (props.part as any).id : undefined}
     >
       <div class="message-reasoning-header">
+        <Show when={props.showDeleteMessage}>
+          <span class="message-reasoning-header-prefix">
+            <input
+              class="message-select-checkbox"
+              type="checkbox"
+              checked={isSelectedForDeletion()}
+              onClick={(event) => {
+                event.stopPropagation()
+              }}
+              onChange={(event) => {
+                event.stopPropagation()
+                const next = Boolean((event.currentTarget as HTMLInputElement).checked)
+                props.onToggleSelectedMessage?.(props.messageId, next)
+              }}
+              aria-label={t("messageItem.selection.checkboxAriaLabel")}
+              title={t("messageItem.selection.checkboxAriaLabel")}
+            />
+          </span>
+        </Show>
         <button
           type="button"
           class="message-reasoning-toggle"
@@ -1684,35 +1727,30 @@ function ReasoningCard(props: ReasoningCardProps) {
           aria-expanded={expanded()}
           aria-label={expanded() ? t("messageBlock.reasoning.collapseAriaLabel") : t("messageBlock.reasoning.expandAriaLabel")}
         >
+          <span class="message-reasoning-disclosure" aria-hidden="true">{expanded() ? "▼" : "▶"}</span>
+          <span class="message-reasoning-icon" aria-hidden="true">🧠</span>
           <span class="message-reasoning-label">
-            <span class="message-reasoning-label-primary">
-              <Show when={props.showDeleteMessage}>
-                <input
-                  class="message-select-checkbox"
-                  type="checkbox"
-                  checked={isSelectedForDeletion()}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                  }}
-                  onChange={(event) => {
-                    event.stopPropagation()
-                    const next = Boolean((event.currentTarget as HTMLInputElement).checked)
-                    props.onToggleSelectedMessage?.(props.messageId, next)
-                  }}
-                  aria-label={t("messageItem.selection.checkboxAriaLabel")}
-                  title={t("messageItem.selection.checkboxAriaLabel")}
-                />
-              </Show>
-
-              <span>{t("messageBlock.reasoning.thinkingLabel")}</span>
-              <Show when={durationLabel()}>
-                {(value) => <span class="message-reasoning-duration">{value()}</span>}
-              </Show>
+            <span class="message-reasoning-title" title={reasoningMetaTooltip() || undefined}>
+              {reasoningTitle()}
             </span>
           </span>
         </button>
 
         <div class="message-reasoning-actions" data-action-overflow={actionMenuItems().length > 1 ? "true" : undefined}>
+          <button
+            type="button"
+            class="message-action-button"
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              void handleCopyReasoning()
+            }}
+            aria-label={t("messageBlock.reasoning.copyAriaLabel")}
+            title={t("messageBlock.reasoning.copyTitle")}
+          >
+            <Copy class="w-3.5 h-3.5" aria-hidden="true" />
+          </button>
+
           <Show when={canSpeakReasoning()}>
             <SpeechActionButton
               class="message-action-button"
@@ -1727,79 +1765,14 @@ function ReasoningCard(props: ReasoningCardProps) {
             />
           </Show>
 
-          <button
-            type="button"
-            class="message-action-button message-reasoning-primary-action"
-            onClick={(event) => {
-              event.preventDefault()
-              event.stopPropagation()
-              toggle()
-            }}
-            aria-label={viewHideLabel()}
-            title={viewHideLabel()}
-          >
-            <Show when={expanded()} fallback={<ChevronsUpDown class="w-3.5 h-3.5" aria-hidden="true" />}>
-              <ChevronsDownUp class="w-3.5 h-3.5" aria-hidden="true" />
-            </Show>
-          </button>
-
-          <Show when={props.showDeleteMessage}>
-            <button
-              type="button"
-              class="message-action-button"
-              onClick={handleDeleteUpTo}
-              disabled={!props.onDeleteMessagesUpTo || deletingUpTo()}
-              onMouseEnter={() => props.onDeleteHoverChange?.({ kind: "deleteUpTo", messageId: props.messageId })}
-              onMouseLeave={() => props.onDeleteHoverChange?.({ kind: "none" })}
-              aria-label={t("messageItem.actions.deleteMessagesUpTo")}
-              title={t("messageItem.actions.deleteMessagesUpTo")}
-            >
-              <DeleteUpToIcon />
-            </button>
-
-            <button
-              type="button"
-              class="message-action-button"
-              onClick={handleDeleteMessage}
-              disabled={!canDeleteMessage()}
-              onMouseEnter={() => props.onDeleteHoverChange?.({ kind: "message", messageId: props.messageId })}
-              onMouseLeave={() => props.onDeleteHoverChange?.({ kind: "none" })}
-              aria-label={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
-              title={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
-            >
-              <Trash class="w-3.5 h-3.5" aria-hidden="true" />
-            </button>
-          </Show>
-
           <ActionOverflowMenu
             items={actionMenuItems()}
             label={t("messageItem.actions.more")}
             triggerClass="message-action-button"
             minItems={2}
           />
-
-          <div class="message-reasoning-timing">
-            <span class="message-reasoning-time">{timestamp()}</span>
-          </div>
         </div>
       </div>
-
-      <Show when={hasMeta()}>
-        <div class="message-reasoning-meta-row">
-          <span class="message-step-meta-inline">
-            <Show when={agentIdentifier()}>
-              {(value) => (
-                <span class="font-medium text-[var(--message-assistant-border)]">{t("messageBlock.step.agentLabel", { agent: value() })}</span>
-              )}
-            </Show>
-            <Show when={modelIdentifier()}>
-              {(value) => (
-                <span class="font-medium text-[var(--message-assistant-border)]">{t("messageBlock.step.modelLabel", { model: value() })}</span>
-              )}
-            </Show>
-          </span>
-        </div>
-      </Show>
 
       <Show when={expanded()}>
         <div class="message-reasoning-expanded">

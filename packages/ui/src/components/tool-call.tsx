@@ -919,7 +919,7 @@ export default function ToolCall(props: ToolCallProps) {
         <Show when={hasToolInput()}>
           <button
             type="button"
-            class="tool-call-header-input"
+            class="tool-call-header-icon-button tool-call-header-input"
             onClick={handleToggleInputVisibility}
             aria-pressed={isToolInputVisible()}
             aria-label={
@@ -935,7 +935,7 @@ export default function ToolCall(props: ToolCallProps) {
 
         <button
           type="button"
-          class="tool-call-header-copy"
+          class="tool-call-header-icon-button tool-call-header-copy"
           onClick={handleCopyHeader}
           aria-label={t("toolCall.header.copyAriaLabel")}
           title={t("toolCall.header.copyTitle")}
@@ -945,7 +945,7 @@ export default function ToolCall(props: ToolCallProps) {
 
         <Show when={canSpeakToolCall()}>
           <SpeechActionButton
-            class="tool-call-header-copy"
+            class="tool-call-header-icon-button tool-call-header-copy"
             onClick={() => void speech.toggle()}
             title={speech.buttonTitle()}
             isLoading={speech.isLoading()}
@@ -956,7 +956,7 @@ export default function ToolCall(props: ToolCallProps) {
         <ActionOverflowMenu
           items={actionMenuItems()}
           label={t("messageItem.actions.more")}
-          triggerClass="tool-call-header-copy"
+          triggerClass="tool-call-header-icon-button tool-call-header-copy"
           minItems={2}
         />
 

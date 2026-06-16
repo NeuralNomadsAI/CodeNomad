@@ -427,9 +427,9 @@
 
 .message-reasoning-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: 0;
   transition: background-color 0.2s ease, box-shadow 0.2s ease;
 }
 
@@ -444,11 +444,12 @@
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 0.65rem;
+  gap: 0.4rem;
   background: none;
   border: none;
-  padding: 0.25rem 0.6rem;
-  font: inherit;
+  padding: 0.35rem 0.6rem;
+  font-family: var(--font-family-mono);
+  font-size: 13px;
   color: inherit;
   text-align: start;
   cursor: pointer;
@@ -459,14 +460,14 @@
   display: inline-flex;
   align-items: center;
   gap: 0;
-  padding: 0.25rem 0.6rem 0.25rem 0;
+  padding: 0.25rem 0.4rem 0.25rem 0;
 }
 
 .message-reasoning-actions > .action-overflow-trigger {
-  display: none;
+  display: inline-flex;
 }
 
-.session-center-column[data-session-center-width="narrow"] .message-reasoning-actions[data-action-overflow="true"] > .message-action-button:not(.message-reasoning-primary-action):not(.action-overflow-trigger) {
+.session-center-column[data-session-center-width="narrow"] .message-reasoning-actions[data-action-overflow="true"] > .message-action-button:not(.action-overflow-trigger) {
   display: none;
 }
 
@@ -487,10 +488,42 @@
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.75rem;
+  gap: 0.4rem;
+  min-width: 0;
+  flex: 1 1 auto;
+  font-size: 13px;
   font-weight: var(--font-weight-medium);
-  color: var(--message-assistant-border);
+  color: var(--text-primary);
+}
+
+.message-reasoning-header-prefix {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding-inline-start: 0.5rem;
+  flex: 0 0 auto;
+}
+
+.message-reasoning-disclosure {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  flex: 0 0 auto;
+  font-size: 11px;
+  width: 0.9rem;
+}
+
+.message-reasoning-icon {
+  flex: 0 0 auto;
+}
+
+.message-reasoning-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .message-reasoning-label-primary {
