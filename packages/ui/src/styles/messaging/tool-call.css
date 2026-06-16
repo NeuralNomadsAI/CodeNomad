@@ -98,7 +98,6 @@
   @apply flex items-center w-full;
   background-color: transparent;
   color: var(--text-primary);
-  border-bottom: 1px solid var(--tool-call-border-color);
 }
 
 .tool-call-header:hover {
@@ -258,7 +257,7 @@
 
 .tool-call-details {
   @apply flex flex-col;
-  background-color: var(--surface-code);
+  background-color: var(--message-tool-bg);
   font-size: var(--font-size-xs);
 }
 
@@ -324,6 +323,7 @@
   /* Keep a visible frame around the scroll viewport (not the content). */
   border: 1px solid var(--tool-call-border-color);
   border-radius: 0;
+  margin: 0 0.75rem 0.75rem;
   padding: 0;
   font-size: var(--font-size-xs);
   line-height: var(--line-height-tight);
@@ -343,6 +343,7 @@
 /* Avoid double borders when ANSI output uses .tool-call-content inside tool-call-markdown. */
 .tool-call-markdown .tool-call-content {
   border: none;
+  background-color: transparent;
 }
 
 .tool-call-markdown-large {

@@ -600,7 +600,7 @@
 .message-reasoning-body {
   padding: 0;
   background-color: var(--surface-code);
-  margin: 0.75rem;
+  margin: 0 0.75rem 0.75rem;
 }
 
 .message-reasoning-output {
