@@ -39,7 +39,7 @@ export const readRenderer: ToolRenderer = {
     const preview = typeof metadata.preview === "string" ? metadata.preview : null
     if (!preview) return undefined
     const language = inferLanguageFromPath(typeof input.filePath === "string" ? input.filePath : undefined) ?? "text"
-    return { language, copyText: preview, suppressInnerHeader: true }
+    return { language, copyText: preview, wrapToggle: true, suppressInnerHeader: true }
   },
   renderBody({ toolState, renderMarkdown }) {
     const state = toolState()

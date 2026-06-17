@@ -370,7 +370,20 @@
 }
 
 .tool-call-io-copy {
+  margin-inline-end: 0;
+}
+
+.tool-call-io-copy + .tool-call-io-wrap {
+  margin-inline-start: var(--space-xs);
+}
+
+.tool-call-io-wrap,
+.tool-call-io-header > .tool-call-header-icon-button:last-child {
   margin-inline-end: var(--space-sm);
+}
+
+.tool-call-io-wrap.active {
+  color: var(--text-primary);
 }
 
 .tool-call-io-body {
@@ -811,6 +824,16 @@
   max-height: none;
   overflow-y: visible;
   direction: ltr;
+}
+
+.tool-call-markdown-wrap .markdown-code-block pre,
+.tool-call-markdown-wrap .markdown-code-block code,
+.tool-call-markdown-wrap pre.shiki,
+.tool-call-markdown-wrap pre.shiki code,
+.tool-call-markdown-wrap .shiki {
+  white-space: pre-wrap !important;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 /* Shiki injects inline background colors; force token surfaces. */

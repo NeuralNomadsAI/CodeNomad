@@ -13,6 +13,7 @@ export interface MarkdownRenderOptions {
   content: string
   size?: "default" | "large"
   disableHighlight?: boolean
+  wrap?: boolean
   /**
    * Optional suffix to avoid render-cache collisions when a tool call renders
    * multiple markdown regions (e.g. task prompt vs task output).
@@ -74,6 +75,7 @@ export interface ToolRendererContext {
     sessionId: string
     forceCollapsed?: boolean
   }) => JSXElement | null
+  outputWrapEnabled?: Accessor<boolean>
   scrollHelpers?: ToolScrollHelpers
   onContentRendered?: () => void
 }
@@ -102,6 +104,7 @@ export interface ToolOutputChrome {
   language?: string
   copyText?: string | null
   actions?: JSXElement
+  wrapToggle?: boolean
   suppressInnerHeader?: boolean
 }
 

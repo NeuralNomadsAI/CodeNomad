@@ -25,6 +25,7 @@ export const writeRenderer: ToolRenderer = {
     return {
       language: inferLanguageFromPath(filePath) ?? "text",
       copyText: contentValue,
+      wrapToggle: true,
       suppressInnerHeader: true,
     }
   },

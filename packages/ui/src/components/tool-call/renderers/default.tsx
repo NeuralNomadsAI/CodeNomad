@@ -22,10 +22,11 @@ export const defaultRenderer: ToolRenderer = {
     return {
       language: result.language ?? "text",
       copyText: result.text,
+      wrapToggle: true,
       suppressInnerHeader: true,
     }
   },
-  renderBody({ toolState, renderMarkdown }) {
+  renderBody({ toolState, renderMarkdown, outputWrapEnabled }) {
     const state = toolState()
     if (!state || state.status === "pending") return null
 
@@ -42,6 +43,6 @@ export const defaultRenderer: ToolRenderer = {
     const content = ensureMarkdownContent(result.text, result.language, true)
     if (!content) return null
 
-    return renderMarkdown({ content, disableHighlight: state.status === "running" })
+    return renderMarkdown({ content, disableHighlight: state.status === "running", wrap: outputWrapEnabled?.() ?? true })
   },
 }

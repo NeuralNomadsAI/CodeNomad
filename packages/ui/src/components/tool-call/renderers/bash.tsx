@@ -186,7 +186,7 @@ export const bashRenderer: ToolRenderer = {
   getOutputChrome({ toolState }) {
     const text = getBashOutputText(toolState())
     if (!text) return undefined
-    return { language: "bash", copyText: text, suppressInnerHeader: true }
+    return { language: "bash", copyText: text, wrapToggle: true, suppressInnerHeader: true }
   },
   renderBody({ toolState, renderMarkdown, scrollHelpers, onContentRendered }) {
     return <BashToolBody toolState={toolState} renderMarkdown={renderMarkdown as any} scrollHelpers={scrollHelpers} onContentRendered={onContentRendered} />

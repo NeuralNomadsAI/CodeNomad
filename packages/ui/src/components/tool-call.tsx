@@ -1,5 +1,5 @@
 import { createSignal, Show, createEffect, createMemo, onCleanup, type Accessor, type JSXElement } from "solid-js"
-import { ArrowRightSquare, Check, Copy, Hourglass, Loader2, Volume2, XCircle } from "lucide-solid"
+import { ArrowRightSquare, Check, Copy, Hourglass, Loader2, Volume2, WrapText, XCircle } from "lucide-solid"
 import { stringify as stringifyYaml } from "yaml"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { useTheme } from "../lib/theme"
@@ -409,6 +409,11 @@ function ToolCallDetails(props: {
     onContentRendered: props.onContentRendered,
   })
 
+  const [outputWrapEnabled, setOutputWrapEnabled] = createSignal(true)
+
+  const renderOutputMarkdownContent: ToolRendererContext["renderMarkdown"] = (options) =>
+    renderMarkdownContent({ ...options, wrap: options.wrap ?? outputWrapEnabled() })
+
   const rendererContext: ToolRendererContext = {
     toolCall: props.toolCallMemo,
     toolState: props.toolState,
@@ -418,7 +423,7 @@ function ToolCallDetails(props: {
     t: props.t,
     messageVersion: messageVersionAccessor,
     partVersion: partVersionAccessor,
-    renderMarkdown: renderMarkdownContent,
+    renderMarkdown: renderOutputMarkdownContent,
     renderAnsi: renderAnsiContent,
     renderDiff: renderDiffContent,
     renderToolCall: (options) => {
@@ -437,6 +442,7 @@ function ToolCallDetails(props: {
         />
       )
     },
+    outputWrapEnabled,
     scrollHelpers,
     onContentRendered: props.onContentRendered,
   }
@@ -518,6 +524,11 @@ function ToolCallDetails(props: {
     await copyToClipboard(text)
   }
 
+  const outputWrapTitle = () =>
+    outputWrapEnabled()
+      ? props.t("toolCall.diff.disableWordWrap")
+      : props.t("toolCall.diff.enableWordWrap")
+
   const renderIoHeader = (options: {
     title: () => string
     language?: () => string | null | undefined
@@ -525,6 +536,7 @@ function ToolCallDetails(props: {
     onToggle: () => void
     copyText?: () => string | null | undefined
     actions?: () => JSXElement
+    wrapToggle?: () => boolean | undefined
   }) => (
     <div class="tool-call-io-header">
       <button type="button" class="tool-call-io-toggle" aria-expanded={options.expanded()} onClick={options.onToggle}>
@@ -552,6 +564,22 @@ function ToolCallDetails(props: {
           </button>
         )}
       </Show>
+
+      <Show when={options.wrapToggle?.()}>
+        <button
+          type="button"
+          class={`tool-call-header-icon-button tool-call-header-copy tool-call-io-wrap${outputWrapEnabled() ? " active" : ""}`}
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            setOutputWrapEnabled((enabled) => !enabled)
+          }}
+          aria-label={outputWrapTitle()}
+          title={outputWrapTitle()}
+        >
+          <WrapText class="w-3.5 h-3.5" aria-hidden="true" />
+        </button>
+      </Show>
     </div>
   )
 
@@ -559,9 +587,42 @@ function ToolCallDetails(props: {
     const body = renderToolBody()
     const error = renderError()
     const showPending = shouldShowPendingMessage()
+    const chrome = outputChrome()
 
     if (!body && !error && !showPending) {
       return null
+    }
+
+    if (chrome.wrapToggle) {
+      return (
+        <div class="tool-call-body">
+          <div class="tool-call-io-section">
+            {renderIoHeader({
+              title: () => chrome.title || props.t("toolCall.io.output"),
+              language: () => outputChrome().language,
+              expanded: props.outputSectionExpanded,
+              onToggle: props.toggleOutputSection,
+              copyText: () => outputChrome().copyText,
+              actions: () => outputChrome().actions,
+              wrapToggle: () => outputChrome().wrapToggle,
+            })}
+
+            <Show when={props.outputSectionExpanded()}>
+              <div class="tool-call-io-body" data-suppress-inner-header={chrome.suppressInnerHeader === false ? undefined : "true"}>
+                {body}
+                {error}
+
+                <Show when={showPending}>
+                  <div class="tool-call-pending-message">
+                    <span class="spinner-small"></span>
+                    <span>{props.t("toolCall.pending.waitingToRun")}</span>
+                  </div>
+                </Show>
+              </div>
+            </Show>
+          </div>
+        </div>
+      )
     }
 
     return (
@@ -618,6 +679,7 @@ function ToolCallDetails(props: {
                   onToggle: props.toggleOutputSection,
                   copyText: () => outputChrome().copyText,
                   actions: () => outputChrome().actions,
+                  wrapToggle: () => outputChrome().wrapToggle,
                 })
               })()}
 

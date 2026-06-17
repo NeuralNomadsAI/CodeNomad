@@ -29,7 +29,7 @@ export const editRenderer: ToolRenderer = {
     const fallback = isToolStateCompleted(state) && typeof state.output === "string" ? state.output : null
     const copyText = diffText || fallback
     if (!copyText) return undefined
-    return { language: "diff", copyText, suppressInnerHeader: true }
+    return { language: "diff", copyText, wrapToggle: true, suppressInnerHeader: true }
   },
   renderBody({ toolState, toolName, renderDiff, renderMarkdown }) {
     const state = toolState()

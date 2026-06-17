@@ -77,7 +77,7 @@ export const applyPatchRenderer: ToolRenderer = {
 
     const fallback = isToolStateCompleted(state) && typeof state.output === "string" ? state.output : null
     if (!fallback) return undefined
-    return { language: "text", copyText: fallback, suppressInnerHeader: true }
+    return { language: "text", copyText: fallback, wrapToggle: true, suppressInnerHeader: true }
   },
   renderBody({ toolState, renderDiff, renderMarkdown, t }) {
     const state = toolState()

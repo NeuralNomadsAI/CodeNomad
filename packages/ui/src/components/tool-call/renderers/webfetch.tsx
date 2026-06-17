@@ -31,6 +31,7 @@ export const webfetchRenderer: ToolRenderer = {
     return {
       language: result.language ?? "text",
       copyText: result.text,
+      wrapToggle: true,
       suppressInnerHeader: true,
     }
   },
