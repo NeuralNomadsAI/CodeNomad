@@ -275,8 +275,9 @@
 }
 
 .tool-call-body {
+  --tool-call-body-border-color: var(--border-strong, var(--border-base));
   margin: 0 var(--space-md) var(--space-md);
-  border: 1px solid var(--border-base);
+  border: 1px solid var(--tool-call-body-border-color, var(--border-base));
   background-color: var(--surface-code);
   overflow: hidden;
 }
