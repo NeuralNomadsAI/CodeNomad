@@ -11,6 +11,7 @@ import { webfetchRenderer } from "./webfetch"
 import { writeRenderer } from "./write"
 import { invalidRenderer } from "./invalid"
 import { questionRenderer } from "./question"
+import { searchRenderer } from "./search"
 
 const TOOL_RENDERERS: ToolRenderer[] = [
   bashRenderer,
@@ -20,6 +21,7 @@ const TOOL_RENDERERS: ToolRenderer[] = [
   applyPatchRenderer,
   patchRenderer,
   webfetchRenderer,
+  searchRenderer,
   todoRenderer,
   taskRenderer,
   questionRenderer,

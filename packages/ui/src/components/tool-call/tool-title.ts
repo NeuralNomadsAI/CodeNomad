@@ -12,6 +12,7 @@ import { patchRenderer } from "./renderers/patch"
 import { webfetchRenderer } from "./renderers/webfetch"
 import { todoRenderer } from "./renderers/todo"
 import { invalidRenderer } from "./renderers/invalid"
+import { searchRenderer } from "./renderers/search"
 
 const TITLE_RENDERERS: Record<string, ToolRenderer> = {
   bash: bashRenderer,
@@ -21,6 +22,8 @@ const TITLE_RENDERERS: Record<string, ToolRenderer> = {
   apply_patch: applyPatchRenderer,
   patch: patchRenderer,
   webfetch: webfetchRenderer,
+  glob: searchRenderer,
+  grep: searchRenderer,
   todowrite: todoRenderer,
   todoread: todoRenderer,
   invalid: invalidRenderer,
