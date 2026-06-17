@@ -501,6 +501,11 @@ function ToolCallDetails(props: {
     />
   )
 
+  const shouldShowPendingMessage = () => {
+    const tool = props.toolName()
+    return status() === "pending" && !props.pendingPermission() && tool !== "todowrite" && tool !== "todoread"
+  }
+
   return (
     <div class="tool-call-details">
       <Show
@@ -510,7 +515,7 @@ function ToolCallDetails(props: {
             {renderToolBody()}
             {renderError()}
 
-            <Show when={status() === "pending" && !props.pendingPermission()}>
+            <Show when={shouldShowPendingMessage()}>
               <div class="tool-call-pending-message">
                 <span class="spinner-small"></span>
                 <span>{props.t("toolCall.pending.waitingToRun")}</span>
@@ -546,7 +551,7 @@ function ToolCallDetails(props: {
                 {renderToolBody()}
                 {renderError()}
 
-                <Show when={status() === "pending" && !props.pendingPermission()}>
+                <Show when={shouldShowPendingMessage()}>
                   <div class="tool-call-pending-message">
                     <span class="spinner-small"></span>
                     <span>{props.t("toolCall.pending.waitingToRun")}</span>

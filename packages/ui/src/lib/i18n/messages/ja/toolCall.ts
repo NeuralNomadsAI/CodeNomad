@@ -53,7 +53,7 @@ export const toolCallMessages = {
   "toolCall.renderer.read.detail.offset": "オフセット: {offset}",
   "toolCall.renderer.read.detail.limit": "上限: {limit}",
 
-  "toolCall.renderer.todo.empty": "まだ項目がありません。",
+  "toolCall.renderer.todo.empty": "計画済みの項目はありません",
   "toolCall.renderer.todo.status.pending": "保留",
   "toolCall.renderer.todo.status.inProgress": "進行中",
   "toolCall.renderer.todo.status.completed": "完了",

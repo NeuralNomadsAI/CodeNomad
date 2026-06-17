@@ -53,7 +53,7 @@ export const toolCallMessages = {
   "toolCall.renderer.read.detail.offset": "היסט: {offset}",
   "toolCall.renderer.read.detail.limit": "מגבלה: {limit}",
 
-  "toolCall.renderer.todo.empty": "אין פריטי תוכנית עדיין.",
+  "toolCall.renderer.todo.empty": "אין פריטים מתוכננים",
   "toolCall.renderer.todo.status.pending": "ממתין",
   "toolCall.renderer.todo.status.inProgress": "בביצוע",
   "toolCall.renderer.todo.status.completed": "הושלם",

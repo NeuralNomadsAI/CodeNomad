@@ -53,7 +53,7 @@ export const toolCallMessages = {
   "toolCall.renderer.read.detail.offset": "Offset: {offset}",
   "toolCall.renderer.read.detail.limit": "Limit: {limit}",
 
-  "toolCall.renderer.todo.empty": "Noch keine Planelemente.",
+  "toolCall.renderer.todo.empty": "Keine Elemente geplant",
   "toolCall.renderer.todo.status.pending": "Ausstehend",
   "toolCall.renderer.todo.status.inProgress": "In Arbeit",
   "toolCall.renderer.todo.status.completed": "Abgeschlossen",
