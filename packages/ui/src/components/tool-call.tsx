@@ -506,59 +506,73 @@ function ToolCallDetails(props: {
     return status() === "pending" && !props.pendingPermission() && tool !== "todowrite" && tool !== "todoread"
   }
 
+  const renderToolOutputBody = () => {
+    const body = renderToolBody()
+    const error = renderError()
+    const showPending = shouldShowPendingMessage()
+
+    if (!body && !error && !showPending) {
+      return null
+    }
+
+    return (
+      <div class="tool-call-body">
+        {body}
+        {error}
+
+        <Show when={showPending}>
+          <div class="tool-call-pending-message">
+            <span class="spinner-small"></span>
+            <span>{props.t("toolCall.pending.waitingToRun")}</span>
+          </div>
+        </Show>
+      </div>
+    )
+  }
+
   return (
     <div class="tool-call-details">
       <Show
         when={props.isToolInputVisible() && props.hasToolInput()}
-        fallback={
-          <>
-            {renderToolBody()}
-            {renderError()}
-
-            <Show when={shouldShowPendingMessage()}>
-              <div class="tool-call-pending-message">
-                <span class="spinner-small"></span>
-                <span>{props.t("toolCall.pending.waitingToRun")}</span>
-              </div>
-            </Show>
-          </>
-        }
+        fallback={renderToolOutputBody()}
       >
-        <div class="tool-call-io-sections">
-          <div class="tool-call-io-section">
-            <button type="button" class="tool-call-io-toggle" aria-expanded={props.inputSectionExpanded()} onClick={props.toggleInputSection}>
-              <span class="tool-call-io-title">{props.t("toolCall.io.input")}</span>
-            </button>
+        <div class="tool-call-body">
+          <div class="tool-call-io-sections">
+            <div class="tool-call-io-section">
+              <button type="button" class="tool-call-io-toggle" aria-expanded={props.inputSectionExpanded()} onClick={props.toggleInputSection}>
+                <span class="tool-call-io-title">{props.t("toolCall.io.input")}</span>
+              </button>
 
-            <Show when={props.inputSectionExpanded()}>
-              <div class="tool-call-io-body">
-                {(() => {
-                  const content = toolInputMarkdown()
-                  if (!content) return null
-                  return renderMarkdownContent({ content, cacheKey: "input" })
-                })()}
-              </div>
-            </Show>
-          </div>
+              <Show when={props.inputSectionExpanded()}>
+                <div class="tool-call-io-body">
+                  {(() => {
+                    const content = toolInputMarkdown()
+                    if (!content) return null
+                    return renderMarkdownContent({ content, cacheKey: "input" })
+                  })()}
+                </div>
+              </Show>
+            </div>
 
-          <div class="tool-call-io-section">
-            <button type="button" class="tool-call-io-toggle" aria-expanded={props.outputSectionExpanded()} onClick={props.toggleOutputSection}>
-              <span class="tool-call-io-title">{props.t("toolCall.io.output")}</span>
-            </button>
+            <div class="tool-call-io-section">
+              <button type="button" class="tool-call-io-toggle" aria-expanded={props.outputSectionExpanded()} onClick={props.toggleOutputSection}>
+                <span class="tool-call-io-title">{props.t("toolCall.io.output")}</span>
+              </button>
 
-            <Show when={props.outputSectionExpanded()}>
-              <div class="tool-call-io-body">
-                {renderToolBody()}
-                {renderError()}
+              <Show when={props.outputSectionExpanded()}>
+                <div class="tool-call-io-body">
+                  {renderToolBody()}
+                  {renderError()}
 
-                <Show when={shouldShowPendingMessage()}>
-                  <div class="tool-call-pending-message">
-                    <span class="spinner-small"></span>
-                    <span>{props.t("toolCall.pending.waitingToRun")}</span>
-                  </div>
-                </Show>
-              </div>
-            </Show>
+                  <Show when={shouldShowPendingMessage()}>
+                    <div class="tool-call-pending-message">
+                      <span class="spinner-small"></span>
+                      <span>{props.t("toolCall.pending.waitingToRun")}</span>
+                    </div>
+                  </Show>
+                </div>
+              </Show>
+            </div>
           </div>
         </div>
       </Show>

@@ -4,7 +4,7 @@
 
 .tool-call-todo-empty {
   @apply text-sm text-muted;
-  padding: var(--space-xs) var(--space-md) var(--space-xs) calc(0.9rem + var(--message-part-header-gap));
+  padding: var(--space-xs) 0 var(--space-xs) max(0px, calc(0.9rem + var(--message-part-header-gap) - var(--space-md)));
 }
 
 .tool-call-todos {

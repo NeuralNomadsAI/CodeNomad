@@ -274,6 +274,14 @@
   font-size: var(--font-size-xs);
 }
 
+.tool-call-body {
+  padding: 0 var(--space-md) var(--space-md);
+}
+
+.tool-call-body:empty {
+  display: none;
+}
+
 
 .tool-call-io-sections {
   display: flex;
@@ -336,7 +344,7 @@
   /* Keep a visible frame around the scroll viewport (not the content). */
   border: 1px solid var(--tool-call-border-color);
   border-radius: 0;
-  margin: 0 0.75rem 0.75rem;
+  margin: 0;
   padding: 0;
   font-size: var(--font-size-xs);
   line-height: var(--line-height-tight);
@@ -447,7 +455,7 @@
   @apply flex flex-col gap-3;
   border: 2px solid var(--status-warning);
   border-radius: 0;
-  margin: 0;
+  margin: 0 var(--space-md) var(--space-md);
   padding: 1rem 1.25rem;
   background-color: var(--message-assistant-bg);
 }
