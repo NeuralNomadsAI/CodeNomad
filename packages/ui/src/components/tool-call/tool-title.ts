@@ -17,6 +17,7 @@ import { searchRenderer } from "./renderers/search"
 const TITLE_RENDERERS: Record<string, ToolRenderer> = {
   bash: bashRenderer,
   read: readRenderer,
+  skill: readRenderer,
   write: writeRenderer,
   edit: editRenderer,
   apply_patch: applyPatchRenderer,

@@ -756,7 +756,7 @@ export default function ToolCall(props: ToolCallProps) {
     }
     const prefExpanded = toolOutputDefaultExpanded()
     const toolName = toolCallMemo()?.tool || ""
-    if (toolName === "read") {
+    if (toolName === "read" || toolName === "skill") {
       const state = toolState()
       if (state?.status === "error") {
         return true

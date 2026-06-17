@@ -3,15 +3,23 @@ import { ensureMarkdownContent, getRelativePath, getToolName, inferLanguageFromP
 import { tGlobal } from "../../../lib/i18n"
 import { getReadToolSearchText } from "../search-text"
 
+function getReadPath(input: Record<string, any>): string {
+  const filePath = typeof input.filePath === "string" ? input.filePath : ""
+  if (filePath) return filePath
+  const path = typeof input.path === "string" ? input.path : ""
+  if (path) return path
+  return typeof input.name === "string" ? input.name : ""
+}
+
 export const readRenderer: ToolRenderer = {
-  tools: ["read"],
+  tools: ["read", "skill"],
   getSearchText: getReadToolSearchText,
   getAction: () => tGlobal("toolCall.renderer.action.readingFile"),
-  getTitle({ toolState }) {
+  getTitle({ toolName, toolState }) {
     const state = toolState()
     if (!state) return undefined
     const { input } = readToolStatePayload(state)
-    const filePath = typeof input.filePath === "string" ? input.filePath : ""
+    const filePath = getReadPath(input)
     const offset = typeof input.offset === "number" ? input.offset : undefined
     const limit = typeof input.limit === "number" ? input.limit : undefined
     const relativePath = filePath ? getRelativePath(filePath) : ""
@@ -25,7 +33,8 @@ export const readRenderer: ToolRenderer = {
       detailParts.push(tGlobal("toolCall.renderer.read.detail.limit", { limit }))
     }
 
-    const baseTitle = relativePath ? `${getToolName("read")} ${relativePath}` : getToolName("read")
+    const toolLabel = getToolName(toolName())
+    const baseTitle = relativePath ? `${toolLabel} ${relativePath}` : toolLabel
     if (!detailParts.length) {
       return baseTitle
     }
@@ -38,7 +47,7 @@ export const readRenderer: ToolRenderer = {
     const { metadata, input } = readToolStatePayload(state)
     const preview = typeof metadata.preview === "string" ? metadata.preview : null
     if (!preview) return undefined
-    const language = inferLanguageFromPath(typeof input.filePath === "string" ? input.filePath : undefined) ?? "text"
+    const language = inferLanguageFromPath(getReadPath(input)) ?? "text"
     return { language, copyText: preview, wrapToggle: true, suppressInnerHeader: true }
   },
   renderBody({ toolState, renderMarkdown }) {
@@ -46,7 +55,7 @@ export const readRenderer: ToolRenderer = {
     if (!state || state.status === "pending") return null
     const { metadata, input } = readToolStatePayload(state)
     const preview = typeof metadata.preview === "string" ? metadata.preview : null
-    const language = inferLanguageFromPath(typeof input.filePath === "string" ? input.filePath : undefined)
+    const language = inferLanguageFromPath(getReadPath(input))
     const content = ensureMarkdownContent(preview, language, true)
     if (!content) return null
     return renderMarkdown({ content, disableHighlight: state.status === "running" })
