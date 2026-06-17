@@ -429,7 +429,10 @@
 }
 
 .tool-call-diff-toolbar {
-  @apply flex items-center justify-between gap-3 px-3 py-2;
+  @apply flex items-center justify-between;
+  gap: var(--message-part-header-gap);
+  min-height: 1.6rem;
+  padding: 0 var(--space-sm);
   background-color: var(--surface-secondary);
   border-bottom: 1px solid var(--tool-call-border-color);
   position: sticky;
@@ -451,6 +454,22 @@
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.08em;
+}
+
+.tool-call-diff-toolbar .file-viewer-toolbar-icon-button {
+  width: 1.6rem;
+  height: 1.6rem;
+  border: none;
+  border-radius: 0.25rem;
+  background-color: transparent;
+  color: var(--text-secondary);
+}
+
+.tool-call-diff-toolbar .file-viewer-toolbar-icon-button:hover,
+.tool-call-diff-toolbar .file-viewer-toolbar-icon-button.active {
+  background-color: transparent;
+  color: var(--text-primary);
+  box-shadow: none;
 }
 
 .tool-call-diff-toggle {
