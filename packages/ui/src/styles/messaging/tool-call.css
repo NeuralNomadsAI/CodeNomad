@@ -195,25 +195,26 @@
 }
 
 .tool-call-summary {
-  @apply flex-1 text-start inline-flex items-center gap-1.5 min-w-0;
-  color: var(--text-primary);
+  @apply flex-1 text-start inline-flex items-center min-w-0;
+  gap: var(--message-part-header-gap);
+  color: var(--message-part-header-title);
 }
 
 .tool-call-summary-type {
   flex: 0 0 auto;
-  font-family: var(--font-family-sans);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--text-muted);
+  font-family: var(--message-part-header-font-family);
+  font-size: var(--message-part-header-type-font-size);
+  font-weight: var(--message-part-header-type-font-weight);
+  color: var(--message-part-header-type);
 }
 
 .tool-call-summary-title {
   @apply truncate;
-  font-family: var(--font-family-sans);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-normal);
-  line-height: var(--line-height-normal);
-  color: var(--text-primary);
+  font-family: var(--message-part-header-font-family);
+  font-size: var(--message-part-header-title-font-size);
+  font-weight: var(--message-part-header-title-font-weight);
+  line-height: var(--message-part-header-title-line-height);
+  color: var(--message-part-header-title);
   min-width: 0;
 }
 

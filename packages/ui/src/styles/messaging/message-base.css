@@ -548,20 +548,17 @@
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--message-part-header-gap);
   min-width: 0;
   flex: 1 1 auto;
-  font-size: 13px;
-  font-weight: var(--font-weight-medium);
-  color: var(--text-primary);
 }
 
 .message-reasoning-type {
   flex: 0 0 auto;
-  font-family: var(--font-family-sans);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--text-muted);
+  font-family: var(--message-part-header-font-family);
+  font-size: var(--message-part-header-type-font-size);
+  font-weight: var(--message-part-header-type-font-weight);
+  color: var(--message-part-header-type);
 }
 
 .message-reasoning-disclosure {
@@ -576,11 +573,11 @@
 
 .message-reasoning-title {
   @apply truncate;
-  font-family: var(--font-family-sans);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-normal);
-  line-height: var(--line-height-normal);
-  color: var(--text-primary);
+  font-family: var(--message-part-header-font-family);
+  font-size: var(--message-part-header-title-font-size);
+  font-weight: var(--message-part-header-title-font-weight);
+  line-height: var(--message-part-header-title-line-height);
+  color: var(--message-part-header-title);
   min-width: 0;
 }
 
