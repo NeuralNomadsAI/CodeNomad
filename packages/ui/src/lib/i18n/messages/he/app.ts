@@ -12,6 +12,7 @@ export const appMessages = {
   "app.stopInstance.title": "עצור מופע",
   "app.stopInstance.confirmLabel": "עצור",
   "app.stopInstance.cancelLabel": "המשך להריץ",
+  "app.stopInstance.toast.error": "עצירת סביבת העבודה נכשלה.",
 
   "emptyState.logoAlt": "לוגו CodeNomad",
   "emptyState.brandTitle": "CodeNomad",

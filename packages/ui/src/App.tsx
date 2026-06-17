@@ -389,7 +389,7 @@ const App: Component = () => {
 
     if (!confirmed) return
 
-    await stopInstance(instanceId)
+    stopInstance(instanceId)
   }
 
   async function handleNewSession(instanceId: string) {

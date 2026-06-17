@@ -520,15 +520,9 @@
   margin-top: 0.75rem;
 }
 
-.tool-call-permission-reject-label {
-  @apply text-sm;
-  color: var(--text-secondary);
-  font-weight: var(--font-weight-medium);
-}
-
 .tool-call-permission-reject-textarea {
   width: 100%;
-  min-height: 5rem;
+  min-height: 2.35rem;
   resize: vertical;
   background-color: var(--surface-code);
   border: 1px solid var(--tool-call-border-color, var(--border-base));
@@ -542,11 +536,6 @@
 .tool-call-permission-reject-textarea:focus {
   outline: none;
   border-color: var(--status-warning);
-}
-
-.tool-call-permission-reject-hint {
-  @apply text-xs text-muted;
-  margin: 0;
 }
 
 .tool-call-permission-queued-text {
