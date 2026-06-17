@@ -62,6 +62,23 @@ export const applyPatchRenderer: ToolRenderer = {
     }
     return getToolName("apply_patch")
   },
+  getOutputChrome({ toolState }) {
+    const state = toolState()
+    if (!state || state.status === "pending") return undefined
+
+    const payload = readToolStatePayload(state)
+    const files = Array.isArray((payload.metadata as any).files) ? ((payload.metadata as any).files as ApplyPatchFile[]) : []
+    const diffs = files
+      .map((file) => (typeof file.diff === "string" ? file.diff : typeof file.patch === "string" ? file.patch : ""))
+      .filter((diff) => diff.trim().length > 0)
+    if (diffs.length > 0) {
+      return { language: "diff", copyText: diffs.join("\n"), suppressInnerHeader: false }
+    }
+
+    const fallback = isToolStateCompleted(state) && typeof state.output === "string" ? state.output : null
+    if (!fallback) return undefined
+    return { language: "text", copyText: fallback, suppressInnerHeader: true }
+  },
   renderBody({ toolState, renderDiff, renderMarkdown, t }) {
     const state = toolState()
     if (!state || state.status === "pending") return null

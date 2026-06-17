@@ -290,52 +290,95 @@
 .tool-call-io-sections {
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs);
+  gap: 0;
   padding: 0;
 }
 
 .tool-call-io-section {
-  border: 1px solid var(--tool-call-border-color);
+  border: 1px solid var(--tool-call-body-border-color, var(--border-base));
   overflow: hidden;
   background-color: transparent;
   border-radius: 0;
+}
+
+.tool-call-io-section + .tool-call-io-section {
+  border-top: none;
+}
+
+.tool-call-io-header {
+  display: flex;
+  align-items: center;
+  min-height: 1.6rem;
+  background-color: var(--surface-secondary);
+  border-bottom: 1px solid var(--tool-call-body-border-color, var(--border-base));
 }
 
 .tool-call-io-toggle {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 0.75rem;
-  padding: 0.5rem;
-  background-color: var(--surface-secondary);
+  gap: var(--message-part-header-gap);
+  min-width: 0;
+  flex: 1;
+  padding: 0 0 0 var(--space-sm);
+  background-color: transparent;
   border: none;
-  border-bottom: 1px solid var(--tool-call-border-color);
   width: 100%;
+  min-height: 1.6rem;
   text-align: start;
-  font-size: 0.875rem;
-  font-weight: normal;
   color: var(--text-primary);
   cursor: pointer;
 }
 
-.tool-call-io-toggle::before {
-  content: "▶";
+.tool-call-io-toggle:hover {
+  background-color: transparent;
+}
+
+.tool-call-io-disclosure {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 0.9rem;
   font-size: 11px;
-  margin-inline-end: 0.35rem;
   color: var(--text-secondary);
 }
 
-.tool-call-io-toggle[aria-expanded="true"]::before {
-  content: "▼";
+.tool-call-io-title {
+  font-family: var(--message-part-header-font-family);
+  font-size: var(--message-part-header-title-font-size);
+  font-weight: var(--message-part-header-title-font-weight);
+  line-height: var(--message-part-header-title-line-height);
+  color: var(--message-part-header-title);
 }
 
-.tool-call-io-title {
-  font-weight: inherit;
-  color: inherit;
+.tool-call-io-language {
+  flex: 0 0 auto;
+  font-family: var(--message-part-header-font-family);
+  font-size: var(--message-part-header-type-font-size);
+  font-weight: var(--message-part-header-type-font-weight);
+  line-height: var(--message-part-header-title-line-height);
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tool-call-io-actions {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.tool-call-io-copy {
+  margin-inline-end: var(--space-sm);
 }
 
 .tool-call-io-body {
   background-color: var(--surface-code);
+}
+
+.tool-call-io-body[data-suppress-inner-header="true"] .tool-call-markdown .code-block-header {
+  display: none;
 }
 
 /* IO sections provide the outer frame; avoid double borders on markdown frames. */
@@ -678,7 +721,14 @@
   background-color: transparent;
 }
 
+.tool-call-markdown .markdown-code-block pre,
+.tool-call-markdown .markdown-code-block .shiki {
+  border-radius: 0 !important;
+}
+
 .tool-call-markdown .code-block-header {
+  min-height: 1.6rem;
+  padding: 0 0 0 var(--space-sm);
   position: sticky;
   top: 0;
   z-index: auto;
@@ -689,12 +739,45 @@
 
 /* Tool output header (language + copy) needs stronger contrast in light mode. */
 .tool-call-markdown .code-block-language {
+  font-family: var(--message-part-header-font-family);
+  font-size: var(--message-part-header-type-font-size);
+  font-weight: var(--message-part-header-type-font-weight);
+  line-height: var(--message-part-header-title-line-height);
   color: var(--text-primary);
 }
 
 .tool-call-markdown .code-block-copy {
-  border-color: var(--tool-call-border-color);
+  width: 1.6rem;
+  height: 1.6rem;
+  margin-inline-end: var(--space-sm);
+  padding: 0;
+  justify-content: center;
+  gap: 0;
+  border: none;
+  border-radius: 0.25rem;
+  color: var(--text-secondary);
+}
+
+.tool-call-markdown .code-block-copy:hover {
+  background-color: transparent;
   color: var(--text-primary);
+}
+
+.tool-call-markdown .code-block-copy .copy-icon {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+.tool-call-markdown .code-block-copy .copy-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* Plain (non-highlighted) tool output must remain readable in light mode. */

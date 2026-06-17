@@ -25,6 +25,7 @@ import type {
   MarkdownRenderOptions,
   AnsiRenderOptions,
   ToolCallPart,
+  ToolOutputChrome,
   ToolRendererContext,
   ToolScrollHelpers,
 } from "./tool-call/types"
@@ -353,18 +354,20 @@ function ToolCallDetails(props: {
 
   const status = () => props.toolState()?.status || ""
 
-  const toolInputMarkdown = createMemo(() => {
+  const toolInputDisplay = createMemo((): { content: string; copyText: string; language: string } | null => {
     const input = props.toolInput()
     if (!input || Object.keys(input).length === 0) return null
 
     try {
       const yamlText = stringifyYaml(input)
-      return ensureMarkdownContent(yamlText, "yaml", true)
+      const content = ensureMarkdownContent(yamlText, "yaml", true)
+      return content ? { content, copyText: yamlText, language: "yaml" } : null
     } catch (error) {
       log.error("Failed to convert tool call input to YAML", error)
       try {
         const jsonText = JSON.stringify(input, null, 2)
-        return ensureMarkdownContent(jsonText, "json", true)
+        const content = ensureMarkdownContent(jsonText, "json", true)
+        return content ? { content, copyText: jsonText, language: "json" } : null
       } catch (nestedError) {
         log.error("Failed to stringify tool call input", nestedError)
         return null
@@ -461,6 +464,8 @@ function ToolCallDetails(props: {
     return renderer().renderBody(rendererContext)
   }
 
+  const outputChrome = createMemo<ToolOutputChrome>(() => renderer().getOutputChrome?.(rendererContext) ?? {})
+
   const renderError = () => {
     const state = props.toolState()
     if (state?.status === "error" && state.error) {
@@ -506,6 +511,50 @@ function ToolCallDetails(props: {
     return status() === "pending" && !props.pendingPermission() && tool !== "todowrite" && tool !== "todoread"
   }
 
+  const copyIoText = async (event: MouseEvent, text?: string | null) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (!text) return
+    await copyToClipboard(text)
+  }
+
+  const renderIoHeader = (options: {
+    title: () => string
+    language?: () => string | null | undefined
+    expanded: () => boolean
+    onToggle: () => void
+    copyText?: () => string | null | undefined
+    actions?: () => JSXElement
+  }) => (
+    <div class="tool-call-io-header">
+      <button type="button" class="tool-call-io-toggle" aria-expanded={options.expanded()} onClick={options.onToggle}>
+        <span class="tool-call-io-disclosure" aria-hidden="true">{options.expanded() ? "▼" : "▶"}</span>
+        <span class="tool-call-io-title">{options.title()}</span>
+        <Show when={options.language?.()}>
+          {(language) => <span class="tool-call-io-language">{language()}</span>}
+        </Show>
+      </button>
+
+      <Show when={options.actions?.()}>
+        {(actions) => <span class="tool-call-io-actions">{actions()}</span>}
+      </Show>
+
+      <Show when={options.copyText?.()}>
+        {(copyText) => (
+          <button
+            type="button"
+            class="tool-call-header-icon-button tool-call-header-copy tool-call-io-copy"
+            onClick={(event) => void copyIoText(event, copyText())}
+            aria-label={props.t("toolCall.header.copyAriaLabel")}
+            title={props.t("toolCall.header.copyTitle")}
+          >
+            <Copy class="w-3.5 h-3.5" aria-hidden="true" />
+          </button>
+        )}
+      </Show>
+    </div>
+  )
+
   const renderToolOutputBody = () => {
     const body = renderToolBody()
     const error = renderError()
@@ -539,28 +588,41 @@ function ToolCallDetails(props: {
         <div class="tool-call-body">
           <div class="tool-call-io-sections">
             <div class="tool-call-io-section">
-              <button type="button" class="tool-call-io-toggle" aria-expanded={props.inputSectionExpanded()} onClick={props.toggleInputSection}>
-                <span class="tool-call-io-title">{props.t("toolCall.io.input")}</span>
-              </button>
+              {(() => {
+                return renderIoHeader({
+                  title: () => props.t("toolCall.io.input"),
+                  language: () => toolInputDisplay()?.language,
+                  expanded: props.inputSectionExpanded,
+                  onToggle: props.toggleInputSection,
+                  copyText: () => toolInputDisplay()?.copyText,
+                })
+              })()}
 
               <Show when={props.inputSectionExpanded()}>
-                <div class="tool-call-io-body">
+                <div class="tool-call-io-body" data-suppress-inner-header="true">
                   {(() => {
-                    const content = toolInputMarkdown()
-                    if (!content) return null
-                    return renderMarkdownContent({ content, cacheKey: "input" })
+                    const input = toolInputDisplay()
+                    if (!input) return null
+                    return renderMarkdownContent({ content: input.content, cacheKey: "input" })
                   })()}
                 </div>
               </Show>
             </div>
 
             <div class="tool-call-io-section">
-              <button type="button" class="tool-call-io-toggle" aria-expanded={props.outputSectionExpanded()} onClick={props.toggleOutputSection}>
-                <span class="tool-call-io-title">{props.t("toolCall.io.output")}</span>
-              </button>
+              {(() => {
+                return renderIoHeader({
+                  title: () => outputChrome().title || props.t("toolCall.io.output"),
+                  language: () => outputChrome().language,
+                  expanded: props.outputSectionExpanded,
+                  onToggle: props.toggleOutputSection,
+                  copyText: () => outputChrome().copyText,
+                  actions: () => outputChrome().actions,
+                })
+              })()}
 
               <Show when={props.outputSectionExpanded()}>
-                <div class="tool-call-io-body">
+                <div class="tool-call-io-body" data-suppress-inner-header={outputChrome().suppressInnerHeader === false ? undefined : "true"}>
                   {renderToolBody()}
                   {renderError()}
 

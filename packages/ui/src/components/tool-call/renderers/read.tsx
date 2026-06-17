@@ -32,6 +32,15 @@ export const readRenderer: ToolRenderer = {
 
     return `${baseTitle} · ${detailParts.join(" · ")}`
   },
+  getOutputChrome({ toolState }) {
+    const state = toolState()
+    if (!state || state.status === "pending") return undefined
+    const { metadata, input } = readToolStatePayload(state)
+    const preview = typeof metadata.preview === "string" ? metadata.preview : null
+    if (!preview) return undefined
+    const language = inferLanguageFromPath(typeof input.filePath === "string" ? input.filePath : undefined) ?? "text"
+    return { language, copyText: preview, suppressInnerHeader: true }
+  },
   renderBody({ toolState, renderMarkdown }) {
     const state = toolState()
     if (!state || state.status === "pending") return null

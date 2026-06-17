@@ -88,12 +88,21 @@ export interface ToolRenderer {
   tools: string[]
   getTitle?(context: ToolRendererContext): string | undefined
   getAction?(context: ToolRendererContext): string | undefined
+  getOutputChrome?(context: ToolRendererContext): ToolOutputChrome | undefined
   /**
    * Text that is visible or directly revealable through this renderer. Keep this
    * in sync with custom renderBody output when adding specialized tool UIs.
    */
   getSearchText?(context: ToolSearchTextContext): string[]
   renderBody(context: ToolRendererContext): JSXElement | null
+}
+
+export interface ToolOutputChrome {
+  title?: string
+  language?: string
+  copyText?: string | null
+  actions?: JSXElement
+  suppressInnerHeader?: boolean
 }
 
 export type ToolRendererMap = Record<string, ToolRenderer>

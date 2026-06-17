@@ -16,6 +16,24 @@ export const webfetchRenderer: ToolRenderer = {
     }
     return getToolName("webfetch")
   },
+  getOutputChrome({ toolState }) {
+    const state = toolState()
+    if (!state || state.status === "pending") return undefined
+
+    const { metadata } = readToolStatePayload(state)
+    const result = formatUnknown(
+      state.status === "completed"
+        ? state.output
+        : metadata.output,
+    )
+    if (!result) return undefined
+
+    return {
+      language: result.language ?? "text",
+      copyText: result.text,
+      suppressInnerHeader: true,
+    }
+  },
   renderBody({ toolState, renderMarkdown }) {
     const state = toolState()
     if (!state || state.status === "pending") return null

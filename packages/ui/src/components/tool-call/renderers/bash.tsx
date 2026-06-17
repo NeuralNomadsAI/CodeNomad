@@ -94,6 +94,21 @@ function FinalAnsiOutput(props: {
   )
 }
 
+function getBashOutputText(state: ToolState | undefined): string {
+  if (!state || state.status === "pending") return ""
+
+  const { input, metadata } = readToolStatePayload(state)
+  const command = typeof input.command === "string" && input.command.length > 0 ? `$ ${input.command}` : ""
+  const outputResult = formatUnknown(
+    isToolStateCompleted(state)
+      ? state.output
+      : (isToolStateRunning(state) || isToolStateError(state)) && metadata.output
+        ? metadata.output
+        : undefined,
+  )
+  return [command, outputResult?.text].filter(Boolean).join("\n")
+}
+
 function BashToolBody(props: {
   toolState: Accessor<ToolState | undefined>
   renderMarkdown: (options: { content: string }) => ReturnType<ToolRenderer["renderBody"]>
@@ -103,19 +118,7 @@ function BashToolBody(props: {
   const state = createMemo(() => props.toolState())
 
   const joinedContent = createMemo(() => {
-    const current = state()
-    if (!current || current.status === "pending") return ""
-
-    const { input, metadata } = readToolStatePayload(current)
-    const command = typeof input.command === "string" && input.command.length > 0 ? `$ ${input.command}` : ""
-    const outputResult = formatUnknown(
-      isToolStateCompleted(current)
-        ? current.output
-        : (isToolStateRunning(current) || isToolStateError(current)) && metadata.output
-          ? metadata.output
-          : undefined,
-    )
-    return [command, outputResult?.text].filter(Boolean).join("\n")
+    return getBashOutputText(state())
   })
 
   const finalMarkdown = createMemo(() => {
@@ -179,6 +182,11 @@ export const bashRenderer: ToolRenderer = {
 
     const timeoutLabel = `${timeout}ms`
     return `${baseTitle} · ${tGlobal("toolCall.renderer.bash.title.timeout", { timeout: timeoutLabel })}`
+  },
+  getOutputChrome({ toolState }) {
+    const text = getBashOutputText(toolState())
+    if (!text) return undefined
+    return { language: "bash", copyText: text, suppressInnerHeader: true }
   },
   renderBody({ toolState, renderMarkdown, scrollHelpers, onContentRendered }) {
     return <BashToolBody toolState={toolState} renderMarkdown={renderMarkdown as any} scrollHelpers={scrollHelpers} onContentRendered={onContentRendered} />

@@ -15,6 +15,22 @@ export const patchRenderer: ToolRenderer = {
     if (!filePath) return getToolName("patch")
     return `${getToolName("patch")} ${getRelativePath(filePath)}`
   },
+  getOutputChrome({ toolState, toolName }) {
+    const state = toolState()
+    if (!state || state.status === "pending") return undefined
+
+    const diffPayload = extractDiffPayload(toolName(), state)
+    if (diffPayload) {
+      return { language: "diff", copyText: diffPayload.diffText, suppressInnerHeader: false }
+    }
+
+    const { metadata } = readToolStatePayload(state)
+    const diffText = typeof metadata.diff === "string" ? metadata.diff : null
+    const fallback = isToolStateCompleted(state) && typeof state.output === "string" ? state.output : null
+    const copyText = diffText || fallback
+    if (!copyText) return undefined
+    return { language: "diff", copyText, suppressInnerHeader: true }
+  },
   renderBody({ toolState, toolName, renderDiff, renderMarkdown }) {
     const state = toolState()
     if (!state || state.status === "pending") return null
