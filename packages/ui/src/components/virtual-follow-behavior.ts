@@ -18,6 +18,7 @@ export type FollowEvent =
   | { type: "content-grew"; canPinToBottom: boolean }
   | { type: "hold-candidate"; key: string; shouldHold: boolean }
   | { type: "hold-target-changed"; key: string | null; canPinToBottom: boolean }
+  | { type: "clear-hold"; follow: boolean; canPinToBottom: boolean; suppressHold: boolean }
   | { type: "set-follow"; enabled: boolean }
   | { type: "reset"; follow: boolean }
 
@@ -58,35 +59,107 @@ export interface ScrollControllerSnapshot {
   restoring: boolean
 }
 
+export interface FollowSnapshotState {
+  followModeType?: FollowMode["type"]
+  heldKey?: string
+  holdAnchorSuspended?: boolean
+}
+
+export type HoldTargetElementResolver = (itemWrapper: HTMLElement, key: string) => HTMLElement | null | undefined
+
 const noFollowEffect: FollowEffect = { type: "none" }
 
 export function isAutoFollowing(mode: FollowMode) {
-  return mode.type === "following" || mode.type === "holding"
+  return mode.type === "following"
 }
 
 export function getHeldKey(mode: FollowMode) {
   return mode.type === "holding" ? mode.key : null
 }
 
+export function resolveAutoPinHoldElement(
+  itemWrapper: HTMLElement | null | undefined,
+  key: string,
+  resolver?: HoldTargetElementResolver,
+) {
+  if (!itemWrapper) return null
+  if (!resolver) return itemWrapper
+
+  const resolved = resolver(itemWrapper, key)
+  return resolved === undefined ? itemWrapper : resolved
+}
+
+export function shouldSuspendAutoPinToBottomForHold(state: {
+  externalSuspend: boolean
+  activeHoldTargetKey: string | null
+  eligibleHoldTargetKey?: string | null
+}) {
+  return state.externalSuspend || state.activeHoldTargetKey !== null
+}
+
+export function shouldTrackHeldAnchor(state: {
+  activeHoldTargetKey: string | null
+  eligibleHoldTargetKey: string | null
+  suspendedByUser: boolean
+}) {
+  return !state.suspendedByUser && state.activeHoldTargetKey !== null && state.activeHoldTargetKey === state.eligibleHoldTargetKey
+}
+
+export function isSnapshotAutoFollowing(snapshot: { atBottom: boolean; followModeType?: FollowMode["type"] } | null | undefined) {
+  if (!snapshot) return true
+  if (snapshot.followModeType) return snapshot.followModeType === "following"
+  return snapshot.atBottom
+}
+
+export function getFollowSnapshotState(mode: FollowMode, holdAnchorSuspended: boolean): FollowSnapshotState {
+  if (mode.type === "holding") {
+    return {
+      followModeType: "holding",
+      heldKey: mode.key,
+      holdAnchorSuspended: holdAnchorSuspended || undefined,
+    }
+  }
+
+  return { followModeType: mode.type }
+}
+
+export function restoreFollowModeFromSnapshot(state: {
+  atBottom: boolean
+  followModeType?: FollowMode["type"]
+  heldKey?: string
+  hasHeldKeyItem?: boolean
+}): FollowMode {
+  if (state.followModeType === "holding" && state.heldKey && state.hasHeldKeyItem) {
+    return { type: "holding", key: state.heldKey }
+  }
+  if (state.followModeType === "following") {
+    return { type: "following" }
+  }
+  if (state.followModeType === "escaped") {
+    return { type: "escaped" }
+  }
+  return state.atBottom ? { type: "following" } : { type: "escaped" }
+}
+
 export function transitionFollowMode(mode: FollowMode, event: FollowEvent): FollowTransition {
   switch (event.type) {
     case "user-scroll": {
+      if (mode.type === "holding") {
+        if (event.atBottom && event.direction !== "up") {
+          return { mode: { type: "following" }, effect: noFollowEffect }
+        }
+        return { mode, effect: noFollowEffect }
+      }
       if (event.direction === "up") {
         return { mode: { type: "escaped" }, effect: noFollowEffect }
       }
-      if (mode.type === "holding" && event.direction === null) {
-        return { mode: { type: "escaped" }, effect: noFollowEffect }
-      }
-      if (mode.type === "holding" && event.direction === "down") {
-        return { mode: { type: "escaped" }, effect: noFollowEffect }
-      }
-      if (mode.type === "escaped" && event.direction === "down" && event.canPinToBottom) {
+      if (mode.type === "escaped" && event.direction === "down" && event.atBottom && event.canPinToBottom) {
         return {
           mode: { type: "following" },
           effect: { type: "scroll-bottom", immediate: true, suppressHold: false },
         }
       }
-      if (event.atBottom && mode.type !== "holding") {
+      if (event.atBottom) {
         return { mode: { type: "following" }, effect: noFollowEffect }
       }
       return { mode, effect: noFollowEffect }
@@ -111,9 +184,6 @@ export function transitionFollowMode(mode: FollowMode, event: FollowEvent): Foll
       if (mode.type === "following" && event.canPinToBottom) {
         return { mode, effect: { type: "scroll-bottom", immediate: true, suppressHold: false } }
       }
-      if (mode.type === "holding" && event.canPinToBottom) {
-        return { mode, effect: { type: "align-hold", key: mode.key } }
-      }
       return { mode, effect: noFollowEffect }
 
     case "hold-candidate":
@@ -123,12 +193,18 @@ export function transitionFollowMode(mode: FollowMode, event: FollowEvent): Foll
       return { mode, effect: noFollowEffect }
 
     case "hold-target-changed":
-      if (mode.type !== "holding" || event.key === mode.key) {
+      return { mode, effect: noFollowEffect }
+
+    case "clear-hold":
+      if (mode.type !== "holding") {
         return { mode, effect: noFollowEffect }
       }
       return {
-        mode: { type: "following" },
-        effect: event.canPinToBottom ? { type: "scroll-bottom", immediate: false, suppressHold: false } : noFollowEffect,
+        mode: event.follow ? { type: "following" } : { type: "escaped" },
+        effect:
+          event.follow && event.canPinToBottom
+            ? { type: "scroll-bottom", immediate: true, suppressHold: event.suppressHold }
+            : noFollowEffect,
       }
 
     case "set-follow":
@@ -205,6 +281,11 @@ export class VirtualScrollController {
     return this.result(next.effect)
   }
 
+  restoreMode(mode: FollowMode): ScrollControllerResult {
+    this.state.mode = mode
+    return this.result(noFollowEffect)
+  }
+
   jumpTop(immediate: boolean): ScrollControllerResult {
     const next = transitionFollowMode(this.state.mode, { type: "jump-top", immediate })
     this.state.mode = next.mode
@@ -235,7 +316,19 @@ export class VirtualScrollController {
     return this.result(next.effect)
   }
 
-  observeViewport(metrics: ScrollControllerMetrics, now: number, programmatic: boolean, canPinToBottom = false): ScrollControllerResult {
+  clearHold(follow: boolean, canPinToBottom: boolean, suppressHold: boolean): ScrollControllerResult {
+    const next = transitionFollowMode(this.state.mode, { type: "clear-hold", follow, canPinToBottom, suppressHold })
+    this.state.mode = next.mode
+    return this.result(next.effect)
+  }
+
+  observeViewport(
+    metrics: ScrollControllerMetrics,
+    now: number,
+    programmatic: boolean,
+    canPinToBottom = false,
+    forceEscapeFromUpScroll = false,
+  ): ScrollControllerResult {
     const previousOffset = this.state.lastObservedOffset
     const offset = metrics.offset
     const scrolledUp = offset < previousOffset - 1
@@ -247,7 +340,13 @@ export class VirtualScrollController {
     this.clearExpiredUserIntent(now)
 
     const hasFreshIntent = now <= this.state.userIntentUntil
-    if (scrolledUp && this.isAutoFollowing() && !atBottom && this.heldKey() === null && (!programmatic || hasFreshIntent)) {
+    if (
+      scrolledUp &&
+      this.isAutoFollowing() &&
+      (forceEscapeFromUpScroll || !atBottom) &&
+      this.heldKey() === null &&
+      (!programmatic || hasFreshIntent)
+    ) {
       return this.setFollow(false)
     }
 

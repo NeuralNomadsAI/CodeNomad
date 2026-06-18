@@ -391,6 +391,7 @@ function MessageContentItem(props: MessageContentItemProps) {
           parts={visibleParts()}
           instanceId={props.instanceId}
           sessionId={props.sessionId}
+          contentStartPartId={props.startPartId}
           isQueued={isQueued()}
           showAgentMeta={showAgentMeta()}
           showDeleteMessage={props.showDeleteMessage}
