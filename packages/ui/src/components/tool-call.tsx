@@ -1002,17 +1002,18 @@ export default function ToolCall(props: ToolCallProps) {
     }
 
     if (includePrimaryActions) {
-      items.push({
-        key: "copy",
-        label: t("toolCall.header.copyOutputTitle"),
-        icon: <Copy class="w-3.5 h-3.5" aria-hidden="true" />,
-        disabled: !canCopyHeaderOutput(),
-        onSelect: async () => {
-          const text = headerCopyText()
-          if (!text) return
-          await copyToClipboard(text)
-        },
-      })
+      if (canCopyHeaderOutput()) {
+        items.push({
+          key: "copy",
+          label: t("toolCall.header.copyOutputTitle"),
+          icon: <Copy class="w-3.5 h-3.5" aria-hidden="true" />,
+          onSelect: async () => {
+            const text = headerCopyText()
+            if (!text) return
+            await copyToClipboard(text)
+          },
+        })
+      }
 
       if (canToggleOutputWrap()) {
         items.push({
@@ -1073,16 +1074,17 @@ export default function ToolCall(props: ToolCallProps) {
           </span>
         </button>
 
-        <button
-          type="button"
-          class="tool-call-header-icon-button tool-call-header-copy"
-          onClick={handleCopyHeader}
-          disabled={!canCopyHeaderOutput()}
-          aria-label={t("toolCall.header.copyOutputAriaLabel")}
-          title={t("toolCall.header.copyOutputTitle")}
-        >
-          <Copy class="w-3.5 h-3.5" />
-        </button>
+        <Show when={canCopyHeaderOutput()}>
+          <button
+            type="button"
+            class="tool-call-header-icon-button tool-call-header-copy"
+            onClick={handleCopyHeader}
+            aria-label={t("toolCall.header.copyOutputAriaLabel")}
+            title={t("toolCall.header.copyOutputTitle")}
+          >
+            <Copy class="w-3.5 h-3.5" />
+          </button>
+        </Show>
 
         <Show when={canToggleOutputWrap()}>
           <button

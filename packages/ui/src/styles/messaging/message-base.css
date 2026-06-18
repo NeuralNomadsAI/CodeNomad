@@ -200,7 +200,10 @@
 .message-step-finish {
   background-color: var(--message-assistant-bg);
   border-inline-start: 4px solid var(--message-assistant-border);
+  border-block-start: none;
+  border-block-end: none;
   margin: 0;
+  padding-top: 0;
 }
 
 .message-step-finish-flush {
@@ -403,6 +406,9 @@
 .message-step-finish {
   background-color: var(--message-assistant-bg);
   border-inline-start: 4px solid var(--message-assistant-border);
+  border-block-start: none;
+  border-block-end: none;
+  padding-top: 0;
 }
 
 .message-step-heading {

@@ -32,7 +32,7 @@ function DeleteUpToIcon() {
 
 const USER_BORDER_COLOR = "var(--message-user-border)"
 const ASSISTANT_BORDER_COLOR = "var(--message-assistant-border)"
-const TOOL_BORDER_COLOR = "var(--message-tool-border)"
+const NO_STEP_BORDER = "none"
 const REASONING_SCROLL_SENTINEL_MARGIN_PX = 48
 
 const LazyToolCall = lazy(() => import("./tool-call"))
@@ -802,7 +802,7 @@ export default function MessageBlock(props: MessageBlockProps) {
         }
         items.push(toolItem)
         blockToolKeys.push(key)
-        lastAccentColor = TOOL_BORDER_COLOR
+        lastAccentColor = NO_STEP_BORDER
         return
       }
 
@@ -1219,7 +1219,14 @@ function StepCard(props: StepCardProps) {
     }
   }
 
-  const finishStyle = () => (props.borderColor ? { "border-left-color": props.borderColor } : undefined)
+  const finishStyle = () => {
+    if (props.borderColor === NO_STEP_BORDER) {
+      return {
+        "border-inline-start": "none",
+      }
+    }
+    return props.borderColor ? { "border-left-color": props.borderColor } : undefined
+  }
   let didReportUsageStats = false
 
   createEffect(() => {
