@@ -12,7 +12,7 @@ function getReadPath(input: Record<string, any>): string {
 }
 
 export const readRenderer: ToolRenderer = {
-  tools: ["read", "skill"],
+  tools: ["read"],
   getSearchText: getReadToolSearchText,
   getAction: () => tGlobal("toolCall.renderer.action.readingFile"),
   getTitle({ toolName, toolState }) {

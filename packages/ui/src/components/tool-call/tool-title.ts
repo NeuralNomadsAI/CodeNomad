@@ -5,6 +5,7 @@ import { enMessages } from "../../lib/i18n/messages/en"
 import { defaultRenderer } from "./renderers/default"
 import { bashRenderer } from "./renderers/bash"
 import { readRenderer } from "./renderers/read"
+import { skillRenderer } from "./renderers/skill"
 import { writeRenderer } from "./renderers/write"
 import { editRenderer } from "./renderers/edit"
 import { applyPatchRenderer } from "./renderers/apply-patch"
@@ -17,7 +18,7 @@ import { searchRenderer } from "./renderers/search"
 const TITLE_RENDERERS: Record<string, ToolRenderer> = {
   bash: bashRenderer,
   read: readRenderer,
-  skill: readRenderer,
+  skill: skillRenderer,
   write: writeRenderer,
   edit: editRenderer,
   apply_patch: applyPatchRenderer,
