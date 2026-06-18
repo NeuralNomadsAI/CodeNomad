@@ -117,6 +117,14 @@ export const messagingMessages = {
   "messageItem.actions.deleteMessageFailedMessage": "Impossible de supprimer le message",
 
   "messageItem.selection.checkboxAriaLabel": "Sélectionner le message pour suppression",
+  "messageItem.selection.selectForDeletion": "Sélectionner le message pour suppression",
+  "messageItem.selection.deselectForDeletion": "Désélectionner le message pour suppression",
+  "messageItem.duration.workedFor.seconds.one": "A travaillé pendant {count} seconde",
+  "messageItem.duration.workedFor.seconds.other": "A travaillé pendant {count} secondes",
+  "messageItem.duration.workedFor.minutes.one": "A travaillé pendant {count} minute",
+  "messageItem.duration.workedFor.minutes.other": "A travaillé pendant {count} minutes",
+  "messageItem.duration.workedFor.hours.one": "A travaillé pendant {count} heure",
+  "messageItem.duration.workedFor.hours.other": "A travaillé pendant {count} heures",
 
   "messageSection.bulkDelete.toolbarAriaLabel": "Éléments sélectionnés ({count})",
   "messageSection.bulkDelete.deleteSelectedTitle": "Supprimer les éléments sélectionnés",

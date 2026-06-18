@@ -115,6 +115,14 @@ export const messagingMessages = {
   "messageItem.actions.deleteMessageFailedMessage": "Nachricht konnte nicht gelöscht werden",
 
   "messageItem.selection.checkboxAriaLabel": "Nachricht zum Löschen auswählen",
+  "messageItem.selection.selectForDeletion": "Nachricht zum Löschen auswählen",
+  "messageItem.selection.deselectForDeletion": "Nachricht zum Löschen abwählen",
+  "messageItem.duration.workedFor.seconds.one": "Hat {count} Sekunde gearbeitet",
+  "messageItem.duration.workedFor.seconds.other": "Hat {count} Sekunden gearbeitet",
+  "messageItem.duration.workedFor.minutes.one": "Hat {count} Minute gearbeitet",
+  "messageItem.duration.workedFor.minutes.other": "Hat {count} Minuten gearbeitet",
+  "messageItem.duration.workedFor.hours.one": "Hat {count} Stunde gearbeitet",
+  "messageItem.duration.workedFor.hours.other": "Hat {count} Stunden gearbeitet",
 
   "messageSection.bulkDelete.toolbarAriaLabel": "Ausgewählte Elemente ({count})",
   "messageSection.bulkDelete.deleteSelectedTitle": "Ausgewählte Elemente löschen",

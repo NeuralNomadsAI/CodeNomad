@@ -404,23 +404,21 @@ export default function MessageItem(props: MessageItemProps) {
     const duration = totalDuration()
     if (typeof duration !== "number" || !Number.isFinite(duration) || duration <= 0) return ""
 
-    const formatWorkedFor = (count: number, unit: "second" | "minute" | "hour") => {
-      const suffix = count === 1 ? unit : `${unit}s`
-      return `Worked for ${count} ${suffix}`
-    }
+    const formatWorkedFor = (count: number, unit: "seconds" | "minutes" | "hours") =>
+      t(`messageItem.duration.workedFor.${unit}.${count === 1 ? "one" : "other"}`, { count })
 
     const seconds = Math.max(1, Math.round(duration / 1000))
     if (seconds < 60) {
-      return formatWorkedFor(seconds, "second")
+      return formatWorkedFor(seconds, "seconds")
     }
 
     const minutes = Math.max(1, Math.round(seconds / 60))
     if (minutes < 60) {
-      return formatWorkedFor(minutes, "minute")
+      return formatWorkedFor(minutes, "minutes")
     }
 
     const hours = Math.max(1, Math.round(minutes / 60))
-    return formatWorkedFor(hours, "hour")
+    return formatWorkedFor(hours, "hours")
   }
 
   const actionMenuItems = (includePrimaryActions = false): ActionOverflowMenuItem[] => {
@@ -429,10 +427,13 @@ export default function MessageItem(props: MessageItemProps) {
     if (props.showDeleteMessage) {
       items.push({
         key: "select",
-        label: t("messageItem.selection.checkboxAriaLabel"),
+        label: isSelectedForDeletion()
+          ? t("messageItem.selection.deselectForDeletion")
+          : t("messageItem.selection.selectForDeletion"),
         icon: isSelectedForDeletion()
           ? <CheckSquare2 class="w-3.5 h-3.5" aria-hidden="true" />
           : <Square class="w-3.5 h-3.5" aria-hidden="true" />,
+        checked: isSelectedForDeletion(),
         onSelect: () => props.onToggleSelectedMessage?.(props.record.id, !isSelectedForDeletion()),
       })
     }

@@ -4,6 +4,8 @@ export const toolCallMessages = {
 
   "toolCall.header.copyTitle": "复制工具调用标题",
   "toolCall.header.copyAriaLabel": "复制工具调用标题",
+  "toolCall.header.copyOutputTitle": "复制工具输出",
+  "toolCall.header.copyOutputAriaLabel": "复制工具输出",
 
   "toolCall.header.showInputTitle": "显示工具参数",
   "toolCall.header.showInputAriaLabel": "显示工具参数",
@@ -12,6 +14,10 @@ export const toolCallMessages = {
 
   "toolCall.io.input": "工具输入",
   "toolCall.io.output": "工具输出",
+  "toolCall.io.copyInputTitle": "复制工具输入",
+  "toolCall.io.copyInputAriaLabel": "复制工具输入",
+  "toolCall.io.copyOutputTitle": "复制工具输出",
+  "toolCall.io.copyOutputAriaLabel": "复制工具输出",
 
   "toolCall.diff.label": "差异",
   "toolCall.diff.label.withPath": "差异 · {path}",

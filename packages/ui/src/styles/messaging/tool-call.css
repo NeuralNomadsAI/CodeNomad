@@ -933,18 +933,6 @@
 }
 
 
-.tool-call-diagnostics-heading {
-  @apply flex items-center gap-2 p-2 w-full border-none cursor-pointer text-start;
-  font-family: var(--font-family-mono);
-  font-size: 13px;
-  color: var(--text-primary);
-  background-color: var(--surface-code);
-}
-
-.tool-call-diagnostics-heading:hover {
-  background-color: var(--surface-hover);
-}
-
 .tool-call-diagnostics-title {
   font-size: 13px;
 }
@@ -958,16 +946,6 @@
   border-radius: var(--radius-sm);
   border: 1px solid var(--tool-call-border-color, var(--border-base));
   font-size: 12px;
-}
-
-.tool-call-diagnostics-file {
-  @apply inline-flex items-center;
-  flex: 1;
-  font-size: 12px;
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .tool-call-diagnostics-spacer {

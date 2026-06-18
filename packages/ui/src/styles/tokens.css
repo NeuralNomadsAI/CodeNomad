@@ -47,7 +47,7 @@
   --message-part-header-type-font-size: var(--font-size-sm);
   --message-part-header-type-font-weight: var(--font-weight-medium);
   --message-part-header-title-font-size: var(--font-size-sm);
-  --message-part-header-title-font-weight: var(--font-weight-normal);
+  --message-part-header-title-font-weight: var(--font-weight-regular);
   --message-part-header-title-line-height: var(--line-height-normal);
 
   /* Session list selection tints */

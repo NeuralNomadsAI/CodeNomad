@@ -535,6 +535,8 @@ function ToolCallDetails(props: {
     expanded: () => boolean
     onToggle: () => void
     copyText?: () => string | null | undefined
+    copyTitle?: () => string
+    copyAriaLabel?: () => string
     actions?: () => JSXElement
     wrapToggle?: () => boolean | undefined
   }) => (
@@ -557,8 +559,8 @@ function ToolCallDetails(props: {
             type="button"
             class="tool-call-header-icon-button tool-call-header-copy tool-call-io-copy"
             onClick={(event) => void copyIoText(event, copyText())}
-            aria-label={props.t("toolCall.header.copyAriaLabel")}
-            title={props.t("toolCall.header.copyTitle")}
+            aria-label={options.copyAriaLabel?.() ?? props.t("toolCall.io.copyOutputAriaLabel")}
+            title={options.copyTitle?.() ?? props.t("toolCall.io.copyOutputTitle")}
           >
             <Copy class="w-3.5 h-3.5" aria-hidden="true" />
           </button>
@@ -644,6 +646,8 @@ function ToolCallDetails(props: {
                   expanded: props.inputSectionExpanded,
                   onToggle: props.toggleInputSection,
                   copyText: () => toolInputDisplay()?.copyText,
+                  copyTitle: () => props.t("toolCall.io.copyInputTitle"),
+                  copyAriaLabel: () => props.t("toolCall.io.copyInputAriaLabel"),
                 })
               })()}
 
@@ -666,6 +670,8 @@ function ToolCallDetails(props: {
                     expanded: props.outputSectionExpanded,
                     onToggle: props.toggleOutputSection,
                     copyText: () => outputChrome().copyText,
+                    copyTitle: () => props.t("toolCall.io.copyOutputTitle"),
+                    copyAriaLabel: () => props.t("toolCall.io.copyOutputAriaLabel"),
                     actions: () => outputChrome().actions,
                     wrapToggle: () => outputChrome().wrapToggle,
                   })}
@@ -998,7 +1004,7 @@ export default function ToolCall(props: ToolCallProps) {
     if (includePrimaryActions) {
       items.push({
         key: "copy",
-        label: t("toolCall.header.copyTitle"),
+        label: t("toolCall.header.copyOutputTitle"),
         icon: <Copy class="w-3.5 h-3.5" aria-hidden="true" />,
         disabled: !canCopyHeaderOutput(),
         onSelect: async () => {
@@ -1072,8 +1078,8 @@ export default function ToolCall(props: ToolCallProps) {
           class="tool-call-header-icon-button tool-call-header-copy"
           onClick={handleCopyHeader}
           disabled={!canCopyHeaderOutput()}
-          aria-label={t("toolCall.header.copyAriaLabel")}
-          title={t("toolCall.header.copyTitle")}
+          aria-label={t("toolCall.header.copyOutputAriaLabel")}
+          title={t("toolCall.header.copyOutputTitle")}
         >
           <Copy class="w-3.5 h-3.5" />
         </button>

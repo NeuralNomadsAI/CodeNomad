@@ -115,6 +115,14 @@ export const messagingMessages = {
   "messageItem.actions.deleteMessageFailedMessage": "Failed to delete message",
 
   "messageItem.selection.checkboxAriaLabel": "Select message for deletion",
+  "messageItem.selection.selectForDeletion": "Select message for deletion",
+  "messageItem.selection.deselectForDeletion": "Deselect message for deletion",
+  "messageItem.duration.workedFor.seconds.one": "Worked for {count} second",
+  "messageItem.duration.workedFor.seconds.other": "Worked for {count} seconds",
+  "messageItem.duration.workedFor.minutes.one": "Worked for {count} minute",
+  "messageItem.duration.workedFor.minutes.other": "Worked for {count} minutes",
+  "messageItem.duration.workedFor.hours.one": "Worked for {count} hour",
+  "messageItem.duration.workedFor.hours.other": "Worked for {count} hours",
 
   "messageSection.bulkDelete.toolbarAriaLabel": "Selected items ({count})",
   "messageSection.bulkDelete.deleteSelectedTitle": "Delete selected items",

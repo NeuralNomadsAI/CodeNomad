@@ -4,6 +4,8 @@ export const toolCallMessages = {
 
   "toolCall.header.copyTitle": "Copiar título de la llamada de herramienta",
   "toolCall.header.copyAriaLabel": "Copiar título de la llamada de herramienta",
+  "toolCall.header.copyOutputTitle": "Copiar salida de herramienta",
+  "toolCall.header.copyOutputAriaLabel": "Copiar salida de herramienta",
 
   "toolCall.header.showInputTitle": "Mostrar argumentos de herramienta",
   "toolCall.header.showInputAriaLabel": "Mostrar argumentos de herramienta",
@@ -12,6 +14,10 @@ export const toolCallMessages = {
 
   "toolCall.io.input": "Entrada de herramienta",
   "toolCall.io.output": "Salida de herramienta",
+  "toolCall.io.copyInputTitle": "Copiar entrada de herramienta",
+  "toolCall.io.copyInputAriaLabel": "Copiar entrada de herramienta",
+  "toolCall.io.copyOutputTitle": "Copiar salida de herramienta",
+  "toolCall.io.copyOutputAriaLabel": "Copiar salida de herramienta",
 
   "toolCall.diff.label": "Diff",
   "toolCall.diff.label.withPath": "Diff · {path}",

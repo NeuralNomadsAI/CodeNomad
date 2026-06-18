@@ -115,6 +115,14 @@ export const messagingMessages = {
   "messageItem.actions.deleteMessageFailedMessage": "सन्देश मेटाउन असफल भयो",
 
   "messageItem.selection.checkboxAriaLabel": "मेटाउनको लागि सन्देश चयन गर्नुहोस्",
+  "messageItem.selection.selectForDeletion": "मेटाउनको लागि सन्देश चयन गर्नुहोस्",
+  "messageItem.selection.deselectForDeletion": "मेटाउनको लागि सन्देश चयन हटाउनुहोस्",
+  "messageItem.duration.workedFor.seconds.one": "{count} सेकेन्ड काम गर्‍यो",
+  "messageItem.duration.workedFor.seconds.other": "{count} सेकेन्ड काम गर्‍यो",
+  "messageItem.duration.workedFor.minutes.one": "{count} मिनेट काम गर्‍यो",
+  "messageItem.duration.workedFor.minutes.other": "{count} मिनेट काम गर्‍यो",
+  "messageItem.duration.workedFor.hours.one": "{count} घण्टा काम गर्‍यो",
+  "messageItem.duration.workedFor.hours.other": "{count} घण्टा काम गर्‍यो",
 
   "messageSection.bulkDelete.toolbarAriaLabel": "चयन गरिएका वस्तुहरू ({count})",
   "messageSection.bulkDelete.deleteSelectedTitle": "चयन गरिएका वस्तुहरू मेटाउनुहोस्",

@@ -4,6 +4,8 @@ export const toolCallMessages = {
 
   "toolCall.header.copyTitle": "ツール呼び出しのタイトルをコピー",
   "toolCall.header.copyAriaLabel": "ツール呼び出しのタイトルをコピー",
+  "toolCall.header.copyOutputTitle": "ツール出力をコピー",
+  "toolCall.header.copyOutputAriaLabel": "ツール出力をコピー",
 
   "toolCall.header.showInputTitle": "ツール引数を表示",
   "toolCall.header.showInputAriaLabel": "ツール引数を表示",
@@ -12,6 +14,10 @@ export const toolCallMessages = {
 
   "toolCall.io.input": "ツール入力",
   "toolCall.io.output": "ツール出力",
+  "toolCall.io.copyInputTitle": "ツール入力をコピー",
+  "toolCall.io.copyInputAriaLabel": "ツール入力をコピー",
+  "toolCall.io.copyOutputTitle": "ツール出力をコピー",
+  "toolCall.io.copyOutputAriaLabel": "ツール出力をコピー",
 
   "toolCall.diff.label": "差分",
   "toolCall.diff.label.withPath": "差分 · {path}",

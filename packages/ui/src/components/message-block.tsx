@@ -504,10 +504,13 @@ function ToolCallItem(props: ToolCallItemProps) {
     if (props.showDeleteMessage) {
       items.push({
         key: "select",
-        label: t("messageItem.selection.checkboxAriaLabel"),
+        label: isSelectedForDeletion()
+          ? t("messageItem.selection.deselectForDeletion")
+          : t("messageItem.selection.selectForDeletion"),
         icon: isSelectedForDeletion()
           ? <CheckSquare2 class="w-3.5 h-3.5" aria-hidden="true" />
           : <Square class="w-3.5 h-3.5" aria-hidden="true" />,
+        checked: isSelectedForDeletion(),
         onSelect: () => props.onToggleSelectedMessage?.(props.messageId, !isSelectedForDeletion()),
       })
     }
@@ -1107,10 +1110,13 @@ function CompactionCard(props: CompactionCardProps) {
     return [
       {
         key: "select",
-        label: t("messageItem.selection.checkboxAriaLabel"),
+        label: isSelectedForDeletion()
+          ? t("messageItem.selection.deselectForDeletion")
+          : t("messageItem.selection.selectForDeletion"),
         icon: isSelectedForDeletion()
           ? <CheckSquare2 class="w-3.5 h-3.5" aria-hidden="true" />
           : <Square class="w-3.5 h-3.5" aria-hidden="true" />,
+        checked: isSelectedForDeletion(),
         onSelect: () => props.onToggleSelectedMessage?.(props.messageId, !isSelectedForDeletion()),
       },
       {
@@ -1260,10 +1266,13 @@ function StepCard(props: StepCardProps) {
     return [
       {
         key: "select",
-        label: t("messageItem.selection.checkboxAriaLabel"),
+        label: isSelectedForDeletion()
+          ? t("messageItem.selection.deselectForDeletion")
+          : t("messageItem.selection.selectForDeletion"),
         icon: isSelectedForDeletion()
           ? <CheckSquare2 class="w-3.5 h-3.5" aria-hidden="true" />
           : <Square class="w-3.5 h-3.5" aria-hidden="true" />,
+        checked: isSelectedForDeletion(),
         onSelect: () => props.onToggleSelectedMessage?.(props.messageId!, !isSelectedForDeletion()),
       },
       {
@@ -1608,10 +1617,13 @@ function ReasoningCard(props: ReasoningCardProps) {
     if (props.showDeleteMessage) {
       items.push({
         key: "select",
-        label: t("messageItem.selection.checkboxAriaLabel"),
+        label: isSelectedForDeletion()
+          ? t("messageItem.selection.deselectForDeletion")
+          : t("messageItem.selection.selectForDeletion"),
         icon: isSelectedForDeletion()
           ? <CheckSquare2 class="w-3.5 h-3.5" aria-hidden="true" />
           : <Square class="w-3.5 h-3.5" aria-hidden="true" />,
+        checked: isSelectedForDeletion(),
         onSelect: () => props.onToggleSelectedMessage?.(props.messageId, !isSelectedForDeletion()),
       })
     }

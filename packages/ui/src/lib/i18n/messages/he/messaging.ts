@@ -115,6 +115,14 @@ export const messagingMessages = {
   "messageItem.actions.deleteMessageFailedMessage": "מחיקת ההודעה נכשלה",
 
   "messageItem.selection.checkboxAriaLabel": "בחר הודעה למחיקה",
+  "messageItem.selection.selectForDeletion": "בחר הודעה למחיקה",
+  "messageItem.selection.deselectForDeletion": "בטל בחירת הודעה למחיקה",
+  "messageItem.duration.workedFor.seconds.one": "עבד במשך {count} שנייה",
+  "messageItem.duration.workedFor.seconds.other": "עבד במשך {count} שניות",
+  "messageItem.duration.workedFor.minutes.one": "עבד במשך {count} דקה",
+  "messageItem.duration.workedFor.minutes.other": "עבד במשך {count} דקות",
+  "messageItem.duration.workedFor.hours.one": "עבד במשך {count} שעה",
+  "messageItem.duration.workedFor.hours.other": "עבד במשך {count} שעות",
 
   "messageSection.bulkDelete.toolbarAriaLabel": "פריטים נבחרים ({count})",
   "messageSection.bulkDelete.deleteSelectedTitle": "מחק פריטים נבחרים",

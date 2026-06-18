@@ -117,6 +117,14 @@ export const messagingMessages = {
   "messageItem.actions.deleteMessageFailedMessage": "Не удалось удалить сообщение",
 
   "messageItem.selection.checkboxAriaLabel": "Выбрать сообщение для удаления",
+  "messageItem.selection.selectForDeletion": "Выбрать сообщение для удаления",
+  "messageItem.selection.deselectForDeletion": "Снять выбор сообщения для удаления",
+  "messageItem.duration.workedFor.seconds.one": "Работал {count} секунду",
+  "messageItem.duration.workedFor.seconds.other": "Работал {count} сек.",
+  "messageItem.duration.workedFor.minutes.one": "Работал {count} минуту",
+  "messageItem.duration.workedFor.minutes.other": "Работал {count} мин.",
+  "messageItem.duration.workedFor.hours.one": "Работал {count} час",
+  "messageItem.duration.workedFor.hours.other": "Работал {count} ч.",
 
   "messageSection.bulkDelete.toolbarAriaLabel": "Выбранные элементы ({count})",
   "messageSection.bulkDelete.deleteSelectedTitle": "Удалить выбранные элементы",

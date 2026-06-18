@@ -4,6 +4,8 @@ export const toolCallMessages = {
 
   "toolCall.header.copyTitle": "העתק כותרת קריאת כלי",
   "toolCall.header.copyAriaLabel": "העתק כותרת קריאת כלי",
+  "toolCall.header.copyOutputTitle": "העתק פלט כלי",
+  "toolCall.header.copyOutputAriaLabel": "העתק פלט כלי",
 
   "toolCall.header.showInputTitle": "הצג ארגומנטי כלי",
   "toolCall.header.showInputAriaLabel": "הצג ארגומנטי כלי",
@@ -12,6 +14,10 @@ export const toolCallMessages = {
 
   "toolCall.io.input": "קלט כלי",
   "toolCall.io.output": "פלט כלי",
+  "toolCall.io.copyInputTitle": "העתק קלט כלי",
+  "toolCall.io.copyInputAriaLabel": "העתק קלט כלי",
+  "toolCall.io.copyOutputTitle": "העתק פלט כלי",
+  "toolCall.io.copyOutputAriaLabel": "העתק פלט כלי",
 
   "toolCall.diff.label": "Diff",
   "toolCall.diff.label.withPath": "Diff · {path}",

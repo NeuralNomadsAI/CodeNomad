@@ -4,6 +4,8 @@ export const toolCallMessages = {
 
   "toolCall.header.copyTitle": "उपकरण कल शीर्षक प्रतिलिपि गर्नुहोस्",
   "toolCall.header.copyAriaLabel": "उपकरण कल शीर्षक प्रतिलिपि गर्नुहोस्",
+  "toolCall.header.copyOutputTitle": "उपकरण आउटपुट प्रतिलिपि गर्नुहोस्",
+  "toolCall.header.copyOutputAriaLabel": "उपकरण आउटपुट प्रतिलिपि गर्नुहोस्",
 
   "toolCall.header.showInputTitle": "उपकरण तर्कहरू देखाउनुहोस्",
   "toolCall.header.showInputAriaLabel": "उपकरण तर्कहरू देखाउनुहोस्",
@@ -12,6 +14,10 @@ export const toolCallMessages = {
 
   "toolCall.io.input": "उपकरण इनपुट",
   "toolCall.io.output": "उपकरण आउटपुट",
+  "toolCall.io.copyInputTitle": "उपकरण इनपुट प्रतिलिपि गर्नुहोस्",
+  "toolCall.io.copyInputAriaLabel": "उपकरण इनपुट प्रतिलिपि गर्नुहोस्",
+  "toolCall.io.copyOutputTitle": "उपकरण आउटपुट प्रतिलिपि गर्नुहोस्",
+  "toolCall.io.copyOutputAriaLabel": "उपकरण आउटपुट प्रतिलिपि गर्नुहोस्",
 
   "toolCall.diff.label": "डिफ (Diff)",
   "toolCall.diff.label.withPath": "डिफ · {path}",

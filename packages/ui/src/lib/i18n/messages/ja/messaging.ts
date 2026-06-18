@@ -117,6 +117,14 @@ export const messagingMessages = {
   "messageItem.actions.deleteMessageFailedMessage": "メッセージの削除に失敗しました",
 
   "messageItem.selection.checkboxAriaLabel": "削除するメッセージを選択",
+  "messageItem.selection.selectForDeletion": "削除するメッセージを選択",
+  "messageItem.selection.deselectForDeletion": "削除対象のメッセージ選択を解除",
+  "messageItem.duration.workedFor.seconds.one": "{count}秒間処理しました",
+  "messageItem.duration.workedFor.seconds.other": "{count}秒間処理しました",
+  "messageItem.duration.workedFor.minutes.one": "{count}分間処理しました",
+  "messageItem.duration.workedFor.minutes.other": "{count}分間処理しました",
+  "messageItem.duration.workedFor.hours.one": "{count}時間処理しました",
+  "messageItem.duration.workedFor.hours.other": "{count}時間処理しました",
 
   "messageSection.bulkDelete.toolbarAriaLabel": "選択した項目（{count}）",
   "messageSection.bulkDelete.deleteSelectedTitle": "選択した項目を削除",
