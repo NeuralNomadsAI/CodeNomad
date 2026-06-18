@@ -16,12 +16,14 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.5rem;
+  gap: var(--message-part-header-gap);
+  min-height: 1.6rem;
+  padding: 0 var(--space-sm);
   background-color: var(--surface-secondary);
   border-bottom: 1px solid var(--tool-call-border-color, var(--border-base));
-  font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-family: var(--message-part-header-font-family);
+  font-size: var(--message-part-header-title-font-size);
+  line-height: var(--message-part-header-title-line-height);
   color: inherit;
 }
 
@@ -30,7 +32,10 @@
 }
 
 .tool-call-task-section-meta {
-  font-family: var(--font-family-mono);
+  font-family: var(--message-part-header-font-family);
+  font-size: var(--message-part-header-type-font-size);
+  font-weight: var(--message-part-header-type-font-weight);
+  line-height: var(--message-part-header-title-line-height);
   color: var(--text-muted);
 }
 
@@ -39,7 +44,7 @@
 }
 
 .tool-call-task-section-body .tool-call-markdown {
-  padding: 12px;
+  padding: var(--space-md);
 }
 
 .tool-call-task-container {
@@ -78,38 +83,7 @@
 
 /* Nested tool calls (child session tool timeline) */
 .tool-call-task-summary .tool-call {
-  /* Tool calls inside the main message stream are borderless.
-     Use an overlay stripe so hover backgrounds don't hide it. */
   position: relative;
-}
-
-.tool-call-task-summary .tool-call::before {
-  content: "";
-  position: absolute;
-  inset-inline-start: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background-color: var(--task-tool-call-stripe, transparent);
-  pointer-events: none;
-  z-index: 2;
-}
-
-.tool-call-task-summary .tool-call.tool-call-status-completed,
-.tool-call-task-summary .tool-call.tool-call-status-success {
-  --task-tool-call-stripe: var(--status-success);
-}
-
-.tool-call-task-summary .tool-call.tool-call-status-running {
-  --task-tool-call-stripe: var(--status-warning);
-}
-
-.tool-call-task-summary .tool-call.tool-call-status-pending {
-  --task-tool-call-stripe: var(--accent-primary);
-}
-
-.tool-call-task-summary .tool-call.tool-call-status-error {
-  --task-tool-call-stripe: var(--status-error);
 }
 
 .tool-call-task-item {
@@ -117,7 +91,6 @@
   align-items: center;
   gap: 0.4rem;
   padding: 0.35rem 0.5rem 0.35rem 0.75rem;
-  border-inline-start: 2px solid var(--tool-call-border-color, var(--border-base));
   font-size: var(--font-size-sm);
   font-family: var(--font-family-mono);
   line-height: 1.35;
@@ -131,22 +104,6 @@
 
 .tool-call-task-item:hover {
   background-color: var(--surface-hover);
-}
-
-.tool-call-task-item[data-task-status="completed"] {
-  border-inline-start-color: var(--status-success);
-}
-
-.tool-call-task-item[data-task-status="running"] {
-  border-inline-start-color: var(--status-warning);
-}
-
-.tool-call-task-item[data-task-status="pending"] {
-  border-inline-start-color: var(--accent-primary);
-}
-
-.tool-call-task-item[data-task-status="error"] {
-  border-inline-start-color: var(--status-error);
 }
 
 .tool-call-task-icon {
