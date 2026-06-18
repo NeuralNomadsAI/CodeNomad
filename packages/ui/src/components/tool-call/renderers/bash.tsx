@@ -94,6 +94,21 @@ function FinalAnsiOutput(props: {
   )
 }
 
+function getBashCopyText(state: ToolState | undefined): string {
+  if (!state || state.status === "pending") return ""
+
+  const { input, metadata } = readToolStatePayload(state)
+  const command = typeof input.command === "string" && input.command.length > 0 ? `$ ${input.command}` : ""
+  const outputResult = formatUnknown(
+    isToolStateCompleted(state)
+      ? state.output
+      : (isToolStateRunning(state) || isToolStateError(state)) && metadata.output
+        ? metadata.output
+        : undefined,
+  )
+  return [command, outputResult?.text].filter(Boolean).join("\n")
+}
+
 function BashToolBody(props: {
   toolState: Accessor<ToolState | undefined>
   renderMarkdown: (options: { content: string }) => ReturnType<ToolRenderer["renderBody"]>
@@ -179,6 +194,11 @@ export const bashRenderer: ToolRenderer = {
 
     const timeoutLabel = `${timeout}ms`
     return `${baseTitle} · ${tGlobal("toolCall.renderer.bash.title.timeout", { timeout: timeoutLabel })}`
+  },
+  getOutputChrome({ toolState }) {
+    const text = getBashCopyText(toolState())
+    if (!text) return undefined
+    return { language: "bash", copyText: text, wrapToggle: true, suppressInnerHeader: true }
   },
   renderBody({ toolState, renderMarkdown, scrollHelpers, onContentRendered }) {
     return <BashToolBody toolState={toolState} renderMarkdown={renderMarkdown as any} scrollHelpers={scrollHelpers} onContentRendered={onContentRendered} />

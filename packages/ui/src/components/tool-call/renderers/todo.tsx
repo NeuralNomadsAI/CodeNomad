@@ -1,5 +1,6 @@
 import { For, Show } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk/v2"
+import { CheckCircle, CircleEllipsis, MinusCircle, PauseCircle } from "lucide-solid"
 import type { ToolRenderer } from "../types"
 import { readToolStatePayload } from "../utils"
 import { useI18n, tGlobal } from "../../../lib/i18n"
@@ -60,6 +61,19 @@ function getTodoStatusLabel(t: (key: string) => string, status: TodoViewStatus):
   }
 }
 
+function TodoStatusIcon(props: { status: TodoViewStatus }) {
+  switch (props.status) {
+    case "completed":
+      return <CheckCircle class="tool-call-todo-icon" aria-hidden="true" />
+    case "in_progress":
+      return <CircleEllipsis class="tool-call-todo-icon" aria-hidden="true" />
+    case "cancelled":
+      return <MinusCircle class="tool-call-todo-icon" aria-hidden="true" />
+    default:
+      return <PauseCircle class="tool-call-todo-icon" aria-hidden="true" />
+  }
+}
+
 interface TodoListViewProps {
   state?: ToolState
   emptyLabel?: string
@@ -87,20 +101,20 @@ export function TodoListView(props: TodoListViewProps) {
                 classList={{
                   "tool-call-todo-item-completed": todo.status === "completed",
                   "tool-call-todo-item-cancelled": todo.status === "cancelled",
-                  "tool-call-todo-item-active": todo.status === "in_progress",
                 }}
                 role="listitem"
               >
-                <span class="tool-call-todo-checkbox" data-status={todo.status} aria-label={label}></span>
-                  <div class="tool-call-todo-body">
-                    <div class="tool-call-todo-heading">
-                      <span class="tool-call-todo-text">{todo.content}</span>
-                      <Show when={props.showStatusLabel !== false}>
-                        <span class={`tool-call-todo-status tool-call-todo-status-${todo.status}`}>{label}</span>
-                      </Show>
-                    </div>
+                <span class="tool-call-todo-checkbox" data-status={todo.status} aria-label={label}>
+                  <TodoStatusIcon status={todo.status} />
+                </span>
+                <div class="tool-call-todo-body">
+                  <div class="tool-call-todo-heading">
+                    <span class="tool-call-todo-text">{todo.content}</span>
+                    <Show when={props.showStatusLabel !== false}>
+                      <span class={`tool-call-todo-status tool-call-todo-status-${todo.status}`}>{label}</span>
+                    </Show>
                   </div>
-
+                </div>
               </div>
             )
           }}

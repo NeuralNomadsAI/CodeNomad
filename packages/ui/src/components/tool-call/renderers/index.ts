@@ -5,21 +5,25 @@ import { editRenderer } from "./edit"
 import { applyPatchRenderer } from "./apply-patch"
 import { patchRenderer } from "./patch"
 import { readRenderer } from "./read"
+import { skillRenderer } from "./skill"
 import { taskRenderer } from "./task"
 import { todoRenderer } from "./todo"
 import { webfetchRenderer } from "./webfetch"
 import { writeRenderer } from "./write"
 import { invalidRenderer } from "./invalid"
 import { questionRenderer } from "./question"
+import { searchRenderer } from "./search"
 
 const TOOL_RENDERERS: ToolRenderer[] = [
   bashRenderer,
+  skillRenderer,
   readRenderer,
   writeRenderer,
   editRenderer,
   applyPatchRenderer,
   patchRenderer,
   webfetchRenderer,
+  searchRenderer,
   todoRenderer,
   taskRenderer,
   questionRenderer,

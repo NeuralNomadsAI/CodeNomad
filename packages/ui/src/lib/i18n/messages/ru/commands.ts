@@ -168,6 +168,7 @@ export const commandMessages = {
   "unifiedPicker.sections.commands": "КОМАНДЫ",
   "unifiedPicker.sections.agents": "АГЕНТЫ",
   "unifiedPicker.sections.files": "ФАЙЛЫ",
+  "unifiedPicker.sections.workspaceRoot": "КОРЕНЬ РАБОЧЕЙ ОБЛАСТИ",
   "unifiedPicker.badge.subagent": "субагент",
   "unifiedPicker.footer.navigate": "навигация",
   "unifiedPicker.footer.select": "выбрать",

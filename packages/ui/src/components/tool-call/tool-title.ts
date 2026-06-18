@@ -5,6 +5,7 @@ import { enMessages } from "../../lib/i18n/messages/en"
 import { defaultRenderer } from "./renderers/default"
 import { bashRenderer } from "./renderers/bash"
 import { readRenderer } from "./renderers/read"
+import { skillRenderer } from "./renderers/skill"
 import { writeRenderer } from "./renderers/write"
 import { editRenderer } from "./renderers/edit"
 import { applyPatchRenderer } from "./renderers/apply-patch"
@@ -12,15 +13,19 @@ import { patchRenderer } from "./renderers/patch"
 import { webfetchRenderer } from "./renderers/webfetch"
 import { todoRenderer } from "./renderers/todo"
 import { invalidRenderer } from "./renderers/invalid"
+import { searchRenderer } from "./renderers/search"
 
 const TITLE_RENDERERS: Record<string, ToolRenderer> = {
   bash: bashRenderer,
   read: readRenderer,
+  skill: skillRenderer,
   write: writeRenderer,
   edit: editRenderer,
   apply_patch: applyPatchRenderer,
   patch: patchRenderer,
   webfetch: webfetchRenderer,
+  glob: searchRenderer,
+  grep: searchRenderer,
   todowrite: todoRenderer,
   todoread: todoRenderer,
   invalid: invalidRenderer,

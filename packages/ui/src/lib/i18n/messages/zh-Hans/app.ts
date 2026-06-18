@@ -34,4 +34,10 @@ export const appMessages = {
   "releases.devUpdateAvailable.title": "可用的开发版",
   "releases.devUpdateAvailable.message": "有新的开发版可用：{version}。",
   "releases.devUpdateAvailable.action": "查看发布",
+
+  "theme.mode.system": "系统",
+  "theme.mode.light": "浅色",
+  "theme.mode.dark": "深色",
+  "theme.toggle.title": "主题：{mode}",
+  "theme.toggle.ariaLabel": "主题：{mode}",
 } as const
