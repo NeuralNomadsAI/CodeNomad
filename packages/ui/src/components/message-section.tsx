@@ -6,6 +6,7 @@ import MessageBlock from "./message-block"
 import { getMessageAnchorId } from "./message-anchors"
 import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./message-timeline"
 import VirtualFollowList, { type VirtualFollowBottomIntent, type VirtualFollowListApi, type VirtualFollowListState, type VirtualFollowScrollSnapshot } from "./virtual-follow-list"
+import { isSnapshotAutoFollowing } from "./virtual-follow-behavior"
 import { useConfig } from "../stores/preferences"
 import { getSessionInfo } from "../stores/sessions"
 import { messageStoreBus } from "../stores/message-v2/bus"
@@ -658,7 +659,7 @@ export default function MessageSection(props: MessageSectionProps) {
   const followToken = createMemo(() => preferenceSignature())
 
   const initialScrollSnapshot = createMemo(() => store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE))
-  const initialAutoScroll = createMemo(() => initialScrollSnapshot()?.atBottom ?? true)
+  const initialAutoScroll = createMemo(() => isSnapshotAutoFollowing(initialScrollSnapshot()))
 
   const [didRestoreScroll, setDidRestoreScroll] = createSignal(false)
   const lastGoodScrollSnapshots = new Map<string, VirtualFollowScrollSnapshot>()
@@ -830,8 +831,6 @@ export default function MessageSection(props: MessageSectionProps) {
         setDidRestoreScroll(true)
       },
       onApplied: () => {
-        // Keep follow mode consistent with the restored state.
-        api.setAutoScroll(snapshot.atBottom)
         restoringScrollSnapshot = false
         setLastGoodScrollSnapshot(props.sessionId, snapshot)
         setDidRestoreScroll(true)

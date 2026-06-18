@@ -59,6 +59,12 @@ export interface ScrollControllerSnapshot {
   restoring: boolean
 }
 
+export interface FollowSnapshotState {
+  followModeType?: FollowMode["type"]
+  heldKey?: string
+  holdAnchorSuspended?: boolean
+}
+
 export type HoldTargetElementResolver = (itemWrapper: HTMLElement, key: string) => HTMLElement | null | undefined
 
 const noFollowEffect: FollowEffect = { type: "none" }
@@ -89,6 +95,50 @@ export function shouldSuspendAutoPinToBottomForHold(state: {
   eligibleHoldTargetKey?: string | null
 }) {
   return state.externalSuspend || state.activeHoldTargetKey !== null
+}
+
+export function shouldTrackHeldAnchor(state: {
+  activeHoldTargetKey: string | null
+  eligibleHoldTargetKey: string | null
+  suspendedByUser: boolean
+}) {
+  return !state.suspendedByUser && state.activeHoldTargetKey !== null && state.activeHoldTargetKey === state.eligibleHoldTargetKey
+}
+
+export function isSnapshotAutoFollowing(snapshot: { atBottom: boolean; followModeType?: FollowMode["type"] } | null | undefined) {
+  if (!snapshot) return true
+  if (snapshot.followModeType) return snapshot.followModeType === "following"
+  return snapshot.atBottom
+}
+
+export function getFollowSnapshotState(mode: FollowMode, holdAnchorSuspended: boolean): FollowSnapshotState {
+  if (mode.type === "holding") {
+    return {
+      followModeType: "holding",
+      heldKey: mode.key,
+      holdAnchorSuspended: holdAnchorSuspended || undefined,
+    }
+  }
+
+  return { followModeType: mode.type }
+}
+
+export function restoreFollowModeFromSnapshot(state: {
+  atBottom: boolean
+  followModeType?: FollowMode["type"]
+  heldKey?: string
+  hasHeldKeyItem?: boolean
+}): FollowMode {
+  if (state.followModeType === "holding" && state.heldKey && state.hasHeldKeyItem) {
+    return { type: "holding", key: state.heldKey }
+  }
+  if (state.followModeType === "following") {
+    return { type: "following" }
+  }
+  if (state.followModeType === "escaped") {
+    return { type: "escaped" }
+  }
+  return state.atBottom ? { type: "following" } : { type: "escaped" }
 }
 
 export function transitionFollowMode(mode: FollowMode, event: FollowEvent): FollowTransition {
@@ -231,6 +281,11 @@ export class VirtualScrollController {
     return this.result(next.effect)
   }
 
+  restoreMode(mode: FollowMode): ScrollControllerResult {
+    this.state.mode = mode
+    return this.result(noFollowEffect)
+  }
+
   jumpTop(immediate: boolean): ScrollControllerResult {
     const next = transitionFollowMode(this.state.mode, { type: "jump-top", immediate })
     this.state.mode = next.mode
@@ -267,7 +322,13 @@ export class VirtualScrollController {
     return this.result(next.effect)
   }
 
-  observeViewport(metrics: ScrollControllerMetrics, now: number, programmatic: boolean, canPinToBottom = false): ScrollControllerResult {
+  observeViewport(
+    metrics: ScrollControllerMetrics,
+    now: number,
+    programmatic: boolean,
+    canPinToBottom = false,
+    forceEscapeFromUpScroll = false,
+  ): ScrollControllerResult {
     const previousOffset = this.state.lastObservedOffset
     const offset = metrics.offset
     const scrolledUp = offset < previousOffset - 1
@@ -279,7 +340,13 @@ export class VirtualScrollController {
     this.clearExpiredUserIntent(now)
 
     const hasFreshIntent = now <= this.state.userIntentUntil
-    if (scrolledUp && this.isAutoFollowing() && !atBottom && this.heldKey() === null && (!programmatic || hasFreshIntent)) {
+    if (
+      scrolledUp &&
+      this.isAutoFollowing() &&
+      (forceEscapeFromUpScroll || !atBottom) &&
+      this.heldKey() === null &&
+      (!programmatic || hasFreshIntent)
+    ) {
       return this.setFollow(false)
     }
 
