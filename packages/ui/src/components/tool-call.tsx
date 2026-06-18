@@ -583,6 +583,55 @@ function ToolCallDetails(props: {
     </div>
   )
 
+  const renderOutputActions = (options: {
+    language?: () => string | null | undefined
+    copyText?: () => string | null | undefined
+    actions?: () => JSXElement
+    wrapToggle?: () => boolean | undefined
+  }) => (
+    <div class="tool-call-output-actions">
+      <Show when={options.language?.()}>
+        {(language) => <span class="tool-call-output-language">{language()}</span>}
+      </Show>
+
+      <span class="tool-call-output-action-buttons">
+        <Show when={options.actions?.()}>
+          {(actions) => <span class="tool-call-io-actions">{actions()}</span>}
+        </Show>
+
+        <Show when={options.copyText?.()}>
+          {(copyText) => (
+            <button
+              type="button"
+              class="tool-call-header-icon-button tool-call-header-copy tool-call-output-copy"
+              onClick={(event) => void copyIoText(event, copyText())}
+              aria-label={props.t("toolCall.header.copyAriaLabel")}
+              title={props.t("toolCall.header.copyTitle")}
+            >
+              <Copy class="w-3.5 h-3.5" aria-hidden="true" />
+            </button>
+          )}
+        </Show>
+
+        <Show when={options.wrapToggle?.()}>
+          <button
+            type="button"
+            class={`tool-call-header-icon-button tool-call-header-copy tool-call-output-wrap${outputWrapEnabled() ? " active" : ""}`}
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              setOutputWrapEnabled((enabled) => !enabled)
+            }}
+            aria-label={outputWrapTitle()}
+            title={outputWrapTitle()}
+          >
+            <WrapText class="w-3.5 h-3.5" aria-hidden="true" />
+          </button>
+        </Show>
+      </span>
+    </div>
+  )
+
   const renderToolOutputBody = () => {
     const body = renderToolBody()
     const error = renderError()
@@ -596,19 +645,14 @@ function ToolCallDetails(props: {
     if (chrome.wrapToggle) {
       return (
         <div class="tool-call-body">
-          <div class="tool-call-io-section">
-            {renderIoHeader({
-              title: () => chrome.title || props.t("toolCall.io.output"),
+          {renderOutputActions({
               language: () => outputChrome().language,
-              expanded: props.outputSectionExpanded,
-              onToggle: props.toggleOutputSection,
               copyText: () => outputChrome().copyText,
               actions: () => outputChrome().actions,
               wrapToggle: () => outputChrome().wrapToggle,
             })}
 
-            <Show when={props.outputSectionExpanded()}>
-              <div class="tool-call-io-body" data-suppress-inner-header={chrome.suppressInnerHeader === false ? undefined : "true"}>
+          <div class="tool-call-io-body" data-suppress-inner-header={chrome.suppressInnerHeader === false ? undefined : "true"}>
                 {body}
                 {error}
 
@@ -618,8 +662,6 @@ function ToolCallDetails(props: {
                     <span>{props.t("toolCall.pending.waitingToRun")}</span>
                   </div>
                 </Show>
-              </div>
-            </Show>
           </div>
         </div>
       )
