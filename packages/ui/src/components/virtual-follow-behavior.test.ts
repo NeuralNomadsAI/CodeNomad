@@ -39,11 +39,11 @@ describe("virtual follow behavior", () => {
     assert.deepEqual(next.effect, { type: "none" })
   })
 
-  it("rejoins follow and pins bottom when escaped user scrolls down with pin permission", () => {
+  it("does not rejoin follow above bottom even with pin permission", () => {
     const next = transitionFollowMode({ type: "escaped" }, userScroll("down", false, true))
 
-    assert.deepEqual(next.mode, { type: "following" })
-    assert.deepEqual(next.effect, { type: "scroll-bottom", immediate: true, suppressHold: false })
+    assert.deepEqual(next.mode, { type: "escaped" })
+    assert.deepEqual(next.effect, { type: "none" })
   })
 
   it("rejoins follow when escaped user scrolls to the bottom", () => {
@@ -145,32 +145,7 @@ describe("virtual follow behavior", () => {
     assert.deepEqual(result.effect, { type: "scroll-bottom", immediate: true, suppressHold: true })
   })
 
-  it("keeps submitted prompt content growth in bottom-follow after clearing stale hold", () => {
-    const controller = new VirtualScrollController(true)
-    controller.holdCandidate("old-assistant-answer", true)
-    controller.jumpBottom(true, true)
-
-    const result = controller.contentRendered(metrics(2400), true)
-
-    assert.deepEqual(result.state.mode, { type: "following" })
-    assert.deepEqual(result.effect, { type: "scroll-bottom", immediate: true, suppressHold: false })
-  })
-
-  it("ignores stale previous assistant hold target changes after a submit bottom jump", () => {
-    const controller = new VirtualScrollController(true)
-    controller.holdCandidate("previous-assistant-answer", true)
-    controller.jumpBottom(true, true)
-
-    const targetChanged = controller.holdTargetChanged("previous-assistant-answer", true)
-    const contentRendered = controller.contentRendered(metrics(2400), true)
-
-    assert.deepEqual(targetChanged.state.mode, { type: "following" })
-    assert.deepEqual(targetChanged.effect, { type: "none" })
-    assert.deepEqual(contentRendered.state.mode, { type: "following" })
-    assert.deepEqual(contentRendered.effect, { type: "scroll-bottom", immediate: true, suppressHold: false })
-  })
-
-  it("allows escaped-mode streaming rejoin when only a future hold target is eligible", () => {
+  it("keeps escaped-mode streaming detached until actual bottom", () => {
     const suspend = shouldSuspendAutoPinToBottomForHold({
       externalSuspend: false,
       activeHoldTargetKey: null,
@@ -180,8 +155,8 @@ describe("virtual follow behavior", () => {
     const next = transitionFollowMode({ type: "escaped" }, userScroll("down", false, !suspend))
 
     assert.equal(suspend, false)
-    assert.deepEqual(next.mode, { type: "following" })
-    assert.deepEqual(next.effect, { type: "scroll-bottom", immediate: true, suppressHold: false })
+    assert.deepEqual(next.mode, { type: "escaped" })
+    assert.deepEqual(next.effect, { type: "none" })
   })
 
   it("keeps auto-pin suspended while a hold target is actively latched", () => {
@@ -284,6 +259,17 @@ describe("virtual follow behavior", () => {
     controller.setUserIntent("down", 700)
 
     const result = controller.observeViewport(metrics(2220), 100, false)
+
+    assert.deepEqual(result.state.mode, { type: "escaped" })
+    assert.deepEqual(result.effect, { type: "none" })
+  })
+
+  it("does not magnet to bottom above bottom even with integration pin permission", () => {
+    const controller = new VirtualScrollController(false)
+    controller.recordProgrammaticOffset(2100, false)
+    controller.setUserIntent("down", 700)
+
+    const result = controller.observeViewport(metrics(2220), 100, false, true)
 
     assert.deepEqual(result.state.mode, { type: "escaped" })
     assert.deepEqual(result.effect, { type: "none" })

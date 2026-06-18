@@ -5,7 +5,7 @@ import BrandedEmptyState from "./branded-empty-state"
 import MessageBlock from "./message-block"
 import { getMessageAnchorId } from "./message-anchors"
 import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./message-timeline"
-import VirtualFollowList, { type VirtualFollowBottomIntent, type VirtualFollowListApi, type VirtualFollowListState, type VirtualFollowScrollSnapshot } from "./virtual-follow-list"
+import VirtualFollowList, { type VirtualFollowListApi, type VirtualFollowListState, type VirtualFollowScrollSnapshot } from "./virtual-follow-list"
 import { useConfig } from "../stores/preferences"
 import { getSessionInfo } from "../stores/sessions"
 import { messageStoreBus } from "../stores/message-v2/bus"
@@ -47,7 +47,6 @@ export interface MessageSectionProps {
   onReloadMessages?: () => void
   isActive?: boolean
   sessionStreamingActive?: boolean
-  bottomFollowIntent?: VirtualFollowBottomIntent | null
 }
 
 export default function MessageSection(props: MessageSectionProps) {
@@ -1339,7 +1338,6 @@ export default function MessageSection(props: MessageSectionProps) {
           initialAutoScroll={initialAutoScroll}
           resetKey={() => props.sessionId}
           followToken={followToken}
-          forceBottomFollowIntent={() => props.bottomFollowIntent ?? null}
           autoPinHoldEnabled={holdLongAssistantRepliesEnabled}
           autoPinHoldTargetKey={autoPinHoldTargetKey}
           autoPinHoldTopThresholdPx={STREAMING_TEXT_HOLD_TOP_THRESHOLD_PX}

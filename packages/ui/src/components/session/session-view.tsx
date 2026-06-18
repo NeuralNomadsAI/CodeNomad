@@ -79,8 +79,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   let scrollToBottomHandle: (() => void) | undefined
   let rootRef: HTMLDivElement | undefined
   const pendingIdleSeenTimers = new Set<string>()
-  const [submitBottomFollowIntent, setSubmitBottomFollowIntent] = createSignal<{ token: number; minItemCount: number } | null>(null)
-  let submitBottomFollowIntentSequence = 0
+  const [pendingSubmitBottomScrollTargetCount, setPendingSubmitBottomScrollTargetCount] = createSignal<number | null>(null)
 
   function shouldScrollToBottomOnActivate() {
     const current = session()
@@ -100,14 +99,9 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     return true
   }
 
-  function startSubmitBottomFollowIntent(minItemCount: number) {
-    submitBottomFollowIntentSequence += 1
-    setSubmitBottomFollowIntent({ token: submitBottomFollowIntentSequence, minItemCount })
-  }
-
-  function forceSubmittedExchangeToBottom(minItemCount: number) {
-    startSubmitBottomFollowIntent(minItemCount)
+  function forceSubmittedExchangeToBottom() {
     scrollToBottomHandle?.()
+    scheduleScrollToBottom({ force: true })
   }
 
   function getSeenIdleEntries(currentSession: Session, keepUnseenSubagentIdleStatus: boolean): Array<{ id: string; idleSince: number }> {
@@ -227,6 +221,21 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     )
   }
 
+  createEffect(
+    on(
+      () => messageStore().getSessionMessageIds(props.sessionId).length,
+      (messageCount) => {
+        const targetCount = pendingSubmitBottomScrollTargetCount()
+        if (targetCount === null) return
+        const didSchedule = scheduleScrollToBottom({ force: true })
+        if (didSchedule && messageCount >= targetCount) {
+          setPendingSubmitBottomScrollTargetCount(null)
+        }
+      },
+      { defer: true },
+    ),
+  )
+
   function registerPromptInputApi(api: PromptInputApi) {
     promptInputApi = api
     props.registerSessionPromptApi?.(props.sessionId, api)
@@ -272,13 +281,14 @@ export const SessionView: Component<SessionViewProps> = (props) => {
  
   async function handleSendMessage(prompt: string, attachments: Attachment[]) {
     const messageCount = messageStore().getSessionMessageIds(props.sessionId).length
-    const submittedExchangeTargetCount = messageCount + 2
-    forceSubmittedExchangeToBottom(submittedExchangeTargetCount)
+    setPendingSubmitBottomScrollTargetCount(messageCount + 2)
+    forceSubmittedExchangeToBottom()
     try {
       await sendMessage(props.instanceId, props.sessionId, prompt, attachments)
-      const latestMessageCount = messageStore().getSessionMessageIds(props.sessionId).length
-      forceSubmittedExchangeToBottom(Math.max(submittedExchangeTargetCount, latestMessageCount))
+      forceSubmittedExchangeToBottom()
+      setPendingSubmitBottomScrollTargetCount(null)
     } catch (error) {
+      setPendingSubmitBottomScrollTargetCount(null)
       throw error
     }
   }
@@ -443,13 +453,20 @@ export const SessionView: Component<SessionViewProps> = (props) => {
                   loadError={messagesLoadError()}
                   onReloadMessages={handleReloadMessages}
                   sessionStreamingActive={sessionStreamingActive()}
-                  bottomFollowIntent={submitBottomFollowIntent()}
                   onRevert={handleRevert}
                   onDeleteMessagesUpTo={handleDeleteMessagesUpTo}
                   onFork={handleFork}
                   isActive={props.isActive}
                   registerScrollToBottom={(fn) => {
                     scrollToBottomHandle = fn ?? undefined
+                    if (!fn) return
+                    const targetCount = pendingSubmitBottomScrollTargetCount()
+                    if (targetCount === null) return
+                    const didSchedule = scheduleScrollToBottom({ force: true })
+                    const messageCount = messageStore().getSessionMessageIds(props.sessionId).length
+                    if (didSchedule && messageCount >= targetCount) {
+                      setPendingSubmitBottomScrollTargetCount(null)
+                    }
                   }}
                   showSidebarToggle={props.showSidebarToggle}
                   onSidebarToggle={props.onSidebarToggle}

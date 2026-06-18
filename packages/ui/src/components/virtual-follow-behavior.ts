@@ -103,7 +103,7 @@ export function transitionFollowMode(mode: FollowMode, event: FollowEvent): Foll
       if (event.direction === "up") {
         return { mode: { type: "escaped" }, effect: noFollowEffect }
       }
-      if (mode.type === "escaped" && event.direction === "down" && event.canPinToBottom) {
+      if (mode.type === "escaped" && event.direction === "down" && event.atBottom && event.canPinToBottom) {
         return {
           mode: { type: "following" },
           effect: { type: "scroll-bottom", immediate: true, suppressHold: false },
