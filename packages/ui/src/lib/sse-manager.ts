@@ -68,12 +68,15 @@ interface ServerInstanceDisposedEvent {
   }
 }
 
+type EventSessionCreated = Omit<EventSessionUpdated, "type"> & { type: "session.created" }
+
 type SSEEvent =
   | MessageUpdateEvent
   | MessageRemovedEvent
   | MessagePartUpdatedEvent
   | MessagePartRemovedEvent
   | MessagePartDeltaEvent
+  | EventSessionCreated
   | EventSessionUpdated
   | EventSessionCompacted
   | EventSessionError
@@ -149,6 +152,9 @@ class SSEManager {
         this.onMessagePartRemoved?.(instanceId, event as MessagePartRemovedEvent)
         break
       case "session.updated":
+        this.onSessionUpdate?.(instanceId, event as EventSessionUpdated)
+        break
+      case "session.created":
         this.onSessionUpdate?.(instanceId, event as EventSessionUpdated)
         break
       case "session.compacted":
