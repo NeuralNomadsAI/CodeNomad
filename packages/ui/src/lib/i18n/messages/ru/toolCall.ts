@@ -2,16 +2,16 @@ export const toolCallMessages = {
   "toolCall.pending.waitingToRun": "Ожидание запуска…",
   "toolCall.error.label": "Ошибка:",
 
-  "toolCall.header.copyTitle": "Copy tool call title",
-  "toolCall.header.copyAriaLabel": "Copy tool call title",
+  "toolCall.header.copyTitle": "Скопировать заголовок вызова инструмента",
+  "toolCall.header.copyAriaLabel": "Скопировать заголовок вызова инструмента",
 
-  "toolCall.header.showInputTitle": "Show Tool Arguments",
-  "toolCall.header.showInputAriaLabel": "Show Tool Arguments",
-  "toolCall.header.hideInputTitle": "Hide Tool Arguments",
-  "toolCall.header.hideInputAriaLabel": "Hide Tool Arguments",
+  "toolCall.header.showInputTitle": "Показать аргументы инструмента",
+  "toolCall.header.showInputAriaLabel": "Показать аргументы инструмента",
+  "toolCall.header.hideInputTitle": "Скрыть аргументы инструмента",
+  "toolCall.header.hideInputAriaLabel": "Скрыть аргументы инструмента",
 
-  "toolCall.io.input": "Tool Input",
-  "toolCall.io.output": "Tool Output",
+  "toolCall.io.input": "Входные данные инструмента",
+  "toolCall.io.output": "Вывод инструмента",
 
   "toolCall.diff.label": "Diff",
   "toolCall.diff.label.withPath": "Diff · {path}",
@@ -117,7 +117,7 @@ export const toolCallMessages = {
   "toolCall.question.errors.unableToDismiss": "Не удалось скрыть",
 
   "toolCall.task.action.delegating": "Делегирование…",
-  "toolCall.task.sections.prompt": "Prompt",
+  "toolCall.task.sections.prompt": "Промпт",
   "toolCall.task.sections.steps": "Шаги",
   "toolCall.task.sections.output": "Вывод",
   "toolCall.task.steps.count": "{count} шагов",

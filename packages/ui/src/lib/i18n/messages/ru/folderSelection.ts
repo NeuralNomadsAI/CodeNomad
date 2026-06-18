@@ -95,7 +95,7 @@ export const folderSelectionMessages = {
   "folderSelection.servers.certificateInstall.confirmLabel": "Продолжить",
   "folderSelection.servers.certificateInstall.cancelLabel": "Отмена",
   "folderSelection.servers.certificateInstall.cancelled": "CodeNomad должен доверять локальному сертификату, прежде чем сможет открывать удаленные HTTPS-окна с самоподписанным сертификатом.",
-  "folderSelection.sidecars.button": "Open SideCar",
+  "folderSelection.sidecars.button": "Открыть SideCar",
 
   "projectRenameDialog.title": "Переименовать рабочее пространство",
   "projectRenameDialog.description.withLabel": "Обновите имя рабочего пространства для \"{label}\".",

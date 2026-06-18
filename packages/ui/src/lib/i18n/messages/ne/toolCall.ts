@@ -50,8 +50,8 @@ export const toolCallMessages = {
   "toolCall.renderer.action.listingDirectory": "डाइरेक्टरी सूचीबद्ध गर्दै...",
 
   "toolCall.renderer.bash.title.timeout": "समय समाप्त: {timeout}",
-  "toolCall.renderer.read.detail.offset": "Offset: {offset}",
-  "toolCall.renderer.read.detail.limit": "Limit: {limit}",
+  "toolCall.renderer.read.detail.offset": "अफसेट: {offset}",
+  "toolCall.renderer.read.detail.limit": "सीमा: {limit}",
 
   "toolCall.renderer.todo.empty": "कुनै वस्तु योजना गरिएको छैन",
   "toolCall.renderer.todo.status.pending": "विचाराधीन",

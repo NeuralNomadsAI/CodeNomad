@@ -168,6 +168,7 @@ export const commandMessages = {
   "unifiedPicker.sections.commands": "コマンド",
   "unifiedPicker.sections.agents": "エージェント",
   "unifiedPicker.sections.files": "ファイル",
+  "unifiedPicker.sections.workspaceRoot": "ワークスペースルート",
   "unifiedPicker.badge.subagent": "サブエージェント",
   "unifiedPicker.footer.navigate": "移動",
   "unifiedPicker.footer.select": "選択",
