@@ -229,6 +229,15 @@
   min-width: 0;
 }
 
+.session-center-column[data-session-center-width="narrow"] .tool-call-summary-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ToolState uses status="completed"; keep "success" as a legacy alias. */
 .tool-call-status-completed,
 .tool-call-status-success {

@@ -17,6 +17,7 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--message-part-header-gap);
+  flex-wrap: nowrap;
   min-height: 1.6rem;
   padding: 0 var(--space-sm);
   background-color: var(--surface-secondary);
@@ -25,10 +26,13 @@
   font-size: var(--message-part-header-title-font-size);
   line-height: var(--message-part-header-title-line-height);
   color: inherit;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .tool-call-task-section-title {
   font-weight: var(--font-weight-semibold);
+  flex: 0 0 auto;
 }
 
 .tool-call-task-section-meta {
@@ -37,6 +41,9 @@
   font-weight: var(--message-part-header-type-font-weight);
   line-height: var(--message-part-header-title-line-height);
   color: var(--text-muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tool-call-task-section-body {
