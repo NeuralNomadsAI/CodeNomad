@@ -50,7 +50,6 @@ import {
   hasRepliedPermission,
   addQuestionToQueue,
   removeQuestionFromQueue,
-  drainAutoAcceptPermissionsForInstance,
 } from "./instances"
 import { showAlertDialog } from "./alerts"
 import {
@@ -235,7 +234,6 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
 
     let updatedInstanceSessions: Map<string, Session> | undefined
     let shouldExpandParent: string | null = null
-    let shouldDrainAutoAcceptPermissions = false
 
     setSessions((prev) => {
       const next = new Map(prev)
@@ -258,7 +256,6 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
       instanceSessions.set(sessionId, merged)
       next.set(instanceId, instanceSessions)
       updatedInstanceSessions = instanceSessions
-      shouldDrainAutoAcceptPermissions = Boolean(merged.parentId)
 
       if (merged.parentId && merged.status === "working" && (existing?.status ?? "idle") !== "working") {
         shouldExpandParent = merged.parentId
@@ -267,10 +264,6 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
     })
 
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
-
-    if (shouldDrainAutoAcceptPermissions) {
-      drainAutoAcceptPermissionsForInstance(instanceId)
-    }
 
     if (shouldExpandParent) {
       ensureSessionParentExpanded(instanceId, shouldExpandParent)
@@ -542,9 +535,7 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
 
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
     setSessionRevertV2(instanceId, info.id, info.revert ?? null)
-    if (newSession.parentId) {
-      drainAutoAcceptPermissionsForInstance(instanceId)
-    } else {
+    if (!newSession.parentId) {
       prependSessionListId(instanceId, newSession.id)
     }
 
@@ -585,9 +576,6 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
 
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
     setSessionRevertV2(instanceId, info.id, info.revert ?? null)
-    if (updatedSession.parentId) {
-      drainAutoAcceptPermissionsForInstance(instanceId)
-    }
   }
 }
 

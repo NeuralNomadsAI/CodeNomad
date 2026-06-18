@@ -22,6 +22,7 @@ import type {
   RemoteServerProbeRequest,
   RemoteServerProbeResponse,
   VoiceModeStateResponse,
+  YoloStateResponse,
   WorkspaceCloneRequest,
   WorkspaceCloneResponse,
   WorktreeGitCommitRequest,
@@ -519,6 +520,17 @@ export const serverApi = {
       method: "POST",
       body: JSON.stringify({ ...identity, enabled }),
     })
+  },
+  getYoloState(instanceId: string, sessionId: string): Promise<YoloStateResponse> {
+    return request<YoloStateResponse>(
+      `/workspaces/${encodeURIComponent(instanceId)}/yolo/sessions/${encodeURIComponent(sessionId)}`,
+    )
+  },
+  toggleYolo(instanceId: string, sessionId: string): Promise<YoloStateResponse> {
+    return request<YoloStateResponse>(
+      `/workspaces/${encodeURIComponent(instanceId)}/yolo/sessions/${encodeURIComponent(sessionId)}/toggle`,
+      { method: "POST" },
+    )
   },
   sendClientConnectionPong(payload: { clientId: string; connectionId: string; pingTs?: number }, signal?: AbortSignal): Promise<void> {
     const init: RequestInit = {

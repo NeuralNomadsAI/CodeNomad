@@ -22,6 +22,7 @@ import { registerEventRoutes } from "./routes/events"
 import { registerStorageRoutes } from "./routes/storage"
 import { registerPluginRoutes } from "./routes/plugin"
 import { registerBackgroundProcessRoutes } from "./routes/background-processes"
+import { registerYoloRoutes } from "./routes/yolo"
 import { registerWorktreeRoutes } from "./routes/worktrees"
 import { registerSpeechRoutes } from "./routes/speech"
 import { registerRemoteServerRoutes } from "./routes/remote-servers"
@@ -31,6 +32,8 @@ import { registerPreviewRoutes } from "./routes/previews"
 import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import { BackgroundProcessManager } from "../background-processes/manager"
+import { AutoAcceptManager } from "../permissions/auto-accept-manager"
+import { createOpencodePermissionReplier } from "../permissions/opencode-replier"
 import type { AuthManager } from "../auth/manager"
 import { registerAuthRoutes } from "./routes/auth"
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth"
@@ -192,6 +195,17 @@ export function createHttpServer(deps: HttpServerDeps) {
     logger: deps.logger.child({ component: "background-processes" }),
   })
 
+  const yoloManager = new AutoAcceptManager({
+    eventBus: deps.eventBus,
+    logger: deps.logger.child({ component: "yolo" }),
+    replier: createOpencodePermissionReplier({
+      workspaceManager: deps.workspaceManager,
+      logger: deps.logger.child({ component: "yolo" }),
+    }),
+  })
+  yoloManager.start()
+  sseClients.add(() => yoloManager.stop())
+
   registerAuthRoutes(app, { authManager: deps.authManager })
 
   app.addHook("preHandler", (request, reply, done) => {
@@ -309,6 +323,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     voiceModeManager: deps.voiceModeManager,
   })
   registerBackgroundProcessRoutes(app, { backgroundProcessManager })
+  registerYoloRoutes(app, { yoloManager })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger })
 
 
