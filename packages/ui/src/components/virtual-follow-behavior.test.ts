@@ -145,6 +145,31 @@ describe("virtual follow behavior", () => {
     assert.deepEqual(result.effect, { type: "scroll-bottom", immediate: true, suppressHold: true })
   })
 
+  it("keeps submitted prompt content growth in bottom-follow after clearing stale hold", () => {
+    const controller = new VirtualScrollController(true)
+    controller.holdCandidate("old-assistant-answer", true)
+    controller.jumpBottom(true, true)
+
+    const result = controller.contentRendered(metrics(2400), true)
+
+    assert.deepEqual(result.state.mode, { type: "following" })
+    assert.deepEqual(result.effect, { type: "scroll-bottom", immediate: true, suppressHold: false })
+  })
+
+  it("ignores stale previous assistant hold target changes after a submit bottom jump", () => {
+    const controller = new VirtualScrollController(true)
+    controller.holdCandidate("previous-assistant-answer", true)
+    controller.jumpBottom(true, true)
+
+    const targetChanged = controller.holdTargetChanged("previous-assistant-answer", true)
+    const contentRendered = controller.contentRendered(metrics(2400), true)
+
+    assert.deepEqual(targetChanged.state.mode, { type: "following" })
+    assert.deepEqual(targetChanged.effect, { type: "none" })
+    assert.deepEqual(contentRendered.state.mode, { type: "following" })
+    assert.deepEqual(contentRendered.effect, { type: "scroll-bottom", immediate: true, suppressHold: false })
+  })
+
   it("keeps escaped-mode streaming detached until actual bottom", () => {
     const suspend = shouldSuspendAutoPinToBottomForHold({
       externalSuspend: false,
