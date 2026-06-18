@@ -387,44 +387,7 @@
   color: var(--text-primary);
 }
 
-.tool-call-output-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-xs);
-  min-height: 1.6rem;
-  padding-inline-start: var(--space-sm);
-  padding-inline-end: var(--space-sm);
-  background-color: var(--surface-secondary);
-  border-bottom: 1px solid var(--tool-call-body-border-color, var(--border-base));
-}
-
-.tool-call-output-language {
-  flex: 0 1 auto;
-  min-width: 0;
-  font-family: var(--message-part-header-font-family);
-  font-size: var(--message-part-header-type-font-size);
-  font-weight: var(--message-part-header-type-font-weight);
-  line-height: var(--message-part-header-title-line-height);
-  color: var(--text-primary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.tool-call-output-action-buttons {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-xs);
-  flex: 0 0 auto;
-}
-
-.tool-call-output-copy,
-.tool-call-output-wrap {
-  margin-inline-end: 0;
-}
-
-.tool-call-output-wrap.active {
+.tool-call-header-wrap.active {
   color: var(--text-primary);
 }
 
