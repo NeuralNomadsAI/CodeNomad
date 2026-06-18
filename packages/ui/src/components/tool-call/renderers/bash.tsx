@@ -94,7 +94,7 @@ function FinalAnsiOutput(props: {
   )
 }
 
-function getBashOutputText(state: ToolState | undefined): string {
+function getBashCopyText(state: ToolState | undefined): string {
   if (!state || state.status === "pending") return ""
 
   const { input, metadata } = readToolStatePayload(state)
@@ -118,7 +118,19 @@ function BashToolBody(props: {
   const state = createMemo(() => props.toolState())
 
   const joinedContent = createMemo(() => {
-    return getBashOutputText(state())
+    const current = state()
+    if (!current || current.status === "pending") return ""
+
+    const { input, metadata } = readToolStatePayload(current)
+    const command = typeof input.command === "string" && input.command.length > 0 ? `$ ${input.command}` : ""
+    const outputResult = formatUnknown(
+      isToolStateCompleted(current)
+        ? current.output
+        : (isToolStateRunning(current) || isToolStateError(current)) && metadata.output
+          ? metadata.output
+          : undefined,
+    )
+    return [command, outputResult?.text].filter(Boolean).join("\n")
   })
 
   const finalMarkdown = createMemo(() => {
@@ -184,7 +196,7 @@ export const bashRenderer: ToolRenderer = {
     return `${baseTitle} · ${tGlobal("toolCall.renderer.bash.title.timeout", { timeout: timeoutLabel })}`
   },
   getOutputChrome({ toolState }) {
-    const text = getBashOutputText(toolState())
+    const text = getBashCopyText(toolState())
     if (!text) return undefined
     return { language: "bash", copyText: text, wrapToggle: true, suppressInnerHeader: true }
   },
