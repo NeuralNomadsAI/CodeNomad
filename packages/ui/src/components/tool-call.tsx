@@ -948,7 +948,8 @@ export default function ToolCall(props: ToolCallProps) {
     return [typeLabel, detail].filter(Boolean).join(" ")
   })
 
-  const headerCopyText = createMemo(() => headerOutputChrome().copyText || headerText())
+  const headerCopyText = createMemo(() => headerOutputChrome().copyText || "")
+  const canCopyHeaderOutput = () => headerCopyText().length > 0
   const canToggleOutputWrap = () => Boolean(headerOutputChrome().wrapToggle)
   const outputWrapTitle = () =>
     outputWrapEnabled()
@@ -999,6 +1000,7 @@ export default function ToolCall(props: ToolCallProps) {
         key: "copy",
         label: t("toolCall.header.copyTitle"),
         icon: <Copy class="w-3.5 h-3.5" aria-hidden="true" />,
+        disabled: !canCopyHeaderOutput(),
         onSelect: async () => {
           const text = headerCopyText()
           if (!text) return
@@ -1069,6 +1071,7 @@ export default function ToolCall(props: ToolCallProps) {
           type="button"
           class="tool-call-header-icon-button tool-call-header-copy"
           onClick={handleCopyHeader}
+          disabled={!canCopyHeaderOutput()}
           aria-label={t("toolCall.header.copyAriaLabel")}
           title={t("toolCall.header.copyTitle")}
         >

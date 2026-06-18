@@ -151,6 +151,16 @@
   color: var(--text-primary);
 }
 
+.tool-call-header-icon-button:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.tool-call-header-icon-button:disabled:hover {
+  color: var(--text-muted);
+}
+
 .tool-call-header > .action-overflow-trigger {
   display: inline-flex;
 }
