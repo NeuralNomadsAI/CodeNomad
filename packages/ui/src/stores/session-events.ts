@@ -62,7 +62,7 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { ensureSessionParentExpanded, sessions, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
+import { ensureSessionParentExpanded, prependSessionListId, sessions, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { tGlobal } from "../lib/i18n"
@@ -544,6 +544,8 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
     setSessionRevertV2(instanceId, info.id, info.revert ?? null)
     if (newSession.parentId) {
       drainAutoAcceptPermissionsForInstance(instanceId)
+    } else {
+      prependSessionListId(instanceId, newSession.id)
     }
 
     log.info(`[SSE] New session created: ${info.id}`, newSession)
