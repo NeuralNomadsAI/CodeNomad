@@ -22,6 +22,7 @@ import { buildRecordDisplayData } from "../stores/message-v2/record-display-cach
 import { getPartCharCount } from "../lib/token-utils"
 import { buildSessionSearchMatches } from "../lib/session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
+import { resolveThinkingExpansionDefault } from "./tool-call/tool-registry"
 
 const SCROLL_SENTINEL_MARGIN_PX = 8
 const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
@@ -117,7 +118,7 @@ export default function MessageSection(props: MessageSectionProps) {
   const preferenceSignature = createMemo(() => {
     const pref = preferences()
     const showThinking = pref.showThinkingBlocks ? 1 : 0
-    const thinkingExpansion = pref.thinkingBlocksExpansion ?? "expanded"
+    const thinkingExpansion = resolveThinkingExpansionDefault(pref) ? "expanded" : "collapsed"
     const showUsage = (pref.showUsageMetrics ?? true) ? 1 : 0
     return `${showThinking}|${thinkingExpansion}|${showUsage}`
   })
@@ -1495,7 +1496,7 @@ export default function MessageSection(props: MessageSectionProps) {
               messageIndex={index}
               lastAssistantIndex={lastAssistantIndex}
               showThinking={() => preferences().showThinkingBlocks}
-              thinkingDefaultExpanded={() => (preferences().thinkingBlocksExpansion ?? "expanded") === "expanded"}
+              thinkingDefaultExpanded={() => resolveThinkingExpansionDefault(preferences())}
               showUsageMetrics={showUsagePreference}
               deleteHover={deleteHover}
               onDeleteHoverChange={setDeleteHover}
