@@ -191,7 +191,7 @@ async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: SDKSe
   })
 }
 
-async function fetchSessions(instanceId: string, options?: { limit?: number; reset?: boolean }): Promise<void> {
+async function fetchSessions(instanceId: string, options?: { reset?: boolean }): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
