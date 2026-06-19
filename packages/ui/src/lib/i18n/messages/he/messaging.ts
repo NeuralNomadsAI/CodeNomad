@@ -20,6 +20,7 @@ export const messagingMessages = {
   "messageSection.loadError.reload": "טען הודעות מחדש",
   "messageSection.scroll.toFirstAriaLabel": "גלול להודעה הראשונה",
   "messageSection.scroll.toLatestAriaLabel": "גלול להודעה האחרונה",
+  "messageSection.scroll.showControlsAriaLabel": "הצג פקדי גלילה",
   "messageSection.scroll.enableHoldAriaLabel": "הפעל עצירה לתגובות עוזר ארוכות",
   "messageSection.scroll.disableHoldAriaLabel": "כבה עצירה לתגובות עוזר ארוכות",
   "messageSection.quote.addAsQuote": "הוסף כציטוט",

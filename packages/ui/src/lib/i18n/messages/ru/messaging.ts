@@ -20,6 +20,7 @@ export const messagingMessages = {
   "messageSection.loadError.reload": "Перезагрузить сообщения",
   "messageSection.scroll.toFirstAriaLabel": "Прокрутить к первому сообщению",
   "messageSection.scroll.toLatestAriaLabel": "Прокрутить к последнему сообщению",
+  "messageSection.scroll.showControlsAriaLabel": "Показать элементы прокрутки",
   "messageSection.scroll.enableHoldAriaLabel": "Включить удержание для длинных ответов ассистента",
   "messageSection.scroll.disableHoldAriaLabel": "Выключить удержание для длинных ответов ассистента",
   "messageSection.quote.addAsQuote": "Добавить как цитату",

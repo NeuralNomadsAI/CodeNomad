@@ -20,6 +20,7 @@ export const messagingMessages = {
   "messageSection.loadError.reload": "Nachrichten neu laden",
   "messageSection.scroll.toFirstAriaLabel": "Zur ersten Nachricht scrollen",
   "messageSection.scroll.toLatestAriaLabel": "Zur neuesten Nachricht scrollen",
+  "messageSection.scroll.showControlsAriaLabel": "Scroll-Steuerung anzeigen",
   "messageSection.scroll.enableHoldAriaLabel": "Halten für lange Assistentenantworten aktivieren",
   "messageSection.scroll.disableHoldAriaLabel": "Halten für lange Assistentenantworten deaktivieren",
   "messageSection.quote.addAsQuote": "Als Zitat hinzufügen",
