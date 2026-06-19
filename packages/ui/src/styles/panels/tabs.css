@@ -19,6 +19,8 @@
 .tab-scroll {
   @apply w-full;
   overflow-x: auto;
+  touch-action: pan-x;
+  -webkit-overflow-scrolling: touch;
 }
 
 .tab-strip {
