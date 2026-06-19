@@ -20,6 +20,7 @@ export const messagingMessages = {
   "messageSection.loadError.reload": "Recharger les messages",
   "messageSection.scroll.toFirstAriaLabel": "Aller au premier message",
   "messageSection.scroll.toLatestAriaLabel": "Aller au dernier message",
+  "messageSection.scroll.showControlsAriaLabel": "Afficher les contrôles de défilement",
   "messageSection.scroll.enableHoldAriaLabel": "Activer le maintien pour les longues réponses de l'assistant",
   "messageSection.scroll.disableHoldAriaLabel": "Désactiver le maintien pour les longues réponses de l'assistant",
   "messageSection.quote.addAsQuote": "Ajouter en citation",

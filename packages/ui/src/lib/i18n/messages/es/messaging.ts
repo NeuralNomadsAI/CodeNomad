@@ -20,6 +20,7 @@ export const messagingMessages = {
   "messageSection.loadError.reload": "Recargar mensajes",
   "messageSection.scroll.toFirstAriaLabel": "Desplazarse al primer mensaje",
   "messageSection.scroll.toLatestAriaLabel": "Desplazarse al último mensaje",
+  "messageSection.scroll.showControlsAriaLabel": "Mostrar controles de desplazamiento",
   "messageSection.scroll.enableHoldAriaLabel": "Activar pausa para respuestas largas del asistente",
   "messageSection.scroll.disableHoldAriaLabel": "Desactivar pausa para respuestas largas del asistente",
   "messageSection.quote.addAsQuote": "Añadir como cita",

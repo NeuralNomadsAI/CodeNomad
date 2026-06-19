@@ -20,6 +20,7 @@ export const messagingMessages = {
   "messageSection.loadError.reload": "सन्देशहरू फेरि लोड गर्नुहोस्",
   "messageSection.scroll.toFirstAriaLabel": "पहिलो सन्देशमा जानुहोस्",
   "messageSection.scroll.toLatestAriaLabel": "भर्खरको सन्देशमा जानुहोस्",
+  "messageSection.scroll.showControlsAriaLabel": "स्क्रोल नियन्त्रणहरू देखाउनुहोस्",
   "messageSection.scroll.enableHoldAriaLabel": "लामो प्रतिक्रियाहरूको लागि होल्ड सक्षम गर्नुहोस्",
   "messageSection.scroll.disableHoldAriaLabel": "लामो प्रतिक्रियाहरूको लागि होल्ड अक्षम गर्नुहोस्",
   "messageSection.quote.addAsQuote": "उद्धरणको रूपमा थप्नुहोस्",
