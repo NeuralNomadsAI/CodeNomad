@@ -31,12 +31,20 @@ export interface ModelPreference {
 
 export type DiffViewMode = "split" | "unified"
 export type ExpansionPreference = "expanded" | "collapsed"
+export type ToolCallExpansionPreset = "minimal" | "balanced" | "detailed" | "everything"
+export type ToolCallExpansionPresetSelection = ToolCallExpansionPreset | "custom"
 export type ToolInputsVisibilityPreference = "hidden" | "collapsed" | "expanded"
 export type ListeningMode = "local" | "all"
 export type ServerLogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR"
 export type SpeechProviderPreference = "openai-compatible"
 export type SpeechPlaybackMode = "streaming" | "buffered"
 export type SpeechTtsFormat = "mp3" | "wav" | "opus" | "aac"
+
+export interface ToolCallExpansionDefaults {
+  preset: ToolCallExpansionPresetSelection
+  thinking: ExpansionPreference
+  tools: Record<string, ExpansionPreference>
+}
 
 export interface SpeechSettings {
   provider: SpeechProviderPreference
@@ -65,6 +73,7 @@ export interface UiSettings {
   showPromptVoiceInput: boolean
   locale?: string
   diffViewMode: DiffViewMode
+  toolCallExpansionDefaults: ToolCallExpansionDefaults
   toolOutputExpansion: ExpansionPreference
   diagnosticsExpansion: ExpansionPreference
   toolInputsVisibility: ToolInputsVisibilityPreference
@@ -137,16 +146,23 @@ const MAX_RECENT_FOLDERS = 20
 const MAX_RECENT_MODELS = 5
 const MAX_FAVORITE_MODELS = 50
 
+const defaultToolCallExpansionDefaults: ToolCallExpansionDefaults = {
+  preset: "balanced",
+  thinking: "collapsed",
+  tools: {},
+}
+
 const defaultUiSettings: UiSettings = {
   showThinkingBlocks: false,
   showKeyboardShortcutHints: true,
-  thinkingBlocksExpansion: "expanded",
+  thinkingBlocksExpansion: "collapsed",
   showMessageTimeline: true,
   showTimelineTools: true,
   holdLongAssistantReplies: true,
   promptSubmitOnEnter: false,
   showPromptVoiceInput: true,
   diffViewMode: "split",
+  toolCallExpansionDefaults: defaultToolCallExpansionDefaults,
   toolOutputExpansion: "expanded",
   diagnosticsExpansion: "expanded",
   toolInputsVisibility: "collapsed",
@@ -158,6 +174,45 @@ const defaultUiSettings: UiSettings = {
   osNotificationsAllowWhenVisible: false,
   notifyOnNeedsInput: true,
   notifyOnIdle: true,
+}
+
+function normalizeExpansionPreference(value: unknown, fallback: ExpansionPreference): ExpansionPreference {
+  return value === "expanded" || value === "collapsed" ? value : fallback
+}
+
+function normalizeToolCallExpansionPreset(value: unknown): ToolCallExpansionPresetSelection {
+  if (value === "minimal" || value === "balanced" || value === "detailed" || value === "everything" || value === "custom") {
+    return value
+  }
+  return defaultToolCallExpansionDefaults.preset
+}
+
+function normalizeToolCallExpansionTools(value: unknown): Record<string, ExpansionPreference> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
+  const next: Record<string, ExpansionPreference> = {}
+  for (const [tool, mode] of Object.entries(value as Record<string, unknown>)) {
+    if (!tool) continue
+    if (mode === "expanded" || mode === "collapsed") {
+      next[tool] = mode
+    }
+  }
+  return next
+}
+
+function normalizeToolCallExpansionDefaults(input: unknown, legacySettings: Partial<UiSettings>): ToolCallExpansionDefaults {
+  const source = input && typeof input === "object" && !Array.isArray(input)
+    ? (input as Partial<ToolCallExpansionDefaults>)
+    : undefined
+  const legacyThinking = normalizeExpansionPreference(
+    legacySettings.thinkingBlocksExpansion,
+    defaultToolCallExpansionDefaults.thinking,
+  )
+
+  return {
+    preset: normalizeToolCallExpansionPreset(source?.preset),
+    thinking: normalizeExpansionPreference(source?.thinking, legacyThinking),
+    tools: normalizeToolCallExpansionTools(source?.tools),
+  }
 }
 
 const defaultSpeechSettings: SpeechSettings = {
@@ -184,6 +239,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     showPromptVoiceInput: sanitized.showPromptVoiceInput ?? defaultUiSettings.showPromptVoiceInput,
     locale: sanitized.locale ?? defaultUiSettings.locale,
     diffViewMode: sanitized.diffViewMode ?? defaultUiSettings.diffViewMode,
+    toolCallExpansionDefaults: normalizeToolCallExpansionDefaults(sanitized.toolCallExpansionDefaults, sanitized),
     toolOutputExpansion: sanitized.toolOutputExpansion ?? defaultUiSettings.toolOutputExpansion,
     diagnosticsExpansion: sanitized.diagnosticsExpansion ?? defaultUiSettings.diagnosticsExpansion,
     toolInputsVisibility:
@@ -724,8 +780,19 @@ function setDiffViewMode(mode: DiffViewMode): void {
 }
 
 function setToolOutputExpansion(mode: ExpansionPreference): void {
-  if (preferences().toolOutputExpansion === mode) return
-  updateUiSettings({ toolOutputExpansion: mode })
+  const current = preferences()
+  if (current.toolOutputExpansion === mode && current.toolCallExpansionDefaults.tools.other === mode) return
+  updateUiSettings({
+    toolOutputExpansion: mode,
+    toolCallExpansionDefaults: {
+      ...current.toolCallExpansionDefaults,
+      preset: "custom",
+      tools: {
+        ...current.toolCallExpansionDefaults.tools,
+        other: mode,
+      },
+    },
+  })
 }
 
 function setDiagnosticsExpansion(mode: ExpansionPreference): void {
@@ -739,8 +806,16 @@ function setToolInputsVisibility(mode: ToolInputsVisibilityPreference): void {
 }
 
 function setThinkingBlocksExpansion(mode: ExpansionPreference): void {
-  if (preferences().thinkingBlocksExpansion === mode) return
-  updateUiSettings({ thinkingBlocksExpansion: mode })
+  const current = preferences()
+  if (current.thinkingBlocksExpansion === mode && current.toolCallExpansionDefaults.thinking === mode) return
+  updateUiSettings({
+    thinkingBlocksExpansion: mode,
+    toolCallExpansionDefaults: {
+      ...current.toolCallExpansionDefaults,
+      preset: "custom",
+      thinking: mode,
+    },
+  })
 }
 
 function toggleShowThinkingBlocks(): void {

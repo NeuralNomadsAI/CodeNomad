@@ -12,6 +12,7 @@ import { getPermissionSessionId } from "../types/permission"
 import type { QuestionRequest } from "../types/question"
 import { useI18n } from "../lib/i18n"
 import { resolveToolRenderer } from "./tool-call/renderers"
+import { resolveToolExpansionDefault } from "./tool-call/tool-registry"
 import { QuestionToolBlock } from "./tool-call/question-block"
 import { PermissionToolBlock } from "./tool-call/permission-block"
 import { createAnsiContentRenderer } from "./tool-call/ansi-render"
@@ -40,7 +41,6 @@ import {
   getDefaultToolAction,
   readToolStatePayload,
 } from "./tool-call/utils"
-import { resolveTitleForTool } from "./tool-call/tool-title"
 import { getLogger } from "../lib/logger"
 import { useSpeech } from "../lib/hooks/use-speech"
 import { createFollowScroll } from "../lib/follow-scroll"
@@ -514,7 +514,7 @@ function ToolCallDetails(props: {
 
   const shouldShowPendingMessage = () => {
     const tool = props.toolName()
-    return status() === "pending" && !props.pendingPermission() && tool !== "todowrite" && tool !== "todoread"
+    return status() === "pending" && !props.pendingPermission() && tool !== "todowrite"
   }
 
   const copyIoText = async (event: MouseEvent, text?: string | null) => {
@@ -746,23 +746,17 @@ export default function ToolCall(props: ToolCallProps) {
     return undefined
   })
 
-  const toolOutputDefaultExpanded = createMemo(() => (preferences().toolOutputExpansion || "expanded") === "expanded")
   const diagnosticsDefaultExpanded = createMemo(() => (preferences().diagnosticsExpansion || "expanded") === "expanded")
 
   const defaultExpandedForTool = createMemo(() => {
     if (props.forceCollapsed) {
       return false
     }
-    const prefExpanded = toolOutputDefaultExpanded()
-    const toolName = toolCallMemo()?.tool || ""
-    if (toolName === "read" || toolName === "skill") {
-      const state = toolState()
-      if (state?.status === "error") {
-        return true
-      }
-      return false
+    const state = toolState()
+    if (state?.status === "error") {
+      return true
     }
-    return prefExpanded
+    return resolveToolExpansionDefault(preferences(), toolCallMemo()?.tool || "")
   })
 
   const [userExpanded, setUserExpanded] = createSignal<boolean | null>(null)
@@ -911,7 +905,17 @@ export default function ToolCall(props: ToolCallProps) {
     const currentTool = toolName()
 
     if (currentTool !== "task") {
-      return resolveTitleForTool({ toolName: currentTool, state })
+      if (!state || state.status === "pending") return getRendererAction()
+
+      const stateTitle = typeof (state as { title?: string }).title === "string" ? (state as { title?: string }).title : undefined
+      if (stateTitle && stateTitle.length > 0) {
+        return stateTitle
+      }
+
+      const customTitle = renderer().getTitle?.(headerRendererContext)
+      if (customTitle) return customTitle
+
+      return getToolName(currentTool)
     }
 
     if (!state) return getRendererAction()

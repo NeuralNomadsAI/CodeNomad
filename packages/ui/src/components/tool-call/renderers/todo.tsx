@@ -137,7 +137,7 @@ export function getTodoTitle(state?: ToolState): string {
 }
 
 export const todoRenderer: ToolRenderer = {
-  tools: ["todowrite", "todoread"],
+  tools: ["todowrite"],
   getSearchText: getTodoToolSearchText,
   getAction: () => tGlobal("toolCall.renderer.action.planning"),
   getTitle({ toolState }) {
