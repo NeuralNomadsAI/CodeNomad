@@ -330,6 +330,11 @@ export default function PromptInput(props: PromptInputProps) {
     return Boolean(window.matchMedia?.("(pointer: coarse)")?.matches)
   }
 
+  const isTouchOnlyPointer = () => {
+    if (typeof window === "undefined") return false
+    return Boolean(window.matchMedia?.("(pointer: coarse)")?.matches && !window.matchMedia?.("(any-pointer: fine)")?.matches)
+  }
+
   createEffect(() => {
     // Scope global "type-to-focus" behavior to the active, visible prompt only.
     if (typeof document === "undefined") return
@@ -532,7 +537,9 @@ export default function PromptInput(props: PromptInputProps) {
         variant: "error",
       })
     } finally {
-      textareaRef?.focus()
+      if (!isTouchOnlyPointer()) {
+        textareaRef?.focus()
+      }
     }
   }
 
