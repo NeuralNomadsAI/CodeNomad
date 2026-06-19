@@ -44,7 +44,6 @@ export function getToolIcon(tool: string): string {
     case "task":
       return "🎯"
     case "todowrite":
-    case "todoread":
       return "📋"
     case "question":
       return "❓"
@@ -68,7 +67,6 @@ export function getToolName(tool: string): string {
     case "invalid":
       return tGlobal("toolCall.renderer.toolName.invalid")
     case "todowrite":
-    case "todoread":
       return tGlobal("toolCall.renderer.toolName.plan")
     case "apply_patch":
       return tGlobal("toolCall.renderer.toolName.applyPatch")
@@ -221,7 +219,6 @@ export function getDefaultToolAction(toolName: string) {
     case "write":
       return tGlobal("toolCall.renderer.action.preparingWrite")
     case "todowrite":
-    case "todoread":
       return tGlobal("toolCall.renderer.action.planning")
     case "patch":
       return tGlobal("toolCall.renderer.action.preparingPatch")

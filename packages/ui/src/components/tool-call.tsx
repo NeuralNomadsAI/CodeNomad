@@ -41,7 +41,6 @@ import {
   getDefaultToolAction,
   readToolStatePayload,
 } from "./tool-call/utils"
-import { resolveTitleForTool } from "./tool-call/tool-title"
 import { getLogger } from "../lib/logger"
 import { useSpeech } from "../lib/hooks/use-speech"
 import { createFollowScroll } from "../lib/follow-scroll"
@@ -515,7 +514,7 @@ function ToolCallDetails(props: {
 
   const shouldShowPendingMessage = () => {
     const tool = props.toolName()
-    return status() === "pending" && !props.pendingPermission() && tool !== "todowrite" && tool !== "todoread"
+    return status() === "pending" && !props.pendingPermission() && tool !== "todowrite"
   }
 
   const copyIoText = async (event: MouseEvent, text?: string | null) => {
@@ -906,7 +905,17 @@ export default function ToolCall(props: ToolCallProps) {
     const currentTool = toolName()
 
     if (currentTool !== "task") {
-      return resolveTitleForTool({ toolName: currentTool, state })
+      if (!state || state.status === "pending") return getRendererAction()
+
+      const stateTitle = typeof (state as { title?: string }).title === "string" ? (state as { title?: string }).title : undefined
+      if (stateTitle && stateTitle.length > 0) {
+        return stateTitle
+      }
+
+      const customTitle = renderer().getTitle?.(headerRendererContext)
+      if (customTitle) return customTitle
+
+      return getToolName(currentTool)
     }
 
     if (!state) return getRendererAction()
