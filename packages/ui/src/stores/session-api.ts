@@ -56,9 +56,9 @@ import { getRootClient } from "./opencode-client"
 import { getWorktreeSlugForSession, migrateLegacyWorktreeMapToSessionMetadata, pruneStaleLegacyWorktreeMapEntries, removeLegacyParentSessionMapping, setWorktreeSlugForParentSession } from "./worktrees"
 import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 import { hydrateSessionMetadataWithClient } from "./session-metadata"
+import { PROJECT_SESSION_LIST_LIMIT, buildProjectSessionListOptions } from "./session-list-options"
 
 const log = getLogger("api")
-const PROJECT_SESSION_LIST_LIMIT = 1000
 
 function getErrorMessage(error: unknown): string {
   if (!error) return "Failed to load messages"
@@ -110,7 +110,6 @@ interface SessionForkResponse {
 
 type V2SessionListOptions = {
   directory?: string
-  limit?: number
   search?: string
 }
 
@@ -141,12 +140,7 @@ function hasMissingParentChain(session: SDKSession, loaded: Map<string, SDKSessi
 
 async function fetchV2Sessions(instanceId: string, options: V2SessionListOptions): Promise<ProjectSessionListResponse> {
   const client = getRootClient(instanceId)
-  const listOptions = {
-    ...(options.directory ? { directory: options.directory } : {}),
-    ...(options.limit ? { limit: options.limit } : {}),
-    ...(options.search ? { search: options.search } : {}),
-    scope: "project" as const,
-  }
+  const listOptions = buildProjectSessionListOptions(options)
   const data = await requestData<SessionListResponse>(client.session.list(listOptions), "session.list")
   return { data }
 }
@@ -178,7 +172,7 @@ async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: SDKSe
 
   if (!apiSessions.some((session) => hasMissingParentChain(session, loaded))) return
 
-  const page = await fetchV2Sessions(instanceId, { directory, limit: PROJECT_SESSION_LIST_LIMIT })
+  const page = await fetchV2Sessions(instanceId, { directory })
   const items = getV2SessionItems(page)
   if (items.length === 0) return
 
@@ -212,14 +206,9 @@ async function fetchSessions(instanceId: string, options?: { limit?: number; res
   })
 
   try {
-    const limit = Math.min(Math.max(options?.limit ?? PROJECT_SESSION_LIST_LIMIT, PROJECT_SESSION_LIST_LIMIT), PROJECT_SESSION_LIST_LIMIT)
+    const sessionListOptions = instance.folder ? { directory: instance.folder } : {}
 
-    const sessionListOptions: { directory?: string; limit?: number } = {
-      limit,
-      ...(instance.folder ? { directory: instance.folder } : {}),
-    }
-
-    log.info("session.list", { instanceId, limit, directory: sessionListOptions.directory, scope: "project" })
+    log.info("session.list", { instanceId, limit: PROJECT_SESSION_LIST_LIMIT, directory: sessionListOptions.directory, scope: "project" })
     const response = await fetchV2Sessions(instanceId, sessionListOptions)
 
     let statusById: Record<string, any> = {}
@@ -349,7 +338,6 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
     log.info("v2.session.search", { instanceId, query: trimmedQuery, directory: instance.folder })
     const response = await fetchV2Sessions(instanceId, {
       search: trimmedQuery,
-      limit: PROJECT_SESSION_LIST_LIMIT,
       directory: instance.folder,
     })
     if (!isLatestSessionSearch(instanceId, trimmedQuery, requestId)) return
