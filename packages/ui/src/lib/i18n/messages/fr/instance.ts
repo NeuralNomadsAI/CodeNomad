@@ -119,6 +119,7 @@ export const instanceMessages = {
   "instanceShell.rightPanel.sections.plugins": "Plugins",
   "instanceShell.rightPanel.sections.plugins.tooltip": "Plugins qui personnalisent le comportement de l'UI et du serveur, ajoutant des fonctionnalités au-delà de MCP et LSP.",
 
+  "instanceShell.gitChanges.noSessionSelected": "Sélectionnez une session pour voir les changements Git.",
   "instanceShell.gitChanges.loading": "Chargement des changements Git...",
   "instanceShell.gitChanges.empty": "Aucun changement Git pour l'instant.",
   "instanceShell.gitChanges.deleted": "Supprimé",
@@ -151,6 +152,15 @@ export const instanceMessages = {
   "instanceShell.filesShell.showSource": "Afficher la source",
   "instanceShell.filesShell.enableWordWrap": "Activer le retour à la ligne",
   "instanceShell.filesShell.disableWordWrap": "Désactiver le retour à la ligne",
+  "instanceShell.filesShell.hideFiles": "Masquer les fichiers",
+  "instanceShell.filesShell.showFiles": "Afficher les fichiers",
+  "instanceShell.diff.hideUnchanged": "Masquer les zones inchangées",
+  "instanceShell.diff.showFull": "Afficher le fichier complet",
+  "instanceShell.diff.switchToSplit": "Passer à la vue côte à côte",
+  "instanceShell.diff.switchToUnified": "Passer à la vue unifiée",
+  "instanceShell.diff.enableWordWrap": "Activer le retour à la ligne",
+  "instanceShell.diff.disableWordWrap": "Désactiver le retour à la ligne",
+  "instanceShell.worktree.create": "+ Créer un worktree",
 
   "instanceShell.plan.noSessionSelected": "Sélectionnez une session pour voir le plan.",
   "instanceShell.plan.empty": "Aucun plan pour l'instant.",

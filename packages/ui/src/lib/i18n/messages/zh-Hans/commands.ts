@@ -168,6 +168,7 @@ export const commandMessages = {
   "unifiedPicker.sections.commands": "命令",
   "unifiedPicker.sections.agents": "智能体",
   "unifiedPicker.sections.files": "文件",
+  "unifiedPicker.sections.workspaceRoot": "工作区根目录",
   "unifiedPicker.badge.subagent": "子智能体",
   "unifiedPicker.footer.navigate": "导航",
   "unifiedPicker.footer.select": "选择",

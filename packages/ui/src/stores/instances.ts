@@ -54,6 +54,8 @@ import { mergeInstanceMetadata, clearInstanceMetadata } from "./instance-metadat
 import { showWorkspaceLaunchError } from "./launch-errors"
 import { activeSidecarToken } from "./sidecars"
 import { buildV2RequestLocations, type V2Location } from "./request-locations"
+import { showToastNotification } from "../lib/notifications"
+import { tGlobal } from "../lib/i18n"
 
 const log = getLogger("api")
 
@@ -715,19 +717,20 @@ function updateProjectNameForFolder(folder: string, projectName: string): void {
   }
 }
 
-async function stopInstance(id: string) {
+function stopInstance(id: string) {
   const instance = instances().get(id)
   if (!instance) return
 
   releaseInstanceResources(id)
-
-  try {
-    await serverApi.deleteWorkspace(id)
-  } catch (error) {
-    log.error("Failed to stop workspace", error)
-  }
-
   removeInstance(id)
+
+  void serverApi.deleteWorkspace(id).catch((error) => {
+    log.error("Failed to stop workspace", error)
+    showToastNotification({
+      message: tGlobal("app.stopInstance.toast.error"),
+      variant: "error",
+    })
+  })
 }
 
 async function fetchLspStatus(instanceId: string): Promise<LspStatus[] | undefined> {
@@ -1351,7 +1354,7 @@ async function acknowledgeDisconnectedInstance(): Promise<void> {
   }
 
   try {
-    await stopInstance(pending.id)
+    stopInstance(pending.id)
   } catch (error) {
     log.error("Failed to stop disconnected instance", error)
   } finally {

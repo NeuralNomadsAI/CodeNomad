@@ -47,7 +47,6 @@ import {
   clearActiveParentSession,
   createSession,
   fetchSessions,
-  getSessionFetchLimit,
   updateSessionAgent,
   updateSessionModel,
 } from "./stores/sessions"
@@ -389,7 +388,7 @@ const App: Component = () => {
 
     if (!confirmed) return
 
-    await stopInstance(instanceId)
+    stopInstance(instanceId)
   }
 
   async function handleNewSession(instanceId: string) {
@@ -419,7 +418,7 @@ const App: Component = () => {
     clearActiveParentSession(instanceId)
 
     try {
-      await fetchSessions(instanceId, { reset: true, limit: getSessionFetchLimit(instanceId) })
+      await fetchSessions(instanceId, { reset: true })
     } catch (error) {
       log.error("Failed to refresh sessions after closing", error)
     }

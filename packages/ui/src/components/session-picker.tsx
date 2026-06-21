@@ -67,7 +67,7 @@ const SessionPicker: Component<SessionPickerProps> = (props) => {
   }
 
   async function handleCancel() {
-    await stopInstance(props.instanceId)
+    stopInstance(props.instanceId)
     props.onClose()
   }
 

@@ -119,6 +119,7 @@ export const instanceMessages = {
   "instanceShell.rightPanel.sections.plugins": "プラグイン",
   "instanceShell.rightPanel.sections.plugins.tooltip": "UI とサーバーの動作をカスタマイズし、MCP や LSP 以外の機能も追加できるプラグイン。",
 
+  "instanceShell.gitChanges.noSessionSelected": "Git の変更を表示するにはセッションを選択してください。",
   "instanceShell.gitChanges.loading": "Git の変更を読み込み中...",
   "instanceShell.gitChanges.empty": "Git の変更はまだありません。",
   "instanceShell.gitChanges.deleted": "削除済み",
@@ -141,6 +142,8 @@ export const instanceMessages = {
   "instanceShell.filesShell.viewerPlaceholder": "詳細な変更表示は次のステップで追加します。",
   "instanceShell.filesShell.viewerEmpty": "ファイルが選択されていません。",
   "instanceShell.filesShell.listEmpty": "このフォルダーにファイルはありません。",
+  "instanceShell.filesShell.hideFiles": "ファイルを非表示",
+  "instanceShell.filesShell.showFiles": "ファイルを表示",
   "instanceShell.filesShell.search.placeholder": "このフォルダーのファイルを絞り込む",
   "instanceShell.filesShell.search.ariaLabel": "このフォルダーのファイルを絞り込む",
   "instanceShell.filesShell.search.empty": "一致するファイルがありません。",
@@ -151,6 +154,13 @@ export const instanceMessages = {
   "instanceShell.filesShell.showSource": "ソースを表示",
   "instanceShell.filesShell.enableWordWrap": "折り返しを有効化",
   "instanceShell.filesShell.disableWordWrap": "折り返しを無効化",
+  "instanceShell.diff.hideUnchanged": "未変更部分を非表示",
+  "instanceShell.diff.showFull": "ファイル全体を表示",
+  "instanceShell.diff.switchToSplit": "分割表示に切り替え",
+  "instanceShell.diff.switchToUnified": "ユニファイド表示に切り替え",
+  "instanceShell.diff.enableWordWrap": "折り返しを有効化",
+  "instanceShell.diff.disableWordWrap": "折り返しを無効化",
+  "instanceShell.worktree.create": "+ worktree を作成",
 
   "instanceShell.plan.noSessionSelected": "計画を表示するにはセッションを選択してください。",
   "instanceShell.plan.empty": "まだ計画はありません。",
@@ -212,6 +222,6 @@ export const instanceMessages = {
   "opencodeBinarySelector.dialog.description": "CLI サーバーから公開されているファイルを参照します。",
   "opencodeBinarySelector.validation.invalidBinary": "OpenCode バイナリが無効です",
   "opencodeBinarySelector.validation.alreadyValidating": "すでに検証中です",
-  "opencodeBinarySelector.display.systemPath": "{name} (system PATH)",
+  "opencodeBinarySelector.display.systemPath": "{name} (システム PATH)",
   "opencodeBinarySelector.versionLabel": "v{version}",
 } as const

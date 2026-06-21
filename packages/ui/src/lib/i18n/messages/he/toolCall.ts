@@ -4,6 +4,8 @@ export const toolCallMessages = {
 
   "toolCall.header.copyTitle": "העתק כותרת קריאת כלי",
   "toolCall.header.copyAriaLabel": "העתק כותרת קריאת כלי",
+  "toolCall.header.copyOutputTitle": "העתק פלט כלי",
+  "toolCall.header.copyOutputAriaLabel": "העתק פלט כלי",
 
   "toolCall.header.showInputTitle": "הצג ארגומנטי כלי",
   "toolCall.header.showInputAriaLabel": "הצג ארגומנטי כלי",
@@ -12,6 +14,10 @@ export const toolCallMessages = {
 
   "toolCall.io.input": "קלט כלי",
   "toolCall.io.output": "פלט כלי",
+  "toolCall.io.copyInputTitle": "העתק קלט כלי",
+  "toolCall.io.copyInputAriaLabel": "העתק קלט כלי",
+  "toolCall.io.copyOutputTitle": "העתק פלט כלי",
+  "toolCall.io.copyOutputAriaLabel": "העתק פלט כלי",
 
   "toolCall.diff.label": "Diff",
   "toolCall.diff.label.withPath": "Diff · {path}",
@@ -53,7 +59,7 @@ export const toolCallMessages = {
   "toolCall.renderer.read.detail.offset": "היסט: {offset}",
   "toolCall.renderer.read.detail.limit": "מגבלה: {limit}",
 
-  "toolCall.renderer.todo.empty": "אין פריטי תוכנית עדיין.",
+  "toolCall.renderer.todo.empty": "אין פריטים מתוכננים",
   "toolCall.renderer.todo.status.pending": "ממתין",
   "toolCall.renderer.todo.status.inProgress": "בביצוע",
   "toolCall.renderer.todo.status.completed": "הושלם",
@@ -71,13 +77,9 @@ export const toolCallMessages = {
   "toolCall.permission.actions.allowOnce": "אפשר פעם אחת",
   "toolCall.permission.actions.alwaysAllow": "אפשר תמיד",
   "toolCall.permission.actions.deny": "דחה",
-  "toolCall.permission.actions.confirmDeny": "אשר דחייה",
-  "toolCall.permission.actions.cancel": "בטל",
   "toolCall.permission.shortcuts.allowOnce": "אפשר פעם אחת",
   "toolCall.permission.shortcuts.alwaysAllow": "אפשר תמיד",
-  "toolCall.permission.rejectReason.label": "למה לדחות את האישור הזה?",
-  "toolCall.permission.rejectReason.placeholder": "ספר ל-CodeNomad מה לעשות אחרת...",
-  "toolCall.permission.rejectReason.hint": "הסוכן יראה את המשוב הזה ויוכל להתאים את הפעולה הבאה שלו.",
+  "toolCall.permission.rejectReason.placeholder": "משוב אופציונלי בעת דחייה, למשל השתמש בפקודה בטוחה יותר...",
   "toolCall.permission.errors.unableToUpdate": "לא ניתן לעדכן אישור",
 
   "permissionApproval.title": "בקשות",
@@ -94,11 +96,7 @@ export const toolCallMessages = {
   "permissionApproval.actions.allowOnce": "אפשר פעם אחת",
   "permissionApproval.actions.alwaysAllow": "אפשר תמיד",
   "permissionApproval.actions.deny": "דחה",
-  "permissionApproval.actions.confirmDeny": "אשר דחייה",
-  "permissionApproval.actions.cancel": "בטל",
-  "permissionApproval.rejectReason.label": "למה לדחות את האישור הזה?",
-  "permissionApproval.rejectReason.placeholder": "ספר ל-CodeNomad מה לעשות אחרת...",
-  "permissionApproval.rejectReason.hint": "הסוכן יראה את המשוב הזה ויוכל להתאים את הפעולה הבאה שלו.",
+  "permissionApproval.rejectReason.placeholder": "משוב אופציונלי בעת דחייה, למשל השתמש בפקודה בטוחה יותר...",
   "permissionApproval.fallbackHint": "טען סשן לקבלת מידע נוסף.",
   "permissionApproval.errors.unableToUpdatePermission": "לא ניתן לעדכן אישור",
 

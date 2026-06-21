@@ -15,6 +15,9 @@ export const invalidRenderer: ToolRenderer = {
     }
     return getToolName("invalid")
   },
+  getOutputChrome(context) {
+    return defaultRenderer.getOutputChrome?.(context)
+  },
   renderBody(context) {
     return defaultRenderer.renderBody(context)
   },

@@ -36,10 +36,17 @@ export default function MessagePart(props: MessagePartProps) {
   const textContainerClass = () => (isAssistantMessage() ? "message-text message-text-assistant" : "message-text")
   const markdownContainerClass = () => "message-text message-text-assistant"
   const textContainerRole = () => props.messageType || "assistant"
+  const isPrimaryUserTextPart = () =>
+    props.messageType === "user" &&
+    props.part?.type === "text" &&
+    typeof props.primaryUserTextPartId === "string" &&
+    props.primaryUserTextPartId.length > 0 &&
+    props.part.id === props.primaryUserTextPartId
 
   const shouldHideTextPart = () => {
     const part = props.part
     if (!part || part.type !== "text") return false
+    if (isPrimaryUserTextPart()) return false
     return Boolean((part as any).synthetic)
   }
 
@@ -213,7 +220,7 @@ export default function MessagePart(props: MessagePartProps) {
   return (
     <Switch>
       <Match when={partType() === "text"}>
-        <Show when={!shouldHideTextPart() && partHasRenderableText(props.part)}>
+        <Show when={!shouldHideTextPart() && (partHasRenderableText(props.part) || isPrimaryUserTextPart())}>
           <div
             class={canRenderMarkdown() ? markdownContainerClass() : textContainerClass()}
             dir="auto"
@@ -270,6 +277,7 @@ export default function MessagePart(props: MessagePartProps) {
             toolCallId={props.part?.id}
             instanceId={props.instanceId}
             sessionId={props.sessionId}
+            onContentRendered={props.onRendered}
           />
         </Suspense>
       </Match>

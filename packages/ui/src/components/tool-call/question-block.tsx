@@ -206,6 +206,7 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
                 const customSelected = () => selected().filter((value) => !optionLabels().has(value))
                 const customValue = () => customSelected()[0] ?? ""
                 const customChecked = () => customValue().length > 0
+                const showCustomAnswer = () => !hasFinalAnswers() || customChecked()
 
                 return (
                   <div class="border border-base bg-surface-secondary p-3 text-primary">
@@ -249,57 +250,59 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
                         }}
                       </For>
 
-                      <label
-                        class={`mt-2 flex items-start gap-2 py-1 ${props.active() ? "cursor-pointer" : props.request() ? "opacity-80" : ""}`}
-                        title={t("toolCall.question.custom.title")}
-                      >
-                        <input
-                          ref={(el) => {
-                            if (i() === 0 && (q?.options?.length ?? 0) === 0) firstInputRef = el
-                          }}
-                          type={inputType()}
-                          name={groupName()}
-                          class="mt-0.5 accent-[var(--accent-primary)]"
-                          checked={customChecked()}
-                          disabled={!props.active() || props.submitting()}
-                          onChange={(e) => {
-                            const container = e.currentTarget.closest("label")
-                            const input = container?.querySelector("input[type='text']") as HTMLInputElement | null
-                            if (!props.active()) return
-                            if (customChecked()) {
-                              clearCustomAnswer(i(), customSelected())
-                              if (input) {
-                                delete input.dataset.lastValue
-                              }
-                              return
-                            }
-                            toggleFromCustomInput(i(), input)
-                          }}
-                        />
-                        <div class="flex flex-1 flex-col gap-2">
-                          <div class="text-sm leading-tight text-primary">{t("toolCall.question.custom.label")}</div>
+                      <Show when={showCustomAnswer()}>
+                        <label
+                          class={`mt-2 flex items-start gap-2 py-1 ${props.active() ? "cursor-pointer" : props.request() ? "opacity-80" : ""}`}
+                          title={t("toolCall.question.custom.title")}
+                        >
                           <input
-                            class="w-full rounded-md border border-base bg-surface-base px-2 py-1 text-sm text-primary"
-                            type="text"
-                            placeholder={t("toolCall.question.custom.placeholder")}
-                              disabled={!props.active() || props.submitting()}
-                              value={customValue()}
-                            onFocus={(e) => {
-                              if (!props.active()) return
-                              // Keep the radio/checkbox selected while editing.
-                              toggleFromCustomInput(i(), e.currentTarget)
+                            ref={(el) => {
+                              if (i() === 0 && (q?.options?.length ?? 0) === 0) firstInputRef = el
                             }}
-                            onInput={(e) => handleCustomTyping(i(), e.currentTarget)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" && !e.isComposing) {
-                                if (!submitDisabled()) {
-                                  props.onSubmit()
+                            type={inputType()}
+                            name={groupName()}
+                            class="mt-0.5 accent-[var(--accent-primary)]"
+                            checked={customChecked()}
+                            disabled={!props.active() || props.submitting()}
+                            onChange={(e) => {
+                              const container = e.currentTarget.closest("label")
+                              const input = container?.querySelector("input[type='text']") as HTMLInputElement | null
+                              if (!props.active()) return
+                              if (customChecked()) {
+                                clearCustomAnswer(i(), customSelected())
+                                if (input) {
+                                  delete input.dataset.lastValue
                                 }
+                                return
                               }
+                              toggleFromCustomInput(i(), input)
                             }}
                           />
-                        </div>
-                      </label>
+                          <div class="flex flex-1 flex-col gap-2">
+                            <div class="text-sm leading-tight text-primary">{t("toolCall.question.custom.label")}</div>
+                            <input
+                              class="w-full rounded-md border border-base bg-surface-base px-2 py-1 text-sm text-primary"
+                              type="text"
+                              placeholder={t("toolCall.question.custom.placeholder")}
+                              disabled={!props.active() || props.submitting()}
+                              value={customValue()}
+                              onFocus={(e) => {
+                                if (!props.active()) return
+                                // Keep the radio/checkbox selected while editing.
+                                toggleFromCustomInput(i(), e.currentTarget)
+                              }}
+                              onInput={(e) => handleCustomTyping(i(), e.currentTarget)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" && !e.isComposing) {
+                                  if (!submitDisabled()) {
+                                    props.onSubmit()
+                                  }
+                                }
+                              }}
+                            />
+                          </div>
+                        </label>
+                      </Show>
                     </div>
                   </div>
                 )

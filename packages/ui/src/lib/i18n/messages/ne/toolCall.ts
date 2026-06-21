@@ -4,6 +4,8 @@ export const toolCallMessages = {
 
   "toolCall.header.copyTitle": "उपकरण कल शीर्षक प्रतिलिपि गर्नुहोस्",
   "toolCall.header.copyAriaLabel": "उपकरण कल शीर्षक प्रतिलिपि गर्नुहोस्",
+  "toolCall.header.copyOutputTitle": "उपकरण आउटपुट प्रतिलिपि गर्नुहोस्",
+  "toolCall.header.copyOutputAriaLabel": "उपकरण आउटपुट प्रतिलिपि गर्नुहोस्",
 
   "toolCall.header.showInputTitle": "उपकरण तर्कहरू देखाउनुहोस्",
   "toolCall.header.showInputAriaLabel": "उपकरण तर्कहरू देखाउनुहोस्",
@@ -12,6 +14,10 @@ export const toolCallMessages = {
 
   "toolCall.io.input": "उपकरण इनपुट",
   "toolCall.io.output": "उपकरण आउटपुट",
+  "toolCall.io.copyInputTitle": "उपकरण इनपुट प्रतिलिपि गर्नुहोस्",
+  "toolCall.io.copyInputAriaLabel": "उपकरण इनपुट प्रतिलिपि गर्नुहोस्",
+  "toolCall.io.copyOutputTitle": "उपकरण आउटपुट प्रतिलिपि गर्नुहोस्",
+  "toolCall.io.copyOutputAriaLabel": "उपकरण आउटपुट प्रतिलिपि गर्नुहोस्",
 
   "toolCall.diff.label": "डिफ (Diff)",
   "toolCall.diff.label.withPath": "डिफ · {path}",
@@ -50,10 +56,10 @@ export const toolCallMessages = {
   "toolCall.renderer.action.listingDirectory": "डाइरेक्टरी सूचीबद्ध गर्दै...",
 
   "toolCall.renderer.bash.title.timeout": "समय समाप्त: {timeout}",
-  "toolCall.renderer.read.detail.offset": "Offset: {offset}",
-  "toolCall.renderer.read.detail.limit": "Limit: {limit}",
+  "toolCall.renderer.read.detail.offset": "अफसेट: {offset}",
+  "toolCall.renderer.read.detail.limit": "सीमा: {limit}",
 
-  "toolCall.renderer.todo.empty": "अझै कुनै योजना वस्तुहरू छैनन्।",
+  "toolCall.renderer.todo.empty": "कुनै वस्तु योजना गरिएको छैन",
   "toolCall.renderer.todo.status.pending": "विचाराधीन",
   "toolCall.renderer.todo.status.inProgress": "प्रगतिमा",
   "toolCall.renderer.todo.status.completed": "सम्पन्न",
@@ -71,13 +77,9 @@ export const toolCallMessages = {
   "toolCall.permission.actions.allowOnce": "एक पटक अनुमति दिनुहोस्",
   "toolCall.permission.actions.alwaysAllow": "सधैं अनुमति दिनुहोस्",
   "toolCall.permission.actions.deny": "अस्वीकार गर्नुहोस्",
-  "toolCall.permission.actions.confirmDeny": "अस्वीकार पुष्टि गर्नुहोस्",
-  "toolCall.permission.actions.cancel": "रद्द गर्नुहोस्",
   "toolCall.permission.shortcuts.allowOnce": "एक पटक अनुमति दिनुहोस्",
   "toolCall.permission.shortcuts.alwaysAllow": "सधैं अनुमति दिनुहोस्",
-  "toolCall.permission.rejectReason.label": "यो अनुमति किन अस्वीकार गर्ने?",
-  "toolCall.permission.rejectReason.placeholder": "CodeNomad लाई के फरक गर्ने भन्नुहोस्...",
-  "toolCall.permission.rejectReason.hint": "एजेन्टले यो प्रतिक्रिया देख्नेछ र आफ्नो अर्को कार्य समायोजन गर्न सक्नेछ।",
+  "toolCall.permission.rejectReason.placeholder": "अस्वीकार गर्दा वैकल्पिक प्रतिक्रिया, जस्तै अझ सुरक्षित आदेश प्रयोग गर्नुहोस्...",
   "toolCall.permission.errors.unableToUpdate": "अनुमति अपडेट गर्न असमर्थ",
 
   "permissionApproval.title": "अनुरोधहरू",
@@ -94,11 +96,7 @@ export const toolCallMessages = {
   "permissionApproval.actions.allowOnce": "एक पटक अनुमति दिनुहोस्",
   "permissionApproval.actions.alwaysAllow": "सधैं अनुमति दिनुहोस्",
   "permissionApproval.actions.deny": "अस्वीकार गर्नुहोस्",
-  "permissionApproval.actions.confirmDeny": "अस्वीकार पुष्टि गर्नुहोस्",
-  "permissionApproval.actions.cancel": "रद्द गर्नुहोस्",
-  "permissionApproval.rejectReason.label": "यो अनुमति किन अस्वीकार गर्ने?",
-  "permissionApproval.rejectReason.placeholder": "CodeNomad लाई के फरक गर्ने भन्नुहोस्...",
-  "permissionApproval.rejectReason.hint": "एजेन्टले यो प्रतिक्रिया देख्नेछ र आफ्नो अर्को कार्य समायोजन गर्न सक्नेछ।",
+  "permissionApproval.rejectReason.placeholder": "अस्वीकार गर्दा वैकल्पिक प्रतिक्रिया, जस्तै अझ सुरक्षित आदेश प्रयोग गर्नुहोस्...",
   "permissionApproval.fallbackHint": "थप जानकारीको लागि सत्र लोड गर्नुहोस्।",
   "permissionApproval.errors.unableToUpdatePermission": "अनुमति अपडेट गर्न असमर्थ",
 
