@@ -599,8 +599,16 @@ export class BackgroundProcessManager {
     }
 
     if (completion.removeAfterFinalize) {
-      await this.removeFromIndex(workspaceId, record.id)
-      await this.removeProcessDir(workspaceId, record.id)
+      try {
+        await this.removeFromIndex(workspaceId, record.id)
+      } catch {
+        // Workspace may have been deleted, ignore error
+      }
+      try {
+        await this.removeProcessDir(workspaceId, record.id)
+      } catch {
+        // Workspace may have been deleted, ignore error
+      }
 
       this.deps.eventBus.publish({
         type: "instance.event",
@@ -610,9 +618,14 @@ export class BackgroundProcessManager {
       return
     }
 
-    await this.upsertIndex(workspaceId, record)
-    record.outputSizeBytes = await this.getOutputSize(workspaceId, record.id)
-    this.publishUpdate(workspaceId, record)
+    try {
+      await this.upsertIndex(workspaceId, record)
+      record.outputSizeBytes = await this.getOutputSize(workspaceId, record.id)
+      this.publishUpdate(workspaceId, record)
+    } catch (error) {
+      // Workspace may have been deleted, log and continue
+      this.deps.logger.warn({ err: error, workspaceId, processId: record.id }, "Failed to finalize background process record - workspace may have been deleted")
+    }
   }
 
   private shouldSendCompletionPrompt(record: PersistedBackgroundProcess, completion: ProcessCompletion) {
