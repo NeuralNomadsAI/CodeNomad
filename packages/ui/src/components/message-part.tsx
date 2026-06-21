@@ -277,6 +277,7 @@ export default function MessagePart(props: MessagePartProps) {
             toolCallId={props.part?.id}
             instanceId={props.instanceId}
             sessionId={props.sessionId}
+            onContentRendered={props.onRendered}
           />
         </Suspense>
       </Match>
