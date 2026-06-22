@@ -34,4 +34,10 @@ export const appMessages = {
   "releases.devUpdateAvailable.title": "開発版が利用可能",
   "releases.devUpdateAvailable.message": "新しい開発版が利用可能です: {version}。",
   "releases.devUpdateAvailable.action": "リリースを見る",
+
+  "theme.mode.system": "システム",
+  "theme.mode.light": "ライト",
+  "theme.mode.dark": "ダーク",
+  "theme.toggle.title": "テーマ: {mode}",
+  "theme.toggle.ariaLabel": "テーマ: {mode}",
 } as const

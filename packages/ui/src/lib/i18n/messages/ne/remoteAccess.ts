@@ -44,7 +44,7 @@ export const remoteAccessMessages = {
   "remoteAccess.addresses.actions.showOther": "अन्य {count} ठेगानाहरू देखाउनुहोस्",
   "remoteAccess.addresses.actions.hideOther": "अन्य ठेगानाहरू लुकाउनुहोस्",
   "remoteAccess.address.scope.network": "नेटवर्क",
-  "remoteAccess.address.scope.loopback": "Loopback",
+  "remoteAccess.address.scope.loopback": "लूपब्याक",
   "remoteAccess.address.scope.internal": "आन्तरिक",
   "remoteAccess.address.open": "खोल्नुहोस्",
   "remoteAccess.address.showQr": "QR देखाउनुहोस्",

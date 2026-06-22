@@ -95,7 +95,7 @@ export const folderSelectionMessages = {
   "folderSelection.servers.certificateInstall.confirmLabel": "続行",
   "folderSelection.servers.certificateInstall.cancelLabel": "キャンセル",
   "folderSelection.servers.certificateInstall.cancelled": "自己署名 HTTPS のリモートウィンドウを開くには、CodeNomad のローカル証明書を信頼する必要があります。",
-  "folderSelection.sidecars.button": "Open SideCar",
+  "folderSelection.sidecars.button": "SideCar を開く",
 
   "projectRenameDialog.title": "ワークスペース名を変更",
   "projectRenameDialog.description.withLabel": "\"{label}\" のワークスペース名を更新します。",

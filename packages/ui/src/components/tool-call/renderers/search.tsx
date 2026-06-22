@@ -1,19 +1,21 @@
 import type { ToolRenderer } from "../types"
-import { defaultRenderer } from "./default"
 import { getToolName, readToolStatePayload } from "../utils"
 import { getDefaultToolSearchText } from "../search-text"
+import { defaultRenderer } from "./default"
 
-export const invalidRenderer: ToolRenderer = {
-  tools: ["invalid"],
+export const searchRenderer: ToolRenderer = {
+  tools: ["glob", "grep"],
   getSearchText: getDefaultToolSearchText,
-  getTitle({ toolState }) {
+  getTitle({ toolName, toolState }) {
     const state = toolState()
-    if (!state) return getToolName("invalid")
+    const name = getToolName(toolName())
+    if (!state) return name
+
     const { input } = readToolStatePayload(state)
-    if (typeof input.tool === "string") {
-      return getToolName(input.tool)
-    }
-    return getToolName("invalid")
+    const pattern = typeof input.pattern === "string" ? input.pattern.trim() : ""
+    if (!pattern) return name
+
+    return `${name} ${pattern}`
   },
   getOutputChrome(context) {
     return defaultRenderer.getOutputChrome?.(context)

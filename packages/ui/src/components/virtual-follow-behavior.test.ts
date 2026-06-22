@@ -5,6 +5,8 @@ import {
   VirtualScrollController,
   isAtBottom,
   isAutoFollowing,
+  resolveAutoPinHoldElement,
+  shouldSuspendAutoPinToBottomForHold,
   transitionFollowMode,
   type FollowMode,
   type ScrollControllerMetrics,
@@ -37,11 +39,11 @@ describe("virtual follow behavior", () => {
     assert.deepEqual(next.effect, { type: "none" })
   })
 
-  it("rejoins follow and pins bottom when escaped user scrolls down with pin permission", () => {
+  it("does not rejoin follow above bottom even with pin permission", () => {
     const next = transitionFollowMode({ type: "escaped" }, userScroll("down", false, true))
 
-    assert.deepEqual(next.mode, { type: "following" })
-    assert.deepEqual(next.effect, { type: "scroll-bottom", immediate: true, suppressHold: false })
+    assert.deepEqual(next.mode, { type: "escaped" })
+    assert.deepEqual(next.effect, { type: "none" })
   })
 
   it("rejoins follow when escaped user scrolls to the bottom", () => {
@@ -51,10 +53,10 @@ describe("virtual follow behavior", () => {
     assert.deepEqual(next.effect, { type: "none" })
   })
 
-  it("releases hold when the user scrolls down above bottom", () => {
+  it("keeps hold latched when the user scrolls down above bottom", () => {
     const next = transitionFollowMode({ type: "holding", key: "message-1" }, userScroll("down", false, true))
 
-    assert.deepEqual(next.mode, { type: "escaped" })
+    assert.deepEqual(next.mode, { type: "holding", key: "message-1" })
     assert.deepEqual(next.effect, { type: "none" })
   })
 
@@ -72,10 +74,10 @@ describe("virtual follow behavior", () => {
     assert.deepEqual(next.effect, { type: "none" })
   })
 
-  it("releases hold for directionless user scroll away from bottom", () => {
+  it("keeps hold latched for directionless user scroll away from bottom", () => {
     const next = transitionFollowMode({ type: "holding", key: "message-1" }, userScroll(null, false, true))
 
-    assert.deepEqual(next.mode, { type: "escaped" })
+    assert.deepEqual(next.mode, { type: "holding", key: "message-1" })
     assert.deepEqual(next.effect, { type: "none" })
   })
 
@@ -87,11 +89,11 @@ describe("virtual follow behavior", () => {
     assert.deepEqual(following.effect, { type: "scroll-bottom", immediate: true, suppressHold: false })
   })
 
-  it("maintains hold alignment while held content grows", () => {
+  it("does not align or pin while held content grows", () => {
     const next = transitionFollowMode({ type: "holding", key: "message-1" }, { type: "content-grew", canPinToBottom: true })
 
     assert.deepEqual(next.mode, { type: "holding", key: "message-1" })
-    assert.deepEqual(next.effect, { type: "align-hold", key: "message-1" })
+    assert.deepEqual(next.effect, { type: "none" })
   })
 
   it("enters hold mode for a valid hold candidate", () => {
@@ -101,11 +103,99 @@ describe("virtual follow behavior", () => {
     assert.deepEqual(next.effect, { type: "align-hold", key: "message-1" })
   })
 
+  it("keeps hold latched when the hold target disappears", () => {
+    const next = transitionFollowMode({ type: "holding", key: "message-1" }, { type: "hold-target-changed", key: null, canPinToBottom: true })
+
+    assert.deepEqual(next.mode, { type: "holding", key: "message-1" })
+    assert.deepEqual(next.effect, { type: "none" })
+  })
+
+  it("keeps hold latched when a later hold target is reported", () => {
+    const next = transitionFollowMode({ type: "holding", key: "message-1" }, { type: "hold-target-changed", key: "message-2", canPinToBottom: true })
+
+    assert.deepEqual(next.mode, { type: "holding", key: "message-1" })
+    assert.deepEqual(next.effect, { type: "none" })
+  })
+
   it("explicit bottom jumps leave hold and suppress the next hold", () => {
     const next = transitionFollowMode({ type: "holding", key: "message-1" }, { type: "jump-bottom", immediate: true, explicit: true })
 
     assert.deepEqual(next.mode, { type: "following" })
     assert.deepEqual(next.effect, { type: "scroll-bottom", immediate: true, suppressHold: true })
+  })
+
+  it("prompt submission overrides a stale hold latch and returns to bottom follow", () => {
+    const controller = new VirtualScrollController(true)
+    controller.holdCandidate("old-assistant-answer", true)
+
+    const result = controller.jumpBottom(true, true)
+
+    assert.deepEqual(result.state.mode, { type: "following" })
+    assert.deepEqual(result.effect, { type: "scroll-bottom", immediate: true, suppressHold: true })
+    assert.equal(controller.isAutoFollowing(), true)
+  })
+
+  it("clears an existing hold latch when hold targeting is disabled", () => {
+    const controller = new VirtualScrollController(true)
+    controller.holdCandidate("old-assistant-answer", true)
+
+    const result = controller.clearHold(true, true, true)
+
+    assert.deepEqual(result.state.mode, { type: "following" })
+    assert.deepEqual(result.effect, { type: "scroll-bottom", immediate: true, suppressHold: true })
+  })
+
+  it("keeps submitted prompt content growth in bottom-follow after clearing stale hold", () => {
+    const controller = new VirtualScrollController(true)
+    controller.holdCandidate("old-assistant-answer", true)
+    controller.jumpBottom(true, true)
+
+    const result = controller.contentRendered(metrics(2400), true)
+
+    assert.deepEqual(result.state.mode, { type: "following" })
+    assert.deepEqual(result.effect, { type: "scroll-bottom", immediate: true, suppressHold: false })
+  })
+
+  it("ignores stale previous assistant hold target changes after a submit bottom jump", () => {
+    const controller = new VirtualScrollController(true)
+    controller.holdCandidate("previous-assistant-answer", true)
+    controller.jumpBottom(true, true)
+
+    const targetChanged = controller.holdTargetChanged("previous-assistant-answer", true)
+    const contentRendered = controller.contentRendered(metrics(2400), true)
+
+    assert.deepEqual(targetChanged.state.mode, { type: "following" })
+    assert.deepEqual(targetChanged.effect, { type: "none" })
+    assert.deepEqual(contentRendered.state.mode, { type: "following" })
+    assert.deepEqual(contentRendered.effect, { type: "scroll-bottom", immediate: true, suppressHold: false })
+  })
+
+  it("keeps escaped-mode streaming detached until actual bottom", () => {
+    const suspend = shouldSuspendAutoPinToBottomForHold({
+      externalSuspend: false,
+      activeHoldTargetKey: null,
+      eligibleHoldTargetKey: "streaming-assistant-answer",
+    })
+
+    const next = transitionFollowMode({ type: "escaped" }, userScroll("down", false, !suspend))
+
+    assert.equal(suspend, false)
+    assert.deepEqual(next.mode, { type: "escaped" })
+    assert.deepEqual(next.effect, { type: "none" })
+  })
+
+  it("keeps auto-pin suspended while a hold target is actively latched", () => {
+    const suspend = shouldSuspendAutoPinToBottomForHold({
+      externalSuspend: false,
+      activeHoldTargetKey: "streaming-assistant-answer",
+      eligibleHoldTargetKey: "streaming-assistant-answer",
+    })
+
+    const next = transitionFollowMode({ type: "holding", key: "streaming-assistant-answer" }, userScroll("down", false, !suspend))
+
+    assert.equal(suspend, true)
+    assert.deepEqual(next.mode, { type: "holding", key: "streaming-assistant-answer" })
+    assert.deepEqual(next.effect, { type: "none" })
   })
 
   it("key jumps can opt into follow or escape mode", () => {
@@ -119,7 +209,7 @@ describe("virtual follow behavior", () => {
   it("derives auto-follow from modes", () => {
     const modes: Array<[FollowMode, boolean]> = [
       [{ type: "following" }, true],
-      [{ type: "holding", key: "message-1" }, true],
+      [{ type: "holding", key: "message-1" }, false],
       [{ type: "escaped" }, false],
     ]
 
@@ -138,14 +228,24 @@ describe("virtual follow behavior", () => {
     assert.deepEqual(result.effect, { type: "scroll-bottom", immediate: true, suppressHold: false })
   })
 
-  it("maintains hold alignment when held content renders", () => {
+  it("does not align or pin when held content renders", () => {
     const controller = new VirtualScrollController(true)
     controller.holdCandidate("message-1", true)
 
     const result = controller.contentRendered(metrics(2200), true)
 
     assert.deepEqual(result.state.mode, { type: "holding", key: "message-1" })
-    assert.deepEqual(result.effect, { type: "align-hold", key: "message-1" })
+    assert.deepEqual(result.effect, { type: "none" })
+  })
+
+  it("does not resume or snap when a held target disappears", () => {
+    const controller = new VirtualScrollController(true)
+    controller.holdCandidate("message-1", true)
+
+    const result = controller.holdTargetChanged(null, true)
+
+    assert.deepEqual(result.state.mode, { type: "holding", key: "message-1" })
+    assert.deepEqual(result.effect, { type: "none" })
   })
 
   it("lets fresh user upward movement escape even during a programmatic window", () => {
@@ -189,6 +289,17 @@ describe("virtual follow behavior", () => {
     assert.deepEqual(result.effect, { type: "none" })
   })
 
+  it("does not magnet to bottom above bottom even with integration pin permission", () => {
+    const controller = new VirtualScrollController(false)
+    controller.recordProgrammaticOffset(2100, false)
+    controller.setUserIntent("down", 700)
+
+    const result = controller.observeViewport(metrics(2220), 100, false, true)
+
+    assert.deepEqual(result.state.mode, { type: "escaped" })
+    assert.deepEqual(result.effect, { type: "none" })
+  })
+
   it("resumes follow only when downward movement reaches actual bottom", () => {
     const controller = new VirtualScrollController(false)
     controller.recordProgrammaticOffset(2300, false)
@@ -198,6 +309,24 @@ describe("virtual follow behavior", () => {
 
     assert.deepEqual(result.state.mode, { type: "following" })
     assert.deepEqual(result.effect, { type: "none" })
+  })
+
+  it("keeps hold latched until downward movement reaches actual bottom", () => {
+    const controller = new VirtualScrollController(true)
+    controller.holdCandidate("message-1", true)
+    controller.recordProgrammaticOffset(2100, false)
+    controller.setUserIntent("down", 700)
+
+    const nearBottom = controller.observeViewport(metrics(2220), 100, false, true)
+
+    assert.deepEqual(nearBottom.state.mode, { type: "holding", key: "message-1" })
+    assert.deepEqual(nearBottom.effect, { type: "none" })
+
+    controller.setUserIntent("down", 800)
+    const atBottom = controller.observeViewport(metrics(2400), 200, false, true)
+
+    assert.deepEqual(atBottom.state.mode, { type: "following" })
+    assert.deepEqual(atBottom.effect, { type: "none" })
   })
 
   it("still escapes follow on upward movement at bottom", () => {
@@ -244,5 +373,14 @@ describe("virtual follow behavior", () => {
     const closeButNotAtBottom = metrics(2351)
 
     assert.equal(isAtBottom(closeButNotAtBottom), false)
+  })
+
+  it("excludes reasoning-only hold targets while preserving Assistant text eligibility", () => {
+    const itemWrapper = { id: "message-wrapper" } as unknown as HTMLElement
+    const assistantAnswerText = { id: "assistant-answer-text" } as unknown as HTMLElement
+
+    assert.equal(resolveAutoPinHoldElement(itemWrapper, "message-1", () => null), null)
+    assert.equal(resolveAutoPinHoldElement(itemWrapper, "message-1", () => assistantAnswerText), assistantAnswerText)
+    assert.equal(resolveAutoPinHoldElement(itemWrapper, "message-1", () => undefined), itemWrapper)
   })
 })

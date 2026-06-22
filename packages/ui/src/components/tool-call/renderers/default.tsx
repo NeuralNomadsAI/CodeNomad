@@ -5,7 +5,28 @@ import { getDefaultToolSearchText } from "../search-text"
 export const defaultRenderer: ToolRenderer = {
   tools: ["*"],
   getSearchText: getDefaultToolSearchText,
-  renderBody({ toolState, renderMarkdown }) {
+  getOutputChrome({ toolState }) {
+    const state = toolState()
+    if (!state || state.status === "pending") return undefined
+
+    const { metadata, input } = readToolStatePayload(state)
+    const primaryOutput = isToolStateCompleted(state)
+      ? state.output
+      : (isToolStateRunning(state) || isToolStateError(state)) && metadata.output
+        ? metadata.output
+        : metadata.diff ?? metadata.preview ?? input.content
+
+    const result = formatUnknown(primaryOutput)
+    if (!result) return undefined
+
+    return {
+      language: result.language ?? "text",
+      copyText: result.text,
+      wrapToggle: true,
+      suppressInnerHeader: true,
+    }
+  },
+  renderBody({ toolState, renderMarkdown, outputWrapEnabled }) {
     const state = toolState()
     if (!state || state.status === "pending") return null
 
@@ -22,6 +43,6 @@ export const defaultRenderer: ToolRenderer = {
     const content = ensureMarkdownContent(result.text, result.language, true)
     if (!content) return null
 
-    return renderMarkdown({ content, disableHighlight: state.status === "running" })
+    return renderMarkdown({ content, disableHighlight: state.status === "running", wrap: outputWrapEnabled?.() ?? true })
   },
 }

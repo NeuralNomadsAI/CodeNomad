@@ -1,14 +1,5 @@
 /* Message multi-select delete mode UI. */
 
-.message-select-checkbox {
-  width: 14px;
-  height: 14px;
-  margin-inline-end: 0.5rem;
-  cursor: pointer;
-  accent-color: var(--status-error);
-  flex: 0 0 auto;
-}
-
 .message-delete-mode-toolbar {
   position: absolute;
   left: 50%;

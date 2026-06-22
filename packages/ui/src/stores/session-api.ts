@@ -7,7 +7,7 @@ import {
   type SessionStatus,
 } from "../types/session"
 import type { Message } from "../types/message"
-import type { SessionV2Info, V2SessionsResponse } from "@opencode-ai/sdk/v2/client"
+import type { Session as SDKSession, SessionListResponse } from "@opencode-ai/sdk/v2/client"
 
 import { instances } from "./instances"
 import { preferences, setAgentModelPreference } from "./preferences"
@@ -36,8 +36,6 @@ import {
   cleanupBlankSessions,
   syncInstanceSessionIndicator,
   updateThreadTotalsForParent,
-  SESSION_PAGE_SIZE,
-  getSessionNextCursor,
   setSessionPage,
   prependSessionListId,
   removeSessionListId,
@@ -58,6 +56,7 @@ import { getRootClient } from "./opencode-client"
 import { getWorktreeSlugForSession, migrateLegacyWorktreeMapToSessionMetadata, pruneStaleLegacyWorktreeMapEntries, removeLegacyParentSessionMapping, setWorktreeSlugForParentSession } from "./worktrees"
 import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 import { hydrateSessionMetadataWithClient } from "./session-metadata"
+import { PROJECT_SESSION_LIST_LIMIT, buildProjectSessionListOptions } from "./session-list-options"
 
 const log = getLogger("api")
 
@@ -111,17 +110,19 @@ interface SessionForkResponse {
 
 type V2SessionListOptions = {
   directory?: string
-  limit?: number
   search?: string
-  cursor?: string
 }
 
-function getKnownParentId(session: SessionV2Info | Session): string | null | undefined {
+type ProjectSessionListResponse = {
+  data: SDKSession[]
+}
+
+function getKnownParentId(session: SDKSession | Session): string | null | undefined {
   return (session as any).parentID ?? (session as Session).parentId
 }
 
-function hasMissingParentChain(session: SessionV2Info, loaded: Map<string, SessionV2Info | Session>): boolean {
-  let current: SessionV2Info | Session = session
+function hasMissingParentChain(session: SDKSession, loaded: Map<string, SDKSession | Session>): boolean {
+  let current: SDKSession | Session = session
   const seen = new Set<string>()
 
   while (getKnownParentId(current)) {
@@ -137,18 +138,15 @@ function hasMissingParentChain(session: SessionV2Info, loaded: Map<string, Sessi
   return false
 }
 
-async function fetchV2Sessions(instanceId: string, options: V2SessionListOptions): Promise<V2SessionsResponse> {
+async function fetchV2Sessions(instanceId: string, options: V2SessionListOptions): Promise<ProjectSessionListResponse> {
   const client = getRootClient(instanceId)
-  return requestData<V2SessionsResponse>(client.v2.session.list(options), "v2.session.list")
+  const listOptions = buildProjectSessionListOptions(options)
+  const data = await requestData<SessionListResponse>(client.session.list(listOptions), "session.list")
+  return { data }
 }
 
-function getV2SessionItems(response: V2SessionsResponse): SessionV2Info[] {
+function getV2SessionItems(response: ProjectSessionListResponse): SDKSession[] {
   return response.data
-}
-
-function getV2NextCursor(response: V2SessionsResponse): string | undefined {
-  const next = (response as any)?.cursor?.next
-  return typeof next === "string" && next.length > 0 ? next : undefined
 }
 
 async function hydrateMissingSessionMetadata(instanceId: string, sessionIds: string[]): Promise<void> {
@@ -167,43 +165,33 @@ async function hydrateMissingSessionMetadata(instanceId: string, sessionIds: str
   }
 }
 
-async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: SessionV2Info[], directory?: string): Promise<void> {
+async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: SDKSession[], directory?: string): Promise<void> {
   const currentSessions = sessions().get(instanceId) ?? new Map<string, Session>()
-  const loaded = new Map<string, SessionV2Info | Session>(currentSessions)
+  const loaded = new Map<string, SDKSession | Session>(currentSessions)
   for (const session of apiSessions) loaded.set(session.id, session)
 
   if (!apiSessions.some((session) => hasMissingParentChain(session, loaded))) return
 
-  const limit = SESSION_PAGE_SIZE
-  let cursor: string | undefined
-  let remainingPages = 25
+  const page = await fetchV2Sessions(instanceId, { directory })
+  const items = getV2SessionItems(page)
+  if (items.length === 0) return
 
-  while (apiSessions.some((session) => hasMissingParentChain(session, loaded)) && remainingPages > 0) {
-    const page = await fetchV2Sessions(instanceId, { directory, limit, ...(cursor ? { cursor } : {}) })
-    const items = getV2SessionItems(page)
-    if (items.length === 0) break
+  setSessions((prev) => {
+    const next = new Map(prev)
+    const instanceSessions = new Map(next.get(instanceId) ?? new Map())
 
-    setSessions((prev) => {
-      const next = new Map(prev)
-      const instanceSessions = new Map(next.get(instanceId) ?? new Map())
+    for (const apiSession of items) {
+      const existingSession = instanceSessions.get(apiSession.id)
+      instanceSessions.set(apiSession.id, toClientSessionV2(instanceId, apiSession, existingSession))
+      loaded.set(apiSession.id, apiSession)
+    }
 
-      for (const apiSession of items) {
-        const existingSession = instanceSessions.get(apiSession.id)
-        instanceSessions.set(apiSession.id, toClientSessionV2(instanceId, apiSession, existingSession))
-        loaded.set(apiSession.id, apiSession)
-      }
-
-      next.set(instanceId, instanceSessions)
-      return next
-    })
-
-    cursor = getV2NextCursor(page)
-    if (!cursor) break
-    remainingPages -= 1
-  }
+    next.set(instanceId, instanceSessions)
+    return next
+  })
 }
 
-async function fetchSessions(instanceId: string, options?: { limit?: number; reset?: boolean; cursor?: string }): Promise<void> {
+async function fetchSessions(instanceId: string, options?: { reset?: boolean }): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -218,17 +206,10 @@ async function fetchSessions(instanceId: string, options?: { limit?: number; res
   })
 
   try {
-    const limit = Math.min(options?.limit ?? SESSION_PAGE_SIZE, 200)
+    const sessionListOptions = instance.folder ? { directory: instance.folder } : {}
 
-    const sessionListOptions: { directory?: string; limit?: number; cursor?: string } = {
-      limit,
-      ...(instance.folder ? { directory: instance.folder } : {}),
-      ...(options?.cursor ? { cursor: options.cursor } : {}),
-    }
-
-    log.info("v2.session.list", { instanceId, limit, directory: sessionListOptions.directory, cursor: sessionListOptions.cursor })
+    log.info("session.list", { instanceId, limit: PROJECT_SESSION_LIST_LIMIT, directory: sessionListOptions.directory, scope: "project" })
     const response = await fetchV2Sessions(instanceId, sessionListOptions)
-    const nextCursor = getV2NextCursor(response)
 
     let statusById: Record<string, any> = {}
     try {
@@ -298,7 +279,7 @@ async function fetchSessions(instanceId: string, options?: { limit?: number; res
       })
     }
 
-    setSessionPage(instanceId, rootIds, Boolean(nextCursor), options?.reset ?? true, nextCursor)
+    setSessionPage(instanceId, rootIds, false, options?.reset ?? true)
 
     syncInstanceSessionIndicator(instanceId)
 
@@ -339,9 +320,7 @@ async function fetchSessions(instanceId: string, options?: { limit?: number; res
 }
 
 async function loadMoreSessions(instanceId: string): Promise<void> {
-  const cursor = getSessionNextCursor(instanceId)
-  if (!cursor) return
-  await fetchSessions(instanceId, { limit: SESSION_PAGE_SIZE, reset: false, cursor })
+  return
 }
 
 async function searchSessions(instanceId: string, query: string): Promise<void> {
@@ -359,7 +338,6 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
     log.info("v2.session.search", { instanceId, query: trimmedQuery, directory: instance.folder })
     const response = await fetchV2Sessions(instanceId, {
       search: trimmedQuery,
-      limit: SESSION_PAGE_SIZE,
       directory: instance.folder,
     })
     if (!isLatestSessionSearch(instanceId, trimmedQuery, requestId)) return
@@ -410,7 +388,7 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
   }
 }
 
-function toClientSessionV2(instanceId: string, apiSession: SessionV2Info, existingSession?: Session): Session {
+function toClientSessionV2(instanceId: string, apiSession: SDKSession, existingSession?: Session): Session {
   return {
     id: apiSession.id,
     instanceId,

@@ -95,7 +95,7 @@ export const folderSelectionMessages = {
   "folderSelection.servers.certificateInstall.confirmLabel": "המשך",
   "folderSelection.servers.certificateInstall.cancelLabel": "ביטול",
   "folderSelection.servers.certificateInstall.cancelled": "CodeNomad צריך שהאישור המקומי יהיה מהימן לפני שיוכל לפתוח חלונות HTTPS מרוחקים עם אישור בחתימה עצמית.",
-  "folderSelection.sidecars.button": "Open SideCar",
+  "folderSelection.sidecars.button": "פתח SideCar",
 
   "projectRenameDialog.title": "שנה שם סביבת עבודה",
   "projectRenameDialog.description.withLabel": "עדכן את שם סביבת העבודה עבור \"{label}\".",

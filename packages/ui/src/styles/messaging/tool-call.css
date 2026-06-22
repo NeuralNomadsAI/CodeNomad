@@ -1,11 +1,15 @@
 /* Tool call rendering */
 @import "./tool-call/todo.css";
 @import "./tool-call/task.css";
+@import "./tool-call/skill.css";
 
 .tool-call-message {
-  @apply flex flex-col gap-2 p-3 w-full;
-  background-color: var(--message-tool-bg);
-  border-inline-start: 4px solid var(--message-tool-border);
+  @apply flex flex-col gap-0 p-0 w-full;
+  background-color: var(--message-assistant-bg);
+  border-block-start: none;
+  border-block-end: none;
+  border-inline-end: none;
+  border-inline-start: none;
   color: inherit;
 }
 
@@ -76,10 +80,10 @@
 }
 
 .tool-call {
-  @apply border overflow-hidden;
+  @apply overflow-hidden;
   /* Tokenized so dark mode doesn't get overly bright borders. */
-  --tool-call-border-color: var(--border-strong, var(--border-base));
-  border-color: var(--tool-call-border-color);
+  --tool-call-border-color: transparent;
+  border: none;
   color: inherit;
   --tool-call-line-unit: 1.4em;
   --tool-call-lines-compact: 15;
@@ -95,10 +99,11 @@
 }
 
 .tool-call-header {
-  @apply flex items-stretch w-full;
+  @apply flex items-center w-full;
   background-color: transparent;
   color: var(--text-primary);
-  border-bottom: 1px solid var(--tool-call-border-color);
+  --message-action-right-inset: 0.75rem;
+  padding-inline-end: var(--message-action-right-inset);
 }
 
 .tool-call-header:hover {
@@ -106,73 +111,73 @@
 }
 
 .tool-call-header-toggle {
-  @apply flex items-center gap-2 p-2 w-full bg-transparent border-none cursor-pointer text-start;
+  @apply flex items-center gap-1.5 px-2 py-1.5 w-full bg-transparent border-none cursor-pointer text-start;
   font-family: var(--font-family-mono);
   font-size: 13px;
   border-radius: 0;
   color: var(--text-primary);
   flex: 1;
+  min-width: 0;
+  padding-inline-start: 0;
 }
 
 .tool-call-header-toggle::before {
-  content: "▶";
-  font-size: 11px;
-  margin-inline-end: 0.35rem;
-  color: var(--text-secondary);
+  content: none;
 }
 
 .tool-call-header-toggle[aria-expanded="true"]::before {
-  content: "▼";
+  content: none;
 }
 
 .tool-call-header-toggle:hover {
   background-color: transparent;
 }
 
-.tool-call-header-copy {
+.tool-call-header-icon-button {
   @apply inline-flex items-center justify-center;
   background-color: transparent;
   border: none;
   color: var(--text-secondary);
-  padding: 0 0.5rem;
-  border-radius: 0;
+  width: 1.6rem;
+  height: 1.6rem;
+  padding: 0;
+  border-radius: 0.25rem;
   cursor: pointer;
+  flex: 0 0 auto;
 }
 
-.tool-call-header-input {
-  @apply inline-flex items-center justify-center;
-  background-color: transparent;
-  border: none;
-  color: var(--text-secondary);
-  padding: 0 0.5rem;
-  border-radius: 0;
-  cursor: pointer;
-}
-
-.tool-call-header-copy:hover {
+.tool-call-header-icon-button:hover {
   background-color: transparent;
   color: var(--text-primary);
 }
 
-.tool-call-header-input:hover {
-  background-color: transparent;
-  color: var(--text-primary);
+.tool-call-header-icon-button:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
-.tool-call-header-input[aria-pressed="true"] {
-  color: var(--text-primary);
+.tool-call-header-icon-button:disabled:hover {
+  color: var(--text-muted);
 }
 
 .tool-call-header > .action-overflow-trigger {
+  display: inline-flex;
+}
+
+.tool-call-header > .action-overflow-trigger.action-overflow-narrow {
   display: none;
 }
 
-.session-center-column[data-session-center-width="narrow"] .tool-call-header[data-action-overflow="true"] > .tool-call-header-input,
 .session-center-column[data-session-center-width="narrow"] .tool-call-header[data-action-overflow="true"] > .tool-call-header-copy:not(.action-overflow-trigger) {
   display: none;
 }
 
-.session-center-column[data-session-center-width="narrow"] .tool-call-header[data-action-overflow="true"] > .action-overflow-trigger {
+.session-center-column[data-session-center-width="narrow"] .tool-call-header[data-action-overflow="true"] > .action-overflow-trigger.action-overflow-wide {
+  display: none;
+}
+
+.session-center-column[data-session-center-width="narrow"] .tool-call-header[data-action-overflow="true"] > .action-overflow-trigger.action-overflow-narrow {
   display: inline-flex;
 }
 
@@ -180,39 +185,71 @@
   @apply inline-flex items-center justify-center;
   font-size: 0.95rem;
   color: var(--text-secondary);
-  padding: 0 0.5rem;
+  width: 1.25rem;
+  height: 1.25rem;
+  flex: 0 0 auto;
+}
+
+.tool-call-header-action {
+  @apply inline-flex items-center justify-center;
+  width: 1.6rem;
+  height: 1.6rem;
+  flex: 0 0 auto;
+}
+
+.tool-call-disclosure {
+  @apply inline-flex items-center justify-center;
+  color: var(--text-secondary);
+  flex: 0 0 auto;
+  font-size: 11px;
+  width: 0.9rem;
 }
 
 .tool-call-summary {
-  @apply flex-1 text-start inline-flex items-center gap-2;
-  color: var(--text-primary);
+  @apply flex-1 text-start inline-flex items-center min-w-0;
+  gap: var(--message-part-header-gap);
+  color: var(--message-part-header-title);
 }
 
-.tool-call-summary::before {
-  content: attr(data-tool-icon);
+.tool-call-summary-type {
+  flex: 0 0 auto;
+  font-family: var(--message-part-header-font-family);
+  font-size: var(--message-part-header-type-font-size);
+  font-weight: var(--message-part-header-type-font-weight);
+  color: var(--message-part-header-type);
 }
 
-.tool-call-summary[data-tool-icon=""]::before {
-  margin-inline-end: 0;
-  content: "";
+.tool-call-summary-title {
+  @apply truncate;
+  font-family: var(--message-part-header-font-family);
+  font-size: var(--message-part-header-title-font-size);
+  font-weight: var(--message-part-header-title-font-weight);
+  line-height: var(--message-part-header-title-line-height);
+  color: var(--message-part-header-title);
+  min-width: 0;
 }
 
-.tool-call-summary[data-tool-icon]:not([data-tool-icon=""])::before {
-  margin-inline-end: 0.35rem;
+.session-center-column[data-session-center-width="narrow"] .tool-call-summary-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ToolState uses status="completed"; keep "success" as a legacy alias. */
 .tool-call-status-completed,
 .tool-call-status-success {
-  border-inline-start: 3px solid var(--status-success);
+  border-inline-start: none;
 }
 
 .tool-call-status-error {
-  border-inline-start: 3px solid var(--status-error);
+  border-inline-start: none;
 }
 
 .tool-call-status-running {
-  border-inline-start: 3px solid var(--status-warning);
+  border-inline-start: none;
 }
 
 .tool-call-status-running .tool-call-status {
@@ -220,7 +257,7 @@
 }
 
 .tool-call-status-pending {
-  border-inline-start: 3px solid var(--accent-primary);
+  border-inline-start: none;
 }
 
 .tool-call-status-pending .tool-call-summary {
@@ -253,60 +290,132 @@
 
 .tool-call-details {
   @apply flex flex-col;
-  background-color: var(--surface-code);
+  background-color: var(--message-assistant-bg);
   font-size: var(--font-size-xs);
+}
+
+.tool-call-body {
+  --tool-call-body-border-color: var(--border-strong, var(--border-base));
+  margin: 0 var(--space-md) var(--space-md);
+  border: 1px solid var(--tool-call-body-border-color, var(--border-base));
+  background-color: var(--surface-code);
+  overflow: hidden;
+}
+
+.tool-call-body:empty {
+  display: none;
 }
 
 
 .tool-call-io-sections {
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs);
+  gap: 0;
   padding: 0;
 }
 
 .tool-call-io-section {
-  border: 1px solid var(--tool-call-border-color);
+  border: 1px solid var(--tool-call-body-border-color, var(--border-base));
   overflow: hidden;
   background-color: transparent;
   border-radius: 0;
+}
+
+.tool-call-io-section + .tool-call-io-section {
+  border-top: none;
+}
+
+.tool-call-io-header {
+  display: flex;
+  align-items: center;
+  min-height: 1.6rem;
+  background-color: var(--surface-secondary);
+  border-bottom: 1px solid var(--tool-call-body-border-color, var(--border-base));
 }
 
 .tool-call-io-toggle {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 0.75rem;
-  padding: 0.5rem;
-  background-color: var(--surface-secondary);
+  gap: var(--message-part-header-gap);
+  min-width: 0;
+  flex: 1;
+  padding: 0 0 0 var(--space-sm);
+  background-color: transparent;
   border: none;
-  border-bottom: 1px solid var(--tool-call-border-color);
   width: 100%;
+  min-height: 1.6rem;
   text-align: start;
-  font-size: 0.875rem;
-  font-weight: normal;
   color: var(--text-primary);
   cursor: pointer;
 }
 
-.tool-call-io-toggle::before {
-  content: "▶";
+.tool-call-io-toggle:hover {
+  background-color: transparent;
+}
+
+.tool-call-io-disclosure {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 0.9rem;
   font-size: 11px;
-  margin-inline-end: 0.35rem;
   color: var(--text-secondary);
 }
 
-.tool-call-io-toggle[aria-expanded="true"]::before {
-  content: "▼";
+.tool-call-io-title {
+  font-family: var(--message-part-header-font-family);
+  font-size: var(--message-part-header-title-font-size);
+  font-weight: var(--message-part-header-title-font-weight);
+  line-height: var(--message-part-header-title-line-height);
+  color: var(--message-part-header-title);
 }
 
-.tool-call-io-title {
-  font-weight: inherit;
-  color: inherit;
+.tool-call-io-language {
+  flex: 0 0 auto;
+  font-family: var(--message-part-header-font-family);
+  font-size: var(--message-part-header-type-font-size);
+  font-weight: var(--message-part-header-type-font-weight);
+  line-height: var(--message-part-header-title-line-height);
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tool-call-io-actions {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.tool-call-io-copy {
+  margin-inline-end: 0;
+}
+
+.tool-call-io-copy + .tool-call-io-wrap {
+  margin-inline-start: var(--space-xs);
+}
+
+.tool-call-io-wrap,
+.tool-call-io-header > .tool-call-header-icon-button:last-child {
+  margin-inline-end: var(--space-sm);
+}
+
+.tool-call-io-wrap.active {
+  color: var(--text-primary);
+}
+
+.tool-call-header-wrap.active {
+  color: var(--text-primary);
 }
 
 .tool-call-io-body {
   background-color: var(--surface-code);
+}
+
+.tool-call-io-body[data-suppress-inner-header="true"] .tool-call-markdown .code-block-header {
+  display: none;
 }
 
 /* IO sections provide the outer frame; avoid double borders on markdown frames. */
@@ -316,9 +425,9 @@
 
 .tool-call-markdown {
   background-color: var(--surface-code);
-  /* Keep a visible frame around the scroll viewport (not the content). */
-  border: 1px solid var(--tool-call-border-color);
+  border: none;
   border-radius: 0;
+  margin: 0;
   padding: 0;
   font-size: var(--font-size-xs);
   line-height: var(--line-height-tight);
@@ -338,6 +447,7 @@
 /* Avoid double borders when ANSI output uses .tool-call-content inside tool-call-markdown. */
 .tool-call-markdown .tool-call-content {
   border: none;
+  background-color: transparent;
 }
 
 .tool-call-markdown-large {
@@ -356,7 +466,10 @@
 }
 
 .tool-call-diff-toolbar {
-  @apply flex items-center justify-between gap-3 px-3 py-2;
+  @apply flex items-center justify-between;
+  gap: var(--message-part-header-gap);
+  min-height: 1.6rem;
+  padding: 0 var(--space-sm);
   background-color: var(--surface-secondary);
   border-bottom: 1px solid var(--tool-call-border-color);
   position: sticky;
@@ -378,6 +491,22 @@
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.08em;
+}
+
+.tool-call-diff-toolbar .file-viewer-toolbar-icon-button {
+  width: 1.6rem;
+  height: 1.6rem;
+  border: none;
+  border-radius: 0.25rem;
+  background-color: transparent;
+  color: var(--text-secondary);
+}
+
+.tool-call-diff-toolbar .file-viewer-toolbar-icon-button:hover,
+.tool-call-diff-toolbar .file-viewer-toolbar-icon-button.active {
+  background-color: transparent;
+  color: var(--text-primary);
+  box-shadow: none;
 }
 
 .tool-call-diff-toggle {
@@ -428,9 +557,9 @@
   @apply flex flex-col gap-3;
   border: 2px solid var(--status-warning);
   border-radius: 0;
-  margin: 0;
+  margin: 0 var(--space-md) var(--space-md);
   padding: 1rem 1.25rem;
-  background-color: var(--message-tool-bg);
+  background-color: var(--message-assistant-bg);
 }
 
 .tool-call-permission.tool-call-permission-answered {
@@ -648,7 +777,14 @@
   background-color: transparent;
 }
 
+.tool-call-markdown .markdown-code-block pre,
+.tool-call-markdown .markdown-code-block .shiki {
+  border-radius: 0 !important;
+}
+
 .tool-call-markdown .code-block-header {
+  min-height: 1.6rem;
+  padding: 0 0 0 var(--space-sm);
   position: sticky;
   top: 0;
   z-index: auto;
@@ -659,12 +795,45 @@
 
 /* Tool output header (language + copy) needs stronger contrast in light mode. */
 .tool-call-markdown .code-block-language {
+  font-family: var(--message-part-header-font-family);
+  font-size: var(--message-part-header-type-font-size);
+  font-weight: var(--message-part-header-type-font-weight);
+  line-height: var(--message-part-header-title-line-height);
   color: var(--text-primary);
 }
 
 .tool-call-markdown .code-block-copy {
-  border-color: var(--tool-call-border-color);
+  width: 1.6rem;
+  height: 1.6rem;
+  margin-inline-end: var(--space-sm);
+  padding: 0;
+  justify-content: center;
+  gap: 0;
+  border: none;
+  border-radius: 0.25rem;
+  color: var(--text-secondary);
+}
+
+.tool-call-markdown .code-block-copy:hover {
+  background-color: transparent;
   color: var(--text-primary);
+}
+
+.tool-call-markdown .code-block-copy .copy-icon {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+.tool-call-markdown .code-block-copy .copy-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* Plain (non-highlighted) tool output must remain readable in light mode. */
@@ -679,6 +848,16 @@
   max-height: none;
   overflow-y: visible;
   direction: ltr;
+}
+
+.tool-call-markdown-wrap .markdown-code-block pre,
+.tool-call-markdown-wrap .markdown-code-block code,
+.tool-call-markdown-wrap pre.shiki,
+.tool-call-markdown-wrap pre.shiki code,
+.tool-call-markdown-wrap .shiki {
+  white-space: pre-wrap !important;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 /* Shiki injects inline background colors; force token surfaces. */
@@ -763,18 +942,6 @@
 }
 
 
-.tool-call-diagnostics-heading {
-  @apply flex items-center gap-2 p-2 w-full border-none cursor-pointer text-start;
-  font-family: var(--font-family-mono);
-  font-size: 13px;
-  color: var(--text-primary);
-  background-color: var(--surface-code);
-}
-
-.tool-call-diagnostics-heading:hover {
-  background-color: var(--surface-hover);
-}
-
 .tool-call-diagnostics-title {
   font-size: 13px;
 }
@@ -788,16 +955,6 @@
   border-radius: var(--radius-sm);
   border: 1px solid var(--tool-call-border-color, var(--border-base));
   font-size: 12px;
-}
-
-.tool-call-diagnostics-file {
-  @apply inline-flex items-center;
-  flex: 1;
-  font-size: 12px;
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .tool-call-diagnostics-spacer {
