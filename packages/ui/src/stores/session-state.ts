@@ -85,10 +85,6 @@ function getSessionListIds(instanceId: string): string[] {
   return getSessionPaginationState(instanceId).ids
 }
 
-function getSessionFetchLimit(instanceId: string): number {
-  return Math.max(getSessionPaginationState(instanceId).ids.length, SESSION_PAGE_SIZE)
-}
-
 function getSessionNextCursor(instanceId: string): string | undefined {
   return getSessionPaginationState(instanceId).nextCursor
 }
@@ -1070,7 +1066,6 @@ export {
   sessionPagination,
   sessionSearch,
   getSessionListIds,
-  getSessionFetchLimit,
   getSessionNextCursor,
   setSessionPage,
   getSessionHasMore,

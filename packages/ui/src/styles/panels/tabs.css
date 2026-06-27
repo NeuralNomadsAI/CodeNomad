@@ -19,6 +19,8 @@
 .tab-scroll {
   @apply w-full;
   overflow-x: auto;
+  touch-action: pan-x;
+  -webkit-overflow-scrolling: touch;
 }
 
 .tab-strip {
@@ -165,7 +167,7 @@
 }
 
 .new-tab-button {
-  @apply inline-flex items-center justify-center w-8 h-8 rounded-md transition-colors;
+  @apply inline-flex items-center justify-center w-8 h-8 flex-shrink-0 rounded-md transition-colors;
   background-color: var(--new-tab-bg);
   color: var(--new-tab-text);
 }

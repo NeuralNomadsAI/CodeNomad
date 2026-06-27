@@ -1,4 +1,4 @@
-import { Component, For, Show, createMemo, createSignal } from "solid-js"
+import { Component, For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import { Dynamic } from "solid-js/web"
 import {
   DragDropProvider,
@@ -37,15 +37,9 @@ interface SortableAppTabProps {
   onClose: (tabId: string) => void
 }
 
-const SortableAppTab: Component<SortableAppTabProps> = (props) => {
-  const sortable = createSortable(props.tab.id)
-
+const AppTabContent: Component<SortableAppTabProps> = (props) => {
   return (
-    <div
-      ref={sortable}
-      class={`tab-draggable ${sortable.isActiveDraggable ? "tab-draggable-active" : ""}`}
-      data-app-tab-id={props.tab.id}
-    >
+    <>
       {props.tab.kind === "instance" ? (
         <InstanceTab
           instance={props.tab.instance}
@@ -82,14 +76,59 @@ const SortableAppTab: Component<SortableAppTabProps> = (props) => {
           </button>
         </div>
       )}
+    </>
+  )
+}
+
+const SortableAppTab: Component<SortableAppTabProps> = (props) => {
+  const sortable = createSortable(props.tab.id)
+
+  return (
+    <div
+      ref={sortable}
+      class={`tab-draggable ${sortable.isActiveDraggable ? "tab-draggable-active" : ""}`}
+      data-app-tab-id={props.tab.id}
+    >
+      <AppTabContent {...props} />
     </div>
   )
+}
+
+const StaticAppTab: Component<SortableAppTabProps> = (props) => {
+  return (
+    <div class="tab-draggable" data-app-tab-id={props.tab.id}>
+      <AppTabContent {...props} />
+    </div>
+  )
+}
+
+const isTouchOnlyPointer = () => {
+  if (typeof window === "undefined") return false
+  return Boolean(window.matchMedia?.("(pointer: coarse)")?.matches && !window.matchMedia?.("(any-pointer: fine)")?.matches)
 }
 
 const InstanceTabs: Component<InstanceTabsProps> = (props) => {
   const { t } = useI18n()
   const { preferences } = useConfig()
   const tabIds = createMemo(() => props.tabs.map((tab) => tab.id))
+  const [dragReorderEnabled, setDragReorderEnabled] = createSignal(!isTouchOnlyPointer())
+
+  onMount(() => {
+    if (typeof window === "undefined") return
+    const coarseQuery = window.matchMedia?.("(pointer: coarse)")
+    const fineQuery = window.matchMedia?.("(any-pointer: fine)")
+    if (!coarseQuery || !fineQuery) return
+
+    const syncDragReorder = () => setDragReorderEnabled(!isTouchOnlyPointer())
+    syncDragReorder()
+    coarseQuery.addEventListener("change", syncDragReorder)
+    fineQuery.addEventListener("change", syncDragReorder)
+
+    onCleanup(() => {
+      coarseQuery.removeEventListener("change", syncDragReorder)
+      fineQuery.removeEventListener("change", syncDragReorder)
+    })
+  })
 
   /** Whether to show toast history panel */
   const [showToastHistory, setShowToastHistory] = createSignal(false)
@@ -132,22 +171,38 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
           <div class="tab-scroll">
             <div class="tab-strip">
               <div class="tab-strip-tabs">
-                <DragDropProvider collisionDetector={closestCenter} onDragEnd={handleDragEnd}>
-                  <DragDropSensors>
-                    <SortableProvider ids={tabIds()}>
-                      <For each={props.tabs}>
-                        {(tab) => (
-                          <SortableAppTab
-                            tab={tab}
-                            activeTabId={props.activeTabId}
-                            onSelect={props.onSelect}
-                            onClose={props.onClose}
-                          />
-                        )}
-                      </For>
-                    </SortableProvider>
-                  </DragDropSensors>
-                </DragDropProvider>
+                <Show
+                  when={dragReorderEnabled()}
+                  fallback={
+                    <For each={props.tabs}>
+                      {(tab) => (
+                        <StaticAppTab
+                          tab={tab}
+                          activeTabId={props.activeTabId}
+                          onSelect={props.onSelect}
+                          onClose={props.onClose}
+                        />
+                      )}
+                    </For>
+                  }
+                >
+                  <DragDropProvider collisionDetector={closestCenter} onDragEnd={handleDragEnd}>
+                    <DragDropSensors>
+                      <SortableProvider ids={tabIds()}>
+                        <For each={props.tabs}>
+                          {(tab) => (
+                            <SortableAppTab
+                              tab={tab}
+                              activeTabId={props.activeTabId}
+                              onSelect={props.onSelect}
+                              onClose={props.onClose}
+                            />
+                          )}
+                        </For>
+                      </SortableProvider>
+                    </DragDropSensors>
+                  </DragDropProvider>
+                </Show>
               </div>
               <div class="tab-strip-spacer" />
               <Show when={props.tabs.length > 1}>

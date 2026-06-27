@@ -95,7 +95,7 @@ export const folderSelectionMessages = {
   "folderSelection.servers.certificateInstall.confirmLabel": "继续",
   "folderSelection.servers.certificateInstall.cancelLabel": "取消",
   "folderSelection.servers.certificateInstall.cancelled": "CodeNomad 需要先信任本地证书，才能打开使用自签名 HTTPS 的远程窗口。",
-  "folderSelection.sidecars.button": "Open SideCar",
+  "folderSelection.sidecars.button": "打开 SideCar",
 
   "projectRenameDialog.title": "重命名工作区",
   "projectRenameDialog.description.withLabel": "更新“{label}”的工作区名称。",

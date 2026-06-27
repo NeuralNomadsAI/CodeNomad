@@ -4,6 +4,8 @@ export const toolCallMessages = {
 
   "toolCall.header.copyTitle": "Tool-Aufruf-Titel kopieren",
   "toolCall.header.copyAriaLabel": "Tool-Aufruf-Titel kopieren",
+  "toolCall.header.copyOutputTitle": "Tool-Ausgabe kopieren",
+  "toolCall.header.copyOutputAriaLabel": "Tool-Ausgabe kopieren",
 
   "toolCall.header.showInputTitle": "Tool-Argumente anzeigen",
   "toolCall.header.showInputAriaLabel": "Tool-Argumente anzeigen",
@@ -12,6 +14,10 @@ export const toolCallMessages = {
 
   "toolCall.io.input": "Tool-Eingabe",
   "toolCall.io.output": "Tool-Ausgabe",
+  "toolCall.io.copyInputTitle": "Tool-Eingabe kopieren",
+  "toolCall.io.copyInputAriaLabel": "Tool-Eingabe kopieren",
+  "toolCall.io.copyOutputTitle": "Tool-Ausgabe kopieren",
+  "toolCall.io.copyOutputAriaLabel": "Tool-Ausgabe kopieren",
 
   "toolCall.diff.label": "Diff",
   "toolCall.diff.label.withPath": "Diff · {path}",
@@ -53,7 +59,7 @@ export const toolCallMessages = {
   "toolCall.renderer.read.detail.offset": "Offset: {offset}",
   "toolCall.renderer.read.detail.limit": "Limit: {limit}",
 
-  "toolCall.renderer.todo.empty": "Noch keine Planelemente.",
+  "toolCall.renderer.todo.empty": "Keine Elemente geplant",
   "toolCall.renderer.todo.status.pending": "Ausstehend",
   "toolCall.renderer.todo.status.inProgress": "In Arbeit",
   "toolCall.renderer.todo.status.completed": "Abgeschlossen",

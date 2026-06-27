@@ -30,7 +30,7 @@ export function createMarkdownContentRenderer(params: {
 
     const size = options.size || "default"
     const disableHighlight = options.disableHighlight || false
-    const messageClass = `message-text tool-call-markdown${size === "large" ? " tool-call-markdown-large" : ""}`
+    const messageClass = `message-text tool-call-markdown${size === "large" ? " tool-call-markdown-large" : ""}${options.wrap ? " tool-call-markdown-wrap" : ""}`
     const state = params.toolState()
     const disableScrollTracking = options.disableScrollTracking || (state?.status !== "running" && state?.status !== "pending")
     const registerRef = disableScrollTracking ? registerUntracked : registerTracked

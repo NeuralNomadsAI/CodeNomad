@@ -4,6 +4,8 @@ export const toolCallMessages = {
 
   "toolCall.header.copyTitle": "उपकरण कल शीर्षक प्रतिलिपि गर्नुहोस्",
   "toolCall.header.copyAriaLabel": "उपकरण कल शीर्षक प्रतिलिपि गर्नुहोस्",
+  "toolCall.header.copyOutputTitle": "उपकरण आउटपुट प्रतिलिपि गर्नुहोस्",
+  "toolCall.header.copyOutputAriaLabel": "उपकरण आउटपुट प्रतिलिपि गर्नुहोस्",
 
   "toolCall.header.showInputTitle": "उपकरण तर्कहरू देखाउनुहोस्",
   "toolCall.header.showInputAriaLabel": "उपकरण तर्कहरू देखाउनुहोस्",
@@ -12,6 +14,10 @@ export const toolCallMessages = {
 
   "toolCall.io.input": "उपकरण इनपुट",
   "toolCall.io.output": "उपकरण आउटपुट",
+  "toolCall.io.copyInputTitle": "उपकरण इनपुट प्रतिलिपि गर्नुहोस्",
+  "toolCall.io.copyInputAriaLabel": "उपकरण इनपुट प्रतिलिपि गर्नुहोस्",
+  "toolCall.io.copyOutputTitle": "उपकरण आउटपुट प्रतिलिपि गर्नुहोस्",
+  "toolCall.io.copyOutputAriaLabel": "उपकरण आउटपुट प्रतिलिपि गर्नुहोस्",
 
   "toolCall.diff.label": "डिफ (Diff)",
   "toolCall.diff.label.withPath": "डिफ · {path}",
@@ -50,10 +56,10 @@ export const toolCallMessages = {
   "toolCall.renderer.action.listingDirectory": "डाइरेक्टरी सूचीबद्ध गर्दै...",
 
   "toolCall.renderer.bash.title.timeout": "समय समाप्त: {timeout}",
-  "toolCall.renderer.read.detail.offset": "Offset: {offset}",
-  "toolCall.renderer.read.detail.limit": "Limit: {limit}",
+  "toolCall.renderer.read.detail.offset": "अफसेट: {offset}",
+  "toolCall.renderer.read.detail.limit": "सीमा: {limit}",
 
-  "toolCall.renderer.todo.empty": "अझै कुनै योजना वस्तुहरू छैनन्।",
+  "toolCall.renderer.todo.empty": "कुनै वस्तु योजना गरिएको छैन",
   "toolCall.renderer.todo.status.pending": "विचाराधीन",
   "toolCall.renderer.todo.status.inProgress": "प्रगतिमा",
   "toolCall.renderer.todo.status.completed": "सम्पन्न",
