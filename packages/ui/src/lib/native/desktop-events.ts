@@ -23,6 +23,16 @@ interface WorkspaceEventBatchPayload {
   events: WorkspaceEventPayload[]
 }
 
+interface DesktopEventTransportBridge {
+  invoke: typeof invoke
+  listen: typeof listen
+}
+
+const defaultDesktopEventTransportBridge: DesktopEventTransportBridge = {
+  invoke,
+  listen,
+}
+
 export function createTerminalErrorNotifier(callbacks: Pick<WorkspaceEventTransportCallbacks, "onError">) {
   let raised = false
   return () => {
@@ -43,6 +53,7 @@ export function mapDesktopEventTransportStatus(
 export async function connectTauriWorkspaceEvents(
   callbacks: WorkspaceEventTransportCallbacks,
   options: DesktopEventTransportStartOptions,
+  bridge: DesktopEventTransportBridge = defaultDesktopEventTransportBridge,
 ): Promise<WorkspaceEventConnection> {
   let closed = false
   let opened = false
@@ -58,6 +69,7 @@ export async function connectTauriWorkspaceEvents(
 
     if (!opened) {
       opened = true
+      callbacks.onStatus?.("connected")
       callbacks.onOpen?.()
     }
 
@@ -122,7 +134,7 @@ export async function connectTauriWorkspaceEvents(
     }
   }
 
-  const unlistenBatch = await listen<WorkspaceEventBatchPayload>("desktop:event-batch", (event) => {
+  const unlistenBatch = await bridge.listen<WorkspaceEventBatchPayload>("desktop:event-batch", (event) => {
     if (closed) return
     const payload = event.payload
     if (!payload) return
@@ -133,7 +145,7 @@ export async function connectTauriWorkspaceEvents(
     handleBatchPayload(payload)
   })
 
-  const unlistenStatus = await listen<DesktopEventTransportStatusPayload>("desktop:event-stream-status", (event) => {
+  const unlistenStatus = await bridge.listen<DesktopEventTransportStatusPayload>("desktop:event-stream-status", (event) => {
     if (closed) return
     const payload = event.payload
     if (!payload) return
@@ -145,7 +157,7 @@ export async function connectTauriWorkspaceEvents(
   })
 
   try {
-    const result = await invoke<DesktopEventsStartResult>("desktop_events_start", { request: options })
+    const result = await bridge.invoke<DesktopEventsStartResult>("desktop_events_start", { request: options })
     if (!result?.started) {
       throw new Error(result?.reason ?? "desktop event transport unavailable")
     }
@@ -166,7 +178,7 @@ export async function connectTauriWorkspaceEvents(
       closed = true
       unlistenBatch()
       unlistenStatus()
-      void invoke("desktop_events_stop").catch((error) => {
+      void bridge.invoke("desktop_events_stop").catch((error) => {
         log.warn("Failed to stop native desktop event transport", error)
       })
     },
