@@ -24,13 +24,14 @@ import type {
 } from "@opencode-ai/sdk/v2"
 import type { LegacyPermissionAskedEvent, LegacyPermissionRepliedEvent } from "../types/permission"
 import { serverEvents } from "./server-events"
+import type { WorkspaceEventTransportStatus } from "./event-transport"
 import type {
   BackgroundProcess,
   InstanceStreamEvent,
-  InstanceStreamStatus,
   WorkspaceEventPayload,
 } from "../../../server/src/api-types"
 import { getLogger } from "./logger"
+import { deriveDisplayConnectionStatus, type ConnectionStatus } from "./connection-status"
 
 const log = getLogger("sse")
 
@@ -98,12 +99,13 @@ type SSEEvent =
   | ServerInstanceDisposedEvent
   | { type: string; properties?: Record<string, unknown> }
 
-type ConnectionStatus = InstanceStreamStatus
-
 const [connectionStatus, setConnectionStatus] = createSignal<Map<string, ConnectionStatus>>(new Map())
+const [transportStatus, setTransportStatus] = createSignal<WorkspaceEventTransportStatus>("connecting")
 
 class SSEManager {
   constructor() {
+    log.info("sseManager initialized: listening for SSE disconnect and reconnect")
+
     serverEvents.on("instance.eventStatus", (event) => {
       const payload = event as InstanceStatusPayload
       this.updateConnectionStatus(payload.instanceId, payload.status)
@@ -120,6 +122,11 @@ class SSEManager {
       const payload = event as InstanceEventPayload
       this.updateConnectionStatus(payload.instanceId, "connected")
       this.handleEvent(payload.instanceId, payload.event as SSEEvent)
+    })
+
+    serverEvents.onTransportStatus((status) => {
+      log.info("SSE transport status changed", { status })
+      setTransportStatus(status)
     })
   }
 
@@ -246,7 +253,7 @@ class SSEManager {
   onConnectionLost?: (instanceId: string, reason: string) => void | Promise<void>
 
   getStatus(instanceId: string): ConnectionStatus | null {
-    return connectionStatus().get(instanceId) ?? null
+    return deriveDisplayConnectionStatus(connectionStatus().get(instanceId) ?? null, transportStatus())
   }
 
   getStatuses() {
