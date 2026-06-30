@@ -115,11 +115,26 @@ export class WorkspaceManager {
   }
 
   async create(folder: string, name?: string): Promise<WorkspaceDescriptor> {
- 
-    const id = `${Date.now().toString(36)}`
+
     const binary = this.options.binaryResolver.resolveDefault()
     const resolvedBinaryPath = this.resolveBinaryPath(binary.path)
     const workspacePath = path.isAbsolute(folder) ? folder : path.resolve(this.options.rootDir, folder)
+
+    // Deduplicate: if a workspace already exists for this exact path,
+    // reuse it instead of creating a new one. This prevents the bug
+    // where the same session appears in multiple projects because each
+    // UI refresh created a fresh workspace pointing at the same folder.
+    for (const existing of this.workspaces.values()) {
+      if (existing.path === workspacePath) {
+        this.options.logger.info(
+          { workspaceId: existing.id, folder: workspacePath },
+          "Reusing existing workspace for path"
+        )
+        return existing
+      }
+    }
+
+    const id = `${Date.now().toString(36)}`
     clearWorkspaceSearchCache(workspacePath)
 
     this.options.logger.info({ workspaceId: id, folder: workspacePath, binary: resolvedBinaryPath }, "Creating workspace")
