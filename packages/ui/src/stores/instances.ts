@@ -671,6 +671,20 @@ function removeInstance(id: string) {
 
 async function createInstance(folder: string, _binaryPath?: string, projectName?: string): Promise<string> {
   try {
+    // Before creating a new workspace, check if one already exists for this
+    // folder on the backend. After a server restart the backend's in-memory
+    // workspace map starts empty, but workspaces pointing at the same folder
+    // still get created on every UI rehydrate, producing duplicates that
+    // surface the same session across multiple project tabs.
+    const existingWorkspaces = await serverApi.fetchWorkspaces()
+    const normalizedFolder = normalizeInstanceFolderPath(folder)
+    const existing = existingWorkspaces.find((workspace) => normalizeInstanceFolderPath(workspace.path) === normalizedFolder)
+    if (existing) {
+      upsertWorkspace(existing, projectName)
+      setActiveInstanceId(existing.id)
+      return existing.id
+    }
+
     const workspace = await serverApi.createWorkspace({ path: folder, name: projectName })
     upsertWorkspace(workspace, projectName)
     setActiveInstanceId(workspace.id)
