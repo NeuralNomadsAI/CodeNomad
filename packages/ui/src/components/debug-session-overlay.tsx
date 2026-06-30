@@ -64,44 +64,58 @@ const DebugSessionOverlay: Component = () => {
             left: `${position().x}px`,
             "background-color": "rgba(0, 0, 0, 0.95)",
             color: "#00ff00",
-            padding: minimized() ? "8px" : "16px",
             "border-radius": "8px",
             "font-family": "monospace",
             "font-size": "12px",
             "z-index": 99999,
             "max-width": minimized() ? "300px" : "700px",
             "max-height": minimized() ? "auto" : "85vh",
-            "overflow-y": minimized() ? "hidden" : "auto",
+            display: "flex",
+            "flex-direction": "column",
             border: "2px solid #00ff00",
             "box-shadow": "0 4px 20px rgba(0, 255, 0, 0.3)",
           }}
         >
-          <div style={{ display: "flex", "justify-content": "space-between", "align-items": "center", "margin-bottom": minimized() ? "0" : "12px" }}>
+          {/* Fixed Header - always visible */}
+          <div
+            style={{
+              display: "flex",
+              "justify-content": "space-between",
+              "align-items": "center",
+              padding: minimized() ? "8px" : "12px 16px",
+              "background-color": "rgba(0, 0, 0, 0.98)",
+              "border-bottom": minimized() ? "none" : "1px solid #00ff00",
+              "border-radius": "8px 8px 0 0",
+              "flex-shrink": "0",
+            }}
+          >
             <div style={{ "font-weight": "bold", color: "#ffff00", display: "flex", "align-items": "center", gap: "8px" }}>
               🔧 DEBUG SESSION OVERLAY
             </div>
             <div style={{ display: "flex", gap: "8px", "align-items": "center" }}>
-              <button
-                onClick={() => shareDebugInfo()}
-                style={{
-                  background: copiedId() === "share" ? "#00ff00" : "rgba(0, 255, 0, 0.2)",
-                  border: "1px solid #00ff00",
-                  color: copiedId() === "share" ? "#000" : "#00ff00",
-                  padding: "4px 8px",
-                  "border-radius": "4px",
-                  cursor: "pointer",
-                  display: "flex",
-                  "align-items": "center",
-                  gap: "4px",
-                  "font-size": "11px",
-                }}
-                title="Copiar todo como JSON"
-              >
-                <Show when={copiedId() === "share"} fallback={<Share2 size={14} />}>
-                  <Check size={14} />
-                </Show>
-                Share
-              </button>
+              <Show when={!minimized()}>
+                <button
+                  onClick={() => shareDebugInfo()}
+                  style={{
+                    background: copiedId() === "share" ? "#00ff00" : "rgba(0, 255, 0, 0.2)",
+                    border: "1px solid #00ff00",
+                    color: copiedId() === "share" ? "#000" : "#00ff00",
+                    padding: "4px 8px",
+                    "border-radius": "4px",
+                    cursor: "pointer",
+                    display: "flex",
+                    "align-items": "center",
+                    gap: "4px",
+                    "font-size": "11px",
+                  }}
+                  title="Copiar todo como JSON"
+                >
+                  <Show when={copiedId() === "share"} fallback={<Share2 size={14} />}>
+                    <Check size={14} />
+                  </Show>
+                  Share
+                </button>
+              </Show>
               <button
                 onClick={() => setMinimized(!minimized())}
                 style={{
@@ -139,105 +153,116 @@ const DebugSessionOverlay: Component = () => {
             </div>
           </div>
 
+          {/* Scrollable Content */}
           <Show when={!minimized()}>
-            <div style={{ "margin-bottom": "12px", "padding": "8px", "background-color": "rgba(255, 255, 0, 0.1)", "border-radius": "4px" }}>
-              <input
-                type="text"
-                placeholder="Presiona Ctrl+Shift+D para mostrar/ocultar"
-                value={keyboardInput()}
-                onInput={(e) => setKeyboardInput(e.currentTarget.value)}
-                style={{
-                  width: "100%",
-                  background: "rgba(0, 0, 0, 0.5)",
-                  border: "1px solid #00ff00",
-                  color: "#00ff00",
-                  padding: "6px",
-                  "border-radius": "4px",
-                  "font-family": "monospace",
-                  "font-size": "12px",
-                }}
-              />
-            </div>
+            <div
+              style={{
+                padding: "16px",
+                "overflow-y": "auto",
+                "overflow-x": "hidden",
+                "flex-grow": "1",
+                "min-height": "0",
+              }}
+            >
+              <div style={{ "margin-bottom": "12px", "padding": "8px", "background-color": "rgba(255, 255, 0, 0.1)", "border-radius": "4px" }}>
+                <input
+                  type="text"
+                  placeholder="Presiona Ctrl+Shift+D para mostrar/ocultar"
+                  value={keyboardInput()}
+                  onInput={(e) => setKeyboardInput(e.currentTarget.value)}
+                  style={{
+                    width: "100%",
+                    background: "rgba(0, 0, 0, 0.5)",
+                    border: "1px solid #00ff00",
+                    color: "#00ff00",
+                    padding: "6px",
+                    "border-radius": "4px",
+                    "font-family": "monospace",
+                    "font-size": "12px",
+                  }}
+                />
+              </div>
 
-            <div style={{ "margin-bottom": "8px" }}>
-              <strong>Active Instance:</strong> {activeInstanceId() || "none"}
-            </div>
+              <div style={{ "margin-bottom": "8px" }}>
+                <strong>Active Instance:</strong> {activeInstanceId() || "none"}
+              </div>
 
-            <div style={{ "margin-bottom": "12px" }}>
-              <strong>Total Instances:</strong> {instances().size}
-            </div>
+              <div style={{ "margin-bottom": "12px" }}>
+                <strong>Total Instances:</strong> {instances().size}
+              </div>
 
-            <For each={Array.from(instances().entries())}>
-              {([instanceId, instance]) => (
-                <div style={{ "margin-bottom": "16px", "padding": "8px", "background-color": "rgba(255, 255, 255, 0.1)", "border-radius": "4px" }}>
-                  <div style={{ display: "flex", "justify-content": "space-between", "align-items": "center" }}>
-                    <div style={{ color: "#00ffff", "font-weight": "bold" }}>
-                      Instance: {instanceId.substring(0, 12)}...
+              <For each={Array.from(instances().entries())}>
+                {([instanceId, instance]) => (
+                  <div style={{ "margin-bottom": "16px", "padding": "8px", "background-color": "rgba(255, 255, 255, 0.1)", "border-radius": "4px" }}>
+                    <div style={{ display: "flex", "justify-content": "space-between", "align-items": "center" }}>
+                      <div style={{ color: "#00ffff", "font-weight": "bold" }}>
+                        Instance: {instanceId.substring(0, 12)}...
+                      </div>
+                      <button
+                        onClick={() => copyToClipboard(instanceId, `inst-${instanceId}`)}
+                        style={{
+                          background: copiedId() === `inst-${instanceId}` ? "#00ff00" : "transparent",
+                          border: "1px solid #00ffff",
+                          color: copiedId() === `inst-${instanceId}` ? "#000" : "#00ffff",
+                          padding: "2px 6px",
+                          "border-radius": "3px",
+                          cursor: "pointer",
+                          "font-size": "10px",
+                          display: "flex",
+                          "align-items": "center",
+                          gap: "4px",
+                        }}
+                      >
+                        <Show when={copiedId() === `inst-${instanceId}`} fallback={<Copy size={12} />}>
+                          <Check size={12} />
+                        </Show>
+                      </button>
                     </div>
-                    <button
-                      onClick={() => copyToClipboard(instanceId, `inst-${instanceId}`)}
-                      style={{
-                        background: copiedId() === `inst-${instanceId}` ? "#00ff00" : "transparent",
-                        border: "1px solid #00ffff",
-                        color: copiedId() === `inst-${instanceId}` ? "#000" : "#00ffff",
-                        padding: "2px 6px",
-                        "border-radius": "3px",
-                        cursor: "pointer",
-                        "font-size": "10px",
-                        display: "flex",
-                        "align-items": "center",
-                        gap: "4px",
-                      }}
-                    >
-                      <Show when={copiedId() === `inst-${instanceId}`} fallback={<Copy size={12} />}>
-                        <Check size={12} />
-                      </Show>
-                    </button>
-                  </div>
-                  <div style={{ "margin-left": "8px", "margin-top": "4px" }}>
-                    <div>Folder: {instance.folder}</div>
-                    <div>Status: {instance.status}</div>
-                    <div>
-                      Sessions: {sessions().get(instanceId)?.size || 0}
-                    </div>
-                    <For each={Array.from(sessions().get(instanceId)?.entries() || [])}>
-                      {([sessionId, session]) => (
-                        <div style={{ "margin-left": "16px", "margin-top": "4px", "padding": "4px", "background-color": "rgba(0, 255, 0, 0.1)", "border-radius": "3px" }}>
-                          <div style={{ display: "flex", "justify-content": "space-between", "align-items": "center" }}>
-                            <div style={{ color: "#ffff00", "font-size": "11px" }}>
-                              {sessionId.substring(0, 20)}...
+                    <div style={{ "margin-left": "8px", "margin-top": "4px" }}>
+                      <div>Folder: {instance.folder}</div>
+                      <div>Status: {instance.status}</div>
+                      <div>
+                        Sessions: {sessions().get(instanceId)?.size || 0}
+                      </div>
+                      <For each={Array.from(sessions().get(instanceId)?.entries() || [])}>
+                        {([sessionId, session]) => (
+                          <div style={{ "margin-left": "16px", "margin-top": "4px", "padding": "4px", "background-color": "rgba(0, 255, 0, 0.1)", "border-radius": "3px" }}>
+                            <div style={{ display: "flex", "justify-content": "space-between", "align-items": "center" }}>
+                              <div style={{ color: "#ffff00", "font-size": "11px" }}>
+                                {sessionId.substring(0, 20)}...
+                              </div>
+                              <button
+                                onClick={() => copyToClipboard(sessionId, `sess-${sessionId}`)}
+                                style={{
+                                  background: copiedId() === `sess-${sessionId}` ? "#00ff00" : "transparent",
+                                  border: "1px solid #ffff00",
+                                  color: copiedId() === `sess-${sessionId}` ? "#000" : "#ffff00",
+                                  padding: "2px 4px",
+                                  "border-radius": "2px",
+                                  cursor: "pointer",
+                                  "font-size": "9px",
+                                  display: "flex",
+                                  "align-items": "center",
+                                }}
+                              >
+                                <Show when={copiedId() === `sess-${sessionId}`} fallback={<Copy size={10} />}>
+                                  <Check size={10} />
+                                </Show>
+                              </button>
                             </div>
-                            <button
-                              onClick={() => copyToClipboard(sessionId, `sess-${sessionId}`)}
-                              style={{
-                                background: copiedId() === `sess-${sessionId}` ? "#00ff00" : "transparent",
-                                border: "1px solid #ffff00",
-                                color: copiedId() === `sess-${sessionId}` ? "#000" : "#ffff00",
-                                padding: "2px 4px",
-                                "border-radius": "2px",
-                                cursor: "pointer",
-                                "font-size": "9px",
-                                display: "flex",
-                                "align-items": "center",
-                              }}
-                            >
-                              <Show when={copiedId() === `sess-${sessionId}`} fallback={<Copy size={10} />}>
-                                <Check size={10} />
-                              </Show>
-                            </button>
+                            <div style={{ "margin-left": "8px", "font-size": "11px" }}>
+                              <div>Title: {session.title}</div>
+                              <div>Directory: {(session as any).directory || "N/A"}</div>
+                              <div>Parent: {session.parentId || "null"}</div>
+                            </div>
                           </div>
-                          <div style={{ "margin-left": "8px", "font-size": "11px" }}>
-                            <div>Title: {session.title}</div>
-                            <div>Directory: {(session as any).directory || "N/A"}</div>
-                            <div>Parent: {session.parentId || "null"}</div>
-                          </div>
-                        </div>
-                      )}
-                    </For>
+                        )}
+                      </For>
+                    </div>
                   </div>
-                </div>
-              )}
-            </For>
+                )}
+              </For>
+            </div>
           </Show>
         </div>
       )}
