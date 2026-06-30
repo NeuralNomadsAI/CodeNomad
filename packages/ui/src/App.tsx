@@ -5,6 +5,7 @@ import useMediaQuery from "@suid/material/useMediaQuery"
 import { Minimize2 } from "lucide-solid"
 import AlertDialog from "./components/alert-dialog"
 import FolderSelectionView from "./components/folder-selection-view"
+import DebugSessionOverlay from "./components/debug-session-overlay"
 import { showConfirmDialog } from "./stores/alerts"
 import InstanceTabs from "./components/instance-tabs"
 import InstanceDisconnectedModal from "./components/instance-disconnected-modal"
@@ -705,6 +706,7 @@ const App: Component = () => {
             className: "bg-transparent border-none shadow-none p-0",
           }}
         />
+        <DebugSessionOverlay />
       </div>
     </>
   )
