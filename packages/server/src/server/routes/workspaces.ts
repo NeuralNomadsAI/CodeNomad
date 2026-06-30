@@ -65,6 +65,10 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
     return deps.workspaceManager.list()
   })
 
+  app.get("/api/workspaces/stats", async () => {
+    return deps.workspaceManager.getStats()
+  })
+
   app.post("/api/workspaces", async (request, reply) => {
     try {
       const body = WorkspaceCreateSchema.parse(request.body ?? {})

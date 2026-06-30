@@ -53,6 +53,17 @@ export class WorkspaceManager {
     return Array.from(this.workspaces.values())
   }
 
+  getStats(): { total: number; byPath: Record<string, number> } {
+    const byPath: Record<string, number> = {}
+    for (const ws of this.workspaces.values()) {
+      byPath[ws.path] = (byPath[ws.path] ?? 0) + 1
+    }
+    return {
+      total: this.workspaces.size,
+      byPath,
+    }
+  }
+
   get(id: string): WorkspaceDescriptor | undefined {
     return this.workspaces.get(id)
   }
@@ -124,20 +135,62 @@ export class WorkspaceManager {
     // reuse it instead of creating a new one. This prevents the bug
     // where the same session appears in multiple projects because each
     // UI refresh created a fresh workspace pointing at the same folder.
+    const totalBefore = this.workspaces.size
+    const pathOccurrences = Array.from(this.workspaces.values()).filter(
+      (w) => w.path === workspacePath
+    ).length
+
+    this.options.logger.info(
+      {
+        folder: workspacePath,
+        name,
+        totalWorkspaces: totalBefore,
+        pathOccurrences,
+        action: "create_request",
+      },
+      "Workspace create requested"
+    )
+
     for (const existing of this.workspaces.values()) {
       if (existing.path === workspacePath) {
-        this.options.logger.info(
-          { workspaceId: existing.id, folder: workspacePath },
-          "Reusing existing workspace for path"
+        this.options.logger.warn(
+          {
+            workspaceId: existing.id,
+            folder: workspacePath,
+            totalWorkspaces: totalBefore,
+            pathOccurrences,
+            action: "reused",
+          },
+          "Reusing existing workspace for path (deduplication hit)"
         )
         return existing
       }
     }
 
+    if (pathOccurrences > 0) {
+      this.options.logger.error(
+        {
+          folder: workspacePath,
+          pathOccurrences,
+          action: "dedup_missed",
+        },
+        "BUG: Path had occurrences but dedup loop missed them - check normalization"
+      )
+    }
+
     const id = `${Date.now().toString(36)}`
     clearWorkspaceSearchCache(workspacePath)
 
-    this.options.logger.info({ workspaceId: id, folder: workspacePath, binary: resolvedBinaryPath }, "Creating workspace")
+    this.options.logger.info(
+      {
+        workspaceId: id,
+        folder: workspacePath,
+        binary: resolvedBinaryPath,
+        totalWorkspaces: this.workspaces.size + 1,
+        action: "created",
+      },
+      "Creating new workspace"
+    )
 
     const proxyPath = `/workspaces/${id}/instance`
 
