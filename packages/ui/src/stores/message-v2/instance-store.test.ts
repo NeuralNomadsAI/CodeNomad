@@ -40,4 +40,5 @@ describe("message-v2 permission state", () => {
     assert.equal(store.state.permissions.active?.permission.id, "permission-2")
     assert.equal(store.getPermissionState(undefined, "permission-2")?.active, true)
   })
+
 })

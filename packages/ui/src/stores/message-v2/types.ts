@@ -82,9 +82,7 @@ export interface ScrollSnapshot {
   anchorKey?: string
   anchorOffset?: number
   atBottom: boolean
-  followModeType?: "following" | "escaped" | "holding"
-  heldKey?: string
-  holdAnchorSuspended?: boolean
+  followModeType?: "following" | "escaped"
   updatedAt: number
 }
 
