@@ -204,7 +204,6 @@ export function createHttpServer(deps: HttpServerDeps) {
     }),
   })
   yoloManager.start()
-  sseClients.add(() => yoloManager.stop())
 
   registerAuthRoutes(app, { authManager: deps.authManager })
 
@@ -386,6 +385,7 @@ export function createHttpServer(deps: HttpServerDeps) {
       return { port: actualPort, url: serverUrl, displayHost }
     },
     stop: () => {
+      yoloManager.stop()
       closeSseClients()
       return app.close()
     },

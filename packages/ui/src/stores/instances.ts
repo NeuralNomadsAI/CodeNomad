@@ -529,6 +529,8 @@ function handleWorkspaceEvent(event: WorkspaceEventPayload) {
     case "workspace.error":
       upsertWorkspace(event.workspace)
       showWorkspaceLaunchError(event.workspace)
+      clearPermissionAutoAcceptForInstance(event.workspace.id)
+      clearSyncedYoloSessionsForInstance(event.workspace.id)
       break
     case "workspace.stopped":
       releaseInstanceResources(event.workspaceId)
