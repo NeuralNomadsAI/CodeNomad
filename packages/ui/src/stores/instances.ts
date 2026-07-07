@@ -41,6 +41,7 @@ import {
   pruneRepliedPermissions,
 } from "./permission-replies"
 import {
+  clearPermissionAutoAcceptForInstance,
   isPermissionAutoAcceptEnabled,
   resolvePermissionAutoAcceptFamilyRoot,
   setPermissionAutoAcceptEnabled,
@@ -666,6 +667,8 @@ function removeInstance(id: string) {
   clearRepliedPermissions(id)
   clearQuestionQueue(id)
   clearInstanceMetadata(id)
+  clearPermissionAutoAcceptForInstance(id)
+  clearSyncedYoloSessionsForInstance(id)
 
   if (activeInstanceId() === id) {
     setActiveInstanceId(nextActiveId)
@@ -1052,6 +1055,7 @@ function removePermissionFromQueue(instanceId: string, permissionId: string): vo
 }
 
 function togglePermissionAutoAcceptForSession(instanceId: string, sessionId: string): void {
+  const wasEnabled = isPermissionAutoAcceptEnabled(instanceId, sessionId)
   togglePermissionAutoAccept(instanceId, sessionId)
   void serverApi
     .toggleYolo(instanceId, sessionId)
@@ -1060,8 +1064,9 @@ function togglePermissionAutoAcceptForSession(instanceId: string, sessionId: str
     })
     .catch((error) => {
       log.warn("Failed to toggle Yolo on server", { instanceId, sessionId, error })
-      // revert optimistic local state on failure
-      setPermissionAutoAcceptEnabled(instanceId, sessionId, !isPermissionAutoAcceptEnabled(instanceId, sessionId))
+      // revert to the pre-toggle state (not a naive flip, which can be wrong
+      // if an SSE yolo.stateChanged arrived between toggle and catch)
+      setPermissionAutoAcceptEnabled(instanceId, sessionId, wasEnabled)
     })
 }
 
@@ -1094,6 +1099,15 @@ export function ensureYoloStateSynced(instanceId: string, sessionId: string): vo
 serverEvents.onOpen(() => {
   syncedYoloSessions.clear()
 })
+
+function clearSyncedYoloSessionsForInstance(instanceId: string): void {
+  const prefix = `${instanceId}:`
+  for (const key of Array.from(syncedYoloSessions)) {
+    if (key.startsWith(prefix)) {
+      syncedYoloSessions.delete(key)
+    }
+  }
+}
 
 function clearPermissionQueue(instanceId: string): void {
   for (const permission of getPermissionQueue(instanceId)) {

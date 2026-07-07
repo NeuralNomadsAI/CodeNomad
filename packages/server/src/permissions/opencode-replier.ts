@@ -14,8 +14,8 @@ interface OpencodeReplierDeps {
  * Default {@link PermissionReplier} that calls the OpenCode instance directly
  * over loopback using the same `"once"` reply the UI previously sent.
  *
- *   - v2:  POST /session/{sessionID}/permissions/{permissionID}  body { response }
- *   - legacy: POST /permission/{requestID}/reply                 body { reply }
+ *   - v2:  POST /api/session/{sessionID}/permission/request/{requestID}/reply  body { reply }
+ *   - legacy: POST /permission/{requestID}/reply                                 body { reply }
  *
  * Mirrors the per-instance direct-call pattern used by the background-process
  * notifier (`background-processes/manager.ts`).
@@ -35,13 +35,10 @@ export function createOpencodePermissionReplier(deps: OpencodeReplierDeps): Perm
 
     const url =
       reply.source === "v2"
-        ? `http://${INSTANCE_HOST}:${port}/session/${encodeURIComponent(reply.sessionId)}/permissions/${encodeURIComponent(reply.permissionId)}`
+        ? `http://${INSTANCE_HOST}:${port}/api/session/${encodeURIComponent(reply.sessionId)}/permission/request/${encodeURIComponent(reply.permissionId)}/reply`
         : `http://${INSTANCE_HOST}:${port}/permission/${encodeURIComponent(reply.permissionId)}/reply`
 
-    const body =
-      reply.source === "v2"
-        ? JSON.stringify({ response: reply.reply })
-        : JSON.stringify({ reply: reply.reply })
+    const body = JSON.stringify({ reply: reply.reply })
 
     const response = await fetch(url, { method: "POST", headers, body })
     if (!response.ok) {

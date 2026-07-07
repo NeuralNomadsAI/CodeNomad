@@ -293,6 +293,172 @@ describe("AutoAcceptManager lifecycle", () => {
   })
 })
 
+describe("AutoAcceptManager pending permissions drain", () => {
+  it("drains a pending permission that arrived before enable", async () => {
+    const bus = new EventBus(noopLogger)
+    const replier = makeRecordingReplier()
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier })
+    manager.start()
+
+    publishSession(bus, "inst", "session.updated", { id: "solo", parentID: null })
+
+    // permission arrives while yolo is OFF
+    publishInstanceEvent(bus, "inst", {
+      type: "permission.v2.asked",
+      properties: { id: "perm-pending", sessionID: "solo" },
+    })
+    await flushMicrotasks()
+    assert.equal(replier.calls.length, 0)
+
+    // enabling yolo should drain the pending permission
+    manager.toggle("inst", "solo")
+    await flushMicrotasks()
+
+    assert.equal(replier.calls.length, 1)
+    assert.equal(replier.calls[0].permissionId, "perm-pending")
+
+    manager.stop()
+  })
+
+  it("drains pending permissions for the same family only", async () => {
+    const bus = new EventBus(noopLogger)
+    const replier = makeRecordingReplier()
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier })
+    manager.start()
+
+    publishSession(bus, "inst", "session.updated", { id: "root-a", parentID: null })
+    publishSession(bus, "inst", "session.updated", { id: "root-b", parentID: null })
+
+    publishInstanceEvent(bus, "inst", {
+      type: "permission.v2.asked",
+      properties: { id: "perm-a", sessionID: "root-a" },
+    })
+    publishInstanceEvent(bus, "inst", {
+      type: "permission.v2.asked",
+      properties: { id: "perm-b", sessionID: "root-b" },
+    })
+    await flushMicrotasks()
+    assert.equal(replier.calls.length, 0)
+
+    manager.toggle("inst", "root-a")
+    await flushMicrotasks()
+
+    assert.equal(replier.calls.length, 1)
+    assert.equal(replier.calls[0].permissionId, "perm-a")
+
+    manager.stop()
+  })
+
+  it("does not re-drain already-auto-accepted permissions", async () => {
+    const bus = new EventBus(noopLogger)
+    const replier = makeRecordingReplier()
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier })
+    manager.start()
+
+    publishSession(bus, "inst", "session.updated", { id: "solo", parentID: null })
+    manager.toggle("inst", "solo")
+
+    publishInstanceEvent(bus, "inst", {
+      type: "permission.v2.asked",
+      properties: { id: "perm-1", sessionID: "solo" },
+    })
+    await flushMicrotasks()
+    assert.equal(replier.calls.length, 1)
+
+    // toggling off then on should not re-drain the already-replied permission
+    manager.toggle("inst", "solo") // off
+    manager.toggle("inst", "solo") // on — drain runs but pending set is empty
+    await flushMicrotasks()
+
+    assert.equal(replier.calls.length, 1)
+
+    manager.stop()
+  })
+})
+
+describe("AutoAcceptManager permission replied cleanup", () => {
+  it("removes a pending permission on permission.v2.replied", async () => {
+    const bus = new EventBus(noopLogger)
+    const replier = makeRecordingReplier()
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier })
+    manager.start()
+
+    publishSession(bus, "inst", "session.updated", { id: "solo", parentID: null })
+
+    publishInstanceEvent(bus, "inst", {
+      type: "permission.v2.asked",
+      properties: { id: "perm-x", sessionID: "solo" },
+    })
+    await flushMicrotasks()
+
+    // user manually replies → replied event cleans up pending
+    publishInstanceEvent(bus, "inst", {
+      type: "permission.v2.replied",
+      properties: { id: "perm-x" },
+    })
+
+    // enabling yolo now should NOT drain the already-replied permission
+    manager.toggle("inst", "solo")
+    await flushMicrotasks()
+
+    assert.equal(replier.calls.length, 0)
+    manager.stop()
+  })
+
+  it("removes a pending permission on legacy permission.replied", async () => {
+    const bus = new EventBus(noopLogger)
+    const replier = makeRecordingReplier()
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier })
+    manager.start()
+
+    publishSession(bus, "inst", "session.updated", { id: "solo", parentID: null })
+
+    publishInstanceEvent(bus, "inst", {
+      type: "permission.asked",
+      properties: { id: "perm-y", sessionID: "solo" },
+    })
+    await flushMicrotasks()
+
+    publishInstanceEvent(bus, "inst", {
+      type: "permission.replied",
+      properties: { requestID: "perm-y" },
+    })
+
+    manager.toggle("inst", "solo")
+    await flushMicrotasks()
+
+    assert.equal(replier.calls.length, 0)
+    manager.stop()
+  })
+})
+
+describe("AutoAcceptManager clearInstance clears pending", () => {
+  it("drops pending permissions on clearInstance", async () => {
+    const bus = new EventBus(noopLogger)
+    const replier = makeRecordingReplier()
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier })
+    manager.start()
+
+    publishSession(bus, "inst", "session.updated", { id: "solo", parentID: null })
+
+    publishInstanceEvent(bus, "inst", {
+      type: "permission.v2.asked",
+      properties: { id: "perm-z", sessionID: "solo" },
+    })
+    await flushMicrotasks()
+
+    manager.clearInstance("inst")
+
+    // re-create session and enable — pending set should be empty
+    publishSession(bus, "inst", "session.updated", { id: "solo", parentID: null })
+    manager.toggle("inst", "solo")
+    await flushMicrotasks()
+
+    assert.equal(replier.calls.length, 0)
+    manager.stop()
+  })
+})
+
 function makeRecordingReplier() {
   const calls: AutoAcceptReply[] = []
   const replier: PermissionReplier = async (reply) => {

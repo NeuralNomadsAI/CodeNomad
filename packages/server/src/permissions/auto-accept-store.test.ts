@@ -129,18 +129,16 @@ describe("AutoAcceptStore inheritance", () => {
 })
 
 describe("AutoAcceptStore session tree maintenance", () => {
-  it("re-evaluates family root when a parent is discovered later", () => {
+  it("migrates enabled root when a parent is discovered later", () => {
     const store = new AutoAcceptStore()
     store.upsertSession("inst", { id: "child", parentId: "parent" })
     // parent unknown -> child is its own root
     store.setEnabled("inst", "child", true)
 
-    // later the parent shows up
+    // later the parent shows up — root should migrate from "child" to "parent"
     store.upsertSession("inst", { id: "parent", parentId: null })
-    // child now resolves to "parent"; the original setting was on "child"
-    // so the parent family is NOT enabled (child's own root id was recorded)
-    assert.equal(store.isEnabled("inst", "parent"), false)
-    assert.equal(store.isEnabled("inst", "child"), false)
+    assert.equal(store.isEnabled("inst", "parent"), true)
+    assert.equal(store.isEnabled("inst", "child"), true)
   })
 
   it("removing a session does not clear an enabled family root", () => {

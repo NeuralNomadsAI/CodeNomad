@@ -51,12 +51,12 @@ export class AutoAcceptStore {
   private readonly sessions = new Map<string, Map<string, AutoAcceptSessionInfo>>()
 
   isEnabled(instanceId: string, sessionId: string): boolean {
-    const root = this.resolveRoot(instanceId, sessionId)
+    const root = this.familyRoot(instanceId, sessionId)
     return this.enabled.get(instanceId)?.has(root) ?? false
   }
 
   setEnabled(instanceId: string, sessionId: string, enabled: boolean): void {
-    const root = this.resolveRoot(instanceId, sessionId)
+    const root = this.familyRoot(instanceId, sessionId)
     let roots = this.enabled.get(instanceId)
     if (!roots) {
       if (!enabled) return
@@ -90,6 +90,7 @@ export class AutoAcceptStore {
       parentId: info.parentId ?? null,
       revert: info.revert,
     })
+    this.migrateEnabledRoots(instanceId)
   }
 
   removeSession(instanceId: string, sessionId: string): void {
@@ -101,8 +102,27 @@ export class AutoAcceptStore {
     this.enabled.delete(instanceId)
   }
 
-  private resolveRoot(instanceId: string, sessionId: string): string {
+  /** Resolves the family-root session id for the given session. */
+  familyRoot(instanceId: string, sessionId: string): string {
     const tree = this.sessions.get(instanceId)
     return resolveFamilyRoot(sessionId, (id) => tree?.get(id))
+  }
+
+  /**
+   * Re-resolves every enabled family root for an instance after the session
+   * tree changes (new session, updated parent/revert). If a root now resolves
+   * to a different id, the enabled entry is migrated so toggles survive late
+   * ancestry discovery.
+   */
+  private migrateEnabledRoots(instanceId: string): void {
+    const roots = this.enabled.get(instanceId)
+    if (!roots || roots.size === 0) return
+    for (const oldRoot of Array.from(roots)) {
+      const newRoot = this.familyRoot(instanceId, oldRoot)
+      if (newRoot !== oldRoot) {
+        roots.delete(oldRoot)
+        roots.add(newRoot)
+      }
+    }
   }
 }

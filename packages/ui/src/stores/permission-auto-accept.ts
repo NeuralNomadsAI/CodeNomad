@@ -83,3 +83,19 @@ export function togglePermissionAutoAccept(instanceId: string, sessionId: string
   setPermissionAutoAcceptEnabled(instanceId, sessionId, next)
   return next
 }
+
+/** Remove all Yolo state entries for an instance (workspace stop / removal). */
+export function clearPermissionAutoAcceptForInstance(instanceId: string) {
+  setAutoAcceptState((prev) => {
+    const prefix = `${instanceId}:`
+    let changed = false
+    const next = new Map(prev)
+    for (const key of Array.from(next.keys())) {
+      if (key.startsWith(prefix)) {
+        next.delete(key)
+        changed = true
+      }
+    }
+    return changed ? next : prev
+  })
+}
