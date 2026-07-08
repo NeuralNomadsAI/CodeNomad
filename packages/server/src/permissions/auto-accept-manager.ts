@@ -47,11 +47,14 @@ const SESSION_UPSERT_TYPES = new Set(["session.updated", "session.created"])
 const SESSION_REMOVE_TYPES = new Set(["session.deleted"])
 
 export class AutoAcceptManager {
+  private static readonly MAX_REPLY_ATTEMPTS = 3
   private readonly store = new AutoAcceptStore()
   /** instanceId:permissionId entries currently being replied, to dedupe re-emissions */
   private readonly inFlight = new Set<string>()
   /** instanceId -> (permissionId -> pending permission) awaiting a reply */
   private readonly pending = new Map<string, Map<string, PendingPermission>>()
+  /** instanceId:permissionId -> failure count, to stop retrying stuck permissions */
+  private readonly replyAttempts = new Map<string, number>()
   private unsubscribe?: () => void
 
   constructor(private readonly deps: AutoAcceptManagerDeps) {}
@@ -99,6 +102,13 @@ export class AutoAcceptManager {
   clearInstance(instanceId: string): void {
     this.store.clearInstance(instanceId)
     this.pending.delete(instanceId)
+    const prefix = `${instanceId}:`
+    for (const key of Array.from(this.inFlight.keys())) {
+      if (key.startsWith(prefix)) this.inFlight.delete(key)
+    }
+    for (const key of Array.from(this.replyAttempts.keys())) {
+      if (key.startsWith(prefix)) this.replyAttempts.delete(key)
+    }
   }
 
   handleInstanceEvent(instanceId: string, event: InstanceStreamPayload): void {
@@ -111,7 +121,10 @@ export class AutoAcceptManager {
     if (SESSION_REMOVE_TYPES.has(event.type)) {
       const info = (event.properties as { info?: SessionProperties } | undefined)?.info
       const id = readString(info?.id) ?? readString(event.properties?.id)
-      if (id) this.store.removeSession(instanceId, id)
+      if (id) {
+        this.store.removeSession(instanceId, id)
+        this.removePendingForSession(instanceId, id)
+      }
       return
     }
     if (PERMISSION_REPLIED_TYPES.has(event.type)) {
@@ -149,7 +162,10 @@ export class AutoAcceptManager {
     const sessionId = readString(request.sessionID) ?? readString(request.sessionId)
     if (!permissionId || !sessionId) return
 
-    const source: PermissionSource = eventType === "permission.v2.asked" ? "v2" : "legacy"
+    // Infer source from the event type, but prefer the already-tracked source
+    // for permission.updated (which may belong to a v2 permission).
+    const existing = this.pending.get(instanceId)?.get(permissionId)
+    const source: PermissionSource = eventType === "permission.v2.asked" ? "v2" : (existing?.source ?? "legacy")
 
     // `permission.updated` represents a detail change for a permission that
     // is *already* pending. If it is no longer in our pending set it was
@@ -183,17 +199,24 @@ export class AutoAcceptManager {
   ): void {
     const key = `${instanceId}:${permissionId}`
     if (this.inFlight.has(key)) return
+    const attempts = this.replyAttempts.get(key) ?? 0
+    if (attempts >= AutoAcceptManager.MAX_REPLY_ATTEMPTS) return
     this.inFlight.add(key)
+    this.replyAttempts.set(key, attempts + 1)
 
     const reply: AutoAcceptReply = { instanceId, permissionId, sessionId, source, reply: "once" }
 
     void this.deps.replier(reply)
       .then(() => {
+        this.replyAttempts.delete(key)
         this.removePending(instanceId, permissionId)
         this.deps.eventBus.publish({ type: "yolo.autoAccepted", instanceId, sessionId, permissionId })
       })
       .catch((error) => {
-        this.deps.logger.error({ instanceId, permissionId, err: error }, "Yolo auto-accept reply failed")
+        this.deps.logger.error({ instanceId, permissionId, err: error, attempt: attempts + 1 }, "Yolo auto-accept reply failed")
+        if (attempts + 1 >= AutoAcceptManager.MAX_REPLY_ATTEMPTS) {
+          this.removePending(instanceId, permissionId)
+        }
       })
       .finally(() => {
         this.inFlight.delete(key)
@@ -222,7 +245,23 @@ export class AutoAcceptManager {
   }
 
   private removePending(instanceId: string, permissionId: string): void {
-    this.pending.get(instanceId)?.delete(permissionId)
+    const instancePending = this.pending.get(instanceId)
+    if (instancePending?.delete(permissionId)) {
+      this.replyAttempts.delete(`${instanceId}:${permissionId}`)
+      if (instancePending.size === 0) this.pending.delete(instanceId)
+    }
+  }
+
+  private removePendingForSession(instanceId: string, sessionId: string): void {
+    const instancePending = this.pending.get(instanceId)
+    if (!instancePending) return
+    for (const [permId, entry] of Array.from(instancePending)) {
+      if (entry.sessionId === sessionId) {
+        instancePending.delete(permId)
+        this.replyAttempts.delete(`${instanceId}:${permId}`)
+      }
+    }
+    if (instancePending.size === 0) this.pending.delete(instanceId)
   }
 }
 

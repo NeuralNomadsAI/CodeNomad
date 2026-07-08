@@ -1096,7 +1096,7 @@ function togglePermissionAutoAcceptForSession(instanceId: string, sessionId: str
 const syncedYoloSessions = new Set<string>()
 
 export function ensureYoloStateSynced(instanceId: string, sessionId: string): void {
-  if (!instanceId || !sessionId) return
+  if (!instanceId || !sessionId || sessionId === "info") return
   const key = `${instanceId}:${sessionId}`
   if (syncedYoloSessions.has(key)) return
   syncedYoloSessions.add(key)
