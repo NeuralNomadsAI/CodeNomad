@@ -53,10 +53,17 @@ import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
 import { getRootClient } from "./opencode-client"
-import { getWorktreeSlugForSession, migrateLegacyWorktreeMapToSessionMetadata, pruneStaleLegacyWorktreeMapEntries, removeLegacyParentSessionMapping, setWorktreeSlugForParentSession } from "./worktrees"
+import {
+  getWorktreeSlugForSession,
+  getWorktrees,
+  migrateLegacyWorktreeMapToSessionMetadata,
+  pruneStaleLegacyWorktreeMapEntries,
+  removeLegacyParentSessionMapping,
+  setWorktreeSlugForParentSession,
+} from "./worktrees"
 import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 import { hydrateSessionMetadataWithClient } from "./session-metadata"
-import { PROJECT_SESSION_LIST_LIMIT, buildProjectSessionListOptions } from "./session-list-options"
+import { PROJECT_SESSION_LIST_LIMIT, buildProjectSessionListOptions, filterProjectScopedSessions } from "./session-list-options"
 
 const log = getLogger("api")
 
@@ -142,7 +149,11 @@ async function fetchV2Sessions(instanceId: string, options: V2SessionListOptions
   const client = getRootClient(instanceId)
   const listOptions = buildProjectSessionListOptions(options)
   const data = await requestData<SessionListResponse>(client.session.list(listOptions), "session.list")
-  return { data }
+  const allowedDirectories = [options.directory, ...getWorktrees(instanceId).map((worktree) => worktree.directory)]
+
+  return {
+    data: filterProjectScopedSessions(data, allowedDirectories),
+  }
 }
 
 function getV2SessionItems(response: ProjectSessionListResponse): SDKSession[] {
@@ -208,7 +219,7 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
   try {
     const sessionListOptions = instance.folder ? { directory: instance.folder } : {}
 
-    log.info("session.list", { instanceId, limit: PROJECT_SESSION_LIST_LIMIT, directory: sessionListOptions.directory })
+    log.info("session.list", { instanceId, limit: PROJECT_SESSION_LIST_LIMIT, directory: sessionListOptions.directory, scope: "project" })
     const response = await fetchV2Sessions(instanceId, sessionListOptions)
 
     let statusById: Record<string, any> = {}
