@@ -33,7 +33,6 @@ function DeleteUpToIcon() {
 const USER_BORDER_COLOR = "var(--message-user-border)"
 const ASSISTANT_BORDER_COLOR = "var(--message-assistant-border)"
 const NO_STEP_BORDER = "none"
-const REASONING_SCROLL_SENTINEL_MARGIN_PX = 48
 
 const LazyToolCall = lazy(() => import("./tool-call"))
 
@@ -1419,7 +1418,6 @@ function ReasoningStreamOutput(props: {
   const followScroll = createFollowScroll({
     getScrollTopSnapshot: props.scrollTopSnapshot,
     setScrollTopSnapshot: props.setScrollTopSnapshot,
-    sentinelMarginPx: REASONING_SCROLL_SENTINEL_MARGIN_PX,
     sentinelClassName: "reasoning-scroll-sentinel",
   })
 

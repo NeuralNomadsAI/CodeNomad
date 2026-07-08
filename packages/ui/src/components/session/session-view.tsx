@@ -21,7 +21,7 @@ import { useConfig } from "../../stores/preferences"
 import { closeSessionPreview, getSessionPreview, showSessionChat } from "../../stores/session-previews"
 import { SessionPreviewView } from "../session-preview-view"
 import { isSnapshotAutoFollowing } from "../virtual-follow-behavior"
-import { resolveSessionBottomFollowIntent, shouldClearSessionBottomFollowIntent, type SessionBottomFollowIntent } from "./session-bottom-follow-intent"
+import { getSubmitBottomPinTargetCount, resolveSessionBottomPinIntent, shouldClearSessionBottomPinIntent, type SessionBottomPinIntent } from "./session-bottom-pin-intent"
 
 const log = getLogger("session")
 
@@ -81,8 +81,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   let scrollToBottomHandle: (() => void) | undefined
   let rootRef: HTMLDivElement | undefined
   const pendingIdleSeenTimers = new Set<string>()
-  const [submitBottomFollowIntent, setSubmitBottomFollowIntent] = createSignal<SessionBottomFollowIntent | null>(null)
-  let submitBottomFollowIntentSequence = 0
+  const [submitBottomPinIntent, setSubmitBottomPinIntent] = createSignal<SessionBottomPinIntent | null>(null)
+  let submitBottomPinIntentSequence = 0
 
   function shouldScrollToBottomOnActivate() {
     const current = session()
@@ -105,23 +105,45 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     return true
   }
 
-  function startSubmitBottomFollowIntent(minItemCount: number) {
-    submitBottomFollowIntentSequence += 1
-    setSubmitBottomFollowIntent({ sessionId: props.sessionId, token: submitBottomFollowIntentSequence, minItemCount })
+  function startSubmitBottomPinIntent(
+    minItemCount: number,
+    options?: { createdMessageCount?: number; preserveObservedStreaming?: boolean },
+  ) {
+    submitBottomPinIntentSequence += 1
+    const previous = submitBottomPinIntent()
+    const createdMessageCount = options?.createdMessageCount ?? messageStore().getSessionMessageIds(props.sessionId).length
+    const shouldPreserveObservedStreaming = Boolean(
+      options?.preserveObservedStreaming &&
+      previous?.sessionId === props.sessionId &&
+      previous.createdMessageCount === createdMessageCount,
+    )
+    const intent: SessionBottomPinIntent = {
+      sessionId: props.sessionId,
+      token: submitBottomPinIntentSequence,
+      minItemCount,
+      createdMessageCount,
+      observedStreaming: shouldPreserveObservedStreaming ? previous?.observedStreaming === true : false,
+    }
+    setSubmitBottomPinIntent(intent)
+    return intent
   }
 
-  function forceSubmittedExchangeToBottom(minItemCount: number) {
-    startSubmitBottomFollowIntent(minItemCount)
+  function forceSubmittedExchangeToBottom(
+    minItemCount: number,
+    options?: { createdMessageCount?: number; preserveObservedStreaming?: boolean },
+  ) {
+    const intent = startSubmitBottomPinIntent(minItemCount, options)
     scrollToBottomHandle?.()
+    return intent
   }
 
-  const activeSubmitBottomFollowIntent = createMemo(() => {
-    const intent = submitBottomFollowIntent()
+  const activeSubmitBottomPinIntent = createMemo(() => {
+    const intent = submitBottomPinIntent()
     const currentSession = session()
     if (!intent || !currentSession) return null
 
     const messageCount = messageStore().getSessionMessageIds(currentSession.id).length
-    if (shouldClearSessionBottomFollowIntent(intent, {
+    if (shouldClearSessionBottomPinIntent(intent, {
       sessionId: currentSession.id,
       messageCount,
       streamingActive: sessionStreamingActive(),
@@ -129,7 +151,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       return null
     }
 
-    return resolveSessionBottomFollowIntent(intent, currentSession.id)
+    return resolveSessionBottomPinIntent(intent, currentSession.id)
   })
 
   function getSeenIdleEntries(currentSession: Session, keepUnseenSubagentIdleStatus: boolean): Array<{ id: string; idleSince: number }> {
@@ -153,6 +175,14 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
   createEffect(
     on(
+      () => props.sessionId,
+      () => setSubmitBottomPinIntent(null),
+      { defer: true },
+    ),
+  )
+
+  createEffect(
+    on(
       () => props.isActive,
       (isActive, wasActive) => {
         if (!isActive) return
@@ -164,17 +194,22 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   )
 
   createEffect(() => {
-    const intent = submitBottomFollowIntent()
+    const intent = submitBottomPinIntent()
     const currentSession = session()
     if (!intent || !currentSession) return
 
+    if (sessionStreamingActive() && intent.sessionId === currentSession.id && !intent.observedStreaming) {
+      setSubmitBottomPinIntent({ ...intent, observedStreaming: true })
+      return
+    }
+
     const messageCount = messageStore().getSessionMessageIds(currentSession.id).length
-    if (shouldClearSessionBottomFollowIntent(intent, {
+    if (shouldClearSessionBottomPinIntent(intent, {
       sessionId: currentSession.id,
       messageCount,
       streamingActive: sessionStreamingActive(),
     })) {
-      setSubmitBottomFollowIntent(null)
+      setSubmitBottomPinIntent(null)
     }
   })
 
@@ -309,14 +344,21 @@ export const SessionView: Component<SessionViewProps> = (props) => {
  
   async function handleSendMessage(prompt: string, attachments: Attachment[]) {
     const messageCount = messageStore().getSessionMessageIds(props.sessionId).length
-    const submittedExchangeTargetCount = messageCount + 2
-    forceSubmittedExchangeToBottom(submittedExchangeTargetCount)
+    const submittedExchangeTargetCount = getSubmitBottomPinTargetCount(messageCount, sessionStreamingActive())
+    const initialPinIntent = forceSubmittedExchangeToBottom(submittedExchangeTargetCount, { createdMessageCount: messageCount })
     try {
       await sendMessage(props.instanceId, props.sessionId, prompt, attachments)
       const latestMessageCount = messageStore().getSessionMessageIds(props.sessionId).length
-      forceSubmittedExchangeToBottom(Math.max(submittedExchangeTargetCount, latestMessageCount))
+      if (latestMessageCount < submittedExchangeTargetCount && !sessionStreamingActive()) {
+        setSubmitBottomPinIntent(null)
+      } else if (submitBottomPinIntent()?.token === initialPinIntent.token) {
+        forceSubmittedExchangeToBottom(Math.max(submittedExchangeTargetCount, latestMessageCount), {
+          createdMessageCount: messageCount,
+          preserveObservedStreaming: true,
+        })
+      }
     } catch (error) {
-      setSubmitBottomFollowIntent(null)
+      setSubmitBottomPinIntent(null)
       throw error
     }
   }
@@ -481,7 +523,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
                   loadError={messagesLoadError()}
                   onReloadMessages={handleReloadMessages}
                   sessionStreamingActive={sessionStreamingActive()}
-                  bottomFollowIntent={activeSubmitBottomFollowIntent()}
+                  explicitBottomPinIntent={activeSubmitBottomPinIntent()}
+                  onExplicitBottomPinCancelled={() => setSubmitBottomPinIntent(null)}
                   onRevert={handleRevert}
                   onDeleteMessagesUpTo={handleDeleteMessagesUpTo}
                   onFork={handleFork}

@@ -13,6 +13,7 @@ import {
 import type { ClientPart, MessageInfo } from "../../types/message"
 import { mergePermissionRequest } from "../../types/permission"
 import { clearRecordDisplayCacheForMessages } from "./record-display-cache"
+import { mergePendingRequestEntry, shouldSkipPendingRequestUpsert } from "./pending-request-dedupe"
 import type {
   InstanceMessageState,
   LatestTodoSnapshot,
@@ -958,6 +959,23 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     const entry = mergePermissionEntry(input)
     const messageKey = entry.messageId ?? "__global__"
     const partKey = entry.partId ?? entry.permission?.id ?? "__global__"
+    const existing = state.permissions.queue.find((item) => item.permission.id === entry.permission.id)
+    const existingAtLocation = state.permissions.byMessage[messageKey]?.[partKey]
+    const expectedActiveId = state.permissions.queue[0]?.permission.id
+    if (shouldSkipPendingRequestUpsert({
+      existing,
+      existingAtLocationId: existingAtLocation?.permission.id,
+      expectedActiveId,
+      activeId: state.permissions.active?.permission.id,
+      incomingId: entry.permission.id,
+      incomingMessageId: entry.messageId,
+      incomingPartId: entry.partId,
+      incomingEnqueuedAt: entry.enqueuedAt,
+      existingValue: existing?.permission,
+      incomingValue: entry.permission,
+    })) {
+      return
+    }
 
     setState(
       "permissions",
@@ -1019,13 +1037,47 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return { entry, active }
   }
 
-  function upsertQuestion(entry: QuestionEntry) {
+  function mergeQuestionEntry(entry: QuestionEntry): QuestionEntry {
+    const existing = state.questions.queue.find((item) => item.request.id === entry.request.id)
+    return mergePendingRequestEntry(entry, existing)
+  }
+
+  function upsertQuestion(input: QuestionEntry) {
+    const entry = mergeQuestionEntry(input)
     const messageKey = entry.messageId ?? "__global__"
     const partKey = entry.partId ?? entry.request?.id ?? "__global__"
+    const existing = state.questions.queue.find((item) => item.request.id === entry.request.id)
+    const existingAtLocation = state.questions.byMessage[messageKey]?.[partKey]
+    const expectedActiveId = state.questions.queue[0]?.request.id
+    if (shouldSkipPendingRequestUpsert({
+      existing,
+      existingAtLocationId: existingAtLocation?.request.id,
+      expectedActiveId,
+      activeId: state.questions.active?.request.id,
+      incomingId: entry.request.id,
+      incomingMessageId: entry.messageId,
+      incomingPartId: entry.partId,
+      incomingEnqueuedAt: entry.enqueuedAt,
+      existingValue: existing?.request,
+      incomingValue: entry.request,
+    })) {
+      return
+    }
 
     setState(
       "questions",
       produce((draft) => {
+        Object.keys(draft.byMessage).forEach((existingMessageKey) => {
+          const partEntries = draft.byMessage[existingMessageKey]
+          Object.keys(partEntries).forEach((existingPartKey) => {
+            if (partEntries[existingPartKey].request.id === entry.request.id) {
+              delete partEntries[existingPartKey]
+            }
+          })
+          if (Object.keys(partEntries).length === 0) {
+            delete draft.byMessage[existingMessageKey]
+          }
+        })
         draft.byMessage[messageKey] = draft.byMessage[messageKey] ?? {}
         draft.byMessage[messageKey][partKey] = entry
         const existingIndex = draft.queue.findIndex((item) => item.request.id === entry.request.id)
