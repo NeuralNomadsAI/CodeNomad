@@ -5,15 +5,15 @@ import { applySessionPage, getDefaultSessionPaginationState } from "./session-pa
 import { PROJECT_SESSION_LIST_LIMIT, buildProjectSessionListOptions } from "./session-list-options.ts"
 
 describe("project session list loading", () => {
-  it("builds a one-shot project-scoped request without pagination params", () => {
+  it("builds a one-shot directory-scoped request without pagination params", () => {
     const options = buildProjectSessionListOptions({ directory: "/tmp/project", search: "worktree" })
 
     assert.deepEqual(options, {
       directory: "/tmp/project",
       search: "worktree",
       limit: PROJECT_SESSION_LIST_LIMIT,
-      scope: "project",
     })
+    assert.equal("scope" in options, false)
     assert.equal("start" in options, false)
     assert.equal("cursor" in options, false)
   })

@@ -208,7 +208,7 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
   try {
     const sessionListOptions = instance.folder ? { directory: instance.folder } : {}
 
-    log.info("session.list", { instanceId, limit: PROJECT_SESSION_LIST_LIMIT, directory: sessionListOptions.directory, scope: "project" })
+    log.info("session.list", { instanceId, limit: PROJECT_SESSION_LIST_LIMIT, directory: sessionListOptions.directory })
     const response = await fetchV2Sessions(instanceId, sessionListOptions)
 
     let statusById: Record<string, any> = {}
