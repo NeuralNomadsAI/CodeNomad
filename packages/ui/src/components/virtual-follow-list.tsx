@@ -1,26 +1,27 @@
 import { Show, createEffect, createMemo, createSignal, type Accessor, type JSX, on, onCleanup } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
-import { getFollowSnapshotState, getHeldKey, isAutoFollowing, isAtBottom, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, shouldSuspendAutoPinToBottomForHold, shouldTrackHeldAnchor, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
+import { BOTTOM_FOLLOW_EPSILON_PX, getFollowSnapshotState, isAtBottom, isAutoFollowing, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
 
-const DEFAULT_SCROLL_SENTINEL_MARGIN_PX = 48
 const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
+const EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES = 2
+const TOP_SCROLL_EPSILON_PX = 0
+const EXPLICIT_BOTTOM_PIN_MAX_FRAMES = 90
 const USER_SCROLL_INTENT_WINDOW_MS = 600
-const BOTTOM_FOLLOW_INTENT_SETTLE_FRAMES = 4
-const BOTTOM_FOLLOW_INTENT_MAX_FRAMES = 60
+const PROGRAMMATIC_SCROLL_WINDOW_MS = 120
 const SCROLL_INTENT_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Spacebar"])
 const INTERACTIVE_KEY_TARGET_SELECTOR = "button, a, input, textarea, select, [contenteditable='true'], [role='button'], [role='textbox']"
 
-export interface VirtualFollowBottomIntent {
+export interface VirtualExplicitBottomPinIntent {
   token: string | number
   minItemCount?: number
 }
 
 export interface VirtualFollowListApi {
   scrollToTop: (opts?: { immediate?: boolean }) => void
-  scrollToBottom: (opts?: { immediate?: boolean; suppressAutoAnchor?: boolean; suppressHold?: boolean }) => void
+  scrollToBottom: (opts?: { immediate?: boolean }) => void
   scrollToKey: (
     key: string,
-    opts?: { behavior?: ScrollBehavior; block?: ScrollLogicalPosition; setAutoScroll?: boolean },
+    opts?: { behavior?: ScrollBehavior; block?: ScrollLogicalPosition },
   ) => void
   notifyContentRendered: () => void
   setAutoScroll: (enabled: boolean) => void
@@ -39,8 +40,6 @@ export interface VirtualFollowScrollSnapshot {
   anchorOffset?: number
   atBottom: boolean
   followModeType?: FollowMode["type"]
-  heldKey?: string
-  holdAnchorSuspended?: boolean
 }
 
 interface RestoreScrollSnapshotOptions {
@@ -61,112 +60,29 @@ export interface VirtualFollowListProps<T> {
   items: Accessor<T[]>
   getKey: (item: T, index: number) => string
   renderItem: (item: T, index: number) => JSX.Element
-
-  /**
-   * Optional stable DOM id for the item wrapper.
-   * Defaults to the key itself.
-   */
   getAnchorId?: (key: string) => string
-
   overscanPx?: number
-  scrollSentinelMarginPx?: number
-  virtualizationEnabled?: Accessor<boolean>
-  suspendMeasurements?: Accessor<boolean>
   streamingActive?: Accessor<boolean>
   isActive?: Accessor<boolean>
   autoPinHoldEnabled?: Accessor<boolean>
-
-  /**
-   * When switching back to an inactive (cached) pane, the list historically
-   * re-pinned to the bottom if autoScroll was enabled.
-   *
-   * Disable this to preserve the existing scroll position across pane switches.
-   */
   scrollToBottomOnActivate?: Accessor<boolean>
-
-  /**
-   * Controls whether the list should scroll to bottom the first time items
-   * appear (default behavior for chat streams).
-   *
-   * Set to false when an outer component restores scroll from a cache.
-   */
   initialScrollToBottom?: Accessor<boolean>
-
-  /**
-   * Initial value for the internal autoScroll signal.
-   * Useful when restoring scroll state (e.g. start in non-follow mode).
-   */
   initialAutoScroll?: Accessor<boolean>
-
-  /**
-   * When this value changes, the list resets internal follow/anchor state.
-   * Useful when reusing the same list instance across different datasets.
-   */
   resetKey?: Accessor<string | number>
-
-  /**
-   * If this value changes and autoScroll is enabled, the list will
-   * anchor-scroll to the bottom (unless suppressed).
-   */
   followToken?: Accessor<string | number>
-
-  /**
-   * Explicit submit intent that temporarily overrides stale hold/restore state
-   * until the newly submitted exchange has mounted.
-   */
-  forceBottomFollowIntent?: Accessor<VirtualFollowBottomIntent | null>
-
-  /**
-   * Optional item key whose geometry can temporarily hold auto-follow when the
-   * rendered item grows taller than the viewport and reaches the top edge.
-   */
+  explicitBottomPinIntent?: Accessor<VirtualExplicitBottomPinIntent | null>
   autoPinHoldTargetKey?: Accessor<string | null>
-
-  /**
-   * Optional resolver for the specific element inside an item wrapper that
-   * should be measured for hold-target geometry. Return null when the item has
-   * no eligible hold target; return undefined to fall back to the item wrapper.
-   */
   resolveAutoPinHoldElement?: HoldTargetElementResolver
-
-  /**
-   * Top-edge threshold for the hold target in pixels.
-   */
   autoPinHoldTopThresholdPx?: number
-
-  /**
-   * Temporarily suppress automatic bottom pinning while keeping follow mode enabled.
-   */
   suspendAutoPinToBottom?: Accessor<boolean>
-
-  /**
-   * Optional hooks to render content inside the scroll container.
-   * Useful for empty/loading states that should scroll with the list.
-   */
   renderBeforeItems?: Accessor<JSX.Element>
-
-  /**
-   * Render content inside the shell, above timeline/sidebar layers.
-   * (Quote popovers, etc.)
-   */
   renderOverlay?: Accessor<JSX.Element>
-
-  /**
-   * Provide localized labels for built-in controls.
-   */
   scrollToTopAriaLabel?: Accessor<string>
   scrollToBottomAriaLabel?: Accessor<string>
-
-  /**
-   * Receive element refs for external logic (selection, geometry, etc.)
-   */
   onScrollElementChange?: (element: HTMLDivElement | undefined) => void
   onShellElementChange?: (element: HTMLDivElement | undefined) => void
-
-  /**
-   * Callbacks for consumers.
-   */
   onScroll?: () => void
+  onExplicitBottomPinCancelled?: () => void
   onMouseUp?: (event: MouseEvent) => void
   onClick?: (event: MouseEvent) => void
   onActiveKeyChange?: (key: string | null) => void
@@ -179,239 +95,52 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const [scrollElement, setScrollElement] = createSignal<HTMLDivElement | undefined>()
   const [shellElement, setShellElement] = createSignal<HTMLDivElement | undefined>()
   const [virtuaHandle, setVirtuaHandle] = createSignal<VirtualizerHandle | undefined>()
-
-  const isActive = () => (props.isActive ? props.isActive() : true)
-  const scrollToBottomOnActivate = () => (props.scrollToBottomOnActivate ? props.scrollToBottomOnActivate() : true)
-  const initialScrollToBottom = () => (props.initialScrollToBottom ? props.initialScrollToBottom() : true)
-  const initialAutoScroll = () => (props.initialAutoScroll ? props.initialAutoScroll() : true)
-  const externalSuspendAutoPinToBottom = () => (props.suspendAutoPinToBottom ? props.suspendAutoPinToBottom() : false)
-  const streamingActive = () => props.streamingActive?.() ?? false
-  const autoPinHoldEnabled = () => props.autoPinHoldEnabled?.() ?? true
-  const holdTargetKey = () => (props.autoPinHoldTargetKey ? props.autoPinHoldTargetKey() : null)
-  const forceBottomFollowIntent = () => props.forceBottomFollowIntent?.() ?? null
-  const holdTargetTopThresholdPx = () => props.autoPinHoldTopThresholdPx ?? DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX
-
-  const scrollController = new VirtualScrollController(initialAutoScroll())
-  const [followMode, setFollowMode] = createSignal<FollowMode>(scrollController.snapshot().mode)
-  const autoScroll = createMemo(() => isAutoFollowing(followMode()))
+  const [followMode, setFollowMode] = createSignal<FollowMode>({ type: props.initialAutoScroll?.() ?? true ? "following" : "escaped" })
   const [showScrollTopButton, setShowScrollTopButton] = createSignal(false)
   const [showScrollBottomButton, setShowScrollBottomButton] = createSignal(false)
   const [activeKey, setActiveKey] = createSignal<string | null>(null)
-  const activeHoldTargetKey = createMemo(() => getHeldKey(followMode()))
-  const [didTriggerHoldForCurrentTarget, setDidTriggerHoldForCurrentTarget] = createSignal(false)
-  const effectiveSuspendAutoPinToBottom = () => shouldSuspendAutoPinToBottomForHold({
-    externalSuspend: externalSuspendAutoPinToBottom(),
-    activeHoldTargetKey: activeHoldTargetKey(),
-    eligibleHoldTargetKey: holdTargetKey(),
-  })
 
+  const isActive = () => props.isActive?.() ?? true
+  const initialScrollToBottom = () => props.initialScrollToBottom?.() ?? true
+  const initialAutoScroll = () => props.initialAutoScroll?.() ?? true
+  const scrollToBottomOnActivate = () => props.scrollToBottomOnActivate?.() ?? true
+  const streamingActive = () => props.streamingActive?.() ?? false
+  const autoPinHoldEnabled = () => props.autoPinHoldEnabled?.() ?? true
+  const holdTargetKey = () => props.autoPinHoldTargetKey?.() ?? null
+  const externalSuspendAutoPinToBottom = () => props.suspendAutoPinToBottom?.() ?? false
+  const explicitBottomPinIntent = () => props.explicitBottomPinIntent?.() ?? null
+  const holdTargetTopThresholdPx = () => props.autoPinHoldTopThresholdPx ?? DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX
+  const autoScroll = createMemo(() => isAutoFollowing(followMode()))
   const scrollButtonsCount = createMemo(() => (showScrollTopButton() ? 1 : 0) + (showScrollBottomButton() ? 1 : 0))
+
+  const scrollController = new VirtualScrollController(initialAutoScroll())
   const itemElements = new Map<string, HTMLDivElement>()
+  const state: VirtualFollowListState = { autoScroll, showScrollTopButton, showScrollBottomButton, scrollButtonsCount, activeKey }
 
   let detachScrollIntentListeners: (() => void) | undefined
-  let lastResetKey: string | number | undefined
-  let suppressAutoScrollOnce = false
-  let suppressHoldUntilTargetChanges = false
-  let suspendHeldAnchorUntilBottom = false
-  let lastItemsReference = props.items()
   let restoreToken = 0
-
-  createEffect(() => {
-    const items = props.items()
-    if (items === lastItemsReference) return
-    lastItemsReference = items
-    restoreToken += 1
-    scrollController.setRestoring(false)
-  })
-
-  onCleanup(() => {
-    restoreToken += 1
-    scrollController.setRestoring(false)
-  })
+  let lastResetKey: string | number | undefined = props.resetKey?.()
   let pendingInitialScroll = true
-  let programmaticScrollUntil = 0
-  let pendingBottomRepinAfterHold = false
   let pendingContentRenderedFrame: number | null = null
-  let pendingBottomFollowIntentFrame: number | null = null
-  let bottomFollowIntentToken: string | number | null = null
-  let bottomFollowIntentMinItemCount = 0
-  let bottomFollowIntentStaleHoldTargetKey: string | null = null
-  let bottomFollowIntentSettleFrames = 0
-  let bottomFollowIntentFramesRemaining = 0
-  let heldAnchorKey: string | null = null
-  let heldAnchorElement: HTMLElement | null = null
-  let heldAnchorOffset: number | null = null
-
-  const state: VirtualFollowListState = {
-    autoScroll,
-    showScrollTopButton,
-    showScrollBottomButton,
-    scrollButtonsCount,
-    activeKey,
-  }
-
-  function markUserScrollIntent(direction?: "up" | "down" | null) {
-    if (hasActiveBottomFollowIntent()) {
-      clearBottomFollowIntent()
-    }
-    const now = performance.now()
-    scrollController.setUserIntent(direction ?? null, now + USER_SCROLL_INTENT_WINDOW_MS)
-  }
-
-  function markProgrammaticScroll() {
-    programmaticScrollUntil = performance.now() + 120
-  }
-
-  function hasProgrammaticScrollIntent() {
-    return performance.now() <= programmaticScrollUntil
-  }
-
-  function hasActiveBottomFollowIntent() {
-    return bottomFollowIntentToken !== null
-  }
-
-  function resetStaleHoldForBottomIntent() {
-    restoreToken += 1
-    scrollController.setRestoring(false)
-    setDidTriggerHoldForCurrentTarget(false)
-    suppressHoldUntilTargetChanges = true
-    pendingBottomRepinAfterHold = false
-    clearHeldAnchor()
-  }
-
-  function clearBottomFollowIntent() {
-    const staleTargetStillCurrent = bottomFollowIntentStaleHoldTargetKey !== null && holdTargetKey() === bottomFollowIntentStaleHoldTargetKey
-    bottomFollowIntentToken = null
-    bottomFollowIntentMinItemCount = 0
-    bottomFollowIntentStaleHoldTargetKey = null
-    bottomFollowIntentSettleFrames = 0
-    bottomFollowIntentFramesRemaining = 0
-    if (!staleTargetStillCurrent) {
-      suppressHoldUntilTargetChanges = false
-    }
-  }
-
-  function scheduleBottomFollowIntentFrame() {
-    if (!hasActiveBottomFollowIntent()) return
-    if (pendingBottomFollowIntentFrame !== null) return
-    if (typeof requestAnimationFrame !== "function") {
-      runBottomFollowIntentFrame()
-      return
-    }
-    pendingBottomFollowIntentFrame = requestAnimationFrame(() => runBottomFollowIntentFrame())
-  }
-
-  function runBottomFollowIntentFrame() {
-    pendingBottomFollowIntentFrame = null
-    if (!hasActiveBottomFollowIntent()) return
-
-    resetStaleHoldForBottomIntent()
-    dispatchFollowEvent({ type: "jump-bottom", immediate: true, explicit: true })
-
-    const minItemCountReached = props.items().length >= bottomFollowIntentMinItemCount
-    if (minItemCountReached) {
-      bottomFollowIntentSettleFrames -= 1
-    } else {
-      bottomFollowIntentSettleFrames = BOTTOM_FOLLOW_INTENT_SETTLE_FRAMES
-    }
-    bottomFollowIntentFramesRemaining -= 1
-
-    if ((minItemCountReached && bottomFollowIntentSettleFrames <= 0) || bottomFollowIntentFramesRemaining <= 0) {
-      clearBottomFollowIntent()
-      return
-    }
-
-    scheduleBottomFollowIntentFrame()
-  }
-
-  function startBottomFollowIntent(intent: VirtualFollowBottomIntent | null) {
-    if (!intent) return
-    if (!hasActiveBottomFollowIntent()) {
-      bottomFollowIntentStaleHoldTargetKey = activeHoldTargetKey() ?? holdTargetKey()
-    }
-    bottomFollowIntentToken = intent.token
-    bottomFollowIntentMinItemCount = Math.max(0, Math.floor(intent.minItemCount ?? 0))
-    bottomFollowIntentSettleFrames = BOTTOM_FOLLOW_INTENT_SETTLE_FRAMES
-    bottomFollowIntentFramesRemaining = BOTTOM_FOLLOW_INTENT_MAX_FRAMES
-    resetStaleHoldForBottomIntent()
-    runBottomFollowIntentFrame()
-  }
-
-  function shouldManageHeldAnchor(key = activeHoldTargetKey(), targetKey = holdTargetKey()) {
-    if (key === null || key !== activeHoldTargetKey()) return false
-    return shouldTrackHeldAnchor({
-      activeHoldTargetKey: key,
-      eligibleHoldTargetKey: targetKey,
-      suspendedByUser: suspendHeldAnchorUntilBottom,
-    })
-  }
-
-  function hasItemKey(key: string) {
-    return props.items().some((item, index) => props.getKey(item, index) === key)
-  }
-
-  function applyRestoredFollowSnapshot(snapshot: VirtualFollowScrollSnapshot) {
-    const restoredMode = restoreFollowModeFromSnapshot({
-      atBottom: snapshot.atBottom,
-      followModeType: snapshot.followModeType,
-      heldKey: snapshot.heldKey,
-      hasHeldKeyItem: snapshot.heldKey ? hasItemKey(snapshot.heldKey) : false,
-    })
-
-    suspendHeldAnchorUntilBottom = restoredMode.type === "holding" && Boolean(snapshot.holdAnchorSuspended)
-    setFollowMode(restoredMode)
-    scrollController.restoreMode(restoredMode)
-
-    if (restoredMode.type === "holding" && shouldManageHeldAnchor(restoredMode.key)) {
-      captureHeldAnchor(restoredMode.key)
-      return
-    }
-
-    clearHeldAnchor()
-  }
+  let pendingExplicitBottomPinFrame: number | null = null
+  let explicitBottomPinToken: string | number | null = null
+  let userCancelledExplicitBottomPinToken: string | number | null = null
+  let explicitBottomPinMinItemCount = 0
+  let explicitBottomPinSettleFrames = 0
+  let explicitBottomPinFramesRemaining = 0
+  let programmaticScrollUntil = 0
 
   function syncControllerResult(result: ScrollControllerResult) {
-    const previousMode = followMode()
-    const previousHeldKey = previousMode.type === "holding" ? previousMode.key : null
     setFollowMode(result.state.mode)
-    if (result.state.mode.type !== "holding") {
-      suspendHeldAnchorUntilBottom = false
-      clearHeldAnchor()
-    } else if (previousHeldKey !== result.state.mode.key) {
-      suspendHeldAnchorUntilBottom = false
-      clearHeldAnchor()
-    } else if (heldAnchorKey !== null && heldAnchorKey !== result.state.mode.key) {
-      clearHeldAnchor()
-    }
     applyFollowEffect(result.effect)
   }
 
-  function escapeFollowIfDomMovedUp(element = scrollElement()) {
-    if (!element) return false
-    const result = scrollController.beforeBottomPin(getDomMetrics(element))
-    syncControllerResult(result)
-    return result.effect.type !== "none" || result.state.mode.type === "escaped"
-  }
-
-  function shouldHonorPrePinEscape() {
-    const snapshot = scrollController.snapshot()
-    return performance.now() <= snapshot.userIntentUntil && snapshot.userIntentDirection === "up"
-  }
-
   function dispatchFollowEvent(event: FollowEvent) {
-    let result: ScrollControllerResult
+    let result
     switch (event.type) {
-      case "user-scroll": {
-        const metrics = getManualMetrics(event.atBottom)
-        result = scrollController.observeViewport(
-          metrics,
-          performance.now(),
-          hasProgrammaticScrollIntent(),
-          canRejoinFollowFromDownScroll(metrics),
-          autoPinHoldEnabled() && streamingActive(),
-        )
+      case "user-scroll":
+        result = scrollController.observeViewport(getManualMetrics(event.atBottom), performance.now(), hasProgrammaticScrollIntent())
         break
-      }
       case "jump-top":
         result = scrollController.jumpTop(event.immediate)
         break
@@ -419,23 +148,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         result = scrollController.jumpBottom(event.immediate, event.explicit)
         break
       case "jump-key":
-        result = scrollController.jumpKey(event.key, event.block, event.smooth, event.followAfter)
+        result = scrollController.jumpKey(event.key, event.block, event.smooth)
         break
-      case "content-grew": {
-        const element = scrollElement()
-        result = element
-          ? scrollController.contentRendered(getDomMetrics(element), event.canPinToBottom)
-          : scrollController.contentRendered(getManualMetrics(false), event.canPinToBottom)
-        break
-      }
-      case "hold-candidate":
-        result = scrollController.holdCandidate(event.key, event.shouldHold)
-        break
-      case "hold-target-changed":
-        result = scrollController.holdTargetChanged(event.key, event.canPinToBottom)
-        break
-      case "clear-hold":
-        result = scrollController.clearHold(event.follow, event.canPinToBottom, event.suppressHold)
+      case "content-grew":
+        result = scrollController.contentRendered(getCurrentMetrics(), event.canPinToBottom)
         break
       case "set-follow":
         result = scrollController.setFollow(event.enabled)
@@ -455,87 +171,67 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         performScrollToTop(effect.immediate)
         return
       case "scroll-bottom":
-        if (effect.suppressHold) {
-          suppressHoldUntilTargetChanges = true
-        }
         performScrollToBottom(effect.immediate)
         return
       case "scroll-key":
         performScrollToKey(effect.key, { block: effect.block, smooth: effect.smooth })
         return
-      case "align-hold":
-        alignHoldTarget(effect.key)
-        return
     }
   }
 
-  function attachScrollIntentListeners(element: HTMLDivElement | undefined) {
-    if (detachScrollIntentListeners) {
-      detachScrollIntentListeners()
-      detachScrollIntentListeners = undefined
-    }
-    if (!element) return
-    const handleWheelIntent = (event: WheelEvent) => {
-      const dir: "up" | "down" | null = event.deltaY < 0 ? "up" : event.deltaY > 0 ? "down" : null
-      markUserScrollIntent(dir)
-    }
-    const handlePointerIntent = (event: PointerEvent) => {
-      if ((event.target as HTMLElement | null)?.closest(INTERACTIVE_KEY_TARGET_SELECTOR)) return
-      markUserScrollIntent(null)
-    }
-    const handleKeyIntent = (event: KeyboardEvent) => {
-      if (!SCROLL_INTENT_KEYS.has(event.key)) return
-      if ((event.target as HTMLElement | null)?.closest(INTERACTIVE_KEY_TARGET_SELECTOR)) return
-      const key = event.key
-      const dir: "up" | "down" | null =
-        key === "ArrowUp" || key === "PageUp" || key === "Home"
-          ? "up"
-          : key === "ArrowDown" || key === "PageDown" || key === "End"
-            ? "down"
-            : key === " " || key === "Spacebar"
-              ? event.shiftKey
-                ? "up"
-                : "down"
-              : null
-      if (key === "End") {
-        event.preventDefault()
-        scrollToBottom(true)
-        return
-      }
-      markUserScrollIntent(dir)
-    }
-    element.addEventListener("wheel", handleWheelIntent, { passive: true })
-    element.addEventListener("pointerdown", handlePointerIntent)
-    element.addEventListener("keydown", handleKeyIntent)
-    detachScrollIntentListeners = () => {
-      element.removeEventListener("wheel", handleWheelIntent)
-      element.removeEventListener("pointerdown", handlePointerIntent)
-      element.removeEventListener("keydown", handleKeyIntent)
+  function markUserScrollIntent(direction: "up" | "down" | null) {
+    scrollController.setUserIntent(direction, performance.now() + USER_SCROLL_INTENT_WINDOW_MS)
+    if (direction === "up") {
+      if (hasActiveExplicitBottomPin() || explicitBottomPinIntent()) cancelExplicitBottomPinFromUser()
+      dispatchFollowEvent({ type: "user-scroll", direction: "up", atBottom: isActuallyAtBottom() })
+    } else if (direction === "down" && isActuallyAtBottom()) {
+      dispatchFollowEvent({ type: "user-scroll", direction: "down", atBottom: true })
     }
   }
 
-  function getCurrentScrollOffset(_element: HTMLDivElement, handle: VirtualizerHandle) {
-    return handle.scrollOffset
+  function markProgrammaticScroll() {
+    programmaticScrollUntil = performance.now() + PROGRAMMATIC_SCROLL_WINDOW_MS
   }
 
-  function getCurrentScrollSize(_element: HTMLDivElement, handle: VirtualizerHandle) {
-    return handle.scrollSize
+  function hasProgrammaticScrollIntent() {
+    return performance.now() <= programmaticScrollUntil
+  }
+
+  function getCurrentMetrics(): ScrollControllerMetrics {
+    const element = scrollElement()
+    if (!element) return getManualMetrics(false)
+    return getDomMetrics(element)
   }
 
   function getDomMetrics(element: HTMLDivElement, handle = virtuaHandle(), offset = handle?.scrollOffset ?? element.scrollTop): ScrollControllerMetrics {
-    const scrollHeight = handle ? getCurrentScrollSize(element, handle) : element.scrollHeight
     return {
       offset,
-      scrollHeight,
+      scrollHeight: handle?.scrollSize ?? element.scrollHeight,
       clientHeight: handle?.viewportSize ?? element.clientHeight,
-      sentinelMarginPx: props.scrollSentinelMarginPx ?? DEFAULT_SCROLL_SENTINEL_MARGIN_PX,
+      sentinelMarginPx: BOTTOM_FOLLOW_EPSILON_PX,
     }
   }
 
+  function getManualMetrics(atBottom: boolean): ScrollControllerMetrics {
+    const clientHeight = 1000
+    return {
+      offset: 0,
+      scrollHeight: atBottom ? clientHeight : clientHeight * 2,
+      clientHeight,
+      sentinelMarginPx: BOTTOM_FOLLOW_EPSILON_PX,
+    }
+  }
+
+  function isActuallyAtBottom() {
+    const element = scrollElement()
+    if (!element) return false
+    return isAtBottom(getDomMetrics(element))
+  }
+
   function scrollToOffset(offset: number, atBottom: boolean) {
-    const handle = virtuaHandle()
     const element = scrollElement()
     if (!element) return
+    const handle = virtuaHandle()
     const maxOffset = Math.max((handle?.scrollSize ?? element.scrollHeight) - (handle?.viewportSize ?? element.clientHeight), 0)
     const nextOffset = Math.min(Math.max(offset, 0), maxOffset)
     markProgrammaticScroll()
@@ -547,297 +243,38 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     scrollController.recordProgrammaticOffset(nextOffset, atBottom)
   }
 
-  function getManualMetrics(atBottom: boolean): ScrollControllerMetrics {
-    const clientHeight = 1000
-    const sentinelMarginPx = props.scrollSentinelMarginPx ?? DEFAULT_SCROLL_SENTINEL_MARGIN_PX
-    const distance = atBottom ? 0 : clientHeight
-    return {
-      offset: 0,
-      scrollHeight: clientHeight + distance,
-      clientHeight,
-      sentinelMarginPx,
-    }
-  }
-
-  function canRejoinFollowFromDownScroll(metrics: ScrollControllerMetrics) {
-    if (!streamingActive()) return false
-    if (effectiveSuspendAutoPinToBottom()) return false
-    if (activeHoldTargetKey() !== null) return false
-    return isAtBottom(metrics)
-  }
-
-  function getSnapshotMetrics(element: HTMLDivElement, handle?: VirtualizerHandle) {
-    const scrollTop = handle?.scrollOffset ?? element.scrollTop
-    const scrollHeight = handle ? getCurrentScrollSize(element, handle) : element.scrollHeight
-    const clientHeight = handle?.viewportSize ?? element.clientHeight
-    const maxScrollTop = Math.max(scrollHeight - clientHeight, 0)
-    const atBottom = scrollHeight - (scrollTop + clientHeight) <= (props.scrollSentinelMarginPx ?? DEFAULT_SCROLL_SENTINEL_MARGIN_PX)
-    return {
-      scrollTop,
-      scrollRatio: maxScrollTop > 0 ? scrollTop / maxScrollTop : 0,
-      maxScrollTop,
-      atBottom,
-    }
-  }
-
-  function findTopVisibleAnchor(element: HTMLDivElement) {
-    const containerRect = element.getBoundingClientRect()
-    let closestAbove: { key: string; offset: number } | null = null
-    let closestBelow: { key: string; offset: number } | null = null
-
-    for (const [key, itemElement] of itemElements) {
-      const rect = itemElement.getBoundingClientRect()
-      if (rect.bottom <= containerRect.top || rect.top >= containerRect.bottom) continue
-
-      const offset = rect.top - containerRect.top
-      if (offset <= 0) {
-        if (!closestAbove || offset > closestAbove.offset) closestAbove = { key, offset }
-      } else if (!closestBelow || offset < closestBelow.offset) {
-        closestBelow = { key, offset }
-      }
-    }
-
-    return closestAbove ?? closestBelow
-  }
-
-  function captureScrollSnapshot(): VirtualFollowScrollSnapshot | undefined {
-    const element = scrollElement()
-    if (!element) return undefined
-
-    const snapshot: VirtualFollowScrollSnapshot = getSnapshotMetrics(element, virtuaHandle())
-    const currentMode = hasActiveBottomFollowIntent() ? ({ type: "following" } as const) : followMode()
-    Object.assign(snapshot, getFollowSnapshotState(currentMode, suspendHeldAnchorUntilBottom))
-    if (hasActiveBottomFollowIntent()) {
-      snapshot.atBottom = true
-      delete snapshot.anchorKey
-      delete snapshot.anchorOffset
-      return snapshot
-    }
-    if (!snapshot.atBottom) {
-      const anchor = findTopVisibleAnchor(element)
-      if (anchor) {
-        snapshot.anchorKey = anchor.key
-        snapshot.anchorOffset = anchor.offset
-      }
-    }
-    return snapshot
-  }
-
-  function applyPixelSnapshot(snapshot: VirtualFollowScrollSnapshot, behavior: ScrollBehavior) {
-    const element = scrollElement()
-    if (!element) return
-
-    const handle = virtuaHandle()
-    const maxScrollTop = Math.max((handle?.scrollSize ?? element.scrollHeight) - (handle?.viewportSize ?? element.clientHeight), 0)
-    const scrollRatio = snapshot.scrollRatio
-    const canUseRatio =
-      !snapshot.atBottom &&
-      typeof scrollRatio === "number" &&
-      Number.isFinite(scrollRatio) &&
-      snapshot.maxScrollTop !== maxScrollTop
-    const nextTop = snapshot.atBottom
-      ? maxScrollTop
-      : canUseRatio
-        ? Math.min(Math.max(scrollRatio, 0), 1) * maxScrollTop
-        : Math.min(snapshot.scrollTop, maxScrollTop)
-
-    if (behavior === "smooth" && !virtuaHandle()) {
-      markProgrammaticScroll()
-      element.scrollTo({ top: nextTop, behavior })
-      scrollController.recordProgrammaticOffset(nextTop, snapshot.atBottom)
-      return
-    }
-    scrollToOffset(nextTop, snapshot.atBottom)
-  }
-
-  function applyAnchorSnapshot(snapshot: VirtualFollowScrollSnapshot) {
-    const element = scrollElement()
-    if (!element || !snapshot.anchorKey || typeof snapshot.anchorOffset !== "number") return false
-
-    const itemWrapper = itemElements.get(snapshot.anchorKey)
-    if (!itemWrapper) return false
-
-    const containerRect = element.getBoundingClientRect()
-    const itemRect = itemWrapper.getBoundingClientRect()
-    const currentOffset = itemRect.top - containerRect.top
-    const delta = currentOffset - snapshot.anchorOffset
-    if (Math.abs(delta) > 1) {
-      scrollToOffset((virtuaHandle()?.scrollOffset ?? element.scrollTop) + delta, false)
-    }
-    return true
-  }
-
-  function applyBottomSnapshot() {
-    const element = scrollElement()
-    if (!element) return
-    const handle = virtuaHandle()
-    const maxOffset = Math.max((handle?.scrollSize ?? element.scrollHeight) - (handle?.viewportSize ?? element.clientHeight), 0)
-    scrollToOffset(maxOffset, true)
-  }
-
-  function restoreScrollSnapshot(snapshot: VirtualFollowScrollSnapshot, opts?: RestoreScrollSnapshotOptions) {
-    const element = scrollElement()
-    if (!element) {
-      opts?.fallback?.()
-      return
-    }
-
-    if (hasActiveBottomFollowIntent()) {
-      scheduleBottomFollowIntentFrame()
-      opts?.onApplied?.()
-      return
-    }
-
-    const token = ++restoreToken
-    const isRestoreCurrent = () => token === restoreToken && Boolean(scrollElement())
-    const behavior = opts?.behavior ?? "auto"
-    scrollController.setRestoring(true)
-    const finishRestore = () => {
-      if (!isRestoreCurrent()) return
-      applyRestoredFollowSnapshot(snapshot)
-      scrollController.setRestoring(false)
-      opts?.onApplied?.()
-    }
-    if (snapshot.atBottom) {
-      applyBottomSnapshot()
-      requestAnimationFrame(() => {
-        if (!isRestoreCurrent()) return
-        applyBottomSnapshot()
-        finishRestore()
-      })
-      return
-    }
-
-    if (snapshot.anchorKey) {
-      const index = props.items().findIndex((item, i) => props.getKey(item, i) === snapshot.anchorKey)
-      if (index !== -1) {
-        markProgrammaticScroll()
-        virtuaHandle()?.scrollToIndex(index, { align: "start", smooth: behavior === "smooth" })
-        retryAnchorRestore(snapshot, behavior, 6, isRestoreCurrent, finishRestore)
-        return
-      }
-    }
-
-    applyPixelSnapshot(snapshot, behavior)
-    requestAnimationFrame(finishRestore)
-  }
-
-  function retryAnchorRestore(
-    snapshot: VirtualFollowScrollSnapshot,
-    behavior: ScrollBehavior,
-    remainingFrames: number,
-    isCurrent: () => boolean,
-    onApplied?: () => void,
-  ) {
-    requestAnimationFrame(() => {
-      if (!isCurrent()) return
-      const applied = applyAnchorSnapshot(snapshot)
-      if (applied) {
-        requestAnimationFrame(() => {
-          if (!isCurrent()) return
-          applyAnchorSnapshot(snapshot)
-          onApplied?.()
-        })
-        return
-      }
-
-      if (remainingFrames > 0) {
-        retryAnchorRestore(snapshot, behavior, remainingFrames - 1, isCurrent, onApplied)
-        return
-      }
-
-      applyPixelSnapshot(snapshot, behavior)
-      requestAnimationFrame(() => {
-        if (!isCurrent()) return
-        onApplied?.()
-      })
-    })
-  }
-
-  function updateScrollButtons() {
-    const handle = virtuaHandle()
-    const element = scrollElement()
-    if (!handle || !element) return
-
-    const previousSnapshot = scrollController.snapshot()
-    const offset = getCurrentScrollOffset(element, handle)
-    const now = performance.now()
-    const programmatic = hasProgrammaticScrollIntent()
-    const hasFreshUserIntent = now <= previousSnapshot.userIntentUntil
-    const metrics = getDomMetrics(element, handle, offset)
-    const atBottom = isAtBottom(metrics)
-    const atTop = offset <= (props.scrollSentinelMarginPx ?? DEFAULT_SCROLL_SENTINEL_MARGIN_PX)
-
-    const hasItems = props.items().length > 0
-    setShowScrollBottomButton(hasItems && !atBottom)
-    setShowScrollTopButton(hasItems && !atTop)
-
-    const result = scrollController.observeViewport(
-      metrics,
-      now,
-      programmatic,
-      canRejoinFollowFromDownScroll(metrics),
-      autoPinHoldEnabled() && streamingActive(),
-    )
-    const manualHoldScroll =
-      previousSnapshot.mode.type === "holding" &&
-      result.state.mode.type === "holding" &&
-      hasFreshUserIntent &&
-      Math.abs(offset - previousSnapshot.lastObservedOffset) > 1
-    if (manualHoldScroll) {
-      suspendHeldAnchorUntilBottom = true
-      clearHeldAnchor()
-    }
-    if (result.state.mode.type !== followMode().type || result.effect.type !== "none") {
-      suppressHoldUntilTargetChanges = false
-    }
-    syncControllerResult(result)
-    if (result.state.mode.type === "holding" && shouldManageHeldAnchor(result.state.mode.key)) {
-      captureHeldAnchor(result.state.mode.key)
-    }
-  }
-
   function performScrollToBottom(immediate = true) {
     const handle = virtuaHandle()
     const element = scrollElement()
-    if (!handle || props.items().length === 0) return
-    if (immediate && element) {
-      markProgrammaticScroll()
-      handle.scrollToIndex(props.items().length - 1, { align: "end", smooth: false })
-      pinDomBottomAfterLayout()
-      return
-    }
+    if (props.items().length === 0) return
     markProgrammaticScroll()
-    handle.scrollToIndex(props.items().length - 1, { align: "end", smooth: !immediate })
+    if (handle) {
+      handle.scrollToIndex(props.items().length - 1, { align: "end", smooth: !immediate })
+    } else if (element) {
+      scrollToOffset(element.scrollHeight - element.clientHeight, true)
+    }
+    pinDomBottomAfterLayout()
   }
 
   function pinDomBottomAfterLayout(remainingFrames = 2) {
     const element = scrollElement()
-    if (!element) return
-    if (!autoScroll() || effectiveSuspendAutoPinToBottom() || scrollController.snapshot().restoring) return
-    if (shouldHonorPrePinEscape() && escapeFollowIfDomMovedUp(element)) return
-
+    if (!element || !autoScroll() || externalSuspendAutoPinToBottom() || scrollController.snapshot().restoring) return
     const handle = virtuaHandle()
     const maxOffset = Math.max((handle?.scrollSize ?? element.scrollHeight) - (handle?.viewportSize ?? element.clientHeight), 0)
     scrollToOffset(maxOffset, true)
     if (remainingFrames <= 0) return
-
-    requestAnimationFrame(() => {
-      if (!autoScroll() || effectiveSuspendAutoPinToBottom() || scrollController.snapshot().restoring) return
-      pinDomBottomAfterLayout(remainingFrames - 1)
-    })
+    requestAnimationFrame(() => pinDomBottomAfterLayout(remainingFrames - 1))
   }
 
   function performScrollToTop(immediate = true) {
     const handle = virtuaHandle()
-    const element = scrollElement()
-    if (!handle) return
-    if (immediate && element) {
+    if (immediate) {
       scrollToOffset(0, false)
       return
     }
+    if (!handle) return
     markProgrammaticScroll()
-    handle.scrollToIndex(0, { align: "start", smooth: !immediate })
+    handle.scrollToIndex(0, { align: "start", smooth: true })
   }
 
   function performScrollToKey(key: string, opts: { block: ScrollLogicalPosition; smooth: boolean }) {
@@ -847,35 +284,47 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     virtuaHandle()?.scrollToIndex(index, { align: opts.block, smooth: opts.smooth })
   }
 
-  function scrollToBottom(immediate = true, options?: { suppressAutoAnchor?: boolean; suppressHold?: boolean }) {
-    if (options?.suppressAutoAnchor ?? !immediate) {
-      suppressAutoScrollOnce = true
-    }
-    dispatchFollowEvent({ type: "jump-bottom", immediate, explicit: options?.suppressHold ?? false })
-  }
+  function updateScrollStateFromDom() {
+    const handle = virtuaHandle()
+    const element = scrollElement()
+    if (!handle || !element) return
 
-  function scrollToTop(immediate = true) {
-    dispatchFollowEvent({ type: "jump-top", immediate })
+    const offset = handle.scrollOffset
+    const metrics = getDomMetrics(element, handle, offset)
+    const atBottom = isAtBottom(metrics)
+    const atTop = offset <= TOP_SCROLL_EPSILON_PX
+    const hasItems = props.items().length > 0
+    setShowScrollBottomButton(hasItems && !atBottom)
+    setShowScrollTopButton(hasItems && !atTop)
+
+    const now = performance.now()
+    const programmatic = hasProgrammaticScrollIntent()
+    const result = scrollController.observeViewport(metrics, now, programmatic)
+    if (result.state.mode.type === "escaped" && explicitBottomPinIntent()) {
+      cancelExplicitBottomPinFromUser()
+    }
+    syncControllerResult(result)
   }
 
   function handleScroll() {
-    updateScrollButtons()
+    updateScrollStateFromDom()
     props.onScroll?.()
 
-    // Find active key (roughly the first visible item)
     const handle = virtuaHandle()
     const element = scrollElement()
-    if (handle && element) {
-      const start = handle.findItemIndex(getCurrentScrollOffset(element, handle))
-      const items = props.items()
-      if (items[start]) {
-        const key = props.getKey(items[start], start)
-        if (key !== activeKey()) {
-          setActiveKey(key)
-          props.onActiveKeyChange?.(key)
-        }
-      }
+    if (!handle || !element) return
+    const start = handle.findItemIndex(handle.scrollOffset)
+    const item = props.items()[start]
+    if (!item) return
+    const key = props.getKey(item, start)
+    if (key !== activeKey()) {
+      setActiveKey(key)
+      props.onActiveKeyChange?.(key)
     }
+  }
+
+  function getAnchorIdForKey(key: string) {
+    return props.getAnchorId ? props.getAnchorId(key) : key
   }
 
   function registerItemElement(key: string, element: HTMLDivElement | null | undefined) {
@@ -886,174 +335,297 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     itemElements.set(key, element)
   }
 
-  function getAnchorIdForKey(key: string) {
-    return props.getAnchorId ? props.getAnchorId(key) : key
-  }
-
-  function resolveHoldTargetElement(key: string) {
-    const itemWrapper = itemElements.get(key)
-    return resolveAutoPinHoldElement(itemWrapper, key, props.resolveAutoPinHoldElement)
-  }
-
-  function clearHeldAnchor() {
-    heldAnchorKey = null
-    heldAnchorElement = null
-    heldAnchorOffset = null
-  }
-
-  function captureHeldAnchor(key = activeHoldTargetKey(), target?: HTMLElement | null) {
+  function maybeEscapeForHoldTrigger() {
+    if (!streamingActive() || !autoPinHoldEnabled() || !autoScroll() || externalSuspendAutoPinToBottom()) return false
     const element = scrollElement()
-    if (!element || !key || !shouldManageHeldAnchor(key)) return false
-    const resolvedTarget = target ?? (
-      heldAnchorKey === key && heldAnchorElement && element.contains(heldAnchorElement)
-        ? heldAnchorElement
-        : resolveHoldTargetElement(key)
-    )
-    if (!resolvedTarget || !element.contains(resolvedTarget)) return false
+    const key = holdTargetKey()
+    if (!element || !key) return false
+    const target = resolveAutoPinHoldElement(itemElements.get(key), key, props.resolveAutoPinHoldElement)
+    if (!target) return false
+
     const containerRect = element.getBoundingClientRect()
-    const targetRect = resolvedTarget.getBoundingClientRect()
-    heldAnchorKey = key
-    heldAnchorElement = resolvedTarget
-    heldAnchorOffset = targetRect.top - containerRect.top
+    const targetRect = target.getBoundingClientRect()
+    if (targetRect.height <= element.clientHeight) return false
+    if (targetRect.top - containerRect.top - holdTargetTopThresholdPx() > 1) return false
+
+    dispatchFollowEvent({ type: "set-follow", enabled: false })
+    scrollController.recordProgrammaticOffset(virtuaHandle()?.scrollOffset ?? element.scrollTop, isActuallyAtBottom())
     return true
-  }
-
-  function restoreHeldAnchor() {
-    const key = activeHoldTargetKey()
-    const element = scrollElement()
-    if (!element || !key || heldAnchorKey !== key || heldAnchorOffset === null) return false
-    const target = heldAnchorElement
-    if (!target || !element.contains(target)) {
-      clearHeldAnchor()
-      return false
-    }
-
-    const containerRect = element.getBoundingClientRect()
-    const targetRect = target.getBoundingClientRect()
-    const currentOffset = targetRect.top - containerRect.top
-    const delta = currentOffset - heldAnchorOffset
-    if (Math.abs(delta) > 1) {
-      scrollToOffset((virtuaHandle()?.scrollOffset ?? element.scrollTop) + delta, false)
-    }
-    captureHeldAnchor(key, target)
-    return true
-  }
-
-  function alignHoldTarget(key: string) {
-    if (activeHoldTargetKey() !== key) return
-    if (!shouldManageHeldAnchor(key)) return
-    const element = scrollElement()
-    if (!element) return
-    const target = resolveHoldTargetElement(key)
-    if (!target) return
-    const containerRect = element.getBoundingClientRect()
-    const targetRect = target.getBoundingClientRect()
-    const relativeTop = targetRect.top - containerRect.top
-    const alignDelta = relativeTop - holdTargetTopThresholdPx()
-    if (Math.abs(alignDelta) > 1) {
-      scrollToOffset((virtuaHandle()?.scrollOffset ?? element.scrollTop) + alignDelta, false)
-    }
-    captureHeldAnchor(key, target)
-    requestAnimationFrame(() => captureHeldAnchor(key, target))
-  }
-
-  function updateAutoPinHold() {
-    const element = scrollElement()
-    if (!element) return
-    if (hasActiveBottomFollowIntent()) return
-
-    const targetKey = holdTargetKey()
-    const heldKey = activeHoldTargetKey()
-
-    if (heldKey !== null) {
-      if (targetKey !== heldKey) {
-        suspendHeldAnchorUntilBottom = true
-        clearHeldAnchor()
-        dispatchFollowEvent({ type: "hold-target-changed", key: targetKey, canPinToBottom: !externalSuspendAutoPinToBottom() })
-      }
-      if (shouldManageHeldAnchor(heldKey, targetKey) && (heldAnchorKey !== heldKey || heldAnchorOffset === null)) {
-        captureHeldAnchor(heldKey)
-      }
-
-      return
-    }
-
-    if (!streamingActive()) return
-    if (!autoPinHoldEnabled()) return
-    if (!autoScroll()) return
-    if (externalSuspendAutoPinToBottom()) return
-    if (!targetKey) return
-    if (didTriggerHoldForCurrentTarget()) return
-    if (suppressHoldUntilTargetChanges) return
-
-    const itemWrapper = itemElements.get(targetKey)
-    const target = resolveAutoPinHoldElement(itemWrapper, targetKey, props.resolveAutoPinHoldElement)
-    if (!target) return
-
-    const containerRect = element.getBoundingClientRect()
-    const targetRect = target.getBoundingClientRect()
-    const relativeTop = targetRect.top - containerRect.top
-    const exceedsViewport = targetRect.height > element.clientHeight
-
-    if (exceedsViewport && relativeTop <= holdTargetTopThresholdPx()) {
-      dispatchFollowEvent({ type: "hold-candidate", key: targetKey, shouldHold: true })
-      setDidTriggerHoldForCurrentTarget(true)
-    }
   }
 
   function flushContentRendered() {
     pendingContentRenderedFrame = null
-
-    if (hasActiveBottomFollowIntent()) {
-      scheduleBottomFollowIntentFrame()
-      updateScrollButtons()
+    if (hasActiveExplicitBottomPin()) {
+      scheduleExplicitBottomPinFrame()
+      updateScrollStateFromDom()
       return
     }
 
-    if (shouldHonorPrePinEscape() && escapeFollowIfDomMovedUp()) {
-      updateScrollButtons()
+    if (maybeEscapeForHoldTrigger()) {
+      updateScrollStateFromDom()
       return
     }
 
-    updateAutoPinHold()
-    if (activeHoldTargetKey() !== null) {
-      if (autoScroll() && streamingActive()) pendingBottomRepinAfterHold = true
-      if (shouldManageHeldAnchor()) {
-        restoreHeldAnchor()
+    dispatchFollowEvent({ type: "content-grew", canPinToBottom: autoScroll() && !externalSuspendAutoPinToBottom() })
+    updateScrollStateFromDom()
+  }
+
+  function hasActiveExplicitBottomPin() {
+    return explicitBottomPinToken !== null
+  }
+
+  function clearExplicitBottomPin() {
+    explicitBottomPinToken = null
+    explicitBottomPinMinItemCount = 0
+    explicitBottomPinSettleFrames = 0
+    explicitBottomPinFramesRemaining = 0
+  }
+
+  function cancelExplicitBottomPinFromUser() {
+    userCancelledExplicitBottomPinToken = explicitBottomPinToken ?? explicitBottomPinIntent()?.token ?? null
+    clearExplicitBottomPin()
+    props.onExplicitBottomPinCancelled?.()
+  }
+
+  function startExplicitBottomPin(intent: VirtualExplicitBottomPinIntent) {
+    userCancelledExplicitBottomPinToken = null
+    explicitBottomPinToken = intent.token
+    explicitBottomPinMinItemCount = Math.max(0, Math.floor(intent.minItemCount ?? 0))
+    explicitBottomPinSettleFrames = EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES
+    explicitBottomPinFramesRemaining = EXPLICIT_BOTTOM_PIN_MAX_FRAMES
+    runExplicitBottomPinFrame()
+  }
+
+  function scheduleExplicitBottomPinFrame() {
+    if (!hasActiveExplicitBottomPin() || pendingExplicitBottomPinFrame !== null) return
+    pendingExplicitBottomPinFrame = requestAnimationFrame(() => runExplicitBottomPinFrame())
+  }
+
+  function runExplicitBottomPinFrame() {
+    pendingExplicitBottomPinFrame = null
+    if (!hasActiveExplicitBottomPin()) return
+    dispatchFollowEvent({ type: "jump-bottom", immediate: true, explicit: true })
+
+    const ready = props.items().length >= explicitBottomPinMinItemCount && isActuallyAtBottom()
+    if (ready) explicitBottomPinSettleFrames -= 1
+    else explicitBottomPinSettleFrames = EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES
+    explicitBottomPinFramesRemaining -= 1
+
+    if ((ready && explicitBottomPinSettleFrames <= 0) || explicitBottomPinFramesRemaining <= 0) {
+      clearExplicitBottomPin()
+      return
+    }
+    scheduleExplicitBottomPinFrame()
+  }
+
+  function captureScrollSnapshot(): VirtualFollowScrollSnapshot | undefined {
+    const element = scrollElement()
+    if (!element) return undefined
+    const handle = virtuaHandle()
+    const scrollTop = handle?.scrollOffset ?? element.scrollTop
+    const scrollHeight = handle?.scrollSize ?? element.scrollHeight
+    const clientHeight = handle?.viewportSize ?? element.clientHeight
+    const maxScrollTop = Math.max(scrollHeight - clientHeight, 0)
+    const atBottom = isAtBottom(getDomMetrics(element, handle, scrollTop))
+    const snapshot: VirtualFollowScrollSnapshot = {
+      scrollTop,
+      scrollRatio: maxScrollTop > 0 ? scrollTop / maxScrollTop : 0,
+      maxScrollTop,
+      atBottom,
+      ...getFollowSnapshotState(followMode()),
+    }
+    if (!atBottom) {
+      const anchor = findTopVisibleAnchor(element)
+      if (anchor) {
+        snapshot.anchorKey = anchor.key
+        snapshot.anchorOffset = anchor.offset
       }
-      updateScrollButtons()
+    }
+    return snapshot
+  }
+
+  function findTopVisibleAnchor(element: HTMLDivElement) {
+    const containerRect = element.getBoundingClientRect()
+    let best: { key: string; offset: number } | null = null
+    for (const [key, itemElement] of itemElements) {
+      const rect = itemElement.getBoundingClientRect()
+      if (rect.bottom <= containerRect.top || rect.top >= containerRect.bottom) continue
+      const offset = rect.top - containerRect.top
+      if (!best || Math.abs(offset) < Math.abs(best.offset)) best = { key, offset }
+    }
+    return best
+  }
+
+  function restoreScrollSnapshot(snapshot: VirtualFollowScrollSnapshot, opts?: RestoreScrollSnapshotOptions) {
+    const element = scrollElement()
+    if (!element) {
+      opts?.fallback?.()
+      return
+    }
+    if (hasActiveExplicitBottomPin()) {
+      scheduleExplicitBottomPinFrame()
+      opts?.onApplied?.()
       return
     }
 
-    const canPinToBottom = autoScroll() && !effectiveSuspendAutoPinToBottom()
-    dispatchFollowEvent({ type: "content-grew", canPinToBottom })
-    updateScrollButtons()
+    const token = ++restoreToken
+    const isCurrent = () => token === restoreToken && Boolean(scrollElement())
+    scrollController.setRestoring(true)
+
+    const finish = () => {
+      if (!isCurrent()) return
+      const mode = restoreFollowModeFromSnapshot(snapshot)
+      setFollowMode(mode)
+      scrollController.restoreMode(mode)
+      scrollController.setRestoring(false)
+      opts?.onApplied?.()
+    }
+
+    if (snapshot.atBottom) {
+      performScrollToBottom(true)
+      requestAnimationFrame(finish)
+      return
+    }
+
+    if (snapshot.anchorKey) {
+      const index = props.items().findIndex((item, i) => props.getKey(item, i) === snapshot.anchorKey)
+      if (index !== -1) {
+        markProgrammaticScroll()
+        virtuaHandle()?.scrollToIndex(index, { align: "start", smooth: opts?.behavior === "smooth" })
+        retryAnchorRestore(snapshot, 6, isCurrent, finish)
+        return
+      }
+    }
+
+    applyPixelSnapshot(snapshot, opts?.behavior ?? "auto")
+    requestAnimationFrame(finish)
+  }
+
+  function retryAnchorRestore(snapshot: VirtualFollowScrollSnapshot, remainingFrames: number, isCurrent: () => boolean, onApplied: () => void) {
+    requestAnimationFrame(() => {
+      if (!isCurrent()) return
+      const element = scrollElement()
+      const itemWrapper = snapshot.anchorKey ? itemElements.get(snapshot.anchorKey) : undefined
+      if (element && itemWrapper && typeof snapshot.anchorOffset === "number") {
+        const delta = itemWrapper.getBoundingClientRect().top - element.getBoundingClientRect().top - snapshot.anchorOffset
+        if (Math.abs(delta) > 1) scrollToOffset((virtuaHandle()?.scrollOffset ?? element.scrollTop) + delta, false)
+        onApplied()
+        return
+      }
+      if (remainingFrames > 0) {
+        retryAnchorRestore(snapshot, remainingFrames - 1, isCurrent, onApplied)
+        return
+      }
+      applyPixelSnapshot(snapshot, "auto")
+      requestAnimationFrame(onApplied)
+    })
+  }
+
+  function applyPixelSnapshot(snapshot: VirtualFollowScrollSnapshot, behavior: ScrollBehavior) {
+    const element = scrollElement()
+    if (!element) return
+    const handle = virtuaHandle()
+    const maxScrollTop = Math.max((handle?.scrollSize ?? element.scrollHeight) - (handle?.viewportSize ?? element.clientHeight), 0)
+    const nextTop = snapshot.atBottom
+      ? maxScrollTop
+      : typeof snapshot.scrollRatio === "number" && snapshot.maxScrollTop !== maxScrollTop
+        ? Math.min(Math.max(snapshot.scrollRatio, 0), 1) * maxScrollTop
+        : Math.min(snapshot.scrollTop, maxScrollTop)
+    if (behavior === "smooth" && !handle) {
+      markProgrammaticScroll()
+      element.scrollTo({ top: nextTop, behavior })
+      scrollController.recordProgrammaticOffset(nextTop, snapshot.atBottom)
+      return
+    }
+    scrollToOffset(nextTop, snapshot.atBottom)
+  }
+
+  function attachScrollIntentListeners(element: HTMLDivElement | undefined) {
+    detachScrollIntentListeners?.()
+    detachScrollIntentListeners = undefined
+    if (!element) return
+    const handleWheelIntent = (event: WheelEvent) => markUserScrollIntent(event.deltaY < 0 ? "up" : event.deltaY > 0 ? "down" : null)
+    const handlePointerIntent = (event: PointerEvent) => {
+      if ((event.target as HTMLElement | null)?.closest(INTERACTIVE_KEY_TARGET_SELECTOR)) return
+      markUserScrollIntent(null)
+    }
+    let lastTouchY: number | null = null
+    const handleTouchStart = (event: TouchEvent) => {
+      lastTouchY = event.touches[0]?.clientY ?? null
+      markUserScrollIntent(null)
+    }
+    const handleTouchMove = (event: TouchEvent) => {
+      const nextY = event.touches[0]?.clientY ?? null
+      const previousY = lastTouchY
+      lastTouchY = nextY
+      if (nextY === null || previousY === null) {
+        markUserScrollIntent(null)
+        return
+      }
+      markUserScrollIntent(nextY > previousY ? "up" : nextY < previousY ? "down" : null)
+    }
+    const handleTouchEnd = () => {
+      lastTouchY = null
+    }
+    const handleKeyIntent = (event: KeyboardEvent) => {
+      if (!isActive()) return
+      if (!SCROLL_INTENT_KEYS.has(event.key)) return
+      if ((event.target as HTMLElement | null)?.closest(INTERACTIVE_KEY_TARGET_SELECTOR)) return
+      if (event.key === "End") {
+        event.preventDefault()
+        scrollToBottom(true)
+        return
+      }
+      if (event.key === "Home") {
+        event.preventDefault()
+        scrollToTop(true)
+        return
+      }
+      const direction = event.key === "ArrowUp" || event.key === "PageUp" || event.key === "Home" || (event.shiftKey && (event.key === " " || event.key === "Spacebar"))
+        ? "up"
+        : "down"
+      markUserScrollIntent(direction)
+    }
+    element.addEventListener("wheel", handleWheelIntent, { passive: true })
+    element.addEventListener("pointerdown", handlePointerIntent)
+    element.addEventListener("touchstart", handleTouchStart, { passive: true })
+    element.addEventListener("touchmove", handleTouchMove, { passive: true })
+    element.addEventListener("touchend", handleTouchEnd, { passive: true })
+    element.addEventListener("touchcancel", handleTouchEnd, { passive: true })
+    element.addEventListener("keydown", handleKeyIntent)
+    detachScrollIntentListeners = () => {
+      element.removeEventListener("wheel", handleWheelIntent)
+      element.removeEventListener("pointerdown", handlePointerIntent)
+      element.removeEventListener("touchstart", handleTouchStart)
+      element.removeEventListener("touchmove", handleTouchMove)
+      element.removeEventListener("touchend", handleTouchEnd)
+      element.removeEventListener("touchcancel", handleTouchEnd)
+      element.removeEventListener("keydown", handleKeyIntent)
+    }
+  }
+
+  function scrollToBottom(immediate = true) {
+    dispatchFollowEvent({ type: "jump-bottom", immediate, explicit: true })
+  }
+
+  function scrollToTop(immediate = true) {
+    dispatchFollowEvent({ type: "jump-top", immediate })
   }
 
   const api: VirtualFollowListApi = {
     scrollToTop: (opts) => scrollToTop(opts?.immediate ?? true),
-    scrollToBottom: (opts) => scrollToBottom(opts?.immediate ?? true, { suppressAutoAnchor: opts?.suppressAutoAnchor, suppressHold: opts?.suppressHold }),
-    scrollToKey: (key, opts) => {
-      const index = props.items().findIndex((item, i) => props.getKey(item, i) === key)
-      if (index === -1) return
-      const nextAutoScroll = opts?.setAutoScroll ?? false
-      dispatchFollowEvent({
-        type: "jump-key",
-        key,
-        block: opts?.block ?? "start",
-        smooth: opts?.behavior === "smooth",
-        followAfter: nextAutoScroll,
-      })
-    },
+    scrollToBottom: (opts) => scrollToBottom(opts?.immediate ?? true),
+    scrollToKey: (key, opts) => dispatchFollowEvent({
+      type: "jump-key",
+      key,
+      block: opts?.block ?? "start",
+      smooth: opts?.behavior === "smooth",
+    }),
     notifyContentRendered: () => {
-      if (typeof requestAnimationFrame !== "function") {
-        flushContentRendered()
-        return
-      }
       if (pendingContentRenderedFrame !== null) return
       pendingContentRenderedFrame = requestAnimationFrame(() => flushContentRendered())
     },
-    setAutoScroll: (enabled) => dispatchFollowEvent({ type: "set-follow", enabled: Boolean(enabled) }),
+    setAutoScroll: (enabled) => dispatchFollowEvent({ type: "set-follow", enabled }),
     getAutoScroll: () => autoScroll(),
     getScrollElement: () => scrollElement(),
     getShellElement: () => shellElement(),
@@ -1064,120 +636,53 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   createEffect(() => props.registerApi?.(api))
   createEffect(() => props.registerState?.(state))
 
-  createEffect(on(() => props.resetKey?.(), () => {
-    itemElements.clear()
-    setDidTriggerHoldForCurrentTarget(false)
-    suppressHoldUntilTargetChanges = false
-    suspendHeldAnchorUntilBottom = false
-    pendingBottomRepinAfterHold = false
-    clearHeldAnchor()
-  }))
-
-  createEffect(on(holdTargetKey, (nextTargetKey, prevTargetKey) => {
-    if (nextTargetKey !== prevTargetKey && didTriggerHoldForCurrentTarget()) {
-      setDidTriggerHoldForCurrentTarget(false)
-    }
-    if (nextTargetKey !== prevTargetKey && !hasActiveBottomFollowIntent()) {
-      suppressHoldUntilTargetChanges = false
-    }
-    if (activeHoldTargetKey() === null) return
-    if (nextTargetKey === activeHoldTargetKey()) return
-    suspendHeldAnchorUntilBottom = true
-    clearHeldAnchor()
-    dispatchFollowEvent({ type: "hold-target-changed", key: nextTargetKey, canPinToBottom: !externalSuspendAutoPinToBottom() })
-    if (pendingBottomRepinAfterHold) {
-      pendingBottomRepinAfterHold = false
-      requestAnimationFrame(() => pinDomBottomAfterLayout())
-    }
-  }, { defer: true }))
-
-  createEffect(on(autoPinHoldEnabled, (enabled) => {
-    if (enabled) return
-    setDidTriggerHoldForCurrentTarget(false)
-    suppressHoldUntilTargetChanges = false
-    suspendHeldAnchorUntilBottom = false
-    pendingBottomRepinAfterHold = false
-    if (activeHoldTargetKey() !== null) {
-      dispatchFollowEvent({
-        type: "clear-hold",
-        follow: true,
-        canPinToBottom: !externalSuspendAutoPinToBottom(),
-        suppressHold: true,
-      })
+  createEffect(on(explicitBottomPinIntent, (intent) => {
+    if (!intent) {
+      userCancelledExplicitBottomPinToken = null
+      clearExplicitBottomPin()
       return
     }
-    clearHeldAnchor()
-  }, { defer: true }))
+    if (intent.token === userCancelledExplicitBottomPinToken) return
+    if (intent.token === explicitBottomPinToken) return
+    startExplicitBottomPin(intent)
+  }))
 
-  createEffect(on(forceBottomFollowIntent, (intent) => {
-    if (!intent) return
-    if (intent.token === bottomFollowIntentToken) return
-    startBottomFollowIntent(intent)
-  }, { defer: true }))
-
-  // Handle autoScroll (Follow) on items change
   createEffect(on(() => props.items().length, (len, prevLen) => {
     if (pendingInitialScroll && isActive() && len > 0) {
       pendingInitialScroll = false
-      if (initialScrollToBottom()) {
-        dispatchFollowEvent({ type: "jump-bottom", immediate: true, explicit: false })
-      }
-      suppressAutoScrollOnce = false
+      if (initialScrollToBottom()) scrollToBottom(true)
       return
     }
-    if (len > (prevLen ?? 0) && autoScroll() && !effectiveSuspendAutoPinToBottom() && !suppressAutoScrollOnce) {
-      if (hasActiveBottomFollowIntent()) {
-        scheduleBottomFollowIntentFrame()
-        suppressAutoScrollOnce = false
-        return
-      }
-      requestAnimationFrame(() => {
-        dispatchFollowEvent({ type: "content-grew", canPinToBottom: autoScroll() && !effectiveSuspendAutoPinToBottom() })
-      })
-    }
-    suppressAutoScrollOnce = false
+    if (len > (prevLen ?? 0) && autoScroll()) api.notifyContentRendered()
   }, { defer: true }))
 
-  // Handle followToken change
   createEffect(on(() => props.followToken?.(), () => {
-    const canPinToBottom = autoScroll() && !effectiveSuspendAutoPinToBottom()
-    if (canPinToBottom) {
-      dispatchFollowEvent({ type: "content-grew", canPinToBottom })
-    }
+    if (autoScroll()) api.notifyContentRendered()
   }, { defer: true }))
 
-  // Reset state on resetKey change
   createEffect(on(() => props.resetKey?.(), (nextKey) => {
     if (nextKey === lastResetKey) return
     lastResetKey = nextKey
-    dispatchFollowEvent({ type: "reset", follow: Boolean(initialAutoScroll()) })
+    clearExplicitBottomPin()
+    dispatchFollowEvent({ type: "reset", follow: initialAutoScroll() })
     pendingInitialScroll = true
+    itemElements.clear()
   }))
 
-  // Initial scroll and session activation
   createEffect(on(isActive, (active) => {
     if (!active) return
     if (pendingInitialScroll && props.items().length > 0) {
       pendingInitialScroll = false
-      if (initialScrollToBottom()) {
-        dispatchFollowEvent({ type: "jump-bottom", immediate: true, explicit: false })
-      }
-    } else if (autoScroll() && scrollToBottomOnActivate()) {
-      dispatchFollowEvent({ type: "jump-bottom", immediate: true, explicit: false })
+      if (initialScrollToBottom()) scrollToBottom(true)
+      return
     }
+    if (autoScroll() && scrollToBottomOnActivate()) scrollToBottom(true)
   }))
 
   onCleanup(() => {
-    if (pendingContentRenderedFrame !== null && typeof cancelAnimationFrame === "function") {
-      cancelAnimationFrame(pendingContentRenderedFrame)
-      pendingContentRenderedFrame = null
-    }
-    if (pendingBottomFollowIntentFrame !== null && typeof cancelAnimationFrame === "function") {
-      cancelAnimationFrame(pendingBottomFollowIntentFrame)
-      pendingBottomFollowIntentFrame = null
-    }
+    if (pendingContentRenderedFrame !== null) cancelAnimationFrame(pendingContentRenderedFrame)
+    if (pendingExplicitBottomPinFrame !== null) cancelAnimationFrame(pendingExplicitBottomPinFrame)
     detachScrollIntentListeners?.()
-    detachScrollIntentListeners = undefined
   })
 
   return (
@@ -1195,9 +700,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         onMouseUp={props.onMouseUp}
         onClick={props.onClick}
       >
-        <Show when={props.renderBeforeItems}>
-          {props.renderBeforeItems!()}
-        </Show>
+        <Show when={props.renderBeforeItems}>{props.renderBeforeItems!()}</Show>
         <Virtualizer
           ref={setVirtuaHandle}
           scrollRef={scrollElement()}
@@ -1207,12 +710,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         >
           {(item, index) => {
             const key = props.getKey(item, index())
-            const anchorId = getAnchorIdForKey(key)
-            return (
-              <div id={anchorId} data-virtual-follow-key={key} ref={(element) => registerItemElement(key, element)}>
-                {props.renderItem(item, index())}
-              </div>
-            )
+            return <div id={getAnchorIdForKey(key)} data-virtual-follow-key={key} ref={(element) => registerItemElement(key, element)}>{props.renderItem(item, index())}</div>
           }}
         </Virtualizer>
       </div>
@@ -1225,27 +723,16 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         <div class="virtual-follow-list-controls-container">{props.renderControls!(state, api)}</div>
       </Show>
 
-      <Show
-        when={
-          !props.renderControls &&
-          (showScrollTopButton() || showScrollBottomButton()) &&
-          props.scrollToTopAriaLabel &&
-          props.scrollToBottomAriaLabel
-        }
-      >
+      <Show when={!props.renderControls && (showScrollTopButton() || showScrollBottomButton()) && props.scrollToTopAriaLabel && props.scrollToBottomAriaLabel}>
         <div class="message-scroll-button-wrapper">
           <Show when={showScrollTopButton()}>
             <button type="button" class="message-scroll-button" onClick={() => scrollToTop()} aria-label={props.scrollToTopAriaLabel!()}>
-              <span class="message-scroll-icon" aria-hidden="true">
-                ↑
-              </span>
+              <span class="message-scroll-icon" aria-hidden="true">↑</span>
             </button>
           </Show>
           <Show when={showScrollBottomButton()}>
-            <button type="button" class="message-scroll-button" onClick={() => scrollToBottom(true, { suppressHold: true })} aria-label={props.scrollToBottomAriaLabel!()}>
-              <span class="message-scroll-icon" aria-hidden="true">
-                ↓
-              </span>
+            <button type="button" class="message-scroll-button" onClick={() => scrollToBottom(true)} aria-label={props.scrollToBottomAriaLabel!()}>
+              <span class="message-scroll-icon" aria-hidden="true">↓</span>
             </button>
           </Show>
         </div>

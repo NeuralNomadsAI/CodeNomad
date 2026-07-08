@@ -5,7 +5,7 @@ import BrandedEmptyState from "./branded-empty-state"
 import MessageBlock from "./message-block"
 import { getMessageAnchorId } from "./message-anchors"
 import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./message-timeline"
-import VirtualFollowList, { type VirtualFollowBottomIntent, type VirtualFollowListApi, type VirtualFollowListState, type VirtualFollowScrollSnapshot } from "./virtual-follow-list"
+import VirtualFollowList, { type VirtualExplicitBottomPinIntent, type VirtualFollowListApi, type VirtualFollowListState, type VirtualFollowScrollSnapshot } from "./virtual-follow-list"
 import { isSnapshotAutoFollowing } from "./virtual-follow-behavior"
 import { useConfig } from "../stores/preferences"
 import { getSessionInfo } from "../stores/sessions"
@@ -24,7 +24,6 @@ import { buildSessionSearchMatches } from "../lib/session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
 import { resolveThinkingExpansionDefault } from "./tool-call/tool-registry"
 
-const SCROLL_SENTINEL_MARGIN_PX = 8
 const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 const QUOTE_SELECTION_MAX_LENGTH = 2000
 const STREAMING_TEXT_HOLD_TOP_THRESHOLD_PX = 8
@@ -49,7 +48,8 @@ export interface MessageSectionProps {
   onReloadMessages?: () => void
   isActive?: boolean
   sessionStreamingActive?: boolean
-  bottomFollowIntent?: VirtualFollowBottomIntent | null
+  explicitBottomPinIntent?: VirtualExplicitBottomPinIntent | null
+  onExplicitBottomPinCancelled?: () => void
 }
 
 export default function MessageSection(props: MessageSectionProps) {
@@ -735,16 +735,6 @@ export default function MessageSection(props: MessageSectionProps) {
       return
     }
 
-    const element = streamElement()
-    if (!allowCapture || !canCapture) return
-    if (!element) return
-    const scrollTop = element.scrollTop
-    const maxScrollTop = Math.max(element.scrollHeight - element.clientHeight, 0)
-    const scrollRatio = maxScrollTop > 0 ? scrollTop / maxScrollTop : 0
-    const atBottom = element.scrollHeight - (element.scrollTop + element.clientHeight) <= 48
-    const snapshot = { scrollTop, scrollRatio, maxScrollTop, atBottom }
-    setLastGoodScrollSnapshot(sessionId, snapshot)
-    store().setScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE, snapshot)
   }
 
   // Persist scroll position when switching sessions. This effect's cleanup runs
@@ -783,7 +773,7 @@ export default function MessageSection(props: MessageSectionProps) {
     setScrollControlsOpen(false)
   }
 
-  function openScrollControlsFromTrigger(event: PointerEvent) {
+  function openScrollControlsFromTrigger(event: MouseEvent) {
     event.preventDefault()
     event.stopPropagation()
     if (scrollControlsOpen()) return
@@ -795,7 +785,7 @@ export default function MessageSection(props: MessageSectionProps) {
     event.preventDefault()
     event.stopPropagation()
     action()
-    setScrollControlsHoverSuppressed(event.pointerType !== "mouse")
+    setScrollControlsHoverSuppressed(false)
     closeScrollControls()
   }
 
@@ -836,7 +826,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const api = listApi()
     if (!api) return
     if (props.registerScrollToBottom) {
-      props.registerScrollToBottom(() => api.scrollToBottom({ immediate: true, suppressHold: true }))
+      props.registerScrollToBottom(() => api.scrollToBottom({ immediate: true }))
       onCleanup(() => props.registerScrollToBottom?.(null))
     }
   })
@@ -1264,7 +1254,7 @@ export default function MessageSection(props: MessageSectionProps) {
     if (!match || !isSearchOpen()) return
     if (match.id === lastScrolledSearchMatchId) return
     lastScrolledSearchMatchId = match.id
-    listApi()?.scrollToKey(match.messageId, { behavior: "smooth", block: "start", setAutoScroll: false })
+    listApi()?.scrollToKey(match.messageId, { behavior: "smooth", block: "start" })
   })
 
 
@@ -1367,8 +1357,6 @@ export default function MessageSection(props: MessageSectionProps) {
           getKey={(messageId) => messageId}
           getAnchorId={getMessageAnchorId}
           overscanPx={800}
-          scrollSentinelMarginPx={SCROLL_SENTINEL_MARGIN_PX}
-          suspendMeasurements={() => !isActive()}
           streamingActive={streamingActive}
           isActive={isActive}
           scrollToBottomOnActivate={() => false}
@@ -1376,7 +1364,8 @@ export default function MessageSection(props: MessageSectionProps) {
           initialAutoScroll={initialAutoScroll}
           resetKey={() => props.sessionId}
           followToken={followToken}
-          forceBottomFollowIntent={() => props.bottomFollowIntent ?? null}
+          explicitBottomPinIntent={() => props.explicitBottomPinIntent ?? null}
+          onExplicitBottomPinCancelled={props.onExplicitBottomPinCancelled}
           autoPinHoldEnabled={holdLongAssistantRepliesEnabled}
           autoPinHoldTargetKey={autoPinHoldTargetKey}
           autoPinHoldTopThresholdPx={STREAMING_TEXT_HOLD_TOP_THRESHOLD_PX}
@@ -1429,7 +1418,7 @@ export default function MessageSection(props: MessageSectionProps) {
               <button
                 type="button"
                 class="message-scroll-button message-scroll-controls-trigger"
-                onPointerUp={openScrollControlsFromTrigger}
+                onClick={openScrollControlsFromTrigger}
                 aria-label={t("messageSection.scroll.showControlsAriaLabel")}
                 title={t("messageSection.scroll.showControlsAriaLabel")}
               >
@@ -1472,7 +1461,7 @@ export default function MessageSection(props: MessageSectionProps) {
                   <button
                     type="button"
                     class="message-scroll-button"
-                    onPointerUp={(event) => runScrollControlAction(event, () => api.scrollToBottom({ suppressHold: true }))}
+                    onPointerUp={(event) => runScrollControlAction(event, () => api.scrollToBottom())}
                     aria-label={t("messageSection.scroll.toLatestAriaLabel")}
                   >
                     <span class="message-scroll-icon" aria-hidden="true">
