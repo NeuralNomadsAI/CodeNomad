@@ -365,6 +365,10 @@ export interface VoiceModeStateResponse {
   enabled: boolean
 }
 
+export interface YoloStateResponse {
+  enabled: boolean
+}
+
 export interface RemoteServerProfile {
   id: string
   name: string
@@ -414,6 +418,8 @@ export type WorkspaceEventType =
   | "instance.dataChanged"
   | "instance.event"
   | "instance.eventStatus"
+  | "yolo.stateChanged"
+  | "yolo.autoAccepted"
 
 export type WorkspaceEventPayload =
   | { type: "workspace.created"; workspace: WorkspaceDescriptor }
@@ -428,6 +434,8 @@ export type WorkspaceEventPayload =
   | { type: "instance.dataChanged"; instanceId: string; data: InstanceData }
   | { type: "instance.event"; instanceId: string; event: InstanceStreamEvent }
   | { type: "instance.eventStatus"; instanceId: string; status: InstanceStreamStatus; reason?: string }
+  | { type: "yolo.stateChanged"; instanceId: string; sessionId: string; enabled: boolean }
+  | { type: "yolo.autoAccepted"; instanceId: string; sessionId: string; permissionId: string }
 
 export interface NetworkAddress {
   ip: string

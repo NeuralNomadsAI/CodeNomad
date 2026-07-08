@@ -4,7 +4,7 @@ import { getIdleSinceForStatusTransition, type Session, type SessionStatus, type
 import { deleteSession, loadMessages } from "./session-api"
 import { showToastNotification } from "../lib/notifications"
 import { messageStoreBus } from "./message-v2/bus"
-import { instances } from "./instances"
+import { instances, ensureYoloStateSynced } from "./instances"
 import { showConfirmDialog } from "./alerts"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
@@ -483,6 +483,9 @@ function setActiveSession(instanceId: string, sessionId: string): void {
     next.set(instanceId, sessionId)
     return next
   })
+  // Backfill authoritative Yolo state for the now-active session so the badge
+  // matches the server even on first connect / multi-client scenarios.
+  ensureYoloStateSynced(instanceId, sessionId)
 }
 
 function setActiveParentSession(instanceId: string, parentSessionId: string): void {

@@ -7,11 +7,12 @@ End-to-end feature flows with decision branches and mechanism references.
 1. **Server:** Backend emits SSE event `permission.asked` or `permission.updated`
    - Events are pushed through the instance event stream
 
-2. **UI Store:** `packages/ui/src/stores/instances.ts` receives via `serverEvents` handler
-   - **Branch:** IF `isPermissionAutoAcceptEnabled(instanceId, sessionId)` is true
-     - **Mechanism:** `drainAutoAcceptPermissions()` in `packages/ui/src/stores/permission-auto-accept.ts`
-     - **Action:** Automatically calls `Permission.reply()`, skips modal display
-     - **File:** `packages/ui/src/stores/permission-auto-accept.ts:drainAutoAcceptPermission()`
+2. **Server AutoAcceptManager** intercepts permission events (if Yolo is enabled)
+   - **File:** `packages/server/src/permissions/auto-accept-manager.ts`
+   - **Action:** Auto-replies via SDK client, emits `yolo.autoAccepted` to UI for immediate queue cleanup
+   - **Pending drain:** Re-drains pending permissions on toggle(enable) and session ancestry changes
+3. **UI Store:** `packages/ui/src/stores/instances.ts` receives via `serverEvents`
+   - **Branch:** IF `yolo.autoAccepted` event arrives → marks replied + removes from queue immediately
    - **Branch:** ELSE (normal flow)
      - **Mechanism:** Permission queued in `permissionQueues` signal
      - **Action:** Display approval modal
