@@ -374,6 +374,40 @@ describe("AutoAcceptManager pending permissions drain", () => {
 
     manager.stop()
   })
+
+  it("re-drains pending when late session ancestry joins an enabled family", async () => {
+    const bus = new EventBus(noopLogger)
+    const replier = makeRecordingReplier()
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier })
+    manager.start()
+
+    // master exists, yolo enabled on master
+    publishSession(bus, "inst", "session.updated", { id: "master", parentID: null })
+    manager.toggle("inst", "master")
+
+    // child permission arrives BEFORE child's session ancestry is known.
+    // At this point "child" is unknown to the tree, so it resolves as its
+    // own root and the permission is NOT auto-accepted.
+    publishInstanceEvent(bus, "inst", {
+      type: "permission.v2.asked",
+      properties: { id: "perm-late", sessionID: "child" },
+    })
+    await flushMicrotasks()
+    assert.equal(replier.calls.length, 0)
+
+    // child session ancestry arrives — child.parentID = "master".
+    // ingestSession → upsertSession → migrateEnabledRoots makes "child"
+    // resolve to "master" (enabled). drainPending should fire and accept
+    // the previously-pending permission.
+    publishSession(bus, "inst", "session.updated", { id: "child", parentID: "master" })
+    await flushMicrotasks()
+
+    assert.equal(replier.calls.length, 1)
+    assert.equal(replier.calls[0].permissionId, "perm-late")
+    assert.equal(replier.calls[0].sessionId, "child")
+
+    manager.stop()
+  })
 })
 
 describe("AutoAcceptManager permission replied cleanup", () => {

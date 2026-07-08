@@ -76,6 +76,20 @@ serverEvents.on("yolo.stateChanged", (event) => {
   setPermissionAutoAcceptEnabled(instanceId, sessionId, enabled)
 })
 
+// When the server auto-accepts a permission, clean up the UI queue immediately
+// instead of waiting for the OpenCode permission.replied SSE event (which may
+// be delayed or missed on a flaky connection). This preserves the #424
+// invariant: auto-accept cleanup happens at the queue level, not tied to
+// external event timing.
+serverEvents.on("yolo.autoAccepted", (event) => {
+  if (event.type !== "yolo.autoAccepted") return
+  const { instanceId, permissionId } = event
+  if (typeof instanceId !== "string" || typeof permissionId !== "string") return
+  markPermissionReplied(instanceId, permissionId)
+  removePermissionFromQueue(instanceId, permissionId)
+  removePermissionV2(instanceId, permissionId)
+})
+
 const [instances, setInstances] = createSignal<Map<string, Instance>>(new Map())
 
 const [activeInstanceId, setActiveInstanceId] = createSignal<string | null>(null)

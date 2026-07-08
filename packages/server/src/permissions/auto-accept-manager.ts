@@ -135,6 +135,11 @@ export class AutoAcceptManager {
     const parentId = session.parentID ?? session.parentId ?? null
     const revert = session.revert ?? undefined
     this.store.upsertSession(instanceId, { id: session.id, parentId, revert })
+    // Session ancestry may have changed (parent discovered, revert toggled).
+    // Re-drain pending permissions whose family root may have migrated into
+    // an enabled family — mirrors the old UI's drainAutoAcceptPermissions-
+    // ForInstance trigger on session.updated (#497).
+    this.drainPending(instanceId, session.id)
   }
 
   private handlePermissionRequest(instanceId: string, eventType: string, permission: unknown): void {
