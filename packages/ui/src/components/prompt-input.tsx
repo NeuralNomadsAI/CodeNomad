@@ -738,6 +738,12 @@ export default function PromptInput(props: PromptInputProps) {
       selectNextHistory({ force, isPickerOpen: showPicker(), getTextarea: () => textareaRef ?? null }),
   })
 
+  function handlePromptKeyDown(event: KeyboardEvent) {
+    handleKeyDown(event)
+    if (event.key !== "Escape" || event.defaultPrevented) return
+    wrapperRef?.closest(".session-view")?.querySelector<HTMLElement>(".message-stream")?.focus()
+  }
+
   const shouldShowOverlay = () => prompt().length === 0
   const voiceInput = usePromptVoiceInput({
     prompt,
@@ -851,7 +857,7 @@ export default function PromptInput(props: PromptInputProps) {
                 placeholder={getPlaceholder()}
                 value={prompt()}
                 onInput={handleInput}
-                onKeyDown={handleKeyDown}
+                onKeyDown={handlePromptKeyDown}
                 onPaste={handlePaste}
                 onFocus={() => setIsFocused(true)}
                 onBlur={() => setIsFocused(false)}
