@@ -890,7 +890,13 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     )?;
     let reset_zoom_item =
         MenuItem::with_id(app, "reset_zoom", "Actual Size", true, Some("CmdOrCtrl+0"))?;
-    let zoom_in_item = MenuItem::with_id(app, "zoom_in", "Zoom In", true, Some("CmdOrCtrl+Equal"))?;
+    let zoom_in_item = MenuItem::with_id(
+        app,
+        "zoom_in",
+        "Zoom In",
+        true,
+        Some("CmdOrCtrl+Shift+Equal"),
+    )?;
     let zoom_out_item =
         MenuItem::with_id(app, "zoom_out", "Zoom Out", true, Some("CmdOrCtrl+Minus"))?;
     let toggle_fullscreen_item = MenuItem::with_id(
