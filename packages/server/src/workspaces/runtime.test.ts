@@ -11,6 +11,7 @@ import {
   WorkspaceRuntimeIdentityCaptureError,
   WorkspaceRuntimeLaunchCancelledError,
   WorkspaceStopTimeoutError,
+  WorkspaceWindowsTreeCleanupIncompleteError,
   type WorkspaceRuntimeOptions,
 } from "./runtime"
 
@@ -103,7 +104,11 @@ function isGuarded(args: readonly string[]): boolean {
   return !isTokenCleanup(args) && args.some((arg) => arg.includes("guarded-signal") || arg.includes("CODENOMAD_RESULT"))
 }
 
-async function createRuntime(options: Omit<WorkspaceRuntimeOptions, "spawn" | "setTimeout" | "clearTimeout"> = {}, reportPort = true) {
+async function createRuntime(
+  options: Omit<WorkspaceRuntimeOptions, "spawn" | "setTimeout" | "clearTimeout"> = {},
+  reportPort = true,
+  binaryPath = "opencode",
+) {
   const child = new FakeChild()
   const timers = new ManualTimers()
   const platform = options.platform ?? "linux"
@@ -134,16 +139,17 @@ async function createRuntime(options: Omit<WorkspaceRuntimeOptions, "spawn" | "s
       return child as unknown as ChildProcess
     }) as typeof import("node:child_process").spawn,
   })
-  const launch = runtime.launch({ workspaceId: "workspace-1", folder: process.cwd(), binaryPath: "opencode" })
+  const launch = runtime.launch({ workspaceId: "workspace-1", folder: process.cwd(), binaryPath })
   if (reportPort) await launch
   return { runtime, child, timers, launch }
 }
 
 function setWslIdentity(runtime: WorkspaceRuntime): void {
   const managed = (runtime as unknown as {
-    processes: Map<string, { wsl?: Record<string, unknown> }>
+    processes: Map<string, { processKind: string; wsl?: Record<string, unknown> }>
   }).processes.get("workspace-1")
   assert.ok(managed)
+  managed.processKind = "wsl"
   managed.wsl = {
     distro: "Ubuntu",
     linuxPid: 99,
@@ -155,6 +161,55 @@ function setWslIdentity(runtime: WorkspaceRuntime): void {
 }
 
 describe("workspace runtime verified stop", () => {
+  it("launches a direct Windows child without CIM identity discovery", async () => {
+    let commandCalls = 0
+    const harness = await createRuntime({
+      platform: "win32",
+      spawnSync: (() => {
+        commandCalls += 1
+        return result("", 1, "CIM unavailable")
+      }) as unknown as SpawnCommand,
+    }, true, "opencode.exe")
+
+    assert.equal(commandCalls, 0)
+    harness.child.exit(0, null)
+  })
+
+  it("stops a direct Windows child without invoking taskkill or PowerShell", async () => {
+    const commands: string[] = []
+    const harness = await createRuntime({
+      platform: "win32",
+      spawnSync: ((command: string) => {
+        commands.push(command)
+        return result("", 1, "ETIMEDOUT")
+      }) as unknown as SpawnCommand,
+    }, true, "opencode.exe")
+
+    const stop = harness.runtime.stop("workspace-1")
+    assert.deepEqual(harness.child.liveSignals, ["SIGTERM"])
+    harness.child.exit(null, "SIGTERM")
+    await stop
+    assert.deepEqual(commands, [])
+  })
+
+  it("keeps direct Windows stop bounded when the child ignores termination", async () => {
+    let commandCalls = 0
+    const harness = await createRuntime({
+      platform: "win32",
+      spawnSync: (() => {
+        commandCalls += 1
+        return result()
+      }) as unknown as SpawnCommand,
+    }, true, "opencode.exe")
+
+    const stop = harness.runtime.stop("workspace-1")
+    harness.timers.runNext()
+    assert.deepEqual(harness.child.liveSignals, ["SIGTERM", "SIGKILL"])
+    harness.timers.runNext()
+    await assert.rejects(stop, WorkspaceStopTimeoutError)
+    assert.equal(commandCalls, 0)
+  })
+
   it("cleans a token-matching descendant that survives its unidentified wrapper", async () => {
     const child = new FakeChild()
     const timers = new ManualTimers()
@@ -364,7 +419,7 @@ describe("workspace runtime verified stop", () => {
       }
       return result()
     }) as unknown as SpawnCommand
-    const harness = await createRuntime({ platform: "win32", spawnSync: spawnCommand })
+    const harness = await createRuntime({ platform: "win32", spawnSync: spawnCommand }, true, "opencode.cmd")
     setWslIdentity(harness.runtime)
 
     const stop = harness.runtime.stop("workspace-1")
@@ -373,23 +428,112 @@ describe("workspace runtime verified stop", () => {
     assert.ok(guardedCommands[0]?.includes("wsl-boot"))
   })
 
-  it("uses guarded CIM termination and never taskkill on Windows", async () => {
-    let alive = true
-    const commands: string[] = []
+  it("launches and stops a bare opencode cmd shim without PowerShell", async () => {
+    const commands: Array<{ command: string; args: readonly string[] }> = []
     const spawnCommand = ((command: string, args: readonly string[]) => {
-      commands.push(command)
-      if (isGuarded(args)) {
-        alive = false
-        return result("CODENOMAD_TARGET|4242|1|0|created||100\nCODENOMAD_RESULT|1||1")
-      }
-      return result(alive ? windowsRows([[4242, 1, "created"]]) : windowsRows([[7, 1, "other"]]))
+      commands.push({ command, args: [...args] })
+      return command === "powershell.exe" ? result("", 1, "ETIMEDOUT") : result()
     }) as unknown as SpawnCommand
-    const harness = await createRuntime({ platform: "win32", spawnSync: spawnCommand })
+    const harness = await createRuntime({ platform: "win32", spawnSync: spawnCommand }, true, "opencode")
 
     const stop = harness.runtime.stop("workspace-1")
+    assert.deepEqual(commands, [{ command: "taskkill.exe", args: ["/PID", "4242", "/T"] }])
+    harness.child.exit(0, null)
     await stop
-    assert.equal(commands.filter((command) => command === "powershell.exe").length >= 2, true)
-    assert.equal(commands.includes("taskkill"), false)
+    assert.equal(commands.some(({ command }) => command === "powershell.exe"), false)
+  })
+
+  it("adds force only when Windows wrapper cleanup escalates", async () => {
+    const invocations: readonly string[][] = []
+    const harness = await createRuntime({
+      platform: "win32",
+      spawnSync: ((_command: string, args: readonly string[]) => {
+        (invocations as string[][]).push([...args])
+        return result()
+      }) as unknown as SpawnCommand,
+    }, true, "opencode.cmd")
+
+    const stop = harness.runtime.stop("workspace-1")
+    harness.timers.runNext()
+    assert.deepEqual(invocations, [
+      ["/PID", "4242", "/T"],
+      ["/PID", "4242", "/T", "/F"],
+    ])
+    harness.child.exit(0, null)
+    await stop
+  })
+
+  it("keeps failed Windows wrapper cleanup bounded and retryable", async () => {
+    let available = false
+    const harness = await createRuntime({
+      platform: "win32",
+      spawnSync: (() => available ? result() : result("", 1, "taskkill unavailable")) as unknown as SpawnCommand,
+    }, true, "opencode.cmd")
+
+    const first = harness.runtime.stop("workspace-1")
+    harness.timers.runNext()
+    harness.timers.runNext()
+    await assert.rejects(first, (error: unknown) => {
+      assert.ok(error instanceof WorkspaceStopTimeoutError)
+      assert.match(error.message, /taskkill \/T failed: taskkill unavailable/)
+      assert.match(error.message, /taskkill \/T \/F failed: taskkill unavailable/)
+      return true
+    })
+
+    available = true
+    const retry = harness.runtime.stop("workspace-1")
+    harness.child.exit(0, null)
+    await retry
+  })
+
+  it("never signals an exited wrapper PID after tree cleanup was not confirmed", async () => {
+    const invocations: readonly string[][] = []
+    const harness = await createRuntime({
+      platform: "win32",
+      spawnSync: ((_command: string, args: readonly string[]) => {
+        (invocations as string[][]).push([...args])
+        return result("", 1, "taskkill unavailable")
+      }) as unknown as SpawnCommand,
+    }, true, "opencode")
+
+    const first = harness.runtime.stop("workspace-1")
+    harness.child.exit(1, null)
+    await assert.rejects(first, WorkspaceWindowsTreeCleanupIncompleteError)
+    assert.equal((harness.runtime as unknown as { processes: Map<string, unknown> }).processes.size, 1)
+    assert.deepEqual(invocations, [["/PID", "4242", "/T"]])
+
+    const second = harness.runtime.stop("workspace-1")
+    await assert.rejects(second, (error: unknown) => {
+      assert.ok(error instanceof WorkspaceWindowsTreeCleanupIncompleteError)
+      assert.match(error.message, /taskkill unavailable/)
+      return true
+    })
+    assert.equal((harness.runtime as unknown as { processes: Map<string, unknown> }).processes.size, 1)
+    assert.deepEqual(invocations, [["/PID", "4242", "/T"]])
+  })
+
+  it("persists confirmed wrapper tree cleanup across a later exit and retry", async () => {
+    const invocations: readonly string[][] = []
+    const harness = await createRuntime({
+      platform: "win32",
+      spawnSync: ((_command: string, args: readonly string[]) => {
+        (invocations as string[][]).push([...args])
+        return result()
+      }) as unknown as SpawnCommand,
+    }, true, "opencode.cmd")
+
+    const first = harness.runtime.stop("workspace-1")
+    harness.timers.runNext()
+    harness.timers.runNext()
+    await assert.rejects(first, WorkspaceStopTimeoutError)
+    harness.child.exit(0, null)
+
+    await harness.runtime.stop("workspace-1")
+    assert.deepEqual(invocations, [
+      ["/PID", "4242", "/T"],
+      ["/PID", "4242", "/T", "/F"],
+    ])
+    assert.equal((harness.runtime as unknown as { processes: Map<string, unknown> }).processes.size, 0)
   })
 
   it("retains launch identity so a transient stop failure can recover on retry", async () => {

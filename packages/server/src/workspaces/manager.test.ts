@@ -6,6 +6,7 @@ import { EventBus } from "../events/bus"
 import {
   WorkspaceRuntimeIdentityCaptureError,
   WorkspaceRuntimeLaunchCancelledError,
+  WorkspaceWindowsTreeCleanupIncompleteError,
   type ProcessExitInfo,
   type WorkspaceRuntime,
 } from "./runtime"
@@ -324,6 +325,26 @@ describe("workspace manager launch cancellation", () => {
     await harness.manager.delete(workspaceId)
     assert.equal(harness.manager.get(workspaceId), undefined)
     assert.equal(harness.runtime.active.has(workspaceId), false)
+  })
+
+  it("reports incomplete Windows tree cleanup during shutdown", async () => {
+    const harness = createHarness()
+    const creation = harness.manager.create(process.cwd())
+    const workspaceId = await harness.runtime.launchCalled.promise
+    harness.runtime.resolveLaunch(workspaceId)
+    harness.readiness.resolve(undefined)
+    await creation
+    harness.runtime.stop = async () => {
+      throw new WorkspaceWindowsTreeCleanupIncompleteError(workspaceId, 4242, ["taskkill /T failed: unavailable"])
+    }
+
+    await assert.rejects(harness.manager.shutdown(), (error: unknown) => {
+      assert.ok(error instanceof WorkspaceShutdownError)
+      assert.ok(error.errors[0] instanceof WorkspaceWindowsTreeCleanupIncompleteError)
+      return true
+    })
+    assert.equal(harness.manager.get(workspaceId)?.status, "ready")
+    assert.equal(harness.runtime.active.has(workspaceId), true)
   })
 
   it("bounds cleanup when a runtime does not settle its cancelled launch", async () => {

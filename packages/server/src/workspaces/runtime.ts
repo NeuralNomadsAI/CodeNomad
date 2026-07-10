@@ -5,7 +5,7 @@ import path from "path"
 import { EventBus } from "../events/bus"
 import { LogLevel, WorkspaceLogEntry } from "../api-types"
 import { Logger } from "../logger"
-import { buildSpawnSpec } from "./spawn"
+import { buildSpawnSpec, type SpawnProcessKind } from "./spawn"
 import {
   descendantsOf,
   probePosixProcesses,
@@ -25,7 +25,6 @@ import {
   LAUNCH_CLEANUP_TOKEN_ENV,
   probeLaunchCleanupToken,
   signalLaunchCleanupToken,
-  signalOwnedWindowsProcessTree,
 } from "./launch-cleanup"
 
 const SENSITIVE_ENV_KEY = /(PASSWORD|TOKEN|SECRET)/i
@@ -62,6 +61,9 @@ export interface ProcessExitInfo {
 interface ManagedProcess {
   child: ChildProcess
   cleanupToken: string
+  processKind: SpawnProcessKind
+  windowsTreeCleanupConfirmed?: boolean
+  windowsTreeCleanupFailures?: string[]
   identityCaptureFailed?: boolean
   requestedStop: boolean
   stopPromise?: Promise<void>
@@ -108,6 +110,20 @@ export class WorkspaceStopTimeoutError extends Error {
         `${failureDetails} The stop can be retried.`,
     )
     this.name = "WorkspaceStopTimeoutError"
+  }
+}
+
+export class WorkspaceWindowsTreeCleanupIncompleteError extends Error {
+  readonly code = "WORKSPACE_WINDOWS_TREE_CLEANUP_INCOMPLETE"
+  readonly retryable = true
+
+  constructor(workspaceId: string, pid: number | undefined, failures: string[]) {
+    const failureDetails = failures.length > 0 ? ` Stop failures: ${failures.join("; ")}.` : ""
+    super(
+      `Workspace ${workspaceId} Windows wrapper ${pid ?? "with unknown PID"} exited before taskkill confirmed process-tree cleanup.` +
+        `${failureDetails} The workspace record was retained because cleanup is incomplete.`,
+    )
+    this.name = "WorkspaceWindowsTreeCleanupIncompleteError"
   }
 }
 
@@ -202,6 +218,7 @@ export class WorkspaceRuntime {
         env,
         propagateEnvKeys: propagatedEnvKeys,
         wslPidMarker: WSL_PID_MARKER,
+        platform: this.platform,
       })
       const commandLine = [spec.command, ...spec.args].join(" ")
       this.logger.info(
@@ -242,6 +259,7 @@ export class WorkspaceRuntime {
       const managed: ManagedProcess = {
         child,
         cleanupToken,
+        processKind: spec.processKind,
         requestedStop: false,
         targets: { members: new Map<number, ProcessIdentity>() },
         ...(spec.wsl
@@ -258,23 +276,25 @@ export class WorkspaceRuntime {
           : {}),
       }
       this.processes.set(options.workspaceId, managed)
-      const launchSnapshot = child.pid
-        ? this.platform === "win32"
-          ? probeWindowsProcesses(this.spawnCommand, this.stopCommandTimeoutMs)
-          : probePosixProcesses(this.spawnCommand, this.stopCommandTimeoutMs, this.platform)
-        : { ok: false as const, error: "spawned child did not expose a PID" }
-      const launchLeader = launchSnapshot.ok && child.pid ? launchSnapshot.processes.get(child.pid) : undefined
-      if (!launchLeader) {
-        const detail = launchSnapshot.ok
-          ? `spawned PID ${child.pid ?? "unknown"} was absent from the identity snapshot`
-          : launchSnapshot.error
-        this.beginFailedLaunchCleanup(options.workspaceId, managed)
-        reject(new WorkspaceRuntimeIdentityCaptureError(options.workspaceId, detail))
-        return
+      if (spec.processKind === "posix" || spec.processKind === "wsl") {
+        const launchSnapshot = child.pid
+          ? this.platform === "win32"
+            ? probeWindowsProcesses(this.spawnCommand, this.stopCommandTimeoutMs)
+            : probePosixProcesses(this.spawnCommand, this.stopCommandTimeoutMs, this.platform)
+          : { ok: false as const, error: "spawned child did not expose a PID" }
+        const launchLeader = launchSnapshot.ok && child.pid ? launchSnapshot.processes.get(child.pid) : undefined
+        if (!launchLeader) {
+          const detail = launchSnapshot.ok
+            ? `spawned PID ${child.pid ?? "unknown"} was absent from the identity snapshot`
+            : launchSnapshot.error
+          this.beginFailedLaunchCleanup(options.workspaceId, managed)
+          reject(new WorkspaceRuntimeIdentityCaptureError(options.workspaceId, detail))
+          return
+        }
+        managed.targets!.leader = launchLeader
+        managed.targets!.groupId = launchLeader.groupId
+        managed.targets!.members.set(launchLeader.pid, launchLeader)
       }
-      managed.targets!.leader = launchLeader
-      managed.targets!.groupId = launchLeader.groupId
-      managed.targets!.members.set(launchLeader.pid, launchLeader)
 
       let stdoutBuffer = ""
       let stderrBuffer = ""
@@ -520,6 +540,10 @@ export class WorkspaceRuntime {
     const child = managed.child
     this.logger.info({ workspaceId }, "Stopping OpenCode process")
 
+    if (managed.processKind === "windows-direct" || managed.processKind === "windows-wrapper") {
+      return this.stopOwnedWindowsProcess(workspaceId, managed)
+    }
+
     const pid = child.pid
     const failures: string[] = []
 
@@ -668,14 +692,7 @@ export class WorkspaceRuntime {
       }
 
       let ownedPosixHandled = false
-      if (pid && managed.identityCaptureFailed && this.platform === "win32" && !managed.wsl && !wrapperExited()) {
-        const cleanup = signalOwnedWindowsProcessTree(this.spawnCommand, pid, this.stopCommandTimeoutMs)
-        if (!cleanup.ok) {
-          failures.push(`Windows live-root cleanup failed: ${cleanup.error}`)
-        } else {
-          for (const identity of cleanup.targets) managed.targets!.members.set(identity.pid, identity)
-        }
-      } else if (pid && managed.identityCaptureFailed && this.platform !== "linux" && this.platform !== "win32" && !wrapperExited()) {
+      if (pid && managed.identityCaptureFailed && this.platform !== "linux" && this.platform !== "win32" && !wrapperExited()) {
         const cleanup = signalOwnedPosixProcessGroup(this.spawnCommand, pid, signal, this.stopCommandTimeoutMs)
         recordSignalResult(cleanup, managed.targets!, "owned POSIX group", signal)
         if (cleanup.ok && cleanup.matched) {
@@ -862,6 +879,129 @@ export class WorkspaceRuntime {
       )
       sendStopSignal("SIGTERM")
       checkForConfirmedStop()
+    })
+  }
+
+  private stopOwnedWindowsProcess(workspaceId: string, managed: ManagedProcess): Promise<void> {
+    const child = managed.child
+    const pid = child.pid
+    const isWrapper = managed.processKind === "windows-wrapper"
+    const failures = isWrapper
+      ? (managed.windowsTreeCleanupFailures ??= [])
+      : []
+
+    return new Promise<void>((resolve, reject) => {
+      let escalationTimer: RuntimeTimeout | null = null
+      let deadlineTimer: RuntimeTimeout | null = null
+      let settled = false
+
+      const cleanup = () => {
+        child.removeListener("exit", onExit)
+        child.removeListener("error", onError)
+        if (escalationTimer) this.cancelTimeout(escalationTimer)
+        if (deadlineTimer) this.cancelTimeout(deadlineTimer)
+      }
+      const finish = () => {
+        if (settled) return
+        settled = true
+        cleanup()
+        if (this.processes.get(workspaceId) === managed) this.processes.delete(workspaceId)
+        managed.finalizeExit?.(child.exitCode, child.signalCode)
+        resolve()
+      }
+      const rejectIncompleteCleanup = () => {
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(new WorkspaceWindowsTreeCleanupIncompleteError(workspaceId, pid, failures))
+      }
+      const onExit = () => {
+        if (!isWrapper || managed.windowsTreeCleanupConfirmed) {
+          finish()
+        } else {
+          rejectIncompleteCleanup()
+        }
+      }
+      const onError = (error: Error) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        failures.push(`child process error while stopping: ${error.message}`)
+        reject(error)
+      }
+      const stopChild = (force: boolean) => {
+        if (child.exitCode !== null || child.signalCode !== null) return
+        if (!pid) {
+          failures.push(`${force ? "forced" : "graceful"} stop was not sent because the process PID is unavailable`)
+          return
+        }
+
+        if (isWrapper) {
+          const args = ["/PID", String(pid), "/T", ...(force ? ["/F"] : [])]
+          try {
+            const result = this.spawnCommand("taskkill.exe", args, {
+              encoding: "utf8",
+              timeout: this.stopCommandTimeoutMs,
+            })
+            if (result.status === 0) {
+              managed.windowsTreeCleanupConfirmed = true
+            } else {
+              const detail = result.error?.message || String(result.stderr ?? result.stdout ?? "").trim() || `exit code ${result.status}`
+              failures.push(`taskkill ${force ? "/T /F" : "/T"} failed: ${detail}`)
+            }
+          } catch (error) {
+            failures.push(`taskkill ${force ? "/T /F" : "/T"} failed: ${error instanceof Error ? error.message : String(error)}`)
+          }
+          return
+        }
+
+        const signal: NodeJS.Signals = force ? "SIGKILL" : "SIGTERM"
+        try {
+          if (!child.kill(signal) && child.exitCode === null && child.signalCode === null) {
+            failures.push(`${signal} was not accepted by the owned child process`)
+          }
+        } catch (error) {
+          failures.push(`${signal} failed: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
+
+      child.once("exit", onExit)
+      child.once("error", onError)
+      if (child.exitCode !== null || child.signalCode !== null) {
+        if (!isWrapper || managed.windowsTreeCleanupConfirmed) {
+          finish()
+        } else {
+          rejectIncompleteCleanup()
+        }
+        return
+      }
+
+      escalationTimer = this.scheduleTimeout(() => {
+        escalationTimer = null
+        if (settled) return
+        this.logger.warn({ workspaceId, pid }, "Owned Windows process did not stop after the graceful attempt, escalating")
+        stopChild(true)
+      }, this.gracefulStopTimeoutMs)
+
+      const totalTimeoutMs = this.gracefulStopTimeoutMs + this.forcedStopTimeoutMs
+      deadlineTimer = this.scheduleTimeout(() => {
+        deadlineTimer = null
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(new WorkspaceStopTimeoutError(
+          workspaceId,
+          pid,
+          totalTimeoutMs,
+          isWrapper && (child.exitCode !== null || child.signalCode !== null)
+            ? "taskkill did not confirm tree cleanup before the owned Windows wrapper exited"
+            : `the owned Windows ${isWrapper ? "wrapper" : "child"} did not emit exit or error after termination`,
+          failures,
+        ))
+      }, totalTimeoutMs)
+
+      this.logger.debug({ workspaceId, pid, isWrapper }, "Stopping owned Windows workspace process")
+      stopChild(false)
     })
   }
 
