@@ -521,6 +521,7 @@ dependencies = [
  "tempfile",
  "url",
  "webkit2gtk",
+ "webview2-com",
  "which",
  "windows-sys 0.59.0",
 ]

@@ -1,7 +1,8 @@
 use super::commands::is_allowed_client_state_origin;
 use super::process::{PRIMARY_LOCK_FILENAME, RUNNING_MARKER_PREFIX, RUNNING_MARKER_SUFFIX};
 use super::window::{
-    clamp_window_bounds, DisplayArea, NativeWindowState, WindowBounds, MAX_ZOOM_LEVEL,
+    clamp_window_bounds, normalize_native_zoom_level, DisplayArea, NativeWindowState, WindowBounds,
+    MAX_ZOOM_LEVEL,
 };
 use super::{
     parse_client_state, ClientState, ClientStateLoadResult, CLIENT_STATE_FILENAME,
@@ -38,6 +39,20 @@ fn parses_and_normalizes_versioned_state() {
     assert!(!state.restore_enabled);
     assert_eq!(state.snapshot, Some(json!({ "folder": "work" })));
     assert_eq!(state.window.unwrap().zoom_factor, MAX_ZOOM_LEVEL);
+}
+
+#[test]
+fn normalizes_valid_native_zoom_levels() {
+    assert_eq!(normalize_native_zoom_level(1.25), Some(1.25));
+    assert_eq!(normalize_native_zoom_level(0.01), Some(0.25));
+    assert_eq!(normalize_native_zoom_level(20.0), Some(MAX_ZOOM_LEVEL));
+}
+
+#[test]
+fn rejects_invalid_native_zoom_levels() {
+    for value in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert_eq!(normalize_native_zoom_level(value), None);
+    }
 }
 
 #[test]

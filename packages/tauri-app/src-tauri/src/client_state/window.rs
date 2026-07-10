@@ -63,6 +63,10 @@ fn normalize_zoom_level(value: Option<f64>) -> f64 {
     }
 }
 
+pub(super) fn normalize_native_zoom_level(value: f64) -> Option<f64> {
+    (value.is_finite() && value > 0.0).then(|| normalize_zoom_level(Some(value)))
+}
+
 pub(super) fn clamp_window_bounds(
     bounds: &WindowBounds,
     displays: &[DisplayArea],
@@ -203,6 +207,53 @@ fn schedule_flush(app: &AppHandle) {
     });
 }
 
+#[cfg(windows)]
+fn register_native_zoom_handler(window: &tauri::WebviewWindow, app: &AppHandle) {
+    use webview2_com::ZoomFactorChangedEventHandler;
+
+    let app = app.clone();
+    if let Err(err) = window.with_webview(move |webview| {
+        let controller = webview.controller();
+        let callback_app = app.clone();
+        let handler = ZoomFactorChangedEventHandler::create(Box::new(move |sender, _| {
+            let Some(controller) = sender else {
+                return Ok(());
+            };
+            let mut native_zoom = 0.0;
+            if let Err(err) = unsafe { controller.ZoomFactor(&mut native_zoom) } {
+                eprintln!("[client-state] failed to read native zoom level: {err}");
+                return Ok(());
+            }
+            let Some(normalized) = normalize_native_zoom_level(native_zoom) else {
+                eprintln!("[client-state] ignored invalid native zoom level: {native_zoom}");
+                return Ok(());
+            };
+            let Some(client_state) = callback_app.try_state::<ClientState>() else {
+                return Ok(());
+            };
+            let Ok(mut zoom_level) = client_state.zoom_level.lock() else {
+                return Ok(());
+            };
+            *zoom_level = normalized;
+            drop(zoom_level);
+
+            if client_state.is_primary()
+                && client_state.normal_writes_suppressed().ok() == Some(false)
+            {
+                capture_main_window_in_memory(&callback_app);
+                schedule_flush(&callback_app);
+            }
+            Ok(())
+        }));
+        let mut token = 0;
+        if let Err(err) = unsafe { controller.add_ZoomFactorChanged(&handler, &mut token) } {
+            eprintln!("[client-state] failed to register native zoom handler: {err}");
+        }
+    }) {
+        eprintln!("[client-state] failed to access native webview for zoom tracking: {err}");
+    }
+}
+
 pub fn setup_main_window(app: &AppHandle) -> Result<(), String> {
     let client_state = app.state::<ClientState>();
     let window = app
@@ -214,6 +265,8 @@ pub fn setup_main_window(app: &AppHandle) -> Result<(), String> {
         .map(|zoom| *zoom)
         .unwrap_or(DEFAULT_ZOOM_LEVEL);
     let _ = window.set_zoom(initial_zoom);
+    #[cfg(windows)]
+    register_native_zoom_handler(&window, app);
     if !client_state.is_primary() {
         let _ = window.show();
         return Ok(());
