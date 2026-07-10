@@ -893,12 +893,21 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     let zoom_in_item = MenuItem::with_id(
         app,
         "zoom_in",
-        "Zoom In",
+        if is_mac { "Zoom In" } else { "Zoom In\tCtrl++" },
         true,
-        Some("CmdOrCtrl+Shift+Equal"),
+        None::<&str>,
     )?;
-    let zoom_out_item =
-        MenuItem::with_id(app, "zoom_out", "Zoom Out", true, Some("CmdOrCtrl+Minus"))?;
+    let zoom_out_item = MenuItem::with_id(
+        app,
+        "zoom_out",
+        if is_mac {
+            "Zoom Out"
+        } else {
+            "Zoom Out\tCtrl+-"
+        },
+        true,
+        None::<&str>,
+    )?;
     let toggle_fullscreen_item = MenuItem::with_id(
         app,
         "toggle_fullscreen",
