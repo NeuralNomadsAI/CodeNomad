@@ -128,15 +128,6 @@ export function buildSpawnSpec(binaryPath: string, args: string[], options: Buil
   return buildWindowsSpawnSpec(binaryPath, args, options)
 }
 
-export function buildWslSignalSpec(distro: string, linuxPid: number, signal: NodeJS.Signals): SpawnSpec {
-  return {
-    command: "wsl.exe",
-    args: ["--distribution", distro, "--exec", "kill", signal === "SIGKILL" ? "-KILL" : "-TERM", String(linuxPid)],
-    options: {},
-    wsl: { distro },
-  }
-}
-
 export function probeBinaryVersion(binaryPath: string): {
   valid: boolean
   version?: string
@@ -245,7 +236,9 @@ function buildWslLaunchScript(
   const steps: string[] = []
 
   if (pidMarker) {
-    steps.push(`printf '%s%s\\n' '${pidMarker}' "$$"`)
+    steps.push(
+      `codenomad_pgid=$(ps -o pgid= -p "$$" 2>/dev/null | tr -d '[:space:]'); codenomad_start=$(awk '{print $22}' "/proc/$$/stat" 2>/dev/null); codenomad_boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null); test -n "$codenomad_pgid" && test -n "$codenomad_start" && test -n "$codenomad_boot" && printf '%s%s:%s:%s:%s\\n' '${pidMarker}' "$$" "$codenomad_pgid" "$codenomad_start" "$codenomad_boot"`,
+    )
   }
 
   if (workingDirectory?.kind === "linux") {

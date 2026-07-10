@@ -16,6 +16,7 @@ import type {
 import type { MessageStatus } from "./message-v2/types"
 
 import { getLogger } from "../lib/logger"
+import type { EventSessionDeleted } from "../lib/sse-manager"
 import { requestData } from "../lib/opencode-api"
 import {
   enqueueDelta,
@@ -66,7 +67,7 @@ import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { tGlobal } from "../lib/i18n"
 
-import { loadMessages } from "./session-api"
+import { loadMessages, removeSessionRuntimeState } from "./session-api"
 import { getRootClient } from "./opencode-client"
 import { getWorktreeSlugForDirectory, getWorktreeSlugForSession } from "./worktrees"
 import { getOpenCodeWorkspaceIdForWorktree } from "./opencode-workspaces"
@@ -579,6 +580,15 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
   }
 }
 
+function handleSessionDeleted(instanceId: string, event: EventSessionDeleted): void {
+  const properties = event.properties
+  const sessionId = properties?.info?.id ?? properties?.sessionID ?? properties?.id
+  if (!sessionId) return
+
+  log.info(`[SSE] Session deleted: ${sessionId}`)
+  removeSessionRuntimeState(instanceId, sessionId)
+}
+
 function handleSessionIdle(instanceId: string, event: EventSessionIdle): void {
   const sessionId = event.properties?.sessionID
   if (!sessionId) return
@@ -790,6 +800,7 @@ export {
   handleQuestionAsked,
   handleQuestionAnswered,
   handleSessionCompacted,
+  handleSessionDeleted,
   handleSessionError,
   handleSessionIdle,
   handleSessionStatus,

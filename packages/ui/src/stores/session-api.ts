@@ -13,15 +13,17 @@ import { instances } from "./instances"
 import { preferences, setAgentModelPreference } from "./preferences"
 import {
   activeSessionId,
+  activeParentSessionId,
   agents,
+  clearActiveSession,
+  clearActiveParentSession,
   clearSessionDraftPrompt,
+  markSessionDeletedAuthoritative,
   getDescendantSessions,
   isBlankSession,
   messagesLoaded,
   getSessionMessagesLoadError,
-  pruneDraftPrompts,
   providers,
-  setActiveSessionId,
   setAgents,
   setMessagesLoaded,
   setSessionMessagesLoadError,
@@ -44,6 +46,7 @@ import {
   isLatestSessionSearch,
   setSessionSearchResults,
 } from "./session-state"
+import { deleteSessionAttachments } from "./attachments"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getDefaultModel, isModelValid } from "./session-models"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
@@ -310,7 +313,6 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
     })
 
 
-    pruneDraftPrompts(instanceId, new Set(sessions().get(instanceId)?.keys() ?? []))
     void (async () => {
       await hydrateMissingSessionMetadata(instanceId, rootIds)
       await migrateLegacyWorktreeMapToSessionMetadata(instanceId)
@@ -660,49 +662,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
     log.info(`[HTTP] DELETE /session.delete for instance ${instanceId}`, { sessionId })
     await requestData(client.session.delete({ sessionID: sessionId, ...(await getSessionWorkspacePayload(instanceId, sessionId)) }), "session.delete")
 
-    setSessions((prev) => {
-      const next = new Map(prev)
-      const instanceSessions = next.get(instanceId)
-      if (instanceSessions) {
-        instanceSessions.delete(sessionId)
-        if (instanceSessions.size === 0) {
-          next.delete(instanceId)
-        }
-      }
-      return next
-    })
-
-    syncInstanceSessionIndicator(instanceId)
-    removeSessionListId(instanceId, sessionId)
-
-    clearSessionDraftPrompt(instanceId, sessionId)
-
-    // Drop normalized message state and caches for this session
-    messageStoreBus.getOrCreate(instanceId).clearSession(sessionId)
-    clearCacheForSession(instanceId, sessionId)
-
-    setSessionInfoByInstance((prev) => {
-      const next = new Map(prev)
-      const instanceInfo = next.get(instanceId)
-      if (instanceInfo) {
-        const updatedInstanceInfo = new Map(instanceInfo)
-        updatedInstanceInfo.delete(sessionId)
-        if (updatedInstanceInfo.size === 0) {
-          next.delete(instanceId)
-        } else {
-          next.set(instanceId, updatedInstanceInfo)
-        }
-      }
-      return next
-    })
-
-    if (activeSessionId().get(instanceId) === sessionId) {
-      setActiveSessionId((prev) => {
-        const next = new Map(prev)
-        next.delete(instanceId)
-        return next
-      })
-    }
+    removeSessionRuntimeState(instanceId, sessionId)
 
     // Clean up mapping for deleted parent sessions.
     if (deletingSession?.parentId === null) {
@@ -720,6 +680,54 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
       }
       return next
     })
+  }
+}
+
+function removeSessionRuntimeState(instanceId: string, sessionId: string): void {
+  markSessionDeletedAuthoritative(instanceId, sessionId)
+  deleteSessionAttachments(instanceId, sessionId)
+  clearSessionDraftPrompt(instanceId, sessionId)
+
+  setSessions((prev) => {
+    const next = new Map(prev)
+    const instanceSessions = next.get(instanceId)
+    if (instanceSessions) {
+      instanceSessions.delete(sessionId)
+      if (instanceSessions.size === 0) {
+        next.delete(instanceId)
+      }
+    }
+    return next
+  })
+
+  syncInstanceSessionIndicator(instanceId)
+  removeSessionListId(instanceId, sessionId)
+
+  // Drop normalized message state and caches for this session.
+  messageStoreBus.getOrCreate(instanceId).clearSession(sessionId)
+  clearCacheForSession(instanceId, sessionId)
+
+  setSessionInfoByInstance((prev) => {
+    const next = new Map(prev)
+    const instanceInfo = next.get(instanceId)
+    if (instanceInfo) {
+      const updatedInstanceInfo = new Map(instanceInfo)
+      updatedInstanceInfo.delete(sessionId)
+      if (updatedInstanceInfo.size === 0) {
+        next.delete(instanceId)
+      } else {
+        next.set(instanceId, updatedInstanceInfo)
+      }
+    }
+    return next
+  })
+
+  if (activeSessionId().get(instanceId) === sessionId) {
+    if (activeParentSessionId().get(instanceId) === sessionId) {
+      clearActiveParentSession(instanceId)
+    } else {
+      clearActiveSession(instanceId)
+    }
   }
 }
 
@@ -1002,6 +1010,7 @@ async function loadMessages(
 export {
   createSession,
   deleteSession,
+  removeSessionRuntimeState,
   fetchAgents,
   fetchProviders,
 

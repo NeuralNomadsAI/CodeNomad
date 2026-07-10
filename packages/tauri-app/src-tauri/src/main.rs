@@ -3,18 +3,21 @@
 #[allow(dead_code)]
 mod cert_manager;
 mod cli_manager;
+mod client_state;
 mod desktop_event_transport;
 #[cfg(target_os = "linux")]
 mod linux_tls;
 mod managed_node;
+mod shutdown;
 
 use cli_manager::{CliProcessManager, CliStatus};
-use desktop_event_transport::{DesktopEventTransportManager, DesktopEventsStartRequest, DesktopEventsStartResult};
+use desktop_event_transport::{
+    DesktopEventTransportManager, DesktopEventsStartRequest, DesktopEventsStartResult,
+};
 use keepawake::KeepAwake;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::menu::{MenuBuilder, MenuItem, SubmenuBuilder};
@@ -38,11 +41,7 @@ use std::os::windows::ffi::OsStrExt;
 #[cfg(windows)]
 use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 
-static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
-const DEFAULT_ZOOM_LEVEL: f64 = 1.0;
 const ZOOM_STEP: f64 = 0.1;
-const MIN_ZOOM_LEVEL: f64 = 0.2;
-const MAX_ZOOM_LEVEL: f64 = 5.0;
 const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_WINDOW_CONTEXT__ = 'local';";
 const REMOTE_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_WINDOW_CONTEXT__ = 'remote';";
 
@@ -53,7 +52,6 @@ pub struct AppState {
     pub manager: CliProcessManager,
     pub desktop_events: DesktopEventTransportManager,
     pub wake_lock: Mutex<Option<KeepAwake>>,
-    pub zoom_level: Mutex<f64>,
     pub remote_origins: Mutex<HashMap<String, String>>,
     pub remote_proxy_sessions: Mutex<HashMap<String, String>>,
     pub remote_skip_tls_verify: Mutex<HashMap<String, bool>>,
@@ -462,59 +460,63 @@ fn emit_folder_drop_event(
     }
 }
 
-fn clamp_zoom_level(value: f64) -> f64 {
-    value.clamp(MIN_ZOOM_LEVEL, MAX_ZOOM_LEVEL)
-}
-
-fn set_main_window_zoom(app_handle: &AppHandle, next_zoom: f64) {
-    if let Some(window) = app_handle.get_webview_window("main") {
-        let normalized = clamp_zoom_level(next_zoom);
-        if window.set_zoom(normalized).is_ok() {
-            if let Ok(mut zoom_level) = app_handle.state::<AppState>().zoom_level.lock() {
-                *zoom_level = normalized;
-            }
-        }
-    }
-}
-
 fn reload_main_window(app_handle: &AppHandle) {
-    if let Some(window) = app_handle.get_webview_window("main") {
-        let _ = window.reload();
-    }
+    client_state::before_main_window_navigation(
+        app_handle,
+        client_state::NavigationKind::Reload,
+        |app| {
+            let window = app
+                .get_webview_window("main")
+                .ok_or_else(|| "main window not found for reload".to_string())?;
+            window
+                .reload()
+                .map_err(|err| format!("failed to reload main window: {err}"))
+        },
+    );
 }
 
 fn force_reload_main_window(app_handle: &AppHandle) {
-    if let Some(window) = app_handle.get_webview_window("main") {
-        if let Ok(mut url) = window.url() {
-            if should_allow_internal(&url) {
-                let reload_token = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis()
-                    .to_string();
+    client_state::before_main_window_navigation(
+        app_handle,
+        client_state::NavigationKind::ForceReload,
+        |app| {
+            let window = app
+                .get_webview_window("main")
+                .ok_or_else(|| "main window not found for force reload".to_string())?;
+            if let Ok(mut url) = window.url() {
+                if should_allow_internal(&url) {
+                    let reload_token = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis()
+                        .to_string();
 
-                let existing_pairs: Vec<(String, String)> = url
-                    .query_pairs()
-                    .into_owned()
-                    .filter(|(key, _)| key != "__codenomad_force_reload")
-                    .collect();
+                    let existing_pairs: Vec<(String, String)> = url
+                        .query_pairs()
+                        .into_owned()
+                        .filter(|(key, _)| key != "__codenomad_force_reload")
+                        .collect();
 
-                {
-                    let mut pairs = url.query_pairs_mut();
-                    pairs.clear();
-                    for (key, value) in existing_pairs {
-                        pairs.append_pair(&key, &value);
+                    {
+                        let mut pairs = url.query_pairs_mut();
+                        pairs.clear();
+                        for (key, value) in existing_pairs {
+                            pairs.append_pair(&key, &value);
+                        }
+                        pairs.append_pair("__codenomad_force_reload", &reload_token);
                     }
-                    pairs.append_pair("__codenomad_force_reload", &reload_token);
+
+                    return window
+                        .navigate(url)
+                        .map_err(|err| format!("failed to force reload main window: {err}"));
                 }
-
-                let _ = window.navigate(url);
-                return;
             }
-        }
 
-        let _ = window.reload();
-    }
+            window
+                .reload()
+                .map_err(|err| format!("failed to force reload main window: {err}"))
+        },
+    );
 }
 
 fn toggle_fullscreen_window(app_handle: &AppHandle) {
@@ -584,7 +586,6 @@ fn main() {
             manager: CliProcessManager::new(),
             desktop_events: DesktopEventTransportManager::new(),
             wake_lock: Mutex::new(None),
-            zoom_level: Mutex::new(DEFAULT_ZOOM_LEVEL),
             remote_origins: Mutex::new(HashMap::new()),
             remote_proxy_sessions: Mutex::new(HashMap::new()),
             remote_skip_tls_verify: Mutex::new(HashMap::new()),
@@ -592,6 +593,14 @@ fn main() {
             remote_titles: Mutex::new(HashMap::new()),
         })
         .on_page_load(|webview, payload| {
+            if payload.event() == PageLoadEvent::Started && webview.label() == "main" {
+                if let Some(state) = webview
+                    .app_handle()
+                    .try_state::<client_state::ClientState>()
+                {
+                    state.reset_renderer_access();
+                }
+            }
             if matches!(
                 payload.event(),
                 PageLoadEvent::Started | PageLoadEvent::Finished
@@ -601,7 +610,12 @@ fn main() {
         })
         .setup(|app| {
             set_windows_app_user_model_id();
+            let client_state = client_state::ClientState::initialize(&app.handle())
+                .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+            app.manage(client_state);
             build_menu(&app.handle())?;
+            client_state::setup_main_window(&app.handle())
+                .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.eval(LOCAL_WINDOW_CONTEXT_SCRIPT);
             }
@@ -642,7 +656,14 @@ fn main() {
             wake_lock_start,
             wake_lock_stop,
             needs_local_certificate_install,
-            open_remote_window
+            open_remote_window,
+            client_state::client_state_claim_access,
+            client_state::client_state_load,
+            client_state::client_state_save,
+            client_state::client_state_set_restore_enabled,
+            client_state::client_state_clear,
+            client_state::client_state_renderer_flushed,
+            client_state::client_state_navigation_flushed
         ])
         .on_menu_event(|app_handle, event| {
             match event.id().0.as_str() {
@@ -673,17 +694,18 @@ fn main() {
                     }
                 }
                 "reset_zoom" => {
-                    set_main_window_zoom(app_handle, DEFAULT_ZOOM_LEVEL);
+                    client_state::set_main_window_zoom(
+                        app_handle,
+                        client_state::DEFAULT_ZOOM_LEVEL,
+                    );
                 }
                 "zoom_in" => {
-                    if let Ok(zoom_level) = app_handle.state::<AppState>().zoom_level.lock() {
-                        set_main_window_zoom(app_handle, *zoom_level + ZOOM_STEP);
-                    }
+                    let zoom_level = client_state::main_window_zoom(app_handle);
+                    client_state::set_main_window_zoom(app_handle, zoom_level + ZOOM_STEP);
                 }
                 "zoom_out" => {
-                    if let Ok(zoom_level) = app_handle.state::<AppState>().zoom_level.lock() {
-                        set_main_window_zoom(app_handle, *zoom_level - ZOOM_STEP);
-                    }
+                    let zoom_level = client_state::main_window_zoom(app_handle);
+                    client_state::set_main_window_zoom(app_handle, zoom_level - ZOOM_STEP);
                 }
 
                 "toggle_fullscreen" => {
@@ -735,20 +757,11 @@ fn main() {
         .expect("error while building tauri application")
         .run(|app_handle, event| match event {
             tauri::RunEvent::ExitRequested { api, .. } => {
-                // `app_handle.exit(0)` triggers another `ExitRequested`. Without a guard, we can
-                // prevent exit forever and the app never quits (Cmd+Q / Quit menu appears stuck).
-                if QUIT_REQUESTED.swap(true, Ordering::SeqCst) {
+                if shutdown::exit_allowed() {
                     return;
                 }
                 api.prevent_exit();
-                let app = app_handle.clone();
-                std::thread::spawn(move || {
-                    if let Some(state) = app.try_state::<AppState>() {
-                        state.desktop_events.stop();
-                        let _ = state.manager.stop();
-                    }
-                    app.exit(0);
-                });
+                shutdown::request(app_handle.clone());
             }
             tauri::RunEvent::WindowEvent {
                 label,
@@ -772,35 +785,44 @@ fn main() {
                 emit_window_event(&app_handle, &label, "desktop:folder-drag-leave");
             }
             tauri::RunEvent::WindowEvent {
+                label,
                 event: tauri::WindowEvent::CloseRequested { api, .. },
                 ..
             } => {
+                if label == "main" {
+                    if shutdown::main_window_close_allowed() {
+                        return;
+                    }
+                    let final_window = app_handle.webview_windows().len() == 1;
+                    if shutdown::exit_allowed() {
+                        return;
+                    }
+                    api.prevent_close();
+                    if final_window {
+                        shutdown::request(app_handle.clone());
+                    } else {
+                        shutdown::request_main_window_close(app_handle.clone());
+                    }
+                    return;
+                }
                 // Let windows close normally. App shutdown is handled only after the
                 // last window is actually gone so remote windows can outlive `main`.
-                let _ = api;
             }
             tauri::RunEvent::WindowEvent {
+                label,
                 event: tauri::WindowEvent::Destroyed,
                 ..
             } => {
+                if label == "main" {
+                    shutdown::main_window_destroyed(app_handle.clone());
+                }
                 if !app_handle.webview_windows().is_empty() {
                     return;
                 }
 
                 // Stop the CLI only when the final window is gone and the app is
                 // truly exiting.
-                if QUIT_REQUESTED.swap(true, Ordering::SeqCst) {
-                    return;
-                }
-
-                let app = app_handle.clone();
-                std::thread::spawn(move || {
-                    if let Some(state) = app.try_state::<AppState>() {
-                        state.desktop_events.stop();
-                        let _ = state.manager.stop();
-                    }
-                    app.exit(0);
-                });
+                shutdown::request(app_handle.clone());
             }
             _ => {}
         });
@@ -868,24 +890,9 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     )?;
     let reset_zoom_item =
         MenuItem::with_id(app, "reset_zoom", "Actual Size", true, Some("CmdOrCtrl+0"))?;
-    let zoom_in_item = MenuItem::with_id(
-        app,
-        "zoom_in",
-        if is_mac { "Zoom In" } else { "Zoom In\tCtrl++" },
-        true,
-        None::<&str>,
-    )?;
-    let zoom_out_item = MenuItem::with_id(
-        app,
-        "zoom_out",
-        if is_mac {
-            "Zoom Out"
-        } else {
-            "Zoom Out\tCtrl+-"
-        },
-        true,
-        None::<&str>,
-    )?;
+    let zoom_in_item = MenuItem::with_id(app, "zoom_in", "Zoom In", true, Some("CmdOrCtrl+Equal"))?;
+    let zoom_out_item =
+        MenuItem::with_id(app, "zoom_out", "Zoom Out", true, Some("CmdOrCtrl+Minus"))?;
     let toggle_fullscreen_item = MenuItem::with_id(
         app,
         "toggle_fullscreen",

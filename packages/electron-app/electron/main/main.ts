@@ -1,13 +1,24 @@
-import { app, BrowserView, BrowserWindow, nativeImage, session, shell } from "electron"
+import { app, BrowserView, BrowserWindow, nativeImage, screen, session, shell } from "electron"
 import http from "node:http"
 import https from "node:https"
 import { existsSync, mkdirSync, rmSync } from "fs"
 import { dirname, join } from "path"
 import { fileURLToPath } from "url"
 import { createApplicationMenu } from "./menu"
+import { ClientStateManager } from "./client-state"
+import { setupClientStateIPC } from "./client-state-ipc"
+import { ClientStateLifecycle } from "./client-state-lifecycle"
+import { ClientStateNavigationController } from "./client-state-navigation"
 import { setupCliIPC } from "./ipc"
-import { configureMediaPermissionHandlers } from "./permissions"
+import { configureMediaPermissionHandlers, isAllowedRendererOrigin } from "./permissions"
 import { CliProcessManager } from "./process-manager"
+import {
+  clampWindowBounds,
+  DEFAULT_WINDOW_HEIGHT,
+  DEFAULT_WINDOW_WIDTH,
+  restoreWindowState,
+  WindowStateTracker,
+} from "./window-state"
 
 const mainFilename = fileURLToPath(import.meta.url)
 const mainDirname = dirname(mainFilename)
@@ -82,6 +93,7 @@ function cleanupPackagedChromiumStorage() {
 
 cleanupPackagedChromiumStorage()
 
+const clientStateManager = new ClientStateManager(app.getPath("userData"))
 const cliManager = new CliProcessManager()
 let mainWindow: BrowserWindow | null = null
 let currentCliUrl: string | null = null
@@ -89,8 +101,18 @@ let pendingCliUrl: string | null = null
 let pendingBootstrapToken: string | null = null
 let showingLoadingScreen = false
 let preloadingView: BrowserView | null = null
+let mainNavigationController: ClientStateNavigationController | null = null
 const remoteWindowOrigins = new Map<number, Set<string>>()
 const insecureWindowOrigins = new Map<number, Set<string>>()
+const clientStateLifecycle = new ClientStateLifecycle({
+  app,
+  clientStateManager,
+  cliManager,
+  getMainWindow: () => mainWindow,
+  getAllWindows: () => BrowserWindow.getAllWindows(),
+  getAllowedRendererOrigins,
+  isTrustedRendererOrigin: isAllowedRendererOrigin,
+})
 
 if (isMac) {
   app.commandLine.appendSwitch("disable-spell-checking")
@@ -158,7 +180,7 @@ function loadLoadingScreen(window: BrowserWindow) {
       ? window.loadURL(target.source)
       : window.loadFile(target.source)
 
-  loader.catch((error) => {
+  return loader.catch((error) => {
     if (isIgnorableNavigationError(error)) {
       return
     }
@@ -210,7 +232,7 @@ function shouldOpenExternally(url: string, window?: BrowserWindow | null): boole
   }
 }
 
-function setupNavigationGuards(window: BrowserWindow) {
+function setupNavigationGuards(window: BrowserWindow, navigationController?: ClientStateNavigationController) {
   const handleExternal = (url: string) => {
     shell.openExternal(url).catch((error) => console.error("[cli] failed to open external URL", url, error))
   }
@@ -224,6 +246,20 @@ function setupNavigationGuards(window: BrowserWindow) {
   })
 
   window.webContents.on("will-navigate", (event, url) => {
+    if (shouldOpenExternally(url, window)) {
+      event.preventDefault()
+      handleExternal(url)
+    } else if (navigationController) {
+      event.preventDefault()
+      void navigationController.navigate((target) => target.loadURL(url)).catch((error) => {
+        if (!isIgnorableNavigationError(error)) {
+          console.error("[client-state] trusted renderer navigation failed", error)
+        }
+      })
+    }
+  })
+
+  window.webContents.on("will-redirect", (event, url) => {
     if (shouldOpenExternally(url, window)) {
       event.preventDefault()
       handleExternal(url)
@@ -320,10 +356,18 @@ function createWindow() {
   const prefersDark = true
   const backgroundColor = prefersDark ? "#1a1a1a" : "#ffffff"
   const iconPath = getIconPath()
+  const savedWindowState = clientStateManager.getWindowState()
+  const restoredBounds = savedWindowState
+    ? clampWindowBounds(
+        savedWindowState.bounds,
+        screen.getAllDisplays().map((display) => display.workArea),
+      )
+    : undefined
 
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
+    width: restoredBounds?.width ?? DEFAULT_WINDOW_WIDTH,
+    height: restoredBounds?.height ?? DEFAULT_WINDOW_HEIGHT,
+    ...(restoredBounds ? { x: restoredBounds.x, y: restoredBounds.y } : {}),
     minWidth: 800,
     minHeight: 600,
     backgroundColor,
@@ -338,8 +382,23 @@ function createWindow() {
   })
 
   const window = mainWindow
+  const navigationController = new ClientStateNavigationController({
+    clientStateManager,
+    getWindow: () => mainWindow,
+    isTrustedOrigin: (url) => isAllowedRendererOrigin(url, getAllowedRendererOrigins(window)),
+    reportFlushError: (error) => {
+      console.warn("[client-state] renderer pre-navigation flush failed; continuing navigation", error)
+    },
+  })
+  mainNavigationController = navigationController
 
-  setupNavigationGuards(window)
+  let windowStateTracker: WindowStateTracker | null = null
+  if (clientStateManager.isPrimary) {
+    restoreWindowState(window, savedWindowState, restoredBounds)
+    windowStateTracker = new WindowStateTracker(window, clientStateManager, savedWindowState)
+  }
+
+  setupNavigationGuards(window, navigationController)
 
   if (isMac) {
     window.webContents.session.setSpellCheckerEnabled(false)
@@ -348,23 +407,34 @@ function createWindow() {
   showingLoadingScreen = true
   currentCliUrl = null
   clearWindowAllowedOrigin(window)
-  loadLoadingScreen(window)
+  void loadLoadingScreen(window)
 
   if (process.env.NODE_ENV === "development") {
     window.webContents.openDevTools({ mode: "detach" })
   }
 
-  createApplicationMenu(window)
+  createApplicationMenu(window, {
+    reload: () => {
+      void navigationController.navigate((target) => target.webContents.reload())
+    },
+    forceReload: () => {
+      void navigationController.navigate((target) => target.webContents.reloadIgnoringCache())
+    },
+  })
   setupCliIPC(window, cliManager)
+  setupClientStateIPC(window, clientStateManager, () => getAllowedRendererOrigins(window))
+  clientStateLifecycle.attachMainWindow(window, windowStateTracker)
 
   window.on("closed", () => {
     destroyPreloadingView()
     clearWindowAllowedOrigin(window)
     clearWindowInsecureOrigin(window)
     mainWindow = null
+    if (mainNavigationController === navigationController) mainNavigationController = null
     currentCliUrl = null
     pendingCliUrl = null
     showingLoadingScreen = false
+    clientStateLifecycle.detachMainWindow(window)
   })
 
   if (pendingCliUrl) {
@@ -383,11 +453,20 @@ function showLoadingScreen(force = false) {
     return
   }
 
-  destroyPreloadingView()
+  const window = mainWindow
   showingLoadingScreen = true
-  currentCliUrl = null
-  pendingCliUrl = null
-  loadLoadingScreen(mainWindow)
+  const navigate = (target: BrowserWindow) => {
+    destroyPreloadingView()
+    currentCliUrl = null
+    pendingCliUrl = null
+    clearWindowAllowedOrigin(target)
+    return loadLoadingScreen(target)
+  }
+  if (mainNavigationController) {
+    void mainNavigationController.navigate(navigate)
+  } else {
+    navigate(window)
+  }
 }
 
 function isBootstrapTokenUrl(url: string): boolean {
@@ -461,15 +540,20 @@ function finalizeCliSwap(url: string) {
   }
 
   const window = mainWindow
-  showingLoadingScreen = false
-  currentCliUrl = url
-  setWindowAllowedOrigin(window, url)
-  pendingCliUrl = null
-  window.loadURL(url).catch((error) => {
-    if (isIgnorableNavigationError(error)) {
-      return
+  const navigate = async (target: BrowserWindow) => {
+    showingLoadingScreen = false
+    currentCliUrl = url
+    setWindowAllowedOrigin(target, url)
+    pendingCliUrl = null
+    await target.loadURL(url)
+  }
+  const navigation = mainNavigationController
+    ? mainNavigationController.navigate(navigate)
+    : navigate(window)
+  void navigation.catch((error) => {
+    if (!isIgnorableNavigationError(error)) {
+      console.error("[cli] failed to load CLI view:", error)
     }
-    console.error("[cli] failed to load CLI view:", error)
   })
 }
 
@@ -727,13 +811,4 @@ app.whenReady().then(() => {
   })
 })
 
-app.on("before-quit", async (event) => {
-  event.preventDefault()
-  await cliManager.stop().catch(() => {})
-  app.exit(0)
-})
-
-app.on("window-all-closed", () => {
-  // CodeNomad supports a single window; closing it should quit the app on all platforms.
-  app.quit()
-})
+clientStateLifecycle.registerAppEvents()

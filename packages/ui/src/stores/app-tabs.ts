@@ -2,6 +2,7 @@ import { createMemo, createSignal } from "solid-js"
 import type { Instance } from "../types/instance"
 import { activeInstanceId, instances, setActiveInstanceId } from "./instances"
 import { activeSidecarToken, setActiveSidecarToken, sidecarTabs, type SideCarTabRecord } from "./sidecars"
+import { appSessionRestoreGateActive } from "./app-session-restore-gate"
 
 export interface InstanceAppTab {
   id: string
@@ -127,6 +128,25 @@ function moveAppTab(tabId: string, targetTabId: string, placement: "before" | "a
   setTabOrder(reorderedIds)
 }
 
+function setAppTabOrder(tabIds: string[]) {
+  const availableIds = appTabs().map((tab) => tab.id)
+  const available = new Set(availableIds)
+  const seen = new Set<string>()
+  const orderedIds: string[] = []
+
+  for (const tabId of tabIds) {
+    if (!available.has(tabId) || seen.has(tabId)) continue
+    seen.add(tabId)
+    orderedIds.push(tabId)
+  }
+  for (const tabId of availableIds) {
+    if (seen.has(tabId)) continue
+    orderedIds.push(tabId)
+  }
+
+  setTabOrder(orderedIds)
+}
+
 function selectNextAppTab() {
   const tabs = appTabs()
   if (tabs.length <= 1) return
@@ -153,6 +173,7 @@ function selectAppTabByIndex(index: number) {
 }
 
 function ensureActiveAppTab(preferredTabId?: string | null) {
+  if (appSessionRestoreGateActive()) return
   const tabs = appTabs()
   const current = activeAppTabId()
 
@@ -179,6 +200,7 @@ export {
   getInstanceAppTabId,
   getSidecarAppTabId,
   moveAppTab,
+  setAppTabOrder,
   selectAppTab,
   selectAppTabByIndex,
   selectInstanceTab,

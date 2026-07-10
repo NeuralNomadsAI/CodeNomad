@@ -24,6 +24,12 @@ import {
 } from "./opencode-auth"
 
 const STARTUP_STABILITY_DELAY_MS = 1500
+type ManagerTimeout = ReturnType<typeof setTimeout>
+
+interface WorkspaceRuntimeController {
+  launch: WorkspaceRuntime["launch"]
+  stop: WorkspaceRuntime["stop"]
+}
 
 interface WorkspaceManagerOptions {
   rootDir: string
@@ -34,35 +40,104 @@ interface WorkspaceManagerOptions {
   getServerBaseUrl: () => string
   /** Optional CA bundle path to trust CodeNomad HTTPS certs. */
   nodeExtraCaCertsPath?: string
+  runtime?: WorkspaceRuntimeController
+  shutdownTimeoutMs?: number
+  launchSettlementTimeoutMs?: number
+  setTimeout?: (callback: () => void, delayMs: number) => ManagerTimeout
+  clearTimeout?: (timer: ManagerTimeout) => void
 }
 
-interface WorkspaceRecord extends WorkspaceDescriptor {}
+interface WorkspaceLaunchLifecycle {
+  cancelled: boolean
+  settled: boolean
+  completion: Promise<void>
+  complete: () => void
+  deletePromise?: Promise<WorkspaceDescriptor | undefined>
+  stoppedEventPublished: boolean
+}
+
+interface WorkspaceRecord {
+  descriptor: WorkspaceDescriptor
+  lifecycle: WorkspaceLaunchLifecycle
+  published: boolean
+}
+
+export class WorkspaceLaunchCancelledError extends Error {
+  constructor(workspaceId: string) {
+    super(`Workspace ${workspaceId} launch was cancelled`)
+    this.name = "WorkspaceLaunchCancelledError"
+  }
+}
+
+export class WorkspaceShutdownTimeoutError extends Error {
+  readonly code = "WORKSPACE_SHUTDOWN_TIMEOUT"
+  readonly retryable = true
+
+  constructor(timeoutMs: number) {
+    super(`Workspace shutdown did not finish within ${timeoutMs}ms; remaining workspace cleanup can be retried`)
+    this.name = "WorkspaceShutdownTimeoutError"
+  }
+}
+
+export class WorkspaceLaunchSettlementTimeoutError extends Error {
+  readonly code = "WORKSPACE_LAUNCH_SETTLEMENT_TIMEOUT"
+  readonly retryable = true
+
+  constructor(workspaceId: string, timeoutMs: number) {
+    super(`Workspace ${workspaceId} launch cancellation did not settle within ${timeoutMs}ms; cleanup can be retried`)
+    this.name = "WorkspaceLaunchSettlementTimeoutError"
+  }
+}
+
+export class WorkspaceShutdownError extends Error {
+  readonly code = "WORKSPACE_SHUTDOWN_FAILED"
+  readonly retryable = true
+  readonly errors: unknown[]
+
+  constructor(errors: unknown[]) {
+    super(`Failed to stop ${errors.length} workspace${errors.length === 1 ? "" : "s"} during shutdown; cleanup can be retried`)
+    this.name = "WorkspaceShutdownError"
+    this.errors = errors
+  }
+}
 
 export class WorkspaceManager {
   private readonly workspaces = new Map<string, WorkspaceRecord>()
-  private readonly runtime: WorkspaceRuntime
+  private readonly runtime: WorkspaceRuntimeController
   private readonly codeNomadPluginUrl: string
   private readonly opencodeAuth = new Map<string, { username: string; password: string; authorization: string }>()
+  private readonly shutdownTimeoutMs: number
+  private readonly launchSettlementTimeoutMs: number
+  private readonly scheduleTimeout: (callback: () => void, delayMs: number) => ManagerTimeout
+  private readonly cancelTimeout: (timer: ManagerTimeout) => void
 
   constructor(private readonly options: WorkspaceManagerOptions) {
-    this.runtime = new WorkspaceRuntime(this.options.eventBus, this.options.logger)
+    this.runtime = options.runtime ?? new WorkspaceRuntime(this.options.eventBus, this.options.logger)
     this.codeNomadPluginUrl = getCodeNomadPluginUrl()
+    this.shutdownTimeoutMs = Math.max(1, options.shutdownTimeoutMs ?? 10000)
+    this.launchSettlementTimeoutMs = Math.max(1, options.launchSettlementTimeoutMs ?? 5000)
+    this.scheduleTimeout = options.setTimeout ?? setTimeout
+    this.cancelTimeout = options.clearTimeout ?? clearTimeout
   }
 
   list(): WorkspaceDescriptor[] {
     return Array.from(this.workspaces.values())
+      .filter((record) => record.published)
+      .map((record) => record.descriptor)
   }
 
   get(id: string): WorkspaceDescriptor | undefined {
-    return this.workspaces.get(id)
+    const record = this.workspaces.get(id)
+    return record?.published ? record.descriptor : undefined
   }
 
   getInstancePort(id: string): number | undefined {
-    return this.workspaces.get(id)?.port
+    const record = this.workspaces.get(id)
+    return record?.published ? record.descriptor.port : undefined
   }
 
   getInstanceAuthorizationHeader(id: string): string | undefined {
-    return this.opencodeAuth.get(id)?.authorization
+    return this.workspaces.get(id)?.published ? this.opencodeAuth.get(id)?.authorization : undefined
   }
 
   listFiles(workspaceId: string, relativePath = "."): FileSystemEntry[] {
@@ -114,10 +189,10 @@ export class WorkspaceManager {
     browser.writeFile(relativePath, contents)
   }
 
-  async create(folder: string, name?: string): Promise<WorkspaceDescriptor> {
+  async create(folder: string, name?: string, binaryPath?: string, requestId?: string): Promise<WorkspaceDescriptor> {
  
     const id = `${Date.now().toString(36)}`
-    const binary = this.options.binaryResolver.resolveDefault()
+    const binary = this.options.binaryResolver.resolve(binaryPath)
     const resolvedBinaryPath = this.resolveBinaryPath(binary.path)
     const workspacePath = path.isAbsolute(folder) ? folder : path.resolve(this.options.rootDir, folder)
     clearWorkspaceSearchCache(workspacePath)
@@ -127,8 +202,9 @@ export class WorkspaceManager {
     const proxyPath = `/workspaces/${id}/instance`
 
 
-    const descriptor: WorkspaceRecord = {
+    const descriptor: WorkspaceDescriptor = {
       id,
+      requestId,
       path: workspacePath,
       name,
       status: "starting",
@@ -140,47 +216,61 @@ export class WorkspaceManager {
       updatedAt: new Date().toISOString(),
     }
 
-    this.workspaces.set(id, descriptor)
-
-
-    this.options.eventBus.publish({ type: "workspace.created", workspace: descriptor })
-
-    const serverConfig = this.options.settings.getOwner("config", "server")
-    const envVars = (serverConfig as any)?.environmentVariables
-    const userEnvironment = envVars && typeof envVars === "object" && !Array.isArray(envVars) ? (envVars as any) : {}
-    const opencodeConfigContent = buildOpencodeConfigContent(
-      resolveExistingOpencodeConfigContent(userEnvironment),
-      this.codeNomadPluginUrl,
-    )
-    const serverBaseUrl = this.options.getServerBaseUrl()
-    const normalizedServerBaseUrl = serverBaseUrl.replace(/\/+$/, "")
-
-    const { username: opencodeUsername, password: opencodePassword } = resolveOpencodeServerAuth({
-      userEnvironment,
-      processEnv: process.env,
+    let completeLaunch!: () => void
+    const completion = new Promise<void>((resolve) => {
+      completeLaunch = resolve
     })
-    const authorization = buildOpencodeBasicAuthHeader({ username: opencodeUsername, password: opencodePassword })
-    if (!authorization) {
-      throw new Error("Failed to build OpenCode auth header")
-    }
-    this.opencodeAuth.set(id, { username: opencodeUsername, password: opencodePassword, authorization })
-
-    const environment = {
-      ...userEnvironment,
-      OPENCODE_CONFIG_CONTENT: opencodeConfigContent,
-      OPENCODE_EXPERIMENTAL_WORKSPACES: "true",
-      CODENOMAD_INSTANCE_ID: id,
-      CODENOMAD_BASE_URL: serverBaseUrl,
-      ...(this.options.nodeExtraCaCertsPath ? { NODE_EXTRA_CA_CERTS: this.options.nodeExtraCaCertsPath } : {}),
-      [OPENCODE_SERVER_BASE_URL_ENV]: `${normalizedServerBaseUrl}${proxyPath}`,
-      [OPENCODE_SERVER_USERNAME_ENV]: opencodeUsername,
-      [OPENCODE_SERVER_PASSWORD_ENV]: opencodePassword,
+    const record: WorkspaceRecord = {
+      descriptor,
+      lifecycle: {
+        cancelled: false,
+        settled: false,
+        completion,
+        complete: completeLaunch,
+        stoppedEventPublished: false,
+      },
+      published: false,
     }
 
-    const logLevel = (serverConfig as any)?.logLevel
+    this.workspaces.set(id, record)
 
     try {
-      const { pid, port, exitPromise, getLastOutput } = await this.runtime.launch({
+      this.throwIfCancelled(record)
+
+      const serverConfig = this.options.settings.getOwner("config", "server")
+      const envVars = (serverConfig as any)?.environmentVariables
+      const userEnvironment = envVars && typeof envVars === "object" && !Array.isArray(envVars) ? (envVars as any) : {}
+      const opencodeConfigContent = buildOpencodeConfigContent(
+        resolveExistingOpencodeConfigContent(userEnvironment),
+        this.codeNomadPluginUrl,
+      )
+      const serverBaseUrl = this.options.getServerBaseUrl()
+      const normalizedServerBaseUrl = serverBaseUrl.replace(/\/+$/, "")
+
+      const { username: opencodeUsername, password: opencodePassword } = resolveOpencodeServerAuth({
+        userEnvironment,
+        processEnv: process.env,
+      })
+      const authorization = buildOpencodeBasicAuthHeader({ username: opencodeUsername, password: opencodePassword })
+      if (!authorization) {
+        throw new Error("Failed to build OpenCode auth header")
+      }
+      this.opencodeAuth.set(id, { username: opencodeUsername, password: opencodePassword, authorization })
+
+      const environment = {
+        ...userEnvironment,
+        OPENCODE_CONFIG_CONTENT: opencodeConfigContent,
+        OPENCODE_EXPERIMENTAL_WORKSPACES: "true",
+        CODENOMAD_INSTANCE_ID: id,
+        CODENOMAD_BASE_URL: serverBaseUrl,
+        ...(this.options.nodeExtraCaCertsPath ? { NODE_EXTRA_CA_CERTS: this.options.nodeExtraCaCertsPath } : {}),
+        [OPENCODE_SERVER_BASE_URL_ENV]: `${normalizedServerBaseUrl}${proxyPath}`,
+        [OPENCODE_SERVER_USERNAME_ENV]: opencodeUsername,
+        [OPENCODE_SERVER_PASSWORD_ENV]: opencodePassword,
+      }
+
+      const logLevel = (serverConfig as any)?.logLevel
+      const { pid, port, exitPromise, cancellationPromise, getLastOutput } = await this.runtime.launch({
         workspaceId: id,
         folder: workspacePath,
         binaryPath: resolvedBinaryPath,
@@ -189,7 +279,19 @@ export class WorkspaceManager {
         onExit: (info) => this.handleProcessExit(info.workspaceId, info),
       })
 
-      const runtimeVersion = await this.waitForWorkspaceReadiness({ workspaceId: id, port, exitPromise, getLastOutput })
+      this.throwIfCancelled(record)
+      record.published = true
+      this.options.eventBus.publish({ type: "workspace.created", workspace: descriptor })
+      this.throwIfCancelled(record)
+      const readinessAbort = new AbortController()
+      const runtimeVersion = await Promise.race([
+        this.waitForWorkspaceReadiness({ workspaceId: id, port, exitPromise, getLastOutput, signal: readinessAbort.signal }),
+        cancellationPromise.then((error) => {
+          readinessAbort.abort(error)
+          throw error
+        }),
+      ])
+      this.throwIfCancelled(record)
       if (runtimeVersion) {
         descriptor.binaryVersion = runtimeVersion
       }
@@ -202,70 +304,168 @@ export class WorkspaceManager {
       this.options.logger.info({ workspaceId: id, port }, "Workspace ready")
       return descriptor
     } catch (error) {
+      if (record.lifecycle.cancelled) {
+        await this.stopRuntime(id)
+        throw error instanceof WorkspaceLaunchCancelledError ? error : new WorkspaceLaunchCancelledError(id)
+      }
+      if (!record.published) {
+        try {
+          await this.stopRuntime(id)
+        } catch (cleanupError) {
+          this.options.logger.error({ workspaceId: id, err: cleanupError }, "Unpublished workspace cleanup remains pending")
+          throw cleanupError
+        }
+        if (this.workspaces.get(id) === record) this.workspaces.delete(id)
+        this.opencodeAuth.delete(id)
+        this.options.logger.error({ workspaceId: id, err: error }, "Workspace failed before identity publication")
+        throw error
+      }
       descriptor.status = "error"
       descriptor.error = error instanceof Error ? error.message : String(error)
       descriptor.updatedAt = new Date().toISOString()
       this.options.eventBus.publish({ type: "workspace.error", workspace: descriptor })
       this.options.logger.error({ workspaceId: id, err: error }, "Workspace failed to start")
       throw error
+    } finally {
+      record.lifecycle.settled = true
+      record.lifecycle.complete()
     }
   }
 
-  async delete(id: string): Promise<WorkspaceDescriptor | undefined> {
-    const workspace = this.workspaces.get(id)
-    if (!workspace) return undefined
+  delete(id: string): Promise<WorkspaceDescriptor | undefined> {
+    const record = this.workspaces.get(id)
+    if (!record) return Promise.resolve(undefined)
 
-    this.options.logger.info({ workspaceId: id }, "Stopping workspace")
-    const wasRunning = Boolean(workspace.pid)
-    if (wasRunning) {
-      await this.runtime.stop(id).catch((error) => {
-        this.options.logger.warn({ workspaceId: id, err: error }, "Failed to stop workspace process cleanly")
+    record.lifecycle.cancelled = true
+    if (!record.lifecycle.deletePromise) {
+      let deletePromise!: Promise<WorkspaceDescriptor | undefined>
+      deletePromise = this.cleanupDeletedWorkspace(id, record).catch((error) => {
+        if (record.lifecycle.deletePromise === deletePromise) {
+          record.lifecycle.deletePromise = undefined
+        }
+        throw error
       })
+      record.lifecycle.deletePromise = deletePromise
     }
-
-    this.workspaces.delete(id)
-    this.opencodeAuth.delete(id)
-    clearWorkspaceSearchCache(workspace.path)
-    if (!wasRunning) {
-      this.options.eventBus.publish({ type: "workspace.stopped", workspaceId: id })
-    }
-    return workspace
+    return record.lifecycle.deletePromise
   }
 
   async shutdown() {
     this.options.logger.info("Shutting down all workspaces")
 
-    const stopTasks: Array<Promise<void>> = []
-
-    for (const [id, workspace] of this.workspaces) {
-      if (!workspace.pid) {
-        this.options.logger.debug({ workspaceId: id }, "Workspace already stopped")
-        continue
-      }
-
-      this.options.logger.info({ workspaceId: id }, "Stopping workspace during shutdown")
-      stopTasks.push(
-        this.runtime.stop(id).catch((error) => {
-          this.options.logger.error({ workspaceId: id, err: error }, "Failed to stop workspace during shutdown")
-        }),
-      )
-    }
+    const stopTasks = Array.from(this.workspaces.keys(), (id) => this.delete(id))
+    let stopFailures: unknown[] = []
 
     if (stopTasks.length > 0) {
-      await Promise.allSettled(stopTasks)
+      const results = await this.withShutdownTimeout(Promise.allSettled(stopTasks))
+      stopFailures = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []))
     }
 
-    this.workspaces.clear()
-    this.opencodeAuth.clear()
-    this.options.logger.info("All workspaces cleared")
+    if (this.workspaces.size === 0) {
+      this.options.logger.info("All workspaces cleared")
+    } else {
+      this.options.logger.warn(
+        { workspaceIds: Array.from(this.workspaces.keys()) },
+        "Some workspace records remain after failed shutdown cleanup",
+      )
+      if (stopFailures.length === 0) {
+        stopFailures.push(new Error(`Workspace cleanup remains incomplete for: ${Array.from(this.workspaces.keys()).join(", ")}`))
+      }
+    }
+
+    if (stopFailures.length > 0) {
+      throw new WorkspaceShutdownError(stopFailures)
+    }
   }
 
-  private requireWorkspace(id: string): WorkspaceRecord {
-    const workspace = this.workspaces.get(id)
-    if (!workspace) {
+  private async withShutdownTimeout<T>(operation: Promise<T>): Promise<T> {
+    let timeout: ManagerTimeout | null = null
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timeout = this.scheduleTimeout(() => {
+        timeout = null
+        reject(new WorkspaceShutdownTimeoutError(this.shutdownTimeoutMs))
+      }, this.shutdownTimeoutMs)
+    })
+
+    try {
+      return await Promise.race([operation, deadline])
+    } finally {
+      if (timeout) {
+        this.cancelTimeout(timeout)
+      }
+    }
+  }
+
+  private requireWorkspace(id: string): WorkspaceDescriptor {
+    const record = this.workspaces.get(id)
+    if (!record?.published) {
       throw new Error("Workspace not found")
     }
-    return workspace
+    return record.descriptor
+  }
+
+  private throwIfCancelled(record: WorkspaceRecord): void {
+    if (record.lifecycle.cancelled) {
+      throw new WorkspaceLaunchCancelledError(record.descriptor.id)
+    }
+  }
+
+  private async stopRuntime(workspaceId: string): Promise<void> {
+    try {
+      await this.runtime.stop(workspaceId)
+    } catch (error) {
+      this.options.logger.warn({ workspaceId, err: error }, "Failed to stop workspace process cleanly")
+      throw error
+    }
+  }
+
+  private async cleanupDeletedWorkspace(id: string, record: WorkspaceRecord): Promise<WorkspaceDescriptor> {
+    this.options.logger.info({ workspaceId: id }, "Stopping workspace")
+
+    // Stop once immediately, then again after launch settlement to cover a child
+    // that became available while cancellation was propagating.
+    await this.stopRuntime(id)
+    if (!record.lifecycle.settled) {
+      await this.withLaunchSettlementTimeout(id, record.lifecycle.completion)
+    }
+    try {
+      await this.runtime.stop(id)
+    } catch (error) {
+      this.options.logger.warn({ workspaceId: id, err: error }, "Failed final workspace process cleanup")
+      throw error
+    }
+
+    if (this.workspaces.get(id) === record) {
+      this.workspaces.delete(id)
+      this.opencodeAuth.delete(id)
+      clearWorkspaceSearchCache(record.descriptor.path)
+      this.publishStopped(record)
+    }
+    return record.descriptor
+  }
+
+  private async withLaunchSettlementTimeout(workspaceId: string, completion: Promise<void>): Promise<void> {
+    let timeout: ManagerTimeout | null = null
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timeout = this.scheduleTimeout(() => {
+        timeout = null
+        reject(new WorkspaceLaunchSettlementTimeoutError(workspaceId, this.launchSettlementTimeoutMs))
+      }, this.launchSettlementTimeoutMs)
+    })
+
+    try {
+      await Promise.race([completion, deadline])
+    } finally {
+      if (timeout) {
+        this.cancelTimeout(timeout)
+      }
+    }
+  }
+
+  private publishStopped(record: WorkspaceRecord): void {
+    if (record.lifecycle.stoppedEventPublished) return
+    record.lifecycle.stoppedEventPublished = true
+    this.options.eventBus.publish({ type: "workspace.stopped", workspaceId: record.descriptor.id })
   }
 
   private resolveBinaryPath(identifier: string): string {
@@ -326,10 +526,11 @@ export class WorkspaceManager {
     port: number
     exitPromise: Promise<ProcessExitInfo>
     getLastOutput: () => string
+    signal?: AbortSignal
   }): Promise<string | undefined> {
 
     await Promise.race([
-      this.waitForPortAvailability(params.port),
+      this.waitForPortAvailability(params.port, 5000, params.signal),
       params.exitPromise.then((info) => {
         throw this.buildStartupError(
           params.workspaceId,
@@ -343,7 +544,7 @@ export class WorkspaceManager {
     const version = await this.waitForInstanceHealth(params)
 
     await Promise.race([
-      this.delay(STARTUP_STABILITY_DELAY_MS),
+      this.delay(STARTUP_STABILITY_DELAY_MS, params.signal),
       params.exitPromise.then((info) => {
         throw this.buildStartupError(
           params.workspaceId,
@@ -362,9 +563,10 @@ export class WorkspaceManager {
     port: number
     exitPromise: Promise<ProcessExitInfo>
     getLastOutput: () => string
+    signal?: AbortSignal
   }): Promise<string | undefined> {
     const probeResult = await Promise.race([
-      this.probeInstance(params.workspaceId, params.port),
+      this.probeInstance(params.workspaceId, params.port, params.signal),
       params.exitPromise.then((info) => {
         throw this.buildStartupError(
           params.workspaceId,
@@ -390,6 +592,7 @@ export class WorkspaceManager {
   private async probeInstance(
     workspaceId: string,
     port: number,
+    signal?: AbortSignal,
   ): Promise<{ ok: boolean; reason?: string; version?: string }> {
     const url = `http://127.0.0.1:${port}/global/health`
 
@@ -400,7 +603,7 @@ export class WorkspaceManager {
         headers["Authorization"] = authHeader
       }
 
-      const response = await fetch(url, { headers })
+      const response = await fetch(url, { headers, signal })
       if (!response.ok) {
         const reason = `/global/health returned HTTP ${response.status}`
         this.options.logger.debug({ workspaceId, status: response.status }, "Health probe returned server error")
@@ -437,11 +640,12 @@ export class WorkspaceManager {
     return new Error(`Workspace ${workspaceId} ${phase} (${exitDetails}).${outputDetails}`)
   }
 
-  private waitForPortAvailability(port: number, timeoutMs = 5000): Promise<void> {
+  private waitForPortAvailability(port: number, timeoutMs = 5000, signal?: AbortSignal): Promise<void> {
     return new Promise((resolve, reject) => {
       const deadline = Date.now() + timeoutMs
       let settled = false
       let retryTimer: NodeJS.Timeout | null = null
+      let socket: ReturnType<typeof connect> | null = null
 
       const cleanup = () => {
         settled = true
@@ -449,19 +653,26 @@ export class WorkspaceManager {
           clearTimeout(retryTimer)
           retryTimer = null
         }
+        signal?.removeEventListener("abort", onAbort)
+      }
+      const onAbort = () => {
+        if (settled) return
+        cleanup()
+        socket?.destroy()
+        reject(signal?.reason instanceof Error ? signal.reason : new Error("Workspace readiness was cancelled"))
       }
 
       const tryConnect = () => {
         if (settled) {
           return
         }
-        const socket = connect({ port, host: "127.0.0.1" }, () => {
+        socket = connect({ port, host: "127.0.0.1" }, () => {
           cleanup()
-          socket.end()
+          socket?.end()
           resolve()
         })
         socket.once("error", () => {
-          socket.destroy()
+          socket?.destroy()
           if (settled) {
             return
           }
@@ -477,15 +688,35 @@ export class WorkspaceManager {
         })
       }
 
+      if (signal?.aborted) {
+        onAbort()
+        return
+      }
+      signal?.addEventListener("abort", onAbort, { once: true })
       tryConnect()
     })
   }
 
-  private delay(durationMs: number): Promise<void> {
+  private delay(durationMs: number, signal?: AbortSignal): Promise<void> {
     if (durationMs <= 0) {
       return Promise.resolve()
     }
-    return new Promise((resolve) => setTimeout(resolve, durationMs))
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort)
+        resolve()
+      }, durationMs)
+      const onAbort = () => {
+        clearTimeout(timer)
+        signal?.removeEventListener("abort", onAbort)
+        reject(signal?.reason instanceof Error ? signal.reason : new Error("Workspace readiness was cancelled"))
+      }
+      if (signal?.aborted) {
+        onAbort()
+        return
+      }
+      signal?.addEventListener("abort", onAbort, { once: true })
+    })
   }
 
   private describeExit(info: ProcessExitInfo): string {
@@ -499,8 +730,9 @@ export class WorkspaceManager {
   }
 
   private handleProcessExit(workspaceId: string, info: { code: number | null; requested: boolean }) {
-    const workspace = this.workspaces.get(workspaceId)
-    if (!workspace) return
+    const record = this.workspaces.get(workspaceId)
+    if (!record) return
+    const workspace = record.descriptor
 
     this.opencodeAuth.delete(workspaceId)
 
@@ -510,10 +742,10 @@ export class WorkspaceManager {
     workspace.port = undefined
     workspace.updatedAt = new Date().toISOString()
 
-    if (info.requested || info.code === 0) {
+    if (record.lifecycle.cancelled || info.requested || info.code === 0) {
       workspace.status = "stopped"
       workspace.error = undefined
-      this.options.eventBus.publish({ type: "workspace.stopped", workspaceId })
+      this.publishStopped(record)
     } else {
       workspace.status = "error"
       workspace.error = `Process exited with code ${info.code}`

@@ -14,6 +14,8 @@ interface RouteDeps {
 const WorkspaceCreateSchema = z.object({
   path: z.string(),
   name: z.string().optional(),
+  binaryPath: z.string().trim().min(1).max(4096).optional(),
+  requestId: z.string().trim().min(1).max(128).optional(),
 })
 
 const WorkspaceCloneSchema = z.object({
@@ -68,7 +70,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.post("/api/workspaces", async (request, reply) => {
     try {
       const body = WorkspaceCreateSchema.parse(request.body ?? {})
-      const workspace = await deps.workspaceManager.create(body.path, body.name)
+      const workspace = await deps.workspaceManager.create(body.path, body.name, body.binaryPath, body.requestId)
       reply.code(201)
       return workspace
     } catch (error) {

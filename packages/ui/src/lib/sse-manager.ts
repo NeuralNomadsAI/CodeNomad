@@ -70,6 +70,14 @@ interface ServerInstanceDisposedEvent {
 }
 
 type EventSessionCreated = Omit<EventSessionUpdated, "type"> & { type: "session.created" }
+export interface EventSessionDeleted {
+  type: "session.deleted"
+  properties?: {
+    info?: { id?: string }
+    id?: string
+    sessionID?: string
+  }
+}
 
 type SSEEvent =
   | MessageUpdateEvent
@@ -79,6 +87,7 @@ type SSEEvent =
   | MessagePartDeltaEvent
   | EventSessionCreated
   | EventSessionUpdated
+  | EventSessionDeleted
   | EventSessionCompacted
   | EventSessionError
   | EventSessionIdle
@@ -164,6 +173,9 @@ class SSEManager {
       case "session.created":
         this.onSessionUpdate?.(instanceId, event as EventSessionUpdated)
         break
+      case "session.deleted":
+        this.onSessionDeleted?.(instanceId, event as EventSessionDeleted)
+        break
       case "session.compacted":
         this.onSessionCompacted?.(instanceId, event as EventSessionCompacted)
         break
@@ -237,6 +249,7 @@ class SSEManager {
   onMessagePartDelta?: (instanceId: string, event: MessagePartDeltaEvent) => void
   onMessagePartRemoved?: (instanceId: string, event: MessagePartRemovedEvent) => void
   onSessionUpdate?: (instanceId: string, event: EventSessionUpdated) => void
+  onSessionDeleted?: (instanceId: string, event: EventSessionDeleted) => void
   onSessionCompacted?: (instanceId: string, event: EventSessionCompacted) => void
   onSessionError?: (instanceId: string, event: EventSessionError) => void
   onTuiToast?: (instanceId: string, event: TuiToastEvent) => void
