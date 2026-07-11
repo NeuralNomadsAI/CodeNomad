@@ -325,6 +325,7 @@ export const settingsMessages = {
   "settings.speech.tts.apiKey.clearPending": "La clave API de salida guardada se eliminará al guardar.",
   "settings.speech.tts.baseUrl.title": "URL base de salida",
   "settings.speech.tts.baseUrl.subtitle": "Endpoint compatible con OpenAI para síntesis.",
+  "settings.speech.tts.baseUrl.placeholder": "https://api.openai.com/v1",
   "settings.speech.tts.model.title": "Modelo de salida",
   "settings.speech.tts.model.subtitle": "Modelo usado para texto a voz.",
   "settings.nav.sidecars": "SideCars",

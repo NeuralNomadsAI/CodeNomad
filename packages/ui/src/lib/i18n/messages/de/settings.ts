@@ -326,6 +326,7 @@ export const settingsMessages = {
   "settings.speech.tts.apiKey.clearPending": "Der gespeicherte Ausgabe-API-Schlüssel wird beim Speichern entfernt.",
   "settings.speech.tts.baseUrl.title": "Ausgabe-Basis-URL",
   "settings.speech.tts.baseUrl.subtitle": "OpenAI-kompatibler Endpunkt für Synthese.",
+  "settings.speech.tts.baseUrl.placeholder": "https://api.openai.com/v1",
   "settings.speech.tts.model.title": "Ausgabemodell",
   "settings.speech.tts.model.subtitle": "Modell für Text-zu-Sprache.",
   "settings.nav.sidecars": "SideCars",

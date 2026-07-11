@@ -325,6 +325,7 @@ export const settingsMessages = {
   "settings.speech.tts.apiKey.clearPending": "Сохранённый API-ключ для вывода будет удалён при сохранении.",
   "settings.speech.tts.baseUrl.title": "Базовый URL для вывода",
   "settings.speech.tts.baseUrl.subtitle": "OpenAI-совместимый эндпоинт для синтеза речи.",
+  "settings.speech.tts.baseUrl.placeholder": "https://api.openai.com/v1",
   "settings.speech.tts.model.title": "Модель вывода",
   "settings.speech.tts.model.subtitle": "Модель, используемая для преобразования текста в речь.",
   "settings.nav.sidecars": "SideCars",

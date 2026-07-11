@@ -326,6 +326,7 @@ export const settingsMessages = {
   "settings.speech.tts.apiKey.clearPending": "The saved output API key will be removed when you save.",
   "settings.speech.tts.baseUrl.title": "Output base URL",
   "settings.speech.tts.baseUrl.subtitle": "OpenAI-compatible endpoint for synthesis requests.",
+  "settings.speech.tts.baseUrl.placeholder": "https://api.openai.com/v1",
   "settings.speech.tts.model.title": "Output model",
   "settings.speech.tts.model.subtitle": "Model used for text-to-speech.",
   "settings.nav.sidecars": "SideCars",

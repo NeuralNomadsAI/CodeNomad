@@ -325,6 +325,7 @@ export const settingsMessages = {
   "settings.speech.tts.apiKey.clearPending": "מפתח ה-API לפלט השמור יוסר בעת השמירה.",
   "settings.speech.tts.baseUrl.title": "כתובת בסיס לפלט",
   "settings.speech.tts.baseUrl.subtitle": "נקודת קצה תואמת OpenAI לסינתזה.",
+  "settings.speech.tts.baseUrl.placeholder": "https://api.openai.com/v1",
   "settings.speech.tts.model.title": "מודל פלט",
   "settings.speech.tts.model.subtitle": "מודל המשמש לטקסט לדיבור.",
   "settings.nav.sidecars": "SideCars",

@@ -325,6 +325,7 @@ export const settingsMessages = {
   "settings.speech.tts.apiKey.clearPending": "保存后将删除已保存的输出 API 密钥。",
   "settings.speech.tts.baseUrl.title": "输出基础 URL",
   "settings.speech.tts.baseUrl.subtitle": "用于文字转语音的 OpenAI 兼容端点。",
+  "settings.speech.tts.baseUrl.placeholder": "https://api.openai.com/v1",
   "settings.speech.tts.model.title": "输出模型",
   "settings.speech.tts.model.subtitle": "用于文字转语音的模型。",
   "settings.nav.sidecars": "SideCars",

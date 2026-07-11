@@ -326,6 +326,7 @@ export const settingsMessages = {
   "settings.speech.tts.apiKey.clearPending": "बचत गर्दा बचत गरिएको आउटपुट API कुञ्जी हटाइनेछ।",
   "settings.speech.tts.baseUrl.title": "आउटपुट आधार URL",
   "settings.speech.tts.baseUrl.subtitle": "सिन्थेसिसका लागि OpenAI-संगत एन्डपोइन्ट।",
+  "settings.speech.tts.baseUrl.placeholder": "https://api.openai.com/v1",
   "settings.speech.tts.model.title": "आउटपुट मोडेल",
   "settings.speech.tts.model.subtitle": "पाठबाट आवाजका लागि प्रयोग गरिने मोडेल।",
   "settings.nav.sidecars": "SideCars",

@@ -325,6 +325,7 @@ export const settingsMessages = {
   "settings.speech.tts.apiKey.clearPending": "保存すると、保存済みの出力 API キーが削除されます。",
   "settings.speech.tts.baseUrl.title": "出力ベース URL",
   "settings.speech.tts.baseUrl.subtitle": "音声合成用の OpenAI 互換エンドポイントです。",
+  "settings.speech.tts.baseUrl.placeholder": "https://api.openai.com/v1",
   "settings.speech.tts.model.title": "出力モデル",
   "settings.speech.tts.model.subtitle": "テキストから音声に使用するモデルです。",
   "settings.nav.sidecars": "SideCar",

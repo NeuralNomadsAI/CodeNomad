@@ -325,6 +325,7 @@ export const settingsMessages = {
   "settings.speech.tts.apiKey.clearPending": "La clé API de sortie enregistrée sera supprimée lors de l'enregistrement.",
   "settings.speech.tts.baseUrl.title": "URL de base de sortie",
   "settings.speech.tts.baseUrl.subtitle": "Point de terminaison compatible OpenAI pour la synthèse.",
+  "settings.speech.tts.baseUrl.placeholder": "https://api.openai.com/v1",
   "settings.speech.tts.model.title": "Modèle de sortie",
   "settings.speech.tts.model.subtitle": "Modèle utilisé pour le texte vers voix.",
   "settings.nav.sidecars": "SideCars",
