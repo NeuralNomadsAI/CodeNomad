@@ -100,7 +100,7 @@ export class SpeechService {
       supportsStt: true,
       supportsTts: true,
       supportsStreamingTts: true,
-      baseUrl: speech.baseUrl?.trim() || process.env.OPENAI_BASE_URL || undefined,
+      baseUrl: separate ? undefined : (speech.baseUrl?.trim() || process.env.OPENAI_BASE_URL || undefined),
       sttModel: sttSettings.sttModel,
       ttsModel: ttsSettings.ttsModel,
       ttsVoice: ttsSettings.ttsVoice,
