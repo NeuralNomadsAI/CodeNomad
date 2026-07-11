@@ -56,10 +56,26 @@ export interface SpeechSettings {
   ttsVoice: string
   playbackMode: SpeechPlaybackMode
   ttsFormat: SpeechTtsFormat
+  separateProviders: boolean
+  stt: {
+    apiKey?: string
+    hasApiKey: boolean
+    baseUrl?: string
+    model: string
+  }
+  tts: {
+    apiKey?: string
+    hasApiKey: boolean
+    baseUrl?: string
+    model: string
+  }
 }
 
-export type SpeechSettingsUpdate = Partial<Omit<SpeechSettings, "apiKey">> & {
+export type SpeechSettingsUpdate = Partial<Omit<SpeechSettings, "apiKey" | "stt" | "tts">> & {
   apiKey?: string | null
+  separateProviders?: boolean
+  stt?: { apiKey?: string | null; baseUrl?: string; model?: string }
+  tts?: { apiKey?: string | null; baseUrl?: string; model?: string }
 }
 
 export interface UiSettings {
@@ -223,6 +239,15 @@ const defaultSpeechSettings: SpeechSettings = {
   ttsVoice: "alloy",
   playbackMode: "streaming",
   ttsFormat: "mp3",
+  separateProviders: false,
+  stt: {
+    hasApiKey: false,
+    model: "gpt-4o-mini-transcribe",
+  },
+  tts: {
+    hasApiKey: false,
+    model: "gpt-4o-mini-tts",
+  },
 }
 
 function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
@@ -294,6 +319,25 @@ function normalizeSpeechSettings(input?: Partial<SpeechSettings> | null): Speech
       sanitized.ttsFormat === "wav" || sanitized.ttsFormat === "opus" || sanitized.ttsFormat === "aac" || sanitized.ttsFormat === "mp3"
         ? sanitized.ttsFormat
         : defaultSpeechSettings.ttsFormat,
+    separateProviders: sanitized.separateProviders === true,
+    stt: {
+      apiKey: typeof (sanitized as any).stt?.apiKey === "string" && (sanitized as any).stt.apiKey.trim() ? (sanitized as any).stt.apiKey.trim() : undefined,
+      hasApiKey: (sanitized as any).stt?.hasApiKey === true,
+      baseUrl: typeof (sanitized as any).stt?.baseUrl === "string" && (sanitized as any).stt.baseUrl.trim() ? (sanitized as any).stt.baseUrl.trim() : undefined,
+      model:
+        typeof (sanitized as any).stt?.model === "string" && (sanitized as any).stt.model.trim()
+          ? (sanitized as any).stt.model.trim()
+          : defaultSpeechSettings.stt.model,
+    },
+    tts: {
+      apiKey: typeof (sanitized as any).tts?.apiKey === "string" && (sanitized as any).tts.apiKey.trim() ? (sanitized as any).tts.apiKey.trim() : undefined,
+      hasApiKey: (sanitized as any).tts?.hasApiKey === true,
+      baseUrl: typeof (sanitized as any).tts?.baseUrl === "string" && (sanitized as any).tts.baseUrl.trim() ? (sanitized as any).tts.baseUrl.trim() : undefined,
+      model:
+        typeof (sanitized as any).tts?.model === "string" && (sanitized as any).tts.model.trim()
+          ? (sanitized as any).tts.model.trim()
+          : defaultSpeechSettings.tts.model,
+    },
   }
 }
 
@@ -634,17 +678,40 @@ function updateLogLevel(level: ServerLogLevel): void {
 
 async function updateSpeechSettings(updates: SpeechSettingsUpdate): Promise<void> {
   const apiKeyPatch = updates.apiKey
+  const sttApiKeyPatch = (updates as any).stt?.apiKey
+  const ttsApiKeyPatch = (updates as any).tts?.apiKey
   const { apiKey: _apiKey, ...restUpdates } = updates
   const next = normalizeSpeechSettings({
     ...serverSettings().speech,
-    ...restUpdates,
-    ...(apiKeyPatch === null ? {} : { apiKey: apiKeyPatch }),
+    ...(restUpdates as any),
+    ...(apiKeyPatch === null ? {} : apiKeyPatch ? { apiKey: apiKeyPatch } : {}),
   })
   const { hasApiKey: _hasApiKey, ...persistedSpeech } = next
-  const patch = {
+  const patch: any = {
     ...persistedSpeech,
     ...(apiKeyPatch === null ? { apiKey: null } : {}),
   }
+
+  if (updates.separateProviders !== undefined || sttApiKeyPatch !== undefined || ttsApiKeyPatch !== undefined) {
+    if (updates.separateProviders !== undefined) {
+      patch.separateProviders = updates.separateProviders
+    }
+    if (sttApiKeyPatch !== undefined) {
+      const { hasApiKey: _sttHas, ...sttRest } = patch.stt ?? {}
+      patch.stt = {
+        ...sttRest,
+        ...(sttApiKeyPatch === null ? { apiKey: null } : { apiKey: sttApiKeyPatch }),
+      }
+    }
+    if (ttsApiKeyPatch !== undefined) {
+      const { hasApiKey: _ttsHas, ...ttsRest } = patch.tts ?? {}
+      patch.tts = {
+        ...ttsRest,
+        ...(ttsApiKeyPatch === null ? { apiKey: null } : { apiKey: ttsApiKeyPatch }),
+      }
+    }
+  }
+
   try {
     await patchConfigOwner("server", { speech: patch })
   } catch (error) {
