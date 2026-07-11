@@ -9,7 +9,16 @@ import { getSpeechPlaybackSupport } from "../../lib/speech-playback-support"
 
 const log = getLogger("actions")
 
+type DirectionalDraft = {
+  apiKey: string
+  apiKeyTouched: boolean
+  clearApiKey: boolean
+  baseUrl: string
+  model: string
+}
+
 type DraftFields = {
+  separateProviders: boolean
   apiKey: string
   baseUrl: string
   sttModel: string
@@ -17,10 +26,24 @@ type DraftFields = {
   ttsVoice: string
   playbackMode: SpeechSettings["playbackMode"]
   ttsFormat: SpeechSettings["ttsFormat"]
+  stt: DirectionalDraft
+  tts: DirectionalDraft
+}
+
+function createDirectionalDraft(speech: SpeechSettings, direction: "stt" | "tts"): DirectionalDraft {
+  const dir = speech[direction]
+  return {
+    apiKey: "",
+    apiKeyTouched: false,
+    clearApiKey: false,
+    baseUrl: dir.baseUrl ?? "",
+    model: dir.model,
+  }
 }
 
 function createDraftFields(speech: SpeechSettings): DraftFields {
   return {
+    separateProviders: speech.separateProviders,
     apiKey: "",
     baseUrl: speech.baseUrl ?? "",
     sttModel: speech.sttModel,
@@ -28,18 +51,33 @@ function createDraftFields(speech: SpeechSettings): DraftFields {
     ttsVoice: speech.ttsVoice,
     playbackMode: speech.playbackMode,
     ttsFormat: speech.ttsFormat,
+    stt: createDirectionalDraft(speech, "stt"),
+    tts: createDirectionalDraft(speech, "tts"),
   }
+}
+
+function isDirectionalDraftEqual(a: DirectionalDraft, b: DirectionalDraft): boolean {
+  return (
+    a.apiKey === b.apiKey &&
+    a.apiKeyTouched === b.apiKeyTouched &&
+    a.clearApiKey === b.clearApiKey &&
+    a.baseUrl === b.baseUrl &&
+    a.model === b.model
+  )
 }
 
 function isDraftEqual(a: DraftFields, b: DraftFields): boolean {
   return (
+    a.separateProviders === b.separateProviders &&
     a.apiKey === b.apiKey &&
     a.baseUrl === b.baseUrl &&
     a.sttModel === b.sttModel &&
     a.ttsModel === b.ttsModel &&
     a.ttsVoice === b.ttsVoice &&
     a.playbackMode === b.playbackMode &&
-    a.ttsFormat === b.ttsFormat
+    a.ttsFormat === b.ttsFormat &&
+    isDirectionalDraftEqual(a.stt, b.stt) &&
+    isDirectionalDraftEqual(a.tts, b.tts)
   )
 }
 
@@ -52,6 +90,10 @@ export const SpeechSettingsCard: Component = () => {
   const [drafts, setDrafts] = createSignal<DraftFields>(initialDrafts)
   const [apiKeyTouched, setApiKeyTouched] = createSignal(false)
   const [clearStoredApiKey, setClearStoredApiKey] = createSignal(false)
+  const [sttApiKeyTouched, setSttApiKeyTouched] = createSignal(false)
+  const [clearSttApiKey, setClearSttApiKey] = createSignal(false)
+  const [ttsApiKeyTouched, setTtsApiKeyTouched] = createSignal(false)
+  const [clearTtsApiKey, setClearTtsApiKey] = createSignal(false)
 
   const testSpeech = useSpeech({
     id: () => "settings-speech-test",
@@ -69,12 +111,12 @@ export const SpeechSettingsCard: Component = () => {
       if (!isDraftEqual(drafts(), nextDrafts)) {
         setDrafts(nextDrafts)
       }
-      if (apiKeyTouched()) {
-        setApiKeyTouched(false)
-      }
-      if (clearStoredApiKey()) {
-        setClearStoredApiKey(false)
-      }
+      if (apiKeyTouched()) setApiKeyTouched(false)
+      if (clearStoredApiKey()) setClearStoredApiKey(false)
+      if (sttApiKeyTouched()) setSttApiKeyTouched(false)
+      if (clearSttApiKey()) setClearSttApiKey(false)
+      if (ttsApiKeyTouched()) setTtsApiKeyTouched(false)
+      if (clearTtsApiKey()) setClearTtsApiKey(false)
     }
   })
 
@@ -95,6 +137,23 @@ export const SpeechSettingsCard: Component = () => {
       setClearStoredApiKey(false)
     }
     setDrafts((current) => ({ ...current, [key]: value }))
+  }
+
+  const updateDirectionalDraft = (dir: "stt" | "tts", key: keyof DirectionalDraft, value: string) => {
+    setSaveStatus("idle")
+    if (key === "apiKey") {
+      if (dir === "stt") {
+        setSttApiKeyTouched(true)
+        setClearSttApiKey(false)
+      } else {
+        setTtsApiKeyTouched(true)
+        setClearTtsApiKey(false)
+      }
+    }
+    setDrafts((current) => ({
+      ...current,
+      [dir]: { ...current[dir], [key]: value },
+    }))
   }
 
   const apiKeyDirty = createMemo(() => clearStoredApiKey() || drafts().apiKey.trim().length > 0)
@@ -122,6 +181,26 @@ export const SpeechSettingsCard: Component = () => {
   const isDirty = createMemo(() => {
     const speech = serverSettings().speech
     const current = drafts()
+
+    if (current.separateProviders !== speech.separateProviders) return true
+
+    if (current.separateProviders) {
+      const sttDirty =
+        clearSttApiKey() ||
+        current.stt.apiKey.trim().length > 0 ||
+        (current.stt.baseUrl || "") !== (speech.stt.baseUrl || "") ||
+        current.stt.model !== speech.stt.model
+      const ttsDirty =
+        clearTtsApiKey() ||
+        current.tts.apiKey.trim().length > 0 ||
+        (current.tts.baseUrl || "") !== (speech.tts.baseUrl || "") ||
+        current.tts.model !== speech.tts.model ||
+        current.ttsVoice !== speech.ttsVoice ||
+        current.playbackMode !== speech.playbackMode ||
+        current.ttsFormat !== speech.ttsFormat
+      return sttDirty || ttsDirty
+    }
+
     return (
       apiKeyDirty() ||
       (current.baseUrl || "") !== (speech.baseUrl || "") ||
@@ -146,28 +225,46 @@ export const SpeechSettingsCard: Component = () => {
     setIsSaving(true)
     setSaveStatus("idle")
     try {
-      const trimmedApiKey = current.apiKey.trim()
-      await updateSpeechSettings({
-        ...(clearStoredApiKey() ? { apiKey: null } : trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
-        baseUrl: current.baseUrl.trim() || undefined,
-        sttModel: current.sttModel.trim() || undefined,
-        ttsModel: current.ttsModel.trim() || undefined,
-        ttsVoice: current.ttsVoice.trim() || undefined,
-        playbackMode: current.playbackMode,
-        ttsFormat: current.ttsFormat,
-      })
+      if (current.separateProviders) {
+        const sttApiKeyTrimmed = current.stt.apiKey.trim()
+        const ttsApiKeyTrimmed = current.tts.apiKey.trim()
+        await updateSpeechSettings({
+          separateProviders: true,
+          stt: {
+            ...(clearSttApiKey() ? { apiKey: null } : sttApiKeyTrimmed ? { apiKey: sttApiKeyTrimmed } : {}),
+            baseUrl: current.stt.baseUrl.trim() || undefined,
+            model: current.stt.model.trim() || undefined,
+          },
+          tts: {
+            ...(clearTtsApiKey() ? { apiKey: null } : ttsApiKeyTrimmed ? { apiKey: ttsApiKeyTrimmed } : {}),
+            baseUrl: current.tts.baseUrl.trim() || undefined,
+            model: current.tts.model.trim() || undefined,
+          },
+          ttsVoice: current.ttsVoice.trim() || undefined,
+          playbackMode: current.playbackMode,
+          ttsFormat: current.ttsFormat,
+        } as any)
+      } else {
+        const trimmedApiKey = current.apiKey.trim()
+        await updateSpeechSettings({
+          separateProviders: false,
+          ...(clearStoredApiKey() ? { apiKey: null } : trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
+          baseUrl: current.baseUrl.trim() || undefined,
+          sttModel: current.sttModel.trim() || undefined,
+          ttsModel: current.ttsModel.trim() || undefined,
+          ttsVoice: current.ttsVoice.trim() || undefined,
+          playbackMode: current.playbackMode,
+          ttsFormat: current.ttsFormat,
+        })
+      }
       await loadSpeechCapabilities(true)
-      setDrafts({
-        apiKey: "",
-        baseUrl: current.baseUrl.trim(),
-        sttModel: current.sttModel.trim() || serverSettings().speech.sttModel,
-        ttsModel: current.ttsModel.trim() || serverSettings().speech.ttsModel,
-        ttsVoice: current.ttsVoice.trim() || serverSettings().speech.ttsVoice,
-        playbackMode: current.playbackMode,
-        ttsFormat: current.ttsFormat,
-      })
+      setDrafts(createDraftFields(serverSettings().speech))
       setApiKeyTouched(false)
       setClearStoredApiKey(false)
+      setSttApiKeyTouched(false)
+      setClearSttApiKey(false)
+      setTtsApiKeyTouched(false)
+      setClearTtsApiKey(false)
       setSaveStatus("saved")
     } catch (error) {
       log.error("Failed to save speech settings", error)
@@ -237,57 +334,162 @@ export const SpeechSettingsCard: Component = () => {
           </div>
         </div>
 
-        <Field
-          label={t("settings.speech.apiKey.title")}
-          caption={t("settings.speech.apiKey.subtitle")}
-          value={drafts().apiKey}
-          onInput={(value) => updateDraft("apiKey", value)}
-          type="password"
-          placeholder={serverSettings().speech.hasApiKey ? t("settings.speech.apiKey.placeholder") : undefined}
-        />
-        <Show when={serverSettings().speech.hasApiKey && !apiKeyTouched() && drafts().apiKey.length === 0}>
-          <div class="settings-inline-note">
-            {clearStoredApiKey() ? t("settings.speech.apiKey.clearPending") : t("settings.speech.apiKey.storedNote")}{" "}
-            <Show when={!clearStoredApiKey()}>
-              <button
-                type="button"
-                class="selector-button selector-button-secondary w-auto whitespace-nowrap"
-                onClick={() => {
-                  setClearStoredApiKey(true)
-                  setSaveStatus("idle")
-                }}
-              >
-                {t("settings.speech.apiKey.clearAction")}
-              </button>
-            </Show>
+        <div class="settings-toggle-row settings-toggle-row-compact">
+          <div>
+            <div class="settings-toggle-title">{t("settings.speech.separateProviders.title")}</div>
+            <div class="settings-toggle-caption">{t("settings.speech.separateProviders.subtitle")}</div>
           </div>
+          <button
+            type="button"
+            class="settings-toggle-switch"
+            role="switch"
+            aria-checked={drafts().separateProviders}
+            onClick={() => {
+              setSaveStatus("idle")
+              setDrafts((current) => ({ ...current, separateProviders: !current.separateProviders }))
+            }}
+          >
+            <span class="settings-toggle-thumb" data-on={drafts().separateProviders} />
+          </button>
+        </div>
+
+        <Show when={!drafts().separateProviders}>
+          <Field
+            label={t("settings.speech.apiKey.title")}
+            caption={t("settings.speech.apiKey.subtitle")}
+            value={drafts().apiKey}
+            onInput={(value) => updateDraft("apiKey", value)}
+            type="password"
+            placeholder={serverSettings().speech.hasApiKey ? t("settings.speech.apiKey.placeholder") : undefined}
+          />
+          <Show when={serverSettings().speech.hasApiKey && !apiKeyTouched() && drafts().apiKey.length === 0}>
+            <div class="settings-inline-note">
+              {clearStoredApiKey() ? t("settings.speech.apiKey.clearPending") : t("settings.speech.apiKey.storedNote")}{" "}
+              <Show when={!clearStoredApiKey()}>
+                <button
+                  type="button"
+                  class="selector-button selector-button-secondary w-auto whitespace-nowrap"
+                  onClick={() => { setClearStoredApiKey(true); setSaveStatus("idle") }}
+                >
+                  {t("settings.speech.apiKey.clearAction")}
+                </button>
+              </Show>
+            </div>
+          </Show>
+          <Field
+            label={t("settings.speech.baseUrl.title")}
+            caption={t("settings.speech.baseUrl.subtitle")}
+            value={drafts().baseUrl}
+            onInput={(value) => updateDraft("baseUrl", value)}
+            placeholder={t("settings.speech.baseUrl.placeholder")}
+          />
+          <Field
+            label={t("settings.speech.sttModel.title")}
+            caption={t("settings.speech.sttModel.subtitle")}
+            value={drafts().sttModel}
+            onInput={(value) => updateDraft("sttModel", value)}
+          />
+          <Field
+            label={t("settings.speech.ttsModel.title")}
+            caption={t("settings.speech.ttsModel.subtitle")}
+            value={drafts().ttsModel}
+            onInput={(value) => updateDraft("ttsModel", value)}
+          />
+          <Field
+            label={t("settings.speech.ttsVoice.title")}
+            caption={t("settings.speech.ttsVoice.subtitle")}
+            value={drafts().ttsVoice}
+            onInput={(value) => updateDraft("ttsVoice", value)}
+            icon={<Mic class="w-3.5 h-3.5 icon-muted flex-shrink-0" />}
+          />
         </Show>
-        <Field
-          label={t("settings.speech.baseUrl.title")}
-          caption={t("settings.speech.baseUrl.subtitle")}
-          value={drafts().baseUrl}
-          onInput={(value) => updateDraft("baseUrl", value)}
-          placeholder={t("settings.speech.baseUrl.placeholder")}
-        />
-        <Field
-          label={t("settings.speech.sttModel.title")}
-          caption={t("settings.speech.sttModel.subtitle")}
-          value={drafts().sttModel}
-          onInput={(value) => updateDraft("sttModel", value)}
-        />
-        <Field
-          label={t("settings.speech.ttsModel.title")}
-          caption={t("settings.speech.ttsModel.subtitle")}
-          value={drafts().ttsModel}
-          onInput={(value) => updateDraft("ttsModel", value)}
-        />
-        <Field
-          label={t("settings.speech.ttsVoice.title")}
-          caption={t("settings.speech.ttsVoice.subtitle")}
-          value={drafts().ttsVoice}
-          onInput={(value) => updateDraft("ttsVoice", value)}
-          icon={<Mic class="w-3.5 h-3.5 icon-muted flex-shrink-0" />}
-        />
+
+        <Show when={drafts().separateProviders}>
+          <div class="settings-card-section-header">
+            <h4 class="settings-card-section-title">{t("settings.speech.stt.section.title")}</h4>
+          </div>
+          <Field
+            label={t("settings.speech.stt.apiKey.title")}
+            caption={t("settings.speech.stt.apiKey.subtitle")}
+            value={drafts().stt.apiKey}
+            onInput={(value) => updateDirectionalDraft("stt", "apiKey", value)}
+            type="password"
+            placeholder={serverSettings().speech.stt.hasApiKey ? t("settings.speech.stt.apiKey.placeholder") : undefined}
+          />
+          <Show when={serverSettings().speech.stt.hasApiKey && !sttApiKeyTouched() && drafts().stt.apiKey.length === 0}>
+            <div class="settings-inline-note">
+              {clearSttApiKey() ? t("settings.speech.stt.apiKey.clearPending") : t("settings.speech.stt.apiKey.storedNote")}{" "}
+              <Show when={!clearSttApiKey()}>
+                <button
+                  type="button"
+                  class="selector-button selector-button-secondary w-auto whitespace-nowrap"
+                  onClick={() => { setClearSttApiKey(true); setSaveStatus("idle") }}
+                >
+                  {t("settings.speech.stt.apiKey.clearAction")}
+                </button>
+              </Show>
+            </div>
+          </Show>
+          <Field
+            label={t("settings.speech.stt.baseUrl.title")}
+            caption={t("settings.speech.stt.baseUrl.subtitle")}
+            value={drafts().stt.baseUrl}
+            onInput={(value) => updateDirectionalDraft("stt", "baseUrl", value)}
+            placeholder={t("settings.speech.stt.baseUrl.placeholder")}
+          />
+          <Field
+            label={t("settings.speech.stt.model.title")}
+            caption={t("settings.speech.stt.model.subtitle")}
+            value={drafts().stt.model}
+            onInput={(value) => updateDirectionalDraft("stt", "model", value)}
+          />
+
+          <div class="settings-card-section-header">
+            <h4 class="settings-card-section-title">{t("settings.speech.tts.section.title")}</h4>
+          </div>
+          <Field
+            label={t("settings.speech.tts.apiKey.title")}
+            caption={t("settings.speech.tts.apiKey.subtitle")}
+            value={drafts().tts.apiKey}
+            onInput={(value) => updateDirectionalDraft("tts", "apiKey", value)}
+            type="password"
+            placeholder={serverSettings().speech.tts.hasApiKey ? t("settings.speech.tts.apiKey.placeholder") : undefined}
+          />
+          <Show when={serverSettings().speech.tts.hasApiKey && !ttsApiKeyTouched() && drafts().tts.apiKey.length === 0}>
+            <div class="settings-inline-note">
+              {clearTtsApiKey() ? t("settings.speech.tts.apiKey.clearPending") : t("settings.speech.tts.apiKey.storedNote")}{" "}
+              <Show when={!clearTtsApiKey()}>
+                <button
+                  type="button"
+                  class="selector-button selector-button-secondary w-auto whitespace-nowrap"
+                  onClick={() => { setClearTtsApiKey(true); setSaveStatus("idle") }}
+                >
+                  {t("settings.speech.tts.apiKey.clearAction")}
+                </button>
+              </Show>
+            </div>
+          </Show>
+          <Field
+            label={t("settings.speech.tts.baseUrl.title")}
+            caption={t("settings.speech.tts.baseUrl.subtitle")}
+            value={drafts().tts.baseUrl}
+            onInput={(value) => updateDirectionalDraft("tts", "baseUrl", value)}
+            placeholder={t("settings.speech.tts.baseUrl.placeholder")}
+          />
+          <Field
+            label={t("settings.speech.tts.model.title")}
+            caption={t("settings.speech.tts.model.subtitle")}
+            value={drafts().tts.model}
+            onInput={(value) => updateDirectionalDraft("tts", "model", value)}
+          />
+          <Field
+            label={t("settings.speech.ttsVoice.title")}
+            caption={t("settings.speech.ttsVoice.subtitle")}
+            value={drafts().ttsVoice}
+            onInput={(value) => updateDraft("ttsVoice", value)}
+            icon={<Mic class="w-3.5 h-3.5 icon-muted flex-shrink-0" />}
+          />
+        </Show>
         <SelectField
           label={t("settings.speech.playbackMode.title")}
           caption={t("settings.speech.playbackMode.subtitle")}
