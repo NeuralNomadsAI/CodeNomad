@@ -4,6 +4,7 @@ import ExpandButton from "./expand-button"
 import { clearAttachments, removeAttachment } from "../stores/attachments"
 import { createPastedPlaceholderRegex, pastedDisplayCounterRegex } from "./prompt-input/attachmentPlaceholders"
 import { preparePromptSubmission } from "./prompt-input/submitPrompt"
+import { focusConversationStream } from "./focus-conversation"
 import Kbd from "./kbd"
 import { getActiveInstance } from "../stores/instances"
 import { agents, executeCustomCommand } from "../stores/sessions"
@@ -325,11 +326,6 @@ export default function PromptInput(props: PromptInputProps) {
     ),
   )
 
-  const isCoarsePointer = () => {
-    if (typeof window === "undefined") return false
-    return Boolean(window.matchMedia?.("(pointer: coarse)")?.matches)
-  }
-
   const isTouchOnlyPointer = () => {
     if (typeof window === "undefined") return false
     return Boolean(window.matchMedia?.("(pointer: coarse)")?.matches && !window.matchMedia?.("(any-pointer: fine)")?.matches)
@@ -338,7 +334,7 @@ export default function PromptInput(props: PromptInputProps) {
   createEffect(() => {
     // Scope global "type-to-focus" behavior to the active, visible prompt only.
     if (typeof document === "undefined") return
-    if (isCoarsePointer()) return
+    if (isTouchOnlyPointer()) return
     if (props.isActive === false) return
     if (props.disabled) return
 
@@ -386,6 +382,13 @@ export default function PromptInput(props: PromptInputProps) {
 
       // In session cache mode inactive panes are display:none; avoid stealing focus.
       if (textarea.offsetParent === null) return
+
+      if (e.key === "!" && prompt().length === 0) {
+        e.preventDefault()
+        setMode("shell")
+        textarea.focus()
+        return
+      }
 
       if (e.key.length === 1) {
         textarea.focus()
@@ -453,20 +456,6 @@ export default function PromptInput(props: PromptInputProps) {
     resizeDragState = undefined
   })
 
-  function focusMessageStream() {
-    const stream = wrapperRef?.closest(".session-view")?.querySelector<HTMLElement>(".message-stream")
-    if (!stream) return
-    try {
-      stream.focus({ preventScroll: true })
-    } catch {
-      try {
-        stream.focus()
-      } catch {
-        // Focus support varies across embedded webviews.
-      }
-    }
-  }
-
   async function handleSend() {
     const text = prompt().trim()
     const currentAttachments = attachments()
@@ -526,6 +515,10 @@ export default function PromptInput(props: PromptInputProps) {
       void refreshHistory()
     }
 
+    if (!isTouchOnlyPointer()) {
+      focusConversationStream(wrapperRef?.closest(".session-view"))
+    }
+
     try {
       if (isShellMode) {
         if (props.onRunShell) {
@@ -556,10 +549,6 @@ export default function PromptInput(props: PromptInputProps) {
         textareaRef?.focus()
       }
       return
-    }
-
-    if (!isTouchOnlyPointer()) {
-      focusMessageStream()
     }
   }
 
@@ -758,12 +747,6 @@ export default function PromptInput(props: PromptInputProps) {
       selectNextHistory({ force, isPickerOpen: showPicker(), getTextarea: () => textareaRef ?? null }),
   })
 
-  function handlePromptKeyDown(event: KeyboardEvent) {
-    handleKeyDown(event)
-    if (event.key !== "Escape" || event.defaultPrevented) return
-    focusMessageStream()
-  }
-
   const shouldShowOverlay = () => prompt().length === 0
   const voiceInput = usePromptVoiceInput({
     prompt,
@@ -877,7 +860,7 @@ export default function PromptInput(props: PromptInputProps) {
                 placeholder={getPlaceholder()}
                 value={prompt()}
                 onInput={handleInput}
-                onKeyDown={handlePromptKeyDown}
+                onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
                 onFocus={() => setIsFocused(true)}
                 onBlur={() => setIsFocused(false)}
