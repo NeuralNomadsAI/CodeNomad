@@ -72,11 +72,11 @@ describe("SpeechService direction resolution", () => {
       assert.equal(caps.ttsBaseUrl, "https://api.openai.com/v1")
     })
 
-    it("reports partial config when only STT has apiKey", () => {
+    it("reports partial config when only STT has complete directional pair", () => {
       const settings = createMockSettings({
         speech: {
           separateProviders: true,
-          stt: { apiKey: "sk-groq" },
+          stt: { apiKey: "sk-groq", baseUrl: "https://api.groq.com/openai/v1" },
         },
       })
       const service = new SpeechService(settings, mockLogger)
@@ -87,10 +87,28 @@ describe("SpeechService direction resolution", () => {
       assert.equal(caps.configured, false)
     })
 
-    it("does NOT fall back to shared apiKey when directional baseUrl is set", () => {
+    it("does NOT combine directional key with shared URL (incomplete pair)", () => {
       const settings = createMockSettings({
         speech: {
           apiKey: "sk-shared",
+          baseUrl: "https://api.openai.com/v1",
+          separateProviders: true,
+          stt: { apiKey: "sk-groq" },
+          tts: { apiKey: "sk-deepseek" },
+        },
+      })
+      const service = new SpeechService(settings, mockLogger)
+      const caps = service.getCapabilities()
+
+      assert.equal(caps.sttConfigured, false, "directional key without directional URL should not be configured")
+      assert.equal(caps.ttsConfigured, false)
+    })
+
+    it("does NOT combine shared key with directional URL (incomplete pair)", () => {
+      const settings = createMockSettings({
+        speech: {
+          apiKey: "sk-shared",
+          baseUrl: "https://api.openai.com/v1",
           separateProviders: true,
           stt: { baseUrl: "https://api.groq.com/openai/v1" },
           tts: { baseUrl: "https://api.openai.com/v1" },
@@ -103,13 +121,12 @@ describe("SpeechService direction resolution", () => {
       assert.equal(caps.ttsConfigured, false)
     })
 
-    it("falls back to shared apiKey when directional baseUrl is NOT set", () => {
+    it("inherits complete shared pair when neither directional value is set", () => {
       const settings = createMockSettings({
         speech: {
           apiKey: "sk-shared",
+          baseUrl: "https://api.openai.com/v1",
           separateProviders: true,
-          stt: { apiKey: "sk-stt" },
-          tts: { apiKey: "sk-tts" },
         },
       })
       const service = new SpeechService(settings, mockLogger)
@@ -117,6 +134,24 @@ describe("SpeechService direction resolution", () => {
 
       assert.equal(caps.sttConfigured, true)
       assert.equal(caps.ttsConfigured, true)
+    })
+
+    it("uses complete directional pair when both key and URL are set", () => {
+      const settings = createMockSettings({
+        speech: {
+          apiKey: "sk-shared",
+          baseUrl: "https://api.openai.com/v1",
+          separateProviders: true,
+          stt: { apiKey: "sk-groq", baseUrl: "https://api.groq.com/openai/v1" },
+          tts: { apiKey: "sk-openai", baseUrl: "https://api.openai.com/v1" },
+        },
+      })
+      const service = new SpeechService(settings, mockLogger)
+      const caps = service.getCapabilities()
+
+      assert.equal(caps.sttConfigured, true)
+      assert.equal(caps.ttsConfigured, true)
+      assert.equal(caps.sttBaseUrl, "https://api.groq.com/openai/v1")
     })
 
     it("falls back to shared sttModel/ttsModel when per-direction model is absent", () => {

@@ -29,9 +29,7 @@ export function useTranscriptionTest() {
     return Boolean(isSupported() && capabilities?.available && capabilities?.sttConfigured && capabilities?.supportsStt)
   }
 
-  const cleanup = () => {
-    disposed = true
-    requestGeneration += 1
+  const stopRecorderAndTracks = () => {
     if (mediaRecorder && mediaRecorder.state !== "inactive") {
       mediaRecorder.stop()
     }
@@ -42,7 +40,9 @@ export function useTranscriptionTest() {
   }
 
   onCleanup(() => {
-    cleanup()
+    disposed = true
+    requestGeneration += 1
+    stopRecorderAndTracks()
   })
 
   const startRecording = async () => {
@@ -93,15 +93,14 @@ export function useTranscriptionTest() {
       setState("recording")
       recorder.start()
     } catch (error) {
-      if (generation === requestGeneration) {
-        cleanup()
-        setState("idle")
-        showAlertDialog(t("promptInput.voiceInput.error.permission"), {
-          title: t("promptInput.voiceInput.error.title"),
-          detail: error instanceof Error ? error.message : String(error),
-          variant: "error",
-        })
-      }
+      if (generation !== requestGeneration) return
+      stopRecorderAndTracks()
+      setState("idle")
+      showAlertDialog(t("promptInput.voiceInput.error.permission"), {
+        title: t("promptInput.voiceInput.error.title"),
+        detail: error instanceof Error ? error.message : String(error),
+        variant: "error",
+      })
     }
   }
 
@@ -120,7 +119,7 @@ export function useTranscriptionTest() {
     mediaRecorder = null
 
     if (generation !== requestGeneration || chunks.length === 0) {
-      setState("idle")
+      if (generation === requestGeneration) setState("idle")
       return
     }
 
@@ -168,7 +167,7 @@ export function useTranscriptionTest() {
     isTranscribing: () => state() === "transcribing",
     toggle,
     buttonTitle: () => {
-      if (state() === "requesting") return t("settings.speech.testInput.transcribing")
+      if (state() === "requesting") return t("settings.speech.testInput.requesting")
       if (state() === "recording") return t("settings.speech.testInput.stop")
       if (state() === "transcribing") return t("settings.speech.testInput.transcribing")
       return t("settings.speech.testInput.action")

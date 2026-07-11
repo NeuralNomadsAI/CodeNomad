@@ -324,7 +324,7 @@ function normalizeSpeechSettings(input?: Partial<SpeechSettings> | null): Speech
     separateProviders: sanitized.separateProviders === true,
     stt: {
       apiKey: typeof sanitized.stt?.apiKey === "string" && sanitized.stt.apiKey.trim() ? sanitized.stt.apiKey.trim() : undefined,
-      hasApiKey: sanitized.stt?.hasApiKey === true,
+      hasApiKey: sanitized.stt?.hasApiKey === true || (typeof sanitized.stt?.apiKey === "string" && sanitized.stt.apiKey.trim().length > 0),
       baseUrl: typeof sanitized.stt?.baseUrl === "string" && sanitized.stt.baseUrl.trim() ? sanitized.stt.baseUrl.trim() : undefined,
       model:
         typeof sanitized.stt?.model === "string" && sanitized.stt.model.trim()
@@ -333,7 +333,7 @@ function normalizeSpeechSettings(input?: Partial<SpeechSettings> | null): Speech
     },
     tts: {
       apiKey: typeof sanitized.tts?.apiKey === "string" && sanitized.tts.apiKey.trim() ? sanitized.tts.apiKey.trim() : undefined,
-      hasApiKey: sanitized.tts?.hasApiKey === true,
+      hasApiKey: sanitized.tts?.hasApiKey === true || (typeof sanitized.tts?.apiKey === "string" && sanitized.tts.apiKey.trim().length > 0),
       baseUrl: typeof sanitized.tts?.baseUrl === "string" && sanitized.tts.baseUrl.trim() ? sanitized.tts.baseUrl.trim() : undefined,
       model:
         typeof sanitized.tts?.model === "string" && sanitized.tts.model.trim()

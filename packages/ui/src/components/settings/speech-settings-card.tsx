@@ -124,7 +124,13 @@ export const SpeechSettingsCard: Component = () => {
   const capabilityLabel = () => {
     if (speechCapabilitiesLoading()) return t("settings.speech.status.loading")
     if (speechCapabilitiesError()) return t("settings.speech.status.error")
-    return speechCapabilities()?.configured ? t("settings.speech.status.configured") : t("settings.speech.status.missing")
+    const caps = speechCapabilities()
+    if (caps?.separateProviders) {
+      if (caps.sttConfigured && caps.ttsConfigured) return t("settings.speech.status.configured")
+      if (caps.sttConfigured || caps.ttsConfigured) return t("settings.speech.status.partial")
+      return t("settings.speech.status.missing")
+    }
+    return caps?.configured ? t("settings.speech.status.configured") : t("settings.speech.status.missing")
   }
 
   const updateDraft = (key: keyof DraftFields, value: string) => {
@@ -302,7 +308,7 @@ export const SpeechSettingsCard: Component = () => {
               type="button"
               class="selector-button selector-button-secondary w-auto whitespace-nowrap inline-flex items-center gap-2"
               onClick={() => void testTranscription.toggle()}
-              disabled={isSaving() || testTranscription.state() !== "idle" || !testTranscription.canUseTranscription()}
+              disabled={isSaving() || testTranscription.state() === "requesting" || testTranscription.state() === "transcribing" || (testTranscription.state() === "idle" && !testTranscription.canUseTranscription())}
               title={testTranscription.buttonTitle()}
               aria-label={testTranscription.buttonTitle()}
             >
@@ -377,18 +383,8 @@ export const SpeechSettingsCard: Component = () => {
               type="checkbox"
               checked={drafts().separateProviders}
               onChange={(event) => {
-                const next = event.currentTarget.checked
                 setSaveStatus("idle")
-                setApiKeyTouched(false)
-                setClearStoredApiKey(false)
-                setSttApiKeyTouched(false)
-                setClearSttApiKey(false)
-                setTtsApiKeyTouched(false)
-                setClearTtsApiKey(false)
-                setDrafts(() => {
-                  const base = createDraftFields(serverSettings().speech)
-                  return { ...base, separateProviders: next }
-                })
+                setDrafts((current) => ({ ...current, separateProviders: event.currentTarget.checked }))
               }}
             />
             <span>{t("settings.common.enabled")}</span>

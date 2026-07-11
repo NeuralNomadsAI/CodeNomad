@@ -172,11 +172,18 @@ export class SpeechService {
     const stt = speech.stt ?? {}
     const dirBaseUrl = stt.baseUrl?.trim() || undefined
     const dirApiKey = stt.apiKey?.trim() || undefined
-    const hasDirectionalUrl = Boolean(dirBaseUrl)
+    const hasCompleteDirectional = Boolean(dirApiKey) && Boolean(dirBaseUrl)
+    const hasNoDirectional = !dirApiKey && !dirBaseUrl
     return {
       provider: speech.provider?.trim() || DEFAULT_PROVIDER,
-      apiKey: dirApiKey || (hasDirectionalUrl ? undefined : speech.apiKey?.trim() || process.env.OPENAI_API_KEY),
-      baseUrl: dirBaseUrl || speech.baseUrl?.trim() || process.env.OPENAI_BASE_URL || undefined,
+      apiKey: hasCompleteDirectional
+        ? dirApiKey
+        : hasNoDirectional
+          ? speech.apiKey?.trim() || process.env.OPENAI_API_KEY
+          : undefined,
+      baseUrl: hasCompleteDirectional || hasNoDirectional
+        ? (dirBaseUrl || speech.baseUrl?.trim() || process.env.OPENAI_BASE_URL || undefined)
+        : dirBaseUrl || undefined,
       sttModel: stt.model?.trim() || speech.sttModel?.trim() || DEFAULT_STT_MODEL,
       ttsModel: speech.ttsModel?.trim() || DEFAULT_TTS_MODEL,
       ttsVoice: speech.ttsVoice?.trim() || DEFAULT_TTS_VOICE,
@@ -191,11 +198,18 @@ export class SpeechService {
     const tts = speech.tts ?? {}
     const dirBaseUrl = tts.baseUrl?.trim() || undefined
     const dirApiKey = tts.apiKey?.trim() || undefined
-    const hasDirectionalUrl = Boolean(dirBaseUrl)
+    const hasCompleteDirectional = Boolean(dirApiKey) && Boolean(dirBaseUrl)
+    const hasNoDirectional = !dirApiKey && !dirBaseUrl
     return {
       provider: speech.provider?.trim() || DEFAULT_PROVIDER,
-      apiKey: dirApiKey || (hasDirectionalUrl ? undefined : speech.apiKey?.trim() || process.env.OPENAI_API_KEY),
-      baseUrl: dirBaseUrl || speech.baseUrl?.trim() || process.env.OPENAI_BASE_URL || undefined,
+      apiKey: hasCompleteDirectional
+        ? dirApiKey
+        : hasNoDirectional
+          ? speech.apiKey?.trim() || process.env.OPENAI_API_KEY
+          : undefined,
+      baseUrl: hasCompleteDirectional || hasNoDirectional
+        ? (dirBaseUrl || speech.baseUrl?.trim() || process.env.OPENAI_BASE_URL || undefined)
+        : dirBaseUrl || undefined,
       sttModel: speech.sttModel?.trim() || DEFAULT_STT_MODEL,
       ttsModel: tts.model?.trim() || speech.ttsModel?.trim() || DEFAULT_TTS_MODEL,
       ttsVoice: speech.ttsVoice?.trim() || DEFAULT_TTS_VOICE,
