@@ -23,7 +23,7 @@ import { getPartCharCount } from "../lib/token-utils"
 import { buildSessionSearchMatches } from "../lib/session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
 import { resolveThinkingExpansionDefault } from "./tool-call/tool-registry"
-import { collectToolDeletionCompanionPartIds } from "./tool-deletion-companions"
+import { collectToolDeletionCompanionPartIds, executeBulkDeletionPlan } from "./tool-deletion-companions"
 
 const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 const QUOTE_SELECTION_MAX_LENGTH = 2000
@@ -664,18 +664,19 @@ export default function MessageSection(props: MessageSectionProps) {
     const companionParts = deleteCompanionParts()
 
     try {
-      for (const messageId of toDelete) {
-        await deleteMessage(props.instanceId, props.sessionId, messageId)
-      }
-      for (const { messageId, partId } of toolParts) {
-        if (!allowed.has(messageId)) continue
-        await deleteMessagePart(props.instanceId, props.sessionId, messageId, partId)
-      }
-      for (const { messageId, partId } of companionParts) {
-        if (!allowed.has(messageId)) continue
-        await deleteMessagePart(props.instanceId, props.sessionId, messageId, partId)
-      }
-      clearDeleteMode()
+      await executeBulkDeletionPlan(
+        {
+          messageIds: toDelete,
+          companionParts: companionParts.filter(({ messageId }) => allowed.has(messageId)),
+          toolParts: toolParts.filter(({ messageId }) => allowed.has(messageId)),
+        },
+        {
+          clearSelection: clearDeleteMode,
+          deleteMessage: (messageId) => deleteMessage(props.instanceId, props.sessionId, messageId),
+          deletePart: ({ messageId, partId }) =>
+            deleteMessagePart(props.instanceId, props.sessionId, messageId, partId),
+        },
+      )
     } catch (error) {
       showAlertDialog(t("messageSection.bulkDelete.failedMessage"), {
         title: t("messageSection.bulkDelete.failedTitle"),
