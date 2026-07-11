@@ -235,18 +235,18 @@ export const SpeechSettingsCard: Component = () => {
           separateProviders: true,
           stt: {
             ...(clearSttApiKey() ? { apiKey: null } : sttApiKeyTrimmed ? { apiKey: sttApiKeyTrimmed } : {}),
-            baseUrl: current.stt.baseUrl.trim() || undefined,
-            model: current.stt.model.trim() || undefined,
+            baseUrl: current.stt.baseUrl.trim(),
+            model: current.stt.model.trim(),
           },
           tts: {
             ...(clearTtsApiKey() ? { apiKey: null } : ttsApiKeyTrimmed ? { apiKey: ttsApiKeyTrimmed } : {}),
-            baseUrl: current.tts.baseUrl.trim() || undefined,
-            model: current.tts.model.trim() || undefined,
+            baseUrl: current.tts.baseUrl.trim(),
+            model: current.tts.model.trim(),
           },
           ttsVoice: current.ttsVoice.trim() || undefined,
           playbackMode: current.playbackMode,
           ttsFormat: current.ttsFormat,
-        } as any)
+        })
       } else {
         const trimmedApiKey = current.apiKey.trim()
         await updateSpeechSettings({
