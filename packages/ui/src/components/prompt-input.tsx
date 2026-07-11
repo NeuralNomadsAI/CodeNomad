@@ -374,6 +374,8 @@ export default function PromptInput(props: PromptInputProps) {
       const isSpecialKey =
         e.key === "Tab" ||
         e.key === "Enter" ||
+        e.key === " " ||
+        e.key === "Spacebar" ||
         e.key.startsWith("Arrow") ||
         e.key === "Backspace" ||
         e.key === "Delete"
@@ -450,6 +452,20 @@ export default function PromptInput(props: PromptInputProps) {
   onCleanup(() => {
     resizeDragState = undefined
   })
+
+  function focusMessageStream() {
+    const stream = wrapperRef?.closest(".session-view")?.querySelector<HTMLElement>(".message-stream")
+    if (!stream) return
+    try {
+      stream.focus({ preventScroll: true })
+    } catch {
+      try {
+        stream.focus()
+      } catch {
+        // Focus support varies across embedded webviews.
+      }
+    }
+  }
 
   async function handleSend() {
     const text = prompt().trim()
@@ -536,10 +552,14 @@ export default function PromptInput(props: PromptInputProps) {
         detail: error instanceof Error ? error.message : String(error),
         variant: "error",
       })
-    } finally {
       if (!isTouchOnlyPointer()) {
         textareaRef?.focus()
       }
+      return
+    }
+
+    if (!isTouchOnlyPointer()) {
+      focusMessageStream()
     }
   }
 
@@ -741,7 +761,7 @@ export default function PromptInput(props: PromptInputProps) {
   function handlePromptKeyDown(event: KeyboardEvent) {
     handleKeyDown(event)
     if (event.key !== "Escape" || event.defaultPrevented) return
-    wrapperRef?.closest(".session-view")?.querySelector<HTMLElement>(".message-stream")?.focus()
+    focusMessageStream()
   }
 
   const shouldShowOverlay = () => prompt().length === 0
