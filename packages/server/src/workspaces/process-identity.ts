@@ -22,7 +22,7 @@ export interface GuardedSignalRequest {
 
 export type GuardedSignalResult =
   | { ok: true; matched: boolean; signalSent: boolean; signaled: ProcessIdentity[]; cutoff?: string }
-  | { ok: false; error: string }
+  | { ok: false; error: string; observed?: ProcessIdentity[] }
 
 type SpawnCommand = typeof spawnSync
 
@@ -228,28 +228,32 @@ function snapshotOrFailure(processes: Map<number, ProcessIdentity> | null): Proc
 }
 
 function parseGuardedResult(result: SpawnSyncReturns<string>): GuardedSignalResult {
-  if (result.status !== 0) return { ok: false, error: commandError(result) }
   const signaled = new Map<number, ProcessIdentity>()
+  const failure = (error: string): GuardedSignalResult => ({
+    ok: false,
+    error,
+    ...(signaled.size > 0 ? { observed: Array.from(signaled.values()) } : {}),
+  })
   let matched: boolean | undefined
   let signalSent = false
   let cutoff: string | undefined
   for (const line of String(result.stdout ?? "").split(/\r?\n/)) {
     if (line.startsWith("CODENOMAD_TARGET|")) {
       const parsed = parseDelimitedSnapshot(line.slice("CODENOMAD_TARGET|".length))
-      if (!parsed) return { ok: false, error: "guarded signal command returned a malformed target record" }
+      if (!parsed) return failure("guarded signal command returned a malformed target record")
       for (const identity of parsed.values()) signaled.set(identity.pid, identity)
       continue
     }
     if (line.startsWith("CODENOMAD_TARGET_B64|")) {
       const parsed = parseBase64Snapshot(line, "CODENOMAD_TARGET_B64|")
-      if (!parsed) return { ok: false, error: "guarded signal command returned a malformed target record" }
+      if (!parsed) return failure("guarded signal command returned a malformed target record")
       for (const identity of parsed.values()) signaled.set(identity.pid, identity)
       continue
     }
     if (line.startsWith("CODENOMAD_RESULT|")) {
       const fields = line.split("|")
       if (fields.length !== 4 || !/^[01]$/.test(fields[1] ?? "") || !/^[01]$/.test(fields[3] ?? "")) {
-        return { ok: false, error: "guarded signal command returned a malformed result record" }
+        return failure("guarded signal command returned a malformed result record")
       }
       const [, matchedText, cutoffText, signalSentText] = fields
       matched = matchedText === "1"
@@ -257,10 +261,11 @@ function parseGuardedResult(result: SpawnSyncReturns<string>): GuardedSignalResu
       signalSent = signalSentText === "1"
       continue
     }
-    if (line) return { ok: false, error: "guarded signal command returned unexpected output" }
+    if (line) return failure("guarded signal command returned unexpected output")
   }
+  if (result.status !== 0) return failure(commandError(result))
   return matched === undefined
-    ? { ok: false, error: "guarded signal command returned no structured result" }
+    ? failure("guarded signal command returned no structured result")
     : { ok: true, matched, signalSent, signaled: Array.from(signaled.values()), ...(cutoff ? { cutoff } : {}) }
 }
 
@@ -324,6 +329,8 @@ function buildWindowsGuardedScript(request: GuardedSignalRequest): string {
     "foreach ($process in $selected) {",
     "  $start = Get-CodeNomadStart $process",
     "  '{0}|{1}|0|{2}||{2}' -f [int]$process.ProcessId, [int]$process.ParentProcessId, $start | ForEach-Object { 'CODENOMAD_TARGET|' + $_ }",
+    "}",
+    "foreach ($process in $selected) {",
     "  Invoke-CimMethod -InputObject $process -MethodName Terminate -Arguments @{ Reason = 1 } -ErrorAction Stop | Out-Null",
     "}",
     "'CODENOMAD_RESULT|' + ($(if ($matched) { '1' } else { '0' })) + '||' + ($(if ($selected.Count -gt 0) { '1' } else { '0' }))",

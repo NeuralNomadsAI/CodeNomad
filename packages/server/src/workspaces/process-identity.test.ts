@@ -181,7 +181,29 @@ describe("process identity probes", () => {
     const script = invocations[0]?.args.at(-1) ?? ""
     assert.match(script, /CreationDate/)
     assert.match(script, /Invoke-CimMethod -InputObject/)
+    assert.equal(script.match(/foreach \(\$process in \$selected\)/g)?.length, 2)
+    assert.ok(script.indexOf("CODENOMAD_TARGET|") < script.indexOf("Invoke-CimMethod"))
     assert.doesNotMatch(script, /taskkill/i)
+  })
+
+  it("preserves observed Windows targets when guarded termination fails partway", () => {
+    const identity: ProcessIdentity = { pid: 4242, parentPid: 1, groupId: 4242, startTime: "created" }
+    const guarded = signalWindowsProcesses((() => result(
+      [
+        "CODENOMAD_TARGET|4242|1|0|created||99",
+        "CODENOMAD_TARGET|4243|4242|0|descendant||100",
+      ].join("\n"),
+      1,
+      "termination failed",
+    )) as unknown as SpawnCommand, {
+      leader: identity,
+      groupId: 4242,
+      members: [identity],
+      signal: "SIGTERM",
+    }, 25)
+
+    assert.equal(guarded.ok, false)
+    assert.deepEqual(!guarded.ok && guarded.observed?.map((target) => target.pid), [4242, 4243])
   })
 
   it("reports command failures without fabricating identities", () => {

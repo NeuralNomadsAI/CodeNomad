@@ -276,7 +276,7 @@ export class WorkspaceRuntime {
           : {}),
       }
       this.processes.set(options.workspaceId, managed)
-      if (spec.processKind === "posix" || spec.processKind === "wsl") {
+      if (spec.processKind === "posix" || spec.processKind === "wsl" || spec.processKind === "windows-direct") {
         const launchSnapshot = child.pid
           ? this.platform === "win32"
             ? probeWindowsProcesses(this.spawnCommand, this.stopCommandTimeoutMs)
@@ -540,7 +540,7 @@ export class WorkspaceRuntime {
     const child = managed.child
     this.logger.info({ workspaceId }, "Stopping OpenCode process")
 
-    if (managed.processKind === "windows-direct" || managed.processKind === "windows-wrapper") {
+    if (managed.processKind === "windows-wrapper") {
       return this.stopOwnedWindowsProcess(workspaceId, managed)
     }
 
@@ -678,6 +678,7 @@ export class WorkspaceRuntime {
       signal: NodeJS.Signals,
     ) => {
       if (!result.ok) {
+        for (const identity of result.observed ?? []) target.members.set(identity.pid, identity)
         failures.push(`${platformName} guarded ${signal} failed: ${result.error}`)
         return
       }
@@ -885,10 +886,7 @@ export class WorkspaceRuntime {
   private stopOwnedWindowsProcess(workspaceId: string, managed: ManagedProcess): Promise<void> {
     const child = managed.child
     const pid = child.pid
-    const isWrapper = managed.processKind === "windows-wrapper"
-    const failures = isWrapper
-      ? (managed.windowsTreeCleanupFailures ??= [])
-      : []
+    const failures = (managed.windowsTreeCleanupFailures ??= [])
 
     return new Promise<void>((resolve, reject) => {
       let escalationTimer: RuntimeTimeout | null = null
@@ -916,7 +914,7 @@ export class WorkspaceRuntime {
         reject(new WorkspaceWindowsTreeCleanupIncompleteError(workspaceId, pid, failures))
       }
       const onExit = () => {
-        if (!isWrapper || managed.windowsTreeCleanupConfirmed) {
+        if (managed.windowsTreeCleanupConfirmed) {
           finish()
         } else {
           rejectIncompleteCleanup()
@@ -936,39 +934,27 @@ export class WorkspaceRuntime {
           return
         }
 
-        if (isWrapper) {
-          const args = ["/PID", String(pid), "/T", ...(force ? ["/F"] : [])]
-          try {
-            const result = this.spawnCommand("taskkill.exe", args, {
-              encoding: "utf8",
-              timeout: this.stopCommandTimeoutMs,
-            })
-            if (result.status === 0) {
-              managed.windowsTreeCleanupConfirmed = true
-            } else {
-              const detail = result.error?.message || String(result.stderr ?? result.stdout ?? "").trim() || `exit code ${result.status}`
-              failures.push(`taskkill ${force ? "/T /F" : "/T"} failed: ${detail}`)
-            }
-          } catch (error) {
-            failures.push(`taskkill ${force ? "/T /F" : "/T"} failed: ${error instanceof Error ? error.message : String(error)}`)
-          }
-          return
-        }
-
-        const signal: NodeJS.Signals = force ? "SIGKILL" : "SIGTERM"
+        const args = ["/PID", String(pid), "/T", ...(force ? ["/F"] : [])]
         try {
-          if (!child.kill(signal) && child.exitCode === null && child.signalCode === null) {
-            failures.push(`${signal} was not accepted by the owned child process`)
+          const result = this.spawnCommand("taskkill.exe", args, {
+            encoding: "utf8",
+            timeout: this.stopCommandTimeoutMs,
+          })
+          if (result.status === 0) {
+            managed.windowsTreeCleanupConfirmed = true
+          } else {
+            const detail = result.error?.message || String(result.stderr ?? result.stdout ?? "").trim() || `exit code ${result.status}`
+            failures.push(`taskkill ${force ? "/T /F" : "/T"} failed: ${detail}`)
           }
         } catch (error) {
-          failures.push(`${signal} failed: ${error instanceof Error ? error.message : String(error)}`)
+          failures.push(`taskkill ${force ? "/T /F" : "/T"} failed: ${error instanceof Error ? error.message : String(error)}`)
         }
       }
 
       child.once("exit", onExit)
       child.once("error", onError)
       if (child.exitCode !== null || child.signalCode !== null) {
-        if (!isWrapper || managed.windowsTreeCleanupConfirmed) {
+        if (managed.windowsTreeCleanupConfirmed) {
           finish()
         } else {
           rejectIncompleteCleanup()
@@ -993,14 +979,14 @@ export class WorkspaceRuntime {
           workspaceId,
           pid,
           totalTimeoutMs,
-          isWrapper && (child.exitCode !== null || child.signalCode !== null)
+          child.exitCode !== null || child.signalCode !== null
             ? "taskkill did not confirm tree cleanup before the owned Windows wrapper exited"
-            : `the owned Windows ${isWrapper ? "wrapper" : "child"} did not emit exit or error after termination`,
+            : "the owned Windows wrapper did not emit exit or error after tree termination",
           failures,
         ))
       }, totalTimeoutMs)
 
-      this.logger.debug({ workspaceId, pid, isWrapper }, "Stopping owned Windows workspace process")
+      this.logger.debug({ workspaceId, pid }, "Stopping owned Windows workspace wrapper tree")
       stopChild(false)
     })
   }

@@ -161,7 +161,7 @@ function setWslIdentity(runtime: WorkspaceRuntime): void {
 }
 
 describe("workspace runtime verified stop", () => {
-  it("launches a direct Windows child without CIM identity discovery", async () => {
+  it("rejects a direct Windows launch without immutable process identity", async () => {
     let commandCalls = 0
     const harness = await createRuntime({
       platform: "win32",
@@ -169,45 +169,98 @@ describe("workspace runtime verified stop", () => {
         commandCalls += 1
         return result("", 1, "CIM unavailable")
       }) as unknown as SpawnCommand,
-    }, true, "opencode.exe")
+    }, false, "opencode.exe")
 
-    assert.equal(commandCalls, 0)
-    harness.child.exit(0, null)
+    await assert.rejects(harness.launch, WorkspaceRuntimeIdentityCaptureError)
+    assert.ok(commandCalls >= 1)
+    assert.deepEqual(harness.child.liveSignals, ["SIGTERM"])
+    harness.child.exit(null, "SIGTERM")
   })
 
-  it("stops a direct Windows child without invoking taskkill or PowerShell", async () => {
-    const commands: string[] = []
+  it("stops an identity-matched direct Windows process tree", async () => {
+    let alive = true
+    const commands: Array<{ command: string; args: readonly string[] }> = []
     const harness = await createRuntime({
       platform: "win32",
-      spawnSync: ((command: string) => {
-        commands.push(command)
-        return result("", 1, "ETIMEDOUT")
+      spawnSync: ((command: string, args: readonly string[]) => {
+        commands.push({ command, args: [...args] })
+        if (isGuarded(args)) {
+          alive = false
+          return result([
+            "CODENOMAD_TARGET|4243|4242|0|descendant-start||101",
+            "CODENOMAD_TARGET|4242|1|0|win-start||100",
+            "CODENOMAD_RESULT|1||1",
+          ].join("\n"))
+        }
+        return result(alive
+          ? windowsRows([[4242, 1, "win-start"], [4243, 4242, "descendant-start"]])
+          : windowsRows([[7, 1, "other-start"]]))
       }) as unknown as SpawnCommand,
     }, true, "opencode.exe")
 
-    const stop = harness.runtime.stop("workspace-1")
-    assert.deepEqual(harness.child.liveSignals, ["SIGTERM"])
-    harness.child.exit(null, "SIGTERM")
-    await stop
-    assert.deepEqual(commands, [])
+    await harness.runtime.stop("workspace-1")
+    assert.equal(commands.some(({ command }) => command === "taskkill.exe"), false)
+    assert.equal(commands.filter(({ args }) => isGuarded(args)).length, 1)
+    assert.deepEqual(harness.child.liveSignals, [])
   })
 
   it("keeps direct Windows stop bounded when the child ignores termination", async () => {
-    let commandCalls = 0
+    const commands: Array<{ command: string; args: readonly string[] }> = []
     const harness = await createRuntime({
       platform: "win32",
-      spawnSync: (() => {
-        commandCalls += 1
-        return result()
+      spawnSync: ((command: string, args: readonly string[]) => {
+        commands.push({ command, args: [...args] })
+        return isGuarded(args)
+          ? result("CODENOMAD_TARGET|4242|1|0|win-start||100\nCODENOMAD_RESULT|1||1")
+          : result(windowsRows([[4242, 1, "win-start"]]))
       }) as unknown as SpawnCommand,
     }, true, "opencode.exe")
 
     const stop = harness.runtime.stop("workspace-1")
     harness.timers.runNext()
-    assert.deepEqual(harness.child.liveSignals, ["SIGTERM", "SIGKILL"])
     harness.timers.runNext()
     await assert.rejects(stop, WorkspaceStopTimeoutError)
-    assert.equal(commandCalls, 0)
+    assert.equal(commands.filter(({ args }) => isGuarded(args)).length, 2)
+    assert.equal(commands.some(({ command }) => command === "taskkill.exe"), false)
+    assert.deepEqual(harness.child.liveSignals, [])
+  })
+
+  it("keeps tracking a descendant after partial guarded Windows termination", async () => {
+    let stage: "tree" | "descendant" | "gone" = "tree"
+    let guardedCalls = 0
+    const harness = await createRuntime({
+      platform: "win32",
+      spawnSync: ((_command: string, args: readonly string[]) => {
+        if (isGuarded(args)) {
+          guardedCalls += 1
+          if (guardedCalls === 1) {
+            stage = "descendant"
+            return result([
+              "CODENOMAD_TARGET|4242|1|0|win-start||100",
+              "CODENOMAD_TARGET|4243|4242|0|descendant-start||101",
+            ].join("\n"), 1, "descendant termination failed")
+          }
+          stage = "gone"
+          return result("CODENOMAD_TARGET|4243|1|0|descendant-start||101\nCODENOMAD_RESULT|0||1")
+        }
+        if (stage === "tree") {
+          return result(windowsRows([[4242, 1, "win-start"], [4243, 4242, "descendant-start"]]))
+        }
+        if (stage === "descendant") {
+          return result(windowsRows([[4243, 1, "descendant-start"]]))
+        }
+        return result(windowsRows([[7, 1, "other-start"]]))
+      }) as unknown as SpawnCommand,
+    }, true, "opencode.exe")
+
+    let settled = false
+    const stop = harness.runtime.stop("workspace-1").finally(() => { settled = true })
+    await Promise.resolve()
+    assert.equal(settled, false)
+    harness.timers.runNext()
+    harness.timers.runNext()
+    await stop
+    assert.equal(guardedCalls, 2)
   })
 
   it("cleans a token-matching descendant that survives its unidentified wrapper", async () => {
