@@ -11,7 +11,7 @@ import {
   getQuestionEnqueuedAtForInstance,
   sendPermissionResponse,
 } from "../stores/instances"
-import { ensureSessionParentExpanded, loadMessages, sessions as sessionStateSessions, setActiveSessionFromList } from "../stores/sessions"
+import { ensureSessionAncestorsExpanded, loadMessages, sessions as sessionStateSessions, setActiveSessionFromList } from "../stores/sessions"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { PERMISSION_REJECT_REASON_MAX_LENGTH } from "./tool-call/permission-constants"
 
@@ -262,10 +262,8 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
   function handleGoToSession(sessionId: string) {
     if (!sessionId) return
 
-    const session = sessionStateSessions().get(props.instanceId)?.get(sessionId)
-    const parentId = session?.parentId ?? session?.id
-    if (parentId) {
-      ensureSessionParentExpanded(props.instanceId, parentId)
+    if (sessionStateSessions().get(props.instanceId)?.has(sessionId)) {
+      ensureSessionAncestorsExpanded(props.instanceId, sessionId)
     }
 
     setActiveSessionFromList(props.instanceId, sessionId)
