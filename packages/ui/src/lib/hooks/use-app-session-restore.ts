@@ -73,6 +73,7 @@ import {
   hasAuthoritativeSessionSelection,
   hydrateActiveSessionSelection,
   hydrateSessionIdleMarkers,
+  hydrateSessionGenerationRecovery,
 } from "../../stores/sessions"
 import { messageStoreBus, type MessageScrollSnapshotSeed } from "../../stores/message-v2/bus"
 import type { ScrollSnapshot } from "../../stores/message-v2/types"
@@ -85,6 +86,7 @@ import {
 } from "../../stores/client-state-attachments-codec"
 import { hydrateWorkspacePromptState } from "../../stores/app-session-prompt-hydration"
 import { onInstanceLifecycleAuthority } from "../../stores/instance-lifecycle-authority"
+import { getPersistedGenerationRecovery, type PersistedGenerationRecovery } from "../../stores/session-generation-recovery"
 
 const log = getLogger("actions")
 const MESSAGE_SCROLL_SCOPE = "message-stream"
@@ -124,6 +126,15 @@ function captureUnseenIdleMarkers(instanceId: string): Record<string, number> {
   )
 }
 
+function captureGenerationRecovery(instanceId: string): Record<string, PersistedGenerationRecovery> {
+  const result: Record<string, PersistedGenerationRecovery> = {}
+  for (const session of getSessions(instanceId)) {
+    const recovery = getPersistedGenerationRecovery(session.status, session.generationRecovery)
+    if (recovery) result[session.id] = recovery
+  }
+  return result
+}
+
 function captureRestorableSessionState(
   authoritativeScrollSessionIdsByInstance: ReadonlyMap<string, ReadonlySet<string>>,
 ): {
@@ -157,6 +168,7 @@ function captureRestorableSessionState(
       attachments: draftState.attachments,
       scrollSnapshots: captureScrollSnapshots(tab.instance.id),
       unseenIdleSince: captureUnseenIdleMarkers(tab.instance.id),
+      generationRecovery: captureGenerationRecovery(tab.instance.id),
     }
     if (tab.instance.projectName) result.projectName = tab.instance.projectName
     if (tab.instance.binaryPath) result.binaryPath = tab.instance.binaryPath
@@ -179,6 +191,7 @@ function captureRestorableSessionState(
       attachments: getAuthoritativeAttachmentSessionIdsForInstance(tab.instance.id),
       scrollSnapshots: authoritativeScrollSessionIdsByInstance.get(tab.instance.id),
       idleMarkers: new Set(getSessions(tab.instance.id).map((session) => session.id)),
+      generationRecovery: new Set(getSessions(tab.instance.id).map((session) => session.id)),
       deletedSessions: getAuthoritativelyDeletedSessionIdsForInstance(tab.instance.id),
       sessionSelection: hasAuthoritativeSessionSelection(tab.instance.id),
     } : undefined),
@@ -195,10 +208,12 @@ function restoreWorkspaceState(instanceId: string, snapshot: RestorableWorkspace
     attachmentSessionIds: Object.keys(snapshot.attachments),
     scrollSessionIds: Object.keys(snapshot.scrollSnapshots),
     idleMarkerSessionIds: Object.keys(snapshot.unseenIdleSince),
+    generationRecoverySessionIds: Object.keys(snapshot.generationRecovery),
   }, [NO_SESSION_DRAFT_SESSION_ID])
 
   hydrateWorkspacePromptState(instanceId, snapshot, validSessionIds, NO_SESSION_DRAFT_SESSION_ID)
   hydrateSessionIdleMarkers(instanceId, snapshot.unseenIdleSince)
+  hydrateSessionGenerationRecovery(instanceId, snapshot.generationRecovery)
 
   const scrollSeeds: MessageScrollSnapshotSeed[] = []
   for (const [sessionId, scrollSnapshot] of Object.entries(snapshot.scrollSnapshots)) {

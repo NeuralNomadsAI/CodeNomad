@@ -71,6 +71,10 @@ export const sessionMessages = {
   "sessionRenameDialog.actions.renaming": "正在重命名…",
 
   "sessionView.fallback.sessionNotFound": "未找到会话",
+  "sessionView.interrupted.title": "生成已中断",
+  "sessionView.interrupted.description": "此会话工作时 CodeNomad 重新启动，但 OpenCode 现在报告其为空闲状态。没有自动重放任何操作。",
+  "sessionView.interrupted.action": "准备继续",
+  "sessionView.interrupted.prefill": "请从中断处继续。先检查对话和工作区当前状态，不要假定中断的回复已经完成。",
   "sessionView.alerts.abortFailed.message": "停止会话失败",
   "sessionView.alerts.abortFailed.title": "停止失败",
   "sessionView.alerts.revertFailed.message": "回退到消息失败",

@@ -51,6 +51,7 @@ describe("abortable restore creation", () => {
         attachments: {},
         scrollSnapshots: {},
         unseenIdleSince: {},
+        generationRecovery: {},
       }],
       activeTabIndex: 0,
     })

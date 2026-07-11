@@ -13,8 +13,30 @@ import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 import { tGlobal } from "../lib/i18n"
 import { computeThreadTotals, type ThreadTotals } from "../lib/thread-totals"
 import { applySessionPage, getDefaultSessionPaginationState, type SessionPaginationState } from "./session-pagination-model"
+import {
+  resolveAuthoritativeGenerationRecovery,
+  resolveHydratedGenerationRecovery,
+  type PersistedGenerationRecovery,
+} from "./session-generation-recovery"
 
 const log = getLogger("session")
+let generationAdmissionSequence = 0
+type GenerationAdmissionBaseline = Pick<Session, "generationRecovery" | "runtimeStatusKnown" | "idleSince">
+interface GenerationAdmissionGroup {
+  id: number
+  tokens: Set<number>
+  accepted: boolean
+  baseline: GenerationAdmissionBaseline
+}
+const generationAdmissionGroups = new Map<string, GenerationAdmissionGroup>()
+
+function generationAdmissionKey(instanceId: string, sessionId: string): string {
+  return `${instanceId}:${sessionId}`
+}
+
+function cancelSessionGenerationAdmissions(instanceId: string, sessionId: string): void {
+  generationAdmissionGroups.delete(generationAdmissionKey(instanceId, sessionId))
+}
 
 export interface SessionInfo {
   cost: number
@@ -513,16 +535,26 @@ function withSession(instanceId: string, sessionId: string, updater: (session: S
 }
 
 function setSessionPendingPermission(instanceId: string, sessionId: string, pending: boolean): void {
+  if (pending) cancelSessionGenerationAdmissions(instanceId, sessionId)
   withSession(instanceId, sessionId, (session) => {
-    if (session.pendingPermission === pending) return false
+    if (session.pendingPermission === pending && (!pending || !session.generationRecovery)) return false
     session.pendingPermission = pending
+    if (pending) {
+      session.generationRecovery = null
+      session.generationAdmissionToken = undefined
+    }
   })
 }
 
 function setSessionPendingQuestion(instanceId: string, sessionId: string, pending: boolean): void {
+  if (pending) cancelSessionGenerationAdmissions(instanceId, sessionId)
   withSession(instanceId, sessionId, (session) => {
-    if (session.pendingQuestion === pending) return false
+    if (session.pendingQuestion === pending && (!pending || !session.generationRecovery)) return false
     session.pendingQuestion = pending
+    if (pending) {
+      session.generationRecovery = null
+      session.generationAdmissionToken = undefined
+    }
   })
 }
 
@@ -600,6 +632,89 @@ function hydrateSessionIdleMarkers(instanceId: string, markers: Readonly<Record<
     next.set(instanceId, updatedSessions)
     return next
   })
+}
+
+function hydrateSessionGenerationRecovery(
+  instanceId: string,
+  markers: Readonly<Record<string, PersistedGenerationRecovery>>,
+): void {
+  setSessions((prev) => {
+    const instanceSessions = prev.get(instanceId)
+    if (!instanceSessions) return prev
+
+    let changed = false
+    const updatedSessions = new Map(instanceSessions)
+    for (const [sessionId, persisted] of Object.entries(markers)) {
+      const session = updatedSessions.get(sessionId)
+      if (!session) continue
+      const generationRecovery = session.pendingPermission || session.pendingQuestion
+        ? null
+        : resolveHydratedGenerationRecovery(
+            persisted,
+            session.status,
+            session.runtimeStatusKnown === true,
+          )
+      if ((session.generationRecovery ?? null) === generationRecovery) continue
+      updatedSessions.set(sessionId, { ...session, generationRecovery })
+      changed = true
+    }
+    if (!changed) return prev
+
+    const next = new Map(prev)
+    next.set(instanceId, updatedSessions)
+    return next
+  })
+}
+
+function beginSessionGenerationAdmission(instanceId: string, sessionId: string): {
+  complete: () => void
+  rollback: () => void
+} {
+  generationAdmissionSequence += 1
+  const token = generationAdmissionSequence
+  const key = generationAdmissionKey(instanceId, sessionId)
+  let group = generationAdmissionGroups.get(key)
+  if (!group) {
+    const session = sessions().get(instanceId)?.get(sessionId)
+    if (!session) return { complete: () => {}, rollback: () => {} }
+    group = {
+      id: token,
+      tokens: new Set(),
+      accepted: false,
+      baseline: {
+        generationRecovery: session.generationRecovery,
+        runtimeStatusKnown: session.runtimeStatusKnown,
+        idleSince: session.idleSince,
+      },
+    }
+    generationAdmissionGroups.set(key, group)
+  }
+  group.tokens.add(token)
+  withSession(instanceId, sessionId, (session) => {
+    session.generationRecovery = "pending"
+    session.runtimeStatusKnown = false
+    session.idleSince = null
+    session.generationAdmissionToken = group!.id
+  })
+  const settle = (accepted: boolean) => {
+    const activeGroup = generationAdmissionGroups.get(key)
+    if (!activeGroup || !activeGroup.tokens.delete(token)) return
+    activeGroup.accepted ||= accepted
+    if (activeGroup.tokens.size > 0) return
+    generationAdmissionGroups.delete(key)
+    withSession(instanceId, sessionId, (session) => {
+      if (session.generationAdmissionToken !== activeGroup.id) return false
+      session.generationAdmissionToken = undefined
+      if (activeGroup.accepted) return
+      session.generationRecovery = activeGroup.baseline.generationRecovery
+      session.runtimeStatusKnown = activeGroup.baseline.runtimeStatusKnown
+      session.idleSince = activeGroup.baseline.idleSince
+    })
+  }
+  return {
+    complete: () => settle(true),
+    rollback: () => settle(false),
+  }
 }
 
 function hasAuthoritativeSessionSelection(instanceId: string): boolean {
@@ -682,9 +797,23 @@ function setSessionStatus(instanceId: string, sessionId: string, status: Session
   let parentToExpand: string | null = null
 
   withSession(instanceId, sessionId, (session) => {
-    if (session.status === status) return false
+    const admissionPending = session.generationAdmissionToken !== undefined && status === "idle"
+    const generationRecovery = admissionPending
+      ? "pending"
+      : resolveAuthoritativeGenerationRecovery(session.generationRecovery, status)
+    if (
+      session.status === status
+      && session.runtimeStatusKnown === !admissionPending
+      && (session.generationRecovery ?? null) === generationRecovery
+    ) return false
     const previous = session.status
     session.status = status
+    session.runtimeStatusKnown = !admissionPending
+    session.generationRecovery = generationRecovery
+    if (!admissionPending) {
+      cancelSessionGenerationAdmissions(instanceId, sessionId)
+      session.generationAdmissionToken = undefined
+    }
     session.idleSince = getIdleSinceForStatusTransition(previous, status, session.idleSince)
     if (status !== "working") {
       session.retry = null
@@ -1210,6 +1339,9 @@ export {
   markSessionIdleSeen,
   markViewedSessionIdleSeen,
   hydrateSessionIdleMarkers,
+  hydrateSessionGenerationRecovery,
+  beginSessionGenerationAdmission,
+  cancelSessionGenerationAdmissions,
   setSessionStatus,
   setActiveSession,
   setActiveParentSession,

@@ -71,6 +71,10 @@ export const sessionMessages = {
   "sessionRenameDialog.actions.renaming": "Переименование…",
 
   "sessionView.fallback.sessionNotFound": "Сессия не найдена",
+  "sessionView.interrupted.title": "Генерация была прервана",
+  "sessionView.interrupted.description": "CodeNomad перезапустился во время работы этой сессии, но OpenCode теперь сообщает, что она неактивна. Ничего не было запущено повторно автоматически.",
+  "sessionView.interrupted.action": "Подготовить продолжение",
+  "sessionView.interrupted.prefill": "Продолжи с места остановки. Сначала проверь диалог и текущее состояние рабочей области и не предполагай, что прерванный ответ был завершён.",
   "sessionView.alerts.abortFailed.message": "Не удалось остановить сессию",
   "sessionView.alerts.abortFailed.title": "Не удалось остановить",
   "sessionView.alerts.revertFailed.message": "Не удалось откатиться к сообщению",

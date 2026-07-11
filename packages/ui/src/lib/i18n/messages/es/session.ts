@@ -71,6 +71,10 @@ export const sessionMessages = {
   "sessionRenameDialog.actions.renaming": "Renombrando…",
 
   "sessionView.fallback.sessionNotFound": "No se encontró la sesión",
+  "sessionView.interrupted.title": "La generación fue interrumpida",
+  "sessionView.interrupted.description": "CodeNomad se reinició mientras esta sesión trabajaba, pero OpenCode ahora la marca como inactiva. No se repitió nada automáticamente.",
+  "sessionView.interrupted.action": "Preparar continuación",
+  "sessionView.interrupted.prefill": "Continúa desde donde lo dejaste. Primero revisa la conversación y el estado actual del espacio de trabajo, y no asumas que la respuesta interrumpida terminó.",
   "sessionView.alerts.abortFailed.message": "No se pudo detener la sesión",
   "sessionView.alerts.abortFailed.title": "No se pudo detener",
   "sessionView.alerts.revertFailed.message": "No se pudo revertir al mensaje",

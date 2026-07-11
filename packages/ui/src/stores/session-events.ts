@@ -62,7 +62,8 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { ensureSessionParentExpanded, prependSessionListId, sessions, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
+import { cancelSessionGenerationAdmissions, ensureSessionParentExpanded, prependSessionListId, sessions, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
+import { resolveAuthoritativeGenerationRecovery } from "./session-generation-recovery"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { tGlobal } from "../lib/i18n"
@@ -171,13 +172,28 @@ function applySessionStatus(instanceId: string, sessionId: string, status: Sessi
   withSession(instanceId, sessionId, (session) => {
     const current = session.status ?? "idle"
     const nextRetry = retry ?? null
-    if (current === status && isSameRetryState(session.retry, nextRetry)) return false
+    const admissionPending = session.generationAdmissionToken !== undefined && status === "idle"
+    const generationRecovery = admissionPending
+      ? "pending"
+      : resolveAuthoritativeGenerationRecovery(session.generationRecovery, status)
+    if (
+      current === status
+      && isSameRetryState(session.retry, nextRetry)
+      && session.runtimeStatusKnown === !admissionPending
+      && (session.generationRecovery ?? null) === generationRecovery
+    ) return false
 
     if (current === "compacting" && status !== "compacting") {
       return false
     }
 
     session.status = status
+    session.runtimeStatusKnown = !admissionPending
+    session.generationRecovery = generationRecovery
+    if (!admissionPending) {
+      cancelSessionGenerationAdmissions(instanceId, sessionId)
+      session.generationAdmissionToken = undefined
+    }
     session.retry = status === "working" ? nextRetry : null
     session.idleSince = getIdleSinceForStatusTransition(current, status, session.idleSince)
 
@@ -210,6 +226,7 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
 
     let fetchedStatus: SessionStatus = "idle"
     let fetchedRetry: SessionRetryState | null = null
+    let fetchedStatusKnown = false
     try {
       let statuses: Record<string, any> = {}
       try {
@@ -226,12 +243,21 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
       const hasType = rawStatus && typeof rawStatus === "object" && typeof rawStatus.type === "string"
       fetchedStatus = hasType ? mapSdkSessionStatus(rawStatus) : "idle"
       fetchedRetry = hasType ? mapSdkSessionRetry(rawStatus) : null
+      fetchedStatusKnown = true
     } catch (error) {
       log.error("Failed to fetch session status", error)
+      const rawStatus = (info as any)?.status
+      const hasType = rawStatus && typeof rawStatus === "object" && typeof rawStatus.type === "string"
+      if (hasType) {
+        fetchedStatus = mapSdkSessionStatus(rawStatus)
+        fetchedRetry = mapSdkSessionRetry(rawStatus)
+        fetchedStatusKnown = true
+      }
     }
 
     const fetched = createClientSession(info, instanceId, "", { providerId: "", modelId: "" }, fetchedStatus)
     fetched.retry = fetchedRetry
+    fetched.runtimeStatusKnown = fetchedStatusKnown
 
     let updatedInstanceSessions: Map<string, Session> | undefined
     let shouldExpandParent: string | null = null
@@ -240,11 +266,16 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
       const next = new Map(prev)
       const instanceSessions = next.get(instanceId) ?? new Map<string, Session>()
       const existing = instanceSessions.get(sessionId)
+      const admissionPending = existing?.generationAdmissionToken !== undefined
+      const status = admissionPending || existing?.status === "compacting" ? existing!.status : fetched.status
+      const runtimeStatusKnown = admissionPending
+        ? existing?.runtimeStatusKnown ?? false
+        : Boolean(existing?.status === "compacting" || fetchedStatusKnown || existing?.runtimeStatusKnown)
       const merged: Session = {
         ...fetched,
         agent: existing?.agent ?? fetched.agent,
         model: existing?.model ?? fetched.model,
-        status: existing?.status === "compacting" ? "compacting" : fetched.status,
+        status,
         retry: existing?.status === "compacting" ? null : fetched.retry,
         idleSince: getIdleSinceForStatusTransition(
           existing?.status,
@@ -253,6 +284,13 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
         ),
         pendingPermission: existing?.pendingPermission ?? fetched.pendingPermission,
         pendingQuestion: existing?.pendingQuestion ?? false,
+        runtimeStatusKnown,
+        generationRecovery: admissionPending
+          ? existing?.generationRecovery ?? "pending"
+          : runtimeStatusKnown
+          ? resolveAuthoritativeGenerationRecovery(existing?.generationRecovery, status)
+          : existing?.generationRecovery ?? null,
+        generationAdmissionToken: admissionPending ? existing?.generationAdmissionToken : undefined,
       }
       instanceSessions.set(sessionId, merged)
       next.set(instanceId, instanceSessions)
@@ -287,9 +325,6 @@ function ensureSessionStatus(
   const instanceSessions = sessions().get(instanceId)
   const existing = instanceSessions?.get(sessionId)
   if (existing) {
-    if ((existing.status ?? "idle") === status && isSameRetryState(existing.retry, retry)) {
-      return
-    }
     applySessionStatus(instanceId, sessionId, status, retry)
     return
   }
@@ -642,8 +677,12 @@ function handleSessionCompacted(instanceId: string, event: EventSessionCompacted
 
   const existing = sessions().get(instanceId)?.get(sessionID)
   if (existing) {
+    cancelSessionGenerationAdmissions(instanceId, sessionID)
     withSession(instanceId, sessionID, (session) => {
       session.status = "working"
+      session.runtimeStatusKnown = true
+      session.generationRecovery = null
+      session.generationAdmissionToken = undefined
       session.retry = null
       session.idleSince = null
     })
