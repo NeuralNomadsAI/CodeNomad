@@ -315,7 +315,7 @@ export const settingsMessages = {
   "settings.speech.stt.apiKey.clearPending": "The saved input API key will be removed when you save.",
   "settings.speech.stt.baseUrl.title": "Input base URL",
   "settings.speech.stt.baseUrl.subtitle": "OpenAI-compatible endpoint for transcription requests.",
-  "settings.speech.stt.baseUrl.placeholder": "https://api.groq.com/openai/v1",
+  "settings.speech.stt.baseUrl.placeholder": "https://api.openai.com/v1",
   "settings.speech.stt.model.title": "Input model",
   "settings.speech.stt.model.subtitle": "Model used for speech-to-text.",
   "settings.speech.tts.apiKey.title": "Output API key",

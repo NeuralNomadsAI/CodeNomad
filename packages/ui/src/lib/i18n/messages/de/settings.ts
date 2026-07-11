@@ -315,7 +315,7 @@ export const settingsMessages = {
   "settings.speech.stt.apiKey.clearPending": "Der gespeicherte Eingabe-API-Schlüssel wird beim Speichern entfernt.",
   "settings.speech.stt.baseUrl.title": "Eingabe-Basis-URL",
   "settings.speech.stt.baseUrl.subtitle": "OpenAI-kompatibler Endpunkt für Transkription.",
-  "settings.speech.stt.baseUrl.placeholder": "https://api.groq.com/openai/v1",
+  "settings.speech.stt.baseUrl.placeholder": "https://api.openai.com/v1",
   "settings.speech.stt.model.title": "Eingabemodell",
   "settings.speech.stt.model.subtitle": "Modell für Sprache-zu-Text.",
   "settings.speech.tts.apiKey.title": "Ausgabe-API-Schlüssel",

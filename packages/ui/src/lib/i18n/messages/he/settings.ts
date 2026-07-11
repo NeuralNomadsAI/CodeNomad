@@ -314,7 +314,7 @@ export const settingsMessages = {
   "settings.speech.stt.apiKey.clearPending": "מפתח ה-API לקלט השמור יוסר בעת השמירה.",
   "settings.speech.stt.baseUrl.title": "כתובת בסיס לקלט",
   "settings.speech.stt.baseUrl.subtitle": "נקודת קצה תואמת OpenAI לתמלול.",
-  "settings.speech.stt.baseUrl.placeholder": "https://api.groq.com/openai/v1",
+  "settings.speech.stt.baseUrl.placeholder": "https://api.openai.com/v1",
   "settings.speech.stt.model.title": "מודל קלט",
   "settings.speech.stt.model.subtitle": "מודל המשמש לדיבור לטקסט.",
   "settings.speech.tts.apiKey.title": "מפתח API לפלט",

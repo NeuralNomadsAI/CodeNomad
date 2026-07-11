@@ -314,7 +314,7 @@ export const settingsMessages = {
   "settings.speech.stt.apiKey.clearPending": "Сохранённый API-ключ для ввода будет удалён при сохранении.",
   "settings.speech.stt.baseUrl.title": "Базовый URL для ввода",
   "settings.speech.stt.baseUrl.subtitle": "OpenAI-совместимый эндпоинт для транскрипции.",
-  "settings.speech.stt.baseUrl.placeholder": "https://api.groq.com/openai/v1",
+  "settings.speech.stt.baseUrl.placeholder": "https://api.openai.com/v1",
   "settings.speech.stt.model.title": "Модель ввода",
   "settings.speech.stt.model.subtitle": "Модель, используемая для преобразования речи в текст.",
   "settings.speech.tts.apiKey.title": "API-ключ для вывода",

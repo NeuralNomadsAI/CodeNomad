@@ -36,8 +36,8 @@ function createDirectionalDraft(speech: SpeechSettings, direction: "stt" | "tts"
     apiKey: "",
     apiKeyTouched: false,
     clearApiKey: false,
-    baseUrl: dir.baseUrl ?? "",
-    model: dir.model,
+    baseUrl: dir.baseUrl ?? speech.baseUrl ?? "",
+    model: dir.model || (direction === "stt" ? speech.sttModel : speech.ttsModel),
   }
 }
 
@@ -413,9 +413,9 @@ export const SpeechSettingsCard: Component = () => {
             value={drafts().stt.apiKey}
             onInput={(value) => updateDirectionalDraft("stt", "apiKey", value)}
             type="password"
-            placeholder={serverSettings().speech.stt.hasApiKey ? t("settings.speech.stt.apiKey.placeholder") : undefined}
+            placeholder={(serverSettings().speech.stt.hasApiKey || serverSettings().speech.hasApiKey) ? t("settings.speech.stt.apiKey.placeholder") : undefined}
           />
-          <Show when={serverSettings().speech.stt.hasApiKey && !sttApiKeyTouched() && drafts().stt.apiKey.length === 0}>
+          <Show when={(serverSettings().speech.stt.hasApiKey || serverSettings().speech.hasApiKey) && !sttApiKeyTouched() && drafts().stt.apiKey.length === 0}>
             <div class="settings-inline-note">
               {clearSttApiKey() ? t("settings.speech.stt.apiKey.clearPending") : t("settings.speech.stt.apiKey.storedNote")}{" "}
               <Show when={!clearSttApiKey()}>
@@ -452,9 +452,9 @@ export const SpeechSettingsCard: Component = () => {
             value={drafts().tts.apiKey}
             onInput={(value) => updateDirectionalDraft("tts", "apiKey", value)}
             type="password"
-            placeholder={serverSettings().speech.tts.hasApiKey ? t("settings.speech.tts.apiKey.placeholder") : undefined}
+            placeholder={(serverSettings().speech.tts.hasApiKey || serverSettings().speech.hasApiKey) ? t("settings.speech.tts.apiKey.placeholder") : undefined}
           />
-          <Show when={serverSettings().speech.tts.hasApiKey && !ttsApiKeyTouched() && drafts().tts.apiKey.length === 0}>
+          <Show when={(serverSettings().speech.tts.hasApiKey || serverSettings().speech.hasApiKey) && !ttsApiKeyTouched() && drafts().tts.apiKey.length === 0}>
             <div class="settings-inline-note">
               {clearTtsApiKey() ? t("settings.speech.tts.apiKey.clearPending") : t("settings.speech.tts.apiKey.storedNote")}{" "}
               <Show when={!clearTtsApiKey()}>

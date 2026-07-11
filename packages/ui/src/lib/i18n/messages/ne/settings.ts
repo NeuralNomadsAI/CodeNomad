@@ -315,7 +315,7 @@ export const settingsMessages = {
   "settings.speech.stt.apiKey.clearPending": "बचत गर्दा बचत गरिएको इनपुट API कुञ्जी हटाइनेछ।",
   "settings.speech.stt.baseUrl.title": "इनपुट आधार URL",
   "settings.speech.stt.baseUrl.subtitle": "ट्रान्सक्रिप्सनका लागि OpenAI-संगत एन्डपोइन्ट।",
-  "settings.speech.stt.baseUrl.placeholder": "https://api.groq.com/openai/v1",
+  "settings.speech.stt.baseUrl.placeholder": "https://api.openai.com/v1",
   "settings.speech.stt.model.title": "इनपुट मोडेल",
   "settings.speech.stt.model.subtitle": "आवाजबाट पाठका लागि प्रयोग गरिने मोडेल।",
   "settings.speech.tts.apiKey.title": "आउटपुट API कुञ्जी",

@@ -314,7 +314,7 @@ export const settingsMessages = {
   "settings.speech.stt.apiKey.clearPending": "La clé API d'entrée enregistrée sera supprimée lors de l'enregistrement.",
   "settings.speech.stt.baseUrl.title": "URL de base d'entrée",
   "settings.speech.stt.baseUrl.subtitle": "Point de terminaison compatible OpenAI pour la transcription.",
-  "settings.speech.stt.baseUrl.placeholder": "https://api.groq.com/openai/v1",
+  "settings.speech.stt.baseUrl.placeholder": "https://api.openai.com/v1",
   "settings.speech.stt.model.title": "Modèle d'entrée",
   "settings.speech.stt.model.subtitle": "Modèle utilisé pour la voix vers texte.",
   "settings.speech.tts.apiKey.title": "Clé API de sortie",

@@ -314,7 +314,7 @@ export const settingsMessages = {
   "settings.speech.stt.apiKey.clearPending": "保存すると、保存済みの入力 API キーが削除されます。",
   "settings.speech.stt.baseUrl.title": "入力ベース URL",
   "settings.speech.stt.baseUrl.subtitle": "文字起こし用の OpenAI 互換エンドポイントです。",
-  "settings.speech.stt.baseUrl.placeholder": "https://api.groq.com/openai/v1",
+  "settings.speech.stt.baseUrl.placeholder": "https://api.openai.com/v1",
   "settings.speech.stt.model.title": "入力モデル",
   "settings.speech.stt.model.subtitle": "音声からテキストに使用するモデルです。",
   "settings.speech.tts.apiKey.title": "出力 API キー",

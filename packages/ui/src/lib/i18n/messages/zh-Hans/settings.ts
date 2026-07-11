@@ -314,7 +314,7 @@ export const settingsMessages = {
   "settings.speech.stt.apiKey.clearPending": "保存后将删除已保存的输入 API 密钥。",
   "settings.speech.stt.baseUrl.title": "输入基础 URL",
   "settings.speech.stt.baseUrl.subtitle": "用于语音转文字的 OpenAI 兼容端点。",
-  "settings.speech.stt.baseUrl.placeholder": "https://api.groq.com/openai/v1",
+  "settings.speech.stt.baseUrl.placeholder": "https://api.openai.com/v1",
   "settings.speech.stt.model.title": "输入模型",
   "settings.speech.stt.model.subtitle": "用于语音转文字的模型。",
   "settings.speech.tts.apiKey.title": "输出 API 密钥",
