@@ -46,7 +46,7 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
       options.enabled() &&
         isSupported() &&
         capabilities?.available &&
-        capabilities?.configured &&
+        capabilities?.sttConfigured &&
         capabilities?.supportsStt,
     )
   }
