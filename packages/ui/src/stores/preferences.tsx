@@ -680,37 +680,51 @@ function updateLogLevel(level: ServerLogLevel): void {
 
 async function updateSpeechSettings(updates: SpeechSettingsUpdate): Promise<void> {
   const apiKeyPatch = updates.apiKey
-  const sttApiKeyPatch = (updates as any).stt?.apiKey
-  const ttsApiKeyPatch = (updates as any).tts?.apiKey
-  const { apiKey: _apiKey, ...restUpdates } = updates
+  const sttApiKeyPatch = updates.stt?.apiKey
+  const ttsApiKeyPatch = updates.tts?.apiKey
+  const { apiKey: _apiKey, stt: _sttUpdate, tts: _ttsUpdate, ...restUpdates } = updates
+  const current = serverSettings().speech
   const next = normalizeSpeechSettings({
-    ...serverSettings().speech,
-    ...(restUpdates as any),
+    ...current,
+    ...restUpdates,
     ...(apiKeyPatch === null ? {} : apiKeyPatch ? { apiKey: apiKeyPatch } : {}),
+    stt: {
+      ...current.stt,
+      ...(updates.stt?.baseUrl !== undefined ? { baseUrl: updates.stt.baseUrl } : {}),
+      ...(updates.stt?.model !== undefined ? { model: updates.stt.model } : {}),
+    },
+    tts: {
+      ...current.tts,
+      ...(updates.tts?.baseUrl !== undefined ? { baseUrl: updates.tts.baseUrl } : {}),
+      ...(updates.tts?.model !== undefined ? { model: updates.tts.model } : {}),
+    },
   })
   const { hasApiKey: _hasApiKey, ...persistedSpeech } = next
+  const stripDirectionHasApiKey = (dir: any) => {
+    if (!dir || typeof dir !== "object") return dir
+    const { hasApiKey: _omitted, ...rest } = dir
+    return rest
+  }
   const patch: any = {
     ...persistedSpeech,
     ...(apiKeyPatch === null ? { apiKey: null } : {}),
   }
+  if (patch.stt) patch.stt = stripDirectionHasApiKey(patch.stt)
+  if (patch.tts) patch.tts = stripDirectionHasApiKey(patch.tts)
 
-  if (updates.separateProviders !== undefined || sttApiKeyPatch !== undefined || ttsApiKeyPatch !== undefined) {
-    if (updates.separateProviders !== undefined) {
-      patch.separateProviders = updates.separateProviders
+  if (updates.separateProviders !== undefined) {
+    patch.separateProviders = updates.separateProviders
+  }
+  if (sttApiKeyPatch !== undefined) {
+    patch.stt = {
+      ...(patch.stt ?? {}),
+      ...(sttApiKeyPatch === null ? { apiKey: null } : { apiKey: sttApiKeyPatch }),
     }
-    if (sttApiKeyPatch !== undefined) {
-      const { hasApiKey: _sttHas, ...sttRest } = patch.stt ?? {}
-      patch.stt = {
-        ...sttRest,
-        ...(sttApiKeyPatch === null ? { apiKey: null } : { apiKey: sttApiKeyPatch }),
-      }
-    }
-    if (ttsApiKeyPatch !== undefined) {
-      const { hasApiKey: _ttsHas, ...ttsRest } = patch.tts ?? {}
-      patch.tts = {
-        ...ttsRest,
-        ...(ttsApiKeyPatch === null ? { apiKey: null } : { apiKey: ttsApiKeyPatch }),
-      }
+  }
+  if (ttsApiKeyPatch !== undefined) {
+    patch.tts = {
+      ...(patch.tts ?? {}),
+      ...(ttsApiKeyPatch === null ? { apiKey: null } : { apiKey: ttsApiKeyPatch }),
     }
   }
 

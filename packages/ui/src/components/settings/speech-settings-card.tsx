@@ -12,8 +12,6 @@ const log = getLogger("actions")
 
 type DirectionalDraft = {
   apiKey: string
-  apiKeyTouched: boolean
-  clearApiKey: boolean
   baseUrl: string
   model: string
 }
@@ -35,8 +33,6 @@ function createDirectionalDraft(speech: SpeechSettings, direction: "stt" | "tts"
   const dir = speech[direction]
   return {
     apiKey: "",
-    apiKeyTouched: false,
-    clearApiKey: false,
     baseUrl: dir.baseUrl ?? speech.baseUrl ?? "",
     model: dir.model || (direction === "stt" ? speech.sttModel : speech.ttsModel),
   }
@@ -60,8 +56,6 @@ function createDraftFields(speech: SpeechSettings): DraftFields {
 function isDirectionalDraftEqual(a: DirectionalDraft, b: DirectionalDraft): boolean {
   return (
     a.apiKey === b.apiKey &&
-    a.apiKeyTouched === b.apiKeyTouched &&
-    a.clearApiKey === b.clearApiKey &&
     a.baseUrl === b.baseUrl &&
     a.model === b.model
   )
@@ -190,16 +184,20 @@ export const SpeechSettingsCard: Component = () => {
     if (current.separateProviders !== speech.separateProviders) return true
 
     if (current.separateProviders) {
+      const sttEffectiveBaseUrl = speech.stt.baseUrl ?? speech.baseUrl ?? ""
+      const ttsEffectiveBaseUrl = speech.tts.baseUrl ?? speech.baseUrl ?? ""
+      const sttEffectiveModel = speech.stt.model || speech.sttModel
+      const ttsEffectiveModel = speech.tts.model || speech.ttsModel
       const sttDirty =
         clearSttApiKey() ||
         current.stt.apiKey.trim().length > 0 ||
-        (current.stt.baseUrl || "") !== (speech.stt.baseUrl || "") ||
-        current.stt.model !== speech.stt.model
+        (current.stt.baseUrl || "") !== sttEffectiveBaseUrl ||
+        current.stt.model !== sttEffectiveModel
       const ttsDirty =
         clearTtsApiKey() ||
         current.tts.apiKey.trim().length > 0 ||
-        (current.tts.baseUrl || "") !== (speech.tts.baseUrl || "") ||
-        current.tts.model !== speech.tts.model ||
+        (current.tts.baseUrl || "") !== ttsEffectiveBaseUrl ||
+        current.tts.model !== ttsEffectiveModel ||
         current.ttsVoice !== speech.ttsVoice ||
         current.playbackMode !== speech.playbackMode ||
         current.ttsFormat !== speech.ttsFormat
@@ -306,7 +304,7 @@ export const SpeechSettingsCard: Component = () => {
               type="button"
               class="selector-button selector-button-secondary w-auto whitespace-nowrap inline-flex items-center gap-2"
               onClick={() => void testTranscription.toggle()}
-              disabled={isSaving() || testTranscription.isTranscribing()}
+              disabled={isSaving() || testTranscription.isTranscribing() || !testTranscription.canUseTranscription()}
               title={testTranscription.buttonTitle()}
               aria-label={testTranscription.buttonTitle()}
             >
@@ -458,15 +456,20 @@ export const SpeechSettingsCard: Component = () => {
           />
           <Show when={(serverSettings().speech.stt.hasApiKey || serverSettings().speech.hasApiKey) && !sttApiKeyTouched() && drafts().stt.apiKey.length === 0}>
             <div class="settings-inline-note">
-              {clearSttApiKey() ? t("settings.speech.stt.apiKey.clearPending") : t("settings.speech.stt.apiKey.storedNote")}{" "}
-              <Show when={!clearSttApiKey()}>
-                <button
-                  type="button"
-                  class="selector-button selector-button-secondary w-auto whitespace-nowrap"
-                  onClick={() => { setClearSttApiKey(true); setSaveStatus("idle") }}
-                >
-                  {t("settings.speech.stt.apiKey.clearAction")}
-                </button>
+              <Show
+                when={serverSettings().speech.stt.hasApiKey}
+                fallback={t("settings.speech.stt.apiKey.usingShared")}
+              >
+                {clearSttApiKey() ? t("settings.speech.stt.apiKey.clearPending") : t("settings.speech.stt.apiKey.storedNote")}{" "}
+                <Show when={!clearSttApiKey()}>
+                  <button
+                    type="button"
+                    class="selector-button selector-button-secondary w-auto whitespace-nowrap"
+                    onClick={() => { setClearSttApiKey(true); setSaveStatus("idle") }}
+                  >
+                    {t("settings.speech.stt.apiKey.clearAction")}
+                  </button>
+                </Show>
               </Show>
             </div>
           </Show>
@@ -497,15 +500,20 @@ export const SpeechSettingsCard: Component = () => {
           />
           <Show when={(serverSettings().speech.tts.hasApiKey || serverSettings().speech.hasApiKey) && !ttsApiKeyTouched() && drafts().tts.apiKey.length === 0}>
             <div class="settings-inline-note">
-              {clearTtsApiKey() ? t("settings.speech.tts.apiKey.clearPending") : t("settings.speech.tts.apiKey.storedNote")}{" "}
-              <Show when={!clearTtsApiKey()}>
-                <button
-                  type="button"
-                  class="selector-button selector-button-secondary w-auto whitespace-nowrap"
-                  onClick={() => { setClearTtsApiKey(true); setSaveStatus("idle") }}
-                >
-                  {t("settings.speech.tts.apiKey.clearAction")}
-                </button>
+              <Show
+                when={serverSettings().speech.tts.hasApiKey}
+                fallback={t("settings.speech.tts.apiKey.usingShared")}
+              >
+                {clearTtsApiKey() ? t("settings.speech.tts.apiKey.clearPending") : t("settings.speech.tts.apiKey.storedNote")}{" "}
+                <Show when={!clearTtsApiKey()}>
+                  <button
+                    type="button"
+                    class="selector-button selector-button-secondary w-auto whitespace-nowrap"
+                    onClick={() => { setClearTtsApiKey(true); setSaveStatus("idle") }}
+                  >
+                    {t("settings.speech.tts.apiKey.clearAction")}
+                  </button>
+                </Show>
               </Show>
             </div>
           </Show>

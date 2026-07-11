@@ -84,9 +84,11 @@ export class SpeechService {
   ) {}
 
   getCapabilities(): SpeechCapabilitiesResponse {
-    const sttSettings = this.resolveSttSettings()
-    const ttsSettings = this.resolveTtsSettings()
-    const separate = this.isSeparateProviders()
+    const parsed = this.parseConfig()
+    const speech = parsed.speech ?? {}
+    const separate = speech.separateProviders === true
+    const sttSettings = this.resolveSttSettingsFrom(speech)
+    const ttsSettings = this.resolveTtsSettingsFrom(speech)
 
     const sttConfigured = Boolean(sttSettings.apiKey)
     const ttsConfigured = Boolean(ttsSettings.apiKey)
@@ -98,7 +100,7 @@ export class SpeechService {
       supportsStt: true,
       supportsTts: true,
       supportsStreamingTts: true,
-      baseUrl: this.resolveSharedBaseUrl(),
+      baseUrl: speech.baseUrl?.trim() || process.env.OPENAI_BASE_URL || undefined,
       sttModel: sttSettings.sttModel,
       ttsModel: ttsSettings.ttsModel,
       ttsVoice: ttsSettings.ttsVoice,
@@ -123,6 +125,10 @@ export class SpeechService {
     return this.createTtsProvider().synthesizeStream(input)
   }
 
+  private parseConfig() {
+    return ServerSpeechSettingsSchema.parse(this.settings.getOwner("config", "server") ?? {})
+  }
+
   private createSttProvider(): SpeechProvider {
     const settings = this.resolveSttSettings()
     return new OpenAICompatibleSpeechProvider({
@@ -139,58 +145,15 @@ export class SpeechService {
     })
   }
 
-  private isSeparateProviders(): boolean {
-    const parsed = ServerSpeechSettingsSchema.parse(this.settings.getOwner("config", "server") ?? {})
-    return parsed.speech?.separateProviders === true
-  }
-
   private resolveSttSettings(): NormalizedSpeechSettings {
-    const parsed = ServerSpeechSettingsSchema.parse(this.settings.getOwner("config", "server") ?? {})
-    const speech = parsed.speech ?? {}
-    const separate = speech.separateProviders === true
-
-    if (separate) {
-      const stt = speech.stt ?? {}
-      return {
-        provider: speech.provider?.trim() || DEFAULT_PROVIDER,
-        apiKey: stt.apiKey?.trim() || speech.apiKey?.trim() || process.env.OPENAI_API_KEY,
-        baseUrl: stt.baseUrl?.trim() || speech.baseUrl?.trim() || process.env.OPENAI_BASE_URL || undefined,
-        sttModel: stt.model?.trim() || speech.sttModel?.trim() || DEFAULT_STT_MODEL,
-        ttsModel: speech.ttsModel?.trim() || DEFAULT_TTS_MODEL,
-        ttsVoice: speech.ttsVoice?.trim() || DEFAULT_TTS_VOICE,
-        ttsFormat: speech.ttsFormat ?? DEFAULT_TTS_FORMAT,
-      }
-    }
-
-    return {
-      provider: speech.provider?.trim() || DEFAULT_PROVIDER,
-      apiKey: speech.apiKey?.trim() || process.env.OPENAI_API_KEY,
-      baseUrl: speech.baseUrl?.trim() || process.env.OPENAI_BASE_URL || undefined,
-      sttModel: speech.sttModel?.trim() || DEFAULT_STT_MODEL,
-      ttsModel: speech.ttsModel?.trim() || DEFAULT_TTS_MODEL,
-      ttsVoice: speech.ttsVoice?.trim() || DEFAULT_TTS_VOICE,
-      ttsFormat: speech.ttsFormat ?? DEFAULT_TTS_FORMAT,
-    }
+    return this.resolveSttSettingsFrom(this.parseConfig().speech ?? {})
   }
 
   private resolveTtsSettings(): NormalizedSpeechSettings {
-    const parsed = ServerSpeechSettingsSchema.parse(this.settings.getOwner("config", "server") ?? {})
-    const speech = parsed.speech ?? {}
-    const separate = speech.separateProviders === true
+    return this.resolveTtsSettingsFrom(this.parseConfig().speech ?? {})
+  }
 
-    if (separate) {
-      const tts = speech.tts ?? {}
-      return {
-        provider: speech.provider?.trim() || DEFAULT_PROVIDER,
-        apiKey: tts.apiKey?.trim() || speech.apiKey?.trim() || process.env.OPENAI_API_KEY,
-        baseUrl: tts.baseUrl?.trim() || speech.baseUrl?.trim() || process.env.OPENAI_BASE_URL || undefined,
-        sttModel: speech.sttModel?.trim() || DEFAULT_STT_MODEL,
-        ttsModel: tts.model?.trim() || speech.ttsModel?.trim() || DEFAULT_TTS_MODEL,
-        ttsVoice: speech.ttsVoice?.trim() || DEFAULT_TTS_VOICE,
-        ttsFormat: speech.ttsFormat ?? DEFAULT_TTS_FORMAT,
-      }
-    }
-
+  private resolveShared(speech: NonNullable<z.infer<typeof ServerSpeechSettingsSchema>["speech"]>): NormalizedSpeechSettings {
     return {
       provider: speech.provider?.trim() || DEFAULT_PROVIDER,
       apiKey: speech.apiKey?.trim() || process.env.OPENAI_API_KEY,
@@ -202,9 +165,35 @@ export class SpeechService {
     }
   }
 
-  private resolveSharedBaseUrl(): string | undefined {
-    const parsed = ServerSpeechSettingsSchema.parse(this.settings.getOwner("config", "server") ?? {})
-    const speech = parsed.speech ?? {}
-    return speech.baseUrl?.trim() || process.env.OPENAI_BASE_URL || undefined
+  private resolveSttSettingsFrom(speech: NonNullable<z.infer<typeof ServerSpeechSettingsSchema>["speech"]>): NormalizedSpeechSettings {
+    if (speech.separateProviders !== true) {
+      return this.resolveShared(speech)
+    }
+    const stt = speech.stt ?? {}
+    return {
+      provider: speech.provider?.trim() || DEFAULT_PROVIDER,
+      apiKey: stt.apiKey?.trim() || speech.apiKey?.trim() || process.env.OPENAI_API_KEY,
+      baseUrl: stt.baseUrl?.trim() || speech.baseUrl?.trim() || process.env.OPENAI_BASE_URL || undefined,
+      sttModel: stt.model?.trim() || speech.sttModel?.trim() || DEFAULT_STT_MODEL,
+      ttsModel: speech.ttsModel?.trim() || DEFAULT_TTS_MODEL,
+      ttsVoice: speech.ttsVoice?.trim() || DEFAULT_TTS_VOICE,
+      ttsFormat: speech.ttsFormat ?? DEFAULT_TTS_FORMAT,
+    }
+  }
+
+  private resolveTtsSettingsFrom(speech: NonNullable<z.infer<typeof ServerSpeechSettingsSchema>["speech"]>): NormalizedSpeechSettings {
+    if (speech.separateProviders !== true) {
+      return this.resolveShared(speech)
+    }
+    const tts = speech.tts ?? {}
+    return {
+      provider: speech.provider?.trim() || DEFAULT_PROVIDER,
+      apiKey: tts.apiKey?.trim() || speech.apiKey?.trim() || process.env.OPENAI_API_KEY,
+      baseUrl: tts.baseUrl?.trim() || speech.baseUrl?.trim() || process.env.OPENAI_BASE_URL || undefined,
+      sttModel: speech.sttModel?.trim() || DEFAULT_STT_MODEL,
+      ttsModel: tts.model?.trim() || speech.ttsModel?.trim() || DEFAULT_TTS_MODEL,
+      ttsVoice: speech.ttsVoice?.trim() || DEFAULT_TTS_VOICE,
+      ttsFormat: speech.ttsFormat ?? DEFAULT_TTS_FORMAT,
+    }
   }
 }
