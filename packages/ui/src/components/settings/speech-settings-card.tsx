@@ -34,7 +34,7 @@ function createDirectionalDraft(speech: SpeechSettings, direction: "stt" | "tts"
   return {
     apiKey: "",
     baseUrl: dir.baseUrl ?? "",
-    model: dir.model || (direction === "stt" ? speech.sttModel : speech.ttsModel),
+    model: dir.model,
   }
 }
 
