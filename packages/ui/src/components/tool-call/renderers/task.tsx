@@ -2,7 +2,6 @@ import { For, Index, Show, createEffect, createMemo, createSignal, untrack } fro
 import type { ToolState } from "@opencode-ai/sdk/v2"
 import type { ToolRenderer } from "../types"
 import { ensureMarkdownContent, getDefaultToolAction, getToolIcon, getToolName, readToolStatePayload } from "../utils"
-import { resolveTitleForTool } from "../tool-title"
 import { messageStoreBus } from "../../../stores/message-v2/bus"
 import { loadMessages } from "../../../stores/session-api"
 import { loading, messagesLoaded } from "../../../stores/session-state"
@@ -121,6 +120,24 @@ function describeTaskTitle(input: Record<string, any>) {
   return base
 }
 
+function describeGenericToolTitle(tool: string, input: Record<string, any>) {
+  const base = getToolName(tool)
+  const detail =
+    typeof input.description === "string" && input.description.trim().length > 0
+      ? input.description.trim()
+      : typeof input.filePath === "string" && input.filePath.trim().length > 0
+        ? input.filePath.trim()
+        : typeof input.path === "string" && input.path.trim().length > 0
+          ? input.path.trim()
+          : typeof input.url === "string" && input.url.trim().length > 0
+            ? input.url.trim()
+            : typeof input.pattern === "string" && input.pattern.trim().length > 0
+              ? input.pattern.trim()
+              : ""
+
+  return detail ? `${base} ${detail}` : base
+}
+
 function describeToolTitle(item: TaskSummaryItem): string {
   if (item.title && item.title.length > 0) {
     return item.title
@@ -131,7 +148,12 @@ function describeToolTitle(item: TaskSummaryItem): string {
   }
 
   if (item.state) {
-    return resolveTitleForTool({ toolName: item.tool, state: item.state })
+    const stateTitle = typeof (item.state as { title?: string }).title === "string" ? (item.state as { title?: string }).title : undefined
+    if (stateTitle && stateTitle.length > 0) {
+      return stateTitle
+    }
+    const { input } = readToolStatePayload(item.state)
+    return describeGenericToolTitle(item.tool, { ...item.metadata, ...item.input, ...input })
   }
 
   return getDefaultToolAction(item.tool)

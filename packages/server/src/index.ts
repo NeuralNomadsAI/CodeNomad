@@ -23,6 +23,7 @@ import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_COOKIE_NAME, D
 import { resolveHttpsOptions } from "./server/tls"
 import { RemoteProxySessionManager } from "./server/remote-proxy"
 import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
+import { resolvePluginBaseUrl } from "./server/listener-base-url"
 import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
 import { SpeechService } from "./speech/service"
 import { SideCarManager } from "./sidecars/manager"
@@ -490,14 +491,8 @@ async function main() {
   }
 
   const remoteStart = httpsStart ?? httpStart
-  const localProtocol: "http" | "https" = httpStart ? "http" : "https"
   const remoteProtocol: "http" | "https" = httpsStart ? "https" : "http"
 
-  // Use an explicit IPv4 loopback address for the "local" URL.
-  // On macOS, `localhost` often resolves to ::1 first, and it is possible to have
-  // another instance bound on IPv6 while this instance binds IPv4 (or vice versa),
-  // which can lead clients to talk to the wrong process.
-  const localUrl = `${localProtocol}://127.0.0.1:${localStart.port}`
   let remoteUrl: string | undefined
   let remoteAddresses = [] as ReturnType<typeof resolveNetworkAddresses>
   if (remoteStart) {
@@ -516,6 +511,15 @@ async function main() {
       remoteUrl = `${remoteProtocol}://${remoteHost}:${remoteStart.port}`
     }
   }
+
+  // Prefer an explicit IPv4 loopback address only when one of the bound listeners
+  // accepts loopback. Concrete LAN bindings do not, so plugins need the reachable
+  // bound/listener URL instead of an unreachable 127.0.0.1 URL.
+  const localUrl = resolvePluginBaseUrl({
+    httpStart: httpStart ? { protocol: "http", bindHost: httpBindHost, port: httpStart.port } : null,
+    httpsStart: httpsStart ? { protocol: "https", bindHost: httpsBindHost, port: httpsStart.port } : null,
+    remoteUrl,
+  })
 
   serverMeta.localUrl = localUrl
   serverMeta.localPort = localStart.port

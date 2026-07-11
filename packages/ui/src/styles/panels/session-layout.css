@@ -105,6 +105,32 @@
   color: var(--text-primary);
 }
 
+.session-header-left-slot {
+  @apply flex items-center gap-2 min-w-0;
+  flex: 0 0 auto;
+}
+
+.session-header-active-title {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-self: stretch;
+  padding-inline: 0.75rem;
+  border-inline: 1px solid color-mix(in oklab, var(--border-base) 72%, transparent);
+  color: var(--text-secondary);
+}
+
+.session-header-active-title-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.15;
+}
+
 .session-sidebar-shortcuts {
   @apply flex flex-col gap-1;
 }
@@ -242,154 +268,38 @@ session-sidebar-controls .selector-trigger-primary {
 }
 
 
-/* Depth-based indentation for nested sessions */
-.session-item-base.session-item-depth-1 {
-  padding-inline-start: 2.25rem;
+.session-item-base.session-item-nested {
+  padding-inline-start: var(--session-indent);
   position: relative;
 }
 
-.session-item-base.session-item-depth-2 {
-  padding-inline-start: 3.5rem;
-  position: relative;
-}
-
-.session-item-base.session-item-depth-3 {
-  padding-inline-start: 4.75rem;
-  position: relative;
-}
-
-.session-item-base.session-item-depth-4 {
-  padding-inline-start: 6rem;
-  position: relative;
-}
-
-.session-item-base.session-item-depth-5 {
-  padding-inline-start: 7.25rem;
-  position: relative;
-}
-
-.session-item-base.session-item-depth-6 {
-  padding-inline-start: 8.5rem;
-  position: relative;
-}
-
-.session-item-base.session-item-depth-7 {
-  padding-inline-start: 9.75rem;
-  position: relative;
-}
-
-.session-item-base.session-item-depth-8 {
-  padding-inline-start: 11rem;
-  position: relative;
-}
-
-.session-item-base.session-item-depth-9 {
-  padding-inline-start: 12.25rem;
-  position: relative;
-}
-
-.session-item-base.session-item-depth-10 {
-  padding-inline-start: 13.5rem;
-  position: relative;
-}
-
-/* Tree connector lines for depth 1 */
-.session-item-base.session-item-depth-1::before {
+.session-item-base.session-item-nested::before {
   content: "";
   position: absolute;
   top: 0;
   bottom: 0;
-  inset-inline-start: 1.125rem;
+  inset-inline-start: var(--session-connector-offset);
   width: 1px;
   background-color: var(--text-secondary);
-  opacity: 0.95;
+  opacity: 0.65;
   pointer-events: none;
 }
 
-.session-item-base.session-item-depth-1.session-item-child-last::before {
+.session-item-base.session-item-nested.session-item-child-last::before {
   bottom: 50%;
 }
 
-.session-item-base.session-item-depth-1::after {
+.session-item-base.session-item-nested::after {
   content: "";
   position: absolute;
   top: 50%;
-  inset-inline-start: 1.125rem;
+  inset-inline-start: var(--session-connector-offset);
   width: 0.875rem;
   height: 1px;
   background-color: var(--text-secondary);
-  opacity: 0.95;
+  opacity: 0.65;
   transform: translateY(-0.5px);
   pointer-events: none;
-}
-
-/* Tree connector lines for depth 2 */
-.session-item-base.session-item-depth-2::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  inset-inline-start: 2.375rem;
-  width: 1px;
-  background-color: var(--text-secondary);
-  opacity: 0.95;
-  pointer-events: none;
-}
-
-.session-item-base.session-item-depth-2.session-item-child-last::before {
-  bottom: 50%;
-}
-
-.session-item-base.session-item-depth-2::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  inset-inline-start: 2.375rem;
-  width: 0.875rem;
-  height: 1px;
-  background-color: var(--text-secondary);
-  opacity: 0.95;
-  transform: translateY(-0.5px);
-  pointer-events: none;
-}
-
-/* Tree connector lines for depth 3+ - simplified vertical line */
-.session-item-base.session-item-depth-3::before,
-.session-item-base.session-item-depth-4::before,
-.session-item-base.session-item-depth-5::before,
-.session-item-base.session-item-depth-6::before,
-.session-item-base.session-item-depth-7::before,
-.session-item-base.session-item-depth-8::before,
-.session-item-base.session-item-depth-9::before,
-.session-item-base.session-item-depth-10::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background-color: var(--text-secondary);
-  opacity: 0.95;
-  pointer-events: none;
-}
-
-.session-item-base.session-item-depth-3::before { inset-inline-start: 3.625rem; }
-.session-item-base.session-item-depth-4::before { inset-inline-start: 4.875rem; }
-.session-item-base.session-item-depth-5::before { inset-inline-start: 6.125rem; }
-.session-item-base.session-item-depth-6::before { inset-inline-start: 7.375rem; }
-.session-item-base.session-item-depth-7::before { inset-inline-start: 8.625rem; }
-.session-item-base.session-item-depth-8::before { inset-inline-start: 9.875rem; }
-.session-item-base.session-item-depth-9::before { inset-inline-start: 11.125rem; }
-.session-item-base.session-item-depth-10::before { inset-inline-start: 12.375rem; }
-
-.session-item-base.session-item-depth-3.session-item-child-last::before,
-.session-item-base.session-item-depth-4.session-item-child-last::before,
-.session-item-base.session-item-depth-5.session-item-child-last::before,
-.session-item-base.session-item-depth-6.session-item-child-last::before,
-.session-item-base.session-item-depth-7.session-item-child-last::before,
-.session-item-base.session-item-depth-8.session-item-child-last::before,
-.session-item-base.session-item-depth-9.session-item-child-last::before,
-.session-item-base.session-item-depth-10.session-item-child-last::before {
-  bottom: 50%;
 }
 
 .session-item-base.session-item-border-user {

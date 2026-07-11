@@ -11,7 +11,7 @@ import { useI18n } from "../lib/i18n"
 import { showConfirmDialog } from "../stores/alerts"
 import {
   deleteSession,
-  ensureSessionExpanded,
+  ensureSessionAncestorsExpanded,
   getVisibleSessionIds,
   isSessionExpanded,
   loadMessages,
@@ -20,6 +20,13 @@ import {
   sessions as sessionStateSessions,
   setActiveSessionFromList,
   toggleSessionExpanded,
+  loadMoreSessions,
+  searchSessions,
+  getSessionHasMore,
+  clearSessionSearch,
+  getSessionSearchQuery,
+  getSessionSearchThreads,
+  isSessionSearchLoading,
 } from "../stores/sessions"
 import { getGitRepoStatus, getWorktreeSlugForParentSession } from "../stores/worktrees"
 import { getLogger } from "../lib/logger"
@@ -65,6 +72,71 @@ const SessionList: Component<SessionListProps> = (props) => {
     onCleanup(() => window.clearInterval(timer))
   })
 
+  const [sentinelEl, setSentinelEl] = createSignal<HTMLDivElement | null>(null)
+
+  const hasMore = createMemo(() => {
+    if (normalizedQuery()) return false
+    return getSessionHasMore(props.instanceId)
+  })
+
+  const isFetchingSessions = createMemo(() => {
+    return loading().fetchingSessions.get(props.instanceId) ?? false
+  })
+
+  createEffect(() => {
+    const el = sentinelEl()
+    if (!el || !hasMore() || isFetchingSessions()) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0]
+        if (entry?.isIntersecting && hasMore() && !isFetchingSessions()) {
+          void loadMoreSessions(props.instanceId).catch((error) => {
+            log.error("Failed to load more sessions:", error)
+          })
+        }
+      },
+      { root: el.parentElement ?? null, rootMargin: "0px 0px 200px 0px" }
+    )
+
+    observer.observe(el)
+    onCleanup(() => observer.disconnect())
+  })
+
+  let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null
+  createEffect(() => {
+    const query = normalizedQuery()
+    if (!props.enableFilterBar) {
+      clearSessionSearch(props.instanceId)
+      return
+    }
+
+    if (searchDebounceTimer) {
+      clearTimeout(searchDebounceTimer)
+    }
+
+    if (!query) {
+      clearSessionSearch(props.instanceId)
+      return
+    }
+
+    // Always run server search in background for workspace-complete results.
+    // Client-side filtering (filteredThreads) shows instant results from loaded sessions.
+    const queryAtDispatch = query
+    searchDebounceTimer = setTimeout(() => {
+      void searchSessions(props.instanceId, queryAtDispatch)
+        .catch((error) => {
+          log.error("Failed to search sessions:", error)
+        })
+    }, 150)
+
+    onCleanup(() => {
+      if (searchDebounceTimer) {
+        clearTimeout(searchDebounceTimer)
+      }
+    })
+  })
+
   const normalizeSessionLabel = (sessionId: string) => {
     const session = sessionStateSessions().get(props.instanceId)?.get(sessionId)
     const title = (session?.title ?? "").trim()
@@ -78,45 +150,25 @@ const SessionList: Component<SessionListProps> = (props) => {
     return sessionId.toLowerCase().includes(query)
   }
 
-  // Recursively check if any session in a thread subtree matches the query
-  const subtreeHasMatch = (thread: SessionThread, query: string): boolean => {
-    if (sessionMatchesQuery(thread.session.id, query)) return true
-    for (const child of thread.children) {
-      if (subtreeHasMatch(child, query)) return true
-    }
-    return false
-  }
-
-  // Recursively filter threads while preserving the tree structure
   const filterThreadTree = (thread: SessionThread, query: string): SessionThread | null => {
-    const parentMatches = sessionMatchesQuery(thread.session.id, query)
-
-    if (parentMatches) {
-      // Parent matches: keep all children (but filter them recursively in case query is deeper)
-      const filteredChildren: SessionThread[] = []
-      for (const child of thread.children) {
-        const filteredChild = filterThreadTree(child, query)
-        if (filteredChild !== null) filteredChildren.push(filteredChild)
-      }
-      return { ...thread, children: filteredChildren }
-    }
-
-    // Parent doesn't match: check if any descendant matches
     const matchingChildren: SessionThread[] = []
     for (const child of thread.children) {
       const filteredChild = filterThreadTree(child, query)
       if (filteredChild !== null) matchingChildren.push(filteredChild)
     }
-
-    if (matchingChildren.length === 0) return null
-
-    // Return thread with only matching descendants
+    if (!sessionMatchesQuery(thread.session.id, query) && matchingChildren.length === 0) return null
     return { ...thread, children: matchingChildren }
   }
 
   const filteredThreads = createMemo<SessionThread[]>(() => {
     const query = normalizedQuery()
     if (!query) return props.threads
+
+    const searchQuery = getSessionSearchQuery(props.instanceId)
+    const searchLoading = isSessionSearchLoading(props.instanceId)
+    if (searchQuery === query && !searchLoading) {
+      return getSessionSearchThreads(props.instanceId)
+    }
 
     const result: SessionThread[] = []
     for (const thread of props.threads) {
@@ -165,7 +217,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     // If the user selects a child session, make sure its parent thread is expanded.
     // For parent sessions we don't force expansion; user can collapse/expand freely.
     if (session?.parentId) {
-      ensureSessionExpanded(props.instanceId, session.parentId)
+      ensureSessionAncestorsExpanded(props.instanceId, session.id)
     }
 
     props.onSelect(sessionId)
@@ -512,13 +564,21 @@ const SessionList: Component<SessionListProps> = (props) => {
       rowCheckboxEl.indeterminate = parentGroupState().indeterminate
     })
 
-    // Build depth-based class for indentation
-    const depthClass = () => isChild() ? `session-item-depth-${Math.min(rowProps.depth, 10)}` : ""
+    const nestedStyle = () => {
+      if (!isChild()) return undefined
+      const visualDepth = Math.min(rowProps.depth, 6)
+      const indent = 1.375 + visualDepth * 0.875
+      return {
+        "--session-indent": `${indent}rem`,
+        "--session-connector-offset": `${indent - 0.875}rem`,
+      }
+    }
 
     return (
       <div class="session-list-item group">
         <button
-          class={`session-item-base ${depthClass()} ${isChild() && rowProps.isLastChild ? "session-item-child-last" : ""} ${isChild() ? "session-item-border-assistant session-item-kind-assistant" : "session-item-border-user session-item-kind-user"} ${isActive() ? "session-item-active" : "session-item-inactive"}`}
+          class={`session-item-base ${isChild() ? "session-item-nested" : ""} ${isChild() && rowProps.isLastChild ? "session-item-child-last" : ""} ${isChild() ? "session-item-border-assistant session-item-kind-assistant" : "session-item-border-user session-item-kind-user"} ${isActive() ? "session-item-active" : "session-item-inactive"}`}
+          style={nestedStyle()}
           data-session-id={sessionId()}
           onClick={() => selectSession(sessionId())}
           title={title()}
@@ -544,7 +604,9 @@ const SessionList: Component<SessionListProps> = (props) => {
                 />
               </Show>
 
-              <User class="w-4 h-4 flex-shrink-0" />
+              <Show when={isChild()} fallback={<User class="w-4 h-4 flex-shrink-0" />}>
+                <Bot class="w-4 h-4 flex-shrink-0" />
+              </Show>
               <span class="session-item-title session-item-title--clamp" dir="auto">{title()}</span>
             </div>
           </div>
@@ -660,31 +722,29 @@ const SessionList: Component<SessionListProps> = (props) => {
   // Recursive component for rendering a thread and its children
   const SessionThreadRow: Component<{
     thread: SessionThread
-    instanceId: string
-    activeSessionId: string | null
     depth?: number
-  }> = (props) => {
-    const depth = () => props.depth ?? 0
-    const expanded = () => isSessionExpanded(props.instanceId, props.thread.session.id)
+    isLastChild?: boolean
+  }> = (rowProps) => {
+    const depth = () => rowProps.depth ?? 0
+    const expanded = () => normalizedQuery() ? true : isSessionExpanded(props.instanceId, rowProps.thread.session.id)
 
     return (
       <>
         <SessionRow
-          session={props.thread.session}
+          session={rowProps.thread.session}
           depth={depth()}
-          hasChildren={props.thread.hasChildren}
+          hasChildren={rowProps.thread.hasChildren}
           expanded={expanded()}
-          onToggleExpand={() => toggleSessionExpanded(props.instanceId, props.thread.session.id)}
-          isLastChild={false}
+          onToggleExpand={() => toggleSessionExpanded(props.instanceId, rowProps.thread.session.id)}
+          isLastChild={Boolean(rowProps.isLastChild)}
         />
-        <Show when={expanded() && props.thread.children.length > 0}>
-          <For each={props.thread.children}>
-            {(childThread) => (
+        <Show when={expanded() && rowProps.thread.children.length > 0}>
+          <For each={rowProps.thread.children}>
+            {(childThread, index) => (
               <SessionThreadRow
                 thread={childThread}
-                instanceId={props.instanceId}
-                activeSessionId={props.activeSessionId}
                 depth={depth() + 1}
+                isLastChild={index() === rowProps.thread.children.length - 1}
               />
             )}
           </For>
@@ -693,27 +753,12 @@ const SessionList: Component<SessionListProps> = (props) => {
     )
   }
 
-  const activeParentId = createMemo(() => {
-    const activeId = props.activeSessionId
-    if (!activeId || activeId === "info") return null
-
-    const activeSession = sessionStateSessions().get(props.instanceId)?.get(activeId)
-    if (!activeSession) return null
-
-    return activeSession.parentId ?? activeSession.id
-  })
-
   createEffect(() => {
-    // Keep the active child session visible by ensuring its parent is expanded.
-    // Don't force-expanding when the active session itself is a parent lets users collapse it.
     const activeId = props.activeSessionId
     if (!activeId || activeId === "info") return
     const activeSession = sessionStateSessions().get(props.instanceId)?.get(activeId)
-    if (!activeSession) return
-    if (!activeSession.parentId) return
-    const parentId = activeParentId()
-    if (!parentId) return
-    ensureSessionExpanded(props.instanceId, parentId)
+    if (!activeSession?.parentId) return
+    ensureSessionAncestorsExpanded(props.instanceId, activeId)
   })
  
   const listEl = createSignal<HTMLElement | null>(null)
@@ -844,15 +889,25 @@ const SessionList: Component<SessionListProps> = (props) => {
          <Show when={filteredThreads().length > 0}>
            <div class="session-section">
              <For each={filteredThreads()}>
-                {(thread) => (
+                {(thread, index) => (
                   <SessionThreadRow
                     thread={thread}
-                    instanceId={props.instanceId}
-                    activeSessionId={props.activeSessionId}
                     depth={0}
+                    isLastChild={index() === filteredThreads().length - 1}
                   />
                 )}
              </For>
+             <Show when={hasMore() || isFetchingSessions()}>
+               <div
+                 ref={(el) => setSentinelEl(el)}
+                 class="session-list-sentinel flex items-center justify-center py-3 text-text-weak text-xs"
+                 data-session-sentinel
+               >
+                 <Show when={isFetchingSessions()}>
+                   <span class="animate-pulse">{t("sessionList.loading.more")}</span>
+                 </Show>
+               </div>
+             </Show>
            </div>
          </Show>
        </div>

@@ -75,6 +75,8 @@ export function getReadToolSearchText(context: ToolSearchTextContext): string[] 
   const { input, metadata } = readToolStatePayload(context.toolState)
   appendBaseToolText(values, context)
   appendString(values, input.filePath)
+  appendString(values, input.path)
+  appendString(values, input.name)
   appendString(values, metadata.preview)
   appendToolErrorText(values, context)
   return values

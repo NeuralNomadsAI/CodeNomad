@@ -7,6 +7,7 @@ interface ContextMeterProps {
   usedLabel: string
   availableLabel: string
   class?: string
+  centerValue?: boolean
 }
 
 const LABEL_CLASS = "uppercase text-[10px] tracking-wide text-muted"
@@ -104,18 +105,32 @@ export const ContextMeter: Component<ContextMeterProps> = (props) => {
 
   const tooltipText = () => `Context Used: ${percentLabel()}`
 
+  const valuePill = () => (
+    <div class={containerClass}>
+      <span class={LABEL_CLASS}>{props.usedLabel}</span>
+      <span class="font-semibold text-primary tabular-nums">{props.formatTokens(used())}</span>
+      <span class="text-muted">/</span>
+      <span class={LABEL_CLASS}>{props.availableLabel}</span>
+      <span class="font-semibold text-primary tabular-nums">
+        {available() !== null ? props.formatTokens(available() as number) : "--"}
+      </span>
+    </div>
+  )
+
+  if (props.centerValue) {
+    return (
+      <div class="grid grid-cols-[22px_auto_22px] items-center gap-2" title={tooltipText()}>
+        <div class="flex justify-end">{circle()}</div>
+        {valuePill()}
+        <span aria-hidden="true" />
+      </div>
+    )
+  }
+
   return (
     <div class="inline-flex items-center gap-2" title={tooltipText()}>
       {circle()}
-      <div class={containerClass}>
-        <span class={LABEL_CLASS}>{props.usedLabel}</span>
-        <span class="font-semibold text-primary tabular-nums">{props.formatTokens(used())}</span>
-        <span class="text-muted">/</span>
-        <span class={LABEL_CLASS}>{props.availableLabel}</span>
-        <span class="font-semibold text-primary tabular-nums">
-          {available() !== null ? props.formatTokens(available() as number) : "--"}
-        </span>
-      </div>
+      {valuePill()}
     </div>
   )
 }

@@ -56,7 +56,7 @@ describe("buildWindowsSpawnSpec", () => {
         env: {
           OPENCODE_CONFIG_CONTENT: JSON.stringify({ plugin: ["file:///C:/Users/dev/AppData/Roaming/CodeNomad/plugin.tgz"] }),
           CODENOMAD_INSTANCE_ID: "workspace-123",
-          OPENCODE_SERVER_BASE_URL: "https://127.0.0.1:4321/workspaces/workspace-123/worktrees/root/instance",
+          OPENCODE_SERVER_BASE_URL: "https://127.0.0.1:4321/workspaces/workspace-123/instance",
           OPENCODE_SERVER_PASSWORD: "secret",
         },
         propagateEnvKeys: ["OPENCODE_CONFIG_CONTENT", "CODENOMAD_INSTANCE_ID", "OPENCODE_SERVER_BASE_URL", "OPENCODE_SERVER_PASSWORD"],

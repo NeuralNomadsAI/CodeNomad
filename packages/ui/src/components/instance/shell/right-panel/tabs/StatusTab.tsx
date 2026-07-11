@@ -24,7 +24,6 @@ interface StatusTabProps {
 
   activeSessionId: Accessor<string | null>
   activeSession: Accessor<Session | null>
-  activeSessionDiffs: Accessor<any[] | undefined>
 
   latestTodoState: Accessor<ToolState | null>
 
@@ -36,7 +35,6 @@ interface StatusTabProps {
   expandedItems: Accessor<string[]>
   onExpandedItemsChange: (values: string[]) => void
 
-  onOpenChangesTab: (file?: string) => void
 }
 
 const StatusTab: Component<StatusTabProps> = (props) => {
@@ -66,85 +64,6 @@ const StatusTab: Component<StatusTabProps> = (props) => {
             inputProps={{ "aria-label": props.t("instanceShell.yoloMode.title") }}
             onChange={() => togglePermissionAutoAcceptForSession(props.instanceId, session.id)}
           />
-        </div>
-      </div>
-    )
-  }
-
-  const renderStatusSessionChanges = () => {
-    const sessionId = props.activeSessionId()
-    if (!sessionId || sessionId === "info") {
-      return (
-        <div class="right-panel-empty right-panel-empty--left">
-          <span class="text-xs">{props.t("instanceShell.sessionChanges.noSessionSelected")}</span>
-        </div>
-      )
-    }
-
-    const diffs = props.activeSessionDiffs()
-    if (diffs === undefined) {
-      return (
-        <div class="right-panel-empty right-panel-empty--left">
-          <span class="text-xs">{props.t("instanceShell.sessionChanges.loading")}</span>
-        </div>
-      )
-    }
-
-    if (!Array.isArray(diffs) || diffs.length === 0) {
-      return (
-        <div class="right-panel-empty right-panel-empty--left">
-          <span class="text-xs">{props.t("instanceShell.sessionChanges.empty")}</span>
-        </div>
-      )
-    }
-
-    const sorted = [...diffs].sort((a, b) => String(a.file || "").localeCompare(String(b.file || "")))
-    const totals = sorted.reduce(
-      (acc, item) => {
-        acc.additions += typeof item.additions === "number" ? item.additions : 0
-        acc.deletions += typeof item.deletions === "number" ? item.deletions : 0
-        return acc
-      },
-      { additions: 0, deletions: 0 },
-    )
-
-    return (
-      <div class="flex flex-col gap-3 min-h-0">
-        <div class="flex items-center justify-between gap-2 text-[11px] text-secondary">
-          <span>{props.t("instanceShell.sessionChanges.filesChanged", { count: sorted.length })}</span>
-          <span class="flex items-center gap-2">
-            <span style={{ color: "var(--session-status-idle-fg)" }}>{`+${totals.additions}`}</span>
-            <span style={{ color: "var(--session-status-working-fg)" }}>{`-${totals.deletions}`}</span>
-          </span>
-        </div>
-
-        <div class="rounded-md border border-base bg-surface-secondary p-2 max-h-[40vh] overflow-y-auto">
-          <div class="flex flex-col">
-            <For each={sorted}>
-              {(item) => (
-                <button
-                  type="button"
-                  class="border-b border-base last:border-b-0 text-left hover:bg-surface-muted rounded-sm"
-                  onClick={() => props.onOpenChangesTab(item.file)}
-                  title={props.t("instanceShell.sessionChanges.actions.show")}
-                >
-                  <div class="flex items-center justify-between gap-3">
-                    <div
-                      class="text-xs font-mono text-primary min-w-0 flex-1 overflow-hidden whitespace-nowrap"
-                      title={item.file}
-                      style="text-overflow: ellipsis; direction: rtl; text-align: left; unicode-bidi: plaintext;"
-                    >
-                      {item.file}
-                    </div>
-                    <div class="flex items-center gap-2 text-[11px] flex-shrink-0">
-                      <span style={{ color: "var(--session-status-idle-fg)" }}>{`+${item.additions}`}</span>
-                      <span style={{ color: "var(--session-status-working-fg)" }}>{`-${item.deletions}`}</span>
-                    </div>
-                  </div>
-                </button>
-              )}
-            </For>
-          </div>
         </div>
       </div>
     )
@@ -259,12 +178,6 @@ const StatusTab: Component<StatusTabProps> = (props) => {
       labelKey: "instanceShell.rightPanel.sections.yoloMode",
       tooltipKey: "instanceShell.rightPanel.sections.yoloMode.tooltip",
       render: renderYoloModeSection,
-    },
-    {
-      id: "session-changes",
-      labelKey: "instanceShell.rightPanel.sections.sessionChanges",
-      tooltipKey: "instanceShell.rightPanel.sections.sessionChanges.tooltip",
-      render: renderStatusSessionChanges,
     },
     {
       id: "plan",

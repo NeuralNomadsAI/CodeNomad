@@ -14,6 +14,7 @@ export const folderSelectionMessages = {
   "folderSelection.recent.title": "Недавние папки",
   "folderSelection.recent.subtitle.one": "Доступна {count} папка",
   "folderSelection.recent.subtitle.other": "Доступно {count} папок",
+  "folderSelection.recent.rename": "Переименовать рабочее пространство",
   "folderSelection.recent.remove": "Убрать из недавних",
   "folderSelection.recent.openBadge": "Открыта",
   "folderSelection.recent.alreadyOpenTitle": "Проект уже открыт",
@@ -94,5 +95,14 @@ export const folderSelectionMessages = {
   "folderSelection.servers.certificateInstall.confirmLabel": "Продолжить",
   "folderSelection.servers.certificateInstall.cancelLabel": "Отмена",
   "folderSelection.servers.certificateInstall.cancelled": "CodeNomad должен доверять локальному сертификату, прежде чем сможет открывать удаленные HTTPS-окна с самоподписанным сертификатом.",
-  "folderSelection.sidecars.button": "Open SideCar",
+  "folderSelection.sidecars.button": "Открыть SideCar",
+
+  "projectRenameDialog.title": "Переименовать рабочее пространство",
+  "projectRenameDialog.description.withLabel": "Обновите имя рабочего пространства для \"{label}\".",
+  "projectRenameDialog.description.default": "Задайте имя рабочего пространства для этой папки.",
+  "projectRenameDialog.input.label": "Имя рабочего пространства",
+  "projectRenameDialog.input.placeholder": "Введите имя рабочего пространства",
+  "projectRenameDialog.actions.cancel": "Отмена",
+  "projectRenameDialog.actions.rename": "Переименовать",
+  "projectRenameDialog.actions.renaming": "Переименование...",
 } as const

@@ -12,6 +12,7 @@ export const appMessages = {
   "app.stopInstance.title": "Detener instancia",
   "app.stopInstance.confirmLabel": "Detener",
   "app.stopInstance.cancelLabel": "Seguir ejecutándose",
+  "app.stopInstance.toast.error": "No se pudo detener el workspace.",
 
   "emptyState.logoAlt": "Logo de CodeNomad",
   "emptyState.brandTitle": "CodeNomad",
@@ -33,4 +34,10 @@ export const appMessages = {
   "releases.devUpdateAvailable.title": "Compilación dev disponible",
   "releases.devUpdateAvailable.message": "Hay una nueva compilación dev disponible: {version}.",
   "releases.devUpdateAvailable.action": "Ver release",
+
+  "theme.mode.system": "Sistema",
+  "theme.mode.light": "Claro",
+  "theme.mode.dark": "Oscuro",
+  "theme.toggle.title": "Tema: {mode}",
+  "theme.toggle.ariaLabel": "Tema: {mode}",
 } as const

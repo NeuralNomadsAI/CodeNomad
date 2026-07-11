@@ -1,0 +1,151 @@
+name: Update Winget
+
+on:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: "Stable release tag to inspect"
+        required: true
+        type: string
+      release_id:
+        description: "Optional numeric GitHub release id"
+        required: false
+        default: ""
+        type: string
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Stable release tag to inspect"
+        required: true
+        type: string
+      release_id:
+        description: "Optional numeric GitHub release id"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  resolve-release:
+    name: Resolve release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.release.outputs.release_id }}
+      release_tag: ${{ steps.release.outputs.release_tag }}
+      draft: ${{ steps.release.outputs.draft }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+    steps:
+      - name: Resolve release metadata
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_ID_INPUT: ${{ inputs.release_id }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$RELEASE_ID_INPUT" ]; then
+            release_api="repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID_INPUT}"
+          else
+            release_api="repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}"
+          fi
+
+          release_id="$(gh api "$release_api" --jq '.id')"
+          release_tag="$(gh api "$release_api" --jq '.tag_name')"
+          draft="$(gh api "$release_api" --jq '.draft')"
+          prerelease="$(gh api "$release_api" --jq '.prerelease')"
+
+          if [ -z "$release_id" ] || [ "$release_id" = "null" ]; then
+            echo "Unable to resolve release id for tag '$RELEASE_TAG'" >&2
+            exit 1
+          fi
+
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "draft=$draft" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+      - name: Log resolved release metadata
+        run: |
+          echo "Release tag: ${{ steps.release.outputs.release_tag }}"
+          echo "Release id: ${{ steps.release.outputs.release_id }}"
+          echo "Draft: ${{ steps.release.outputs.draft }}"
+          echo "Prerelease: ${{ steps.release.outputs.prerelease }}"
+
+  update-winget:
+    name: Submit Winget manifest update
+    needs: resolve-release
+    if: ${{ needs.resolve-release.outputs.draft != 'true' && needs.resolve-release.outputs.prerelease != 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      WINGET_PACKAGE_IDENTIFIER: ${{ vars.WINGET_PACKAGE_IDENTIFIER || 'NeuralNomadsAI.CodeNomad' }}
+      WINGET_FORK_OWNER: ${{ vars.WINGET_FORK_OWNER || 'pascalandr' }}
+      WINGET_WINDOWS_ASSET_NAME_TEMPLATE: ${{ vars.WINGET_WINDOWS_ASSET_NAME_TEMPLATE || 'CodeNomad-Tauri-windows-x64-{version}.zip' }}
+      WINGET_ASSET_WAIT_TIMEOUT_SECONDS: ${{ vars.WINGET_ASSET_WAIT_TIMEOUT_SECONDS || '900' }}
+      WINGET_ASSET_POLL_INTERVAL_SECONDS: ${{ vars.WINGET_ASSET_POLL_INTERVAL_SECONDS || '15' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Wait for Windows Tauri release asset
+        id: release_asset
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          args=(
+            --repo "${{ github.repository }}"
+            --release-id "${{ needs.resolve-release.outputs.release_id }}"
+            --tag "${{ needs.resolve-release.outputs.release_tag }}"
+            --asset-name-template "$WINGET_WINDOWS_ASSET_NAME_TEMPLATE"
+            --timeout-seconds "$WINGET_ASSET_WAIT_TIMEOUT_SECONDS"
+            --poll-interval-seconds "$WINGET_ASSET_POLL_INTERVAL_SECONDS"
+            --github-output "$GITHUB_OUTPUT"
+          )
+
+          node scripts/winget/resolve-release-asset.cjs "${args[@]}"
+
+      - name: Log resolved Winget asset metadata
+        run: |
+          echo "Resolved asset: ${{ steps.release_asset.outputs.asset_name }}"
+          echo "Resolved version: ${{ steps.release_asset.outputs.version }}"
+          echo "Resolved SHA-256: ${{ steps.release_asset.outputs.asset_sha256 }}"
+
+      - name: Validate fork configuration
+        env:
+          GH_TOKEN: ${{ secrets.WINGET_GITHUB_TOKEN }}
+          EXPECTED_OWNER: ${{ env.WINGET_FORK_OWNER }}
+        run: |
+          set -euo pipefail
+          token_owner="$(gh api user --jq '.login')"
+          fork_name="$(gh api "repos/$EXPECTED_OWNER/winget-pkgs" --jq '.full_name')"
+          parent_name="$(gh api "repos/$EXPECTED_OWNER/winget-pkgs" --jq '.parent.full_name')"
+          is_fork="$(gh api "repos/$EXPECTED_OWNER/winget-pkgs" --jq '.fork')"
+
+          if [ "$token_owner" != "$EXPECTED_OWNER" ]; then
+            echo "WINGET_GITHUB_TOKEN belongs to '$token_owner' but WINGET_FORK_OWNER is '$EXPECTED_OWNER'" >&2
+            exit 1
+          fi
+
+          if [ "$is_fork" != "true" ] || [ "$parent_name" != "microsoft/winget-pkgs" ]; then
+            echo "Configured fork must be $EXPECTED_OWNER/winget-pkgs forked from microsoft/winget-pkgs" >&2
+            exit 1
+          fi
+
+          echo "Validated fork: $fork_name"
+
+      - name: Submit update to Winget
+        uses: vedantmgoyal9/winget-releaser@v2
+        with:
+          identifier: ${{ env.WINGET_PACKAGE_IDENTIFIER }}
+          version: ${{ steps.release_asset.outputs.version }}
+          release-tag: ${{ needs.resolve-release.outputs.release_tag }}
+          installers-regex: ${{ steps.release_asset.outputs.asset_regex }}
+          fork-user: ${{ env.WINGET_FORK_OWNER }}
+          token: ${{ secrets.WINGET_GITHUB_TOKEN }}

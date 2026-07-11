@@ -1,5 +1,5 @@
 import { Component, createSignal, For, Show } from "solid-js"
-import { Plus, Trash2, Key, Globe } from "lucide-solid"
+import { Plus, Trash2, Key, Globe, Shield, ShieldOff } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
 import { useI18n } from "../lib/i18n"
 
@@ -14,10 +14,13 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
     addEnvironmentVariable,
     removeEnvironmentVariable,
     updateEnvironmentVariables,
+    isSecureEnvVar,
+    toggleSecureEnvVar,
   } = useConfig()
   const [envVars, setEnvVars] = createSignal<Record<string, string>>(serverSettings().environmentVariables || {})
   const [newKey, setNewKey] = createSignal("")
   const [newValue, setNewValue] = createSignal("")
+  const [newVarSecure, setNewVarSecure] = createSignal(true)
 
   const entries = () => Object.entries(envVars())
 
@@ -27,10 +30,11 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
 
     if (!key) return
 
-    addEnvironmentVariable(key, value)
+    addEnvironmentVariable(key, value, newVarSecure())
     setEnvVars({ ...envVars(), [key]: value })
     setNewKey("")
     setNewValue("")
+    setNewVarSecure(true)
   }
 
   function handleRemoveVariable(key: string) {
@@ -43,6 +47,10 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
     const updated = { ...envVars(), [key]: value }
     setEnvVars(updated)
     updateEnvironmentVariables(updated)
+  }
+
+  function handleSecureToggle(key: string) {
+    toggleSecureEnvVar(key)
   }
 
   function handleKeyPress(e: KeyboardEvent) {
@@ -81,14 +89,29 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
                     title={t("envEditor.fields.name.readOnlyTitle")}
                   />
                   <input
-                    type="text"
+                    type={isSecureEnvVar(key) ? "password" : "text"}
                     value={value}
                     disabled={props.disabled}
                     onInput={(e) => handleUpdateVariable(key, e.currentTarget.value)}
                     class="flex-1 px-2.5 py-1.5 text-sm bg-surface-base border border-base rounded text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
                     placeholder={t("envEditor.fields.value.placeholder")}
+                    autocomplete={isSecureEnvVar(key) ? "new-password" : "off"}
+                    spellcheck={isSecureEnvVar(key) ? false : undefined}
+                    autocapitalize={isSecureEnvVar(key) ? "off" : undefined}
                   />
                 </div>
+                <button
+                  onClick={() => handleSecureToggle(key)}
+                  disabled={props.disabled}
+                  class={`p-1.5 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                    isSecureEnvVar(key)
+                      ? "icon-accent-hover text-accent"
+                      : "icon-muted icon-accent-hover"
+                  }`}
+                  title={isSecureEnvVar(key) ? t("envEditor.fields.secure.enabled") : t("envEditor.fields.secure.disabled")}
+                >
+                  {isSecureEnvVar(key) ? <Shield class="w-3.5 h-3.5" /> : <ShieldOff class="w-3.5 h-3.5" />}
+                </button>
                 <button
                   onClick={() => handleRemoveVariable(key)}
                   disabled={props.disabled}
@@ -117,15 +140,28 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
             placeholder={t("envEditor.fields.name.placeholder")}
           />
           <input
-            type="text"
+            type={newVarSecure() ? "password" : "text"}
             value={newValue()}
             onInput={(e) => setNewValue(e.currentTarget.value)}
             onKeyPress={handleKeyPress}
             disabled={props.disabled}
             class="flex-1 px-2.5 py-1.5 text-sm bg-surface-base border border-base rounded text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
             placeholder={t("envEditor.fields.value.placeholder")}
+            autocomplete="new-password"
           />
         </div>
+        <button
+          onClick={() => setNewVarSecure(!newVarSecure())}
+          disabled={props.disabled}
+          class={`p-1.5 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+            newVarSecure()
+              ? "icon-accent-hover text-accent"
+              : "icon-muted icon-accent-hover"
+          }`}
+          title={newVarSecure() ? t("envEditor.fields.secure.enabled") : t("envEditor.fields.secure.disabled")}
+        >
+          {newVarSecure() ? <Shield class="w-3.5 h-3.5" /> : <ShieldOff class="w-3.5 h-3.5" />}
+        </button>
         <button
           onClick={handleAddVariable}
           disabled={props.disabled || !newKey().trim()}

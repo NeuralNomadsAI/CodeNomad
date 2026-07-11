@@ -26,10 +26,11 @@ import type { DiffContextMode, DiffViewMode, DiffWordWrapMode, RightPanelTab } f
 import {
   getDefaultWorktreeSlug,
   getGitRepoStatus,
-  getOrCreateWorktreeClient,
   getWorktreeSlugForSession,
   getWorktrees,
 } from "../../../../stores/worktrees"
+import { getRootClient } from "../../../../stores/opencode-client"
+import { getOpenCodeWorkspaceIdForWorktree } from "../../../../stores/opencode-workspaces"
 import { requestData } from "../../../../lib/opencode-api"
 import { serverApi } from "../../../../lib/api-client"
 import { showConfirmDialog } from "../../../../stores/alerts"
@@ -40,10 +41,7 @@ import {
   RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY,
   RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY,
   RIGHT_PANEL_CHANGES_DIFF_WORD_WRAP_KEY,
-  RIGHT_PANEL_CHANGES_LIST_OPEN_NONPHONE_KEY,
-  RIGHT_PANEL_CHANGES_LIST_OPEN_PHONE_KEY,
   RIGHT_PANEL_FILES_WORD_WRAP_KEY,
-  RIGHT_PANEL_CHANGES_SPLIT_WIDTH_KEY,
   RIGHT_PANEL_FILES_LIST_OPEN_NONPHONE_KEY,
   RIGHT_PANEL_FILES_LIST_OPEN_PHONE_KEY,
   RIGHT_PANEL_FILES_SPLIT_WIDTH_KEY,
@@ -61,7 +59,6 @@ import {
   readStoredRightPanelTab,
 } from "../storage"
 
-const LazyChangesTab = lazy(() => import("./tabs/ChangesTab"))
 const LazyGitChangesTab = lazy(() => import("./tabs/GitChangesTab"))
 const LazyFilesTab = lazy(() => import("./tabs/FilesTab"))
 const LazyStatusTab = lazy(() => import("./tabs/StatusTab"))
@@ -78,7 +75,6 @@ interface RightPanelProps {
 
   activeSessionId: Accessor<string | null>
   activeSession: Accessor<Session | null>
-  activeSessionDiffs: Accessor<any[] | undefined>
 
   latestTodoState: Accessor<ToolState | null>
   backgroundProcessList: Accessor<BackgroundProcess[]>
@@ -100,10 +96,9 @@ interface RightPanelProps {
 }
 
 const RightPanel: Component<RightPanelProps> = (props) => {
-  const [rightPanelTab, setRightPanelTab] = createSignal<RightPanelTab>(readStoredRightPanelTab("changes"))
-  const defaultStatusSectionIds = ["yolo-mode", "session-changes", "plan", "background-processes", "mcp", "lsp", "plugins"]
+  const [rightPanelTab, setRightPanelTab] = createSignal<RightPanelTab>(readStoredRightPanelTab("git-changes"))
+  const defaultStatusSectionIds = ["yolo-mode", "plan", "background-processes", "mcp", "lsp", "plugins"]
   const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>(defaultStatusSectionIds)
-  const [selectedFile, setSelectedFile] = createSignal<string | null>(null)
 
   const [browserPath, setBrowserPath] = createSignal(".")
   const [browserEntries, setBrowserEntries] = createSignal<FileNode[] | null>(null)
@@ -130,17 +125,14 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     readStoredEnum(RIGHT_PANEL_FILES_WORD_WRAP_KEY, ["on", "off"] as const) ?? "off",
   )
 
-  const [changesSplitWidth, setChangesSplitWidth] = createSignal(320)
   const [filesSplitWidth, setFilesSplitWidth] = createSignal(320)
   const [gitChangesSplitWidth, setGitChangesSplitWidth] = createSignal(320)
-  const [activeSplitResize, setActiveSplitResize] = createSignal<"changes" | "git-changes" | "files" | null>(null)
+  const [activeSplitResize, setActiveSplitResize] = createSignal<"git-changes" | "files" | null>(null)
   const [splitResizeStartX, setSplitResizeStartX] = createSignal(0)
   const [splitResizeStartWidth, setSplitResizeStartWidth] = createSignal(0)
 
   const [filesListOpen, setFilesListOpen] = createSignal(true)
   const [filesListTouched, setFilesListTouched] = createSignal(false)
-  const [changesListOpen, setChangesListOpen] = createSignal(true)
-  const [changesListTouched, setChangesListTouched] = createSignal(false)
   const [gitChangesListOpen, setGitChangesListOpen] = createSignal(true)
   const [gitChangesListTouched, setGitChangesListTouched] = createSignal(false)
   const [gitStagedOpen, setGitStagedOpen] = createSignal(true)
@@ -148,11 +140,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   const listLayoutKey = createMemo(() => (props.isPhoneLayout() ? "phone" : "nonphone"))
 
-  const listOpenStorageKey = (tab: "changes" | "git-changes" | "files") => {
+  const listOpenStorageKey = (tab: "git-changes" | "files") => {
     const layout = listLayoutKey()
-    if (tab === "changes") {
-      return layout === "phone" ? RIGHT_PANEL_CHANGES_LIST_OPEN_PHONE_KEY : RIGHT_PANEL_CHANGES_LIST_OPEN_NONPHONE_KEY
-    }
     if (tab === "git-changes") {
       return layout === "phone"
         ? RIGHT_PANEL_GIT_CHANGES_LIST_OPEN_PHONE_KEY
@@ -173,7 +162,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       : RIGHT_PANEL_GIT_CHANGES_UNSTAGED_OPEN_NONPHONE_KEY
   }
 
-  const persistListOpen = (tab: "changes" | "git-changes" | "files", value: boolean) => {
+  const persistListOpen = (tab: "git-changes" | "files", value: boolean) => {
     if (typeof window === "undefined") return
     window.localStorage.setItem(listOpenStorageKey(tab), value ? "true" : "false")
   }
@@ -195,15 +184,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     } else {
       setFilesListOpen(true)
       setFilesListTouched(false)
-    }
-
-    const changesPersisted = readStoredBool(listOpenStorageKey("changes"))
-    if (changesPersisted !== null) {
-      setChangesListOpen(changesPersisted)
-      setChangesListTouched(true)
-    } else {
-      setChangesListOpen(true)
-      setChangesListTouched(false)
     }
 
     const gitPersisted = readStoredBool(listOpenStorageKey("git-changes"))
@@ -270,19 +250,13 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     if (splitWidthsInitialized()) return
     if (!props.rightDrawerWidthInitialized()) return
     setSplitWidthsInitialized(true)
-    setChangesSplitWidth(clampSplitWidth(readStoredPanelWidth(RIGHT_PANEL_CHANGES_SPLIT_WIDTH_KEY, 320)))
     setFilesSplitWidth(clampSplitWidth(readStoredPanelWidth(RIGHT_PANEL_FILES_SPLIT_WIDTH_KEY, 320)))
     setGitChangesSplitWidth(clampSplitWidth(readStoredPanelWidth(RIGHT_PANEL_GIT_CHANGES_SPLIT_WIDTH_KEY, 320)))
   })
 
-  const persistSplitWidth = (mode: "changes" | "git-changes" | "files", width: number) => {
+  const persistSplitWidth = (mode: "git-changes" | "files", width: number) => {
     if (typeof window === "undefined") return
-    const key =
-      mode === "changes"
-        ? RIGHT_PANEL_CHANGES_SPLIT_WIDTH_KEY
-        : mode === "git-changes"
-          ? RIGHT_PANEL_GIT_CHANGES_SPLIT_WIDTH_KEY
-          : RIGHT_PANEL_FILES_SPLIT_WIDTH_KEY
+    const key = mode === "git-changes" ? RIGHT_PANEL_GIT_CHANGES_SPLIT_WIDTH_KEY : RIGHT_PANEL_FILES_SPLIT_WIDTH_KEY
     window.localStorage.setItem(key, String(width))
   }
 
@@ -299,16 +273,14 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     const isRtl = typeof document !== "undefined" && document.documentElement.dir === "rtl"
     const delta = (event.clientX - splitResizeStartX()) * (isRtl ? -1 : 1)
     const next = clampSplitWidth(splitResizeStartWidth() + delta)
-    if (mode === "changes") setChangesSplitWidth(next)
-    else if (mode === "git-changes") setGitChangesSplitWidth(next)
+    if (mode === "git-changes") setGitChangesSplitWidth(next)
     else setFilesSplitWidth(next)
   }
 
   function splitMouseUp() {
     const mode = activeSplitResize()
     if (mode) {
-      const width =
-        mode === "changes" ? changesSplitWidth() : mode === "git-changes" ? gitChangesSplitWidth() : filesSplitWidth()
+      const width = mode === "git-changes" ? gitChangesSplitWidth() : filesSplitWidth()
       persistSplitWidth(mode, width)
     }
     stopSplitResize()
@@ -323,16 +295,14 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     const isRtl = typeof document !== "undefined" && document.documentElement.dir === "rtl"
     const delta = (touch.clientX - splitResizeStartX()) * (isRtl ? -1 : 1)
     const next = clampSplitWidth(splitResizeStartWidth() + delta)
-    if (mode === "changes") setChangesSplitWidth(next)
-    else if (mode === "git-changes") setGitChangesSplitWidth(next)
+    if (mode === "git-changes") setGitChangesSplitWidth(next)
     else setFilesSplitWidth(next)
   }
 
   function splitTouchEnd() {
     const mode = activeSplitResize()
     if (mode) {
-      const width =
-        mode === "changes" ? changesSplitWidth() : mode === "git-changes" ? gitChangesSplitWidth() : filesSplitWidth()
+      const width = mode === "git-changes" ? gitChangesSplitWidth() : filesSplitWidth()
       persistSplitWidth(mode, width)
     }
     stopSplitResize()
@@ -345,22 +315,20 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     onTouchEnd: splitTouchEnd,
   })
 
-  const startSplitResize = (mode: "changes" | "git-changes" | "files", clientX: number) => {
+  const startSplitResize = (mode: "git-changes" | "files", clientX: number) => {
     if (typeof document === "undefined") return
     setActiveSplitResize(mode)
     setSplitResizeStartX(clientX)
-    setSplitResizeStartWidth(
-      mode === "changes" ? changesSplitWidth() : mode === "git-changes" ? gitChangesSplitWidth() : filesSplitWidth(),
-    )
+    setSplitResizeStartWidth(mode === "git-changes" ? gitChangesSplitWidth() : filesSplitWidth())
     splitPointerDrag.start()
   }
 
-  const handleSplitResizeMouseDown = (mode: "changes" | "git-changes" | "files") => (event: MouseEvent) => {
+  const handleSplitResizeMouseDown = (mode: "git-changes" | "files") => (event: MouseEvent) => {
     event.preventDefault()
     startSplitResize(mode, event.clientX)
   }
 
-  const handleSplitResizeTouchStart = (mode: "changes" | "git-changes" | "files") => (event: TouchEvent) => {
+  const handleSplitResizeTouchStart = (mode: "git-changes" | "files") => (event: TouchEvent) => {
     const touch = event.touches[0]
     if (!touch) return
     event.preventDefault()
@@ -396,7 +364,11 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     return branch || null
   })
 
-  const browserClient = createMemo(() => getOrCreateWorktreeClient(props.instanceId, worktreeSlugForViewer()))
+  const browserClient = createMemo(() => getRootClient(props.instanceId))
+  const fileWorkspacePayload = async () => {
+    const workspace = await getOpenCodeWorkspaceIdForWorktree(props.instanceId, worktreeSlugForViewer())
+    return workspace ? { workspace } : {}
+  }
 
   const {
     gitStatusEntries,
@@ -439,36 +411,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setBrowserSelectedLoading(false)
   })
 
-  const bestDiffFile = createMemo<string | null>(() => {
-    const diffs = props.activeSessionDiffs()
-    if (!Array.isArray(diffs) || diffs.length === 0) return null
-    const best = diffs.reduce((currentBest, item) => {
-      const bestAdd = typeof (currentBest as any)?.additions === "number" ? (currentBest as any).additions : 0
-      const bestDel = typeof (currentBest as any)?.deletions === "number" ? (currentBest as any).deletions : 0
-      const bestScore = bestAdd + bestDel
-
-      const add = typeof (item as any)?.additions === "number" ? (item as any).additions : 0
-      const del = typeof (item as any)?.deletions === "number" ? (item as any).deletions : 0
-      const score = add + del
-
-      if (score > bestScore) return item
-      if (score < bestScore) return currentBest
-      return String(item.file || "").localeCompare(String((currentBest as any)?.file || "")) < 0 ? item : currentBest
-    }, diffs[0])
-    return typeof (best as any)?.file === "string" ? (best as any).file : null
-  })
-
-  createEffect(() => {
-    const next = bestDiffFile()
-    if (!next) return
-    const diffs = props.activeSessionDiffs()
-    if (!Array.isArray(diffs) || diffs.length === 0) return
-
-    const current = selectedFile()
-    if (current && diffs.some((d) => d.file === current)) return
-    setSelectedFile(next)
-  })
-
   const normalizeBrowserPath = (input: string) => {
     const raw = String(input || ".").trim()
     if (!raw || raw === "./") return "."
@@ -489,7 +431,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setBrowserLoading(true)
     setBrowserError(null)
     try {
-      const nodes = await requestData<FileNode[]>(browserClient().file.list({ path: normalized }), "file.list")
+      const nodes = await requestData<FileNode[]>(browserClient().file.list({ path: normalized, ...(await fileWorkspacePayload()) }), "file.list")
       setBrowserPath(normalized)
       setBrowserEntries(Array.isArray(nodes) ? nodes : [])
     } catch (error) {
@@ -513,7 +455,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       setFilesListOpen(false)
     }
     try {
-      const content = await requestData<FileContent>(browserClient().file.read({ path }), "file.read")
+      const content = await requestData<FileContent>(browserClient().file.read({ path, ...(await fileWorkspacePayload()) }), "file.read")
       const type = (content as any)?.type
       const encoding = (content as any)?.encoding
       if (type && type !== "text") {
@@ -544,7 +486,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     if (originalContent !== null) {
       try {
         const currentDiskContent = await requestData<FileContent>(
-          browserClient().file.read({ path }),
+          browserClient().file.read({ path, ...(await fileWorkspacePayload()) }),
           "file.read",
         )
         const diskContent = (currentDiskContent as any)?.content
@@ -573,7 +515,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
     setBrowserSelectedSaving(true)
     try {
-      await serverApi.writeWorkspaceFile(props.instanceId, path, content)
+      await serverApi.writeWorkspaceFile(props.instanceId, path, content, { worktree: worktreeSlugForViewer() })
       setBrowserSelectedContent(content)
       setBrowserSelectedOriginalContent(content) // Update original to match saved
       setBrowserSelectedDirty(false)
@@ -639,22 +581,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setBrowserSelectedDirty(false)
   })
 
-  const handleSelectChangesFile = (file: string, closeList: boolean) => {
-    setSelectedFile(file)
-    if (closeList) {
-      setChangesListOpen(false)
-    }
-  }
-
-  const toggleChangesList = () => {
-    setChangesListTouched(true)
-    setChangesListOpen((current) => {
-      const next = !current
-      persistListOpen("changes", next)
-      return next
-    })
-  }
-
   const toggleFilesList = () => {
     setFilesListTouched(true)
     setFilesListOpen((current) => {
@@ -697,7 +623,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       setBrowserSelectedLoading(true)
       setBrowserSelectedError(null)
       try {
-        const content = await requestData<FileContent>(browserClient().file.read({ path: selected }), "file.read")
+        const content = await requestData<FileContent>(browserClient().file.read({ path: selected, ...(await fileWorkspacePayload()) }), "file.read")
         const type = (content as any)?.type
         const encoding = (content as any)?.encoding
         if (type && type !== "text") {
@@ -724,13 +650,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const browserParentPath = createMemo(() => getParentPath(browserPath()))
   const browserScopeKey = createMemo(() => `${props.instanceId}:${worktreeSlugForViewer()}`)
   const gitScopeKey = createMemo(() => `${props.instanceId}:git:${worktreeSlugForViewer()}`)
-
-  const openChangesTabFromStatus = (file?: string) => {
-    if (file) {
-      setSelectedFile(file)
-    }
-    setRightPanelTab("changes")
-  }
 
   const handleAccordionChange = (values: string[]) => {
     setRightPanelExpandedItems(values)
@@ -772,15 +691,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                 <button
                   type="button"
                   role="tab"
-                  class={tabClass("changes")}
-                  aria-selected={rightPanelTab() === "changes"}
-                  onClick={() => setRightPanelTab("changes")}
-                >
-                  <span class="tab-label">{props.t("instanceShell.rightPanel.tabs.changes")}</span>
-                </button>
-                <button
-                  type="button"
-                  role="tab"
                   class={tabClass("git-changes")}
                   aria-selected={rightPanelTab() === "git-changes"}
                   onClick={() => setRightPanelTab("git-changes")}
@@ -814,31 +724,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       </div>
 
       <div class="flex-1 overflow-y-auto">
-        <Show when={rightPanelTab() === "changes"}>
-          <Suspense fallback={<RightPanelTabFallback />}>
-            <LazyChangesTab
-              t={props.t}
-              instanceId={props.instanceId}
-              activeSessionId={props.activeSessionId}
-              activeSessionDiffs={props.activeSessionDiffs}
-              selectedFile={selectedFile}
-              onSelectFile={handleSelectChangesFile}
-              diffViewMode={diffViewMode}
-              diffContextMode={diffContextMode}
-              diffWordWrapMode={diffWordWrapMode}
-              onViewModeChange={setDiffViewMode}
-              onContextModeChange={setDiffContextMode}
-              onWordWrapModeChange={setDiffWordWrapMode}
-              listOpen={changesListOpen}
-              onToggleList={toggleChangesList}
-              splitWidth={changesSplitWidth}
-              onResizeMouseDown={handleSplitResizeMouseDown("changes")}
-              onResizeTouchStart={handleSplitResizeTouchStart("changes")}
-              isPhoneLayout={props.isPhoneLayout}
-            />
-          </Suspense>
-        </Show>
-
         <Show when={rightPanelTab() === "git-changes"}>
           <Suspense fallback={<RightPanelTabFallback />}>
             <LazyGitChangesTab
@@ -934,7 +819,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               instance={props.instance}
               activeSessionId={props.activeSessionId}
               activeSession={props.activeSession}
-              activeSessionDiffs={props.activeSessionDiffs}
               latestTodoState={props.latestTodoState}
               backgroundProcessList={props.backgroundProcessList}
               onOpenBackgroundOutput={props.onOpenBackgroundOutput}
@@ -942,7 +826,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               onTerminateBackgroundProcess={props.onTerminateBackgroundProcess}
               expandedItems={rightPanelExpandedItems}
               onExpandedItemsChange={handleAccordionChange}
-              onOpenChangesTab={openChangesTabFromStatus}
             />
           </Suspense>
         </Show>

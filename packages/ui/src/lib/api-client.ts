@@ -22,6 +22,7 @@ import type {
   RemoteServerProbeRequest,
   RemoteServerProbeResponse,
   VoiceModeStateResponse,
+  YoloStateResponse,
   WorkspaceCloneRequest,
   WorkspaceCloneResponse,
   WorktreeGitCommitRequest,
@@ -50,7 +51,7 @@ import { attachEventSourceHandlers } from "./event-source-handlers"
 const RUNTIME_BASE = typeof window !== "undefined" ? window.location?.origin : undefined
 const DEFAULT_BASE = typeof window !== "undefined" ? window.__CODENOMAD_API_BASE__ ?? RUNTIME_BASE : undefined
 const DEFAULT_EVENTS_PATH = typeof window !== "undefined" ? window.__CODENOMAD_EVENTS_URL__ ?? "/api/events" : "/api/events"
-const API_BASE = import.meta.env.VITE_CODENOMAD_API_BASE ?? DEFAULT_BASE
+const API_BASE = import.meta.env?.VITE_CODENOMAD_API_BASE ?? DEFAULT_BASE
 const EVENTS_URL = buildEventsUrl(API_BASE, DEFAULT_EVENTS_PATH)
 
 export const CODENOMAD_API_BASE = API_BASE
@@ -348,8 +349,11 @@ export const serverApi = {
       `/api/workspaces/${encodeURIComponent(id)}/files/content?${params.toString()}`,
     )
   },
-  writeWorkspaceFile(id: string, relativePath: string, contents: string): Promise<void> {
+  writeWorkspaceFile(id: string, relativePath: string, contents: string, options?: { worktree?: string }): Promise<void> {
     const params = new URLSearchParams({ path: relativePath })
+    if (options?.worktree && options.worktree !== "root") {
+      params.set("worktree", options.worktree)
+    }
     return request(
       `/api/workspaces/${encodeURIComponent(id)}/files/content?${params.toString()}`,
       {
@@ -517,11 +521,26 @@ export const serverApi = {
       body: JSON.stringify({ ...identity, enabled }),
     })
   },
-  sendClientConnectionPong(payload: { clientId: string; connectionId: string; pingTs?: number }): Promise<void> {
-    return request<void>("/api/client-connections/pong", {
+  getYoloState(instanceId: string, sessionId: string): Promise<YoloStateResponse> {
+    return request<YoloStateResponse>(
+      `/workspaces/${encodeURIComponent(instanceId)}/yolo/sessions/${encodeURIComponent(sessionId)}`,
+    )
+  },
+  toggleYolo(instanceId: string, sessionId: string): Promise<YoloStateResponse> {
+    return request<YoloStateResponse>(
+      `/workspaces/${encodeURIComponent(instanceId)}/yolo/sessions/${encodeURIComponent(sessionId)}/toggle`,
+      { method: "POST" },
+    )
+  },
+  sendClientConnectionPong(payload: { clientId: string; connectionId: string; pingTs?: number }, signal?: AbortSignal): Promise<void> {
+    const init: RequestInit = {
       method: "POST",
       body: JSON.stringify(payload),
-    })
+    }
+    if (signal) {
+      init.signal = signal
+    }
+    return request<void>("/api/client-connections/pong", init)
   },
   fetchBackgroundProcessOutput(
     instanceId: string,

@@ -1,5 +1,6 @@
 import type { ClientPart } from "../../types/message"
-import type { PermissionRequestLike } from "../../types/permission"
+import type { PromptDisplayMetadata } from "../../lib/prompt-display-metadata"
+import type { PermissionRequest } from "../../types/permission"
 import type { QuestionRequest } from "../../types/question"
 
 export type MessageStatus = "sending" | "sent" | "streaming" | "complete" | "error"
@@ -20,6 +21,7 @@ export interface MessageRecord {
   updatedAt: number
   revision: number
   isEphemeral?: boolean
+  clientPromptDisplayMetadata?: PromptDisplayMetadata
   partIds: string[]
   parts: Record<string, NormalizedPartRecord>
 }
@@ -48,7 +50,7 @@ export interface PendingPartEntry {
 }
 
 export interface PermissionEntry {
-  permission: PermissionRequestLike
+  permission: PermissionRequest
   messageId?: string
   partId?: string
   enqueuedAt: number
@@ -75,7 +77,12 @@ export interface InstanceQuestionState {
 
 export interface ScrollSnapshot {
   scrollTop: number
+  scrollRatio?: number
+  maxScrollTop?: number
+  anchorKey?: string
+  anchorOffset?: number
   atBottom: boolean
+  followModeType?: "following" | "escaped"
   updatedAt: number
 }
 
@@ -141,6 +148,7 @@ export interface MessageUpsertInput {
   createdAt?: number
   updatedAt?: number
   isEphemeral?: boolean
+  clientPromptDisplayMetadata?: PromptDisplayMetadata
   bumpRevision?: boolean
 }
 

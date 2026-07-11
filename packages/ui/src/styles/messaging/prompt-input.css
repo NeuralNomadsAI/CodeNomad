@@ -47,6 +47,13 @@
 
 .prompt-input-wrapper {
   --prompt-input-compact-height: 104px;
+  --prompt-input-inline-control-size: 1.75rem;
+  --prompt-input-expand-control-top: 0.5rem;
+  --prompt-input-clear-control-top: 2.5rem;
+  --prompt-input-inline-control-bottom-gap: 0.5rem;
+  --prompt-input-compact-control-fit-height: calc(
+    var(--prompt-input-clear-control-top) + var(--prompt-input-inline-control-size) + var(--prompt-input-inline-control-bottom-gap)
+  );
   @apply grid items-stretch;
   grid-template-columns: minmax(0, 1fr) 72px 64px;
   gap: 0;
@@ -211,14 +218,14 @@
 
 .prompt-clear-button-inline {
   position: absolute;
-  top: 2.5rem;
+  top: var(--prompt-input-clear-control-top);
   inset-inline-end: 0.5rem;
   z-index: 2;
 }
 
 .prompt-expand-button-inline {
   position: absolute;
-  top: 0.5rem;
+  top: var(--prompt-input-expand-control-top);
   inset-inline-end: 0.5rem;
   z-index: 2;
 }
@@ -473,27 +480,17 @@
   }
 }
 
-.session-center-column[data-session-center-width="medium"] .prompt-input-wrapper,
-.session-center-column[data-session-center-width="narrow"] .prompt-input-wrapper {
-  min-height: var(--prompt-input-compact-height);
-}
-
-.session-center-column[data-session-center-width="medium"] .prompt-input-field-container,
-.session-center-column[data-session-center-width="narrow"] .prompt-input-field-container {
-  min-height: var(--prompt-input-compact-height);
-  height: var(--prompt-input-compact-height);
-}
-
-.session-center-column[data-session-center-width="medium"] .prompt-input-field,
-.session-center-column[data-session-center-width="narrow"] .prompt-input-field {
-  height: var(--prompt-input-compact-height);
-}
-
 .session-center-column[data-session-center-width="medium"] .prompt-input-field-container.is-expanded,
 .session-center-column[data-session-center-width="medium"] .prompt-input-field.is-expanded,
 .session-center-column[data-session-center-width="narrow"] .prompt-input-field-container.is-expanded,
 .session-center-column[data-session-center-width="narrow"] .prompt-input-field.is-expanded {
   height: auto;
+}
+
+.session-center-column[data-session-center-width="narrow"] .prompt-input-wrapper[data-compact-layout="true"] .prompt-input-field-container,
+.session-center-column[data-session-center-width="narrow"] .prompt-input-wrapper[data-compact-layout="true"] .prompt-input-field,
+.session-center-column[data-session-center-width="narrow"] .prompt-input-wrapper[data-compact-layout="true"] .prompt-input {
+  min-height: var(--prompt-input-compact-control-fit-height);
 }
 
 .session-center-column[data-session-center-width="narrow"] .prompt-input-wrapper {

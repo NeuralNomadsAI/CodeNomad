@@ -1,16 +1,16 @@
 import { Show, createEffect, createMemo, createSignal, onCleanup, on, untrack } from "solid-js"
-import { ChevronDown, ChevronUp, MoreHorizontal, Pause, Search, Trash, X } from "lucide-solid"
+import { ArrowUpDown, ChevronDown, ChevronUp, MoreHorizontal, Pause, Search, Trash, X } from "lucide-solid"
 import Kbd from "./kbd"
 import BrandedEmptyState from "./branded-empty-state"
 import MessageBlock from "./message-block"
-import { getMessageAnchorId, getMessageIdFromAnchorId } from "./message-anchors"
+import { getMessageAnchorId } from "./message-anchors"
 import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./message-timeline"
-import VirtualFollowList, { type VirtualFollowListApi, type VirtualFollowListState } from "./virtual-follow-list"
+import VirtualFollowList, { type VirtualExplicitBottomPinIntent, type VirtualFollowListApi, type VirtualFollowListState, type VirtualFollowScrollSnapshot } from "./virtual-follow-list"
+import { isSnapshotAutoFollowing } from "./virtual-follow-behavior"
 import { useConfig } from "../stores/preferences"
 import { getSessionInfo } from "../stores/sessions"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { useI18n } from "../lib/i18n"
-import { useScrollCache } from "../lib/hooks/use-scroll-cache"
 import { copyToClipboard } from "../lib/clipboard"
 import { showToastNotification } from "../lib/notifications"
 import { showAlertDialog } from "../stores/alerts"
@@ -22,8 +22,8 @@ import { buildRecordDisplayData } from "../stores/message-v2/record-display-cach
 import { getPartCharCount } from "../lib/token-utils"
 import { buildSessionSearchMatches } from "../lib/session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
+import { resolveThinkingExpansionDefault } from "./tool-call/tool-registry"
 
-const SCROLL_SENTINEL_MARGIN_PX = 8
 const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 const QUOTE_SELECTION_MAX_LENGTH = 2000
 const STREAMING_TEXT_HOLD_TOP_THRESHOLD_PX = 8
@@ -35,16 +35,21 @@ export interface MessageSectionProps {
   instanceId: string
   sessionId: string
   loading?: boolean
+  loadError?: string | null
   emptyStateVariant?: "messages" | "no-session"
   onRevert?: (messageId: string) => void
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   onFork?: (messageId?: string) => void
-  registerScrollToBottom?: (fn: () => void) => void
+  registerScrollToBottom?: (fn: (() => void) | null) => void
   showSidebarToggle?: boolean
   onSidebarToggle?: () => void
   forceCompactStatusLayout?: boolean
   onQuoteSelection?: (text: string, mode: "quote" | "code") => void
+  onReloadMessages?: () => void
   isActive?: boolean
+  sessionStreamingActive?: boolean
+  explicitBottomPinIntent?: VirtualExplicitBottomPinIntent | null
+  onExplicitBottomPinCancelled?: () => void
 }
 
 export default function MessageSection(props: MessageSectionProps) {
@@ -85,12 +90,6 @@ export default function MessageSection(props: MessageSectionProps) {
     })
   })
 
-  const scrollCache = useScrollCache({
-    instanceId: props.instanceId,
-    sessionId: props.sessionId,
-    scope: MESSAGE_SCROLL_CACHE_SCOPE,
-  })
-
   const sessionRevision = createMemo(() => store().getSessionRevision(props.sessionId))
   const usageSnapshot = createMemo(() => store().getSessionUsage(props.sessionId))
   const sessionInfo = createMemo(() =>
@@ -119,7 +118,7 @@ export default function MessageSection(props: MessageSectionProps) {
   const preferenceSignature = createMemo(() => {
     const pref = preferences()
     const showThinking = pref.showThinkingBlocks ? 1 : 0
-    const thinkingExpansion = pref.thinkingBlocksExpansion ?? "expanded"
+    const thinkingExpansion = resolveThinkingExpansionDefault(pref) ? "expanded" : "collapsed"
     const showUsage = (pref.showUsageMetrics ?? true) ? 1 : 0
     return `${showThinking}|${thinkingExpansion}|${showUsage}`
   })
@@ -650,10 +649,13 @@ export default function MessageSection(props: MessageSectionProps) {
   const isActive = createMemo(() => props.isActive !== false)
   const [listApi, setListApi] = createSignal<VirtualFollowListApi | null>(null)
   const [listState, setListState] = createSignal<VirtualFollowListState | null>(null)
+  const [scrollControlsOpen, setScrollControlsOpen] = createSignal(false)
+  const [scrollControlsHoverSuppressed, setScrollControlsHoverSuppressed] = createSignal(false)
   const scrollButtonsCount = createMemo(() => listState()?.scrollButtonsCount() ?? 0)
 
   const [streamElement, setStreamElement] = createSignal<HTMLDivElement | undefined>()
   const [streamShellElement, setStreamShellElement] = createSignal<HTMLDivElement | undefined>()
+  let scrollControlsRef: HTMLDivElement | undefined
 
   // Only preferences should force a follow-token re-anchor. Message/session
   // revision churn at the end of a turn (message.updated, session.idle, etc.)
@@ -661,47 +663,145 @@ export default function MessageSection(props: MessageSectionProps) {
   const followToken = createMemo(() => preferenceSignature())
 
   const initialScrollSnapshot = createMemo(() => store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE))
-  const initialAutoScroll = createMemo(() => initialScrollSnapshot()?.atBottom ?? true)
+  const initialAutoScroll = createMemo(() => isSnapshotAutoFollowing(initialScrollSnapshot()))
 
   const [didRestoreScroll, setDidRestoreScroll] = createSignal(false)
+  const lastGoodScrollSnapshots = new Map<string, VirtualFollowScrollSnapshot>()
+  let restoringScrollSnapshot = false
+
+  function getLastGoodScrollSnapshot(sessionId: string) {
+    return lastGoodScrollSnapshots.get(sessionId) ?? store().getScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE)
+  }
+
+  function setLastGoodScrollSnapshot(sessionId: string, snapshot: VirtualFollowScrollSnapshot) {
+    lastGoodScrollSnapshots.set(sessionId, snapshot)
+  }
+
   createEffect(
     on(
       () => props.sessionId,
       () => {
         setDidRestoreScroll(false)
+        const snapshot = store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE)
+        if (snapshot) setLastGoodScrollSnapshot(props.sessionId, snapshot)
       },
     ),
   )
+
+  createEffect(
+    on(
+      isActive,
+      (active, wasActive) => {
+        if (active) {
+          if (wasActive === false) {
+            setDidRestoreScroll(false)
+          }
+          return
+        }
+        persistMessageScrollSnapshot({ requireActive: false })
+      },
+    ),
+  )
+
+  function canCaptureScrollSnapshot(options?: { requireActive?: boolean }) {
+    const element = streamElement()
+    if (!element) return false
+    if ((options?.requireActive ?? true) && !isActive()) return false
+    if (restoringScrollSnapshot) return false
+    if (!element.isConnected) return false
+    if (element.clientHeight <= 0) return false
+    if (typeof getComputedStyle === "function" && getComputedStyle(element).display === "none") return false
+    return true
+  }
+
+  function persistMessageScrollSnapshot(options?: { sessionId?: string; allowCapture?: boolean; requireActive?: boolean }) {
+    if (restoringScrollSnapshot) return
+
+    const sessionId = options?.sessionId ?? props.sessionId
+    const allowCapture = options?.allowCapture ?? true
+    const canCapture = canCaptureScrollSnapshot({ requireActive: options?.requireActive })
+    if (allowCapture && canCapture) {
+      const snapshot = listApi()?.captureScrollSnapshot()
+      if (snapshot) {
+        setLastGoodScrollSnapshot(sessionId, snapshot)
+        store().setScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE, snapshot)
+        return
+      }
+    }
+
+    const lastGoodScrollSnapshot = getLastGoodScrollSnapshot(sessionId)
+    if (lastGoodScrollSnapshot) {
+      store().setScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE, lastGoodScrollSnapshot)
+      return
+    }
+
+  }
 
   // Persist scroll position when switching sessions. This effect's cleanup runs
   // when `props.sessionId` changes, before the next session is rendered.
   createEffect(() => {
     const sessionId = props.sessionId
     onCleanup(() => {
-      const element = streamElement()
-      if (!element) return
-      const scrollTop = element.scrollTop
-      const atBottom = element.scrollHeight - (element.scrollTop + element.clientHeight) <= 48
-      store().setScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE, { scrollTop, atBottom })
+      persistMessageScrollSnapshot({ sessionId, requireActive: false })
     })
   })
 
   const [quoteSelection, setQuoteSelection] = createSignal<{ text: string; top: number; left: number } | null>(null)
 
-  const lastVisibleMessageId = createMemo(() => {
-    const ids = visibleMessageIds()
-    return ids[ids.length - 1] ?? null
+  const streamingAssistantTextMessageId = createMemo(() => {
+    const ids = messageIds()
+    for (let index = ids.length - 1; index >= 0; index -= 1) {
+      const messageId = ids[index]
+      if (isStreamingAssistantTextMessage(messageId)) return messageId
+    }
+    return null
   })
+
+  const streamingActive = createMemo(() => Boolean(props.sessionStreamingActive) && streamingAssistantTextMessageId() !== null)
 
   const autoPinHoldTargetKey = createMemo(() => {
     if (!holdLongAssistantRepliesEnabled()) return null
-    const messageId = lastVisibleMessageId()
-    return isStreamingAssistantTextMessage(messageId) ? messageId : null
+    if (!streamingActive()) return null
+    return streamingAssistantTextMessageId()
   })
 
   function toggleHoldLongAssistantReplies() {
     updatePreferences({ holdLongAssistantReplies: !holdLongAssistantRepliesEnabled() })
   }
+
+  function closeScrollControls() {
+    setScrollControlsOpen(false)
+  }
+
+  function openScrollControlsFromTrigger(event: MouseEvent) {
+    event.preventDefault()
+    event.stopPropagation()
+    if (scrollControlsOpen()) return
+    setScrollControlsHoverSuppressed(false)
+    setScrollControlsOpen(true)
+  }
+
+  function runScrollControlAction(event: PointerEvent, action: () => void) {
+    event.preventDefault()
+    event.stopPropagation()
+    action()
+    setScrollControlsHoverSuppressed(false)
+    closeScrollControls()
+  }
+
+  createEffect(() => {
+    if (!scrollControlsOpen()) return
+    if (typeof document === "undefined") return
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null
+      if (target && scrollControlsRef?.contains(target)) return
+      closeScrollControls()
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown)
+    onCleanup(() => document.removeEventListener("pointerdown", handlePointerDown))
+  })
 
   function isStreamingAssistantTextMessage(messageId: string | null | undefined) {
     if (!messageId) return false
@@ -711,10 +811,8 @@ export default function MessageSection(props: MessageSectionProps) {
     if (record.status !== "streaming") return false
 
     const info = resolvedStore.getMessageInfo(messageId)
-    if (!info) return false
     const timeInfo = info?.time as { end?: number } | undefined
-    const isStreaming = timeInfo?.end === undefined || timeInfo.end === 0
-    if (!isStreaming) return false
+    if (typeof timeInfo?.end === "number" && timeInfo.end > 0) return false
 
     const { orderedParts } = buildRecordDisplayData(props.instanceId, record)
     return orderedParts.some((part) => {
@@ -729,6 +827,7 @@ export default function MessageSection(props: MessageSectionProps) {
     if (!api) return
     if (props.registerScrollToBottom) {
       props.registerScrollToBottom(() => api.scrollToBottom({ immediate: true }))
+      onCleanup(() => props.registerScrollToBottom?.(null))
     }
   })
 
@@ -737,26 +836,38 @@ export default function MessageSection(props: MessageSectionProps) {
     const element = streamElement()
     const api = listApi()
     if (!element || !api) return
+    if (!isActive()) return
     if (props.loading) return
     if (visibleMessageIds().length === 0) return
     if (didRestoreScroll()) return
 
-    scrollCache.restore(element, {
+    const snapshot = store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE)
+    if (!snapshot) {
+      api.setAutoScroll(true)
+      api.scrollToBottom({ immediate: true })
+      setDidRestoreScroll(true)
+      return
+    }
+
+    restoringScrollSnapshot = true
+    api.restoreScrollSnapshot(snapshot, {
       behavior: "auto",
       fallback: () => {
         api.setAutoScroll(true)
         api.scrollToBottom({ immediate: true })
+        restoringScrollSnapshot = false
+        setDidRestoreScroll(true)
       },
-      onApplied: (snapshot) => {
-        // Keep follow mode consistent with the restored state.
-        api.setAutoScroll(snapshot?.atBottom ?? true)
+      onApplied: () => {
+        restoringScrollSnapshot = false
+        setLastGoodScrollSnapshot(props.sessionId, snapshot)
         setDidRestoreScroll(true)
       },
     })
   })
 
   onCleanup(() => {
-    scrollCache.persist(streamElement())
+    persistMessageScrollSnapshot({ requireActive: false })
   })
 
   function clearQuoteSelection() {
@@ -868,7 +979,6 @@ export default function MessageSection(props: MessageSectionProps) {
   }
  
   function handleContentRendered() {
-    if (props.loading) return
     listApi()?.notifyContentRendered()
   }
 
@@ -1144,7 +1254,7 @@ export default function MessageSection(props: MessageSectionProps) {
     if (!match || !isSearchOpen()) return
     if (match.id === lastScrolledSearchMatchId) return
     lastScrolledSearchMatchId = match.id
-    listApi()?.scrollToKey(match.messageId, { behavior: "smooth", block: "start", setAutoScroll: false })
+    listApi()?.scrollToKey(match.messageId, { behavior: "smooth", block: "start" })
   })
 
 
@@ -1246,26 +1356,26 @@ export default function MessageSection(props: MessageSectionProps) {
           items={visibleMessageIds}
           getKey={(messageId) => messageId}
           getAnchorId={getMessageAnchorId}
-          getKeyFromAnchorId={getMessageIdFromAnchorId}
           overscanPx={800}
-          scrollSentinelMarginPx={SCROLL_SENTINEL_MARGIN_PX}
-          suspendMeasurements={() => !isActive()}
-          loading={() => Boolean(props.loading)}
+          streamingActive={streamingActive}
           isActive={isActive}
           scrollToBottomOnActivate={() => false}
           initialScrollToBottom={() => false}
           initialAutoScroll={initialAutoScroll}
           resetKey={() => props.sessionId}
           followToken={followToken}
+          explicitBottomPinIntent={() => props.explicitBottomPinIntent ?? null}
+          onExplicitBottomPinCancelled={props.onExplicitBottomPinCancelled}
+          autoPinHoldEnabled={holdLongAssistantRepliesEnabled}
           autoPinHoldTargetKey={autoPinHoldTargetKey}
           autoPinHoldTopThresholdPx={STREAMING_TEXT_HOLD_TOP_THRESHOLD_PX}
           resolveAutoPinHoldElement={(itemWrapper, key) => {
-            const candidates = Array.from(itemWrapper.querySelectorAll<HTMLElement>(`.message-item-base[data-message-id="${key}"][data-message-role="assistant"]`))
+            const candidates = Array.from(itemWrapper.querySelectorAll<HTMLElement>(`.message-item-base[data-message-id="${key}"][data-message-role="assistant"][data-assistant-text-block="true"]`))
             return candidates[candidates.length - 1] ?? null
           }}
           onScroll={() => {
             clearQuoteSelection()
-            scrollCache.persist(streamElement())
+            persistMessageScrollSnapshot()
           }}
           onMouseUp={() => handleStreamMouseUp()}
           onClick={(e) => {
@@ -1294,54 +1404,77 @@ export default function MessageSection(props: MessageSectionProps) {
           registerApi={(api) => setListApi(api)}
           registerState={(state) => setListState(state)}
           renderControls={(state, api) => (
-            <div class="message-scroll-button-wrapper">
+            <div
+              ref={(el) => {
+                scrollControlsRef = el
+              }}
+              class="message-scroll-controls"
+              data-open={scrollControlsOpen() ? "true" : "false"}
+              data-hover-suppressed={scrollControlsHoverSuppressed() ? "true" : "false"}
+              onPointerLeave={(event) => {
+                if (event.pointerType === "mouse") setScrollControlsHoverSuppressed(false)
+              }}
+            >
               <button
                 type="button"
-                class="message-scroll-button"
-                data-active={holdLongAssistantRepliesEnabled() ? "true" : "false"}
-                onClick={toggleHoldLongAssistantReplies}
-                aria-label={
-                  holdLongAssistantRepliesEnabled()
-                    ? t("messageSection.scroll.disableHoldAriaLabel")
-                    : t("messageSection.scroll.enableHoldAriaLabel")
-                }
-                title={
-                  holdLongAssistantRepliesEnabled()
-                    ? t("messageSection.scroll.disableHoldAriaLabel")
-                    : t("messageSection.scroll.enableHoldAriaLabel")
-                }
+                class="message-scroll-button message-scroll-controls-trigger"
+                onClick={openScrollControlsFromTrigger}
+                aria-label={t("messageSection.scroll.showControlsAriaLabel")}
+                title={t("messageSection.scroll.showControlsAriaLabel")}
               >
-                <Pause class="message-scroll-icon message-scroll-icon--toggle w-4 h-4" aria-hidden="true" />
+                <ArrowUpDown class="message-scroll-icon w-4 h-4" aria-hidden="true" />
               </button>
-              <Show when={state.showScrollTopButton()}>
+
+              <div class="message-scroll-controls-expanded">
                 <button
                   type="button"
                   class="message-scroll-button"
-                  onClick={() => api.scrollToTop()}
-                  aria-label={t("messageSection.scroll.toFirstAriaLabel")}
+                  data-active={holdLongAssistantRepliesEnabled() ? "true" : "false"}
+                  onPointerUp={(event) => runScrollControlAction(event, toggleHoldLongAssistantReplies)}
+                  aria-pressed={holdLongAssistantRepliesEnabled()}
+                  aria-label={
+                    holdLongAssistantRepliesEnabled()
+                      ? t("messageSection.scroll.disableHoldAriaLabel")
+                      : t("messageSection.scroll.enableHoldAriaLabel")
+                  }
+                  title={
+                    holdLongAssistantRepliesEnabled()
+                      ? t("messageSection.scroll.disableHoldAriaLabel")
+                      : t("messageSection.scroll.enableHoldAriaLabel")
+                  }
                 >
-                  <span class="message-scroll-icon" aria-hidden="true">
-                    ↑
-                  </span>
+                  <Pause class="message-scroll-icon message-scroll-icon--toggle w-4 h-4" aria-hidden="true" />
                 </button>
-              </Show>
-              <Show when={state.showScrollBottomButton()}>
-                <button
-                  type="button"
-                  class="message-scroll-button"
-                  onClick={() => api.scrollToBottom()}
-                  aria-label={t("messageSection.scroll.toLatestAriaLabel")}
-                >
-                  <span class="message-scroll-icon" aria-hidden="true">
-                    ↓
-                  </span>
-                </button>
-              </Show>
+                <Show when={state.showScrollTopButton()}>
+                  <button
+                    type="button"
+                    class="message-scroll-button"
+                    onPointerUp={(event) => runScrollControlAction(event, () => api.scrollToTop())}
+                    aria-label={t("messageSection.scroll.toFirstAriaLabel")}
+                  >
+                    <span class="message-scroll-icon" aria-hidden="true">
+                      ↑
+                    </span>
+                  </button>
+                </Show>
+                <Show when={state.showScrollBottomButton()}>
+                  <button
+                    type="button"
+                    class="message-scroll-button"
+                    onPointerUp={(event) => runScrollControlAction(event, () => api.scrollToBottom())}
+                    aria-label={t("messageSection.scroll.toLatestAriaLabel")}
+                  >
+                    <span class="message-scroll-icon" aria-hidden="true">
+                      ↓
+                    </span>
+                  </button>
+                </Show>
+              </div>
             </div>
           )}
           renderBeforeItems={() => (
             <>
-              <Show when={!props.loading && visibleMessageIds().length === 0}>
+              <Show when={!props.loading && !props.loadError && visibleMessageIds().length === 0}>
                 <Show
                   when={emptyStateVariant() === "no-session"}
                   fallback={
@@ -1386,6 +1519,20 @@ export default function MessageSection(props: MessageSectionProps) {
                   <p>{t("messageSection.loading.messages")}</p>
                 </div>
               </Show>
+
+              <Show when={!props.loading && props.loadError}>
+                {(loadError) => (
+                  <div class="message-load-error-state">
+                    <div class="message-load-error-card">
+                      <h3>{t("messageSection.loadError.title")}</h3>
+                      <p>{loadError()}</p>
+                      <button type="button" class="message-load-error-retry" onClick={() => props.onReloadMessages?.()}>
+                        {t("messageSection.loadError.reload")}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </Show>
             </>
           )}
           renderItem={(messageId, index) => (
@@ -1397,7 +1544,7 @@ export default function MessageSection(props: MessageSectionProps) {
               messageIndex={index}
               lastAssistantIndex={lastAssistantIndex}
               showThinking={() => preferences().showThinkingBlocks}
-              thinkingDefaultExpanded={() => (preferences().thinkingBlocksExpansion ?? "expanded") === "expanded"}
+              thinkingDefaultExpanded={() => resolveThinkingExpansionDefault(preferences())}
               showUsageMetrics={showUsagePreference}
               deleteHover={deleteHover}
               onDeleteHoverChange={setDeleteHover}

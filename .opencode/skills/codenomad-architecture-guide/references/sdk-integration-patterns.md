@@ -129,20 +129,20 @@ Rapid successive operations can cause temporary desync:
 
 1. **Server emits** `permission.asked` or `permission.updated` SSE event
    - Pushed through instance event stream
-2. **UI Store receives** via `serverEvents`
+2. **Server AutoAcceptManager** intercepts the event (if Yolo is enabled)
+   - File: `packages/server/src/permissions/auto-accept-manager.ts`
+   - Action: Auto-replies via SDK client (`createInstanceClient`), tracks pending permissions, drains on enable/ancestry change
+   - Emits `yolo.autoAccepted` + `yolo.stateChanged` events to UI
+3. **UI Store receives** via `serverEvents`
    - File: `packages/ui/src/stores/instances.ts`
-   - **Branch:** IF `isPermissionAutoAcceptEnabled()` 
-     - Mechanism: `drainAutoAcceptPermissions()` in `packages/ui/src/stores/permission-auto-accept.ts`
-     - Action: Calls reply immediately, skips modal
-   - **Branch:** ELSE 
-     - Mechanism: Queued in `permissionQueues`
-     - Action: Display modal
-3. **UI Store:** `packages/ui/src/stores/message-v2/bridge.ts` calls `upsertPermissionV2()`
-4. **UI Component:** `packages/ui/src/components/permission-approval-modal.tsx` displays
-5. **User Action:** Calls `packages/ui/src/stores/instances.ts:sendPermissionResponse()`
-6. **SDK Call:** `client.permission.reply()` via `packages/ui/src/lib/opencode-api.ts`
-7. **Optimistic Update:** `removePermissionV2()` in bridge
-8. **SSE Confirmation:** `permission.replied` event
+   - **Branch:** IF `yolo.autoAccepted` event arrives → immediately marks replied + removes from queue
+   - **Branch:** ELSE (user must reply) → Queued in `permissionQueues` → Display modal
+4. **UI Store:** `packages/ui/src/stores/message-v2/bridge.ts` calls `upsertPermissionV2()`
+5. **UI Component:** `packages/ui/src/components/permission-approval-modal.tsx` displays
+6. **User Action:** Calls `packages/ui/src/stores/instances.ts:sendPermissionResponse()`
+7. **SDK Call:** `client.permission.reply()` via `packages/ui/src/lib/opencode-api.ts`
+8. **Optimistic Update:** `removePermissionV2()` in bridge
+9. **SSE Confirmation:** `permission.replied` event
    - **Branch:** IF SSE disconnected → `syncPendingPermissions()` reconciles on reconnect
 
 ## Session Event Handling

@@ -1,4 +1,4 @@
-import { batch, createMemo, type Accessor } from "solid-js"
+import { createMemo, type Accessor } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk/v2"
 import type { Session } from "../../../types/session"
 import {
@@ -8,8 +8,8 @@ import {
   getSessionInfo,
   getSessionThreads,
   sessions,
-  setActiveParentSession,
   setActiveSession,
+  setActiveSessionFromList,
 } from "../../../stores/sessions"
 import { messageStoreBus } from "../../../stores/message-v2/bus"
 import { getBackgroundProcesses } from "../../../stores/background-processes"
@@ -27,7 +27,6 @@ type InstanceSessionContextState = {
   activeSessionIdForInstance: Accessor<string | null>
   parentSessionIdForInstance: Accessor<string | null>
   activeSessionForInstance: Accessor<SessionFamilyMember | null>
-  activeSessionDiffs: Accessor<SessionFamilyMember["diff"] | undefined>
 
   // Usage / info summaries
   activeSessionUsage: Accessor<SessionUsageState | null>
@@ -75,11 +74,6 @@ export function useInstanceSessionContext(options: InstanceSessionContextOptions
     const sessionId = activeSessionIdForInstance()
     if (!sessionId || sessionId === "info") return null
     return activeSessions().get(sessionId) ?? null
-  })
-
-  const activeSessionDiffs = createMemo(() => {
-    const session = activeSessionForInstance()
-    return session?.diff
   })
 
   const activeSessionUsage = createMemo(() => {
@@ -137,21 +131,8 @@ export function useInstanceSessionContext(options: InstanceSessionContextOptions
       return
     }
 
-    const session = allInstanceSessions().get(sessionId)
-    if (!session) return
-
-    if (session.parentId === null) {
-      setActiveParentSession(instanceId, sessionId)
-      return
-    }
-
-    const parentId = session.parentId
-    if (!parentId) return
-
-    batch(() => {
-      setActiveParentSession(instanceId, parentId)
-      setActiveSession(instanceId, sessionId)
-    })
+    if (!allInstanceSessions().has(sessionId)) return
+    setActiveSessionFromList(instanceId, sessionId)
   }
 
   return {
@@ -161,7 +142,6 @@ export function useInstanceSessionContext(options: InstanceSessionContextOptions
     activeSessionIdForInstance,
     parentSessionIdForInstance,
     activeSessionForInstance,
-    activeSessionDiffs,
     activeSessionUsage,
     activeSessionInfoDetails,
     tokenStats,
