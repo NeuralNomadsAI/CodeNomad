@@ -610,7 +610,7 @@ function getSessionSearchThreads(instanceId: string): SessionThread[] {
     const session = instanceSessions.get(sessionId)
     if (!session) continue
     if (session.parentId === null) {
-      rootIds.push(session.id)
+      if (!rootIds.includes(session.id)) rootIds.push(session.id)
     } else {
       childIds.add(session.id)
       const root = getSessionRootFromMap(instanceSessions, session.id)
@@ -770,9 +770,10 @@ function updateThreadTotalsForParent(instanceId: string, parentSessionId: string
 }
 
 function updateThreadTotalsForSession(instanceId: string, sessionId: string): void {
-  const root = getSessionRoot(instanceId, sessionId)
-  if (!root) return
-  updateThreadTotalsForParent(instanceId, root.id)
+  const instanceSessions = sessions().get(instanceId)
+  if (!instanceSessions?.has(sessionId)) return
+  const familyIds = [...getSessionAncestorIdsFromMap(instanceSessions, sessionId), sessionId]
+  for (const familyId of familyIds) updateThreadTotalsForParent(instanceId, familyId)
 }
 
 async function isBlankSession(session: Session, instanceId: string, fetchIfNeeded = false): Promise<boolean> {

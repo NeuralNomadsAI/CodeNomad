@@ -110,7 +110,10 @@ export function buildSessionThreadsFromMap(
   }
 
   const threads: SessionThread[] = []
+  const seenRootIds = new Set<string>()
   for (const rootId of rootIds) {
+    if (seenRootIds.has(rootId)) continue
+    seenRootIds.add(rootId)
     const root = instanceSessions.get(rootId)
     if (!root || root.parentId !== null) continue
     const thread = buildThread(root, childrenByParent, 0, new Set())
@@ -131,4 +134,28 @@ export function collectVisibleSessionIds(threads: SessionThread[], expanded: Set
     if (expanded?.has(thread.session.id)) ids.push(...collectVisibleSessionIds(thread.children, expanded))
   }
   return ids
+}
+
+export function findSessionThread(threads: SessionThread[], sessionId: string): SessionThread | null {
+  for (const thread of threads) {
+    if (thread.session.id === sessionId) return thread
+    const child = findSessionThread(thread.children, sessionId)
+    if (child) return child
+  }
+  return null
+}
+
+export function collectSessionThreadIds(threads: SessionThread[]): string[] {
+  const ids: string[] = []
+  for (const thread of threads) {
+    ids.push(thread.session.id)
+    ids.push(...collectSessionThreadIds(thread.children))
+  }
+  return ids
+}
+
+export function sortSessionIdsDeepestFirst(instanceSessions: Map<string, Session>, sessionIds: string[]): string[] {
+  return [...sessionIds].sort(
+    (left, right) => getSessionAncestorIdsFromMap(instanceSessions, right).length - getSessionAncestorIdsFromMap(instanceSessions, left).length,
+  )
 }

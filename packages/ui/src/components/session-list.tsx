@@ -29,6 +29,7 @@ import {
   isSessionSearchLoading,
 } from "../stores/sessions"
 import { getGitRepoStatus, getWorktreeSlugForParentSession } from "../stores/worktrees"
+import { collectSessionThreadIds, findSessionThread, sortSessionIdsDeepestFirst } from "../stores/session-tree"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
 import { useConfig } from "../stores/preferences"
@@ -210,7 +211,6 @@ const SessionList: Component<SessionListProps> = (props) => {
     const deleting = loading().deletingSession.get(props.instanceId)
     return deleting ? deleting.has(sessionId) : false
   }
-  
 
   const selectSession = (sessionId: string) => {
     const session = sessionStateSessions().get(props.instanceId)?.get(sessionId)
@@ -364,25 +364,14 @@ const SessionList: Component<SessionListProps> = (props) => {
     })
   }
 
-  // Recursively collect all session IDs from a thread tree
-  const collectThreadIds = (threads: SessionThread[]): string[] => {
-    const ids: string[] = []
-    for (const thread of threads) {
-      ids.push(thread.session.id)
-      ids.push(...collectThreadIds(thread.children))
-    }
-    return ids
-  }
-
-  const getSelectableThreadIds = (rootSessionId: string): string[] => {
+  const getSelectableThreadIds = (sessionId: string): string[] => {
     const source = normalizedQuery() ? filteredThreads() : props.threads
-    const rootThread = source.find((t) => t.session.id === rootSessionId)
-    if (!rootThread) return [rootSessionId]
-    return collectThreadIds([rootThread])
+    const thread = findSessionThread(source, sessionId)
+    return thread ? collectSessionThreadIds([thread]) : [sessionId]
   }
 
   const getAllSessionIdsInOrder = (threads: SessionThread[]): string[] => {
-    return collectThreadIds(threads)
+    return collectSessionThreadIds(threads)
   }
 
   const handleToggleSelectAll = (checked: boolean) => {
@@ -441,8 +430,9 @@ const SessionList: Component<SessionListProps> = (props) => {
       }
     }
 
+    const deletionOrder = sortSessionIdsDeepestFirst(sessionStateSessions().get(props.instanceId) ?? new Map(), selected)
     let failed = 0
-    for (const sessionId of selected) {
+    for (const sessionId of deletionOrder) {
       try {
         // eslint-disable-next-line no-await-in-loop
         await deleteSession(props.instanceId, sessionId)
@@ -465,7 +455,6 @@ const SessionList: Component<SessionListProps> = (props) => {
       })
     }
   }
-  
 
   const SessionRow: Component<{
     session: SessionThread["session"]
@@ -544,11 +533,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     const isSelected = () => selectedSessionIds().has(sessionId())
 
     const parentGroupState = createMemo(() => {
-      if (isChild()) {
-        return { checked: isSelected(), indeterminate: false, ids: [sessionId()] }
-      }
-
-      const ids = getSelectableThreadIds(sessionId())
+      const ids = rowProps.hasChildren ? getSelectableThreadIds(sessionId()) : [sessionId()]
       const selected = selectedSessionIds()
       const selectedInGroup = ids.reduce((count, id) => (selected.has(id) ? count + 1 : count), 0)
       return {

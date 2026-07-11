@@ -163,7 +163,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
     if (currentSession.parentId === null && !keepUnseenSubagentIdleStatus) {
       for (const child of props.activeSessions.values()) {
-        if (child.parentId !== currentSession.id) continue
+        if (child.id === currentSession.id) continue
         if (child.status !== "idle") continue
         if (typeof child.idleSince !== "number") continue
         entries.push({ id: child.id, idleSince: child.idleSince })

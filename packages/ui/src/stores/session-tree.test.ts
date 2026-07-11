@@ -4,10 +4,13 @@ import { describe, it } from "node:test"
 import type { Session } from "../types/session"
 import {
   buildSessionThreadsFromMap,
+  collectSessionThreadIds,
   collectVisibleSessionIds,
+  findSessionThread,
   getDescendantSessionsFromMap,
   getSessionAncestorIdsFromMap,
   getSessionRootFromMap,
+  sortSessionIdsDeepestFirst,
 } from "./session-tree"
 
 function session(id: string, parentId: string | null, updated: number): Session {
@@ -45,6 +48,7 @@ describe("session tree", () => {
     const [root] = buildSessionThreadsFromMap(sessions, ["root"], new Set(["grandchild"]))
     assert.deepEqual(root.children.map((child) => child.session.id), ["child"])
     assert.deepEqual(root.children[0].children.map((child) => child.session.id), ["grandchild"])
+    assert.equal(buildSessionThreadsFromMap(sessions, ["root", "root"]).length, 1)
   })
 
   it("only exposes descendants whose full parent path is expanded", () => {
@@ -83,5 +87,23 @@ describe("session tree", () => {
     assert.deepEqual(getSessionAncestorIdsFromMap(sessions, "a"), [])
     assert.deepEqual(getDescendantSessionsFromMap(sessions, "a").map((item) => item.id), ["b"])
     assert.deepEqual(buildSessionThreadsFromMap(sessions, ["a", "orphan"]), [])
+  })
+
+  it("collects an intermediate subtree and orders deletion children before parents", () => {
+    const sessions = sessionMap([
+      ["root", null, 100],
+      ["child", "root", 200],
+      ["grandchild", "child", 300],
+      ["sibling", "root", 400],
+    ])
+    const threads = buildSessionThreadsFromMap(sessions, ["root"])
+    const child = findSessionThread(threads, "child")
+
+    assert.ok(child)
+    assert.deepEqual(collectSessionThreadIds([child]), ["child", "grandchild"])
+    assert.deepEqual(
+      sortSessionIdsDeepestFirst(sessions, ["root", "child", "grandchild"]),
+      ["grandchild", "child", "root"],
+    )
   })
 })
