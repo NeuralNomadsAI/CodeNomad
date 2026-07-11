@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, type Accessor } from "solid-js"
+import { createSignal, onCleanup } from "solid-js"
 import { showAlertDialog } from "../../stores/alerts"
 import { speechCapabilities } from "../../stores/speech"
 import { serverApi } from "../api-client"
@@ -8,11 +8,7 @@ import { blobToBase64, createMediaRecorder, stopTracks } from "../audio-utils"
 
 type TranscriptionTestState = "idle" | "recording" | "transcribing"
 
-interface UseTranscriptionTestOptions {
-  id: Accessor<string>
-}
-
-export function useTranscriptionTest(options: UseTranscriptionTestOptions) {
+export function useTranscriptionTest() {
   const { t } = useI18n()
   const [state, setState] = createSignal<TranscriptionTestState>("idle")
   const [result, setResult] = createSignal<string | null>(null)

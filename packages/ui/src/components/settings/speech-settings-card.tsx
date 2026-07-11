@@ -99,9 +99,7 @@ export const SpeechSettingsCard: Component = () => {
     }),
   })
 
-  const testTranscription = useTranscriptionTest({
-    id: () => "settings-transcription-test",
-  })
+  const testTranscription = useTranscriptionTest()
 
   createEffect(() => {
     const speech = serverSettings().speech

@@ -16,16 +16,6 @@ export function createMediaRecorder(stream: MediaStream): MediaRecorder {
   return supported ? new MediaRecorder(stream, { mimeType: supported }) : new MediaRecorder(stream)
 }
 
-export function extensionForMime(mimeType: string): string {
-  const normalized = mimeType.toLowerCase()
-  if (normalized.includes("webm")) return "webm"
-  if (normalized.includes("ogg")) return "ogg"
-  if (normalized.includes("wav")) return "wav"
-  if (normalized.includes("mpeg") || normalized.includes("mp3")) return "mp3"
-  if (normalized.includes("mp4") || normalized.includes("aac")) return "m4a"
-  return "webm"
-}
-
 export function stopTracks(stream: MediaStream | null) {
   stream?.getTracks().forEach((track) => track.stop())
 }
