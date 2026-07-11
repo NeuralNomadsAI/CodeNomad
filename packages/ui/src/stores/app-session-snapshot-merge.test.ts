@@ -25,6 +25,7 @@ function workspace(
     drafts: {},
     attachments: {},
     scrollSnapshots: {},
+    unseenIdleSince: {},
     ...state,
   }
 }
@@ -322,6 +323,47 @@ describe("app session snapshot merge", () => {
     )
 
     assert.deepEqual(merged.tabs[0]?.kind === "workspace" ? merged.tabs[0].attachments : undefined, {})
+  })
+
+  it("does not resurrect a preserved idle marker after it is seen at runtime", () => {
+    const preservation = createRestorableSessionPreservation({
+      tabs: [workspace("/work", 0, { unseenIdleSince: { seen: 1_000 } })],
+      activeTabIndex: 0,
+    })
+    const merged = mergeRestorableSessionState(
+      { tabs: [workspace("/work", 0)], activeTabIndex: 0 },
+      preservation,
+      {
+        currentTabIds: ["instance:work"],
+        currentTabAuthorities: [{ idleMarkers: new Set(["seen"]) }],
+      },
+    )
+
+    assert.deepEqual(merged.tabs[0]?.kind === "workspace" ? merged.tabs[0].unseenIdleSince : undefined, {})
+  })
+
+  it("preserves idle markers for sessions unavailable during partial restore", () => {
+    let preservation = createRestorableSessionPreservation({
+      tabs: [workspace("/work", 0, {
+        unseenIdleSince: { missing: 1_000, loaded: 2_000 },
+      })],
+      activeTabIndex: 0,
+    })
+    preservation = markRestoredTab(preservation, 0, new Set(["missing"]), "instance:work")
+
+    const merged = mergeRestorableSessionState(
+      { tabs: [workspace("/work", 0)], activeTabIndex: 0 },
+      preservation,
+      {
+        currentTabIds: ["instance:work"],
+        currentTabAuthorities: [{ idleMarkers: new Set(["loaded"]) }],
+      },
+    )
+
+    assert.deepEqual(
+      merged.tabs[0]?.kind === "workspace" ? merged.tabs[0].unseenIdleSince : undefined,
+      { missing: 1_000 },
+    )
   })
 
   it("keeps new authoritative runtime values over preserved values", () => {

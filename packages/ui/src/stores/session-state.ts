@@ -581,6 +581,27 @@ function markSessionSelectionAuthoritative(instanceId: string): void {
   })
 }
 
+function hydrateSessionIdleMarkers(instanceId: string, markers: Readonly<Record<string, number>>): void {
+  setSessions((prev) => {
+    const instanceSessions = prev.get(instanceId)
+    if (!instanceSessions) return prev
+
+    let changed = false
+    const updatedSessions = new Map(instanceSessions)
+    for (const [sessionId, idleSince] of Object.entries(markers)) {
+      const session = updatedSessions.get(sessionId)
+      if (!session || session.status !== "idle" || typeof session.idleSince === "number") continue
+      updatedSessions.set(sessionId, { ...session, idleSince })
+      changed = true
+    }
+    if (!changed) return prev
+
+    const next = new Map(prev)
+    next.set(instanceId, updatedSessions)
+    return next
+  })
+}
+
 function hasAuthoritativeSessionSelection(instanceId: string): boolean {
   return authoritativeSessionSelectionInstanceIds().has(instanceId)
 }
@@ -1188,6 +1209,7 @@ export {
   setSessionPendingQuestion,
   markSessionIdleSeen,
   markViewedSessionIdleSeen,
+  hydrateSessionIdleMarkers,
   setSessionStatus,
   setActiveSession,
   setActiveParentSession,

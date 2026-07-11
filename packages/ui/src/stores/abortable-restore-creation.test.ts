@@ -50,6 +50,7 @@ describe("abortable restore creation", () => {
         drafts: { missing: "preserve through cancellation" },
         attachments: {},
         scrollSnapshots: {},
+        unseenIdleSince: {},
       }],
       activeTabIndex: 0,
     })

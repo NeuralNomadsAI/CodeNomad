@@ -65,6 +65,7 @@ it("claims access before loading and uses one renderer token for every native op
       drafts: { session1: "draft" },
       attachments: {},
       scrollSnapshots: {},
+      unseenIdleSince: {},
     }],
   })
   await clientState.flushClientState()

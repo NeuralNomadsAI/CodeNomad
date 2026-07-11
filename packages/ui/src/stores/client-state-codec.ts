@@ -17,6 +17,7 @@ export interface RestorableWorkspaceTabState {
   drafts: Record<string, string>
   attachments: Record<string, RestorableAttachment[]>
   scrollSnapshots: Record<string, ScrollSnapshot>
+  unseenIdleSince: Record<string, number>
 }
 
 export interface RestorableSidecarTabState {
@@ -43,6 +44,7 @@ const MAX_TABS = 32
 const MAX_LAYOUT_ENTRIES = 64
 const MAX_DRAFTS_PER_TAB = 24
 const MAX_SCROLL_SNAPSHOTS_PER_TAB = 96
+const MAX_IDLE_MARKERS_PER_TAB = 256
 const MAX_KEY_LENGTH = 256
 const MAX_PATH_LENGTH = 4096
 const MAX_ID_LENGTH = 512
@@ -169,13 +171,32 @@ function normalizeScrollSnapshotRecord(value: unknown, budget: StringBudget): Re
   return result
 }
 
+function normalizeIdleMarkerRecord(value: unknown, budget: StringBudget): Record<string, number> | null {
+  if (!isRecord(value)) return null
+
+  const result: Record<string, number> = Object.create(null)
+  let count = 0
+  for (const [rawKey, rawValue] of Object.entries(value)) {
+    if (count >= MAX_IDLE_MARKERS_PER_TAB) break
+    if (!isSafeRecordKey(rawKey)) continue
+
+    const key = takeString(rawKey, MAX_KEY_LENGTH, budget)
+    const idleSince = takeFiniteNumber(rawValue, 0, Number.MAX_SAFE_INTEGER)
+    if (key === undefined || idleSince === undefined) continue
+    result[key] = idleSince
+    count += 1
+  }
+  return result
+}
+
 function normalizeWorkspaceTab(value: Record<string, unknown>, budget: StringBudget): RestorableWorkspaceTabState | null {
   const folder = takeString(value.folder, MAX_PATH_LENGTH, budget)
   if (folder === undefined) return null
 
   const normalizedDrafts = normalizeStringRecord(value.drafts ?? {}, MAX_DRAFTS_PER_TAB, MAX_DRAFT_LENGTH, budget)
   const scrollSnapshots = normalizeScrollSnapshotRecord(value.scrollSnapshots ?? {}, budget)
-  if (normalizedDrafts === null || scrollSnapshots === null) return null
+  const unseenIdleSince = normalizeIdleMarkerRecord(value.unseenIdleSince ?? {}, budget)
+  if (normalizedDrafts === null || scrollSnapshots === null || unseenIdleSince === null) return null
   const attachmentResult = normalizeRestorableAttachmentRecord(value.attachments ?? {}, normalizedDrafts, budget.attachments)
   if (attachmentResult === null) return null
 
@@ -185,6 +206,7 @@ function normalizeWorkspaceTab(value: Record<string, unknown>, budget: StringBud
     drafts: attachmentResult.drafts,
     attachments: attachmentResult.attachments,
     scrollSnapshots,
+    unseenIdleSince,
   }
   if (Number.isInteger(value.occurrence) && Number(value.occurrence) >= 0 && Number(value.occurrence) < MAX_TABS) {
     result.occurrence = Number(value.occurrence)

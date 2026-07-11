@@ -72,6 +72,7 @@ import {
   getSessions,
   hasAuthoritativeSessionSelection,
   hydrateActiveSessionSelection,
+  hydrateSessionIdleMarkers,
 } from "../../stores/sessions"
 import { messageStoreBus, type MessageScrollSnapshotSeed } from "../../stores/message-v2/bus"
 import type { ScrollSnapshot } from "../../stores/message-v2/types"
@@ -115,6 +116,14 @@ function captureScrollSnapshots(instanceId: string): Record<string, ScrollSnapsh
   return result
 }
 
+function captureUnseenIdleMarkers(instanceId: string): Record<string, number> {
+  return Object.fromEntries(
+    getSessions(instanceId)
+      .filter((session) => session.status === "idle" && typeof session.idleSince === "number")
+      .map((session) => [session.id, session.idleSince as number]),
+  )
+}
+
 function captureRestorableSessionState(
   authoritativeScrollSessionIdsByInstance: ReadonlyMap<string, ReadonlySet<string>>,
 ): {
@@ -147,6 +156,7 @@ function captureRestorableSessionState(
       drafts: draftState.drafts,
       attachments: draftState.attachments,
       scrollSnapshots: captureScrollSnapshots(tab.instance.id),
+      unseenIdleSince: captureUnseenIdleMarkers(tab.instance.id),
     }
     if (tab.instance.projectName) result.projectName = tab.instance.projectName
     if (tab.instance.binaryPath) result.binaryPath = tab.instance.binaryPath
@@ -168,6 +178,7 @@ function captureRestorableSessionState(
       drafts: getAuthoritativeDraftSessionIdsForInstance(tab.instance.id),
       attachments: getAuthoritativeAttachmentSessionIdsForInstance(tab.instance.id),
       scrollSnapshots: authoritativeScrollSessionIdsByInstance.get(tab.instance.id),
+      idleMarkers: new Set(getSessions(tab.instance.id).map((session) => session.id)),
       deletedSessions: getAuthoritativelyDeletedSessionIdsForInstance(tab.instance.id),
       sessionSelection: hasAuthoritativeSessionSelection(tab.instance.id),
     } : undefined),
@@ -183,9 +194,11 @@ function restoreWorkspaceState(instanceId: string, snapshot: RestorableWorkspace
     draftSessionIds: Object.keys(snapshot.drafts),
     attachmentSessionIds: Object.keys(snapshot.attachments),
     scrollSessionIds: Object.keys(snapshot.scrollSnapshots),
+    idleMarkerSessionIds: Object.keys(snapshot.unseenIdleSince),
   }, [NO_SESSION_DRAFT_SESSION_ID])
 
   hydrateWorkspacePromptState(instanceId, snapshot, validSessionIds, NO_SESSION_DRAFT_SESSION_ID)
+  hydrateSessionIdleMarkers(instanceId, snapshot.unseenIdleSince)
 
   const scrollSeeds: MessageScrollSnapshotSeed[] = []
   for (const [sessionId, scrollSnapshot] of Object.entries(snapshot.scrollSnapshots)) {
@@ -457,6 +470,7 @@ export function useAppSessionRestore(): void {
     activeSessionId()
     for (const tab of tabs) {
       if (tab.kind !== "instance") continue
+      getSessions(tab.instance.id)
       getSessionDraftPromptsForInstance(tab.instance.id)
       getSessionAttachmentsForInstance(tab.instance.id)
     }

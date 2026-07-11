@@ -52,6 +52,7 @@ function workspace(state: Partial<RestorableWorkspaceTabState> = {}): Restorable
     drafts: {},
     attachments: {},
     scrollSnapshots: {},
+    unseenIdleSince: {},
     ...state,
   }
 }

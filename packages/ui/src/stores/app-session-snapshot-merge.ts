@@ -21,6 +21,7 @@ export interface RestorableWorkspaceRuntimeAuthority {
   drafts?: ReadonlySet<string>
   attachments?: ReadonlySet<string>
   scrollSnapshots?: ReadonlySet<string>
+  idleMarkers?: ReadonlySet<string>
   deletedSessions?: ReadonlySet<string>
   sessionSelection?: boolean
 }
@@ -150,12 +151,16 @@ export function markRestoredTab(
     const scrollSnapshots = Object.fromEntries(
       Object.entries(source.scrollSnapshots).filter(([sessionId]) => unavailableSessionIds.has(sessionId)),
     )
+    const unseenIdleSince = Object.fromEntries(
+      Object.entries(source.unseenIdleSince).filter(([sessionId]) => unavailableSessionIds.has(sessionId)),
+    )
     const tab: RestorableWorkspaceTabState = {
       kind: "workspace",
       folder: source.folder,
       drafts,
       attachments,
       scrollSnapshots,
+      unseenIdleSince,
     }
     if (source.occurrence !== undefined) tab.occurrence = source.occurrence
     if (unavailableSessionIds.has(source.activeParentSessionId ?? "")) {
@@ -227,6 +232,7 @@ function mergeWorkspaceState(
     drafts: mergeRecords(current.drafts, preserved.drafts, authority.drafts),
     attachments: mergeRecords(current.attachments, preserved.attachments, authority.attachments),
     scrollSnapshots: mergeRecords(current.scrollSnapshots, preserved.scrollSnapshots, authority.scrollSnapshots),
+    unseenIdleSince: mergeRecords(current.unseenIdleSince, preserved.unseenIdleSince, authority.idleMarkers),
   }
   if (!authority.sessionSelection && !current.activeParentSessionId && !current.activeSessionId) {
     if (preserved.activeParentSessionId && !authority.deletedSessions?.has(preserved.activeParentSessionId)) {

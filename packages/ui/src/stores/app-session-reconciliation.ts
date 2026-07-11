@@ -37,6 +37,7 @@ export interface RestoredSessionReferences {
   draftSessionIds: readonly string[]
   attachmentSessionIds?: readonly string[]
   scrollSessionIds: readonly string[]
+  idleMarkerSessionIds?: readonly string[]
 }
 
 function normalizeWorkspacePath(folderPath: string): string {
@@ -158,6 +159,7 @@ function getUnavailableRestoredSessionIds(
     ...references.draftSessionIds,
     ...(references.attachmentSessionIds ?? []),
     ...references.scrollSessionIds,
+    ...(references.idleMarkerSessionIds ?? []),
   ]
   return new Set(
     requiredIds.filter((sessionId): sessionId is string =>

@@ -28,6 +28,7 @@ describe("client state codec", () => {
             scrollSnapshots: {
               session1: { scrollTop: 120, scrollRatio: 0.5, atBottom: false, updatedAt: 1200 },
             },
+            unseenIdleSince: { session1: 1100, malformed: -1 },
           },
           { kind: "sidecar", sidecarId: "docs" },
         ],
@@ -39,6 +40,10 @@ describe("client state codec", () => {
     assert.equal(decoded.session?.activeTabIndex, 1)
     assert.equal(decoded.session?.tabs[0]?.kind, "workspace")
     assert.equal(decoded.session?.tabs[0]?.kind === "workspace" ? decoded.session.tabs[0].occurrence : undefined, 1)
+    assert.deepEqual(
+      decoded.session?.tabs[0]?.kind === "workspace" ? { ...decoded.session.tabs[0].unseenIdleSince } : undefined,
+      { session1: 1100 },
+    )
     assert.deepEqual(decoded.session?.tabs[1], { kind: "sidecar", sidecarId: "docs" })
   })
 
