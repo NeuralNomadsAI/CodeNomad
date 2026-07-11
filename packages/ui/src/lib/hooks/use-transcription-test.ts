@@ -6,7 +6,7 @@ import { useI18n } from "../i18n"
 import { isElectronHost } from "../runtime-env"
 import { blobToBase64, createMediaRecorder, stopTracks } from "../audio-utils"
 
-type TranscriptionTestState = "idle" | "recording" | "transcribing"
+type TranscriptionTestState = "idle" | "requesting" | "recording" | "transcribing"
 
 export function useTranscriptionTest() {
   const { t } = useI18n()
@@ -16,7 +16,8 @@ export function useTranscriptionTest() {
   let mediaRecorder: MediaRecorder | null = null
   let mediaStream: MediaStream | null = null
   let recordedChunks: Blob[] = []
-  let shouldFinalize = true
+  let requestGeneration = 0
+  let disposed = false
 
   const isSupported = () => {
     if (typeof window === "undefined") return false
@@ -29,7 +30,8 @@ export function useTranscriptionTest() {
   }
 
   const cleanup = () => {
-    shouldFinalize = false
+    disposed = true
+    requestGeneration += 1
     if (mediaRecorder && mediaRecorder.state !== "inactive") {
       mediaRecorder.stop()
     }
@@ -52,6 +54,10 @@ export function useTranscriptionTest() {
       return
     }
 
+    const generation = ++requestGeneration
+    setState("requesting")
+    setResult(null)
+
     try {
       if (isElectronHost()) {
         const granted = await (window as Window & { electronAPI?: ElectronAPI }).electronAPI?.requestMicrophoneAccess?.()
@@ -60,73 +66,87 @@ export function useTranscriptionTest() {
         }
       }
 
-      recordedChunks = []
-      shouldFinalize = true
-      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      mediaRecorder = createMediaRecorder(mediaStream)
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
 
-      mediaRecorder.addEventListener("dataavailable", (event) => {
-        if (event.data.size > 0) {
+      if (generation !== requestGeneration || disposed) {
+        stopTracks(stream)
+        return
+      }
+
+      recordedChunks = []
+      mediaStream = stream
+      const recorder = createMediaRecorder(stream)
+      mediaRecorder = recorder
+
+      recorder.addEventListener("dataavailable", (event) => {
+        if (event.data.size > 0 && generation === requestGeneration) {
           recordedChunks.push(event.data)
         }
       })
 
-      mediaRecorder.addEventListener("stop", () => {
-        void finalizeRecording()
+      recorder.addEventListener("stop", () => {
+        if (generation === requestGeneration) {
+          void finalizeRecording(generation)
+        }
       })
 
       setState("recording")
-      setResult(null)
-      mediaRecorder.start()
+      recorder.start()
     } catch (error) {
-      cleanup()
-      setState("idle")
-      showAlertDialog(t("promptInput.voiceInput.error.permission"), {
-        title: t("promptInput.voiceInput.error.title"),
-        detail: error instanceof Error ? error.message : String(error),
-        variant: "error",
-      })
+      if (generation === requestGeneration) {
+        cleanup()
+        setState("idle")
+        showAlertDialog(t("promptInput.voiceInput.error.permission"), {
+          title: t("promptInput.voiceInput.error.title"),
+          detail: error instanceof Error ? error.message : String(error),
+          variant: "error",
+        })
+      }
     }
   }
 
   const stopRecording = () => {
     if (!mediaRecorder || state() !== "recording") return
     mediaRecorder.stop()
+    stopTracks(mediaStream)
+    mediaStream = null
     setState("transcribing")
   }
 
-  const finalizeRecording = async () => {
+  const finalizeRecording = async (generation: number) => {
+    const chunks = recordedChunks
+    recordedChunks = []
     const recorder = mediaRecorder
-    const stream = mediaStream
     mediaRecorder = null
-    mediaStream = null
 
-    if (!shouldFinalize || recordedChunks.length === 0) {
-      recordedChunks = []
-      stopTracks(stream)
+    if (generation !== requestGeneration || chunks.length === 0) {
       setState("idle")
       return
     }
 
-    const mimeType = recorder?.mimeType || recordedChunks[0]?.type || "audio/webm"
+    const mimeType = recorder?.mimeType || chunks[0]?.type || "audio/webm"
 
     try {
-      const audioBlob = new Blob(recordedChunks, { type: mimeType })
+      const audioBlob = new Blob(chunks, { type: mimeType })
       const transcription = await serverApi.transcribeAudio({
         audioBase64: await blobToBase64(audioBlob),
         mimeType,
       })
-      setResult(transcription.text.trim() || t("settings.speech.testInput.empty"))
+      if (generation === requestGeneration) {
+        setResult(transcription.text.trim() || t("settings.speech.testInput.empty"))
+      }
     } catch (error) {
-      showAlertDialog(t("promptInput.voiceInput.error.transcribe"), {
-        title: t("promptInput.voiceInput.error.title"),
-        detail: error instanceof Error ? error.message : String(error),
-        variant: "error",
-      })
+      if (generation === requestGeneration) {
+        showAlertDialog(t("promptInput.voiceInput.error.transcribe"), {
+          title: t("promptInput.voiceInput.error.title"),
+          detail: error instanceof Error ? error.message : String(error),
+          variant: "error",
+        })
+      }
     } finally {
-      recordedChunks = []
-      stopTracks(stream)
-      setState("idle")
+      if (generation === requestGeneration) {
+        setState("idle")
+      }
     }
   }
 
@@ -140,12 +160,6 @@ export function useTranscriptionTest() {
     }
   }
 
-  const reset = () => {
-    cleanup()
-    setState("idle")
-    setResult(null)
-  }
-
   return {
     state,
     result,
@@ -153,8 +167,8 @@ export function useTranscriptionTest() {
     isRecording: () => state() === "recording",
     isTranscribing: () => state() === "transcribing",
     toggle,
-    reset,
     buttonTitle: () => {
+      if (state() === "requesting") return t("settings.speech.testInput.transcribing")
       if (state() === "recording") return t("settings.speech.testInput.stop")
       if (state() === "transcribing") return t("settings.speech.testInput.transcribing")
       return t("settings.speech.testInput.action")

@@ -95,7 +95,7 @@ export class SpeechService {
 
     return {
       available: true,
-      configured: sttConfigured || ttsConfigured,
+      configured: separate ? (sttConfigured && ttsConfigured) : (sttConfigured || ttsConfigured),
       provider: sttSettings.provider,
       supportsStt: true,
       supportsTts: true,
@@ -170,10 +170,13 @@ export class SpeechService {
       return this.resolveShared(speech)
     }
     const stt = speech.stt ?? {}
+    const dirBaseUrl = stt.baseUrl?.trim() || undefined
+    const dirApiKey = stt.apiKey?.trim() || undefined
+    const hasDirectionalUrl = Boolean(dirBaseUrl)
     return {
       provider: speech.provider?.trim() || DEFAULT_PROVIDER,
-      apiKey: stt.apiKey?.trim() || speech.apiKey?.trim() || process.env.OPENAI_API_KEY,
-      baseUrl: stt.baseUrl?.trim() || speech.baseUrl?.trim() || process.env.OPENAI_BASE_URL || undefined,
+      apiKey: dirApiKey || (hasDirectionalUrl ? undefined : speech.apiKey?.trim() || process.env.OPENAI_API_KEY),
+      baseUrl: dirBaseUrl || speech.baseUrl?.trim() || process.env.OPENAI_BASE_URL || undefined,
       sttModel: stt.model?.trim() || speech.sttModel?.trim() || DEFAULT_STT_MODEL,
       ttsModel: speech.ttsModel?.trim() || DEFAULT_TTS_MODEL,
       ttsVoice: speech.ttsVoice?.trim() || DEFAULT_TTS_VOICE,
@@ -186,10 +189,13 @@ export class SpeechService {
       return this.resolveShared(speech)
     }
     const tts = speech.tts ?? {}
+    const dirBaseUrl = tts.baseUrl?.trim() || undefined
+    const dirApiKey = tts.apiKey?.trim() || undefined
+    const hasDirectionalUrl = Boolean(dirBaseUrl)
     return {
       provider: speech.provider?.trim() || DEFAULT_PROVIDER,
-      apiKey: tts.apiKey?.trim() || speech.apiKey?.trim() || process.env.OPENAI_API_KEY,
-      baseUrl: tts.baseUrl?.trim() || speech.baseUrl?.trim() || process.env.OPENAI_BASE_URL || undefined,
+      apiKey: dirApiKey || (hasDirectionalUrl ? undefined : speech.apiKey?.trim() || process.env.OPENAI_API_KEY),
+      baseUrl: dirBaseUrl || speech.baseUrl?.trim() || process.env.OPENAI_BASE_URL || undefined,
       sttModel: speech.sttModel?.trim() || DEFAULT_STT_MODEL,
       ttsModel: tts.model?.trim() || speech.ttsModel?.trim() || DEFAULT_TTS_MODEL,
       ttsVoice: speech.ttsVoice?.trim() || DEFAULT_TTS_VOICE,

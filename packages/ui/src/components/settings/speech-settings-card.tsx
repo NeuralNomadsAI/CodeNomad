@@ -302,12 +302,12 @@ export const SpeechSettingsCard: Component = () => {
               type="button"
               class="selector-button selector-button-secondary w-auto whitespace-nowrap inline-flex items-center gap-2"
               onClick={() => void testTranscription.toggle()}
-              disabled={isSaving() || testTranscription.isTranscribing() || !testTranscription.canUseTranscription()}
+              disabled={isSaving() || testTranscription.state() !== "idle" || !testTranscription.canUseTranscription()}
               title={testTranscription.buttonTitle()}
               aria-label={testTranscription.buttonTitle()}
             >
               <Show
-                when={testTranscription.isTranscribing()}
+                when={testTranscription.isTranscribing() || testTranscription.state() === "requesting"}
                 fallback={
                   <Show
                     when={testTranscription.isRecording()}
@@ -320,11 +320,7 @@ export const SpeechSettingsCard: Component = () => {
                 <Loader2 class="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
               </Show>
               <span>
-                {testTranscription.isRecording()
-                  ? t("settings.speech.testInput.stop")
-                  : testTranscription.isTranscribing()
-                    ? t("settings.speech.testInput.transcribing")
-                    : t("settings.speech.testInput.action")}
+                {testTranscription.buttonTitle()}
               </span>
             </button>
             <Show when={testTranscription.result()}>
@@ -381,8 +377,18 @@ export const SpeechSettingsCard: Component = () => {
               type="checkbox"
               checked={drafts().separateProviders}
               onChange={(event) => {
+                const next = event.currentTarget.checked
                 setSaveStatus("idle")
-                setDrafts((current) => ({ ...current, separateProviders: event.currentTarget.checked }))
+                setApiKeyTouched(false)
+                setClearStoredApiKey(false)
+                setSttApiKeyTouched(false)
+                setClearSttApiKey(false)
+                setTtsApiKeyTouched(false)
+                setClearTtsApiKey(false)
+                setDrafts(() => {
+                  const base = createDraftFields(serverSettings().speech)
+                  return { ...base, separateProviders: next }
+                })
               }}
             />
             <span>{t("settings.common.enabled")}</span>
