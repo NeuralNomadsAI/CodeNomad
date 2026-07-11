@@ -72,7 +72,7 @@ export interface SpeechSettings {
   }
 }
 
-export type SpeechSettingsUpdate = Partial<Omit<SpeechSettings, "apiKey" | "baseUrl" | "sttModel" | "ttsModel" | "ttsVoice" | "stt" | "tts">> & {
+export type SpeechSettingsUpdate = Partial<Omit<SpeechSettings, "provider" | "hasApiKey" | "apiKey" | "baseUrl" | "sttModel" | "ttsModel" | "ttsVoice" | "stt" | "tts">> & {
   apiKey?: string | null
   baseUrl?: string | null
   sttModel?: string | null
