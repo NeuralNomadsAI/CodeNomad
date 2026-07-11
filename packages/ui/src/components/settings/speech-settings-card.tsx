@@ -339,18 +339,17 @@ export const SpeechSettingsCard: Component = () => {
             <div class="settings-toggle-title">{t("settings.speech.separateProviders.title")}</div>
             <div class="settings-toggle-caption">{t("settings.speech.separateProviders.subtitle")}</div>
           </div>
-          <button
-            type="button"
-            class="settings-toggle-switch"
-            role="switch"
-            aria-checked={drafts().separateProviders}
-            onClick={() => {
-              setSaveStatus("idle")
-              setDrafts((current) => ({ ...current, separateProviders: !current.separateProviders }))
-            }}
-          >
-            <span class="settings-toggle-thumb" data-on={drafts().separateProviders} />
-          </button>
+          <label class="settings-checkbox-toggle">
+            <input
+              type="checkbox"
+              checked={drafts().separateProviders}
+              onChange={(event) => {
+                setSaveStatus("idle")
+                setDrafts((current) => ({ ...current, separateProviders: event.currentTarget.checked }))
+              }}
+            />
+            <span>{t("settings.common.enabled")}</span>
+          </label>
         </div>
 
         <Show when={!drafts().separateProviders}>
