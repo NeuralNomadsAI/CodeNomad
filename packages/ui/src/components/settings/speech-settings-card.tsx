@@ -233,12 +233,12 @@ export const SpeechSettingsCard: Component = () => {
       if (current.separateProviders) {
         await updateSpeechSettings({
           separateProviders: true,
-          stt: {
-            ...(clearSttApiKey() ? { apiKey: null, baseUrl: null, model: null } : current.stt.apiKey.trim() ? { apiKey: current.stt.apiKey.trim(), baseUrl: current.stt.baseUrl.trim() || null, model: current.stt.model.trim() || null } : {}),
-          },
-          tts: {
-            ...(clearTtsApiKey() ? { apiKey: null, baseUrl: null, model: null } : current.tts.apiKey.trim() ? { apiKey: current.tts.apiKey.trim(), baseUrl: current.tts.baseUrl.trim() || null, model: current.tts.model.trim() || null } : {}),
-          },
+          stt: clearSttApiKey()
+            ? { apiKey: null, baseUrl: null, model: null }
+            : { baseUrl: current.stt.baseUrl.trim() || null, model: current.stt.model.trim() || null, ...(current.stt.apiKey.trim() ? { apiKey: current.stt.apiKey.trim() } : {}) },
+          tts: clearTtsApiKey()
+            ? { apiKey: null, baseUrl: null, model: null }
+            : { baseUrl: current.tts.baseUrl.trim() || null, model: current.tts.model.trim() || null, ...(current.tts.apiKey.trim() ? { apiKey: current.tts.apiKey.trim() } : {}) },
           ttsVoice: current.ttsVoice.trim() || null,
           playbackMode: current.playbackMode,
           ttsFormat: current.ttsFormat,
