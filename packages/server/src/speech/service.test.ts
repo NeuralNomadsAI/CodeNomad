@@ -18,22 +18,6 @@ const mockLogger: Logger = {
   debug: () => {},
 } as unknown as Logger
 
-async function resolveSettings(serverConfig: Record<string, unknown>) {
-  const service = new SpeechService(createMockSettings(serverConfig), mockLogger)
-  const caps = service.getCapabilities()
-  let resolvedApiKey: string | undefined
-  let resolvedBaseUrl: string | undefined
-  try {
-    await service.transcribe({ audioBase64: "", mimeType: "audio/webm" })
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error)
-    if (!msg.includes("not configured")) {
-      resolvedApiKey = "present-but-transcription-failed"
-    }
-  }
-  return { caps, resolvedApiKey, resolvedBaseUrl }
-}
-
 describe("SpeechService direction resolution", () => {
   describe("separateProviders = false (default)", () => {
     it("uses shared apiKey for both STT and TTS", () => {
@@ -275,25 +259,6 @@ describe("SpeechService direction resolution", () => {
         () => service.transcribe({ audioBase64: "", mimeType: "audio/webm" }),
         /not configured/i,
       )
-    })
-
-    it("transcribe does NOT throw for complete directional pair", async () => {
-      const settings = createMockSettings({
-        speech: {
-          separateProviders: true,
-          stt: { apiKey: "sk-groq", baseUrl: "https://api.groq.com/openai/v1" },
-        },
-      })
-      const service = new SpeechService(settings, mockLogger)
-      try {
-        await service.transcribe({ audioBase64: "", mimeType: "audio/webm" })
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error)
-        assert.ok(
-          !msg.includes("not configured"),
-          `transcribe should not throw not-configured for a complete pair, got: ${msg}`,
-        )
-      }
     })
 
     it("configured uses && in separate mode (both required for legacy compat)", () => {

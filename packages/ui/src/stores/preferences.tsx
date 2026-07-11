@@ -13,6 +13,7 @@ import {
 } from "./instance-config"
 import { getLogger } from "../lib/logger"
 import { loadSpeechCapabilities, resetSpeechCapabilities } from "./speech"
+import { buildSpeechPatch } from "../lib/speech-patch"
 
 const log = getLogger("actions")
 
@@ -71,9 +72,12 @@ export interface SpeechSettings {
   }
 }
 
-export type SpeechSettingsUpdate = Partial<Omit<SpeechSettings, "apiKey" | "baseUrl" | "stt" | "tts">> & {
+export type SpeechSettingsUpdate = Partial<Omit<SpeechSettings, "apiKey" | "baseUrl" | "sttModel" | "ttsModel" | "ttsVoice" | "stt" | "tts">> & {
   apiKey?: string | null
   baseUrl?: string | null
+  sttModel?: string | null
+  ttsModel?: string | null
+  ttsVoice?: string | null
   separateProviders?: boolean
   stt?: { apiKey?: string | null; baseUrl?: string | null; model?: string | null }
   tts?: { apiKey?: string | null; baseUrl?: string | null; model?: string | null }
@@ -678,8 +682,6 @@ function updateLogLevel(level: ServerLogLevel): void {
   const target = level ?? "DEBUG"
   void patchConfigOwner("server", { logLevel: target }).catch((error) => log.error("Failed to set log level", error))
 }
-
-import { buildSpeechPatch } from "../lib/speech-patch"
 
 async function updateSpeechSettings(updates: SpeechSettingsUpdate): Promise<void> {
   const patch = buildSpeechPatch(updates)

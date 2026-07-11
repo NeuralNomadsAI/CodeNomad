@@ -18,16 +18,16 @@ const ServerSpeechSettingsSchema = z.object({
       separateProviders: z.boolean().optional(),
       stt: z
         .object({
-          apiKey: z.string().optional(),
-          baseUrl: z.string().optional(),
-          model: z.string().optional(),
+          apiKey: z.string().nullish(),
+          baseUrl: z.string().nullish(),
+          model: z.string().nullish(),
         })
         .optional(),
       tts: z
         .object({
-          apiKey: z.string().optional(),
-          baseUrl: z.string().optional(),
-          model: z.string().optional(),
+          apiKey: z.string().nullish(),
+          baseUrl: z.string().nullish(),
+          model: z.string().nullish(),
         })
         .optional(),
     })

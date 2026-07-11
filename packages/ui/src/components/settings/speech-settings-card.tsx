@@ -33,7 +33,7 @@ function createDirectionalDraft(speech: SpeechSettings, direction: "stt" | "tts"
   const dir = speech[direction]
   return {
     apiKey: "",
-    baseUrl: dir.baseUrl ?? speech.baseUrl ?? "",
+    baseUrl: dir.baseUrl ?? "",
     model: dir.model || (direction === "stt" ? speech.sttModel : speech.ttsModel),
   }
 }
@@ -188,20 +188,18 @@ export const SpeechSettingsCard: Component = () => {
     if (current.separateProviders !== speech.separateProviders) return true
 
     if (current.separateProviders) {
-      const sttEffectiveBaseUrl = speech.stt.baseUrl ?? speech.baseUrl ?? ""
-      const ttsEffectiveBaseUrl = speech.tts.baseUrl ?? speech.baseUrl ?? ""
-      const sttEffectiveModel = speech.stt.model || speech.sttModel
-      const ttsEffectiveModel = speech.tts.model || speech.ttsModel
+      const sttDir = speech.stt
+      const ttsDir = speech.tts
       const sttDirty =
         clearSttApiKey() ||
         current.stt.apiKey.trim().length > 0 ||
-        (current.stt.baseUrl || "") !== sttEffectiveBaseUrl ||
-        current.stt.model !== sttEffectiveModel
+        (current.stt.baseUrl || "") !== (sttDir.baseUrl || "") ||
+        current.stt.model !== sttDir.model
       const ttsDirty =
         clearTtsApiKey() ||
         current.tts.apiKey.trim().length > 0 ||
-        (current.tts.baseUrl || "") !== ttsEffectiveBaseUrl ||
-        current.tts.model !== ttsEffectiveModel ||
+        (current.tts.baseUrl || "") !== (ttsDir.baseUrl || "") ||
+        current.tts.model !== ttsDir.model ||
         current.ttsVoice !== speech.ttsVoice ||
         current.playbackMode !== speech.playbackMode ||
         current.ttsFormat !== speech.ttsFormat
@@ -233,36 +231,15 @@ export const SpeechSettingsCard: Component = () => {
     setSaveStatus("idle")
     try {
       if (current.separateProviders) {
-        const sttApiKeyTrimmed = current.stt.apiKey.trim()
-        const ttsApiKeyTrimmed = current.tts.apiKey.trim()
-        const sharedBaseUrl = serverSettings().speech.baseUrl ?? ""
-        const buildDirPatch = (clearKey: boolean, apiKeyTrimmed: string, dirBaseUrl: string, dirModel: string, hasExistingKey: boolean) => {
-          const patch: { apiKey?: string | null; baseUrl?: string | null; model?: string | null } = {}
-          if (clearKey) {
-            patch.apiKey = null
-            patch.baseUrl = null
-            patch.model = null
-          } else if (apiKeyTrimmed) {
-            patch.apiKey = apiKeyTrimmed
-            if (dirBaseUrl.trim() && dirBaseUrl.trim() !== sharedBaseUrl.trim()) {
-              patch.baseUrl = dirBaseUrl.trim()
-            } else {
-              patch.baseUrl = null
-            }
-            patch.model = dirModel.trim() || null
-          } else if (hasExistingKey) {
-            if (dirBaseUrl.trim() && dirBaseUrl.trim() !== sharedBaseUrl.trim()) {
-              patch.baseUrl = dirBaseUrl.trim()
-            }
-            patch.model = dirModel.trim() || null
-          }
-          return patch
-        }
         await updateSpeechSettings({
           separateProviders: true,
-          stt: buildDirPatch(clearSttApiKey(), sttApiKeyTrimmed, current.stt.baseUrl, current.stt.model, serverSettings().speech.stt.hasApiKey),
-          tts: buildDirPatch(clearTtsApiKey(), ttsApiKeyTrimmed, current.tts.baseUrl, current.tts.model, serverSettings().speech.tts.hasApiKey),
-          ttsVoice: current.ttsVoice.trim() || undefined,
+          stt: {
+            ...(clearSttApiKey() ? { apiKey: null, baseUrl: null, model: null } : current.stt.apiKey.trim() ? { apiKey: current.stt.apiKey.trim(), baseUrl: current.stt.baseUrl.trim() || null, model: current.stt.model.trim() || null } : {}),
+          },
+          tts: {
+            ...(clearTtsApiKey() ? { apiKey: null, baseUrl: null, model: null } : current.tts.apiKey.trim() ? { apiKey: current.tts.apiKey.trim(), baseUrl: current.tts.baseUrl.trim() || null, model: current.tts.model.trim() || null } : {}),
+          },
+          ttsVoice: current.ttsVoice.trim() || null,
           playbackMode: current.playbackMode,
           ttsFormat: current.ttsFormat,
         })
@@ -273,9 +250,9 @@ export const SpeechSettingsCard: Component = () => {
           separateProviders: false,
           ...(clearStoredApiKey() ? { apiKey: null } : trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
           baseUrl: current.baseUrl.trim() || null,
-          sttModel: current.sttModel.trim() || undefined,
-          ttsModel: current.ttsModel.trim() || undefined,
-          ttsVoice: current.ttsVoice.trim() || undefined,
+          sttModel: current.sttModel.trim() || null,
+          ttsModel: current.ttsModel.trim() || null,
+          ttsVoice: current.ttsVoice.trim() || null,
           playbackMode: current.playbackMode,
           ttsFormat: current.ttsFormat,
           ...(wasSeparate ? { stt: { apiKey: null, baseUrl: null, model: null }, tts: { apiKey: null, baseUrl: null, model: null } } : {}),
