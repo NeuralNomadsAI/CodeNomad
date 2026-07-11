@@ -593,9 +593,9 @@ function addEnvironmentVariable(key: string, value: string, secure: boolean = tr
 }
 
 function removeEnvironmentVariable(key: string): void {
-  const current = serverSettings().environmentVariables
-  const { [key]: removed, ...rest } = current
-  updateEnvironmentVariables(rest)
+  void patchConfigOwner("server", { environmentVariables: { [key]: null } }).catch((error) =>
+    log.error("Failed to remove environment variable", error),
+  )
 }
 
 function isSecureEnvVar(key: string): boolean {
