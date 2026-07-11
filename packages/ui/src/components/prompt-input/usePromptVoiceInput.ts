@@ -4,6 +4,7 @@ import { loadSpeechCapabilities, speechCapabilities } from "../../stores/speech"
 import { serverApi } from "../../lib/api-client"
 import { useI18n } from "../../lib/i18n"
 import { isElectronHost } from "../../lib/runtime-env"
+import { blobToBase64, createMediaRecorder, stopTracks } from "../../lib/audio-utils"
 
 interface UsePromptVoiceInputOptions {
   prompt: Accessor<string>
@@ -98,7 +99,7 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
       }
 
       mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      mediaRecorder = createRecorder(mediaStream)
+      mediaRecorder = createMediaRecorder(mediaStream)
 
       mediaRecorder.addEventListener("dataavailable", (event) => {
         if (event.data.size > 0) {
@@ -237,24 +238,4 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
       return t("promptInput.voiceInput.start.title")
     },
   }
-}
-
-function createRecorder(stream: MediaStream): MediaRecorder {
-  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"]
-  const supported = candidates.find((candidate) => typeof MediaRecorder.isTypeSupported !== "function" || MediaRecorder.isTypeSupported(candidate))
-  return supported ? new MediaRecorder(stream, { mimeType: supported }) : new MediaRecorder(stream)
-}
-
-function stopTracks(stream: MediaStream | null) {
-  stream?.getTracks().forEach((track) => track.stop())
-}
-
-async function blobToBase64(blob: Blob): Promise<string> {
-  const buffer = await blob.arrayBuffer()
-  const bytes = new Uint8Array(buffer)
-  let binary = ""
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte)
-  }
-  return btoa(binary)
 }

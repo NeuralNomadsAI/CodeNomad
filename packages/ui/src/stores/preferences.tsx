@@ -323,21 +323,21 @@ function normalizeSpeechSettings(input?: Partial<SpeechSettings> | null): Speech
         : defaultSpeechSettings.ttsFormat,
     separateProviders: sanitized.separateProviders === true,
     stt: {
-      apiKey: typeof (sanitized as any).stt?.apiKey === "string" && (sanitized as any).stt.apiKey.trim() ? (sanitized as any).stt.apiKey.trim() : undefined,
-      hasApiKey: (sanitized as any).stt?.hasApiKey === true,
-      baseUrl: typeof (sanitized as any).stt?.baseUrl === "string" && (sanitized as any).stt.baseUrl.trim() ? (sanitized as any).stt.baseUrl.trim() : undefined,
+      apiKey: typeof sanitized.stt?.apiKey === "string" && sanitized.stt.apiKey.trim() ? sanitized.stt.apiKey.trim() : undefined,
+      hasApiKey: sanitized.stt?.hasApiKey === true,
+      baseUrl: typeof sanitized.stt?.baseUrl === "string" && sanitized.stt.baseUrl.trim() ? sanitized.stt.baseUrl.trim() : undefined,
       model:
-        typeof (sanitized as any).stt?.model === "string" && (sanitized as any).stt.model.trim()
-          ? (sanitized as any).stt.model.trim()
+        typeof sanitized.stt?.model === "string" && sanitized.stt.model.trim()
+          ? sanitized.stt.model.trim()
           : sttModel,
     },
     tts: {
-      apiKey: typeof (sanitized as any).tts?.apiKey === "string" && (sanitized as any).tts.apiKey.trim() ? (sanitized as any).tts.apiKey.trim() : undefined,
-      hasApiKey: (sanitized as any).tts?.hasApiKey === true,
-      baseUrl: typeof (sanitized as any).tts?.baseUrl === "string" && (sanitized as any).tts.baseUrl.trim() ? (sanitized as any).tts.baseUrl.trim() : undefined,
+      apiKey: typeof sanitized.tts?.apiKey === "string" && sanitized.tts.apiKey.trim() ? sanitized.tts.apiKey.trim() : undefined,
+      hasApiKey: sanitized.tts?.hasApiKey === true,
+      baseUrl: typeof sanitized.tts?.baseUrl === "string" && sanitized.tts.baseUrl.trim() ? sanitized.tts.baseUrl.trim() : undefined,
       model:
-        typeof (sanitized as any).tts?.model === "string" && (sanitized as any).tts.model.trim()
-          ? (sanitized as any).tts.model.trim()
+        typeof sanitized.tts?.model === "string" && sanitized.tts.model.trim()
+          ? sanitized.tts.model.trim()
           : ttsModel,
     },
   }

@@ -4,6 +4,7 @@ import { speechCapabilities } from "../../stores/speech"
 import { serverApi } from "../api-client"
 import { useI18n } from "../i18n"
 import { isElectronHost } from "../runtime-env"
+import { blobToBase64, createMediaRecorder, stopTracks } from "../audio-utils"
 
 type TranscriptionTestState = "idle" | "recording" | "transcribing"
 
@@ -19,6 +20,7 @@ export function useTranscriptionTest(options: UseTranscriptionTestOptions) {
   let mediaRecorder: MediaRecorder | null = null
   let mediaStream: MediaStream | null = null
   let recordedChunks: Blob[] = []
+  let shouldFinalize = true
 
   const isSupported = () => {
     if (typeof window === "undefined") return false
@@ -31,13 +33,12 @@ export function useTranscriptionTest(options: UseTranscriptionTestOptions) {
   }
 
   const cleanup = () => {
+    shouldFinalize = false
     if (mediaRecorder && mediaRecorder.state !== "inactive") {
       mediaRecorder.stop()
     }
     mediaRecorder = null
-    if (mediaStream) {
-      mediaStream.getTracks().forEach((track) => track.stop())
-    }
+    stopTracks(mediaStream)
     mediaStream = null
     recordedChunks = []
   }
@@ -64,13 +65,9 @@ export function useTranscriptionTest(options: UseTranscriptionTestOptions) {
       }
 
       recordedChunks = []
+      shouldFinalize = true
       mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
-
-      const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"]
-      const supported = candidates.find(
-        (candidate) => typeof MediaRecorder.isTypeSupported !== "function" || MediaRecorder.isTypeSupported(candidate),
-      )
-      mediaRecorder = supported ? new MediaRecorder(mediaStream, { mimeType: supported }) : new MediaRecorder(mediaStream)
+      mediaRecorder = createMediaRecorder(mediaStream)
 
       mediaRecorder.addEventListener("dataavailable", (event) => {
         if (event.data.size > 0) {
@@ -108,8 +105,9 @@ export function useTranscriptionTest(options: UseTranscriptionTestOptions) {
     mediaRecorder = null
     mediaStream = null
 
-    if (recordedChunks.length === 0) {
-      cleanup()
+    if (!shouldFinalize || recordedChunks.length === 0) {
+      recordedChunks = []
+      stopTracks(stream)
       setState("idle")
       return
     }
@@ -131,9 +129,7 @@ export function useTranscriptionTest(options: UseTranscriptionTestOptions) {
       })
     } finally {
       recordedChunks = []
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop())
-      }
+      stopTracks(stream)
       setState("idle")
     }
   }
@@ -168,14 +164,4 @@ export function useTranscriptionTest(options: UseTranscriptionTestOptions) {
       return t("settings.speech.testInput.action")
     },
   }
-}
-
-async function blobToBase64(blob: Blob): Promise<string> {
-  const buffer = await blob.arrayBuffer()
-  const bytes = new Uint8Array(buffer)
-  let binary = ""
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte)
-  }
-  return btoa(binary)
 }
