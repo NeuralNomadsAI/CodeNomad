@@ -294,19 +294,21 @@ function normalizeRecord(value: unknown): Record<string, string> {
 
 function normalizeSpeechSettings(input?: Partial<SpeechSettings> | null): SpeechSettings {
   const sanitized = input ?? {}
+  const sttModel =
+    typeof sanitized.sttModel === "string" && sanitized.sttModel.trim()
+      ? sanitized.sttModel.trim()
+      : defaultSpeechSettings.sttModel
+  const ttsModel =
+    typeof sanitized.ttsModel === "string" && sanitized.ttsModel.trim()
+      ? sanitized.ttsModel.trim()
+      : defaultSpeechSettings.ttsModel
   return {
     provider: sanitized.provider === "openai-compatible" ? sanitized.provider : defaultSpeechSettings.provider,
     apiKey: typeof sanitized.apiKey === "string" && sanitized.apiKey.trim() ? sanitized.apiKey.trim() : undefined,
     hasApiKey: sanitized.hasApiKey === true || (typeof sanitized.apiKey === "string" && sanitized.apiKey.trim().length > 0),
     baseUrl: typeof sanitized.baseUrl === "string" && sanitized.baseUrl.trim() ? sanitized.baseUrl.trim() : undefined,
-    sttModel:
-      typeof sanitized.sttModel === "string" && sanitized.sttModel.trim()
-        ? sanitized.sttModel.trim()
-        : defaultSpeechSettings.sttModel,
-    ttsModel:
-      typeof sanitized.ttsModel === "string" && sanitized.ttsModel.trim()
-        ? sanitized.ttsModel.trim()
-        : defaultSpeechSettings.ttsModel,
+    sttModel,
+    ttsModel,
     ttsVoice:
       typeof sanitized.ttsVoice === "string" && sanitized.ttsVoice.trim()
         ? sanitized.ttsVoice.trim()
@@ -327,7 +329,7 @@ function normalizeSpeechSettings(input?: Partial<SpeechSettings> | null): Speech
       model:
         typeof (sanitized as any).stt?.model === "string" && (sanitized as any).stt.model.trim()
           ? (sanitized as any).stt.model.trim()
-          : defaultSpeechSettings.stt.model,
+          : sttModel,
     },
     tts: {
       apiKey: typeof (sanitized as any).tts?.apiKey === "string" && (sanitized as any).tts.apiKey.trim() ? (sanitized as any).tts.apiKey.trim() : undefined,
@@ -336,7 +338,7 @@ function normalizeSpeechSettings(input?: Partial<SpeechSettings> | null): Speech
       model:
         typeof (sanitized as any).tts?.model === "string" && (sanitized as any).tts.model.trim()
           ? (sanitized as any).tts.model.trim()
-          : defaultSpeechSettings.tts.model,
+          : ttsModel,
     },
   }
 }
