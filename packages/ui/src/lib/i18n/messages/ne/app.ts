@@ -12,6 +12,7 @@ export const appMessages = {
   "app.stopInstance.title": "उदाहरण रोक्नुहोस्",
   "app.stopInstance.confirmLabel": "रोक्नुहोस्",
   "app.stopInstance.cancelLabel": "चालु राख्नुहोस्",
+  "app.stopInstance.toast.error": "कार्यस्थान रोक्न असफल भयो।",
 
   "emptyState.logoAlt": "CodeNomad लोगो",
   "emptyState.brandTitle": "CodeNomad",

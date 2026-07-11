@@ -2,25 +2,62 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { applySessionPage, getDefaultSessionPaginationState } from "./session-pagination-model.ts"
+import { PROJECT_SESSION_LIST_LIMIT, buildProjectSessionListOptions, filterProjectScopedSessions } from "./session-list-options.ts"
 
-describe("session pagination cursor state", () => {
-  it("stores the v2 next cursor and appends loaded pages", () => {
-    const firstPage = applySessionPage(getDefaultSessionPaginationState(), ["root-1", "root-2"], true, true, "cursor-page-2")
+describe("project session list loading", () => {
+  it("builds a one-shot project-scoped request without pagination params", () => {
+    const options = buildProjectSessionListOptions({ directory: "/tmp/project", search: "worktree" })
 
-    assert.deepEqual(firstPage.ids, ["root-1", "root-2"])
-    assert.equal(firstPage.hasMore, true)
-    assert.equal(firstPage.nextCursor, "cursor-page-2")
-
-    const secondPage = applySessionPage(firstPage, ["root-2", "root-3"], false, false, undefined)
-
-    assert.deepEqual(secondPage.ids, ["root-1", "root-2", "root-3"])
-    assert.equal(secondPage.hasMore, false)
-    assert.equal(secondPage.nextCursor, undefined)
+    assert.deepEqual(options, {
+      directory: "/tmp/project",
+      search: "worktree",
+      limit: PROJECT_SESSION_LIST_LIMIT,
+      scope: "project",
+    })
+    assert.equal("start" in options, false)
+    assert.equal("cursor" in options, false)
   })
 
-  it("resets ids and cursor when a fresh first page is loaded", () => {
+  it("filters project-scoped results to the root and known worktree directories", () => {
+    const sessions = [
+      { id: "root", directory: "/repo" },
+      { id: "worktree", directory: "/repo/.codenomad/worktrees/feature" },
+      { id: "sibling", directory: "/other" },
+      { id: "unknown" },
+    ]
+
+    assert.deepEqual(
+      filterProjectScopedSessions(sessions, ["/repo", "/repo/.codenomad/worktrees/feature"]).map((session) => session.id),
+      ["root", "worktree", "unknown"],
+    )
+  })
+
+  it("normalizes Windows paths when filtering project-scoped results", () => {
+    const sessions = [
+      { id: "root", directory: String.raw`C:\Repo` },
+      { id: "worktree", directory: "c:/repo/.codenomad/worktrees/feature/" },
+      { id: "other", directory: String.raw`C:\Other` },
+    ]
+
+    assert.deepEqual(
+      filterProjectScopedSessions(sessions, ["c:/repo/", String.raw`C:\Repo\.codenomad\worktrees\feature`]).map(
+        (session) => session.id,
+      ),
+      ["root", "worktree"],
+    )
+  })
+
+  it("marks the loaded session list complete because the API does not paginate", () => {
+    const state = applySessionPage(getDefaultSessionPaginationState(), ["root-1", "root-2"], false, true)
+
+    assert.deepEqual(state.ids, ["root-1", "root-2"])
+    assert.equal(state.hasMore, false)
+    assert.equal(state.nextCursor, undefined)
+  })
+
+  it("resets stale cursor state when the one-shot list refreshes", () => {
     const previous = applySessionPage(getDefaultSessionPaginationState(), ["old-root"], true, true, "old-cursor")
-    const next = applySessionPage(previous, ["new-root"], false, true, undefined)
+    const next = applySessionPage(previous, ["new-root"], false, true)
 
     assert.deepEqual(next.ids, ["new-root"])
     assert.equal(next.hasMore, false)

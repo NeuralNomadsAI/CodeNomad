@@ -12,6 +12,7 @@ export const appMessages = {
   "app.stopInstance.title": "Instanz stoppen",
   "app.stopInstance.confirmLabel": "Stoppen",
   "app.stopInstance.cancelLabel": "Weiterlaufen lassen",
+  "app.stopInstance.toast.error": "Arbeitsbereich konnte nicht gestoppt werden.",
 
   "emptyState.logoAlt": "CodeNomad Logo",
   "emptyState.brandTitle": "CodeNomad",

@@ -22,6 +22,7 @@ import type {
   RemoteServerProbeRequest,
   RemoteServerProbeResponse,
   VoiceModeStateResponse,
+  YoloStateResponse,
   WorkspaceCloneRequest,
   WorkspaceCloneResponse,
   WorktreeGitCommitRequest,
@@ -520,11 +521,26 @@ export const serverApi = {
       body: JSON.stringify({ ...identity, enabled }),
     })
   },
-  sendClientConnectionPong(payload: { clientId: string; connectionId: string; pingTs?: number }): Promise<void> {
-    return request<void>("/api/client-connections/pong", {
+  getYoloState(instanceId: string, sessionId: string): Promise<YoloStateResponse> {
+    return request<YoloStateResponse>(
+      `/workspaces/${encodeURIComponent(instanceId)}/yolo/sessions/${encodeURIComponent(sessionId)}`,
+    )
+  },
+  toggleYolo(instanceId: string, sessionId: string): Promise<YoloStateResponse> {
+    return request<YoloStateResponse>(
+      `/workspaces/${encodeURIComponent(instanceId)}/yolo/sessions/${encodeURIComponent(sessionId)}/toggle`,
+      { method: "POST" },
+    )
+  },
+  sendClientConnectionPong(payload: { clientId: string; connectionId: string; pingTs?: number }, signal?: AbortSignal): Promise<void> {
+    const init: RequestInit = {
       method: "POST",
       body: JSON.stringify(payload),
-    })
+    }
+    if (signal) {
+      init.signal = signal
+    }
+    return request<void>("/api/client-connections/pong", init)
   },
   fetchBackgroundProcessOutput(
     instanceId: string,

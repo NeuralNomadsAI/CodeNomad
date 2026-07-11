@@ -30,6 +30,7 @@ import PermissionApprovalModal from "../permission-approval-modal"
 import SessionView from "../session/session-view"
 import MessageSection from "../message-section"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
+import ActionOverflowMenu, { type ActionOverflowMenuItem } from "../action-overflow-menu"
 import { formatTokenTotal } from "../../lib/formatters"
 import ContextMeter from "../context-meter"
 import { sseManager } from "../../lib/sse-manager"
@@ -136,7 +137,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     activeSessions,
     activeSessionIdForInstance,
     activeSessionForInstance,
-    activeSessionDiffs,
     latestTodoState,
     tokenStats,
     backgroundProcessList,
@@ -157,8 +157,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   })
 
   const isPhoneLayout = createMemo(() => layoutMode() === "phone")
-  const compactHeaderLayout = createMemo(() => isPhoneLayout() || compactHeaderQuery())
+  const narrowHeaderLayout = createMemo(() => sessionCenterWidthStep() === "narrow")
+  const compactHeaderLayout = createMemo(() => narrowHeaderLayout() || compactHeaderQuery())
   const mobileFullscreen = createMemo(() => props.mobileFullscreenMode && isPhoneLayout())
+  const showCompactFullscreenButton = createMemo(() => isPhoneLayout() && !props.mobileFullscreenMode)
   const compactPromptLayout = createMemo(() => layoutMode() !== "desktop")
   const leftPinningSupported = createMemo(() => layoutMode() !== "phone")
   const rightPinningSupported = createMemo(() => layoutMode() !== "phone")
@@ -540,6 +542,24 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     window.dispatchEvent(new CustomEvent(OPEN_SESSION_SEARCH_EVENT))
   }
 
+  const narrowHeaderMenuItems = createMemo<ActionOverflowMenuItem[]>(() => {
+    const PreviewIcon = PreviewToggleIcon()
+    return [
+      {
+        key: "search",
+        label: t("instanceShell.chatSearch.openAriaLabel"),
+        icon: <Search class="w-3.5 h-3.5" aria-hidden="true" />,
+        onSelect: handleChatSearchClick,
+      },
+      {
+        key: "preview",
+        label: previewToggleLabel(),
+        icon: <PreviewIcon class="w-3.5 h-3.5" aria-hidden="true" />,
+        onSelect: handlePreviewButtonClick,
+      },
+    ]
+  })
+
   const openBackgroundOutput = (process: BackgroundProcess) => {
     setSelectedBackgroundProcess(process)
     setShowBackgroundOutput(true)
@@ -759,7 +779,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             instance={props.instance}
             activeSessionId={activeSessionIdForInstance}
             activeSession={activeSessionForInstance}
-            activeSessionDiffs={activeSessionDiffs}
             latestTodoState={latestTodoState}
             backgroundProcessList={backgroundProcessList}
             onOpenBackgroundOutput={openBackgroundOutput}
@@ -828,7 +847,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           instance={props.instance}
           activeSessionId={activeSessionIdForInstance}
           activeSession={activeSessionForInstance}
-          activeSessionDiffs={activeSessionDiffs}
           latestTodoState={latestTodoState}
           backgroundProcessList={backgroundProcessList}
           onOpenBackgroundOutput={openBackgroundOutput}
@@ -993,15 +1011,14 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 when={!compactHeaderLayout()}
                 fallback={
                   <div class="flex flex-col w-full gap-1.5">
-                    <div class="flex flex-wrap items-center justify-between gap-2 w-full">
-                      {renderHeaderLeftSlot()}
-
-                      <div class="flex-1 flex items-center justify-center min-w-0">
+                    <div class="grid grid-cols-[1fr_auto_1fr] items-center gap-2 w-full">
+                      <div class="flex min-w-0 items-center gap-2">
+                        {renderHeaderLeftSlot()}
                         {renderSessionHeaderIndicators()}
                       </div>
 
                       <div class="flex flex-wrap items-center justify-center gap-1">
-                        <Show when={!showingInfoView()}>
+                        <Show when={!showingInfoView() && !narrowHeaderLayout()}>
                           <IconButton
                             color="inherit"
                             onClick={handleChatSearchClick}
@@ -1026,55 +1043,85 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                         </span>
                       </div>
 
-                      <div class="flex-1 flex items-center justify-center min-w-0">
+                      <div class="flex flex-1 items-center justify-end gap-1 min-w-0">
                         <span
                           class={`status-indicator ${connectionStatusClass()}`}
                           aria-label={t("instanceShell.connection.ariaLabel", { status: connectionStatusLabel() })}
                         >
                           <span class="status-dot" />
                         </span>
+
+                        <Show when={!isPhoneLayout() && !narrowHeaderLayout()}>
+                          {renderPreviewToggleButton()}
+                        </Show>
+
+                        <Show when={showCompactFullscreenButton() && !narrowHeaderLayout()}>
+                          {renderPreviewToggleButton()}
+                        </Show>
+
+                        <Show when={rightDrawerState() === "floating-closed"}>
+                          <IconButton
+                            ref={setRightToggleButtonEl}
+                            color="inherit"
+                            onClick={handleRightAppBarButtonClick}
+                            aria-label={rightAppBarButtonLabel()}
+                            size="small"
+                            aria-expanded={rightDrawerState() !== "floating-closed"}
+                          >
+                            {rightAppBarButtonIcon()}
+                          </IconButton>
+                        </Show>
                       </div>
-
-                      <Show when={!isPhoneLayout()}>
-                        {renderPreviewToggleButton()}
-                      </Show>
-
-                      <Show when={isPhoneLayout() && !props.mobileFullscreenMode}>
-                        <IconButton
-                          color="inherit"
-                          onClick={props.onEnterMobileFullscreen}
-                          aria-label={t("instanceShell.fullscreen.enter")}
-                          title={t("instanceShell.fullscreen.enter")}
-                          size="small"
-                        >
-                          <Maximize2 class="w-5 h-5" aria-hidden="true" />
-                        </IconButton>
-                        {renderPreviewToggleButton()}
-                      </Show>
-
-                      <Show when={rightDrawerState() === "floating-closed"}>
-                        <IconButton
-                          ref={setRightToggleButtonEl}
-                          color="inherit"
-                          onClick={handleRightAppBarButtonClick}
-                          aria-label={rightAppBarButtonLabel()}
-                          size="small"
-                          aria-expanded={rightDrawerState() !== "floating-closed"}
-                        >
-                          {rightAppBarButtonIcon()}
-                        </IconButton>
-                      </Show>
                     </div>
 
-                    <div class="flex flex-wrap items-center justify-center gap-2 pb-1">
-                      <Show when={!showingInfoView()}>
-                        <ContextMeter
-                          usedTokens={tokenStats().used}
-                          availableTokens={tokenStats().avail}
-                          formatTokens={formatTokenTotal}
-                          usedLabel={t("instanceShell.metrics.usedLabel")}
-                          availableLabel={t("instanceShell.metrics.availableLabel")}
-                        />
+                    <div
+                      class={
+                        narrowHeaderLayout() || showCompactFullscreenButton()
+                          ? "grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 pb-1"
+                          : "flex flex-wrap items-center justify-center gap-2 pb-1"
+                      }
+                    >
+                      <Show when={narrowHeaderLayout() || showCompactFullscreenButton()}>
+                        <div class="flex min-w-0 items-center justify-start">
+                          <Show when={narrowHeaderLayout() && !showingInfoView()}>
+                            <ActionOverflowMenu
+                              items={narrowHeaderMenuItems()}
+                              label={t("messageItem.actions.more")}
+                              triggerClass="message-action-button"
+                              minItems={1}
+                            />
+                          </Show>
+                        </div>
+                      </Show>
+
+                      <div class="flex items-center justify-center">
+                        <Show when={!showingInfoView()}>
+                          <ContextMeter
+                            usedTokens={tokenStats().used}
+                            availableTokens={tokenStats().avail}
+                            formatTokens={formatTokenTotal}
+                            usedLabel={t("instanceShell.metrics.usedLabel")}
+                            availableLabel={t("instanceShell.metrics.availableLabel")}
+                            centerValue={narrowHeaderLayout() || showCompactFullscreenButton()}
+                          />
+                        </Show>
+                      </div>
+
+                      <Show when={narrowHeaderLayout() || showCompactFullscreenButton()}>
+                        <div class="flex items-center justify-end gap-1">
+                          <Show when={showCompactFullscreenButton()}>
+                            <IconButton
+                              color="inherit"
+                              onClick={props.onEnterMobileFullscreen}
+                              aria-label={t("instanceShell.fullscreen.enter")}
+                              title={t("instanceShell.fullscreen.enter")}
+                              size="small"
+                              sx={{ width: 30, height: 30 }}
+                            >
+                              <Maximize2 class="w-5 h-5" aria-hidden="true" />
+                            </IconButton>
+                          </Show>
+                        </div>
                       </Show>
                     </div>
                 </div>

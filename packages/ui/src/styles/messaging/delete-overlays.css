@@ -33,9 +33,6 @@
   /* Overlay must sit above the part card background. */
   z-index: 10;
 }
-
-
-
 .message-reasoning-card[data-delete-part-hover="true"]::before {
   inset: 0;
 }

@@ -41,10 +41,10 @@ import {
   pruneRepliedPermissions,
 } from "./permission-replies"
 import {
-  clearAutoAcceptPermission,
-  drainAutoAcceptPermissions,
+  clearPermissionAutoAcceptForInstance,
   isPermissionAutoAcceptEnabled,
   resolvePermissionAutoAcceptFamilyRoot,
+  setPermissionAutoAcceptEnabled,
   setPermissionAutoAcceptFamilyRootResolver,
   togglePermissionAutoAccept,
 } from "./permission-auto-accept"
@@ -54,6 +54,8 @@ import { mergeInstanceMetadata, clearInstanceMetadata } from "./instance-metadat
 import { showWorkspaceLaunchError } from "./launch-errors"
 import { activeSidecarToken } from "./sidecars"
 import { buildV2RequestLocations, type V2Location } from "./request-locations"
+import { showToastNotification } from "../lib/notifications"
+import { tGlobal } from "../lib/i18n"
 
 const log = getLogger("api")
 
@@ -61,6 +63,31 @@ setPermissionAutoAcceptFamilyRootResolver((instanceId, sessionId) => {
   const instanceSessions = sessions().get(instanceId)
   if (!instanceSessions) return sessionId
   return resolvePermissionAutoAcceptFamilyRoot(sessionId, (id) => instanceSessions.get(id))
+})
+
+// Server is authoritative for Yolo state; mirror toggles (incl. from other
+// clients) arriving over the CodeNomad server event stream into the local
+// projection so the badge/switch stay in sync.
+serverEvents.on("yolo.stateChanged", (event) => {
+  if (event.type !== "yolo.stateChanged") return
+  const { instanceId, sessionId, enabled } = event
+  if (typeof instanceId !== "string" || typeof sessionId !== "string" || typeof enabled !== "boolean") return
+  log.info(`[SSE] Yolo state changed: ${instanceId}:${sessionId} -> ${enabled}`)
+  setPermissionAutoAcceptEnabled(instanceId, sessionId, enabled)
+})
+
+// When the server auto-accepts a permission, clean up the UI queue immediately
+// instead of waiting for the OpenCode permission.replied SSE event (which may
+// be delayed or missed on a flaky connection). This preserves the #424
+// invariant: auto-accept cleanup happens at the queue level, not tied to
+// external event timing.
+serverEvents.on("yolo.autoAccepted", (event) => {
+  if (event.type !== "yolo.autoAccepted") return
+  const { instanceId, permissionId } = event
+  if (typeof instanceId !== "string" || typeof permissionId !== "string") return
+  markPermissionReplied(instanceId, permissionId)
+  removePermissionFromQueue(instanceId, permissionId)
+  removePermissionV2(instanceId, permissionId)
 })
 
 const [instances, setInstances] = createSignal<Map<string, Instance>>(new Map())
@@ -324,7 +351,6 @@ async function syncPendingPermissions(instanceId: string): Promise<void> {
       const queuedPermission = addPermissionToQueue(instanceId, permission, source) ?? permission
       upsertPermissionV2(instanceId, queuedPermission)
     }
-    drainAutoAcceptPermissions(instanceId, getPermissionQueue(instanceId), sendPermissionResponse, hasPendingPermission)
   } catch (error) {
     log.warn("Failed to sync pending permissions", { instanceId, error })
   }
@@ -517,6 +543,8 @@ function handleWorkspaceEvent(event: WorkspaceEventPayload) {
     case "workspace.error":
       upsertWorkspace(event.workspace)
       showWorkspaceLaunchError(event.workspace)
+      clearPermissionAutoAcceptForInstance(event.workspace.id)
+      clearSyncedYoloSessionsForInstance(event.workspace.id)
       break
     case "workspace.stopped":
       releaseInstanceResources(event.workspaceId)
@@ -655,6 +683,8 @@ function removeInstance(id: string) {
   clearRepliedPermissions(id)
   clearQuestionQueue(id)
   clearInstanceMetadata(id)
+  clearPermissionAutoAcceptForInstance(id)
+  clearSyncedYoloSessionsForInstance(id)
 
   if (activeInstanceId() === id) {
     setActiveInstanceId(nextActiveId)
@@ -715,19 +745,20 @@ function updateProjectNameForFolder(folder: string, projectName: string): void {
   }
 }
 
-async function stopInstance(id: string) {
+function stopInstance(id: string) {
   const instance = instances().get(id)
   if (!instance) return
 
   releaseInstanceResources(id)
-
-  try {
-    await serverApi.deleteWorkspace(id)
-  } catch (error) {
-    log.error("Failed to stop workspace", error)
-  }
-
   removeInstance(id)
+
+  void serverApi.deleteWorkspace(id).catch((error) => {
+    log.error("Failed to stop workspace", error)
+    showToastNotification({
+      message: tGlobal("app.stopInstance.toast.error"),
+      variant: "error",
+    })
+  })
 }
 
 async function fetchLspStatus(instanceId: string): Promise<LspStatus[] | undefined> {
@@ -998,7 +1029,6 @@ function addPermissionToQueue(instanceId: string, permission: PermissionRequest,
 
   }
 
-  drainAutoAcceptPermissions(instanceId, [queuedPermission], sendPermissionResponse, hasPendingPermission)
   return queuedPermission
 }
 
@@ -1034,7 +1064,6 @@ function removePermissionFromQueue(instanceId: string, permissionId: string): vo
   if (removed) {
     const removedSessionId = getPermissionSessionId(removed)
     if (removedSessionId) {
-      clearAutoAcceptPermission(instanceId, removedSessionId, permissionId)
       const remaining = decrementSessionPendingCount(instanceId, removedSessionId)
       setSessionPendingPermission(instanceId, removedSessionId, remaining > 0)
     }
@@ -1042,23 +1071,61 @@ function removePermissionFromQueue(instanceId: string, permissionId: string): vo
 }
 
 function togglePermissionAutoAcceptForSession(instanceId: string, sessionId: string): void {
-  const willEnable = !isPermissionAutoAcceptEnabled(instanceId, sessionId)
+  const wasEnabled = isPermissionAutoAcceptEnabled(instanceId, sessionId)
   togglePermissionAutoAccept(instanceId, sessionId)
-  if (!willEnable) return
-  drainAutoAcceptPermissionsForInstance(instanceId)
+  void serverApi
+    .toggleYolo(instanceId, sessionId)
+    .then((state) => {
+      setPermissionAutoAcceptEnabled(instanceId, sessionId, state.enabled)
+    })
+    .catch((error) => {
+      log.warn("Failed to toggle Yolo on server", { instanceId, sessionId, error })
+      // revert to the pre-toggle state (not a naive flip, which can be wrong
+      // if an SSE yolo.stateChanged arrived between toggle and catch)
+      setPermissionAutoAcceptEnabled(instanceId, sessionId, wasEnabled)
+    })
 }
 
-function drainAutoAcceptPermissionsForInstance(instanceId: string): void {
-  drainAutoAcceptPermissions(instanceId, getPermissionQueue(instanceId), sendPermissionResponse, hasPendingPermission)
+/**
+ * Sessions whose Yolo state has been backfilled from the server. The server is
+ * authoritative but only pushes changes (`yolo.stateChanged`); a freshly
+ * connected client must fetch the effective state for a session so the badge
+ * matches reality from the start. De-duped per session and reset on SSE
+ * reconnect so state re-syncs after a server restart.
+ */
+const syncedYoloSessions = new Set<string>()
+
+export function ensureYoloStateSynced(instanceId: string, sessionId: string): void {
+  if (!instanceId || !sessionId || sessionId === "info") return
+  const key = `${instanceId}:${sessionId}`
+  if (syncedYoloSessions.has(key)) return
+  syncedYoloSessions.add(key)
+  void serverApi
+    .getYoloState(instanceId, sessionId)
+    .then((state) => {
+      setPermissionAutoAcceptEnabled(instanceId, sessionId, state.enabled)
+    })
+    .catch((error) => {
+      // allow retry on next activation (e.g. instance not ready yet)
+      syncedYoloSessions.delete(key)
+      log.warn("Failed to sync Yolo state", { instanceId, sessionId, error })
+    })
+}
+
+serverEvents.onOpen(() => {
+  syncedYoloSessions.clear()
+})
+
+function clearSyncedYoloSessionsForInstance(instanceId: string): void {
+  const prefix = `${instanceId}:`
+  for (const key of Array.from(syncedYoloSessions)) {
+    if (key.startsWith(prefix)) {
+      syncedYoloSessions.delete(key)
+    }
+  }
 }
 
 function clearPermissionQueue(instanceId: string): void {
-  for (const permission of getPermissionQueue(instanceId)) {
-    const sessionId = getPermissionSessionId(permission)
-    if (sessionId) {
-      clearAutoAcceptPermission(instanceId, sessionId, permission.id)
-    }
-  }
   for (const permission of getPermissionQueue(instanceId)) {
     permissionEnqueuedAt.delete(permission.id)
   }
@@ -1351,7 +1418,7 @@ async function acknowledgeDisconnectedInstance(): Promise<void> {
   }
 
   try {
-    await stopInstance(pending.id)
+    stopInstance(pending.id)
   } catch (error) {
     log.error("Failed to stop disconnected instance", error)
   } finally {
@@ -1388,7 +1455,6 @@ export {
   markPermissionReplied,
   hasRepliedPermission,
   togglePermissionAutoAcceptForSession,
-  drainAutoAcceptPermissionsForInstance,
   clearPermissionQueue,
   sendPermissionResponse,
   setActivePermissionIdForInstance,

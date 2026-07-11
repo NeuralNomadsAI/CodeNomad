@@ -44,7 +44,7 @@ export const remoteAccessMessages = {
   "remoteAccess.addresses.actions.showOther": "Показать еще {count} адресов",
   "remoteAccess.addresses.actions.hideOther": "Скрыть остальные адреса",
   "remoteAccess.address.scope.network": "Сеть",
-  "remoteAccess.address.scope.loopback": "Loopback",
+  "remoteAccess.address.scope.loopback": "Локальный loopback",
   "remoteAccess.address.scope.internal": "Внутренний",
   "remoteAccess.address.open": "Открыть",
   "remoteAccess.address.showQr": "Показать QR",

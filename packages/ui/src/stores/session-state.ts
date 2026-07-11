@@ -4,7 +4,7 @@ import { getIdleSinceForStatusTransition, type Session, type SessionStatus, type
 import { deleteSession, loadMessages } from "./session-api"
 import { showToastNotification } from "../lib/notifications"
 import { messageStoreBus } from "./message-v2/bus"
-import { instances } from "./instances"
+import { instances, ensureYoloStateSynced } from "./instances"
 import { showConfirmDialog } from "./alerts"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
@@ -49,6 +49,7 @@ const [loading, setLoading] = createSignal({
 })
 
 const [messagesLoaded, setMessagesLoaded] = createSignal<Map<string, Set<string>>>(new Map())
+const [messageLoadErrors, setMessageLoadErrors] = createSignal<Map<string, Map<string, string>>>(new Map())
 const [sessionInfoByInstance, setSessionInfoByInstance] = createSignal<Map<string, Map<string, SessionInfo>>>(new Map())
 const [threadTotalsByInstance, setThreadTotalsByInstance] = createSignal<Map<string, Map<string, ThreadTotals>>>(new Map())
 
@@ -82,10 +83,6 @@ function getSessionPaginationState(instanceId: string): SessionPaginationState {
 
 function getSessionListIds(instanceId: string): string[] {
   return getSessionPaginationState(instanceId).ids
-}
-
-function getSessionFetchLimit(instanceId: string): number {
-  return Math.max(getSessionPaginationState(instanceId).ids.length, SESSION_PAGE_SIZE)
 }
 
 function getSessionNextCursor(instanceId: string): string | undefined {
@@ -486,6 +483,9 @@ function setActiveSession(instanceId: string, sessionId: string): void {
     next.set(instanceId, sessionId)
     return next
   })
+  // Backfill authoritative Yolo state for the now-active session so the badge
+  // matches the server even on first connect / multi-client scenarios.
+  ensureYoloStateSynced(instanceId, sessionId)
 }
 
 function setActiveParentSession(instanceId: string, parentSessionId: string): void {
@@ -844,6 +844,31 @@ function isSessionMessagesLoading(instanceId: string, sessionId: string): boolea
   return Boolean(loading().loadingMessages.get(instanceId)?.has(sessionId))
 }
 
+function getSessionMessagesLoadError(instanceId: string, sessionId: string): string | undefined {
+  return messageLoadErrors().get(instanceId)?.get(sessionId)
+}
+
+function setSessionMessagesLoadError(instanceId: string, sessionId: string, error: string | null): void {
+  setMessageLoadErrors((prev) => {
+    const next = new Map(prev)
+    const instanceErrors = new Map(next.get(instanceId))
+
+    if (error) {
+      instanceErrors.set(sessionId, error)
+      next.set(instanceId, instanceErrors)
+      return next
+    }
+
+    instanceErrors.delete(sessionId)
+    if (instanceErrors.size > 0) {
+      next.set(instanceId, instanceErrors)
+    } else {
+      next.delete(instanceId)
+    }
+    return next
+  })
+}
+
 function getSessionInfo(instanceId: string, sessionId: string): SessionInfo | undefined {
   return sessionInfoByInstance().get(instanceId)?.get(sessionId)
 }
@@ -995,6 +1020,7 @@ export {
   setLoading,
   messagesLoaded,
   setMessagesLoaded,
+  setSessionMessagesLoadError,
   sessionInfoByInstance,
   setSessionInfoByInstance,
   threadTotalsByInstance,
@@ -1035,6 +1061,7 @@ export {
   setActiveSessionFromList,
   isSessionBusy,
   isSessionMessagesLoading,
+  getSessionMessagesLoadError,
   getSessionInfo,
   isBlankSession,
   cleanupBlankSessions,
@@ -1042,7 +1069,6 @@ export {
   sessionPagination,
   sessionSearch,
   getSessionListIds,
-  getSessionFetchLimit,
   getSessionNextCursor,
   setSessionPage,
   getSessionHasMore,

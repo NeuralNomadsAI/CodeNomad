@@ -20,7 +20,7 @@ export const instanceMessages = {
   "instanceTab.status.permission": "अनुमतिको प्रतीक्षा गर्दै",
   "instanceTab.status.compacting": "संक्षिप्त गर्दै",
   "instanceTab.status.working": "काम गर्दै",
-  "instanceTab.status.idle": "Idle",
+  "instanceTab.status.idle": "निष्क्रिय",
   "instanceTab.status.ariaLabel": "उदाहरण स्थिति: {status}",
   "instanceTab.actions.close.ariaLabel": "उदाहरण बन्द गर्नुहोस्",
 
@@ -89,7 +89,6 @@ export const instanceMessages = {
   "instanceShell.empty.description": "नयाँ सत्र सिर्जना गर्न तल सन्देश पठाउनुहोस्, वा जारी राख्न अवस्थित सत्र चयन गर्नुहोस्।",
 
   "instanceShell.rightPanel.title": "स्थिति प्यानल (Status Panel)",
-  "instanceShell.rightPanel.tabs.changes": "सत्र परिवर्तनहरू",
   "instanceShell.rightPanel.tabs.gitChanges": "Git परिवर्तनहरू",
   "instanceShell.rightPanel.tabs.files": "फाइलहरू",
   "instanceShell.rightPanel.tabs.status": "स्थिति",
@@ -109,8 +108,6 @@ export const instanceMessages = {
   "instanceShell.rightPanel.toast.saveError": "फाइल बचत गर्न असफल भयो",
   "instanceShell.rightPanel.sections.yoloMode": "Yolo मोड",
   "instanceShell.rightPanel.sections.yoloMode.tooltip": "हालको सत्रको लागि अनुमति अनुरोधहरू स्वतः स्वीकृत गर्दछ। तपाईंले चलिरहेका उपकरणहरूलाई विश्वास गर्दा मात्र यसलाई प्रयोग गर्नुहोस्।",
-  "instanceShell.rightPanel.sections.sessionChanges": "सत्र परिवर्तनहरू",
-  "instanceShell.rightPanel.sections.sessionChanges.tooltip": "हालको सत्रमा परिमार्जन गरिएका फाइलहरू।",
   "instanceShell.rightPanel.sections.plan": "योजना",
   "instanceShell.rightPanel.sections.plan.tooltip": "यस सत्रको लागि एजेन्टको मार्गचित्र।",
   "instanceShell.rightPanel.sections.backgroundProcesses": "पृष्ठभूमि शेलहरू",
@@ -121,12 +118,6 @@ export const instanceMessages = {
   "instanceShell.rightPanel.sections.lsp.tooltip": "भाषा सर्भर प्रोटोकल (LSP) सर्भरहरू।",
   "instanceShell.rightPanel.sections.plugins": "प्लगइनहरू",
   "instanceShell.rightPanel.sections.plugins.tooltip": "UI र सर्भर व्यवहार अनुकूलित गर्ने प्लगइनहरू।",
-
-  "instanceShell.sessionChanges.noSessionSelected": "परिवर्तनहरू हेर्न सत्र चयन गर्नुहोस्।",
-  "instanceShell.sessionChanges.loading": "सत्र परिवर्तनहरू प्राप्त गर्दै...",
-  "instanceShell.sessionChanges.empty": "अझै कुनै सत्र परिवर्तनहरू छैनन्।",
-  "instanceShell.sessionChanges.filesChanged": "{count} फाइलहरू परिवर्तन भए",
-  "instanceShell.sessionChanges.actions.show": "परिवर्तनहरू देखाउनुहोस्",
 
   "instanceShell.gitChanges.noSessionSelected": "Git परिवर्तनहरू हेर्न सत्र चयन गर्नुहोस्।",
   "instanceShell.gitChanges.loading": "Git परिवर्तनहरू लोड गर्दै...",
@@ -139,10 +130,10 @@ export const instanceMessages = {
   "instanceShell.gitChanges.actions.stage": "फाइल स्टेज गर्नुहोस्",
   "instanceShell.gitChanges.actions.unstage": "फाइल अनस्टेज गर्नुहोस्",
   "instanceShell.gitChanges.commit.placeholder": "Commit सन्देश प्रविष्ट गर्नुहोस्",
-  "instanceShell.gitChanges.commit.submit": "Commit",
-  "instanceShell.gitChanges.commit.submitting": "Commit गर्दै...",
-  "instanceShell.gitChanges.commit.success": "Commit सफलतापूर्वक सिर्जना गरियो",
-  "instanceShell.gitChanges.commit.error": "Commit सिर्जना गर्न असफल भयो",
+  "instanceShell.gitChanges.commit.submit": "कमिट गर्नुहोस्",
+  "instanceShell.gitChanges.commit.submitting": "कमिट गर्दै...",
+  "instanceShell.gitChanges.commit.success": "कमिट सफलतापूर्वक सिर्जना गरियो",
+  "instanceShell.gitChanges.commit.error": "कमिट सिर्जना गर्न असफल भयो",
 
   "instanceShell.filesShell.fileListTitle": "फाइल सूची",
   "instanceShell.filesShell.mobileSelectorLabel": "फाइल चयन गर्नुहोस्",

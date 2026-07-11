@@ -4,6 +4,8 @@ export const toolCallMessages = {
 
   "toolCall.header.copyTitle": "Tool-Aufruf-Titel kopieren",
   "toolCall.header.copyAriaLabel": "Tool-Aufruf-Titel kopieren",
+  "toolCall.header.copyOutputTitle": "Tool-Ausgabe kopieren",
+  "toolCall.header.copyOutputAriaLabel": "Tool-Ausgabe kopieren",
 
   "toolCall.header.showInputTitle": "Tool-Argumente anzeigen",
   "toolCall.header.showInputAriaLabel": "Tool-Argumente anzeigen",
@@ -12,6 +14,10 @@ export const toolCallMessages = {
 
   "toolCall.io.input": "Tool-Eingabe",
   "toolCall.io.output": "Tool-Ausgabe",
+  "toolCall.io.copyInputTitle": "Tool-Eingabe kopieren",
+  "toolCall.io.copyInputAriaLabel": "Tool-Eingabe kopieren",
+  "toolCall.io.copyOutputTitle": "Tool-Ausgabe kopieren",
+  "toolCall.io.copyOutputAriaLabel": "Tool-Ausgabe kopieren",
 
   "toolCall.diff.label": "Diff",
   "toolCall.diff.label.withPath": "Diff · {path}",
@@ -53,7 +59,7 @@ export const toolCallMessages = {
   "toolCall.renderer.read.detail.offset": "Offset: {offset}",
   "toolCall.renderer.read.detail.limit": "Limit: {limit}",
 
-  "toolCall.renderer.todo.empty": "Noch keine Planelemente.",
+  "toolCall.renderer.todo.empty": "Keine Elemente geplant",
   "toolCall.renderer.todo.status.pending": "Ausstehend",
   "toolCall.renderer.todo.status.inProgress": "In Arbeit",
   "toolCall.renderer.todo.status.completed": "Abgeschlossen",
@@ -71,13 +77,9 @@ export const toolCallMessages = {
   "toolCall.permission.actions.allowOnce": "Einmalig erlauben",
   "toolCall.permission.actions.alwaysAllow": "Immer erlauben",
   "toolCall.permission.actions.deny": "Ablehnen",
-  "toolCall.permission.actions.confirmDeny": "Ablehnung bestätigen",
-  "toolCall.permission.actions.cancel": "Abbrechen",
   "toolCall.permission.shortcuts.allowOnce": "Einmalig erlauben",
   "toolCall.permission.shortcuts.alwaysAllow": "Immer erlauben",
-  "toolCall.permission.rejectReason.label": "Warum diese Berechtigung ablehnen?",
-  "toolCall.permission.rejectReason.placeholder": "Sagen Sie CodeNomad, was anders gemacht werden soll...",
-  "toolCall.permission.rejectReason.hint": "Der Agent sieht dieses Feedback und kann seine nächste Aktion anpassen.",
+  "toolCall.permission.rejectReason.placeholder": "Optionales Feedback beim Ablehnen, z. B. einen sichereren Befehl verwenden...",
   "toolCall.permission.errors.unableToUpdate": "Berechtigung konnte nicht aktualisiert werden",
 
   "permissionApproval.title": "Anfragen",
@@ -94,11 +96,7 @@ export const toolCallMessages = {
   "permissionApproval.actions.allowOnce": "Einmalig erlauben",
   "permissionApproval.actions.alwaysAllow": "Immer erlauben",
   "permissionApproval.actions.deny": "Ablehnen",
-  "permissionApproval.actions.confirmDeny": "Ablehnung bestätigen",
-  "permissionApproval.actions.cancel": "Abbrechen",
-  "permissionApproval.rejectReason.label": "Warum diese Berechtigung ablehnen?",
-  "permissionApproval.rejectReason.placeholder": "Sagen Sie CodeNomad, was anders gemacht werden soll...",
-  "permissionApproval.rejectReason.hint": "Der Agent sieht dieses Feedback und kann seine nächste Aktion anpassen.",
+  "permissionApproval.rejectReason.placeholder": "Optionales Feedback beim Ablehnen, z. B. einen sichereren Befehl verwenden...",
   "permissionApproval.fallbackHint": "Sitzung für weitere Informationen laden.",
   "permissionApproval.errors.unableToUpdatePermission": "Berechtigung konnte nicht aktualisiert werden",
 

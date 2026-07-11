@@ -8,7 +8,6 @@ import type {
 } from "../types/message"
 import type {
   EventSessionCompacted,
-  EventSessionDiff,
   EventSessionError,
   EventSessionIdle,
   EventSessionUpdated,
@@ -18,6 +17,12 @@ import type { MessageStatus } from "./message-v2/types"
 
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
+import {
+  enqueueDelta,
+  clearPendingDeltasForPart,
+  flushPendingDeltasForMessage,
+  setFlushCallback,
+} from "./delta-buffer"
 import {
   getPermissionId,
   getPermissionKind,
@@ -45,7 +50,6 @@ import {
   hasRepliedPermission,
   addQuestionToQueue,
   removeQuestionFromQueue,
-  drainAutoAcceptPermissionsForInstance,
 } from "./instances"
 import { showAlertDialog } from "./alerts"
 import {
@@ -57,7 +61,7 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { ensureSessionParentExpanded, sessions, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
+import { ensureSessionParentExpanded, prependSessionListId, sessions, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { tGlobal } from "../lib/i18n"
@@ -230,7 +234,6 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
 
     let updatedInstanceSessions: Map<string, Session> | undefined
     let shouldExpandParent: string | null = null
-    let shouldDrainAutoAcceptPermissions = false
 
     setSessions((prev) => {
       const next = new Map(prev)
@@ -253,7 +256,6 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
       instanceSessions.set(sessionId, merged)
       next.set(instanceId, instanceSessions)
       updatedInstanceSessions = instanceSessions
-      shouldDrainAutoAcceptPermissions = Boolean(merged.parentId)
 
       if (merged.parentId && merged.status === "working" && (existing?.status ?? "idle") !== "working") {
         shouldExpandParent = merged.parentId
@@ -262,10 +264,6 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
     })
 
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
-
-    if (shouldDrainAutoAcceptPermissions) {
-      drainAutoAcceptPermissionsForInstance(instanceId)
-    }
 
     if (shouldExpandParent) {
       ensureSessionParentExpanded(instanceId, shouldExpandParent)
@@ -385,6 +383,12 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
       upsertMessageInfoV2(instanceId, messageInfo, { status: "streaming" })
     }
   
+    // Clear any pending deltas for this part before applying the full part update.
+    // The part update contains the complete state from the server, so accumulated
+    // deltas would be stale and cause duplication if flushed later.
+    if (part.id) {
+      clearPendingDeltasForPart(instanceId, messageId, part.id)
+    }
     applyPartUpdateV2(instanceId, { ...part, sessionID: sessionId, messageID: messageId })
     handleConversationAssistantPartUpdated(instanceId, { ...part, sessionID: sessionId, messageID: messageId }, messageInfo)
 
@@ -402,6 +406,14 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     const sessionId = typeof info.sessionID === "string" ? info.sessionID : undefined
     const messageId = typeof info.id === "string" ? info.id : undefined
     if (!sessionId || !messageId) return
+
+    // Flush any pending deltas for this message before applying the update.
+    // Deltas are buffered for up to 50ms; if message.updated arrives before
+    // the buffer flushes, the message could be marked complete/error with
+    // stale text mutations still pending. Flushing first preserves the
+    // server's event ordering: all delta content is applied, then the
+    // message status/metadata update runs on the complete content.
+    flushPendingDeltasForMessage(instanceId, messageId, applyPartDeltaV2)
 
     const timeInfo = (info.time ?? {}) as { created?: number; updated?: number; end?: number }
     const nextUpdated =
@@ -454,12 +466,19 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
   }
 }
 
+// Delta buffer callback setup
+setFlushCallback((batch) => {
+  for (const { instanceId, messageId, partId, field, delta } of batch) {
+    applyPartDeltaV2(instanceId, { messageId, partId, field, delta })
+  }
+})
+
 function handleMessagePartDelta(instanceId: string, event: MessagePartDeltaEvent): void {
   const props = event.properties
   if (!props) return
   const { messageID, partID, field, delta } = props
   if (!messageID || !partID || !field || typeof delta !== "string") return
-  applyPartDeltaV2(instanceId, { messageId: messageID, partId: partID, field, delta })
+  enqueueDelta(instanceId, messageID, partID, field, delta)
 }
 
 function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): void {
@@ -516,8 +535,8 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
 
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
     setSessionRevertV2(instanceId, info.id, info.revert ?? null)
-    if (newSession.parentId) {
-      drainAutoAcceptPermissionsForInstance(instanceId)
+    if (!newSession.parentId) {
+      prependSessionListId(instanceId, newSession.id)
     }
 
     log.info(`[SSE] New session created: ${info.id}`, newSession)
@@ -557,35 +576,7 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
 
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
     setSessionRevertV2(instanceId, info.id, info.revert ?? null)
-    if (updatedSession.parentId) {
-      drainAutoAcceptPermissionsForInstance(instanceId)
-    }
   }
-}
-
-function handleSessionDiff(instanceId: string, event: EventSessionDiff): void {
-  const sessionId = event.properties?.sessionID
-  if (!sessionId) return
-
-  const diffs = event.properties?.diff
-  if (!Array.isArray(diffs)) return
-
-  const existing = sessions().get(instanceId)?.get(sessionId)
-  if (existing) {
-    withSession(instanceId, sessionId, (session) => {
-      session.diff = diffs
-    })
-    return
-  }
-
-  // A diff event can arrive before we have hydrated the session list.
-  // Best-effort: fetch the session record so the diff has somewhere to live.
-  void (async () => {
-    await fetchSessionInfo(instanceId, sessionId, (event as any)?.directory)
-    withSession(instanceId, sessionId, (session) => {
-      session.diff = diffs
-    })
-  })().catch((error) => log.warn("Failed to hydrate session for diff event", { instanceId, sessionId, error }))
 }
 
 function handleSessionIdle(instanceId: string, event: EventSessionIdle): void {
@@ -799,7 +790,6 @@ export {
   handleQuestionAsked,
   handleQuestionAnswered,
   handleSessionCompacted,
-  handleSessionDiff,
   handleSessionError,
   handleSessionIdle,
   handleSessionStatus,

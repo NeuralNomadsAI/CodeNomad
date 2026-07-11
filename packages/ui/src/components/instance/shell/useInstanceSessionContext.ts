@@ -27,7 +27,6 @@ type InstanceSessionContextState = {
   activeSessionIdForInstance: Accessor<string | null>
   parentSessionIdForInstance: Accessor<string | null>
   activeSessionForInstance: Accessor<SessionFamilyMember | null>
-  activeSessionDiffs: Accessor<SessionFamilyMember["diff"] | undefined>
 
   // Usage / info summaries
   activeSessionUsage: Accessor<SessionUsageState | null>
@@ -75,11 +74,6 @@ export function useInstanceSessionContext(options: InstanceSessionContextOptions
     const sessionId = activeSessionIdForInstance()
     if (!sessionId || sessionId === "info") return null
     return activeSessions().get(sessionId) ?? null
-  })
-
-  const activeSessionDiffs = createMemo(() => {
-    const session = activeSessionForInstance()
-    return session?.diff
   })
 
   const activeSessionUsage = createMemo(() => {
@@ -161,7 +155,6 @@ export function useInstanceSessionContext(options: InstanceSessionContextOptions
     activeSessionIdForInstance,
     parentSessionIdForInstance,
     activeSessionForInstance,
-    activeSessionDiffs,
     activeSessionUsage,
     activeSessionInfoDetails,
     tokenStats,

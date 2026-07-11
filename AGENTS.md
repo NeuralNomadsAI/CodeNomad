@@ -6,6 +6,7 @@
 - When adding new component styles, place them beside their peers in the scoped subdirectory (e.g., `src/styles/messaging/new-part.css`) and import them from the corresponding aggregator file.
 - Prefer smaller, focused style files (≈150 lines or less) over large monoliths. Split by component or feature area if a file grows beyond that size.
 - Co-locate reusable UI patterns (buttons, selectors, dropdowns, etc.) under `src/styles/components/` and avoid redefining the same utility classes elsewhere.
+- Never use rounded corners in UI styling; keep corners square unless the user explicitly requests otherwise for a specific change.
 - Document any new styling conventions or directory additions in this file so future changes remain consistent.
 
 ## Coding Principles

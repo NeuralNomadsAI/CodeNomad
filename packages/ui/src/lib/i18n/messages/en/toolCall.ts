@@ -4,6 +4,8 @@ export const toolCallMessages = {
 
   "toolCall.header.copyTitle": "Copy tool call title",
   "toolCall.header.copyAriaLabel": "Copy tool call title",
+  "toolCall.header.copyOutputTitle": "Copy tool output",
+  "toolCall.header.copyOutputAriaLabel": "Copy tool output",
 
   "toolCall.header.showInputTitle": "Show Tool Arguments",
   "toolCall.header.showInputAriaLabel": "Show Tool Arguments",
@@ -12,6 +14,10 @@ export const toolCallMessages = {
 
   "toolCall.io.input": "Tool Input",
   "toolCall.io.output": "Tool Output",
+  "toolCall.io.copyInputTitle": "Copy tool input",
+  "toolCall.io.copyInputAriaLabel": "Copy tool input",
+  "toolCall.io.copyOutputTitle": "Copy tool output",
+  "toolCall.io.copyOutputAriaLabel": "Copy tool output",
 
   "toolCall.diff.label": "Diff",
   "toolCall.diff.label.withPath": "Diff · {path}",
@@ -53,7 +59,7 @@ export const toolCallMessages = {
   "toolCall.renderer.read.detail.offset": "Offset: {offset}",
   "toolCall.renderer.read.detail.limit": "Limit: {limit}",
 
-  "toolCall.renderer.todo.empty": "No plan items yet.",
+  "toolCall.renderer.todo.empty": "No items planned",
   "toolCall.renderer.todo.status.pending": "Pending",
   "toolCall.renderer.todo.status.inProgress": "In progress",
   "toolCall.renderer.todo.status.completed": "Completed",
@@ -71,13 +77,9 @@ export const toolCallMessages = {
   "toolCall.permission.actions.allowOnce": "Allow Once",
   "toolCall.permission.actions.alwaysAllow": "Always Allow",
   "toolCall.permission.actions.deny": "Deny",
-  "toolCall.permission.actions.confirmDeny": "Confirm Deny",
-  "toolCall.permission.actions.cancel": "Cancel",
   "toolCall.permission.shortcuts.allowOnce": "Allow once",
   "toolCall.permission.shortcuts.alwaysAllow": "Always allow",
-  "toolCall.permission.rejectReason.label": "Why deny this permission?",
-  "toolCall.permission.rejectReason.placeholder": "Tell CodeNomad what to do differently...",
-  "toolCall.permission.rejectReason.hint": "The agent will see this feedback and can adjust its next action.",
+  "toolCall.permission.rejectReason.placeholder": "Optional feedback for Deny, e.g. use a safer command...",
   "toolCall.permission.errors.unableToUpdate": "Unable to update permission",
 
   "permissionApproval.title": "Requests",
@@ -94,11 +96,7 @@ export const toolCallMessages = {
   "permissionApproval.actions.allowOnce": "Allow Once",
   "permissionApproval.actions.alwaysAllow": "Always Allow",
   "permissionApproval.actions.deny": "Deny",
-  "permissionApproval.actions.confirmDeny": "Confirm Deny",
-  "permissionApproval.actions.cancel": "Cancel",
-  "permissionApproval.rejectReason.label": "Why deny this permission?",
-  "permissionApproval.rejectReason.placeholder": "Tell CodeNomad what to do differently...",
-  "permissionApproval.rejectReason.hint": "The agent will see this feedback and can adjust its next action.",
+  "permissionApproval.rejectReason.placeholder": "Optional feedback for Deny, e.g. use a safer command...",
   "permissionApproval.fallbackHint": "Load session for more information.",
   "permissionApproval.errors.unableToUpdatePermission": "Unable to update permission",
 
