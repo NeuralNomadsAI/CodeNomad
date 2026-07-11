@@ -29,6 +29,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
+use url::Url;
 use window::NativeWindowState;
 
 const CLIENT_STATE_VERSION: u64 = 1;
@@ -231,16 +232,28 @@ impl ClientState {
             || self.has_unsupported_future_envelope()?)
     }
 
-    fn claim_renderer_access(&self, access_token: &str) -> Result<(), String> {
-        self.renderer_access.claim(access_token)
+    fn claim_renderer_access(&self, access_token: &str, renderer_url: &Url) -> Result<(), String> {
+        self.renderer_access.claim(access_token, renderer_url)
     }
 
-    fn validate_renderer_access(&self, access_token: &str) -> Result<(), String> {
-        self.renderer_access.validate(access_token)
+    fn validate_renderer_access(
+        &self,
+        access_token: &str,
+        renderer_url: &Url,
+    ) -> Result<(), String> {
+        self.renderer_access.validate(access_token, renderer_url)
     }
 
-    pub(crate) fn reset_renderer_access(&self) {
-        self.renderer_access.reset();
+    fn renderer_origin_can_claim(&self, renderer_url: &Url) -> bool {
+        self.renderer_access.allows_claim_origin(renderer_url)
+    }
+
+    fn begin_renderer_navigation(&self, target_url: Option<&Url>) -> Result<(), String> {
+        self.renderer_access.begin_navigation(target_url)
+    }
+
+    fn cancel_renderer_navigation(&self) {
+        self.renderer_access.cancel_navigation();
     }
 
     fn renderer_access_is_claimed(&self) -> bool {

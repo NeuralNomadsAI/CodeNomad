@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, LazyLock, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
+use url::Url;
 
 const RENDERER_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
 const RELOAD_COALESCED: &str = "reload coalesced with an existing reload request";
@@ -41,6 +42,7 @@ struct NavigationFlushRequest {
 
 struct NavigationOperation {
     app: AppHandle,
+    target_url: Option<Url>,
     navigate: Operation,
 }
 
@@ -190,6 +192,7 @@ impl PendingFlush {
 pub(crate) fn before_main_window_navigation(
     app: &AppHandle,
     kind: NavigationKind,
+    target_url: Option<Url>,
     navigate: impl FnOnce(AppHandle) -> Result<(), String> + Send + 'static,
 ) {
     let (request, _completion) = QueuedNavigation::new(
@@ -197,6 +200,7 @@ pub(crate) fn before_main_window_navigation(
         kind.description(),
         NavigationOperation {
             app: app.clone(),
+            target_url,
             navigate: Box::new(navigate),
         },
     );
@@ -222,12 +226,19 @@ fn run_navigation_queue() {
         let QueuedNavigation {
             description,
             completion,
-            value: NavigationOperation { app, navigate },
+            value:
+                NavigationOperation {
+                    app,
+                    target_url,
+                    navigate,
+                },
             ..
         } = request;
         wait_for_renderer_flush(&app);
         let state = app.try_state::<ClientState>();
-        let result = execute_navigation(state.as_deref(), || navigate(app.clone()));
+        let result = execute_navigation(state.as_deref(), target_url.as_ref(), || {
+            navigate(app.clone())
+        });
         finish_request(&description, completion, result);
 
         NAVIGATIONS
@@ -262,12 +273,16 @@ fn wait_for_renderer_flush(app: &AppHandle) {
 
 fn execute_navigation(
     state: Option<&ClientState>,
+    target_url: Option<&Url>,
     navigate: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
+    if let Some(state) = state {
+        state.begin_renderer_navigation(target_url)?;
+    }
     let result = navigate();
-    if result.is_ok() {
+    if result.is_err() {
         if let Some(state) = state {
-            state.reset_renderer_access();
+            state.cancel_renderer_navigation();
         }
     }
     result
@@ -379,29 +394,49 @@ mod tests {
     fn failed_navigation_preserves_renderer_access_and_runs_once() {
         let directory = tempfile::tempdir().unwrap();
         let state = ClientState::initialize_at(directory.path()).unwrap();
+        let renderer_url = url::Url::parse("http://127.0.0.1:43123/workspace").unwrap();
         let calls = Arc::new(AtomicUsize::new(0));
-        state.claim_renderer_access("current-renderer").unwrap();
+        state
+            .claim_renderer_access("current-renderer", &renderer_url)
+            .unwrap();
 
         let calls_for_navigation = Arc::clone(&calls);
-        let result = execute_navigation(Some(&state), || {
+        let result = execute_navigation(Some(&state), Some(&renderer_url), || {
             calls_for_navigation.fetch_add(1, Ordering::SeqCst);
             Err("synchronous navigation failure".to_string())
         });
 
         assert_eq!(result, Err("synchronous navigation failure".to_string()));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-        state.validate_renderer_access("current-renderer").unwrap();
+        state
+            .validate_renderer_access("current-renderer", &renderer_url)
+            .unwrap();
     }
 
     #[test]
     fn accepted_navigation_rotates_renderer_access() {
         let directory = tempfile::tempdir().unwrap();
         let state = ClientState::initialize_at(directory.path()).unwrap();
-        state.claim_renderer_access("outgoing-renderer").unwrap();
+        let outgoing_url = url::Url::parse("http://127.0.0.1:43123/workspace").unwrap();
+        let incoming_url = url::Url::parse("http://127.0.0.1:43124/workspace").unwrap();
+        state
+            .claim_renderer_access("outgoing-renderer", &outgoing_url)
+            .unwrap();
 
-        execute_navigation(Some(&state), || Ok(())).unwrap();
+        execute_navigation(Some(&state), Some(&incoming_url), || Ok(())).unwrap();
 
-        assert!(state.validate_renderer_access("outgoing-renderer").is_err());
-        state.claim_renderer_access("incoming-renderer").unwrap();
+        state
+            .validate_renderer_access("outgoing-renderer", &outgoing_url)
+            .unwrap();
+        assert!(state.renderer_origin_can_claim(&outgoing_url));
+        state
+            .claim_renderer_access("incoming-renderer", &incoming_url)
+            .unwrap();
+        assert!(state
+            .validate_renderer_access("outgoing-renderer", &outgoing_url)
+            .is_err());
+        state
+            .validate_renderer_access("incoming-renderer", &incoming_url)
+            .unwrap();
     }
 }

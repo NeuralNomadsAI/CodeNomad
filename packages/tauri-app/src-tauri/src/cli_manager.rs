@@ -196,6 +196,7 @@ fn navigate_main(app: &AppHandle, url: &str) {
             crate::client_state::before_main_window_navigation(
                 app,
                 crate::client_state::NavigationKind::Cli,
+                Some(parsed.clone()),
                 move |app| {
                     let window = app
                         .get_webview_window("main")

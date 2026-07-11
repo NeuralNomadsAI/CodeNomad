@@ -464,6 +464,7 @@ fn reload_main_window(app_handle: &AppHandle) {
     client_state::before_main_window_navigation(
         app_handle,
         client_state::NavigationKind::Reload,
+        None,
         |app| {
             let window = app
                 .get_webview_window("main")
@@ -479,6 +480,7 @@ fn force_reload_main_window(app_handle: &AppHandle) {
     client_state::before_main_window_navigation(
         app_handle,
         client_state::NavigationKind::ForceReload,
+        None,
         |app| {
             let window = app
                 .get_webview_window("main")
@@ -593,14 +595,6 @@ fn main() {
             remote_titles: Mutex::new(HashMap::new()),
         })
         .on_page_load(|webview, payload| {
-            if payload.event() == PageLoadEvent::Started && webview.label() == "main" {
-                if let Some(state) = webview
-                    .app_handle()
-                    .try_state::<client_state::ClientState>()
-                {
-                    state.reset_renderer_access();
-                }
-            }
             if matches!(
                 payload.event(),
                 PageLoadEvent::Started | PageLoadEvent::Finished

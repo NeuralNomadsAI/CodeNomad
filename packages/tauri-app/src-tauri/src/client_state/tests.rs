@@ -549,41 +549,108 @@ fn failed_future_envelope_clear_preserves_file_and_write_suppression() {
 fn renderer_access_requires_a_claimed_matching_nonempty_token() {
     let directory = tempfile::tempdir().unwrap();
     let state = ClientState::initialize_at(directory.path()).unwrap();
+    let renderer_a = Url::parse("http://127.0.0.1:43123/workspace").unwrap();
+    let renderer_b = Url::parse("http://127.0.0.1:43124/workspace").unwrap();
 
-    assert!(state.claim_renderer_access("").is_err());
-    assert!(state.validate_renderer_access("").is_err());
-    assert!(state.validate_renderer_access("renderer-a").is_err());
-    state.claim_renderer_access("renderer-a").unwrap();
-    state.validate_renderer_access("renderer-a").unwrap();
-    state.claim_renderer_access("renderer-a").unwrap();
-    assert!(state.claim_renderer_access("renderer-b").is_err());
-    assert!(state.validate_renderer_access("renderer-b").is_err());
+    assert!(state.claim_renderer_access("", &renderer_a).is_err());
+    assert!(state.validate_renderer_access("", &renderer_a).is_err());
+    assert!(state
+        .validate_renderer_access("renderer-a", &renderer_a)
+        .is_err());
+    state
+        .claim_renderer_access("renderer-a", &renderer_a)
+        .unwrap();
+    state
+        .validate_renderer_access("renderer-a", &renderer_a)
+        .unwrap();
+    state
+        .claim_renderer_access("renderer-a", &renderer_a)
+        .unwrap();
+    assert!(state
+        .claim_renderer_access("renderer-b", &renderer_a)
+        .is_err());
+    assert!(state
+        .validate_renderer_access("renderer-b", &renderer_a)
+        .is_err());
+    assert!(state
+        .validate_renderer_access("renderer-a", &renderer_b)
+        .is_err());
 
-    state.reset_renderer_access();
-    assert!(state.validate_renderer_access("renderer-a").is_err());
-    state.claim_renderer_access("renderer-b").unwrap();
-    state.validate_renderer_access("renderer-b").unwrap();
+    state.begin_renderer_navigation(Some(&renderer_b)).unwrap();
+    state
+        .validate_renderer_access("renderer-a", &renderer_a)
+        .unwrap();
+    state
+        .claim_renderer_access("renderer-b", &renderer_b)
+        .unwrap();
+    state
+        .validate_renderer_access("renderer-b", &renderer_b)
+        .unwrap();
 }
 
 #[test]
 fn navigation_token_rotation_preserves_the_outgoing_renderers_latest_snapshot() {
     let directory = tempfile::tempdir().unwrap();
     let state = ClientState::initialize_at(directory.path()).unwrap();
+    let outgoing_url = Url::parse("http://127.0.0.1:43123/workspace").unwrap();
+    let incoming_url = Url::parse("http://127.0.0.1:43124/workspace").unwrap();
 
-    state.claim_renderer_access("outgoing-document").unwrap();
-    state.validate_renderer_access("outgoing-document").unwrap();
+    state
+        .claim_renderer_access("outgoing-document", &outgoing_url)
+        .unwrap();
+    state
+        .validate_renderer_access("outgoing-document", &outgoing_url)
+        .unwrap();
+    assert!(!is_allowed_client_state_origin(
+        &outgoing_url,
+        Some(incoming_url.as_str()),
+    ));
+    state
+        .validate_renderer_access("outgoing-document", &outgoing_url)
+        .unwrap();
+    assert!(state.renderer_origin_can_claim(&outgoing_url));
     assert!(state
         .save_snapshot(json!({ "revision": 7, "editor": "latest" }))
         .unwrap());
 
-    state.reset_renderer_access();
-    assert!(state.validate_renderer_access("outgoing-document").is_err());
-    state.claim_renderer_access("new-document").unwrap();
-    state.validate_renderer_access("new-document").unwrap();
+    state
+        .begin_renderer_navigation(Some(&incoming_url))
+        .unwrap();
+    state
+        .validate_renderer_access("outgoing-document", &outgoing_url)
+        .unwrap();
+    assert!(state
+        .save_snapshot(json!({ "revision": 8, "editor": "flushed" }))
+        .unwrap());
+    state
+        .claim_renderer_access("new-document", &incoming_url)
+        .unwrap();
+    state
+        .validate_renderer_access("new-document", &incoming_url)
+        .unwrap();
+    assert!(state
+        .validate_renderer_access("outgoing-document", &outgoing_url)
+        .is_err());
     assert_eq!(
         state.load().unwrap().snapshot,
-        json!({ "revision": 7, "editor": "latest" })
+        json!({ "revision": 8, "editor": "flushed" })
     );
+}
+
+#[test]
+fn opaque_renderer_urls_cannot_share_client_state_authority() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = ClientState::initialize_at(directory.path()).unwrap();
+    let app_url = Url::parse("tauri://localhost/loading.html").unwrap();
+    let asset_url = Url::parse("asset://localhost/loading.html").unwrap();
+    let file_url = Url::parse("file:///tmp/loading.html").unwrap();
+    let about_url = Url::parse("about:blank").unwrap();
+
+    state.claim_renderer_access("app", &app_url).unwrap();
+    state.validate_renderer_access("app", &app_url).unwrap();
+    assert!(state.validate_renderer_access("app", &asset_url).is_err());
+    assert!(state.claim_renderer_access("file", &file_url).is_err());
+    assert!(state.claim_renderer_access("about", &about_url).is_err());
 }
 
 #[test]
