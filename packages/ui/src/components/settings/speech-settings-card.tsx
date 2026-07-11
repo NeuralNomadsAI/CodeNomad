@@ -166,7 +166,7 @@ export const SpeechSettingsCard: Component = () => {
   )
   const compatibilityMessage = createMemo(() => {
     const capabilities = speechCapabilities()
-    if (!capabilities?.available || !capabilities?.configured || !capabilities?.supportsTts) {
+    if (!capabilities?.available || !capabilities?.ttsConfigured || !capabilities?.supportsTts) {
       return null
     }
     if (drafts().playbackMode === "streaming" && !capabilities.supportsStreamingTts) {
