@@ -104,14 +104,14 @@ describe("SpeechService direction resolution", () => {
       assert.equal(caps.ttsConfigured, false)
     })
 
-    it("does NOT combine shared key with directional URL (incomplete pair)", () => {
+    it("does NOT combine shared key with foreign directional URL (incomplete pair)", () => {
       const settings = createMockSettings({
         speech: {
           apiKey: "sk-shared",
           baseUrl: "https://api.openai.com/v1",
           separateProviders: true,
           stt: { baseUrl: "https://api.groq.com/openai/v1" },
-          tts: { baseUrl: "https://api.openai.com/v1" },
+          tts: { baseUrl: "https://api.deepseek.com/v1" },
         },
       })
       const service = new SpeechService(settings, mockLogger)
@@ -119,6 +119,24 @@ describe("SpeechService direction resolution", () => {
 
       assert.equal(caps.sttConfigured, false)
       assert.equal(caps.ttsConfigured, false)
+    })
+
+    it("treats directional baseUrl matching shared as inherited (pre-populated scenario)", () => {
+      const sharedUrl = "https://api.openai.com/v1"
+      const settings = createMockSettings({
+        speech: {
+          apiKey: "sk-shared",
+          baseUrl: sharedUrl,
+          separateProviders: true,
+          stt: { baseUrl: sharedUrl },
+          tts: { baseUrl: sharedUrl },
+        },
+      })
+      const service = new SpeechService(settings, mockLogger)
+      const caps = service.getCapabilities()
+
+      assert.equal(caps.sttConfigured, true, "directional baseUrl matching shared should inherit shared key")
+      assert.equal(caps.ttsConfigured, true)
     })
 
     it("inherits complete shared pair when neither directional value is set", () => {

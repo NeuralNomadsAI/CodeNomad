@@ -71,11 +71,12 @@ export interface SpeechSettings {
   }
 }
 
-export type SpeechSettingsUpdate = Partial<Omit<SpeechSettings, "apiKey" | "stt" | "tts">> & {
+export type SpeechSettingsUpdate = Partial<Omit<SpeechSettings, "apiKey" | "baseUrl" | "stt" | "tts">> & {
   apiKey?: string | null
+  baseUrl?: string | null
   separateProviders?: boolean
-  stt?: { apiKey?: string | null; baseUrl?: string; model?: string }
-  tts?: { apiKey?: string | null; baseUrl?: string; model?: string }
+  stt?: { apiKey?: string | null; baseUrl?: string | null; model?: string | null }
+  tts?: { apiKey?: string | null; baseUrl?: string | null; model?: string | null }
 }
 
 export interface UiSettings {
@@ -680,14 +681,16 @@ function updateLogLevel(level: ServerLogLevel): void {
 
 async function updateSpeechSettings(updates: SpeechSettingsUpdate): Promise<void> {
   const apiKeyPatch = updates.apiKey
+  const baseUrlPatch = updates.baseUrl
   const sttApiKeyPatch = updates.stt?.apiKey
   const ttsApiKeyPatch = updates.tts?.apiKey
-  const { apiKey: _apiKey, stt: sttUpdate, tts: ttsUpdate, ...restUpdates } = updates
+  const { apiKey: _apiKey, baseUrl: _baseUrl, stt: sttUpdate, tts: ttsUpdate, ...restUpdates } = updates
   const current = serverSettings().speech
   const next = normalizeSpeechSettings({
     ...current,
     ...restUpdates,
     ...(apiKeyPatch === null ? {} : apiKeyPatch ? { apiKey: apiKeyPatch } : {}),
+    ...(baseUrlPatch === null ? {} : baseUrlPatch ? { baseUrl: baseUrlPatch } : {}),
   })
   const { hasApiKey: _hasApiKey, ...persistedSpeech } = next
   const stripDirectionHasApiKey = (dir: any) => {
@@ -695,10 +698,11 @@ async function updateSpeechSettings(updates: SpeechSettingsUpdate): Promise<void
     const { hasApiKey: _omitted, ...rest } = dir
     return rest
   }
-  const nullIfEmpty = (v: string | undefined) => (v !== undefined && v.trim() === "" ? null : v)
+  const nullIfEmpty = (v: string | null | undefined) => (v !== undefined && v !== null && v.trim() === "" ? null : v)
   const patch: any = {
     ...persistedSpeech,
     ...(apiKeyPatch === null ? { apiKey: null } : {}),
+    ...(baseUrlPatch === null ? { baseUrl: null } : {}),
   }
   if (patch.stt) patch.stt = stripDirectionHasApiKey(patch.stt)
   if (patch.tts) patch.tts = stripDirectionHasApiKey(patch.tts)

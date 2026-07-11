@@ -170,8 +170,12 @@ export class SpeechService {
       return this.resolveShared(speech)
     }
     const stt = speech.stt ?? {}
-    const dirBaseUrl = stt.baseUrl?.trim() || undefined
+    const sharedBaseUrl = speech.baseUrl?.trim() || undefined
+    const rawDirBaseUrl = stt.baseUrl?.trim() || undefined
     const dirApiKey = stt.apiKey?.trim() || undefined
+    const dirBaseUrl = dirApiKey
+      ? rawDirBaseUrl
+      : (rawDirBaseUrl && rawDirBaseUrl !== sharedBaseUrl ? rawDirBaseUrl : undefined)
     const hasCompleteDirectional = Boolean(dirApiKey) && Boolean(dirBaseUrl)
     const hasNoDirectional = !dirApiKey && !dirBaseUrl
     return {
@@ -182,7 +186,7 @@ export class SpeechService {
           ? speech.apiKey?.trim() || process.env.OPENAI_API_KEY
           : undefined,
       baseUrl: hasCompleteDirectional || hasNoDirectional
-        ? (dirBaseUrl || speech.baseUrl?.trim() || process.env.OPENAI_BASE_URL || undefined)
+        ? (dirBaseUrl || sharedBaseUrl || process.env.OPENAI_BASE_URL || undefined)
         : dirBaseUrl || undefined,
       sttModel: stt.model?.trim() || speech.sttModel?.trim() || DEFAULT_STT_MODEL,
       ttsModel: speech.ttsModel?.trim() || DEFAULT_TTS_MODEL,
@@ -196,8 +200,12 @@ export class SpeechService {
       return this.resolveShared(speech)
     }
     const tts = speech.tts ?? {}
-    const dirBaseUrl = tts.baseUrl?.trim() || undefined
+    const sharedBaseUrl = speech.baseUrl?.trim() || undefined
+    const rawDirBaseUrl = tts.baseUrl?.trim() || undefined
     const dirApiKey = tts.apiKey?.trim() || undefined
+    const dirBaseUrl = dirApiKey
+      ? rawDirBaseUrl
+      : (rawDirBaseUrl && rawDirBaseUrl !== sharedBaseUrl ? rawDirBaseUrl : undefined)
     const hasCompleteDirectional = Boolean(dirApiKey) && Boolean(dirBaseUrl)
     const hasNoDirectional = !dirApiKey && !dirBaseUrl
     return {
@@ -208,7 +216,7 @@ export class SpeechService {
           ? speech.apiKey?.trim() || process.env.OPENAI_API_KEY
           : undefined,
       baseUrl: hasCompleteDirectional || hasNoDirectional
-        ? (dirBaseUrl || speech.baseUrl?.trim() || process.env.OPENAI_BASE_URL || undefined)
+        ? (dirBaseUrl || sharedBaseUrl || process.env.OPENAI_BASE_URL || undefined)
         : dirBaseUrl || undefined,
       sttModel: speech.sttModel?.trim() || DEFAULT_STT_MODEL,
       ttsModel: tts.model?.trim() || speech.ttsModel?.trim() || DEFAULT_TTS_MODEL,

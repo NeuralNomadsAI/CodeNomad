@@ -256,12 +256,14 @@ export const SpeechSettingsCard: Component = () => {
         await updateSpeechSettings({
           separateProviders: false,
           ...(clearStoredApiKey() ? { apiKey: null } : trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
-          baseUrl: current.baseUrl.trim() || undefined,
+          baseUrl: current.baseUrl.trim() || null,
           sttModel: current.sttModel.trim() || undefined,
           ttsModel: current.ttsModel.trim() || undefined,
           ttsVoice: current.ttsVoice.trim() || undefined,
           playbackMode: current.playbackMode,
           ttsFormat: current.ttsFormat,
+          stt: { apiKey: null },
+          tts: { apiKey: null },
         })
       }
       await loadSpeechCapabilities(true)
