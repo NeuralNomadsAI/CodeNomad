@@ -262,8 +262,8 @@ export const SpeechSettingsCard: Component = () => {
           ttsVoice: current.ttsVoice.trim() || undefined,
           playbackMode: current.playbackMode,
           ttsFormat: current.ttsFormat,
-          stt: { apiKey: null },
-          tts: { apiKey: null },
+          stt: { apiKey: null, baseUrl: null, model: null },
+          tts: { apiKey: null, baseUrl: null, model: null },
         })
       }
       await loadSpeechCapabilities(true)
