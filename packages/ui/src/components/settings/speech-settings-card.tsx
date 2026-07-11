@@ -230,21 +230,35 @@ export const SpeechSettingsCard: Component = () => {
     setIsSaving(true)
     setSaveStatus("idle")
     try {
+      const saved = serverSettings().speech
       if (current.separateProviders) {
+        const buildDirSave = (
+          clearKey: boolean,
+          draftApiKey: string,
+          draftBaseUrl: string,
+          draftModel: string,
+          storedDir: { hasApiKey: boolean; baseUrl?: string; model: string },
+          sharedModel: string,
+        ): { apiKey?: string | null; baseUrl?: string | null; model?: string | null } => {
+          if (clearKey) return { apiKey: null, baseUrl: null, model: null }
+          const newKey = draftApiKey.trim()
+          const baseUrlChanged = (draftBaseUrl.trim() || "") !== (storedDir.baseUrl || "")
+          const modelMatchesShared = draftModel.trim() === sharedModel.trim()
+          return {
+            ...(newKey ? { apiKey: newKey } : baseUrlChanged && storedDir.hasApiKey ? { apiKey: null } : {}),
+            baseUrl: draftBaseUrl.trim() || null,
+            model: modelMatchesShared ? null : (draftModel.trim() || null),
+          }
+        }
         await updateSpeechSettings({
           separateProviders: true,
-          stt: clearSttApiKey()
-            ? { apiKey: null, baseUrl: null, model: null }
-            : { baseUrl: current.stt.baseUrl.trim() || null, model: current.stt.model.trim() || null, ...(current.stt.apiKey.trim() ? { apiKey: current.stt.apiKey.trim() } : {}) },
-          tts: clearTtsApiKey()
-            ? { apiKey: null, baseUrl: null, model: null }
-            : { baseUrl: current.tts.baseUrl.trim() || null, model: current.tts.model.trim() || null, ...(current.tts.apiKey.trim() ? { apiKey: current.tts.apiKey.trim() } : {}) },
+          stt: buildDirSave(clearSttApiKey(), current.stt.apiKey, current.stt.baseUrl, current.stt.model, saved.stt, saved.sttModel),
+          tts: buildDirSave(clearTtsApiKey(), current.tts.apiKey, current.tts.baseUrl, current.tts.model, saved.tts, saved.ttsModel),
           ttsVoice: current.ttsVoice.trim() || null,
           playbackMode: current.playbackMode,
           ttsFormat: current.ttsFormat,
         })
       } else {
-        const wasSeparate = serverSettings().speech.separateProviders
         const trimmedApiKey = current.apiKey.trim()
         await updateSpeechSettings({
           separateProviders: false,
@@ -255,7 +269,6 @@ export const SpeechSettingsCard: Component = () => {
           ttsVoice: current.ttsVoice.trim() || null,
           playbackMode: current.playbackMode,
           ttsFormat: current.ttsFormat,
-          ...(wasSeparate ? { stt: { apiKey: null, baseUrl: null, model: null }, tts: { apiKey: null, baseUrl: null, model: null } } : {}),
         })
       }
       await loadSpeechCapabilities(true)
@@ -377,6 +390,7 @@ export const SpeechSettingsCard: Component = () => {
               type="checkbox"
               checked={drafts().separateProviders}
               onChange={(event) => {
+                if (isSaving()) return
                 setSaveStatus("idle")
                 setDrafts((current) => ({ ...current, separateProviders: event.currentTarget.checked }))
               }}
