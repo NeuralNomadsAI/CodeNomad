@@ -235,23 +235,39 @@ export const SpeechSettingsCard: Component = () => {
       if (current.separateProviders) {
         const sttApiKeyTrimmed = current.stt.apiKey.trim()
         const ttsApiKeyTrimmed = current.tts.apiKey.trim()
-        const hasSttKey = clearSttApiKey() || sttApiKeyTrimmed.length > 0 || serverSettings().speech.stt.hasApiKey
-        const hasTtsKey = clearTtsApiKey() || ttsApiKeyTrimmed.length > 0 || serverSettings().speech.tts.hasApiKey
+        const sharedBaseUrl = serverSettings().speech.baseUrl ?? ""
+        const buildDirPatch = (clearKey: boolean, apiKeyTrimmed: string, dirBaseUrl: string, dirModel: string, hasExistingKey: boolean) => {
+          const patch: { apiKey?: string | null; baseUrl?: string | null; model?: string | null } = {}
+          if (clearKey) {
+            patch.apiKey = null
+            patch.baseUrl = null
+            patch.model = null
+          } else if (apiKeyTrimmed) {
+            patch.apiKey = apiKeyTrimmed
+            if (dirBaseUrl.trim() && dirBaseUrl.trim() !== sharedBaseUrl.trim()) {
+              patch.baseUrl = dirBaseUrl.trim()
+            } else {
+              patch.baseUrl = null
+            }
+            patch.model = dirModel.trim() || null
+          } else if (hasExistingKey) {
+            if (dirBaseUrl.trim() && dirBaseUrl.trim() !== sharedBaseUrl.trim()) {
+              patch.baseUrl = dirBaseUrl.trim()
+            }
+            patch.model = dirModel.trim() || null
+          }
+          return patch
+        }
         await updateSpeechSettings({
           separateProviders: true,
-          stt: {
-            ...(clearSttApiKey() ? { apiKey: null } : sttApiKeyTrimmed ? { apiKey: sttApiKeyTrimmed } : {}),
-            ...(hasSttKey ? { baseUrl: current.stt.baseUrl.trim(), model: current.stt.model.trim() } : {}),
-          },
-          tts: {
-            ...(clearTtsApiKey() ? { apiKey: null } : ttsApiKeyTrimmed ? { apiKey: ttsApiKeyTrimmed } : {}),
-            ...(hasTtsKey ? { baseUrl: current.tts.baseUrl.trim(), model: current.tts.model.trim() } : {}),
-          },
+          stt: buildDirPatch(clearSttApiKey(), sttApiKeyTrimmed, current.stt.baseUrl, current.stt.model, serverSettings().speech.stt.hasApiKey),
+          tts: buildDirPatch(clearTtsApiKey(), ttsApiKeyTrimmed, current.tts.baseUrl, current.tts.model, serverSettings().speech.tts.hasApiKey),
           ttsVoice: current.ttsVoice.trim() || undefined,
           playbackMode: current.playbackMode,
           ttsFormat: current.ttsFormat,
         })
       } else {
+        const wasSeparate = serverSettings().speech.separateProviders
         const trimmedApiKey = current.apiKey.trim()
         await updateSpeechSettings({
           separateProviders: false,
@@ -262,8 +278,7 @@ export const SpeechSettingsCard: Component = () => {
           ttsVoice: current.ttsVoice.trim() || undefined,
           playbackMode: current.playbackMode,
           ttsFormat: current.ttsFormat,
-          stt: { apiKey: null, baseUrl: null, model: null },
-          tts: { apiKey: null, baseUrl: null, model: null },
+          ...(wasSeparate ? { stt: { apiKey: null, baseUrl: null, model: null }, tts: { apiKey: null, baseUrl: null, model: null } } : {}),
         })
       }
       await loadSpeechCapabilities(true)

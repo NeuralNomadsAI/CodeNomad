@@ -680,50 +680,25 @@ function updateLogLevel(level: ServerLogLevel): void {
 }
 
 async function updateSpeechSettings(updates: SpeechSettingsUpdate): Promise<void> {
-  const apiKeyPatch = updates.apiKey
-  const baseUrlPatch = updates.baseUrl
-  const sttApiKeyPatch = updates.stt?.apiKey
-  const ttsApiKeyPatch = updates.tts?.apiKey
-  const { apiKey: _apiKey, baseUrl: _baseUrl, stt: sttUpdate, tts: ttsUpdate, ...restUpdates } = updates
-  const current = serverSettings().speech
-  const next = normalizeSpeechSettings({
-    ...current,
-    ...restUpdates,
-    ...(apiKeyPatch === null ? {} : apiKeyPatch ? { apiKey: apiKeyPatch } : {}),
-    ...(baseUrlPatch === null ? {} : baseUrlPatch ? { baseUrl: baseUrlPatch } : {}),
-  })
-  const { hasApiKey: _hasApiKey, ...persistedSpeech } = next
-  const stripDirectionHasApiKey = (dir: any) => {
-    if (!dir || typeof dir !== "object") return dir
-    const { hasApiKey: _omitted, ...rest } = dir
-    return rest
-  }
-  const nullIfEmpty = (v: string | null | undefined) => (v !== undefined && v !== null && v.trim() === "" ? null : v)
-  const patch: any = {
-    ...persistedSpeech,
-    ...(apiKeyPatch === null ? { apiKey: null } : {}),
-    ...(baseUrlPatch === null ? { baseUrl: null } : {}),
-  }
-  if (patch.stt) patch.stt = stripDirectionHasApiKey(patch.stt)
-  if (patch.tts) patch.tts = stripDirectionHasApiKey(patch.tts)
+  const patch: Record<string, unknown> = {}
 
-  if (updates.separateProviders !== undefined) {
-    patch.separateProviders = updates.separateProviders
-  }
-  if (sttUpdate) {
-    patch.stt = {
-      ...(patch.stt ?? {}),
-      ...(sttApiKeyPatch === null ? { apiKey: null } : sttApiKeyPatch ? { apiKey: sttApiKeyPatch } : {}),
-      ...(sttUpdate.baseUrl !== undefined ? { baseUrl: nullIfEmpty(sttUpdate.baseUrl) } : {}),
-      ...(sttUpdate.model !== undefined ? { model: nullIfEmpty(sttUpdate.model) } : {}),
-    }
-  }
-  if (ttsUpdate) {
-    patch.tts = {
-      ...(patch.tts ?? {}),
-      ...(ttsApiKeyPatch === null ? { apiKey: null } : ttsApiKeyPatch ? { apiKey: ttsApiKeyPatch } : {}),
-      ...(ttsUpdate.baseUrl !== undefined ? { baseUrl: nullIfEmpty(ttsUpdate.baseUrl) } : {}),
-      ...(ttsUpdate.model !== undefined ? { model: nullIfEmpty(ttsUpdate.model) } : {}),
+  if (updates.separateProviders !== undefined) patch.separateProviders = updates.separateProviders
+  if (updates.apiKey !== undefined) patch.apiKey = updates.apiKey
+  if (updates.baseUrl !== undefined) patch.baseUrl = updates.baseUrl?.trim() || null
+  if (updates.sttModel !== undefined) patch.sttModel = updates.sttModel?.trim() || null
+  if (updates.ttsModel !== undefined) patch.ttsModel = updates.ttsModel?.trim() || null
+  if (updates.ttsVoice !== undefined) patch.ttsVoice = updates.ttsVoice?.trim() || null
+  if (updates.playbackMode !== undefined) patch.playbackMode = updates.playbackMode
+  if (updates.ttsFormat !== undefined) patch.ttsFormat = updates.ttsFormat
+
+  for (const dir of ["stt", "tts"] as const) {
+    const dirUpdate = updates[dir]
+    if (dirUpdate) {
+      const dirPatch: Record<string, unknown> = {}
+      if (dirUpdate.apiKey !== undefined) dirPatch.apiKey = dirUpdate.apiKey
+      if (dirUpdate.baseUrl !== undefined) dirPatch.baseUrl = dirUpdate.baseUrl?.trim() || null
+      if (dirUpdate.model !== undefined) dirPatch.model = dirUpdate.model?.trim() || null
+      if (Object.keys(dirPatch).length > 0) patch[dir] = dirPatch
     }
   }
 
