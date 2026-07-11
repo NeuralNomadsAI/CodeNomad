@@ -5,6 +5,7 @@ import { useI18n } from "../../lib/i18n"
 import { loadSpeechCapabilities, speechCapabilities, speechCapabilitiesError, speechCapabilitiesLoading } from "../../stores/speech"
 import { getLogger } from "../../lib/logger"
 import { useSpeech } from "../../lib/hooks/use-speech"
+import { useTranscriptionTest } from "../../lib/hooks/use-transcription-test"
 import { getSpeechPlaybackSupport } from "../../lib/speech-playback-support"
 
 const log = getLogger("actions")
@@ -102,6 +103,10 @@ export const SpeechSettingsCard: Component = () => {
       playbackMode: drafts().playbackMode,
       ttsFormat: drafts().ttsFormat,
     }),
+  })
+
+  const testTranscription = useTranscriptionTest({
+    id: () => "settings-transcription-test",
   })
 
   createEffect(() => {
@@ -297,6 +302,42 @@ export const SpeechSettingsCard: Component = () => {
             <span class="settings-inline-note">{t("settings.speech.provider.openaiCompatible")}</span>
             <span class="settings-inline-note">{capabilityLabel()}</span>
             <span class="settings-inline-note">{saveStatusLabel()}</span>
+            <button
+              type="button"
+              class="selector-button selector-button-secondary w-auto whitespace-nowrap inline-flex items-center gap-2"
+              onClick={() => void testTranscription.toggle()}
+              disabled={isSaving() || testTranscription.isTranscribing()}
+              title={testTranscription.buttonTitle()}
+              aria-label={testTranscription.buttonTitle()}
+            >
+              <Show
+                when={testTranscription.isTranscribing()}
+                fallback={
+                  <Show
+                    when={testTranscription.isRecording()}
+                    fallback={<Mic class="w-3.5 h-3.5" aria-hidden="true" />}
+                  >
+                    <Square class="w-3.5 h-3.5" aria-hidden="true" />
+                  </Show>
+                }
+              >
+                <Loader2 class="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+              </Show>
+              <span>
+                {testTranscription.isRecording()
+                  ? t("settings.speech.testInput.stop")
+                  : testTranscription.isTranscribing()
+                    ? t("settings.speech.testInput.transcribing")
+                    : t("settings.speech.testInput.action")}
+              </span>
+            </button>
+            <Show when={testTranscription.result()}>
+              {(text) => (
+                <span class="settings-inline-note" title={text()}>
+                  {text().length > 40 ? `${text().slice(0, 40)}…` : text()}
+                </span>
+              )}
+            </Show>
             <button
               type="button"
               class="selector-button selector-button-secondary w-auto whitespace-nowrap inline-flex items-center gap-2"
