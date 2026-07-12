@@ -387,6 +387,21 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
+          files=(packages/electron-app/release/*.tar.gz)
+          if [ "${#files[@]}" -ne 1 ]; then
+            echo "Expected one Electron Linux release asset, found ${#files[@]}" >&2
+            exit 1
+          fi
+
+          file="${files[0]}"
+          asset_name=$(basename "$file")
+          echo "Uploading $file"
+          gh release upload "$TAG" "$file" --clobber
+          if ! gh release view "$TAG" --json assets --jq '.assets[].name' | grep -Fxq -- "$asset_name"; then
+            echo "Uploaded Electron Linux asset is missing from release: $asset_name" >&2
+            exit 1
+          fi
+
           gh release view "$TAG" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
             case "$asset" in
               CodeNomad-Electron-linux-*.zip|CodeNomad-Electron-linux-*.AppImage|CodeNomad-Electron-linux-*.flatpak)
@@ -394,11 +409,6 @@ jobs:
                 gh release delete-asset "$TAG" "$asset" --yes
                 ;;
             esac
-          done
-          for file in packages/electron-app/release/*.tar.gz; do
-            [ -f "$file" ] || continue
-            echo "Uploading $file"
-            gh release upload "$TAG" "$file" --clobber
           done
 
       - name: Upload Actions artifacts (Electron Linux)
@@ -859,6 +869,21 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
+          files=(packages/tauri-app/release-tauri/*.deb)
+          if [ "${#files[@]}" -ne 1 ]; then
+            echo "Expected one Tauri Linux release asset, found ${#files[@]}" >&2
+            exit 1
+          fi
+
+          file="${files[0]}"
+          asset_name=$(basename "$file")
+          echo "Uploading $file"
+          gh release upload "$TAG" "$file" --clobber
+          if ! gh release view "$TAG" --json assets --jq '.assets[].name' | grep -Fxq -- "$asset_name"; then
+            echo "Uploaded Tauri Linux asset is missing from release: $asset_name" >&2
+            exit 1
+          fi
+
           gh release view "$TAG" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
             case "$asset" in
               CodeNomad-Tauri-linux-*.zip|CodeNomad-Tauri-linux-*.AppImage|CodeNomad-Tauri-linux-*.rpm|CodeNomad-Tauri-linux-*.flatpak)
@@ -866,11 +891,6 @@ jobs:
                 gh release delete-asset "$TAG" "$asset" --yes
                 ;;
             esac
-          done
-          for file in packages/tauri-app/release-tauri/*.deb; do
-            [ -f "$file" ] || continue
-            echo "Uploading $file"
-            gh release upload "$TAG" "$file" --clobber
           done
 
   build-tauri-linux-arm64:
