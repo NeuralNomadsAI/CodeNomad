@@ -1015,6 +1015,7 @@ function setActiveSessionFromList(instanceId: string, sessionId: string): void {
   if (!session) return
   const root = getSessionRoot(instanceId, sessionId)
   if (!root) return
+  if (session.id !== root.id) ensureSessionAncestorsExpanded(instanceId, session.id)
 
   batch(() => {
     setActiveParentSession(instanceId, root.id)

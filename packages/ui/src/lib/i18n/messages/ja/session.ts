@@ -15,6 +15,7 @@ export const sessionMessages = {
   "sessionList.status.working": "作業中",
   "sessionList.status.compacting": "圧縮中",
   "sessionList.status.idle": "待機中",
+  "sessionList.status.interrupted": "中断",
   "sessionList.status.retrying": "再試行中",
   "sessionList.status.retryingIn": "{seconds}秒後に再試行",
   "sessionList.status.retryTooltip": "{message}（{attempt}回目）",
