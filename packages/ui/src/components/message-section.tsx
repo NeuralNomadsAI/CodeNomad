@@ -23,6 +23,7 @@ import { getPartCharCount } from "../lib/token-utils"
 import { buildSessionSearchMatches } from "../lib/session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
 import { resolveThinkingExpansionDefault } from "./tool-call/tool-registry"
+import { collectToolDeletionCompanionPartIds, executeBulkDeletionPlan } from "./tool-deletion-companions"
 
 const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 const QUOTE_SELECTION_MAX_LENGTH = 2000
@@ -502,6 +503,34 @@ export default function MessageSection(props: MessageSectionProps) {
     }
     return set
   })
+  const deleteCompanionParts = createMemo(() => {
+    sessionRevision()
+    const selectedByMessage = new Map<string, Set<string>>()
+    for (const entry of deleteToolParts()) {
+      const selected = selectedByMessage.get(entry.messageId) ?? new Set<string>()
+      selected.add(entry.partId)
+      selectedByMessage.set(entry.messageId, selected)
+    }
+
+    const companions: { messageId: string; partId: string }[] = []
+    const s = store()
+    for (const [messageId, selectedToolPartIds] of selectedByMessage) {
+      const record = s.getMessage(messageId)
+      if (!record) continue
+      const partIds = collectToolDeletionCompanionPartIds(
+        record.partIds ?? [],
+        (partId) => record.parts?.[partId]?.data,
+        selectedToolPartIds,
+      )
+      for (const partId of partIds) {
+        companions.push({ messageId, partId })
+      }
+    }
+    return companions
+  })
+  const deleteCompanionPartKeys = createMemo(() =>
+    new Set(deleteCompanionParts().map((entry) => `${entry.messageId}:${entry.partId}`)),
+  )
   const isDeleteMode = createMemo(() => deleteMessageIds().size > 0 || deleteToolParts().length > 0)
   const selectedDeleteCount = createMemo(() => deleteMessageIds().size + deleteToolParts().length)
 
@@ -550,6 +579,10 @@ export default function MessageSection(props: MessageSectionProps) {
           chars = partFallbackChars.get(partId) ?? 0
         }
         total += Math.max(Math.round(chars / 4), 1)
+      }
+      for (const { messageId, partId } of deleteCompanionParts()) {
+        const part = s.getMessage(messageId)?.parts?.[partId]?.data
+        if (part) total += Math.max(Math.round(getPartCharCount(part) / 4), 1)
       }
     }
     return total
@@ -628,15 +661,22 @@ export default function MessageSection(props: MessageSectionProps) {
       }
     }
 
+    const companionParts = deleteCompanionParts()
+
     try {
-      for (const messageId of toDelete) {
-        await deleteMessage(props.instanceId, props.sessionId, messageId)
-      }
-      for (const { messageId, partId } of toolParts) {
-        if (!allowed.has(messageId)) continue
-        await deleteMessagePart(props.instanceId, props.sessionId, messageId, partId)
-      }
-      clearDeleteMode()
+      await executeBulkDeletionPlan(
+        {
+          messageIds: toDelete,
+          companionParts: companionParts.filter(({ messageId }) => allowed.has(messageId)),
+          toolParts: toolParts.filter(({ messageId }) => allowed.has(messageId)),
+        },
+        {
+          clearSelection: clearDeleteMode,
+          deleteMessage: (messageId) => deleteMessage(props.instanceId, props.sessionId, messageId),
+          deletePart: ({ messageId, partId }) =>
+            deleteMessagePart(props.instanceId, props.sessionId, messageId, partId),
+        },
+      )
     } catch (error) {
       showAlertDialog(t("messageSection.bulkDelete.failedMessage"), {
         title: t("messageSection.bulkDelete.failedTitle"),
@@ -1550,6 +1590,7 @@ export default function MessageSection(props: MessageSectionProps) {
               onDeleteHoverChange={setDeleteHover}
               selectedMessageIds={selectedForDeletion}
               selectedToolPartKeys={deleteToolPartKeys}
+              selectedCompanionPartKeys={deleteCompanionPartKeys}
               onToggleSelectedMessage={setMessageSelectedForDeletion}
               onRevert={props.onRevert}
               onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}

@@ -638,6 +638,7 @@ interface MessageBlockProps {
   onDeleteHoverChange?: (state: DeleteHoverState) => void
   selectedMessageIds?: () => Set<string>
   selectedToolPartKeys?: () => Set<string>
+  selectedCompanionPartKeys?: () => Set<string>
   onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
   onRevert?: (messageId: string) => void
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
@@ -657,8 +658,7 @@ export default function MessageBlock(props: MessageBlockProps) {
   const isDeleteMessageHovered = () => {
     const hover = props.deleteHover?.() ?? ({ kind: "none" } as DeleteHoverState)
 
-    const selected = props.selectedMessageIds?.() ?? new Set<string>()
-    if (selected.has(props.messageId)) {
+    if (props.selectedMessageIds?.().has(props.messageId)) {
       return true
     }
 
@@ -962,6 +962,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     onDeleteHoverChange={props.onDeleteHoverChange}
                     onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
                     selectedMessageIds={props.selectedMessageIds}
+                    selectedCompanionPartKeys={props.selectedCompanionPartKeys}
                     onToggleSelectedMessage={props.onToggleSelectedMessage}
                   />
                 </Match>
@@ -979,6 +980,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     onDeleteHoverChange={props.onDeleteHoverChange}
                     onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
                     selectedMessageIds={props.selectedMessageIds}
+                    selectedCompanionPartKeys={props.selectedCompanionPartKeys}
                     onToggleSelectedMessage={props.onToggleSelectedMessage}
                     onContentRendered={props.onContentRendered}
                   />
@@ -1012,6 +1014,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     onDeleteHoverChange={props.onDeleteHoverChange}
                     onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
                     selectedMessageIds={props.selectedMessageIds}
+                    selectedCompanionPartKeys={props.selectedCompanionPartKeys}
                     onToggleSelectedMessage={props.onToggleSelectedMessage}
                     onContentRendered={props.onContentRendered}
                     forceExpanded={activeSearchMatch()?.partId === (item() as ReasoningDisplayItem).partId}
@@ -1040,6 +1043,7 @@ interface StepCardProps {
   onDeleteHoverChange?: (state: DeleteHoverState) => void
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   selectedMessageIds?: () => Set<string>
+  selectedCompanionPartKeys?: () => Set<string>
   onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
   onContentRendered?: () => void
 }
@@ -1168,6 +1172,14 @@ function StepCard(props: StepCardProps) {
   const [deletingMessage, setDeletingMessage] = createSignal(false)
   const [deletingUpTo, setDeletingUpTo] = createSignal(false)
   const isSelectedForDeletion = () => Boolean(props.messageId && props.selectedMessageIds?.().has(props.messageId))
+  const isSelectedCompanion = () => {
+    const partId = (props.part as { id?: unknown })?.id
+    return Boolean(
+      props.messageId &&
+      typeof partId === "string" &&
+      props.selectedCompanionPartKeys?.().has(`${props.messageId}:${partId}`),
+    )
+  }
   const timestamp = () => {
     const value = props.messageInfo?.time?.created ?? (props.part as any)?.time?.start ?? Date.now()
     const date = new Date(value)
@@ -1197,7 +1209,7 @@ function StepCard(props: StepCardProps) {
     }
     const info = props.messageInfo
     const part = props.part as any
-    
+
     // step-finish parts have tokens embedded; also check messageInfo
     const partTokens = part?.tokens
     const infoTokens = info && info.role === "assistant" ? info.tokens : undefined
@@ -1205,7 +1217,7 @@ function StepCard(props: StepCardProps) {
     if (!tokens) {
       return null
     }
-    
+
     return {
       input: tokens.input ?? 0,
       output: tokens.output ?? 0,
@@ -1332,7 +1344,11 @@ function StepCard(props: StepCardProps) {
       return null
     }
     return (
-      <div class={`message-step-card message-step-finish message-step-finish-flush relative`} style={finishStyle()}>
+      <div
+        class="delete-hover-scope message-step-card message-step-finish message-step-finish-flush relative"
+        style={finishStyle()}
+        data-delete-part-hover={isSelectedCompanion() ? "true" : undefined}
+      >
         <Show when={props.showDeleteMessage}>
           <div class="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
             <ActionOverflowMenu
@@ -1397,6 +1413,7 @@ interface ReasoningCardProps {
   onDeleteHoverChange?: (state: DeleteHoverState) => void
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   selectedMessageIds?: () => Set<string>
+  selectedCompanionPartKeys?: () => Set<string>
   onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
   onContentRendered?: () => void
   forceExpanded?: boolean
@@ -1475,6 +1492,13 @@ function ReasoningCard(props: ReasoningCardProps) {
   const [deletingUpTo, setDeletingUpTo] = createSignal(false)
   const [scrollTopSnapshot, setScrollTopSnapshot] = createSignal(0)
   const isSelectedForDeletion = () => Boolean(props.selectedMessageIds?.().has(props.messageId))
+  const isSelectedCompanion = () => {
+    const partId = (props.part as { id?: unknown })?.id
+    return Boolean(
+      typeof partId === "string" &&
+      props.selectedCompanionPartKeys?.().has(`${props.messageId}:${partId}`),
+    )
+  }
 
   createEffect(() => {
     setExpanded(Boolean(props.defaultExpanded))
@@ -1694,6 +1718,7 @@ function ReasoningCard(props: ReasoningCardProps) {
   return (
     <div
       class="delete-hover-scope message-reasoning-card"
+      data-delete-part-hover={isSelectedCompanion() ? "true" : undefined}
       data-part-id={typeof (props.part as any)?.id === "string" ? (props.part as any).id : undefined}
     >
       <div class="message-reasoning-header">
