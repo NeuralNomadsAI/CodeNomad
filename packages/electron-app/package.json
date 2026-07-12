@@ -34,7 +34,6 @@
     "build:linux": "node scripts/build.js linux",
     "build:linux-arm64": "node scripts/build.js linux-arm64",
     "build:linux-rpm": "node scripts/build.js linux-rpm",
-    "build:flatpak": "node scripts/build-flatpak.js",
     "build:all": "node scripts/build.js all",
     "package:mac": "node scripts/build.js mac",
     "package:win": "node scripts/build.js win",
@@ -134,10 +133,7 @@
     "linux": {
       "target": [
         {
-          "target": "zip"
-        },
-        {
-          "target": "AppImage"
+          "target": "tar.gz"
         }
       ],
       "artifactName": "CodeNomad-Electron-linux-${arch}-${version}.${ext}",

@@ -311,33 +311,74 @@ jobs:
       - name: Ensure rollup native binary
         run: npm install @rollup/rollup-linux-x64-gnu --no-save
 
-      - name: Install Flatpak build dependencies (Electron)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y flatpak flatpak-builder
-          sudo flatpak remote-add --system --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-          sudo flatpak install --system --noninteractive flathub \
-            org.freedesktop.Platform//24.08 \
-            org.freedesktop.Sdk//24.08
-
       - name: Build Linux binaries (Electron)
         run: npm run build:linux --workspace @neuralnomads/codenomad-electron-app
-
-      - name: Build Flatpak bundle (Electron)
-        run: npm run build:flatpak --workspace @neuralnomads/codenomad-electron-app
 
       - name: Verify bundled Node resource (Electron Linux)
         run: node scripts/verify-bundled-node.cjs packages/electron-app/electron/resources@linux-x64
 
-      - name: Verify Electron Linux artifacts
+      - name: Verify Electron portable archive
         run: |
           set -euo pipefail
           shopt -s nullglob
-          zips=(packages/electron-app/release/*.zip)
-          appimages=(packages/electron-app/release/*.AppImage)
-          flatpaks=(packages/electron-app/release/*.flatpak)
-          if [ "${#zips[@]}" -eq 0 ] || [ "${#appimages[@]}" -eq 0 ] || [ "${#flatpaks[@]}" -eq 0 ]; then
-            echo "Missing Electron Linux artifact(s): zip=${#zips[@]} appimage=${#appimages[@]} flatpak=${#flatpaks[@]}" >&2
+          archives=(packages/electron-app/release/*.tar.gz)
+          if [ "${#archives[@]}" -ne 1 ]; then
+            echo "Expected one Electron Linux tar.gz, found ${#archives[@]}" >&2
+            exit 1
+          fi
+
+          extract_dir=$(mktemp -d)
+          trap 'rm -rf "$extract_dir"' EXIT
+          tar -xzf "${archives[0]}" -C "$extract_dir"
+
+          binary=$(find "$extract_dir" -type f -name CodeNomad -print -quit)
+          if [ -z "$binary" ] || [ ! -x "$binary" ]; then
+            echo "Electron portable archive does not contain an executable CodeNomad binary" >&2
+            exit 1
+          fi
+
+          resources_dir="$(dirname "$binary")/resources"
+          node scripts/smoke-packaged-resources.cjs \
+            --resources "$resources_dir" \
+            --target linux-x64
+
+          app_asar="$resources_dir/app.asar"
+          if [ ! -f "$app_asar" ]; then
+            echo "Electron portable archive does not contain resources/app.asar" >&2
+            exit 1
+          fi
+          node - "$app_asar" <<'NODE'
+          const asar = require("@electron/asar")
+          const path = require("node:path")
+          const archive = process.argv[2]
+          const files = asar.listPackage(archive).map((file) =>
+            file.replace(/^[/\\]/, "").replaceAll("\\", "/"),
+          )
+          const fileSet = new Set(files)
+          const loadingPath = "dist/renderer/loading.html"
+          if (!fileSet.has(loadingPath)) {
+            throw new Error("Electron app.asar is missing dist/renderer/loading.html")
+          }
+          if (!files.some((file) => file.startsWith("dist/renderer/assets/") && !file.endsWith("/"))) {
+            throw new Error("Electron app.asar does not contain renderer assets")
+          }
+          const html = asar.extractFile(archive, loadingPath).toString("utf8")
+          for (const match of html.matchAll(/\b(?:src|href)=["']([^"']+)["']/g)) {
+            const reference = match[1]
+            if (/^(?:[a-z]+:|#)/i.test(reference)) continue
+            const cleanReference = reference.split(/[?#]/, 1)[0]
+            const target = cleanReference.startsWith("/")
+              ? cleanReference.slice(1)
+              : path.posix.normalize(path.posix.join(path.posix.dirname(loadingPath), cleanReference))
+            if (!fileSet.has(target)) {
+              throw new Error(`Electron app.asar is missing renderer reference ${target}`)
+            }
+          }
+          NODE
+
+          ldd "$binary" | tee /tmp/codenomad-electron-ldd.txt
+          if grep -q "not found" /tmp/codenomad-electron-ldd.txt; then
+            echo "Electron portable binary has unresolved shared libraries" >&2
             exit 1
           fi
 
@@ -346,7 +387,15 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          for file in packages/electron-app/release/*.zip packages/electron-app/release/*.AppImage packages/electron-app/release/*.flatpak; do
+          gh release view "$TAG" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
+            case "$asset" in
+              CodeNomad-Electron-linux-*.zip|CodeNomad-Electron-linux-*.AppImage|CodeNomad-Electron-linux-*.flatpak)
+                echo "Deleting obsolete Linux asset $asset"
+                gh release delete-asset "$TAG" "$asset" --yes
+                ;;
+            esac
+          done
+          for file in packages/electron-app/release/*.tar.gz; do
             [ -f "$file" ] || continue
             echo "Uploading $file"
             gh release upload "$TAG" "$file" --clobber
@@ -357,10 +406,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.actions_artifacts_name_prefix }}electron-linux
-          path: |
-            packages/electron-app/release/*.zip
-            packages/electron-app/release/*.AppImage
-            packages/electron-app/release/*.flatpak
+          path: packages/electron-app/release/*.tar.gz
           retention-days: ${{ inputs.actions_artifacts_retention_days }}
           if-no-files-found: error
 
@@ -388,6 +434,9 @@ jobs:
       - name: Set workspace versions
         if: ${{ inputs.set_versions && inputs.version != '' }}
         run: npm version ${VERSION} --workspaces --include-workspace-root --no-git-tag-version --allow-same-version
+
+      - name: Sync Tauri package version
+        run: npm run sync:version --workspace @codenomad/tauri-app
 
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
@@ -476,6 +525,9 @@ jobs:
         if: ${{ inputs.set_versions && inputs.version != '' }}
         run: npm version ${VERSION} --workspaces --include-workspace-root --no-git-tag-version --allow-same-version
 
+      - name: Sync Tauri package version
+        run: npm run sync:version --workspace @codenomad/tauri-app
+
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
 
@@ -563,6 +615,9 @@ jobs:
         if: ${{ inputs.set_versions && inputs.version != '' }}
         run: npm version ${{ env.VERSION }} --workspaces --include-workspace-root --no-git-tag-version --allow-same-version
         shell: bash
+
+      - name: Sync Tauri package version
+        run: npm run sync:version --workspace @codenomad/tauri-app
 
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
@@ -662,19 +717,14 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libsoup-3.0-dev \
             libayatana-appindicator3-dev \
-            librsvg2-dev \
-            xdg-utils \
-            rpm \
-            flatpak \
-            flatpak-builder
-          sudo flatpak remote-add --system --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-          sudo flatpak install --system --noninteractive flathub \
-            org.gnome.Platform//47 \
-            org.gnome.Sdk//47
+            librsvg2-dev
 
       - name: Set workspace versions
         if: ${{ inputs.set_versions && inputs.version != '' }}
         run: npm version ${VERSION} --workspaces --include-workspace-root --no-git-tag-version --allow-same-version
+
+      - name: Sync Tauri package version
+        run: npm run sync:version --workspace @codenomad/tauri-app
 
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
@@ -702,42 +752,15 @@ jobs:
           echo "Tauri CLI failed to load after retries" >&2
           exit 1
 
-      - name: Build Linux bundle (Tauri)
+      - name: Build Debian package (Tauri)
         working-directory: packages/tauri-app
-        run: npm exec -- tauri build
+        run: npm exec -- tauri build --bundles deb
 
-      - name: Build Flatpak bundle (Tauri)
-        run: npm run build:flatpak --workspace @codenomad/tauri-app
-
-      - name: Verify Tauri Flatpak runtime closure
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          flatpaks=(packages/tauri-app/target/release/bundle/flatpak/*.flatpak)
-          if [ "${#flatpaks[@]}" -eq 0 ]; then
-            echo "Missing Tauri Flatpak artifact" >&2
-            exit 1
-          fi
-
-          flatpak install --user --noninteractive --bundle "${flatpaks[0]}"
-          cleanup() {
-            flatpak uninstall --user --noninteractive ai.neuralnomads.codenomad.client >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT
-
-          flatpak run --user --command=sh ai.neuralnomads.codenomad.client -c '
-            set -e
-            test -x /app/bin/codenomad-tauri
-            test -d /app/lib/CodeNomad/resources
-            ldd /app/bin/codenomad-tauri | tee /tmp/codenomad-tauri-ldd.txt
-            ! grep -q "not found" /tmp/codenomad-tauri-ldd.txt
-          '
-
-      - name: Package Tauri artifacts (Linux)
+      - name: Package and verify Tauri deb
         if: ${{ inputs.upload || inputs.upload_actions_artifacts }}
         run: |
           set -euo pipefail
-          SEARCH_ROOT="packages/tauri-app/target"
+          BUNDLE_ROOT="packages/tauri-app/target/release/bundle/deb"
           ARTIFACT_DIR="packages/tauri-app/release-tauri"
           VERSION_TO_USE="${VERSION:-}"
           if [ -z "$VERSION_TO_USE" ]; then
@@ -745,44 +768,106 @@ jobs:
           fi
           rm -rf "$ARTIFACT_DIR"
           mkdir -p "$ARTIFACT_DIR"
-          shopt -s nullglob globstar
+          shopt -s nullglob
 
-          find_one() {
-            find "$SEARCH_ROOT" -type f -iname "$1" | head -n1
-          }
-
-          appimage=$(find_one "*.AppImage")
-          deb=$(find_one "*.deb")
-          rpm=$(find_one "*.rpm")
-          flatpak=$(find_one "*.flatpak")
-          fallback_bin="$SEARCH_ROOT/release/codenomad-tauri"
-
-          if [ -z "$appimage" ] || [ -z "$deb" ] || [ -z "$rpm" ] || [ -z "$flatpak" ] || [ ! -f "$fallback_bin" ]; then
-            echo "Missing bundle(s): appimage=${appimage:-none} deb=${deb:-none} rpm=${rpm:-none} flatpak=${flatpak:-none} binary=$fallback_bin" >&2
+          debs=("$BUNDLE_ROOT"/*.deb)
+          if [ "${#debs[@]}" -ne 1 ]; then
+            echo "Expected one Tauri deb under $BUNDLE_ROOT, found ${#debs[@]}" >&2
             exit 1
           fi
 
-          cp "$appimage" "$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION_TO_USE}.AppImage"
-          cp "$deb" "$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION_TO_USE}.deb"
-          cp "$rpm" "$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION_TO_USE}.rpm"
-          cp "$flatpak" "$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION_TO_USE}.flatpak"
-          zip -j "$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION_TO_USE}.zip" "$fallback_bin"
+          artifact="$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION_TO_USE}.deb"
+          cp "${debs[0]}" "$artifact"
+          dpkg-deb --info "$artifact"
+          dpkg-deb --contents "$artifact"
+          package_version=$(dpkg-deb --field "$artifact" Version)
+          if [ "$package_version" != "$VERSION_TO_USE" ]; then
+            echo "Tauri deb version mismatch: expected $VERSION_TO_USE, found $package_version" >&2
+            exit 1
+          fi
+
+          extract_dir=$(mktemp -d)
+          trap 'rm -rf "$extract_dir"' EXIT
+          dpkg-deb --extract "$artifact" "$extract_dir"
+
+          binary="$extract_dir/usr/bin/codenomad-tauri"
+          resources_dir="$extract_dir/usr/lib/CodeNomad/resources"
+          desktop_file="$extract_dir/usr/share/applications/CodeNomad.desktop"
+          for required in "$binary" "$resources_dir" "$desktop_file"; do
+            if [ ! -e "$required" ]; then
+              echo "Missing path in Tauri deb: $required" >&2
+              exit 1
+            fi
+          done
+
+          grep -Fx "Exec=codenomad-tauri" "$desktop_file"
+          if grep -Fxq "NoDisplay=true" "$desktop_file"; then
+            echo "Generated Tauri desktop entry must be visible" >&2
+            exit 1
+          fi
+          node scripts/smoke-packaged-resources.cjs \
+            --resources "$resources_dir" \
+            --loading "$resources_dir/ui-loading" \
+            --target linux-x64
+
+          ldd "$binary" | tee /tmp/codenomad-tauri-ldd.txt
+          if grep -q "not found" /tmp/codenomad-tauri-ldd.txt; then
+            echo "Tauri deb binary has unresolved shared libraries" >&2
+            exit 1
+          fi
+
+      - name: Verify Tauri deb installation on Ubuntu 24.04
+        if: ${{ inputs.upload || inputs.upload_actions_artifacts }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          debs=(packages/tauri-app/release-tauri/*.deb)
+          if [ "${#debs[@]}" -ne 1 ]; then
+            echo "Expected one packaged Tauri deb, found ${#debs[@]}" >&2
+            exit 1
+          fi
+
+          artifact=$(realpath "${debs[0]}")
+          docker run --rm \
+            --volume "$artifact:/tmp/codenomad.deb:ro" \
+            ubuntu:24.04 \
+            bash -euc '
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update >/dev/null
+              apt-get install -y /tmp/codenomad.deb >/dev/null
+              test -x /usr/bin/codenomad-tauri
+              test -x /usr/lib/CodeNomad/resources/node/linux-x64/bin/node
+              test -f /usr/lib/CodeNomad/resources/server/dist/bin.js
+              test -f /usr/lib/CodeNomad/resources/ui-loading/loading.html
+              /usr/lib/CodeNomad/resources/node/linux-x64/bin/node \
+                /usr/lib/CodeNomad/resources/server/dist/bin.js --version
+              ldd /usr/bin/codenomad-tauri | tee /tmp/codenomad-tauri-ldd.txt
+              ! grep -q "not found" /tmp/codenomad-tauri-ldd.txt
+            '
 
       - name: Upload Actions artifacts (Tauri Linux)
         if: ${{ inputs.upload_actions_artifacts }}
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.actions_artifacts_name_prefix }}tauri-linux
-          path: packages/tauri-app/release-tauri/*
+          path: packages/tauri-app/release-tauri/*.deb
           retention-days: ${{ inputs.actions_artifacts_retention_days }}
-          if-no-files-found: warn
+          if-no-files-found: error
 
       - name: Upload Tauri release assets (Linux)
         if: ${{ inputs.upload && inputs.tag != '' }}
         run: |
           set -euo pipefail
           shopt -s nullglob
-          for file in packages/tauri-app/release-tauri/*; do
+          gh release view "$TAG" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
+            case "$asset" in
+              CodeNomad-Tauri-linux-*.zip|CodeNomad-Tauri-linux-*.AppImage|CodeNomad-Tauri-linux-*.rpm|CodeNomad-Tauri-linux-*.flatpak)
+                echo "Deleting obsolete Linux asset $asset"
+                gh release delete-asset "$TAG" "$asset" --yes
+                ;;
+            esac
+          done
+          for file in packages/tauri-app/release-tauri/*.deb; do
             [ -f "$file" ] || continue
             echo "Uploading $file"
             gh release upload "$TAG" "$file" --clobber
@@ -841,6 +926,9 @@ jobs:
 
       - name: Set workspace versions
         run: npm version ${VERSION} --workspaces --include-workspace-root --no-git-tag-version --allow-same-version
+
+      - name: Sync Tauri package version
+        run: npm run sync:version --workspace @codenomad/tauri-app
 
       - name: Install dependencies
         run: npm ci --workspaces --include=optional

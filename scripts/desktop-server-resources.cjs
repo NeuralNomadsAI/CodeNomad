@@ -23,7 +23,7 @@ function copyRequiredArtifact(serverRoot, serverDest, name, log) {
   if (!fs.existsSync(from)) {
     throw new Error(`Missing required server artifact: ${from}`)
   }
-  fs.cpSync(from, to, { recursive: true })
+  fs.cpSync(from, to, { recursive: true, dereference: true })
   log(`copied ${name}`)
 }
 
