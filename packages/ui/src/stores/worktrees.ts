@@ -13,8 +13,7 @@ const [worktreesByInstance, setWorktreesByInstance] = createSignal<Map<string, W
 const [worktreeMapByInstance, setWorktreeMapByInstance] = createSignal<Map<string, WorktreeMap>>(new Map())
 const [gitRepoStatusByInstance, setGitRepoStatusByInstance] = createSignal<Map<string, boolean | null>>(new Map())
 
-const worktreeLoads = new Map<string, Promise<void>>()
-const worktreeReloads = new Map<string, Promise<void>>()
+const worktreeRequests = new Map<string, Promise<void>>()
 const worktreeReadyRefreshes = new Map<string, Promise<void>>()
 const mapLoads = new Map<string, Promise<void>>()
 const mapMigrations = new Map<string, Promise<void>>()
@@ -32,15 +31,11 @@ function normalizeMap(input?: WorktreeMap | null): WorktreeMap {
   }
 }
 
-async function ensureWorktreesLoaded(instanceId: string): Promise<void> {
-  if (!instanceId) return
-  if (worktreesByInstance().has(instanceId) && gitRepoStatusByInstance().has(instanceId)) return
-  const existing = worktreeLoads.get(instanceId)
-  if (existing) return existing
-
-  const task = serverApi
-    .fetchWorktrees(instanceId)
-    .then((response) => {
+async function queueWorktreeRequest(instanceId: string, initial: boolean): Promise<void> {
+  const previous = worktreeRequests.get(instanceId)
+  const task = (previous?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
+    try {
+      const response = await serverApi.fetchWorktrees(instanceId)
       setWorktreesByInstance((prev) => {
         const next = new Map(prev)
         next.set(instanceId, response.worktrees ?? [])
@@ -57,9 +52,10 @@ async function ensureWorktreesLoaded(instanceId: string): Promise<void> {
       if (worktreeMapByInstance().has(instanceId)) {
         void pruneWorktreeMap(instanceId).catch(() => undefined)
       }
-    })
-    .catch((error) => {
-      log.warn("Failed to load worktrees", { instanceId, error })
+    } catch (error) {
+      log.warn(initial ? "Failed to load worktrees" : "Failed to reload worktrees", { instanceId, error })
+      if (!initial) return
+
       setWorktreesByInstance((prev) => {
         const next = new Map(prev)
         next.set(instanceId, [])
@@ -73,52 +69,33 @@ async function ensureWorktreesLoaded(instanceId: string): Promise<void> {
         next.set(instanceId, null)
         return next
       })
-    })
-    .finally(() => {
-      worktreeLoads.delete(instanceId)
-    })
+    }
+  })
 
-  worktreeLoads.set(instanceId, task)
-  return task
+  worktreeRequests.set(instanceId, task)
+  await task.finally(() => {
+    if (worktreeRequests.get(instanceId) === task) {
+      worktreeRequests.delete(instanceId)
+    }
+  })
+}
+
+async function ensureWorktreesLoaded(instanceId: string): Promise<void> {
+  if (!instanceId) return
+  if (worktreesByInstance().has(instanceId) && gitRepoStatusByInstance().has(instanceId)) return
+
+  const existing = worktreeRequests.get(instanceId)
+  if (existing) {
+    await existing
+    if (worktreesByInstance().has(instanceId) && gitRepoStatusByInstance().has(instanceId)) return
+  }
+
+  await queueWorktreeRequest(instanceId, true)
 }
 
 async function reloadWorktrees(instanceId: string): Promise<void> {
   if (!instanceId) return
-  const previous = worktreeReloads.get(instanceId)
-  const task = (async () => {
-    await previous?.catch(() => undefined)
-    await worktreeLoads.get(instanceId)?.catch(() => undefined)
-
-    await serverApi
-      .fetchWorktrees(instanceId)
-      .then((response) => {
-        setWorktreesByInstance((prev) => {
-          const next = new Map(prev)
-          next.set(instanceId, response.worktrees ?? [])
-          return next
-        })
-
-        setGitRepoStatusByInstance((prev) => {
-          const next = new Map(prev)
-          next.set(instanceId, typeof response.isGitRepo === "boolean" ? response.isGitRepo : null)
-          return next
-        })
-
-        if (worktreeMapByInstance().has(instanceId)) {
-          void pruneWorktreeMap(instanceId).catch(() => undefined)
-        }
-      })
-      .catch((error) => {
-        log.warn("Failed to reload worktrees", { instanceId, error })
-      })
-  })()
-
-  worktreeReloads.set(instanceId, task)
-  await task.finally(() => {
-    if (worktreeReloads.get(instanceId) === task) {
-      worktreeReloads.delete(instanceId)
-    }
-  })
+  await queueWorktreeRequest(instanceId, false)
 }
 
 async function handleWorktreeReady(

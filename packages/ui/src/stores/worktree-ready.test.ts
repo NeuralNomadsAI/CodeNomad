@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { handleWorktreeReady } from "./worktrees.ts"
+import { serverApi } from "../lib/api-client.ts"
+import { ensureWorktreesLoaded, getWorktrees, handleWorktreeReady, reloadWorktrees } from "./worktrees.ts"
 
 describe("handleWorktreeReady", () => {
   it("refreshes worktrees before synchronizing OpenCode workspaces", async () => {
@@ -91,5 +92,54 @@ describe("handleWorktreeReady", () => {
     )
 
     assert.deepEqual(calls, ["worktrees", "workspaces"])
+  })
+
+  it("orders initial hydration before a trailing reload", async () => {
+    const instanceId = "instance-initial-reload"
+    const originalFetchWorktrees = serverApi.fetchWorktrees
+    let resolveInitial!: (value: Awaited<ReturnType<typeof serverApi.fetchWorktrees>>) => void
+    let resolveReload!: (value: Awaited<ReturnType<typeof serverApi.fetchWorktrees>>) => void
+    const initialResponse = new Promise<Awaited<ReturnType<typeof serverApi.fetchWorktrees>>>((resolve) => {
+      resolveInitial = resolve
+    })
+    const reloadResponse = new Promise<Awaited<ReturnType<typeof serverApi.fetchWorktrees>>>((resolve) => {
+      resolveReload = resolve
+    })
+    let requestCount = 0
+
+    serverApi.fetchWorktrees = async () => {
+      requestCount += 1
+      return requestCount === 1 ? initialResponse : reloadResponse
+    }
+
+    try {
+      const initial = ensureWorktreesLoaded(instanceId)
+      const reload = reloadWorktrees(instanceId)
+      await Promise.resolve()
+
+      assert.equal(requestCount, 1)
+
+      resolveInitial({
+        isGitRepo: true,
+        worktrees: [{ slug: "root", directory: "/repo", kind: "root" }],
+      })
+      await initial
+      await Promise.resolve()
+
+      assert.equal(requestCount, 2)
+
+      resolveReload({
+        isGitRepo: true,
+        worktrees: [
+          { slug: "root", directory: "/repo", kind: "root" },
+          { slug: "feature", directory: "/repo-feature", kind: "worktree" },
+        ],
+      })
+      await reload
+
+      assert.deepEqual(getWorktrees(instanceId).map((worktree) => worktree.slug), ["root", "feature"])
+    } finally {
+      serverApi.fetchWorktrees = originalFetchWorktrees
+    }
   })
 })
