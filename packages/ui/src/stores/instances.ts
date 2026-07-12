@@ -216,6 +216,7 @@ const MAX_LOG_ENTRIES = 1000
 const pendingDisposeRequests = new Map<string, Promise<boolean>>()
 const pendingRehydrations = new Map<string, Promise<void>>()
 const initialHydrations = new Map<string, Promise<void>>()
+const initialSessionHydrations = new Map<string, Promise<void>>()
 const restoreCreatedWorkspaceCleanup = new AbortCreatedWorkspaceCleanup<WorkspaceDescriptor>({
   deleteWorkspace: (workspaceId) => serverApi.deleteWorkspace(workspaceId),
   restoreWorkspace: (workspace) => upsertWorkspace(workspace),
@@ -364,7 +365,12 @@ function attachClient(descriptor: WorkspaceDescriptor) {
     status: "ready",
   })
   sseManager.seedStatusIfMissing(descriptor.id, "connecting")
-  const hydration = hydrateInstanceData(descriptor.id, { propagateErrors: true })
+  const sessionHydration = hydrateInstanceSessions(descriptor.id)
+  initialSessionHydrations.set(descriptor.id, sessionHydration)
+  const hydration = hydrateInstanceData(descriptor.id, {
+    propagateErrors: true,
+    sessionHydration,
+  })
   initialHydrations.set(descriptor.id, hydration)
   if (sseManager.getStatuses().get(descriptor.id) === "connected") {
     resyncConnectedInstance(descriptor.id)
@@ -404,6 +410,11 @@ function waitForInstanceReady(instanceId: string): Promise<void> {
 async function waitForInstanceInitialHydration(instanceId: string): Promise<void> {
   await waitForInstanceReady(instanceId)
   await initialHydrations.get(instanceId)
+}
+
+async function waitForInstanceInitialSessionHydration(instanceId: string): Promise<void> {
+  await waitForInstanceReady(instanceId)
+  await initialSessionHydrations.get(instanceId)
 }
 
 function releaseInstanceResources(instanceId: string) {
@@ -525,18 +536,26 @@ async function syncPendingQuestions(instanceId: string): Promise<void> {
   }
 }
 
-async function hydrateInstanceData(instanceId: string, options?: { force?: boolean; propagateErrors?: boolean }) {
+async function hydrateInstanceSessions(instanceId: string, force = false): Promise<void> {
+  if (force) {
+    await reloadWorktrees(instanceId)
+    await reloadWorktreeMap(instanceId)
+  } else {
+    await ensureWorktreesLoaded(instanceId)
+    await ensureWorktreeMapLoaded(instanceId)
+  }
+  await syncOpenCodeWorkspaces(instanceId)
+  resetSessionPagination(instanceId)
+  await fetchSessions(instanceId)
+}
+
+async function hydrateInstanceData(instanceId: string, options?: {
+  force?: boolean
+  propagateErrors?: boolean
+  sessionHydration?: Promise<void>
+}) {
   try {
-    if (options?.force) {
-      await reloadWorktrees(instanceId)
-      await reloadWorktreeMap(instanceId)
-    } else {
-      await ensureWorktreesLoaded(instanceId)
-      await ensureWorktreeMapLoaded(instanceId)
-    }
-    await syncOpenCodeWorkspaces(instanceId)
-    resetSessionPagination(instanceId)
-    await fetchSessions(instanceId)
+    await (options?.sessionHydration ?? hydrateInstanceSessions(instanceId, options?.force))
     await fetchAgents(instanceId)
     await fetchProviders(instanceId)
     await ensureInstanceConfigLoaded(instanceId)
@@ -844,6 +863,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   clearPermissionAutoAcceptForInstance(id)
   clearSyncedYoloSessionsForInstance(id)
   initialHydrations.delete(id)
+  initialSessionHydrations.delete(id)
   settleInstanceReadyWaiters(id, new Error(`Workspace ${id} was removed before it became ready`))
 
   if (activeInstanceId() === id) {
@@ -1671,6 +1691,7 @@ export {
   waitForInitialWorkspaceLoad,
   waitForInstanceReady,
   waitForInstanceInitialHydration,
+  waitForInstanceInitialSessionHydration,
   getExistingInstanceForFolder,
   updateProjectNameForFolder,
   stopInstance,

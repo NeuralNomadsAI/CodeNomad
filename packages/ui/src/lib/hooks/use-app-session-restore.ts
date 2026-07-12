@@ -40,7 +40,7 @@ import {
   releaseRestoreCreatedInstance,
   instances,
   waitForInitialWorkspaceLoad,
-  waitForInstanceInitialHydration,
+  waitForInstanceInitialSessionHydration,
 } from "../../stores/instances"
 import { openSidecarTab, SidecarNotFoundError } from "../../stores/sidecars"
 import {
@@ -61,7 +61,15 @@ const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
 // seconds, while each combined workspace or SideCar operation gets 30 seconds.
 const INITIAL_WORKSPACE_LOAD_TIMEOUT_MS = 15_000
 const RESTORE_OPERATION_TIMEOUT_MS = 30_000
-const STARTUP_RESTORE_TIMEOUT_MS = 60_000
+const MINIMUM_STARTUP_RESTORE_TIMEOUT_MS = 60_000
+const STARTUP_RESTORE_GRACE_MS = 5_000
+
+function getStartupRestoreTimeoutMs(snapshot: RestorableSessionState): number {
+  const sequentialOperationBudget = INITIAL_WORKSPACE_LOAD_TIMEOUT_MS
+    + snapshot.tabs.length * RESTORE_OPERATION_TIMEOUT_MS
+    + STARTUP_RESTORE_GRACE_MS
+  return Math.max(MINIMUM_STARTUP_RESTORE_TIMEOUT_MS, sequentialOperationBudget)
+}
 
 function getWorkspaceSessionReferences(snapshot: RestorableWorkspaceTabState) {
   return {
@@ -189,7 +197,7 @@ async function restoreWorkspaceTabs(
         try {
           await completeAbortableRestoreHydration(id, {
             signal: operationSignal,
-            hydrate: waitForInstanceInitialHydration,
+            hydrate: waitForInstanceInitialSessionHydration,
             commit: (hydratedId) => {
               updatePreservation(match.tabIndex, restoreWorkspaceState(hydratedId, tab), restoredTabId)
               if (!existingId) releaseRestoreCreatedInstance(hydratedId)
@@ -332,7 +340,7 @@ export function useAppSessionRestore(): void {
               capture.mapWorkspaces,
               capture.unmapWorkspace,
             ),
-            STARTUP_RESTORE_TIMEOUT_MS,
+            getStartupRestoreTimeoutMs(snapshot!),
             "Timed out restoring the saved app session",
           )
           restoreCompleted = true
