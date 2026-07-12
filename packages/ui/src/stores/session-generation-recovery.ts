@@ -10,17 +10,6 @@ export function getDisplayedSessionStatus(
   return status === "idle" && recovery === "pending" ? "working" : status
 }
 
-export function resolveRestoredIdleSince(
-  persistedStatus: SessionStatus,
-  runtimeStatus: SessionStatus,
-  runtimeStatusKnown: boolean,
-  currentIdleSince: number | null | undefined,
-  restoredAt: number,
-): number | null | undefined {
-  if (typeof currentIdleSince === "number") return currentIdleSince
-  return runtimeStatusKnown && persistedStatus === "idle" && runtimeStatus === "idle" ? restoredAt : currentIdleSince
-}
-
 export function resolveHydratedGenerationRecovery(
   persisted: PersistedGenerationRecovery,
   runtimeStatus: SessionStatus,

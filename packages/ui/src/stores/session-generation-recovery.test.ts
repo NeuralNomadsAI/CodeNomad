@@ -7,7 +7,6 @@ import {
   mergeFetchedSessionRuntimeState,
   resolveAuthoritativeGenerationRecovery,
   resolveHydratedGenerationRecovery,
-  resolveRestoredIdleSince,
 } from "./session-generation-recovery.ts"
 import type { Session } from "../types/session.ts"
 
@@ -31,14 +30,6 @@ describe("session generation recovery", () => {
     assert.equal(getDisplayedSessionStatus("idle", "pending"), "working")
     assert.equal(getDisplayedSessionStatus("idle", "interrupted"), "idle")
     assert.equal(getDisplayedSessionStatus("compacting", "pending"), "compacting")
-  })
-
-  it("restores idle presentation for a session first loaded as already idle", () => {
-    assert.equal(resolveRestoredIdleSince("idle", "idle", true, null, 2_000), 2_000)
-    assert.equal(resolveRestoredIdleSince("idle", "idle", false, null, 2_000), null)
-    assert.equal(resolveRestoredIdleSince("working", "idle", true, null, 2_000), null)
-    assert.equal(resolveRestoredIdleSince("idle", "working", true, null, 2_000), null)
-    assert.equal(resolveRestoredIdleSince("idle", "idle", true, 1_000, 2_000), 1_000)
   })
 
   it("passively reconnects when the runtime is still working", () => {

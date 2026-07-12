@@ -17,7 +17,6 @@ import {
   resolveAuthoritativeGenerationRecovery,
   getDisplayedSessionStatus,
   resolveHydratedGenerationRecovery,
-  resolveRestoredIdleSince,
   type PersistedGenerationRecovery,
 } from "./session-generation-recovery"
 import {
@@ -675,37 +674,6 @@ function hydrateSessionGenerationRecovery(
   syncInstanceSessionIndicator(instanceId)
 }
 
-function hydrateSessionPresentationStatuses(
-  instanceId: string,
-  statuses: Readonly<Record<string, SessionStatus>>,
-  restoredAt = Date.now(),
-): void {
-  setSessions((prev) => {
-    const instanceSessions = prev.get(instanceId)
-    if (!instanceSessions) return prev
-    let changed = false
-    const updatedSessions = new Map(instanceSessions)
-    for (const [sessionId, persistedStatus] of Object.entries(statuses)) {
-      const session = updatedSessions.get(sessionId)
-      if (!session) continue
-      const idleSince = resolveRestoredIdleSince(
-        persistedStatus,
-        session.status,
-        session.runtimeStatusKnown === true,
-        session.idleSince,
-        restoredAt,
-      )
-      if (idleSince === session.idleSince) continue
-      updatedSessions.set(sessionId, { ...session, idleSince })
-      changed = true
-    }
-    if (!changed) return prev
-    const next = new Map(prev)
-    next.set(instanceId, updatedSessions)
-    return next
-  })
-}
-
 function beginSessionGenerationAdmission(instanceId: string, sessionId: string): {
   complete: () => void
   rollback: () => void
@@ -1274,7 +1242,6 @@ export {
   markSessionIdleSeen,
   markViewedSessionIdleSeen,
   hydrateSessionIdleMarkers,
-  hydrateSessionPresentationStatuses,
   hydrateSessionGenerationRecovery,
   beginSessionGenerationAdmission,
   cancelSessionGenerationAdmissions,

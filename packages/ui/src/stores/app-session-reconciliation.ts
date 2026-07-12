@@ -39,7 +39,6 @@ export interface RestoredSessionReferences {
   scrollSessionIds: readonly string[]
   idleMarkerSessionIds?: readonly string[]
   generationRecoverySessionIds?: readonly string[]
-  sessionStatusIds?: readonly string[]
   expandedSessionIds?: readonly string[]
 }
 
@@ -164,7 +163,6 @@ function getUnavailableRestoredSessionIds(
     ...references.scrollSessionIds,
     ...(references.idleMarkerSessionIds ?? []),
     ...(references.generationRecoverySessionIds ?? []),
-    ...(references.sessionStatusIds ?? []),
     ...(references.expandedSessionIds ?? []),
   ]
   return new Set(

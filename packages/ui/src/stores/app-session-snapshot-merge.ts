@@ -23,7 +23,6 @@ export interface RestorableWorkspaceRuntimeAuthority {
   scrollSnapshots?: ReadonlySet<string>
   idleMarkers?: ReadonlySet<string>
   generationRecovery?: ReadonlySet<string>
-  sessionStatuses?: ReadonlySet<string>
   sessionExpansion?: ReadonlySet<string>
   deletedSessions?: ReadonlySet<string>
   sessionSelection?: boolean
@@ -160,9 +159,6 @@ export function markRestoredTab(
     const generationRecovery = Object.fromEntries(
       Object.entries(source.generationRecovery).filter(([sessionId]) => unavailableSessionIds.has(sessionId)),
     )
-    const sessionStatuses = Object.fromEntries(
-      Object.entries(source.sessionStatuses).filter(([sessionId]) => unavailableSessionIds.has(sessionId)),
-    )
     const expandedSessionIds = source.expandedSessionIds.filter((sessionId) => unavailableSessionIds.has(sessionId))
     const tab: RestorableWorkspaceTabState = {
       kind: "workspace",
@@ -172,7 +168,6 @@ export function markRestoredTab(
       scrollSnapshots,
       unseenIdleSince,
       generationRecovery,
-      sessionStatuses,
       expandedSessionIds,
     }
     if (source.occurrence !== undefined) tab.occurrence = source.occurrence
@@ -251,7 +246,6 @@ function mergeWorkspaceState(
       preserved.generationRecovery,
       authority.generationRecovery,
     ),
-    sessionStatuses: mergeRecords(current.sessionStatuses, preserved.sessionStatuses, authority.sessionStatuses),
     expandedSessionIds: [
       ...new Set([
         ...current.expandedSessionIds,
