@@ -131,6 +131,7 @@
       "createStartMenuShortcut": true
     },
     "linux": {
+      "executableName": "CodeNomad",
       "target": [
         {
           "target": "tar.gz"
