@@ -27,6 +27,7 @@ function workspace(
     scrollSnapshots: {},
     unseenIdleSince: {},
     generationRecovery: {},
+    sessionStatuses: {},
     expandedSessionIds: [],
     ...state,
   }
@@ -401,6 +402,41 @@ describe("app session snapshot merge", () => {
     )
 
     assert.deepEqual(merged.tabs[0]?.kind === "workspace" ? merged.tabs[0].expandedSessionIds : undefined, ["missing"])
+  })
+
+  it("keeps current statuses authoritative for loaded sessions", () => {
+    const preservation = createRestorableSessionPreservation({
+      tabs: [workspace("/work", 0, { sessionStatuses: { session: "working" } })],
+      activeTabIndex: 0,
+    })
+    const merged = mergeRestorableSessionState(
+      { tabs: [workspace("/work", 0, { sessionStatuses: { session: "idle" } })], activeTabIndex: 0 },
+      preservation,
+      {
+        currentTabIds: ["instance:work"],
+        currentTabAuthorities: [{ sessionStatuses: new Set(["session"]) }],
+      },
+    )
+
+    assert.deepEqual(merged.tabs[0]?.kind === "workspace" ? merged.tabs[0].sessionStatuses : undefined, { session: "idle" })
+  })
+
+  it("preserves statuses for sessions unavailable during partial restore", () => {
+    let preservation = createRestorableSessionPreservation({
+      tabs: [workspace("/work", 0, { sessionStatuses: { missing: "idle", loaded: "working" } })],
+      activeTabIndex: 0,
+    })
+    preservation = markRestoredTab(preservation, 0, new Set(["missing"]), "instance:work")
+    const merged = mergeRestorableSessionState(
+      { tabs: [workspace("/work", 0)], activeTabIndex: 0 },
+      preservation,
+      {
+        currentTabIds: ["instance:work"],
+        currentTabAuthorities: [{ sessionStatuses: new Set(["loaded"]) }],
+      },
+    )
+
+    assert.deepEqual(merged.tabs[0]?.kind === "workspace" ? merged.tabs[0].sessionStatuses : undefined, { missing: "idle" })
   })
 
   it("does not resurrect cleared generation recovery for an authoritative runtime session", () => {

@@ -48,6 +48,7 @@ import {
   hydrateActiveSessionSelection,
   hydrateSessionExpansion,
   hydrateSessionIdleMarkers,
+  hydrateSessionPresentationStatuses,
   hydrateSessionGenerationRecovery,
 } from "../../stores/sessions"
 import { messageStoreBus, type MessageScrollSnapshotSeed } from "../../stores/message-v2/bus"
@@ -71,6 +72,7 @@ function getWorkspaceSessionReferences(snapshot: RestorableWorkspaceTabState) {
     scrollSessionIds: Object.keys(snapshot.scrollSnapshots),
     idleMarkerSessionIds: Object.keys(snapshot.unseenIdleSince),
     generationRecoverySessionIds: Object.keys(snapshot.generationRecovery),
+    sessionStatusIds: Object.keys(snapshot.sessionStatuses),
     expandedSessionIds: snapshot.expandedSessionIds,
   }
 }
@@ -86,6 +88,7 @@ function restoreWorkspaceState(instanceId: string, snapshot: RestorableWorkspace
 
   hydrateWorkspacePromptState(instanceId, snapshot, validSessionIds, NO_SESSION_DRAFT_SESSION_ID)
   hydrateSessionIdleMarkers(instanceId, snapshot.unseenIdleSince)
+  hydrateSessionPresentationStatuses(instanceId, snapshot.sessionStatuses)
   hydrateSessionGenerationRecovery(instanceId, snapshot.generationRecovery)
   hydrateSessionExpansion(instanceId, snapshot.expandedSessionIds)
 

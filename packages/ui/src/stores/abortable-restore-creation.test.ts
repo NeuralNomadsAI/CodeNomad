@@ -53,6 +53,7 @@ describe("abortable restore creation", () => {
         scrollSnapshots: {},
         unseenIdleSince: {},
         generationRecovery: {},
+        sessionStatuses: {},
         expandedSessionIds: [],
       }],
       activeTabIndex: 0,

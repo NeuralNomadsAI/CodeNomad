@@ -6,6 +6,7 @@ import {
   type RestorableAttachment,
 } from "./client-state-attachments-codec"
 import type { PersistedGenerationRecovery } from "./session-generation-recovery"
+import type { SessionStatus } from "../types/session"
 
 export interface RestorableWorkspaceTabState {
   kind: "workspace"
@@ -20,6 +21,7 @@ export interface RestorableWorkspaceTabState {
   scrollSnapshots: Record<string, ScrollSnapshot>
   unseenIdleSince: Record<string, number>
   generationRecovery: Record<string, PersistedGenerationRecovery>
+  sessionStatuses: Record<string, SessionStatus>
   expandedSessionIds: string[]
 }
 
@@ -49,6 +51,7 @@ const MAX_DRAFTS_PER_TAB = 24
 const MAX_SCROLL_SNAPSHOTS_PER_TAB = 96
 const MAX_IDLE_MARKERS_PER_TAB = 256
 const MAX_GENERATION_RECOVERY_PER_TAB = 256
+const MAX_SESSION_STATUSES_PER_TAB = 256
 const MAX_EXPANDED_SESSIONS_PER_TAB = 256
 const MAX_KEY_LENGTH = 256
 const MAX_PATH_LENGTH = 4096
@@ -214,6 +217,21 @@ function normalizeGenerationRecoveryRecord(
   return result
 }
 
+function normalizeSessionStatusRecord(value: unknown, budget: StringBudget): Record<string, SessionStatus> | null {
+  if (!isRecord(value)) return null
+  const result: Record<string, SessionStatus> = Object.create(null)
+  let count = 0
+  for (const [rawKey, rawValue] of Object.entries(value)) {
+    if (count >= MAX_SESSION_STATUSES_PER_TAB) break
+    if (!isSafeRecordKey(rawKey) || (rawValue !== "idle" && rawValue !== "working" && rawValue !== "compacting")) continue
+    const key = takeString(rawKey, MAX_KEY_LENGTH, budget)
+    if (key === undefined) continue
+    result[key] = rawValue
+    count += 1
+  }
+  return result
+}
+
 function normalizeExpandedSessionIds(value: unknown, budget: StringBudget): string[] | null {
   if (!Array.isArray(value)) return null
   const result: string[] = []
@@ -239,12 +257,14 @@ function normalizeWorkspaceTab(value: Record<string, unknown>, budget: StringBud
   const scrollSnapshots = normalizeScrollSnapshotRecord(value.scrollSnapshots ?? {}, budget)
   const unseenIdleSince = normalizeIdleMarkerRecord(value.unseenIdleSince ?? {}, budget)
   const generationRecovery = normalizeGenerationRecoveryRecord(value.generationRecovery ?? {}, budget)
+  const sessionStatuses = normalizeSessionStatusRecord(value.sessionStatuses ?? {}, budget)
   const expandedSessionIds = normalizeExpandedSessionIds(value.expandedSessionIds ?? [], budget)
   if (
     normalizedDrafts === null
     || scrollSnapshots === null
     || unseenIdleSince === null
     || generationRecovery === null
+    || sessionStatuses === null
     || expandedSessionIds === null
   ) return null
   const attachmentResult = normalizeRestorableAttachmentRecord(value.attachments ?? {}, normalizedDrafts, budget.attachments)
@@ -258,6 +278,7 @@ function normalizeWorkspaceTab(value: Record<string, unknown>, budget: StringBud
     scrollSnapshots,
     unseenIdleSince,
     generationRecovery,
+    sessionStatuses,
     expandedSessionIds,
   }
   if (Number.isInteger(value.occurrence) && Number(value.occurrence) >= 0 && Number(value.occurrence) < MAX_TABS) {

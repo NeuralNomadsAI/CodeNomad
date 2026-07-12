@@ -102,6 +102,10 @@ function captureGenerationRecovery(instanceId: string): Record<string, Persisted
   return result
 }
 
+function captureSessionStatuses(instanceId: string): RestorableWorkspaceTabState["sessionStatuses"] {
+  return Object.fromEntries(getSessions(instanceId).map((session) => [session.id, session.status ?? "idle"]))
+}
+
 function captureRestorableSessionState(
   authoritativeScrollSessionIdsByInstance: ReadonlyMap<string, ReadonlySet<string>>,
 ): {
@@ -134,6 +138,7 @@ function captureRestorableSessionState(
       scrollSnapshots: captureScrollSnapshots(tab.instance.id),
       unseenIdleSince: captureUnseenIdleMarkers(tab.instance.id),
       generationRecovery: captureGenerationRecovery(tab.instance.id),
+      sessionStatuses: captureSessionStatuses(tab.instance.id),
       expandedSessionIds: [...(expandedSessionParents().get(tab.instance.id) ?? [])],
     }
     if (tab.instance.projectName) result.projectName = tab.instance.projectName
@@ -158,6 +163,7 @@ function captureRestorableSessionState(
       scrollSnapshots: authoritativeScrollSessionIdsByInstance.get(tab.instance.id),
       idleMarkers: new Set(getSessions(tab.instance.id).map((session) => session.id)),
       generationRecovery: new Set(getSessions(tab.instance.id).map((session) => session.id)),
+      sessionStatuses: new Set(getSessions(tab.instance.id).map((session) => session.id)),
       sessionExpansion: new Set(getSessions(tab.instance.id).map((session) => session.id)),
       deletedSessions: getAuthoritativelyDeletedSessionIdsForInstance(tab.instance.id),
       sessionSelection: hasAuthoritativeSessionSelection(tab.instance.id),
