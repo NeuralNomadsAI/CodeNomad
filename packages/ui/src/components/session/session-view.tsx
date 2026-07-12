@@ -224,13 +224,10 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       if (pendingIdleSeenTimers.has(timerKey)) continue
       pendingIdleSeenTimers.add(timerKey)
       markSessionIdleFadeStarted(props.instanceId, entry.id)
+      markSessionIdleSeen(props.instanceId, entry.id)
 
       window.setTimeout(() => {
         pendingIdleSeenTimers.delete(timerKey)
-        const latestEntry = props.activeSessions.get(entry.id)
-        if (latestEntry?.status === "idle" && latestEntry.idleSince === entry.idleSince) {
-          markSessionIdleSeen(props.instanceId, entry.id)
-        }
         clearSessionIdleFade(props.instanceId, entry.id, entry.idleSince)
       }, IDLE_STATUS_VISIBILITY_MS)
     }
