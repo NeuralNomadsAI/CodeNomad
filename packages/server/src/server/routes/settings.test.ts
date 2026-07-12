@@ -3,6 +3,21 @@ import { describe, it } from "node:test"
 import { enforceSpeechCredentialPairing } from "./settings"
 
 describe("enforceSpeechCredentialPairing", () => {
+  it("clears shared apiKey when shared baseUrl changes without apiKey in patch", () => {
+    const result = enforceSpeechCredentialPairing({
+      speech: { baseUrl: "https://api.newendpoint.com/v1" },
+    }) as any
+    assert.equal(result.speech.apiKey, null, "shared apiKey must be cleared when only baseUrl is patched")
+    assert.equal(result.speech.baseUrl, "https://api.newendpoint.com/v1")
+  })
+
+  it("preserves shared apiKey when both baseUrl and apiKey are in patch", () => {
+    const result = enforceSpeechCredentialPairing({
+      speech: { baseUrl: "https://api.newendpoint.com/v1", apiKey: "sk-new-shared" },
+    }) as any
+    assert.equal(result.speech.apiKey, "sk-new-shared")
+  })
+
   it("clears stored key when baseUrl changes without apiKey in patch", () => {
     const result = enforceSpeechCredentialPairing({
       speech: { stt: { baseUrl: "https://api.groq.com/v1" } },

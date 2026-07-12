@@ -53,7 +53,7 @@ async function loadSpeechCapabilities(force = false): Promise<SpeechCapabilities
 function resetSpeechCapabilities(): void {
   setSpeechCapabilities(null)
   setSpeechCapabilitiesError(null)
-  setServerSupportsSeparateProviders(true)
+  setServerSupportsSeparateProviders(false)
 }
 
 export { speechCapabilities, speechCapabilitiesLoading, speechCapabilitiesError, serverSupportsSeparateProviders, loadSpeechCapabilities, resetSpeechCapabilities }

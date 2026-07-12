@@ -25,6 +25,9 @@ export function enforceSpeechCredentialPairing(body: unknown): unknown {
   const speech = patch.speech
   if (!speech || typeof speech !== "object") return patch
   const speechPatch = { ...(speech as Record<string, unknown>) }
+  if ("baseUrl" in speechPatch && !("apiKey" in speechPatch)) {
+    speechPatch.apiKey = null
+  }
   for (const dir of ["stt", "tts"] as const) {
     if (dir in speechPatch) {
       const dirPatch = { ...(speechPatch[dir] as Record<string, unknown>) }

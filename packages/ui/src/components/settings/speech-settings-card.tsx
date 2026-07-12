@@ -440,7 +440,7 @@ export const SpeechSettingsCard: Component = () => {
           />
         </Show>
 
-        <Show when={drafts().separateProviders}>
+        <Show when={drafts().separateProviders && serverSupportsSeparateProviders()}>
           <div class="settings-card-section-header">
             <h4 class="settings-card-section-title">{t("settings.speech.stt.section.title")}</h4>
           </div>
