@@ -13,6 +13,7 @@ export interface MarkdownRenderOptions {
   content: string
   size?: "default" | "large"
   disableHighlight?: boolean
+  wrap?: boolean
   /**
    * Optional suffix to avoid render-cache collisions when a tool call renders
    * multiple markdown regions (e.g. task prompt vs task output).
@@ -74,6 +75,7 @@ export interface ToolRendererContext {
     sessionId: string
     forceCollapsed?: boolean
   }) => JSXElement | null
+  outputWrapEnabled?: Accessor<boolean>
   scrollHelpers?: ToolScrollHelpers
   onContentRendered?: () => void
 }
@@ -88,12 +90,22 @@ export interface ToolRenderer {
   tools: string[]
   getTitle?(context: ToolRendererContext): string | undefined
   getAction?(context: ToolRendererContext): string | undefined
+  getOutputChrome?(context: ToolRendererContext): ToolOutputChrome | undefined
   /**
    * Text that is visible or directly revealable through this renderer. Keep this
    * in sync with custom renderBody output when adding specialized tool UIs.
    */
   getSearchText?(context: ToolSearchTextContext): string[]
   renderBody(context: ToolRendererContext): JSXElement | null
+}
+
+export interface ToolOutputChrome {
+  title?: string
+  language?: string
+  copyText?: string | null
+  actions?: JSXElement
+  wrapToggle?: boolean
+  suppressInnerHeader?: boolean
 }
 
 export type ToolRendererMap = Record<string, ToolRenderer>

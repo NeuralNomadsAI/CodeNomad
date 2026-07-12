@@ -89,9 +89,28 @@ export class WorkspaceManager {
     }
   }
 
+  readFileInDirectory(workspaceId: string, directory: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): WorkspaceFileResponse {
+    this.requireWorkspace(workspaceId)
+    const browser = new FileSystemBrowser({ rootDir: directory })
+    const encoding = options?.encoding ?? "utf-8"
+    const contents = encoding === "base64" ? browser.readFileBase64(relativePath) : browser.readFile(relativePath)
+    return {
+      workspaceId,
+      relativePath,
+      contents,
+      encoding,
+    }
+  }
+
   writeFile(workspaceId: string, relativePath: string, contents: string): void {
     const workspace = this.requireWorkspace(workspaceId)
     const browser = new FileSystemBrowser({ rootDir: workspace.path })
+    browser.writeFile(relativePath, contents)
+  }
+
+  writeFileInDirectory(workspaceId: string, directory: string, relativePath: string, contents: string): void {
+    this.requireWorkspace(workspaceId)
+    const browser = new FileSystemBrowser({ rootDir: directory })
     browser.writeFile(relativePath, contents)
   }
 
@@ -105,7 +124,7 @@ export class WorkspaceManager {
 
     this.options.logger.info({ workspaceId: id, folder: workspacePath, binary: resolvedBinaryPath }, "Creating workspace")
 
-    const proxyPath = `/workspaces/${id}/worktrees/root/instance`
+    const proxyPath = `/workspaces/${id}/instance`
 
 
     const descriptor: WorkspaceRecord = {
@@ -149,6 +168,7 @@ export class WorkspaceManager {
     const environment = {
       ...userEnvironment,
       OPENCODE_CONFIG_CONTENT: opencodeConfigContent,
+      OPENCODE_EXPERIMENTAL_WORKSPACES: "true",
       CODENOMAD_INSTANCE_ID: id,
       CODENOMAD_BASE_URL: serverBaseUrl,
       ...(this.options.nodeExtraCaCertsPath ? { NODE_EXTRA_CA_CERTS: this.options.nodeExtraCaCertsPath } : {}),

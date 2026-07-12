@@ -47,6 +47,7 @@ export const sessionMessages = {
 
   "sessionList.filter.placeholder": "搜索会话…",
   "sessionList.filter.ariaLabel": "搜索会话",
+  "sessionList.loading.more": "正在加载更多会话…",
   "sessionList.selection.selectAllLabel": "全选",
   "sessionList.selection.selectAllAriaLabel": "选择所有会话",
   "sessionList.selection.clearLabel": "清除",

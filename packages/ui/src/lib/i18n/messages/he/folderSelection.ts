@@ -12,8 +12,9 @@ export const folderSelectionMessages = {
   "folderSelection.empty.description": "עיין בתיקייה כדי להתחיל",
 
   "folderSelection.recent.title": "תיקיות אחרונות",
-  "folderSelection.recent.subtitle.one": "תיקייה אחת זמינה",
+  "folderSelection.recent.subtitle.one": "{count} תיקייה זמינה",
   "folderSelection.recent.subtitle.other": "{count} תיקיות זמינות",
+  "folderSelection.recent.rename": "שנה שם סביבת עבודה",
   "folderSelection.recent.remove": "הסר מהרשימה האחרונה",
   "folderSelection.recent.openBadge": "פתוח",
   "folderSelection.recent.alreadyOpenTitle": "הפרויקט כבר פתוח",
@@ -94,5 +95,14 @@ export const folderSelectionMessages = {
   "folderSelection.servers.certificateInstall.confirmLabel": "המשך",
   "folderSelection.servers.certificateInstall.cancelLabel": "ביטול",
   "folderSelection.servers.certificateInstall.cancelled": "CodeNomad צריך שהאישור המקומי יהיה מהימן לפני שיוכל לפתוח חלונות HTTPS מרוחקים עם אישור בחתימה עצמית.",
-  "folderSelection.sidecars.button": "Open SideCar",
+  "folderSelection.sidecars.button": "פתח SideCar",
+
+  "projectRenameDialog.title": "שנה שם סביבת עבודה",
+  "projectRenameDialog.description.withLabel": "עדכן את שם סביבת העבודה עבור \"{label}\".",
+  "projectRenameDialog.description.default": "הגדר שם סביבת עבודה לתיקייה זו.",
+  "projectRenameDialog.input.label": "שם סביבת עבודה",
+  "projectRenameDialog.input.placeholder": "הזן שם סביבת עבודה",
+  "projectRenameDialog.actions.cancel": "ביטול",
+  "projectRenameDialog.actions.rename": "שנה שם",
+  "projectRenameDialog.actions.renaming": "משנה שם...",
 } as const

@@ -1,5 +1,9 @@
 import { createContext, createMemo, createSignal, onMount, useContext } from "solid-js"
 import type { Accessor, ParentComponent } from "solid-js"
+import {
+  readUseTauriNativeEventTransportPreference,
+  writeUseTauriNativeEventTransportPreference,
+} from "../lib/desktop-event-transport-preference"
 import { storage, type OwnerBucket } from "../lib/storage"
 import type { RemoteServerProfile } from "../../../server/src/api-types"
 import {
@@ -27,12 +31,20 @@ export interface ModelPreference {
 
 export type DiffViewMode = "split" | "unified"
 export type ExpansionPreference = "expanded" | "collapsed"
+export type ToolCallExpansionPreset = "minimal" | "balanced" | "detailed" | "everything"
+export type ToolCallExpansionPresetSelection = ToolCallExpansionPreset | "custom"
 export type ToolInputsVisibilityPreference = "hidden" | "collapsed" | "expanded"
 export type ListeningMode = "local" | "all"
 export type ServerLogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR"
 export type SpeechProviderPreference = "openai-compatible"
 export type SpeechPlaybackMode = "streaming" | "buffered"
 export type SpeechTtsFormat = "mp3" | "wav" | "opus" | "aac"
+
+export interface ToolCallExpansionDefaults {
+  preset: ToolCallExpansionPresetSelection
+  thinking: ExpansionPreference
+  tools: Record<string, ExpansionPreference>
+}
 
 export interface SpeechSettings {
   provider: SpeechProviderPreference
@@ -61,6 +73,7 @@ export interface UiSettings {
   showPromptVoiceInput: boolean
   locale?: string
   diffViewMode: DiffViewMode
+  toolCallExpansionDefaults: ToolCallExpansionDefaults
   toolOutputExpansion: ExpansionPreference
   diagnosticsExpansion: ExpansionPreference
   toolInputsVisibility: ToolInputsVisibilityPreference
@@ -88,6 +101,7 @@ export interface OpenCodeBinary {
 export interface RecentFolder {
   path: string
   lastAccessed: number
+  projectName?: string
 }
 
 export type ThemePreference = "light" | "dark" | "system"
@@ -101,6 +115,7 @@ interface ServerConfigBucket {
   listeningMode?: ListeningMode
   logLevel?: ServerLogLevel
   environmentVariables?: Record<string, string>
+  secureEnvVars?: string[]
   opencodeBinary?: string
   speech?: Partial<SpeechSettings>
 }
@@ -131,16 +146,23 @@ const MAX_RECENT_FOLDERS = 20
 const MAX_RECENT_MODELS = 5
 const MAX_FAVORITE_MODELS = 50
 
+const defaultToolCallExpansionDefaults: ToolCallExpansionDefaults = {
+  preset: "balanced",
+  thinking: "collapsed",
+  tools: {},
+}
+
 const defaultUiSettings: UiSettings = {
   showThinkingBlocks: false,
   showKeyboardShortcutHints: true,
-  thinkingBlocksExpansion: "expanded",
+  thinkingBlocksExpansion: "collapsed",
   showMessageTimeline: true,
   showTimelineTools: true,
   holdLongAssistantReplies: true,
   promptSubmitOnEnter: false,
   showPromptVoiceInput: true,
   diffViewMode: "split",
+  toolCallExpansionDefaults: defaultToolCallExpansionDefaults,
   toolOutputExpansion: "expanded",
   diagnosticsExpansion: "expanded",
   toolInputsVisibility: "collapsed",
@@ -152,6 +174,45 @@ const defaultUiSettings: UiSettings = {
   osNotificationsAllowWhenVisible: false,
   notifyOnNeedsInput: true,
   notifyOnIdle: true,
+}
+
+function normalizeExpansionPreference(value: unknown, fallback: ExpansionPreference): ExpansionPreference {
+  return value === "expanded" || value === "collapsed" ? value : fallback
+}
+
+function normalizeToolCallExpansionPreset(value: unknown): ToolCallExpansionPresetSelection {
+  if (value === "minimal" || value === "balanced" || value === "detailed" || value === "everything" || value === "custom") {
+    return value
+  }
+  return defaultToolCallExpansionDefaults.preset
+}
+
+function normalizeToolCallExpansionTools(value: unknown): Record<string, ExpansionPreference> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
+  const next: Record<string, ExpansionPreference> = {}
+  for (const [tool, mode] of Object.entries(value as Record<string, unknown>)) {
+    if (!tool) continue
+    if (mode === "expanded" || mode === "collapsed") {
+      next[tool] = mode
+    }
+  }
+  return next
+}
+
+function normalizeToolCallExpansionDefaults(input: unknown, legacySettings: Partial<UiSettings>): ToolCallExpansionDefaults {
+  const source = input && typeof input === "object" && !Array.isArray(input)
+    ? (input as Partial<ToolCallExpansionDefaults>)
+    : undefined
+  const legacyThinking = normalizeExpansionPreference(
+    legacySettings.thinkingBlocksExpansion,
+    defaultToolCallExpansionDefaults.thinking,
+  )
+
+  return {
+    preset: normalizeToolCallExpansionPreset(source?.preset),
+    thinking: normalizeExpansionPreference(source?.thinking, legacyThinking),
+    tools: normalizeToolCallExpansionTools(source?.tools),
+  }
 }
 
 const defaultSpeechSettings: SpeechSettings = {
@@ -178,6 +239,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     showPromptVoiceInput: sanitized.showPromptVoiceInput ?? defaultUiSettings.showPromptVoiceInput,
     locale: sanitized.locale ?? defaultUiSettings.locale,
     diffViewMode: sanitized.diffViewMode ?? defaultUiSettings.diffViewMode,
+    toolCallExpansionDefaults: normalizeToolCallExpansionDefaults(sanitized.toolCallExpansionDefaults, sanitized),
     toolOutputExpansion: sanitized.toolOutputExpansion ?? defaultUiSettings.toolOutputExpansion,
     diagnosticsExpansion: sanitized.diagnosticsExpansion ?? defaultUiSettings.diagnosticsExpansion,
     toolInputsVisibility:
@@ -252,9 +314,14 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
       if (!f || typeof f !== "object") return null
       const p = (f as any).path
       const lastAccessed = (f as any).lastAccessed
+      const projectName = (f as any).projectName
       if (typeof p !== "string") return null
       const ts = typeof lastAccessed === "number" ? lastAccessed : Date.now()
-      return { path: p, lastAccessed: ts }
+      return {
+        path: p,
+        lastAccessed: ts,
+        ...(typeof projectName === "string" && projectName.trim() ? { projectName: projectName.trim() } : {}),
+      }
     }),
     opencodeBinaries: cloneArray<OpenCodeBinary>(source.opencodeBinaries, (b) => {
       if (!b || typeof b !== "object") return null
@@ -310,7 +377,7 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
 
 function normalizeServerConfig(
   input?: ServerConfigBucket | null,
-): Required<Pick<ServerConfigBucket, "listeningMode" | "logLevel" | "environmentVariables" | "opencodeBinary">> & { speech: SpeechSettings } {
+): Required<Pick<ServerConfigBucket, "listeningMode" | "logLevel" | "environmentVariables" | "opencodeBinary" | "secureEnvVars">> & { speech: SpeechSettings } {
   const source = input ?? {}
   const listeningMode = source.listeningMode === "all" ? "all" : "local"
   const logLevel =
@@ -319,8 +386,14 @@ function normalizeServerConfig(
       : "DEBUG"
   const opencodeBinary = typeof source.opencodeBinary === "string" && source.opencodeBinary.trim() ? source.opencodeBinary : "opencode"
   const environmentVariables = normalizeRecord(source.environmentVariables)
+  const secureEnvVars = normalizeSecureEnvVars(source.secureEnvVars)
   const speech = normalizeSpeechSettings(source.speech)
-  return { listeningMode, logLevel, opencodeBinary, environmentVariables, speech }
+  return { listeningMode, logLevel, opencodeBinary, environmentVariables, secureEnvVars, speech }
+}
+
+function normalizeSecureEnvVars(input?: unknown): string[] {
+  if (!Array.isArray(input)) return []
+  return input.filter((item): item is string => typeof item === "string" && item.length > 0)
 }
 
 function getModelKey(model: { providerId: string; modelId: string }): string {
@@ -328,8 +401,13 @@ function getModelKey(model: { providerId: string; modelId: string }): string {
 }
 
 function buildRecentFolderList(folderPath: string, source: RecentFolder[]): RecentFolder[] {
+  const existing = source.find((f) => f.path === folderPath)
   const folders = source.filter((f) => f.path !== folderPath)
-  folders.unshift({ path: folderPath, lastAccessed: Date.now() })
+  folders.unshift({
+    path: folderPath,
+    lastAccessed: Date.now(),
+    ...(existing?.projectName ? { projectName: existing.projectName } : {}),
+  })
   return folders.slice(0, MAX_RECENT_FOLDERS)
 }
 
@@ -388,6 +466,9 @@ const [uiConfigBucket, setUiConfigBucket] = createSignal<UiConfigBucket>({})
 const [serverConfigBucket, setServerConfigBucket] = createSignal<ServerConfigBucket>({})
 const [uiStateBucket, setUiStateBucket] = createSignal<UiStateBucket>({})
 const [isLoaded, setIsLoaded] = createSignal(false)
+const [useTauriNativeEventTransport, setUseTauriNativeEventTransportSignal] = createSignal(
+  readUseTauriNativeEventTransportPreference(),
+)
 
 const uiSettings = createMemo<UiSettings>(() => normalizeUiSettings(uiConfigBucket().settings))
 const themePreference = createMemo<ThemePreference>(() => uiConfigBucket().theme ?? "system")
@@ -436,6 +517,23 @@ async function patchConfigOwner(owner: string, patch: unknown) {
   if (owner === "server") setServerConfigBucket(updated as any)
 }
 
+function setUseTauriNativeEventTransport(enabled: boolean): void {
+  if (useTauriNativeEventTransport() === enabled) {
+    return
+  }
+
+  setUseTauriNativeEventTransportSignal(enabled)
+  writeUseTauriNativeEventTransportPreference(enabled)
+
+  void import("../lib/server-events")
+    .then(({ serverEvents }) => {
+      serverEvents.restart("desktop transport preference changed")
+    })
+    .catch((error) => {
+      log.error("Failed to restart backend events stream after desktop transport preference change", error)
+    })
+}
+
 async function patchStateOwner(owner: string, patch: unknown) {
   await ensureLoaded()
   const updated = await storage.patchStateOwner(owner, patch)
@@ -469,15 +567,52 @@ function updateEnvironmentVariables(envVars: Record<string, string>): void {
   )
 }
 
-function addEnvironmentVariable(key: string, value: string): void {
+function addEnvironmentVariable(key: string, value: string, secure: boolean = true): void {
   const current = serverSettings().environmentVariables
   updateEnvironmentVariables({ ...current, [key]: value })
+
+  const secureList = serverSettings().secureEnvVars
+  const upperKey = key.toUpperCase()
+  const exists = secureList.some((name) => name.toUpperCase() === upperKey)
+
+  if (secure) {
+    if (!exists) {
+      const next = [...secureList, key]
+      void patchConfigOwner("server", { secureEnvVars: next }).catch((error) =>
+        log.error("Failed to add secure env var", error),
+      )
+    }
+  } else {
+    if (exists) {
+      const next = secureList.filter((name) => name.toUpperCase() !== upperKey)
+      void patchConfigOwner("server", { secureEnvVars: next }).catch((error) =>
+        log.error("Failed to remove secure env var", error),
+      )
+    }
+  }
 }
 
 function removeEnvironmentVariable(key: string): void {
   const current = serverSettings().environmentVariables
   const { [key]: removed, ...rest } = current
   updateEnvironmentVariables(rest)
+}
+
+function isSecureEnvVar(key: string): boolean {
+  const secureList = serverSettings().secureEnvVars
+  return secureList.some((name) => name.toUpperCase() === key.toUpperCase())
+}
+
+function toggleSecureEnvVar(key: string): void {
+  const secureList = serverSettings().secureEnvVars
+  const upperKey = key.toUpperCase()
+  const exists = secureList.some((name) => name.toUpperCase() === upperKey)
+  const next = exists
+    ? secureList.filter((name) => name.toUpperCase() !== upperKey)
+    : [...secureList, key]
+  void patchConfigOwner("server", { secureEnvVars: next }).catch((error) =>
+    log.error("Failed to update secure env vars", error),
+  )
 }
 
 function updateLastUsedBinary(path: string): void {
@@ -539,6 +674,18 @@ function addRecentFolder(folderPath: string): void {
 function removeRecentFolder(folderPath: string): void {
   const next = recentFolders().filter((f) => f.path !== folderPath)
   void patchStateOwner("ui", { recentFolders: next }).catch((error) => log.error("Failed to remove recent folder", error))
+}
+
+async function renameRecentFolderProject(folderPath: string, projectName: string): Promise<void> {
+  const name = projectName.trim()
+  if (!folderPath || !name) return
+  const next = recentFolders().map((folder) => (folder.path === folderPath ? { ...folder, projectName: name } : folder))
+  try {
+    await patchStateOwner("ui", { recentFolders: next })
+  } catch (error) {
+    log.error("Failed to rename recent folder", error)
+    throw error
+  }
 }
 
 async function saveRemoteServerProfile(input: RemoteServerProfileInput): Promise<RemoteServerProfile> {
@@ -633,8 +780,19 @@ function setDiffViewMode(mode: DiffViewMode): void {
 }
 
 function setToolOutputExpansion(mode: ExpansionPreference): void {
-  if (preferences().toolOutputExpansion === mode) return
-  updateUiSettings({ toolOutputExpansion: mode })
+  const current = preferences()
+  if (current.toolOutputExpansion === mode && current.toolCallExpansionDefaults.tools.other === mode) return
+  updateUiSettings({
+    toolOutputExpansion: mode,
+    toolCallExpansionDefaults: {
+      ...current.toolCallExpansionDefaults,
+      preset: "custom",
+      tools: {
+        ...current.toolCallExpansionDefaults.tools,
+        other: mode,
+      },
+    },
+  })
 }
 
 function setDiagnosticsExpansion(mode: ExpansionPreference): void {
@@ -648,8 +806,16 @@ function setToolInputsVisibility(mode: ToolInputsVisibilityPreference): void {
 }
 
 function setThinkingBlocksExpansion(mode: ExpansionPreference): void {
-  if (preferences().thinkingBlocksExpansion === mode) return
-  updateUiSettings({ thinkingBlocksExpansion: mode })
+  const current = preferences()
+  if (current.thinkingBlocksExpansion === mode && current.toolCallExpansionDefaults.thinking === mode) return
+  updateUiSettings({
+    thinkingBlocksExpansion: mode,
+    toolCallExpansionDefaults: {
+      ...current.toolCallExpansionDefaults,
+      preset: "custom",
+      thinking: mode,
+    },
+  })
 }
 
 function toggleShowThinkingBlocks(): void {
@@ -714,6 +880,8 @@ void ensureLoaded().catch((error: unknown) => {
 interface ConfigContextValue {
   isLoaded: Accessor<boolean>
   preferences: typeof preferences
+  useTauriNativeEventTransport: typeof useTauriNativeEventTransport
+  setUseTauriNativeEventTransport: typeof setUseTauriNativeEventTransport
   updatePreferences: typeof updatePreferences
   themePreference: typeof themePreference
   setThemePreference: typeof setThemePreference
@@ -724,6 +892,8 @@ interface ConfigContextValue {
   updateEnvironmentVariables: typeof updateEnvironmentVariables
   addEnvironmentVariable: typeof addEnvironmentVariable
   removeEnvironmentVariable: typeof removeEnvironmentVariable
+  isSecureEnvVar: typeof isSecureEnvVar
+  toggleSecureEnvVar: typeof toggleSecureEnvVar
     updateLastUsedBinary: typeof updateLastUsedBinary
     updateLogLevel: typeof updateLogLevel
     updateSpeechSettings: typeof updateSpeechSettings
@@ -735,6 +905,7 @@ interface ConfigContextValue {
   uiState: typeof uiState
   addRecentFolder: typeof addRecentFolder
   removeRecentFolder: typeof removeRecentFolder
+  renameRecentFolderProject: typeof renameRecentFolderProject
   addOpenCodeBinary: typeof addOpenCodeBinary
   removeOpenCodeBinary: typeof removeOpenCodeBinary
   saveRemoteServerProfile: typeof saveRemoteServerProfile
@@ -772,6 +943,8 @@ const ConfigContext = createContext<ConfigContextValue>()
 const configContextValue: ConfigContextValue = {
   isLoaded,
   preferences,
+  useTauriNativeEventTransport,
+  setUseTauriNativeEventTransport,
   updatePreferences,
   themePreference,
   setThemePreference,
@@ -780,6 +953,8 @@ const configContextValue: ConfigContextValue = {
   updateEnvironmentVariables,
   addEnvironmentVariable,
   removeEnvironmentVariable,
+  isSecureEnvVar,
+  toggleSecureEnvVar,
   updateLastUsedBinary,
   updateLogLevel,
   updateSpeechSettings,
@@ -789,6 +964,7 @@ const configContextValue: ConfigContextValue = {
   uiState,
   addRecentFolder,
   removeRecentFolder,
+  renameRecentFolderProject,
   addOpenCodeBinary,
   removeOpenCodeBinary,
   saveRemoteServerProfile,
@@ -858,6 +1034,8 @@ export function useConfig(): ConfigContextValue {
 
 export {
   preferences,
+  useTauriNativeEventTransport,
+  setUseTauriNativeEventTransport,
   uiState,
   serverSettings,
   recentFolders,
@@ -869,11 +1047,14 @@ export {
   updateEnvironmentVariables,
   addEnvironmentVariable,
   removeEnvironmentVariable,
+  isSecureEnvVar,
+  toggleSecureEnvVar,
   updateLastUsedBinary,
   updateLogLevel,
   updateSpeechSettings,
   addRecentFolder,
   removeRecentFolder,
+  renameRecentFolderProject,
   addOpenCodeBinary,
   removeOpenCodeBinary,
   recordWorkspaceLaunch,

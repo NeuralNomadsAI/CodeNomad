@@ -8,7 +8,6 @@ import type {
 } from "../types/message"
 import type {
   EventSessionCompacted,
-  EventSessionDiff,
   EventSessionError,
   EventSessionIdle,
   EventSessionUpdated,
@@ -19,15 +18,27 @@ import type { MessageStatus } from "./message-v2/types"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
 import {
+  enqueueDelta,
+  clearPendingDeltasForPart,
+  flushPendingDeltasForMessage,
+  setFlushCallback,
+} from "./delta-buffer"
+import {
   getPermissionId,
   getPermissionKind,
   getPermissionSessionId,
   getRequestIdFromPermissionReply,
 } from "../types/permission"
-import type { PermissionReplyEventPropertiesLike, PermissionRequestLike } from "../types/permission"
+import type { LegacyPermissionAskedEvent, LegacyPermissionRepliedEvent, PermissionRequest } from "../types/permission"
 import { getQuestionId, getQuestionSessionId, getRequestIdFromQuestionReply } from "../types/question"
-import type { QuestionRequest } from "../types/question"
-import type { EventQuestionReplied, EventQuestionRejected } from "@opencode-ai/sdk/v2"
+import type { LegacyQuestionAnsweredEvent, LegacyQuestionAskedEvent, QuestionRequest } from "../types/question"
+import type {
+  EventPermissionV2Asked,
+  EventPermissionV2Replied,
+  EventQuestionV2Asked,
+  EventQuestionV2Rejected,
+  EventQuestionV2Replied,
+} from "@opencode-ai/sdk/v2"
 import { showToastNotification, type ToastHandle, ToastVariant } from "../lib/notifications"
 import { sendOsNotification } from "../lib/os-notifications"
 import { preferences } from "./preferences"
@@ -50,13 +61,15 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { ensureSessionParentExpanded, sessions, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
+import { ensureSessionParentExpanded, prependSessionListId, sessions, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { tGlobal } from "../lib/i18n"
 
 import { loadMessages } from "./session-api"
-import { getOrCreateWorktreeClient, getRootClient, getWorktreeSlugForDirectory, getWorktreeSlugForSession } from "./worktrees"
+import { getRootClient } from "./opencode-client"
+import { getWorktreeSlugForDirectory, getWorktreeSlugForSession } from "./worktrees"
+import { getOpenCodeWorkspaceIdForWorktree } from "./opencode-workspaces"
 import {
   applyPartUpdateV2,
   applyPartDeltaV2,
@@ -185,12 +198,12 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
 
   const slugFromDirectory = getWorktreeSlugForDirectory(instanceId, directory)
   const slug = slugFromDirectory ?? getWorktreeSlugForSession(instanceId, sessionId)
-  const client = getOrCreateWorktreeClient(instanceId, slug)
-  const rootClient = getRootClient(instanceId)
+  const client = getRootClient(instanceId)
+  const workspace = await getOpenCodeWorkspaceIdForWorktree(instanceId, slug)
 
   try {
     const info = await requestData<any>(
-      client.session.get({ sessionID: sessionId }),
+      client.session.get({ sessionID: sessionId, ...(workspace ? { workspace } : {}) }),
       "session.get",
     )
 
@@ -199,7 +212,7 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
     try {
       let statuses: Record<string, any> = {}
       try {
-        statuses = await requestData<Record<string, any>>(rootClient.session.status(), "session.status")
+        statuses = await requestData<Record<string, any>>(client.session.status(), "session.status")
       } catch {
         statuses = await requestData<Record<string, any>>(client.session.status(), "session.status")
       }
@@ -370,6 +383,12 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
       upsertMessageInfoV2(instanceId, messageInfo, { status: "streaming" })
     }
   
+    // Clear any pending deltas for this part before applying the full part update.
+    // The part update contains the complete state from the server, so accumulated
+    // deltas would be stale and cause duplication if flushed later.
+    if (part.id) {
+      clearPendingDeltasForPart(instanceId, messageId, part.id)
+    }
     applyPartUpdateV2(instanceId, { ...part, sessionID: sessionId, messageID: messageId })
     handleConversationAssistantPartUpdated(instanceId, { ...part, sessionID: sessionId, messageID: messageId }, messageInfo)
 
@@ -387,6 +406,14 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     const sessionId = typeof info.sessionID === "string" ? info.sessionID : undefined
     const messageId = typeof info.id === "string" ? info.id : undefined
     if (!sessionId || !messageId) return
+
+    // Flush any pending deltas for this message before applying the update.
+    // Deltas are buffered for up to 50ms; if message.updated arrives before
+    // the buffer flushes, the message could be marked complete/error with
+    // stale text mutations still pending. Flushing first preserves the
+    // server's event ordering: all delta content is applied, then the
+    // message status/metadata update runs on the complete content.
+    flushPendingDeltasForMessage(instanceId, messageId, applyPartDeltaV2)
 
     const timeInfo = (info.time ?? {}) as { created?: number; updated?: number; end?: number }
     const nextUpdated =
@@ -439,12 +466,19 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
   }
 }
 
+// Delta buffer callback setup
+setFlushCallback((batch) => {
+  for (const { instanceId, messageId, partId, field, delta } of batch) {
+    applyPartDeltaV2(instanceId, { messageId, partId, field, delta })
+  }
+})
+
 function handleMessagePartDelta(instanceId: string, event: MessagePartDeltaEvent): void {
   const props = event.properties
   if (!props) return
   const { messageID, partID, field, delta } = props
   if (!messageID || !partID || !field || typeof delta !== "string") return
-  applyPartDeltaV2(instanceId, { messageId: messageID, partId: partID, field, delta })
+  enqueueDelta(instanceId, messageID, partID, field, delta)
 }
 
 function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): void {
@@ -471,12 +505,21 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
       retry: null,
       idleSince: null,
       version: info.version || "0",
+      metadata: (info as any).metadata,
       time: info.time
         ? { ...info.time }
         : {
             created: Date.now(),
             updated: Date.now(),
           },
+      revert: info.revert
+        ? {
+            messageID: info.revert.messageID,
+            partID: info.revert.partID,
+            snapshot: info.revert.snapshot,
+            diff: info.revert.diff,
+          }
+        : undefined,
     } as Session
 
     let updatedInstanceSessions: Map<string, Session> | undefined
@@ -492,6 +535,9 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
 
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
     setSessionRevertV2(instanceId, info.id, info.revert ?? null)
+    if (!newSession.parentId) {
+      prependSessionListId(instanceId, newSession.id)
+    }
 
     log.info(`[SSE] New session created: ${info.id}`, newSession)
   } else {
@@ -502,8 +548,10 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
     const updatedSession = {
       ...existingSession,
       title: info.title || existingSession.title,
+      parentId: info.parentID ?? existingSession.parentId,
       status: existingSession.status ?? "idle",
       retry: existingSession.retry ?? null,
+      metadata: (info as any).metadata ?? existingSession.metadata,
       time: mergedTime,
       revert: info.revert
         ? {
@@ -529,31 +577,6 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
     setSessionRevertV2(instanceId, info.id, info.revert ?? null)
   }
-}
-
-function handleSessionDiff(instanceId: string, event: EventSessionDiff): void {
-  const sessionId = event.properties?.sessionID
-  if (!sessionId) return
-
-  const diffs = event.properties?.diff
-  if (!Array.isArray(diffs)) return
-
-  const existing = sessions().get(instanceId)?.get(sessionId)
-  if (existing) {
-    withSession(instanceId, sessionId, (session) => {
-      session.diff = diffs
-    })
-    return
-  }
-
-  // A diff event can arrive before we have hydrated the session list.
-  // Best-effort: fetch the session record so the diff has somewhere to live.
-  void (async () => {
-    await fetchSessionInfo(instanceId, sessionId, (event as any)?.directory)
-    withSession(instanceId, sessionId, (session) => {
-      session.diff = diffs
-    })
-  })().catch((error) => log.warn("Failed to hydrate session for diff event", { instanceId, sessionId, error }))
 }
 
 function handleSessionIdle(instanceId: string, event: EventSessionIdle): void {
@@ -690,9 +713,10 @@ function handleTuiToast(_instanceId: string, event: TuiToastEvent): void {
   })
 }
 
-function handlePermissionUpdated(instanceId: string, event: { type: string; properties?: PermissionRequestLike } | any): void {
-  const permission = event?.properties as PermissionRequestLike | undefined
+function handlePermissionUpdated(instanceId: string, event: EventPermissionV2Asked | LegacyPermissionAskedEvent): void {
+  const permission = event?.properties as PermissionRequest | undefined
   if (!permission) return
+  const source = event.type === "permission.v2.asked" ? "v2" : "legacy"
   const permissionId = getPermissionId(permission)
   if (permissionId && hasRepliedPermission(instanceId, permissionId)) {
     log.info(`[SSE] Ignoring stale permission request after local reply: ${permissionId}`)
@@ -700,7 +724,7 @@ function handlePermissionUpdated(instanceId: string, event: { type: string; prop
   }
 
   log.info(`[SSE] Permission request: ${permissionId} (${getPermissionKind(permission)})`)
-  const queuedPermission = addPermissionToQueue(instanceId, permission) ?? permission
+  const queuedPermission = addPermissionToQueue(instanceId, permission, source) ?? permission
   upsertPermissionV2(instanceId, queuedPermission)
 
   const sessionId = getPermissionSessionId(permission)
@@ -713,8 +737,8 @@ function handlePermissionUpdated(instanceId: string, event: { type: string; prop
   }
 }
 
-function handlePermissionReplied(instanceId: string, event: { type: string; properties?: PermissionReplyEventPropertiesLike } | any): void {
-  const properties = event?.properties as PermissionReplyEventPropertiesLike | undefined
+function handlePermissionReplied(instanceId: string, event: EventPermissionV2Replied | LegacyPermissionRepliedEvent): void {
+  const properties = event?.properties
   const requestId = getRequestIdFromPermissionReply(properties)
   if (!requestId) return
 
@@ -724,12 +748,13 @@ function handlePermissionReplied(instanceId: string, event: { type: string; prop
   removePermissionV2(instanceId, requestId)
 }
 
-function handleQuestionAsked(instanceId: string, event: { type: string; properties?: QuestionRequest } | any): void {
+function handleQuestionAsked(instanceId: string, event: EventQuestionV2Asked | LegacyQuestionAskedEvent): void {
   const request = event?.properties as QuestionRequest | undefined
   if (!request) return
+  const source = event.type === "question.asked" ? "legacy" : "v2"
 
   log.info(`[SSE] Question asked: ${getQuestionId(request)}`)
-  addQuestionToQueue(instanceId, request)
+  addQuestionToQueue(instanceId, request, source)
   upsertQuestionV2(instanceId, request)
 
   const sessionId = getQuestionSessionId(request)
@@ -744,9 +769,9 @@ function handleQuestionAsked(instanceId: string, event: { type: string; properti
 
 function handleQuestionAnswered(
   instanceId: string,
-  event: { type: string; properties?: EventQuestionReplied["properties"] | EventQuestionRejected["properties"] } | any,
+  event: EventQuestionV2Replied | EventQuestionV2Rejected | LegacyQuestionAnsweredEvent,
 ): void {
-  const properties = event?.properties as EventQuestionReplied["properties"] | EventQuestionRejected["properties"] | undefined
+  const properties = event?.properties
   const requestId = getRequestIdFromQuestionReply(properties)
   if (!requestId) return
 
@@ -765,7 +790,6 @@ export {
   handleQuestionAsked,
   handleQuestionAnswered,
   handleSessionCompacted,
-  handleSessionDiff,
   handleSessionError,
   handleSessionIdle,
   handleSessionStatus,

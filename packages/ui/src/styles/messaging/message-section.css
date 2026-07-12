@@ -215,6 +215,35 @@
   align-items: flex-end;
 }
 
+.message-scroll-controls {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  width: 2.75rem;
+  min-height: 2.75rem;
+}
+
+.message-scroll-controls-expanded {
+  position: absolute;
+  inset-inline-end: 0;
+  bottom: 0;
+  display: none;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+
+.message-scroll-controls:not([data-hover-suppressed="true"]):hover .message-scroll-controls-trigger,
+.message-scroll-controls[data-open="true"] .message-scroll-controls-trigger {
+  display: none;
+}
+
+.message-scroll-controls:not([data-hover-suppressed="true"]):hover .message-scroll-controls-expanded,
+.message-scroll-controls[data-open="true"] .message-scroll-controls-expanded {
+  display: flex;
+}
+
 .message-scroll-button {
   @apply inline-flex items-center justify-center;
   width: 2.75rem;

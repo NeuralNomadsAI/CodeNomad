@@ -28,6 +28,7 @@ async function ensureGitExclude(repoRoot: string, logger?: LogLike): Promise<voi
   }
 
   const entries = [
+    ".codenomad/background_processes/",
     ".codenomad/worktrees/",
     ".codenomad/worktreeMap.json",
   ]
@@ -108,6 +109,11 @@ export async function writeWorktreeMap(workspaceFolder: string, next: WorktreeMa
     await ensureGitExclude(repoRoot, logger).catch(() => undefined)
   }
 
+  if (Object.keys(next.parentSessionWorktreeSlug ?? {}).length === 0) {
+    await deleteWorktreeMap(workspaceFolder, logger)
+    return
+  }
+
   const payload: WorktreeMap = {
     version: 1,
     defaultWorktreeSlug: next.defaultWorktreeSlug || "root",
@@ -118,6 +124,17 @@ export async function writeWorktreeMap(workspaceFolder: string, next: WorktreeMa
   const tmpPath = `${filePath}.${process.pid}.tmp`
   await fsp.writeFile(tmpPath, JSON.stringify(payload, null, 2), "utf-8")
   await fsp.rename(tmpPath, filePath)
+}
+
+export async function deleteWorktreeMap(workspaceFolder: string, logger?: LogLike): Promise<void> {
+  const { repoRoot } = await resolveRepoRoot(workspaceFolder, logger)
+  const filePath = getMapPath(repoRoot)
+  try {
+    await fsp.rm(filePath, { force: true })
+  } catch (error) {
+    logger?.warn?.({ err: error, filePath }, "Failed to delete worktree map")
+    throw error
+  }
 }
 
 export function worktreeMapExists(repoRoot: string): boolean {

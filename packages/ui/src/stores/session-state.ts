@@ -4,13 +4,15 @@ import { getIdleSinceForStatusTransition, type Session, type SessionStatus, type
 import { deleteSession, loadMessages } from "./session-api"
 import { showToastNotification } from "../lib/notifications"
 import { messageStoreBus } from "./message-v2/bus"
-import { instances } from "./instances"
+import { instances, ensureYoloStateSynced } from "./instances"
 import { showConfirmDialog } from "./alerts"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
-import { getOrCreateWorktreeClient, getWorktreeSlugForSession } from "./worktrees"
+import { getRootClient } from "./opencode-client"
+import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 import { tGlobal } from "../lib/i18n"
 import { computeThreadTotals, type ThreadTotals } from "../lib/thread-totals"
+import { applySessionPage, getDefaultSessionPaginationState, type SessionPaginationState } from "./session-pagination-model"
 
 const log = getLogger("session")
 
@@ -47,6 +49,7 @@ const [loading, setLoading] = createSignal({
 })
 
 const [messagesLoaded, setMessagesLoaded] = createSignal<Map<string, Set<string>>>(new Map())
+const [messageLoadErrors, setMessageLoadErrors] = createSignal<Map<string, Map<string, string>>>(new Map())
 const [sessionInfoByInstance, setSessionInfoByInstance] = createSignal<Map<string, Map<string, SessionInfo>>>(new Map())
 const [threadTotalsByInstance, setThreadTotalsByInstance] = createSignal<Map<string, Map<string, ThreadTotals>>>(new Map())
 
@@ -61,6 +64,118 @@ type InstanceIndicatorCounts = {
 }
 
 const [instanceIndicatorCounts, setInstanceIndicatorCounts] = createSignal<Map<string, InstanceIndicatorCounts>>(new Map())
+
+const SESSION_PAGE_SIZE = 200
+
+type SessionSearchState = {
+  query: string
+  ids: string[]
+  loading: boolean
+  requestId: number
+}
+
+const [sessionPagination, setSessionPagination] = createSignal<Map<string, SessionPaginationState>>(new Map())
+const [sessionSearch, setSessionSearch] = createSignal<Map<string, SessionSearchState>>(new Map())
+
+function getSessionPaginationState(instanceId: string): SessionPaginationState {
+  return sessionPagination().get(instanceId) ?? getDefaultSessionPaginationState()
+}
+
+function getSessionListIds(instanceId: string): string[] {
+  return getSessionPaginationState(instanceId).ids
+}
+
+function getSessionNextCursor(instanceId: string): string | undefined {
+  return getSessionPaginationState(instanceId).nextCursor
+}
+
+function setSessionPage(instanceId: string, ids: string[], hasMore: boolean, reset = false, nextCursor?: string): void {
+  setSessionPagination((prev) => {
+    const next = new Map(prev)
+    next.set(instanceId, applySessionPage(prev.get(instanceId), ids, hasMore, reset, nextCursor))
+    return next
+  })
+}
+
+function getSessionHasMore(instanceId: string): boolean {
+  return getSessionPaginationState(instanceId).hasMore
+}
+
+function resetSessionPagination(instanceId: string): void {
+  setSessionPagination((prev) => {
+    const next = new Map(prev)
+    next.set(instanceId, getDefaultSessionPaginationState())
+    return next
+  })
+}
+
+function prependSessionListId(instanceId: string, sessionId: string): void {
+  setSessionPagination((prev) => {
+    const next = new Map(prev)
+    const current = prev.get(instanceId) ?? { ids: [], hasMore: true }
+    const ids = [sessionId, ...current.ids.filter((id) => id !== sessionId)]
+    next.set(instanceId, { ...current, ids })
+    return next
+  })
+}
+
+function removeSessionListId(instanceId: string, sessionId: string): void {
+  setSessionPagination((prev) => {
+    const next = new Map(prev)
+    const current = prev.get(instanceId) ?? { ids: [], hasMore: true }
+    const ids = current.ids.filter((id) => id !== sessionId)
+    next.set(instanceId, { ...current, ids })
+    return next
+  })
+}
+
+function beginSessionSearch(instanceId: string, query: string): number {
+  const current = sessionSearch().get(instanceId)
+  const requestId = (current?.requestId ?? 0) + 1
+  setSessionSearch((prev) => {
+    const next = new Map(prev)
+    next.set(instanceId, { query, ids: current?.ids ?? [], loading: true, requestId })
+    return next
+  })
+  return requestId
+}
+
+function isLatestSessionSearch(instanceId: string, query: string, requestId: number): boolean {
+  const current = sessionSearch().get(instanceId)
+  return Boolean(current && current.query === query && current.requestId === requestId)
+}
+
+function setSessionSearchResults(instanceId: string, query: string, ids: string[], requestId: number): boolean {
+  if (!isLatestSessionSearch(instanceId, query, requestId)) return false
+  setSessionSearch((prev) => {
+    const next = new Map(prev)
+    next.set(instanceId, { query, ids, loading: false, requestId })
+    return next
+  })
+  return true
+}
+
+function clearSessionSearch(instanceId: string): void {
+  setSessionSearch((prev) => {
+    const current = prev.get(instanceId)
+    const requestId = (current?.requestId ?? 0) + 1
+    const next = new Map(prev)
+    next.set(instanceId, { query: "", ids: [], loading: false, requestId })
+    return next
+  })
+}
+
+function getSessionSearchResultIds(instanceId: string): string[] {
+  return sessionSearch().get(instanceId)?.ids ?? []
+}
+
+function getSessionSearchQuery(instanceId: string): string {
+  return sessionSearch().get(instanceId)?.query ?? ""
+}
+
+function isSessionSearchLoading(instanceId: string): boolean {
+  return sessionSearch().get(instanceId)?.loading ?? false
+}
 
 function getIndicatorBucket(session: Pick<Session, "status" | "pendingPermission" | "pendingQuestion">): InstanceSessionIndicatorStatus | "idle" {
   if (session.pendingPermission || session.pendingQuestion) {
@@ -368,6 +483,9 @@ function setActiveSession(instanceId: string, sessionId: string): void {
     next.set(instanceId, sessionId)
     return next
   })
+  // Backfill authoritative Yolo state for the now-active session so the badge
+  // matches the server even on first connect / multi-client scenarios.
+  ensureYoloStateSynced(instanceId, sessionId)
 }
 
 function setActiveParentSession(instanceId: string, parentSessionId: string): void {
@@ -449,12 +567,64 @@ function getChildSessions(instanceId: string, parentId: string): Session[] {
   return allSessions.filter((s) => s.parentId === parentId)
 }
 
+function getDescendantSessions(instanceId: string, parentId: string): Session[] {
+  const allSessions = getSessions(instanceId)
+  const childrenByParent = new Map<string, Session[]>()
+
+  for (const session of allSessions) {
+    if (!session.parentId) continue
+    const children = childrenByParent.get(session.parentId)
+    if (children) {
+      children.push(session)
+    } else {
+      childrenByParent.set(session.parentId, [session])
+    }
+  }
+
+  const descendants: Session[] = []
+  const stack = [...(childrenByParent.get(parentId) ?? [])]
+  const seen = new Set<string>()
+
+  while (stack.length > 0) {
+    const session = stack.shift()
+    if (!session || seen.has(session.id)) continue
+    seen.add(session.id)
+    descendants.push(session)
+    stack.push(...(childrenByParent.get(session.id) ?? []))
+  }
+
+  descendants.sort((a, b) => (b.time.updated ?? 0) - (a.time.updated ?? 0))
+  return descendants
+}
+
 function getSessionFamily(instanceId: string, parentId: string): Session[] {
   const parent = sessions().get(instanceId)?.get(parentId)
   if (!parent) return []
 
-  const children = getChildSessions(instanceId, parentId)
+  const children = getDescendantSessions(instanceId, parentId)
   return [parent, ...children]
+}
+
+function getSessionRoot(instanceId: string, sessionId: string): Session | null {
+  const instanceSessions = sessions().get(instanceId)
+  if (!instanceSessions) return null
+  return getSessionRootFromMap(instanceSessions, sessionId)
+}
+
+function getSessionRootFromMap(instanceSessions: Map<string, Session>, sessionId: string): Session | null {
+  let current = instanceSessions.get(sessionId)
+  if (!current) return null
+
+  const seen = new Set<string>()
+  while (current.parentId) {
+    if (seen.has(current.id)) return null
+    seen.add(current.id)
+    const parent = instanceSessions.get(current.parentId)
+    if (!parent) return null
+    current = parent
+  }
+
+  return current
 }
 
 type SessionThreadCacheEntry = {
@@ -477,9 +647,9 @@ function getOrCreateSessionThreadCache(instanceId: string): SessionThreadCache {
   return cache
 }
 
-function getSessionThreads(instanceId: string): SessionThread[] {
+function buildSessionThreads(instanceId: string, rootIds: string[], childIds?: Set<string>): SessionThread[] {
   const instanceSessions = sessions().get(instanceId)
-  if (!instanceSessions || instanceSessions.size === 0) {
+  if (!instanceSessions || instanceSessions.size === 0 || rootIds.length === 0) {
     sessionThreadCache.delete(instanceId)
     return []
   }
@@ -487,31 +657,30 @@ function getSessionThreads(instanceId: string): SessionThread[] {
   const cache = getOrCreateSessionThreadCache(instanceId)
   const seenParents = new Set<string>()
 
-  const parents: Session[] = []
-  const childrenByParent = new Map<string, Session[]>()
+  const childrenByRoot = new Map<string, Session[]>()
 
   for (const session of instanceSessions.values()) {
-    if (session.parentId === null) {
-      parents.push(session)
-      continue
-    }
-
-    const parentId = session.parentId
-    if (!parentId) continue
-    const children = childrenByParent.get(parentId)
+    if (!session.parentId) continue
+    if (childIds && !childIds.has(session.id)) continue
+    const root = getSessionRootFromMap(instanceSessions, session.id)
+    if (!root) continue
+    const children = childrenByRoot.get(root.id)
     if (children) {
       children.push(session)
     } else {
-      childrenByParent.set(parentId, [session])
+      childrenByRoot.set(root.id, [session])
     }
   }
 
   const threads: SessionThread[] = []
 
-  for (const parent of parents) {
+  for (const parentId of rootIds) {
+    const parent = instanceSessions.get(parentId)
+    if (!parent || parent.parentId !== null) continue
+
     seenParents.add(parent.id)
 
-    const children = childrenByParent.get(parent.id) ?? []
+    const children = childrenByRoot.get(parent.id) ?? []
     if (children.length > 1) {
       children.sort((a, b) => (b.time.updated ?? 0) - (a.time.updated ?? 0))
     }
@@ -548,6 +717,35 @@ function getSessionThreads(instanceId: string): SessionThread[] {
   })
 
   return threads
+}
+
+function getSessionThreads(instanceId: string): SessionThread[] {
+  return buildSessionThreads(instanceId, getSessionListIds(instanceId))
+}
+
+function getSessionSearchThreads(instanceId: string): SessionThread[] {
+  const resultIds = getSessionSearchResultIds(instanceId)
+  if (resultIds.length === 0) return []
+
+  const instanceSessions = sessions().get(instanceId)
+  if (!instanceSessions) return []
+
+  const rootIds: string[] = []
+  const childIds = new Set<string>()
+
+  for (const sessionId of resultIds) {
+    const session = instanceSessions.get(sessionId)
+    if (!session) continue
+    if (session.parentId === null) {
+      rootIds.push(session.id)
+    } else {
+      childIds.add(session.id)
+      const root = getSessionRootFromMap(instanceSessions, session.id)
+      if (root && !rootIds.includes(root.id)) rootIds.push(root.id)
+    }
+  }
+
+  return buildSessionThreads(instanceId, rootIds, childIds)
 }
 
 function isSessionParentExpanded(instanceId: string, parentSessionId: string): boolean {
@@ -646,6 +844,31 @@ function isSessionMessagesLoading(instanceId: string, sessionId: string): boolea
   return Boolean(loading().loadingMessages.get(instanceId)?.has(sessionId))
 }
 
+function getSessionMessagesLoadError(instanceId: string, sessionId: string): string | undefined {
+  return messageLoadErrors().get(instanceId)?.get(sessionId)
+}
+
+function setSessionMessagesLoadError(instanceId: string, sessionId: string, error: string | null): void {
+  setMessageLoadErrors((prev) => {
+    const next = new Map(prev)
+    const instanceErrors = new Map(next.get(instanceId))
+
+    if (error) {
+      instanceErrors.set(sessionId, error)
+      next.set(instanceId, instanceErrors)
+      return next
+    }
+
+    instanceErrors.delete(sessionId)
+    if (instanceErrors.size > 0) {
+      next.set(instanceId, instanceErrors)
+    } else {
+      next.delete(instanceId)
+    }
+    return next
+  })
+}
+
 function getSessionInfo(instanceId: string, sessionId: string): SessionInfo | undefined {
   return sessionInfoByInstance().get(instanceId)?.get(sessionId)
 }
@@ -692,10 +915,10 @@ async function isBlankSession(session: Session, instanceId: string, fetchIfNeede
   }
   let messages: any[] = []
     try {
-      const worktreeSlug = getWorktreeSlugForSession(instanceId, session.id)
-      const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+      const client = getRootClient(instanceId)
+      const workspace = await getOpenCodeWorkspaceIdForSession(instanceId, session.id)
       messages = await requestData<any[]>(
-        client.session.messages({ sessionID: session.id }),
+        client.session.messages({ sessionID: session.id, ...(workspace ? { workspace } : {}) }),
         "session.messages",
       )
     } catch (error) {
@@ -797,6 +1020,7 @@ export {
   setLoading,
   messagesLoaded,
   setMessagesLoaded,
+  setSessionMessagesLoadError,
   sessionInfoByInstance,
   setSessionInfoByInstance,
   threadTotalsByInstance,
@@ -824,8 +1048,11 @@ export {
   getSessions,
   getParentSessions,
   getChildSessions,
+  getDescendantSessions,
+  getSessionRoot,
   getSessionFamily,
   getSessionThreads,
+  getSessionSearchThreads,
   getVisibleSessionIds,
   isSessionParentExpanded,
   setSessionParentExpanded,
@@ -834,7 +1061,25 @@ export {
   setActiveSessionFromList,
   isSessionBusy,
   isSessionMessagesLoading,
+  getSessionMessagesLoadError,
   getSessionInfo,
   isBlankSession,
   cleanupBlankSessions,
+  SESSION_PAGE_SIZE,
+  sessionPagination,
+  sessionSearch,
+  getSessionListIds,
+  getSessionNextCursor,
+  setSessionPage,
+  getSessionHasMore,
+  resetSessionPagination,
+  prependSessionListId,
+  removeSessionListId,
+  beginSessionSearch,
+  isLatestSessionSearch,
+  setSessionSearchResults,
+  clearSessionSearch,
+  getSessionSearchResultIds,
+  getSessionSearchQuery,
+  isSessionSearchLoading,
 }

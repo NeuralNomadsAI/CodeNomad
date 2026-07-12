@@ -2,16 +2,22 @@ export const toolCallMessages = {
   "toolCall.pending.waitingToRun": "Esperando para ejecutar...",
   "toolCall.error.label": "Error:",
 
-  "toolCall.header.copyTitle": "Copy tool call title",
-  "toolCall.header.copyAriaLabel": "Copy tool call title",
+  "toolCall.header.copyTitle": "Copiar título de la llamada de herramienta",
+  "toolCall.header.copyAriaLabel": "Copiar título de la llamada de herramienta",
+  "toolCall.header.copyOutputTitle": "Copiar salida de herramienta",
+  "toolCall.header.copyOutputAriaLabel": "Copiar salida de herramienta",
 
-  "toolCall.header.showInputTitle": "Show Tool Arguments",
-  "toolCall.header.showInputAriaLabel": "Show Tool Arguments",
-  "toolCall.header.hideInputTitle": "Hide Tool Arguments",
-  "toolCall.header.hideInputAriaLabel": "Hide Tool Arguments",
+  "toolCall.header.showInputTitle": "Mostrar argumentos de herramienta",
+  "toolCall.header.showInputAriaLabel": "Mostrar argumentos de herramienta",
+  "toolCall.header.hideInputTitle": "Ocultar argumentos de herramienta",
+  "toolCall.header.hideInputAriaLabel": "Ocultar argumentos de herramienta",
 
-  "toolCall.io.input": "Tool Input",
-  "toolCall.io.output": "Tool Output",
+  "toolCall.io.input": "Entrada de herramienta",
+  "toolCall.io.output": "Salida de herramienta",
+  "toolCall.io.copyInputTitle": "Copiar entrada de herramienta",
+  "toolCall.io.copyInputAriaLabel": "Copiar entrada de herramienta",
+  "toolCall.io.copyOutputTitle": "Copiar salida de herramienta",
+  "toolCall.io.copyOutputAriaLabel": "Copiar salida de herramienta",
 
   "toolCall.diff.label": "Diff",
   "toolCall.diff.label.withPath": "Diff · {path}",
@@ -53,7 +59,7 @@ export const toolCallMessages = {
   "toolCall.renderer.read.detail.offset": "Desplazamiento: {offset}",
   "toolCall.renderer.read.detail.limit": "Límite: {limit}",
 
-  "toolCall.renderer.todo.empty": "Aún no hay elementos del plan.",
+  "toolCall.renderer.todo.empty": "No hay elementos planificados",
   "toolCall.renderer.todo.status.pending": "Pendiente",
   "toolCall.renderer.todo.status.inProgress": "En progreso",
   "toolCall.renderer.todo.status.completed": "Completado",
@@ -73,7 +79,7 @@ export const toolCallMessages = {
   "toolCall.permission.actions.deny": "Denegar",
   "toolCall.permission.shortcuts.allowOnce": "Permitir una vez",
   "toolCall.permission.shortcuts.alwaysAllow": "Permitir siempre",
-  "toolCall.permission.shortcuts.deny": "Denegar",
+  "toolCall.permission.rejectReason.placeholder": "Comentario opcional al denegar, p. ej. usa un comando más seguro...",
   "toolCall.permission.errors.unableToUpdate": "No se pudo actualizar el permiso",
 
   "permissionApproval.title": "Solicitudes",
@@ -90,6 +96,7 @@ export const toolCallMessages = {
   "permissionApproval.actions.allowOnce": "Permitir una vez",
   "permissionApproval.actions.alwaysAllow": "Permitir siempre",
   "permissionApproval.actions.deny": "Denegar",
+  "permissionApproval.rejectReason.placeholder": "Comentario opcional al denegar, p. ej. usa un comando más seguro...",
   "permissionApproval.fallbackHint": "Carga la sesión para más información.",
   "permissionApproval.errors.unableToUpdatePermission": "No se pudo actualizar el permiso",
 
