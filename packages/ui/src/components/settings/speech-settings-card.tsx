@@ -106,8 +106,11 @@ export const SpeechSettingsCard: Component = () => {
     const speech = serverSettings().speech
     const nextDrafts = createDraftFields(speech)
     if (!isSaving() && !isDirty()) {
-      if (!isDraftEqual(drafts(), nextDrafts)) {
-        setDrafts(nextDrafts)
+      const adjustedDrafts = serverSupportsSeparateProviders()
+        ? nextDrafts
+        : { ...nextDrafts, separateProviders: false }
+      if (!isDraftEqual(drafts(), adjustedDrafts)) {
+        setDrafts(adjustedDrafts)
       }
       if (apiKeyTouched()) setApiKeyTouched(false)
       if (clearStoredApiKey()) setClearStoredApiKey(false)
@@ -248,10 +251,11 @@ export const SpeechSettingsCard: Component = () => {
         })
       } else {
         const trimmedApiKey = current.apiKey.trim()
+        const baseUrlChanged = (current.baseUrl.trim() || "") !== (saved.baseUrl || "")
         await updateSpeechSettings({
           separateProviders: false,
           ...(clearStoredApiKey() ? { apiKey: null } : trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
-          baseUrl: current.baseUrl.trim() || null,
+          ...(baseUrlChanged ? { baseUrl: current.baseUrl.trim() || null } : {}),
           sttModel: current.sttModel.trim() || null,
           ttsModel: current.ttsModel.trim() || null,
           ttsVoice: current.ttsVoice.trim() || null,
