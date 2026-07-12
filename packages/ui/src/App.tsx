@@ -42,6 +42,7 @@ import {
 } from "./stores/instances"
 import {
   getSessions,
+  getSessionRoot,
   activeSessionId,
   setActiveParentSession,
   clearActiveParentSession,
@@ -408,12 +409,8 @@ const App: Component = () => {
       return
     }
 
-    const parentSessionId = session.parentId ?? session.id
-    const parentSession = sessions.find((s) => s.id === parentSessionId)
-
-    if (!parentSession || parentSession.parentId !== null) {
-      return
-    }
+    const parentSession = getSessionRoot(instanceId, sessionId)
+    if (!parentSession) return
 
     clearActiveParentSession(instanceId)
 

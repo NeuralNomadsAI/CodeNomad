@@ -8,7 +8,7 @@ import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import { getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances } from "../../stores/instances"
-import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, setActiveParentSession, setActiveSession, runShellCommand, abortSession } from "../../stores/sessions"
+import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession } from "../../stores/sessions"
 import { clearSessionIdleFade, IDLE_STATUS_VISIBILITY_MS, getSessionStatus, isSessionBusy as getSessionBusyStatus, markSessionIdleFadeStarted } from "../../stores/session-status"
 import { deleteMessage } from "../../stores/session-actions"
 import { showAlertDialog } from "../../stores/alerts"
@@ -163,7 +163,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
     if (currentSession.parentId === null && !keepUnseenSubagentIdleStatus) {
       for (const child of props.activeSessions.values()) {
-        if (child.parentId !== currentSession.id) continue
+        if (child.id === currentSession.id) continue
         if (child.status !== "idle") continue
         if (typeof child.idleSince !== "number") continue
         entries.push({ id: child.id, idleSince: child.idleSince })
@@ -476,11 +476,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         log.error("Failed to rename forked session", error)
       })
 
-      const parentToActivate = forkedSession.parentId ?? forkedSession.id
-      setActiveParentSession(props.instanceId, parentToActivate)
-      if (forkedSession.parentId) {
-        setActiveSession(props.instanceId, forkedSession.id)
-      }
+      ensureSessionAncestorsExpanded(props.instanceId, forkedSession.id)
+      setActiveSessionFromList(props.instanceId, forkedSession.id)
 
       await loadMessages(props.instanceId, forkedSession.id).catch((error) => log.error("Failed to load forked session messages", error))
 
