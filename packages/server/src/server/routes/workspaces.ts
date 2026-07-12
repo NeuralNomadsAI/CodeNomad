@@ -14,6 +14,7 @@ interface RouteDeps {
 const WorkspaceCreateSchema = z.object({
   path: z.string(),
   name: z.string().optional(),
+  forceNew: z.boolean().optional(),
 })
 
 const WorkspaceCloneSchema = z.object({
@@ -68,9 +69,9 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.post("/api/workspaces", async (request, reply) => {
     try {
       const body = WorkspaceCreateSchema.parse(request.body ?? {})
-      const workspace = await deps.workspaceManager.create(body.path, body.name)
+      const result = await deps.workspaceManager.create(body.path, body.name, { forceNew: body.forceNew })
       reply.code(201)
-      return workspace
+      return result.created ? result.workspace : { ...result.workspace, reused: true as const }
     } catch (error) {
       request.log.error({ err: error }, "Failed to create workspace")
       const message = error instanceof Error ? error.message : "Failed to create workspace"

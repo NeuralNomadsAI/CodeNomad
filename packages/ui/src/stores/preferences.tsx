@@ -400,13 +400,16 @@ function getModelKey(model: { providerId: string; modelId: string }): string {
   return `${model.providerId}/${model.modelId}`
 }
 
-function buildRecentFolderList(folderPath: string, source: RecentFolder[]): RecentFolder[] {
-  const existing = source.find((f) => f.path === folderPath)
-  const folders = source.filter((f) => f.path !== folderPath)
+function buildRecentFolderList(folderPath: string, source: RecentFolder[], aliasPath?: string): RecentFolder[] {
+  const matchingPaths = new Set([folderPath, aliasPath].filter((value): value is string => Boolean(value)))
+  const aliasEntry = aliasPath ? source.find((folder) => folder.path === aliasPath) : undefined
+  const canonicalEntry = source.find((folder) => folder.path === folderPath)
+  const projectName = aliasEntry?.projectName ?? canonicalEntry?.projectName
+  const folders = source.filter((folder) => !matchingPaths.has(folder.path))
   folders.unshift({
     path: folderPath,
     lastAccessed: Date.now(),
-    ...(existing?.projectName ? { projectName: existing.projectName } : {}),
+    ...(projectName ? { projectName } : {}),
   })
   return folders.slice(0, MAX_RECENT_FOLDERS)
 }
@@ -711,9 +714,9 @@ function removeRemoteServerProfile(id: string): void {
   void patchStateOwner("ui", { remoteServers: next }).catch((error) => log.error("Failed to remove remote server", error))
 }
 
-function recordWorkspaceLaunch(folderPath: string, binaryPath?: string): void {
+function recordWorkspaceLaunch(folderPath: string, binaryPath?: string, aliasPath?: string): void {
   const targetBinary = binaryPath && binaryPath.trim().length > 0 ? binaryPath : serverSettings().opencodeBinary
-  const nextFolders = buildRecentFolderList(folderPath, recentFolders())
+  const nextFolders = buildRecentFolderList(folderPath, recentFolders(), aliasPath)
   const nextBinaries = buildBinaryList(targetBinary, undefined, opencodeBinaries())
 
   void patchStateOwner("ui", { recentFolders: nextFolders, opencodeBinaries: nextBinaries }).catch((error) =>
