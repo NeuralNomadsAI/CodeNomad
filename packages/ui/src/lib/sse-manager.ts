@@ -229,7 +229,14 @@ class SSEManager {
         this.onInstanceDisposed?.(instanceId, event as ServerInstanceDisposedEvent)
         break
       case "worktree.ready":
-        this.onWorktreeReady?.(instanceId, event as WorktreeReadyEvent)
+        try {
+          const result = this.onWorktreeReady?.(instanceId, event as WorktreeReadyEvent)
+          void result?.catch((error) => {
+            log.warn("Failed to handle worktree ready event", { instanceId, error })
+          })
+        } catch (error) {
+          log.warn("Failed to handle worktree ready event", { instanceId, error })
+        }
         break
       default:
         log.warn("Unknown SSE event type", { type: event.type })
@@ -263,7 +270,7 @@ class SSEManager {
   onBackgroundProcessUpdated?: (instanceId: string, event: BackgroundProcessUpdatedEvent) => void
   onBackgroundProcessRemoved?: (instanceId: string, event: BackgroundProcessRemovedEvent) => void
   onInstanceDisposed?: (instanceId: string, event: ServerInstanceDisposedEvent) => void
-  onWorktreeReady?: (instanceId: string, event: WorktreeReadyEvent) => void
+  onWorktreeReady?: (instanceId: string, event: WorktreeReadyEvent) => void | Promise<void>
   onConnectionLost?: (instanceId: string, reason: string) => void | Promise<void>
 
   getStatus(instanceId: string): ConnectionStatus | null {

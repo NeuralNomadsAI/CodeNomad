@@ -14,6 +14,8 @@ const [worktreeMapByInstance, setWorktreeMapByInstance] = createSignal<Map<strin
 const [gitRepoStatusByInstance, setGitRepoStatusByInstance] = createSignal<Map<string, boolean | null>>(new Map())
 
 const worktreeLoads = new Map<string, Promise<void>>()
+const worktreeReloads = new Map<string, Promise<void>>()
+const worktreeReadyRefreshes = new Map<string, Promise<void>>()
 const mapLoads = new Map<string, Promise<void>>()
 const mapMigrations = new Map<string, Promise<void>>()
 
@@ -82,28 +84,41 @@ async function ensureWorktreesLoaded(instanceId: string): Promise<void> {
 
 async function reloadWorktrees(instanceId: string): Promise<void> {
   if (!instanceId) return
-  await serverApi
-    .fetchWorktrees(instanceId)
-    .then((response) => {
-      setWorktreesByInstance((prev) => {
-        const next = new Map(prev)
-        next.set(instanceId, response.worktrees ?? [])
-        return next
-      })
+  const previous = worktreeReloads.get(instanceId)
+  const task = (async () => {
+    await previous?.catch(() => undefined)
+    await worktreeLoads.get(instanceId)?.catch(() => undefined)
 
-      setGitRepoStatusByInstance((prev) => {
-        const next = new Map(prev)
-        next.set(instanceId, typeof response.isGitRepo === "boolean" ? response.isGitRepo : null)
-        return next
-      })
+    await serverApi
+      .fetchWorktrees(instanceId)
+      .then((response) => {
+        setWorktreesByInstance((prev) => {
+          const next = new Map(prev)
+          next.set(instanceId, response.worktrees ?? [])
+          return next
+        })
 
-      if (worktreeMapByInstance().has(instanceId)) {
-        void pruneWorktreeMap(instanceId).catch(() => undefined)
-      }
-    })
-    .catch((error) => {
-      log.warn("Failed to reload worktrees", { instanceId, error })
-    })
+        setGitRepoStatusByInstance((prev) => {
+          const next = new Map(prev)
+          next.set(instanceId, typeof response.isGitRepo === "boolean" ? response.isGitRepo : null)
+          return next
+        })
+
+        if (worktreeMapByInstance().has(instanceId)) {
+          void pruneWorktreeMap(instanceId).catch(() => undefined)
+        }
+      })
+      .catch((error) => {
+        log.warn("Failed to reload worktrees", { instanceId, error })
+      })
+  })()
+
+  worktreeReloads.set(instanceId, task)
+  await task.finally(() => {
+    if (worktreeReloads.get(instanceId) === task) {
+      worktreeReloads.delete(instanceId)
+    }
+  })
 }
 
 async function handleWorktreeReady(
@@ -123,8 +138,18 @@ async function handleWorktreeReady(
     name: event.properties?.name,
   })
 
-  await refreshWorktrees(instanceId)
-  await refreshWorkspaces(instanceId)
+  const previous = worktreeReadyRefreshes.get(instanceId)
+  const task = (previous?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
+    await refreshWorktrees(instanceId)
+    await refreshWorkspaces(instanceId)
+  })
+
+  worktreeReadyRefreshes.set(instanceId, task)
+  await task.finally(() => {
+    if (worktreeReadyRefreshes.get(instanceId) === task) {
+      worktreeReadyRefreshes.delete(instanceId)
+    }
+  })
 }
 
 function getGitRepoStatus(instanceId: string): boolean | null {
