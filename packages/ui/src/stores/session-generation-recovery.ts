@@ -3,6 +3,13 @@ import type { Session, SessionStatus } from "../types/session"
 export type GenerationRecoveryState = "pending" | "interrupted"
 export type PersistedGenerationRecovery = "working" | "interrupted"
 
+export function getDisplayedSessionStatus(
+  status: SessionStatus,
+  recovery: GenerationRecoveryState | null | undefined,
+): SessionStatus {
+  return status === "idle" && recovery === "pending" ? "working" : status
+}
+
 export function resolveHydratedGenerationRecovery(
   persisted: PersistedGenerationRecovery,
   runtimeStatus: SessionStatus,

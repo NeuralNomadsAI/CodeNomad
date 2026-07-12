@@ -3,6 +3,7 @@ import { describe, it } from "node:test"
 
 import {
   getPersistedGenerationRecovery,
+  getDisplayedSessionStatus,
   mergeFetchedSessionRuntimeState,
   resolveAuthoritativeGenerationRecovery,
   resolveHydratedGenerationRecovery,
@@ -25,6 +26,12 @@ function session(state: Partial<Session>): Session {
 }
 
 describe("session generation recovery", () => {
+  it("displays unresolved restored work as active without changing runtime status", () => {
+    assert.equal(getDisplayedSessionStatus("idle", "pending"), "working")
+    assert.equal(getDisplayedSessionStatus("idle", "interrupted"), "idle")
+    assert.equal(getDisplayedSessionStatus("compacting", "pending"), "compacting")
+  })
+
   it("passively reconnects when the runtime is still working", () => {
     assert.equal(resolveHydratedGenerationRecovery("working", "working", true), null)
     assert.equal(resolveHydratedGenerationRecovery("working", "compacting", true), null)

@@ -1,6 +1,7 @@
 import type { Session, SessionRetryState, SessionStatus } from "../types/session"
 import { getInstanceSessionIndicatorStatusCached, sessions } from "./session-state"
 import { shouldSessionHoldWakeLock } from "./wake-lock-eligibility"
+import { getDisplayedSessionStatus } from "./session-generation-recovery"
 import { createSignal } from "solid-js"
 
 export const IDLE_STATUS_VISIBILITY_MS = 5000
@@ -36,7 +37,7 @@ export function getSessionStatus(instanceId: string, sessionId: string): Session
   if (!session) {
     return "idle"
   }
-  return session.status ?? "idle"
+  return getDisplayedSessionStatus(session.status ?? "idle", session.generationRecovery)
 }
 
 export function getSessionRetry(instanceId: string, sessionId: string): SessionRetryState | null {
@@ -128,7 +129,8 @@ export function shouldShowSessionStatus(
     return true
   }
 
-  return session.status !== "idle" || shouldShowIdleStatus(session, now, keepUnseenSubagentIdleStatus)
+  return getDisplayedSessionStatus(session.status ?? "idle", session.generationRecovery) !== "idle"
+    || shouldShowIdleStatus(session, now, keepUnseenSubagentIdleStatus)
 }
 
 export function getRetrySeconds(next: number, now = Date.now()): number {

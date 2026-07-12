@@ -71,10 +71,8 @@ export const sessionMessages = {
   "sessionRenameDialog.actions.renaming": "Renaming…",
 
   "sessionView.fallback.sessionNotFound": "Session not found",
-  "sessionView.interrupted.title": "Generation was interrupted",
+  "sessionView.interrupted.title": "Interrupted",
   "sessionView.interrupted.description": "CodeNomad restarted after this session was working, but OpenCode now reports it as idle. Nothing was replayed automatically.",
-  "sessionView.interrupted.action": "Prepare continuation",
-  "sessionView.interrupted.prefill": "Continue from where you left off. First review the conversation and current workspace state, and do not assume the interrupted response completed.",
   "sessionView.alerts.abortFailed.message": "Failed to stop session",
   "sessionView.alerts.abortFailed.title": "Stop failed",
   "sessionView.alerts.revertFailed.message": "Failed to revert to message",

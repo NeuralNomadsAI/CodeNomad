@@ -6,6 +6,7 @@ import {
   buildSessionThreadsFromMap,
   collectSessionThreadIds,
   collectVisibleSessionIds,
+  createHydratedSessionExpansion,
   findSessionThread,
   getDescendantSessionsFromMap,
   getSessionAncestorIdsFromMap,
@@ -22,6 +23,10 @@ function sessionMap(definitions: Array<[string, string | null, number]>): Map<st
 }
 
 describe("session tree", () => {
+  it("retains expansion IDs for sessions that load after initial hydration", () => {
+    assert.deepEqual([...createHydratedSessionExpansion(["loaded", "delayed"])], ["loaded", "delayed"])
+  })
+
   it("preserves nesting and sorts siblings by descendant activity", () => {
     const sessions = sessionMap([
       ["root", null, 100],

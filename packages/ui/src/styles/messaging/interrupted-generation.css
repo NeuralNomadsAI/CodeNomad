@@ -18,22 +18,14 @@
   font-size: var(--font-size-sm);
 }
 
-.interrupted-generation-copy strong {
+.interrupted-generation-tag {
+  align-self: flex-start;
+  padding: 0.1rem 0.35rem;
+  border: 1px solid color-mix(in srgb, var(--status-warning) 55%, var(--border-base));
+  background-color: color-mix(in srgb, var(--status-warning) 12%, transparent);
   color: var(--status-warning);
-}
-
-.interrupted-generation-action {
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-
-@media (max-width: 640px) {
-  .interrupted-generation-notice {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .interrupted-generation-action {
-    width: 100%;
-  }
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  line-height: 1.3;
+  text-transform: uppercase;
 }

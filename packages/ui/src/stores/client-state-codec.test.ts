@@ -30,6 +30,7 @@ describe("client state codec", () => {
             },
             unseenIdleSince: { session1: 1100, malformed: -1 },
             generationRecovery: { session1: "working", session2: "interrupted", malformed: "idle" },
+            expandedSessionIds: ["session1", "session1", "session2", 42],
           },
           { kind: "sidecar", sidecarId: "docs" },
         ],
@@ -48,6 +49,10 @@ describe("client state codec", () => {
     assert.deepEqual(
       decoded.session?.tabs[0]?.kind === "workspace" ? { ...decoded.session.tabs[0].generationRecovery } : undefined,
       { session1: "working", session2: "interrupted" },
+    )
+    assert.deepEqual(
+      decoded.session?.tabs[0]?.kind === "workspace" ? decoded.session.tabs[0].expandedSessionIds : undefined,
+      ["session1", "session2"],
     )
     assert.deepEqual(decoded.session?.tabs[1], { kind: "sidecar", sidecarId: "docs" })
   })

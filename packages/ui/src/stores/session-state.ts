@@ -15,12 +15,14 @@ import { computeThreadTotals, type ThreadTotals } from "../lib/thread-totals"
 import { applySessionPage, getDefaultSessionPaginationState, type SessionPaginationState } from "./session-pagination-model"
 import {
   resolveAuthoritativeGenerationRecovery,
+  getDisplayedSessionStatus,
   resolveHydratedGenerationRecovery,
   type PersistedGenerationRecovery,
 } from "./session-generation-recovery"
 import {
   buildSessionThreadsFromMap,
   collectVisibleSessionIds,
+  createHydratedSessionExpansion,
   getDescendantSessionsFromMap,
   getSessionAncestorIdsFromMap,
   getSessionRootFromMap,
@@ -209,11 +211,11 @@ function isSessionSearchLoading(instanceId: string): boolean {
   return sessionSearch().get(instanceId)?.loading ?? false
 }
 
-function getIndicatorBucket(session: Pick<Session, "status" | "pendingPermission" | "pendingQuestion">): InstanceSessionIndicatorStatus | "idle" {
+function getIndicatorBucket(session: Pick<Session, "status" | "pendingPermission" | "pendingQuestion" | "generationRecovery">): InstanceSessionIndicatorStatus | "idle" {
   if (session.pendingPermission || session.pendingQuestion) {
     return "permission"
   }
-  const status = session.status ?? "idle"
+  const status = getDisplayedSessionStatus(session.status ?? "idle", session.generationRecovery)
   return status
 }
 
@@ -281,7 +283,7 @@ function recomputeIndicatorCounts(instanceId: string, instanceSessions: Map<stri
       permission += 1
       continue
     }
-    const status = session.status ?? "idle"
+    const status = getDisplayedSessionStatus(session.status ?? "idle", session.generationRecovery)
     if (status === "compacting") {
       compacting += 1
     } else if (status === "working") {
@@ -669,6 +671,7 @@ function hydrateSessionGenerationRecovery(
     next.set(instanceId, updatedSessions)
     return next
   })
+  syncInstanceSessionIndicator(instanceId)
 }
 
 function beginSessionGenerationAdmission(instanceId: string, sessionId: string): {
@@ -938,6 +941,18 @@ function setSessionExpanded(instanceId: string, sessionId: string, expanded: boo
       next.set(instanceId, updated)
     }
 
+    return next
+  })
+}
+
+function hydrateSessionExpansion(instanceId: string, expandedSessionIds: readonly string[]): void {
+  const expanded = createHydratedSessionExpansion(expandedSessionIds)
+  setExpandedSessions((prev) => {
+    const current = prev.get(instanceId)
+    if (current?.size === expanded.size && [...expanded].every((sessionId) => current.has(sessionId))) return prev
+    const next = new Map(prev)
+    if (expanded.size === 0) next.delete(instanceId)
+    else next.set(instanceId, expanded)
     return next
   })
 }
@@ -1249,6 +1264,7 @@ export {
   getSessionSearchThreads,
   getVisibleSessionIds,
   isSessionExpanded,
+  hydrateSessionExpansion,
   setSessionExpanded,
   toggleSessionExpanded,
   ensureSessionExpanded,

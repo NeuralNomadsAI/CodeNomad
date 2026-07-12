@@ -73,8 +73,6 @@ export const sessionMessages = {
   "sessionView.fallback.sessionNotFound": "सत्र फेला परेन",
   "sessionView.interrupted.title": "जेनेरेसन अवरुद्ध भयो",
   "sessionView.interrupted.description": "यो सत्र चलिरहेको बेला CodeNomad पुनः सुरु भयो, तर OpenCode ले अहिले यसलाई निष्क्रिय देखाउँछ। कुनै पनि काम स्वचालित रूपमा पुनः चलाइएको छैन।",
-  "sessionView.interrupted.action": "निरन्तरता तयार गर्नुहोस्",
-  "sessionView.interrupted.prefill": "रोकिएको ठाउँबाट जारी राख्नुहोस्। पहिले कुराकानी र कार्यक्षेत्रको हालको अवस्था जाँच्नुहोस्, र अवरुद्ध प्रतिक्रिया पूरा भएको नमान्नुहोस्।",
   "sessionView.alerts.abortFailed.message": "सत्र रोक्न असफल भयो",
   "sessionView.alerts.abortFailed.title": "रोक्न असफल",
   "sessionView.alerts.revertFailed.message": "सन्देश फिर्ता गर्न असफल भयो",

@@ -46,6 +46,7 @@ import { openSidecarTab, SidecarNotFoundError } from "../../stores/sidecars"
 import {
   getSessions,
   hydrateActiveSessionSelection,
+  hydrateSessionExpansion,
   hydrateSessionIdleMarkers,
   hydrateSessionGenerationRecovery,
 } from "../../stores/sessions"
@@ -70,6 +71,7 @@ function getWorkspaceSessionReferences(snapshot: RestorableWorkspaceTabState) {
     scrollSessionIds: Object.keys(snapshot.scrollSnapshots),
     idleMarkerSessionIds: Object.keys(snapshot.unseenIdleSince),
     generationRecoverySessionIds: Object.keys(snapshot.generationRecovery),
+    expandedSessionIds: snapshot.expandedSessionIds,
   }
 }
 
@@ -85,6 +87,7 @@ function restoreWorkspaceState(instanceId: string, snapshot: RestorableWorkspace
   hydrateWorkspacePromptState(instanceId, snapshot, validSessionIds, NO_SESSION_DRAFT_SESSION_ID)
   hydrateSessionIdleMarkers(instanceId, snapshot.unseenIdleSince)
   hydrateSessionGenerationRecovery(instanceId, snapshot.generationRecovery)
+  hydrateSessionExpansion(instanceId, snapshot.expandedSessionIds)
 
   const scrollSeeds: MessageScrollSnapshotSeed[] = []
   for (const [sessionId, scrollSnapshot] of Object.entries(snapshot.scrollSnapshots)) {
