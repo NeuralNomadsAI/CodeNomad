@@ -419,7 +419,9 @@ async function hydrateInstanceData(instanceId: string, options?: { force?: boole
     }
     await syncOpenCodeWorkspaces(instanceId)
     resetSessionPagination(instanceId)
-    await fetchSessions(instanceId)
+    await fetchSessions(instanceId).catch((error) => {
+      log.error("Failed to hydrate sessions", { instanceId, error })
+    })
     await fetchAgents(instanceId)
     await fetchProviders(instanceId)
     await ensureInstanceConfigLoaded(instanceId)

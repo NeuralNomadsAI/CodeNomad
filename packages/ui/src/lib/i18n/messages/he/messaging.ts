@@ -17,6 +17,7 @@ export const messagingMessages = {
   "messageSection.empty.tips.attachFilesPrefix": "צרף קבצים עם",
   "messageSection.loading.messages": "טוען הודעות...",
   "messageSection.loadError.title": "לא ניתן לטעון הודעות",
+  "messageSection.loadError.detail": "OpenCode לא החזיר את הודעות הסשן.",
   "messageSection.loadError.reload": "טען הודעות מחדש",
   "messageSection.scroll.toFirstAriaLabel": "גלול להודעה הראשונה",
   "messageSection.scroll.toLatestAriaLabel": "גלול להודעה האחרונה",

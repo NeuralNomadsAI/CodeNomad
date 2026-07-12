@@ -17,6 +17,7 @@ export const messagingMessages = {
   "messageSection.empty.tips.attachFilesPrefix": "通过以下方式附加文件",
   "messageSection.loading.messages": "正在加载消息...",
   "messageSection.loadError.title": "无法加载消息",
+  "messageSection.loadError.detail": "OpenCode 未返回会话消息。",
   "messageSection.loadError.reload": "重新加载消息",
   "messageSection.scroll.toFirstAriaLabel": "滚动到第一条消息",
   "messageSection.scroll.toLatestAriaLabel": "滚动到最新消息",

@@ -54,6 +54,7 @@ const [loading, setLoading] = createSignal({
 
 const [messagesLoaded, setMessagesLoaded] = createSignal<Map<string, Set<string>>>(new Map())
 const [messageLoadErrors, setMessageLoadErrors] = createSignal<Map<string, Map<string, string>>>(new Map())
+const [sessionListErrors, setSessionListErrors] = createSignal<Map<string, string>>(new Map())
 const [sessionInfoByInstance, setSessionInfoByInstance] = createSignal<Map<string, Map<string, SessionInfo>>>(new Map())
 const [threadTotalsByInstance, setThreadTotalsByInstance] = createSignal<Map<string, Map<string, ThreadTotals>>>(new Map())
 
@@ -727,6 +728,22 @@ function getSessionMessagesLoadError(instanceId: string, sessionId: string): str
   return messageLoadErrors().get(instanceId)?.get(sessionId)
 }
 
+function getSessionListError(instanceId: string): string | undefined {
+  return sessionListErrors().get(instanceId)
+}
+
+function setSessionListError(instanceId: string, error: string | null): void {
+  setSessionListErrors((prev) => {
+    const next = new Map(prev)
+    if (error) {
+      next.set(instanceId, error)
+    } else {
+      next.delete(instanceId)
+    }
+    return next
+  })
+}
+
 function setSessionMessagesLoadError(instanceId: string, sessionId: string, error: string | null): void {
   setMessageLoadErrors((prev) => {
     const next = new Map(prev)
@@ -907,6 +924,8 @@ export {
   setLoading,
   messagesLoaded,
   setMessagesLoaded,
+  getSessionListError,
+  setSessionListError,
   setSessionMessagesLoadError,
   sessionInfoByInstance,
   setSessionInfoByInstance,

@@ -2,6 +2,7 @@ import { Show, createEffect, createMemo, createSignal, onCleanup, on, untrack } 
 import { ArrowUpDown, ChevronDown, ChevronUp, MoreHorizontal, Pause, Search, Trash, X } from "lucide-solid"
 import Kbd from "./kbd"
 import BrandedEmptyState from "./branded-empty-state"
+import LoadErrorState from "./load-error-state"
 import MessageBlock from "./message-block"
 import { getMessageAnchorId } from "./message-anchors"
 import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./message-timeline"
@@ -1522,15 +1523,12 @@ export default function MessageSection(props: MessageSectionProps) {
 
               <Show when={!props.loading && props.loadError}>
                 {(loadError) => (
-                  <div class="message-load-error-state">
-                    <div class="message-load-error-card">
-                      <h3>{t("messageSection.loadError.title")}</h3>
-                      <p>{loadError()}</p>
-                      <button type="button" class="message-load-error-retry" onClick={() => props.onReloadMessages?.()}>
-                        {t("messageSection.loadError.reload")}
-                      </button>
-                    </div>
-                  </div>
+                  <LoadErrorState
+                    title={t("messageSection.loadError.title")}
+                    error={loadError()}
+                    retryLabel={t("messageSection.loadError.reload")}
+                    onRetry={() => props.onReloadMessages?.()}
+                  />
                 )}
               </Show>
             </>
