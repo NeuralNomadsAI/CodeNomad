@@ -1,24 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-
-function enforceSpeechCredentialPairing(body: unknown): unknown {
-  if (!body || typeof body !== "object") return body
-  const patch = { ...(body as Record<string, unknown>) }
-  const speech = patch.speech
-  if (!speech || typeof speech !== "object") return patch
-  const speechPatch = { ...(speech as Record<string, unknown>) }
-  for (const dir of ["stt", "tts"] as const) {
-    if (dir in speechPatch) {
-      const dirPatch = { ...(speechPatch[dir] as Record<string, unknown>) }
-      if ("baseUrl" in dirPatch && !("apiKey" in dirPatch)) {
-        dirPatch.apiKey = null
-        speechPatch[dir] = dirPatch
-      }
-    }
-  }
-  patch.speech = speechPatch
-  return patch
-}
+import { enforceSpeechCredentialPairing } from "./settings"
 
 describe("enforceSpeechCredentialPairing", () => {
   it("clears stored key when baseUrl changes without apiKey in patch", () => {
@@ -51,8 +33,8 @@ describe("enforceSpeechCredentialPairing", () => {
         tts: { baseUrl: "https://tts.example.com/v1" },
       },
     }) as any
-    assert.equal(result.speech.stt.apiKey, "sk-stt", "stt key preserved when both fields provided")
-    assert.equal(result.speech.tts.apiKey, null, "tts key cleared when only baseUrl provided")
+    assert.equal(result.speech.stt.apiKey, "sk-stt")
+    assert.equal(result.speech.tts.apiKey, null)
   })
 
   it("passes through non-speech patches unchanged", () => {

@@ -19,7 +19,7 @@ function validateBinaryPath(binaryPath: string): { valid: boolean; version?: str
   return { valid: result.valid, version: result.version, error: result.error }
 }
 
-function enforceSpeechCredentialPairing(body: unknown): unknown {
+export function enforceSpeechCredentialPairing(body: unknown): unknown {
   if (!body || typeof body !== "object") return body
   const patch = { ...(body as Record<string, unknown>) }
   const speech = patch.speech

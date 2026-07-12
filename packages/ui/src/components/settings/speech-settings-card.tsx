@@ -236,8 +236,8 @@ export const SpeechSettingsCard: Component = () => {
       if (current.separateProviders) {
         await updateSpeechSettings({
           separateProviders: true,
-          stt: buildDirSave(clearSttApiKey(), current.stt.apiKey, current.stt.baseUrl, current.stt.model, saved.sttModel),
-          tts: buildDirSave(clearTtsApiKey(), current.tts.apiKey, current.tts.baseUrl, current.tts.model, saved.ttsModel),
+          stt: buildDirSave(clearSttApiKey(), current.stt.apiKey, current.stt.baseUrl, current.stt.model, saved.stt.baseUrl, saved.sttModel),
+          tts: buildDirSave(clearTtsApiKey(), current.tts.apiKey, current.tts.baseUrl, current.tts.model, saved.tts.baseUrl, saved.ttsModel),
           ...(current.sttModel !== saved.sttModel ? { sttModel: current.sttModel.trim() || null } : {}),
           ...(current.ttsModel !== saved.ttsModel ? { ttsModel: current.ttsModel.trim() || null } : {}),
           ...(current.baseUrl !== (saved.baseUrl || "") ? { baseUrl: current.baseUrl.trim() || null } : {}),

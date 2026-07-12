@@ -16,7 +16,7 @@ function normalizeCapabilities(result: SpeechCapabilitiesResponse): SpeechCapabi
 const [speechCapabilities, setSpeechCapabilities] = createSignal<SpeechCapabilitiesResponse | null>(null)
 const [speechCapabilitiesLoading, setSpeechCapabilitiesLoading] = createSignal(false)
 const [speechCapabilitiesError, setSpeechCapabilitiesError] = createSignal<string | null>(null)
-const [serverSupportsSeparateProviders, setServerSupportsSeparateProviders] = createSignal(true)
+const [serverSupportsSeparateProviders, setServerSupportsSeparateProviders] = createSignal(false)
 
 let speechCapabilitiesPromise: Promise<SpeechCapabilitiesResponse | null> | null = null
 
