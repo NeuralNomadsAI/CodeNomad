@@ -3,6 +3,8 @@ import { Loader2, Mic, Square, Volume2 } from "lucide-solid"
 import { useConfig, type SpeechSettings } from "../../stores/preferences"
 import { useI18n } from "../../lib/i18n"
 import { loadSpeechCapabilities, speechCapabilities, speechCapabilitiesError, speechCapabilitiesLoading } from "../../stores/speech"
+import { showAlertDialog } from "../../stores/alerts"
+import { buildDirSave } from "../../lib/speech-dir-save"
 import { getLogger } from "../../lib/logger"
 import { useSpeech } from "../../lib/hooks/use-speech"
 import { useTranscriptionTest } from "../../lib/hooks/use-transcription-test"
@@ -227,36 +229,38 @@ export const SpeechSettingsCard: Component = () => {
   async function handleSave() {
     if (!isDirty() || isSaving()) return
     const current = drafts()
+    const saved = serverSettings().speech
+
+    if (current.separateProviders) {
+      const sttUrlChanged = (current.stt.baseUrl.trim() || "") !== (saved.stt.baseUrl || "")
+      const ttsUrlChanged = (current.tts.baseUrl.trim() || "") !== (saved.tts.baseUrl || "")
+      const sttNeedsKey = sttUrlChanged && saved.stt.hasApiKey && !current.stt.apiKey.trim() && !clearSttApiKey()
+      const ttsNeedsKey = ttsUrlChanged && saved.tts.hasApiKey && !current.tts.apiKey.trim() && !clearTtsApiKey()
+      if (sttNeedsKey || ttsNeedsKey) {
+        showAlertDialog(
+          sttNeedsKey && ttsNeedsKey
+            ? t("settings.speech.error.urlChangeKeyRequired.both")
+            : sttNeedsKey
+              ? t("settings.speech.error.urlChangeKeyRequired.stt")
+              : t("settings.speech.error.urlChangeKeyRequired.tts"),
+          { title: t("settings.speech.error.urlChangeKeyRequired.title"), variant: "error" },
+        )
+        return
+      }
+    }
+
     setIsSaving(true)
     setSaveStatus("idle")
     try {
-      const saved = serverSettings().speech
       if (current.separateProviders) {
-        const buildDirSave = (
-          clearKey: boolean,
-          draftApiKey: string,
-          draftBaseUrl: string,
-          draftModel: string,
-          storedDir: { hasApiKey: boolean; baseUrl?: string; model: string },
-          sharedModel: string,
-        ): { apiKey?: string | null; baseUrl?: string | null; model?: string | null } => {
-          if (clearKey) return { apiKey: null, baseUrl: null, model: null }
-          const newKey = draftApiKey.trim()
-          const baseUrlChanged = (draftBaseUrl.trim() || "") !== (storedDir.baseUrl || "")
-          const modelMatchesShared = draftModel.trim() === sharedModel.trim()
-          return {
-            ...(newKey ? { apiKey: newKey } : baseUrlChanged && storedDir.hasApiKey ? { apiKey: null } : {}),
-            baseUrl: draftBaseUrl.trim() || null,
-            model: modelMatchesShared ? null : (draftModel.trim() || null),
-          }
-        }
         await updateSpeechSettings({
           separateProviders: true,
-          stt: buildDirSave(clearSttApiKey(), current.stt.apiKey, current.stt.baseUrl, current.stt.model, saved.stt, saved.sttModel),
-          tts: buildDirSave(clearTtsApiKey(), current.tts.apiKey, current.tts.baseUrl, current.tts.model, saved.tts, saved.ttsModel),
+          stt: buildDirSave(clearSttApiKey(), current.stt.apiKey, current.stt.baseUrl, current.stt.model, saved.sttModel),
+          tts: buildDirSave(clearTtsApiKey(), current.tts.apiKey, current.tts.baseUrl, current.tts.model, saved.ttsModel),
           ...(current.sttModel !== saved.sttModel ? { sttModel: current.sttModel.trim() || null } : {}),
           ...(current.ttsModel !== saved.ttsModel ? { ttsModel: current.ttsModel.trim() || null } : {}),
           ...(current.baseUrl !== (saved.baseUrl || "") ? { baseUrl: current.baseUrl.trim() || null } : {}),
+          ...(clearStoredApiKey() ? { apiKey: null } : current.apiKey.trim() ? { apiKey: current.apiKey.trim() } : {}),
           ttsVoice: current.ttsVoice.trim() || null,
           playbackMode: current.playbackMode,
           ttsFormat: current.ttsFormat,
