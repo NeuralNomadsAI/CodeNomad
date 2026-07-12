@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js"
 import type { WorktreeDescriptor, WorktreeMap } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
-import { sessions } from "./session-state"
+import { getSessionRoot, sessions } from "./session-state"
 import { getLogger } from "../lib/logger"
 import { getCodeNomadSessionMetadata, setSessionWorktreeSlugWithClient } from "./session-metadata"
 import { getRootClient } from "./opencode-client"
@@ -283,9 +283,7 @@ function getDefaultWorktreeSlug(instanceId: string): string {
 }
 
 function getParentSessionId(instanceId: string, sessionId: string): string {
-  const session = sessions().get(instanceId)?.get(sessionId)
-  if (!session) return sessionId
-  return session.parentId ?? session.id
+  return getSessionRoot(instanceId, sessionId)?.id ?? sessionId
 }
 
 function getWorktreeSlugForParentSession(instanceId: string, parentSessionId: string): string {

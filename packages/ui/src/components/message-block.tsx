@@ -8,7 +8,7 @@ import { buildRecordDisplayData, clearRecordDisplayCacheForInstance } from "../s
 import type { MessageRecord } from "../stores/message-v2/types"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { formatTokenTotal } from "../lib/formatters"
-import { sessions, setActiveParentSession, setActiveSession } from "../stores/sessions"
+import { ensureSessionAncestorsExpanded, sessions, setActiveSessionFromList } from "../stores/sessions"
 import { selectInstanceTab } from "../stores/app-tabs"
 import { showAlertDialog } from "../stores/alerts"
 import { deleteMessage } from "../stores/session-actions"
@@ -135,11 +135,8 @@ function findTaskSessionLocation(sessionId: string, preferredInstanceId?: string
 
 function navigateToTaskSession(location: TaskSessionLocation) {
   selectInstanceTab(location.instanceId)
-  const parentToActivate = location.parentId ?? location.sessionId
-  setActiveParentSession(location.instanceId, parentToActivate)
-  if (location.parentId) {
-    setActiveSession(location.instanceId, location.sessionId)
-  }
+  ensureSessionAncestorsExpanded(location.instanceId, location.sessionId)
+  setActiveSessionFromList(location.instanceId, location.sessionId)
 }
 
 interface CachedBlockEntry {
