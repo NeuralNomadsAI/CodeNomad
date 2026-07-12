@@ -19,12 +19,32 @@ function validateBinaryPath(binaryPath: string): { valid: boolean; version?: str
   return { valid: result.valid, version: result.version, error: result.error }
 }
 
+function enforceSpeechCredentialPairing(body: unknown): unknown {
+  if (!body || typeof body !== "object") return body
+  const patch = { ...(body as Record<string, unknown>) }
+  const speech = patch.speech
+  if (!speech || typeof speech !== "object") return patch
+  const speechPatch = { ...(speech as Record<string, unknown>) }
+  for (const dir of ["stt", "tts"] as const) {
+    if (dir in speechPatch) {
+      const dirPatch = { ...(speechPatch[dir] as Record<string, unknown>) }
+      if ("baseUrl" in dirPatch && !("apiKey" in dirPatch)) {
+        dirPatch.apiKey = null
+        speechPatch[dir] = dirPatch
+      }
+    }
+  }
+  patch.speech = speechPatch
+  return patch
+}
+
 export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
   // Full-document access
   app.get("/api/storage/config", async () => sanitizeConfigDoc(deps.settings.getDoc("config")))
   app.patch("/api/storage/config", async (request, reply) => {
     try {
-      return sanitizeConfigDoc(deps.settings.mergePatchDoc("config", request.body ?? {}))
+      const processed = enforceSpeechCredentialPairing(request.body ?? {})
+      return sanitizeConfigDoc(deps.settings.mergePatchDoc("config", processed))
     } catch (error) {
       reply.code(400)
       return { error: error instanceof Error ? error.message : "Invalid patch" }
@@ -37,9 +57,12 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
 
   app.patch<{ Params: { owner: string } }>("/api/storage/config/:owner", async (request, reply) => {
     try {
+      const processed = request.params.owner === "server"
+        ? enforceSpeechCredentialPairing(request.body ?? {})
+        : request.body ?? {}
       return sanitizeConfigOwner(
         request.params.owner,
-        deps.settings.mergePatchOwner("config", request.params.owner, request.body ?? {}),
+        deps.settings.mergePatchOwner("config", request.params.owner, processed),
       )
     } catch (error) {
       reply.code(400)

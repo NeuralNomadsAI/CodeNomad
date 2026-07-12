@@ -16,6 +16,7 @@ function normalizeCapabilities(result: SpeechCapabilitiesResponse): SpeechCapabi
 const [speechCapabilities, setSpeechCapabilities] = createSignal<SpeechCapabilitiesResponse | null>(null)
 const [speechCapabilitiesLoading, setSpeechCapabilitiesLoading] = createSignal(false)
 const [speechCapabilitiesError, setSpeechCapabilitiesError] = createSignal<string | null>(null)
+const [serverSupportsSeparateProviders, setServerSupportsSeparateProviders] = createSignal(true)
 
 let speechCapabilitiesPromise: Promise<SpeechCapabilitiesResponse | null> | null = null
 
@@ -28,6 +29,8 @@ async function loadSpeechCapabilities(force = false): Promise<SpeechCapabilities
   speechCapabilitiesPromise = serverApi
     .fetchSpeechCapabilities()
     .then((result) => {
+      const raw = result as unknown as Record<string, unknown>
+      setServerSupportsSeparateProviders("separateProviders" in raw)
       const normalized = normalizeCapabilities(result)
       setSpeechCapabilities(normalized)
       setSpeechCapabilitiesError(null)
@@ -50,6 +53,7 @@ async function loadSpeechCapabilities(force = false): Promise<SpeechCapabilities
 function resetSpeechCapabilities(): void {
   setSpeechCapabilities(null)
   setSpeechCapabilitiesError(null)
+  setServerSupportsSeparateProviders(true)
 }
 
-export { speechCapabilities, speechCapabilitiesLoading, speechCapabilitiesError, loadSpeechCapabilities, resetSpeechCapabilities }
+export { speechCapabilities, speechCapabilitiesLoading, speechCapabilitiesError, serverSupportsSeparateProviders, loadSpeechCapabilities, resetSpeechCapabilities }

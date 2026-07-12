@@ -2,7 +2,7 @@ import { For, Show, createEffect, createMemo, createSignal, type Component } fro
 import { Loader2, Mic, Square, Volume2 } from "lucide-solid"
 import { useConfig, type SpeechSettings } from "../../stores/preferences"
 import { useI18n } from "../../lib/i18n"
-import { loadSpeechCapabilities, speechCapabilities, speechCapabilitiesError, speechCapabilitiesLoading } from "../../stores/speech"
+import { loadSpeechCapabilities, serverSupportsSeparateProviders, speechCapabilities, speechCapabilitiesError, speechCapabilitiesLoading } from "../../stores/speech"
 import { buildDirSave } from "../../lib/speech-dir-save"
 import { getLogger } from "../../lib/logger"
 import { useSpeech } from "../../lib/hooks/use-speech"
@@ -368,24 +368,26 @@ export const SpeechSettingsCard: Component = () => {
           </div>
         </div>
 
-        <div class="settings-toggle-row settings-toggle-row-compact">
-          <div>
-            <div class="settings-toggle-title">{t("settings.speech.separateProviders.title")}</div>
-            <div class="settings-toggle-caption">{t("settings.speech.separateProviders.subtitle")}</div>
+        <Show when={serverSupportsSeparateProviders()}>
+          <div class="settings-toggle-row settings-toggle-row-compact">
+            <div>
+              <div class="settings-toggle-title">{t("settings.speech.separateProviders.title")}</div>
+              <div class="settings-toggle-caption">{t("settings.speech.separateProviders.subtitle")}</div>
+            </div>
+            <label class="settings-checkbox-toggle">
+              <input
+                type="checkbox"
+                checked={drafts().separateProviders}
+                disabled={isSaving()}
+                onChange={(event) => {
+                  setSaveStatus("idle")
+                  setDrafts((current) => ({ ...current, separateProviders: event.currentTarget.checked }))
+                }}
+              />
+              <span>{t("settings.common.enabled")}</span>
+            </label>
           </div>
-          <label class="settings-checkbox-toggle">
-            <input
-              type="checkbox"
-              checked={drafts().separateProviders}
-              onChange={(event) => {
-                if (isSaving()) return
-                setSaveStatus("idle")
-                setDrafts((current) => ({ ...current, separateProviders: event.currentTarget.checked }))
-              }}
-            />
-            <span>{t("settings.common.enabled")}</span>
-          </label>
-        </div>
+        </Show>
 
         <Show when={!drafts().separateProviders}>
           <Field
