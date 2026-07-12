@@ -18,6 +18,16 @@ import {
   resolveHydratedGenerationRecovery,
   type PersistedGenerationRecovery,
 } from "./session-generation-recovery"
+import {
+  buildSessionThreadsFromMap,
+  collectVisibleSessionIds,
+  getDescendantSessionsFromMap,
+  getSessionAncestorIdsFromMap,
+  getSessionRootFromMap,
+  type SessionThread,
+} from "./session-tree"
+
+export type { SessionThread } from "./session-tree"
 
 const log = getLogger("session")
 let generationAdmissionSequence = 0
@@ -50,12 +60,6 @@ export interface SessionInfo {
   contextAvailableTokens: number | null
 }
 
-export type SessionThread = {
-  parent: Session
-  children: Session[]
-  latestUpdated: number
-}
-
 const [sessions, setSessions] = createSignal<Map<string, Map<string, Session>>>(new Map())
 const [activeSessionId, setActiveSessionId] = createSignal<Map<string, string>>(new Map())
 const [activeParentSessionId, setActiveParentSessionId] = createSignal<Map<string, string>>(new Map())
@@ -80,7 +84,8 @@ const [messageLoadErrors, setMessageLoadErrors] = createSignal<Map<string, Map<s
 const [sessionInfoByInstance, setSessionInfoByInstance] = createSignal<Map<string, Map<string, SessionInfo>>>(new Map())
 const [threadTotalsByInstance, setThreadTotalsByInstance] = createSignal<Map<string, Map<string, ThreadTotals>>>(new Map())
 
-const [expandedSessionParents, setExpandedSessionParents] = createSignal<Map<string, Set<string>>>(new Map())
+// Track expansion state for ANY session that has children (not just top-level parents)
+const [expandedSessions, setExpandedSessions] = createSignal<Map<string, Set<string>>>(new Map())
 
 export type InstanceSessionIndicatorStatus = "permission" | SessionStatus
 
@@ -342,7 +347,6 @@ messageStoreBus.onSessionCleared((instanceId, sessionId) => {
 })
 
 function getDraftKey(instanceId: string, sessionId: string): string {
-
   return `${instanceId}:${sessionId}`
 }
 
@@ -581,7 +585,8 @@ function markViewedSessionIdleSeen(
     const idsToClear = new Set<string>([sessionId])
     if (viewedSession.parentId === null && !keepUnseenSubagentIdleStatus) {
       for (const session of instanceSessions.values()) {
-        if (session.parentId === sessionId) idsToClear.add(session.id)
+        if (session.id === sessionId) continue
+        if (getSessionRootFromMap(instanceSessions, session.id)?.id === sessionId) idsToClear.add(session.id)
       }
     }
 
@@ -794,7 +799,7 @@ function clearInstanceSessionSelection(instanceId: string): void {
 }
 
 function setSessionStatus(instanceId: string, sessionId: string, status: SessionStatus): void {
-  let parentToExpand: string | null = null
+  let expandAncestors = false
 
   withSession(instanceId, sessionId, (session) => {
     const admissionPending = session.generationAdmissionToken !== undefined && status === "idle"
@@ -819,16 +824,12 @@ function setSessionStatus(instanceId: string, sessionId: string, status: Session
       session.retry = null
     }
 
-    // If a child session starts working, auto-expand its parent thread once.
-    // Users can still collapse it afterwards; we only expand on the transition.
     if (session.parentId && status === "working" && previous !== "working") {
-      parentToExpand = session.parentId
+      expandAncestors = true
     }
   })
 
-  if (parentToExpand) {
-    ensureSessionParentExpanded(instanceId, parentToExpand)
-  }
+  if (expandAncestors) ensureSessionAncestorsExpanded(instanceId, sessionId)
 }
 
 function getActiveParentSession(instanceId: string): Session | null {
@@ -863,33 +864,8 @@ function getChildSessions(instanceId: string, parentId: string): Session[] {
 }
 
 function getDescendantSessions(instanceId: string, parentId: string): Session[] {
-  const allSessions = getSessions(instanceId)
-  const childrenByParent = new Map<string, Session[]>()
-
-  for (const session of allSessions) {
-    if (!session.parentId) continue
-    const children = childrenByParent.get(session.parentId)
-    if (children) {
-      children.push(session)
-    } else {
-      childrenByParent.set(session.parentId, [session])
-    }
-  }
-
-  const descendants: Session[] = []
-  const stack = [...(childrenByParent.get(parentId) ?? [])]
-  const seen = new Set<string>()
-
-  while (stack.length > 0) {
-    const session = stack.shift()
-    if (!session || seen.has(session.id)) continue
-    seen.add(session.id)
-    descendants.push(session)
-    stack.push(...(childrenByParent.get(session.id) ?? []))
-  }
-
-  descendants.sort((a, b) => (b.time.updated ?? 0) - (a.time.updated ?? 0))
-  return descendants
+  const instanceSessions = sessions().get(instanceId)
+  return instanceSessions ? getDescendantSessionsFromMap(instanceSessions, parentId) : []
 }
 
 function getSessionFamily(instanceId: string, parentId: string): Session[] {
@@ -906,112 +882,9 @@ function getSessionRoot(instanceId: string, sessionId: string): Session | null {
   return getSessionRootFromMap(instanceSessions, sessionId)
 }
 
-function getSessionRootFromMap(instanceSessions: Map<string, Session>, sessionId: string): Session | null {
-  let current = instanceSessions.get(sessionId)
-  if (!current) return null
-
-  const seen = new Set<string>()
-  while (current.parentId) {
-    if (seen.has(current.id)) return null
-    seen.add(current.id)
-    const parent = instanceSessions.get(current.parentId)
-    if (!parent) return null
-    current = parent
-  }
-
-  return current
-}
-
-type SessionThreadCacheEntry = {
-  signature: string
-  thread: SessionThread
-}
-
-type SessionThreadCache = {
-  byParentId: Map<string, SessionThreadCacheEntry>
-}
-
-const sessionThreadCache = new Map<string, SessionThreadCache>()
-
-function getOrCreateSessionThreadCache(instanceId: string): SessionThreadCache {
-  let cache = sessionThreadCache.get(instanceId)
-  if (!cache) {
-    cache = { byParentId: new Map() }
-    sessionThreadCache.set(instanceId, cache)
-  }
-  return cache
-}
-
 function buildSessionThreads(instanceId: string, rootIds: string[], childIds?: Set<string>): SessionThread[] {
   const instanceSessions = sessions().get(instanceId)
-  if (!instanceSessions || instanceSessions.size === 0 || rootIds.length === 0) {
-    sessionThreadCache.delete(instanceId)
-    return []
-  }
-
-  const cache = getOrCreateSessionThreadCache(instanceId)
-  const seenParents = new Set<string>()
-
-  const childrenByRoot = new Map<string, Session[]>()
-
-  for (const session of instanceSessions.values()) {
-    if (!session.parentId) continue
-    if (childIds && !childIds.has(session.id)) continue
-    const root = getSessionRootFromMap(instanceSessions, session.id)
-    if (!root) continue
-    const children = childrenByRoot.get(root.id)
-    if (children) {
-      children.push(session)
-    } else {
-      childrenByRoot.set(root.id, [session])
-    }
-  }
-
-  const threads: SessionThread[] = []
-
-  for (const parentId of rootIds) {
-    const parent = instanceSessions.get(parentId)
-    if (!parent || parent.parentId !== null) continue
-
-    seenParents.add(parent.id)
-
-    const children = childrenByRoot.get(parent.id) ?? []
-    if (children.length > 1) {
-      children.sort((a, b) => (b.time.updated ?? 0) - (a.time.updated ?? 0))
-    }
-
-    const parentUpdated = parent.time.updated ?? 0
-    const latestChild = children[0]?.time.updated ?? 0
-    const latestUpdated = Math.max(parentUpdated, latestChild)
-
-    const childIds = children.map((child) => child.id).join(",")
-    const signature = `${parentUpdated}:${latestChild}:${childIds}`
-
-    const cached = cache.byParentId.get(parent.id)
-    if (cached && cached.signature === signature) {
-      threads.push(cached.thread)
-    } else {
-      const thread: SessionThread = { parent, children, latestUpdated }
-      cache.byParentId.set(parent.id, { signature, thread })
-      threads.push(thread)
-    }
-  }
-
-  for (const parentId of Array.from(cache.byParentId.keys())) {
-    if (!seenParents.has(parentId)) {
-      cache.byParentId.delete(parentId)
-    }
-  }
-
-  threads.sort((a, b) => {
-    if (b.latestUpdated !== a.latestUpdated) return b.latestUpdated - a.latestUpdated
-    const bParentUpdated = b.parent.time.updated ?? 0
-    const aParentUpdated = a.parent.time.updated ?? 0
-    if (bParentUpdated !== aParentUpdated) return bParentUpdated - aParentUpdated
-    return b.parent.id.localeCompare(a.parent.id)
-  })
-
-  return threads
+  return instanceSessions ? buildSessionThreadsFromMap(instanceSessions, rootIds, childIds) : []
 }
 
 function getSessionThreads(instanceId: string): SessionThread[] {
@@ -1032,7 +905,7 @@ function getSessionSearchThreads(instanceId: string): SessionThread[] {
     const session = instanceSessions.get(sessionId)
     if (!session) continue
     if (session.parentId === null) {
-      rootIds.push(session.id)
+      if (!rootIds.includes(session.id)) rootIds.push(session.id)
     } else {
       childIds.add(session.id)
       const root = getSessionRootFromMap(instanceSessions, session.id)
@@ -1043,20 +916,20 @@ function getSessionSearchThreads(instanceId: string): SessionThread[] {
   return buildSessionThreads(instanceId, rootIds, childIds)
 }
 
-function isSessionParentExpanded(instanceId: string, parentSessionId: string): boolean {
-  return Boolean(expandedSessionParents().get(instanceId)?.has(parentSessionId))
+function isSessionExpanded(instanceId: string, sessionId: string): boolean {
+  return Boolean(expandedSessions().get(instanceId)?.has(sessionId))
 }
 
-function setSessionParentExpanded(instanceId: string, parentSessionId: string, expanded: boolean): void {
-  setExpandedSessionParents((prev) => {
+function setSessionExpanded(instanceId: string, sessionId: string, expanded: boolean): void {
+  setExpandedSessions((prev) => {
     const next = new Map(prev)
     const currentSet = next.get(instanceId) ?? new Set<string>()
     const updated = new Set(currentSet)
 
     if (expanded) {
-      updated.add(parentSessionId)
+      updated.add(sessionId)
     } else {
-      updated.delete(parentSessionId)
+      updated.delete(sessionId)
     }
 
     if (updated.size === 0) {
@@ -1069,16 +942,16 @@ function setSessionParentExpanded(instanceId: string, parentSessionId: string, e
   })
 }
 
-function toggleSessionParentExpanded(instanceId: string, parentSessionId: string): void {
-  setExpandedSessionParents((prev) => {
+function toggleSessionExpanded(instanceId: string, sessionId: string): void {
+  setExpandedSessions((prev) => {
     const next = new Map(prev)
     const currentSet = next.get(instanceId) ?? new Set<string>()
     const updated = new Set(currentSet)
 
-    if (updated.has(parentSessionId)) {
-      updated.delete(parentSessionId)
+    if (updated.has(sessionId)) {
+      updated.delete(sessionId)
     } else {
-      updated.add(parentSessionId)
+      updated.add(sessionId)
     }
 
     next.set(instanceId, updated)
@@ -1086,45 +959,51 @@ function toggleSessionParentExpanded(instanceId: string, parentSessionId: string
   })
 }
 
-function ensureSessionParentExpanded(instanceId: string, parentSessionId: string): void {
-  if (isSessionParentExpanded(instanceId, parentSessionId)) return
-  setSessionParentExpanded(instanceId, parentSessionId, true)
+function ensureSessionExpanded(instanceId: string, sessionId: string): void {
+  if (isSessionExpanded(instanceId, sessionId)) return
+  setSessionExpanded(instanceId, sessionId, true)
+}
+
+function getSessionAncestorIds(instanceId: string, sessionId: string): string[] {
+  const instanceSessions = sessions().get(instanceId)
+  return instanceSessions ? getSessionAncestorIdsFromMap(instanceSessions, sessionId) : []
+}
+
+function ensureSessionAncestorsExpanded(instanceId: string, sessionId: string): void {
+  const ancestorIds = getSessionAncestorIds(instanceId, sessionId)
+  if (ancestorIds.length === 0) return
+  setExpandedSessions((prev) => {
+    const next = new Map(prev)
+    const expanded = new Set(next.get(instanceId))
+    let changed = false
+    for (const ancestorId of ancestorIds) {
+      if (expanded.has(ancestorId)) continue
+      expanded.add(ancestorId)
+      changed = true
+    }
+    if (!changed) return prev
+    next.set(instanceId, expanded)
+    return next
+  })
 }
 
 function getVisibleSessionIds(instanceId: string): string[] {
   const threads = getSessionThreads(instanceId)
   if (threads.length === 0) return []
 
-  const expanded = expandedSessionParents().get(instanceId)
-  const ids: string[] = []
-
-  for (const thread of threads) {
-    ids.push(thread.parent.id)
-    if (expanded?.has(thread.parent.id)) {
-      for (const child of thread.children) {
-        ids.push(child.id)
-      }
-    }
-  }
-
-  return ids
+  const expanded = expandedSessions().get(instanceId)
+  return collectVisibleSessionIds(threads, expanded)
 }
 
 function setActiveSessionFromList(instanceId: string, sessionId: string): void {
   const session = sessions().get(instanceId)?.get(sessionId)
   if (!session) return
-
-  if (session.parentId === null) {
-    setActiveParentSession(instanceId, sessionId)
-    return
-  }
-
-  const parentId = session.parentId
-  if (!parentId) return
+  const root = getSessionRoot(instanceId, sessionId)
+  if (!root) return
 
   batch(() => {
-    setActiveParentSession(instanceId, parentId)
-    setActiveSession(instanceId, sessionId)
+    setActiveParentSession(instanceId, root.id)
+    if (session.id !== root.id) setActiveSession(instanceId, session.id)
   })
 }
 
@@ -1186,9 +1065,10 @@ function updateThreadTotalsForParent(instanceId: string, parentSessionId: string
 }
 
 function updateThreadTotalsForSession(instanceId: string, sessionId: string): void {
-  const session = sessions().get(instanceId)?.get(sessionId)
-  if (!session) return
-  updateThreadTotalsForParent(instanceId, session.parentId ?? session.id)
+  const instanceSessions = sessions().get(instanceId)
+  if (!instanceSessions?.has(sessionId)) return
+  const familyIds = [...getSessionAncestorIdsFromMap(instanceSessions, sessionId), sessionId]
+  for (const familyId of familyIds) updateThreadTotalsForParent(instanceId, familyId)
 }
 
 async function isBlankSession(session: Session, instanceId: string, fetchIfNeeded = false): Promise<boolean> {
@@ -1203,20 +1083,20 @@ async function isBlankSession(session: Session, instanceId: string, fetchIfNeede
   }
 
   // For a more thorough deep clean, we need to look at actual messages
-  
+
   const instance = instances().get(instanceId)
   if (!instance?.client) {
     return isFreshSession
   }
   let messages: any[] = []
-    try {
-      const client = getRootClient(instanceId)
-      const workspace = await getOpenCodeWorkspaceIdForSession(instanceId, session.id)
-      messages = await requestData<any[]>(
-        client.session.messages({ sessionID: session.id, ...(workspace ? { workspace } : {}) }),
-        "session.messages",
-      )
-    } catch (error) {
+  try {
+    const client = getRootClient(instanceId)
+    const workspace = await getOpenCodeWorkspaceIdForSession(instanceId, session.id)
+    messages = await requestData<any[]>(
+      client.session.messages({ sessionID: session.id, ...(workspace ? { workspace } : {}) }),
+      "session.messages",
+    )
+  } catch (error) {
     log.error(`Failed to fetch messages for session ${session.id}`, error)
     return isFreshSession
   }
@@ -1230,23 +1110,23 @@ async function isBlankSession(session: Session, instanceId: string, fetchIfNeede
     // Subagent: "blank" (really: finished doing its job) if actually blank...
     // ... OR no streaming, no pending perms, no tool parts
     if (messages.length === 0) return true
-    
+
     const hasStreaming = messages.some((msg) => {
       const info = msg.info.status || msg.status
       return info === "streaming" || info === "sending"
     })
-    
+
     const lastMessage = messages[messages.length - 1]
     const lastParts = lastMessage?.parts || []
-    const hasToolPart = lastParts.some((part: any) => 
+    const hasToolPart = lastParts.some((part: any) =>
       part.type === "tool" || part.data?.type === "tool"
     )
-    
+
     return !hasStreaming && !session.pendingPermission && !hasToolPart
   } else {
     // Fork: blank if somehow has no messages or at revert point
     if (messages.length === 0) return true
-  
+
     const lastMessage = messages[messages.length - 1]
     const lastInfo = lastMessage?.info || lastMessage
     return lastInfo?.id === session.revert?.messageID
@@ -1299,6 +1179,13 @@ async function cleanupBlankSessions(instanceId: string, excludeSessionId?: strin
     }
   }
 }
+
+// Backward compatibility aliases for renamed exports
+const expandedSessionParents = expandedSessions
+const isSessionParentExpanded = isSessionExpanded
+const setSessionParentExpanded = setSessionExpanded
+const toggleSessionParentExpanded = toggleSessionExpanded
+const ensureSessionParentExpanded = ensureSessionExpanded
 
 export {
   sessions,
@@ -1361,10 +1248,12 @@ export {
   getSessionThreads,
   getSessionSearchThreads,
   getVisibleSessionIds,
-  isSessionParentExpanded,
-  setSessionParentExpanded,
-  toggleSessionParentExpanded,
-  ensureSessionParentExpanded,
+  isSessionExpanded,
+  setSessionExpanded,
+  toggleSessionExpanded,
+  ensureSessionExpanded,
+  getSessionAncestorIds,
+  ensureSessionAncestorsExpanded,
   setActiveSessionFromList,
   isSessionBusy,
   isSessionMessagesLoading,
@@ -1372,6 +1261,11 @@ export {
   getSessionInfo,
   isBlankSession,
   cleanupBlankSessions,
+  expandedSessionParents,
+  isSessionParentExpanded,
+  setSessionParentExpanded,
+  toggleSessionParentExpanded,
+  ensureSessionParentExpanded,
   SESSION_PAGE_SIZE,
   sessionPagination,
   sessionSearch,
