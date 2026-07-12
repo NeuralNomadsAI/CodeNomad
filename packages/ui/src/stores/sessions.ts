@@ -50,6 +50,7 @@ import {
 } from "./session-state"
 
 import { getDefaultModel } from "./session-models"
+import { handleWorktreeReady } from "./worktrees"
 import {
   createSession,
   deleteSession,
@@ -102,6 +103,7 @@ sseManager.onPermissionUpdated = handlePermissionUpdated
 sseManager.onPermissionReplied = handlePermissionReplied
 sseManager.onQuestionAsked = handleQuestionAsked
 sseManager.onQuestionAnswered = handleQuestionAnswered
+sseManager.onWorktreeReady = handleWorktreeReady
 
 export {
   abortSession,

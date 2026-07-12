@@ -69,6 +69,15 @@ interface ServerInstanceDisposedEvent {
   }
 }
 
+export interface WorktreeReadyEvent {
+  type: "worktree.ready"
+  directory?: string
+  properties: {
+    name: string
+    branch?: string
+  }
+}
+
 type EventSessionCreated = Omit<EventSessionUpdated, "type"> & { type: "session.created" }
 
 type SSEEvent =
@@ -97,6 +106,7 @@ type SSEEvent =
   | BackgroundProcessUpdatedEvent
   | BackgroundProcessRemovedEvent
   | ServerInstanceDisposedEvent
+  | WorktreeReadyEvent
   | { type: string; properties?: Record<string, unknown> }
 
 const [connectionStatus, setConnectionStatus] = createSignal<Map<string, ConnectionStatus>>(new Map())
@@ -218,6 +228,9 @@ class SSEManager {
       case "server.instance.disposed":
         this.onInstanceDisposed?.(instanceId, event as ServerInstanceDisposedEvent)
         break
+      case "worktree.ready":
+        this.onWorktreeReady?.(instanceId, event as WorktreeReadyEvent)
+        break
       default:
         log.warn("Unknown SSE event type", { type: event.type })
     }
@@ -250,6 +263,7 @@ class SSEManager {
   onBackgroundProcessUpdated?: (instanceId: string, event: BackgroundProcessUpdatedEvent) => void
   onBackgroundProcessRemoved?: (instanceId: string, event: BackgroundProcessRemovedEvent) => void
   onInstanceDisposed?: (instanceId: string, event: ServerInstanceDisposedEvent) => void
+  onWorktreeReady?: (instanceId: string, event: WorktreeReadyEvent) => void
   onConnectionLost?: (instanceId: string, reason: string) => void | Promise<void>
 
   getStatus(instanceId: string): ConnectionStatus | null {

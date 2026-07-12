@@ -5,6 +5,7 @@ import { getSessionRoot, sessions } from "./session-state"
 import { getLogger } from "../lib/logger"
 import { getCodeNomadSessionMetadata, setSessionWorktreeSlugWithClient } from "./session-metadata"
 import { getRootClient } from "./opencode-client"
+import type { WorktreeReadyEvent } from "../lib/sse-manager"
 
 const log = getLogger("api")
 
@@ -15,6 +16,8 @@ const [gitRepoStatusByInstance, setGitRepoStatusByInstance] = createSignal<Map<s
 const worktreeLoads = new Map<string, Promise<void>>()
 const mapLoads = new Map<string, Promise<void>>()
 const mapMigrations = new Map<string, Promise<void>>()
+
+type WorktreeReadyRefresh = (instanceId: string) => Promise<void>
 
 function normalizeMap(input?: WorktreeMap | null): WorktreeMap {
   if (!input || typeof input !== "object") {
@@ -101,6 +104,27 @@ async function reloadWorktrees(instanceId: string): Promise<void> {
     .catch((error) => {
       log.warn("Failed to reload worktrees", { instanceId, error })
     })
+}
+
+async function handleWorktreeReady(
+  instanceId: string,
+  event: WorktreeReadyEvent,
+  refreshWorktrees: WorktreeReadyRefresh = reloadWorktrees,
+  refreshWorkspaces: WorktreeReadyRefresh = async (id) => {
+    const { reloadOpenCodeWorkspaces } = await import("./opencode-workspaces")
+    await reloadOpenCodeWorkspaces(id)
+  },
+): Promise<void> {
+  if (!instanceId) return
+
+  log.info("OpenCode worktree ready", {
+    instanceId,
+    directory: event.directory,
+    name: event.properties?.name,
+  })
+
+  await refreshWorktrees(instanceId)
+  await refreshWorkspaces(instanceId)
 }
 
 function getGitRepoStatus(instanceId: string): boolean | null {
@@ -401,6 +425,7 @@ export {
   gitRepoStatusByInstance,
   ensureWorktreesLoaded,
   reloadWorktrees,
+  handleWorktreeReady,
   reloadWorktreeMap,
   ensureWorktreeMapLoaded,
   getGitRepoStatus,
