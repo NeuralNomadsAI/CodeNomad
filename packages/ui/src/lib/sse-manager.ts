@@ -31,7 +31,11 @@ import type {
   WorkspaceEventPayload,
 } from "../../../server/src/api-types"
 import { getLogger } from "./logger"
-import { deriveDisplayConnectionStatus, type ConnectionStatus } from "./connection-status"
+import {
+  deriveDisplayConnectionStatus,
+  seedConnectionStatusIfMissing,
+  type ConnectionStatus,
+} from "./connection-status"
 
 const log = getLogger("sse")
 
@@ -141,6 +145,10 @@ class SSEManager {
 
   seedStatus(instanceId: string, status: ConnectionStatus) {
     this.updateConnectionStatus(instanceId, status)
+  }
+
+  seedStatusIfMissing(instanceId: string, status: ConnectionStatus) {
+    setConnectionStatus((prev) => seedConnectionStatusIfMissing(prev, instanceId, status))
   }
 
   private handleEvent(instanceId: string, event: SSEEvent | InstanceStreamEvent): void {

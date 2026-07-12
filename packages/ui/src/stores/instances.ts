@@ -64,6 +64,7 @@ import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authorit
 import { completeAbortableRestoreCreation } from "./abortable-restore-creation"
 import { getAbortReason } from "./app-session-restore-timeout"
 import { AbortCreatedWorkspaceCleanup } from "./abort-created-workspace-cleanup"
+import { TrailingResyncCoordinator } from "../lib/trailing-resync"
 
 const log = getLogger("api")
 
@@ -227,6 +228,30 @@ const restoreCreatedWorkspaceCleanup = new AbortCreatedWorkspaceCleanup<Workspac
 })
 let restoreCreationRequestSequence = 0
 
+const connectionResyncs = new TrailingResyncCoordinator(
+  async (instanceId) => {
+    await initialHydrations.get(instanceId)
+    const instance = instances().get(instanceId)
+    if (!instance?.client || instance.status !== "ready") return
+    await fetchSessions(instanceId, { reset: false })
+  },
+  (instanceId, error) => {
+    log.warn("Failed to resync sessions after instance connection", { instanceId, error })
+  },
+)
+
+function resyncConnectedInstance(instanceId: string): void {
+  void connectionResyncs.request(instanceId)
+}
+
+serverEvents.on("instance.eventStatus", (event) => {
+  if (event.type !== "instance.eventStatus" || event.status !== "connected") return
+  if (disconnectedInstance()?.id === event.instanceId) {
+    setDisconnectedInstance(null)
+  }
+  resyncConnectedInstance(event.instanceId)
+})
+
 function createRestoreCreationRequestId(): string {
   if (typeof globalThis.crypto?.randomUUID === "function") {
     return `restore-${globalThis.crypto.randomUUID()}`
@@ -338,9 +363,12 @@ function attachClient(descriptor: WorkspaceDescriptor) {
     proxyPath: nextProxyPath,
     status: "ready",
   })
-  sseManager.seedStatus(descriptor.id, "connecting")
+  sseManager.seedStatusIfMissing(descriptor.id, "connecting")
   const hydration = hydrateInstanceData(descriptor.id, { propagateErrors: true })
   initialHydrations.set(descriptor.id, hydration)
+  if (sseManager.getStatuses().get(descriptor.id) === "connected") {
+    resyncConnectedInstance(descriptor.id)
+  }
   void hydration.catch((error) => {
     log.error("Failed to hydrate instance data", error)
   })
