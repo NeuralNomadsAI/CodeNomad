@@ -10,9 +10,15 @@ export function buildDirSave(
   const newKey = draftApiKey.trim()
   const baseUrlChanged = (draftBaseUrl.trim() || "") !== (storedBaseUrl || "")
   const modelMatchesShared = draftModel.trim() === sharedModel.trim()
+  if (baseUrlChanged) {
+    return {
+      ...(newKey ? { apiKey: newKey } : { apiKey: null }),
+      baseUrl: draftBaseUrl.trim() || null,
+      model: modelMatchesShared ? null : (draftModel.trim() || null),
+    }
+  }
   return {
     ...(newKey ? { apiKey: newKey } : {}),
-    ...(baseUrlChanged ? { baseUrl: draftBaseUrl.trim() || null } : {}),
     model: modelMatchesShared ? null : (draftModel.trim() || null),
   }
 }

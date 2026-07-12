@@ -28,10 +28,10 @@ describe("buildDirSave", () => {
     assert.equal("apiKey" in result, false, "apiKey must not be in patch when no new key entered")
   })
 
-  it("includes baseUrl when it differs from stored value", () => {
+  it("clears stored key when URL differs from stored (old-server safe)", () => {
     const result = buildDirSave(false, "", "https://api.new.com/v1", "whisper-large-v3", "https://api.old.com/v1", "whisper-1")
     assert.equal(result.baseUrl, "https://api.new.com/v1")
-    assert.equal("apiKey" in result, false)
+    assert.equal(result.apiKey, null, "apiKey must be null when URL changes without new key — old-server safe")
   })
 
   it("includes apiKey when user enters a new key", () => {

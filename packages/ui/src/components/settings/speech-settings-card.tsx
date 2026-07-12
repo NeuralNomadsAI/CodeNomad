@@ -243,7 +243,7 @@ export const SpeechSettingsCard: Component = () => {
           tts: buildDirSave(clearTtsApiKey(), current.tts.apiKey, current.tts.baseUrl, current.tts.model, saved.tts.baseUrl, saved.ttsModel),
           ...(current.sttModel !== saved.sttModel ? { sttModel: current.sttModel.trim() || null } : {}),
           ...(current.ttsModel !== saved.ttsModel ? { ttsModel: current.ttsModel.trim() || null } : {}),
-          ...(current.baseUrl !== (saved.baseUrl || "") ? { baseUrl: current.baseUrl.trim() || null } : {}),
+          ...(current.baseUrl !== (saved.baseUrl || "") ? { baseUrl: current.baseUrl.trim() || null, ...(clearStoredApiKey() ? {} : current.apiKey.trim() ? {} : { apiKey: null }) } : {}),
           ...(clearStoredApiKey() ? { apiKey: null } : current.apiKey.trim() ? { apiKey: current.apiKey.trim() } : {}),
           ttsVoice: current.ttsVoice.trim() || null,
           playbackMode: current.playbackMode,
@@ -254,7 +254,7 @@ export const SpeechSettingsCard: Component = () => {
         const baseUrlChanged = (current.baseUrl.trim() || "") !== (saved.baseUrl || "")
         await updateSpeechSettings({
           separateProviders: false,
-          ...(clearStoredApiKey() ? { apiKey: null } : trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
+          ...(clearStoredApiKey() ? { apiKey: null } : trimmedApiKey ? { apiKey: trimmedApiKey } : baseUrlChanged ? { apiKey: null } : {}),
           ...(baseUrlChanged ? { baseUrl: current.baseUrl.trim() || null } : {}),
           sttModel: current.sttModel.trim() || null,
           ttsModel: current.ttsModel.trim() || null,
