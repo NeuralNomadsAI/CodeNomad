@@ -38,6 +38,7 @@ export interface WorkspaceDescriptor {
 export interface WorkspaceCreateRequest {
   path: string
   name?: string
+  forceNew?: boolean
 }
 
 export interface WorkspaceCloneRequest {
@@ -50,7 +51,10 @@ export interface WorkspaceCloneResponse {
   path: string
 }
 
-export type WorkspaceCreateResponse = WorkspaceDescriptor
+export type WorkspaceCreateResponse = WorkspaceDescriptor & {
+  /** True when an active workspace with the same canonical path was returned. */
+  reused?: true
+}
 export type WorkspaceListResponse = WorkspaceDescriptor[]
 export type WorkspaceDetailResponse = WorkspaceDescriptor
 
@@ -218,13 +222,6 @@ export interface FileSystemFileContentResponse {
   path: string
   contents: string
   encoding: "utf-8" | "base64"
-}
-
-export interface DetectPathExistingInRecentResponse {
-  exists: boolean
-  currentPath: string
-  currentReal: string
-  foundResult: string | undefined
 }
 
 export interface ConfigFileDescriptor {

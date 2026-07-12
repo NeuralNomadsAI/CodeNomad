@@ -212,7 +212,7 @@ function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectN
   return {
     id: descriptor.id,
     folder: descriptor.path,
-    projectName: descriptor.name ?? projectName ?? existing?.projectName,
+    projectName: projectName ?? existing?.projectName ?? descriptor.name,
     port: descriptor.port ?? existing?.port ?? 0,
     pid: descriptor.pid ?? existing?.pid ?? 0,
     proxyPath: descriptor.proxyPath,
@@ -697,12 +697,20 @@ function removeInstance(id: string) {
   syncHasInstancesFlag()
 }
 
-async function createInstance(folder: string, _binaryPath?: string, projectName?: string): Promise<string> {
+async function createInstance(
+  folder: string,
+  _binaryPath?: string,
+  projectName?: string,
+  options?: { forceNew?: boolean },
+): Promise<{ instanceId: string; reused: boolean }> {
   try {
-    const workspace = await serverApi.createWorkspace({ path: folder, name: projectName })
-    upsertWorkspace(workspace, projectName)
-    setActiveInstanceId(workspace.id)
-    return workspace.id
+    const workspace = await serverApi.createWorkspace({ path: folder, name: projectName, forceNew: options?.forceNew })
+    const reused = workspace.reused === true
+    upsertWorkspace(workspace, reused ? undefined : projectName)
+    if (!reused) {
+      setActiveInstanceId(workspace.id)
+    }
+    return { instanceId: workspace.id, reused }
   } catch (error) {
     log.error("Failed to create workspace", error)
     throw error

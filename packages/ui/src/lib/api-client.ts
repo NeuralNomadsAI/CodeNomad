@@ -31,6 +31,7 @@ import type {
   WorktreeGitMutationResponse,
   WorktreeGitPathsRequest,
   WorkspaceCreateRequest,
+  WorkspaceCreateResponse,
   WorkspaceDescriptor,
   WorkspaceFileResponse,
   WorkspaceFileSearchResponse,
@@ -43,8 +44,6 @@ import type {
   WorktreeCreateRequest,
   WorktreeGitDiffResponse,
   WorktreeGitStatusResponse,
-  RecentFolder,
-  DetectPathExistingInRecentResponse,
 } from "../../../server/src/api-types"
 import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
@@ -227,8 +226,8 @@ export const serverApi = {
       body: JSON.stringify(map),
     })
   },
-  createWorkspace(payload: WorkspaceCreateRequest): Promise<WorkspaceDescriptor> {
-    return request<WorkspaceDescriptor>("/api/workspaces", {
+  createWorkspace(payload: WorkspaceCreateRequest): Promise<WorkspaceCreateResponse> {
+    return request<WorkspaceCreateResponse>("/api/workspaces", {
       method: "POST",
       body: JSON.stringify(payload),
     })
@@ -486,12 +485,6 @@ export const serverApi = {
       params.set("encoding", options.encoding)
     }
     return request<FileSystemFileContentResponse>(`/api/filesystem/files/content?${params.toString()}`)
-  },
-  detectPathExistingInRecent(currentPath: string, recentPaths: string[]): Promise<DetectPathExistingInRecentResponse> {
-    return request<DetectPathExistingInRecentResponse>(`/api/filesystem/detect-path-existing-in-recent`, {
-      method: "POST",
-      body: JSON.stringify({ currentPath, recentPaths }),
-    })
   },
   readInstanceData(id: string): Promise<InstanceData> {
     return request<InstanceData>(`/api/storage/instances/${encodeURIComponent(id)}`)

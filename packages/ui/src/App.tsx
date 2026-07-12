@@ -71,10 +71,6 @@ import {
   selectInstanceTab,
   selectSidecarTab,
 } from "./stores/app-tabs"
-import { serverApi } from './lib/api-client'
-import { RecentFolder } from '../../server/src/api-types'
-import { Instance } from './types/instance'
-
 const log = getLogger("actions")
 
 const App: Component = () => {
@@ -285,31 +281,14 @@ const App: Component = () => {
       return
     }
 
-    let existingInstance = getExistingInstanceForFolder(folderPath)
-
-    if (!existingInstance) {
-      const detectResult = await serverApi.detectPathExistingInRecent(folderPath, [
-        ...(Array.from(instances().values()) as Instance[]).reduce((acc: string[], instance: Instance) => {
-          if (instance.status === "stopped") return acc
-          acc.push(instance.folder)
-          return acc
-        }, [] as string[]),
-        ...recentFolders().map((folder: RecentFolder) => folder.path),
-      ]).catch(() => null)
-
-      if (detectResult?.exists) {
-        folderPath = detectResult.foundResult!
-        existingInstance = getExistingInstanceForFolder(folderPath)
-      }
-    }
-
     const selectedBinary = binaryPath || serverSettings().opencodeBinary || "opencode"
     const projectName = getProjectNameForFolder(folderPath)
-    recordWorkspaceLaunch(folderPath, selectedBinary)
     clearLaunchError()
 
     if (!options?.forceNew) {
+      const existingInstance = getExistingInstanceForFolder(folderPath)
       if (existingInstance) {
+        recordWorkspaceLaunch(existingInstance.folder, selectedBinary, folderPath)
         setAlreadyOpenFolderChoice({ folderPath, binaryPath: selectedBinary, instanceId: existingInstance.id })
         return
       }
@@ -317,13 +296,20 @@ const App: Component = () => {
 
     setIsSelectingFolder(true)
     try {
-      const instanceId = await createInstance(folderPath, selectedBinary, projectName)
-      selectInstanceTab(instanceId)
+      const result = await createInstance(folderPath, selectedBinary, projectName, { forceNew: options?.forceNew })
+      if (result.reused) {
+        recordWorkspaceLaunch(instances().get(result.instanceId)?.folder ?? folderPath, selectedBinary, folderPath)
+        setAlreadyOpenFolderChoice({ folderPath, binaryPath: selectedBinary, instanceId: result.instanceId })
+        return
+      }
+
+      recordWorkspaceLaunch(instances().get(result.instanceId)?.folder ?? folderPath, selectedBinary, folderPath)
+      selectInstanceTab(result.instanceId)
       setShowFolderSelection(false)
 
       log.info("Created instance", {
-        instanceId,
-        port: instances().get(instanceId)?.port,
+        instanceId: result.instanceId,
+        port: instances().get(result.instanceId)?.port,
       })
     } catch (error) {
       const message = formatLaunchErrorMessage(error, t("app.launchError.fallbackMessage"))
