@@ -3,7 +3,6 @@ import { Loader2, Mic, Square, Volume2 } from "lucide-solid"
 import { useConfig, type SpeechSettings } from "../../stores/preferences"
 import { useI18n } from "../../lib/i18n"
 import { loadSpeechCapabilities, speechCapabilities, speechCapabilitiesError, speechCapabilitiesLoading } from "../../stores/speech"
-import { showAlertDialog } from "../../stores/alerts"
 import { buildDirSave } from "../../lib/speech-dir-save"
 import { getLogger } from "../../lib/logger"
 import { useSpeech } from "../../lib/hooks/use-speech"
@@ -230,24 +229,6 @@ export const SpeechSettingsCard: Component = () => {
     if (!isDirty() || isSaving()) return
     const current = drafts()
     const saved = serverSettings().speech
-
-    if (current.separateProviders) {
-      const sttUrlChanged = (current.stt.baseUrl.trim() || "") !== (saved.stt.baseUrl || "")
-      const ttsUrlChanged = (current.tts.baseUrl.trim() || "") !== (saved.tts.baseUrl || "")
-      const sttNeedsKey = sttUrlChanged && saved.stt.hasApiKey && !current.stt.apiKey.trim() && !clearSttApiKey()
-      const ttsNeedsKey = ttsUrlChanged && saved.tts.hasApiKey && !current.tts.apiKey.trim() && !clearTtsApiKey()
-      if (sttNeedsKey || ttsNeedsKey) {
-        showAlertDialog(
-          sttNeedsKey && ttsNeedsKey
-            ? t("settings.speech.error.urlChangeKeyRequired.both")
-            : sttNeedsKey
-              ? t("settings.speech.error.urlChangeKeyRequired.stt")
-              : t("settings.speech.error.urlChangeKeyRequired.tts"),
-          { title: t("settings.speech.error.urlChangeKeyRequired.title"), variant: "error" },
-        )
-        return
-      }
-    }
 
     setIsSaving(true)
     setSaveStatus("idle")

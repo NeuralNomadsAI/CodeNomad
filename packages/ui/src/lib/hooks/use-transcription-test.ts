@@ -29,20 +29,24 @@ export function useTranscriptionTest() {
     return Boolean(isSupported() && capabilities?.available && capabilities?.sttConfigured && capabilities?.supportsStt)
   }
 
-  const stopRecorderAndTracks = () => {
+  const releaseStream = () => {
+    stopTracks(mediaStream)
+    mediaStream = null
+  }
+
+  const releaseAll = () => {
     if (mediaRecorder && mediaRecorder.state !== "inactive") {
       mediaRecorder.stop()
     }
     mediaRecorder = null
-    stopTracks(mediaStream)
-    mediaStream = null
+    releaseStream()
     recordedChunks = []
   }
 
   onCleanup(() => {
     disposed = true
     requestGeneration += 1
-    stopRecorderAndTracks()
+    releaseAll()
   })
 
   const startRecording = async () => {
@@ -84,6 +88,12 @@ export function useTranscriptionTest() {
         }
       })
 
+      recorder.addEventListener("error", () => {
+        if (generation !== requestGeneration) return
+        releaseAll()
+        setState("idle")
+      })
+
       recorder.addEventListener("stop", () => {
         if (generation === requestGeneration) {
           void finalizeRecording(generation)
@@ -94,7 +104,7 @@ export function useTranscriptionTest() {
       recorder.start()
     } catch (error) {
       if (generation !== requestGeneration) return
-      stopRecorderAndTracks()
+      releaseAll()
       setState("idle")
       showAlertDialog(t("promptInput.voiceInput.error.permission"), {
         title: t("promptInput.voiceInput.error.title"),
@@ -107,8 +117,7 @@ export function useTranscriptionTest() {
   const stopRecording = () => {
     if (!mediaRecorder || state() !== "recording") return
     mediaRecorder.stop()
-    stopTracks(mediaStream)
-    mediaStream = null
+    releaseStream()
     setState("transcribing")
   }
 
