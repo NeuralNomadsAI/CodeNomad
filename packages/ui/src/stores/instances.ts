@@ -17,6 +17,7 @@ import {
   fetchAgents,
   fetchProviders,
   clearInstanceDraftPrompts,
+  clearSessionListRequestState,
   resetSessionPagination,
 } from "./sessions"
 import {
@@ -30,7 +31,12 @@ import { getRootClient } from "./opencode-client"
 import { clearOpenCodeWorkspaceCache, getOpenCodeWorkspaceIdForSession, getOpenCodeWorkspaceIdForWorktree, syncOpenCodeWorkspaces } from "./opencode-workspaces"
 import { fetchCommands, clearCommands } from "./commands"
 import { serverSettings } from "./preferences"
-import { sessions, setSessionPendingPermission, setSessionPendingQuestion } from "./session-state"
+import {
+  reconcileSessionPendingState,
+  sessions,
+  setSessionPendingPermission,
+  setSessionPendingQuestion,
+} from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
 import { upsertPermissionV2, removePermissionV2, upsertQuestionV2, removeQuestionV2 } from "./message-v2/bridge"
@@ -207,6 +213,14 @@ const MAX_LOG_ENTRIES = 1000
 const pendingDisposeRequests = new Map<string, Promise<boolean>>()
 const pendingRehydrations = new Map<string, Promise<void>>()
 
+function reconcilePendingSessionIndicators(instanceId: string): void {
+  reconcileSessionPendingState(
+    instanceId,
+    new Set(permissionSessionCounts.get(instanceId)?.keys() ?? []),
+    new Set(questionSessionCounts.get(instanceId)?.keys() ?? []),
+  )
+}
+
 function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectName?: string): Instance {
   const existing = instances().get(descriptor.id)
   return {
@@ -351,6 +365,7 @@ async function syncPendingPermissions(instanceId: string): Promise<void> {
       const queuedPermission = addPermissionToQueue(instanceId, permission, source) ?? permission
       upsertPermissionV2(instanceId, queuedPermission)
     }
+    reconcilePendingSessionIndicators(instanceId)
   } catch (error) {
     log.warn("Failed to sync pending permissions", { instanceId, error })
   }
@@ -403,6 +418,7 @@ async function syncPendingQuestions(instanceId: string): Promise<void> {
       addQuestionToQueue(instanceId, request, source)
       upsertQuestionV2(instanceId, request)
     }
+    reconcilePendingSessionIndicators(instanceId)
   } catch (error) {
     log.warn("Failed to sync pending questions", { instanceId, error })
   }
@@ -696,6 +712,7 @@ function removeInstance(id: string) {
   clearCacheForInstance(id)
   messageStoreBus.unregisterInstance(id)
   clearInstanceDraftPrompts(id)
+  clearSessionListRequestState(id)
   syncHasInstancesFlag()
 }
 
@@ -1476,4 +1493,5 @@ export {
   acknowledgeDisconnectedInstance,
   fetchLspStatus,
   disposeInstance,
+  reconcilePendingSessionIndicators,
 }

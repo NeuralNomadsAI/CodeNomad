@@ -9,7 +9,7 @@ import {
 import type { Message } from "../types/message"
 import type { Session as SDKSession, SessionListResponse } from "@opencode-ai/sdk/v2/client"
 
-import { instances } from "./instances"
+import { instances, reconcilePendingSessionIndicators } from "./instances"
 import { preferences, setAgentModelPreference } from "./preferences"
 import {
   activeSessionId,
@@ -69,15 +69,27 @@ import { PROJECT_SESSION_LIST_LIMIT, buildProjectSessionListOptions, filterProje
 
 const log = getLogger("api")
 const sessionListRequestIds = new Map<string, number>()
+let nextSessionListRequestId = 0
 
 function beginSessionListRequest(instanceId: string): number {
-  const requestId = (sessionListRequestIds.get(instanceId) ?? 0) + 1
+  const requestId = ++nextSessionListRequestId
   sessionListRequestIds.set(instanceId, requestId)
   return requestId
 }
 
 function isLatestSessionListRequest(instanceId: string, requestId: number): boolean {
   return sessionListRequestIds.get(instanceId) === requestId
+}
+
+function clearSessionListRequestState(instanceId: string): void {
+  sessionListRequestIds.delete(instanceId)
+  setSessionListError(instanceId, null)
+  setLoading((prev) => {
+    if (!prev.fetchingSessions.has(instanceId)) return prev
+    const fetchingSessions = new Map(prev.fetchingSessions)
+    fetchingSessions.delete(instanceId)
+    return { ...prev, fetchingSessions }
+  })
 }
 
 async function getSessionWorkspacePayload(instanceId: string, sessionId: string): Promise<{ workspace?: string }> {
@@ -288,7 +300,7 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
 
     setSessionPage(instanceId, rootIds, false, options?.reset ?? true)
 
-    syncInstanceSessionIndicator(instanceId)
+    reconcilePendingSessionIndicators(instanceId)
 
     setMessagesLoaded((prev) => {
       const next = new Map(prev)
@@ -1011,4 +1023,5 @@ export {
   searchSessions,
   forkSession,
   loadMessages,
+  clearSessionListRequestState,
 }

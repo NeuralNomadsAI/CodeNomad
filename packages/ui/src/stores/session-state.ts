@@ -13,6 +13,7 @@ import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 import { tGlobal } from "../lib/i18n"
 import { computeThreadTotals, type ThreadTotals } from "../lib/thread-totals"
 import { applySessionPage, getDefaultSessionPaginationState, type SessionPaginationState } from "./session-pagination-model"
+import { applySessionPendingState } from "./session-pending-state"
 import {
   buildSessionThreadsFromMap,
   collectVisibleSessionIds,
@@ -434,6 +435,25 @@ function setSessionPendingQuestion(instanceId: string, sessionId: string, pendin
     if (session.pendingQuestion === pending) return false
     session.pendingQuestion = pending
   })
+}
+
+function reconcileSessionPendingState(
+  instanceId: string,
+  permissionSessionIds: ReadonlySet<string>,
+  questionSessionIds: ReadonlySet<string>,
+): void {
+  setSessions((prev) => {
+    const instanceSessions = prev.get(instanceId)
+    if (!instanceSessions) return prev
+
+    const reconciled = applySessionPendingState(instanceSessions, permissionSessionIds, questionSessionIds)
+    if (reconciled === instanceSessions) return prev
+
+    const next = new Map(prev)
+    next.set(instanceId, reconciled)
+    return next
+  })
+  syncInstanceSessionIndicator(instanceId)
 }
 
 function markSessionIdleSeen(instanceId: string, sessionId: string): void {
@@ -941,6 +961,7 @@ export {
   withSession,
   setSessionPendingPermission,
   setSessionPendingQuestion,
+  reconcileSessionPendingState,
   markSessionIdleSeen,
   markViewedSessionIdleSeen,
   setSessionStatus,

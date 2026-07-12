@@ -61,6 +61,7 @@ import {
   searchSessions,
   forkSession,
   loadMessages,
+  clearSessionListRequestState,
 } from "./session-api"
 import {
   abortSession,
@@ -147,6 +148,7 @@ export {
   isSessionMessagesLoading,
   isSessionExpanded,
   loadMessages,
+  clearSessionListRequestState,
   loading,
   markSessionIdleSeen,
   markViewedSessionIdleSeen,

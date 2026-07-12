@@ -1,24 +1,9 @@
 import assert from "node:assert/strict"
-import { afterEach, describe, it } from "node:test"
+import { describe, it } from "node:test"
 
-import { getOpencodeErrorMessage } from "../lib/opencode-api.ts"
-import { getSessionListError, setSessionListError } from "./session-state.ts"
+import { getOpencodeErrorMessage } from "./opencode-api.ts"
 
-const instanceId = "session-list-error-test"
-
-afterEach(() => setSessionListError(instanceId, null))
-
-describe("session list errors", () => {
-  it("stores and clears errors per instance", () => {
-    setSessionListError(instanceId, "Invalid session data")
-    assert.equal(getSessionListError(instanceId), "Invalid session data")
-
-    setSessionListError(instanceId, null)
-    assert.equal(getSessionListError(instanceId), undefined)
-  })
-})
-
-describe("OpenCode error messages", () => {
+describe("getOpencodeErrorMessage", () => {
   it("uses the detailed message from a nested SDK error", () => {
     const error = new Error("session.list failed")
     ;(error as Error & { cause: unknown }).cause = {
