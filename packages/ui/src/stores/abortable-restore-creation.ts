@@ -24,6 +24,7 @@ export async function completeAbortableRestoreHydration<T>(
     hydrate: (value: T) => Promise<void>
     commit: (value: T) => void
     discard?: (value: T) => Promise<void>
+    retainOnAbort?: (reason: Error) => boolean
   },
 ): Promise<T> {
   try {
@@ -33,7 +34,10 @@ export async function completeAbortableRestoreHydration<T>(
     options.commit(value)
     return value
   } catch (error) {
-    if (options.signal.aborted) await options.discard?.(value)
+    if (options.signal.aborted) {
+      const reason = getAbortReason(options.signal)
+      if (!options.retainOnAbort?.(reason)) await options.discard?.(value)
+    }
     throw error
   }
 }

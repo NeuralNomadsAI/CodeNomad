@@ -5,6 +5,7 @@ import {
   completeAbortableRestoreCreation,
   completeAbortableRestoreHydration,
 } from "./abortable-restore-creation.ts"
+import { RestoreTimeoutError } from "./app-session-restore-timeout.ts"
 import {
   createRestorableSessionPreservation,
   mapRestoredWorkspace,
@@ -106,5 +107,29 @@ describe("abortable restore creation", () => {
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
     assert.equal(restoredTabId, null)
     assert.equal(restoredStateApplied, false)
+  })
+
+  it("retains a ready workspace when only session hydration times out", async () => {
+    const controller = new AbortController()
+    let finishHydration: (() => void) | undefined
+    const hydration = new Promise<void>((resolve) => {
+      finishHydration = resolve
+    })
+    const discarded: string[] = []
+    const completion = completeAbortableRestoreHydration("workspace-1", {
+      signal: controller.signal,
+      hydrate: () => hydration,
+      commit: () => undefined,
+      discard: async (workspaceId) => {
+        discarded.push(workspaceId)
+      },
+      retainOnAbort: (reason) => reason instanceof RestoreTimeoutError,
+    })
+
+    controller.abort(new RestoreTimeoutError("session hydration stalled"))
+    await assert.rejects(completion, RestoreTimeoutError)
+    assert.deepEqual(discarded, [])
+
+    finishHydration?.()
   })
 })
