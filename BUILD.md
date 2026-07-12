@@ -83,7 +83,7 @@ The build script performs these steps:
 
 ## Output
 
-Binaries are generated in the `release/` directory:
+Build artifacts are generated in package-specific output directories:
 
 ```
 packages/electron-app/release/
