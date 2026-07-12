@@ -268,36 +268,36 @@ session-sidebar-controls .selector-trigger-primary {
 }
 
 
-.session-item-base.session-item-child {
-  padding-inline-start: 2.25rem;
+.session-item-base.session-item-nested {
+  padding-inline-start: var(--session-indent);
   position: relative;
 }
 
-.session-item-base.session-item-child::before {
+.session-item-base.session-item-nested::before {
   content: "";
   position: absolute;
   top: 0;
   bottom: 0;
-  inset-inline-start: 1.125rem;
+  inset-inline-start: var(--session-connector-offset);
   width: 1px;
   background-color: var(--text-secondary);
-  opacity: 0.95;
+  opacity: 0.65;
   pointer-events: none;
 }
 
-.session-item-base.session-item-child.session-item-child-last::before {
+.session-item-base.session-item-nested.session-item-child-last::before {
   bottom: 50%;
 }
 
-.session-item-base.session-item-child::after {
+.session-item-base.session-item-nested::after {
   content: "";
   position: absolute;
   top: 50%;
-  inset-inline-start: 1.125rem;
+  inset-inline-start: var(--session-connector-offset);
   width: 0.875rem;
   height: 1px;
   background-color: var(--text-secondary);
-  opacity: 0.95;
+  opacity: 0.65;
   transform: translateY(-0.5px);
   pointer-events: none;
 }

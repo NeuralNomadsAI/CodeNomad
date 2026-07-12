@@ -61,7 +61,7 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { ensureSessionParentExpanded, prependSessionListId, sessions, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
+import { ensureSessionAncestorsExpanded, prependSessionListId, sessions, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { tGlobal } from "../lib/i18n"
@@ -165,7 +165,7 @@ interface TuiToastEvent {
 const ALLOWED_TOAST_VARIANTS = new Set<ToastVariant>(["info", "success", "warning", "error"])
 
 function applySessionStatus(instanceId: string, sessionId: string, status: SessionStatus, retry?: SessionRetryState | null) {
-  let parentToExpand: string | null = null
+  let expandAncestors = false
 
   withSession(instanceId, sessionId, (session) => {
     const current = session.status ?? "idle"
@@ -183,13 +183,11 @@ function applySessionStatus(instanceId: string, sessionId: string, status: Sessi
     // Auto-expand the parent thread when a child session starts working.
     // Users can still collapse it; we only expand on the transition.
     if (session.parentId && status === "working" && current !== "working") {
-      parentToExpand = session.parentId
+      expandAncestors = true
     }
   })
 
-  if (parentToExpand) {
-    ensureSessionParentExpanded(instanceId, parentToExpand)
-  }
+  if (expandAncestors) ensureSessionAncestorsExpanded(instanceId, sessionId)
 }
 
 async function fetchSessionInfo(instanceId: string, sessionId: string, directory?: string): Promise<Session | null> {
@@ -233,7 +231,7 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
     fetched.retry = fetchedRetry
 
     let updatedInstanceSessions: Map<string, Session> | undefined
-    let shouldExpandParent: string | null = null
+    let shouldExpandAncestors = false
 
     setSessions((prev) => {
       const next = new Map(prev)
@@ -258,16 +256,14 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
       updatedInstanceSessions = instanceSessions
 
       if (merged.parentId && merged.status === "working" && (existing?.status ?? "idle") !== "working") {
-        shouldExpandParent = merged.parentId
+        shouldExpandAncestors = true
       }
       return next
     })
 
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
 
-    if (shouldExpandParent) {
-      ensureSessionParentExpanded(instanceId, shouldExpandParent)
-    }
+    if (shouldExpandAncestors) ensureSessionAncestorsExpanded(instanceId, sessionId)
 
     return fetched
   } catch (error) {

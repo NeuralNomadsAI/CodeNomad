@@ -584,7 +584,7 @@ npm run package      # Create distributable
 
 - macOS: DMG + auto-update
 - Windows: NSIS installer + auto-update
-- Linux: AppImage + deb/rpm
+- Linux: Electron portable tar.gz + Tauri deb
 
 ## Configuration Files
 
