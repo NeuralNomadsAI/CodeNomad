@@ -1,0 +1,269 @@
+export type FollowMode = { type: "following" } | { type: "escaped" }
+
+export const BOTTOM_FOLLOW_EPSILON_PX = 48
+
+export type FollowEffect =
+  | { type: "none" }
+  | { type: "scroll-top"; immediate: boolean }
+  | { type: "scroll-bottom"; immediate: boolean }
+  | { type: "scroll-key"; key: string; block: ScrollLogicalPosition; smooth: boolean }
+
+export type FollowEvent =
+  | { type: "user-scroll"; direction: "up" | "down" | null; atBottom: boolean }
+  | { type: "jump-top"; immediate: boolean }
+  | { type: "jump-bottom"; immediate: boolean; explicit: boolean }
+  | { type: "jump-key"; key: string; block: ScrollLogicalPosition; smooth: boolean }
+  | { type: "content-grew"; canPinToBottom: boolean }
+  | { type: "set-follow"; enabled: boolean }
+  | { type: "reset"; follow: boolean }
+
+export interface FollowTransition {
+  mode: FollowMode
+  effect: FollowEffect
+}
+
+export type ScrollDirection = "up" | "down" | null
+
+export interface ScrollControllerMetrics {
+  offset: number
+  scrollHeight: number
+  clientHeight: number
+  sentinelMarginPx: number
+}
+
+export interface ScrollControllerState {
+  mode: FollowMode
+  lastObservedOffset: number
+  lastObservedAtBottom: boolean
+  userIntentDirection: ScrollDirection
+  userIntentUntil: number
+  restoring: boolean
+}
+
+export interface ScrollControllerResult {
+  effect: FollowEffect
+  state: ScrollControllerState
+}
+
+export interface ScrollControllerSnapshot {
+  mode: FollowMode
+  lastObservedOffset: number
+  lastObservedAtBottom: boolean
+  userIntentDirection: ScrollDirection
+  userIntentUntil: number
+  restoring: boolean
+}
+
+export interface FollowSnapshotState {
+  followModeType?: FollowMode["type"]
+}
+
+export type HoldTargetElementResolver = (itemWrapper: HTMLElement, key: string) => HTMLElement | null | undefined
+
+const noFollowEffect: FollowEffect = { type: "none" }
+
+export function isAutoFollowing(mode: FollowMode) {
+  return mode.type === "following"
+}
+
+export function resolveAutoPinHoldElement(
+  itemWrapper: HTMLElement | null | undefined,
+  key: string,
+  resolver?: HoldTargetElementResolver,
+) {
+  if (!itemWrapper) return null
+  if (!resolver) return itemWrapper
+
+  const resolved = resolver(itemWrapper, key)
+  return resolved === undefined ? itemWrapper : resolved
+}
+
+export function isSnapshotAutoFollowing(snapshot: { atBottom: boolean; followModeType?: FollowMode["type"] } | null | undefined) {
+  if (!snapshot) return true
+  return snapshot.atBottom && snapshot.followModeType !== "escaped"
+}
+
+export function getFollowSnapshotState(mode: FollowMode): FollowSnapshotState {
+  return { followModeType: mode.type }
+}
+
+export function restoreFollowModeFromSnapshot(state: { atBottom: boolean; followModeType?: FollowMode["type"] }): FollowMode {
+  if (state.followModeType === "escaped") return { type: "escaped" }
+  return state.atBottom ? { type: "following" } : { type: "escaped" }
+}
+
+export function transitionFollowMode(mode: FollowMode, event: FollowEvent): FollowTransition {
+  switch (event.type) {
+    case "user-scroll": {
+      if (event.direction === "up") return { mode: { type: "escaped" }, effect: noFollowEffect }
+      if (event.atBottom) return { mode: { type: "following" }, effect: noFollowEffect }
+      return { mode, effect: noFollowEffect }
+    }
+
+    case "jump-top":
+      return { mode: { type: "escaped" }, effect: { type: "scroll-top", immediate: event.immediate } }
+
+    case "jump-bottom":
+      return {
+        mode: { type: "following" },
+        effect: { type: "scroll-bottom", immediate: event.immediate },
+      }
+
+    case "jump-key":
+      return {
+        mode: { type: "escaped" },
+        effect: { type: "scroll-key", key: event.key, block: event.block, smooth: event.smooth },
+      }
+
+    case "content-grew":
+      if (mode.type === "following" && event.canPinToBottom) {
+        return { mode, effect: { type: "scroll-bottom", immediate: true } }
+      }
+      return { mode, effect: noFollowEffect }
+
+    case "set-follow":
+      return { mode: event.enabled ? { type: "following" } : { type: "escaped" }, effect: noFollowEffect }
+
+    case "reset":
+      return { mode: event.follow ? { type: "following" } : { type: "escaped" }, effect: noFollowEffect }
+  }
+}
+
+export function getDistanceFromBottom(metrics: ScrollControllerMetrics) {
+  return metrics.scrollHeight - (metrics.offset + metrics.clientHeight)
+}
+
+export function isAtBottom(metrics: ScrollControllerMetrics) {
+  return getDistanceFromBottom(metrics) <= metrics.sentinelMarginPx
+}
+
+export class VirtualScrollController {
+  private state: ScrollControllerState
+
+  constructor(initialFollow: boolean) {
+    this.state = {
+      mode: initialFollow ? { type: "following" } : { type: "escaped" },
+      lastObservedOffset: 0,
+      lastObservedAtBottom: false,
+      userIntentDirection: null,
+      userIntentUntil: 0,
+      restoring: false,
+    }
+  }
+
+  snapshot(): ScrollControllerSnapshot {
+    return { ...this.state, mode: { ...this.state.mode } }
+  }
+
+  isAutoFollowing() {
+    return isAutoFollowing(this.state.mode)
+  }
+
+  setUserIntent(direction: ScrollDirection, until: number) {
+    this.state.userIntentDirection = direction
+    this.state.userIntentUntil = until
+  }
+
+  clearExpiredUserIntent(now: number) {
+    if (now <= this.state.userIntentUntil) return false
+    this.state.userIntentDirection = null
+    return true
+  }
+
+  setRestoring(restoring: boolean) {
+    this.state.restoring = restoring
+  }
+
+  reset(follow: boolean): ScrollControllerResult {
+    const next = transitionFollowMode(this.state.mode, { type: "reset", follow })
+    this.state.mode = next.mode
+    this.state.lastObservedOffset = 0
+    this.state.lastObservedAtBottom = false
+    this.state.userIntentDirection = null
+    this.state.userIntentUntil = 0
+    this.state.restoring = false
+    return this.result(next.effect)
+  }
+
+  setFollow(enabled: boolean): ScrollControllerResult {
+    const next = transitionFollowMode(this.state.mode, { type: "set-follow", enabled })
+    this.state.mode = next.mode
+    return this.result(next.effect)
+  }
+
+  restoreMode(mode: FollowMode): ScrollControllerResult {
+    this.state.mode = mode
+    return this.result(noFollowEffect)
+  }
+
+  jumpTop(immediate: boolean): ScrollControllerResult {
+    const next = transitionFollowMode(this.state.mode, { type: "jump-top", immediate })
+    this.state.mode = next.mode
+    return this.result(next.effect)
+  }
+
+  jumpBottom(immediate: boolean, explicit: boolean): ScrollControllerResult {
+    if (explicit) {
+      this.state.userIntentDirection = null
+      this.state.userIntentUntil = 0
+    }
+    const next = transitionFollowMode(this.state.mode, { type: "jump-bottom", immediate, explicit })
+    this.state.mode = next.mode
+    return this.result(next.effect)
+  }
+
+  jumpKey(key: string, block: ScrollLogicalPosition, smooth: boolean): ScrollControllerResult {
+    const next = transitionFollowMode(this.state.mode, { type: "jump-key", key, block, smooth })
+    this.state.mode = next.mode
+    return this.result(next.effect)
+  }
+
+  observeViewport(metrics: ScrollControllerMetrics, now: number, programmatic: boolean): ScrollControllerResult {
+    const previousOffset = this.state.lastObservedOffset
+    const offset = metrics.offset
+    const scrolledUp = offset < previousOffset - 1
+    const scrolledDown = offset > previousOffset + 1
+    const atBottom = isAtBottom(metrics)
+
+    this.state.lastObservedOffset = offset
+    this.state.lastObservedAtBottom = this.isAutoFollowing() && atBottom
+    this.clearExpiredUserIntent(now)
+
+    const hasFreshIntent = now <= this.state.userIntentUntil
+    const actualDirection: ScrollDirection = scrolledUp ? "up" : scrolledDown ? "down" : null
+    if (hasFreshIntent && this.state.userIntentDirection === "up") {
+      return this.setFollow(false)
+    }
+
+    const direction = actualDirection ?? this.state.userIntentDirection
+
+    if (!hasFreshIntent && (!actualDirection || programmatic)) {
+      return this.result(noFollowEffect)
+    }
+
+    if (direction === "up" && (!programmatic || hasFreshIntent)) {
+      return this.setFollow(false)
+    }
+
+    const next = transitionFollowMode(this.state.mode, { type: "user-scroll", direction, atBottom })
+    this.state.mode = next.mode
+    this.state.lastObservedAtBottom = this.isAutoFollowing() && atBottom
+    return this.result(next.effect)
+  }
+
+  contentRendered(_metrics: ScrollControllerMetrics, canPinToBottom: boolean): ScrollControllerResult {
+    if (this.state.restoring) return this.result(noFollowEffect)
+    const next = transitionFollowMode(this.state.mode, { type: "content-grew", canPinToBottom })
+    this.state.mode = next.mode
+    return this.result(next.effect)
+  }
+
+  recordProgrammaticOffset(offset: number, atBottom: boolean) {
+    this.state.lastObservedOffset = offset
+    this.state.lastObservedAtBottom = this.isAutoFollowing() && atBottom
+  }
+
+  private result(effect: FollowEffect): ScrollControllerResult {
+    return { effect, state: this.snapshot() }
+  }
+}

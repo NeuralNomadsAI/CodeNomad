@@ -2,6 +2,7 @@ import type { Instance, RawMcpStatus } from "../../types/instance"
 import { fetchLspStatus } from "../../stores/instances"
 import { getLogger } from "../../lib/logger"
 import { getInstanceMetadata, mergeInstanceMetadata } from "../../stores/instance-metadata"
+import { extractConfiguredPlugins } from "./plugin-metadata"
 
 const log = getLogger("session")
 const pendingMetadataRequests = new Set<string>()
@@ -41,11 +42,7 @@ export async function loadInstanceMetadata(instance: Instance, options?: { force
     const mcpStatus = mcpResult.status === "fulfilled" ? (mcpResult.value.data as RawMcpStatus) : undefined
     const lspStatus = lspResult.status === "fulfilled" ? lspResult.value ?? [] : undefined
     const config = configResult.status === "fulfilled" ? (configResult.value.data as { plugin?: unknown } | undefined) : undefined
-    const plugins = Array.isArray(config?.plugin)
-      ? (config?.plugin as string[]).map((plugin) =>
-          plugin.startsWith("file://") ? plugin.slice("file://".length) : plugin,
-        )
-      : undefined
+    const plugins = config ? extractConfiguredPlugins(config.plugin) : undefined
 
     const updates: Instance["metadata"] = { ...(currentMetadata ?? {}) }
 

@@ -55,6 +55,7 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
         return null
     }
   })
+  const tabLabel = createMemo(() => props.instance.projectName?.trim() || getPathBasename(props.instance.folder))
 
   return (
     <div class="group">
@@ -67,7 +68,7 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
       >
         <FolderOpen class="w-4 h-4 flex-shrink-0" />
         <span class="tab-label">
-          {getPathBasename(props.instance.folder)}
+          {tabLabel()}
         </span>
         <Show when={statusClassName() && statusTitle()}>
           <span

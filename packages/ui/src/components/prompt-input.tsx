@@ -1,9 +1,9 @@
-import { Suspense, createEffect, createSignal, lazy, on, onCleanup, Show } from "solid-js"
+import { Suspense, createEffect, createSignal, lazy, on, onCleanup, onMount, Show } from "solid-js"
 import { ArrowBigUp, ArrowBigDown, Loader2, Mic, Paperclip, Volume2, X } from "lucide-solid"
 import ExpandButton from "./expand-button"
 import { clearAttachments, removeAttachment } from "../stores/attachments"
-import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
 import { createPastedPlaceholderRegex, pastedDisplayCounterRegex } from "./prompt-input/attachmentPlaceholders"
+import { preparePromptSubmission } from "./prompt-input/submitPrompt"
 import Kbd from "./kbd"
 import { getActiveInstance } from "../stores/instances"
 import { agents, executeCustomCommand } from "../stores/sessions"
@@ -33,6 +33,13 @@ const log = getLogger("actions")
 const LazyUnifiedPicker = lazy(() => import("./unified-picker"))
 const DEFAULT_PROMPT_FIELD_HEIGHT = 104
 const MAX_PROMPT_FIELD_HEIGHT_RATIO = 0.6
+type SessionCenterWidthStep = "narrow" | "medium" | "wide"
+
+function getSessionCenterWidthStep(width: number): SessionCenterWidthStep {
+  if (width < 768) return "narrow"
+  if (width < 1280) return "medium"
+  return "wide"
+}
 
 type ResizeDragState = {
   pointerId: number
@@ -75,7 +82,9 @@ export default function PromptInput(props: PromptInputProps) {
   const [mode, setMode] = createSignal<PromptMode>("normal")
   const [expandState, setExpandState] = createSignal<ExpandState>("normal")
   const [inputHeight, setInputHeight] = createSignal<number | null>(null)
+  const [autoInputHeight, setAutoInputHeight] = createSignal<number | null>(null)
   const [isResizing, setIsResizing] = createSignal(false)
+  const [sessionCenterWidthStep, setSessionCenterWidthStep] = createSignal<SessionCenterWidthStep | null>(null)
   const [isFileBrowserOpen, setIsFileBrowserOpen] = createSignal(false)
   const SELECTION_INSERT_MAX_LENGTH = 2000
   const MAX_READABLE_PICKED_FILE_BYTES = 5 * 1024 * 1024
@@ -90,6 +99,54 @@ export default function PromptInput(props: PromptInputProps) {
       return t("promptInput.placeholder.shell")
     }
     return t("promptInput.placeholder.default")
+  }
+
+  const compactAutosizeEnabled = () => {
+    const widthStep = sessionCenterWidthStep()
+    return props.compactLayout && expandState() === "normal" && inputHeight() === null && widthStep === "narrow"
+  }
+
+  const effectiveInputHeight = () => inputHeight() ?? autoInputHeight()
+
+  const fieldHeightStyle = () => {
+    const height = effectiveInputHeight()
+    if (height === null) return undefined
+    if (inputHeight() !== null) return { height: `${height}px`, "min-height": `${height}px` }
+    return { height: `${height}px` }
+  }
+
+  const textareaHeightStyle = () => {
+    const height = effectiveInputHeight()
+    if (height === null) return undefined
+    const overflowY: "auto" | "hidden" = inputHeight() !== null || height >= DEFAULT_PROMPT_FIELD_HEIGHT ? "auto" : "hidden"
+    if (inputHeight() !== null) {
+      return {
+        height: `${height}px`,
+        "min-height": `${height}px`,
+        "overflow-y": overflowY,
+      }
+    }
+    return { height: `${height}px`, "overflow-y": overflowY }
+  }
+
+  const textareaRows = () => {
+    if (expandState() === "expanded") return props.compactLayout ? 10 : 15
+    return compactAutosizeEnabled() ? 2 : 3
+  }
+
+  const syncCompactAutoHeight = () => {
+    const textarea = textareaRef
+    if (!textarea || !compactAutosizeEnabled()) {
+      setAutoInputHeight(null)
+      return
+    }
+
+    const previousHeight = textarea.style.height
+    textarea.style.height = "auto"
+    const measuredHeight = textarea.scrollHeight
+    textarea.style.height = previousHeight
+    const nextHeight = Math.min(DEFAULT_PROMPT_FIELD_HEIGHT, measuredHeight)
+    setAutoInputHeight(nextHeight)
   }
 
   const promptState = usePromptState({
@@ -111,6 +168,31 @@ export default function PromptInput(props: PromptInputProps) {
     selectPreviousHistory,
     selectNextHistory,
   } = promptState
+
+  onMount(() => {
+    const sessionCenter = wrapperRef?.closest("[data-session-center-width]") as HTMLElement | null
+    if (!sessionCenter) return
+
+    const syncWidthStep = () => {
+      setSessionCenterWidthStep(getSessionCenterWidthStep(sessionCenter.getBoundingClientRect().width))
+    }
+
+    syncWidthStep()
+
+    if (typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(syncWidthStep)
+    observer.observe(sessionCenter)
+    onCleanup(() => observer.disconnect())
+  })
+
+  createEffect(() => {
+    prompt()
+    expandState()
+    inputHeight()
+    props.compactLayout
+    sessionCenterWidthStep()
+    queueMicrotask(syncCompactAutoHeight)
+  })
 
   const {
     attachments,
@@ -248,6 +330,11 @@ export default function PromptInput(props: PromptInputProps) {
     return Boolean(window.matchMedia?.("(pointer: coarse)")?.matches)
   }
 
+  const isTouchOnlyPointer = () => {
+    if (typeof window === "undefined") return false
+    return Boolean(window.matchMedia?.("(pointer: coarse)")?.matches && !window.matchMedia?.("(any-pointer: fine)")?.matches)
+  }
+
   createEffect(() => {
     // Scope global "type-to-focus" behavior to the active, visible prompt only.
     if (typeof document === "undefined") return
@@ -383,13 +470,16 @@ export default function PromptInput(props: PromptInputProps) {
       commandName.length > 0 &&
       getCommands(props.instanceId).some((cmd) => cmd.name === commandName)
 
-    const resolvedCommandArgs = isKnownSlashCommand ? resolvePastedPlaceholders(commandArgs, currentAttachments) : ""
-    const resolvedPrompt = isKnownSlashCommand
-      ? resolvedCommandArgs
-        ? `${commandToken} ${resolvedCommandArgs}`
-        : commandToken
-      : resolvePastedPlaceholders(text, currentAttachments)
-    const historyEntry = resolvedPrompt
+    const submission = preparePromptSubmission({
+      mode: isKnownSlashCommand ? "slash" : isShellMode ? "shell" : "message",
+      text,
+      attachments: currentAttachments,
+      commandToken,
+      commandArgs,
+    })
+    const resolvedCommandArgs = submission.resolvedCommandArgs
+    const submitPrompt = submission.submitPrompt
+    const historyEntry = submission.historyEntry
 
     const refreshHistory = () => recordHistoryEntry(historyEntry)
 
@@ -423,9 +513,9 @@ export default function PromptInput(props: PromptInputProps) {
     try {
       if (isShellMode) {
         if (props.onRunShell) {
-          await props.onRunShell(resolvedPrompt)
+          await props.onRunShell(submitPrompt)
         } else {
-          await props.onSend(resolvedPrompt, [])
+          await props.onSend(submitPrompt, [])
         }
       } else if (isKnownSlashCommand) {
         if (props.onCommand) {
@@ -434,7 +524,7 @@ export default function PromptInput(props: PromptInputProps) {
           await executeCustomCommand(props.instanceId, props.sessionId, commandName, resolvedCommandArgs)
         }
       } else {
-        await props.onSend(resolvedPrompt, currentAttachments)
+        await props.onSend(submitPrompt, currentAttachments)
       }
       if (!isKnownSlashCommand) {
         void refreshHistory()
@@ -447,7 +537,9 @@ export default function PromptInput(props: PromptInputProps) {
         variant: "error",
       })
     } finally {
-      textareaRef?.focus()
+      if (!isTouchOnlyPointer()) {
+        textareaRef?.focus()
+      }
     }
   }
 
@@ -700,6 +792,7 @@ export default function PromptInput(props: PromptInputProps) {
       <div
         ref={wrapperRef}
         class={`prompt-input-wrapper relative ${isDragging() ? "border-2" : ""}`}
+        data-compact-layout={props.compactLayout ? "true" : undefined}
         style={
           isDragging()
             ? "border-color: var(--accent-primary); background-color: rgba(0, 102, 255, 0.05);"
@@ -733,8 +826,8 @@ export default function PromptInput(props: PromptInputProps) {
         <div class="prompt-input-main flex flex-1 flex-col">
           <div
             ref={fieldContainerRef}
-            class={`prompt-input-field-container ${expandState() === "expanded" ? "is-expanded" : ""} ${inputHeight() !== null ? "is-resized" : ""}`}
-            style={inputHeight() !== null ? { height: `${inputHeight()}px`, "min-height": `${inputHeight()}px` } : undefined}
+            class={`prompt-input-field-container ${expandState() === "expanded" ? "is-expanded" : ""} ${effectiveInputHeight() !== null ? "is-resized" : ""}`}
+            style={fieldHeightStyle()}
           >
             <div
               class={`prompt-resize-handle ${isResizing() ? "is-resizing" : ""}`}
@@ -749,7 +842,7 @@ export default function PromptInput(props: PromptInputProps) {
 
             <div
               class={`prompt-input-field ${expandState() === "expanded" ? "is-expanded" : ""}`}
-              style={inputHeight() !== null ? { height: `${inputHeight()}px`, "min-height": `${inputHeight()}px` } : undefined}
+              style={fieldHeightStyle()}
             >
               <textarea
                 ref={textareaRef}
@@ -763,12 +856,12 @@ export default function PromptInput(props: PromptInputProps) {
                 onFocus={() => setIsFocused(true)}
                 onBlur={() => setIsFocused(false)}
                 disabled={props.disabled}
-                rows={expandState() === "expanded" ? (props.compactLayout ? 10 : 15) : 3}
+                rows={textareaRows()}
                 spellcheck={false}
                 autocorrect="off"
                 autoCapitalize="off"
                 autocomplete="off"
-                style={inputHeight() !== null ? { height: `${inputHeight()}px`, "min-height": `${inputHeight()}px`, "overflow-y": "auto" } : undefined}
+                style={textareaHeightStyle()}
               />
               <div class="prompt-expand-button-inline">
                 <ExpandButton

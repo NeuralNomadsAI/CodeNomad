@@ -14,6 +14,7 @@ export const folderSelectionMessages = {
   "folderSelection.recent.title": "最近的文件夹",
   "folderSelection.recent.subtitle.one": "{count} 个文件夹可用",
   "folderSelection.recent.subtitle.other": "{count} 个文件夹可用",
+  "folderSelection.recent.rename": "重命名工作区",
   "folderSelection.recent.remove": "从最近列表移除",
   "folderSelection.recent.openBadge": "已打开",
   "folderSelection.recent.alreadyOpenTitle": "项目已打开",
@@ -94,5 +95,14 @@ export const folderSelectionMessages = {
   "folderSelection.servers.certificateInstall.confirmLabel": "继续",
   "folderSelection.servers.certificateInstall.cancelLabel": "取消",
   "folderSelection.servers.certificateInstall.cancelled": "CodeNomad 需要先信任本地证书，才能打开使用自签名 HTTPS 的远程窗口。",
-  "folderSelection.sidecars.button": "Open SideCar",
+  "folderSelection.sidecars.button": "打开 SideCar",
+
+  "projectRenameDialog.title": "重命名工作区",
+  "projectRenameDialog.description.withLabel": "更新“{label}”的工作区名称。",
+  "projectRenameDialog.description.default": "为此文件夹设置工作区名称。",
+  "projectRenameDialog.input.label": "工作区名称",
+  "projectRenameDialog.input.placeholder": "输入工作区名称",
+  "projectRenameDialog.actions.cancel": "取消",
+  "projectRenameDialog.actions.rename": "重命名",
+  "projectRenameDialog.actions.renaming": "正在重命名...",
 } as const

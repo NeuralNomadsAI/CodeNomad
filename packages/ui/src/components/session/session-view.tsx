@@ -1,4 +1,4 @@
-import { Show, createMemo, createEffect, on, type Component } from "solid-js"
+import { Show, createMemo, createEffect, createSignal, on, type Component } from "solid-js"
 import type { Session } from "../../types/session"
 import type { Attachment } from "../../types/attachment"
 import type { ClientPart } from "../../types/message"
@@ -8,8 +8,8 @@ import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import { getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances } from "../../stores/instances"
-import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, markSessionIdleSeen, setActiveParentSession, setActiveSession, runShellCommand, abortSession } from "../../stores/sessions"
-import { clearSessionIdleFade, IDLE_STATUS_VISIBILITY_MS, isSessionBusy as getSessionBusyStatus, markSessionIdleFadeStarted } from "../../stores/session-status"
+import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession } from "../../stores/sessions"
+import { clearSessionIdleFade, IDLE_STATUS_VISIBILITY_MS, getSessionStatus, isSessionBusy as getSessionBusyStatus, markSessionIdleFadeStarted } from "../../stores/session-status"
 import { deleteMessage } from "../../stores/session-actions"
 import { showAlertDialog } from "../../stores/alerts"
 import { getLogger } from "../../lib/logger"
@@ -20,6 +20,8 @@ import { clearConversationPlaybackForSession } from "../../stores/conversation-s
 import { useConfig } from "../../stores/preferences"
 import { closeSessionPreview, getSessionPreview, showSessionChat } from "../../stores/session-previews"
 import { SessionPreviewView } from "../session-preview-view"
+import { isSnapshotAutoFollowing } from "../virtual-follow-behavior"
+import { getSubmitBottomPinTargetCount, resolveSessionBottomPinIntent, shouldClearSessionBottomPinIntent, type SessionBottomPinIntent } from "./session-bottom-pin-intent"
 
 const log = getLogger("session")
 
@@ -47,11 +49,17 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   const { preferences } = useConfig()
   const session = () => props.activeSessions.get(props.sessionId)
   const messagesLoading = createMemo(() => isSessionMessagesLoading(props.instanceId, props.sessionId))
+  const messagesLoadError = createMemo(() => getSessionMessagesLoadError(props.instanceId, props.sessionId))
   const messageStore = createMemo(() => messageStoreBus.getOrCreate(props.instanceId))
   const sessionBusy = createMemo(() => {
     const currentSession = session()
     if (!currentSession) return false
     return getSessionBusyStatus(props.instanceId, currentSession.id)
+  })
+  const sessionStreamingActive = createMemo(() => {
+    const currentSession = session()
+    if (!currentSession) return false
+    return getSessionStatus(props.instanceId, currentSession.id) === "working"
   })
 
   const sessionNeedsInput = createMemo(() => {
@@ -73,20 +81,78 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   let scrollToBottomHandle: (() => void) | undefined
   let rootRef: HTMLDivElement | undefined
   const pendingIdleSeenTimers = new Set<string>()
+  const [submitBottomPinIntent, setSubmitBottomPinIntent] = createSignal<SessionBottomPinIntent | null>(null)
+  let submitBottomPinIntentSequence = 0
 
   function shouldScrollToBottomOnActivate() {
     const current = session()
     if (!current) return true
     const snapshot = messageStore().getScrollSnapshot(current.id, MESSAGE_SCROLL_CACHE_SCOPE)
-    return !snapshot || snapshot.atBottom
+    return isSnapshotAutoFollowing(snapshot)
   }
 
-  function scheduleScrollToBottom() {
-    if (!scrollToBottomHandle) return
+  function scheduleScrollToBottom(options?: { force?: boolean; sessionId?: string }) {
+    if (!scrollToBottomHandle) return false
+    const targetSessionId = options?.sessionId ?? props.sessionId
     requestAnimationFrame(() => {
-      requestAnimationFrame(() => scrollToBottomHandle?.())
+      requestAnimationFrame(() => {
+        const current = session()
+        if (!current || current.id !== targetSessionId) return
+        if (!options?.force && !shouldScrollToBottomOnActivate()) return
+        scrollToBottomHandle?.()
+      })
     })
+    return true
   }
+
+  function startSubmitBottomPinIntent(
+    minItemCount: number,
+    options?: { createdMessageCount?: number; preserveObservedStreaming?: boolean },
+  ) {
+    submitBottomPinIntentSequence += 1
+    const previous = submitBottomPinIntent()
+    const createdMessageCount = options?.createdMessageCount ?? messageStore().getSessionMessageIds(props.sessionId).length
+    const shouldPreserveObservedStreaming = Boolean(
+      options?.preserveObservedStreaming &&
+      previous?.sessionId === props.sessionId &&
+      previous.createdMessageCount === createdMessageCount,
+    )
+    const intent: SessionBottomPinIntent = {
+      sessionId: props.sessionId,
+      token: submitBottomPinIntentSequence,
+      minItemCount,
+      createdMessageCount,
+      observedStreaming: shouldPreserveObservedStreaming ? previous?.observedStreaming === true : false,
+    }
+    setSubmitBottomPinIntent(intent)
+    return intent
+  }
+
+  function forceSubmittedExchangeToBottom(
+    minItemCount: number,
+    options?: { createdMessageCount?: number; preserveObservedStreaming?: boolean },
+  ) {
+    const intent = startSubmitBottomPinIntent(minItemCount, options)
+    scrollToBottomHandle?.()
+    return intent
+  }
+
+  const activeSubmitBottomPinIntent = createMemo(() => {
+    const intent = submitBottomPinIntent()
+    const currentSession = session()
+    if (!intent || !currentSession) return null
+
+    const messageCount = messageStore().getSessionMessageIds(currentSession.id).length
+    if (shouldClearSessionBottomPinIntent(intent, {
+      sessionId: currentSession.id,
+      messageCount,
+      streamingActive: sessionStreamingActive(),
+    })) {
+      return null
+    }
+
+    return resolveSessionBottomPinIntent(intent, currentSession.id)
+  })
 
   function getSeenIdleEntries(currentSession: Session, keepUnseenSubagentIdleStatus: boolean): Array<{ id: string; idleSince: number }> {
     const entries: Array<{ id: string; idleSince: number }> = []
@@ -97,7 +163,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
     if (currentSession.parentId === null && !keepUnseenSubagentIdleStatus) {
       for (const child of props.activeSessions.values()) {
-        if (child.parentId !== currentSession.id) continue
+        if (child.id === currentSession.id) continue
         if (child.status !== "idle") continue
         if (typeof child.idleSince !== "number") continue
         entries.push({ id: child.id, idleSince: child.idleSince })
@@ -106,6 +172,14 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
     return entries
   }
+
+  createEffect(
+    on(
+      () => props.sessionId,
+      () => setSubmitBottomPinIntent(null),
+      { defer: true },
+    ),
+  )
 
   createEffect(
     on(
@@ -118,6 +192,26 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       },
     ),
   )
+
+  createEffect(() => {
+    const intent = submitBottomPinIntent()
+    const currentSession = session()
+    if (!intent || !currentSession) return
+
+    if (sessionStreamingActive() && intent.sessionId === currentSession.id && !intent.observedStreaming) {
+      setSubmitBottomPinIntent({ ...intent, observedStreaming: true })
+      return
+    }
+
+    const messageCount = messageStore().getSessionMessageIds(currentSession.id).length
+    if (shouldClearSessionBottomPinIntent(intent, {
+      sessionId: currentSession.id,
+      messageCount,
+      streamingActive: sessionStreamingActive(),
+    })) {
+      setSubmitBottomPinIntent(null)
+    }
+  })
 
   createEffect(() => {
     const currentSession = session()
@@ -197,6 +291,14 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     }
   })
 
+  function handleReloadMessages() {
+    const currentSession = session()
+    if (!currentSession) return
+    loadMessages(props.instanceId, currentSession.id, { force: true }).catch((error) =>
+      log.error("Failed to reload messages", error),
+    )
+  }
+
   function registerPromptInputApi(api: PromptInputApi) {
     promptInputApi = api
     props.registerSessionPromptApi?.(props.sessionId, api)
@@ -241,8 +343,24 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   }
  
   async function handleSendMessage(prompt: string, attachments: Attachment[]) {
-    scheduleScrollToBottom()
-    await sendMessage(props.instanceId, props.sessionId, prompt, attachments)
+    const messageCount = messageStore().getSessionMessageIds(props.sessionId).length
+    const submittedExchangeTargetCount = getSubmitBottomPinTargetCount(messageCount, sessionStreamingActive())
+    const initialPinIntent = forceSubmittedExchangeToBottom(submittedExchangeTargetCount, { createdMessageCount: messageCount })
+    try {
+      await sendMessage(props.instanceId, props.sessionId, prompt, attachments)
+      const latestMessageCount = messageStore().getSessionMessageIds(props.sessionId).length
+      if (latestMessageCount < submittedExchangeTargetCount && !sessionStreamingActive()) {
+        setSubmitBottomPinIntent(null)
+      } else if (submitBottomPinIntent()?.token === initialPinIntent.token) {
+        forceSubmittedExchangeToBottom(Math.max(submittedExchangeTargetCount, latestMessageCount), {
+          createdMessageCount: messageCount,
+          preserveObservedStreaming: true,
+        })
+      }
+    } catch (error) {
+      setSubmitBottomPinIntent(null)
+      throw error
+    }
   }
 
   async function handleRunShell(command: string) {
@@ -297,13 +415,13 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       )
 
       const restoredText = getUserMessageText(messageId)
-       if (restoredText) {
-         if (promptInputApi) {
-           promptInputApi.setPromptText(restoredText, { focus: true })
-         } else {
-           pendingPromptText = restoredText
-         }
-       }
+      if (restoredText) {
+        if (promptInputApi) {
+          promptInputApi.setPromptText(restoredText, { focus: true })
+        } else {
+          pendingPromptText = restoredText
+        }
+      }
     } catch (error) {
       log.error("Failed to revert message", error)
       showAlertDialog(t("sessionView.alerts.revertFailed.message"), {
@@ -358,11 +476,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         log.error("Failed to rename forked session", error)
       })
 
-      const parentToActivate = forkedSession.parentId ?? forkedSession.id
-      setActiveParentSession(props.instanceId, parentToActivate)
-      if (forkedSession.parentId) {
-        setActiveSession(props.instanceId, forkedSession.id)
-      }
+      ensureSessionAncestorsExpanded(props.instanceId, forkedSession.id)
+      setActiveSessionFromList(props.instanceId, forkedSession.id)
 
       await loadMessages(props.instanceId, forkedSession.id).catch((error) => log.error("Failed to load forked session messages", error))
 
@@ -381,8 +496,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       })
     }
   }
-
-
   return (
     <Show
       when={session()}
@@ -404,12 +517,17 @@ export const SessionView: Component<SessionViewProps> = (props) => {
                   instanceId={props.instanceId}
                   sessionId={activeSession.id}
                   loading={messagesLoading()}
+                  loadError={messagesLoadError()}
+                  onReloadMessages={handleReloadMessages}
+                  sessionStreamingActive={sessionStreamingActive()}
+                  explicitBottomPinIntent={activeSubmitBottomPinIntent()}
+                  onExplicitBottomPinCancelled={() => setSubmitBottomPinIntent(null)}
                   onRevert={handleRevert}
                   onDeleteMessagesUpTo={handleDeleteMessagesUpTo}
                   onFork={handleFork}
                   isActive={props.isActive}
                   registerScrollToBottom={(fn) => {
-                    scrollToBottomHandle = fn
+                    scrollToBottomHandle = fn ?? undefined
                   }}
                   showSidebarToggle={props.showSidebarToggle}
                   onSidebarToggle={props.onSidebarToggle}

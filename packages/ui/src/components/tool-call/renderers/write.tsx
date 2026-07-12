@@ -15,6 +15,20 @@ export const writeRenderer: ToolRenderer = {
     if (!filePath) return getToolName("write")
     return `${getToolName("write")} ${getRelativePath(filePath)}`
   },
+  getOutputChrome({ toolState }) {
+    const state = toolState()
+    if (!state || state.status === "pending") return undefined
+    const { metadata, input } = readToolStatePayload(state)
+    const contentValue = typeof input.content === "string" ? input.content : metadata.content
+    if (typeof contentValue !== "string" || contentValue.length === 0) return undefined
+    const filePath = typeof input.filePath === "string" ? input.filePath : undefined
+    return {
+      language: inferLanguageFromPath(filePath) ?? "text",
+      copyText: contentValue,
+      wrapToggle: true,
+      suppressInnerHeader: true,
+    }
+  },
   renderBody({ toolState, renderMarkdown }) {
     const state = toolState()
     if (!state || state.status === "pending") return null

@@ -40,15 +40,21 @@ Download the latest installer for your platform from [Releases](https://github.c
 |----------|---------|
 | macOS | DMG, ZIP (Universal: Intel + Apple Silicon) |
 | Windows | NSIS Installer, ZIP (x64, ARM64) |
-| Linux | AppImage, deb, tar.gz (x64, ARM64) |
+| Linux | Tauri deb, Electron portable tar.gz (x64) |
+
+The Tauri deb is currently built and installation-tested on Ubuntu 24.04. Compatibility with older Debian-based distributions is not yet guaranteed.
 
 ### 💻 CodeNomad Server
 
 Run as a local server and access via browser. Perfect for remote development.
 
 ```bash
-npx @neuralnomads/codenomad --launch
+npx @neuralnomads/codenomad --password <your-password> --launch
 ```
+
+> **Authentication required:** The server requires a password on first run. You can pass it via `--password`, the `CODENOMAD_SERVER_PASSWORD` environment variable, or create an `auth.json` file (see [Server Documentation](packages/server/README.md)).
+
+> **Self-signed certificate:** On first launch with HTTPS enabled (the default), your browser will show a "Your connection is not private" warning. This is expected — the server generates a local self-signed certificate automatically. Click **Advanced → Proceed to localhost** to continue. For local-only use without the warning, run with `--https=false --http=true`.
 
 See [Server Documentation](packages/server/README.md) for flags, TLS, auth, and remote access.
 
@@ -57,7 +63,7 @@ See [Server Documentation](packages/server/README.md) for flags, TLS, auth, and 
 Bleeding-edge builds from the `dev` branch:
 
 ```bash
-npx @neuralnomads/codenomad-dev --launch
+npx @neuralnomads/codenomad-dev --password <your-password> --launch
 ```
 
 ---
@@ -165,7 +171,7 @@ On Intel Macs, also check **System Settings → Privacy & Security** on first la
 WebKitGTK DMA-BUF/GBM issue. Run with:
 
 ```bash
-WEBKIT_DISABLE_DMABUF_RENDERER=1 codenomad
+WEBKIT_DISABLE_DMABUF_RENDERER=1 codenomad-tauri
 ```
 
 See full workaround in the original README.

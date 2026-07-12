@@ -1,6 +1,6 @@
 {
   "name": "@neuralnomads/codenomad-electron-app",
-  "version": "0.16.0",
+  "version": "0.18.0",
   "description": "CodeNomad - AI coding assistant",
   "license": "MIT",
   "author": {
@@ -131,12 +131,10 @@
       "createStartMenuShortcut": true
     },
     "linux": {
+      "executableName": "CodeNomad",
       "target": [
         {
-          "target": "zip"
-        },
-        {
-          "target": "AppImage"
+          "target": "tar.gz"
         }
       ],
       "artifactName": "CodeNomad-Electron-linux-${arch}-${version}.${ext}",

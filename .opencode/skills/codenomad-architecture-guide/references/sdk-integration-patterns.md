@@ -1,0 +1,209 @@
+# SDK Integration Patterns
+
+## Client Lifecycle
+
+### SDK Manager
+
+CodeNomad creates and manages `OpencodeClient` instances through `SDKManager`:
+
+```typescript
+// packages/ui/src/lib/sdk-manager.ts
+class SDKManager {
+  private clients = new Map<string, OpencodeClient>()
+  
+  createClient(instanceId: string, proxyPath: string): OpencodeClient {
+    const baseUrl = buildInstanceBaseUrl(proxyPath)
+    return createOpencodeClient({ baseUrl })
+  }
+}
+```
+
+### Worktree-Based Routing
+
+SDK clients are routed per worktree, not just per instance:
+
+```typescript
+// packages/ui/src/stores/worktrees.ts
+export function getOrCreateWorktreeClient(
+  instanceId: string, 
+  worktreeSlug: string
+): OpencodeClient {
+  const proxyPath = `/worktrees/${worktreeSlug}`
+  return sdkManager.createClient(instanceId, proxyPath)
+}
+```
+
+**Rule:** Always use `getOrCreateWorktreeClient()` rather than creating clients directly. This ensures:
+- Correct base URL with worktree proxy path
+- Client caching and reuse
+- Proper cleanup on instance disposal
+
+### Base URL Construction
+
+```typescript
+// packages/ui/src/lib/sdk-manager.ts
+export function buildInstanceBaseUrl(proxyPath: string): string {
+  const normalized = normalizeProxyPath(proxyPath)
+  const base = stripTrailingSlashes(CODENOMAD_API_BASE)
+  return `${base}${normalized}/`
+}
+```
+
+## Error Handling
+
+### RequestData Wrapper
+
+Most SDK calls that return `{ data, error }` go through `requestData()` for consistent error handling:
+
+```typescript
+// packages/ui/src/lib/opencode-api.ts
+export async function requestData<T>(
+  promise: Promise<{ data?: T; error? }>,
+  operation: string
+): Promise<T> {
+  const response = await promise
+  if (response.error) {
+    log.error(`API error in ${operation}`, response.error)
+    throw response.error
+  }
+  if (response.data === undefined) {
+    throw new Error(`No data returned from ${operation}`)
+  }
+  return response.data
+}
+```
+
+### Pattern
+
+```typescript
+// Always wrap SDK calls
+const sessions = await requestData(
+  client.session.list(),
+  "session.list"
+)
+
+// Direct SDK calls are also used when the method doesn't return { data, error }
+// Example: const response = await rootClient.session.list()
+```
+
+## Optimistic Updates
+
+### Pattern
+
+1. Update local state immediately
+2. Make API call
+3. Handle success/error
+4. SSE events eventually confirm/converge
+
+```typescript
+// packages/ui/src/stores/message-v2/bridge.ts
+export function removePermissionV2(instanceId: string, requestId: string) {
+  // 1. Optimistic: Remove from local store
+  updateMessageStore(instanceId, (store) => {
+    store.permissions.delete(requestId)
+  })
+  
+  // 2. API call (may fail)
+  // 3. SSE event eventually confirms
+}
+```
+
+### Reconciliation
+
+SSE events from the server eventually reconcile optimistic state:
+
+| Event | Handler | File |
+|-------|---------|------|
+| `message.part.updated` | `updateMessagePartV2()` | `bridge.ts` |
+| `message.part.removed` | `removeMessagePartV2()` | `bridge.ts` |
+| `permission.replied` | `removePermissionV2()` | `bridge.ts` |
+| `question.replied` | `removeQuestionV2()` | `bridge.ts` |
+
+### Race Condition Warning
+
+Rapid successive operations can cause temporary desync:
+- Delete part → quickly delete message → may error if part delete in flight
+- Always check current state before optimistic updates
+
+## Permission Flow
+
+1. **Server emits** `permission.asked` or `permission.updated` SSE event
+   - Pushed through instance event stream
+2. **Server AutoAcceptManager** intercepts the event (if Yolo is enabled)
+   - File: `packages/server/src/permissions/auto-accept-manager.ts`
+   - Action: Auto-replies via SDK client (`createInstanceClient`), tracks pending permissions, drains on enable/ancestry change
+   - Emits `yolo.autoAccepted` + `yolo.stateChanged` events to UI
+3. **UI Store receives** via `serverEvents`
+   - File: `packages/ui/src/stores/instances.ts`
+   - **Branch:** IF `yolo.autoAccepted` event arrives → immediately marks replied + removes from queue
+   - **Branch:** ELSE (user must reply) → Queued in `permissionQueues` → Display modal
+4. **UI Store:** `packages/ui/src/stores/message-v2/bridge.ts` calls `upsertPermissionV2()`
+5. **UI Component:** `packages/ui/src/components/permission-approval-modal.tsx` displays
+6. **User Action:** Calls `packages/ui/src/stores/instances.ts:sendPermissionResponse()`
+7. **SDK Call:** `client.permission.reply()` via `packages/ui/src/lib/opencode-api.ts`
+8. **Optimistic Update:** `removePermissionV2()` in bridge
+9. **SSE Confirmation:** `permission.replied` event
+   - **Branch:** IF SSE disconnected → `syncPendingPermissions()` reconciles on reconnect
+
+## Session Event Handling
+
+### SSE Event Types
+
+| Event | Direction | Description |
+|-------|-----------|-------------|
+| `message.part.delta` | Server → UI | Streaming text update |
+| `message.part.updated` | Server → UI | Part content changed |
+| `message.part.removed` | Server → UI | Part deleted |
+| `session.status` | Server → UI | Session status changed |
+| `permission.asked` | Server → UI | New permission request |
+| `permission.updated` | Server → UI | Permission updated |
+| `permission.replied` | Server → UI | Permission resolved |
+| `question.asked` | Server → UI | New question |
+| `question.replied` | Server → UI | Question answered |
+| `question.rejected` | Server → UI | Question rejected |
+
+### Event Source Setup
+
+```typescript
+// packages/ui/src/lib/event-source-handlers.ts
+export function attachEventSourceHandlers(
+  source: EventSource, 
+  options: EventSourceHandlerOptions
+) {
+  source.onmessage = (event) => {
+    const payload = JSON.parse(event.data)
+    options.onEvent(payload)
+  }
+  
+  source.onerror = () => {
+    options.onError?.()
+  }
+  
+  ;(source as EventSourceWithClose).onclose = () => {
+    options.onError?.()
+  }
+}
+```
+
+## Worktree Client Pattern
+
+```typescript
+// Always route through worktree
+const worktreeSlug = getWorktreeSlugForSession(instanceId, sessionId)
+const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+
+// Then use client normally
+const diff = await requestData(
+  client.session.diff({ sessionID: sessionId }),
+  "session.diff"
+)
+```
+
+## Cleanup Pattern
+
+```typescript
+// On instance disposal
+sdkManager.destroyClientsForInstance(instanceId)
+messageStoreBus.unregister(instanceId)
+clearCacheForInstance(instanceId)
+```

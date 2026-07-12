@@ -10,20 +10,28 @@ import type {
   EventLspUpdated,
 
   EventSessionCompacted,
-  EventSessionDiff,
   EventSessionError,
   EventSessionIdle,
   EventSessionUpdated,
   EventSessionStatus,
 } from "@opencode-ai/sdk"
+import type {
+  EventPermissionV2Asked,
+  EventPermissionV2Replied,
+  EventQuestionV2Asked,
+  EventQuestionV2Rejected,
+  EventQuestionV2Replied,
+} from "@opencode-ai/sdk/v2"
+import type { LegacyPermissionAskedEvent, LegacyPermissionRepliedEvent } from "../types/permission"
 import { serverEvents } from "./server-events"
+import type { WorkspaceEventTransportStatus } from "./event-transport"
 import type {
   BackgroundProcess,
   InstanceStreamEvent,
-  InstanceStreamStatus,
   WorkspaceEventPayload,
 } from "../../../server/src/api-types"
 import { getLogger } from "./logger"
+import { deriveDisplayConnectionStatus, type ConnectionStatus } from "./connection-status"
 
 const log = getLogger("sse")
 
@@ -61,22 +69,29 @@ interface ServerInstanceDisposedEvent {
   }
 }
 
+type EventSessionCreated = Omit<EventSessionUpdated, "type"> & { type: "session.created" }
+
 type SSEEvent =
   | MessageUpdateEvent
   | MessageRemovedEvent
   | MessagePartUpdatedEvent
   | MessagePartRemovedEvent
   | MessagePartDeltaEvent
+  | EventSessionCreated
   | EventSessionUpdated
   | EventSessionCompacted
-  | EventSessionDiff
   | EventSessionError
   | EventSessionIdle
   | EventSessionStatus
-  | { type: "permission.updated" | "permission.asked"; properties?: any }
-  | { type: "permission.replied"; properties?: any }
+  | EventPermissionV2Asked
+  | EventPermissionV2Replied
+  | LegacyPermissionAskedEvent
+  | LegacyPermissionRepliedEvent
   | { type: "question.asked"; properties?: any }
   | { type: "question.replied" | "question.rejected"; properties?: any }
+  | EventQuestionV2Asked
+  | EventQuestionV2Replied
+  | EventQuestionV2Rejected
   | EventLspUpdated
   | TuiToastEvent
   | BackgroundProcessUpdatedEvent
@@ -84,12 +99,13 @@ type SSEEvent =
   | ServerInstanceDisposedEvent
   | { type: string; properties?: Record<string, unknown> }
 
-type ConnectionStatus = InstanceStreamStatus
-
 const [connectionStatus, setConnectionStatus] = createSignal<Map<string, ConnectionStatus>>(new Map())
+const [transportStatus, setTransportStatus] = createSignal<WorkspaceEventTransportStatus>("connecting")
 
 class SSEManager {
   constructor() {
+    log.info("sseManager initialized: listening for SSE disconnect and reconnect")
+
     serverEvents.on("instance.eventStatus", (event) => {
       const payload = event as InstanceStatusPayload
       this.updateConnectionStatus(payload.instanceId, payload.status)
@@ -106,6 +122,11 @@ class SSEManager {
       const payload = event as InstanceEventPayload
       this.updateConnectionStatus(payload.instanceId, "connected")
       this.handleEvent(payload.instanceId, payload.event as SSEEvent)
+    })
+
+    serverEvents.onTransportStatus((status) => {
+      log.info("SSE transport status changed", { status })
+      setTransportStatus(status)
     })
   }
 
@@ -140,6 +161,9 @@ class SSEManager {
       case "session.updated":
         this.onSessionUpdate?.(instanceId, event as EventSessionUpdated)
         break
+      case "session.created":
+        this.onSessionUpdate?.(instanceId, event as EventSessionUpdated)
+        break
       case "session.compacted":
         this.onSessionCompacted?.(instanceId, event as EventSessionCompacted)
         break
@@ -155,15 +179,18 @@ class SSEManager {
       case "session.status":
         this.onSessionStatus?.(instanceId, event as EventSessionStatus)
         break
-      case "session.diff":
-        this.onSessionDiff?.(instanceId, event as EventSessionDiff)
-        break
-      case "permission.updated":
       case "permission.asked":
+      case "permission.updated":
         this.onPermissionUpdated?.(instanceId, event as any)
         break
       case "permission.replied":
         this.onPermissionReplied?.(instanceId, event as any)
+        break
+      case "permission.v2.asked":
+        this.onPermissionUpdated?.(instanceId, event as EventPermissionV2Asked)
+        break
+      case "permission.v2.replied":
+        this.onPermissionReplied?.(instanceId, event as EventPermissionV2Replied)
         break
       case "question.asked":
         this.onQuestionAsked?.(instanceId, event as any)
@@ -171,6 +198,13 @@ class SSEManager {
       case "question.replied":
       case "question.rejected":
         this.onQuestionAnswered?.(instanceId, event as any)
+        break
+      case "question.v2.asked":
+        this.onQuestionAsked?.(instanceId, event as EventQuestionV2Asked)
+        break
+      case "question.v2.replied":
+      case "question.v2.rejected":
+        this.onQuestionAnswered?.(instanceId, event as EventQuestionV2Replied | EventQuestionV2Rejected)
         break
       case "lsp.updated":
         this.onLspUpdated?.(instanceId, event as EventLspUpdated)
@@ -208,11 +242,10 @@ class SSEManager {
   onTuiToast?: (instanceId: string, event: TuiToastEvent) => void
   onSessionIdle?: (instanceId: string, event: EventSessionIdle) => void
   onSessionStatus?: (instanceId: string, event: EventSessionStatus) => void
-  onSessionDiff?: (instanceId: string, event: EventSessionDiff) => void
-  onPermissionUpdated?: (instanceId: string, event: any) => void
-  onPermissionReplied?: (instanceId: string, event: any) => void
-  onQuestionAsked?: (instanceId: string, event: any) => void
-  onQuestionAnswered?: (instanceId: string, event: any) => void
+  onPermissionUpdated?: (instanceId: string, event: EventPermissionV2Asked | LegacyPermissionAskedEvent) => void
+  onPermissionReplied?: (instanceId: string, event: EventPermissionV2Replied | LegacyPermissionRepliedEvent) => void
+  onQuestionAsked?: (instanceId: string, event: EventQuestionV2Asked | { type: "question.asked"; properties?: any }) => void
+  onQuestionAnswered?: (instanceId: string, event: EventQuestionV2Replied | EventQuestionV2Rejected | { type: "question.replied" | "question.rejected"; properties?: any }) => void
   onLspUpdated?: (instanceId: string, event: EventLspUpdated) => void
   onBackgroundProcessUpdated?: (instanceId: string, event: BackgroundProcessUpdatedEvent) => void
   onBackgroundProcessRemoved?: (instanceId: string, event: BackgroundProcessRemovedEvent) => void
@@ -220,7 +253,7 @@ class SSEManager {
   onConnectionLost?: (instanceId: string, reason: string) => void | Promise<void>
 
   getStatus(instanceId: string): ConnectionStatus | null {
-    return connectionStatus().get(instanceId) ?? null
+    return deriveDisplayConnectionStatus(connectionStatus().get(instanceId) ?? null, transportStatus())
   }
 
   getStatuses() {
