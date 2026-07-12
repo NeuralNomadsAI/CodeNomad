@@ -33,7 +33,6 @@ import { instances } from "../../stores/instances"
 import {
   activeParentSessionId,
   activeSessionId,
-  expandedSessionParents,
   getAuthoritativeDraftSessionIdsForInstance,
   getAuthoritativelyDeletedSessionIdsForInstance,
   getSessionDraftPromptsForInstance,
@@ -134,7 +133,6 @@ function captureRestorableSessionState(
       scrollSnapshots: captureScrollSnapshots(tab.instance.id),
       unseenIdleSince: captureUnseenIdleMarkers(tab.instance.id),
       generationRecovery: captureGenerationRecovery(tab.instance.id),
-      expandedSessionIds: [...(expandedSessionParents().get(tab.instance.id) ?? [])],
     }
     if (tab.instance.projectName) result.projectName = tab.instance.projectName
     if (tab.instance.binaryPath) result.binaryPath = tab.instance.binaryPath
@@ -158,7 +156,6 @@ function captureRestorableSessionState(
       scrollSnapshots: authoritativeScrollSessionIdsByInstance.get(tab.instance.id),
       idleMarkers: new Set(getSessions(tab.instance.id).map((session) => session.id)),
       generationRecovery: new Set(getSessions(tab.instance.id).map((session) => session.id)),
-      sessionExpansion: new Set(getSessions(tab.instance.id).map((session) => session.id)),
       deletedSessions: getAuthoritativelyDeletedSessionIdsForInstance(tab.instance.id),
       sessionSelection: hasAuthoritativeSessionSelection(tab.instance.id),
     } : undefined),
@@ -238,7 +235,6 @@ export function useAppSessionCapture(): AppSessionCaptureController {
     activeAppTabId()
     activeParentSessionId()
     activeSessionId()
-    expandedSessionParents()
     for (const tab of tabs) {
       if (tab.kind !== "instance") continue
       getSessions(tab.instance.id)

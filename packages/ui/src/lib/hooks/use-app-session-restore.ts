@@ -21,7 +21,6 @@ import {
 } from "../../stores/app-session-reconciliation"
 import {
   getAbortReason,
-  RestoreTimeoutError,
   runWithRestoreDeadline,
   withRestoreTimeout,
   type RestoreActivity,
@@ -46,7 +45,6 @@ import { openSidecarTab, SidecarNotFoundError } from "../../stores/sidecars"
 import {
   getSessions,
   hydrateActiveSessionSelection,
-  hydrateSessionExpansion,
   hydrateSessionIdleMarkers,
   hydrateSessionGenerationRecovery,
 } from "../../stores/sessions"
@@ -56,8 +54,7 @@ import { hydrateWorkspacePromptState } from "../../stores/app-session-prompt-hyd
 const log = getLogger("actions")
 const MESSAGE_SCROLL_SCOPE = "message-stream"
 const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
-// The startup gate is held for at most 60 seconds. Initial discovery gets 15
-// seconds, while each combined workspace or SideCar operation gets 30 seconds.
+// Initial discovery gets 15 seconds and each sequential tab operation gets 30 seconds.
 const INITIAL_WORKSPACE_LOAD_TIMEOUT_MS = 15_000
 const RESTORE_OPERATION_TIMEOUT_MS = 30_000
 const MINIMUM_STARTUP_RESTORE_TIMEOUT_MS = 60_000
@@ -70,8 +67,10 @@ function getStartupRestoreTimeoutMs(snapshot: RestorableSessionState): number {
   return Math.max(MINIMUM_STARTUP_RESTORE_TIMEOUT_MS, sequentialOperationBudget)
 }
 
-function getWorkspaceSessionReferences(snapshot: RestorableWorkspaceTabState) {
-  return {
+function restoreWorkspaceState(instanceId: string, snapshot: RestorableWorkspaceTabState): Set<string> {
+  const availableSessions = getSessions(instanceId)
+  const validSessionIds = new Set(availableSessions.map((session) => session.id))
+  const unavailableSessionIds = getUnavailableRestoredSessionIds(availableSessions, {
     activeParentSessionId: snapshot.activeParentSessionId,
     activeSessionId: snapshot.activeSessionId,
     draftSessionIds: Object.keys(snapshot.drafts),
@@ -79,23 +78,11 @@ function getWorkspaceSessionReferences(snapshot: RestorableWorkspaceTabState) {
     scrollSessionIds: Object.keys(snapshot.scrollSnapshots),
     idleMarkerSessionIds: Object.keys(snapshot.unseenIdleSince),
     generationRecoverySessionIds: Object.keys(snapshot.generationRecovery),
-    expandedSessionIds: snapshot.expandedSessionIds,
-  }
-}
-
-function restoreWorkspaceState(instanceId: string, snapshot: RestorableWorkspaceTabState): Set<string> {
-  const availableSessions = getSessions(instanceId)
-  const validSessionIds = new Set(availableSessions.map((session) => session.id))
-  const unavailableSessionIds = getUnavailableRestoredSessionIds(
-    availableSessions,
-    getWorkspaceSessionReferences(snapshot),
-    [NO_SESSION_DRAFT_SESSION_ID],
-  )
+  }, [NO_SESSION_DRAFT_SESSION_ID])
 
   hydrateWorkspacePromptState(instanceId, snapshot, validSessionIds, NO_SESSION_DRAFT_SESSION_ID)
   hydrateSessionIdleMarkers(instanceId, snapshot.unseenIdleSince)
   hydrateSessionGenerationRecovery(instanceId, snapshot.generationRecovery)
-  hydrateSessionExpansion(instanceId, snapshot.expandedSessionIds)
 
   const scrollSeeds: MessageScrollSnapshotSeed[] = []
   for (const [sessionId, scrollSnapshot] of Object.entries(snapshot.scrollSnapshots)) {
@@ -179,40 +166,20 @@ async function restoreWorkspaceTabs(
             }))
         if (!id) return null
 
-        const restoredTabId = getInstanceAppTabId(id)
-        restoredTabIds[match.tabIndex] = restoredTabId
-        updatePreservation(
-          match.tabIndex,
-          getUnavailableRestoredSessionIds(
-            [],
-            getWorkspaceSessionReferences(tab),
-            [NO_SESSION_DRAFT_SESSION_ID],
-          ),
-          restoredTabId,
-        )
-
-        try {
-          await completeAbortableRestoreHydration(id, {
-            signal: operationSignal,
-            hydrate: waitForInstanceInitialSessionHydration,
-            commit: (hydratedId) => {
-              updatePreservation(match.tabIndex, restoreWorkspaceState(hydratedId, tab), restoredTabId)
-              if (!existingId) releaseRestoreCreatedInstance(hydratedId)
-            },
-            discard: existingId ? undefined : async (discardedId) => {
-              unmapWorkspace(getInstanceAppTabId(discardedId))
-              await disposeRestoreCreatedInstance(discardedId)
-            },
-            retainOnAbort: (reason) => {
-              if (!(reason instanceof RestoreTimeoutError)) return false
-              if (!existingId) releaseRestoreCreatedInstance(id)
-              return true
-            },
-          })
-        } catch (error) {
-          if (!existingId && !operationSignal.aborted) releaseRestoreCreatedInstance(id)
-          throw error
-        }
+        await completeAbortableRestoreHydration(id, {
+          signal: operationSignal,
+          hydrate: waitForInstanceInitialSessionHydration,
+          commit: (hydratedId) => {
+            const restoredTabId = getInstanceAppTabId(hydratedId)
+            restoredTabIds[match.tabIndex] = restoredTabId
+            updatePreservation(match.tabIndex, restoreWorkspaceState(hydratedId, tab), restoredTabId)
+            if (!existingId) releaseRestoreCreatedInstance(hydratedId)
+          },
+          discard: existingId ? undefined : async (discardedId) => {
+            unmapWorkspace(getInstanceAppTabId(discardedId))
+            await disposeRestoreCreatedInstance(discardedId)
+          },
+        })
         return id
       }, RESTORE_OPERATION_TIMEOUT_MS, `Timed out restoring workspace ${tab.folder}`, restoreSignal)
       if (!isRestoreActive()) return
@@ -222,10 +189,7 @@ async function restoreWorkspaceTabs(
       }
     } catch (error) {
       if (!isRestoreActive()) return
-      const retained = Boolean(restoredTabIds[match.tabIndex])
-      log.warn(retained
-        ? "Retained workspace after session hydration failed during app restore"
-        : "Skipped workspace while restoring app session", { folder: tab.folder, error })
+      log.warn("Skipped workspace while restoring app session", { folder: tab.folder, error })
     }
   }
 }

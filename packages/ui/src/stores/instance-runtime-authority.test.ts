@@ -54,7 +54,6 @@ function workspace(state: Partial<RestorableWorkspaceTabState> = {}): Restorable
     scrollSnapshots: {},
     unseenIdleSince: {},
     generationRecovery: {},
-    expandedSessionIds: [],
     ...state,
   }
 }

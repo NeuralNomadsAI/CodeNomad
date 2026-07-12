@@ -136,10 +136,6 @@ export function collectVisibleSessionIds(threads: SessionThread[], expanded: Set
   return ids
 }
 
-export function createHydratedSessionExpansion(expandedSessionIds: readonly string[]): Set<string> {
-  return new Set(expandedSessionIds)
-}
-
 export function findSessionThread(threads: SessionThread[], sessionId: string): SessionThread | null {
   for (const thread of threads) {
     if (thread.session.id === sessionId) return thread

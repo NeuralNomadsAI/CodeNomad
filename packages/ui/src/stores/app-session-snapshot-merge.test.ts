@@ -27,7 +27,6 @@ function workspace(
     scrollSnapshots: {},
     unseenIdleSince: {},
     generationRecovery: {},
-    expandedSessionIds: [],
     ...state,
   }
 }
@@ -366,41 +365,6 @@ describe("app session snapshot merge", () => {
       merged.tabs[0]?.kind === "workspace" ? merged.tabs[0].unseenIdleSince : undefined,
       { missing: 1_000 },
     )
-  })
-
-  it("does not re-expand an authoritative session collapsed after restore", () => {
-    const preservation = createRestorableSessionPreservation({
-      tabs: [workspace("/work", 0, { expandedSessionIds: ["collapsed", "still-expanded"] })],
-      activeTabIndex: 0,
-    })
-    const merged = mergeRestorableSessionState(
-      { tabs: [workspace("/work", 0, { expandedSessionIds: ["still-expanded"] })], activeTabIndex: 0 },
-      preservation,
-      {
-        currentTabIds: ["instance:work"],
-        currentTabAuthorities: [{ sessionExpansion: new Set(["collapsed", "still-expanded"]) }],
-      },
-    )
-
-    assert.deepEqual(merged.tabs[0]?.kind === "workspace" ? merged.tabs[0].expandedSessionIds : undefined, ["still-expanded"])
-  })
-
-  it("preserves expansion for a session unavailable during partial restore", () => {
-    let preservation = createRestorableSessionPreservation({
-      tabs: [workspace("/work", 0, { expandedSessionIds: ["missing", "loaded"] })],
-      activeTabIndex: 0,
-    })
-    preservation = markRestoredTab(preservation, 0, new Set(["missing"]), "instance:work")
-    const merged = mergeRestorableSessionState(
-      { tabs: [workspace("/work", 0)], activeTabIndex: 0 },
-      preservation,
-      {
-        currentTabIds: ["instance:work"],
-        currentTabAuthorities: [{ sessionExpansion: new Set(["loaded"]) }],
-      },
-    )
-
-    assert.deepEqual(merged.tabs[0]?.kind === "workspace" ? merged.tabs[0].expandedSessionIds : undefined, ["missing"])
   })
 
   it("does not resurrect cleared generation recovery for an authoritative runtime session", () => {

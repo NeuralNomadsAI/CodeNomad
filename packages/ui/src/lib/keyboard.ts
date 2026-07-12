@@ -1,6 +1,6 @@
 import { activeInstanceId } from "../stores/instances"
 import { selectAppTabByIndex } from "../stores/app-tabs"
-import { activeSessionId, setActiveSession, ensureSessionAncestorsExpanded, getSessionFamily, activeParentSessionId } from "../stores/sessions"
+import { activeSessionId, setActiveSession, getSessionFamily, activeParentSessionId } from "../stores/sessions"
 import { keyboardRegistry } from "./keyboard-registry"
 import { isMac } from "./keyboard-utils"
 
@@ -52,7 +52,6 @@ export function setupTabKeyboardShortcuts(
       const allTabs = sessionFamily.map((s) => s.id).concat(["logs"])
 
       if (allTabs[index]) {
-        ensureSessionAncestorsExpanded(instanceId, allTabs[index])
         setActiveSession(instanceId, allTabs[index])
       }
     }
