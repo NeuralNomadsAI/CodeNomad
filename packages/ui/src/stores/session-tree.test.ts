@@ -6,6 +6,7 @@ import {
   buildSessionThreadsFromMap,
   collectSessionThreadIds,
   collectVisibleSessionIds,
+  flattenVisibleSessionThreads,
   findSessionThread,
   getDescendantSessionsFromMap,
   getSessionAncestorIdsFromMap,
@@ -62,6 +63,76 @@ describe("session tree", () => {
     assert.deepEqual(collectVisibleSessionIds(threads, undefined), ["root"])
     assert.deepEqual(collectVisibleSessionIds(threads, new Set(["root"])), ["root", "child"])
     assert.deepEqual(collectVisibleSessionIds(threads, new Set(["root", "child"])), ["root", "child", "grandchild"])
+  })
+
+  it("flattens visible nested rows in pre-order with sibling metadata", () => {
+    const sessions = sessionMap([
+      ["root", null, 100],
+      ["child", "root", 400],
+      ["grandchild", "child", 300],
+      ["sibling", "root", 200],
+      ["other-root", null, 50],
+    ])
+    const threads = buildSessionThreadsFromMap(sessions, ["root", "other-root"])
+    const expanded = new Set(["root", "child"])
+    const rows = flattenVisibleSessionThreads(threads, (id) => expanded.has(id))
+
+    assert.deepEqual(rows.map((row) => row.sessionId), ["root", "child", "grandchild", "sibling", "other-root"])
+    assert.deepEqual(rows.map((row) => row.depth), [0, 1, 2, 1, 0])
+    assert.deepEqual(rows.map((row) => row.isLastChild), [false, false, true, true, true])
+    assert.deepEqual(rows.map((row) => row.expanded), [true, true, false, false, false])
+  })
+
+  it("does not expose descendants through a collapsed ancestor", () => {
+    const sessions = sessionMap([
+      ["root", null, 100],
+      ["child", "root", 200],
+      ["grandchild", "child", 300],
+    ])
+    const threads = buildSessionThreadsFromMap(sessions, ["root"])
+    const rows = flattenVisibleSessionThreads(threads, (id) => id === "child")
+
+    assert.deepEqual(rows.map((row) => row.sessionId), ["root"])
+  })
+
+  it("matches the existing visible-id traversal for expansion sets", () => {
+    const sessions = sessionMap([
+      ["root", null, 100],
+      ["child", "root", 200],
+      ["grandchild", "child", 300],
+      ["sibling", "root", 400],
+    ])
+    const threads = buildSessionThreadsFromMap(sessions, ["root"])
+
+    for (const expanded of [new Set<string>(), new Set(["root"]), new Set(["root", "child"])]) {
+      assert.deepEqual(
+        flattenVisibleSessionThreads(threads, (id) => expanded.has(id)).map((row) => row.sessionId),
+        collectVisibleSessionIds(threads, expanded),
+      )
+    }
+  })
+
+  it("derives children from the projected filtered tree", () => {
+    const sessions = sessionMap([
+      ["root", null, 100],
+      ["child", "root", 200],
+    ])
+    const [filteredRoot] = buildSessionThreadsFromMap(sessions, ["root"], new Set())
+    const [row] = flattenVisibleSessionThreads([filteredRoot], () => true)
+
+    assert.equal(row.hasChildren, false)
+    assert.equal(row.expanded, false)
+  })
+
+  it("projects large root lists without dropping or duplicating sessions", () => {
+    const definitions: Array<[string, string | null, number]> = []
+    for (let index = 0; index < 1_000; index += 1) definitions.push([`session-${index}`, null, index])
+    const sessions = sessionMap(definitions)
+    const threads = buildSessionThreadsFromMap(sessions, definitions.map(([id]) => id))
+    const rows = flattenVisibleSessionThreads(threads, () => false)
+
+    assert.equal(rows.length, 1_000)
+    assert.equal(new Set(rows.map((row) => row.sessionId)).size, 1_000)
   })
 
   it("resolves roots and ancestors across arbitrary depth", () => {

@@ -8,6 +8,15 @@ export type SessionThread = {
   latestUpdated: number
 }
 
+export type VisibleSessionRow = {
+  sessionId: string
+  thread: SessionThread
+  depth: number
+  isLastChild: boolean
+  hasChildren: boolean
+  expanded: boolean
+}
+
 export function getSessionRootFromMap(instanceSessions: Map<string, Session>, sessionId: string): Session | null {
   let current = instanceSessions.get(sessionId)
   if (!current) return null
@@ -134,6 +143,32 @@ export function collectVisibleSessionIds(threads: SessionThread[], expanded: Set
     if (expanded?.has(thread.session.id)) ids.push(...collectVisibleSessionIds(thread.children, expanded))
   }
   return ids
+}
+
+export function flattenVisibleSessionThreads(
+  threads: readonly SessionThread[],
+  isExpanded: (sessionId: string) => boolean,
+): VisibleSessionRow[] {
+  const rows: VisibleSessionRow[] = []
+
+  const append = (siblings: readonly SessionThread[], depth: number) => {
+    siblings.forEach((thread, index) => {
+      const hasChildren = thread.children.length > 0
+      const expanded = hasChildren && isExpanded(thread.session.id)
+      rows.push({
+        sessionId: thread.session.id,
+        thread,
+        depth,
+        isLastChild: index === siblings.length - 1,
+        hasChildren,
+        expanded,
+      })
+      if (expanded) append(thread.children, depth + 1)
+    })
+  }
+
+  append(threads, 0)
+  return rows
 }
 
 export function findSessionThread(threads: SessionThread[], sessionId: string): SessionThread | null {
