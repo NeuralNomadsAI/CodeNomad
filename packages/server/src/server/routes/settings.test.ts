@@ -3,58 +3,58 @@ import { describe, it } from "node:test"
 import { enforceSpeechCredentialPairing } from "./settings"
 
 describe("enforceSpeechCredentialPairing", () => {
-  it("clears shared apiKey when shared baseUrl changes without apiKey in patch", () => {
-    const result = enforceSpeechCredentialPairing({
-      speech: { baseUrl: "https://api.newendpoint.com/v1" },
-    }) as any
-    assert.equal(result.speech.apiKey, null, "shared apiKey must be cleared when only baseUrl is patched")
-    assert.equal(result.speech.baseUrl, "https://api.newendpoint.com/v1")
+  it("clears shared key when baseUrl differs from stored", () => {
+    const result = enforceSpeechCredentialPairing(
+      { speech: { baseUrl: "https://new.com/v1" } },
+      { speech: { baseUrl: "https://old.com/v1", apiKey: "sk-stored" } },
+    ) as any
+    assert.equal(result.speech.apiKey, null)
   })
 
-  it("preserves shared apiKey when both baseUrl and apiKey are in patch", () => {
-    const result = enforceSpeechCredentialPairing({
-      speech: { baseUrl: "https://api.newendpoint.com/v1", apiKey: "sk-new-shared" },
-    }) as any
-    assert.equal(result.speech.apiKey, "sk-new-shared")
+  it("does NOT clear shared key when baseUrl matches stored (old client full patch)", () => {
+    const result = enforceSpeechCredentialPairing(
+      { speech: { baseUrl: "https://api.openai.com/v1", ttsVoice: "alloy", playbackMode: "streaming" } },
+      { speech: { baseUrl: "https://api.openai.com/v1", apiKey: "sk-stored" } },
+    ) as any
+    assert.equal("apiKey" in result.speech, false, "must not clear key when URL unchanged")
   })
 
-  it("clears stored key when baseUrl changes without apiKey in patch", () => {
-    const result = enforceSpeechCredentialPairing({
-      speech: { stt: { baseUrl: "https://api.groq.com/v1" } },
-    }) as any
-    assert.equal(result.speech.stt.apiKey, null, "apiKey must be cleared when only baseUrl is patched")
-    assert.equal(result.speech.stt.baseUrl, "https://api.groq.com/v1")
+  it("clears directional key when directional baseUrl differs from stored", () => {
+    const result = enforceSpeechCredentialPairing(
+      { speech: { stt: { baseUrl: "https://new.com/v1" } } },
+      { speech: { stt: { baseUrl: "https://old.com/v1", apiKey: "sk-stored" } } },
+    ) as any
+    assert.equal(result.speech.stt.apiKey, null)
+  })
+
+  it("does NOT clear directional key when baseUrl matches stored", () => {
+    const result = enforceSpeechCredentialPairing(
+      { speech: { stt: { baseUrl: "https://same.com/v1", model: "whisper-1" } } },
+      { speech: { stt: { baseUrl: "https://same.com/v1", apiKey: "sk-stored" } } },
+    ) as any
+    assert.equal("apiKey" in result.speech.stt, false, "must not clear directional key when URL unchanged")
   })
 
   it("preserves apiKey when both baseUrl and apiKey are in patch", () => {
-    const result = enforceSpeechCredentialPairing({
-      speech: { stt: { baseUrl: "https://api.groq.com/v1", apiKey: "sk-new" } },
-    }) as any
-    assert.equal(result.speech.stt.apiKey, "sk-new")
+    const result = enforceSpeechCredentialPairing(
+      { speech: { baseUrl: "https://new.com/v1", apiKey: "sk-new" } },
+      { speech: { baseUrl: "https://old.com/v1", apiKey: "sk-old" } },
+    ) as any
+    assert.equal(result.speech.apiKey, "sk-new")
   })
 
-  it("does not add apiKey when baseUrl is not in patch", () => {
-    const result = enforceSpeechCredentialPairing({
-      speech: { stt: { apiKey: "sk-key" } },
-    }) as any
-    assert.equal("apiKey" in result.speech.stt, true)
-    assert.equal("baseUrl" in result.speech.stt, false)
-  })
-
-  it("handles both stt and tts independently", () => {
-    const result = enforceSpeechCredentialPairing({
-      speech: {
-        stt: { baseUrl: "https://stt.example.com/v1", apiKey: "sk-stt" },
-        tts: { baseUrl: "https://tts.example.com/v1" },
-      },
-    }) as any
+  it("handles both stt and tts independently against stored values", () => {
+    const result = enforceSpeechCredentialPairing(
+      { speech: { stt: { baseUrl: "https://stt-same.com/v1", apiKey: "sk-stt" }, tts: { baseUrl: "https://tts-new.com/v1" } } },
+      { speech: { stt: { baseUrl: "https://stt-same.com/v1", apiKey: "sk-stt" }, tts: { baseUrl: "https://tts-old.com/v1", apiKey: "sk-tts" } } },
+    ) as any
     assert.equal(result.speech.stt.apiKey, "sk-stt")
     assert.equal(result.speech.tts.apiKey, null)
   })
 
   it("passes through non-speech patches unchanged", () => {
-    const body = { logLevel: "INFO", opencodeBinary: "/usr/bin/opencode" }
-    const result = enforceSpeechCredentialPairing(body)
+    const body = { logLevel: "INFO" }
+    const result = enforceSpeechCredentialPairing(body, { speech: {} })
     assert.deepEqual(result, body)
   })
 
@@ -64,9 +64,9 @@ describe("enforceSpeechCredentialPairing", () => {
   })
 
   it("does not mutate the original body", () => {
-    const original = { speech: { stt: { baseUrl: "https://new.com/v1" } } }
+    const original = { speech: { baseUrl: "https://new.com/v1" } }
     const originalCopy = JSON.parse(JSON.stringify(original))
-    enforceSpeechCredentialPairing(original)
-    assert.deepEqual(original, originalCopy, "original body must not be mutated")
+    enforceSpeechCredentialPairing(original, { speech: { baseUrl: "https://old.com/v1" } })
+    assert.deepEqual(original, originalCopy)
   })
 })

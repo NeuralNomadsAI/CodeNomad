@@ -307,7 +307,7 @@ export const SpeechSettingsCard: Component = () => {
               type="button"
               class="selector-button selector-button-secondary w-auto whitespace-nowrap inline-flex items-center gap-2"
               onClick={() => void testTranscription.toggle()}
-              disabled={isSaving() || testTranscription.state() === "requesting" || testTranscription.state() === "transcribing" || (testTranscription.state() === "idle" && !testTranscription.canUseTranscription())}
+              disabled={(isSaving() && testTranscription.state() !== "recording") || testTranscription.state() === "requesting" || testTranscription.state() === "transcribing" || (testTranscription.state() === "idle" && !testTranscription.canUseTranscription())}
               title={testTranscription.buttonTitle()}
               aria-label={testTranscription.buttonTitle()}
             >

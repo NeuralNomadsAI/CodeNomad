@@ -19,20 +19,28 @@ function validateBinaryPath(binaryPath: string): { valid: boolean; version?: str
   return { valid: result.valid, version: result.version, error: result.error }
 }
 
-export function enforceSpeechCredentialPairing(body: unknown): unknown {
+export function enforceSpeechCredentialPairing(body: unknown, currentSpeech?: unknown): unknown {
   if (!body || typeof body !== "object") return body
   const patch = { ...(body as Record<string, unknown>) }
   const speech = patch.speech
   if (!speech || typeof speech !== "object") return patch
   const speechPatch = { ...(speech as Record<string, unknown>) }
+  const cur = (currentSpeech && typeof currentSpeech === "object") ? currentSpeech as Record<string, unknown> : {}
+  const curSpeech = (cur.speech && typeof cur.speech === "object") ? cur.speech as Record<string, unknown> : cur
+
   if ("baseUrl" in speechPatch && !("apiKey" in speechPatch)) {
-    speechPatch.apiKey = null
+    if ((speechPatch.baseUrl ?? "") !== (curSpeech.baseUrl ?? "")) {
+      speechPatch.apiKey = null
+    }
   }
   for (const dir of ["stt", "tts"] as const) {
     if (dir in speechPatch) {
       const dirPatch = { ...(speechPatch[dir] as Record<string, unknown>) }
       if ("baseUrl" in dirPatch && !("apiKey" in dirPatch)) {
-        dirPatch.apiKey = null
+        const curDir = (curSpeech[dir] && typeof curSpeech[dir] === "object") ? curSpeech[dir] as Record<string, unknown> : {}
+        if ((dirPatch.baseUrl ?? "") !== (curDir.baseUrl ?? "")) {
+          dirPatch.apiKey = null
+        }
         speechPatch[dir] = dirPatch
       }
     }
@@ -60,8 +68,11 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
 
   app.patch<{ Params: { owner: string } }>("/api/storage/config/:owner", async (request, reply) => {
     try {
+      const currentOwner = request.params.owner === "server"
+        ? deps.settings.getOwner("config", "server")
+        : undefined
       const processed = request.params.owner === "server"
-        ? enforceSpeechCredentialPairing(request.body ?? {})
+        ? enforceSpeechCredentialPairing(request.body ?? {}, currentOwner)
         : request.body ?? {}
       return sanitizeConfigOwner(
         request.params.owner,
