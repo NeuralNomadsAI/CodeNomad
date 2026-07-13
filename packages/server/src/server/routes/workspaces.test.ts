@@ -23,8 +23,10 @@ describe("workspace routes", () => {
     const workspaceManager = {
       create: async (...args: unknown[]) => {
         calls.push(args)
-        return descriptor
+        return { workspace: descriptor, created: true }
       },
+      releaseCreationRequest: (workspaceId: string, requestId: string) =>
+        workspaceId === descriptor.id && requestId === "restore-request",
     } as unknown as WorkspaceManager
     registerWorkspaceRoutes(app, { workspaceManager })
 
@@ -36,11 +38,30 @@ describe("workspace routes", () => {
         name: "Work",
         binaryPath: " C:/tools/opencode.exe ",
         requestId: " restore-request ",
+        forceNew: true,
       },
     })
 
     assert.equal(response.statusCode, 201)
-    assert.deepEqual(calls, [["C:/work", "Work", "C:/tools/opencode.exe", "restore-request"]])
+    assert.deepEqual(calls, [["C:/work", "Work", {
+      binaryPath: "C:/tools/opencode.exe",
+      requestId: "restore-request",
+      forceNew: true,
+    }]])
+
+    const released = await app.inject({
+      method: "POST",
+      url: "/api/workspaces/workspace/creation/release",
+      payload: { requestId: "restore-request" },
+    })
+    assert.equal(released.statusCode, 204)
+
+    const wrongRelease = await app.inject({
+      method: "POST",
+      url: "/api/workspaces/workspace/creation/release",
+      payload: { requestId: "other-request" },
+    })
+    assert.equal(wrongRelease.statusCode, 404)
 
     const invalid = await app.inject({
       method: "POST",

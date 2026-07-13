@@ -132,12 +132,10 @@
       "createStartMenuShortcut": true
     },
     "linux": {
+      "executableName": "CodeNomad",
       "target": [
         {
-          "target": "zip"
-        },
-        {
-          "target": "AppImage"
+          "target": "tar.gz"
         }
       ],
       "artifactName": "CodeNomad-Electron-linux-${arch}-${version}.${ext}",

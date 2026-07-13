@@ -57,6 +57,24 @@ describe("app session restore timeouts", () => {
     assert.equal(nestedSignal?.aborted, true)
   })
 
+  it("cancels the restore deadline when its owner is disposed", async () => {
+    const controller = new AbortController()
+    let restoreSignal: AbortSignal | undefined
+    const completion = runWithRestoreDeadline(
+      async (_isActive, signal) => {
+        restoreSignal = signal
+        await new Promise<never>(() => undefined)
+      },
+      1_000,
+      "deadline stalled",
+      controller.signal,
+    )
+
+    controller.abort(new Error("restore disposed"))
+    await assert.rejects(completion, /restore disposed/)
+    assert.equal(restoreSignal?.aborted, true)
+  })
+
   it("rejects a SideCar load that completes after its restore signal aborts", async () => {
     let finish: (() => void) | undefined
     const load = new Promise<void>((resolve) => {

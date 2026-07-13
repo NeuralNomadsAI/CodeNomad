@@ -84,10 +84,12 @@ export async function runWithRestoreDeadline<T>(
   operation: (isActive: RestoreActivity, signal: AbortSignal) => Promise<T>,
   timeoutMs: number,
   message: string,
+  parentSignal?: AbortSignal,
 ): Promise<T> {
   return withRestoreTimeout(
     (signal) => operation(() => !signal.aborted, signal),
     timeoutMs,
     message,
+    parentSignal,
   )
 }

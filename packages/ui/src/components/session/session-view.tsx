@@ -7,7 +7,7 @@ import { messageStoreBus } from "../../stores/message-v2/bus"
 import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import { getAttachments, removeAttachment } from "../../stores/attachments"
-import { instances } from "../../stores/instances"
+import { instances, waitForInstanceWorkspaceMetadataHydration } from "../../stores/instances"
 import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, getSessionDraftPrompt, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession } from "../../stores/sessions"
 import { clearSessionIdleFade, IDLE_STATUS_VISIBILITY_MS, getSessionStatus, isSessionBusy as getSessionBusyStatus, markSessionIdleFadeStarted } from "../../stores/session-status"
 import { deleteMessage } from "../../stores/session-actions"
@@ -283,10 +283,16 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   )
 
   createEffect(() => {
+    if (!props.isActive) return
     const currentSession = session()
-    if (currentSession) {
-      loadMessages(props.instanceId, currentSession.id).catch((error) => log.error("Failed to load messages", error))
-    }
+    if (!currentSession) return
+    const sessionId = currentSession.id
+    void waitForInstanceWorkspaceMetadataHydration(props.instanceId)
+      .then(() => {
+        if (!props.isActive || session()?.id !== sessionId) return
+        return loadMessages(props.instanceId, sessionId)
+      })
+      .catch((error) => log.error("Failed to load messages", error))
   })
 
   function handleReloadMessages() {

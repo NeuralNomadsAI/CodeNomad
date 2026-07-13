@@ -28,6 +28,9 @@ import {
 import { completeAbortableRestoreHydration } from "../../stores/abortable-restore-creation"
 import type { RestoredWorkspaceMapping } from "../../stores/app-session-snapshot-merge"
 import {
+  activeAppTabId,
+  appTabOrderRevision,
+  appTabSelectionRevision,
   getInstanceAppTabId,
   getSidecarAppTabId,
   selectAppTab,
@@ -44,6 +47,7 @@ import {
 import { openSidecarTab, SidecarNotFoundError } from "../../stores/sidecars"
 import {
   getSessions,
+  hasAuthoritativeSessionSelection,
   hydrateActiveSessionSelection,
   hydrateSessionIdleMarkers,
   hydrateSessionGenerationRecovery,
@@ -54,17 +58,27 @@ import { hydrateWorkspacePromptState } from "../../stores/app-session-prompt-hyd
 const log = getLogger("actions")
 const MESSAGE_SCROLL_SCOPE = "message-stream"
 const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
-// Initial discovery gets 15 seconds and each sequential tab operation gets 30 seconds.
+// Independent tab operations share one concurrent startup window.
 const INITIAL_WORKSPACE_LOAD_TIMEOUT_MS = 15_000
 const RESTORE_OPERATION_TIMEOUT_MS = 30_000
+const RESTORE_CREATE_WITH_ALIAS_RETRY_TIMEOUT_MS = RESTORE_OPERATION_TIMEOUT_MS * 2
 const MINIMUM_STARTUP_RESTORE_TIMEOUT_MS = 60_000
 const STARTUP_RESTORE_GRACE_MS = 5_000
 
 function getStartupRestoreTimeoutMs(snapshot: RestorableSessionState): number {
-  const sequentialOperationBudget = INITIAL_WORKSPACE_LOAD_TIMEOUT_MS
-    + snapshot.tabs.length * RESTORE_OPERATION_TIMEOUT_MS
+  const workspaceGroupSizes = new Map<string, number>()
+  let largestSequentialGroup = 1
+  for (const tab of snapshot.tabs) {
+    if (tab.kind !== "workspace") continue
+    const path = normalizeWorkspacePath(tab.folder)
+    const size = (workspaceGroupSizes.get(path) ?? 0) + 1
+    workspaceGroupSizes.set(path, size)
+    largestSequentialGroup = Math.max(largestSequentialGroup, size)
+  }
+  const concurrentOperationBudget = INITIAL_WORKSPACE_LOAD_TIMEOUT_MS
+    + largestSequentialGroup * RESTORE_CREATE_WITH_ALIAS_RETRY_TIMEOUT_MS
     + STARTUP_RESTORE_GRACE_MS
-  return Math.max(MINIMUM_STARTUP_RESTORE_TIMEOUT_MS, sequentialOperationBudget)
+  return Math.max(MINIMUM_STARTUP_RESTORE_TIMEOUT_MS, concurrentOperationBudget)
 }
 
 function restoreWorkspaceState(instanceId: string, snapshot: RestorableWorkspaceTabState): Set<string> {
@@ -96,6 +110,9 @@ function restoreWorkspaceState(instanceId: string, snapshot: RestorableWorkspace
     snapshot.activeParentSessionId,
     snapshot.activeSessionId,
   )
+  if (hasAuthoritativeSessionSelection(instanceId)) {
+    return unavailableSessionIds
+  }
   if (!selection) {
     hydrateActiveSessionSelection(instanceId, null, null)
     return unavailableSessionIds
@@ -116,6 +133,8 @@ async function restoreWorkspaceTabs(
   ) => void,
   mapWorkspaces: (mappings: readonly RestoredWorkspaceMapping[]) => void,
   unmapWorkspace: (runtimeTabId: string) => void,
+  selectRestoredActive: (tabId: string, requested: boolean) => void,
+  applyRestoredOrder: (tabIds: string[]) => void,
 ): Promise<void> {
   const workspaceMatches = reconcileWorkspaceTabs(
     snapshot.tabs.map((tab) =>
@@ -132,66 +151,101 @@ async function restoreWorkspaceTabs(
     sourceIndex: match.tabIndex,
     runtimeTabId: getInstanceAppTabId(match.existingWorkspaceId!),
   })))
-  const firstTabIndexByPath = new Map<string, number>()
+  for (const match of existingMatches) {
+    restoredTabIds[match.tabIndex] = getInstanceAppTabId(match.existingWorkspaceId!)
+  }
+  const claimedWorkspaceIds = new Set(existingMatches.map((match) => match.existingWorkspaceId!))
+  applyRestoredOrder(restoredTabIds.filter((tabId): tabId is string => Boolean(tabId)))
+  const provisionalActiveTabId = resolveRestoredActiveTabId(restoredTabIds, snapshot.activeTabIndex)
+  if (provisionalActiveTabId) {
+    selectRestoredActive(provisionalActiveTabId, provisionalActiveTabId === restoredTabIds[snapshot.activeTabIndex])
+  }
+
+  const missingMatchesByPath = new Map<string, typeof missingMatches>()
   for (const match of missingMatches) {
     const path = normalizeWorkspacePath(match.descriptor.folderPath)
-    const firstIndex = firstTabIndexByPath.get(path)
-    if (firstIndex === undefined || match.tabIndex < firstIndex) firstTabIndexByPath.set(path, match.tabIndex)
+    const group = missingMatchesByPath.get(path) ?? []
+    group.push(match)
+    missingMatchesByPath.set(path, group)
   }
-  missingMatches.sort((left, right) => {
-    const leftPath = normalizeWorkspacePath(left.descriptor.folderPath)
-    const rightPath = normalizeWorkspacePath(right.descriptor.folderPath)
-    const groupOrder = (firstTabIndexByPath.get(leftPath) ?? left.tabIndex)
-      - (firstTabIndexByPath.get(rightPath) ?? right.tabIndex)
-    return groupOrder || left.descriptor.occurrence - right.descriptor.occurrence
-  })
+  for (const group of missingMatchesByPath.values()) {
+    group.sort((left, right) => left.descriptor.occurrence - right.descriptor.occurrence || left.tabIndex - right.tabIndex)
+  }
 
-  for (const match of [...existingMatches, ...missingMatches]) {
+  const restoreMatch = async (match: (typeof workspaceMatches)[number]): Promise<void> => {
     if (!isRestoreActive()) return
     const tab = snapshot.tabs[match.tabIndex]
-    if (!tab || tab.kind !== "workspace") continue
+    if (!tab || tab.kind !== "workspace") return
 
+    let restoreCreatedId: string | null = null
     try {
       const instanceId = await withRestoreTimeout(async (operationSignal) => {
         const existingId = match.existingWorkspaceId
-        const id = existingId ?? (isWebHost()
+        const createMissingInstance = (forceNew: boolean) => createInstance(tab.folder, tab.binaryPath, tab.projectName, {
+          activate: false,
+          signal: operationSignal,
+          forceNew,
+          onCreateCommit: (createdId) => mapWorkspaces([{
+            sourceIndex: match.tabIndex,
+            runtimeTabId: getInstanceAppTabId(createdId),
+          }]),
+        })
+        let creationResult = existingId || isWebHost()
           ? null
-          : await createInstance(tab.folder, tab.binaryPath, tab.projectName, {
-              activate: false,
-              signal: operationSignal,
-              onCreateCommit: (createdId) => mapWorkspaces([{
-                sourceIndex: match.tabIndex,
-                runtimeTabId: getInstanceAppTabId(createdId),
-              }]),
-            }))
+          : await createMissingInstance(match.descriptor.occurrence > 0)
+        if (creationResult && claimedWorkspaceIds.has(creationResult.instanceId)) {
+          if (!creationResult.reused && creationResult.requestId) {
+            await releaseRestoreCreatedInstance(creationResult.instanceId, creationResult.requestId)
+          }
+          creationResult = await createMissingInstance(true)
+        }
+        const id = existingId ?? creationResult?.instanceId ?? null
         if (!id) return null
+        claimedWorkspaceIds.add(id)
+        const createdByRestore = creationResult?.reused === false
+        if (createdByRestore) restoreCreatedId = id
 
         await completeAbortableRestoreHydration(id, {
           signal: operationSignal,
           hydrate: waitForInstanceInitialSessionHydration,
-          commit: (hydratedId) => {
+          commit: async (hydratedId) => {
             const restoredTabId = getInstanceAppTabId(hydratedId)
+            if (createdByRestore && creationResult?.requestId) {
+              await releaseRestoreCreatedInstance(hydratedId, creationResult.requestId)
+            }
+            if (operationSignal.aborted) throw getAbortReason(operationSignal)
             restoredTabIds[match.tabIndex] = restoredTabId
             updatePreservation(match.tabIndex, restoreWorkspaceState(hydratedId, tab), restoredTabId)
-            if (!existingId) releaseRestoreCreatedInstance(hydratedId)
+            if (match.tabIndex === snapshot.activeTabIndex) selectRestoredActive(restoredTabId, true)
           },
           discard: existingId ? undefined : async (discardedId) => {
             unmapWorkspace(getInstanceAppTabId(discardedId))
-            await disposeRestoreCreatedInstance(discardedId)
+            if (createdByRestore) await disposeRestoreCreatedInstance(discardedId)
           },
         })
         return id
-      }, RESTORE_OPERATION_TIMEOUT_MS, `Timed out restoring workspace ${tab.folder}`, restoreSignal)
+      }, match.existingWorkspaceId ? RESTORE_OPERATION_TIMEOUT_MS : RESTORE_CREATE_WITH_ALIAS_RETRY_TIMEOUT_MS, `Timed out restoring workspace ${tab.folder}`, restoreSignal)
       if (!isRestoreActive()) return
       if (!instanceId) {
         log.info("Skipped automatic remote workspace launch while restoring browser state", { folder: tab.folder })
-        continue
+        return
       }
     } catch (error) {
+      if (restoreCreatedId) {
+        unmapWorkspace(getInstanceAppTabId(restoreCreatedId))
+        await disposeRestoreCreatedInstance(restoreCreatedId)
+      }
       if (!isRestoreActive()) return
       log.warn("Skipped workspace while restoring app session", { folder: tab.folder, error })
     }
   }
+
+  await Promise.all([
+    ...existingMatches.map(restoreMatch),
+    ...Array.from(missingMatchesByPath.values(), async (group) => {
+      for (const match of group) await restoreMatch(match)
+    }),
+  ])
 }
 
 async function restoreSidecarTabs(
@@ -204,11 +258,11 @@ async function restoreSidecarTabs(
     unavailableSessionIds?: ReadonlySet<string>,
     restoredTabId?: string | null,
   ) => void,
+  selectRestoredActive: (tabId: string, requested: boolean) => void,
 ): Promise<void> {
-  for (let index = 0; index < snapshot.tabs.length; index += 1) {
+  await Promise.all(snapshot.tabs.map(async (tab, index) => {
     if (!isRestoreActive()) return
-    const tab = snapshot.tabs[index]
-    if (!tab || tab.kind !== "sidecar") continue
+    if (!tab || tab.kind !== "sidecar") return
     try {
       const opened = await withRestoreTimeout(
         (operationSignal) => openSidecarTab(tab.sidecarId, {
@@ -223,12 +277,13 @@ async function restoreSidecarTabs(
       if (!isRestoreActive()) return
       restoredTabIds[index] = getSidecarAppTabId(opened.token)
       updatePreservation(index, undefined, restoredTabIds[index])
+      if (index === snapshot.activeTabIndex) selectRestoredActive(restoredTabIds[index]!, true)
     } catch (error) {
       if (error instanceof SidecarNotFoundError) updatePreservation(index)
       if (!isRestoreActive()) return
       log.warn("Skipped SideCar while restoring app session", { sidecarId: tab.sidecarId, error })
     }
-  }
+  }))
 }
 
 async function restoreAppSession(
@@ -243,42 +298,71 @@ async function restoreAppSession(
   mapWorkspaces: (mappings: readonly RestoredWorkspaceMapping[]) => void,
   unmapWorkspace: (runtimeTabId: string) => void,
 ): Promise<void> {
-  try {
-    await withRestoreTimeout(
-      async (operationSignal) => {
-        await waitForInitialWorkspaceLoad()
-        if (operationSignal.aborted) throw getAbortReason(operationSignal)
-      },
-      INITIAL_WORKSPACE_LOAD_TIMEOUT_MS,
-      "Timed out loading initial workspaces",
-      restoreSignal,
-    )
-  } catch (error) {
-    log.error("Failed to load workspaces before restoring app session", error)
-    return
-  }
-  if (!isRestoreActive()) return
-
   const restoredTabIds = Array<string | null>(snapshot.tabs.length).fill(null)
-  await restoreWorkspaceTabs(
+  const initialOrderRevision = appTabOrderRevision()
+  const initialSelectionRevision = appTabSelectionRevision()
+  let restoreOwnedActiveTabId: string | null = null
+  const selectRestoredActive = (tabId: string, requested: boolean) => {
+    if (appTabSelectionRevision() !== initialSelectionRevision) return
+    const current = activeAppTabId()
+    if (current && current !== restoreOwnedActiveTabId) return
+    if (!requested && restoreOwnedActiveTabId) return
+    selectAppTab(tabId, { source: "restore" })
+    restoreOwnedActiveTabId = tabId
+  }
+  const applyRestoredOrder = (tabIds: string[]) => {
+    if (appTabOrderRevision() !== initialOrderRevision) return
+    setAppTabOrder(tabIds)
+  }
+  const workspaceRestoration = (async () => {
+    try {
+      await withRestoreTimeout(
+        async (operationSignal) => {
+          await waitForInitialWorkspaceLoad()
+          if (operationSignal.aborted) throw getAbortReason(operationSignal)
+        },
+        INITIAL_WORKSPACE_LOAD_TIMEOUT_MS,
+        "Timed out loading initial workspaces",
+        restoreSignal,
+      )
+    } catch (error) {
+      log.error("Failed to load workspaces before restoring app session", error)
+      return
+    }
+    if (!isRestoreActive()) return
+    await restoreWorkspaceTabs(
+      snapshot,
+      restoredTabIds,
+      isRestoreActive,
+      restoreSignal,
+      updatePreservation,
+      mapWorkspaces,
+      unmapWorkspace,
+      selectRestoredActive,
+      applyRestoredOrder,
+    )
+  })()
+  const sidecarRestoration = restoreSidecarTabs(
     snapshot,
     restoredTabIds,
     isRestoreActive,
     restoreSignal,
     updatePreservation,
-    mapWorkspaces,
-    unmapWorkspace,
+    selectRestoredActive,
   )
-  await restoreSidecarTabs(snapshot, restoredTabIds, isRestoreActive, restoreSignal, updatePreservation)
+  await Promise.all([workspaceRestoration, sidecarRestoration])
   if (!isRestoreActive()) return
 
   const restoredOrder = restoredTabIds.filter((tabId): tabId is string => Boolean(tabId))
-  setAppTabOrder(restoredOrder)
-  selectAppTab(resolveRestoredActiveTabId(restoredTabIds, snapshot.activeTabIndex))
+  applyRestoredOrder(restoredOrder)
+  if (!activeAppTabId() && appTabSelectionRevision() === initialSelectionRevision) {
+    selectAppTab(resolveRestoredActiveTabId(restoredTabIds, snapshot.activeTabIndex), { source: "restore" })
+  }
 }
 
 export function useAppSessionRestore(): void {
   const capture = useAppSessionCapture()
+  const restoreController = new AbortController()
   let disposed = false
 
   onMount(() => {
@@ -303,6 +387,7 @@ export function useAppSessionRestore(): void {
             ),
             getStartupRestoreTimeoutMs(snapshot!),
             "Timed out restoring the saved app session",
+            restoreController.signal,
           )
           restoreCompleted = true
         }
@@ -319,6 +404,7 @@ export function useAppSessionRestore(): void {
 
   onCleanup(() => {
     disposed = true
+    restoreController.abort(new Error("App session restore disposed"))
     releaseAppSessionRestoreGate()
   })
 }

@@ -40,7 +40,9 @@ Download the latest installer for your platform from [Releases](https://github.c
 |----------|---------|
 | macOS | DMG, ZIP (Universal: Intel + Apple Silicon) |
 | Windows | NSIS Installer, ZIP (x64, ARM64) |
-| Linux | AppImage, deb, tar.gz (x64, ARM64) |
+| Linux | Tauri deb, Electron portable tar.gz (x64) |
+
+The Tauri deb is currently built and installation-tested on Ubuntu 24.04. Compatibility with older Debian-based distributions is not yet guaranteed.
 
 ### 💻 CodeNomad Server
 
@@ -169,7 +171,7 @@ On Intel Macs, also check **System Settings → Privacy & Security** on first la
 WebKitGTK DMA-BUF/GBM issue. Run with:
 
 ```bash
-WEBKIT_DISABLE_DMABUF_RENDERER=1 codenomad
+WEBKIT_DISABLE_DMABUF_RENDERER=1 codenomad-tauri
 ```
 
 See full workaround in the original README.

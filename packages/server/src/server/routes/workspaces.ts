@@ -16,12 +16,17 @@ const WorkspaceCreateSchema = z.object({
   name: z.string().optional(),
   binaryPath: z.string().trim().min(1).max(4096).optional(),
   requestId: z.string().trim().min(1).max(128).optional(),
+  forceNew: z.boolean().optional(),
 })
 
 const WorkspaceCloneSchema = z.object({
   repositoryUrl: z.string().trim().min(1, "Repository URL is required"),
   destinationPath: z.string().trim().min(1, "Destination path is required"),
   cleanup: z.boolean().optional(),
+})
+
+const WorkspaceCreationReleaseSchema = z.object({
+  requestId: z.string().trim().min(1).max(128),
 })
 
 const WorkspaceFilesQuerySchema = z.object({
@@ -70,9 +75,13 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.post("/api/workspaces", async (request, reply) => {
     try {
       const body = WorkspaceCreateSchema.parse(request.body ?? {})
-      const workspace = await deps.workspaceManager.create(body.path, body.name, body.binaryPath, body.requestId)
+      const result = await deps.workspaceManager.create(body.path, body.name, {
+        binaryPath: body.binaryPath,
+        requestId: body.requestId,
+        forceNew: body.forceNew,
+      })
       reply.code(201)
-      return workspace
+      return result.created ? result.workspace : { ...result.workspace, reused: true as const }
     } catch (error) {
       request.log.error({ err: error }, "Failed to create workspace")
       const message = error instanceof Error ? error.message : "Failed to create workspace"
@@ -102,6 +111,20 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
 
   app.delete<{ Params: { id: string } }>("/api/workspaces/:id", async (request, reply) => {
     await deps.workspaceManager.delete(request.params.id)
+    reply.code(204)
+  })
+
+  app.post<{ Params: { id: string } }>("/api/workspaces/:id/creation/release", async (request, reply) => {
+    const parsed = WorkspaceCreationReleaseSchema.safeParse(request.body ?? {})
+    if (!parsed.success) {
+      reply.code(400).type("text/plain").send("Invalid workspace creation request")
+      return
+    }
+    const body = parsed.data
+    if (!deps.workspaceManager.releaseCreationRequest(request.params.id, body.requestId)) {
+      reply.code(404).type("text/plain").send("Workspace creation request not found")
+      return
+    }
     reply.code(204)
   })
 

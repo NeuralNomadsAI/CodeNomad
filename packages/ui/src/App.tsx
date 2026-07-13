@@ -32,7 +32,7 @@ import {
   showFolderSelection,
   setShowFolderSelection,
 } from "./stores/ui"
-import { useConfig } from "./stores/preferences"
+import { recentFolders, useConfig } from "./stores/preferences"
 import {
   createInstance,
   getExistingInstanceForFolder,
@@ -67,12 +67,12 @@ import {
   ensureActiveAppTab,
   getAdjacentAppTabId,
   getAppTabById,
+  markAppTabUserInteraction,
   moveAppTab,
   selectAppTab,
   selectInstanceTab,
   selectSidecarTab,
 } from "./stores/app-tabs"
-
 const log = getLogger("actions")
 
 const App: Component = () => {
@@ -283,14 +283,15 @@ const App: Component = () => {
     if (!folderPath) {
       return
     }
+
     const selectedBinary = binaryPath || serverSettings().opencodeBinary || "opencode"
     const projectName = getProjectNameForFolder(folderPath)
-    recordWorkspaceLaunch(folderPath, selectedBinary)
     clearLaunchError()
 
     if (!options?.forceNew) {
       const existingInstance = getExistingInstanceForFolder(folderPath)
       if (existingInstance) {
+        recordWorkspaceLaunch(existingInstance.folder, selectedBinary, folderPath)
         setAlreadyOpenFolderChoice({ folderPath, binaryPath: selectedBinary, instanceId: existingInstance.id })
         return
       }
@@ -298,13 +299,20 @@ const App: Component = () => {
 
     setIsSelectingFolder(true)
     try {
-      const instanceId = await createInstance(folderPath, selectedBinary, projectName)
-      selectInstanceTab(instanceId)
+      const result = await createInstance(folderPath, selectedBinary, projectName, { forceNew: options?.forceNew })
+      if (result.reused) {
+        recordWorkspaceLaunch(instances().get(result.instanceId)?.folder ?? folderPath, selectedBinary, folderPath)
+        setAlreadyOpenFolderChoice({ folderPath, binaryPath: selectedBinary, instanceId: result.instanceId })
+        return
+      }
+
+      recordWorkspaceLaunch(instances().get(result.instanceId)?.folder ?? folderPath, selectedBinary, folderPath)
+      selectInstanceTab(result.instanceId)
       setShowFolderSelection(false)
 
       log.info("Created instance", {
-        instanceId,
-        port: instances().get(instanceId)?.port,
+        instanceId: result.instanceId,
+        port: instances().get(result.instanceId)?.port,
       })
     } catch (error) {
       const message = formatLaunchErrorMessage(error, t("app.launchError.fallbackMessage"))
@@ -426,6 +434,7 @@ const App: Component = () => {
   async function handleCloseAppTab(tabId: string) {
     const tab = getAppTabById(tabId)
     if (!tab) return
+    markAppTabUserInteraction()
 
     const fallbackTabId = activeAppTabId() === tabId ? getAdjacentAppTabId(tabId) : activeAppTabId()
 
@@ -499,7 +508,7 @@ const App: Component = () => {
       const tauriBridge = (window as { __TAURI__?: { event?: { listen: (event: string, handler: (event: { payload: unknown }) => void) => Promise<() => void> } } }).__TAURI__
       if (tauriBridge?.event) {
         let unlistenMenu: (() => void) | null = null
-        
+
         tauriBridge.event.listen("menu:newInstance", () => {
           handleNewInstanceRequest()
         }).then((unlisten) => {
@@ -541,7 +550,7 @@ const App: Component = () => {
                    <p class="text-xs font-medium text-muted uppercase tracking-wide mb-1">{t("app.launchError.binaryPathLabel")}</p>
                    <p class="text-sm font-mono text-primary break-all">{launchErrorPath()}</p>
                  </div>
- 
+
                  <Show when={launchErrorMessage()}>
                    <div class="rounded-lg border border-base bg-surface-secondary p-4 flex flex-col gap-2 flex-1 min-h-0">
                      <p class="text-xs font-medium text-muted uppercase tracking-wide">{t("app.launchError.errorOutputLabel")}</p>
@@ -666,7 +675,7 @@ const App: Component = () => {
             </div>
           </div>
         </Show>
- 
+
         <SettingsScreen />
         <SideCarPickerDialog open={sidecarPickerOpen()} onClose={() => setSidecarPickerOpen(false)} onOpenSidecar={handleOpenSidecar} />
         <Show when={alreadyOpenFolderChoice()}>
@@ -693,7 +702,7 @@ const App: Component = () => {
             </Dialog.Portal>
           </Dialog>
         </Show>
- 
+
         <AlertDialog />
 
         <Toaster

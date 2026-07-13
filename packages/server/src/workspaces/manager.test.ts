@@ -242,7 +242,7 @@ describe("workspace manager launch cancellation", () => {
     harness.runtime.resolveLaunch(workspaceId)
     harness.readiness.resolve("2.0.0")
 
-    const workspace = await creation
+    const { workspace } = await creation
     assert.equal(workspace.id, harness.getCreatedId())
     assert.equal(workspace.status, "ready")
     assert.equal(workspace.binaryVersion, "2.0.0")
@@ -252,6 +252,23 @@ describe("workspace manager launch cancellation", () => {
     await harness.manager.delete(workspaceId)
     assert.equal(harness.runtime.active.has(workspaceId), false)
     assert.equal(harness.manager.get(workspaceId), undefined)
+  })
+
+  it("publishes stopped and removes a workspace after readiness fails", async () => {
+    const harness = createHarness()
+    const stopped: string[] = []
+    harness.eventBus.on("workspace.stopped", (event) => stopped.push(event.workspaceId))
+    const creation = harness.manager.create(process.cwd())
+    const workspaceId = await harness.runtime.launchCalled.promise
+    harness.runtime.resolveLaunch(workspaceId)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    harness.readiness.reject(new Error("readiness failed"))
+    await assert.rejects(creation, /readiness failed/)
+
+    assert.deepEqual(stopped, [workspaceId])
+    assert.equal(harness.manager.get(workspaceId), undefined)
+    assert.deepEqual(harness.manager.list(), [])
   })
 
   it("retains a cancelled record after failed cleanup and allows delete retry", async () => {

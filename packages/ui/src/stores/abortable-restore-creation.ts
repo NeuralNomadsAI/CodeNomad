@@ -4,7 +4,7 @@ export async function completeAbortableRestoreCreation<T>(
   creation: Promise<T>,
   options: {
     signal?: AbortSignal
-    commit: (value: T) => void
+    commit: (value: T) => void | Promise<void>
     discard: (value: T) => Promise<void>
   },
 ): Promise<T> {
@@ -30,7 +30,7 @@ export async function completeAbortableRestoreHydration<T>(
     if (options.signal.aborted) throw getAbortReason(options.signal)
     await awaitRestoreStep(options.hydrate(value), options.signal)
     if (options.signal.aborted) throw getAbortReason(options.signal)
-    options.commit(value)
+    await options.commit(value)
     return value
   } catch (error) {
     if (options.signal.aborted) await options.discard?.(value)

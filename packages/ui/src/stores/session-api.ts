@@ -224,6 +224,7 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
 
   try {
     const sessionListOptions = instance.folder ? { directory: instance.folder } : {}
+    const existingSessions = new Map(sessions().get(instanceId) ?? new Map<string, Session>())
 
     log.info("session.list", { instanceId, limit: PROJECT_SESSION_LIST_LIMIT, directory: sessionListOptions.directory, scope: "project" })
     const response = await fetchV2Sessions(instanceId, sessionListOptions)
@@ -240,7 +241,6 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
       log.error("Failed to fetch session status:", error)
     }
 
-    const existingSessions = new Map(sessions().get(instanceId) ?? new Map<string, Session>())
     const sessionMap = new Map<string, Session>()
 
     for (const apiSession of getV2SessionItems(response)) {
@@ -291,11 +291,15 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
     })
 
     const rootIds: string[] = []
+    const seenRootIds = new Set<string>()
     const missingRootSessionIds: string[] = []
     for (const apiSession of getV2SessionItems(response)) {
       const root = getSessionRoot(instanceId, apiSession.id)
       if (root) {
-        if (!rootIds.includes(root.id)) rootIds.push(root.id)
+        if (!seenRootIds.has(root.id)) {
+          seenRootIds.add(root.id)
+          rootIds.push(root.id)
+        }
       } else if (apiSession.parentID) {
         missingRootSessionIds.push(apiSession.id)
       }
