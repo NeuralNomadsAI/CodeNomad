@@ -54,8 +54,17 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get("/api/storage/config", async () => sanitizeConfigDoc(deps.settings.getDoc("config")))
   app.patch("/api/storage/config", async (request, reply) => {
     try {
-      const processed = enforceSpeechCredentialPairing(request.body ?? {})
-      return sanitizeConfigDoc(deps.settings.mergePatchDoc("config", processed))
+      let body = request.body ?? {}
+      if (body && typeof body === "object" && "server" in body) {
+        const bodyObj = { ...(body as Record<string, unknown>) }
+        const serverPatch = bodyObj.server
+        if (serverPatch && typeof serverPatch === "object") {
+          const currentServer = deps.settings.getOwner("config", "server")
+          bodyObj.server = enforceSpeechCredentialPairing(serverPatch, currentServer)
+        }
+        body = bodyObj
+      }
+      return sanitizeConfigDoc(deps.settings.mergePatchDoc("config", body))
     } catch (error) {
       reply.code(400)
       return { error: error instanceof Error ? error.message : "Invalid patch" }

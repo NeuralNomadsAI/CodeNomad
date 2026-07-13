@@ -69,4 +69,19 @@ describe("enforceSpeechCredentialPairing", () => {
     enforceSpeechCredentialPairing(original, { speech: { baseUrl: "https://old.com/v1" } })
     assert.deepEqual(original, originalCopy)
   })
+
+  it("doc-level payload: clears key when server.speech.baseUrl changes", () => {
+    const docBody = { server: { speech: { baseUrl: "https://new.com/v1" } } }
+    const currentServer = { speech: { baseUrl: "https://old.com/v1", apiKey: "sk-stored" } }
+    const result = enforceSpeechCredentialPairing(docBody.server, currentServer) as any
+    assert.equal(result.speech.apiKey, null, "doc-level server.speech must have key cleared on URL change")
+    assert.equal(result.speech.baseUrl, "https://new.com/v1")
+  })
+
+  it("doc-level payload: preserves key when server.speech.baseUrl unchanged", () => {
+    const docBody = { server: { speech: { baseUrl: "https://same.com/v1", ttsVoice: "alloy" } } }
+    const currentServer = { speech: { baseUrl: "https://same.com/v1", apiKey: "sk-stored" } }
+    const result = enforceSpeechCredentialPairing(docBody.server, currentServer) as any
+    assert.equal("apiKey" in result.speech, false, "key must not be cleared when URL unchanged in doc-level patch")
+  })
 })
