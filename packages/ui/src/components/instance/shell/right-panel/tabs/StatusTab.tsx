@@ -11,6 +11,7 @@ import type { BackgroundProcess } from "../../../../../../../server/src/api-type
 import type { Session } from "../../../../../types/session"
 
 import ContextUsagePanel from "../../../../session/context-usage-panel"
+import ProviderUsagePanel from "../../../../session/provider-usage-panel"
 import { TodoListView } from "../../../../tool-call/renderers/todo"
 import InstanceServiceStatus from "../../../../instance-service-status"
 import { togglePermissionAutoAcceptForSession } from "../../../../../stores/instances"
@@ -172,7 +173,25 @@ const StatusTab: Component<StatusTabProps> = (props) => {
     )
   }
 
+  const renderProviderUsage = () => {
+    const session = props.activeSession()
+    if (!session) {
+      return <div class="text-xs text-tertiary">{props.t("providerUsage.noSession")}</div>
+    }
+    return (
+      <div class="rounded-md border border-base bg-surface-secondary px-3 py-2">
+        <ProviderUsagePanel providerId={session.model.providerId} modelId={session.model.modelId} />
+      </div>
+    )
+  }
+
   const statusSections = [
+    {
+      id: "provider-usage",
+      labelKey: "providerUsage.title",
+      tooltipKey: "providerUsage.tooltip",
+      render: renderProviderUsage,
+    },
     {
       id: "yolo-mode",
       labelKey: "instanceShell.rightPanel.sections.yoloMode",

@@ -97,7 +97,7 @@ interface RightPanelProps {
 
 const RightPanel: Component<RightPanelProps> = (props) => {
   const [rightPanelTab, setRightPanelTab] = createSignal<RightPanelTab>(readStoredRightPanelTab("git-changes"))
-  const defaultStatusSectionIds = ["yolo-mode", "plan", "background-processes", "mcp", "lsp", "plugins"]
+  const defaultStatusSectionIds = ["provider-usage", "yolo-mode", "plan", "background-processes", "mcp", "lsp", "plugins"]
   const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>(defaultStatusSectionIds)
 
   const [browserPath, setBrowserPath] = createSignal(".")
