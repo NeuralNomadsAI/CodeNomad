@@ -332,6 +332,18 @@ export interface BinaryValidationResult {
   error?: string
 }
 
+export interface OpenCodeUpdateStatus {
+  currentVersion: string
+  latestVersion: string
+  updateAvailable: boolean
+  canUpgrade: boolean
+}
+
+export interface OpenCodeUpdateResponse {
+  success: boolean
+  version: string
+}
+
 export interface SpeechSegment {
   startMs: number
   endMs: number

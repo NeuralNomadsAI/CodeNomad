@@ -78,6 +78,14 @@ export class WorkspaceManager {
     return this.opencodeAuth.get(id)?.authorization
   }
 
+  findReadyInstanceIdByBinary(binaryPath: string): string | undefined {
+    const resolvedPath = this.resolveBinaryPath(binaryPath)
+    const normalize = (value: string) => process.platform === "win32" ? value.toLowerCase() : value
+    return this.list().find((workspace) => {
+      return workspace.status === "ready" && normalize(workspace.binaryId) === normalize(resolvedPath)
+    })?.id
+  }
+
   private findReadyWorkspaceByIdentity(identityKey: string): WorkspaceDescriptor | undefined {
     return Array.from(this.workspaces.values()).find((workspace) => {
       return workspace.status === "ready" && this.workspaceIdentities.get(workspace.id) === identityKey

@@ -25,6 +25,7 @@ import { registerBackgroundProcessRoutes } from "./routes/background-processes"
 import { registerYoloRoutes } from "./routes/yolo"
 import { registerWorktreeRoutes } from "./routes/worktrees"
 import { registerSpeechRoutes } from "./routes/speech"
+import { registerOpenCodeUpdateRoutes } from "./routes/opencode-update"
 import { registerRemoteServerRoutes } from "./routes/remote-servers"
 import { registerRemoteProxyRoutes } from "./routes/remote-proxy"
 import { registerSideCarRoutes } from "./routes/sidecars"
@@ -44,6 +45,7 @@ import { VoiceModeManager } from "../plugins/voice-mode"
 import type { SideCarManager } from "../sidecars/manager"
 import type { PreviewManager } from "../previews/manager"
 import type { RemoteProxySessionManager } from "./remote-proxy"
+import { createOpenCodeUpdateService } from "../opencode-update/service"
 
 interface HttpServerDeps {
   bindHost: string
@@ -282,6 +284,10 @@ export function createHttpServer(deps: HttpServerDeps) {
 
   registerWorkspaceRoutes(app, { workspaceManager: deps.workspaceManager })
   registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger })
+  registerOpenCodeUpdateRoutes(app, {
+    service: createOpenCodeUpdateService(deps.settings, deps.workspaceManager),
+    logger: apiLogger,
+  })
   registerFilesystemRoutes(app, { fileSystemBrowser: deps.fileSystemBrowser })
   registerConfigFileRoutes(app)
   registerMetaRoutes(app, { serverMeta: deps.serverMeta })

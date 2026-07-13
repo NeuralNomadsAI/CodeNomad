@@ -6,6 +6,7 @@ import EnvironmentVariablesEditor from "../environment-variables-editor"
 import { useConfig } from "../../stores/preferences"
 import type { ServerLogLevel } from "../../stores/preferences"
 import { useI18n } from "../../lib/i18n"
+import { OpenCodeUpdateCard } from "./opencode-update-card"
 
 type LogLevelOption = {
   value: ServerLogLevel
@@ -52,6 +53,8 @@ export const OpenCodeSettingsSection: Component = () => {
 
         <OpenCodeBinarySelector selectedBinary={selectedBinary()} onBinaryChange={handleBinaryChange} isVisible />
       </div>
+
+      <OpenCodeUpdateCard binary={selectedBinary()} />
 
       <div class="settings-card">
         <div class="settings-card-header">

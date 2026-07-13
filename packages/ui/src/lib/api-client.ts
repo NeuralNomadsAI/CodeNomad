@@ -11,6 +11,8 @@ import type {
   FileSystemFileContentResponse,
   FileSystemListResponse,
   InstanceData,
+  OpenCodeUpdateResponse,
+  OpenCodeUpdateStatus,
   SpeechCapabilitiesResponse,
   SpeechSynthesisResponse,
   SpeechTranscriptionResponse,
@@ -428,6 +430,15 @@ export const serverApi = {
     return request<BinaryValidationResult>("/api/storage/binaries/validate", {
       method: "POST",
       body: JSON.stringify({ path }),
+    })
+  },
+  fetchOpenCodeUpdateStatus(binary: string): Promise<OpenCodeUpdateStatus> {
+    return request<OpenCodeUpdateStatus>(`/api/opencode/update?binary=${encodeURIComponent(binary)}`)
+  },
+  updateOpenCode(binary: string): Promise<OpenCodeUpdateResponse> {
+    return request<OpenCodeUpdateResponse>("/api/opencode/update", {
+      method: "POST",
+      body: JSON.stringify({ binary }),
     })
   },
   fetchSpeechCapabilities(): Promise<SpeechCapabilitiesResponse> {

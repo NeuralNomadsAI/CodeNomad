@@ -1,0 +1,114 @@
+import { createEffect, createResource, createSignal, Show, type Component } from "solid-js"
+import { serverApi } from "../../lib/api-client"
+import { useI18n } from "../../lib/i18n"
+
+interface OpenCodeUpdateCardProps {
+  binary: string
+}
+
+export const OpenCodeUpdateCard: Component<OpenCodeUpdateCardProps> = (props) => {
+  const { t } = useI18n()
+  const [status, { mutate, refetch }] = createResource(
+    () => props.binary,
+    (binary) => serverApi.fetchOpenCodeUpdateStatus(binary),
+  )
+  const [updating, setUpdating] = createSignal(false)
+  const [updatedVersion, setUpdatedVersion] = createSignal<string | null>(null)
+  const [updateFailed, setUpdateFailed] = createSignal(false)
+
+  createEffect(() => {
+    props.binary
+    setUpdatedVersion(null)
+    setUpdateFailed(false)
+  })
+
+  const handleUpdate = async () => {
+    if (updating()) return
+    const binary = props.binary
+    setUpdating(true)
+    setUpdateFailed(false)
+    try {
+      const result = await serverApi.updateOpenCode(binary)
+      if (props.binary !== binary) return
+      setUpdatedVersion(result.version)
+      mutate({
+        currentVersion: result.version,
+        latestVersion: result.version,
+        updateAvailable: false,
+        canUpgrade: false,
+      })
+    } catch {
+      if (props.binary === binary) setUpdateFailed(true)
+    } finally {
+      setUpdating(false)
+    }
+  }
+
+  return (
+    <div class="settings-card">
+      <div class="settings-card-header">
+        <div>
+          <h3 class="settings-card-title">{t("settings.opencode.update.title")}</h3>
+          <p class="settings-card-subtitle">{t("settings.opencode.update.subtitle")}</p>
+        </div>
+        <span class="settings-scope-badge settings-scope-badge-server">{t("settings.scope.server")}</span>
+      </div>
+
+      <Show when={!status.loading} fallback={<div class="settings-toggle-caption">{t("settings.opencode.update.checking")}</div>}>
+        <Show
+          when={!status.error && status()}
+          fallback={
+            <div>
+              <div class="settings-error-message" role="alert">{t("settings.opencode.update.checkFailed")}</div>
+              <button type="button" class="settings-pill-button" onClick={() => void refetch()}>
+                {t("settings.opencode.update.retry")}
+              </button>
+            </div>
+          }
+        >
+          {(updateStatus) => (
+            <>
+              <div class="settings-info-grid">
+                <div class="settings-info-row">
+                  <span class="settings-info-label">{t("settings.opencode.update.installed")}</span>
+                  <span class="settings-info-value">{updateStatus().currentVersion}</span>
+                </div>
+              </div>
+
+              <Show when={updateStatus().updateAvailable} fallback={
+                <div class="settings-toggle-caption" role="status">{t("settings.opencode.update.upToDate")}</div>
+              }>
+                <div class="settings-info-actions">
+                  <button
+                    type="button"
+                    class="settings-pill-button"
+                    disabled={!updateStatus().canUpgrade || updating()}
+                    onClick={() => void handleUpdate()}
+                  >
+                    {updating()
+                      ? t("settings.opencode.update.updating")
+                      : t("settings.opencode.update.action", { version: updateStatus().latestVersion })}
+                  </button>
+                </div>
+                <Show when={!updateStatus().canUpgrade}>
+                  <div class="settings-toggle-caption">{t("settings.opencode.update.requiresInstance")}</div>
+                </Show>
+              </Show>
+            </>
+          )}
+        </Show>
+      </Show>
+
+      <Show when={updatedVersion()}>
+        {(version) => (
+          <div class="settings-info-toast" role="status" aria-live="polite">
+            {t("settings.opencode.update.success", { version: version() })}
+          </div>
+        )}
+      </Show>
+      <Show when={updateFailed()}>
+        <div class="settings-error-message" role="alert">{t("settings.opencode.update.failed")}</div>
+      </Show>
+    </div>
+  )
+}
