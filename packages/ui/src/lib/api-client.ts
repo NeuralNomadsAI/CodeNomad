@@ -432,14 +432,11 @@ export const serverApi = {
       body: JSON.stringify({ path }),
     })
   },
-  fetchOpenCodeUpdateStatus(binary: string): Promise<OpenCodeUpdateStatus> {
-    return request<OpenCodeUpdateStatus>(`/api/opencode/update?binary=${encodeURIComponent(binary)}`)
+  fetchOpenCodeUpdateStatus(): Promise<OpenCodeUpdateStatus> {
+    return request<OpenCodeUpdateStatus>("/api/opencode/update")
   },
-  updateOpenCode(binary: string): Promise<OpenCodeUpdateResponse> {
-    return request<OpenCodeUpdateResponse>("/api/opencode/update", {
-      method: "POST",
-      body: JSON.stringify({ binary }),
-    })
+  updateOpenCode(): Promise<OpenCodeUpdateResponse> {
+    return request<OpenCodeUpdateResponse>("/api/opencode/update", { method: "POST" })
   },
   fetchSpeechCapabilities(): Promise<SpeechCapabilitiesResponse> {
     return request<SpeechCapabilitiesResponse>("/api/speech/capabilities")

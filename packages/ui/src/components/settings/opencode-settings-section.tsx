@@ -54,7 +54,7 @@ export const OpenCodeSettingsSection: Component = () => {
         <OpenCodeBinarySelector selectedBinary={selectedBinary()} onBinaryChange={handleBinaryChange} isVisible />
       </div>
 
-      <OpenCodeUpdateCard binary={selectedBinary()} />
+      <OpenCodeUpdateCard />
 
       <div class="settings-card">
         <div class="settings-card-header">

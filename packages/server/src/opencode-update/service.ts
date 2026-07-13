@@ -9,11 +9,13 @@ import { compareVersionStrings, stripTagPrefix } from "../releases/release-monit
 
 const OPENCODE_LATEST_URL = "https://registry.npmjs.org/opencode-ai/latest"
 const LATEST_VERSION_CACHE_MS = 5 * 60_000
+const UPGRADE_TIMEOUT_MS = 10 * 60_000
+const inFlightUpgrades = new Map<string, Promise<OpenCodeUpdateResponse>>()
 
 type UpgradeResult = { success: true; version: string } | { success: false; error: string }
 
 export interface OpenCodeUpdateServiceDeps {
-  resolveBinary: (binaryPath?: string) => ResolvedBinary
+  resolveBinary: () => ResolvedBinary
   probeBinary: typeof probeBinaryVersion
   findReadyInstanceId: (binaryPath: string) => string | undefined
   upgradeInstance: (instanceId: string, target: string) => Promise<UpgradeResult>
@@ -23,7 +25,12 @@ export interface OpenCodeUpdateServiceDeps {
 
 export class OpenCodeUpdateError extends Error {
   constructor(
-    readonly code: "binary_unavailable" | "no_ready_instance" | "update_check_failed" | "upgrade_failed",
+    readonly code:
+      | "binary_unavailable"
+      | "no_ready_instance"
+      | "update_check_failed"
+      | "upgrade_failed"
+      | "upgrade_verification_failed",
     message: string,
   ) {
     super(message)
@@ -36,10 +43,22 @@ export class OpenCodeUpdateService {
 
   constructor(private readonly deps: OpenCodeUpdateServiceDeps) {}
 
-  async getStatus(binaryPath?: string): Promise<OpenCodeUpdateStatus> {
-    const binary = this.deps.resolveBinary(binaryPath)
+  async getStatus(): Promise<OpenCodeUpdateStatus> {
+    const binary = this.deps.resolveBinary()
     const currentVersion = this.readCurrentVersion(binary.path)
-    const latestVersion = await this.readLatestVersion()
+    let latestVersion: string
+    try {
+      latestVersion = await this.readLatestVersion()
+    } catch (error) {
+      if (!(error instanceof OpenCodeUpdateError) || error.code !== "update_check_failed") throw error
+      return {
+        currentVersion,
+        latestVersion: null,
+        updateAvailable: null,
+        canUpgrade: false,
+        checkError: "update_check_failed",
+      }
+    }
     const updateAvailable = compareVersionStrings(latestVersion, currentVersion) > 0
     const readyInstanceId = this.deps.findReadyInstanceId(binary.path)
 
@@ -51,8 +70,19 @@ export class OpenCodeUpdateService {
     }
   }
 
-  async upgrade(binaryPath?: string): Promise<OpenCodeUpdateResponse> {
-    const binary = this.deps.resolveBinary(binaryPath)
+  upgrade(): Promise<OpenCodeUpdateResponse> {
+    const binary = this.deps.resolveBinary()
+    const existing = inFlightUpgrades.get(binary.path)
+    if (existing) return existing
+
+    const pending = this.performUpgrade(binary).finally(() => {
+      if (inFlightUpgrades.get(binary.path) === pending) inFlightUpgrades.delete(binary.path)
+    })
+    inFlightUpgrades.set(binary.path, pending)
+    return pending
+  }
+
+  private async performUpgrade(binary: ResolvedBinary): Promise<OpenCodeUpdateResponse> {
     const currentVersion = this.readCurrentVersion(binary.path)
     const latestVersion = await this.readLatestVersion()
 
@@ -73,7 +103,14 @@ export class OpenCodeUpdateService {
       if (!result.success) {
         throw new OpenCodeUpdateError("upgrade_failed", result.error)
       }
-      return result
+      const installedVersion = this.readCurrentVersion(binary.path)
+      if (compareVersionStrings(installedVersion, latestVersion) !== 0) {
+        throw new OpenCodeUpdateError(
+          "upgrade_verification_failed",
+          `OpenCode reported ${result.version}, but the configured binary is still ${installedVersion}`,
+        )
+      }
+      return { success: true, version: installedVersion }
     } catch (error) {
       if (error instanceof OpenCodeUpdateError) throw error
       throw new OpenCodeUpdateError(
@@ -84,6 +121,9 @@ export class OpenCodeUpdateService {
   }
 
   private readCurrentVersion(binaryPath: string): string {
+    if (process.platform === "win32" && /["\r\n]/.test(binaryPath)) {
+      throw new OpenCodeUpdateError("binary_unavailable", "The configured OpenCode binary path is invalid")
+    }
     const result = this.deps.probeBinary(binaryPath)
     const version = stripTagPrefix(result.version)
     if (!result.valid || !version) {
@@ -135,14 +175,15 @@ export function createOpenCodeUpdateService(
 ): OpenCodeUpdateService {
   const binaryResolver = new BinaryResolver(settings)
   return new OpenCodeUpdateService({
-    resolveBinary: (binaryPath) => binaryPath
-      ? { path: binaryPath, label: binaryPath }
-      : binaryResolver.resolveDefault(),
+    resolveBinary: () => {
+      const binary = binaryResolver.resolveDefault()
+      return { ...binary, path: workspaceManager.resolveBinaryPath(binary.path) }
+    },
     probeBinary: probeBinaryVersion,
     findReadyInstanceId: (binaryPath) => workspaceManager.findReadyInstanceIdByBinary(binaryPath),
     fetchLatestVersion: fetchLatestOpenCodeVersion,
     upgradeInstance: async (instanceId, target) => {
-      const client = createInstanceClient(workspaceManager, instanceId)
+      const client = createInstanceClient(workspaceManager, instanceId, { timeoutMs: UPGRADE_TIMEOUT_MS })
       if (!client) {
         throw new OpenCodeUpdateError("no_ready_instance", "OpenCode instance is not ready")
       }

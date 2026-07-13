@@ -334,9 +334,10 @@ export interface BinaryValidationResult {
 
 export interface OpenCodeUpdateStatus {
   currentVersion: string
-  latestVersion: string
-  updateAvailable: boolean
+  latestVersion: string | null
+  updateAvailable: boolean | null
   canUpgrade: boolean
+  checkError?: "update_check_failed"
 }
 
 export interface OpenCodeUpdateResponse {

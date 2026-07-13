@@ -1,35 +1,33 @@
 import { createEffect, createResource, createSignal, Show, type Component } from "solid-js"
 import { serverApi } from "../../lib/api-client"
 import { useI18n } from "../../lib/i18n"
+import { useConfig } from "../../stores/preferences"
 
-interface OpenCodeUpdateCardProps {
-  binary: string
-}
-
-export const OpenCodeUpdateCard: Component<OpenCodeUpdateCardProps> = (props) => {
+export const OpenCodeUpdateCard: Component = () => {
   const { t } = useI18n()
+  const { serverSettings } = useConfig()
   const [status, { mutate, refetch }] = createResource(
-    () => props.binary,
-    (binary) => serverApi.fetchOpenCodeUpdateStatus(binary),
+    () => serverSettings().opencodeBinary || "opencode",
+    () => serverApi.fetchOpenCodeUpdateStatus(),
   )
   const [updating, setUpdating] = createSignal(false)
   const [updatedVersion, setUpdatedVersion] = createSignal<string | null>(null)
   const [updateFailed, setUpdateFailed] = createSignal(false)
 
   createEffect(() => {
-    props.binary
+    serverSettings().opencodeBinary
     setUpdatedVersion(null)
     setUpdateFailed(false)
   })
 
   const handleUpdate = async () => {
     if (updating()) return
-    const binary = props.binary
+    const binary = serverSettings().opencodeBinary || "opencode"
     setUpdating(true)
     setUpdateFailed(false)
     try {
-      const result = await serverApi.updateOpenCode(binary)
-      if (props.binary !== binary) return
+      const result = await serverApi.updateOpenCode()
+      if ((serverSettings().opencodeBinary || "opencode") !== binary) return
       setUpdatedVersion(result.version)
       mutate({
         currentVersion: result.version,
@@ -38,7 +36,7 @@ export const OpenCodeUpdateCard: Component<OpenCodeUpdateCardProps> = (props) =>
         canUpgrade: false,
       })
     } catch {
-      if (props.binary === binary) setUpdateFailed(true)
+      if ((serverSettings().opencodeBinary || "opencode") === binary) setUpdateFailed(true)
     } finally {
       setUpdating(false)
     }
@@ -75,23 +73,34 @@ export const OpenCodeUpdateCard: Component<OpenCodeUpdateCardProps> = (props) =>
                 </div>
               </div>
 
-              <Show when={updateStatus().updateAvailable} fallback={
-                <div class="settings-toggle-caption" role="status">{t("settings.opencode.update.upToDate")}</div>
-              }>
+              <Show when={updateStatus().checkError}>
+                <div class="settings-error-message" role="status">{t("settings.opencode.update.checkFailed")}</div>
                 <div class="settings-info-actions">
-                  <button
-                    type="button"
-                    class="settings-pill-button"
-                    disabled={!updateStatus().canUpgrade || updating()}
-                    onClick={() => void handleUpdate()}
-                  >
-                    {updating()
-                      ? t("settings.opencode.update.updating")
-                      : t("settings.opencode.update.action", { version: updateStatus().latestVersion })}
+                  <button type="button" class="settings-pill-button" onClick={() => void refetch()}>
+                    {t("settings.opencode.update.retry")}
                   </button>
                 </div>
-                <Show when={!updateStatus().canUpgrade}>
-                  <div class="settings-toggle-caption">{t("settings.opencode.update.requiresInstance")}</div>
+              </Show>
+
+              <Show when={!updateStatus().checkError}>
+                <Show when={updateStatus().updateAvailable} fallback={
+                  <div class="settings-toggle-caption" role="status">{t("settings.opencode.update.upToDate")}</div>
+                }>
+                  <div class="settings-info-actions">
+                    <button
+                      type="button"
+                      class="settings-pill-button"
+                      disabled={!updateStatus().canUpgrade || updating()}
+                      onClick={() => void handleUpdate()}
+                    >
+                      {updating()
+                        ? t("settings.opencode.update.updating")
+                        : t("settings.opencode.update.action", { version: updateStatus().latestVersion ?? "" })}
+                    </button>
+                  </div>
+                  <Show when={!updateStatus().canUpgrade}>
+                    <div class="settings-toggle-caption">{t("settings.opencode.update.requiresInstance")}</div>
+                  </Show>
                 </Show>
               </Show>
             </>
