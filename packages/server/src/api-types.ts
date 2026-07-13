@@ -355,6 +355,11 @@ export interface SpeechCapabilitiesResponse {
   ttsVoice: string
   ttsFormats: string[]
   streamingTtsFormats: string[]
+  separateProviders?: boolean
+  sttConfigured?: boolean
+  ttsConfigured?: boolean
+  sttBaseUrl?: string
+  ttsBaseUrl?: string
 }
 
 export interface SpeechTranscriptionResponse {
