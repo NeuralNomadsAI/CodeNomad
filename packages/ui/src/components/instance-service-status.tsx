@@ -1,9 +1,11 @@
 import { For, Show, createMemo, createSignal, type Component } from "solid-js"
 import Switch from "@suid/material/Switch"
+import { Settings } from "lucide-solid"
 import type { Instance, RawMcpStatus } from "../types/instance"
 import { useOptionalInstanceMetadataContext } from "../lib/contexts/instance-metadata-context"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
+import { PluginManagerModal } from "./provider-auth/plugin-manager-modal"
 
 const log = getLogger("session")
 
@@ -75,6 +77,7 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
 
 
   const [pendingMcpActions, setPendingMcpActions] = createSignal<Record<string, "connect" | "disconnect">>({})
+  const [pluginsModalOpen, setPluginsModalOpen] = createSignal(false)
 
   const setPendingMcpAction = (name: string, action?: "connect" | "disconnect") => {
     setPendingMcpActions((prev) => {
@@ -227,8 +230,18 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
   const renderPluginsSection = () => (
     <section class="space-y-1.5">
       <Show when={showHeadings()}>
-        <div class="text-xs font-medium text-muted uppercase tracking-wide">
-          {t("instanceServiceStatus.sections.plugins")}
+        <div class="flex items-center justify-between">
+          <div class="text-xs font-medium text-muted uppercase tracking-wide">
+            {t("instanceServiceStatus.sections.plugins")}
+          </div>
+          <button
+            type="button"
+            class="text-[11px] text-secondary hover:text-primary transition-colors flex items-center gap-1"
+            onClick={() => setPluginsModalOpen(true)}
+          >
+            <Settings class="w-3 h-3" />
+            {t("instanceServiceStatus.plugins.manage")}
+          </button>
         </div>
       </Show>
       <Show
@@ -253,6 +266,7 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
       <Show when={includeLsp()}>{renderLspSection()}</Show>
       <Show when={includeMcp()}>{renderMcpSection()}</Show>
       <Show when={includePlugins()}>{renderPluginsSection()}</Show>
+      <PluginManagerModal instanceId={instance().id} open={pluginsModalOpen()} onOpenChange={setPluginsModalOpen} />
     </div>
   )
 }

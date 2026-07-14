@@ -415,4 +415,24 @@ export const settingsMessages = {
   "settings.info.diagnostics.copy": "Скопировать в буфер обмена",
   "settings.info.diagnostics.download": "Скачать .txt",
   "settings.info.diagnostics.copied": "Диагностическая информация скопирована в буфер обмена.",
+
+  "instanceServiceStatus.plugins.manage": "Manage",
+
+  "settings.plugins.title": "Plugin Manager",
+  "settings.plugins.subtitle": "Add or remove OpenCode plugins for the active workspace.",
+  "settings.plugins.refresh": "Refresh",
+  "settings.plugins.loading": "Loading plugins...",
+  "settings.plugins.addPlaceholder": "npm:plugin-name or file:///path/to/plugin.ts",
+  "settings.plugins.restartNote": "Plugin changes require restarting the workspace to take effect.",
+  "settings.plugins.configured.title": "Configured Plugins",
+  "settings.plugins.empty.noPlugins": "No additional plugins configured.",
+  "settings.plugins.empty.noInstance": "Start an OpenCode workspace before managing plugins.",
+  "settings.plugins.status.enabled": "Enabled",
+  "settings.plugins.status.disabled": "Disabled",
+  "settings.plugins.actions.add": "Add",
+  "settings.plugins.actions.remove": "Remove",
+  "settings.plugins.errors.loadFailed": "Failed to load plugin configuration.",
+  "settings.plugins.errors.addFailed": "Failed to add plugin.",
+  "settings.plugins.errors.removeFailed": "Failed to remove plugin.",
+
 } as const
