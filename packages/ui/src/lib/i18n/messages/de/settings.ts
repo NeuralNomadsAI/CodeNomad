@@ -414,4 +414,28 @@ export const settingsMessages = {
   "settings.info.diagnostics.copy": "In Zwischenablage kopieren",
   "settings.info.diagnostics.download": ".txt herunterladen",
   "settings.info.diagnostics.copied": "Diagnoseinfo in Zwischenablage kopiert.",
+
+  "instanceServiceStatus.plugins.manage": "Verwalten",
+
+  "settings.plugins.title": "Plugin-Manager",
+  "settings.plugins.subtitle": "OpenCode-Plugins für den aktiven Arbeitsbereich hinzufügen oder entfernen.",
+  "settings.plugins.refresh": "Aktualisieren",
+  "settings.plugins.loading": "Plugins werden geladen...",
+  "settings.plugins.addPlaceholder": "npm:plugin-name oder file:///pfad/zum/plugin.ts",
+  "settings.plugins.restartNote": "Plugin-Änderungen erfordern einen Neustart des Arbeitsbereichs.",
+  "settings.plugins.configured.title": "Konfigurierte Plugins",
+  "settings.plugins.empty.noPlugins": "Keine zusätzlichen Plugins konfiguriert.",
+  "settings.plugins.empty.noInstance": "Starten Sie einen OpenCode-Arbeitsbereich, bevor Sie Plugins verwalten.",
+  "settings.plugins.status.enabled": "Aktiviert",
+  "settings.plugins.status.disabled": "Deaktiviert",
+  "settings.plugins.actions.add": "Hinzufügen",
+  "settings.plugins.actions.remove": "Entfernen",
+  "settings.plugins.errors.loadFailed": "Fehler beim Laden der Plugin-Konfiguration.",
+  "settings.plugins.errors.addFailed": "Fehler beim Hinzufügen des Plugins.",
+  "settings.plugins.errors.removeFailed": "Fehler beim Entfernen des Plugins.",
+  "settings.plugins.errors.invalidSpec": "Muss mit npm:, file://, https://, /, oder . beginnen",
+  "settings.plugins.remove.confirm": "Dieses Plugin entfernen?",
+  "settings.plugins.remove.confirmYes": "Entfernen",
+  "settings.plugins.remove.confirmNo": "Abbrechen",
+
 } as const

@@ -415,4 +415,28 @@ export const settingsMessages = {
   "settings.info.diagnostics.copy": "העתק ללוח",
   "settings.info.diagnostics.download": "הורד .txt",
   "settings.info.diagnostics.copied": "מידע האבחון הועתק ללוח.",
+
+  "instanceServiceStatus.plugins.manage": "ניהול",
+
+  "settings.plugins.title": "מנהל התוספים",
+  "settings.plugins.subtitle": "הוסף או הסר תוספי OpenCode לסביבת העבודה הפעילה.",
+  "settings.plugins.refresh": "רענן",
+  "settings.plugins.loading": "טוען תוספים...",
+  "settings.plugins.addPlaceholder": "npm:שם-התוסף או file:///נתיב/אל/plugin.ts",
+  "settings.plugins.restartNote": "שינויים בתוספים דורשים הפעלה מחדש של סביבת העבודה.",
+  "settings.plugins.configured.title": "תוספים מוגדרים",
+  "settings.plugins.empty.noPlugins": "לא הוגדרו תוספים נוספים.",
+  "settings.plugins.empty.noInstance": "הפעל סביבת עבודה של OpenCode לפני ניהול תוספים.",
+  "settings.plugins.status.enabled": "פעיל",
+  "settings.plugins.status.disabled": "מושבת",
+  "settings.plugins.actions.add": "הוסף",
+  "settings.plugins.actions.remove": "הסר",
+  "settings.plugins.errors.loadFailed": "טעינת תצורת התוספים נכשלה.",
+  "settings.plugins.errors.addFailed": "הוספת התוסף נכשלה.",
+  "settings.plugins.errors.removeFailed": "הסרת התוסף נכשלה.",
+  "settings.plugins.errors.invalidSpec": "חייב להתחיל ב-npm:, file://, https://, /, או .",
+  "settings.plugins.remove.confirm": "להסיר תוסף זה?",
+  "settings.plugins.remove.confirmYes": "הסר",
+  "settings.plugins.remove.confirmNo": "בטל",
+
 } as const

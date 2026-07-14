@@ -415,4 +415,28 @@ export const settingsMessages = {
   "settings.info.diagnostics.copy": "クリップボードにコピー",
   "settings.info.diagnostics.download": ".txt をダウンロード",
   "settings.info.diagnostics.copied": "診断情報をクリップボードにコピーしました。",
+
+  "instanceServiceStatus.plugins.manage": "管理",
+
+  "settings.plugins.title": "プラグインマネージャー",
+  "settings.plugins.subtitle": "アクティブなワークスペースのOpenCodeプラグインを追加・削除します。",
+  "settings.plugins.refresh": "更新",
+  "settings.plugins.loading": "プラグインを読み込み中...",
+  "settings.plugins.addPlaceholder": "npm:プラグイン名 または file:///パス/plugin.ts",
+  "settings.plugins.restartNote": "プラグインの変更を反映するにはワークスペースの再起動が必要です。",
+  "settings.plugins.configured.title": "設定済みプラグイン",
+  "settings.plugins.empty.noPlugins": "追加のプラグインは設定されていません。",
+  "settings.plugins.empty.noInstance": "プラグインを管理する前にOpenCodeワークスペースを起動してください。",
+  "settings.plugins.status.enabled": "有効",
+  "settings.plugins.status.disabled": "無効",
+  "settings.plugins.actions.add": "追加",
+  "settings.plugins.actions.remove": "削除",
+  "settings.plugins.errors.loadFailed": "プラグイン設定の読み込みに失敗しました。",
+  "settings.plugins.errors.addFailed": "プラグインの追加に失敗しました。",
+  "settings.plugins.errors.removeFailed": "プラグインの削除に失敗しました。",
+  "settings.plugins.errors.invalidSpec": "npm:, file://, https://, /, . のいずれかで始める必要があります",
+  "settings.plugins.remove.confirm": "このプラグインを削除しますか？",
+  "settings.plugins.remove.confirmYes": "削除",
+  "settings.plugins.remove.confirmNo": "キャンセル",
+
 } as const

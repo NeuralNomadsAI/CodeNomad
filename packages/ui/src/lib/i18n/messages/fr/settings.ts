@@ -415,4 +415,28 @@ export const settingsMessages = {
   "settings.info.diagnostics.copy": "Copier dans le presse-papiers",
   "settings.info.diagnostics.download": "Télécharger .txt",
   "settings.info.diagnostics.copied": "Informations de diagnostic copiées dans le presse-papiers.",
+
+  "instanceServiceStatus.plugins.manage": "Gérer",
+
+  "settings.plugins.title": "Gestionnaire de Plugins",
+  "settings.plugins.subtitle": "Ajoutez ou supprimez des plugins OpenCode pour l'espace de travail actif.",
+  "settings.plugins.refresh": "Actualiser",
+  "settings.plugins.loading": "Chargement des plugins...",
+  "settings.plugins.addPlaceholder": "npm:nom-du-plugin ou file:///chemin/vers/plugin.ts",
+  "settings.plugins.restartNote": "Les modifications de plugins nécessitent un redémarrage de l'espace de travail.",
+  "settings.plugins.configured.title": "Plugins Configurés",
+  "settings.plugins.empty.noPlugins": "Aucun plugin supplémentaire configuré.",
+  "settings.plugins.empty.noInstance": "Démarrez un espace de travail OpenCode avant de gérer les plugins.",
+  "settings.plugins.status.enabled": "Activé",
+  "settings.plugins.status.disabled": "Désactivé",
+  "settings.plugins.actions.add": "Ajouter",
+  "settings.plugins.actions.remove": "Supprimer",
+  "settings.plugins.errors.loadFailed": "Échec du chargement de la configuration des plugins.",
+  "settings.plugins.errors.addFailed": "Échec de l'ajout du plugin.",
+  "settings.plugins.errors.removeFailed": "Échec de la suppression du plugin.",
+  "settings.plugins.errors.invalidSpec": "Doit commencer par npm:, file://, https://, /, ou .",
+  "settings.plugins.remove.confirm": "Supprimer ce plugin ?",
+  "settings.plugins.remove.confirmYes": "Supprimer",
+  "settings.plugins.remove.confirmNo": "Annuler",
+
 } as const
