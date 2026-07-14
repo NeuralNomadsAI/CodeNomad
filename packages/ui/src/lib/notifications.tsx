@@ -11,17 +11,19 @@ export type ToastHandle = {
 
 type ToastPosition = "top-left" | "top-right" | "top-center" | "bottom-left" | "bottom-right" | "bottom-center"
 
+export type ToastAction = {
+  label: string
+  href: string
+  onClick?: () => void | Promise<void>
+}
+
 export type ToastPayload = {
   title?: string
   message: string
   variant: ToastVariant
   duration?: number
   position?: ToastPosition
-  action?: {
-    label: string
-    href: string
-    onClick?: () => void | Promise<void>
-  }
+  action?: ToastAction
 }
 
 // ==================== Toast History Types ====================
@@ -43,10 +45,7 @@ export interface IToastHistoryItem {
   /** Read state (clicked) */
   read: boolean;
   /** Action link (optional) */
-  action?: {
-    label: string;
-    href: string;
-  };
+  action?: ToastAction;
 }
 
 /**
@@ -298,6 +297,20 @@ async function openExternalUrl(url: string): Promise<void> {
   }
 }
 
+export async function runToastAction(action: ToastAction): Promise<void> {
+  if (!action.onClick) {
+    await openExternalUrl(action.href)
+    return
+  }
+
+  try {
+    await action.onClick()
+  } catch (error) {
+    console.warn("[notifications] action failed; opening fallback link", error)
+    await openExternalUrl(action.href)
+  }
+}
+
 // ==================== Variant Accent Styles ====================
 
 const variantAccent: Record<
@@ -382,7 +395,7 @@ export function showToastNotification(payload: ToastPayload): ToastHandle {
               <button
                 type="button"
                 class="mt-3 inline-flex items-center text-xs font-semibold uppercase tracking-wide text-sky-300 hover:text-sky-200"
-                onClick={() => void (payload.action!.onClick?.() ?? openExternalUrl(payload.action!.href))}
+                onClick={() => void runToastAction(payload.action!)}
               >
                 {payload.action.label}
               </button>

@@ -21,9 +21,9 @@ import {
   deleteToastHistoryItem,
   markAllToastHistoryAsRead,
   markToastHistoryAsRead,
+  runToastAction,
   subscribeToastHistory,
 } from "../lib/notifications"
-import { isTauriHost } from "../lib/runtime-env"
 
 // ==================== Types ====================
 
@@ -188,8 +188,8 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
     }
 
     // Open action link if exists
-    if (item.action?.href) {
-      void handleOpenAction(item.action.href);
+    if (item.action) {
+      void runToastAction(item.action);
     }
   };
 
@@ -208,21 +208,6 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
   const handleMarkAllAsRead = () => {
     markAllToastHistoryAsRead();
   };
-
-  // Open external link
-  async function handleOpenAction(href: string): Promise<void> {
-    if (isTauriHost()) {
-      try {
-        const { openUrl } = await import("@tauri-apps/plugin-opener");
-        await openUrl(href);
-        return;
-      } catch (error) {
-        console.warn("[toast-history] unable to open via system opener", error);
-      }
-    }
-
-    window.open(href, "_blank", "noopener,noreferrer");
-  }
 
   // Stop click propagation from backdrop to panel
   const handleBackdropClick = (event: MouseEvent) => {
@@ -383,8 +368,8 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
                                   class="toast-history-item-action inline-flex items-center gap-1 text-xs mt-1"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    if (item.action?.href) {
-                                      void handleOpenAction(item.action.href);
+                                    if (item.action) {
+                                      void runToastAction(item.action);
                                     }
                                   }}
                                 >
