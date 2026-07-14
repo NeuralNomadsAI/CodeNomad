@@ -15,6 +15,7 @@ export const sessionMessages = {
   "sessionList.status.working": "काम गर्दै",
   "sessionList.status.compacting": "संक्षिप्त गर्दै",
   "sessionList.status.idle": "निष्क्रिय",
+  "sessionList.status.interrupted": "अवरुद्ध",
   "sessionList.status.retrying": "पुन: प्रयास गर्दै",
   "sessionList.status.retryingIn": "{seconds} सेकेन्डमा पुन: प्रयास गर्दै",
   "sessionList.status.retryTooltip": "{message} (प्रयास {attempt})",
@@ -71,10 +72,6 @@ export const sessionMessages = {
   "sessionRenameDialog.actions.renaming": "पुन: नामकरण गर्दै...",
 
   "sessionView.fallback.sessionNotFound": "सत्र फेला परेन",
-  "sessionView.interrupted.title": "जेनेरेसन अवरुद्ध भयो",
-  "sessionView.interrupted.description": "यो सत्र चलिरहेको बेला CodeNomad पुनः सुरु भयो, तर OpenCode ले अहिले यसलाई निष्क्रिय देखाउँछ। कुनै पनि काम स्वचालित रूपमा पुनः चलाइएको छैन।",
-  "sessionView.interrupted.action": "निरन्तरता तयार गर्नुहोस्",
-  "sessionView.interrupted.prefill": "रोकिएको ठाउँबाट जारी राख्नुहोस्। पहिले कुराकानी र कार्यक्षेत्रको हालको अवस्था जाँच्नुहोस्, र अवरुद्ध प्रतिक्रिया पूरा भएको नमान्नुहोस्।",
   "sessionView.alerts.abortFailed.message": "सत्र रोक्न असफल भयो",
   "sessionView.alerts.abortFailed.title": "रोक्न असफल",
   "sessionView.alerts.revertFailed.message": "सन्देश फिर्ता गर्न असफल भयो",

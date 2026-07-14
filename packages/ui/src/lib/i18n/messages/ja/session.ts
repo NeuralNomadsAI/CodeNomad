@@ -15,6 +15,7 @@ export const sessionMessages = {
   "sessionList.status.working": "作業中",
   "sessionList.status.compacting": "圧縮中",
   "sessionList.status.idle": "待機中",
+  "sessionList.status.interrupted": "中断",
   "sessionList.status.retrying": "再試行中",
   "sessionList.status.retryingIn": "{seconds}秒後に再試行",
   "sessionList.status.retryTooltip": "{message}（{attempt}回目）",
@@ -71,10 +72,6 @@ export const sessionMessages = {
   "sessionRenameDialog.actions.renaming": "変更中…",
 
   "sessionView.fallback.sessionNotFound": "セッションが見つかりません",
-  "sessionView.interrupted.title": "生成が中断されました",
-  "sessionView.interrupted.description": "このセッションの処理中に CodeNomad が再起動し、OpenCode は現在アイドル状態と報告しています。自動的な再実行は行われていません。",
-  "sessionView.interrupted.action": "続行を準備",
-  "sessionView.interrupted.prefill": "中断したところから続けてください。まず会話と現在のワークスペースの状態を確認し、中断された応答が完了したとは想定しないでください。",
   "sessionView.alerts.abortFailed.message": "セッションを停止できませんでした",
   "sessionView.alerts.abortFailed.title": "停止に失敗",
   "sessionView.alerts.revertFailed.message": "メッセージへ戻せませんでした",

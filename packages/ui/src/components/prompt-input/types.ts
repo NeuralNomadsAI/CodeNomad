@@ -11,7 +11,6 @@ export interface PromptInputApi {
   expandTextAttachment(attachmentId: string): void
   removeAttachment(attachmentId: string): void
   setPromptText(text: string, opts?: { focus?: boolean }): void
-  getPromptText(): string
   focus(): void
 }
 

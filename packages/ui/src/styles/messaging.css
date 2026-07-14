@@ -7,7 +7,6 @@
 @import "./messaging/message-timeline.css";
 @import "./messaging/tool-call.css";
 @import "./messaging/log-view.css";
-@import "./messaging/interrupted-generation.css";
 
 /* Message item base styles */
 

@@ -15,6 +15,7 @@ export const sessionMessages = {
   "sessionList.status.working": "עובד",
   "sessionList.status.compacting": "מסכם",
   "sessionList.status.idle": "מוכן",
+  "sessionList.status.interrupted": "הופסק",
   "sessionList.status.retrying": "מנסה שוב",
   "sessionList.status.retryingIn": "מנסה שוב בעוד {seconds}ש׳",
   "sessionList.status.retryTooltip": "{message} (ניסיון {attempt})",
@@ -71,10 +72,6 @@ export const sessionMessages = {
   "sessionRenameDialog.actions.renaming": "משנה שם…",
 
   "sessionView.fallback.sessionNotFound": "הסשן לא נמצא",
-  "sessionView.interrupted.title": "היצירה הופסקה",
-  "sessionView.interrupted.description": "CodeNomad הופעל מחדש בזמן שהסשן עבד, אך OpenCode מדווח כעת שהוא לא פעיל. דבר לא הופעל מחדש באופן אוטומטי.",
-  "sessionView.interrupted.action": "הכן המשך",
-  "sessionView.interrupted.prefill": "המשך מהמקום שבו נעצרת. בדוק תחילה את השיחה ואת המצב הנוכחי של סביבת העבודה, ואל תניח שהתשובה שנקטעה הושלמה.",
   "sessionView.alerts.abortFailed.message": "עצירת הסשן נכשלה",
   "sessionView.alerts.abortFailed.title": "העצירה נכשלה",
   "sessionView.alerts.revertFailed.message": "החזרה להודעה נכשלה",

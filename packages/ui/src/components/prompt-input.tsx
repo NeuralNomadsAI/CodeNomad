@@ -261,7 +261,6 @@ export default function PromptInput(props: PromptInputProps) {
           }, 0)
         }
       },
-      getPromptText: () => textareaRef?.value ?? prompt(),
       focus: () => {
         const textarea = textareaRef
         if (!textarea || textarea.disabled) return

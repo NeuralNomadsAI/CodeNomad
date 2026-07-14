@@ -8,7 +8,7 @@ import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import { getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances, waitForInstanceWorkspaceMetadataHydration } from "../../stores/instances"
-import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, getSessionDraftPrompt, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession } from "../../stores/sessions"
+import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession } from "../../stores/sessions"
 import { clearSessionIdleFade, IDLE_STATUS_VISIBILITY_MS, getSessionStatus, isSessionBusy as getSessionBusyStatus, markSessionIdleFadeStarted } from "../../stores/session-status"
 import { deleteMessage } from "../../stores/session-actions"
 import { showAlertDialog } from "../../stores/alerts"
@@ -61,8 +61,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     if (!currentSession) return false
     return getSessionStatus(props.instanceId, currentSession.id) === "working"
   })
-  const generationInterrupted = createMemo(() => session()?.generationRecovery === "interrupted")
-
   const sessionNeedsInput = createMemo(() => {
     const currentSession = session()
     if (!currentSession) return false
@@ -346,21 +344,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     }
   }
 
-  function handlePrepareContinuation() {
-    const visiblePrompt = promptInputApi?.getPromptText() ?? getSessionDraftPrompt(props.instanceId, props.sessionId)
-    if (visiblePrompt.trim()) {
-      promptInputApi?.focus()
-      return
-    }
-
-    const continuation = t("sessionView.interrupted.prefill")
-    if (promptInputApi) {
-      promptInputApi.setPromptText(continuation, { focus: true })
-    } else {
-      pendingPromptText = continuation
-    }
-  }
- 
   async function handleSendMessage(prompt: string, attachments: Attachment[]) {
     const messageCount = messageStore().getSessionMessageIds(props.sessionId).length
     const submittedExchangeTargetCount = getSubmitBottomPinTargetCount(messageCount, sessionStreamingActive())
@@ -563,18 +546,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
                   onInsertComment={handleInsertPreviewComment}
                 />
               )}
-            </Show>
-
-            <Show when={generationInterrupted()}>
-              <div class="interrupted-generation-notice" role="status">
-                <div class="interrupted-generation-copy">
-                  <strong>{t("sessionView.interrupted.title")}</strong>
-                  <span>{t("sessionView.interrupted.description")}</span>
-                </div>
-                <button type="button" class="button-secondary interrupted-generation-action" onClick={handlePrepareContinuation}>
-                  {t("sessionView.interrupted.action")}
-                </button>
-              </div>
             </Show>
 
             <Show when={attachments().length > 0}>

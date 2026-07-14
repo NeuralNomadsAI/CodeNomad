@@ -15,6 +15,7 @@ export const sessionMessages = {
   "sessionList.status.working": "Arbeitet",
   "sessionList.status.compacting": "Wird komprimiert",
   "sessionList.status.idle": "Bereit",
+  "sessionList.status.interrupted": "Unterbrochen",
   "sessionList.status.retrying": "Wiederholung",
   "sessionList.status.retryingIn": "Wiederholung in {seconds}s",
   "sessionList.status.retryTooltip": "{message} (Versuch {attempt})",
@@ -71,10 +72,6 @@ export const sessionMessages = {
   "sessionRenameDialog.actions.renaming": "Umbenennung läuft...",
 
   "sessionView.fallback.sessionNotFound": "Sitzung nicht gefunden",
-  "sessionView.interrupted.title": "Generierung wurde unterbrochen",
-  "sessionView.interrupted.description": "CodeNomad wurde neu gestartet, während diese Sitzung arbeitete. OpenCode meldet sie nun als inaktiv. Nichts wurde automatisch wiederholt.",
-  "sessionView.interrupted.action": "Fortsetzung vorbereiten",
-  "sessionView.interrupted.prefill": "Setze dort fort, wo du aufgehört hast. Prüfe zuerst die Unterhaltung und den aktuellen Workspace-Zustand und gehe nicht davon aus, dass die unterbrochene Antwort abgeschlossen wurde.",
   "sessionView.alerts.abortFailed.message": "Sitzung konnte nicht gestoppt werden",
   "sessionView.alerts.abortFailed.title": "Stoppen fehlgeschlagen",
   "sessionView.alerts.revertFailed.message": "Wiederherstellen der Nachricht fehlgeschlagen",
