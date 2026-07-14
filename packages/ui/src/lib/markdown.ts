@@ -1,4 +1,4 @@
-import { marked, type Tokens } from "marked"
+import { marked, type Tokenizer, type Tokens } from "marked"
 import markedKatex from "marked-katex-extension"
 import katex from "katex"
 import { getLogger } from "./logger"
@@ -18,10 +18,36 @@ let rendererSetup = false
 let shikiModulePromise: Promise<typeof import("shiki/bundle/full")> | null = null
 let bundledLanguagesCache: typeof import("shiki/bundle/full")["bundledLanguages"] | null = null
 
-// Math rendering is handled by marked-katex-extension (registered in setupRenderer).
-// Delimiter rules, boundaries, CJK punctuation, and block/inline rendering are
-// all delegated to the maintained extension so we avoid ~200 lines of fragile
-// hand-rolled tokenizer code.
+// Dollar-delimited math is handled by marked-katex-extension; bracket delimiters
+// use the small parser-native rules registered in setupRenderer.
+
+const BRACKET_DISPLAY_MATH_RULE = /^\\\[([\s\S]+?)\\\]/
+
+// Find a complete line-start display delimiter while skipping inline code spans.
+function findBracketDisplayStart(src: string): number {
+  const codeRule = marked.Lexer.rules.inline.gfm.code
+  let index = 0
+
+  while (index < src.length) {
+    const code = codeRule.exec(src.slice(index))
+    let precedingBackslashes = 0
+    for (let cursor = index - 1; src[cursor] === "\\"; cursor--) {
+      precedingBackslashes++
+    }
+    if (code?.index === 0 && precedingBackslashes % 2 === 0) {
+      index += code[0].length
+      continue
+    }
+
+    const bracketMath = BRACKET_DISPLAY_MATH_RULE.exec(src.slice(index))
+    if ((index === 0 || src[index - 1] === "\n") && bracketMath?.[1].trim()) {
+      return index
+    }
+    index++
+  }
+
+  return -1
+}
 
 const ALLOWED_RAW_HTML_TAGS = new Set([
   "a",
@@ -433,8 +459,8 @@ function setupRenderer(isDark: boolean) {
         level: "block",
         // Tokenize non-empty display math delimited by \[ and \], across lines.
         tokenizer(src: string) {
-          const match = /^\\\[([\s\S]+?)\\\]/.exec(src)
-          if (!match) return
+          const match = BRACKET_DISPLAY_MATH_RULE.exec(src)
+          if (!match || !match[1].trim()) return
 
           return {
             type: "blockBracketMath",
@@ -452,6 +478,25 @@ function setupRenderer(isDark: boolean) {
         },
       },
     ],
+    tokenizer: {
+      // Split a paragraph before a valid display delimiter so the block lexer can consume it.
+      paragraph(this: Tokenizer, src: string) {
+        const cap = this.rules.block.paragraph.exec(src)
+        if (!cap) return false
+
+        const bracketStart = findBracketDisplayStart(cap[0])
+        if (bracketStart <= 0) return false
+
+        const raw = cap[0].slice(0, bracketStart)
+        const text = raw.endsWith("\n") ? raw.slice(0, -1) : raw
+        return {
+          type: "paragraph",
+          raw,
+          text,
+          tokens: this.lexer.inline(text),
+        }
+      },
+    },
   })
 
   const renderer = new marked.Renderer()

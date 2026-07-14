@@ -18,6 +18,18 @@ describe("renderMarkdown bracket math delimiters", () => {
     assert.match(html, /<span class="katex-display">/)
   })
 
+  it("splits prose around adjacent single-line and multiline display math", async () => {
+    const singleLine = await renderMarkdown("before\n\\[x^2\\]\nafter", { suppressHighlight: true })
+    const multiline = await renderMarkdown("before\n\\[\nx^2\n\\]\nafter", { suppressHighlight: true })
+
+    for (const html of [singleLine, multiline]) {
+      assert.match(html, /^<p>before<\/p>\n<span class="katex-display">/)
+      assert.match(html, /<p>after<\/p>\n$/)
+      assert.doesNotMatch(html, /<br>/)
+      assert.doesNotMatch(html, /katex-error/)
+    }
+  })
+
   it("preserves dollar-delimited math", async () => {
     const inline = await renderMarkdown("$x^2$", { suppressHighlight: true })
     const display = await renderMarkdown("$$x^2$$", { suppressHighlight: true })
@@ -47,11 +59,16 @@ describe("renderMarkdown bracket math delimiters", () => {
   it("does not hijack bracket delimiters in inline code or dollar math", async () => {
     const code = await renderMarkdown("`\\[x\\]`", { suppressHighlight: true })
     const multilineCode = await renderMarkdown("`a\n\\[x\\]`", { suppressHighlight: true })
+    const multilineDoubleCode = await renderMarkdown("``a\n\\[x\\]``", { suppressHighlight: true })
+    const escapedBackticks = await renderMarkdown("\\`a\n\\[x\\]\nafter\\`", { suppressHighlight: true })
     const inlineDollar = await renderMarkdown(String.raw`$\[x\]$`, { suppressHighlight: true })
     const displayDollar = await renderMarkdown(String.raw`$$\[x\]$$`, { suppressHighlight: true })
 
     assert.equal(code, '<p><code class="inline-code">\\[x\\]</code></p>\n')
     assert.equal(multilineCode, '<p><code class="inline-code">a \\[x\\]</code></p>\n')
+    assert.equal(multilineDoubleCode, '<p><code class="inline-code">a \\[x\\]</code></p>\n')
+    assert.match(escapedBackticks, /<span class="katex-display">/)
+    assert.doesNotMatch(escapedBackticks, /katex-error/)
     assert.match(inlineDollar, /^<p><span class="katex-error"/)
     assert.doesNotMatch(inlineDollar, /katex-display/)
     assert.match(displayDollar, /^<p><span class="katex-error"/)
@@ -74,5 +91,24 @@ describe("renderMarkdown bracket math delimiters", () => {
     assert.doesNotMatch(html, /class="katex/)
     assert.match(html, /\\\(x\^2\\\)/)
     assert.match(html, /\\\[x\^2\]/)
+  })
+
+  it("leaves line-start and mid-paragraph invalid display delimiters literal", async () => {
+    const html = await renderMarkdown("\\\\[x\\]\n\\[\]\n\\[x\na \\[\] b\na \\[x", { suppressHighlight: true })
+
+    assert.doesNotMatch(html, /class="katex/)
+    assert.doesNotMatch(html, /katex-error/)
+  })
+
+  it("does not split paragraphs for whitespace-only display delimiters", async () => {
+    const singleLine = await renderMarkdown("before\n\\[   \\]\nafter", { suppressHighlight: true })
+    const multiline = await renderMarkdown("before\n\\[\n \t\n\\]\nafter", { suppressHighlight: true })
+
+    for (const html of [singleLine, multiline]) {
+      assert.doesNotMatch(html, /class="katex/)
+      assert.doesNotMatch(html, /katex-error/)
+      assert.match(html, /^<p>before<br>/)
+      assert.match(html, /after<\/p>\n$/)
+    }
   })
 })
