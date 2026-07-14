@@ -466,6 +466,24 @@ fn clamp_zoom_level(value: f64) -> f64 {
     value.clamp(MIN_ZOOM_LEVEL, MAX_ZOOM_LEVEL)
 }
 
+fn with_adjusted_zoom_level<F>(zoom_level: &Mutex<f64>, delta: f64, apply: F)
+where
+    F: FnOnce(f64),
+{
+    let next_zoom = match zoom_level.lock() {
+        Ok(current) => *current + delta,
+        Err(_) => return,
+    };
+    apply(next_zoom);
+}
+
+fn adjust_main_window_zoom(app_handle: &AppHandle, delta: f64) {
+    let state = app_handle.state::<AppState>();
+    with_adjusted_zoom_level(&state.zoom_level, delta, |next_zoom| {
+        set_main_window_zoom(app_handle, next_zoom);
+    });
+}
+
 fn set_main_window_zoom(app_handle: &AppHandle, next_zoom: f64) {
     if let Some(window) = app_handle.get_webview_window("main") {
         let normalized = clamp_zoom_level(next_zoom);
@@ -676,14 +694,10 @@ fn main() {
                     set_main_window_zoom(app_handle, DEFAULT_ZOOM_LEVEL);
                 }
                 "zoom_in" => {
-                    if let Ok(zoom_level) = app_handle.state::<AppState>().zoom_level.lock() {
-                        set_main_window_zoom(app_handle, *zoom_level + ZOOM_STEP);
-                    }
+                    adjust_main_window_zoom(app_handle, ZOOM_STEP);
                 }
                 "zoom_out" => {
-                    if let Ok(zoom_level) = app_handle.state::<AppState>().zoom_level.lock() {
-                        set_main_window_zoom(app_handle, *zoom_level - ZOOM_STEP);
-                    }
+                    adjust_main_window_zoom(app_handle, -ZOOM_STEP);
                 }
 
                 "toggle_fullscreen" => {
@@ -963,4 +977,20 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
 
     app.set_menu(menu)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod zoom_tests {
+    use super::with_adjusted_zoom_level;
+    use std::sync::Mutex;
+
+    #[test]
+    fn adjusted_zoom_releases_the_lock_before_applying() {
+        let zoom_level = Mutex::new(1.0);
+
+        with_adjusted_zoom_level(&zoom_level, 0.1, |next_zoom| {
+            assert_eq!(next_zoom, 1.1);
+            assert!(zoom_level.try_lock().is_ok());
+        });
+    }
 }
