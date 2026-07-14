@@ -1,5 +1,6 @@
-import { marked } from "marked"
+import { marked, type Tokens } from "marked"
 import markedKatex from "marked-katex-extension"
+import katex from "katex"
 import { getLogger } from "./logger"
 import { tGlobal } from "./i18n"
 import type { Highlighter } from "shiki/bundle/full"
@@ -385,6 +386,73 @@ function setupRenderer(isDark: boolean) {
     nonStandard: true,
     strict: "ignore",
   }))
+
+  marked.use({
+    extensions: [
+      {
+        name: "inlineBracketMath",
+        level: "inline",
+        // Find unescaped inline bracket math without scanning beyond the next line.
+        start(src: string) {
+          return src.search(/(?<!\\)\\\(/)
+        },
+        // Tokenize non-empty inline math delimited by \( and \).
+        tokenizer(src: string) {
+          const escaped = /^\\\\\(([^\n]+?)\\\)/.exec(src)
+          if (escaped) {
+            return {
+              type: "inlineBracketMath",
+              raw: escaped[0],
+              text: escaped[0],
+              escaped: true,
+            }
+          }
+
+          const match = /^\\\(([^\n]+?)\\\)/.exec(src)
+          if (!match) return
+
+          return {
+            type: "inlineBracketMath",
+            raw: match[0],
+            text: match[1],
+          }
+        },
+        // Render inline bracket math with the existing KaTeX error policy.
+        renderer(token: Tokens.Generic) {
+          if (token.escaped) return escapeHtml(token.raw)
+
+          return katex.renderToString(token.text, {
+            throwOnError: false,
+            strict: "ignore",
+            displayMode: false,
+          })
+        },
+      },
+      {
+        name: "blockBracketMath",
+        level: "block",
+        // Tokenize non-empty display math delimited by \[ and \], across lines.
+        tokenizer(src: string) {
+          const match = /^\\\[([\s\S]+?)\\\]/.exec(src)
+          if (!match) return
+
+          return {
+            type: "blockBracketMath",
+            raw: match[0],
+            text: match[1],
+          }
+        },
+        // Render display bracket math with the existing KaTeX error policy.
+        renderer(token: Tokens.Generic) {
+          return katex.renderToString(token.text, {
+            throwOnError: false,
+            strict: "ignore",
+            displayMode: true,
+          })
+        },
+      },
+    ],
+  })
 
   const renderer = new marked.Renderer()
 
