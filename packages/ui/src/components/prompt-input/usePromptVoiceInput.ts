@@ -5,6 +5,7 @@ import { serverApi } from "../../lib/api-client"
 import { useI18n } from "../../lib/i18n"
 import { isElectronHost } from "../../lib/runtime-env"
 import { blobToBase64, createMediaRecorder, stopTracks } from "../../lib/audio-utils"
+import { createRecordingController, type RecordingState } from "./recording-controller"
 
 interface UsePromptVoiceInputOptions {
   prompt: Accessor<string>
@@ -14,26 +15,65 @@ interface UsePromptVoiceInputOptions {
   disabled: Accessor<boolean>
 }
 
-type VoiceInputState = "idle" | "recording" | "transcribing"
-
 export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
   const { t } = useI18n()
-  const [state, setState] = createSignal<VoiceInputState>("idle")
+  const [state, setState] = createSignal<RecordingState>("idle")
   const [elapsedMs, setElapsedMs] = createSignal(0)
 
-  let mediaRecorder: MediaRecorder | null = null
-  let mediaStream: MediaStream | null = null
-  let timerId: number | undefined
-  let shouldTranscribe = true
-  let recordedChunks: Blob[] = []
-  let recordingStartedAt = 0
+  const controller = createRecordingController(
+    {
+      isElectron: () => isElectronHost(),
+      requestMicAccess: async () =>
+        (window as Window & { electronAPI?: ElectronAPI }).electronAPI?.requestMicrophoneAccess?.(),
+      getUserMedia: async () => navigator.mediaDevices.getUserMedia({ audio: true }),
+      setupRecorder: (stream, handlers) => {
+        const recorder = createMediaRecorder(stream as MediaStream)
+        let stopped = false
+        recorder.addEventListener("dataavailable", (event) => {
+          if (event.data.size > 0) handlers.onDataAvailable(event.data)
+        })
+        recorder.addEventListener("stop", () => handlers.onStop())
+        return {
+          start: () => recorder.start(),
+          stop: () => {
+            if (!stopped) {
+              stopped = true
+              if (recorder.state === "recording") {
+                recorder.stop()
+              }
+            }
+          },
+          mimeType: recorder.mimeType,
+        }
+      },
+      stopTracks: (stream) => stopTracks(stream as MediaStream | null),
+      blobToBase64,
+      transcribe: (input) => serverApi.transcribeAudio(input),
+      setInterval: (fn, ms) => window.setInterval(fn, ms),
+      clearInterval: (id) => {
+        if (id !== undefined) window.clearInterval(id)
+      },
+    },
+    {
+      onStateChange: setState,
+      onElapsedChange: setElapsedMs,
+      onTranscript: (text) => insertTranscript(text),
+      onError: (errorKey, detail) => {
+        showAlertDialog(t(errorKey), {
+          title: t("promptInput.voiceInput.error.title"),
+          ...(detail ? { detail } : {}),
+          variant: "error",
+        })
+      },
+    },
+  )
 
   createEffect(() => {
     void loadSpeechCapabilities()
   })
 
   onCleanup(() => {
-    cleanupMedia(false)
+    controller.cleanup(false)
   })
 
   const isSupported = () => {
@@ -52,30 +92,6 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
     )
   }
 
-  async function toggleRecording(): Promise<void> {
-    if (state() === "recording") {
-      stopRecording()
-      return
-    }
-
-    await startRecording()
-  }
-
-  function stopRecording() {
-    if (!mediaRecorder || state() !== "recording") return
-    shouldTranscribe = true
-    mediaRecorder.stop()
-    setState("transcribing")
-    stopTimer()
-  }
-
-  function cancelRecording() {
-    if (!mediaRecorder || state() !== "recording") return
-    shouldTranscribe = false
-    mediaRecorder.stop()
-    cleanupMedia(false)
-  }
-
   async function startRecording() {
     if (!canUseVoiceInput() || options.disabled() || state() === "transcribing" || state() === "recording") return
 
@@ -87,82 +103,20 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
       return
     }
 
-    try {
-      recordedChunks = []
-      shouldTranscribe = true
-
-      if (isElectronHost()) {
-        const granted = await (window as Window & { electronAPI?: ElectronAPI }).electronAPI?.requestMicrophoneAccess?.()
-        if (granted && !granted.granted) {
-          throw new Error(t("promptInput.voiceInput.error.permissionDenied"))
-        }
-      }
-
-      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      mediaRecorder = createMediaRecorder(mediaStream)
-
-      mediaRecorder.addEventListener("dataavailable", (event) => {
-        if (event.data.size > 0) {
-          recordedChunks.push(event.data)
-        }
-      })
-
-      mediaRecorder.addEventListener("stop", () => {
-        void finalizeRecording()
-      })
-
-      recordingStartedAt = Date.now()
-      setElapsedMs(0)
-      setState("recording")
-      startTimer()
-      mediaRecorder.start()
-    } catch (error) {
-      cleanupMedia(false)
-      showAlertDialog(t("promptInput.voiceInput.error.permission"), {
-        title: t("promptInput.voiceInput.error.title"),
-        detail: error instanceof Error ? error.message : String(error),
-        variant: "error",
-      })
-    }
+    await controller.startRecording()
   }
 
-  async function finalizeRecording() {
-    const recorder = mediaRecorder
-    const stream = mediaStream
-    mediaRecorder = null
-    mediaStream = null
+  function stopRecording() {
+    controller.stopRecording()
+  }
 
-    if (!shouldTranscribe || recordedChunks.length === 0) {
-      recordedChunks = []
-      stopTracks(stream)
-      setState("idle")
-      setElapsedMs(0)
+  async function toggleRecording(): Promise<void> {
+    if (state() === "recording") {
+      stopRecording()
       return
     }
 
-    const mimeType = recorder?.mimeType || recordedChunks[0]?.type || "audio/webm"
-
-    try {
-      const audioBlob = new Blob(recordedChunks, { type: mimeType })
-      const transcription = await serverApi.transcribeAudio({
-        audioBase64: await blobToBase64(audioBlob),
-        mimeType,
-      })
-      if (transcription.text.trim()) {
-        insertTranscript(transcription.text.trim())
-      }
-    } catch (error) {
-      showAlertDialog(t("promptInput.voiceInput.error.transcribe"), {
-        title: t("promptInput.voiceInput.error.title"),
-        detail: error instanceof Error ? error.message : String(error),
-        variant: "error",
-      })
-    } finally {
-      recordedChunks = []
-      stopTracks(stream)
-      setState("idle")
-      setElapsedMs(0)
-    }
+    await startRecording()
   }
 
   function insertTranscript(text: string) {
@@ -193,35 +147,6 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
     }
   }
 
-  function cleanupMedia(resetState = true) {
-    stopTimer()
-    if (mediaRecorder && mediaRecorder.state !== "inactive") {
-      mediaRecorder.stop()
-    }
-    mediaRecorder = null
-    stopTracks(mediaStream)
-    mediaStream = null
-    recordedChunks = []
-    if (resetState) {
-      setState("idle")
-      setElapsedMs(0)
-    }
-  }
-
-  function startTimer() {
-    stopTimer()
-    timerId = window.setInterval(() => {
-      setElapsedMs(Date.now() - recordingStartedAt)
-    }, 250)
-  }
-
-  function stopTimer() {
-    if (timerId !== undefined) {
-      window.clearInterval(timerId)
-      timerId = undefined
-    }
-  }
-
   return {
     state,
     elapsedMs,
@@ -229,7 +154,6 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
     startRecording,
     stopRecording,
     toggleRecording,
-    cancelRecording,
     isRecording: () => state() === "recording",
     isTranscribing: () => state() === "transcribing",
     buttonTitle: () => {
