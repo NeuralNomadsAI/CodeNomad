@@ -4,9 +4,12 @@ use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 pub(super) const PRIMARY_LOCK_FILENAME: &str = "client-state.primary.lock";
 const REGISTRATION_LOCK_FILENAME: &str = "client-state.registration.lock";
+const REGISTRATION_LOCK_TIMEOUT: Duration = Duration::from_millis(250);
+const REGISTRATION_LOCK_RETRY_DELAY: Duration = Duration::from_millis(10);
 pub(super) const RUNNING_MARKER_PREFIX: &str = "client-state.running.";
 pub(super) const RUNNING_MARKER_SUFFIX: &str = ".lock";
 
@@ -19,7 +22,7 @@ pub(super) struct ProcessState {
 
 pub(super) struct Registration {
     process: ProcessState,
-    registration_file: File,
+    registration_file: Option<File>,
 }
 
 impl Registration {
@@ -36,8 +39,13 @@ impl Registration {
                     registration_path.display()
                 )
             })?;
-        FileExt::lock_exclusive(&registration_file)
-            .map_err(|err| format!("failed to acquire registration lock: {err}"))?;
+        let has_registration_lock =
+            try_acquire_registration_lock(&registration_file, REGISTRATION_LOCK_TIMEOUT)?;
+        if !has_registration_lock {
+            eprintln!(
+                "[client-state] registration lock timed out; continuing as a secondary client"
+            );
+        }
 
         let running_marker = create_running_marker(app_data_dir)?;
         let lock_path = app_data_dir.join(PRIMARY_LOCK_FILENAME);
@@ -48,32 +56,42 @@ impl Registration {
             .open(&lock_path)
             .map_err(|err| format!("failed to open primary lock {}: {err}", lock_path.display()))?;
 
-        let primary_lock = match FileExt::try_lock_exclusive(&lock_file) {
-            Ok(()) => match has_other_live_running_markers(app_data_dir, &running_marker.path) {
-                Ok(false) => {
-                    lock_file
-                        .set_len(0)
-                        .and_then(|_| lock_file.seek(SeekFrom::Start(0)).map(|_| ()))
-                        .and_then(|_| write!(lock_file, "{{\"pid\":{}}}\n", std::process::id()))
-                        .and_then(|_| lock_file.sync_data())
-                        .map_err(|err| format!("failed to record primary lock owner: {err}"))?;
-                    Some(lock_file)
-                }
-                Ok(true) => {
-                    release_primary_file(&lock_file);
-                    None
+        let primary_lock = if !has_registration_lock {
+            None
+        } else {
+            match FileExt::try_lock_exclusive(&lock_file) {
+                Ok(()) => {
+                    match has_other_live_running_markers(app_data_dir, &running_marker.path) {
+                        Ok(false) => {
+                            lock_file
+                                .set_len(0)
+                                .and_then(|_| lock_file.seek(SeekFrom::Start(0)).map(|_| ()))
+                                .and_then(|_| {
+                                    write!(lock_file, "{{\"pid\":{}}}\n", std::process::id())
+                                })
+                                .and_then(|_| lock_file.sync_data())
+                                .map_err(|err| {
+                                    format!("failed to record primary lock owner: {err}")
+                                })?;
+                            Some(lock_file)
+                        }
+                        Ok(true) => {
+                            release_primary_file(&lock_file);
+                            None
+                        }
+                        Err(err) => {
+                            eprintln!("[client-state] failed to inspect running markers: {err}");
+                            release_primary_file(&lock_file);
+                            None
+                        }
+                    }
                 }
                 Err(err) => {
-                    eprintln!("[client-state] failed to inspect running markers: {err}");
-                    release_primary_file(&lock_file);
+                    if !is_lock_contended(&err) {
+                        eprintln!("[client-state] failed to acquire primary lock: {err}");
+                    }
                     None
                 }
-            },
-            Err(err) => {
-                if !is_lock_contended(&err) {
-                    eprintln!("[client-state] failed to acquire primary lock: {err}");
-                }
-                None
             }
         };
 
@@ -82,7 +100,7 @@ impl Registration {
                 primary_lock: Mutex::new(primary_lock),
                 running_marker: Mutex::new(Some(running_marker)),
             },
-            registration_file,
+            registration_file: has_registration_lock.then_some(registration_file),
         })
     }
 
@@ -91,11 +109,29 @@ impl Registration {
     }
 
     pub(super) fn finish(self) -> ProcessState {
-        if let Err(err) = FileExt::unlock(&self.registration_file) {
-            eprintln!("[client-state] failed to release registration lock: {err}");
+        if let Some(registration_file) = self.registration_file {
+            if let Err(err) = FileExt::unlock(&registration_file) {
+                eprintln!("[client-state] failed to release registration lock: {err}");
+            }
+            drop(registration_file);
         }
-        drop(self.registration_file);
         self.process
+    }
+}
+
+fn try_acquire_registration_lock(file: &File, timeout: Duration) -> Result<bool, String> {
+    let started_at = Instant::now();
+    loop {
+        match FileExt::try_lock_exclusive(file) {
+            Ok(()) => return Ok(true),
+            Err(err) if is_lock_contended(&err) => {
+                if started_at.elapsed() >= timeout {
+                    return Ok(false);
+                }
+                std::thread::sleep(REGISTRATION_LOCK_RETRY_DELAY);
+            }
+            Err(err) => return Err(format!("failed to acquire registration lock: {err}")),
+        }
     }
 }
 
@@ -242,4 +278,54 @@ fn is_lock_contended(error: &std::io::Error) -> bool {
     let expected = fs2::lock_contended_error();
     error.kind() == std::io::ErrorKind::WouldBlock
         || (error.raw_os_error().is_some() && error.raw_os_error() == expected.raw_os_error())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn registration_lock_contention_times_out() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(REGISTRATION_LOCK_FILENAME);
+        let owner = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&path)
+            .unwrap();
+        FileExt::lock_exclusive(&owner).unwrap();
+        let contender = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+
+        let started_at = Instant::now();
+        assert!(!try_acquire_registration_lock(&contender, Duration::from_millis(20)).unwrap());
+        assert!(started_at.elapsed() < Duration::from_secs(1));
+
+        FileExt::unlock(&owner).unwrap();
+    }
+
+    #[test]
+    fn registration_timeout_initializes_a_secondary_process() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(REGISTRATION_LOCK_FILENAME);
+        let owner = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&path)
+            .unwrap();
+        FileExt::lock_exclusive(&owner).unwrap();
+
+        let started_at = Instant::now();
+        let registration = Registration::initialize(directory.path()).unwrap();
+        assert!(!registration.is_primary());
+        assert!(started_at.elapsed() < Duration::from_secs(2));
+
+        registration.finish().release_locks();
+        FileExt::unlock(&owner).unwrap();
+    }
 }

@@ -40,13 +40,6 @@ export function mergeFetchedSessionRuntimeState(
   if (!latest || (latest === captured && latest.generationAdmissionToken === undefined)) return fetched
   return {
     ...fetched,
-    status: latest.status,
-    retry: latest.retry,
-    idleSince: latest.idleSince,
-    runtimeStatusKnown: latest.runtimeStatusKnown,
-    generationRecovery: latest.generationRecovery,
-    generationAdmissionToken: latest.generationAdmissionToken,
-    pendingPermission: latest.pendingPermission,
-    pendingQuestion: latest.pendingQuestion,
+    ...latest,
   }
 }

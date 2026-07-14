@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { it } from "node:test"
 
-import { TrailingResyncCoordinator } from "./trailing-resync.ts"
+import { TrailingResyncCoordinator, waitForSettledPrerequisite } from "./trailing-resync.ts"
 
 function deferred() {
   let resolve!: () => void
@@ -72,4 +72,8 @@ it("does not lose a request queued as the previous pass settles", async () => {
   await boundaryRequest
 
   assert.equal(calls, 2)
+})
+
+it("continues recovery after a prerequisite rejects", async () => {
+  await assert.doesNotReject(waitForSettledPrerequisite(Promise.reject(new Error("initial hydration failed"))))
 })

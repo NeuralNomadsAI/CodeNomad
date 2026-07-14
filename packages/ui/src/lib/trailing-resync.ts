@@ -22,3 +22,11 @@ export class TrailingResyncCoordinator {
     return tracked
   }
 }
+
+export async function waitForSettledPrerequisite(prerequisite: Promise<void> | undefined): Promise<void> {
+  try {
+    await prerequisite
+  } catch {
+    // A resync is the recovery path for a failed prerequisite.
+  }
+}

@@ -40,7 +40,9 @@ export interface RemoteProxySessionCreateResult {
 
 export class RemoteProxySessionManager {
   private readonly sessions = new Map<string, RemoteProxySession>()
+  private readonly pendingCreations = new Set<Promise<RemoteProxySessionCreateResult>>()
   private readonly cleanupTimer: NodeJS.Timeout
+  private shuttingDown = false
 
   constructor(private readonly options: RemoteProxySessionManagerOptions) {
     this.cleanupTimer = setInterval(() => {
@@ -50,6 +52,20 @@ export class RemoteProxySessionManager {
   }
 
   async createSession(baseUrl: string, skipTlsVerify: boolean): Promise<RemoteProxySessionCreateResult> {
+    if (this.shuttingDown) {
+      throw new Error("Remote proxy session manager is shutting down")
+    }
+
+    const creation = this.createSessionInternal(baseUrl, skipTlsVerify)
+    this.pendingCreations.add(creation)
+    try {
+      return await creation
+    } finally {
+      this.pendingCreations.delete(creation)
+    }
+  }
+
+  private async createSessionInternal(baseUrl: string, skipTlsVerify: boolean): Promise<RemoteProxySessionCreateResult> {
     if (!this.options.httpsOptions) {
       throw new Error("Local HTTPS is required for remote proxy sessions")
     }
@@ -130,6 +146,10 @@ export class RemoteProxySessionManager {
     })
 
     const addressInfo = await app.listen({ host: LOOPBACK_HOST, port: 0 })
+    if (this.shuttingDown) {
+      await Promise.all([dispatcher?.close(), app.close()])
+      throw new Error("Remote proxy session manager is shutting down")
+    }
     const address = new URL(addressInfo)
     const localBaseUrl = new URL(`https://${LOOPBACK_HOST}:${address.port}`)
     const entryUrl = new URL(targetBaseUrl.pathname || "/", localBaseUrl)
@@ -165,7 +185,9 @@ export class RemoteProxySessionManager {
   }
 
   async shutdown(): Promise<void> {
+    this.shuttingDown = true
     clearInterval(this.cleanupTimer)
+    await Promise.allSettled(Array.from(this.pendingCreations))
     await Promise.all(Array.from(this.sessions.keys(), (sessionId) => this.disposeSession(sessionId)))
   }
 

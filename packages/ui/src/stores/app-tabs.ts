@@ -1,6 +1,6 @@
 import { createMemo, createSignal } from "solid-js"
 import type { Instance } from "../types/instance"
-import { activeInstanceId, instances, setActiveInstanceId } from "./instances"
+import { activeInstanceId, claimRestoreCreatedInstanceForUser, instances, setActiveInstanceId } from "./instances"
 import { activeSidecarToken, setActiveSidecarToken, sidecarTabs, type SideCarTabRecord } from "./sidecars"
 import { appSessionRestoreGateActive } from "./app-session-restore-gate"
 
@@ -99,6 +99,7 @@ function selectAppTab(tabId: string | null, options?: { source?: "restore" }) {
   setActiveAppTabId(tab.id)
 
   if (tab.kind === "instance") {
+    if (options?.source !== "restore") claimRestoreCreatedInstanceForUser(tab.instance.id)
     setActiveSidecarToken(null)
     setActiveInstanceId(tab.instance.id)
     return

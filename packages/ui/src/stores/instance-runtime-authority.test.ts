@@ -28,6 +28,7 @@ import {
   hydrateSessionDraftPrompt,
   setActiveParentSession,
   setActiveSession,
+  setSessions,
   setSessionDraftPrompt,
 } from "./session-state.ts"
 import { removeSessionRuntimeState } from "./session-api.ts"
@@ -119,6 +120,37 @@ describe("instance runtime authority", () => {
     clearInstanceAttachments(instanceId)
     clearInstanceDraftPrompts(instanceId)
     clearInstanceDeletedSessionAuthority(instanceId)
+  })
+
+  it("selects the retained parent when the active child is deleted remotely", () => {
+    const instanceId = "deleted-active-child"
+    const parentId = "parent"
+    const childId = "child"
+    const parent = { id: parentId, instanceId, parentId: null, title: "Parent", status: "idle" }
+    const child = { id: childId, instanceId, parentId, title: "Child", status: "idle" }
+    setSessions((prev) => {
+      const next = new Map(prev)
+      next.set(instanceId, new Map<string, any>([[parentId, parent], [childId, child]]))
+      return next
+    })
+    setActiveParentSession(instanceId, parentId)
+    setActiveSession(instanceId, childId)
+
+    handleSessionDeleted(instanceId, {
+      type: "session.deleted",
+      properties: { info: { id: childId } },
+    })
+
+    assert.equal(activeParentSessionId().get(instanceId), parentId)
+    assert.equal(activeSessionId().get(instanceId), parentId)
+
+    clearInstanceSessionSelection(instanceId)
+    clearInstanceDeletedSessionAuthority(instanceId)
+    setSessions((prev) => {
+      const next = new Map(prev)
+      next.delete(instanceId)
+      return next
+    })
   })
 
   it("tombstones failed hydration preservation only after explicit instance removal", () => {

@@ -169,6 +169,24 @@ describe("abort-created workspace cleanup", () => {
     assert.equal(deleteCalls, 0)
   })
 
+  it("transfers a tracked workspace to user ownership before restore cleanup", async () => {
+    const workspace: TestWorkspace = { id: "selected-during-restore", status: "ready", requestId: "restore-request" }
+    let deleteCalls = 0
+    const cleanup = new AbortCreatedWorkspaceCleanup<TestWorkspace>({
+      deleteWorkspace: async () => {
+        deleteCalls += 1
+      },
+      restoreWorkspace: () => undefined,
+    })
+
+    cleanup.track(workspace)
+    assert.equal(cleanup.release(workspace.id), workspace)
+    await cleanup.discardTracked(workspace.id, { retainTombstone: true })
+
+    assert.equal(cleanup.owns(workspace.id), false)
+    assert.equal(deleteCalls, 0)
+  })
+
   it("correlates a created event before create resolves and quarantines explicit close", async () => {
     const workspace: TestWorkspace = {
       id: "slow-restore",

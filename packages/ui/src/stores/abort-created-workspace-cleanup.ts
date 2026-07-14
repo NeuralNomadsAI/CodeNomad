@@ -57,8 +57,10 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
     return true
   }
 
-  release(workspaceId: string): void {
+  release(workspaceId: string): T | undefined {
+    const workspace = this.tracked.get(workspaceId)
     this.tracked.delete(workspaceId)
+    return workspace
   }
 
   releaseTombstoneForUserCreate(workspaceId: string): void {

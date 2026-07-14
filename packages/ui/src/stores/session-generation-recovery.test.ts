@@ -54,14 +54,31 @@ describe("session generation recovery", () => {
   })
 
   it("preserves a newer SSE state over a stale session fetch", () => {
-    const captured = session({ status: "idle", runtimeStatusKnown: false })
-    const fetched = session({ status: "idle", runtimeStatusKnown: true, generationRecovery: "interrupted" })
-    const latest = session({ status: "working", runtimeStatusKnown: true, generationRecovery: null })
+    const captured = session({ title: "Captured", status: "idle", runtimeStatusKnown: false })
+    const fetched = session({
+      title: "Stale fetch",
+      metadata: { source: "fetch" },
+      time: { created: 1, updated: 2 },
+      status: "idle",
+      runtimeStatusKnown: true,
+      generationRecovery: "interrupted",
+    })
+    const latest = session({
+      title: "New SSE title",
+      metadata: { source: "sse" },
+      time: { created: 1, updated: 3 },
+      status: "working",
+      runtimeStatusKnown: true,
+      generationRecovery: null,
+    })
 
     const merged = mergeFetchedSessionRuntimeState(fetched, captured, latest)
     assert.ok(merged)
     assert.equal(merged.status, "working")
     assert.equal(merged.generationRecovery, null)
+    assert.equal(merged.title, "New SSE title")
+    assert.deepEqual(merged.metadata, { source: "sse" })
+    assert.equal(merged.time.updated, 3)
   })
 
   it("preserves an in-flight admission even when it predates the fetch snapshot", () => {

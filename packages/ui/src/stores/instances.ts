@@ -64,7 +64,7 @@ import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authorit
 import { completeAbortableRestoreCreation } from "./abortable-restore-creation"
 import { getAbortReason } from "./app-session-restore-timeout"
 import { AbortCreatedWorkspaceCleanup } from "./abort-created-workspace-cleanup"
-import { TrailingResyncCoordinator } from "../lib/trailing-resync"
+import { TrailingResyncCoordinator, waitForSettledPrerequisite } from "../lib/trailing-resync"
 
 const log = getLogger("api")
 
@@ -232,7 +232,7 @@ let restoreCreationRequestSequence = 0
 
 const connectionResyncs = new TrailingResyncCoordinator(
   async (instanceId) => {
-    await initialHydrations.get(instanceId)
+    await waitForSettledPrerequisite(initialHydrations.get(instanceId))
     const instance = instances().get(instanceId)
     if (!instance?.client || instance.status !== "ready") return
     await fetchSessions(instanceId, { reset: false })
@@ -945,6 +945,14 @@ async function releaseRestoreCreatedInstance(instanceId: string, requestId: stri
   }
   log.warn("Failed to release restore workspace creation ownership", { instanceId, error: lastError })
   throw lastError
+}
+
+function claimRestoreCreatedInstanceForUser(instanceId: string): void {
+  const workspace = restoreCreatedWorkspaceCleanup.release(instanceId)
+  if (!workspace?.requestId) return
+  void releaseRestoreCreatedInstance(instanceId, workspace.requestId).catch((error) => {
+    log.warn("Failed to transfer restore workspace creation ownership to the user", { instanceId, error })
+  })
 }
 
 async function createInstance(
@@ -1752,6 +1760,7 @@ export {
   createInstance,
   disposeRestoreCreatedInstance,
   releaseRestoreCreatedInstance,
+  claimRestoreCreatedInstanceForUser,
   waitForInitialWorkspaceLoad,
   waitForInstanceReady,
   waitForInstanceInitialHydration,

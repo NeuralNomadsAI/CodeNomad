@@ -17,6 +17,7 @@ import {
   agents,
   clearActiveSession,
   clearActiveParentSession,
+  setActiveSession,
   clearSessionDraftPrompt,
   cancelSessionGenerationAdmissions,
   markSessionDeletedAuthoritative,
@@ -749,7 +750,12 @@ function removeSessionRuntimeState(instanceId: string, sessionId: string): void 
     if (activeParentSessionId().get(instanceId) === sessionId) {
       clearActiveParentSession(instanceId)
     } else {
-      clearActiveSession(instanceId)
+      const parentId = activeParentSessionId().get(instanceId)
+      if (parentId && sessions().get(instanceId)?.has(parentId)) {
+        setActiveSession(instanceId, parentId)
+      } else {
+        clearActiveSession(instanceId)
+      }
     }
   }
 }

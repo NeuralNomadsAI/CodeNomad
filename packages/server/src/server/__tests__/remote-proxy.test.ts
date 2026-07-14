@@ -172,6 +172,23 @@ describe("RemoteProxySessionManager", () => {
       res.writeHead(200).end("ok")
     })
   })
+
+  it("waits for in-flight creation and rejects sessions that cross shutdown", async () => {
+    await withUpstreamServer(async (upstreamBaseUrl) => {
+      const manager = createSessionManager()
+      const creation = manager.createSession(`${upstreamBaseUrl}/base`, false)
+      const shutdown = manager.shutdown()
+
+      await assert.rejects(creation, /shutting down/)
+      await shutdown
+
+      assert.equal((manager as any).pendingCreations.size, 0)
+      assert.equal((manager as any).sessions.size, 0)
+      await assert.rejects(manager.createSession(`${upstreamBaseUrl}/base`, false), /shutting down/)
+    }, (_req, res) => {
+      res.writeHead(200).end("ok")
+    })
+  })
 })
 
 function createSessionManager() {
