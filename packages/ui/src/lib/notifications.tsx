@@ -20,6 +20,7 @@ export type ToastPayload = {
   action?: {
     label: string
     href: string
+    onClick?: () => void | Promise<void>
   }
 }
 
@@ -381,7 +382,7 @@ export function showToastNotification(payload: ToastPayload): ToastHandle {
               <button
                 type="button"
                 class="mt-3 inline-flex items-center text-xs font-semibold uppercase tracking-wide text-sky-300 hover:text-sky-200"
-                onClick={() => void openExternalUrl(payload.action!.href)}
+                onClick={() => void (payload.action!.onClick?.() ?? openExternalUrl(payload.action!.href))}
               >
                 {payload.action.label}
               </button>
