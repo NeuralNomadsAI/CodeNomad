@@ -100,7 +100,7 @@ export function isConversationModeEnabled(instanceId: string): boolean {
 
 export function canUseConversationMode(): boolean {
   const capabilities = speechCapabilities()
-  if (!capabilities?.available || !capabilities.configured || !capabilities.supportsTts) {
+  if (!capabilities?.available || !capabilities.ttsConfigured || !capabilities.supportsTts) {
     return false
   }
 
@@ -291,7 +291,7 @@ async function createPlaybackHandle(text: string): Promise<PlaybackHandle> {
   const capabilities = (await loadSpeechCapabilities()) ?? speechCapabilities()
   const settings = serverSettings().speech
 
-  if (!capabilities?.available || !capabilities.configured || !capabilities.supportsTts) {
+  if (!capabilities?.available || !capabilities.ttsConfigured || !capabilities.supportsTts) {
     throw new Error(tGlobal("messageItem.actions.speak.error.unavailable"))
   }
 
