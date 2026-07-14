@@ -5,9 +5,18 @@ import { getLogger } from "../lib/logger"
 
 const log = getLogger("api")
 
+function normalizeCapabilities(result: SpeechCapabilitiesResponse): SpeechCapabilitiesResponse {
+  const r = result as unknown as Record<string, unknown>
+  if (r.sttConfigured === undefined) r.sttConfigured = r.configured
+  if (r.ttsConfigured === undefined) r.ttsConfigured = r.configured
+  if (r.separateProviders === undefined) r.separateProviders = false
+  return r as unknown as SpeechCapabilitiesResponse
+}
+
 const [speechCapabilities, setSpeechCapabilities] = createSignal<SpeechCapabilitiesResponse | null>(null)
 const [speechCapabilitiesLoading, setSpeechCapabilitiesLoading] = createSignal(false)
 const [speechCapabilitiesError, setSpeechCapabilitiesError] = createSignal<string | null>(null)
+const [serverSupportsSeparateProviders, setServerSupportsSeparateProviders] = createSignal(false)
 
 let speechCapabilitiesPromise: Promise<SpeechCapabilitiesResponse | null> | null = null
 
@@ -20,9 +29,12 @@ async function loadSpeechCapabilities(force = false): Promise<SpeechCapabilities
   speechCapabilitiesPromise = serverApi
     .fetchSpeechCapabilities()
     .then((result) => {
-      setSpeechCapabilities(result)
+      const raw = result as unknown as Record<string, unknown>
+      setServerSupportsSeparateProviders("separateProviders" in raw)
+      const normalized = normalizeCapabilities(result)
+      setSpeechCapabilities(normalized)
       setSpeechCapabilitiesError(null)
-      return result
+      return normalized
     })
     .catch((error) => {
       log.error("Failed to load speech capabilities", error)
@@ -41,6 +53,7 @@ async function loadSpeechCapabilities(force = false): Promise<SpeechCapabilities
 function resetSpeechCapabilities(): void {
   setSpeechCapabilities(null)
   setSpeechCapabilitiesError(null)
+  setServerSupportsSeparateProviders(false)
 }
 
-export { speechCapabilities, speechCapabilitiesLoading, speechCapabilitiesError, loadSpeechCapabilities, resetSpeechCapabilities }
+export { speechCapabilities, speechCapabilitiesLoading, speechCapabilitiesError, serverSupportsSeparateProviders, loadSpeechCapabilities, resetSpeechCapabilities }

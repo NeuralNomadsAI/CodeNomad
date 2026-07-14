@@ -38,6 +38,7 @@ export interface WorkspaceDescriptor {
 export interface WorkspaceCreateRequest {
   path: string
   name?: string
+  forceNew?: boolean
 }
 
 export interface WorkspaceCloneRequest {
@@ -50,7 +51,10 @@ export interface WorkspaceCloneResponse {
   path: string
 }
 
-export type WorkspaceCreateResponse = WorkspaceDescriptor
+export type WorkspaceCreateResponse = WorkspaceDescriptor & {
+  /** True when an active workspace with the same canonical path was returned. */
+  reused?: true
+}
 export type WorkspaceListResponse = WorkspaceDescriptor[]
 export type WorkspaceDetailResponse = WorkspaceDescriptor
 
@@ -347,6 +351,11 @@ export interface SpeechCapabilitiesResponse {
   ttsVoice: string
   ttsFormats: string[]
   streamingTtsFormats: string[]
+  separateProviders?: boolean
+  sttConfigured?: boolean
+  ttsConfigured?: boolean
+  sttBaseUrl?: string
+  ttsBaseUrl?: string
 }
 
 export interface SpeechTranscriptionResponse {

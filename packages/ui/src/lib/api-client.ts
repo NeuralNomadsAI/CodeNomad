@@ -31,6 +31,7 @@ import type {
   WorktreeGitMutationResponse,
   WorktreeGitPathsRequest,
   WorkspaceCreateRequest,
+  WorkspaceCreateResponse,
   WorkspaceDescriptor,
   WorkspaceFileResponse,
   WorkspaceFileSearchResponse,
@@ -225,8 +226,8 @@ export const serverApi = {
       body: JSON.stringify(map),
     })
   },
-  createWorkspace(payload: WorkspaceCreateRequest): Promise<WorkspaceDescriptor> {
-    return request<WorkspaceDescriptor>("/api/workspaces", {
+  createWorkspace(payload: WorkspaceCreateRequest): Promise<WorkspaceCreateResponse> {
+    return request<WorkspaceCreateResponse>("/api/workspaces", {
       method: "POST",
       body: JSON.stringify(payload),
     })
