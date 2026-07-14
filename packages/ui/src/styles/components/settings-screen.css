@@ -295,6 +295,18 @@
   color: var(--text-muted);
 }
 
+.settings-card-section-header {
+  margin-top: 0.75rem;
+  padding-bottom: 0.375rem;
+  border-bottom: 1px solid var(--border-base);
+}
+
+.settings-card-section-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-secondary);
+}
+
 .settings-card-message {
   padding: 1rem;
   border: 1px dashed var(--border-base);

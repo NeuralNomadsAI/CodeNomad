@@ -1,5 +1,6 @@
 import path from "path"
 import { spawnSync } from "child_process"
+import { randomUUID } from "node:crypto"
 import { connect } from "net"
 import { EventBus } from "../events/bus"
 import type { SettingsService } from "../settings/service"
@@ -22,6 +23,7 @@ import {
   OPENCODE_SERVER_USERNAME_ENV,
   resolveOpencodeServerAuth,
 } from "./opencode-auth"
+import { resolveWorkspaceIdentity } from "./workspace-identity"
 
 const STARTUP_STABILITY_DELAY_MS = 1500
 
@@ -38,8 +40,19 @@ interface WorkspaceManagerOptions {
 
 interface WorkspaceRecord extends WorkspaceDescriptor {}
 
+export interface WorkspaceCreateResult {
+  workspace: WorkspaceDescriptor
+  created: boolean
+}
+
 export class WorkspaceManager {
   private readonly workspaces = new Map<string, WorkspaceRecord>()
+  private readonly workspaceIdentities = new Map<string, string>()
+  private readonly pendingWorkspaceCreations = new Map<string, Promise<WorkspaceCreateResult>>()
+  private readonly pendingWorkspaceOwners = new Map<string, string>()
+  private readonly activeWorkspaceCreations = new Set<Promise<WorkspaceCreateResult>>()
+  private readonly cancelledWorkspaceCreations = new Set<string>()
+  private shuttingDown = false
   private readonly runtime: WorkspaceRuntime
   private readonly codeNomadPluginUrl: string
   private readonly opencodeAuth = new Map<string, { username: string; password: string; authorization: string }>()
@@ -63,6 +76,12 @@ export class WorkspaceManager {
 
   getInstanceAuthorizationHeader(id: string): string | undefined {
     return this.opencodeAuth.get(id)?.authorization
+  }
+
+  private findReadyWorkspaceByIdentity(identityKey: string): WorkspaceDescriptor | undefined {
+    return Array.from(this.workspaces.values()).find((workspace) => {
+      return workspace.status === "ready" && this.workspaceIdentities.get(workspace.id) === identityKey
+    })
   }
 
   listFiles(workspaceId: string, relativePath = "."): FileSystemEntry[] {
@@ -114,12 +133,65 @@ export class WorkspaceManager {
     browser.writeFile(relativePath, contents)
   }
 
-  async create(folder: string, name?: string): Promise<WorkspaceDescriptor> {
- 
-    const id = `${Date.now().toString(36)}`
+  async create(folder: string, name?: string, options?: { forceNew?: boolean }): Promise<WorkspaceCreateResult> {
+    const { workspacePath, identityKey } = await resolveWorkspaceIdentity(folder, this.options.rootDir)
+    if (this.shuttingDown) {
+      throw new Error("Workspace manager is shutting down")
+    }
+    if (options?.forceNew) {
+      return this.trackWorkspaceCreation(this.createResolvedWorkspace(workspacePath, identityKey, name))
+    }
+
+    const existing = this.findReadyWorkspaceByIdentity(identityKey)
+    if (existing) {
+      this.options.logger.info({ workspaceId: existing.id, folder: workspacePath }, "Reusing existing workspace")
+      return { workspace: existing, created: false }
+    }
+
+    const pending = this.pendingWorkspaceCreations.get(identityKey)
+    if (pending) {
+      const result = await pending
+      return { workspace: result.workspace, created: false }
+    }
+
+    const creation = this.trackWorkspaceCreation(
+      this.createResolvedWorkspace(workspacePath, identityKey, name, (workspaceId) => {
+        this.pendingWorkspaceOwners.set(identityKey, workspaceId)
+      }),
+    )
+    this.pendingWorkspaceCreations.set(identityKey, creation)
+    try {
+      return await creation
+    } finally {
+      if (this.pendingWorkspaceCreations.get(identityKey) === creation) {
+        this.pendingWorkspaceCreations.delete(identityKey)
+        this.pendingWorkspaceOwners.delete(identityKey)
+      }
+    }
+  }
+
+  private trackWorkspaceCreation(creation: Promise<WorkspaceCreateResult>): Promise<WorkspaceCreateResult> {
+    let tracked!: Promise<WorkspaceCreateResult>
+    tracked = (async () => {
+      try {
+        return await creation
+      } finally {
+        this.activeWorkspaceCreations.delete(tracked)
+      }
+    })()
+    this.activeWorkspaceCreations.add(tracked)
+    return tracked
+  }
+
+  private async createResolvedWorkspace(
+    workspacePath: string,
+    identityKey: string,
+    name?: string,
+    onReserved?: (workspaceId: string) => void,
+  ): Promise<WorkspaceCreateResult> {
+    const id = randomUUID()
     const binary = this.options.binaryResolver.resolveDefault()
     const resolvedBinaryPath = this.resolveBinaryPath(binary.path)
-    const workspacePath = path.isAbsolute(folder) ? folder : path.resolve(this.options.rootDir, folder)
     clearWorkspaceSearchCache(workspacePath)
 
     this.options.logger.info({ workspaceId: id, folder: workspacePath, binary: resolvedBinaryPath }, "Creating workspace")
@@ -141,45 +213,47 @@ export class WorkspaceManager {
     }
 
     this.workspaces.set(id, descriptor)
+    this.workspaceIdentities.set(id, identityKey)
+    onReserved?.(id)
 
-
-    this.options.eventBus.publish({ type: "workspace.created", workspace: descriptor })
-
-    const serverConfig = this.options.settings.getOwner("config", "server")
-    const envVars = (serverConfig as any)?.environmentVariables
-    const userEnvironment = envVars && typeof envVars === "object" && !Array.isArray(envVars) ? (envVars as any) : {}
-    const opencodeConfigContent = buildOpencodeConfigContent(
-      resolveExistingOpencodeConfigContent(userEnvironment),
-      this.codeNomadPluginUrl,
-    )
-    const serverBaseUrl = this.options.getServerBaseUrl()
-    const normalizedServerBaseUrl = serverBaseUrl.replace(/\/+$/, "")
-
-    const { username: opencodeUsername, password: opencodePassword } = resolveOpencodeServerAuth({
-      userEnvironment,
-      processEnv: process.env,
-    })
-    const authorization = buildOpencodeBasicAuthHeader({ username: opencodeUsername, password: opencodePassword })
-    if (!authorization) {
-      throw new Error("Failed to build OpenCode auth header")
-    }
-    this.opencodeAuth.set(id, { username: opencodeUsername, password: opencodePassword, authorization })
-
-    const environment = {
-      ...userEnvironment,
-      OPENCODE_CONFIG_CONTENT: opencodeConfigContent,
-      OPENCODE_EXPERIMENTAL_WORKSPACES: "true",
-      CODENOMAD_INSTANCE_ID: id,
-      CODENOMAD_BASE_URL: serverBaseUrl,
-      ...(this.options.nodeExtraCaCertsPath ? { NODE_EXTRA_CA_CERTS: this.options.nodeExtraCaCertsPath } : {}),
-      [OPENCODE_SERVER_BASE_URL_ENV]: `${normalizedServerBaseUrl}${proxyPath}`,
-      [OPENCODE_SERVER_USERNAME_ENV]: opencodeUsername,
-      [OPENCODE_SERVER_PASSWORD_ENV]: opencodePassword,
-    }
-
-    const logLevel = (serverConfig as any)?.logLevel
 
     try {
+      this.options.eventBus.publish({ type: "workspace.created", workspace: descriptor })
+
+      const serverConfig = this.options.settings.getOwner("config", "server")
+      const envVars = (serverConfig as any)?.environmentVariables
+      const userEnvironment = envVars && typeof envVars === "object" && !Array.isArray(envVars) ? (envVars as any) : {}
+      const opencodeConfigContent = buildOpencodeConfigContent(
+        resolveExistingOpencodeConfigContent(userEnvironment),
+        this.codeNomadPluginUrl,
+      )
+      const serverBaseUrl = this.options.getServerBaseUrl()
+      const normalizedServerBaseUrl = serverBaseUrl.replace(/\/+$/, "")
+
+      const { username: opencodeUsername, password: opencodePassword } = resolveOpencodeServerAuth({
+        userEnvironment,
+        processEnv: process.env,
+      })
+      const authorization = buildOpencodeBasicAuthHeader({ username: opencodeUsername, password: opencodePassword })
+      if (!authorization) {
+        throw new Error("Failed to build OpenCode auth header")
+      }
+      this.opencodeAuth.set(id, { username: opencodeUsername, password: opencodePassword, authorization })
+
+      const environment = {
+        ...userEnvironment,
+        OPENCODE_CONFIG_CONTENT: opencodeConfigContent,
+        OPENCODE_EXPERIMENTAL_WORKSPACES: "true",
+        CODENOMAD_INSTANCE_ID: id,
+        CODENOMAD_BASE_URL: serverBaseUrl,
+        ...(this.options.nodeExtraCaCertsPath ? { NODE_EXTRA_CA_CERTS: this.options.nodeExtraCaCertsPath } : {}),
+        [OPENCODE_SERVER_BASE_URL_ENV]: `${normalizedServerBaseUrl}${proxyPath}`,
+        [OPENCODE_SERVER_USERNAME_ENV]: opencodeUsername,
+        [OPENCODE_SERVER_PASSWORD_ENV]: opencodePassword,
+      }
+
+      const logLevel = (serverConfig as any)?.logLevel
+      this.throwIfWorkspaceCreationCancelled(id)
       const { pid, port, exitPromise, getLastOutput } = await this.runtime.launch({
         workspaceId: id,
         folder: workspacePath,
@@ -188,25 +262,43 @@ export class WorkspaceManager {
         logLevel,
         onExit: (info) => this.handleProcessExit(info.workspaceId, info),
       })
+      descriptor.pid = pid
+      descriptor.port = port
+      this.throwIfWorkspaceCreationCancelled(id)
 
       const runtimeVersion = await this.waitForWorkspaceReadiness({ workspaceId: id, port, exitPromise, getLastOutput })
       if (runtimeVersion) {
         descriptor.binaryVersion = runtimeVersion
       }
+      this.throwIfWorkspaceCreationCancelled(id)
 
-      descriptor.pid = pid
-      descriptor.port = port
       descriptor.status = "ready"
       descriptor.updatedAt = new Date().toISOString()
       this.options.eventBus.publish({ type: "workspace.started", workspace: descriptor })
       this.options.logger.info({ workspaceId: id, port }, "Workspace ready")
-      return descriptor
+      return { workspace: descriptor, created: true }
     } catch (error) {
+      let stopFailure: unknown
+      await this.runtime.stop(id).catch((stopError) => {
+        stopFailure = stopError
+        this.options.logger.warn({ workspaceId: id, err: stopError }, "Failed to stop workspace after startup error")
+      })
+      const cancelled = this.cancelledWorkspaceCreations.delete(id) || !this.workspaces.has(id)
+      if (cancelled && !stopFailure) {
+        throw new Error("Workspace creation cancelled")
+      }
       descriptor.status = "error"
-      descriptor.error = error instanceof Error ? error.message : String(error)
+      descriptor.error = stopFailure instanceof Error
+        ? `Workspace startup failed and its process could not be stopped: ${stopFailure.message}`
+        : error instanceof Error ? error.message : String(error)
       descriptor.updatedAt = new Date().toISOString()
-      this.options.eventBus.publish({ type: "workspace.error", workspace: descriptor })
+      if (this.workspaces.has(id)) {
+        this.options.eventBus.publish({ type: "workspace.error", workspace: descriptor })
+      }
       this.options.logger.error({ workspaceId: id, err: error }, "Workspace failed to start")
+      if (cancelled) {
+        throw new Error(descriptor.error)
+      }
       throw error
     }
   }
@@ -216,29 +308,54 @@ export class WorkspaceManager {
     if (!workspace) return undefined
 
     this.options.logger.info({ workspaceId: id }, "Stopping workspace")
+    const wasStarting = workspace.status === "starting"
     const wasRunning = Boolean(workspace.pid)
-    if (wasRunning) {
-      await this.runtime.stop(id).catch((error) => {
+    if (wasStarting) {
+      this.cancelledWorkspaceCreations.add(id)
+    }
+    if (wasStarting || wasRunning) {
+      try {
+        await this.runtime.stop(id)
+      } catch (error) {
         this.options.logger.warn({ workspaceId: id, err: error }, "Failed to stop workspace process cleanly")
-      })
+        workspace.status = "error"
+        workspace.error = error instanceof Error ? error.message : String(error)
+        workspace.updatedAt = new Date().toISOString()
+        this.options.eventBus.publish({ type: "workspace.error", workspace })
+        throw error
+      }
     }
 
+    const identityKey = this.workspaceIdentities.get(id)
+    if (identityKey && this.pendingWorkspaceOwners.get(identityKey) === id) {
+      this.pendingWorkspaceCreations.delete(identityKey)
+      this.pendingWorkspaceOwners.delete(identityKey)
+    }
+    const stoppedEventPublished = workspace.status === "stopped"
     this.workspaces.delete(id)
+    this.workspaceIdentities.delete(id)
     this.opencodeAuth.delete(id)
+    if (!wasStarting) {
+      this.cancelledWorkspaceCreations.delete(id)
+    }
     clearWorkspaceSearchCache(workspace.path)
-    if (!wasRunning) {
+    if (!stoppedEventPublished) {
       this.options.eventBus.publish({ type: "workspace.stopped", workspaceId: id })
     }
     return workspace
   }
 
   async shutdown() {
+    this.shuttingDown = true
     this.options.logger.info("Shutting down all workspaces")
 
     const stopTasks: Array<Promise<void>> = []
 
     for (const [id, workspace] of this.workspaces) {
-      if (!workspace.pid) {
+      if (workspace.status === "starting") {
+        this.cancelledWorkspaceCreations.add(id)
+      }
+      if (!workspace.pid && workspace.status !== "starting") {
         this.options.logger.debug({ workspaceId: id }, "Workspace already stopped")
         continue
       }
@@ -247,15 +364,28 @@ export class WorkspaceManager {
       stopTasks.push(
         this.runtime.stop(id).catch((error) => {
           this.options.logger.error({ workspaceId: id, err: error }, "Failed to stop workspace during shutdown")
+          throw error
         }),
       )
     }
 
     if (stopTasks.length > 0) {
-      await Promise.allSettled(stopTasks)
+      const stopResults = await Promise.allSettled(stopTasks)
+      const failedStop = stopResults.find((result): result is PromiseRejectedResult => result.status === "rejected")
+      if (failedStop) {
+        throw failedStop.reason
+      }
+    }
+    if (this.activeWorkspaceCreations.size > 0) {
+      await Promise.allSettled(this.activeWorkspaceCreations)
     }
 
     this.workspaces.clear()
+    this.workspaceIdentities.clear()
+    this.pendingWorkspaceCreations.clear()
+    this.pendingWorkspaceOwners.clear()
+    this.activeWorkspaceCreations.clear()
+    this.cancelledWorkspaceCreations.clear()
     this.opencodeAuth.clear()
     this.options.logger.info("All workspaces cleared")
   }
@@ -266,6 +396,12 @@ export class WorkspaceManager {
       throw new Error("Workspace not found")
     }
     return workspace
+  }
+
+  private throwIfWorkspaceCreationCancelled(id: string): void {
+    if (this.shuttingDown || this.cancelledWorkspaceCreations.has(id) || !this.workspaces.has(id)) {
+      throw new Error("Workspace creation cancelled")
+    }
   }
 
   private resolveBinaryPath(identifier: string): string {

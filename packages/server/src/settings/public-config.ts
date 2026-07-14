@@ -20,6 +20,20 @@ function sanitizeServerOwner(value: SettingsDoc): SettingsDoc {
     speech.hasApiKey = false
   }
 
+  for (const dir of ["stt", "tts"] as const) {
+    if (isPlainObject(speech[dir])) {
+      const sub = { ...speech[dir] } as SettingsDoc
+      const dirKey = typeof sub.apiKey === "string" ? sub.apiKey.trim() : ""
+      if (dirKey) {
+        delete sub.apiKey
+        sub.hasApiKey = true
+      } else if (!("hasApiKey" in sub)) {
+        sub.hasApiKey = false
+      }
+      speech[dir] = sub
+    }
+  }
+
   next.speech = speech
   return next
 }

@@ -19,12 +19,52 @@ function validateBinaryPath(binaryPath: string): { valid: boolean; version?: str
   return { valid: result.valid, version: result.version, error: result.error }
 }
 
+export function enforceSpeechCredentialPairing(body: unknown, currentSpeech?: unknown): unknown {
+  if (!body || typeof body !== "object") return body
+  const patch = { ...(body as Record<string, unknown>) }
+  const speech = patch.speech
+  if (!speech || typeof speech !== "object") return patch
+  const speechPatch = { ...(speech as Record<string, unknown>) }
+  const cur = (currentSpeech && typeof currentSpeech === "object") ? currentSpeech as Record<string, unknown> : {}
+  const curSpeech = (cur.speech && typeof cur.speech === "object") ? cur.speech as Record<string, unknown> : cur
+
+  if ("baseUrl" in speechPatch && !("apiKey" in speechPatch)) {
+    if ((speechPatch.baseUrl ?? "") !== (curSpeech.baseUrl ?? "")) {
+      speechPatch.apiKey = null
+    }
+  }
+  for (const dir of ["stt", "tts"] as const) {
+    if (dir in speechPatch) {
+      const dirPatch = { ...(speechPatch[dir] as Record<string, unknown>) }
+      if ("baseUrl" in dirPatch && !("apiKey" in dirPatch)) {
+        const curDir = (curSpeech[dir] && typeof curSpeech[dir] === "object") ? curSpeech[dir] as Record<string, unknown> : {}
+        if ((dirPatch.baseUrl ?? "") !== (curDir.baseUrl ?? "")) {
+          dirPatch.apiKey = null
+        }
+        speechPatch[dir] = dirPatch
+      }
+    }
+  }
+  patch.speech = speechPatch
+  return patch
+}
+
 export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
   // Full-document access
   app.get("/api/storage/config", async () => sanitizeConfigDoc(deps.settings.getDoc("config")))
   app.patch("/api/storage/config", async (request, reply) => {
     try {
-      return sanitizeConfigDoc(deps.settings.mergePatchDoc("config", request.body ?? {}))
+      let body = request.body ?? {}
+      if (body && typeof body === "object" && "server" in body) {
+        const bodyObj = { ...(body as Record<string, unknown>) }
+        const serverPatch = bodyObj.server
+        if (serverPatch && typeof serverPatch === "object") {
+          const currentServer = deps.settings.getOwner("config", "server")
+          bodyObj.server = enforceSpeechCredentialPairing(serverPatch, currentServer)
+        }
+        body = bodyObj
+      }
+      return sanitizeConfigDoc(deps.settings.mergePatchDoc("config", body))
     } catch (error) {
       reply.code(400)
       return { error: error instanceof Error ? error.message : "Invalid patch" }
@@ -37,9 +77,15 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
 
   app.patch<{ Params: { owner: string } }>("/api/storage/config/:owner", async (request, reply) => {
     try {
+      const currentOwner = request.params.owner === "server"
+        ? deps.settings.getOwner("config", "server")
+        : undefined
+      const processed = request.params.owner === "server"
+        ? enforceSpeechCredentialPairing(request.body ?? {}, currentOwner)
+        : request.body ?? {}
       return sanitizeConfigOwner(
         request.params.owner,
-        deps.settings.mergePatchOwner("config", request.params.owner, request.body ?? {}),
+        deps.settings.mergePatchOwner("config", request.params.owner, processed),
       )
     } catch (error) {
       reply.code(400)
