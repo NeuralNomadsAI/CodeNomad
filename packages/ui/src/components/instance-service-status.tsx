@@ -244,6 +244,18 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
           </button>
         </div>
       </Show>
+      <Show when={!showHeadings()}>
+        <div class="flex items-center justify-end">
+          <button
+            type="button"
+            class="text-[11px] text-secondary hover:text-primary transition-colors flex items-center gap-1"
+            onClick={() => setPluginsModalOpen(true)}
+          >
+            <Settings class="w-3 h-3" />
+            {t("instanceServiceStatus.plugins.manage")}
+          </button>
+        </div>
+      </Show>
       <Show
         when={!isPluginsLoading() && plugins().length > 0}
         fallback={renderEmptyState(isPluginsLoading() ? t("instanceServiceStatus.plugins.loading") : t("instanceServiceStatus.plugins.empty"))}
