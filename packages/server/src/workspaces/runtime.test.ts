@@ -45,12 +45,15 @@ class ManualTimers {
 }
 
 class FakeChild extends EventEmitter {
-  readonly pid = 4242
   readonly stdout = new PassThrough()
   readonly stderr = new PassThrough()
   readonly liveSignals: NodeJS.Signals[] = []
   exitCode: number | null = null
   signalCode: NodeJS.Signals | null = null
+
+  constructor(readonly pid: number | undefined = 4242) {
+    super()
+  }
 
   kill(signal: NodeJS.Signals = "SIGTERM"): boolean {
     this.liveSignals.push(signal)
@@ -161,6 +164,22 @@ function setWslIdentity(runtime: WorkspaceRuntime): void {
 }
 
 describe("workspace runtime verified stop", () => {
+  it("keeps an error listener on children rejected before launch handlers are installed", async () => {
+    const child = new FakeChild(undefined)
+    const runtime = new WorkspaceRuntime(new EventBus(), pino({ level: "silent" }), {
+      platform: "linux",
+      spawn: (() => child as unknown as ChildProcess) as typeof import("node:child_process").spawn,
+      spawnSync: (() => result()) as unknown as SpawnCommand,
+    })
+
+    await assert.rejects(
+      runtime.launch({ workspaceId: "missing-pid", folder: process.cwd(), binaryPath: "missing-opencode" }),
+      WorkspaceRuntimeIdentityCaptureError,
+    )
+    assert.equal(child.listenerCount("error"), 1)
+    assert.doesNotThrow(() => child.emit("error", new Error("ENOENT")))
+  })
+
   it("rejects a direct Windows launch without immutable process identity", async () => {
     let commandCalls = 0
     const harness = await createRuntime({

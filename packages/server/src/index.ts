@@ -576,6 +576,7 @@ async function main() {
           stopInstanceEventBridge: () => instanceEventBridge.shutdown(),
           stopSidecars: () => sidecarManager.shutdown(),
           stopClientConnections: () => clientConnectionManager.shutdown(),
+          stopRemoteProxySessions: () => remoteProxySessionManager.shutdown(),
           stopWorkspaces: () => workspaceManager.shutdown(),
           stopHttpServers: async () => {
             const results = await Promise.allSettled(servers.map((srv) => srv.stop()))

@@ -66,6 +66,13 @@ fn disabled_restore_initializes_default_zoom() {
 
     let state = ClientState::initialize_at(directory.path()).unwrap();
     assert_eq!(*state.zoom_level.lock().unwrap(), DEFAULT_ZOOM_LEVEL);
+    assert!(state.persistence_suppressed.load(Ordering::SeqCst));
+    let disabled_bytes = fs::read(directory.path().join(CLIENT_STATE_FILENAME)).unwrap();
+    assert!(state.save_snapshot(json!({ "ignored": true })).unwrap());
+    assert_eq!(
+        fs::read(directory.path().join(CLIENT_STATE_FILENAME)).unwrap(),
+        disabled_bytes
+    );
 }
 
 #[test]

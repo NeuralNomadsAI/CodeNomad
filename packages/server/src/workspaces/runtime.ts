@@ -255,6 +255,10 @@ export class WorkspaceRuntime {
         detached,
         ...spec.options,
       })
+      const handleEarlyError = (error: Error) => {
+        this.logger.error({ workspaceId: options.workspaceId, err: error }, "Workspace runtime failed before launch handlers were ready")
+      }
+      child.on("error", handleEarlyError)
 
       const managed: ManagedProcess = {
         child,
@@ -389,6 +393,7 @@ export class WorkspaceRuntime {
         }
       }
 
+      child.removeListener("error", handleEarlyError)
       child.on("error", handleError)
       child.on("exit", handleExit)
 

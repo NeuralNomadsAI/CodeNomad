@@ -114,6 +114,16 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
     reply.code(204)
   })
 
+  app.post("/api/workspaces/creation/cancel", async (request, reply) => {
+    const parsed = WorkspaceCreationReleaseSchema.safeParse(request.body ?? {})
+    if (!parsed.success) {
+      reply.code(400).type("text/plain").send("Invalid workspace creation request")
+      return
+    }
+    await deps.workspaceManager.cancelCreationRequest(parsed.data.requestId)
+    reply.code(204)
+  })
+
   app.post<{ Params: { id: string } }>("/api/workspaces/:id/creation/release", async (request, reply) => {
     const parsed = WorkspaceCreationReleaseSchema.safeParse(request.body ?? {})
     if (!parsed.success) {

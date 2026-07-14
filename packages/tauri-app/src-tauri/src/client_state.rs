@@ -120,6 +120,7 @@ impl ClientState {
         } else {
             DEFAULT_ZOOM_LEVEL
         };
+        let persistence_suppressed = !state.restore_enabled;
         let process = registration.finish();
 
         Ok(Self {
@@ -129,7 +130,7 @@ impl ClientState {
             zoom_level: Mutex::new(zoom_level),
             write_lock: Mutex::new(()),
             save_generation: AtomicU64::new(0),
-            persistence_suppressed: AtomicBool::new(false),
+            persistence_suppressed: AtomicBool::new(persistence_suppressed),
             renderer_access: access::RendererAccess::default(),
             write_state,
         })

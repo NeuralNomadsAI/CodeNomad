@@ -157,6 +157,21 @@ describe("RemoteProxySessionManager", () => {
       res.end("ok")
     })
   })
+
+  it("closes every session listener during shutdown", async () => {
+    await withUpstreamServer(async (upstreamBaseUrl) => {
+      const manager = createSessionManager()
+      const first = await createSession(manager, `${upstreamBaseUrl}/base`)
+      await createSession(manager, `${upstreamBaseUrl}/other`)
+
+      await manager.shutdown()
+
+      assert.equal((manager as any).sessions.size, 0)
+      await assert.rejects(proxyFetch(`${first.proxyOrigin}/status`))
+    }, (_req, res) => {
+      res.writeHead(200).end("ok")
+    })
+  })
 })
 
 function createSessionManager() {
@@ -209,11 +224,7 @@ async function proxyFetch(url: string, init?: Parameters<typeof fetch>[1]) {
 }
 
 async function disposeManager(manager: RemoteProxySessionManager) {
-  const sessions = Array.from(((manager as any).sessions as Map<string, unknown>).keys())
-  for (const sessionId of sessions) {
-    await manager.deleteSession(sessionId)
-  }
-  clearInterval((manager as any).cleanupTimer as NodeJS.Timeout)
+  await manager.shutdown()
 }
 
 async function withUpstreamServer(

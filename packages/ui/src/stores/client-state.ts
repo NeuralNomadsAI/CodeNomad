@@ -292,14 +292,19 @@ export function writeClientLayoutValue(key: string, value: string): void {
 
 export async function flushClientState(): Promise<void> {
   cancelSaveTimer()
-  await writeQueue
   let lastError = lastSaveError
+  let attempts = 0
 
-  for (let attempt = 0; attempt < FLUSH_MAX_ATTEMPTS && dirty; attempt += 1) {
+  while (attempts < FLUSH_MAX_ATTEMPTS) {
+    const pendingQueue = writeQueue
+    await pendingQueue
+    if (pendingQueue !== writeQueue) continue
+    if (!dirty) return
     if (!canWriteSnapshot()) {
       if (lastError !== undefined) throw lastError
       return
     }
+    attempts += 1
     try {
       await enqueuePendingSave()
     } catch (error) {
@@ -307,7 +312,13 @@ export async function flushClientState(): Promise<void> {
     }
   }
 
-  if (!dirty) return
+  while (true) {
+    const pendingQueue = writeQueue
+    await pendingQueue
+    if (pendingQueue !== writeQueue) continue
+    if (!dirty) return
+    break
+  }
   if (lastError !== undefined) throw lastError
   throw new Error("Client state remained dirty after the final flush attempt")
 }

@@ -455,10 +455,10 @@ function showLoadingScreen(force = false) {
 
   const window = mainWindow
   showingLoadingScreen = true
+  destroyPreloadingView()
+  currentCliUrl = null
+  pendingCliUrl = null
   const navigate = (target: BrowserWindow) => {
-    destroyPreloadingView()
-    currentCliUrl = null
-    pendingCliUrl = null
     clearWindowAllowedOrigin(target)
     return loadLoadingScreen(target)
   }

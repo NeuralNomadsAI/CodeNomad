@@ -8,6 +8,7 @@ export interface ServerShutdownOperations {
   stopInstanceEventBridge: () => void | Promise<void>
   stopSidecars: () => void | Promise<void>
   stopClientConnections: () => void | Promise<void>
+  stopRemoteProxySessions: () => void | Promise<void>
   stopWorkspaces: () => void | Promise<void>
   stopHttpServers: () => void | Promise<void>
   stopReleaseMonitor: () => void | Promise<void>
@@ -77,6 +78,7 @@ export async function orchestrateServerShutdown(
   await run("Instance event bridge", operations.stopInstanceEventBridge)
   await run("SideCar manager", operations.stopSidecars)
   await run("Client connection manager", operations.stopClientConnections)
+  await run("Remote proxy session manager", operations.stopRemoteProxySessions)
 
   const attempts = Math.max(1, Math.floor(workspaceAttempts))
   let workspaceFailure: unknown

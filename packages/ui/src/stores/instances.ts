@@ -960,6 +960,14 @@ async function createInstance(
 ): Promise<{ instanceId: string; reused: boolean; requestId?: string }> {
   const restoreRequestId = options?.signal ? createRestoreCreationRequestId() : undefined
   if (restoreRequestId) restoreCreatedWorkspaceCleanup.beginRequest(restoreRequestId)
+  let cancellationRequest: Promise<void> | null = null
+  const cancelPendingCreation = () => {
+    if (!restoreRequestId) return
+    cancellationRequest ??= serverApi.cancelWorkspaceCreation(restoreRequestId).catch((error) => {
+      log.warn("Failed to cancel restore workspace creation", { requestId: restoreRequestId, error })
+    })
+  }
+  options?.signal?.addEventListener("abort", cancelPendingCreation, { once: true })
 
   try {
     if (options?.signal?.aborted) throw getAbortReason(options.signal)
@@ -970,7 +978,7 @@ async function createInstance(
         binaryPath,
         requestId: restoreRequestId,
         forceNew: options?.forceNew,
-      }),
+      }, { signal: options?.signal }),
       {
         signal: options?.signal,
         commit: (created) => {
@@ -1000,7 +1008,15 @@ async function createInstance(
     if (!options?.signal?.aborted) log.error("Failed to create workspace", error)
     throw error
   } finally {
-    if (restoreRequestId) restoreCreatedWorkspaceCleanup.finishRequest(restoreRequestId)
+    options?.signal?.removeEventListener("abort", cancelPendingCreation)
+    if (restoreRequestId) {
+      const pendingCancellation = cancellationRequest as Promise<void> | null
+      if (pendingCancellation) {
+        void pendingCancellation.finally(() => restoreCreatedWorkspaceCleanup.finishRequest(restoreRequestId))
+      } else {
+        restoreCreatedWorkspaceCleanup.finishRequest(restoreRequestId)
+      }
+    }
   }
 }
 

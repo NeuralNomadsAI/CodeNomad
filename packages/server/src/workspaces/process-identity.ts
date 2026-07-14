@@ -75,22 +75,6 @@ fi
 printf 'CODENOMAD_RESULT|%s|%s|%s\n' "$matched" "$cutoff" "$signal_sent"
 `
 
-const POSIX_SNAPSHOT_SCRIPT = String.raw`
-encode() { printf '%s' "$1" | base64 | tr -d '\r\n'; }
-for pid in $(ps -eo pid= 2>/dev/null); do
-  meta=$(ps -p "$pid" -o ppid= -o pgid= -o lstart= 2>/dev/null) || continue
-  command=$(ps -p "$pid" -o command= 2>/dev/null) || continue
-  verify=$(ps -p "$pid" -o ppid= -o pgid= -o lstart= 2>/dev/null) || continue
-  test "$meta" = "$verify" || continue
-  set -- $meta
-  test "$#" -ge 7 || continue
-  ppid=$1; pgid=$2; shift 2
-  start="$1 $2 $3 $4 $5"
-  printf 'CODENOMAD_B64|%s|%s|%s|' "$pid" "$ppid" "$pgid"
-  encode "$start"; printf '|'; encode "$command"; printf '\n'
-done
-`
-
 const POSIX_GUARDED_SIGNAL_SCRIPT = String.raw`
 encode() { printf '%s' "$1" | base64 | tr -d '\r\n'; }
 read_identity() {
@@ -216,6 +200,22 @@ function parseBase64Snapshot(output: string, prefix = "CODENOMAD_B64|"): Map<num
     const start = decodeBase64Field(startEncoded)
     const command = decodeBase64Field(commandEncoded)
     if (pid <= 0 || parentPid < 0 || groupId <= 0 || start === null || command === null) return null
+    processes.set(pid, { pid, parentPid, groupId, startTime: `${start}\t${command}` })
+  }
+  return processes
+}
+
+function parsePortablePosixSnapshot(output: string): Map<number, ProcessIdentity> | null {
+  const processes = new Map<number, ProcessIdentity>()
+  for (const line of output.split(/\r?\n/)) {
+    if (!line.trim()) continue
+    const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+\s+\S+\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.+)$/)
+    if (!match) return null
+    const [, pidText = "", parentPidText = "", groupIdText = "", start = "", command = ""] = match
+    const pid = Number.parseInt(pidText, 10)
+    const parentPid = Number.parseInt(parentPidText, 10)
+    const groupId = Number.parseInt(groupIdText, 10)
+    if (pid <= 0 || parentPid < 0 || groupId <= 0) return null
     processes.set(pid, { pid, parentPid, groupId, startTime: `${start}\t${command}` })
   }
   return processes
@@ -385,13 +385,13 @@ export function probePosixProcesses(
       return snapshotOrFailure(parseDelimitedSnapshot(String(result.stdout ?? ""), true))
     }
 
-    // POSIX has no portable pidfd/start ticks; bind lstart to a base64-encoded full command fingerprint.
-    const result = spawnCommand("sh", ["-c", POSIX_SNAPSHOT_SCRIPT, "codenomad-posix-identity"], {
+    // POSIX has no portable pidfd/start ticks; collect one coherent table instead of probing every PID.
+    const result = spawnCommand("ps", ["-axo", "pid=,ppid=,pgid=,lstart=,command="], {
       encoding: "utf8",
       timeout: timeoutMs,
     })
     if (result.status !== 0) return { ok: false, error: commandError(result) }
-    return snapshotOrFailure(parseBase64Snapshot(String(result.stdout ?? "")))
+    return snapshotOrFailure(parsePortablePosixSnapshot(String(result.stdout ?? "")))
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
   }
@@ -400,7 +400,7 @@ export function probePosixProcesses(
 export function probeWindowsProcesses(spawnCommand: SpawnCommand, timeoutMs: number): ProcessSnapshot {
   const script = [
     "$all = @(Get-CimInstance Win32_Process -ErrorAction Stop)",
-    "$all | ForEach-Object { $start = ([datetime]$_.CreationDate).ToUniversalTime().Ticks.ToString(); '{0}|{1}|0|{2}||{2}' -f [int]$_.ProcessId, [int]$_.ParentProcessId, $start }",
+    "$all | Where-Object { [int]$_.ProcessId -gt 0 } | ForEach-Object { $start = ([datetime]$_.CreationDate).ToUniversalTime().Ticks.ToString(); '{0}|{1}|0|{2}||{2}' -f [int]$_.ProcessId, [int]$_.ParentProcessId, $start }",
   ].join("; ")
   try {
     const result = spawnCommand("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {

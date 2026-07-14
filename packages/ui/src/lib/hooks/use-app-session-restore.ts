@@ -376,6 +376,8 @@ export function useAppSessionRestore(): void {
       try {
         if (shouldRestoreSessionState(primary, restoreEnabled, snapshot)) {
           capture.beginRestore(snapshot!)
+          capture.prepareCapture(snapshotExisted, false)
+          capture.startCapture()
           await runWithRestoreDeadline(
             (isRestoreActive, restoreSignal) => restoreAppSession(
               snapshot!,

@@ -164,6 +164,11 @@ export class RemoteProxySessionManager {
     return this.disposeSession(sessionId)
   }
 
+  async shutdown(): Promise<void> {
+    clearInterval(this.cleanupTimer)
+    await Promise.all(Array.from(this.sessions.keys(), (sessionId) => this.disposeSession(sessionId)))
+  }
+
   private async cleanupExpiredSessions() {
     const now = Date.now()
     for (const session of Array.from(this.sessions.values())) {
@@ -181,8 +186,7 @@ export class RemoteProxySessionManager {
     }
 
     this.sessions.delete(sessionId)
-    session.dispatcher?.close().catch(() => {})
-    await session.app.close().catch(() => {})
+    await Promise.all([session.dispatcher?.close(), session.app.close()])
     this.options.logger.info({ sessionId }, "Disposed remote proxy session")
     return true
   }

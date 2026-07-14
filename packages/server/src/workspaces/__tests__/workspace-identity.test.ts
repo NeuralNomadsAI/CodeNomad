@@ -291,6 +291,44 @@ describe("workspace identity", () => {
     assert.equal(events.filter((event) => event.type === "workspace.stopped" && event.workspaceId === workspaceId).length, 1)
   })
 
+  it("cancels an in-flight restore startup by request id", async () => {
+    const { root, target } = await createLinkedWorkspace()
+    const manager = createManager(root)
+    const launch = deferred<{
+      pid: number
+      port: number
+      exitPromise: Promise<never>
+      cancellationPromise: Promise<never>
+      getLastOutput: () => string
+    }>()
+    let workspaceId = ""
+    ;(manager as any).runtime.launch = (options: { workspaceId: string }) => {
+      workspaceId = options.workspaceId
+      return launch.promise
+    }
+
+    const creation = manager.create(target, undefined, { requestId: "cancel-restore" })
+    const creationRejected = assert.rejects(creation, /launch was cancelled/)
+    while (!workspaceId) await new Promise((resolve) => setImmediate(resolve))
+    const cancellation = manager.cancelCreationRequest("cancel-restore")
+    launch.resolve({ pid: 123, port: 4321, exitPromise: new Promise(() => {}), cancellationPromise: new Promise(() => {}), getLastOutput: () => "" })
+
+    await Promise.all([creationRejected, cancellation])
+    assert.equal(manager.get(workspaceId), undefined)
+  })
+
+  it("remembers cancellation that arrives before restore reservation", async () => {
+    const { root, target } = await createLinkedWorkspace()
+    const manager = createManager(root)
+
+    await manager.cancelCreationRequest("early-cancel")
+    await assert.rejects(
+      manager.create(target, undefined, { requestId: "early-cancel" }),
+      /creation request early-cancel was cancelled/,
+    )
+    assert.equal(manager.list().length, 0)
+  })
+
   it("waits for and cancels forced creations during shutdown", async () => {
     const { root, target } = await createLinkedWorkspace()
     const manager = createManager(root)

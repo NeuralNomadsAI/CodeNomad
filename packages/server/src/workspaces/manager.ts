@@ -126,6 +126,7 @@ export class WorkspaceManager {
   private readonly workspaceIdentities = new Map<string, string>()
   private readonly pendingWorkspaceCreations = new Map<string, PendingWorkspaceCreation>()
   private readonly pendingWorkspaceOwners = new Map<string, string>()
+  private readonly cancelledCreationRequests = new Set<string>()
   private shuttingDown = false
   private readonly runtime: WorkspaceRuntimeController
   private readonly codeNomadPluginUrl: string
@@ -237,6 +238,9 @@ export class WorkspaceManager {
     options: WorkspaceCreateOptions = {},
   ): Promise<WorkspaceCreateResult> {
     const { workspacePath, identityKey } = await resolveWorkspaceIdentity(folder, this.options.rootDir)
+    if (options.requestId && this.cancelledCreationRequests.delete(options.requestId)) {
+      throw new Error(`Workspace creation request ${options.requestId} was cancelled`)
+    }
     if (this.shuttingDown) {
       throw new Error("Workspace manager is shutting down")
     }
@@ -334,6 +338,9 @@ export class WorkspaceManager {
     this.workspaces.set(id, record)
     this.workspaceIdentities.set(id, identityKey)
     onReserved?.(id)
+    if (options.requestId && this.cancelledCreationRequests.delete(options.requestId)) {
+      record.lifecycle.cancelled = true
+    }
 
     try {
       this.throwIfCancelled(record)
@@ -488,6 +495,26 @@ export class WorkspaceManager {
     return true
   }
 
+  async cancelCreationRequest(requestId: string): Promise<void> {
+    for (const [workspaceId, record] of this.workspaces) {
+      if (record.descriptor.requestId !== requestId) continue
+      const identityKey = this.workspaceIdentities.get(workspaceId)
+      const pending = identityKey ? this.pendingWorkspaceCreations.get(identityKey) : undefined
+      if (pending?.sharedByNonRestoreCaller) {
+        record.descriptor.requestId = undefined
+        record.releasedCreationRequestId = requestId
+        return
+      }
+      await this.delete(workspaceId)
+      return
+    }
+    if (this.cancelledCreationRequests.size >= 1_024) {
+      const oldestRequestId = this.cancelledCreationRequests.values().next().value
+      if (oldestRequestId) this.cancelledCreationRequests.delete(oldestRequestId)
+    }
+    this.cancelledCreationRequests.add(requestId)
+  }
+
   async shutdown() {
     this.shuttingDown = true
     this.options.logger.info("Shutting down all workspaces")
@@ -504,6 +531,7 @@ export class WorkspaceManager {
       this.workspaceIdentities.clear()
       this.pendingWorkspaceCreations.clear()
       this.pendingWorkspaceOwners.clear()
+      this.cancelledCreationRequests.clear()
       this.options.logger.info("All workspaces cleared")
     } else {
       this.options.logger.warn(

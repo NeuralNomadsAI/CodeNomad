@@ -19,6 +19,7 @@ function operations(overrides: Partial<ServerShutdownOperations> = {}): ServerSh
     stopInstanceEventBridge: () => undefined,
     stopSidecars: () => undefined,
     stopClientConnections: () => undefined,
+    stopRemoteProxySessions: () => undefined,
     stopWorkspaces: () => undefined,
     stopHttpServers: () => undefined,
     stopReleaseMonitor: () => undefined,
@@ -40,6 +41,17 @@ describe("server shutdown orchestration", () => {
     )
 
     assert.equal(attempts, 2)
+  })
+
+  it("stops remote proxy sessions before workspace and HTTP shutdown", async () => {
+    const closed: string[] = []
+    await orchestrateServerShutdown(operations({
+      stopRemoteProxySessions: () => { closed.push("remote-proxy") },
+      stopWorkspaces: () => { closed.push("workspaces") },
+      stopHttpServers: () => { closed.push("http") },
+    }), logger)
+
+    assert.deepEqual(closed, ["remote-proxy", "workspaces", "http"])
   })
 
   it("closes other resources and rejects with the concrete workspace failure", async () => {

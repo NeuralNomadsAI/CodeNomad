@@ -47,23 +47,23 @@ describe("process identity probes", () => {
     }
   })
 
-  it("uses process start time from ps on non-Linux POSIX platforms", () => {
+  it("uses one process-table query on non-Linux POSIX platforms", () => {
     let invocation: { command: string; args: readonly string[] } | undefined
     const probe = probePosixProcesses(((command: string, args: readonly string[]) => {
       invocation = { command, args }
-      return result(`CODENOMAD_B64|42|1|42|${b64("Fri Jul 10 12:34:56 2026")}|${b64("/usr/bin/opencode serve")}\n`)
+      return result("  42     1    42 Fri Jul 10 12:34:56 2026 /usr/bin/opencode serve\n")
     }) as unknown as SpawnCommand, 25, "darwin")
 
-    assert.equal(invocation?.command, "sh")
-    assert.ok(invocation?.args.includes("codenomad-posix-identity"))
+    assert.equal(invocation?.command, "ps")
+    assert.deepEqual(invocation?.args, ["-axo", "pid=,ppid=,pgid=,lstart=,command="])
     assert.equal(probe.ok && probe.processes.get(42)?.startTime, "Fri Jul 10 12:34:56 2026\t/usr/bin/opencode serve")
   })
 
   it("round trips delimiter-heavy non-Linux POSIX command identities", () => {
-    const command = "/opt/opencode 'pipe|value'\nnext\t\"quoted\" café"
+    const command = "/opt/opencode 'pipe|value'\t\"quoted\" café"
     const start = "Fri Jul 10 12:34:56 2026"
     const probe = probePosixProcesses((() => result(
-      `CODENOMAD_B64|42|1|42|${b64(start)}|${b64(command)}\n`,
+      `42 1 42 ${start} ${command}\n`,
     )) as unknown as SpawnCommand, 25, "darwin")
 
     assert.equal(probe.ok && probe.processes.get(42)?.startTime, `${start}\t${command}`)
@@ -97,10 +97,8 @@ describe("process identity probes", () => {
     assert.ok(script.indexOf('kill "-$requested_signal"') < script.lastIndexOf("for current_pid"))
   })
 
-  it("rejects malformed base64 records instead of truncating an identity", () => {
-    const probe = probePosixProcesses((() => result(
-      `CODENOMAD_B64|42|1|42|${b64("Fri Jul 10 12:34:56 2026")}|not|base64\n`,
-    )) as unknown as SpawnCommand, 25, "darwin")
+  it("rejects malformed portable process rows", () => {
+    const probe = probePosixProcesses((() => result("42 malformed process row\n")) as unknown as SpawnCommand, 25, "darwin")
 
     assert.deepEqual(probe, { ok: false, error: "process identity query returned no parseable processes" })
   })
@@ -126,6 +124,7 @@ describe("process identity probes", () => {
     }) as unknown as SpawnCommand, 25)
 
     assert.match(script, /Get-CimInstance Win32_Process/)
+    assert.match(script, /ProcessId -gt 0/)
     assert.equal(probe.ok && probe.processes.get(4242)?.startTime, "20260710123456.123456+000")
   })
 

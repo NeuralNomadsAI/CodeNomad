@@ -116,6 +116,26 @@ test("disabling restore atomically removes snapshot and window state", async (te
   })
 })
 
+test("restore-disabled state remains write-suppressed after restart", async (testContext) => {
+  const directory = mkdtempSync(join(tmpdir(), "codenomad-client-state-disabled-restart-"))
+  const statePath = join(directory, "client-state.json")
+  const disabledState = JSON.stringify({ version: 1, restoreEnabled: false })
+  writeFileSync(statePath, disabledState, "utf8")
+  const manager = new ClientStateManager(directory)
+  testContext.after(async () => {
+    await manager.drainAndReleasePrimary().catch(() => {})
+    rmSync(directory, { recursive: true, force: true })
+  })
+
+  assert.equal(await manager.saveWindowState({
+    bounds: { x: 10, y: 20, width: 1200, height: 800 },
+    maximized: false,
+    fullscreen: false,
+    zoomFactor: 1,
+  }), true)
+  assert.equal(readFileSync(statePath, "utf8"), disabledState)
+})
+
 test("drain freezes new mutations and waits for every admitted write before release", async (testContext) => {
   const directory = mkdtempSync(join(tmpdir(), "codenomad-client-state-drain-"))
   let resolveWriterStarted!: () => void

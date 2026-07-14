@@ -130,6 +130,7 @@ export class ClientStateManager {
     if (this.primary) {
       const persisted = this.readState()
       this.state = persisted.state
+      this.persistenceSuppressed = !this.state.restoreEnabled
       this.unsupportedFutureEnvelope = persisted.unsupportedFutureEnvelope
     }
   }
