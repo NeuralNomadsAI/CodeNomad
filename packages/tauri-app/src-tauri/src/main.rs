@@ -835,7 +835,10 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     let about_item = PredefinedMenuItem::about(
         app,
         Some("About CodeNomad"),
-        Some(build_about_metadata(&app.package_info().version.to_string())),
+        Some(build_about_metadata(
+            &app.package_info().version.to_string(),
+            cfg!(target_os = "linux"),
+        )),
     )?;
     let get_updates_item = MenuItem::with_id(
         app,
@@ -1007,15 +1010,15 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-fn build_about_metadata(version: &str) -> AboutMetadata<'static> {
+fn build_about_metadata(version: &str, include_update_link: bool) -> AboutMetadata<'static> {
     AboutMetadata {
         name: Some("CodeNomad".to_string()),
         version: Some(version.to_string()),
         authors: Some(vec!["Neural Nomads AI".to_string()]),
         comments: Some("A desktop workspace for OpenCode.".to_string()),
         license: Some("MIT".to_string()),
-        website: Some(RELEASES_URL.to_string()),
-        website_label: Some("Get updates".to_string()),
+        website: include_update_link.then(|| RELEASES_URL.to_string()),
+        website_label: include_update_link.then(|| "Get updates".to_string()),
         ..Default::default()
     }
 }
@@ -1025,12 +1028,20 @@ mod about_tests {
     use super::{build_about_metadata, RELEASES_URL};
 
     #[test]
-    fn about_metadata_includes_version_and_update_link() {
-        let metadata = build_about_metadata("1.2.3");
+    fn about_metadata_includes_version_and_supported_update_link() {
+        let metadata = build_about_metadata("1.2.3", true);
 
         assert_eq!(metadata.name.as_deref(), Some("CodeNomad"));
         assert_eq!(metadata.version.as_deref(), Some("1.2.3"));
         assert_eq!(metadata.website.as_deref(), Some(RELEASES_URL));
         assert_eq!(metadata.website_label.as_deref(), Some("Get updates"));
+    }
+
+    #[test]
+    fn about_metadata_omits_unsupported_update_link() {
+        let metadata = build_about_metadata("1.2.3", false);
+
+        assert_eq!(metadata.website, None);
+        assert_eq!(metadata.website_label, None);
     }
 }
