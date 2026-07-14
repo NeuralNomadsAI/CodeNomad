@@ -153,6 +153,34 @@ describe("instance runtime authority", () => {
     })
   })
 
+  it("clears an active child selection when its selected parent is deleted", () => {
+    const instanceId = "deleted-selected-parent"
+    const parentId = "parent"
+    const childId = "child"
+    const parent = { id: parentId, instanceId, parentId: null, title: "Parent", status: "idle" }
+    const child = { id: childId, instanceId, parentId, title: "Child", status: "idle" }
+    setSessions((prev) => {
+      const next = new Map(prev)
+      next.set(instanceId, new Map<string, any>([[parentId, parent], [childId, child]]))
+      return next
+    })
+    setActiveParentSession(instanceId, parentId)
+    setActiveSession(instanceId, childId)
+
+    removeSessionRuntimeState(instanceId, parentId)
+
+    assert.equal(activeParentSessionId().has(instanceId), false)
+    assert.equal(activeSessionId().has(instanceId), false)
+
+    clearInstanceSessionSelection(instanceId)
+    clearInstanceDeletedSessionAuthority(instanceId)
+    setSessions((prev) => {
+      const next = new Map(prev)
+      next.delete(instanceId)
+      return next
+    })
+  })
+
   it("tombstones failed hydration preservation only after explicit instance removal", () => {
     const instanceId = "failed-hydration-removal"
     let preservation = createRestorableSessionPreservation({

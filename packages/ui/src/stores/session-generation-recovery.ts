@@ -38,6 +38,28 @@ export function mergeFetchedSessionRuntimeState(
   if (deleted) return null
   if (captured && !latest) return null
   if (!latest || (latest === captured && latest.generationAdmissionToken === undefined)) return fetched
+  if (captured && latest !== captured) {
+    const merged = { ...fetched } as Record<string, unknown>
+    const capturedRecord = captured as unknown as Record<string, unknown>
+    const latestRecord = latest as unknown as Record<string, unknown>
+    for (const key of new Set([...Object.keys(capturedRecord), ...Object.keys(latestRecord)])) {
+      if (!Object.is(capturedRecord[key], latestRecord[key])) merged[key] = latestRecord[key]
+    }
+    if (
+      (fetched.status === "working" || fetched.status === "compacting")
+      && latest.generationAdmissionToken === undefined
+      && latest.runtimeStatusKnown === false
+      && latest.generationRecovery === "pending"
+    ) {
+      merged.status = fetched.status
+      merged.runtimeStatusKnown = fetched.runtimeStatusKnown
+      merged.generationRecovery = fetched.generationRecovery
+      merged.generationAdmissionToken = undefined
+      merged.retry = fetched.retry
+      merged.idleSince = fetched.idleSince
+    }
+    return merged as unknown as Session
+  }
   return {
     ...fetched,
     ...latest,

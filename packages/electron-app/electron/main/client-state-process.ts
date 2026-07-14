@@ -426,7 +426,8 @@ function acquireMarkerBackedProcessOwnerLock(
   liveOwnerWaitMs: number,
   processStartIdentity: ProcessStartIdentityLookup,
 ): ProcessOwnerLockAcquisition {
-  while (true) {
+  let lastAcquisition: ProcessOwnerLockAcquisition = { acquired: false }
+  for (let recoveryAttempt = 0; recoveryAttempt < PRIMARY_LOCK_ACQUIRE_ATTEMPTS; recoveryAttempt += 1) {
     const acquisition = acquireProcessOwnerLockWithStatus(
       path,
       owner,
@@ -435,6 +436,7 @@ function acquireMarkerBackedProcessOwnerLock(
       liveOwnerWaitMs,
       processStartIdentity,
     )
+    lastAcquisition = acquisition
     if (acquisition.acquired || !acquisition.liveOwner) {
       if (acquisition.acquired) return acquisition
       continue
@@ -461,6 +463,7 @@ function acquireMarkerBackedProcessOwnerLock(
       waitForLockRetry()
     }
   }
+  return lastAcquisition
 }
 
 export function electClientStateProcess(

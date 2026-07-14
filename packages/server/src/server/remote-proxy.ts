@@ -10,6 +10,7 @@ const LOOPBACK_HOST = "127.0.0.1"
 const BOOTSTRAP_PAGE_PATH = "/__codenomad/auth/token"
 const BOOTSTRAP_EXCHANGE_PATH = "/__codenomad/api/auth/token"
 const SESSION_IDLE_TTL_MS = 30 * 60_000
+const SESSION_DISPOSAL_TIMEOUT_MS = 5_000
 
 interface RemoteProxySession {
   id: string
@@ -22,7 +23,8 @@ interface RemoteProxySession {
   activated: boolean
   cookiePrefix: string
   app: FastifyInstance
-  dispatcher?: Agent
+  dispatcher: Agent
+  abortController: AbortController
   createdAt: number
   lastAccessAt: number
 }
@@ -31,6 +33,7 @@ export interface RemoteProxySessionManagerOptions {
   authManager: AuthManager
   logger: Logger
   httpsOptions?: { key: string | Buffer; cert: string | Buffer; ca?: string | Buffer }
+  disposalTimeoutMs?: number
 }
 
 export interface RemoteProxySessionCreateResult {
@@ -41,12 +44,18 @@ export interface RemoteProxySessionCreateResult {
 export class RemoteProxySessionManager {
   private readonly sessions = new Map<string, RemoteProxySession>()
   private readonly pendingCreations = new Set<Promise<RemoteProxySessionCreateResult>>()
+  private readonly pendingDisposals = new Set<Promise<boolean>>()
+  private readonly disposalFailures: unknown[] = []
   private readonly cleanupTimer: NodeJS.Timeout
+  private readonly disposalTimeoutMs: number
   private shuttingDown = false
 
   constructor(private readonly options: RemoteProxySessionManagerOptions) {
+    this.disposalTimeoutMs = Math.max(1, options.disposalTimeoutMs ?? SESSION_DISPOSAL_TIMEOUT_MS)
     this.cleanupTimer = setInterval(() => {
-      void this.cleanupExpiredSessions()
+      void this.cleanupExpiredSessions().catch((error) => {
+        this.options.logger.error({ err: error }, "Failed to dispose expired remote proxy session")
+      })
     }, 60_000)
     this.cleanupTimer.unref()
   }
@@ -73,8 +82,9 @@ export class RemoteProxySessionManager {
     const targetBaseUrl = normalizeBaseUrl(baseUrl)
     const sessionId = randomUUID()
     const bootstrapToken = randomBytes(32).toString("base64url")
-    const dispatcher = skipTlsVerify ? new Agent({ connect: { rejectUnauthorized: false } }) : undefined
-    const app = Fastify({ logger: false, https: this.options.httpsOptions })
+    const dispatcher = new Agent(skipTlsVerify ? { connect: { rejectUnauthorized: false } } : {})
+    const abortController = new AbortController()
+    const app = Fastify({ logger: false, https: this.options.httpsOptions, forceCloseConnections: true })
     let session: RemoteProxySession | null = null
 
     app.removeAllContentTypeParsers()
@@ -147,7 +157,13 @@ export class RemoteProxySessionManager {
 
     const addressInfo = await app.listen({ host: LOOPBACK_HOST, port: 0 })
     if (this.shuttingDown) {
-      await Promise.all([dispatcher?.close(), app.close()])
+      abortController.abort()
+      try {
+        await this.disposeResources(app, dispatcher)
+      } catch (error) {
+        this.disposalFailures.push(error)
+        throw error
+      }
       throw new Error("Remote proxy session manager is shutting down")
     }
     const address = new URL(addressInfo)
@@ -167,6 +183,7 @@ export class RemoteProxySessionManager {
       cookiePrefix: `cnrp_${randomBytes(6).toString("hex")}_`,
       app,
       dispatcher,
+      abortController,
       createdAt: Date.now(),
       lastAccessAt: Date.now(),
     }
@@ -187,8 +204,20 @@ export class RemoteProxySessionManager {
   async shutdown(): Promise<void> {
     this.shuttingDown = true
     clearInterval(this.cleanupTimer)
+    const disposals = new Set(this.pendingDisposals)
     await Promise.allSettled(Array.from(this.pendingCreations))
-    await Promise.all(Array.from(this.sessions.keys(), (sessionId) => this.disposeSession(sessionId)))
+    for (const sessionId of this.sessions.keys()) disposals.add(this.disposeSession(sessionId))
+    while (this.pendingDisposals.size > 0) {
+      const pending = Array.from(this.pendingDisposals)
+      for (const disposal of pending) disposals.add(disposal)
+      await Promise.allSettled(pending)
+    }
+    const results = await Promise.allSettled(disposals)
+    const failures = [
+      ...this.disposalFailures,
+      ...results.flatMap((result) => result.status === "rejected" ? [result.reason] : []),
+    ]
+    if (failures.length > 0) throw createDisposalError("Remote proxy shutdown failed", failures)
   }
 
   private async cleanupExpiredSessions() {
@@ -201,17 +230,53 @@ export class RemoteProxySessionManager {
     }
   }
 
-  private async disposeSession(sessionId: string): Promise<boolean> {
+  private disposeSession(sessionId: string): Promise<boolean> {
     const session = this.sessions.get(sessionId)
     if (!session) {
-      return false
+      return Promise.resolve(false)
     }
 
     this.sessions.delete(sessionId)
-    await Promise.all([session.dispatcher?.close(), session.app.close()])
-    this.options.logger.info({ sessionId }, "Disposed remote proxy session")
-    return true
+    session.abortController.abort()
+    const disposal = this.disposeResources(session.app, session.dispatcher)
+      .then(() => {
+        this.options.logger.info({ sessionId }, "Disposed remote proxy session")
+        return true
+      })
+      .catch((error) => {
+        this.disposalFailures.push(error)
+        throw error
+      })
+    this.pendingDisposals.add(disposal)
+    void disposal.then(
+      () => this.pendingDisposals.delete(disposal),
+      () => this.pendingDisposals.delete(disposal),
+    )
+    return disposal
   }
+
+  private async disposeResources(app: FastifyInstance, dispatcher: Agent): Promise<void> {
+    app.server.closeAllConnections?.()
+    const disposal = Promise.allSettled([app.close(), dispatcher.destroy()])
+    let timeout: NodeJS.Timeout | undefined
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => reject(new Error(
+        `Remote proxy disposal timed out after ${this.disposalTimeoutMs}ms`,
+      )), this.disposalTimeoutMs)
+      timeout.unref()
+    })
+    try {
+      const results = await Promise.race([disposal, deadline])
+      const failures = results.flatMap((result) => result.status === "rejected" ? [result.reason] : [])
+      if (failures.length > 0) throw createDisposalError("Remote proxy disposal failed", failures)
+    } finally {
+      if (timeout) clearTimeout(timeout)
+    }
+  }
+}
+
+function createDisposalError(message: string, failures: unknown[]): Error & { failures: unknown[] } {
+  return Object.assign(new Error(message), { failures })
 }
 
 function normalizeBaseUrl(input: string): URL {
@@ -351,6 +416,7 @@ async function proxyRequest(args: {
     method: request.method,
     headers,
     dispatcher: session.dispatcher,
+    signal: session.abortController.signal,
     redirect: "manual",
   }
 

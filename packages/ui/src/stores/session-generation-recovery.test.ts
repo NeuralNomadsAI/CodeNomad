@@ -97,6 +97,67 @@ describe("session generation recovery", () => {
     assert.equal(merged.generationAdmissionToken, 1)
   })
 
+  it("keeps authoritative active status after a captured admission completes", () => {
+    const captured = session({
+      title: "Captured",
+      status: "idle",
+      runtimeStatusKnown: true,
+      generationRecovery: "interrupted",
+      generationAdmissionToken: undefined,
+    })
+    const latest = session({
+      title: "New SSE title",
+      metadata: { source: "sse" },
+      time: { created: 1, updated: 3 },
+      status: "idle",
+      runtimeStatusKnown: false,
+      generationRecovery: "pending",
+      generationAdmissionToken: undefined,
+    })
+    const fetched = session({
+      title: "Fetched",
+      status: "working",
+      runtimeStatusKnown: true,
+      generationRecovery: null,
+    })
+
+    const merged = mergeFetchedSessionRuntimeState(fetched, captured, latest)
+    assert.ok(merged)
+    assert.equal(merged.status, "working")
+    assert.equal(merged.runtimeStatusKnown, true)
+    assert.equal(merged.generationRecovery, null)
+    assert.equal(merged.generationAdmissionToken, undefined)
+    assert.equal(merged.title, "New SSE title")
+    assert.deepEqual(merged.metadata, { source: "sse" })
+    assert.equal(merged.time.updated, 3)
+  })
+
+  it("clears a captured admission token when authoritative work is active", () => {
+    const captured = session({
+      status: "idle",
+      runtimeStatusKnown: false,
+      generationRecovery: "pending",
+      generationAdmissionToken: 1,
+    })
+    const latest = session({
+      status: "idle",
+      runtimeStatusKnown: false,
+      generationRecovery: "pending",
+      generationAdmissionToken: undefined,
+    })
+    const fetched = session({
+      status: "working",
+      runtimeStatusKnown: true,
+      generationRecovery: null,
+    })
+
+    const merged = mergeFetchedSessionRuntimeState(fetched, captured, latest)
+    assert.equal(merged?.status, "working")
+    assert.equal(merged?.runtimeStatusKnown, true)
+    assert.equal(merged?.generationRecovery, null)
+    assert.equal(merged?.generationAdmissionToken, undefined)
+  })
+
   it("does not resurrect a session deleted while its fetch was pending", () => {
     const captured = session({ status: "idle" })
     const fetched = session({ status: "idle" })

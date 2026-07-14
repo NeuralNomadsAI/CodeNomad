@@ -299,14 +299,19 @@ export async function flushClientState(): Promise<void> {
     const pendingQueue = writeQueue
     await pendingQueue
     if (pendingQueue !== writeQueue) continue
-    if (!dirty) return
-    if (!canWriteSnapshot()) {
+    if (!dirty) {
       if (lastError !== undefined) throw lastError
+      return
+    }
+    if (!canWriteSnapshot()) {
+      const writeError = lastSaveError ?? lastError
+      if (writeError !== undefined) throw writeError
       return
     }
     attempts += 1
     try {
       await enqueuePendingSave()
+      lastError = undefined
     } catch (error) {
       lastError = error
     }

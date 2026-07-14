@@ -374,6 +374,28 @@ test("a primary lock with the current PID and an old token is reclaimed", (testC
   removeProcessOwnerLockIfOwned(primaryLockPath, owner)
 })
 
+test("a malformed marker-backed lock cannot keep the outer recovery loop alive", (testContext) => {
+  const directory = withTempDirectory(testContext)
+  const primaryLockPath = join(directory, "client-state.primary.lock")
+  const registrationLockPath = join(directory, "client-state.registration.lock")
+  const owner: ProcessOwner = { pid: process.pid, runToken: "bounded-recovery" }
+  writeFileSync(registrationLockPath, "malformed", "utf8")
+
+  const startedAt = Date.now()
+  const election = electClientStateProcess(
+    directory,
+    owner,
+    { primaryLockPath, registrationLockPath },
+    () => {},
+    () => true,
+    0,
+  )
+
+  assert.ok(Date.now() - startedAt < 500)
+  assert.equal(election.isPrimary, false)
+  removeRunningMarkerIfOwned(election.runningMarkerPath, owner)
+})
+
 test("a live registration-lock owner with a matching marker remains conservative", (testContext) => {
   const directory = withTempDirectory(testContext)
   const primaryLockPath = join(directory, "client-state.primary.lock")

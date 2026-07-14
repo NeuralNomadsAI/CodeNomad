@@ -604,8 +604,7 @@ fn main() {
         })
         .setup(|app| {
             set_windows_app_user_model_id();
-            let client_state = client_state::ClientState::initialize(&app.handle())
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+            let client_state = client_state::ClientState::initialize(&app.handle());
             app.manage(client_state);
             build_menu(&app.handle())?;
             client_state::setup_main_window(&app.handle())

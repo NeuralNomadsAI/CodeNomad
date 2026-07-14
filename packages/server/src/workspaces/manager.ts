@@ -62,7 +62,8 @@ interface WorkspaceRecord {
   descriptor: WorkspaceDescriptor
   lifecycle: WorkspaceLaunchLifecycle
   published: boolean
-  releasedCreationRequestId?: string
+  creationOwnership: WorkspaceCreationOwnership
+  releasedCreationRequestIds: Set<string>
 }
 
 export class WorkspaceLaunchCancelledError extends Error {
@@ -117,8 +118,14 @@ export interface WorkspaceCreateOptions {
 
 interface PendingWorkspaceCreation {
   promise: Promise<WorkspaceCreateResult>
-  sharedByNonRestoreCaller: boolean
+  ownership: WorkspaceCreationOwnership
   followerCount: number
+}
+
+interface WorkspaceCreationOwnership {
+  requestIds: Set<string>
+  cancelledRequestIds: Set<string>
+  sharedByNonRestoreCaller: boolean
 }
 
 export class WorkspaceManager {
@@ -245,41 +252,62 @@ export class WorkspaceManager {
       throw new Error("Workspace manager is shutting down")
     }
     if (options.forceNew) {
-      return this.createResolvedWorkspace(workspacePath, identityKey, name, options)
+      const ownership = this.createOwnership(options.requestId)
+      const result = await this.createResolvedWorkspace(workspacePath, identityKey, name, options, ownership)
+      return this.resultForCreationOwner(result, options.requestId, ownership)
     }
 
     const existing = this.findReadyWorkspaceByIdentity(identityKey, Boolean(options.requestId))
     if (existing) {
       this.options.logger.info({ workspaceId: existing.id, folder: workspacePath }, "Reusing existing workspace")
+      const record = this.workspaces.get(existing.id)
+      if (options.requestId && record && record.creationOwnership.requestIds.size > 0) {
+        record.creationOwnership.requestIds.add(options.requestId)
+        this.syncCreationOwnership(record)
+        return this.resultForCreationOwner({ workspace: existing, created: false }, options.requestId, record.creationOwnership)
+      }
       return { workspace: existing, created: false }
     }
 
     const pending = this.pendingWorkspaceCreations.get(identityKey)
     if (pending) {
       pending.followerCount += 1
-      if (!options.requestId) pending.sharedByNonRestoreCaller = true
+      if (options.requestId) {
+        pending.ownership.requestIds.add(options.requestId)
+      } else {
+        const workspaceId = this.pendingWorkspaceOwners.get(identityKey)
+        if (workspaceId) {
+          this.retainCreationOwnership(this.workspaces.get(workspaceId))
+        } else {
+          pending.ownership.sharedByNonRestoreCaller = true
+        }
+      }
       const result = await pending.promise
-      return { workspace: result.workspace, created: false }
+      return this.resultForCreationOwner({ workspace: result.workspace, created: false }, options.requestId, pending.ownership)
     }
 
+    const ownership = this.createOwnership(options.requestId)
     const creation = this.createResolvedWorkspace(
       workspacePath,
       identityKey,
       name,
       options,
+      ownership,
       (workspaceId) => {
         this.pendingWorkspaceOwners.set(identityKey, workspaceId)
       },
     )
-    const pendingCreation = { promise: creation, sharedByNonRestoreCaller: false, followerCount: 0 }
+    const pendingCreation = { promise: creation, ownership, followerCount: 0 }
     this.pendingWorkspaceCreations.set(identityKey, pendingCreation)
     try {
       const result = await creation
-      if (options.requestId && pendingCreation.sharedByNonRestoreCaller) {
-        result.workspace.requestId = undefined
-        return { workspace: result.workspace, created: false }
-      }
-      return result
+      return this.resultForCreationOwner(
+        options.requestId && pendingCreation.ownership.sharedByNonRestoreCaller
+          ? { workspace: result.workspace, created: false }
+          : result,
+        options.requestId,
+        pendingCreation.ownership,
+      )
     } finally {
       if (this.pendingWorkspaceCreations.get(identityKey) === pendingCreation) {
         this.pendingWorkspaceCreations.delete(identityKey)
@@ -293,6 +321,7 @@ export class WorkspaceManager {
     identityKey: string,
     name: string | undefined,
     options: WorkspaceCreateOptions,
+    creationOwnership: WorkspaceCreationOwnership,
     onReserved?: (workspaceId: string) => void,
   ): Promise<WorkspaceCreateResult> {
     const id = randomUUID()
@@ -333,6 +362,8 @@ export class WorkspaceManager {
         stoppedEventPublished: false,
       },
       published: false,
+      creationOwnership,
+      releasedCreationRequestIds: new Set(),
     }
 
     this.workspaces.set(id, record)
@@ -488,21 +519,20 @@ export class WorkspaceManager {
   releaseCreationRequest(id: string, requestId: string): boolean {
     const record = this.workspaces.get(id)
     if (!record?.published) return false
-    if (record.releasedCreationRequestId === requestId) return true
-    if (record.descriptor.requestId !== requestId) return false
-    record.descriptor.requestId = undefined
-    record.releasedCreationRequestId = requestId
+    if (record.releasedCreationRequestIds.has(requestId)) return true
+    if (!record.creationOwnership.requestIds.has(requestId)) return false
+    this.retainCreationOwnership(record)
     return true
   }
 
   async cancelCreationRequest(requestId: string): Promise<void> {
     for (const [workspaceId, record] of this.workspaces) {
-      if (record.descriptor.requestId !== requestId) continue
-      const identityKey = this.workspaceIdentities.get(workspaceId)
-      const pending = identityKey ? this.pendingWorkspaceCreations.get(identityKey) : undefined
-      if (pending?.sharedByNonRestoreCaller) {
-        record.descriptor.requestId = undefined
-        record.releasedCreationRequestId = requestId
+      if (record.releasedCreationRequestIds.has(requestId)) return
+      if (!record.creationOwnership.requestIds.delete(requestId)) continue
+      record.creationOwnership.cancelledRequestIds.add(requestId)
+      record.releasedCreationRequestIds.add(requestId)
+      this.syncCreationOwnership(record)
+      if (record.creationOwnership.requestIds.size > 0 || record.creationOwnership.sharedByNonRestoreCaller) {
         return
       }
       await this.delete(workspaceId)
@@ -513,6 +543,47 @@ export class WorkspaceManager {
       if (oldestRequestId) this.cancelledCreationRequests.delete(oldestRequestId)
     }
     this.cancelledCreationRequests.add(requestId)
+  }
+
+  private createOwnership(requestId?: string): WorkspaceCreationOwnership {
+    return {
+      requestIds: new Set(requestId ? [requestId] : []),
+      cancelledRequestIds: new Set(),
+      sharedByNonRestoreCaller: !requestId,
+    }
+  }
+
+  private resultForCreationOwner(
+    result: WorkspaceCreateResult,
+    requestId: string | undefined,
+    ownership: WorkspaceCreationOwnership,
+  ): WorkspaceCreateResult {
+    if (requestId && ownership.cancelledRequestIds.has(requestId)) {
+      throw new Error(`Workspace creation request ${requestId} was cancelled`)
+    }
+    return {
+      workspace: requestId && !ownership.sharedByNonRestoreCaller
+        ? { ...result.workspace, requestId }
+        : result.workspace,
+      created: result.created,
+    }
+  }
+
+  private syncCreationOwnership(record: WorkspaceRecord | undefined): void {
+    if (!record) return
+    record.descriptor.requestId = record.creationOwnership.sharedByNonRestoreCaller
+      ? undefined
+      : record.creationOwnership.requestIds.values().next().value
+  }
+
+  private retainCreationOwnership(record: WorkspaceRecord | undefined): void {
+    if (!record) return
+    for (const requestId of record.creationOwnership.requestIds) {
+      record.releasedCreationRequestIds.add(requestId)
+    }
+    record.creationOwnership.requestIds.clear()
+    record.creationOwnership.sharedByNonRestoreCaller = true
+    this.syncCreationOwnership(record)
   }
 
   async shutdown() {

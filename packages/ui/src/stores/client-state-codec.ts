@@ -212,10 +212,13 @@ function normalizeGenerationRecoveryRecord(
   return result
 }
 
-function normalizeWorkspaceTab(value: Record<string, unknown>, budget: StringBudget): RestorableWorkspaceTabState | null {
-  const folder = takeString(value.folder, MAX_PATH_LENGTH, budget)
-  if (folder === undefined) return null
-
+function normalizeWorkspaceTab(
+  value: Record<string, unknown>,
+  folder: string,
+  activeParentSessionId: string | undefined,
+  activeSessionId: string | undefined,
+  budget: StringBudget,
+): RestorableWorkspaceTabState | null {
   const normalizedDrafts = normalizeStringRecord(value.drafts ?? {}, MAX_DRAFTS_PER_TAB, MAX_DRAFT_LENGTH, budget)
   const scrollSnapshots = normalizeScrollSnapshotRecord(value.scrollSnapshots ?? {}, budget)
   const unseenIdleSince = normalizeIdleMarkerRecord(value.unseenIdleSince ?? {}, budget)
@@ -243,9 +246,6 @@ function normalizeWorkspaceTab(value: Record<string, unknown>, budget: StringBud
   }
   const projectName = takeOptionalString(value.projectName, MAX_PATH_LENGTH, budget)
   const binaryPath = takeOptionalString(value.binaryPath, MAX_PATH_LENGTH, budget)
-  const activeParentSessionId = takeOptionalString(value.activeParentSessionId, MAX_ID_LENGTH, budget)
-  const activeSessionId = takeOptionalString(value.activeSessionId, MAX_ID_LENGTH, budget)
-
   if (projectName !== undefined) result.projectName = projectName
   if (binaryPath !== undefined) result.binaryPath = binaryPath
   if (activeParentSessionId !== undefined) result.activeParentSessionId = activeParentSessionId
@@ -253,13 +253,36 @@ function normalizeWorkspaceTab(value: Record<string, unknown>, budget: StringBud
   return result
 }
 
-function normalizeTab(value: unknown, budget: StringBudget): RestorableTabState | null {
+type NormalizedTabIdentity =
+  | {
+      kind: "workspace"
+      value: Record<string, unknown>
+      folder: string
+      activeParentSessionId: string | undefined
+      activeSessionId: string | undefined
+    }
+  | { kind: "sidecar"; sidecarId: string }
+
+function normalizeTabIdentity(value: unknown, budget: StringBudget): NormalizedTabIdentity | null {
   if (!isRecord(value)) return null
 
   // `type` is accepted as an early-schema migration alias, but v1 is always
   // written with `kind` so subsequent loads have one canonical shape.
   const kind = value.kind ?? value.type
-  if (kind === "workspace" || kind === "instance") return normalizeWorkspaceTab(value, budget)
+  if (kind === "workspace" || kind === "instance") {
+    if (
+      !isRecord(value.drafts ?? {})
+      || !isRecord(value.attachments ?? {})
+      || !isRecord(value.scrollSnapshots ?? {})
+      || !isRecord(value.unseenIdleSince ?? {})
+      || !isRecord(value.generationRecovery ?? {})
+    ) return null
+    const folder = takeString(value.folder, MAX_PATH_LENGTH, budget)
+    if (folder === undefined) return null
+    const activeParentSessionId = takeOptionalString(value.activeParentSessionId, MAX_ID_LENGTH, budget)
+    const activeSessionId = takeOptionalString(value.activeSessionId, MAX_ID_LENGTH, budget)
+    return { kind: "workspace", value, folder, activeParentSessionId, activeSessionId }
+  }
   if (kind !== "sidecar") return null
 
   const sidecarId = takeString(value.sidecarId, MAX_ID_LENGTH, budget)
@@ -273,9 +296,23 @@ export function normalizeRestorableSession(value: unknown): RestorableSessionSta
 function normalizeRestorableSessionWithBudget(value: unknown, budget: StringBudget): RestorableSessionState | null {
   if (!isRecord(value) || !Array.isArray(value.tabs) || !Number.isInteger(value.activeTabIndex)) return null
 
-  const normalizedTabs: Array<{ originalIndex: number; tab: RestorableTabState }> = []
+  const normalizedIdentities: Array<{ originalIndex: number; identity: NormalizedTabIdentity }> = []
   for (const [originalIndex, rawTab] of value.tabs.slice(0, MAX_TABS).entries()) {
-    const tab = normalizeTab(rawTab, budget)
+    const identity = normalizeTabIdentity(rawTab, budget)
+    if (identity) normalizedIdentities.push({ originalIndex, identity })
+  }
+
+  const normalizedTabs: Array<{ originalIndex: number; tab: RestorableTabState }> = []
+  for (const { originalIndex, identity } of normalizedIdentities) {
+    const tab = identity.kind === "sidecar"
+      ? identity
+      : normalizeWorkspaceTab(
+          identity.value,
+          identity.folder,
+          identity.activeParentSessionId,
+          identity.activeSessionId,
+          budget,
+        )
     if (tab) normalizedTabs.push({ originalIndex, tab })
   }
 
@@ -302,14 +339,13 @@ export function decodeClientSnapshot(value: unknown): ClientSnapshotV1 | null {
   if (savedAt === undefined) return null
 
   const budget = createStringBudget()
-  const layout = normalizeStringRecord(value.layout, MAX_LAYOUT_ENTRIES, MAX_LAYOUT_VALUE_LENGTH, budget)
-  if (layout === null) return null
-
   let session: RestorableSessionState | null = null
   if (value.session !== null) {
     session = normalizeRestorableSessionWithBudget(value.session, budget)
     if (session === null) return null
   }
+  const layout = normalizeStringRecord(value.layout, MAX_LAYOUT_ENTRIES, MAX_LAYOUT_VALUE_LENGTH, budget)
+  if (layout === null) return null
 
   return {
     version: 1,

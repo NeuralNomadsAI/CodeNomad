@@ -1,9 +1,11 @@
-import type { App, BrowserWindow } from "electron"
+import type { App, BrowserWindow, Event } from "electron"
 import type { ClientStateManager } from "./client-state"
 import { MainWindowCloseController } from "./main-window-close"
 import type { CliProcessManager } from "./process-manager"
 import { flushRendererClientStateBeforeShutdown } from "./renderer-client-state-flush"
 import type { WindowStateTracker } from "./window-state"
+
+const WINDOWS_SESSION_END_FLUSH_TIMEOUT_MS = 1_500
 
 interface ClientStateLifecycleDependencies {
   app: App
@@ -13,6 +15,9 @@ interface ClientStateLifecycleDependencies {
   getAllWindows(): BrowserWindow[]
   getAllowedRendererOrigins(window?: BrowserWindow | null): string[]
   isTrustedRendererOrigin(url: string, allowedOrigins: string[]): boolean
+  windowsSessionEndFlushTimeoutMs?: number
+  rendererFlushTimeoutMs?: number
+  isWindows?: boolean
 }
 
 export class ClientStateLifecycle {
@@ -20,6 +25,8 @@ export class ClientStateLifecycle {
   private shutdownExitAllowed = false
   private trackedMainWindow: BrowserWindow | null = null
   private windowStateTracker: WindowStateTracker | null = null
+  private windowsSessionEndFlush: Promise<void> | null = null
+  private windowsSessionEndExitAllowed = false
 
   constructor(private readonly dependencies: ClientStateLifecycleDependencies) {}
 
@@ -57,6 +64,15 @@ export class ClientStateLifecycle {
       event.preventDefault()
       this.dependencies.app.quit()
     })
+
+    if (this.dependencies.isWindows ?? process.platform === "win32") {
+      window.on("query-session-end", (event: Event) => {
+        if (this.windowsSessionEndExitAllowed) return
+        event.preventDefault()
+        this.startWindowsSessionEnd(window)
+      })
+      window.on("session-end", () => this.startWindowsSessionEnd(window))
+    }
   }
 
   detachMainWindow(window: BrowserWindow): void {
@@ -108,6 +124,7 @@ export class ClientStateLifecycle {
       this.dependencies.clientStateManager.isPrimary,
       (url) =>
         this.dependencies.isTrustedRendererOrigin(url, this.dependencies.getAllowedRendererOrigins(window)),
+      this.dependencies.rendererFlushTimeoutMs,
     )
     if (result === "untrusted-origin") {
       console.warn(`[client-state] skipped renderer ${context} flush for an untrusted origin`)
@@ -120,5 +137,48 @@ export class ClientStateLifecycle {
     } else {
       await this.dependencies.clientStateManager.flush()
     }
+  }
+
+  private flushForWindowsSessionEnd(window: BrowserWindow): Promise<void> {
+    if (this.windowsSessionEndFlush) return this.windowsSessionEndFlush
+
+    const flush = async () => {
+      try {
+        await this.flushRenderer(window, "shutdown")
+      } catch (error) {
+        console.warn("[client-state] Windows session-end renderer flush failed", error)
+      }
+      try {
+        await this.flushNative()
+      } catch (error) {
+        console.warn("[client-state] Windows session-end native flush failed", error)
+      }
+      try {
+        await this.dependencies.clientStateManager.drainAndReleasePrimary()
+      } catch (error) {
+        console.warn("[client-state] Windows session-end primary release failed", error)
+      }
+      try {
+        await this.dependencies.cliManager.stop()
+      } catch (error) {
+        console.warn("[client-state] Windows session-end CLI stop failed", error)
+      }
+    }
+    this.windowsSessionEndFlush = Promise.race([
+      flush(),
+      new Promise<void>((resolve) => setTimeout(
+        resolve,
+        this.dependencies.windowsSessionEndFlushTimeoutMs ?? WINDOWS_SESSION_END_FLUSH_TIMEOUT_MS,
+      )),
+    ])
+    return this.windowsSessionEndFlush
+  }
+
+  private startWindowsSessionEnd(window: BrowserWindow): void {
+    if (this.windowsSessionEndFlush) return
+    void this.flushForWindowsSessionEnd(window).finally(() => {
+      this.windowsSessionEndExitAllowed = true
+      this.dependencies.app.exit(0)
+    })
   }
 }

@@ -98,6 +98,17 @@ function normalizeBase64(value: unknown): string | undefined {
   return value
 }
 
+function isValidFileData(value: unknown): boolean {
+  if (value instanceof Uint8Array) return true
+  if (typeof value !== "string" || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) return false
+  try {
+    base64ToBytes(value)
+    return true
+  } catch {
+    return false
+  }
+}
+
 function dataUrlPayload(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined
   const match = value.match(/^data:[^;,]+;base64,([A-Za-z0-9+/]*={0,2})$/)
@@ -131,8 +142,10 @@ function normalizeSource(
     const mime = takeString(value.mime, MAX_MIME_LENGTH, budget)
     if (path === undefined || mime === undefined) return undefined
     const hasData = value.data !== undefined || dataUrlPayload(rawUrl) !== undefined
+    const rawData = dataUrlPayload(rawUrl) ?? value.data
     const data = takeFileData(value.data, rawUrl, budget)
-    if (hasData && data === undefined) return undefined
+    const hasRestorablePath = typeof rawUrl === "string" && rawUrl.length > 0 && !rawUrl.startsWith("data:")
+    if (hasData && data === undefined && (!hasRestorablePath || !isValidFileData(rawData))) return undefined
     return data === undefined ? { type: "file", path, mime } : { type: "file", path, mime, data }
   }
   if (value.type === "text") {

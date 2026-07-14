@@ -130,7 +130,7 @@ describe("workspace identity", () => {
     assert.equal(second.workspace.status, "ready")
   })
 
-  it("keeps one cleanup owner when two restore requests share a canonical launch", async () => {
+  it("keeps both cleanup owners when two restore requests share a canonical launch", async () => {
     const { root, target, link } = await createLinkedWorkspace()
     const manager = createManager(root)
     const [first, second] = await Promise.all([
@@ -140,7 +140,87 @@ describe("workspace identity", () => {
 
     assert.equal(Number(first.created) + Number(second.created), 1)
     assert.equal(first.workspace.id, second.workspace.id)
-    assert.ok(first.workspace.requestId === "restore-first" || first.workspace.requestId === "restore-second")
+    assert.equal(first.workspace.requestId, "restore-first")
+    assert.equal(second.workspace.requestId, "restore-second")
+    assert.equal(manager.releaseCreationRequest(first.workspace.id, "restore-first"), true)
+    assert.equal(manager.releaseCreationRequest(first.workspace.id, "restore-second"), true)
+  })
+
+  it("detaches a cancelled restore follower without stopping the leader launch", async () => {
+    const { root, target, link } = await createLinkedWorkspace()
+    const manager = createManager(root)
+    const launchGate = deferred<void>()
+    let launches = 0
+    ;(manager as any).runtime.launch = async () => {
+      launches += 1
+      await launchGate.promise
+      return {
+        pid: 123,
+        port: 4321,
+        exitPromise: new Promise(() => {}),
+        cancellationPromise: new Promise(() => {}),
+        getLastOutput: () => "",
+      }
+    }
+
+    const leader = manager.create(target, undefined, { requestId: "restore-leader" })
+    const follower = manager.create(link, undefined, { requestId: "restore-follower" })
+    while (![...(manager as any).pendingWorkspaceCreations.values()][0]?.followerCount) {
+      await new Promise((resolve) => setImmediate(resolve))
+    }
+    await manager.cancelCreationRequest("restore-follower")
+    launchGate.resolve()
+
+    const leaderResult = await leader
+    await assert.rejects(follower, /creation request restore-follower was cancelled/)
+    assert.equal(launches, 1)
+    assert.equal(leaderResult.workspace.requestId, "restore-leader")
+    assert.equal(manager.list().length, 1)
+  })
+
+  it("detaches a cancelled restore leader without stopping a follower launch", async () => {
+    const { root, target, link } = await createLinkedWorkspace()
+    const manager = createManager(root)
+    const launchGate = deferred<void>()
+    ;(manager as any).runtime.launch = async () => {
+      await launchGate.promise
+      return {
+        pid: 123,
+        port: 4321,
+        exitPromise: new Promise(() => {}),
+        cancellationPromise: new Promise(() => {}),
+        getLastOutput: () => "",
+      }
+    }
+
+    const leader = manager.create(target, undefined, { requestId: "restore-leader" })
+    const follower = manager.create(link, undefined, { requestId: "restore-follower" })
+    while (![...(manager as any).pendingWorkspaceCreations.values()][0]?.followerCount) {
+      await new Promise((resolve) => setImmediate(resolve))
+    }
+    await manager.cancelCreationRequest("restore-leader")
+    launchGate.resolve()
+
+    await assert.rejects(leader, /creation request restore-leader was cancelled/)
+    const followerResult = await follower
+    assert.equal(followerResult.workspace.requestId, "restore-follower")
+    assert.equal(manager.list().length, 1)
+  })
+
+  it("retains a shared workspace after one restore owner releases and another cancels", async () => {
+    const { root, target, link } = await createLinkedWorkspace()
+    const manager = createManager(root)
+    const [first, second] = await Promise.all([
+      manager.create(target, undefined, { requestId: "restore-first" }),
+      manager.create(link, undefined, { requestId: "restore-second" }),
+    ])
+
+    assert.equal(manager.releaseCreationRequest(first.workspace.id, "restore-first"), true)
+    await manager.cancelCreationRequest("restore-second")
+
+    assert.equal(manager.list().length, 1)
+    assert.equal(manager.get(second.workspace.id)?.requestId, undefined)
+    assert.equal(manager.releaseCreationRequest(second.workspace.id, "restore-second"), true)
   })
 
   it("releases a failed identity reservation so creation can be retried", async () => {

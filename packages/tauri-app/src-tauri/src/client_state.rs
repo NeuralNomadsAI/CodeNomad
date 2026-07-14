@@ -84,9 +84,39 @@ pub struct ClientState {
 type StateWriter = std::sync::Arc<dyn Fn(&Path, &[u8]) -> Result<(), String> + Send + Sync>;
 
 impl ClientState {
-    pub fn initialize(app: &AppHandle) -> Result<Self, String> {
-        let app_data_dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
-        Self::initialize_at(&app_data_dir)
+    pub fn initialize(app: &AppHandle) -> Self {
+        match app.path().app_data_dir() {
+            Ok(app_data_dir) => Self::initialize_managed_at(&app_data_dir),
+            Err(err) => {
+                eprintln!("[client-state] initialization failed; restore disabled: {err}");
+                Self::disabled(PathBuf::new())
+            }
+        }
+    }
+
+    fn initialize_managed_at(app_data_dir: &Path) -> Self {
+        Self::initialize_at(app_data_dir).unwrap_or_else(|err| {
+            eprintln!("[client-state] initialization failed; restore disabled: {err}");
+            Self::disabled(app_data_dir.join(CLIENT_STATE_FILENAME))
+        })
+    }
+
+    fn disabled(state_path: PathBuf) -> Self {
+        let state = PersistedClientState {
+            restore_enabled: false,
+            ..PersistedClientState::default()
+        };
+        Self {
+            state_path,
+            process: process::ProcessState::disabled(),
+            state: Mutex::new(state),
+            zoom_level: Mutex::new(DEFAULT_ZOOM_LEVEL),
+            write_lock: Mutex::new(()),
+            save_generation: AtomicU64::new(0),
+            persistence_suppressed: AtomicBool::new(true),
+            renderer_access: access::RendererAccess::default(),
+            write_state: std::sync::Arc::new(write_atomically),
+        }
     }
 
     fn initialize_at(app_data_dir: &Path) -> Result<Self, String> {
@@ -142,9 +172,14 @@ impl ClientState {
 
     fn load(&self) -> Result<ClientStateLoadResult, String> {
         if !self.is_primary() {
+            let restore_enabled = self
+                .state
+                .lock()
+                .map_err(|err| err.to_string())?
+                .restore_enabled;
             return Ok(ClientStateLoadResult {
                 is_primary: false,
-                restore_enabled: true,
+                restore_enabled,
                 snapshot: Value::Null,
             });
         }

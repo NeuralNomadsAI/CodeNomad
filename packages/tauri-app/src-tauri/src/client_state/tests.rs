@@ -322,6 +322,25 @@ fn secondary_never_reads_or_writes_primary_state() {
 }
 
 #[test]
+fn initialization_failure_is_managed_as_non_primary_with_restore_disabled() {
+    let directory = tempfile::tempdir().unwrap();
+    let invalid_app_data_dir = directory.path().join("not-a-directory");
+    fs::write(&invalid_app_data_dir, b"occupied").unwrap();
+
+    let state = ClientState::initialize_managed_at(&invalid_app_data_dir);
+
+    assert_eq!(
+        state.load().unwrap(),
+        ClientStateLoadResult {
+            is_primary: false,
+            restore_enabled: false,
+            snapshot: Value::Null,
+        }
+    );
+    assert!(!state.save_snapshot(json!({ "ignored": true })).unwrap());
+}
+
+#[test]
 fn disabled_primary_loads_role_and_setting_while_writes_are_noops() {
     let directory = tempfile::tempdir().unwrap();
     let state = ClientState::initialize_at(directory.path()).unwrap();
