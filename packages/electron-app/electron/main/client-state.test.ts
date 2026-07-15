@@ -47,19 +47,34 @@ test("cross-host ownership is required in addition to each host-local election",
   const root = mkdtempSync(join(tmpdir(), "codenomad-cross-host-state-"))
   const electronDirectory = join(root, "electron"), tauriDirectory = join(root, "tauri"), election = join(root, "election")
   t.after(() => rmSync(root, { recursive: true, force: true }))
-  const primary = new ClientStateManager(tauriDirectory, undefined, { crossHostElectionDirectory: election })
+  const identities = new Map([[8101, "tauri-start"], [8102, "electron-start"], [8103, "successor-start"]])
+  const crossHostDependencies = { pidAlive: (pid: number) => identities.has(pid), processStartIdentity: (pid: number) => identities.get(pid) }
+  const primary = new ClientStateManager(tauriDirectory, undefined, {
+    crossHostElectionDirectory: election,
+    crossHostDependencies,
+    processOwner: { pid: 8101, runToken: "tauri", processStartIdentity: "tauri-start" },
+  })
   mkdirSync(electronDirectory)
   writeFileSync(join(electronDirectory, "client-state.json"), JSON.stringify({
     version: 1,
     restoreEnabled: true,
     snapshot: { tabs: ["must-not-restore"] },
   }))
-  const secondary = new ClientStateManager(electronDirectory, undefined, { crossHostElectionDirectory: election })
+  const secondary = new ClientStateManager(electronDirectory, undefined, {
+    crossHostElectionDirectory: election,
+    crossHostDependencies,
+    processOwner: { pid: 8102, runToken: "electron", processStartIdentity: "electron-start" },
+  })
   assert.deepEqual(secondary.loadClientState(), { isPrimary: false, restoreEnabled: true, snapshot: null })
   await secondary.drainAndReleasePrimary()
 
   await primary.drainAndReleasePrimary()
-  const successor = new ClientStateManager(electronDirectory, undefined, { crossHostElectionDirectory: election })
+  identities.delete(8101); identities.delete(8102)
+  const successor = new ClientStateManager(electronDirectory, undefined, {
+    crossHostElectionDirectory: election,
+    crossHostDependencies,
+    processOwner: { pid: 8103, runToken: "successor", processStartIdentity: "successor-start" },
+  })
   assert.equal(successor.isPrimary, true)
   await successor.drainAndReleasePrimary()
 })
@@ -72,7 +87,7 @@ test("ownership loss immediately disables restore reads and mutations", async (t
     window: { width: 900, height: 700 },
   })
   const manager = h.create()
-  writeFileSync(join(h.directory, "election", "primary.owner.json"), "malformed")
+  writeFileSync(join(h.directory, "election", "primary.owner.json", "owner.json"), "malformed")
   assert.equal(manager.isPrimary, false)
   assert.deepEqual(manager.loadClientState(), { isPrimary: false, restoreEnabled: true, snapshot: null })
   assert.equal(manager.getWindowState(), undefined)
@@ -111,7 +126,7 @@ test("successful clear suppresses saves, including after failed re-enable", asyn
 
 test("disabling restore atomically removes snapshot/window and survives restart", async (t) => {
   const h = harness(t)
-  const manager = h.create()
+  const manager = h.create(undefined, { pid: process.pid, runToken: "before-restart", processStartIdentity: "old-start" })
   await manager.saveClientState({ kept: true })
   await manager.saveWindowState({ bounds: { x: 10, y: 20, width: 1200, height: 800 }, maximized: true, fullscreen: false, zoomFactor: 1.25 })
   const before = h.writes()
@@ -173,7 +188,7 @@ test("an old writer cannot replace a successor after PID reuse", async (t) => {
 test("future envelopes are preserved until a successful explicit clear", async (t) => {
   const future = { version: 7, restoreEnabled: false, snapshot: { future: true }, futurePreference: "keep" }
   const h = harness(t, future)
-  const manager = h.create()
+  const manager = h.create(undefined, { pid: process.pid, runToken: "future-before-restart", processStartIdentity: "old-start" })
   assert.deepEqual(manager.loadClientState(), { isPrimary: true, restoreEnabled: true, snapshot: null })
   assert.equal(await manager.saveClientState({ ignored: true }), true)
   assert.equal(await manager.setRestoreEnabled(false), false)

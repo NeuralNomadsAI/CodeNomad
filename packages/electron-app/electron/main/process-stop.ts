@@ -19,8 +19,6 @@ interface StopManagedChildOptions {
   isExited(): boolean
   force(): boolean
   isCleanupComplete?(): boolean
-  requestGracefulStop?(): void
-  useStdinShutdown?: boolean
   deadlineMs?: number
   forceRetryMs?: number
   forceAttempts?: number
@@ -187,15 +185,6 @@ export function stopManagedChild(options: StopManagedChildOptions): Promise<void
       options.warn?.(`CLI cleanup timed out after ${deadlineMs}ms; forcing process tree termination`)
       force()
     }, deadlineMs)
-
-    if (options.useStdinShutdown === false) {
-      try {
-        options.requestGracefulStop?.()
-      } catch (error) {
-        options.warn?.("Failed to request graceful CLI termination; waiting until the force deadline", error)
-      }
-      return
-    }
 
     const stdin = options.child.stdin
     if (!stdin || stdin.destroyed || stdin.writable === false) {

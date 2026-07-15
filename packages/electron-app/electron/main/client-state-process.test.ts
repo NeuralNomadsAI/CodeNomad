@@ -19,6 +19,12 @@ test("legacy Tauri markers block only while their PID may be live", (t) => {
   writeFileSync(join(directory, "client-state.running.456.2.lock"), "")
   assert.equal(hasLiveTauriClient(directory, (pid) => pid === 456), true)
   assert.equal(hasLiveTauriClient(directory, () => false), false)
+  assert.equal(hasLiveTauriClient(directory, (pid) => pid === 456, () => "reused", () => false), false)
+  assert.equal(hasLiveTauriClient(directory, (pid) => pid === 456, () => undefined, () => undefined), true)
+  assert.equal(hasLiveTauriClient(directory, (pid) => pid === 456, () => "tauri-start", () => true), true)
+  assert.equal(hasLiveTauriClient(directory, (pid) => pid === 456, () => "tauri-start", () => true, [
+    { pid: 456, runToken: "upgraded", processStartIdentity: "tauri-start" },
+  ]), false)
 })
 
 interface Child { process: ChildProcessWithoutNullStreams; result: Promise<{ isPrimary: boolean }> }

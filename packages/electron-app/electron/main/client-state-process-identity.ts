@@ -1,7 +1,9 @@
 import { spawnSync } from "node:child_process"
-import { readFileSync } from "node:fs"
+import { readFileSync, readlinkSync } from "node:fs"
+import { basename, resolve } from "node:path"
 
 export type ProcessStartIdentityLookup = (pid: number) => string | undefined
+export type ExpectedProcessLookup = (pid: number) => boolean | undefined
 
 function readLinuxProcessStartIdentity(pid: number): string | undefined {
   const stat = readFileSync(`/proc/${pid}/stat`, "utf8")
@@ -59,4 +61,24 @@ export function getProcessStartIdentity(pid: number): string | undefined {
   }
 
   return undefined
+}
+
+export function isExpectedTauriProcess(pid: number): boolean | undefined {
+  try {
+    const executable = process.platform === "linux"
+      ? readlinkSync(`/proc/${pid}/exe`)
+      : readCommandIdentity(
+          process.platform === "win32" ? "powershell.exe" : "ps",
+          process.platform === "win32"
+            ? ["-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${pid} -ErrorAction Stop).Path`]
+            : ["-p", String(pid), "-o", "comm="],
+          "path",
+        )?.slice(5)
+    if (!executable) return undefined
+    if (resolve(executable).toLowerCase() === resolve(process.execPath).toLowerCase()) return false
+    return ["codenomad", "codenomad.exe", "codenomad-tauri", "codenomad-tauri.exe"]
+      .includes(basename(executable).toLowerCase())
+  } catch {
+    return undefined
+  }
 }

@@ -160,6 +160,20 @@ describe("workspace manager lifecycle", () => {
     assert.deepEqual(harness.stopped, [workspaceId])
   })
 
+  it("retains more than 1024 unresolved pre-creation cancellations", async () => {
+    const harness = createHarness()
+    const requestIds = Array.from({ length: 1_025 }, (_, index) => `pending-cancel-${index}`)
+    await Promise.all(requestIds.map((requestId) => harness.manager.cancelCreationRequest(requestId)))
+
+    assert.equal((harness.manager as any).cancelledCreationRequests.size, requestIds.length)
+    await assert.rejects(
+      harness.manager.create(process.cwd(), undefined, { requestId: requestIds[0] }),
+      /was cancelled/,
+    )
+    assert.equal((harness.manager as any).cancelledCreationRequests.has(requestIds[0]), false)
+    assert.equal((harness.manager as any).cancelledCreationRequests.size, requestIds.length - 1)
+  })
+
   it("returns scoped correlation while an ordinary shared launch remains retained", async () => {
     const harness = createHarness()
     const ordinary = harness.manager.create(process.cwd())

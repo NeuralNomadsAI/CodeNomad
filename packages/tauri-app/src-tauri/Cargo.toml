@@ -29,7 +29,6 @@ tauri-plugin-opener = "2"
 tauri-plugin-global-shortcut = "2"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
-sha2 = "0.10"
 tauri-plugin-notification = "2"
 
 [target.'cfg(windows)'.dependencies]

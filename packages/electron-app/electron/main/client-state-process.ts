@@ -1,7 +1,9 @@
 import { closeSync, fsyncSync, openSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs"
 import { basename, join } from "node:path"
 import {
+  type ExpectedProcessLookup,
   getProcessStartIdentity,
+  isExpectedTauriProcess,
   type ProcessStartIdentityLookup,
 } from "./client-state-process-identity"
 
@@ -94,6 +96,9 @@ export function isPidAlive(pid: number): boolean {
 export function hasLiveTauriClient(
   tauriDataPath: string,
   pidAlive: (pid: number) => boolean = isPidAlive,
+  processStartIdentity: ProcessStartIdentityLookup = getProcessStartIdentity,
+  expectedProcess: ExpectedProcessLookup = isExpectedTauriProcess,
+  upgradedParticipants: readonly ProcessOwner[] = [],
 ): boolean {
   let entries: string[]
   try {
@@ -106,7 +111,10 @@ export function hasLiveTauriClient(
     const match = /^client-state\.running\.(\d+)\..+\.lock$/.exec(name)
     if (!match) return false
     const pid = Number(match[1])
-    return Number.isInteger(pid) && pid > 0 && pid !== process.pid && pidAlive(pid)
+    if (!Number.isInteger(pid) || pid <= 0 || !pidAlive(pid)) return false
+    const liveIdentity = processStartIdentity(pid)
+    if (liveIdentity && upgradedParticipants.some((owner) => owner.pid === pid && owner.processStartIdentity === liveIdentity)) return false
+    return expectedProcess(pid) !== false
   })
 }
 

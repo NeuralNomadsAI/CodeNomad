@@ -472,7 +472,8 @@ fn ownership_loss_blocks_the_final_atomic_replacement() {
     let owner_path = directory
         .path()
         .join(".cross-host-election")
-        .join("primary.owner.json");
+        .join("primary.owner.json")
+        .join("owner.json");
     let state = ClientState::initialize_at_with_writer(
         directory.path(),
         Arc::new(move |path, bytes, ownership_valid| {

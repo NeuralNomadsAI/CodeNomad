@@ -961,14 +961,14 @@ async function releaseRestoreCreatedInstance(instanceId: string, requestId: stri
     }))
 }
 
-async function cancelRestoreCreationRequest(instanceId: string, requestId: string): Promise<void> {
+async function cancelRestoreCreationRequest(instanceId: string | undefined, requestId: string): Promise<void> {
   await retryWithBackoff(() => serverApi.cancelWorkspaceCreation(requestId), {
     maxAttempts: 4,
     initialDelayMs: 250,
     maxDelayMs: 2_000,
     backoffMultiplier: 4,
   })
-  restoreCreatedWorkspaceCleanup.forgetRequest(instanceId, requestId)
+  if (instanceId) restoreCreatedWorkspaceCleanup.forgetRequest(instanceId, requestId)
 }
 
 function claimRestoreCreatedInstanceForUser(instanceId: string): void {
@@ -1000,7 +1000,7 @@ async function createInstance(
     const trackedCleanup = restoreCreatedWorkspaceCleanup.quarantineRequest(restoreRequestId)
     cancellationRequest ??= trackedCleanup
       ? trackedCleanup.then(() => true)
-      : serverApi.cancelWorkspaceCreation(restoreRequestId)
+      : cancelRestoreCreationRequest(undefined, restoreRequestId)
           .then(() => true, (error) => {
             log.warn("Failed to cancel restore workspace creation", { requestId: restoreRequestId, error })
             return false

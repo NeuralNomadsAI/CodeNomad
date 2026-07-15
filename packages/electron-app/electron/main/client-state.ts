@@ -15,6 +15,7 @@ import {
 import { getProcessStartIdentity } from "./client-state-process-identity"
 import {
   CrossHostRegistration,
+  crossHostParticipants,
   resolveCrossHostElectionDirectory,
   resolveLegacyTauriDataDirectory,
   type CrossHostLeaseDependencies,
@@ -143,26 +144,31 @@ export class ClientStateManager {
       { primaryLockPath: this.lockPath, registrationLockPath },
       (message, error) => console.warn(`[client-state] ${message}`, error),
     )
-    let legacyPrimaryBlocked = false
+    const crossHostElectionDirectory = options?.crossHostElectionDirectory ?? resolveCrossHostElectionDirectory()
     const legacyTauriDataPath = options?.legacyTauriDataPath === undefined
       ? (options?.crossHostElectionDirectory ? null : resolveLegacyTauriDataDirectory())
       : options.legacyTauriDataPath
     this.legacyTauriDataPath = legacyTauriDataPath
-    if (legacyTauriDataPath) {
-      try {
-        legacyPrimaryBlocked = hasLiveTauriClient(legacyTauriDataPath)
-      } catch (error) {
-        console.warn("[client-state] failed to inspect legacy Tauri process markers; continuing as secondary", error)
-        legacyPrimaryBlocked = true
-      }
-    }
-
-    this.primary = election && !legacyPrimaryBlocked
+    this.primary = election
     try {
       this.crossHostRegistration = CrossHostRegistration.register(
-        options?.crossHostElectionDirectory ?? resolveCrossHostElectionDirectory(),
+        crossHostElectionDirectory,
         this.owner,
-        this.primary,
+        () => {
+          if (!this.primary || !legacyTauriDataPath) return this.primary
+          try {
+            return !hasLiveTauriClient(
+              legacyTauriDataPath,
+              options?.crossHostDependencies?.pidAlive,
+              options?.crossHostDependencies?.processStartIdentity,
+              undefined,
+              crossHostParticipants(crossHostElectionDirectory),
+            )
+          } catch (error) {
+            console.warn("[client-state] failed to inspect legacy Tauri process markers; continuing as secondary", error)
+            return false
+          }
+        },
         options?.crossHostDependencies,
       )
     } catch (error) {
@@ -184,7 +190,7 @@ export class ClientStateManager {
     if (!this.primary || !this.crossHostRegistration?.isPrimary) return false
     if (!this.legacyTauriDataPath) return true
     try {
-      return !hasLiveTauriClient(this.legacyTauriDataPath)
+      return !hasLiveTauriClient(this.legacyTauriDataPath, undefined, undefined, undefined, crossHostParticipants(this.crossHostRegistration.path))
     } catch (error) {
       console.warn("[client-state] failed to recheck legacy Tauri process markers; ownership disabled", error)
       return false

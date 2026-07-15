@@ -1180,13 +1180,6 @@ async function cleanupBlankSessions(instanceId: string, excludeSessionId?: strin
   }
 }
 
-// Backward compatibility aliases for renamed exports
-const expandedSessionParents = expandedSessions
-const isSessionParentExpanded = isSessionExpanded
-const setSessionParentExpanded = setSessionExpanded
-const toggleSessionParentExpanded = toggleSessionExpanded
-const ensureSessionParentExpanded = ensureSessionExpanded
-
 export {
   sessions,
   setSessions,
@@ -1267,11 +1260,6 @@ export {
   getSessionInfo,
   isBlankSession,
   cleanupBlankSessions,
-  expandedSessionParents,
-  isSessionParentExpanded,
-  setSessionParentExpanded,
-  toggleSessionParentExpanded,
-  ensureSessionParentExpanded,
   SESSION_PAGE_SIZE,
   sessionPagination,
   sessionSearch,

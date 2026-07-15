@@ -1,39 +1,23 @@
-import { createHash, randomUUID } from "node:crypto"
-import {
-  closeSync,
-  fsyncSync,
-  linkSync,
-  mkdirSync,
-  openSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  rmdirSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs"
+import { randomUUID } from "node:crypto"
+import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { dirname, join, posix, win32 } from "node:path"
+import { basename, dirname, join, posix, win32 } from "node:path"
 import { getProcessStartIdentity, type ProcessStartIdentityLookup } from "./client-state-process-identity"
 import { hasErrorCode, isPidAlive, type ProcessOwner } from "./client-state-process"
 
-export const CROSS_HOST_OWNER_FILENAME = "primary.owner.json"
+export const CROSS_HOST_OWNER_DIRECTORY = "primary.owner.json"
+const OWNER_FILENAME = "owner.json"
 const PARTICIPANT_PREFIX = "participant."
 const PARTICIPANT_SUFFIX = ".json"
-const REMOVAL_CLAIM_PREFIX = "removed."
-const REMOVAL_CLAIM_SUFFIX = ".claim"
+const RETIRED_PREFIX = "retired."
 const ACQUIRE_ATTEMPTS = 10
-const PROTOCOL_LOCK_DIRECTORY = "protocol.lock"
-const PROTOCOL_LOCK_OWNER_FILENAME = "owner.json"
-const RETIRED_LOCK_PREFIX = "retired."
-const RETIRED_LOCK_SUFFIX = ".lock"
-const PROTOCOL_LOCK_ATTEMPTS = 500
-const PROTOCOL_LOCK_RETRY_MS = 10
 
 export interface CrossHostLeaseDependencies {
   pidAlive(pid: number): boolean
   processStartIdentity: ProcessStartIdentityLookup
   onParticipantPublished?(): void
+  onOwnerPrepared?(): void
+  onOwnerRetired?(): void
 }
 
 const defaultDependencies: CrossHostLeaseDependencies = {
@@ -68,107 +52,81 @@ export function resolveLegacyTauriDataDirectory(
   const home = platform === "win32"
     ? validHome(environment.USERPROFILE, platform) ?? validHome(environment.HOME, platform) ?? fallbackHome
     : validHome(environment.HOME, platform) ?? fallbackHome
-  let appDataRoot: string
-  if (platform === "win32") {
-    appDataRoot = validHome(environment.APPDATA, platform) ?? pathApi.join(home, "AppData", "Roaming")
-  } else if (platform === "darwin") {
-    appDataRoot = pathApi.join(home, "Library", "Application Support")
-  } else {
-    appDataRoot = validHome(environment.XDG_DATA_HOME, platform) ?? pathApi.join(home, ".local", "share")
-  }
-  return pathApi.join(appDataRoot, "ai.neuralnomads.codenomad.client")
+  const root = platform === "win32"
+    ? validHome(environment.APPDATA, platform) ?? pathApi.join(home, "AppData", "Roaming")
+    : platform === "darwin"
+      ? pathApi.join(home, "Library", "Application Support")
+      : validHome(environment.XDG_DATA_HOME, platform) ?? pathApi.join(home, ".local", "share")
+  return pathApi.join(root, "ai.neuralnomads.codenomad.client")
 }
 
 export function createCrossHostOwner(): ProcessOwner | undefined {
   const processStartIdentity = getProcessStartIdentity(process.pid)
-  if (!processStartIdentity) return undefined
-  return { pid: process.pid, runToken: randomUUID(), processStartIdentity }
+  return processStartIdentity ? { pid: process.pid, runToken: randomUUID(), processStartIdentity } : undefined
 }
 
 function serializeOwner(owner: ProcessOwner): string {
-  return JSON.stringify({
-    pid: owner.pid,
-    runToken: owner.runToken,
-    processStartIdentity: owner.processStartIdentity,
-  })
+  return JSON.stringify({ pid: owner.pid, runToken: owner.runToken, processStartIdentity: owner.processStartIdentity })
 }
 
 function parseOwner(value: string): ProcessOwner | undefined {
   try {
-    const candidate = JSON.parse(value) as Partial<ProcessOwner>
-    if (
-      Number.isInteger(candidate.pid) && Number(candidate.pid) > 0 && Number(candidate.pid) <= 0xffff_ffff &&
-      typeof candidate.runToken === "string" && candidate.runToken.length > 0 &&
-      typeof candidate.processStartIdentity === "string" && candidate.processStartIdentity.length > 0
-    ) {
-      return {
-        pid: Number(candidate.pid),
-        runToken: candidate.runToken,
-        processStartIdentity: candidate.processStartIdentity,
-      }
+    const owner = JSON.parse(value) as Partial<ProcessOwner>
+    if (Number.isInteger(owner.pid) && Number(owner.pid) > 0 && Number(owner.pid) <= 0xffff_ffff &&
+      typeof owner.runToken === "string" && /^[A-Za-z0-9_-]+$/.test(owner.runToken) &&
+      typeof owner.processStartIdentity === "string" && owner.processStartIdentity) {
+      return { pid: Number(owner.pid), runToken: owner.runToken, processStartIdentity: owner.processStartIdentity }
     }
-  } catch {
-    // Unknown or partially published ownership must fail closed.
-  }
+  } catch {}
   return undefined
 }
 
 function sameOwner(left: ProcessOwner, right: ProcessOwner): boolean {
-  return left.pid === right.pid &&
-    left.runToken === right.runToken &&
-    left.processStartIdentity === right.processStartIdentity
+  return left.pid === right.pid && left.runToken === right.runToken && left.processStartIdentity === right.processStartIdentity
 }
 
 function readIfExists(path: string): string | undefined {
-  try {
-    return readFileSync(path, "utf8")
-  } catch (error) {
+  try { return readFileSync(path, "utf8") } catch (error) {
     if (hasErrorCode(error, "ENOENT")) return undefined
     throw error
   }
 }
 
-function publish(path: string, value: string): void {
-  const temporaryPath = join(dirname(path), `.publish.${randomUUID()}.tmp`)
-  let descriptor: number | undefined
-  try {
-    descriptor = openSync(temporaryPath, "wx", 0o600)
-    writeFileSync(descriptor, value, "utf8")
-    try {
-      fsyncSync(descriptor)
-    } catch (error) {
-      if (!hasErrorCode(error, "EINVAL") && !hasErrorCode(error, "ENOTSUP") && !hasErrorCode(error, "ENOSYS")) {
-        throw error
-      }
-    }
-    closeSync(descriptor)
-    descriptor = undefined
-    linkSync(temporaryPath, path)
-  } catch (error) {
-    if (descriptor !== undefined) {
-      try { closeSync(descriptor) } catch {}
-    }
-    throw error
-  } finally {
-    try { unlinkSync(temporaryPath) } catch {}
+function sync(descriptor: number): void {
+  try { fsyncSync(descriptor) } catch (error) {
+    if (!["EINVAL", "ENOTSUP", "ENOSYS"].some((code) => hasErrorCode(error, code))) throw error
   }
 }
 
-function digest(value: string): string {
-  return createHash("sha256").update(value, "utf8").digest("hex")
+function publishFile(path: string, value: string): void {
+  const temporary = join(dirname(path), `.publish.${randomUUID()}.tmp`)
+  let descriptor: number | undefined
+  try {
+    descriptor = openSync(temporary, "wx", 0o600)
+    writeFileSync(descriptor, value, "utf8")
+    sync(descriptor)
+    closeSync(descriptor)
+    descriptor = undefined
+    linkSync(temporary, path)
+  } finally {
+    if (descriptor !== undefined) try { closeSync(descriptor) } catch {}
+    try { unlinkSync(temporary) } catch {}
+  }
 }
 
-function participantPath(electionDirectory: string, owner: ProcessOwner): string {
-  return join(electionDirectory, `${PARTICIPANT_PREFIX}${digest(serializeOwner(owner))}${PARTICIPANT_SUFFIX}`)
+function participantPath(directory: string, owner: ProcessOwner): string {
+  return join(directory, `${PARTICIPANT_PREFIX}${owner.pid}.${owner.runToken}${PARTICIPANT_SUFFIX}`)
 }
 
 function publishParticipant(path: string, owner: ProcessOwner): void {
   const value = serializeOwner(owner)
-  try {
-    publish(path, value)
-  } catch (error) {
+  try { publishFile(path, value) } catch (error) {
     if (!hasErrorCode(error, "EEXIST") || readIfExists(path) !== value) throw error
   }
+}
+
+function ownerPath(directory: string): string {
+  return join(directory, CROSS_HOST_OWNER_DIRECTORY, OWNER_FILENAME)
 }
 
 function ownerIsStale(owner: ProcessOwner, dependencies: CrossHostLeaseDependencies): boolean | undefined {
@@ -177,253 +135,126 @@ function ownerIsStale(owner: ProcessOwner, dependencies: CrossHostLeaseDependenc
   return identity ? identity !== owner.processStartIdentity : undefined
 }
 
-function waitForProtocolLock(): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, PROTOCOL_LOCK_RETRY_MS)
-}
-
-function protocolLockOwnerPath(lockDirectory: string): string {
-  return join(lockDirectory, PROTOCOL_LOCK_OWNER_FILENAME)
-}
-
-function retireProtocolLock(electionDirectory: string, observed: string): boolean {
-  const lockDirectory = join(electionDirectory, PROTOCOL_LOCK_DIRECTORY)
-  if (readIfExists(protocolLockOwnerPath(lockDirectory)) !== observed) return false
-  const retired = join(electionDirectory, `${RETIRED_LOCK_PREFIX}${digest(observed)}${RETIRED_LOCK_SUFFIX}`)
-  try {
-    // ponytail: immutable retirement directories accumulate; clean them only if directory growth becomes material.
-    renameSync(lockDirectory, retired)
-    return true
-  } catch (error) {
-    if (hasErrorCode(error, "ENOENT") || hasErrorCode(error, "EEXIST") || hasErrorCode(error, "ENOTEMPTY")) return false
-    throw error
-  }
-}
-
-function acquireProtocolLock(
-  electionDirectory: string,
-  owner: ProcessOwner,
-  dependencies: CrossHostLeaseDependencies,
-): ProcessOwner | undefined {
-  const lockDirectory = join(electionDirectory, PROTOCOL_LOCK_DIRECTORY)
-  const lockOwner = { ...owner, runToken: `${owner.runToken}.${randomUUID()}` }
-  const serialized = serializeOwner(lockOwner)
-  for (let attempt = 0; attempt < PROTOCOL_LOCK_ATTEMPTS; attempt += 1) {
-    try {
-      mkdirSync(lockDirectory, { mode: 0o700 })
-      try {
-        publishProcessLockOwner(protocolLockOwnerPath(lockDirectory), serialized)
-        return lockOwner
-      } catch (error) {
-        try { rmdirSync(lockDirectory) } catch {}
-        throw error
-      }
-    } catch (error) {
-      if (!hasErrorCode(error, "EEXIST")) throw error
-    }
-
-    const observed = readIfExists(protocolLockOwnerPath(lockDirectory))
-    const existing = observed === undefined ? undefined : parseOwner(observed)
-    if (!existing) {
-      if (observed !== undefined && attempt >= ACQUIRE_ATTEMPTS - 1) return undefined
-      waitForProtocolLock()
-      continue
-    }
-    const stale = ownerIsStale(existing, dependencies)
-    if (stale === undefined || !stale) {
-      waitForProtocolLock()
-      continue
-    }
-    retireProtocolLock(electionDirectory, observed!)
-  }
-  return undefined
-}
-
-function publishProcessLockOwner(path: string, value: string): void {
-  let descriptor: number | undefined
-  try {
-    descriptor = openSync(path, "wx", 0o600)
-    writeFileSync(descriptor, value, "utf8")
-    try { fsyncSync(descriptor) } catch (error) {
-      if (!hasErrorCode(error, "EINVAL") && !hasErrorCode(error, "ENOTSUP") && !hasErrorCode(error, "ENOSYS")) throw error
-    }
-    closeSync(descriptor)
-    descriptor = undefined
-  } catch (error) {
-    if (descriptor !== undefined) try { closeSync(descriptor) } catch {}
-    try { unlinkSync(path) } catch {}
-    throw error
-  }
-}
-
-function releaseProtocolLock(electionDirectory: string, owner: ProcessOwner): void {
-  const observed = readIfExists(protocolLockOwnerPath(join(electionDirectory, PROTOCOL_LOCK_DIRECTORY)))
-  const current = observed === undefined ? undefined : parseOwner(observed)
-  if (observed !== undefined && current && sameOwner(current, owner)) retireProtocolLock(electionDirectory, observed)
-}
-
-function removeObservedOwner(
-  electionDirectory: string,
-  path: string,
-  observed: string,
-  owner: ProcessOwner,
-  claimant: ProcessOwner,
-): boolean {
-  const claimPath = join(electionDirectory, `${REMOVAL_CLAIM_PREFIX}${digest(observed)}${REMOVAL_CLAIM_SUFFIX}`)
-  try {
-    publish(claimPath, serializeOwner(claimant))
-  } catch (error) {
-    if (hasErrorCode(error, "EEXIST")) return false
-    throw error
-  }
-
-  const current = readIfExists(path)
-  if (current !== observed) return false
-  const currentOwner = parseOwner(current)
-  if (!currentOwner || !sameOwner(currentOwner, owner)) return false
-  try {
-    unlinkSync(path)
-    return true
-  } catch (error) {
-    if (hasErrorCode(error, "ENOENT")) return false
-    throw error
-  }
-}
-
 function removeParticipantIfOwned(path: string, owner: ProcessOwner): void {
-  const value = readIfExists(path)
-  const current = value === undefined ? undefined : parseOwner(value)
+  const observed = readIfExists(path)
+  const current = observed === undefined ? undefined : parseOwner(observed)
   if (!current || !sameOwner(current, owner)) return
   try { unlinkSync(path) } catch (error) {
     if (!hasErrorCode(error, "ENOENT")) throw error
   }
 }
 
-function hasOtherLiveParticipants(
-  electionDirectory: string,
-  currentOwner: ProcessOwner,
-  dependencies: CrossHostLeaseDependencies,
-): boolean {
-  for (const name of readdirSync(electionDirectory)) {
+function hasLiveParticipants(directory: string, current: ProcessOwner, dependencies: CrossHostLeaseDependencies): boolean {
+  for (const name of readdirSync(directory)) {
     if (!name.startsWith(PARTICIPANT_PREFIX) || !name.endsWith(PARTICIPANT_SUFFIX)) continue
-    const path = join(electionDirectory, name)
-    const value = readIfExists(path)
-    if (value === undefined) continue
-    const participant = parseOwner(value)
+    const path = join(directory, name)
+    const participant = parseOwner(readIfExists(path) ?? "")
     if (!participant) return true
-    if (sameOwner(participant, currentOwner)) continue
+    if (sameOwner(participant, current)) continue
     const stale = ownerIsStale(participant, dependencies)
-    if (stale === undefined || !stale) return true
+    if (stale !== true) return true
     removeParticipantIfOwned(path, participant)
   }
   return false
+}
+
+function retireOwner(directory: string, observed: string, owner: ProcessOwner, claimant: ProcessOwner, dependencies: CrossHostLeaseDependencies): boolean {
+  if (ownerIsStale(owner, dependencies) !== true || hasLiveParticipants(directory, claimant, dependencies)) return false
+  if (readIfExists(ownerPath(directory)) !== observed) return false
+  const retired = join(directory, `${RETIRED_PREFIX}${owner.pid}.${owner.runToken}`)
+  try {
+    renameSync(join(directory, CROSS_HOST_OWNER_DIRECTORY), retired)
+    dependencies.onOwnerRetired?.()
+    return true
+  } catch (error) {
+    if (["ENOENT", "EEXIST", "ENOTEMPTY"].some((code) => hasErrorCode(error, code)) || existsSync(retired)) return false
+    throw error
+  }
+}
+
+function publishOwner(directory: string, owner: ProcessOwner, dependencies: CrossHostLeaseDependencies): boolean {
+  const temporary = join(directory, `.owner.${randomUUID()}.tmp`)
+  try {
+    mkdirSync(temporary, { mode: 0o700 })
+    const descriptor = openSync(join(temporary, OWNER_FILENAME), "wx", 0o600)
+    try { writeFileSync(descriptor, serializeOwner(owner), "utf8"); sync(descriptor) } finally { closeSync(descriptor) }
+    dependencies.onOwnerPrepared?.()
+    renameSync(temporary, join(directory, CROSS_HOST_OWNER_DIRECTORY))
+    return true
+  } catch (error) {
+    if (hasErrorCode(error, "EEXIST") || hasErrorCode(error, "ENOTEMPTY") || existsSync(join(directory, CROSS_HOST_OWNER_DIRECTORY))) return false
+    throw error
+  } finally {
+    try { rmSync(temporary, { recursive: true, force: true }) } catch {}
+  }
+}
+
+export function crossHostParticipants(directory: string): ProcessOwner[] {
+  try {
+    return readdirSync(directory)
+      .filter((name) => name.startsWith(PARTICIPANT_PREFIX) && name.endsWith(PARTICIPANT_SUFFIX))
+      .map((name) => parseOwner(readIfExists(join(directory, name)) ?? ""))
+      .filter((owner): owner is ProcessOwner => Boolean(owner))
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) return []
+    throw error
+  }
 }
 
 export class CrossHostRegistration {
   private released = false
 
   private constructor(
-    readonly path: string,
+    private readonly directory: string,
     readonly owner: ProcessOwner,
-    private readonly electionDirectory: string,
     private readonly participant: string,
-    private readonly dependencies: CrossHostLeaseDependencies,
     private primary: boolean,
   ) {}
 
+  get path(): string { return this.directory }
+
   static register(
-    electionDirectory: string,
+    directory: string,
     owner: ProcessOwner,
-    primaryCandidate: boolean,
+    primaryCandidate: boolean | (() => boolean),
     dependencies: CrossHostLeaseDependencies = defaultDependencies,
   ): CrossHostRegistration | undefined {
-    if (!owner.processStartIdentity) return undefined
-    mkdirSync(electionDirectory, { recursive: true, mode: 0o700 })
-    const protocolLockOwner = acquireProtocolLock(electionDirectory, owner, dependencies)
-    if (!protocolLockOwner) return undefined
-    const path = join(electionDirectory, CROSS_HOST_OWNER_FILENAME)
-    const participant = participantPath(electionDirectory, owner)
+    if (!owner.processStartIdentity || !/^[A-Za-z0-9_-]+$/.test(owner.runToken)) return undefined
+    mkdirSync(directory, { recursive: true, mode: 0o700 })
+    const participant = participantPath(directory, owner)
+    publishParticipant(participant, owner)
+    dependencies.onParticipantPublished?.()
     let primary = false
-
     try {
-      if (primaryCandidate) {
-        try {
-          publish(path, serializeOwner(owner))
-          primary = true
-        } catch (error) {
-          if (!hasErrorCode(error, "EEXIST")) throw error
-        }
-      }
-
-      if (primaryCandidate && !primary) {
+      if (typeof primaryCandidate === "function" ? primaryCandidate() : primaryCandidate) {
         for (let attempt = 0; attempt < ACQUIRE_ATTEMPTS; attempt += 1) {
-          try {
-            publish(path, serializeOwner(owner))
-            primary = true
-            break
-          } catch (error) {
-            if (!hasErrorCode(error, "EEXIST")) throw error
-          }
-
-          const observed = readIfExists(path)
+          if (publishOwner(directory, owner, dependencies)) { primary = true; break }
+          const observed = readIfExists(ownerPath(directory))
           if (observed === undefined) continue
           const existing = parseOwner(observed)
           if (!existing) break
-          if (sameOwner(existing, owner)) {
-            primary = true
-            break
-          }
-          const stale = ownerIsStale(existing, dependencies)
-          if (stale === undefined || !stale || hasOtherLiveParticipants(electionDirectory, owner, dependencies)) break
-          if (!removeObservedOwner(electionDirectory, path, observed, existing, owner)) continue
+          if (sameOwner(existing, owner)) { primary = true; break }
+          if (!retireOwner(directory, observed, existing, owner, dependencies)) break
         }
       }
-
-      try {
-        publishParticipant(participant, owner)
-        dependencies.onParticipantPublished?.()
-      } catch (error) {
-        if (primary) {
-          const observed = readIfExists(path)
-          const current = observed === undefined ? undefined : parseOwner(observed)
-          if (observed !== undefined && current && sameOwner(current, owner)) {
-            removeObservedOwner(electionDirectory, path, observed, owner, owner)
-          }
-        }
-        throw error
-      }
-
-      return new CrossHostRegistration(path, owner, electionDirectory, participant, dependencies, primary)
-    } finally {
-      releaseProtocolLock(electionDirectory, protocolLockOwner)
+      return new CrossHostRegistration(directory, owner, participant, primary)
+    } catch (error) {
+      removeParticipantIfOwned(participant, owner)
+      throw error
     }
   }
 
   get isPrimary(): boolean {
     if (this.released || !this.primary) return false
-    const value = readIfExists(this.path)
-    const owner = value === undefined ? undefined : parseOwner(value)
-    return Boolean(owner && sameOwner(owner, this.owner))
+    const current = parseOwner(readIfExists(ownerPath(this.directory)) ?? "")
+    return Boolean(current && sameOwner(current, this.owner))
   }
 
   release(): boolean {
     if (this.released) return false
-    const protocolLockOwner = acquireProtocolLock(this.electionDirectory, this.owner, this.dependencies)
-    if (!protocolLockOwner) return false
-    let removed = false
-    try {
-      if (this.isPrimary && !hasOtherLiveParticipants(this.electionDirectory, this.owner, this.dependencies)) {
-        const observed = readIfExists(this.path)
-        const current = observed === undefined ? undefined : parseOwner(observed)
-        if (observed !== undefined && current && sameOwner(current, this.owner)) {
-          removed = removeObservedOwner(this.electionDirectory, this.path, observed, this.owner, this.owner)
-        }
-      }
-      removeParticipantIfOwned(this.participant, this.owner)
-      this.primary = false
-      this.released = true
-      return removed
-    } finally {
-      releaseProtocolLock(this.electionDirectory, protocolLockOwner)
-    }
+    removeParticipantIfOwned(this.participant, this.owner)
+    this.primary = false
+    this.released = true
+    return true
   }
 }

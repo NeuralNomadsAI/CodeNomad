@@ -121,23 +121,6 @@ test("ending CLI stdin permits a real child to exit naturally", { timeout: 5_000
   assert.equal(forces, 0)
 })
 
-test("utility-style shutdown requests a signal without pretending stdin is available", async () => {
-  const child = new FakeChild()
-  child.stdin = null as never
-  let gracefulRequests = 0
-  const stopped = stopManagedChild({
-    child,
-    isExited: () => child.exited,
-    useStdinShutdown: false,
-    requestGracefulStop: () => { gracefulRequests++ },
-    force: () => true,
-  })
-  assert.equal(gracefulRequests, 1)
-  child.exited = true
-  child.emit("exit")
-  await stopped
-})
-
 test("tree capture records immutable root and nested descendant identities", () => {
   const list = (() => ({ status: 0, stdout: "100|1|linux:boot:10\n200|100|linux:boot:20\n201|200|linux:boot:21\n999|1|linux:boot:99\n", stderr: "", pid: 1,
     signal: null, output: [] })) as unknown as typeof spawnSync

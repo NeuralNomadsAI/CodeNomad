@@ -245,53 +245,57 @@ export class WorkspaceManager {
   ): Promise<WorkspaceCreateResult> {
     const launchTimeoutMs = Math.max(1, this.options.launchTimeoutMs ?? DEFAULT_LAUNCH_TIMEOUT_MS)
     const launchDeadlineAt = Date.now() + launchTimeoutMs
-    const { workspacePath, identityKey } = await this.withLaunchDeadline(
-      resolveWorkspaceIdentity(folder, this.options.rootDir),
-      undefined,
-      launchDeadlineAt,
-      launchTimeoutMs,
-    )
-    if (options.requestId && this.cancelledCreationRequests.delete(options.requestId)) {
-      throw new Error(`Workspace creation request ${options.requestId} was cancelled`)
-    }
-    if (this.shuttingDown) {
-      throw new Error("Workspace manager is shutting down")
-    }
-    if (options.forceNew) {
+    try {
+      const { workspacePath, identityKey } = await this.withLaunchDeadline(
+        resolveWorkspaceIdentity(folder, this.options.rootDir),
+        undefined,
+        launchDeadlineAt,
+        launchTimeoutMs,
+      )
+      if (options.requestId && this.cancelledCreationRequests.has(options.requestId)) {
+        throw new Error(`Workspace creation request ${options.requestId} was cancelled`)
+      }
+      if (this.shuttingDown) {
+        throw new Error("Workspace manager is shutting down")
+      }
+      if (options.forceNew) {
+        const ownership = this.createOwnership(options.requestId)
+        const record = this.reserveWorkspace(workspacePath, identityKey, name, options, ownership, launchDeadlineAt)
+        const result = await this.startCreation(record, options, launchDeadlineAt, launchTimeoutMs)
+        return this.finishCreation(result, options.requestId, ownership)
+      }
+      const existing = this.findReadyWorkspaceByIdentity(identityKey, Boolean(options.requestId))
+      if (existing) {
+        this.options.logger.info({ workspaceId: existing.id, folder: workspacePath }, "Reusing existing workspace")
+        const record = this.workspaces.get(existing.id)
+        if (options.requestId && record) {
+          record.ownership.set(options.requestId, "active")
+          this.syncOwnership(record)
+          return this.finishCreation({ workspace: existing, created: false }, options.requestId, record.ownership)
+        }
+        return { workspace: existing, created: false }
+      }
+      const pending = this.pendingWorkspaceCreations.get(identityKey)
+      if (pending) {
+        const state = pending[WORKSPACE_STATE]
+        pending.ownership.set(options.requestId ?? ORDINARY_CREATION_OWNER, "active")
+        this.syncOwnership(pending)
+        const result = await state.creation!
+        return this.finishCreation({ workspace: result.workspace, created: false }, options.requestId, pending.ownership)
+      }
       const ownership = this.createOwnership(options.requestId)
       const record = this.reserveWorkspace(workspacePath, identityKey, name, options, ownership, launchDeadlineAt)
-      const result = await this.startCreation(record, options, launchDeadlineAt, launchTimeoutMs)
-      return this.finishCreation(result, options.requestId, ownership)
-    }
-    const existing = this.findReadyWorkspaceByIdentity(identityKey, Boolean(options.requestId))
-    if (existing) {
-      this.options.logger.info({ workspaceId: existing.id, folder: workspacePath }, "Reusing existing workspace")
-      const record = this.workspaces.get(existing.id)
-      if (options.requestId && record) {
-        record.ownership.set(options.requestId, "active")
-        this.syncOwnership(record)
-        return this.finishCreation({ workspace: existing, created: false }, options.requestId, record.ownership)
+      const creation = this.startCreation(record, options, launchDeadlineAt, launchTimeoutMs)
+      this.pendingWorkspaceCreations.set(identityKey, record)
+      try {
+        return this.finishCreation(await creation, options.requestId, ownership)
+      } finally {
+        if (this.pendingWorkspaceCreations.get(identityKey) === record) {
+          this.pendingWorkspaceCreations.delete(identityKey)
+        }
       }
-      return { workspace: existing, created: false }
-    }
-    const pending = this.pendingWorkspaceCreations.get(identityKey)
-    if (pending) {
-      const state = pending[WORKSPACE_STATE]
-      pending.ownership.set(options.requestId ?? ORDINARY_CREATION_OWNER, "active")
-      this.syncOwnership(pending)
-      const result = await state.creation!
-      return this.finishCreation({ workspace: result.workspace, created: false }, options.requestId, pending.ownership)
-    }
-    const ownership = this.createOwnership(options.requestId)
-    const record = this.reserveWorkspace(workspacePath, identityKey, name, options, ownership, launchDeadlineAt)
-    const creation = this.startCreation(record, options, launchDeadlineAt, launchTimeoutMs)
-    this.pendingWorkspaceCreations.set(identityKey, record)
-    try {
-      return this.finishCreation(await creation, options.requestId, ownership)
     } finally {
-      if (this.pendingWorkspaceCreations.get(identityKey) === record) {
-        this.pendingWorkspaceCreations.delete(identityKey)
-      }
+      if (options.requestId) this.cancelledCreationRequests.delete(options.requestId)
     }
   }
   private reserveWorkspace(
@@ -332,7 +336,7 @@ export class WorkspaceManager {
     })
 
     this.workspaces.set(id, record)
-    if (options.requestId && this.cancelledCreationRequests.delete(options.requestId)) {
+    if (options.requestId && this.cancelledCreationRequests.has(options.requestId)) {
       record[WORKSPACE_STATE].abortController.abort(new WorkspaceLaunchCancelledError(id))
     }
     return record
@@ -528,10 +532,6 @@ export class WorkspaceManager {
       if (this.hasActiveRequest(ownership) || this.isRetained(ownership)) return
       await this.delete(workspaceId)
       return
-    }
-    if (this.cancelledCreationRequests.size >= 1_024) {
-      const oldestRequestId = this.cancelledCreationRequests.values().next().value
-      if (oldestRequestId) this.cancelledCreationRequests.delete(oldestRequestId)
     }
     this.cancelledCreationRequests.add(requestId)
   }

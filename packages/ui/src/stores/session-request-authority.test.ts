@@ -1,7 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { clearEvictedSessionMessages } from "../components/instance/shell/session-cache-eviction.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import type { Session } from "../types/session.ts"
 import { addInstance, removeInstance } from "./instances.ts"
@@ -10,6 +9,7 @@ import { loadMessages, removeSessionRuntimeState, searchSessions } from "./sessi
 import {
   clearInstanceDeletedSessionAuthority,
   getSessionSearchResultIds,
+  invalidateSessionMessageLoad,
   loading,
   messagesLoaded,
   sessions,
@@ -115,7 +115,7 @@ describe("session request authority", () => {
 
     try {
       const request = loadMessages(instanceId, sessionId)
-      clearEvictedSessionMessages(instanceId, undefined, sessionId)
+      invalidateSessionMessageLoad(instanceId, sessionId)
       response.resolve({ data: [apiMessage("evicted-message", sessionId)] })
       await request
 
