@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process"
+import { getProcessStartIdentity, type ProcessStartIdentityLookup } from "./client-state-process-identity"
 
 export const CLI_SHUTDOWN_COMMAND = "codenomad:shutdown\n"
 export const CLI_STOP_DEADLINE_MS = 30_000
@@ -17,37 +18,59 @@ interface StopManagedChildOptions {
   child: ExitTrackedChild
   isExited(): boolean
   force(): boolean
+  isCleanupComplete?(): boolean
   requestGracefulStop?(): void
   useStdinShutdown?: boolean
   deadlineMs?: number
   forceRetryMs?: number
+  forceAttempts?: number
   warn?(message: string, error?: unknown): void
 }
 
-interface PosixProcessRow {
+interface ProcessRow {
   pid: number
   parentPid: number
-  groupId: number
+  startIdentity: string
 }
 
-export function forcePosixProcessTree(
-  rootPid: number,
-  runPs: typeof spawnSync = spawnSync,
-  kill: typeof process.kill = process.kill,
-): boolean {
-  const result = runPs("ps", ["-A", "-o", "pid=,ppid=,pgid="], {
-    encoding: "utf8",
-    timeout: 1_500,
-  })
-  if (result.status !== 0) return false
+export interface CapturedProcessTree {
+  platform: NodeJS.Platform
+  members: Array<{ pid: number; startIdentity: string }>
+}
 
-  const rows = String(result.stdout ?? "").split(/\r?\n/).flatMap((line): PosixProcessRow[] => {
-    const [pidText, parentPidText, groupIdText] = line.trim().split(/\s+/)
-    const pid = Number(pidText), parentPid = Number(parentPidText), groupId = Number(groupIdText)
-    return Number.isInteger(pid) && pid > 0 && Number.isInteger(parentPid) && Number.isInteger(groupId)
-      ? [{ pid, parentPid, groupId }]
-      : []
-  })
+export function captureProcessTree(
+  rootPid: number,
+  platform: NodeJS.Platform = process.platform,
+  runList: typeof spawnSync = spawnSync,
+): CapturedProcessTree | undefined {
+  const result = platform === "win32"
+    ? runList("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+        "Get-CimInstance Win32_Process | ForEach-Object { '{0}|{1}|win32:{2}' -f $_.ProcessId, $_.ParentProcessId, ([datetime]$_.CreationDate).ToUniversalTime().Ticks }"],
+        { encoding: "utf8", timeout: 1_500, windowsHide: true })
+    : platform === "linux"
+      ? runList("sh", ["-c", `boot=$(cat /proc/sys/kernel/random/boot_id) || exit 1
+for stat in /proc/[0-9]*/stat; do
+  line=$(cat "$stat" 2>/dev/null) || continue
+  pid=$(printf '%s\n' "$line" | cut -d' ' -f1); rest=$(printf '%s\n' "$line" | sed 's/^.*) //'); set -- $rest
+  ppid=$2; shift 19; printf '%s|%s|linux:%s:%s\n' "$pid" "$ppid" "$boot" "$1"
+done`], { encoding: "utf8", timeout: 1_500 })
+      : runList("ps", ["-A", "-o", "pid=,ppid=,lstart="], { encoding: "utf8", timeout: 1_500,
+          env: { ...process.env, LC_ALL: "C", LANG: "C" } })
+  if (result.status !== 0 || result.error) return undefined
+
+  const rows: ProcessRow[] = []
+  for (const line of String(result.stdout ?? "").split(/\r?\n/)) {
+    if (!line.trim()) continue
+    const fields = platform === "darwin"
+      ? line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/)?.slice(1)
+      : line.trim().split("|")
+    if (!fields || fields.length !== 3) return undefined
+    const [pidText, parentPidText, rawIdentity] = fields
+    const pid = Number(pidText), parentPid = Number(parentPidText)
+    const startIdentity = platform === "darwin" ? `darwin:${rawIdentity}` : rawIdentity
+    if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(parentPid) || !startIdentity) return undefined
+    rows.push({ pid, parentPid, startIdentity })
+  }
   const descendants = new Set([rootPid])
   let changed = true
   while (changed) {
@@ -59,68 +82,111 @@ export function forcePosixProcessTree(
     }
   }
 
-  const targets = rows.filter((row) => descendants.has(row.pid))
-  const groups = new Set(targets.map((row) => row.groupId).filter((groupId) => descendants.has(groupId)))
+  const members = rows.filter((row) => descendants.has(row.pid))
+    .map(({ pid, startIdentity }) => ({ pid, startIdentity }))
+  if (!members.some((member) => member.pid === rootPid)) return undefined
+  return { platform, members }
+}
+
+export function forceCapturedProcessTree(
+  tree: CapturedProcessTree,
+  lookup: ProcessStartIdentityLookup = getProcessStartIdentity,
+  runTaskkill: typeof spawnSync = spawnSync,
+  kill: typeof process.kill = process.kill,
+): boolean {
   let confirmed = true
-  const signal = (pid: number) => {
+  const isGone = (pid: number) => {
     try {
-      kill(pid, "SIGKILL")
+      kill(pid, 0)
+      return false
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "ESRCH"
+    }
+  }
+  for (const member of [...tree.members].reverse()) {
+    const currentIdentity = lookup(member.pid)
+    if (!currentIdentity) {
+      if (!isGone(member.pid)) confirmed = false
+      continue
+    }
+    if (currentIdentity !== member.startIdentity) continue
+    if (tree.platform === "win32") {
+      const result = runTaskkill("taskkill", ["/PID", String(member.pid), "/F"], {
+        encoding: "utf8",
+        timeout: 1_500,
+        windowsHide: true,
+      })
+      if (result.status !== 0) {
+        const remainingIdentity = lookup(member.pid)
+        if (remainingIdentity === member.startIdentity || (!remainingIdentity && !isGone(member.pid))) confirmed = false
+      }
+      continue
+    }
+    try {
+      kill(member.pid, "SIGKILL")
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ESRCH") confirmed = false
     }
   }
-  for (const groupId of groups) signal(-groupId)
-  for (const row of targets) signal(row.pid)
-  if (!targets.some((row) => row.pid === rootPid)) signal(rootPid)
+  for (const member of tree.members) {
+    const remainingIdentity = lookup(member.pid)
+    if (remainingIdentity === member.startIdentity || (!remainingIdentity && !isGone(member.pid))) confirmed = false
+  }
   return confirmed
 }
 
-export function forceWindowsProcessTree(
-  rootPid: number,
-  runTaskkill: typeof spawnSync = spawnSync,
-): boolean {
-  const result = runTaskkill("taskkill", ["/PID", String(rootPid), "/T", "/F"], {
-    encoding: "utf8",
-    timeout: 1_500,
-    windowsHide: true,
-  })
-  return result.status === 0
-}
-
 export function stopManagedChild(options: StopManagedChildOptions): Promise<void> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     let settled = false
-    let deadline: ReturnType<typeof setTimeout> | undefined
-    const finish = () => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let attempts = 0
+    const cleanupComplete = options.isCleanupComplete ?? (() => true)
+    const removeListener = () => options.child.off?.("exit", onExit)
+    const finish = (error?: Error) => {
       if (settled) return
       settled = true
-      if (deadline) clearTimeout(deadline)
-      options.child.off?.("exit", finish)
-      resolve()
+      if (timer) clearTimeout(timer)
+      removeListener()
+      if (error) reject(error)
+      else resolve()
+    }
+    const force = () => {
+      if (timer) clearTimeout(timer)
+      timer = undefined
+      if (settled) return
+      attempts += 1
+      try {
+        if (options.force()) {
+          finish()
+          return
+        }
+      } catch (error) {
+        options.warn?.("Failed to force CLI process tree termination", error)
+      }
+      const maxAttempts = options.forceAttempts ?? 3
+      if (attempts >= maxAttempts) {
+        finish(new Error(`CLI process tree termination was not confirmed after ${attempts} attempts`))
+        return
+      }
+      options.warn?.("CLI process tree termination was not confirmed; retrying")
+      timer = setTimeout(force, options.forceRetryMs ?? 1_000)
+    }
+    function onExit() {
+      if (cleanupComplete()) finish()
+      else force()
     }
 
-    options.child.once("exit", finish)
+    options.child.once("exit", onExit)
     if (options.isExited()) {
-      finish()
+      onExit()
       return
     }
 
     const deadlineMs = options.deadlineMs ?? CLI_STOP_DEADLINE_MS
-    const force = () => {
-      deadline = undefined
-      if (settled) return
+    timer = setTimeout(() => {
       options.warn?.(`CLI cleanup timed out after ${deadlineMs}ms; forcing process tree termination`)
-      try {
-        if (!options.force()) {
-          options.warn?.("CLI process tree termination was not confirmed; still waiting for confirmed exit")
-          deadline = setTimeout(force, options.forceRetryMs ?? 1_000)
-        }
-      } catch (error) {
-        options.warn?.("Failed to force CLI process tree termination; still waiting for confirmed exit", error)
-        deadline = setTimeout(force, options.forceRetryMs ?? 1_000)
-      }
-    }
-    deadline = setTimeout(force, deadlineMs)
+      force()
+    }, deadlineMs)
 
     if (options.useStdinShutdown === false) {
       try {

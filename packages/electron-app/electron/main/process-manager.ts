@@ -10,8 +10,8 @@ import { parse as parseYaml } from "yaml"
 import { ensureManagedNodeBinary } from "./managed-node"
 import {
   CLI_STOP_DEADLINE_MS,
-  forcePosixProcessTree,
-  forceWindowsProcessTree,
+  captureProcessTree,
+  forceCapturedProcessTree,
   stopManagedChild,
 } from "./process-stop"
 import { buildUserShellCommand, getUserShellEnv, supportsUserShell } from "./user-shell"
@@ -202,13 +202,12 @@ export class CliProcessManager extends EventEmitter {
         ? buildUserShellCommand(`ELECTRON_RUN_AS_NODE=1 exec ${this.buildCommand(cliEntry, args)}`)
         : this.buildDirectSpawn(cliEntry, args)
 
-      const detached = process.platform !== "win32"
       child = spawn(spawnDetails.command, spawnDetails.args, {
         cwd: process.cwd(),
         stdio: ["pipe", "pipe", "pipe"],
         env,
         shell: false,
-        detached,
+        detached: process.platform !== "win32",
       })
 
       console.info(`[cli] spawn command: ${spawnDetails.command} ${spawnDetails.args.join(" ")}`)
@@ -320,13 +319,8 @@ export class CliProcessManager extends EventEmitter {
 
     const isAlreadyExited = () => spawnedChild.exitCode !== null || spawnedChild.signalCode !== null
 
-    const forceProcessTree = () => {
-      if (process.platform !== "win32") {
-        return forcePosixProcessTree(pid)
-      }
-
-      return forceWindowsProcessTree(pid)
-    }
+    const processTree = captureProcessTree(pid)
+    const forceProcessTree = () => processTree ? forceCapturedProcessTree(processTree) : false
 
     let forceConfirmed = false
     const enforceIncompleteCleanup = () => {
@@ -345,6 +339,7 @@ export class CliProcessManager extends EventEmitter {
         child: spawnedChild,
         isExited: isAlreadyExited,
         force: () => forceConfirmed || forceProcessTree(),
+        isCleanupComplete: () => this.shutdownStatus === "complete",
         deadlineMs: CLI_STOP_DEADLINE_MS,
         warn: (message, error) => console.warn(`[cli] ${message} (pid=${pid})`, error ?? ""),
       })
@@ -371,9 +366,8 @@ export class CliProcessManager extends EventEmitter {
       return
     }
 
-    const forceProcessTree = () => process.platform === "win32"
-      ? forceWindowsProcessTree(pid)
-      : forcePosixProcessTree(pid)
+    const processTree = captureProcessTree(pid)
+    const forceProcessTree = () => processTree ? forceCapturedProcessTree(processTree) : false
     let forceConfirmed = false
     const enforceIncompleteCleanup = () => {
       try {
@@ -391,6 +385,7 @@ export class CliProcessManager extends EventEmitter {
         isExited: () => this.child !== child,
         deadlineMs: CLI_STOP_DEADLINE_MS,
         force: () => forceConfirmed || forceProcessTree(),
+        isCleanupComplete: () => this.shutdownStatus === "complete",
         useStdinShutdown: false,
         requestGracefulStop: () => {
           if (!child.kill()) console.warn(`[cli] utility supervisor refused graceful termination for pid=${pid}`)
@@ -425,22 +420,12 @@ export class CliProcessManager extends EventEmitter {
   private handleTimeout() {
     if (this.child) {
       const pid = this.child.pid
-      if (this.childLaunchMode === "utility") {
-        if (pid) {
-          try {
-            process.kill(pid, "SIGKILL")
-          } catch {
-            // no-op
-          }
+      if (pid) {
+        const processTree = captureProcessTree(pid)
+        const forced = processTree ? forceCapturedProcessTree(processTree) : false
+        if (!forced) {
+          console.warn(`[cli] startup-timeout process tree cleanup was not confirmed (pid=${pid})`)
         }
-      } else if (pid && process.platform !== "win32") {
-        try {
-          process.kill(-pid, "SIGKILL")
-        } catch {
-          ;(this.child as ChildProcess).kill("SIGKILL")
-        }
-      } else {
-        ;(this.child as ChildProcess).kill("SIGKILL")
       }
       this.child = undefined
     }
@@ -484,7 +469,6 @@ export class CliProcessManager extends EventEmitter {
         this.emit("shutdownIncomplete")
         continue
       }
-
       if (trimmed.startsWith(BOOTSTRAP_TOKEN_PREFIX)) {
         const token = trimmed.slice(BOOTSTRAP_TOKEN_PREFIX.length).trim()
         if (token && !this.bootstrapToken) {

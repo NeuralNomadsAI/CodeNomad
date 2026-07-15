@@ -11,7 +11,6 @@ function harness(options: {
   flush?: () => Promise<unknown>
   stop?: () => Promise<void>
   nativeFlush?: () => Promise<void>
-  timeout?: number
   otherWindow?: boolean
 } = {}) {
   const windows = new Map<string, (event?: { preventDefault(): void }) => void>()
@@ -29,7 +28,7 @@ function harness(options: {
   const app = { on: (name: string, handler: never) => appEvents.set(name, handler), quit: () => calls.push("quit"), exit: () => { exits++ } } as unknown as App
   const manager = { isPrimary: true, flush: async () => {}, drainAndReleasePrimary: async () => { calls.push("release") } } as ClientStateManager
   const cli = { stop: async () => { calls.push("stop"); await options.stop?.() } } as unknown as CliProcessManager
-  const lifecycle = new ClientStateLifecycle({ app, clientStateManager: manager, cliManager: cli, getMainWindow: () => window, getAllWindows: () => options.otherWindow ? [window, other] : [window], getAllowedRendererOrigins: () => ["http://127.0.0.1:43123"], isTrustedRendererOrigin: () => true, windowsSessionEndFlushTimeoutMs: options.timeout, rendererFlushTimeoutMs: options.timeout && options.timeout * 2, isWindows: true })
+  const lifecycle = new ClientStateLifecycle({ app, clientStateManager: manager, cliManager: cli, getMainWindow: () => window, getAllWindows: () => options.otherWindow ? [window, other] : [window], getAllowedRendererOrigins: () => ["http://127.0.0.1:43123"], isTrustedRendererOrigin: () => true, isWindows: true })
   lifecycle.attachMainWindow(window, { flush: async () => { calls.push("native"); await options.nativeFlush?.() } } as unknown as WindowStateTracker)
   lifecycle.registerAppEvents()
   const close = () => { let prevented = false; windows.get("close")?.({ preventDefault: () => { prevented = true } }); return prevented }
@@ -68,26 +67,26 @@ test("late old-window detach preserves replacement tracker during shutdown", asy
   assert.deepEqual(h.calls, ["hide", "renderer", "stop", "replacement-native", "release"])
 })
 
-test("Windows session end flushes once and exits", async () => {
+test("Windows session end starts cleanup without vetoing or explicitly exiting", async () => {
   const h = harness()
   let prevented = false
   h.windows.get("query-session-end")?.({ preventDefault: () => { prevented = true } })
   h.windows.get("session-end")?.()
   await (h.lifecycle as any).sessionEnd; await tick()
-  assert.equal(prevented, true)
+  assert.equal(prevented, false)
   assert.deepEqual(h.calls, ["renderer", "stop", "native", "release"])
-  assert.equal(h.exits(), 1)
+  assert.equal(h.exits(), 0)
 })
 
-test("session end promotes and bounds an already-hung ordinary shutdown", async () => {
-  const h = harness({ flush: () => new Promise(() => {}), timeout: 20 })
-  const started = Date.now()
+test("session end does not force-exit an already-hung ordinary shutdown", async () => {
+  const h = harness({ flush: () => new Promise(() => {}) })
+  let prevented = false
   h.appEvents.get("before-quit")?.({ preventDefault: () => {} })
-  h.windows.get("query-session-end")?.({ preventDefault: () => {} })
-  await (h.lifecycle as any).sessionEnd; await tick()
-  assert.ok(Date.now() - started < 500)
+  h.windows.get("query-session-end")?.({ preventDefault: () => { prevented = true } })
+  await tick()
+  assert.equal(prevented, false)
   assert.deepEqual(h.calls, ["hide", "renderer", "stop"])
-  assert.equal(h.exits(), 1)
+  assert.equal(h.exits(), 0)
 })
 
 test("ordinary quit hides promptly and waits for CLI stop confirmation", async () => {
@@ -101,6 +100,15 @@ test("ordinary quit hides promptly and waits for CLI stop confirmation", async (
   await (h.lifecycle as any).shutdown; await tick()
   assert.deepEqual(h.calls, ["hide", "renderer", "stop", "native", "release"])
   assert.equal(h.exits(), 1)
+})
+
+test("ordinary quit does not exit when CLI cleanup is unconfirmed", async () => {
+  const h = harness({ stop: async () => { throw new Error("unconfirmed") } })
+  h.appEvents.get("before-quit")?.({ preventDefault: () => {} })
+  await assert.rejects((h.lifecycle as any).shutdown, /unconfirmed/)
+  await tick()
+  assert.equal(h.exits(), 0)
+  assert.deepEqual(h.calls, ["hide", "renderer", "stop", "native"])
 })
 
 test("CLI termination starts before a hung native flush", async () => {

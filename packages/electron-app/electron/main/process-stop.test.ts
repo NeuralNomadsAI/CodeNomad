@@ -1,13 +1,13 @@
 import assert from "node:assert/strict"
 import { spawn, spawnSync } from "node:child_process"
-import { EventEmitter, once } from "node:events"
+import { EventEmitter } from "node:events"
 import { setTimeout as delay } from "node:timers/promises"
 import test from "node:test"
 import {
   CLI_SHUTDOWN_COMMAND,
   CLI_STOP_DEADLINE_MS,
-  forcePosixProcessTree,
-  forceWindowsProcessTree,
+  captureProcessTree,
+  forceCapturedProcessTree,
   stopManagedChild,
 } from "./process-stop"
 
@@ -24,7 +24,7 @@ class FakeChild extends EventEmitter {
   }
 }
 
-test("graceful CLI stop waits for confirmed exit after the force deadline", async () => {
+test("force success terminates stop without requiring an exit event", async () => {
   const child = new FakeChild()
   let forces = 0
   let resolved = false
@@ -39,10 +39,6 @@ test("graceful CLI stop waits for confirmed exit after the force deadline", asyn
   assert.deepEqual(child.writes, [CLI_SHUTDOWN_COMMAND])
   await delay(25)
   assert.equal(forces, 1)
-  assert.equal(resolved, false)
-
-  child.exited = true
-  child.emit("exit")
   await stopped
   assert.equal(resolved, true)
 })
@@ -83,6 +79,22 @@ test("unconfirmed final enforcement retries until the process exits", async () =
 
   await stopped
   assert.equal(forces, 2)
+})
+
+test("exit without a complete shutdown handshake enforces the captured tree", async () => {
+  const child = new FakeChild()
+  let forces = 0
+  const stopped = stopManagedChild({
+    child,
+    isExited: () => child.exited,
+    isCleanupComplete: () => false,
+    force: () => { forces++; return true },
+  })
+
+  child.exited = true
+  child.emit("exit")
+  await stopped
+  assert.equal(forces, 1)
 })
 
 test("ending CLI stdin permits a real child to exit naturally", { timeout: 5_000 }, async () => {
@@ -126,71 +138,59 @@ test("utility-style shutdown requests a signal without pretending stdin is avail
   await stopped
 })
 
-test("Windows tree enforcement requires successful taskkill completion", () => {
-  const calls: string[][] = []
-  const completed = ((_command: string, args: readonly string[]) => {
-    calls.push([...args])
-    return { status: 0, stdout: "", stderr: "", pid: 1, signal: null, output: [] }
-  }) as unknown as typeof spawnSync
-  const failed = (() => ({ status: 1, stdout: "", stderr: "failed", pid: 1, signal: null, output: [] })) as unknown as typeof spawnSync
-
-  assert.equal(forceWindowsProcessTree(4242, completed), true)
-  assert.equal(forceWindowsProcessTree(4242, failed), false)
-  assert.deepEqual(calls, [["/PID", "4242", "/T", "/F"]])
+test("tree capture records immutable root and nested descendant identities", () => {
+  const list = (() => ({ status: 0, stdout: "100|1|linux:boot:10\n200|100|linux:boot:20\n201|200|linux:boot:21\n999|1|linux:boot:99\n", stderr: "", pid: 1,
+    signal: null, output: [] })) as unknown as typeof spawnSync
+  const tree = captureProcessTree(100, "linux", list)
+  assert.deepEqual(tree, { platform: "linux", members: [
+    { pid: 100, startIdentity: "linux:boot:10" },
+    { pid: 200, startIdentity: "linux:boot:20" },
+    { pid: 201, startIdentity: "linux:boot:21" },
+  ] })
 })
 
-test("Windows taskkill confirms termination of a real child tree", { skip: process.platform !== "win32", timeout: 5_000 }, async () => {
-  const root = spawn(process.execPath, ["-e", `
-    const { spawn } = require("node:child_process")
-    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" })
-    console.log(child.pid)
-    setInterval(() => {}, 1000)
-  `], { stdio: ["ignore", "pipe", "ignore"] })
-  const [pidChunk] = await once(root.stdout!, "data")
-  const descendantPid = Number(String(pidChunk).trim())
+test("PID reuse is identity-guarded on Windows and POSIX", () => {
+  for (const platform of ["win32", "linux"] as const) {
+    const taskkills: string[][] = []
+    const signals: number[] = []
+    const tree = { platform, members: [{ pid: 42, startIdentity: "old" }] }
+    const runTaskkill = ((_command: string, args: readonly string[]) => {
+      taskkills.push([...args])
+      return { status: 0, stdout: "", stderr: "", pid: 1, signal: null, output: [] }
+    }) as unknown as typeof spawnSync
+    const kill = ((pid: number) => { signals.push(pid); return true }) as typeof process.kill
 
-  assert.equal(forceWindowsProcessTree(root.pid!), true)
-  await once(root, "exit")
-  assert.throws(() => process.kill(descendantPid, 0), (error: unknown) =>
-    (error as NodeJS.ErrnoException).code === "ESRCH")
+    assert.equal(forceCapturedProcessTree(tree, () => "reused", runTaskkill, kill), true)
+    assert.deepEqual(taskkills, [])
+    assert.deepEqual(signals, [])
+  }
 })
 
-test("POSIX final enforcement targets nested detached groups", () => {
+test("captured descendants are forced individually in child-first order", () => {
   const signals: number[] = []
-  const ps = (() => ({
-    status: 0,
-    stdout: "100 1 100\n200 100 200\n201 200 200\n",
-    stderr: "",
-    pid: 1,
-    signal: null,
-    output: [],
-  })) as unknown as typeof spawnSync
-  const kill = ((pid: number) => { signals.push(pid); return true }) as typeof process.kill
-
-  assert.equal(forcePosixProcessTree(100, ps, kill), true)
-  assert.deepEqual(signals, [-100, -200, 100, 200, 201])
-})
-
-test("POSIX final enforcement includes detached descendant groups", { skip: process.platform === "win32" }, async () => {
-  const root = spawn(process.execPath, ["-e", `
-    const { spawn } = require("node:child_process")
-    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore" })
-    console.log(child.pid)
-    setInterval(() => {}, 1000)
-  `], { detached: true, stdio: ["ignore", "pipe", "ignore"] })
-  const [pidChunk] = await once(root.stdout!, "data")
-  const detachedPid = Number(String(pidChunk).trim())
-
-  assert.equal(forcePosixProcessTree(root.pid!, spawnSync), true)
-  await once(root, "exit")
-  for (let attempt = 0; attempt < 40; attempt++) {
-    try {
-      process.kill(detachedPid, 0)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ESRCH") return
+  const tree = { platform: "linux" as const, members: [
+    { pid: 100, startIdentity: "a" }, { pid: 200, startIdentity: "b" }, { pid: 201, startIdentity: "c" },
+  ] }
+  const identities = new Map([[100, "a"], [200, "b"], [201, "c"]])
+  const kill = ((pid: number, signal?: NodeJS.Signals | number) => {
+    if (signal === 0) {
+      if (identities.has(pid)) return true
+      const error = new Error("gone") as NodeJS.ErrnoException
+      error.code = "ESRCH"
       throw error
     }
-    await delay(25)
-  }
-  assert.fail(`detached descendant ${detachedPid} remained alive`)
+    signals.push(pid)
+    identities.delete(pid)
+    return true
+  }) as typeof process.kill
+
+  assert.equal(forceCapturedProcessTree(tree, (pid) => identities.get(pid), spawnSync, kill), true)
+  assert.deepEqual(signals, [201, 200, 100])
+})
+
+test("signal dispatch is not confirmation while the captured identity remains", () => {
+  const tree = { platform: "linux" as const, members: [{ pid: 42, startIdentity: "owned" }] }
+  const kill = (() => true) as typeof process.kill
+
+  assert.equal(forceCapturedProcessTree(tree, () => "owned", spawnSync, kill), false)
 })

@@ -78,6 +78,7 @@ const [loading, setLoading] = createSignal({
 const [messagesLoaded, setMessagesLoaded] = createSignal<Map<string, Set<string>>>(new Map())
 const [messageLoadErrors, setMessageLoadErrors] = createSignal<Map<string, Map<string, string>>>(new Map())
 const [sessionListErrors, setSessionListErrors] = createSignal<Map<string, string>>(new Map())
+const messageLoadEpochs = new Map<string, number>()
 const [sessionInfoByInstance, setSessionInfoByInstance] = createSignal<Map<string, Map<string, SessionInfo>>>(new Map())
 const [threadTotalsByInstance, setThreadTotalsByInstance] = createSignal<Map<string, Map<string, ThreadTotals>>>(new Map())
 
@@ -332,9 +333,37 @@ function clearLoadedFlag(instanceId: string, sessionId: string) {
   })
 }
 
-messageStoreBus.onSessionCleared((instanceId, sessionId) => {
+function advanceMessageLoadEpoch(instanceId: string, sessionId: string): number {
+  const key = getDraftKey(instanceId, sessionId)
+  const epoch = (messageLoadEpochs.get(key) ?? 0) + 1
+  messageLoadEpochs.set(key, epoch)
+  return epoch
+}
+
+function isCurrentMessageLoad(instanceId: string, sessionId: string, epoch: number): boolean {
+  return messageLoadEpochs.get(getDraftKey(instanceId, sessionId)) === epoch
+}
+
+function clearMessageLoadingFlag(instanceId: string, sessionId: string): void {
+  setLoading((prev) => {
+    const existing = prev.loadingMessages.get(instanceId)
+    if (!existing?.has(sessionId)) return prev
+    const loadingMessages = new Map(prev.loadingMessages)
+    const updated = new Set(existing)
+    updated.delete(sessionId)
+    if (updated.size === 0) loadingMessages.delete(instanceId)
+    else loadingMessages.set(instanceId, updated)
+    return { ...prev, loadingMessages }
+  })
+}
+
+function invalidateSessionMessageLoad(instanceId: string, sessionId: string): void {
+  advanceMessageLoadEpoch(instanceId, sessionId)
   clearLoadedFlag(instanceId, sessionId)
-})
+  clearMessageLoadingFlag(instanceId, sessionId)
+}
+
+messageStoreBus.onSessionCleared(invalidateSessionMessageLoad)
 
 function getDraftKey(instanceId: string, sessionId: string): string {
   return `${instanceId}:${sessionId}`
@@ -423,6 +452,9 @@ function markSessionDeletedAuthoritative(instanceId: string, sessionId: string):
 function clearInstanceDeletedSessionAuthority(instanceId: string): void {
   if (!instanceId) return
   const prefix = `${instanceId}:`
+  for (const key of messageLoadEpochs.keys()) {
+    if (key.startsWith(prefix)) messageLoadEpochs.delete(key)
+  }
   setAuthoritativelyDeletedSessionKeys((prev) => {
     const next = new Set([...prev].filter((key) => !key.startsWith(prefix)))
     return next.size === prev.size ? prev : next
@@ -1170,6 +1202,9 @@ export {
   setMessagesLoaded,
   getSessionListError,
   setSessionListError,
+  advanceMessageLoadEpoch,
+  isCurrentMessageLoad,
+  invalidateSessionMessageLoad,
   setSessionMessagesLoadError,
   sessionInfoByInstance,
   setSessionInfoByInstance,

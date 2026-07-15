@@ -1,10 +1,8 @@
-import type { App, BrowserWindow, Event } from "electron"
+import type { App, BrowserWindow } from "electron"
 import type { ClientStateManager } from "./client-state"
 import type { CliProcessManager } from "./process-manager"
 import { flushRendererClientStateBeforeShutdown } from "./renderer-client-state-flush"
 import type { WindowStateTracker } from "./window-state"
-
-const WINDOWS_SESSION_END_FLUSH_TIMEOUT_MS = 1_500
 
 interface ClientStateLifecycleDependencies {
   app: App
@@ -14,7 +12,6 @@ interface ClientStateLifecycleDependencies {
   getAllWindows(): BrowserWindow[]
   getAllowedRendererOrigins(window?: BrowserWindow | null): string[]
   isTrustedRendererOrigin(url: string, allowedOrigins: string[]): boolean
-  windowsSessionEndFlushTimeoutMs?: number
   rendererFlushTimeoutMs?: number
   isWindows?: boolean
 }
@@ -61,9 +58,8 @@ export class ClientStateLifecycle {
     })
 
     if (this.dependencies.isWindows ?? process.platform === "win32") {
-      window.on("query-session-end", (event: Event) => {
+      window.on("query-session-end", () => {
         if (this.exitAllowed) return
-        event.preventDefault()
         this.promoteToSessionEnd(window)
       })
       window.on("session-end", () => this.promoteToSessionEnd(window))
@@ -82,7 +78,9 @@ export class ClientStateLifecycle {
       if (this.exitAllowed) return
       event.preventDefault()
       this.hideWindows()
-      void this.startShutdown(this.dependencies.getMainWindow()).then(() => this.exit())
+      void this.startShutdown(this.dependencies.getMainWindow()).then(() => this.exit(), (error) => {
+        console.warn("[client-state] desktop shutdown remains pending because cleanup was not contained", error)
+      })
     })
     app.on("window-all-closed", () => app.quit())
   }
@@ -96,10 +94,11 @@ export class ClientStateLifecycle {
     if (this.shutdown) return this.shutdown
     const stages = (async () => {
       const rendererFlush = this.runStage("renderer shutdown flush", () => this.flushRenderer(window))
-      const cliStop = this.runStage("CLI stop", () => this.dependencies.cliManager.stop())
+      const cliStop = this.dependencies.cliManager.stop().then(() => null, (error: unknown) => error)
       await rendererFlush
       await this.runStage("native shutdown flush", () => this.flushNative())
-      await cliStop
+      const cliError = await cliStop
+      if (cliError) throw cliError
       await this.runStage("primary release", () => this.dependencies.clientStateManager.drainAndReleasePrimary())
     })()
     this.shutdown = stages
@@ -114,12 +113,10 @@ export class ClientStateLifecycle {
 
   private promoteToSessionEnd(window: BrowserWindow): void {
     if (this.exitAllowed || this.sessionEnd) return
-    const timeoutMs = this.dependencies.windowsSessionEndFlushTimeoutMs ?? WINDOWS_SESSION_END_FLUSH_TIMEOUT_MS
-    this.sessionEnd = Promise.race([
-      this.startShutdown(window),
-      new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
-    ])
-    void this.sessionEnd.then(() => this.exit())
+    this.sessionEnd = this.startShutdown(window)
+    void this.sessionEnd.catch((error) => {
+      console.warn("[client-state] OS session-end cleanup was not contained before termination", error)
+    })
   }
 
   private async flushRenderer(window: BrowserWindow | null): Promise<void> {

@@ -29,6 +29,8 @@ import {
   providers,
   setAgents,
   setMessagesLoaded,
+  advanceMessageLoadEpoch,
+  isCurrentMessageLoad,
   setSessionMessagesLoadError,
   setProviders,
   setSessionInfoByInstance,
@@ -365,8 +367,10 @@ async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: SDKSe
   setSessions((prev) => {
     const next = new Map(prev)
     const instanceSessions = new Map(next.get(instanceId) ?? new Map())
+    const deletedSessionIds = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
 
     for (const apiSession of items) {
+      if (deletedSessionIds.has(apiSession.id)) continue
       const existingSession = instanceSessions.get(apiSession.id)
       instanceSessions.set(apiSession.id, toClientSessionV2(instanceId, apiSession, existingSession))
       loaded.set(apiSession.id, apiSession)
@@ -570,8 +574,10 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
     setSessions((prev) => {
       const next = new Map(prev)
       const instanceSessions = new Map(next.get(instanceId) ?? new Map())
+      const deletedSessionIds = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
 
       for (const apiSession of searchResults) {
+        if (deletedSessionIds.has(apiSession.id)) continue
         const existingSession = instanceSessions.get(apiSession.id)
         instanceSessions.set(apiSession.id, toClientSessionV2(instanceId, apiSession, existingSession))
       }
@@ -585,7 +591,9 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
     if (!isLatestSessionSearch(instanceId, trimmedQuery, requestId)) return
 
     const hydratedSessions = sessions().get(instanceId)
-    const hasUnrenderableChildResult = searchResults.some((session) => {
+    const deletedSessionIds = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
+    const currentSearchResults = searchResults.filter((session) => !deletedSessionIds.has(session.id))
+    const hasUnrenderableChildResult = currentSearchResults.some((session) => {
       const parentId = session.parentID
       return Boolean(parentId && !hydratedSessions?.has(parentId))
     })
@@ -596,7 +604,7 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
     }
 
     syncInstanceSessionIndicator(instanceId)
-    setSessionSearchResults(instanceId, trimmedQuery, searchResults.map((session) => session.id), requestId)
+    setSessionSearchResults(instanceId, trimmedQuery, currentSearchResults.map((session) => session.id), requestId)
   } catch (error) {
     log.error("Failed to search sessions:", error)
     if (isLatestSessionSearch(instanceId, trimmedQuery, requestId)) {
@@ -1045,7 +1053,7 @@ async function loadMessages(
   }
 
   const isLoading = loading().loadingMessages.get(instanceId)?.has(sessionId)
-  if (isLoading) {
+  if (isLoading && !force) {
     return
   }
 
@@ -1062,6 +1070,8 @@ async function loadMessages(
     throw new Error("Session not found")
   }
 
+  const loadEpoch = advanceMessageLoadEpoch(instanceId, sessionId)
+
   setLoading((prev) => {
     const next = { ...prev }
     const loadingSet = next.loadingMessages.get(instanceId) || new Set()
@@ -1077,6 +1087,8 @@ async function loadMessages(
       client.session.messages({ sessionID: sessionId, ...(await getSessionWorkspacePayload(instanceId, sessionId)) }),
       "session.messages",
     )
+
+    if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return
 
     if (!Array.isArray(apiMessages)) {
       return
@@ -1138,12 +1150,14 @@ async function loadMessages(
 
     if (!agentName && !providerID && !modelID) {
       const defaultModel = await getDefaultModel(instanceId, session.agent)
+      if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return
       agentName = session.agent
       providerID = defaultModel.providerId
       modelID = defaultModel.modelId
     }
 
     setSessions((prev) => {
+      if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return prev
       const next = new Map(prev)
       const nextInstanceSessions = next.get(instanceId)
       if (!nextInstanceSessions) {
@@ -1180,6 +1194,7 @@ async function loadMessages(
       parentId: session?.parentId ?? null,
       revert: session?.revert,
     }
+    if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return
     seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo)
 
     // Permissions can be hydrated before messages/tool parts exist in the store.
@@ -1191,19 +1206,22 @@ async function loadMessages(
 
   } catch (error) {
     log.error("Failed to load messages:", error)
-    setSessionMessagesLoadError(instanceId, sessionId, getOpencodeErrorMessage(error, tGlobal("messageSection.loadError.detail")))
+    if (isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) {
+      setSessionMessagesLoadError(instanceId, sessionId, getOpencodeErrorMessage(error, tGlobal("messageSection.loadError.detail")))
+    }
     throw error
   } finally {
-    setLoading((prev) => {
-      const next = { ...prev }
-      const loadingSet = next.loadingMessages.get(instanceId)
-      if (loadingSet) {
-        loadingSet.delete(sessionId)
-      }
-      return next
-    })
+    if (isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) {
+      setLoading((prev) => {
+        const next = { ...prev }
+        const loadingSet = next.loadingMessages.get(instanceId)
+        if (loadingSet) loadingSet.delete(sessionId)
+        return next
+      })
+    }
   }
 
+  if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return
   updateSessionInfo(instanceId, sessionId)
 
   if (!skipChildren && session.parentId === null) {

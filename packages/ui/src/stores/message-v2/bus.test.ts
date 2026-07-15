@@ -3,6 +3,7 @@ import { describe, it } from "node:test"
 
 import { clearEvictedSessionMessages } from "../../components/instance/shell/session-cache-eviction.ts"
 import { messageStoreBus } from "./bus.ts"
+import { messagesLoaded, setMessagesLoaded } from "../session-state.ts"
 
 describe("message store scroll snapshots", () => {
   it("seeds an unregistered instance without claiming runtime authority", () => {
@@ -64,15 +65,13 @@ describe("message store scroll snapshots", () => {
     const instanceId = "scroll-render-cache-eviction"
     const store = messageStoreBus.getOrCreate(instanceId)
     const snapshot = { scrollTop: 240, atBottom: false, updatedAt: 2400 }
-    const loaded = new Map([[instanceId, new Set(["session-1"])]])
-    const stopListening = messageStoreBus.onSessionCleared((id, sessionId) => loaded.get(id)?.delete(sessionId))
+    setMessagesLoaded((prev) => new Map(prev).set(instanceId, new Set(["session-1"])))
     try {
       store.restoreScrollSnapshot("session-1", "message-stream", snapshot)
-      clearEvictedSessionMessages(store, "session-1")
+      clearEvictedSessionMessages(instanceId, store, "session-1")
       assert.deepEqual(store.getScrollSnapshot("session-1", "message-stream"), snapshot)
-      assert.equal(loaded.get(instanceId)?.has("session-1") ?? false, false)
+      assert.equal(messagesLoaded().get(instanceId)?.has("session-1") ?? false, false)
     } finally {
-      stopListening()
       messageStoreBus.unregisterInstance(instanceId)
     }
   })

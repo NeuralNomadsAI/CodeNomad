@@ -6,8 +6,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "macos", windows))]
 use std::process::{Command, Stdio};
+use std::thread;
+use std::time::Duration;
 #[cfg(any(target_os = "macos", windows))]
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 const OWNER_FILENAME: &str = "primary.owner.json";
 const PARTICIPANT_PREFIX: &str = "participant.";
@@ -15,6 +17,12 @@ const PARTICIPANT_SUFFIX: &str = ".json";
 const REMOVAL_CLAIM_PREFIX: &str = "removed.";
 const REMOVAL_CLAIM_SUFFIX: &str = ".claim";
 const ACQUIRE_ATTEMPTS: usize = 10;
+const PROTOCOL_LOCK_DIRECTORY: &str = "protocol.lock";
+const PROTOCOL_LOCK_OWNER_FILENAME: &str = "owner.json";
+const RETIRED_LOCK_PREFIX: &str = "retired.";
+const RETIRED_LOCK_SUFFIX: &str = ".lock";
+const PROTOCOL_LOCK_ATTEMPTS: usize = 500;
+const PROTOCOL_LOCK_RETRY: Duration = Duration::from_millis(10);
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -170,91 +178,103 @@ impl Registration {
                 election_directory.display()
             )
         })?;
-        let owner_path = election_directory.join(OWNER_FILENAME);
-        let participant_path = participant_path(election_directory, &owner)?;
-        let serialized = serialize_owner(&owner)?;
-        let mut primary = false;
+        let Some(protocol_lock_owner) =
+            acquire_protocol_lock(election_directory, &owner, pid_alive, identity)?
+        else {
+            return Ok(None);
+        };
+        let result = (|| -> Result<Option<Self>, String> {
+            let owner_path = election_directory.join(OWNER_FILENAME);
+            let participant_path = participant_path(election_directory, &owner)?;
+            let serialized = serialize_owner(&owner)?;
+            let mut primary = false;
 
-        if primary_candidate {
-            match publish(&owner_path, serialized.as_bytes()) {
-                Ok(()) => primary = true,
-                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
-                Err(err) => return Err(format!("failed to publish cross-host owner: {err}")),
-            }
-        }
-
-        if primary_candidate && !primary {
-            for _ in 0..ACQUIRE_ATTEMPTS {
+            if primary_candidate {
                 match publish(&owner_path, serialized.as_bytes()) {
-                    Ok(()) => {
-                        primary = true;
-                        break;
-                    }
+                    Ok(()) => primary = true,
                     Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
                     Err(err) => return Err(format!("failed to publish cross-host owner: {err}")),
                 }
-
-                let Some(observed) = read_if_exists(&owner_path)? else {
-                    continue;
-                };
-                let Some(existing) = parse_owner(&observed) else {
-                    break;
-                };
-                if existing == owner {
-                    primary = true;
-                    break;
-                }
-                let stale = if existing.pid == owner.pid && existing.run_token != owner.run_token {
-                    Some(true)
-                } else {
-                    owner_is_stale(&existing, pid_alive, identity)
-                };
-                let Some(stale) = stale else {
-                    break;
-                };
-                if !stale
-                    || has_other_live_participants(election_directory, &owner, pid_alive, identity)?
-                {
-                    break;
-                }
-                if !remove_observed_owner(
-                    election_directory,
-                    &owner_path,
-                    &observed,
-                    &existing,
-                    &owner,
-                )? {
-                    continue;
-                }
             }
-        }
 
-        if let Err(err) = publish_participant(&participant_path, &serialized) {
-            if primary {
-                if let Some(observed) = read_if_exists(&owner_path)? {
-                    if parse_owner(&observed).as_ref() == Some(&owner) {
-                        let _ = remove_observed_owner(
+            if primary_candidate && !primary {
+                for _ in 0..ACQUIRE_ATTEMPTS {
+                    match publish(&owner_path, serialized.as_bytes()) {
+                        Ok(()) => {
+                            primary = true;
+                            break;
+                        }
+                        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+                        Err(err) => {
+                            return Err(format!("failed to publish cross-host owner: {err}"))
+                        }
+                    }
+
+                    let Some(observed) = read_if_exists(&owner_path)? else {
+                        continue;
+                    };
+                    let Some(existing) = parse_owner(&observed) else {
+                        break;
+                    };
+                    if existing == owner {
+                        primary = true;
+                        break;
+                    }
+                    let stale = owner_is_stale(&existing, pid_alive, identity);
+                    let Some(stale) = stale else {
+                        break;
+                    };
+                    if !stale
+                        || has_other_live_participants(
                             election_directory,
-                            &owner_path,
-                            &observed,
                             &owner,
-                            &owner,
-                        );
+                            pid_alive,
+                            identity,
+                        )?
+                    {
+                        break;
+                    }
+                    if !remove_observed_owner(
+                        election_directory,
+                        &owner_path,
+                        &observed,
+                        &existing,
+                        &owner,
+                    )? {
+                        continue;
                     }
                 }
             }
-            return Err(err);
-        }
 
-        Ok(Some(Self {
-            election_directory: election_directory.to_path_buf(),
-            owner_path,
-            participant_path,
-            owner,
-            legacy_electron_data: None,
-            primary,
-            released: false,
-        }))
+            if let Err(err) = publish_participant(&participant_path, &serialized) {
+                if primary {
+                    if let Some(observed) = read_if_exists(&owner_path)? {
+                        if parse_owner(&observed).as_ref() == Some(&owner) {
+                            let _ = remove_observed_owner(
+                                election_directory,
+                                &owner_path,
+                                &observed,
+                                &owner,
+                                &owner,
+                            );
+                        }
+                    }
+                }
+                return Err(err);
+            }
+
+            Ok(Some(Self {
+                election_directory: election_directory.to_path_buf(),
+                owner_path,
+                participant_path,
+                owner: owner.clone(),
+                legacy_electron_data: None,
+                primary,
+                released: false,
+            }))
+        })();
+        release_protocol_lock(election_directory, &protocol_lock_owner)?;
+        result
     }
 
     pub(super) fn is_primary(&self) -> bool {
@@ -288,31 +308,40 @@ impl Registration {
         if self.released {
             return Ok(false);
         }
-        let mut removed = false;
-        if self.is_primary()
-            && !has_other_live_participants(
-                &self.election_directory,
-                &self.owner,
-                pid_alive,
-                identity,
-            )?
-        {
-            if let Some(observed) = read_if_exists(&self.owner_path)? {
-                if parse_owner(&observed).as_ref() == Some(&self.owner) {
-                    removed = remove_observed_owner(
-                        &self.election_directory,
-                        &self.owner_path,
-                        &observed,
-                        &self.owner,
-                        &self.owner,
-                    )?;
+        let Some(protocol_lock_owner) =
+            acquire_protocol_lock(&self.election_directory, &self.owner, pid_alive, identity)?
+        else {
+            return Ok(false);
+        };
+        let result = (|| -> Result<bool, String> {
+            let mut removed = false;
+            if self.is_primary()
+                && !has_other_live_participants(
+                    &self.election_directory,
+                    &self.owner,
+                    pid_alive,
+                    identity,
+                )?
+            {
+                if let Some(observed) = read_if_exists(&self.owner_path)? {
+                    if parse_owner(&observed).as_ref() == Some(&self.owner) {
+                        removed = remove_observed_owner(
+                            &self.election_directory,
+                            &self.owner_path,
+                            &observed,
+                            &self.owner,
+                            &self.owner,
+                        )?;
+                    }
                 }
             }
-        }
-        remove_participant_if_owned(&self.participant_path, &self.owner)?;
-        self.primary = false;
-        self.released = true;
-        Ok(removed)
+            remove_participant_if_owned(&self.participant_path, &self.owner)?;
+            self.primary = false;
+            self.released = true;
+            Ok(removed)
+        })();
+        release_protocol_lock(&self.election_directory, &protocol_lock_owner)?;
+        result
     }
 }
 
@@ -412,6 +441,115 @@ fn owner_is_stale(
         return Some(true);
     }
     identity(owner.pid).map(|live| live != owner.process_start_identity)
+}
+
+fn protocol_lock_owner_path(lock_directory: &Path) -> PathBuf {
+    lock_directory.join(PROTOCOL_LOCK_OWNER_FILENAME)
+}
+
+fn retire_protocol_lock(election_directory: &Path, observed: &str) -> Result<bool, String> {
+    let lock_directory = election_directory.join(PROTOCOL_LOCK_DIRECTORY);
+    if read_if_exists(&protocol_lock_owner_path(&lock_directory))?.as_deref() != Some(observed) {
+        return Ok(false);
+    }
+    let retired = election_directory.join(format!(
+        "{RETIRED_LOCK_PREFIX}{}{RETIRED_LOCK_SUFFIX}",
+        digest(observed)
+    ));
+    if retired.exists() {
+        return Ok(false);
+    }
+    match fs::rename(&lock_directory, &retired) {
+        Ok(()) => {
+            // ponytail: immutable retirement directories accumulate; clean them only if directory growth becomes material.
+            Ok(true)
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound || retired.exists() => Ok(false),
+        Err(err) => Err(format!("failed to retire cross-host protocol lock: {err}")),
+    }
+}
+
+fn publish_protocol_lock_owner(path: &Path, serialized: &str) -> Result<(), String> {
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|err| format!("failed to publish cross-host protocol lock owner: {err}"))?;
+    if let Err(err) = file.write_all(serialized.as_bytes()) {
+        drop(file);
+        let _ = fs::remove_file(path);
+        return Err(format!(
+            "failed to publish cross-host protocol lock owner: {err}"
+        ));
+    }
+    if let Err(err) = file.sync_all() {
+        if !is_unsupported_sync_error(&err) {
+            drop(file);
+            let _ = fs::remove_file(path);
+            return Err(format!(
+                "failed to publish cross-host protocol lock owner: {err}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn acquire_protocol_lock(
+    election_directory: &Path,
+    owner: &Owner,
+    pid_alive: impl Fn(u32) -> bool + Copy,
+    identity: impl Fn(u32) -> Option<String> + Copy,
+) -> Result<Option<Owner>, String> {
+    let lock_directory = election_directory.join(PROTOCOL_LOCK_DIRECTORY);
+    let lock_owner = Owner {
+        pid: owner.pid,
+        run_token: format!("{}.{}", owner.run_token, uuid::Uuid::new_v4()),
+        process_start_identity: owner.process_start_identity.clone(),
+    };
+    let serialized = serialize_owner(&lock_owner)?;
+    for attempt in 0..PROTOCOL_LOCK_ATTEMPTS {
+        match fs::create_dir(&lock_directory) {
+            Ok(()) => {
+                if let Err(err) = publish_protocol_lock_owner(
+                    &protocol_lock_owner_path(&lock_directory),
+                    &serialized,
+                ) {
+                    let _ = fs::remove_dir(&lock_directory);
+                    return Err(err);
+                }
+                return Ok(Some(lock_owner));
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(err) => return Err(format!("failed to acquire cross-host protocol lock: {err}")),
+        }
+
+        let observed = read_if_exists(&protocol_lock_owner_path(&lock_directory))?;
+        let Some(existing) = observed.as_deref().and_then(parse_owner) else {
+            if observed.is_some() && attempt >= ACQUIRE_ATTEMPTS - 1 {
+                return Ok(None);
+            }
+            thread::sleep(PROTOCOL_LOCK_RETRY);
+            continue;
+        };
+        match owner_is_stale(&existing, pid_alive, identity) {
+            Some(true) => {
+                retire_protocol_lock(election_directory, observed.as_deref().unwrap())?;
+            }
+            Some(false) | None => thread::sleep(PROTOCOL_LOCK_RETRY),
+        }
+    }
+    Ok(None)
+}
+
+fn release_protocol_lock(election_directory: &Path, owner: &Owner) -> Result<(), String> {
+    let lock_directory = election_directory.join(PROTOCOL_LOCK_DIRECTORY);
+    let Some(observed) = read_if_exists(&protocol_lock_owner_path(&lock_directory))? else {
+        return Ok(());
+    };
+    if parse_owner(&observed).as_ref() == Some(owner) {
+        retire_protocol_lock(election_directory, &observed)?;
+    }
+    Ok(())
 }
 
 fn remove_observed_owner(
@@ -667,19 +805,35 @@ mod tests {
         }
     }
 
-    fn node_child(directory: &Path, start: &Path) -> Child {
+    fn node_child_with(
+        directory: &Path,
+        start: &Path,
+        user_data: Option<&Path>,
+        pause: Option<(&Path, &Path)>,
+    ) -> Child {
         let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
         let workspace = manifest.join("../../..");
         let script =
             manifest.join("../../electron-app/electron/main/client-state-cross-host-child.ts");
-        let ready = directory.join(format!("node-ready-{}", uuid::Uuid::new_v4()));
-        let child = Command::new("node")
+        let ready = start
+            .parent()
+            .unwrap()
+            .join(format!("node-ready-{}", uuid::Uuid::new_v4()));
+        let mut command = Command::new("node");
+        command
             .current_dir(workspace)
             .args(["--import", "tsx"])
             .arg(script)
             .arg(directory)
             .arg(start)
-            .arg(&ready)
+            .arg(&ready);
+        if let Some(user_data) = user_data {
+            command.args(["full"]).arg(user_data);
+            if let Some((participant_ready, participant_continue)) = pause {
+                command.arg(participant_ready).arg(participant_continue);
+            }
+        }
+        let child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -694,6 +848,10 @@ mod tests {
             "Node election child did not reach its startup barrier"
         );
         child
+    }
+
+    fn node_child(directory: &Path, start: &Path) -> Child {
+        node_child_with(directory, start, None, None)
     }
 
     fn node_result(child: &mut Child) -> bool {
@@ -857,6 +1015,75 @@ mod tests {
             stop_node(node);
             assert!(rust.release().unwrap());
         }
+    }
+
+    #[test]
+    fn node_and_rust_full_hosts_serialize_startup_and_release_interleaving() {
+        use crate::client_state::process;
+        use std::sync::{mpsc, Arc};
+
+        let simultaneous = tempfile::tempdir().unwrap();
+        let election = simultaneous.path().join("election");
+        let node_data = simultaneous.path().join("node");
+        let rust_data = simultaneous.path().join("rust");
+        fs::create_dir_all(&rust_data).unwrap();
+        let start = simultaneous.path().join("start");
+        let mut node = node_child_with(&election, &start, Some(&node_data), None);
+        fs::write(&start, b"").unwrap();
+        let rust = process::Registration::initialize(&rust_data, &election, None).unwrap();
+        let node_primary = node_result(&mut node);
+        assert_ne!(node_primary, rust.is_primary());
+        let rust = rust.finish();
+        if node_primary {
+            rust.release_locks();
+            stop_node(node);
+        } else {
+            stop_node(node);
+            rust.release_locks();
+        }
+
+        let interleaving = tempfile::tempdir().unwrap();
+        let election = interleaving.path().join("election");
+        let rust_data = interleaving.path().join("rust");
+        fs::create_dir_all(&rust_data).unwrap();
+        let rust = process::Registration::initialize(&rust_data, &election, None)
+            .unwrap()
+            .finish();
+        assert!(rust.is_primary());
+        let rust = Arc::new(rust);
+        let start = interleaving.path().join("start");
+        let participant_ready = interleaving.path().join("participant-ready");
+        let participant_continue = interleaving.path().join("participant-continue");
+        let node_data = interleaving.path().join("node");
+        let mut node = node_child_with(
+            &election,
+            &start,
+            Some(&node_data),
+            Some((&participant_ready, &participant_continue)),
+        );
+        fs::write(&start, b"").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !participant_ready.exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(participant_ready.exists(), "Node participant did not pause");
+
+        let releasing = Arc::clone(&rust);
+        let (released_tx, released_rx) = mpsc::channel();
+        let release = thread::spawn(move || {
+            releasing.release_locks();
+            released_tx.send(()).unwrap();
+        });
+        assert_eq!(
+            released_rx.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        );
+        fs::write(&participant_continue, b"").unwrap();
+        assert!(!node_result(&mut node));
+        released_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        release.join().unwrap();
+        assert!(election.join(OWNER_FILENAME).exists());
+        stop_node(node);
     }
 
     #[test]

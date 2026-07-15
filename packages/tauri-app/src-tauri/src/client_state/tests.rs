@@ -184,6 +184,7 @@ fn election_preserves_cohorts_until_every_participant_exits() {
             .count(),
         1
     );
+    fs::remove_dir_all(directory.path().join(".cross-host-election")).unwrap();
     let primary = ClientState::initialize_at(directory.path()).unwrap();
     let secondary = ClientState::initialize_at(directory.path()).unwrap();
     assert!(primary.is_primary());
@@ -194,6 +195,8 @@ fn election_preserves_cohorts_until_every_participant_exits() {
     assert!(!waiting.is_primary());
     drop(secondary);
     drop(waiting);
+    // Thread-backed clients share this test process identity; real exited hosts do not.
+    fs::remove_dir_all(directory.path().join(".cross-host-election")).unwrap();
     assert!(ClientState::initialize_at(directory.path())
         .unwrap()
         .is_primary());
