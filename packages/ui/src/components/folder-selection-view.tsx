@@ -51,6 +51,8 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   } = useConfig()
   const { t, locale } = useI18n()
   const [selectedIndex, setSelectedIndex] = createSignal(0)
+  const [hoveredRecentActionPath, setHoveredRecentActionPath] = createSignal<string | null>(null)
+  const [focusedRecentActionPath, setFocusedRecentActionPath] = createSignal<string | null>(null)
   const [focusMode, setFocusMode] = createSignal<"recent" | "new" | null>("recent")
   const [selectedBinary, setSelectedBinary] = createSignal(serverSettings().opencodeBinary || "opencode")
   const [isFolderBrowserOpen, setIsFolderBrowserOpen] = createSignal(false)
@@ -321,6 +323,19 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   function handleExistingInstanceSelect(instanceId: string, recentPath: string) {
     if (isLoading()) return
     props.onSelectExistingInstance(instanceId, recentPath, selectedBinary())
+  }
+
+  function setRecentActionHovered(path: string, active: boolean) {
+    setHoveredRecentActionPath((current) => active ? path : current === path ? null : current)
+  }
+
+  function setRecentActionFocused(path: string, active: boolean) {
+    setFocusedRecentActionPath((current) => active ? path : current === path ? null : current)
+  }
+
+  function clearRecentActionState(path: string) {
+    setRecentActionHovered(path, false)
+    setRecentActionFocused(path, false)
   }
 
   function resetCloneDialog() {
@@ -938,10 +953,12 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                             const openActionLabelId = () => `recent-folder-${index()}-open-action`
 
                             return <div
-                              class="panel-list-item"
+                              class="panel-list-item folder-home-recent-item"
                               classList={{
                                 "panel-list-item-highlight": focusMode() === "recent" && selectedIndex() === index(),
                                 "panel-list-item-disabled": isLoading(),
+                                "folder-home-recent-item-action-active":
+                                  hoveredRecentActionPath() === folder.path || focusedRecentActionPath() === folder.path,
                               }}
                             >
                               <div class="flex items-center gap-2 w-full px-1">
@@ -977,33 +994,68 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                   </div>
                                 </button>
                                 <Show when={existingInstance()}>
-                                  {(instance) => (
-                                    <button
-                                      type="button"
-                                      class="folder-home-open-instance-button"
-                                      disabled={isLoading()}
-                                      aria-labelledby={`${openActionLabelId()} ${projectLabelId()}`}
-                                      title={t("folderSelection.recent.switchToOpenProject")}
-                                      onClick={() => handleExistingInstanceSelect(instance().id, folder.path)}
-                                    >
-                                      <span id={openActionLabelId()}>{t("folderSelection.recent.openBadge")}</span>
-                                      <ChevronRight class="w-3 h-3" aria-hidden="true" />
-                                    </button>
-                                  )}
+                                  {(instance) => {
+                                    let ownsHoverState = false
+                                    let ownsFocusState = false
+                                    onCleanup(() => {
+                                      if (ownsHoverState) setRecentActionHovered(folder.path, false)
+                                      if (ownsFocusState) setRecentActionFocused(folder.path, false)
+                                    })
+                                    return (
+                                      <button
+                                        type="button"
+                                        class="folder-home-open-instance-button folder-home-row-action"
+                                        disabled={isLoading()}
+                                        aria-labelledby={`${openActionLabelId()} ${projectLabelId()}`}
+                                        title={t("folderSelection.recent.switchToOpenProject")}
+                                        onClick={() => handleExistingInstanceSelect(instance().id, folder.path)}
+                                        onMouseEnter={() => {
+                                          ownsHoverState = true
+                                          setRecentActionHovered(folder.path, true)
+                                        }}
+                                        onMouseLeave={() => {
+                                          ownsHoverState = false
+                                          setRecentActionHovered(folder.path, false)
+                                        }}
+                                        onFocus={() => {
+                                          ownsFocusState = true
+                                          setRecentActionFocused(folder.path, true)
+                                        }}
+                                        onBlur={() => {
+                                          ownsFocusState = false
+                                          setRecentActionFocused(folder.path, false)
+                                        }}
+                                      >
+                                        <span id={openActionLabelId()}>{t("folderSelection.recent.openBadge")}</span>
+                                        <ChevronRight class="w-3 h-3" aria-hidden="true" />
+                                      </button>
+                                    )
+                                  }}
                                 </Show>
                                 <button
                                   onClick={(e) => openProjectRename(folder.path, folder.projectName, e)}
                                   disabled={isLoading()}
-                                  class="p-2 transition-all hover:bg-surface-hover opacity-70 hover:opacity-100 rounded"
+                                  class="folder-home-row-action p-2 transition-all hover:bg-surface-hover opacity-70 hover:opacity-100 rounded"
                                   title={t("folderSelection.recent.rename")}
+                                  onMouseEnter={() => setRecentActionHovered(folder.path, true)}
+                                  onMouseLeave={() => setRecentActionHovered(folder.path, false)}
+                                  onFocus={() => setRecentActionFocused(folder.path, true)}
+                                  onBlur={() => setRecentActionFocused(folder.path, false)}
                                 >
                                   <Pencil class="w-3.5 h-3.5 transition-colors icon-muted" />
                                 </button>
                                 <button
-                                  onClick={(e) => handleRemove(folder.path, e)}
+                                  onClick={(e) => {
+                                    clearRecentActionState(folder.path)
+                                    handleRemove(folder.path, e)
+                                  }}
                                   disabled={isLoading()}
-                                  class="p-2 transition-all hover:bg-red-100 dark:hover:bg-red-900/30 opacity-70 hover:opacity-100 rounded"
+                                  class="folder-home-row-action p-2 transition-all hover:bg-red-100 dark:hover:bg-red-900/30 opacity-70 hover:opacity-100 rounded"
                                   title={t("folderSelection.recent.remove")}
+                                  onMouseEnter={() => setRecentActionHovered(folder.path, true)}
+                                  onMouseLeave={() => setRecentActionHovered(folder.path, false)}
+                                  onFocus={() => setRecentActionFocused(folder.path, true)}
+                                  onBlur={() => setRecentActionFocused(folder.path, false)}
                                 >
                                   <Trash2 class="w-3.5 h-3.5 transition-colors icon-muted hover:text-red-600 dark:hover:text-red-400" />
                                 </button>
