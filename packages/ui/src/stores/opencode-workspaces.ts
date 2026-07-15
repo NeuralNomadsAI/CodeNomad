@@ -80,7 +80,9 @@ async function syncOpenCodeWorkspaces(instanceId: string): Promise<void> {
       }
     })
     .finally(() => {
-      workspaceSyncs.delete(instanceId)
+      if (workspaceSyncs.get(instanceId) === task) {
+        workspaceSyncs.delete(instanceId)
+      }
     })
 
   workspaceSyncs.set(instanceId, task)
@@ -88,7 +90,7 @@ async function syncOpenCodeWorkspaces(instanceId: string): Promise<void> {
 }
 
 async function reloadOpenCodeWorkspaces(instanceId: string): Promise<void> {
-  workspaceSyncs.delete(instanceId)
+  await workspaceSyncs.get(instanceId)
   await syncOpenCodeWorkspaces(instanceId)
 }
 
