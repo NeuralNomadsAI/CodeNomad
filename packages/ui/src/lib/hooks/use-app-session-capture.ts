@@ -9,8 +9,10 @@ import {
 } from "../../stores/client-state"
 import { normalizeWorkspacePath } from "../../stores/app-session-reconciliation"
 import {
-  createRestorableSessionPreservation, markPreservedWorkspaceRemoved, markPreservedWorkspaceReopened,
-  mergeRestorableSessionState, recordRestoredTab, type RestorableSessionPreservation,
+  createRestorableSessionPreservation, createRestoredTabCommitGuard, markPreservedWorkspaceRemoved,
+  markPreservedWorkspaceReopened,
+  hasRestoredTabBinding, mergeRestorableSessionState, recordRestoredTab,
+  settleRestoredTab as settlePreservedTab, type RestorableSessionPreservation,
   type RestorableWorkspaceRuntimeAuthority,
 } from "../../stores/app-session-snapshot-merge"
 import { activeAppTabId, appTabs, getInstanceAppTabId } from "../../stores/app-tabs"
@@ -198,6 +200,22 @@ export function useAppSessionCapture() {
       if (!preservation) return
       recordRestoredTab(preservation, index, tabId, unavailable)
       schedule()
+    },
+    createRestoredTabCommitGuard(index: number) {
+      return preservation ? createRestoredTabCommitGuard(preservation, index) : () => false
+    },
+    hasRestoredTabBinding(index: number, expectedRuntimeTabId: string) {
+      return preservation ? hasRestoredTabBinding(preservation, index, expectedRuntimeTabId) : false
+    },
+    settleRestoredTab(
+      index: number,
+      expectedRuntimeTabId: string,
+      tabId: string | null,
+      unavailable?: ReadonlySet<string>,
+    ) {
+      if (!preservation || !settlePreservedTab(preservation, index, expectedRuntimeTabId, tabId, unavailable)) return false
+      schedule()
+      return true
     },
     restoredTabIds: () => preservation?.results.map((result) =>
       "runtimeTabId" in result ? result.runtimeTabId ?? null : null) ?? [],

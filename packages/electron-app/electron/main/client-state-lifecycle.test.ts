@@ -12,7 +12,6 @@ function harness(options: {
   stop?: () => Promise<void>
   nativeFlush?: () => Promise<void>
   timeout?: number
-  shutdownTimeout?: number
   otherWindow?: boolean
 } = {}) {
   const windows = new Map<string, (event?: { preventDefault(): void }) => void>()
@@ -23,13 +22,14 @@ function harness(options: {
     on: (name: string, handler: (event?: { preventDefault(): void }) => void) => windows.set(name, handler),
     isDestroyed: () => false,
     close: () => { calls.push("close"); windows.get("close")?.({ preventDefault: () => assert.fail("approved close prevented") }) },
+    hide: () => { calls.push("hide") },
     webContents: { isDestroyed: () => false, getURL: () => "http://127.0.0.1:43123/workspace", executeJavaScript: () => { calls.push("renderer"); return options.flush?.() ?? Promise.resolve() } },
   } as unknown as BrowserWindow
-  const other = { isDestroyed: () => false } as BrowserWindow
+  const other = { isDestroyed: () => false, hide: () => { calls.push("hide-other") } } as unknown as BrowserWindow
   const app = { on: (name: string, handler: never) => appEvents.set(name, handler), quit: () => calls.push("quit"), exit: () => { exits++ } } as unknown as App
   const manager = { isPrimary: true, flush: async () => {}, drainAndReleasePrimary: async () => { calls.push("release") } } as ClientStateManager
   const cli = { stop: async () => { calls.push("stop"); await options.stop?.() } } as unknown as CliProcessManager
-  const lifecycle = new ClientStateLifecycle({ app, clientStateManager: manager, cliManager: cli, getMainWindow: () => window, getAllWindows: () => options.otherWindow ? [window, other] : [window], getAllowedRendererOrigins: () => ["http://127.0.0.1:43123"], isTrustedRendererOrigin: () => true, windowsSessionEndFlushTimeoutMs: options.timeout, rendererFlushTimeoutMs: options.timeout && options.timeout * 2, shutdownTimeoutMs: options.shutdownTimeout, isWindows: true })
+  const lifecycle = new ClientStateLifecycle({ app, clientStateManager: manager, cliManager: cli, getMainWindow: () => window, getAllWindows: () => options.otherWindow ? [window, other] : [window], getAllowedRendererOrigins: () => ["http://127.0.0.1:43123"], isTrustedRendererOrigin: () => true, windowsSessionEndFlushTimeoutMs: options.timeout, rendererFlushTimeoutMs: options.timeout && options.timeout * 2, isWindows: true })
   lifecycle.attachMainWindow(window, { flush: async () => { calls.push("native"); await options.nativeFlush?.() } } as unknown as WindowStateTracker)
   lifecycle.registerAppEvents()
   const close = () => { let prevented = false; windows.get("close")?.({ preventDefault: () => { prevented = true } }); return prevented }
@@ -65,7 +65,7 @@ test("late old-window detach preserves replacement tracker during shutdown", asy
   h.lifecycle.detachMainWindow(h.window)
   h.appEvents.get("before-quit")?.({ preventDefault: () => {} })
   await (h.lifecycle as any).shutdown
-  assert.deepEqual(h.calls, ["renderer", "stop", "replacement-native", "release"])
+  assert.deepEqual(h.calls, ["hide", "renderer", "stop", "replacement-native", "release"])
 })
 
 test("Windows session end flushes once and exits", async () => {
@@ -86,24 +86,33 @@ test("session end promotes and bounds an already-hung ordinary shutdown", async 
   h.windows.get("query-session-end")?.({ preventDefault: () => {} })
   await (h.lifecycle as any).sessionEnd; await tick()
   assert.ok(Date.now() - started < 500)
-  assert.deepEqual(h.calls, ["renderer", "stop"])
+  assert.deepEqual(h.calls, ["hide", "renderer", "stop"])
   assert.equal(h.exits(), 1)
 })
 
-test("ordinary quit has an absolute deadline when CLI stop never settles", async () => {
-  const h = harness({ stop: () => new Promise(() => {}), shutdownTimeout: 20 })
+test("ordinary quit hides promptly and waits for CLI stop confirmation", async () => {
+  let confirmStop!: () => void
+  const h = harness({ stop: () => new Promise<void>((resolve) => { confirmStop = resolve }) })
   h.appEvents.get("before-quit")?.({ preventDefault: () => {} })
-  await (h.lifecycle as any).shutdown
   await tick()
-  assert.deepEqual(h.calls, ["renderer", "stop", "native", "release"])
+  assert.deepEqual(h.calls, ["hide", "renderer", "stop", "native"])
+  assert.equal(h.exits(), 0)
+  confirmStop()
+  await (h.lifecycle as any).shutdown; await tick()
+  assert.deepEqual(h.calls, ["hide", "renderer", "stop", "native", "release"])
   assert.equal(h.exits(), 1)
 })
 
-test("CLI termination starts before a hung native flush reaches the absolute deadline", async () => {
-  const h = harness({ nativeFlush: () => new Promise(() => {}), shutdownTimeout: 20 })
+test("CLI termination starts before a hung native flush", async () => {
+  const h = harness({ nativeFlush: () => new Promise(() => {}) })
   h.appEvents.get("before-quit")?.({ preventDefault: () => {} })
-  await (h.lifecycle as any).shutdown
   await tick()
-  assert.deepEqual(h.calls, ["renderer", "stop", "native"])
-  assert.equal(h.exits(), 1)
+  assert.deepEqual(h.calls, ["hide", "renderer", "stop", "native"])
+  assert.equal(h.exits(), 0)
+})
+
+test("closing the final window hides it before requesting quit", () => {
+  const h = harness()
+  assert.equal(h.close(), true)
+  assert.deepEqual(h.calls, ["hide", "quit"])
 })

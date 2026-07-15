@@ -1,6 +1,12 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { createServerShutdownHandler, orchestrateServerShutdown, type ServerShutdownOperations } from "./shutdown"
+import {
+  createServerShutdownHandler,
+  orchestrateServerShutdown,
+  SERVER_SHUTDOWN_COMPLETE,
+  SERVER_SHUTDOWN_INCOMPLETE,
+  type ServerShutdownOperations,
+} from "./shutdown"
 
 const logger = { info() {}, warn() {}, error() {} }
 const operations = (overrides: Partial<ServerShutdownOperations> = {}): ServerShutdownOperations => ({
@@ -18,7 +24,7 @@ describe("server shutdown orchestration", () => {
       stopWorkspaces: () => { calls.push(`workspaces-${++attempts}`); if (attempts === 1) throw new Error("still alive") },
       stopHttpServers: () => { calls.push("http") },
     }), logger)
-    assert.deepEqual(calls, ["remote-proxy", "workspaces-1", "workspaces-2", "http"])
+    assert.deepEqual(calls, ["workspaces-1", "remote-proxy", "workspaces-2", "http"])
   })
 
   it("closes remaining resources and aggregates the concrete current error", async () => {
@@ -38,19 +44,77 @@ describe("server shutdown orchestration", () => {
     })
     assert.deepEqual([attempts, closed], [2, ["http", "release-monitor"]])
   })
+
+  it("starts workspace cleanup without waiting for preliminary shutdown", async () => {
+    let releasePreliminary!: () => void
+    const preliminary = new Promise<void>((resolve) => { releasePreliminary = resolve })
+    let workspaceStarted = false
+    const shutdown = orchestrateServerShutdown(operations({
+      stopRemoteProxySessions: () => preliminary,
+      stopWorkspaces: () => { workspaceStarted = true },
+    }), logger)
+
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(workspaceStarted, true)
+    releasePreliminary()
+    await shutdown
+  })
 })
 
 describe("server shutdown signal boundary", () => {
-  it("forces a nonzero exit when first-signal cleanup fails", async () => {
+  it("reports incomplete cleanup and holds for final tree enforcement", async () => {
     const calls: string[] = []
     const exits: number[] = []
+    const statuses: string[] = []
+    let releaseHold!: () => void
+    const hold = new Promise<void>((resolve) => { releaseHold = resolve })
     const handler = createServerShutdownHandler({
       shutdown: async () => { calls.push("cleanup"); throw new Error("retained child survived") },
       logger: { info: () => calls.push("info"), warn() {}, error: () => calls.push("error") },
       forceExit: (code) => { calls.push("force-exit"); exits.push(code) },
+      reportStatus: (status) => statuses.push(status),
+      holdAfterFailure: () => hold,
     })
-    await handler("SIGTERM")
-    assert.deepEqual([exits, calls], [[1], ["info", "cleanup", "error", "force-exit"]])
+    const pending = handler("SIGTERM")
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.deepEqual([exits, statuses, calls], [[], [SERVER_SHUTDOWN_INCOMPLETE], ["info", "cleanup", "error"]])
+    handler("SIGTERM")
+    assert.deepEqual(exits, [1])
+    releaseHold()
+    await pending
+  })
+
+  it("reports complete cleanup before allowing natural exit", async () => {
+    const statuses: string[] = [], exitCodes: number[] = []
+    const handler = createServerShutdownHandler({
+      shutdown: async () => undefined,
+      logger,
+      reportStatus: (status) => statuses.push(status),
+      setExitCode: (code) => exitCodes.push(code),
+    })
+    await handler("stdin")
+    assert.deepEqual(statuses, [SERVER_SHUTDOWN_COMPLETE])
+    assert.deepEqual(exitCodes, [0])
+  })
+
+  it("keeps retrying identity-aware cleanup during the final enforcement budget", async () => {
+    let attempts = 0
+    const statuses: string[] = [], exitCodes: number[] = []
+    const handler = createServerShutdownHandler({
+      shutdown: async () => {
+        attempts++
+        if (attempts === 1) throw new Error("detached group still alive")
+      },
+      logger,
+      reportStatus: (status) => statuses.push(status),
+      setExitCode: (code) => exitCodes.push(code),
+      retryDelayMs: 0,
+    })
+
+    await handler("stdin")
+    assert.equal(attempts, 2)
+    assert.deepEqual(statuses, [SERVER_SHUTDOWN_INCOMPLETE, SERVER_SHUTDOWN_COMPLETE])
+    assert.deepEqual(exitCodes, [0])
   })
 
   it("escalates a second signal while sharing first-signal cleanup", async () => {
@@ -58,7 +122,7 @@ describe("server shutdown signal boundary", () => {
     const cleanup = new Promise<void>((resolve) => { finish = resolve })
     const exits: number[] = [], exitCodes: number[] = []
     const handler = createServerShutdownHandler({ shutdown: () => cleanup, logger,
-      forceExit: (code) => exits.push(code), setExitCode: (code) => exitCodes.push(code) })
+      forceExit: (code) => exits.push(code), setExitCode: (code) => exitCodes.push(code), reportStatus: () => undefined })
     const first = handler("SIGINT"), second = handler("SIGTERM")
     assert.strictEqual(first, second)
     assert.deepEqual(exits, [1])

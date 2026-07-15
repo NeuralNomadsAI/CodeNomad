@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -17,8 +17,8 @@ function harness(t: test.TestContext, initial?: object) {
     writes++
     if (failing) throw new Error("injected write failure")
     await writeFile(path, value, "utf8")
-  }) => {
-    const manager = new ClientStateManager(directory, writer)
+  }, processOwner?: { pid: number; runToken: string; processStartIdentity: string }) => {
+    const manager = new ClientStateManager(directory, writer, { crossHostElectionDirectory: join(directory, "election"), processOwner })
     managers.push(manager)
     return manager
   }
@@ -43,21 +43,40 @@ test("renderer access is exclusive per document and resettable", async (t) => {
   assert.equal(manager.claimClientStateAccess("document-2"), true)
 })
 
-test("a live Tauri owner blocks Electron snapshot restoration", async (t) => {
-  const directory = mkdtempSync(join(tmpdir(), "codenomad-cross-host-state-"))
-  t.after(() => rmSync(directory, { recursive: true, force: true }))
-  writeFileSync(join(directory, "client-state.json"), JSON.stringify({
+test("cross-host ownership is required in addition to each host-local election", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "codenomad-cross-host-state-"))
+  const electronDirectory = join(root, "electron"), tauriDirectory = join(root, "tauri"), election = join(root, "election")
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const primary = new ClientStateManager(tauriDirectory, undefined, { crossHostElectionDirectory: election })
+  mkdirSync(electronDirectory)
+  writeFileSync(join(electronDirectory, "client-state.json"), JSON.stringify({
     version: 1,
     restoreEnabled: true,
     snapshot: { tabs: ["must-not-restore"] },
   }))
-  const secondary = new ClientStateManager(directory, undefined, { primaryBlocked: true })
+  const secondary = new ClientStateManager(electronDirectory, undefined, { crossHostElectionDirectory: election })
   assert.deepEqual(secondary.loadClientState(), { isPrimary: false, restoreEnabled: true, snapshot: null })
   await secondary.drainAndReleasePrimary()
 
-  const successor = new ClientStateManager(directory)
+  await primary.drainAndReleasePrimary()
+  const successor = new ClientStateManager(electronDirectory, undefined, { crossHostElectionDirectory: election })
   assert.equal(successor.isPrimary, true)
   await successor.drainAndReleasePrimary()
+})
+
+test("ownership loss immediately disables restore reads and mutations", async (t) => {
+  const h = harness(t, {
+    version: 1,
+    restoreEnabled: true,
+    snapshot: { tabs: ["must-stop"] },
+    window: { width: 900, height: 700 },
+  })
+  const manager = h.create()
+  writeFileSync(join(h.directory, "election", "primary.owner.json"), "malformed")
+  assert.equal(manager.isPrimary, false)
+  assert.deepEqual(manager.loadClientState(), { isPrimary: false, restoreEnabled: true, snapshot: null })
+  assert.equal(manager.getWindowState(), undefined)
+  assert.equal(await manager.saveClientState({ ignored: true }), false)
 })
 
 test("failed preference and clear writes roll memory and suppression back", async (t) => {
@@ -135,7 +154,10 @@ test("an old writer cannot replace a successor after PID reuse", async (t) => {
   let release!: () => void
   const began = new Promise<void>((resolve) => { started = resolve })
   const gate = new Promise<void>((resolve) => { release = resolve })
-  const old = h.create(async (path, value) => { await writeFile(path, value); started(); await gate })
+  const old = h.create(
+    async (path, value) => { await writeFile(path, value); started(); await gate },
+    { pid: process.pid, runToken: "old-run", processStartIdentity: "old-start" },
+  )
   const staleWrite = old.saveClientState({ stale: true })
   await began
   const oldDrain = old.drainAndReleasePrimary()

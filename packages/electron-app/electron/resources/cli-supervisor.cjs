@@ -2,10 +2,8 @@
 
 const { spawn } = require("child_process")
 
-const SHUTDOWN_GRACE_MS = 30_000
-
 let child = null
-let shutdownTimer = null
+let shutdownRequested = false
 
 function log(message, error) {
   if (error) {
@@ -13,13 +11,6 @@ function log(message, error) {
     return
   }
   console.log(`[cli-supervisor] ${message}`)
-}
-
-function clearShutdownTimer() {
-  if (shutdownTimer) {
-    clearTimeout(shutdownTimer)
-    shutdownTimer = null
-  }
 }
 
 function forwardStream(stream, target) {
@@ -47,18 +38,15 @@ function requestShutdown(force = false) {
     return
   }
 
+  if (!force && shutdownRequested) return
+  shutdownRequested = true
+
   terminateChild(force)
   if (force) {
     process.exit(1)
     return
   }
 
-  clearShutdownTimer()
-  shutdownTimer = setTimeout(() => {
-    log(`shutdown timed out after ${SHUTDOWN_GRACE_MS}ms; forcing child termination`)
-    terminateChild(true)
-  }, SHUTDOWN_GRACE_MS)
-  shutdownTimer.unref()
 }
 
 function installShutdownHandlers() {
@@ -121,7 +109,6 @@ function main() {
   })
 
   child.on("exit", (code, signal) => {
-    clearShutdownTimer()
     log(`child exited code=${code ?? ""} signal=${signal ?? ""}`)
     process.exitCode = typeof code === "number" ? code : signal ? 1 : 0
     process.exit()

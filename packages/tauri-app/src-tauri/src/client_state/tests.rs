@@ -46,11 +46,11 @@ fn failing_state(initially_failing: bool) -> (TempDir, ClientState, Arc<AtomicBo
     let writer_flag = Arc::clone(&fail);
     let state = ClientState::initialize_at_with_writer(
         directory.path(),
-        Arc::new(move |path, bytes| {
+        Arc::new(move |path, bytes, ownership_valid| {
             if writer_flag.load(Ordering::SeqCst) {
                 Err("injected write failure".to_string())
             } else {
-                super::write_atomically(path, bytes)
+                super::write_atomically(path, bytes, ownership_valid)
             }
         }),
     )
@@ -285,12 +285,12 @@ fn future_envelope_is_preserved_until_successful_clear() {
     let writer_count = Arc::clone(&count);
     let state = ClientState::initialize_at_with_writer(
         directory.path(),
-        Arc::new(move |path, bytes| {
+        Arc::new(move |path, bytes, ownership_valid| {
             writer_count.fetch_add(1, Ordering::SeqCst);
             if writer_fail.load(Ordering::SeqCst) {
                 Err("injected write failure".to_string())
             } else {
-                super::write_atomically(path, bytes)
+                super::write_atomically(path, bytes, ownership_valid)
             }
         }),
     )
@@ -437,10 +437,10 @@ fn ownership_release_drains_active_write_and_blocks_later_writes() {
     let state = Arc::new(
         ClientState::initialize_at_with_writer(
             directory.path(),
-            Arc::new(move |path, bytes| {
+            Arc::new(move |path, bytes, ownership_valid| {
                 started_tx.send(()).unwrap();
                 allow_rx.lock().unwrap().recv().unwrap();
-                super::write_atomically(path, bytes)
+                super::write_atomically(path, bytes, ownership_valid)
             }),
         )
         .unwrap(),
@@ -461,6 +461,30 @@ fn ownership_release_drains_active_write_and_blocks_later_writes() {
     releaser.join().unwrap();
     assert!(!state.is_primary());
     assert!(!state.save_snapshot(json!({ "tooLate": true })).unwrap());
+}
+
+#[test]
+fn ownership_loss_blocks_the_final_atomic_replacement() {
+    let directory = tempfile::tempdir().unwrap();
+    let owner_path = directory
+        .path()
+        .join(".cross-host-election")
+        .join("primary.owner.json");
+    let state = ClientState::initialize_at_with_writer(
+        directory.path(),
+        Arc::new(move |path, bytes, ownership_valid| {
+            fs::write(&owner_path, b"malformed").unwrap();
+            super::write_atomically(path, bytes, ownership_valid)
+        }),
+    )
+    .unwrap();
+    assert_eq!(
+        state.save_snapshot(json!({ "blocked": true })).unwrap_err(),
+        "Client state ownership changed before atomic replacement"
+    );
+    assert!(!state.is_primary());
+    assert_eq!(state.load().unwrap(), load(false, true, Value::Null));
+    assert!(!directory.path().join(CLIENT_STATE_FILENAME).exists());
 }
 #[test]
 fn oversized_snapshot_does_not_replace_state() {

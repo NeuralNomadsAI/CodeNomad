@@ -67,7 +67,7 @@ describe("abort-created workspace cleanup", () => {
     const item = workspace("released-during-cancel", "restore-request"), harness = createHarness()
     harness.cleanup.track(item)
     let finishRelease!: () => void
-    const release = harness.cleanup.releaseAfter(item.id, new Promise<void>((resolve) => { finishRelease = resolve }))
+    const release = harness.cleanup.releaseAfter(item.id, () => new Promise<void>((resolve) => { finishRelease = resolve }))
     await harness.cleanup.discardTracked(item.id, { retainTombstone: true })
     finishRelease()
     const released = await release
@@ -81,7 +81,7 @@ describe("abort-created workspace cleanup", () => {
   it("restores cleanup ownership when server release fails", async () => {
     const item = workspace("failed-release", "restore-request"), harness = createHarness()
     harness.cleanup.track(item)
-    await assert.rejects(harness.cleanup.releaseAfter(item.id, Promise.reject(new Error("release failed"))))
+    await assert.rejects(harness.cleanup.releaseAfter(item.id, () => Promise.reject(new Error("release failed"))))
     assert.equal(harness.cleanup.owns(item.id), true)
     await harness.cleanup.discardTracked(item.id)
     assert.equal(harness.discardCalls, 1)
@@ -130,6 +130,25 @@ describe("abort-created workspace cleanup", () => {
     assert.equal(harness.cleanup.shouldIgnoreEvent(item.id), true, "reconciled creation retains its tombstone")
   })
 
+  it("adopts an event-before-abort workspace into one bounded cleanup", async () => {
+    const item = workspace("event-before-abort", "restore-request")
+    const harness = createHarness({ failures: 1, retryDelay: 25 })
+    harness.cleanup.beginRequest(item.requestId!)
+    assert.equal(harness.cleanup.trackPendingRequest(item), true)
+
+    const cleanup = harness.cleanup.quarantineRequest(item.requestId!)
+    const duplicate = harness.cleanup.quarantineRequest(item.requestId!)
+    await flushPromises()
+    assert.equal(harness.discardCalls, 1, "quarantine does not start a parallel cancellation")
+    assert.equal(harness.cleanup.shouldIgnoreEvent(item.id), true)
+    assert.deepEqual(harness.waits.map(({ delayMs }) => delayMs), [25])
+
+    harness.waits[0]?.resolve()
+    await Promise.all([cleanup, duplicate])
+    assert.equal(harness.discardCalls, 2, "the failed delete is retried once")
+    assert.equal(harness.cleanup.shouldIgnoreEvent(item.id), true)
+  })
+
   it("clears a durable tombstone only for explicit user-owned create correlation", async () => {
     const item = workspace("reused-id"), harness = createHarness()
     await harness.cleanup.discardCreated(item, { retainTombstone: true })
@@ -170,6 +189,22 @@ describe("abort-created workspace cleanup", () => {
     await harness.cleanup.discardTracked(item.id, { retainTombstone: true })
     assert.equal(harness.cleanup.owns(item.id), false)
     assert.equal(harness.discardCalls, 0)
+  })
+
+  it("does not start a lazy release after explicit close owns cancellation", async () => {
+    const item = workspace("closed-before-release", "restore-request")
+    const harness = createHarness({ pending: true })
+    harness.cleanup.track(item)
+    const deletion = harness.cleanup.discardTracked(item.id, { retainTombstone: true })
+    let releaseCalls = 0
+
+    const released = await harness.cleanup.releaseAfter(item.id, async () => { releaseCalls += 1 })
+
+    assert.equal(released, undefined)
+    assert.equal(releaseCalls, 0)
+    assert.equal(harness.cleanup.shouldIgnoreEvent(item.id), true)
+    harness.finishDiscard()
+    await deletion
   })
 
   it("correlates created before resolution and quarantines explicit-close races", async () => {

@@ -13,14 +13,12 @@ import { getProcessStartIdentity } from "./client-state-process-identity"
 
 function temp(t: test.TestContext) { const directory = mkdtempSync(join(tmpdir(), "codenomad-election-")); t.after(() => rmSync(directory, { recursive: true, force: true })); return directory }
 
-test("detects only live Tauri client-state markers", (t) => {
+test("legacy Tauri markers block only while their PID may be live", (t) => {
   const directory = temp(t)
   writeFileSync(join(directory, "client-state.running.123.1.lock"), "")
   writeFileSync(join(directory, "client-state.running.456.2.lock"), "")
-  writeFileSync(join(directory, "unrelated.lock"), "")
   assert.equal(hasLiveTauriClient(directory, (pid) => pid === 456), true)
   assert.equal(hasLiveTauriClient(directory, () => false), false)
-  assert.equal(hasLiveTauriClient(join(directory, "missing"), () => true), false)
 })
 
 interface Child { process: ChildProcessWithoutNullStreams; result: Promise<{ isPrimary: boolean }> }

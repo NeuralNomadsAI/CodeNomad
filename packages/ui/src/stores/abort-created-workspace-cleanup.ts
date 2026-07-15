@@ -51,8 +51,16 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
     }
   }
 
-  quarantineRequest(requestId: string): void {
-    if (this.pendingRequestIds.has(requestId)) this.pendingRequestIds.set(requestId, true)
+  quarantineRequest(requestId: string): Promise<void> | undefined {
+    if (!this.pendingRequestIds.has(requestId)) return undefined
+    this.pendingRequestIds.set(requestId, true)
+    for (const [workspaceId, entry] of this.owned) {
+      if (!("workspace" in entry) || entry.workspace.requestId !== requestId) continue
+      const cleanup = this.discardTracked(workspaceId, { retainTombstone: entry.workspace.reused !== true })
+      void cleanup.finally(() => this.finishRequest(requestId))
+      return cleanup
+    }
+    return undefined
   }
 
   trackPendingRequest(workspace: T): boolean {
@@ -77,10 +85,11 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
     return entry && "workspace" in entry && !("completion" in entry) ? entry.workspace : undefined
   }
 
-  async releaseAfter(workspaceId: string, operation: Promise<void>): Promise<T | undefined> {
+  async releaseAfter(workspaceId: string, operation: (workspace: T) => Promise<void>): Promise<T | undefined> {
     const workspace = this.release(workspaceId)
+    if (!workspace) return undefined
     try {
-      await operation
+      await operation(workspace)
       return workspace
     } catch (error) {
       const entry = this.owned.get(workspaceId)

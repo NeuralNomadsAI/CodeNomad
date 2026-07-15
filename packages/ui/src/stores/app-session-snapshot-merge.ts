@@ -12,6 +12,7 @@ export interface RestoreTabResult {
 export interface RestorableSessionPreservation {
   sourceTabs: readonly RestorableTabState[]
   results: RestoreTabResult[]
+  removalRevisions: number[]
 }
 export interface RestorableWorkspaceRuntimeAuthority {
   drafts?: ReadonlySet<string>
@@ -42,7 +43,18 @@ function mapTabIdentities(tabs: readonly RestorableTabState[]): TabIdentity[] {
 export function createRestorableSessionPreservation(
   snapshot: RestorableSessionState,
 ): RestorableSessionPreservation {
-  return { sourceTabs: snapshot.tabs, results: snapshot.tabs.map(() => ({ status: "pending" })) }
+  return {
+    sourceTabs: snapshot.tabs,
+    results: snapshot.tabs.map(() => ({ status: "pending" })),
+    removalRevisions: snapshot.tabs.map(() => 0),
+  }
+}
+export function createRestoredTabCommitGuard(
+  preservation: RestorableSessionPreservation,
+  sourceIndex: number,
+): () => boolean {
+  const removalRevision = preservation.removalRevisions[sourceIndex]
+  return () => preservation.removalRevisions[sourceIndex] === removalRevision
 }
 export function recordRestoredTab(
   preservation: RestorableSessionPreservation,
@@ -54,6 +66,25 @@ export function recordRestoredTab(
   preservation.results[sourceIndex] = unavailableSessionIds
     ? { status: "restored", runtimeTabId, unavailableSessionIds }
     : { status: "pending", ...(runtimeTabId ? { runtimeTabId } : {}) }
+}
+export function hasRestoredTabBinding(
+  preservation: RestorableSessionPreservation,
+  sourceIndex: number,
+  expectedRuntimeTabId: string,
+): boolean {
+  const result = preservation.results[sourceIndex]
+  return Boolean(result?.status === "pending" && result.runtimeTabId === expectedRuntimeTabId)
+}
+export function settleRestoredTab(
+  preservation: RestorableSessionPreservation,
+  sourceIndex: number,
+  expectedRuntimeTabId: string,
+  runtimeTabId: string | null,
+  unavailableSessionIds?: ReadonlySet<string>,
+): boolean {
+  if (!hasRestoredTabBinding(preservation, sourceIndex, expectedRuntimeTabId)) return false
+  recordRestoredTab(preservation, sourceIndex, runtimeTabId, unavailableSessionIds)
+  return true
 }
 function findWorkspaceSourceIndex(
   preservation: RestorableSessionPreservation,
@@ -72,6 +103,7 @@ export function markPreservedWorkspaceRemoved(
   const index = findWorkspaceSourceIndex(preservation, workspace)
   if (index !== undefined && preservation.results[index]?.status === "pending") {
     preservation.results[index] = { status: "removed" }
+    preservation.removalRevisions[index] = (preservation.removalRevisions[index] ?? 0) + 1
   }
   return preservation
 }

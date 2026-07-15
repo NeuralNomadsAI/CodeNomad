@@ -952,13 +952,13 @@ function disposeRestoreCreatedInstance(instanceId: string): Promise<void> {
 }
 
 async function releaseRestoreCreatedInstance(instanceId: string, requestId: string): Promise<void> {
-  const release = retryWithBackoff(() => serverApi.releaseWorkspaceCreation(instanceId, requestId), {
-    maxAttempts: 4,
-    initialDelayMs: 250,
-    maxDelayMs: 2_000,
-    backoffMultiplier: 4,
-  })
-  await restoreCreatedWorkspaceCleanup.releaseAfter(instanceId, release)
+  await restoreCreatedWorkspaceCleanup.releaseAfter(instanceId, () =>
+    retryWithBackoff(() => serverApi.releaseWorkspaceCreation(instanceId, requestId), {
+      maxAttempts: 4,
+      initialDelayMs: 250,
+      maxDelayMs: 2_000,
+      backoffMultiplier: 4,
+    }))
 }
 
 async function cancelRestoreCreationRequest(instanceId: string, requestId: string): Promise<void> {
@@ -986,6 +986,7 @@ async function createInstance(
   options?: {
     activate?: boolean
     signal?: AbortSignal
+    shouldCreateCommit?: () => boolean
     onCreateCommit?: (instanceId: string) => void
     forceNew?: boolean
   },
@@ -996,12 +997,14 @@ async function createInstance(
   let requestResolved = false
   const cancelPendingCreation = () => {
     if (!restoreRequestId) return
-    restoreCreatedWorkspaceCleanup.quarantineRequest(restoreRequestId)
-    cancellationRequest ??= serverApi.cancelWorkspaceCreation(restoreRequestId)
-      .then(() => true, (error) => {
-        log.warn("Failed to cancel restore workspace creation", { requestId: restoreRequestId, error })
-        return false
-      })
+    const trackedCleanup = restoreCreatedWorkspaceCleanup.quarantineRequest(restoreRequestId)
+    cancellationRequest ??= trackedCleanup
+      ? trackedCleanup.then(() => true)
+      : serverApi.cancelWorkspaceCreation(restoreRequestId)
+          .then(() => true, (error) => {
+            log.warn("Failed to cancel restore workspace creation", { requestId: restoreRequestId, error })
+            return false
+          })
   }
   options?.signal?.addEventListener("abort", cancelPendingCreation, { once: true })
 
@@ -1023,6 +1026,7 @@ async function createInstance(
     if (options?.signal && workspace.requestId) restoreCreatedWorkspaceCleanup.track(workspace)
     else if (!options?.signal) restoreCreatedWorkspaceCleanup.releaseTombstoneForUserCreate(workspace.id)
     const discarded = restoreCreatedWorkspaceCleanup.shouldIgnoreEvent(workspace.id)
+      || options?.shouldCreateCommit?.() === false
     if (!discarded) {
       upsertWorkspace(workspace, reused ? undefined : projectName)
       options?.onCreateCommit?.(workspace.id)

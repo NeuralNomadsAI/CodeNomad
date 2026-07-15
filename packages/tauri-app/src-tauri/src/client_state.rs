@@ -1,5 +1,6 @@
 mod access;
 mod commands;
+mod cross_host;
 mod navigation;
 mod process;
 mod window;
@@ -98,12 +99,26 @@ pub struct ClientState {
     write_state: StateWriter,
 }
 
-type StateWriter = std::sync::Arc<dyn Fn(&Path, &[u8]) -> Result<(), String> + Send + Sync>;
+type StateWriter =
+    std::sync::Arc<dyn Fn(&Path, &[u8], &dyn Fn() -> bool) -> Result<(), String> + Send + Sync>;
 
 impl ClientState {
     pub fn initialize(app: &AppHandle) -> Self {
         match app.path().app_data_dir() {
-            Ok(app_data_dir) => Self::initialize_managed_at(&app_data_dir),
+            Ok(app_data_dir) => match cross_host::election_directory() {
+                Ok(election_dir) => {
+                    let legacy_electron = cross_host::legacy_electron_data_directory();
+                    Self::initialize_managed_at_with_election(
+                        &app_data_dir,
+                        &election_dir,
+                        legacy_electron.as_deref(),
+                    )
+                }
+                Err(err) => {
+                    eprintln!("[client-state] initialization failed; restore disabled: {err}");
+                    Self::disabled(app_data_dir.join(CLIENT_STATE_FILENAME))
+                }
+            },
             Err(err) => {
                 eprintln!("[client-state] initialization failed; restore disabled: {err}");
                 Self::disabled(PathBuf::new())
@@ -111,8 +126,26 @@ impl ClientState {
         }
     }
 
+    #[cfg(test)]
     fn initialize_managed_at(app_data_dir: &Path) -> Self {
         Self::initialize_at(app_data_dir).unwrap_or_else(|err| {
+            eprintln!("[client-state] initialization failed; restore disabled: {err}");
+            Self::disabled(app_data_dir.join(CLIENT_STATE_FILENAME))
+        })
+    }
+
+    fn initialize_managed_at_with_election(
+        app_data_dir: &Path,
+        election_dir: &Path,
+        legacy_electron_data_dir: Option<&Path>,
+    ) -> Self {
+        Self::initialize_at_with_writer_and_election(
+            app_data_dir,
+            election_dir,
+            legacy_electron_data_dir,
+            std::sync::Arc::new(write_atomically),
+        )
+        .unwrap_or_else(|err| {
             eprintln!("[client-state] initialization failed; restore disabled: {err}");
             Self::disabled(app_data_dir.join(CLIENT_STATE_FILENAME))
         })
@@ -156,12 +189,28 @@ impl ClientState {
         }
     }
 
+    #[cfg(test)]
     fn initialize_at(app_data_dir: &Path) -> Result<Self, String> {
         Self::initialize_at_with_writer(app_data_dir, std::sync::Arc::new(write_atomically))
     }
 
+    #[cfg(test)]
     fn initialize_at_with_writer(
         app_data_dir: &Path,
+        write_state: StateWriter,
+    ) -> Result<Self, String> {
+        Self::initialize_at_with_writer_and_election(
+            app_data_dir,
+            &app_data_dir.join(".cross-host-election"),
+            None,
+            write_state,
+        )
+    }
+
+    fn initialize_at_with_writer_and_election(
+        app_data_dir: &Path,
+        election_dir: &Path,
+        legacy_electron_data_dir: Option<&Path>,
         write_state: StateWriter,
     ) -> Result<Self, String> {
         fs::create_dir_all(app_data_dir).map_err(|err| {
@@ -172,7 +221,11 @@ impl ClientState {
         })?;
 
         let state_path = app_data_dir.join(CLIENT_STATE_FILENAME);
-        let registration = process::Registration::initialize(app_data_dir)?;
+        let registration = process::Registration::initialize(
+            app_data_dir,
+            election_dir,
+            legacy_electron_data_dir,
+        )?;
         let state = if registration.is_primary() {
             read_client_state(&state_path)
         } else {
@@ -191,7 +244,11 @@ impl ClientState {
         let is_primary = self.is_primary();
         Ok(ClientStateLoadResult {
             is_primary,
-            restore_enabled: state.restore_enabled,
+            restore_enabled: if is_primary || !self.process.is_registered() {
+                state.restore_enabled
+            } else {
+                true
+            },
             snapshot: if is_primary && state.restore_enabled {
                 state.snapshot.clone().unwrap_or(Value::Null)
             } else {
@@ -274,7 +331,7 @@ impl ClientState {
             let state = self.state.lock().map_err(|err| err.to_string())?;
             serde_json::to_vec(&*state).map_err(|err| err.to_string())?
         };
-        (self.write_state)(&self.state_path, &bytes)?;
+        (self.write_state)(&self.state_path, &bytes, &|| self.is_primary())?;
         Ok(())
     }
 
@@ -412,7 +469,11 @@ fn serialized_value_size(value: &Value) -> Result<usize, String> {
         .map_err(|err| err.to_string())
 }
 
-fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
+fn write_atomically(
+    path: &Path,
+    bytes: &[u8],
+    ownership_valid: &dyn Fn() -> bool,
+) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| format!("state path has no parent: {}", path.display()))?;
@@ -422,6 +483,9 @@ fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .write_all(bytes)
         .and_then(|_| temporary.as_file().sync_all())
         .map_err(|err| format!("failed to write temporary state file: {err}"))?;
+    if !ownership_valid() {
+        return Err("Client state ownership changed before atomic replacement".to_string());
+    }
     temporary
         .persist(path)
         .map_err(|err| format!("failed to replace state file: {}", err.error))?;

@@ -5,6 +5,7 @@ import { join } from "node:path"
 import {
   electClientStateProcess,
   getRunningMarkerPath,
+  hasLiveTauriClient,
   hasErrorCode,
   isProcessOwnerLockOwned,
   removeProcessOwnerLockIfOwned,
@@ -12,6 +13,12 @@ import {
   removeRunningMarkerIfOwned,
 } from "./client-state-process"
 import { getProcessStartIdentity } from "./client-state-process-identity"
+import {
+  CrossHostRegistration,
+  resolveCrossHostElectionDirectory,
+  resolveLegacyTauriDataDirectory,
+  type CrossHostLeaseDependencies,
+} from "./client-state-cross-host"
 import { normalizeNativeWindowState } from "./window-state"
 
 const CLIENT_STATE_VERSION = 1
@@ -52,6 +59,13 @@ export type ClientStateWriter = (
   temporaryPath: string,
   serializedState: string,
 ) => Promise<void>
+
+interface ClientStateManagerOptions {
+  crossHostElectionDirectory?: string
+  crossHostDependencies?: CrossHostLeaseDependencies
+  legacyTauriDataPath?: string | null
+  processOwner?: ProcessOwner
+}
 
 async function writeClientStateTemporary(temporaryPath: string, serializedState: string): Promise<void> {
   await writeFile(temporaryPath, serializedState, { encoding: "utf8", mode: 0o600 })
@@ -95,14 +109,12 @@ export class ClientStateManager {
   private readonly userDataPath: string
   private readonly statePath: string
   private readonly lockPath: string
-  private readonly owner: ProcessOwner = {
-    pid: process.pid,
-    runToken: randomUUID(),
-    processStartIdentity: getProcessStartIdentity(process.pid),
-  }
+  private readonly legacyTauriDataPath: string | null
+  private readonly owner: ProcessOwner
   private state: PersistedClientState = { version: CLIENT_STATE_VERSION, restoreEnabled: true }
   private writeQueue: Promise<void> = Promise.resolve()
   private drainAndReleasePromise: Promise<void> | undefined
+  private crossHostRegistration: CrossHostRegistration | undefined
   private primary = false
   private persistenceSuppressed = false
   private unsupportedFutureEnvelope = false
@@ -112,8 +124,13 @@ export class ClientStateManager {
   constructor(
     userDataPath: string,
     private readonly writeState: ClientStateWriter = writeClientStateTemporary,
-    options?: { primaryBlocked?: boolean },
+    options?: ClientStateManagerOptions,
   ) {
+    this.owner = options?.processOwner ?? {
+      pid: process.pid,
+      runToken: randomUUID(),
+      processStartIdentity: getProcessStartIdentity(process.pid),
+    }
     mkdirSync(userDataPath, { recursive: true })
     this.userDataPath = userDataPath
     this.statePath = join(userDataPath, CLIENT_STATE_FILENAME)
@@ -126,12 +143,36 @@ export class ClientStateManager {
       { primaryLockPath: this.lockPath, registrationLockPath },
       (message, error) => console.warn(`[client-state] ${message}`, error),
     )
-    this.primary = election
-    if (this.primary && options?.primaryBlocked) {
-      removeProcessOwnerLockIfOwned(this.lockPath, this.owner)
+    let legacyPrimaryBlocked = false
+    const legacyTauriDataPath = options?.legacyTauriDataPath === undefined
+      ? (options?.crossHostElectionDirectory ? null : resolveLegacyTauriDataDirectory())
+      : options.legacyTauriDataPath
+    this.legacyTauriDataPath = legacyTauriDataPath
+    if (legacyTauriDataPath) {
+      try {
+        legacyPrimaryBlocked = hasLiveTauriClient(legacyTauriDataPath)
+      } catch (error) {
+        console.warn("[client-state] failed to inspect legacy Tauri process markers; continuing as secondary", error)
+        legacyPrimaryBlocked = true
+      }
+    }
+
+    this.primary = election && !legacyPrimaryBlocked
+    try {
+      this.crossHostRegistration = CrossHostRegistration.register(
+        options?.crossHostElectionDirectory ?? resolveCrossHostElectionDirectory(),
+        this.owner,
+        this.primary,
+        options?.crossHostDependencies,
+      )
+    } catch (error) {
+      console.warn("[client-state] failed to register cross-host ownership", error)
+    }
+    if (!this.crossHostRegistration?.isPrimary) {
+      if (election) removeProcessOwnerLockIfOwned(this.lockPath, this.owner)
       this.primary = false
     }
-    if (this.primary) {
+    if (this.isPrimary) {
       const persisted = this.readState()
       this.state = persisted.state
       this.persistenceSuppressed = !this.state.restoreEnabled
@@ -140,11 +181,18 @@ export class ClientStateManager {
   }
 
   get isPrimary(): boolean {
-    return this.primary
+    if (!this.primary || !this.crossHostRegistration?.isPrimary) return false
+    if (!this.legacyTauriDataPath) return true
+    try {
+      return !hasLiveTauriClient(this.legacyTauriDataPath)
+    } catch (error) {
+      console.warn("[client-state] failed to recheck legacy Tauri process markers; ownership disabled", error)
+      return false
+    }
   }
 
   loadClientState(): ClientStateLoadResult {
-    if (!this.primary) {
+    if (!this.isPrimary) {
       return { isPrimary: false, restoreEnabled: true, snapshot: null }
     }
     return {
@@ -155,7 +203,7 @@ export class ClientStateManager {
   }
 
   getWindowState(): NativeWindowState | undefined {
-    return this.primary && !this.unsupportedFutureEnvelope && this.state.restoreEnabled ? this.state.window : undefined
+    return this.isPrimary && !this.unsupportedFutureEnvelope && this.state.restoreEnabled ? this.state.window : undefined
   }
 
   claimClientStateAccess(token: unknown): true {
@@ -220,7 +268,7 @@ export class ClientStateManager {
   }
 
   clearClientState(): Promise<boolean> {
-    if (!this.primary) {
+    if (!this.isPrimary) {
       return Promise.resolve(false)
     }
     if (this.frozen) {
@@ -282,7 +330,7 @@ export class ClientStateManager {
   }
 
   private getMutationDisposition(futureEnvelopeResult = true): Promise<boolean> | undefined {
-    if (!this.primary) {
+    if (!this.isPrimary) {
       return Promise.resolve(false)
     }
     if (this.frozen) {
@@ -336,7 +384,7 @@ export class ClientStateManager {
   }
 
   private assertReplacementAllowed(): void {
-    if (!this.primary || !isProcessOwnerLockOwned(this.lockPath, this.owner)) {
+    if (!this.isPrimary || !isProcessOwnerLockOwned(this.lockPath, this.owner)) {
       throw new Error("Client state ownership changed before atomic replacement")
     }
   }
@@ -345,6 +393,7 @@ export class ClientStateManager {
     const releases: Array<[string, () => void]> = [
       ["remove running marker", () => { removeRunningMarkerIfOwned(getRunningMarkerPath(this.userDataPath, this.owner), this.owner) }],
       ["release primary lock", () => { removeProcessOwnerLockIfOwned(this.lockPath, this.owner) }],
+      ["release cross-host registration", () => { this.crossHostRegistration?.release(); this.crossHostRegistration = undefined }],
     ]
     for (const [action, release] of releases) {
       try {

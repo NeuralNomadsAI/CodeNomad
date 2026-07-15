@@ -5,10 +5,13 @@ import type { RestorableAttachment } from "./client-state-attachments-codec.ts"
 import type { RestorableSessionState, RestorableWorkspaceTabState } from "./client-state-codec.ts"
 import {
   createRestorableSessionPreservation,
+  createRestoredTabCommitGuard,
+  hasRestoredTabBinding,
   markPreservedWorkspaceRemoved,
   markPreservedWorkspaceReopened,
   mergeRestorableSessionState,
   recordRestoredTab,
+  settleRestoredTab,
   type RestorableSessionPreservation,
   type RestorableWorkspaceRuntimeAuthority,
 } from "./app-session-snapshot-merge.ts"
@@ -250,6 +253,70 @@ describe("app session snapshot merge", () => {
       runtimeTabId: "instance:reused", folder: "/work", occurrence: 0,
     })
     assert.equal(preservation.results[0]?.runtimeTabId, null)
+  })
+
+  it("does not seed or settle after an explicit close during hydration", async () => {
+    const preservation = createRestorableSessionPreservation(session([workspace("/work")]))
+    recordRestoredTab(preservation, 0, "instance:hydrating")
+    let resume!: () => void
+    const hydration = new Promise<void>((resolve) => { resume = resolve })
+    const effects: string[] = []
+    const completion = (async () => {
+      await hydration
+      if (!hasRestoredTabBinding(preservation, 0, "instance:hydrating")) return
+      effects.push("seed", "release", "select")
+      settleRestoredTab(preservation, 0, "instance:hydrating", "instance:hydrating", new Set())
+    })()
+
+    markPreservedWorkspaceRemoved(preservation, {
+      runtimeTabId: "instance:hydrating", folder: "/work", occurrence: 0,
+    })
+    markPreservedWorkspaceReopened(preservation, {
+      runtimeTabId: "instance:reopened", folder: "/work", occurrence: 0,
+    })
+    resume()
+    await completion
+
+    assert.deepEqual(effects, [])
+    assert.deepEqual(preservation.results[0], { status: "pending" })
+  })
+
+  it("invalidates a pending create commit after close even when the workspace reopens", () => {
+    const preservation = createRestorableSessionPreservation(session([workspace("/work")]))
+    const canCommit = createRestoredTabCommitGuard(preservation, 0)
+
+    markPreservedWorkspaceReopened(preservation, {
+      runtimeTabId: "instance:restore-event", folder: "/work", occurrence: 0,
+    })
+    assert.equal(canCommit(), true, "restore creation events do not invalidate their own response")
+
+    markPreservedWorkspaceRemoved(preservation, {
+      runtimeTabId: "instance:restore-event", folder: "/work", occurrence: 0,
+    })
+    markPreservedWorkspaceReopened(preservation, {
+      runtimeTabId: "instance:user-reopened", folder: "/work", occurrence: 0,
+    })
+    assert.equal(canCommit(), false, "a late response cannot overwrite the close authority")
+  })
+
+  it("compare-and-set settlement cannot overwrite removed or rebound authority", () => {
+    const preservation = createRestorableSessionPreservation(session([workspace("/work")]))
+    recordRestoredTab(preservation, 0, "instance:old")
+    markPreservedWorkspaceRemoved(preservation, {
+      runtimeTabId: "instance:old", folder: "/work", occurrence: 0,
+    })
+    assert.equal(settleRestoredTab(preservation, 0, "instance:old", "instance:old", new Set()), false)
+    assert.equal(settleRestoredTab(preservation, 0, "instance:old", null), false)
+    assert.deepEqual(preservation.results[0], { status: "removed" })
+
+    markPreservedWorkspaceReopened(preservation, {
+      runtimeTabId: "instance:new", folder: "/work", occurrence: 0,
+    })
+    recordRestoredTab(preservation, 0, "instance:new")
+    assert.equal(settleRestoredTab(preservation, 0, "instance:old", null), false)
+    assert.deepEqual(preservation.results[0], { status: "pending", runtimeTabId: "instance:new" })
+    assert.equal(settleRestoredTab(preservation, 0, "instance:new", "instance:new", new Set()), true)
+    assert.equal(preservation.results[0]?.status, "restored")
   })
 
   it("does not duplicate recovered or authoritatively deleted sidecars", () => {

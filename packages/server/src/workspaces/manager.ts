@@ -267,7 +267,7 @@ export class WorkspaceManager {
     if (existing) {
       this.options.logger.info({ workspaceId: existing.id, folder: workspacePath }, "Reusing existing workspace")
       const record = this.workspaces.get(existing.id)
-      if (options.requestId && record && this.hasActiveRequest(record.ownership)) {
+      if (options.requestId && record) {
         record.ownership.set(options.requestId, "active")
         this.syncOwnership(record)
         return this.finishCreation({ workspace: existing, created: false }, options.requestId, record.ownership)
@@ -516,7 +516,12 @@ export class WorkspaceManager {
     for (const [workspaceId, record] of this.workspaces) {
       const ownership = record.ownership
       const state = ownership.get(requestId)
-      if (state === "released" || state === "cancelled") return
+      if (state === "released") return
+      if (state === "cancelled") {
+        if (this.hasActiveRequest(ownership) || this.isRetained(ownership)) return
+        await this.delete(workspaceId)
+        return
+      }
       if (state !== "active") continue
       ownership.set(requestId, "cancelled")
       this.syncOwnership(record)
@@ -545,7 +550,7 @@ export class WorkspaceManager {
     }
     const retained = this.isRetained(ownership)
     return {
-      workspace: requestId && !retained ? { ...result.workspace, requestId } : result.workspace,
+      workspace: requestId ? { ...result.workspace, requestId } : result.workspace,
       created: result.created && !(requestId && retained),
     }
   }

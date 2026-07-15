@@ -141,6 +141,51 @@ describe("workspace manager lifecycle", () => {
     assert.equal(harness.manager.get(workspaceId), undefined)
   })
 
+  it("retries cancellation deletion for an already-cancelled request", async () => {
+    const harness = createHarness()
+    const creation = harness.manager.create(process.cwd(), undefined, { requestId: "retry-cancel" })
+    const workspaceId = await harness.runtime.launchCalled.promise
+    harness.runtime.resolveLaunch()
+    harness.readiness.resolve(undefined)
+    await creation
+    harness.runtime.failStops = 2
+
+    await assert.rejects(harness.manager.cancelCreationRequest("retry-cancel"), /controlled stop failure/)
+    assert.equal(harness.manager.get(workspaceId)?.id, workspaceId)
+    assert.equal(harness.runtime.active.has(workspaceId), true)
+
+    await harness.manager.cancelCreationRequest("retry-cancel")
+    assert.equal(harness.manager.get(workspaceId), undefined)
+    assert.equal(harness.runtime.active.has(workspaceId), false)
+    assert.deepEqual(harness.stopped, [workspaceId])
+  })
+
+  it("returns scoped correlation while an ordinary shared launch remains retained", async () => {
+    const harness = createHarness()
+    const ordinary = harness.manager.create(process.cwd())
+    const workspaceId = await harness.runtime.launchCalled.promise
+    const scoped = harness.manager.create(process.cwd(), undefined, { requestId: "restore-shared" })
+    harness.runtime.resolveLaunch()
+    harness.readiness.resolve(undefined)
+
+    const [ordinaryResult, scopedResult] = await Promise.all([ordinary, scoped])
+    assert.equal(ordinaryResult.created, true)
+    assert.equal(ordinaryResult.workspace.requestId, undefined)
+    assert.equal(scopedResult.created, false)
+    assert.equal(scopedResult.workspace.id, workspaceId)
+    assert.equal(scopedResult.workspace.requestId, "restore-shared")
+
+    assert.equal(harness.manager.releaseCreationRequest(workspaceId, "restore-shared"), true)
+    assert.equal(harness.manager.get(workspaceId)?.id, workspaceId)
+    assert.equal(harness.runtime.active.has(workspaceId), true)
+
+    const reused = await harness.manager.create(process.cwd(), undefined, { requestId: "restore-reused" })
+    assert.equal(reused.workspace.requestId, "restore-reused")
+    await harness.manager.cancelCreationRequest("restore-reused")
+    assert.equal(harness.manager.get(workspaceId)?.id, workspaceId)
+    assert.equal(harness.runtime.active.has(workspaceId), true)
+  })
+
   for (const boundary of ["runtime launch", "health readiness"] as const) {
     it(`applies one shared end-to-end deadline during ${boundary} and cleans up`, async () => {
       const deadlines: Array<() => void> = []

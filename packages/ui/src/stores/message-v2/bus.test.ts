@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
+import { clearEvictedSessionMessages } from "../../components/instance/shell/session-cache-eviction.ts"
 import { messageStoreBus } from "./bus.ts"
 
 describe("message store scroll snapshots", () => {
@@ -59,15 +60,19 @@ describe("message store scroll snapshots", () => {
     }
   })
 
-  it("preserves scroll state during render-cache eviction", () => {
+  it("preserves scroll and invalidates message hydration during render-cache eviction", () => {
     const instanceId = "scroll-render-cache-eviction"
     const store = messageStoreBus.getOrCreate(instanceId)
     const snapshot = { scrollTop: 240, atBottom: false, updatedAt: 2400 }
+    const loaded = new Map([[instanceId, new Set(["session-1"])]])
+    const stopListening = messageStoreBus.onSessionCleared((id, sessionId) => loaded.get(id)?.delete(sessionId))
     try {
       store.restoreScrollSnapshot("session-1", "message-stream", snapshot)
-      store.clearSession("session-1", { preserveScroll: true, notify: false })
+      clearEvictedSessionMessages(store, "session-1")
       assert.deepEqual(store.getScrollSnapshot("session-1", "message-stream"), snapshot)
+      assert.equal(loaded.get(instanceId)?.has("session-1") ?? false, false)
     } finally {
+      stopListening()
       messageStoreBus.unregisterInstance(instanceId)
     }
   })

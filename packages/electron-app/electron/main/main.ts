@@ -2,7 +2,7 @@ import { app, BrowserView, BrowserWindow, ipcMain, nativeImage, screen, session,
 import http from "node:http"
 import https from "node:https"
 import { existsSync, mkdirSync, rmSync } from "fs"
-import { dirname, isAbsolute, join } from "path"
+import { dirname, join } from "path"
 import { fileURLToPath } from "url"
 import { createApplicationMenu } from "./menu"
 import { ClientStateManager } from "./client-state"
@@ -13,7 +13,6 @@ import { setupCliIPC } from "./ipc"
 import { configureMediaPermissionHandlers, isAllowedRendererOrigin } from "./permissions"
 import { resolveConfiguredRendererOrigins } from "./renderer-origin"
 import { CliProcessManager } from "./process-manager"
-import { hasLiveTauriClient } from "./client-state-process"
 import {
   clampWindowBounds,
   DEFAULT_WINDOW_HEIGHT,
@@ -96,22 +95,7 @@ function cleanupPackagedChromiumStorage() {
 
 cleanupPackagedChromiumStorage()
 
-const linuxDataHome = process.env.XDG_DATA_HOME && isAbsolute(process.env.XDG_DATA_HOME)
-  ? process.env.XDG_DATA_HOME
-  : join(app.getPath("home"), ".local", "share")
-const tauriClientStatePath = process.platform === "linux"
-  ? join(linuxDataHome, "ai.neuralnomads.codenomad.client")
-  : join(app.getPath("appData"), "ai.neuralnomads.codenomad.client")
-let tauriClientIsRunning = false
-try {
-  tauriClientIsRunning = hasLiveTauriClient(tauriClientStatePath)
-} catch (error) {
-  console.warn("[client-state] failed to inspect Tauri process markers; continuing conservatively as secondary", error)
-  tauriClientIsRunning = true
-}
-const clientStateManager = new ClientStateManager(app.getPath("userData"), undefined, {
-  primaryBlocked: tauriClientIsRunning,
-})
+const clientStateManager = new ClientStateManager(app.getPath("userData"))
 const cliManager = new CliProcessManager()
 let mainWindow: BrowserWindow | null = null
 let currentCliUrl: string | null = null

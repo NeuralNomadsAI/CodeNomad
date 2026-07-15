@@ -47,9 +47,11 @@ async function restoreWorkspaceState(
   instanceId: string,
   snapshot: RestorableWorkspaceTabState,
   signal: AbortSignal,
-): Promise<Set<string>> {
+  isCurrentBinding: () => boolean,
+): Promise<Set<string> | null> {
   await hydrateRestoredSessionChain(instanceId, [snapshot.activeParentSessionId, snapshot.activeSessionId], signal)
   if (signal.aborted) throw getAbortReason(signal)
+  if (!isCurrentBinding()) return null
   const sessions = getSessions(instanceId)
   const validIds = new Set(sessions.map(({ id }) => id))
   const unavailable = getUnavailableRestoredSessionIds(sessions, {
@@ -128,11 +130,13 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
     const tab = snapshot.tabs[match.tabIndex]
     if (!tab || tab.kind !== "workspace") return
     let createdId: string | null = null
+    const canCommitCreation = capture.createRestoredTabCommitGuard(match.tabIndex)
     try {
       const instanceId = await runAbortable(async (operationSignal) => {
         const existingId = match.existingWorkspaceId
         const create = (forceNew: boolean) => createInstance(tab.folder, tab.binaryPath, tab.projectName, {
           activate: false, signal: operationSignal, forceNew,
+          shouldCreateCommit: canCommitCreation,
           onCreateCommit: (id) => capture.recordRestoredTab(match.tabIndex, getInstanceAppTabId(id)),
         })
         let creation = existingId || isWebHost() ? null : await create(match.descriptor.occurrence > 0)
@@ -149,15 +153,18 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
         try {
           await runAbortable(() => waitForInstanceInitialSessionHydration(id), { signal: operationSignal })
           const tabId = getInstanceAppTabId(id)
-          const unavailable = await restoreWorkspaceState(id, tab, operationSignal)
+          const isCurrentBinding = () => capture.hasRestoredTabBinding(match.tabIndex, tabId)
+          if (!isCurrentBinding()) return id
+          const unavailable = await restoreWorkspaceState(id, tab, operationSignal, isCurrentBinding)
           if (operationSignal.aborted) throw getAbortReason(operationSignal)
+          if (!unavailable || !isCurrentBinding()) return id
           if (creation?.requestId) await releaseRestoreCreatedInstance(id, creation.requestId)
           if (operationSignal.aborted) throw getAbortReason(operationSignal)
-          capture.recordRestoredTab(match.tabIndex, tabId, unavailable)
-          if (match.tabIndex === snapshot.activeTabIndex) context.selectActive(tabId, true)
+          if (capture.settleRestoredTab(match.tabIndex, tabId, tabId, unavailable)
+            && match.tabIndex === snapshot.activeTabIndex) context.selectActive(tabId, true)
         } catch (error) {
           if (!existingId && creation?.requestId) {
-            capture.recordRestoredTab(match.tabIndex, null)
+            capture.settleRestoredTab(match.tabIndex, getInstanceAppTabId(id), null)
             await disposeRestoreCreatedInstance(id)
             if (created) createdId = null
           }
@@ -173,7 +180,7 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
       }
     } catch (error) {
       if (createdId) {
-        capture.recordRestoredTab(match.tabIndex, null)
+        capture.settleRestoredTab(match.tabIndex, getInstanceAppTabId(createdId), null)
         await disposeRestoreCreatedInstance(createdId)
       }
       if (!signal.aborted) log.warn("Skipped workspace while restoring app session", { folder: tab.folder, error })

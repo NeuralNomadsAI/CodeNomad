@@ -5,7 +5,6 @@ import { flushRendererClientStateBeforeShutdown } from "./renderer-client-state-
 import type { WindowStateTracker } from "./window-state"
 
 const WINDOWS_SESSION_END_FLUSH_TIMEOUT_MS = 1_500
-const SHUTDOWN_TIMEOUT_MS = 10_000
 
 interface ClientStateLifecycleDependencies {
   app: App
@@ -17,7 +16,6 @@ interface ClientStateLifecycleDependencies {
   isTrustedRendererOrigin(url: string, allowedOrigins: string[]): boolean
   windowsSessionEndFlushTimeoutMs?: number
   rendererFlushTimeoutMs?: number
-  shutdownTimeoutMs?: number
   isWindows?: boolean
 }
 
@@ -45,6 +43,7 @@ export class ClientStateLifecycle {
         .getAllWindows()
         .some((candidate) => candidate !== window && !candidate.isDestroyed())
       if (!hasOtherWindow) {
+        window.hide()
         this.dependencies.app.quit()
       } else if (!closeInProgress) {
         closeInProgress = true
@@ -82,6 +81,7 @@ export class ClientStateLifecycle {
     app.on("before-quit", (event) => {
       if (this.exitAllowed) return
       event.preventDefault()
+      this.hideWindows()
       void this.startShutdown(this.dependencies.getMainWindow()).then(() => this.exit())
     })
     app.on("window-all-closed", () => app.quit())
@@ -99,21 +99,17 @@ export class ClientStateLifecycle {
       const cliStop = this.runStage("CLI stop", () => this.dependencies.cliManager.stop())
       await rendererFlush
       await this.runStage("native shutdown flush", () => this.flushNative())
-      await this.runStage("primary release", () => this.dependencies.clientStateManager.drainAndReleasePrimary())
       await cliStop
+      await this.runStage("primary release", () => this.dependencies.clientStateManager.drainAndReleasePrimary())
     })()
-    const timeoutMs = this.dependencies.shutdownTimeoutMs ?? SHUTDOWN_TIMEOUT_MS
-    let timeout: ReturnType<typeof setTimeout> | undefined
-    this.shutdown = Promise.race([
-      stages,
-      new Promise<void>((resolve) => { timeout = setTimeout(() => {
-        console.warn(`[client-state] desktop shutdown timed out after ${timeoutMs}ms; forcing exit`)
-        resolve()
-      }, timeoutMs) }),
-    ]).finally(() => {
-      if (timeout) clearTimeout(timeout)
-    })
+    this.shutdown = stages
     return this.shutdown
+  }
+
+  private hideWindows(): void {
+    for (const window of this.dependencies.getAllWindows()) {
+      if (!window.isDestroyed()) window.hide()
+    }
   }
 
   private promoteToSessionEnd(window: BrowserWindow): void {

@@ -15,7 +15,7 @@ function controller(win: ReturnType<typeof window>, manager: { isPrimary: boolea
 }
 function managerHarness(t: test.TestContext) {
   const directory = mkdtempSync(join(tmpdir(), "codenomad-navigation-"))
-  const manager = new ClientStateManager(directory)
+  const manager = new ClientStateManager(directory, undefined, { crossHostElectionDirectory: join(directory, "election") })
   t.after(async () => { await manager.drainAndReleasePrimary().catch(() => {}); rmSync(directory, { recursive: true, force: true }) })
   return manager
 }

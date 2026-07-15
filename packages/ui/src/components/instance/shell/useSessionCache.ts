@@ -2,6 +2,7 @@ import { createEffect, createSignal, type Accessor } from "solid-js"
 import { messageStoreBus } from "../../../stores/message-v2/bus"
 import { clearSessionRenderCache } from "../../message-block"
 import { getLogger } from "../../../lib/logger"
+import { clearEvictedSessionMessages } from "./session-cache-eviction"
 
 const log = getLogger("session")
 
@@ -26,7 +27,7 @@ export function useSessionCache(options: SessionCacheOptions): SessionCacheState
     const instanceId = options.instanceId()
     log.info("Evicting cached session", { instanceId, sessionId })
     const store = messageStoreBus.getInstance(instanceId)
-    store?.clearSession(sessionId, { preserveScroll: true, notify: false })
+    clearEvictedSessionMessages(store, sessionId)
     clearSessionRenderCache(instanceId, sessionId)
   }
 

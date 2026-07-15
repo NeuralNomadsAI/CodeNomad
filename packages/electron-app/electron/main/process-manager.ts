@@ -1,4 +1,4 @@
-import { spawn, spawnSync, type ChildProcess } from "child_process"
+import { spawn, type ChildProcess } from "child_process"
 import { app, utilityProcess, type UtilityProcess } from "electron"
 import { createRequire } from "module"
 import { EventEmitter } from "events"
@@ -8,6 +8,12 @@ import path from "path"
 import { fileURLToPath } from "url"
 import { parse as parseYaml } from "yaml"
 import { ensureManagedNodeBinary } from "./managed-node"
+import {
+  CLI_STOP_DEADLINE_MS,
+  forcePosixProcessTree,
+  forceWindowsProcessTree,
+  stopManagedChild,
+} from "./process-stop"
 import { buildUserShellCommand, getUserShellEnv, supportsUserShell } from "./user-shell"
 
 const nodeRequire = createRequire(import.meta.url)
@@ -15,10 +21,9 @@ const mainFilename = fileURLToPath(import.meta.url)
 const mainDirname = path.dirname(mainFilename)
 
 const BOOTSTRAP_TOKEN_PREFIX = "CODENOMAD_BOOTSTRAP_TOKEN:"
+const SERVER_SHUTDOWN_COMPLETE = "CODENOMAD_SHUTDOWN_STATUS:complete"
+const SERVER_SHUTDOWN_INCOMPLETE = "CODENOMAD_SHUTDOWN_STATUS:incomplete"
 const SESSION_COOKIE_NAME_PREFIX = "codenomad_session"
-const CLI_STOP_GRACE_MS = 5_000
-const CLI_STOP_DEADLINE_MS = 7_000
-
 type CliState = "starting" | "ready" | "error" | "stopped"
 type ListeningMode = "local" | "all"
 
@@ -137,6 +142,7 @@ export class CliProcessManager extends EventEmitter {
   private bootstrapToken: string | null = null
   private authCookieName = `${SESSION_COOKIE_NAME_PREFIX}_${process.pid}_${Date.now()}`
   private requestedStop = false
+  private shutdownStatus: "complete" | "incomplete" | null = null
 
   async start(options: StartOptions): Promise<CliStatus> {
     if (this.child) {
@@ -149,6 +155,7 @@ export class CliProcessManager extends EventEmitter {
     this.bootstrapToken = null
     this.authCookieName = `${SESSION_COOKIE_NAME_PREFIX}_${process.pid}_${Date.now()}`
     this.requestedStop = false
+    this.shutdownStatus = null
     this.updateStatus({ state: "starting", port: undefined, pid: undefined, url: undefined, error: undefined })
 
     const listeningMode = this.resolveListeningMode()
@@ -198,7 +205,7 @@ export class CliProcessManager extends EventEmitter {
       const detached = process.platform !== "win32"
       child = spawn(spawnDetails.command, spawnDetails.args, {
         cwd: process.cwd(),
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: ["pipe", "pipe", "pipe"],
         env,
         shell: false,
         detached,
@@ -313,173 +320,94 @@ export class CliProcessManager extends EventEmitter {
 
     const isAlreadyExited = () => spawnedChild.exitCode !== null || spawnedChild.signalCode !== null
 
-    const tryKillPosixGroup = (signal: NodeJS.Signals) => {
+    const forceProcessTree = () => {
+      if (process.platform !== "win32") {
+        return forcePosixProcessTree(pid)
+      }
+
+      return forceWindowsProcessTree(pid)
+    }
+
+    let forceConfirmed = false
+    const enforceIncompleteCleanup = () => {
       try {
-        // Negative PID targets the process group (POSIX).
-        process.kill(-pid, signal)
-        return true
+        forceConfirmed = forceProcessTree()
       } catch (error) {
-        const err = error as NodeJS.ErrnoException
-        if (err?.code === "ESRCH") {
-          return true
-        }
-        return false
+        console.warn(`[cli] immediate enforcement after incomplete cleanup failed (pid=${pid})`, error)
+        forceConfirmed = false
       }
+      if (!forceConfirmed) console.warn(`[cli] immediate enforcement after incomplete cleanup was not confirmed (pid=${pid})`)
     }
+    this.once("shutdownIncomplete", enforceIncompleteCleanup)
 
-    const tryKillSinglePid = (signal: NodeJS.Signals) => {
-      try {
-        process.kill(pid, signal)
-        return true
-      } catch (error) {
-        const err = error as NodeJS.ErrnoException
-        if (err?.code === "ESRCH") {
-          return true
-        }
-        return false
-      }
-    }
-
-    const tryTaskkill = (force: boolean) => {
-      const args = ["/PID", String(pid), "/T"]
-      if (force) {
-        args.push("/F")
-      }
-
-      try {
-        const killer = spawn("taskkill", args, { stdio: "ignore", windowsHide: true })
-        killer.on("error", (error) => console.warn(`[cli] taskkill failed for pid=${pid}`, error))
-        killer.on("exit", (code) => {
-          if (code !== 0 && !isAlreadyExited()) console.warn(`[cli] taskkill exited with code ${code} for pid=${pid}`)
-        })
-        killer.unref()
-        return true
-      } catch {
-        return false
-      }
-    }
-
-    const tryTaskkillSync = () => {
-      try {
-        const result = spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
-          encoding: "utf8",
-          timeout: 1_500,
-          windowsHide: true,
-        })
-        if (result.status === 0 || isAlreadyExited()) return true
-        const detail = `${result.stdout ?? ""}\n${result.stderr ?? ""}`.trim()
-        console.warn(`[cli] forced taskkill failed for pid=${pid}${detail ? `: ${detail}` : ""}`)
-      } catch (error) {
-        console.warn(`[cli] forced taskkill failed for pid=${pid}`, error)
-      }
-      return false
-    }
-
-    const sendStopSignal = (signal: NodeJS.Signals) => {
-      if (process.platform === "win32") {
-        if (signal === "SIGKILL") {
-          if (!tryTaskkillSync()) tryTaskkill(true)
-        } else {
-          tryTaskkill(false)
-        }
-        return
-      }
-
-      // Prefer process-group signaling so wrapper launchers (shell/tsx) don't outlive Electron.
-      const groupOk = tryKillPosixGroup(signal)
-      if (!groupOk) {
-        tryKillSinglePid(signal)
-      }
-    }
-
-    return new Promise((resolve) => {
-      let settled = false
-      const finish = (confirmedExited: boolean) => {
-        if (settled) return
-        settled = true
-        clearTimeout(killTimeout)
-        clearTimeout(deadlineTimeout)
-        if (confirmedExited && this.child === spawnedChild) {
-          this.child = undefined
-          this.updateStatus({ state: "stopped" })
-        }
-        resolve()
-      }
-      const killTimeout = setTimeout(() => {
-        console.warn(
-          `[cli] stop timed out after ${CLI_STOP_GRACE_MS}ms; sending SIGKILL (pid=${child.pid ?? "unknown"})`,
-        )
-        sendStopSignal("SIGKILL")
-      }, CLI_STOP_GRACE_MS)
-      const deadlineTimeout = setTimeout(() => {
-        console.warn(`[cli] stop remained pending after ${CLI_STOP_DEADLINE_MS}ms; continuing desktop shutdown`)
-        sendStopSignal("SIGKILL")
-        finish(false)
-      }, CLI_STOP_DEADLINE_MS)
-
-      spawnedChild.on("exit", () => {
-        console.info("[cli] CLI process exited")
-        finish(true)
+    try {
+      await stopManagedChild({
+        child: spawnedChild,
+        isExited: isAlreadyExited,
+        force: () => forceConfirmed || forceProcessTree(),
+        deadlineMs: CLI_STOP_DEADLINE_MS,
+        warn: (message, error) => console.warn(`[cli] ${message} (pid=${pid})`, error ?? ""),
       })
-
-      if (isAlreadyExited()) {
-        finish(true)
-        return
-      }
-
-      sendStopSignal("SIGTERM")
-    })
+    } finally {
+      this.off("shutdownIncomplete", enforceIncompleteCleanup)
+    }
+    if (this.shutdownStatus !== "complete") {
+      console.warn(`[cli] CLI exited without a complete graceful-shutdown handshake (status=${this.shutdownStatus ?? "missing"})`)
+    }
+    console.info("[cli] CLI process exited")
+    if (this.child === spawnedChild) {
+      this.child = undefined
+      this.updateStatus({ state: "stopped" })
+    }
   }
 
-  private stopUtilityChild(child: UtilityProcess): Promise<void> {
+  private async stopUtilityChild(child: UtilityProcess): Promise<void> {
     this.requestedStop = true
 
     const pid = child.pid
     if (!pid) {
       this.child = undefined
       this.updateStatus({ state: "stopped" })
-      return Promise.resolve()
+      return
     }
 
-    return new Promise((resolve) => {
-      let settled = false
-      const finish = (confirmedExited: boolean) => {
-        if (settled) return
-        settled = true
-        clearTimeout(killTimeout)
-        clearTimeout(deadlineTimeout)
-        if (confirmedExited && this.child === child) {
-          this.child = undefined
-          this.updateStatus({ state: "stopped" })
-        }
-        resolve()
+    const forceProcessTree = () => process.platform === "win32"
+      ? forceWindowsProcessTree(pid)
+      : forcePosixProcessTree(pid)
+    let forceConfirmed = false
+    const enforceIncompleteCleanup = () => {
+      try {
+        forceConfirmed = forceProcessTree()
+      } catch (error) {
+        console.warn(`[cli] immediate utility enforcement failed (pid=${pid})`, error)
+        forceConfirmed = false
       }
-      const killTimeout = setTimeout(() => {
-        console.warn(`[cli] stop timed out after ${CLI_STOP_GRACE_MS}ms; sending SIGKILL (pid=${pid})`)
-        try {
-          process.kill(pid, "SIGKILL")
-        } catch {
-          // no-op
-        }
-      }, CLI_STOP_GRACE_MS)
-      const deadlineTimeout = setTimeout(() => {
-        console.warn(`[cli] stop remained pending after ${CLI_STOP_DEADLINE_MS}ms; continuing desktop shutdown`)
-        try { process.kill(pid, "SIGKILL") } catch {}
-        finish(false)
-      }, CLI_STOP_DEADLINE_MS)
-
-      child.once("exit", () => {
-        console.info("[cli] CLI process exited")
-        finish(true)
+      if (!forceConfirmed) console.warn(`[cli] immediate utility enforcement was not confirmed (pid=${pid})`)
+    }
+    this.once("shutdownIncomplete", enforceIncompleteCleanup)
+    try {
+      await stopManagedChild({
+        child,
+        isExited: () => this.child !== child,
+        deadlineMs: CLI_STOP_DEADLINE_MS,
+        force: () => forceConfirmed || forceProcessTree(),
+        useStdinShutdown: false,
+        requestGracefulStop: () => {
+          if (!child.kill()) console.warn(`[cli] utility supervisor refused graceful termination for pid=${pid}`)
+        },
+        warn: (message, error) => console.warn(`[cli] ${message} (pid=${pid})`, error ?? ""),
       })
-
-      if (child.pid === undefined) {
-        finish(true)
-        return
-      }
-
-      child.kill()
-    })
+    } finally {
+      this.off("shutdownIncomplete", enforceIncompleteCleanup)
+    }
+    if (this.shutdownStatus !== "complete") {
+      console.warn(`[cli] utility CLI exited without a complete graceful-shutdown handshake (status=${this.shutdownStatus ?? "missing"})`)
+    }
+    console.info("[cli] CLI process exited")
+    if (this.child === child) {
+      this.child = undefined
+      this.updateStatus({ state: "stopped" })
+    }
   }
 
   getStatus(): CliStatus {
@@ -544,6 +472,18 @@ export class CliProcessManager extends EventEmitter {
     for (const line of lines) {
       const trimmed = line.trim()
       if (!trimmed) continue
+
+      if (trimmed === SERVER_SHUTDOWN_COMPLETE) {
+        this.shutdownStatus = "complete"
+        console.info("[cli] server confirmed graceful shutdown")
+        continue
+      }
+      if (trimmed === SERVER_SHUTDOWN_INCOMPLETE) {
+        this.shutdownStatus = "incomplete"
+        console.warn("[cli] server reported incomplete cleanup; requesting final process-tree enforcement")
+        this.emit("shutdownIncomplete")
+        continue
+      }
 
       if (trimmed.startsWith(BOOTSTRAP_TOKEN_PREFIX)) {
         const token = trimmed.slice(BOOTSTRAP_TOKEN_PREFIX.length).trim()
