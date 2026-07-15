@@ -24,7 +24,6 @@
     "prebuild": "npm run prepare:resources",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test:native": "node --import tsx --test electron/main/client-state-process.test.ts electron/main/client-state.test.ts electron/main/client-state-ipc-handlers.test.ts electron/main/client-state-navigation.test.ts electron/main/client-state-lifecycle.test.ts electron/main/main-window-close.test.ts electron/main/renderer-client-state-flush.test.ts electron/main/window-state.test.ts",
     "preview": "electron-vite preview",
     "build:binaries": "node scripts/build.js",
     "build:mac": "node scripts/build.js mac",

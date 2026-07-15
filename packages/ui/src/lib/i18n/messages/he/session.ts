@@ -15,7 +15,6 @@ export const sessionMessages = {
   "sessionList.status.working": "עובד",
   "sessionList.status.compacting": "מסכם",
   "sessionList.status.idle": "מוכן",
-  "sessionList.status.interrupted": "הופסק",
   "sessionList.status.retrying": "מנסה שוב",
   "sessionList.status.retryingIn": "מנסה שוב בעוד {seconds}ש׳",
   "sessionList.status.retryTooltip": "{message} (ניסיון {attempt})",

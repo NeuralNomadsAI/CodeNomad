@@ -5,7 +5,6 @@ import { useI18n } from "../../lib/i18n"
 import { useTheme, type ThemeMode } from "../../lib/theme"
 import { useConfig, type ExpansionPreference, type ToolCallExpansionPreset } from "../../stores/preferences"
 import { getBehaviorSettings, type BehaviorSetting } from "../../lib/settings/behavior-registry"
-import { StartupStateSettingsCard } from "./startup-state-settings-card"
 import {
   buildToolExpansionPresetDefaults,
   getConfigurableToolEntries,
@@ -43,6 +42,7 @@ export const AppearanceSettingsSection: Component = () => {
     setThinkingBlocksExpansion,
     setToolInputsVisibility,
   } = useConfig()
+
   const behaviorSettings = createMemo(() =>
     getBehaviorSettings({
       preferences,
@@ -343,8 +343,6 @@ export const AppearanceSettingsSection: Component = () => {
           })}
         </div>
       </div>
-
-      <StartupStateSettingsCard />
 
       <div class="settings-card">
         <div class="settings-card-header">

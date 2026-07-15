@@ -31,11 +31,7 @@ import type {
   WorkspaceEventPayload,
 } from "../../../server/src/api-types"
 import { getLogger } from "./logger"
-import {
-  deriveDisplayConnectionStatus,
-  seedConnectionStatusIfMissing,
-  type ConnectionStatus,
-} from "./connection-status"
+import { deriveDisplayConnectionStatus, type ConnectionStatus } from "./connection-status"
 
 const log = getLogger("sse")
 
@@ -83,14 +79,6 @@ export interface WorktreeReadyEvent {
 }
 
 type EventSessionCreated = Omit<EventSessionUpdated, "type"> & { type: "session.created" }
-export interface EventSessionDeleted {
-  type: "session.deleted"
-  properties?: {
-    info?: { id?: string }
-    id?: string
-    sessionID?: string
-  }
-}
 
 type SSEEvent =
   | MessageUpdateEvent
@@ -100,7 +88,6 @@ type SSEEvent =
   | MessagePartDeltaEvent
   | EventSessionCreated
   | EventSessionUpdated
-  | EventSessionDeleted
   | EventSessionCompacted
   | EventSessionError
   | EventSessionIdle
@@ -157,10 +144,6 @@ class SSEManager {
     this.updateConnectionStatus(instanceId, status)
   }
 
-  seedStatusIfMissing(instanceId: string, status: ConnectionStatus) {
-    setConnectionStatus((prev) => seedConnectionStatusIfMissing(prev, instanceId, status))
-  }
-
   private handleEvent(instanceId: string, event: SSEEvent | InstanceStreamEvent): void {
     if (!event || typeof event !== "object" || typeof (event as { type?: unknown }).type !== "string") {
       log.warn("Dropping malformed event", event)
@@ -190,9 +173,6 @@ class SSEManager {
         break
       case "session.created":
         this.onSessionUpdate?.(instanceId, event as EventSessionUpdated)
-        break
-      case "session.deleted":
-        this.onSessionDeleted?.(instanceId, event as EventSessionDeleted)
         break
       case "session.compacted":
         this.onSessionCompacted?.(instanceId, event as EventSessionCompacted)
@@ -277,7 +257,6 @@ class SSEManager {
   onMessagePartDelta?: (instanceId: string, event: MessagePartDeltaEvent) => void
   onMessagePartRemoved?: (instanceId: string, event: MessagePartRemovedEvent) => void
   onSessionUpdate?: (instanceId: string, event: EventSessionUpdated) => void
-  onSessionDeleted?: (instanceId: string, event: EventSessionDeleted) => void
   onSessionCompacted?: (instanceId: string, event: EventSessionCompacted) => void
   onSessionError?: (instanceId: string, event: EventSessionError) => void
   onTuiToast?: (instanceId: string, event: TuiToastEvent) => void

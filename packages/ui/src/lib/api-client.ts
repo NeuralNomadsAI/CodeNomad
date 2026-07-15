@@ -234,23 +234,10 @@ export const serverApi = {
       body: JSON.stringify(map),
     })
   },
-  createWorkspace(payload: WorkspaceCreateRequest, options?: { signal?: AbortSignal }): Promise<WorkspaceCreateResponse> {
+  createWorkspace(payload: WorkspaceCreateRequest): Promise<WorkspaceCreateResponse> {
     return request<WorkspaceCreateResponse>("/api/workspaces", {
       method: "POST",
       body: JSON.stringify(payload),
-      signal: options?.signal,
-    })
-  },
-  cancelWorkspaceCreation(requestId: string): Promise<void> {
-    return request("/api/workspaces/creation/cancel", {
-      method: "POST",
-      body: JSON.stringify({ requestId }),
-    })
-  },
-  releaseWorkspaceCreation(id: string, requestId: string): Promise<void> {
-    return request(`/api/workspaces/${encodeURIComponent(id)}/creation/release`, {
-      method: "POST",
-      body: JSON.stringify({ requestId }),
     })
   },
   fetchSidecars(): Promise<{ sidecars: SideCar[] }> {

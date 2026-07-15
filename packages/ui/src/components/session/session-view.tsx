@@ -7,7 +7,7 @@ import { messageStoreBus } from "../../stores/message-v2/bus"
 import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import { getAttachments, removeAttachment } from "../../stores/attachments"
-import { instances, waitForInstanceWorkspaceMetadataHydration } from "../../stores/instances"
+import { instances } from "../../stores/instances"
 import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession } from "../../stores/sessions"
 import { clearSessionIdleFade, IDLE_STATUS_VISIBILITY_MS, getSessionStatus, isSessionBusy as getSessionBusyStatus, markSessionIdleFadeStarted } from "../../stores/session-status"
 import { deleteMessage } from "../../stores/session-actions"
@@ -64,6 +64,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     if (!currentSession) return false
     return getSessionStatus(props.instanceId, currentSession.id) === "working"
   })
+
   const sessionNeedsInput = createMemo(() => {
     const currentSession = session()
     if (!currentSession) return false
@@ -225,10 +226,13 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       if (pendingIdleSeenTimers.has(timerKey)) continue
       pendingIdleSeenTimers.add(timerKey)
       markSessionIdleFadeStarted(props.instanceId, entry.id)
-      markSessionIdleSeen(props.instanceId, entry.id)
 
       window.setTimeout(() => {
         pendingIdleSeenTimers.delete(timerKey)
+        const latestEntry = props.activeSessions.get(entry.id)
+        if (latestEntry?.status === "idle" && latestEntry.idleSince === entry.idleSince) {
+          markSessionIdleSeen(props.instanceId, entry.id)
+        }
         clearSessionIdleFade(props.instanceId, entry.id, entry.idleSince)
       }, IDLE_STATUS_VISIBILITY_MS)
     }
@@ -297,16 +301,10 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   )
 
   createEffect(() => {
-    if (!props.isActive) return
     const currentSession = session()
-    if (!currentSession) return
-    const sessionId = currentSession.id
-    void waitForInstanceWorkspaceMetadataHydration(props.instanceId)
-      .then(() => {
-        if (!props.isActive || session()?.id !== sessionId) return
-        return loadMessages(props.instanceId, sessionId)
-      })
-      .catch((error) => log.error("Failed to load messages", error))
+    if (currentSession) {
+      loadMessages(props.instanceId, currentSession.id).catch((error) => log.error("Failed to load messages", error))
+    }
   })
 
   function handleReloadMessages() {
@@ -359,7 +357,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       pendingCommentText = `${pendingCommentText ?? ""}${markdown}`
     }
   }
-
+ 
   async function handleSendMessage(prompt: string, attachments: Attachment[]) {
     const messageCount = messageStore().getSessionMessageIds(props.sessionId).length
     const submittedExchangeTargetCount = getSubmitBottomPinTargetCount(messageCount, sessionStreamingActive())

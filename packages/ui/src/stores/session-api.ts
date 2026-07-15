@@ -13,20 +13,15 @@ import { instances } from "./instances"
 import { preferences, setAgentModelPreference } from "./preferences"
 import {
   activeSessionId,
-  activeParentSessionId,
   agents,
-  clearActiveSession,
-  clearActiveParentSession,
-  setActiveSession,
   clearSessionDraftPrompt,
-  cancelSessionGenerationAdmissions,
-  markSessionDeletedAuthoritative,
-  getAuthoritativelyDeletedSessionIdsForInstance,
   getDescendantSessions,
   isBlankSession,
   messagesLoaded,
   getSessionMessagesLoadError,
+  pruneDraftPrompts,
   providers,
+  setActiveSessionId,
   setAgents,
   setMessagesLoaded,
   setSessionMessagesLoadError,
@@ -49,7 +44,6 @@ import {
   isLatestSessionSearch,
   setSessionSearchResults,
 } from "./session-state"
-import { deleteSessionAttachments } from "./attachments"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getDefaultModel, isModelValid } from "./session-models"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
@@ -70,7 +64,6 @@ import {
 import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 import { hydrateSessionMetadataWithClient } from "./session-metadata"
 import { PROJECT_SESSION_LIST_LIMIT, buildProjectSessionListOptions, filterProjectScopedSessions } from "./session-list-options"
-import { mergeFetchedSessionRuntimeState, resolveAuthoritativeGenerationRecovery } from "./session-generation-recovery"
 
 const log = getLogger("api")
 
@@ -225,31 +218,26 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
 
   try {
     const sessionListOptions = instance.folder ? { directory: instance.folder } : {}
-    const existingSessions = new Map(sessions().get(instanceId) ?? new Map<string, Session>())
 
     log.info("session.list", { instanceId, limit: PROJECT_SESSION_LIST_LIMIT, directory: sessionListOptions.directory, scope: "project" })
     const response = await fetchV2Sessions(instanceId, sessionListOptions)
 
     let statusById: Record<string, any> = {}
-    let statusResponseKnown = false
     try {
-      const statusResponse = await rootClient.session.status()
+        const statusResponse = await rootClient.session.status()
       if (statusResponse.data && typeof statusResponse.data === "object") {
-        statusResponseKnown = true
         statusById = statusResponse.data as Record<string, any>
       }
     } catch (error) {
       log.error("Failed to fetch session status:", error)
     }
 
+    const existingSessions = sessions().get(instanceId)
     const sessionMap = new Map<string, Session>()
 
     for (const apiSession of getV2SessionItems(response)) {
       const existingSession = existingSessions?.get(apiSession.id)
       const existingStatus = existingSession?.status
-      const rawStatus = (apiSession as any)?.status ?? statusById[apiSession.id]
-      const hasType = rawStatus && typeof rawStatus === "object" && typeof rawStatus.type === "string"
-      const runtimeStatusKnown = Boolean(hasType || statusResponseKnown || existingSession?.runtimeStatusKnown)
 
       let status: SessionStatus
       let retry = existingSession?.retry ?? null
@@ -257,50 +245,39 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
         status = "compacting"
         retry = null
       } else {
+        const rawStatus = (apiSession as any)?.status ?? statusById[apiSession.id]
+        const hasType = rawStatus && typeof rawStatus === "object" && typeof rawStatus.type === "string"
         status = hasType ? mapSdkSessionStatus(rawStatus) : existingStatus ?? "idle"
         retry = hasType ? mapSdkSessionRetry(rawStatus) : retry
       }
+
+      const session = toClientSessionV2(instanceId, apiSession, existingSession)
       sessionMap.set(apiSession.id, {
-        ...toClientSessionV2(instanceId, apiSession, existingSession),
+        ...session,
+        agent: session.agent,
+        model: session.model,
         status,
         retry,
         idleSince: getIdleSinceForStatusTransition(existingStatus, status, existingSession?.idleSince),
-        runtimeStatusKnown,
-        generationRecovery: runtimeStatusKnown
-          ? resolveAuthoritativeGenerationRecovery(existingSession?.generationRecovery, status)
-          : existingSession?.generationRecovery ?? null,
       })
     }
 
     setSessions((prev) => {
       const next = new Map(prev)
       const instanceSessions = new Map(next.get(instanceId) ?? new Map())
-      const deletedSessionIds = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
       for (const session of sessionMap.values()) {
-        const capturedSession = existingSessions.get(session.id)
-        const latestSession = instanceSessions.get(session.id)
-        const merged = mergeFetchedSessionRuntimeState(
-          session,
-          capturedSession,
-          latestSession,
-          deletedSessionIds.has(session.id),
-        )
-        if (merged) instanceSessions.set(session.id, merged)
+        instanceSessions.set(session.id, session)
       }
       next.set(instanceId, instanceSessions)
       return next
     })
 
     const rootIds: string[] = []
-    const seenRootIds = new Set<string>()
     const missingRootSessionIds: string[] = []
     for (const apiSession of getV2SessionItems(response)) {
       const root = getSessionRoot(instanceId, apiSession.id)
       if (root) {
-        if (!seenRootIds.has(root.id)) {
-          seenRootIds.add(root.id)
-          rootIds.push(root.id)
-        }
+        if (!rootIds.includes(root.id)) rootIds.push(root.id)
       } else if (apiSession.parentID) {
         missingRootSessionIds.push(apiSession.id)
       }
@@ -333,6 +310,7 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
     })
 
 
+    pruneDraftPrompts(instanceId, new Set(sessions().get(instanceId)?.keys() ?? []))
     void (async () => {
       await hydrateMissingSessionMetadata(instanceId, rootIds)
       await migrateLegacyWorktreeMapToSessionMetadata(instanceId)
@@ -437,9 +415,6 @@ function toClientSessionV2(instanceId: string, apiSession: SDKSession, existingS
     status: existingSession?.status ?? "idle",
     retry: existingSession?.retry ?? null,
     idleSince: existingSession?.idleSince ?? null,
-    generationRecovery: existingSession?.generationRecovery ?? null,
-    runtimeStatusKnown: existingSession?.runtimeStatusKnown ?? false,
-    generationAdmissionToken: existingSession?.generationAdmissionToken,
     version: existingSession?.version || "0",
     time: {
       ...apiSession.time,
@@ -685,7 +660,49 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
     log.info(`[HTTP] DELETE /session.delete for instance ${instanceId}`, { sessionId })
     await requestData(client.session.delete({ sessionID: sessionId, ...(await getSessionWorkspacePayload(instanceId, sessionId)) }), "session.delete")
 
-    removeSessionRuntimeState(instanceId, sessionId)
+    setSessions((prev) => {
+      const next = new Map(prev)
+      const instanceSessions = next.get(instanceId)
+      if (instanceSessions) {
+        instanceSessions.delete(sessionId)
+        if (instanceSessions.size === 0) {
+          next.delete(instanceId)
+        }
+      }
+      return next
+    })
+
+    syncInstanceSessionIndicator(instanceId)
+    removeSessionListId(instanceId, sessionId)
+
+    clearSessionDraftPrompt(instanceId, sessionId)
+
+    // Drop normalized message state and caches for this session
+    messageStoreBus.getOrCreate(instanceId).clearSession(sessionId)
+    clearCacheForSession(instanceId, sessionId)
+
+    setSessionInfoByInstance((prev) => {
+      const next = new Map(prev)
+      const instanceInfo = next.get(instanceId)
+      if (instanceInfo) {
+        const updatedInstanceInfo = new Map(instanceInfo)
+        updatedInstanceInfo.delete(sessionId)
+        if (updatedInstanceInfo.size === 0) {
+          next.delete(instanceId)
+        } else {
+          next.set(instanceId, updatedInstanceInfo)
+        }
+      }
+      return next
+    })
+
+    if (activeSessionId().get(instanceId) === sessionId) {
+      setActiveSessionId((prev) => {
+        const next = new Map(prev)
+        next.delete(instanceId)
+        return next
+      })
+    }
 
     // Clean up mapping for deleted parent sessions.
     if (deletingSession?.parentId === null) {
@@ -703,59 +720,6 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
       }
       return next
     })
-  }
-}
-
-function removeSessionRuntimeState(instanceId: string, sessionId: string): void {
-  cancelSessionGenerationAdmissions(instanceId, sessionId)
-  markSessionDeletedAuthoritative(instanceId, sessionId)
-  deleteSessionAttachments(instanceId, sessionId)
-  clearSessionDraftPrompt(instanceId, sessionId)
-
-  setSessions((prev) => {
-    const next = new Map(prev)
-    const instanceSessions = next.get(instanceId)
-    if (instanceSessions) {
-      instanceSessions.delete(sessionId)
-      if (instanceSessions.size === 0) {
-        next.delete(instanceId)
-      }
-    }
-    return next
-  })
-
-  syncInstanceSessionIndicator(instanceId)
-  removeSessionListId(instanceId, sessionId)
-
-  // Drop normalized message state and caches for this session.
-  messageStoreBus.getOrCreate(instanceId).clearSession(sessionId)
-  clearCacheForSession(instanceId, sessionId)
-
-  setSessionInfoByInstance((prev) => {
-    const next = new Map(prev)
-    const instanceInfo = next.get(instanceId)
-    if (instanceInfo) {
-      const updatedInstanceInfo = new Map(instanceInfo)
-      updatedInstanceInfo.delete(sessionId)
-      if (updatedInstanceInfo.size === 0) {
-        next.delete(instanceId)
-      } else {
-        next.set(instanceId, updatedInstanceInfo)
-      }
-    }
-    return next
-  })
-
-  const selectedParentId = activeParentSessionId().get(instanceId)
-  const selectedSessionId = activeSessionId().get(instanceId)
-  if (selectedParentId === sessionId) {
-    clearActiveParentSession(instanceId)
-  } else if (selectedSessionId === sessionId) {
-    if (selectedParentId && sessions().get(instanceId)?.has(selectedParentId)) {
-      setActiveSession(instanceId, selectedParentId)
-    } else {
-      clearActiveSession(instanceId)
-    }
   }
 }
 
@@ -1038,7 +1002,6 @@ async function loadMessages(
 export {
   createSession,
   deleteSession,
-  removeSessionRuntimeState,
   fetchAgents,
   fetchProviders,
 

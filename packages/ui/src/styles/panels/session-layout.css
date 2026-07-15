@@ -459,8 +459,7 @@ session-sidebar-controls .selector-trigger-primary {
 .status-indicator.session-status.session-working,
 .status-indicator.session-status.session-retrying,
 .status-indicator.session-status.session-compacting,
-.status-indicator.session-status.session-idle,
-.status-indicator.session-status.session-interrupted {
+.status-indicator.session-status.session-idle {
   font-weight: var(--font-weight-medium);
 }
 
@@ -482,11 +481,6 @@ session-sidebar-controls .selector-trigger-primary {
 .status-indicator.session-status.session-idle {
   color: var(--session-status-idle-fg);
   --session-status-dot: var(--session-status-idle-fg);
-}
-
-.status-indicator.session-status.session-interrupted {
-  color: var(--status-warning);
-  --session-status-dot: var(--status-warning);
 }
 
 .status-indicator.session-status.session-idle.session-status-fading {
@@ -521,10 +515,6 @@ session-sidebar-controls .selector-trigger-primary {
 
 .status-indicator.session-status.session-idle.session-status-list {
   background-color: var(--session-status-idle-bg);
-}
-
-.status-indicator.session-status.session-interrupted.session-status-list {
-  background-color: color-mix(in srgb, var(--status-warning) 12%, transparent);
 }
 
 .status-indicator.session-status.session-permission.session-status-list {

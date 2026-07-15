@@ -26,8 +26,7 @@
         "decorations": true,
         "theme": "Dark",
         "backgroundColor": "#1a1a1a",
-        "zoomHotkeysEnabled": true,
-        "visible": false
+        "zoomHotkeysEnabled": true
       }
     ],
     "security": {

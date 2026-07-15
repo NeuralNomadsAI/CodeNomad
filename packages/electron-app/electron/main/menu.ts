@@ -1,11 +1,6 @@
 import { Menu, BrowserWindow, MenuItemConstructorOptions } from "electron"
 
-interface ApplicationMenuActions {
-  reload(): void
-  forceReload(): void
-}
-
-export function createApplicationMenu(mainWindow: BrowserWindow, actions: ApplicationMenuActions) {
+export function createApplicationMenu(mainWindow: BrowserWindow) {
   const isMac = process.platform === "darwin"
 
   const template: MenuItemConstructorOptions[] = [
@@ -56,8 +51,8 @@ export function createApplicationMenu(mainWindow: BrowserWindow, actions: Applic
     {
       label: "View",
       submenu: [
-        { label: "Reload", accelerator: "CmdOrCtrl+R", click: actions.reload },
-        { label: "Force Reload", accelerator: "CmdOrCtrl+Shift+R", click: actions.forceReload },
+        { role: "reload" as const },
+        { role: "forceReload" as const },
         { role: "toggleDevTools" as const },
         { type: "separator" as const },
         { role: "resetZoom" as const },

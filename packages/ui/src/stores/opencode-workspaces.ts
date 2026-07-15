@@ -3,24 +3,6 @@ import { getWorktreeSlugForSession, getWorktrees } from "./worktrees"
 import { getLogger } from "../lib/logger"
 import { mapOpenCodeWorkspacesToWorktreeSlugs } from "./opencode-workspace-matching"
 
-const WORKSPACE_SYNC_TIMEOUT_MS = 5_000
-
-function withWorkspaceSyncTimeout<T>(operation: Promise<T>): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("OpenCode workspace sync timed out")), WORKSPACE_SYNC_TIMEOUT_MS)
-    operation.then(
-      (value) => {
-        clearTimeout(timer)
-        resolve(value)
-      },
-      (error) => {
-        clearTimeout(timer)
-        reject(error)
-      },
-    )
-  })
-}
-
 const log = getLogger("api")
 
 type OpenCodeWorkspace = {
@@ -66,8 +48,8 @@ async function syncOpenCodeWorkspaces(instanceId: string): Promise<void> {
       return
     }
 
-    await withWorkspaceSyncTimeout(workspaceApi.syncList({ directory: instance.folder }))
-    const result = await withWorkspaceSyncTimeout<any>(workspaceApi.list({ directory: instance.folder }))
+    await workspaceApi.syncList({ directory: instance.folder })
+    const result = await workspaceApi.list({ directory: instance.folder })
     const workspaces = Array.isArray(result?.data) ? (result.data as OpenCodeWorkspace[]) : []
     const next = mapOpenCodeWorkspacesToWorktreeSlugs(getWorktrees(instanceId), workspaces)
 
@@ -75,9 +57,7 @@ async function syncOpenCodeWorkspaces(instanceId: string): Promise<void> {
   })()
     .catch((error) => {
       log.warn("Failed to sync OpenCode workspaces", { instanceId, error })
-      if (!workspaceIdByWorktreeSlug.has(instanceId)) {
-        workspaceIdByWorktreeSlug.set(instanceId, new Map())
-      }
+      workspaceIdByWorktreeSlug.set(instanceId, new Map())
     })
     .finally(() => {
       if (workspaceSyncs.get(instanceId) === task) {

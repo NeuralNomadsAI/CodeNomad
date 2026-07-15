@@ -15,7 +15,6 @@ export const sessionMessages = {
   "sessionList.status.working": "काम गर्दै",
   "sessionList.status.compacting": "संक्षिप्त गर्दै",
   "sessionList.status.idle": "निष्क्रिय",
-  "sessionList.status.interrupted": "अवरुद्ध",
   "sessionList.status.retrying": "पुन: प्रयास गर्दै",
   "sessionList.status.retryingIn": "{seconds} सेकेन्डमा पुन: प्रयास गर्दै",
   "sessionList.status.retryTooltip": "{message} (प्रयास {attempt})",

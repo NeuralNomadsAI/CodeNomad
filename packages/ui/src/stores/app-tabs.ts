@@ -1,8 +1,7 @@
 import { createMemo, createSignal } from "solid-js"
 import type { Instance } from "../types/instance"
-import { activeInstanceId, claimRestoreCreatedInstanceForUser, instances, setActiveInstanceId } from "./instances"
+import { activeInstanceId, instances, setActiveInstanceId } from "./instances"
 import { activeSidecarToken, setActiveSidecarToken, sidecarTabs, type SideCarTabRecord } from "./sidecars"
-import { appSessionRestoreGateActive } from "./app-session-restore-gate"
 
 export interface InstanceAppTab {
   id: string
@@ -49,8 +48,6 @@ function getPreferredTabId(): string | null {
 
 const [activeAppTabId, setActiveAppTabId] = createSignal<string | null>(null)
 const [tabOrder, setTabOrder] = createSignal<string[]>([])
-const [appTabSelectionRevision, setAppTabSelectionRevision] = createSignal(0)
-const [appTabOrderRevision, setAppTabOrderRevision] = createSignal(0)
 
 function rememberTabOrder(tabId: string) {
   setTabOrder((prev) => (prev.includes(tabId) ? prev : [...prev, tabId]))
@@ -84,8 +81,7 @@ function getAppTabById(tabId: string | null): AppTabRecord | null {
   return appTabs().find((tab) => tab.id === tabId) ?? null
 }
 
-function selectAppTab(tabId: string | null, options?: { source?: "restore" }) {
-  if (options?.source !== "restore") setAppTabSelectionRevision((revision) => revision + 1)
+function selectAppTab(tabId: string | null) {
   if (!tabId) {
     setActiveAppTabId(null)
     setActiveSidecarToken(null)
@@ -99,7 +95,6 @@ function selectAppTab(tabId: string | null, options?: { source?: "restore" }) {
   setActiveAppTabId(tab.id)
 
   if (tab.kind === "instance") {
-    if (options?.source !== "restore") claimRestoreCreatedInstanceForUser(tab.instance.id)
     setActiveSidecarToken(null)
     setActiveInstanceId(tab.instance.id)
     return
@@ -130,31 +125,6 @@ function moveAppTab(tabId: string, targetTabId: string, placement: "before" | "a
 
   reorderedIds.splice(placement === "after" ? targetIndex + 1 : targetIndex, 0, tabId)
   setTabOrder(reorderedIds)
-  setAppTabOrderRevision((revision) => revision + 1)
-}
-
-function markAppTabUserInteraction() {
-  setAppTabSelectionRevision((revision) => revision + 1)
-  setAppTabOrderRevision((revision) => revision + 1)
-}
-
-function setAppTabOrder(tabIds: string[]) {
-  const availableIds = appTabs().map((tab) => tab.id)
-  const available = new Set(availableIds)
-  const seen = new Set<string>()
-  const orderedIds: string[] = []
-
-  for (const tabId of tabIds) {
-    if (!available.has(tabId) || seen.has(tabId)) continue
-    seen.add(tabId)
-    orderedIds.push(tabId)
-  }
-  for (const tabId of availableIds) {
-    if (seen.has(tabId)) continue
-    orderedIds.push(tabId)
-  }
-
-  setTabOrder(orderedIds)
 }
 
 function selectNextAppTab() {
@@ -183,7 +153,6 @@ function selectAppTabByIndex(index: number) {
 }
 
 function ensureActiveAppTab(preferredTabId?: string | null) {
-  if (appSessionRestoreGateActive()) return
   const tabs = appTabs()
   const current = activeAppTabId()
 
@@ -202,8 +171,6 @@ function ensureActiveAppTab(preferredTabId?: string | null) {
 
 export {
   activeAppTabId,
-  appTabOrderRevision,
-  appTabSelectionRevision,
   activeAppTab,
   appTabs,
   ensureActiveAppTab,
@@ -211,9 +178,7 @@ export {
   getAppTabById,
   getInstanceAppTabId,
   getSidecarAppTabId,
-  markAppTabUserInteraction,
   moveAppTab,
-  setAppTabOrder,
   selectAppTab,
   selectAppTabByIndex,
   selectInstanceTab,

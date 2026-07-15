@@ -16,8 +16,6 @@ export type WorkspaceStatus = "starting" | "ready" | "stopped" | "error"
 
 export interface WorkspaceDescriptor {
   id: string
-  /** Correlates creation events with the client request that initiated them. */
-  requestId?: string
   /** Absolute path on the server host. */
   path: string
   name?: string
@@ -40,8 +38,6 @@ export interface WorkspaceDescriptor {
 export interface WorkspaceCreateRequest {
   path: string
   name?: string
-  binaryPath?: string
-  requestId?: string
   forceNew?: boolean
 }
 

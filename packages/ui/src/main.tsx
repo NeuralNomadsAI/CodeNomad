@@ -6,7 +6,6 @@ import { InstanceConfigProvider } from "./stores/instance-config"
 import { runtimeEnv } from "./lib/runtime-env"
 import { I18nProvider, preloadLocaleMessages } from "./lib/i18n"
 import { storage } from "./lib/storage"
-import { initializeClientState } from "./stores/client-state"
 import "./index.css"
 import "@git-diff-view/solid/styles/diff-view-pure.css"
 
@@ -24,8 +23,6 @@ if (typeof document !== "undefined") {
 }
 
 async function bootstrap() {
-  await initializeClientState()
-
   if (typeof document !== "undefined") {
     // renderer/index.html currently seeds a dark theme to avoid a white flash.
     // Reset to CSS defaults immediately so the first render matches system

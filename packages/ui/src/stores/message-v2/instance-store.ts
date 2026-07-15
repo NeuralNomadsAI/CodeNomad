@@ -35,7 +35,6 @@ const storeLog = getLogger("session")
 
 interface MessageStoreHooks {
   onSessionCleared?: (instanceId: string, sessionId: string) => void
-  onScrollSnapshotChanged?: (instanceId: string, sessionId: string, scope: string, snapshot: ScrollSnapshot) => void
 }
 
 function createInitialState(instanceId: string): InstanceMessageState {
@@ -244,7 +243,6 @@ export interface InstanceMessageStore {
   rebuildUsage: (sessionId: string, infos: Iterable<MessageInfo>) => void
   getSessionUsage: (sessionId: string) => SessionUsageState | undefined
   setScrollSnapshot: (sessionId: string, scope: string, snapshot: Omit<ScrollSnapshot, "updatedAt">) => void
-  restoreScrollSnapshot: (sessionId: string, scope: string, snapshot: ScrollSnapshot) => void
   getScrollSnapshot: (sessionId: string, scope: string) => ScrollSnapshot | undefined
   getSessionRevision: (sessionId: string) => number
   getSessionMessageIds: (sessionId: string) => string[]
@@ -255,7 +253,6 @@ export interface InstanceMessageStore {
   getMessage: (messageId: string) => MessageRecord | undefined
   getLatestTodoSnapshot: (sessionId: string) => LatestTodoSnapshot | undefined
   clearSession: (sessionId: string) => void
-  clearScrollSnapshots: () => void
   clearInstance: () => void
 }
 
@@ -1206,14 +1203,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
   function setScrollSnapshot(sessionId: string, scope: string, snapshot: Omit<ScrollSnapshot, "updatedAt">) {
     const key = makeScrollKey(sessionId, scope)
-    const next = { ...snapshot, updatedAt: Date.now() }
-    setState("scrollState", key, next)
-    hooks?.onScrollSnapshotChanged?.(instanceId, sessionId, scope, next)
-  }
-
-  function restoreScrollSnapshot(sessionId: string, scope: string, snapshot: ScrollSnapshot) {
-    const key = makeScrollKey(sessionId, scope)
-    setState("scrollState", key, snapshot)
+    setState("scrollState", key, { ...snapshot, updatedAt: Date.now() })
   }
 
   function getScrollSnapshot(sessionId: string, scope: string) {
@@ -1326,10 +1316,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
      messageInfoCache.clear()
       setState(reconcile(createInitialState(instanceId)))
     }
-
-    function clearScrollSnapshots() {
-      setState("scrollState", reconcile({}))
-    }
  
     return {
 
@@ -1360,7 +1346,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       rebuildUsage,
       getSessionUsage,
       setScrollSnapshot,
-      restoreScrollSnapshot,
       getScrollSnapshot,
       getSessionRevision: getSessionRevisionValue,
       getSessionMessageIds: (sessionId: string) => state.sessions[sessionId]?.messageIds ?? [],
@@ -1369,7 +1354,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       getMessage: (messageId: string) => state.messages[messageId],
       getLatestTodoSnapshot: (sessionId: string) => state.latestTodos[sessionId],
       clearSession,
-      clearScrollSnapshots,
       clearInstance,
      }
    }

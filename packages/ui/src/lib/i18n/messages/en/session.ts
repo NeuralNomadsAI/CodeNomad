@@ -15,7 +15,6 @@ export const sessionMessages = {
   "sessionList.status.working": "Working",
   "sessionList.status.compacting": "Compacting",
   "sessionList.status.idle": "Idle",
-  "sessionList.status.interrupted": "Interrupted",
   "sessionList.status.retrying": "Retrying",
   "sessionList.status.retryingIn": "Retrying in {seconds}s",
   "sessionList.status.retryTooltip": "{message} (Attempt {attempt})",

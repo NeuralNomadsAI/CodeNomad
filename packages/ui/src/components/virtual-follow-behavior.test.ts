@@ -2,19 +2,13 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import {
-  ANCHOR_RESTORE_MAX_FRAMES,
-  ANCHOR_RESTORE_STABLE_FRAMES,
-  AnchorRestoreStabilizer,
   BOTTOM_FOLLOW_EPSILON_PX,
-  ScrollRestoreTokenGuard,
   VirtualScrollController,
   isAtBottom,
   isAutoFollowing,
-  isScrollRestoreGenerationCurrent,
   isSnapshotAutoFollowing,
   resolveAutoPinHoldElement,
   restoreFollowModeFromSnapshot,
-  selectTopViewportAnchor,
   transitionFollowMode,
   type FollowMode,
   type ScrollControllerMetrics,
@@ -201,138 +195,5 @@ describe("virtual follow behavior", () => {
     assert.equal(resolveAutoPinHoldElement(itemWrapper, "message-1", () => null), null)
     assert.equal(resolveAutoPinHoldElement(itemWrapper, "message-1", () => assistantAnswerText), assistantAnswerText)
     assert.equal(resolveAutoPinHoldElement(itemWrapper, "message-1", () => undefined), itemWrapper)
-  })
-
-  it("selects the item crossing the viewport top instead of the nearest item top", () => {
-    const anchor = selectTopViewportAnchor([
-      { key: "crossing", top: -80, bottom: 120 },
-      { key: "below", top: 2, bottom: 102 },
-    ], 0, 600)
-
-    assert.equal(anchor?.key, "crossing")
-  })
-
-  it("keeps waiting for an existing anchor that mounts after six frames", () => {
-    const stabilizer = new AnchorRestoreStabilizer()
-    let result
-
-    for (let frame = 1; frame <= 7; frame += 1) {
-      result = stabilizer.nextFrame({ targetExists: true, mounted: false })
-      assert.equal(result.type, "retry")
-    }
-    for (let frame = 8; frame <= 12; frame += 1) {
-      result = stabilizer.nextFrame({ targetExists: true, mounted: false })
-    }
-
-    assert.deepEqual(result, { type: "retry", reissueIndex: true })
-  })
-
-  it("resets stable frame counting after an anchor offset correction", () => {
-    const stabilizer = new AnchorRestoreStabilizer()
-    for (let frame = 0; frame < ANCHOR_RESTORE_STABLE_FRAMES - 2; frame += 1) {
-      assert.equal(stabilizer.nextFrame({ targetExists: true, mounted: true, delta: 0.5 }).type, "retry")
-    }
-
-    assert.deepEqual(stabilizer.nextFrame({ targetExists: true, mounted: true, delta: 4 }), {
-      type: "correct",
-      delta: 4,
-      finishAfterCorrection: false,
-    })
-    assert.equal(stabilizer.snapshot().stableFrames, 0)
-    for (let frame = 0; frame < ANCHOR_RESTORE_STABLE_FRAMES - 1; frame += 1) {
-      assert.equal(stabilizer.nextFrame({ targetExists: true, mounted: true, delta: 0 }).type, "retry")
-    }
-    assert.equal(stabilizer.nextFrame({ targetExists: true, mounted: true, delta: 0 }).type, "finish")
-  })
-
-  it("restarts anchor stabilization when content grows", () => {
-    const stabilizer = new AnchorRestoreStabilizer()
-    for (let frame = 0; frame < ANCHOR_RESTORE_STABLE_FRAMES - 1; frame += 1) {
-      stabilizer.nextFrame({ targetExists: true, mounted: true, delta: 0 })
-    }
-
-    stabilizer.restartStability()
-
-    assert.equal(stabilizer.nextFrame({ targetExists: true, mounted: true, delta: 0 }).type, "retry")
-    assert.equal(stabilizer.snapshot().stableFrames, 1)
-  })
-
-  it("finishes a mounted anchor at the frame bound instead of ratio fallback", () => {
-    const stabilizer = new AnchorRestoreStabilizer()
-    let result
-    for (let frame = 1; frame <= ANCHOR_RESTORE_MAX_FRAMES; frame += 1) {
-      stabilizer.restartStability()
-      result = stabilizer.nextFrame({ targetExists: true, mounted: true, delta: 0 })
-    }
-
-    assert.deepEqual(result, { type: "finish" })
-  })
-
-  it("requests one final mounted-anchor correction at the frame bound", () => {
-    const stabilizer = new AnchorRestoreStabilizer()
-    for (let frame = 1; frame < ANCHOR_RESTORE_MAX_FRAMES; frame += 1) {
-      stabilizer.restartStability()
-      stabilizer.nextFrame({ targetExists: true, mounted: true, delta: 0 })
-    }
-
-    assert.deepEqual(stabilizer.nextFrame({ targetExists: true, mounted: true, delta: 6 }), {
-      type: "correct",
-      delta: 6,
-      finishAfterCorrection: true,
-    })
-  })
-
-  it("ratio-fallbacks at the frame bound only when an existing anchor never mounts", () => {
-    const stabilizer = new AnchorRestoreStabilizer()
-    let result
-    for (let frame = 1; frame < ANCHOR_RESTORE_MAX_FRAMES; frame += 1) {
-      result = stabilizer.nextFrame({ targetExists: true, mounted: false })
-    }
-
-    assert.equal(result?.type, "retry")
-    assert.equal(stabilizer.snapshot().elapsedFrames, ANCHOR_RESTORE_MAX_FRAMES - 1)
-    result = stabilizer.nextFrame({ targetExists: true, mounted: false })
-    assert.deepEqual(result, { type: "fallback" })
-    assert.equal(stabilizer.snapshot().elapsedFrames, ANCHOR_RESTORE_MAX_FRAMES)
-  })
-
-  it("fallbacks when a previously mounted anchor is unmounted at the strict frame bound", () => {
-    const stabilizer = new AnchorRestoreStabilizer()
-    stabilizer.nextFrame({ targetExists: true, mounted: true, delta: 4 })
-    let result
-    for (let frame = 2; frame <= ANCHOR_RESTORE_MAX_FRAMES; frame += 1) {
-      result = stabilizer.nextFrame({ targetExists: true, mounted: false })
-    }
-
-    assert.deepEqual(result, { type: "fallback" })
-    assert.equal(stabilizer.snapshot().elapsedFrames, ANCHOR_RESTORE_MAX_FRAMES)
-  })
-
-  it("invalidates deferred at-bottom and pixel-only restore finishes on cancellation", () => {
-    for (const path of ["at-bottom", "pixel-only"]) {
-      const guard = new ScrollRestoreTokenGuard()
-      const token = guard.begin()
-      let cancelled = false
-      let restoredOldMode = false
-      const finish = () => {
-        if (guard.isCurrent(token)) restoredOldMode = true
-      }
-      const cancel = () => {
-        guard.invalidate()
-        cancelled = true
-      }
-
-      cancel()
-      finish()
-
-      assert.equal(cancelled, true, path)
-      assert.equal(restoredOldMode, false, path)
-    }
-  })
-
-  it("rejects stale applied or cancellation callbacks from another session generation", () => {
-    assert.equal(isScrollRestoreGenerationCurrent("session-a", 3, "session-a", 3), true)
-    assert.equal(isScrollRestoreGenerationCurrent("session-a", 3, "session-b", 4), false)
-    assert.equal(isScrollRestoreGenerationCurrent("session-a", 3, "session-a", 4), false)
   })
 })

@@ -90,20 +90,6 @@ describe("idle status visibility", () => {
     markSessionIdleFadeStarted(instanceId, sessionId)
     assert.equal(getSessionIdleFadeClass(instanceId, sessionId), "session-status-fading")
 
-    setSessions(
-      new Map([
-        [instanceId, new Map([[sessionId, { id: sessionId, status: "idle", idleSince: null, parentId: null } as any]])],
-      ]),
-    )
-    assert.equal(getSessionIdleFadeClass(instanceId, sessionId), "session-status-fading")
-
-    setSessions(
-      new Map([
-        [instanceId, new Map([[sessionId, { id: sessionId, status: "idle", idleSince: 2_000, parentId: null } as any]])],
-      ]),
-    )
-    assert.equal(getSessionIdleFadeClass(instanceId, sessionId), "")
-
     clearSessionIdleFade(instanceId, sessionId, idleSince)
     assert.equal(getSessionIdleFadeClass(instanceId, sessionId), "")
 

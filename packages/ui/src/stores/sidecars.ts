@@ -4,7 +4,6 @@ import { tGlobal } from "../lib/i18n"
 import { serverEvents } from "../lib/server-events"
 import { getLogger } from "../lib/logger"
 import type { SideCar } from "../../../server/src/api-types"
-import { awaitRestoreStep, getAbortReason } from "./app-session-restore-timeout"
 
 const log = getLogger("api")
 
@@ -28,38 +27,22 @@ const [activeSidecarToken, setActiveSidecarToken] = createSignal<string | null>(
 const [sidecarsLoading, setSidecarsLoading] = createSignal(false)
 
 let loadPromise: Promise<void> | null = null
-let sidecarTabSequence = 0
 
-export class SidecarNotFoundError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = "SidecarNotFoundError"
-  }
-}
-
-async function ensureSidecarsLoaded(options?: { propagateErrors?: boolean }): Promise<void> {
-  if (!loadPromise) {
-    setSidecarsLoading(true)
-    const pending = serverApi.fetchSidecars().then((result) => {
+async function ensureSidecarsLoaded() {
+  if (loadPromise) return loadPromise
+  setSidecarsLoading(true)
+  loadPromise = serverApi.fetchSidecars()
+    .then((result) => {
       setSidecars(new Map(result.sidecars.map((sidecar) => [sidecar.id, sidecar])))
     })
-    loadPromise = pending
-    void pending.then(
-      () => {
-        setSidecarsLoading(false)
-        if (loadPromise === pending) loadPromise = null
-      },
-      (error) => {
-        log.error("Failed to load SideCars", error)
-        setSidecarsLoading(false)
-        if (loadPromise === pending) loadPromise = null
-      },
-    )
-  }
-
-  const pending = loadPromise!
-  if (options?.propagateErrors) return pending
-  await pending.catch(() => undefined)
+    .catch((error) => {
+      log.error("Failed to load SideCars", error)
+    })
+    .finally(() => {
+      setSidecarsLoading(false)
+      loadPromise = null
+    })
+  return loadPromise
 }
 
 function upsertSidecar(sidecar: SideCar) {
@@ -111,25 +94,18 @@ serverEvents.on("sidecar.removed", (event) => {
   removeSidecar(event.sidecarId)
 })
 
-async function openSidecarTab(
-  sidecarId: string,
-  options?: { activate?: boolean; propagateLoadErrors?: boolean; signal?: AbortSignal },
-) {
-  if (options?.signal?.aborted) throw getAbortReason(options.signal)
-  await awaitRestoreStep(
-    ensureSidecarsLoaded({ propagateErrors: options?.propagateLoadErrors }),
-    options?.signal,
-  )
+async function openSidecarTab(sidecarId: string) {
+  await ensureSidecarsLoaded()
 
   const sidecar = sidecars().get(sidecarId)
   if (!sidecar) {
-    throw new SidecarNotFoundError(tGlobal("sidecars.open.notFound"))
+    throw new Error(tGlobal("sidecars.open.notFound"))
   }
   if (sidecar.status !== "running") {
     throw new Error(tGlobal("sidecars.open.notRunning"))
   }
 
-  const token = `${sidecarId}:${Date.now().toString(36)}:${(sidecarTabSequence++).toString(36)}`
+  const token = `${sidecarId}:${Date.now().toString(36)}`
   const nextTab: SideCarTabRecord = {
     token,
     sidecarId,
@@ -140,11 +116,8 @@ async function openSidecarTab(
     shellUrl: buildSidecarShellUrl(sidecarId),
   }
 
-  if (options?.signal?.aborted) throw getAbortReason(options.signal)
   setSidecarTabs((prev) => [...prev, nextTab])
-  if (options?.activate ?? true) {
-    setActiveSidecarToken(nextTab.token)
-  }
+  setActiveSidecarToken(nextTab.token)
   return nextTab
 }
 

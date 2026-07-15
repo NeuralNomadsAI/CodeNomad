@@ -1,10 +1,7 @@
 import assert from "node:assert/strict"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
-import path from "node:path"
 import { describe, it } from "node:test"
 
-import { buildWindowsSpawnSpec, parseWslUncPath, resolveWslWorkingDirectory } from "../spawn"
+import { buildWindowsSpawnSpec, buildWslSignalSpec, parseWslUncPath, resolveWslWorkingDirectory } from "../spawn"
 
 describe("parseWslUncPath", () => {
   it("parses WSL UNC paths into distro and linux path", () => {
@@ -50,70 +47,6 @@ describe("resolveWslWorkingDirectory", () => {
 })
 
 describe("buildWindowsSpawnSpec", () => {
-  it("classifies native executables separately from script and shell wrappers", () => {
-    assert.equal(buildWindowsSpawnSpec("opencode.exe", []).processKind, "windows-direct")
-    assert.equal(buildWindowsSpawnSpec("opencode.cmd", []).processKind, "windows-wrapper")
-    assert.equal(buildWindowsSpawnSpec("powershell.exe", []).processKind, "windows-wrapper")
-  })
-
-  it("conservatively classifies bare commands as wrappers", () => {
-    assert.equal(buildWindowsSpawnSpec("opencode", []).processKind, "windows-wrapper")
-  })
-
-  it("resolves a bare cmd shim from a quoted PATH entry and wraps its absolute path", () => {
-    const root = mkdtempSync(path.join(tmpdir(), "codenomad-spawn-"))
-    const cwd = path.join(root, "workspace")
-    const bin = path.join(root, "bin with spaces")
-    mkdirSync(cwd)
-    mkdirSync(bin)
-    const shim = path.join(bin, "opencode.cmd")
-    writeFileSync(shim, "@echo off\r\n")
-
-    try {
-      const spec = buildWindowsSpawnSpec("opencode", ["serve"], {
-        cwd,
-        env: { Path: `"${bin}"`, PathExt: ".CMD;.EXE", ComSpec: "test-cmd.exe" },
-      })
-
-      assert.equal(spec.command, "test-cmd.exe")
-      assert.equal(spec.processKind, "windows-wrapper")
-      assert.equal(spec.options.windowsVerbatimArguments, true)
-      assert.match(spec.args[3] ?? "", new RegExp(escapeRegex(path.win32.resolve(shim)), "i"))
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
-  })
-
-  it("honors PATHEXT precedence when both native and shim files exist", () => {
-    const root = mkdtempSync(path.join(tmpdir(), "codenomad-spawn-"))
-    writeFileSync(path.join(root, "opencode.cmd"), "@echo off\r\n")
-    writeFileSync(path.join(root, "opencode.exe"), "")
-
-    try {
-      const spec = buildWindowsSpawnSpec("opencode", [], {
-        cwd: root,
-        env: { PATH: "", PATHEXT: ".EXE;.CMD" },
-      })
-
-      assert.equal(spec.command.toLowerCase(), path.win32.resolve(root, "opencode.exe").toLowerCase())
-      assert.equal(spec.processKind, "windows-direct")
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
-  })
-
-  it("leaves an unresolved bare command unchanged without injecting a shell", () => {
-    const spec = buildWindowsSpawnSpec("missing-opencode", ["serve"], {
-      cwd: String.raw`C:\missing-workspace`,
-      env: { PATH: "", PATHEXT: ".CMD;.EXE", ComSpec: "must-not-run.exe" },
-    })
-
-    assert.equal(spec.command, "missing-opencode")
-    assert.deepEqual(spec.args, ["serve"])
-    assert.equal(spec.processKind, "windows-wrapper")
-    assert.equal(spec.options.windowsVerbatimArguments, undefined)
-  })
-
   it("wraps WSL binaries with wsl.exe and propagates required env vars", () => {
     const spec = buildWindowsSpawnSpec(
       String.raw`\\wsl.localhost\Ubuntu\home\dev\.opencode\bin\opencode`,
@@ -267,7 +200,7 @@ describe("buildWindowsSpawnSpec", () => {
       "--exec",
       "sh",
       "-lc",
-      `codenomad_pgid=$(ps -o pgid= -p "$$" 2>/dev/null | tr -d '[:space:]'); codenomad_start=$(awk '{print $22}' "/proc/$$/stat" 2>/dev/null); codenomad_boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null); test -n "$codenomad_pgid" && test -n "$codenomad_start" && test -n "$codenomad_boot" && printf '%s%s:%s:%s:%s\\n' '__CODENOMAD_WSL_PID__:' "$$" "$codenomad_pgid" "$codenomad_start" "$codenomad_boot" && cd "$1" && shift && exec "$@"`,
+      `printf '%s%s\\n' '__CODENOMAD_WSL_PID__:' "$$" && cd "$1" && shift && exec "$@"`,
       "codenomad-wsl-launch",
       "/home/dev/workspace",
       "/home/dev/.opencode/bin/opencode",
@@ -276,8 +209,10 @@ describe("buildWindowsSpawnSpec", () => {
     assert.equal(spec.wsl?.pidMarker, "__CODENOMAD_WSL_PID__:")
   })
 
-})
+  it("builds the WSL kill command for tracked Linux PIDs", () => {
+    const spec = buildWslSignalSpec("Ubuntu", 4321, "SIGTERM")
 
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-}
+    assert.equal(spec.command, "wsl.exe")
+    assert.deepEqual(spec.args, ["--distribution", "Ubuntu", "--exec", "kill", "-TERM", "4321"])
+  })
+})

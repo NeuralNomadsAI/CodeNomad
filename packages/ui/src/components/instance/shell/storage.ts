@@ -1,5 +1,3 @@
-import { readClientLayoutValue, writeClientLayoutValue } from "../../../stores/client-state"
-
 export const DEFAULT_SESSION_SIDEBAR_WIDTH = 340
 export const MIN_SESSION_SIDEBAR_WIDTH = 220
 export const MAX_SESSION_SIDEBAR_WIDTH = 400
@@ -12,8 +10,6 @@ export const LEFT_DRAWER_STORAGE_KEY = "opencode-session-sidebar-width-v8"
 export const RIGHT_DRAWER_STORAGE_KEY = "opencode-session-right-drawer-width-v1"
 export const LEFT_PIN_STORAGE_KEY = "opencode-session-left-drawer-pinned-v1"
 export const RIGHT_PIN_STORAGE_KEY = "opencode-session-right-drawer-pinned-v1"
-export const LEFT_OPEN_STORAGE_KEY = "opencode-session-left-drawer-open-v1"
-export const RIGHT_OPEN_STORAGE_KEY = "opencode-session-right-drawer-open-v1"
 export const RIGHT_PANEL_TAB_STORAGE_KEY = "opencode-session-right-panel-tab-v2"
 export const LEGACY_RIGHT_PANEL_TAB_STORAGE_KEY = "opencode-session-right-panel-tab-v1"
 export const RIGHT_PANEL_FILES_SPLIT_WIDTH_KEY = "opencode-session-right-panel-files-split-width-v1"
@@ -41,41 +37,33 @@ export const clampRightWidth = (value: number) => {
 }
 
 const getPinStorageKey = (side: "left" | "right") => (side === "left" ? LEFT_PIN_STORAGE_KEY : RIGHT_PIN_STORAGE_KEY)
-const getOpenStorageKey = (side: "left" | "right") => (side === "left" ? LEFT_OPEN_STORAGE_KEY : RIGHT_OPEN_STORAGE_KEY)
 
 export function readStoredPinState(side: "left" | "right", defaultValue: boolean) {
-  const stored = readClientLayoutValue(getPinStorageKey(side))
+  if (typeof window === "undefined") return defaultValue
+  const stored = window.localStorage.getItem(getPinStorageKey(side))
   if (stored === "true") return true
   if (stored === "false") return false
   return defaultValue
 }
 
 export function persistPinState(side: "left" | "right", value: boolean) {
-  writeClientLayoutValue(getPinStorageKey(side), value ? "true" : "false")
-}
-
-export function readStoredOpenState(side: "left" | "right", defaultValue: boolean) {
-  const stored = readClientLayoutValue(getOpenStorageKey(side))
-  if (stored === "true") return true
-  if (stored === "false") return false
-  return defaultValue
-}
-
-export function persistOpenState(side: "left" | "right", value: boolean) {
-  writeClientLayoutValue(getOpenStorageKey(side), value ? "true" : "false")
+  if (typeof window === "undefined") return
+  window.localStorage.setItem(getPinStorageKey(side), value ? "true" : "false")
 }
 
 export function readStoredRightPanelTab(
   defaultValue: "git-changes" | "files" | "status",
 ): "git-changes" | "files" | "status" {
-  const stored = readClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY)
+  if (typeof window === "undefined") return defaultValue
+
+  const stored = window.localStorage.getItem(RIGHT_PANEL_TAB_STORAGE_KEY)
   if (stored === "status") return "status"
   if (stored === "changes") return "git-changes"
   if (stored === "git-changes") return "git-changes"
   if (stored === "files") return "files"
 
   // Migrate from v1 (where the stored values were the internal tab ids).
-  const legacy = readClientLayoutValue(LEGACY_RIGHT_PANEL_TAB_STORAGE_KEY)
+  const legacy = window.localStorage.getItem(LEGACY_RIGHT_PANEL_TAB_STORAGE_KEY)
   if (legacy === "status") return "status"
   if (legacy === "browser") return "files"
   if (legacy === "files") return "git-changes"
@@ -84,21 +72,24 @@ export function readStoredRightPanelTab(
 }
 
 export function readStoredPanelWidth(key: string, fallback: number) {
-  const stored = readClientLayoutValue(key)
+  if (typeof window === "undefined") return fallback
+  const stored = window.localStorage.getItem(key)
   if (!stored) return fallback
   const parsed = Number.parseInt(stored, 10)
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
 export function readStoredBool(key: string): boolean | null {
-  const stored = readClientLayoutValue(key)
+  if (typeof window === "undefined") return null
+  const stored = window.localStorage.getItem(key)
   if (stored === "true") return true
   if (stored === "false") return false
   return null
 }
 
 export function readStoredEnum<T extends string>(key: string, allowed: readonly T[]): T | null {
-  const stored = readClientLayoutValue(key)
+  if (typeof window === "undefined") return null
+  const stored = window.localStorage.getItem(key)
   if (!stored) return null
   return (allowed as readonly string[]).includes(stored) ? (stored as T) : null
 }

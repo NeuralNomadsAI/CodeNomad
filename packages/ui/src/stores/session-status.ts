@@ -5,10 +5,10 @@ import { createSignal } from "solid-js"
 
 export const IDLE_STATUS_VISIBILITY_MS = 5000
 
-const [idleFades, setIdleFades] = createSignal<Map<string, number>>(new Map())
+const [idleFadeStarts, setIdleFadeStarts] = createSignal<Map<string, number>>(new Map())
 
-function idleFadeKey(instanceId: string, sessionId: string): string {
-  return `${instanceId}:${sessionId}`
+function idleFadeKey(instanceId: string, sessionId: string, idleSince: number): string {
+  return `${instanceId}:${sessionId}:${idleSince}`
 }
 
 function getSession(instanceId: string, sessionId: string): Session | null {
@@ -47,20 +47,19 @@ export function getSessionRetry(instanceId: string, sessionId: string): SessionR
 export function markSessionIdleFadeStarted(instanceId: string, sessionId: string): void {
   const session = getSession(instanceId, sessionId)
   if (!session || session.status !== "idle" || typeof session.idleSince !== "number") return
-  const idleSince = session.idleSince
-  const key = idleFadeKey(instanceId, sessionId)
-  setIdleFades((prev) => {
-    if (prev.get(key) === idleSince) return prev
+  const key = idleFadeKey(instanceId, sessionId, session.idleSince)
+  setIdleFadeStarts((prev) => {
+    if (prev.has(key)) return prev
     const next = new Map(prev)
-    next.set(key, idleSince)
+    next.set(key, Date.now())
     return next
   })
 }
 
 export function clearSessionIdleFade(instanceId: string, sessionId: string, idleSince: number): void {
-  const key = idleFadeKey(instanceId, sessionId)
-  setIdleFades((prev) => {
-    if (prev.get(key) !== idleSince) return prev
+  const key = idleFadeKey(instanceId, sessionId, idleSince)
+  setIdleFadeStarts((prev) => {
+    if (!prev.has(key)) return prev
     const next = new Map(prev)
     next.delete(key)
     return next
@@ -69,11 +68,9 @@ export function clearSessionIdleFade(instanceId: string, sessionId: string, idle
 
 export function getSessionIdleFadeClass(instanceId: string, sessionId: string): string {
   const session = getSession(instanceId, sessionId)
-  if (!session || session.status !== "idle") return ""
-  const fadingIdleSince = idleFades().get(idleFadeKey(instanceId, sessionId))
-  if (fadingIdleSince === undefined) return ""
-  if (typeof session.idleSince === "number" && session.idleSince !== fadingIdleSince) return ""
-  return "session-status-fading"
+  if (!session || session.status !== "idle" || typeof session.idleSince !== "number") return ""
+  const startedAt = idleFadeStarts().get(idleFadeKey(instanceId, sessionId, session.idleSince))
+  return typeof startedAt === "number" ? "session-status-fading" : ""
 }
 
 export function getInstanceIdleFadeClass(instanceId: string, now = Date.now(), keepUnseenSubagentIdleStatus = false): string {

@@ -1,6 +1,6 @@
 import { Show, createEffect, createMemo, createSignal, type Accessor, type JSX, on, onCleanup } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
-import { AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, getFollowSnapshotState, isAtBottom, isAutoFollowing, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, ScrollRestoreTokenGuard, selectTopViewportAnchor, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
+import { BOTTOM_FOLLOW_EPSILON_PX, getFollowSnapshotState, isAtBottom, isAutoFollowing, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
 
 const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
 const EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES = 2
@@ -46,7 +46,6 @@ interface RestoreScrollSnapshotOptions {
   behavior?: ScrollBehavior
   fallback?: () => void
   onApplied?: () => void
-  onCancelled?: () => void
 }
 
 export interface VirtualFollowListState {
@@ -119,9 +118,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const state: VirtualFollowListState = { autoScroll, showScrollTopButton, showScrollBottomButton, scrollButtonsCount, activeKey }
 
   let detachScrollIntentListeners: (() => void) | undefined
-  const restoreToken = new ScrollRestoreTokenGuard()
-  let restartAnchorRestore: (() => void) | undefined
-  let cancelRestore: (() => void) | undefined
+  let restoreToken = 0
   let lastResetKey: string | number | undefined = props.resetKey?.()
   let pendingInitialScroll = true
   let pendingContentRenderedFrame: number | null = null
@@ -133,49 +130,56 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let explicitBottomPinFramesRemaining = 0
   let programmaticScrollUntil = 0
 
-  function invalidateScrollRestore() {
-    restoreToken.invalidate()
-    restartAnchorRestore = undefined
-    cancelRestore = undefined
-    scrollController.setRestoring(false)
-  }
-
-  function cancelActiveScrollRestore() {
-    const onCancelled = cancelRestore
-    if (!onCancelled) return
-    invalidateScrollRestore()
-    onCancelled()
-  }
-
   function syncControllerResult(result: ScrollControllerResult) {
     setFollowMode(result.state.mode)
     applyFollowEffect(result.effect)
   }
 
   function dispatchFollowEvent(event: FollowEvent) {
+    let result
     switch (event.type) {
-      case "user-scroll": return syncControllerResult(scrollController.observeViewport(getManualMetrics(event.atBottom), performance.now(), hasProgrammaticScrollIntent()))
-      case "jump-top": return syncControllerResult(scrollController.jumpTop(event.immediate))
-      case "jump-bottom": return syncControllerResult(scrollController.jumpBottom(event.immediate, event.explicit))
-      case "jump-key": return syncControllerResult(scrollController.jumpKey(event.key, event.block, event.smooth))
-      case "content-grew": return syncControllerResult(scrollController.contentRendered(getCurrentMetrics(), event.canPinToBottom))
-      case "set-follow": return syncControllerResult(scrollController.setFollow(event.enabled))
-      case "reset": return syncControllerResult(scrollController.reset(event.follow))
+      case "user-scroll":
+        result = scrollController.observeViewport(getManualMetrics(event.atBottom), performance.now(), hasProgrammaticScrollIntent())
+        break
+      case "jump-top":
+        result = scrollController.jumpTop(event.immediate)
+        break
+      case "jump-bottom":
+        result = scrollController.jumpBottom(event.immediate, event.explicit)
+        break
+      case "jump-key":
+        result = scrollController.jumpKey(event.key, event.block, event.smooth)
+        break
+      case "content-grew":
+        result = scrollController.contentRendered(getCurrentMetrics(), event.canPinToBottom)
+        break
+      case "set-follow":
+        result = scrollController.setFollow(event.enabled)
+        break
+      case "reset":
+        result = scrollController.reset(event.follow)
+        break
     }
+    syncControllerResult(result)
   }
 
   function applyFollowEffect(effect: FollowEffect) {
     switch (effect.type) {
       case "none":
         return
-      case "scroll-top": return performScrollToTop(effect.immediate)
-      case "scroll-bottom": return performScrollToBottom(effect.immediate)
-      case "scroll-key": return performScrollToKey(effect.key, { block: effect.block, smooth: effect.smooth })
+      case "scroll-top":
+        performScrollToTop(effect.immediate)
+        return
+      case "scroll-bottom":
+        performScrollToBottom(effect.immediate)
+        return
+      case "scroll-key":
+        performScrollToKey(effect.key, { block: effect.block, smooth: effect.smooth })
+        return
     }
   }
 
   function markUserScrollIntent(direction: "up" | "down" | null) {
-    cancelActiveScrollRestore()
     scrollController.setUserIntent(direction, performance.now() + USER_SCROLL_INTENT_WINDOW_MS)
     if (direction === "up") {
       if (hasActiveExplicitBottomPin() || explicitBottomPinIntent()) cancelExplicitBottomPinFromUser()
@@ -351,11 +355,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   function flushContentRendered() {
     pendingContentRenderedFrame = null
-    if (restartAnchorRestore) {
-      restartAnchorRestore()
-      updateScrollStateFromDom()
-      return
-    }
     if (hasActiveExplicitBottomPin()) {
       scheduleExplicitBottomPinFrame()
       updateScrollStateFromDom()
@@ -389,7 +388,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function startExplicitBottomPin(intent: VirtualExplicitBottomPinIntent) {
-    cancelActiveScrollRestore()
     userCancelledExplicitBottomPinToken = null
     explicitBottomPinToken = intent.token
     explicitBottomPinMinItemCount = Math.max(0, Math.floor(intent.minItemCount ?? 0))
@@ -448,18 +446,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   function findTopVisibleAnchor(element: HTMLDivElement) {
     const containerRect = element.getBoundingClientRect()
-    const candidates = []
+    let best: { key: string; offset: number } | null = null
     for (const [key, itemElement] of itemElements) {
-      if (!itemElement.isConnected) continue
       const rect = itemElement.getBoundingClientRect()
-      candidates.push({ key, top: rect.top, bottom: rect.bottom })
+      if (rect.bottom <= containerRect.top || rect.top >= containerRect.bottom) continue
+      const offset = rect.top - containerRect.top
+      if (!best || Math.abs(offset) < Math.abs(best.offset)) best = { key, offset }
     }
-    const handle = virtuaHandle()
-    const index = handle?.findItemIndex(handle.scrollOffset)
-    const item = typeof index === "number" ? props.items()[index] : undefined
-    const preferredKey = item === undefined || index === undefined ? undefined : props.getKey(item, index)
-    const anchor = selectTopViewportAnchor(candidates, containerRect.top, containerRect.bottom, preferredKey)
-    return anchor ? { key: anchor.key, offset: anchor.top - containerRect.top } : null
+    return best
   }
 
   function restoreScrollSnapshot(snapshot: VirtualFollowScrollSnapshot, opts?: RestoreScrollSnapshotOptions) {
@@ -474,16 +468,12 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       return
     }
 
-    const token = restoreToken.begin()
-    const isCurrent = () => restoreToken.isCurrent(token) && Boolean(scrollElement())
-    restartAnchorRestore = undefined
+    const token = ++restoreToken
+    const isCurrent = () => token === restoreToken && Boolean(scrollElement())
     scrollController.setRestoring(true)
-    cancelRestore = () => opts?.onCancelled?.()
 
     const finish = () => {
       if (!isCurrent()) return
-      restartAnchorRestore = undefined
-      cancelRestore = undefined
       const mode = restoreFollowModeFromSnapshot(snapshot)
       setFollowMode(mode)
       scrollController.restoreMode(mode)
@@ -502,13 +492,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       if (index !== -1) {
         markProgrammaticScroll()
         virtuaHandle()?.scrollToIndex(index, { align: "start", smooth: opts?.behavior === "smooth" })
-        const stabilizer = new AnchorRestoreStabilizer()
-        restartAnchorRestore = () => {
-          if (!isCurrent()) return
-          stabilizer.restartStability()
-          scrollToAnchorIndex(snapshot.anchorKey!)
-        }
-        retryAnchorRestore(snapshot, stabilizer, isCurrent, finish)
+        retryAnchorRestore(snapshot, 6, isCurrent, finish)
         return
       }
     }
@@ -517,47 +501,23 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     requestAnimationFrame(finish)
   }
 
-  function scrollToAnchorIndex(key: string) {
-    const index = props.items().findIndex((item, i) => props.getKey(item, i) === key)
-    if (index === -1) return false
-    markProgrammaticScroll()
-    virtuaHandle()?.scrollToIndex(index, { align: "start", smooth: false })
-    return true
-  }
-
-  function retryAnchorRestore(snapshot: VirtualFollowScrollSnapshot, stabilizer: AnchorRestoreStabilizer, isCurrent: () => boolean, onApplied: () => void) {
+  function retryAnchorRestore(snapshot: VirtualFollowScrollSnapshot, remainingFrames: number, isCurrent: () => boolean, onApplied: () => void) {
     requestAnimationFrame(() => {
       if (!isCurrent()) return
       const element = scrollElement()
-      const key = snapshot.anchorKey!
-      const targetExists = props.items().some((item, index) => props.getKey(item, index) === key)
-      const itemWrapper = itemElements.get(key)
-      const anchorOffset = snapshot.anchorOffset
-      const mounted = Boolean(element && itemWrapper?.isConnected)
-      const delta = mounted && element && itemWrapper && typeof anchorOffset === "number"
-        ? itemWrapper.getBoundingClientRect().top - element.getBoundingClientRect().top - anchorOffset
-        : undefined
-      const result = stabilizer.nextFrame({ targetExists, mounted, delta })
-
-      if (result.type === "finish") {
+      const itemWrapper = snapshot.anchorKey ? itemElements.get(snapshot.anchorKey) : undefined
+      if (element && itemWrapper && typeof snapshot.anchorOffset === "number") {
+        const delta = itemWrapper.getBoundingClientRect().top - element.getBoundingClientRect().top - snapshot.anchorOffset
+        if (Math.abs(delta) > 1) scrollToOffset((virtuaHandle()?.scrollOffset ?? element.scrollTop) + delta, false)
         onApplied()
         return
       }
-      if (result.type === "correct" && element) {
-        scrollToOffset((virtuaHandle()?.scrollOffset ?? element.scrollTop) + result.delta, false)
-        if (result.finishAfterCorrection) {
-          restartAnchorRestore = () => {}
-          requestAnimationFrame(onApplied)
-          return
-        }
-      }
-      if (result.type === "retry" && result.reissueIndex) scrollToAnchorIndex(key)
-      if (result.type !== "fallback") {
-        retryAnchorRestore(snapshot, stabilizer, isCurrent, onApplied)
+      if (remainingFrames > 0) {
+        retryAnchorRestore(snapshot, remainingFrames - 1, isCurrent, onApplied)
         return
       }
       applyPixelSnapshot(snapshot, "auto")
-      onApplied()
+      requestAnimationFrame(onApplied)
     })
   }
 
@@ -645,29 +605,23 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function scrollToBottom(immediate = true) {
-    cancelActiveScrollRestore()
     dispatchFollowEvent({ type: "jump-bottom", immediate, explicit: true })
   }
 
   function scrollToTop(immediate = true) {
-    cancelActiveScrollRestore()
     dispatchFollowEvent({ type: "jump-top", immediate })
-  }
-
-  function scrollToKey(key: string, opts?: { behavior?: ScrollBehavior; block?: ScrollLogicalPosition }) {
-    cancelActiveScrollRestore()
-    dispatchFollowEvent({ type: "jump-key", key, block: opts?.block ?? "start", smooth: opts?.behavior === "smooth" })
   }
 
   const api: VirtualFollowListApi = {
     scrollToTop: (opts) => scrollToTop(opts?.immediate ?? true),
     scrollToBottom: (opts) => scrollToBottom(opts?.immediate ?? true),
-    scrollToKey,
+    scrollToKey: (key, opts) => dispatchFollowEvent({
+      type: "jump-key",
+      key,
+      block: opts?.block ?? "start",
+      smooth: opts?.behavior === "smooth",
+    }),
     notifyContentRendered: () => {
-      if (restartAnchorRestore) {
-        restartAnchorRestore()
-        return
-      }
       if (pendingContentRenderedFrame !== null) return
       pendingContentRenderedFrame = requestAnimationFrame(() => flushContentRendered())
     },
@@ -709,7 +663,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   createEffect(on(() => props.resetKey?.(), (nextKey) => {
     if (nextKey === lastResetKey) return
     lastResetKey = nextKey
-    invalidateScrollRestore()
     clearExplicitBottomPin()
     dispatchFollowEvent({ type: "reset", follow: initialAutoScroll() })
     pendingInitialScroll = true
@@ -727,7 +680,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }))
 
   onCleanup(() => {
-    invalidateScrollRestore()
     if (pendingContentRenderedFrame !== null) cancelAnimationFrame(pendingContentRenderedFrame)
     if (pendingExplicitBottomPinFrame !== null) cancelAnimationFrame(pendingExplicitBottomPinFrame)
     detachScrollIntentListeners?.()

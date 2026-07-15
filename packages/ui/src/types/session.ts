@@ -5,7 +5,6 @@ import type {
   Model as SDKModel,
   SessionStatus as SDKSessionStatus,
 } from "@opencode-ai/sdk/v2"
-import type { GenerationRecoveryState } from "../stores/session-generation-recovery"
 
 // Export SDK types for external use
 export type { 
@@ -77,9 +76,6 @@ export interface Session
   status: SessionStatus // Single source of truth for session status
   retry?: SessionRetryState | null // Retry metadata for transient backoff states
   idleSince?: number | null // Timestamp set when work finished but the session has not been viewed yet
-  generationRecovery?: GenerationRecoveryState | null // Local recovery state for work interrupted across restarts
-  runtimeStatusKnown?: boolean // Whether idle/working came from an authoritative runtime response
-  generationAdmissionToken?: number // Guards recovery state while a new input is being admitted
   metadata?: Record<string, unknown> // Session metadata persisted by OpenCode
 }
 
@@ -99,8 +95,6 @@ export function createClientSession(
     model,
     status,
     idleSince: null,
-    generationRecovery: null,
-    runtimeStatusKnown: false,
   }
 }
 

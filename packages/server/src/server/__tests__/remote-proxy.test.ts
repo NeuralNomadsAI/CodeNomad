@@ -157,133 +157,18 @@ describe("RemoteProxySessionManager", () => {
       res.end("ok")
     })
   })
-
-  it("closes every session listener during shutdown", async () => {
-    await withUpstreamServer(async (upstreamBaseUrl) => {
-      const manager = createSessionManager()
-      const first = await createSession(manager, `${upstreamBaseUrl}/base`)
-      await createSession(manager, `${upstreamBaseUrl}/other`)
-
-      await manager.shutdown()
-
-      assert.equal((manager as any).sessions.size, 0)
-      await assert.rejects(proxyFetch(`${first.proxyOrigin}/status`))
-    }, (_req, res) => {
-      res.writeHead(200).end("ok")
-    })
-  })
-
-  it("waits for in-flight idle cleanup during shutdown", async () => {
-    await withUpstreamServer(async (upstreamBaseUrl) => {
-      const manager = createSessionManager({ disposalTimeoutMs: 1_000 })
-      const session = await createSession(manager, `${upstreamBaseUrl}/base`)
-      const internalSession = (manager as any).sessions.get(session.sessionId)
-      const closeGate = deferred<void>()
-      const originalClose = internalSession.app.close.bind(internalSession.app)
-      internalSession.app.close = async () => {
-        await closeGate.promise
-        return originalClose()
-      }
-
-      internalSession.lastAccessAt = Date.now() - 31 * 60_000
-      const cleanup = (manager as any).cleanupExpiredSessions() as Promise<void>
-      assert.equal((manager as any).pendingDisposals.size, 1)
-      let shutdownSettled = false
-      const shutdown = manager.shutdown().then(() => {
-        shutdownSettled = true
-      })
-      await new Promise((resolve) => setImmediate(resolve))
-      assert.equal(shutdownSettled, false)
-
-      closeGate.resolve()
-      await cleanup
-      await shutdown
-      assert.equal((manager as any).pendingDisposals.size, 0)
-    }, (_req, res) => {
-      res.writeHead(200).end("ok")
-    })
-  })
-
-  it("aborts a stalled event stream during bounded shutdown", async () => {
-    await withUpstreamServer(async (upstreamBaseUrl) => {
-      const manager = createSessionManager({ disposalTimeoutMs: 100 })
-      const session = await createSession(manager, `${upstreamBaseUrl}/base`)
-      await activateSession(session)
-
-      const response = await proxyFetch(`${session.proxyOrigin}/events`)
-      assert.equal(response.status, 200)
-      await Promise.race([
-        manager.shutdown(),
-        new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("shutdown stalled")), 500)),
-      ])
-
-      assert.equal((manager as any).sessions.size, 0)
-      assert.equal((manager as any).pendingDisposals.size, 0)
-    }, (req, res) => {
-      if (req.url === "/base/events") {
-        res.writeHead(200, { "content-type": "text/event-stream" })
-        res.write("data: connected\n\n")
-        return
-      }
-      res.writeHead(200).end("ok")
-    })
-  })
-
-  it("surfaces listener disposal failures", async () => {
-    await withUpstreamServer(async (upstreamBaseUrl) => {
-      const manager = createSessionManager()
-      const session = await createSession(manager, `${upstreamBaseUrl}/base`)
-      const internalSession = (manager as any).sessions.get(session.sessionId)
-      const originalClose = internalSession.app.close.bind(internalSession.app)
-      internalSession.app.close = async () => {
-        await originalClose()
-        throw new Error("close failed")
-      }
-
-      await assert.rejects(manager.deleteSession(session.sessionId), /Remote proxy disposal failed/)
-      await assert.rejects(manager.shutdown(), /Remote proxy shutdown failed/)
-    }, (_req, res) => {
-      res.writeHead(200).end("ok")
-    })
-  })
-
-  it("waits for in-flight creation and rejects sessions that cross shutdown", async () => {
-    await withUpstreamServer(async (upstreamBaseUrl) => {
-      const manager = createSessionManager()
-      const creation = manager.createSession(`${upstreamBaseUrl}/base`, false)
-      const shutdown = manager.shutdown()
-
-      await assert.rejects(creation, /shutting down/)
-      await shutdown
-
-      assert.equal((manager as any).pendingCreations.size, 0)
-      assert.equal((manager as any).sessions.size, 0)
-      await assert.rejects(manager.createSession(`${upstreamBaseUrl}/base`, false), /shutting down/)
-    }, (_req, res) => {
-      res.writeHead(200).end("ok")
-    })
-  })
 })
 
-function createSessionManager(options: { disposalTimeoutMs?: number } = {}) {
+function createSessionManager() {
   const manager = new RemoteProxySessionManager({
     authManager: {
       isLoopbackRequest: () => true,
     } as unknown as AuthManager,
     logger: createStubLogger(),
     httpsOptions: sharedHttpsOptions,
-    ...options,
   })
   managers.add(manager)
   return manager
-}
-
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>((resolvePromise) => {
-    resolve = resolvePromise
-  })
-  return { promise, resolve }
 }
 
 async function createSession(manager: RemoteProxySessionManager, baseUrl: string) {
@@ -324,7 +209,11 @@ async function proxyFetch(url: string, init?: Parameters<typeof fetch>[1]) {
 }
 
 async function disposeManager(manager: RemoteProxySessionManager) {
-  await manager.shutdown().catch(() => undefined)
+  const sessions = Array.from(((manager as any).sessions as Map<string, unknown>).keys())
+  for (const sessionId of sessions) {
+    await manager.deleteSession(sessionId)
+  }
+  clearInterval((manager as any).cleanupTimer as NodeJS.Timeout)
 }
 
 async function withUpstreamServer(

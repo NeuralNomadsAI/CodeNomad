@@ -2,8 +2,6 @@ import { createEffect, createSignal, type Accessor } from "solid-js"
 import { addAttachment, getAttachments, removeAttachment } from "../../stores/attachments"
 import { createFileAttachment, createTextAttachment } from "../../types/attachment"
 import type { Attachment } from "../../types/attachment"
-import { createAttachmentPlaceholderRegex } from "../../lib/attachment-placeholders"
-import { createPromptMentionRegex, getAttachmentPromptMentionCandidates } from "../../lib/attachment-mentions"
 import { tGlobal } from "../../lib/i18n"
 import { getFilePath } from "../../lib/native/file-path"
 import { showToastNotification } from "../../lib/notifications"
@@ -57,6 +55,8 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     setImageCount(highestImage)
   }
 
+  const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
   function removeTokenFromPrompt(currentPrompt: string, tokenRegex: RegExp) {
     const next = currentPrompt.replace(tokenRegex, "")
     if (next === currentPrompt) return currentPrompt
@@ -67,6 +67,11 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
       .replace(/\n[ \t]+/g, "\n")
       .trim()
   }
+
+  const createLooseImagePlaceholderRegex = (counter: string | number) =>
+    new RegExp(`\\[\\s*Image\\s*#\\s*${counter}\\s*\\]`, "i")
+  const createLoosePastedPlaceholderRegex = (counter: string | number) =>
+    new RegExp(`\\[\\s*pasted\\s*#\\s*${counter}\\s*\\]`, "i")
 
   // Keep placeholder-backed attachments in sync with prompt text.
   // If the placeholder token disappears from the prompt, the attachment should disappear too.
@@ -81,7 +86,7 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
         const match = attachment.display.match(pastedDisplayCounterRegex)
         if (!match) continue
         const counter = match[1]
-        if (!createAttachmentPlaceholderRegex("pasted", counter, { global: false }).test(currentPrompt)) {
+        if (!createLoosePastedPlaceholderRegex(counter).test(currentPrompt)) {
           toRemove.push(attachment.id)
         }
         continue
@@ -92,7 +97,7 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
           attachment.display.match(bracketedImageDisplayCounterRegex) || attachment.display.match(imageDisplayCounterRegex)
         if (!match) continue
         const counter = match[1]
-        if (!createAttachmentPlaceholderRegex("image", counter, { global: false }).test(currentPrompt)) {
+        if (!createLooseImagePlaceholderRegex(counter).test(currentPrompt)) {
           toRemove.push(attachment.id)
         }
       }
@@ -115,33 +120,30 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     const currentPrompt = options.prompt()
     let nextPrompt = currentPrompt
 
-    let hasPlaceholder = false
     if (attachment.source.type === "file") {
       if (attachment.mediaType.startsWith("image/")) {
         const imageMatch =
           attachment.display.match(bracketedImageDisplayCounterRegex) || attachment.display.match(imageDisplayCounterRegex)
         if (imageMatch) {
-          hasPlaceholder = true
-          nextPrompt = removeTokenFromPrompt(
-            currentPrompt,
-            createAttachmentPlaceholderRegex("image", imageMatch[1], { global: false }),
-          )
+          nextPrompt = removeTokenFromPrompt(currentPrompt, createLooseImagePlaceholderRegex(imageMatch[1]))
+        }
+      } else {
+        // For file mentions we insert `@<path>`, but the chip might display `@<filename>`.
+        const candidates = [attachment.source.path, attachment.filename]
+        for (const candidate of candidates) {
+          if (!candidate) continue
+          const mentionRegex = new RegExp(`@${escapeRegExp(candidate)}(?=\\s|$)`, "i")
+          nextPrompt = removeTokenFromPrompt(nextPrompt, mentionRegex)
         }
       }
+    } else if (attachment.source.type === "agent") {
+      const agentName = attachment.filename
+      const mentionRegex = new RegExp(`@${escapeRegExp(agentName)}(?=\\s|$)`, "i")
+      nextPrompt = removeTokenFromPrompt(currentPrompt, mentionRegex)
     } else if (attachment.source.type === "text") {
       const placeholderMatch = attachment.display.match(pastedDisplayCounterRegex)
       if (placeholderMatch) {
-        hasPlaceholder = true
-        nextPrompt = removeTokenFromPrompt(
-          currentPrompt,
-          createAttachmentPlaceholderRegex("pasted", placeholderMatch[1], { global: false }),
-        )
-      }
-    }
-
-    if (!hasPlaceholder) {
-      for (const candidate of getAttachmentPromptMentionCandidates(attachment)) {
-        nextPrompt = removeTokenFromPrompt(nextPrompt, createPromptMentionRegex(candidate))
+        nextPrompt = removeTokenFromPrompt(currentPrompt, createLoosePastedPlaceholderRegex(placeholderMatch[1]))
       }
     }
 

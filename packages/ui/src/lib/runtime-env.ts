@@ -17,7 +17,7 @@ declare global {
 
   interface Window {
     __CODENOMAD_WINDOW_CONTEXT__?: WindowContextKind
-    electronAPI?: ElectronAPI
+    electronAPI?: unknown
     __TAURI__?: {
       core?: TauriCoreModule
     }

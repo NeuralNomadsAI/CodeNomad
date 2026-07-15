@@ -32,7 +32,6 @@ import { ClientConnectionManager } from "./clients/connection-manager"
 import { PluginChannelManager } from "./plugins/channel"
 import { VoiceModeManager } from "./plugins/voice-mode"
 import { runCliUpgrade } from "./cli-upgrade"
-import { createServerShutdownHandler, orchestrateServerShutdown } from "./shutdown"
 
 const require = createRequire(import.meta.url)
 
@@ -74,18 +73,6 @@ const DEFAULT_HOST = "127.0.0.1"
 const DEFAULT_CONFIG_PATH = "~/.config/codenomad/config.json"
 const DEFAULT_HTTPS_PORT = 9898
 const DEFAULT_HTTP_PORT = 9899
-
-interface ShutdownSignalSource {
-  on: (signal: "SIGINT" | "SIGTERM", listener: () => void) => unknown
-}
-
-export function installShutdownSignalHandlers(
-  source: ShutdownSignalSource,
-  shutdown: (signal: NodeJS.Signals) => Promise<void>,
-): void {
-  source.on("SIGINT", () => void shutdown("SIGINT"))
-  source.on("SIGTERM", () => void shutdown("SIGTERM"))
-}
 
 function parseCliOptions(argv: string[]): CliOptions {
   const program = new Command()
@@ -568,39 +555,68 @@ async function main() {
     await launchInBrowser(serverMeta.localUrl, logger.child({ component: "launcher" }))
   }
 
-  const shutdown = createServerShutdownHandler({
-    logger,
-    shutdown: () =>
-      orchestrateServerShutdown(
-        {
-          stopInstanceEventBridge: () => instanceEventBridge.shutdown(),
-          stopSidecars: () => sidecarManager.shutdown(),
-          stopClientConnections: () => clientConnectionManager.shutdown(),
-          stopRemoteProxySessions: () => remoteProxySessionManager.shutdown(),
-          stopWorkspaces: () => workspaceManager.shutdown(),
-          stopHttpServers: async () => {
-            const results = await Promise.allSettled(servers.map((srv) => srv.stop()))
-            const failures = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []))
-            if (failures.length > 0) {
-              const error = new Error("One or more HTTP servers failed to stop") as Error & { failures: unknown[] }
-              error.failures = failures
-              throw error
-            }
-            logger.info("HTTP server(s) stopped")
-          },
-          stopReleaseMonitor: () => devReleaseMonitor?.stop(),
-        },
-        logger,
-      ),
-  })
+  let shuttingDown = false
 
-  installShutdownSignalHandlers(process, shutdown)
+  const shutdown = async () => {
+    if (shuttingDown) {
+      logger.info("Shutdown already in progress, ignoring signal")
+      return
+    }
+    shuttingDown = true
+    logger.info("Received shutdown signal, stopping workspaces and server")
+
+    const shutdownWorkspaces = (async () => {
+      try {
+        instanceEventBridge.shutdown()
+      } catch (error) {
+        logger.warn({ err: error }, "Instance event bridge shutdown failed")
+      }
+
+      try {
+        await sidecarManager.shutdown()
+      } catch (error) {
+        logger.error({ err: error }, "SideCar manager shutdown failed")
+      }
+
+      try {
+        clientConnectionManager.shutdown()
+      } catch (error) {
+        logger.warn({ err: error }, "Client connection manager shutdown failed")
+      }
+
+      try {
+        await workspaceManager.shutdown()
+        logger.info("Workspace manager shutdown complete")
+      } catch (error) {
+        logger.error({ err: error }, "Workspace manager shutdown failed")
+      }
+    })()
+
+    const shutdownHttp = (async () => {
+      try {
+        await Promise.allSettled(servers.map((srv) => srv.stop()))
+        logger.info("HTTP server(s) stopped")
+      } catch (error) {
+        logger.error({ err: error }, "Failed to stop HTTP server")
+      }
+    })()
+
+    await Promise.allSettled([shutdownWorkspaces, shutdownHttp])
+
+    // no-op: remote UI manifest replaces GitHub release monitor
+
+    devReleaseMonitor?.stop()
+
+    logger.info("Exiting process")
+    process.exit(0)
+  }
+
+  process.on("SIGINT", shutdown)
+  process.on("SIGTERM", shutdown)
 }
 
-if (path.resolve(process.argv[1] ?? "") === __filename) {
-  main().catch((error) => {
-    const logger = createLogger({ component: "app" })
-    logger.error({ err: error }, "CLI server crashed")
-    process.exit(1)
-  })
-}
+main().catch((error) => {
+  const logger = createLogger({ component: "app" })
+  logger.error({ err: error }, "CLI server crashed")
+  process.exit(1)
+})
