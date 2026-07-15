@@ -63,13 +63,14 @@ import { getRootClient } from "./opencode-client"
 import { tGlobal } from "../lib/i18n"
 import {
   getWorktreeSlugForSession,
+  getWorktreeSlugForDirectory,
   getWorktrees,
   migrateLegacyWorktreeMapToSessionMetadata,
   pruneStaleLegacyWorktreeMapEntries,
   removeLegacyParentSessionMapping,
   setWorktreeSlugForParentSession,
 } from "./worktrees"
-import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
+import { getOpenCodeWorkspaceIdForSession, getOpenCodeWorkspaceIdForWorktree } from "./opencode-workspaces"
 import { hydrateSessionMetadataWithClient } from "./session-metadata"
 import {
   PROJECT_SESSION_LIST_LIMIT,
@@ -83,6 +84,8 @@ import { mergeFetchedSessionRuntimeState, resolveAuthoritativeGenerationRecovery
 const log = getLogger("api")
 const sessionListRequestIds = new Map<string, number>()
 let nextSessionListRequestId = 0
+const pendingMetadataHydrations = new Map<string, Promise<void>>()
+const sessionWorkspaceHints = new Map<string, Map<string, string>>()
 
 function beginSessionListRequest(instanceId: string): number {
   const requestId = ++nextSessionListRequestId
@@ -106,8 +109,59 @@ function clearSessionListRequestState(instanceId: string): void {
 }
 
 async function getSessionWorkspacePayload(instanceId: string, sessionId: string): Promise<{ workspace?: string }> {
+  const hinted = sessionWorkspaceHints.get(instanceId)?.get(sessionId)
+  if (hinted) return { workspace: hinted }
   const workspace = await getOpenCodeWorkspaceIdForSession(instanceId, sessionId)
   return workspace ? { workspace } : {}
+}
+
+async function getSessionWorkspaceCandidates(
+  instanceId: string,
+  sessionId: string,
+  fallback: { workspace?: string } = {},
+): Promise<Array<{ workspace?: string }>> {
+  const candidates: Array<{ workspace?: string }> = []
+  const seen = new Set<string>()
+  const add = (candidate: { workspace?: string }) => {
+    const key = candidate.workspace ?? "root"
+    if (seen.has(key)) return
+    seen.add(key)
+    candidates.push(candidate)
+  }
+  add(await getSessionWorkspacePayload(instanceId, sessionId))
+  add(fallback)
+  add({})
+  for (const worktree of getWorktrees(instanceId)) {
+    if (!worktree.slug || worktree.slug === "root") continue
+    const workspace = await getOpenCodeWorkspaceIdForWorktree(instanceId, worktree.slug)
+    if (workspace) add({ workspace })
+  }
+  return candidates
+}
+
+function rememberSessionWorkspace(instanceId: string, sessionId: string, workspace: string | undefined): void {
+  if (!workspace) return
+  const hints = new Map(sessionWorkspaceHints.get(instanceId) ?? new Map())
+  hints.set(sessionId, workspace)
+  sessionWorkspaceHints.set(instanceId, hints)
+}
+
+async function recordSessionWorkspaceHints(instanceId: string, apiSessions: SDKSession[]): Promise<void> {
+  const hints = new Map<string, string>()
+  const workspaceBySlug = new Map<string, Promise<string | null>>()
+  await Promise.all(apiSessions.map(async (session) => {
+    const directory = (session as SDKSession & { directory?: string }).directory
+    const slug = getWorktreeSlugForDirectory(instanceId, directory)
+    if (!slug || slug === "root") return
+    let workspace = workspaceBySlug.get(slug)
+    if (!workspace) {
+      workspace = getOpenCodeWorkspaceIdForWorktree(instanceId, slug)
+      workspaceBySlug.set(slug, workspace)
+    }
+    const workspaceId = await workspace
+    if (workspaceId) hints.set(session.id, workspaceId)
+  }))
+  sessionWorkspaceHints.set(instanceId, hints)
 }
 
 interface SessionForkResponse {
@@ -186,14 +240,114 @@ async function hydrateMissingSessionMetadata(instanceId: string, sessionIds: str
   if (uniqueIds.length === 0) return
 
   const client = getRootClient(instanceId)
-  for (const sessionId of uniqueIds) {
-    const session = sessions().get(instanceId)?.get(sessionId)
-    if (!session || session.metadata !== undefined) continue
-    try {
-      await hydrateSessionMetadataWithClient(client, instanceId, sessionId)
-    } catch (error) {
-      log.warn("Failed to hydrate session metadata", { instanceId, sessionId, error })
+  let nextIndex = 0
+  const worker = async () => {
+    while (nextIndex < uniqueIds.length) {
+      const sessionId = uniqueIds[nextIndex++]!
+      const session = sessions().get(instanceId)?.get(sessionId)
+      if (!session || session.metadata !== undefined) continue
+      try {
+        await hydrateSessionMetadata(instanceId, sessionId, client)
+      } catch (error) {
+        log.warn("Failed to hydrate session metadata", { instanceId, sessionId, error })
+      }
     }
+  }
+  await Promise.all(Array.from({ length: Math.min(8, uniqueIds.length) }, worker))
+}
+
+function hydrateSessionMetadata(instanceId: string, sessionId: string, client = getRootClient(instanceId)): Promise<void> {
+  const key = `${instanceId}:${sessionId}`
+  const current = pendingMetadataHydrations.get(key)
+  if (current) return current
+  const hydration = (async () => {
+    const candidates = await getSessionWorkspaceCandidates(instanceId, sessionId)
+    let lastError: unknown
+    for (const delayMs of [0, 100, 400]) {
+      if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs))
+      for (const candidate of candidates) {
+        try {
+          await hydrateSessionMetadataWithClient(client, instanceId, sessionId, candidate)
+          rememberSessionWorkspace(instanceId, sessionId, candidate.workspace)
+          return
+        } catch (error) {
+          lastError = error
+        }
+      }
+    }
+    throw lastError
+  })().finally(() => pendingMetadataHydrations.delete(key))
+  pendingMetadataHydrations.set(key, hydration)
+  return hydration
+}
+
+async function hydrateRestoredSessionChain(
+  instanceId: string,
+  requestedIds: Array<string | null | undefined>,
+  signal?: AbortSignal,
+): Promise<void> {
+  const client = getRootClient(instanceId)
+  const pending = requestedIds.filter((id): id is string => Boolean(id) && id !== "info")
+  const visited = new Set<string>()
+  let chainWorkspacePayload: { workspace?: string } = {}
+  while (pending.length > 0) {
+    signal?.throwIfAborted()
+    const sessionId = pending.shift()!
+    if (visited.has(sessionId)) continue
+    visited.add(sessionId)
+    if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) continue
+
+    let session = sessions().get(instanceId)?.get(sessionId)
+    if (!session) {
+      try {
+        const workspaceCandidates = await getSessionWorkspaceCandidates(instanceId, sessionId, chainWorkspacePayload)
+        signal?.throwIfAborted()
+        let apiSession: SDKSession | undefined
+        let hydratedWorkspace: string | undefined
+        let lastError: unknown
+        for (const workspacePayload of workspaceCandidates) {
+          try {
+            apiSession = await requestData<SDKSession>(
+              client.session.get({ sessionID: sessionId, ...workspacePayload }),
+              "session.get",
+            )
+            hydratedWorkspace = workspacePayload.workspace
+            break
+          } catch (error) {
+            lastError = error
+          }
+        }
+        if (!apiSession) throw lastError
+        signal?.throwIfAborted()
+        rememberSessionWorkspace(instanceId, sessionId, hydratedWorkspace)
+        setSessions((prev) => {
+          if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId) || signal?.aborted) return prev
+          const next = new Map(prev)
+          const instanceSessions = new Map(next.get(instanceId) ?? new Map())
+          instanceSessions.set(sessionId, toClientSessionV2(instanceId, apiSession, instanceSessions.get(sessionId)))
+          next.set(instanceId, instanceSessions)
+          return next
+        })
+        session = sessions().get(instanceId)?.get(sessionId)
+        if (session?.parentId === null) prependSessionListId(instanceId, sessionId)
+      } catch (error) {
+        if (signal?.aborted) throw error
+        log.warn("Failed to hydrate restored session", { instanceId, sessionId, error })
+        continue
+      }
+    } else if (session.metadata === undefined) {
+      try {
+        await hydrateSessionMetadata(instanceId, sessionId, client)
+      } catch (error) {
+        if (signal?.aborted) throw error
+        log.warn("Failed to hydrate restored session metadata", { instanceId, sessionId, error })
+      }
+    }
+    if (session?.parentId === null) {
+      const rootWorkspacePayload = await getSessionWorkspacePayload(instanceId, session.id)
+      if (rootWorkspacePayload.workspace) chainWorkspacePayload = rootWorkspacePayload
+    }
+    if (session?.parentId) pending.push(session.parentId)
   }
 }
 
@@ -246,6 +400,7 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
     log.info("session.list", { instanceId, limit: PROJECT_SESSION_LIST_LIMIT, directory: sessionListOptions.directory, scope: "project" })
     const response = await fetchV2Sessions(instanceId, sessionListOptions)
     if (!isLatestSessionListRequest(instanceId, requestId)) return
+    await recordSessionWorkspaceHints(instanceId, getV2SessionItems(response))
 
     let statusById: Record<string, any> = {}
     let statusResponseKnown = false
@@ -474,7 +629,7 @@ function toClientSessionV2(instanceId: string, apiSession: SDKSession, existingS
     time: {
       ...apiSession.time,
     },
-    metadata: existingSession?.metadata,
+    metadata: (apiSession as SDKSession & { metadata?: Session["metadata"] }).metadata ?? existingSession?.metadata,
     revert: existingSession?.revert,
     pendingPermission: existingSession?.pendingPermission,
     pendingQuestion: existingSession?.pendingQuestion,
@@ -1073,6 +1228,7 @@ export {
   fetchProviders,
 
   fetchSessions,
+  hydrateRestoredSessionChain,
   loadMoreSessions,
   searchSessions,
   forkSession,

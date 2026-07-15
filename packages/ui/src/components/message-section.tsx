@@ -760,6 +760,7 @@ export default function MessageSection(props: MessageSectionProps) {
 
   function persistMessageScrollSnapshot(options?: { sessionId?: string; allowCapture?: boolean; requireActive?: boolean }) {
     if (restoringScrollSnapshot) return
+    if (!didRestoreScroll()) return
 
     const sessionId = options?.sessionId ?? props.sessionId
     const allowCapture = options?.allowCapture ?? true

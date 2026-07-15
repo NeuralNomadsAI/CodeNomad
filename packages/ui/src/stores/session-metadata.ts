@@ -86,11 +86,13 @@ export async function hydrateSessionMetadataWithClient(
   client: OpencodeClient,
   instanceId: string,
   sessionId: string,
+  query?: { workspace?: string },
 ): Promise<MetadataRecord> {
-  const latest = await requestData<any>(client.session.get({ sessionID: sessionId }), "session.get")
+  const latest = await requestData<any>(client.session.get({ sessionID: sessionId, ...query }), "session.get")
   const metadata = normalizeMetadata(latest?.metadata)
 
   withSession(instanceId, sessionId, (session) => {
+    if (session.metadata !== undefined) return false
     session.metadata = metadata
   })
 

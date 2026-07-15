@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { clampWindowBounds, normalizeNativeWindowState, normalizeZoomFactor } from "./window-state"
+import { clampWindowBounds, installWindowZoomInput, normalizeNativeWindowState, normalizeZoomFactor, WindowStateTracker } from "./window-state"
+import type { BrowserWindow } from "electron"
+import type { ClientStateManager } from "./client-state"
 
 const primaryDisplay = { x: 0, y: 0, width: 1920, height: 1080 }
 
@@ -17,4 +19,77 @@ test("normalizes unsafe zoom factors", () => {
   assert.equal(normalizeZoomFactor(Number.POSITIVE_INFINITY), 1)
   assert.equal(normalizeZoomFactor(0.01), 0.25)
   assert.equal(normalizeZoomFactor(9), 5)
+})
+
+test("flush captures the current native zoom", async () => {
+  let zoomLevel = -0.5
+  const window = {
+    isDestroyed: () => false,
+    on: () => undefined,
+    getNormalBounds: () => ({ x: 0, y: 0, width: 1200, height: 800 }),
+    isMaximized: () => false,
+    isFullScreen: () => false,
+    webContents: {
+      isDestroyed: () => false,
+      on: () => undefined,
+      setZoomLevel: (level: number) => { zoomLevel = level },
+      getZoomLevel: () => zoomLevel,
+      setZoomFactor: (factor: number) => { zoomLevel = Math.log(factor) / Math.log(1.2) },
+      getZoomFactor: () => 1.2 ** zoomLevel,
+    },
+  } as unknown as BrowserWindow
+  const savedZoomFactors: number[] = []
+  const manager = {
+    saveWindowState: async (state: { zoomFactor: number }) => { savedZoomFactors.push(state.zoomFactor); return true },
+    flush: async () => undefined,
+  } as unknown as ClientStateManager
+  const tracker = new WindowStateTracker(window, manager, { bounds: { x: 0, y: 0, width: 1200, height: 800 }, maximized: false, fullscreen: false, zoomFactor: 1 })
+
+  await tracker.flush()
+  assert.ok(Math.abs(savedZoomFactors.at(-1)! - (1.2 ** -0.5)) < 0.000001)
+})
+
+test("Electron keyboard and wheel zoom input is applied explicitly", () => {
+  const events = new Map<string, (...args: any[]) => void>()
+  let zoomLevel = 0
+  const prevented: string[] = []
+  const window = {
+    webContents: {
+      on: (name: string, handler: (...args: any[]) => void) => events.set(name, handler),
+      getZoomLevel: () => zoomLevel,
+    },
+  } as unknown as BrowserWindow
+  installWindowZoomInput(window, (level) => { zoomLevel = level })
+
+  events.get("before-input-event")?.({ preventDefault: () => prevented.push("keyboard") }, {
+    type: "keyDown", control: true, meta: false, alt: false, key: "=",
+  })
+  assert.equal(zoomLevel, 0.5)
+  events.get("zoom-changed")?.({ preventDefault: () => prevented.push("wheel") }, "out")
+  assert.equal(zoomLevel, 0)
+  assert.deepEqual(prevented, ["keyboard", "wheel"])
+})
+
+test("native menu zoom survives cross-origin navigation", () => {
+  const events = new Map<string, (...args: any[]) => void>()
+  let zoomLevel = -0.5
+  const window = {
+    isDestroyed: () => false,
+    on: () => undefined,
+    webContents: {
+      isDestroyed: () => false,
+      on: (name: string, handler: (...args: any[]) => void) => events.set(name, handler),
+      getZoomFactor: () => 1.2 ** zoomLevel,
+      setZoomFactor: (factor: number) => { zoomLevel = Math.log(factor) / Math.log(1.2) },
+    },
+  } as unknown as BrowserWindow
+  const manager = { flush: async () => undefined } as unknown as ClientStateManager
+  new WindowStateTracker(window, manager, {
+    bounds: { x: 0, y: 0, width: 1200, height: 800 }, maximized: false, fullscreen: false, zoomFactor: 1,
+  })
+
+  events.get("did-start-navigation")?.({}, "http://next.test", false, true)
+  zoomLevel = 0
+  events.get("did-finish-load")?.()
+  assert.ok(Math.abs(zoomLevel - (-0.5)) < 0.000001)
 })

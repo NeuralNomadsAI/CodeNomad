@@ -121,6 +121,19 @@ describe("instance runtime authority", () => {
     }
   })
 
+  it("keeps a pending source tab after non-authoritative startup removal", () => {
+    const id = "automatic-startup-removal"
+    const harness = preservationHarness([workspace({ folder: "/automatic", drafts: { missing: "retry me" } })])
+    addInstance(instance(id, "/automatic", "error")); harness.map(0, id)
+    try {
+      removeInstance(id, { authoritative: false })
+      assert.equal(harness.value.results[0]?.status, "pending")
+      assert.equal(mergeRestorableSessionState(absent, harness.value).tabs.length, 1)
+    } finally {
+      harness.close(); removeInstance(id, { authoritative: false })
+    }
+  })
+
   it("tombstones each mapped failed-hydration duplicate after sequential closes", () => {
     const ids = ["duplicate-first", "duplicate-second"]
     const harness = preservationHarness(ids.map((id, occurrence) =>

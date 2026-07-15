@@ -91,6 +91,25 @@ export function isPidAlive(pid: number): boolean {
   }
 }
 
+export function hasLiveTauriClient(
+  tauriDataPath: string,
+  pidAlive: (pid: number) => boolean = isPidAlive,
+): boolean {
+  let entries: string[]
+  try {
+    entries = readdirSync(tauriDataPath)
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) return false
+    throw error
+  }
+  return entries.some((name) => {
+    const match = /^client-state\.running\.(\d+)\..+\.lock$/.exec(name)
+    if (!match) return false
+    const pid = Number(match[1])
+    return Number.isInteger(pid) && pid > 0 && pid !== process.pid && pidAlive(pid)
+  })
+}
+
 export function classifyRunningMarker(
   markerOwner: ProcessOwner,
   currentOwner: ProcessOwner,

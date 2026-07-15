@@ -219,7 +219,9 @@ const pendingRehydrations = new Map<string, Promise<void>>()
 const initialHydrations = new Map<string, Promise<void>>()
 const initialSessionHydrations = new Map<string, Promise<void>>()
 const initialWorkspaceMetadataHydrations = new Map<string, Promise<void>>()
-const restoreCreatedWorkspaceCleanup = new AbortCreatedWorkspaceCleanup<WorkspaceDescriptor>({
+type RestoreWorkspaceDescriptor = WorkspaceDescriptor & { reused?: boolean }
+
+const restoreCreatedWorkspaceCleanup = new AbortCreatedWorkspaceCleanup<RestoreWorkspaceDescriptor>({
   discardWorkspace: (workspace) => {
     if (!workspace.requestId) return Promise.reject(new Error(`Restore workspace ${workspace.id} has no creation request`))
     return serverApi.cancelWorkspaceCreation(workspace.requestId)
@@ -568,7 +570,7 @@ function startInstanceSessionHydration(instanceId: string, force = false): {
   const worktreeHydration = force
     ? reloadWorktrees(instanceId)
     : ensureWorktreesLoaded(instanceId)
-  const sessions = worktreeHydration.then(async () => {
+  const sessions = Promise.all([worktreeHydration, worktreeMapHydration]).then(async () => {
     resetSessionPagination(instanceId)
     await fetchSessions(instanceId).catch((error) => {
       log.error("Failed to hydrate sessions", { instanceId, error })
@@ -750,7 +752,7 @@ function handleWorkspaceEvent(event: WorkspaceEventPayload) {
     case "workspace.stopped":
       restoreCreatedWorkspaceCleanup.release(event.workspaceId)
       releaseInstanceResources(event.workspaceId)
-      removeInstance(event.workspaceId)
+      removeInstance(event.workspaceId, { authoritative: false })
       break
     case "workspace.log":
       handleWorkspaceLog(event.entry)
@@ -937,15 +939,16 @@ function removeRestoreCreatedInstanceFromUi(instanceId: string): void {
   }
 }
 
-function disposeNewRestoreCreatedWorkspace(workspace: WorkspaceDescriptor): Promise<void> {
-  removeRestoreCreatedInstanceFromUi(workspace.id)
-  return restoreCreatedWorkspaceCleanup.discardCreated(workspace, { retainTombstone: true })
+function disposeRestoreWorkspaceResponse(workspace: RestoreWorkspaceDescriptor): Promise<void> {
+  if (workspace.reused !== true) removeRestoreCreatedInstanceFromUi(workspace.id)
+  return restoreCreatedWorkspaceCleanup.discardCreated(workspace, { retainTombstone: workspace.reused !== true })
 }
 
 function disposeRestoreCreatedInstance(instanceId: string): Promise<void> {
-  if (!restoreCreatedWorkspaceCleanup.owns(instanceId)) return Promise.resolve()
-  removeRestoreCreatedInstanceFromUi(instanceId)
-  return restoreCreatedWorkspaceCleanup.discardTracked(instanceId, { retainTombstone: true })
+  const workspace = restoreCreatedWorkspaceCleanup.get(instanceId)
+  if (!workspace) return Promise.resolve()
+  if (workspace.reused !== true) removeRestoreCreatedInstanceFromUi(instanceId)
+  return restoreCreatedWorkspaceCleanup.discardTracked(instanceId, { retainTombstone: workspace.reused !== true })
 }
 
 async function releaseRestoreCreatedInstance(instanceId: string, requestId: string): Promise<void> {
@@ -956,6 +959,16 @@ async function releaseRestoreCreatedInstance(instanceId: string, requestId: stri
     backoffMultiplier: 4,
   })
   await restoreCreatedWorkspaceCleanup.releaseAfter(instanceId, release)
+}
+
+async function cancelRestoreCreationRequest(instanceId: string, requestId: string): Promise<void> {
+  await retryWithBackoff(() => serverApi.cancelWorkspaceCreation(requestId), {
+    maxAttempts: 4,
+    initialDelayMs: 250,
+    maxDelayMs: 2_000,
+    backoffMultiplier: 4,
+  })
+  restoreCreatedWorkspaceCleanup.forgetRequest(instanceId, requestId)
 }
 
 function claimRestoreCreatedInstanceForUser(instanceId: string): void {
@@ -1004,10 +1017,10 @@ async function createInstance(
     requestResolved = true
     const reused = workspace.reused === true
     if (options?.signal?.aborted) {
-      if (!reused) await disposeNewRestoreCreatedWorkspace(workspace)
+      if (workspace.requestId) await disposeRestoreWorkspaceResponse(workspace)
       throw getAbortReason(options.signal)
     }
-    if (options?.signal && !reused) restoreCreatedWorkspaceCleanup.track(workspace)
+    if (options?.signal && workspace.requestId) restoreCreatedWorkspaceCleanup.track(workspace)
     else if (!options?.signal) restoreCreatedWorkspaceCleanup.releaseTombstoneForUserCreate(workspace.id)
     const discarded = restoreCreatedWorkspaceCleanup.shouldIgnoreEvent(workspace.id)
     if (!discarded) {
@@ -1016,10 +1029,10 @@ async function createInstance(
       if (!reused && (options?.activate ?? true)) setActiveInstanceId(workspace.id)
     }
     if (discarded) {
-      if (!reused) await restoreCreatedWorkspaceCleanup.discardCreated(workspace, { retainTombstone: true })
+      if (workspace.requestId) await disposeRestoreWorkspaceResponse(workspace)
       throw new Error(`Restore-created workspace ${workspace.id} was closed before startup completed`)
     }
-    return { instanceId: workspace.id, reused, requestId: restoreRequestId }
+    return { instanceId: workspace.id, reused, requestId: workspace.requestId }
   } catch (error) {
     if (!options?.signal?.aborted) log.error("Failed to create workspace", error)
     throw error
@@ -1692,6 +1705,7 @@ export {
   updateInstance,
   removeInstance,
   createInstance,
+  cancelRestoreCreationRequest,
   disposeRestoreCreatedInstance,
   releaseRestoreCreatedInstance,
   claimRestoreCreatedInstanceForUser,

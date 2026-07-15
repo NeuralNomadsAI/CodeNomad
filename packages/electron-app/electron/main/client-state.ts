@@ -109,7 +109,11 @@ export class ClientStateManager {
   private frozen = false
   private rendererAccessToken: string | undefined
 
-  constructor(userDataPath: string, private readonly writeState: ClientStateWriter = writeClientStateTemporary) {
+  constructor(
+    userDataPath: string,
+    private readonly writeState: ClientStateWriter = writeClientStateTemporary,
+    options?: { primaryBlocked?: boolean },
+  ) {
     mkdirSync(userDataPath, { recursive: true })
     this.userDataPath = userDataPath
     this.statePath = join(userDataPath, CLIENT_STATE_FILENAME)
@@ -123,6 +127,10 @@ export class ClientStateManager {
       (message, error) => console.warn(`[client-state] ${message}`, error),
     )
     this.primary = election
+    if (this.primary && options?.primaryBlocked) {
+      removeProcessOwnerLockIfOwned(this.lockPath, this.owner)
+      this.primary = false
+    }
     if (this.primary) {
       const persisted = this.readState()
       this.state = persisted.state

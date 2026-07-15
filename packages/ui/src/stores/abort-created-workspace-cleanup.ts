@@ -3,6 +3,7 @@ import { retryWithBackoff } from "../lib/retry-utils"
 interface CreatedWorkspace {
   id: string
   requestId?: string
+  reused?: boolean
 }
 
 interface PendingCleanup<T> {
@@ -42,6 +43,14 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
     this.pendingRequestIds.delete(requestId)
   }
 
+  forgetRequest(workspaceId: string, requestId: string): void {
+    this.pendingRequestIds.delete(requestId)
+    const entry = this.owned.get(workspaceId)
+    if (entry && "workspace" in entry && !("completion" in entry) && entry.workspace.requestId === requestId) {
+      this.owned.delete(workspaceId)
+    }
+  }
+
   quarantineRequest(requestId: string): void {
     if (this.pendingRequestIds.has(requestId)) this.pendingRequestIds.set(requestId, true)
   }
@@ -51,7 +60,7 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
     const quarantined = this.pendingRequestIds.get(workspace.requestId)
     if (quarantined === undefined) return false
     this.track(workspace)
-    if (quarantined) void this.discardTracked(workspace.id, { retainTombstone: true })
+    if (quarantined) void this.discardTracked(workspace.id, { retainTombstone: workspace.reused !== true })
       .finally(() => this.finishRequest(workspace.requestId!))
     return true
   }

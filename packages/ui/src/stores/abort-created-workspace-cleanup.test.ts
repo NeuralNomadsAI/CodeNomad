@@ -3,7 +3,7 @@ import { describe, it } from "node:test"
 
 import { AbortCreatedWorkspaceCleanup } from "./abort-created-workspace-cleanup.ts"
 
-interface TestWorkspace { id: string; status: "starting" | "ready"; requestId?: string }
+interface TestWorkspace { id: string; status: "starting" | "ready"; requestId?: string; reused?: boolean }
 const workspace = (id: string, requestId?: string): TestWorkspace => ({ id, status: "ready", requestId })
 async function flushPromises() { await Promise.resolve(); await Promise.resolve() }
 function createHarness(options: { failures?: number; pending?: boolean; retryDelay?: number } = {}) {
@@ -42,6 +42,25 @@ describe("abort-created workspace cleanup", () => {
     assert.equal(harness.discarded[0]?.requestId, "restore-request")
     assert.deepEqual(harness.restored, [])
     assert.equal(harness.cleanup.shouldIgnoreEvent(item.id), true)
+  })
+
+  it("does not tombstone a reused workspace after request cancellation", async () => {
+    const item = { ...workspace("shared workspace", "restore-request"), reused: true }, harness = createHarness()
+    harness.cleanup.beginRequest(item.requestId!)
+    harness.cleanup.quarantineRequest(item.requestId!)
+    assert.equal(harness.cleanup.trackPendingRequest(item), true)
+    await flushPromises()
+    assert.equal(harness.discardCalls, 1)
+    assert.equal(harness.cleanup.shouldIgnoreEvent(item.id), false)
+  })
+
+  it("forgets only the matching request for a shared workspace", () => {
+    const leader = workspace("shared", "leader"), harness = createHarness()
+    harness.cleanup.track(leader)
+    harness.cleanup.forgetRequest(leader.id, "follower")
+    assert.equal(harness.cleanup.get(leader.id)?.requestId, "leader")
+    harness.cleanup.forgetRequest(leader.id, "leader")
+    assert.equal(harness.cleanup.get(leader.id), undefined)
   })
 
   it("keeps a workspace user-owned when release succeeds during cancellation", async () => {

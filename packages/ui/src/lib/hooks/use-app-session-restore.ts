@@ -17,13 +17,13 @@ import {
   getSidecarAppTabId, selectAppTab, setAppTabOrder,
 } from "../../stores/app-tabs"
 import {
-  createInstance, disposeRestoreCreatedInstance, releaseRestoreCreatedInstance, instances,
+  cancelRestoreCreationRequest, createInstance, disposeRestoreCreatedInstance, releaseRestoreCreatedInstance, instances,
   waitForInitialWorkspaceLoad, waitForInstanceInitialSessionHydration,
 } from "../../stores/instances"
 import { openSidecarTab, SidecarNotFoundError } from "../../stores/sidecars"
 import {
   getSessions, hasAuthoritativeSessionSelection, hydrateActiveSessionSelection,
-  hydrateSessionGenerationRecovery, hydrateSessionIdleMarkers,
+  hydrateRestoredSessionChain, hydrateSessionGenerationRecovery, hydrateSessionIdleMarkers,
 } from "../../stores/sessions"
 import { messageStoreBus, type MessageScrollSnapshotSeed } from "../../stores/message-v2/bus"
 import { hydrateWorkspacePromptState } from "../../stores/app-session-prompt-hydration"
@@ -43,7 +43,13 @@ function startupTimeout(snapshot: RestorableSessionState): number {
   return Math.max(MINIMUM_STARTUP_TIMEOUT_MS,
     INITIAL_LOAD_TIMEOUT_MS + Math.max(1, ...counts.values()) * CREATE_TIMEOUT_MS + 5_000)
 }
-function restoreWorkspaceState(instanceId: string, snapshot: RestorableWorkspaceTabState): Set<string> {
+async function restoreWorkspaceState(
+  instanceId: string,
+  snapshot: RestorableWorkspaceTabState,
+  signal: AbortSignal,
+): Promise<Set<string>> {
+  await hydrateRestoredSessionChain(instanceId, [snapshot.activeParentSessionId, snapshot.activeSessionId], signal)
+  if (signal.aborted) throw getAbortReason(signal)
   const sessions = getSessions(instanceId)
   const validIds = new Set(sessions.map(({ id }) => id))
   const unavailable = getUnavailableRestoredSessionIds(sessions, {
@@ -56,7 +62,6 @@ function restoreWorkspaceState(instanceId: string, snapshot: RestorableWorkspace
   hydrateSessionIdleMarkers(instanceId, snapshot.unseenIdleSince)
   hydrateSessionGenerationRecovery(instanceId, snapshot.generationRecovery)
   const scrollSeeds: MessageScrollSnapshotSeed[] = Object.entries(snapshot.scrollSnapshots)
-    .filter(([sessionId]) => validIds.has(sessionId))
     .map(([sessionId, scrollSnapshot]) => ({ sessionId, scope: MESSAGE_SCROLL_SCOPE, snapshot: scrollSnapshot }))
   messageStoreBus.seedScrollSnapshots(instanceId, scrollSeeds)
   if (!hasAuthoritativeSessionSelection(instanceId)) {
@@ -132,7 +137,8 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
         })
         let creation = existingId || isWebHost() ? null : await create(match.descriptor.occurrence > 0)
         if (creation && claimedIds.has(creation.instanceId)) {
-          if (!creation.reused && creation.requestId) await releaseRestoreCreatedInstance(creation.instanceId, creation.requestId)
+          if (operationSignal.aborted) throw getAbortReason(operationSignal)
+          if (creation.requestId) await cancelRestoreCreationRequest(creation.instanceId, creation.requestId)
           creation = await create(true)
         }
         const id = existingId ?? creation?.instanceId ?? null
@@ -143,14 +149,17 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
         try {
           await runAbortable(() => waitForInstanceInitialSessionHydration(id), { signal: operationSignal })
           const tabId = getInstanceAppTabId(id)
-          if (created && creation?.requestId) await releaseRestoreCreatedInstance(id, creation.requestId)
+          const unavailable = await restoreWorkspaceState(id, tab, operationSignal)
           if (operationSignal.aborted) throw getAbortReason(operationSignal)
-          capture.recordRestoredTab(match.tabIndex, tabId, restoreWorkspaceState(id, tab))
+          if (creation?.requestId) await releaseRestoreCreatedInstance(id, creation.requestId)
+          if (operationSignal.aborted) throw getAbortReason(operationSignal)
+          capture.recordRestoredTab(match.tabIndex, tabId, unavailable)
           if (match.tabIndex === snapshot.activeTabIndex) context.selectActive(tabId, true)
         } catch (error) {
-          if (operationSignal.aborted && !existingId) {
+          if (!existingId && creation?.requestId) {
             capture.recordRestoredTab(match.tabIndex, null)
-            if (created) await disposeRestoreCreatedInstance(id)
+            await disposeRestoreCreatedInstance(id)
+            if (created) createdId = null
           }
           throw error
         }

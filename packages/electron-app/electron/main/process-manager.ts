@@ -16,6 +16,8 @@ const mainDirname = path.dirname(mainFilename)
 
 const BOOTSTRAP_TOKEN_PREFIX = "CODENOMAD_BOOTSTRAP_TOKEN:"
 const SESSION_COOKIE_NAME_PREFIX = "codenomad_session"
+const CLI_STOP_GRACE_MS = 5_000
+const CLI_STOP_DEADLINE_MS = 7_000
 
 type CliState = "starting" | "ready" | "error" | "stopped"
 type ListeningMode = "local" | "all"
@@ -139,6 +141,7 @@ export class CliProcessManager extends EventEmitter {
   async start(options: StartOptions): Promise<CliStatus> {
     if (this.child) {
       await this.stop()
+      if (this.child) throw new Error("CLI process did not exit before restart")
     }
 
     this.stdoutBuffer = ""
@@ -234,6 +237,7 @@ export class CliProcessManager extends EventEmitter {
       })
 
       utilityChild.on("exit", (code) => {
+        if (this.child !== child) return
         const failed = this.status.state !== "ready"
         const error = failed ? this.status.error ?? `CLI exited with code ${code ?? 0}` : undefined
         console.info(`[cli] exit (code=${code ?? ""})${error ? ` error=${error}` : ""}`)
@@ -254,6 +258,7 @@ export class CliProcessManager extends EventEmitter {
       })
 
       spawnedChild.on("exit", (code, signal) => {
+        if (this.child !== child) return
         const failed = this.status.state !== "ready"
         const error = failed ? this.status.error ?? `CLI exited with code ${code ?? 0}${signal ? ` (${signal})` : ""}` : undefined
         console.info(`[cli] exit (code=${code}, signal=${signal || ""})${error ? ` error=${error}` : ""}`)
@@ -342,28 +347,41 @@ export class CliProcessManager extends EventEmitter {
       }
 
       try {
-        const result = spawnSync("taskkill", args, { encoding: "utf8" })
-        const exitCode = result.status
-        if (exitCode === 0) {
-          return true
-        }
-
-        // If the PID is already gone, treat it as success.
-        const stderr = (result.stderr ?? "").toString().toLowerCase()
-        const stdout = (result.stdout ?? "").toString().toLowerCase()
-        const combined = `${stdout}\n${stderr}`
-        if (combined.includes("not found") || combined.includes("no running instance")) {
-          return true
-        }
-        return false
+        const killer = spawn("taskkill", args, { stdio: "ignore", windowsHide: true })
+        killer.on("error", (error) => console.warn(`[cli] taskkill failed for pid=${pid}`, error))
+        killer.on("exit", (code) => {
+          if (code !== 0 && !isAlreadyExited()) console.warn(`[cli] taskkill exited with code ${code} for pid=${pid}`)
+        })
+        killer.unref()
+        return true
       } catch {
         return false
       }
     }
 
+    const tryTaskkillSync = () => {
+      try {
+        const result = spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
+          encoding: "utf8",
+          timeout: 1_500,
+          windowsHide: true,
+        })
+        if (result.status === 0 || isAlreadyExited()) return true
+        const detail = `${result.stdout ?? ""}\n${result.stderr ?? ""}`.trim()
+        console.warn(`[cli] forced taskkill failed for pid=${pid}${detail ? `: ${detail}` : ""}`)
+      } catch (error) {
+        console.warn(`[cli] forced taskkill failed for pid=${pid}`, error)
+      }
+      return false
+    }
+
     const sendStopSignal = (signal: NodeJS.Signals) => {
       if (process.platform === "win32") {
-        tryTaskkill(signal === "SIGKILL")
+        if (signal === "SIGKILL") {
+          if (!tryTaskkillSync()) tryTaskkill(true)
+        } else {
+          tryTaskkill(false)
+        }
         return
       }
 
@@ -375,26 +393,37 @@ export class CliProcessManager extends EventEmitter {
     }
 
     return new Promise((resolve) => {
+      let settled = false
+      const finish = (confirmedExited: boolean) => {
+        if (settled) return
+        settled = true
+        clearTimeout(killTimeout)
+        clearTimeout(deadlineTimeout)
+        if (confirmedExited && this.child === spawnedChild) {
+          this.child = undefined
+          this.updateStatus({ state: "stopped" })
+        }
+        resolve()
+      }
       const killTimeout = setTimeout(() => {
         console.warn(
-          `[cli] stop timed out after 30000ms; sending SIGKILL (pid=${child.pid ?? "unknown"})`,
+          `[cli] stop timed out after ${CLI_STOP_GRACE_MS}ms; sending SIGKILL (pid=${child.pid ?? "unknown"})`,
         )
         sendStopSignal("SIGKILL")
-      }, 30000)
+      }, CLI_STOP_GRACE_MS)
+      const deadlineTimeout = setTimeout(() => {
+        console.warn(`[cli] stop remained pending after ${CLI_STOP_DEADLINE_MS}ms; continuing desktop shutdown`)
+        sendStopSignal("SIGKILL")
+        finish(false)
+      }, CLI_STOP_DEADLINE_MS)
 
       spawnedChild.on("exit", () => {
-        clearTimeout(killTimeout)
-        this.child = undefined
         console.info("[cli] CLI process exited")
-        this.updateStatus({ state: "stopped" })
-        resolve()
+        finish(true)
       })
 
       if (isAlreadyExited()) {
-        clearTimeout(killTimeout)
-        this.child = undefined
-        this.updateStatus({ state: "stopped" })
-        resolve()
+        finish(true)
         return
       }
 
@@ -413,28 +442,39 @@ export class CliProcessManager extends EventEmitter {
     }
 
     return new Promise((resolve) => {
+      let settled = false
+      const finish = (confirmedExited: boolean) => {
+        if (settled) return
+        settled = true
+        clearTimeout(killTimeout)
+        clearTimeout(deadlineTimeout)
+        if (confirmedExited && this.child === child) {
+          this.child = undefined
+          this.updateStatus({ state: "stopped" })
+        }
+        resolve()
+      }
       const killTimeout = setTimeout(() => {
-        console.warn(`[cli] stop timed out after 30000ms; sending SIGKILL (pid=${pid})`)
+        console.warn(`[cli] stop timed out after ${CLI_STOP_GRACE_MS}ms; sending SIGKILL (pid=${pid})`)
         try {
           process.kill(pid, "SIGKILL")
         } catch {
           // no-op
         }
-      }, 30000)
+      }, CLI_STOP_GRACE_MS)
+      const deadlineTimeout = setTimeout(() => {
+        console.warn(`[cli] stop remained pending after ${CLI_STOP_DEADLINE_MS}ms; continuing desktop shutdown`)
+        try { process.kill(pid, "SIGKILL") } catch {}
+        finish(false)
+      }, CLI_STOP_DEADLINE_MS)
 
       child.once("exit", () => {
-        clearTimeout(killTimeout)
-        this.child = undefined
         console.info("[cli] CLI process exited")
-        this.updateStatus({ state: "stopped" })
-        resolve()
+        finish(true)
       })
 
       if (child.pid === undefined) {
-        clearTimeout(killTimeout)
-        this.child = undefined
-        this.updateStatus({ state: "stopped" })
-        resolve()
+        finish(true)
         return
       }
 

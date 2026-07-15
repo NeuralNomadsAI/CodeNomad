@@ -5,6 +5,7 @@ import { flushRendererClientStateBeforeShutdown } from "./renderer-client-state-
 import type { WindowStateTracker } from "./window-state"
 
 const WINDOWS_SESSION_END_FLUSH_TIMEOUT_MS = 1_500
+const SHUTDOWN_TIMEOUT_MS = 10_000
 
 interface ClientStateLifecycleDependencies {
   app: App
@@ -16,6 +17,7 @@ interface ClientStateLifecycleDependencies {
   isTrustedRendererOrigin(url: string, allowedOrigins: string[]): boolean
   windowsSessionEndFlushTimeoutMs?: number
   rendererFlushTimeoutMs?: number
+  shutdownTimeoutMs?: number
   isWindows?: boolean
 }
 
@@ -92,12 +94,25 @@ export class ClientStateLifecycle {
 
   private startShutdown(window: BrowserWindow | null): Promise<void> {
     if (this.shutdown) return this.shutdown
-    this.shutdown = (async () => {
-      await this.runStage("renderer shutdown flush", () => this.flushRenderer(window))
+    const stages = (async () => {
+      const rendererFlush = this.runStage("renderer shutdown flush", () => this.flushRenderer(window))
+      const cliStop = this.runStage("CLI stop", () => this.dependencies.cliManager.stop())
+      await rendererFlush
       await this.runStage("native shutdown flush", () => this.flushNative())
       await this.runStage("primary release", () => this.dependencies.clientStateManager.drainAndReleasePrimary())
-      await this.runStage("CLI stop", () => this.dependencies.cliManager.stop())
+      await cliStop
     })()
+    const timeoutMs = this.dependencies.shutdownTimeoutMs ?? SHUTDOWN_TIMEOUT_MS
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    this.shutdown = Promise.race([
+      stages,
+      new Promise<void>((resolve) => { timeout = setTimeout(() => {
+        console.warn(`[client-state] desktop shutdown timed out after ${timeoutMs}ms; forcing exit`)
+        resolve()
+      }, timeoutMs) }),
+    ]).finally(() => {
+      if (timeout) clearTimeout(timeout)
+    })
     return this.shutdown
   }
 

@@ -58,4 +58,34 @@ describe("message store scroll snapshots", () => {
       if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
     }
   })
+
+  it("preserves scroll state during render-cache eviction", () => {
+    const instanceId = "scroll-render-cache-eviction"
+    const store = messageStoreBus.getOrCreate(instanceId)
+    const snapshot = { scrollTop: 240, atBottom: false, updatedAt: 2400 }
+    try {
+      store.restoreScrollSnapshot("session-1", "message-stream", snapshot)
+      store.clearSession("session-1", { preserveScroll: true, notify: false })
+      assert.deepEqual(store.getScrollSnapshot("session-1", "message-stream"), snapshot)
+    } finally {
+      messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+
+  it("does not replace newer runtime scroll with a late native seed", () => {
+    const instanceId = "scroll-late-seed"
+    const store = messageStoreBus.getOrCreate(instanceId)
+    const current = { scrollTop: 300, atBottom: false, updatedAt: 3000 }
+    try {
+      store.restoreScrollSnapshot("session-1", "message-stream", current)
+      messageStoreBus.seedScrollSnapshots(instanceId, [{
+        sessionId: "session-1",
+        scope: "message-stream",
+        snapshot: { scrollTop: 100, atBottom: false, updatedAt: 1000 },
+      }])
+      assert.deepEqual(store.getScrollSnapshot("session-1", "message-stream"), current)
+    } finally {
+      messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
 })

@@ -26,7 +26,7 @@ export function useSessionCache(options: SessionCacheOptions): SessionCacheState
     const instanceId = options.instanceId()
     log.info("Evicting cached session", { instanceId, sessionId })
     const store = messageStoreBus.getInstance(instanceId)
-    store?.clearSession(sessionId)
+    store?.clearSession(sessionId, { preserveScroll: true, notify: false })
     clearSessionRenderCache(instanceId, sessionId)
   }
 

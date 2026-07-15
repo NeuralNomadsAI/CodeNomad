@@ -8,10 +8,20 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import test from "node:test"
-import { cleanStaleRunningMarkers, createRunningMarker, electClientStateProcess, getRunningMarkerPath, REGISTRATION_LOCK_WAIT_MS, removeProcessOwnerLockIfOwned, removeRunningMarkerIfOwned, type ProcessOwner } from "./client-state-process"
+import { cleanStaleRunningMarkers, createRunningMarker, electClientStateProcess, getRunningMarkerPath, hasLiveTauriClient, REGISTRATION_LOCK_WAIT_MS, removeProcessOwnerLockIfOwned, removeRunningMarkerIfOwned, type ProcessOwner } from "./client-state-process"
 import { getProcessStartIdentity } from "./client-state-process-identity"
 
 function temp(t: test.TestContext) { const directory = mkdtempSync(join(tmpdir(), "codenomad-election-")); t.after(() => rmSync(directory, { recursive: true, force: true })); return directory }
+
+test("detects only live Tauri client-state markers", (t) => {
+  const directory = temp(t)
+  writeFileSync(join(directory, "client-state.running.123.1.lock"), "")
+  writeFileSync(join(directory, "client-state.running.456.2.lock"), "")
+  writeFileSync(join(directory, "unrelated.lock"), "")
+  assert.equal(hasLiveTauriClient(directory, (pid) => pid === 456), true)
+  assert.equal(hasLiveTauriClient(directory, () => false), false)
+  assert.equal(hasLiveTauriClient(join(directory, "missing"), () => true), false)
+})
 
 interface Child { process: ChildProcessWithoutNullStreams; result: Promise<{ isPrimary: boolean }> }
 function child(directory: string, start: string, wait = "", paused = "", release = ""): Child {

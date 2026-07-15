@@ -254,7 +254,7 @@ export interface InstanceMessageStore {
   getLastCompactionMessageIndex: (sessionId: string) => number
   getMessage: (messageId: string) => MessageRecord | undefined
   getLatestTodoSnapshot: (sessionId: string) => LatestTodoSnapshot | undefined
-  clearSession: (sessionId: string) => void
+  clearSession: (sessionId: string, options?: { preserveScroll?: boolean; notify?: boolean }) => void
   clearScrollSnapshots: () => void
   clearInstance: () => void
 }
@@ -1221,7 +1221,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return state.scrollState[key]
   }
 
-  function clearSession(sessionId: string) {
+  function clearSession(sessionId: string, options?: { preserveScroll?: boolean; notify?: boolean }) {
     if (!sessionId) return
 
     clearPromptDisplayOverridesForSession(instanceId, sessionId)
@@ -1290,16 +1290,18 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         return next
       })
 
-      setState("scrollState", (prev) => {
-        const next = { ...prev }
-        const prefix = `${sessionId}:`
-        Object.keys(next).forEach((key) => {
-          if (key.startsWith(prefix)) {
-            delete next[key]
-          }
+      if (!options?.preserveScroll) {
+        setState("scrollState", (prev) => {
+          const next = { ...prev }
+          const prefix = `${sessionId}:`
+          Object.keys(next).forEach((key) => {
+            if (key.startsWith(prefix)) {
+              delete next[key]
+            }
+          })
+          return next
         })
-        return next
-      })
+      }
 
       setState("sessions", sessionId, (current) => {
         if (!current) return current
@@ -1317,7 +1319,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     clearLatestTodoSnapshot(sessionId)
  
-    hooks?.onSessionCleared?.(instanceId, sessionId)
+    if (options?.notify !== false) hooks?.onSessionCleared?.(instanceId, sessionId)
   }
 
  

@@ -129,6 +129,27 @@ export function restoreWindowState(window: BrowserWindow, state: NativeWindowSta
   }
 }
 
+export function installWindowZoomInput(window: BrowserWindow, setZoomLevel: (level: number) => void): void {
+  const changeZoom = (delta: number) => setZoomLevel(window.webContents.getZoomLevel() + delta)
+  window.webContents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown" || (!input.control && !input.meta) || input.alt) return
+    if (input.key === "+" || input.key === "=") {
+      event.preventDefault()
+      changeZoom(0.5)
+    } else if (input.key === "-") {
+      event.preventDefault()
+      changeZoom(-0.5)
+    } else if (input.key === "0") {
+      event.preventDefault()
+      setZoomLevel(0)
+    }
+  })
+  window.webContents.on("zoom-changed", (event, direction) => {
+    event.preventDefault()
+    changeZoom(direction === "in" ? 0.5 : -0.5)
+  })
+}
+
 export class WindowStateTracker {
   private saveTimer: ReturnType<typeof setTimeout> | undefined
   private desiredZoomFactor: number
@@ -143,8 +164,12 @@ export class WindowStateTracker {
     for (const event of ["move", "resize", "maximize", "unmaximize", "enter-full-screen", "leave-full-screen"]) {
       window.on(event as "move", () => this.scheduleSave())
     }
-    const scheduleSave = () => this.scheduleSave()
-    window.webContents.on("zoom-changed", scheduleSave)
+    window.webContents.on("zoom-changed", () => this.scheduleSave())
+    window.webContents.on("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => {
+      if (isMainFrame && !window.webContents.isDestroyed()) {
+        this.desiredZoomFactor = normalizeZoomFactor(window.webContents.getZoomFactor())
+      }
+    })
     window.webContents.on("did-finish-load", () => {
       if (!window.webContents.isDestroyed()) {
         window.webContents.setZoomFactor(this.desiredZoomFactor)
@@ -159,6 +184,13 @@ export class WindowStateTracker {
       await this.captureAndQueue()
     }
     await this.clientState.flush()
+  }
+
+  setZoomLevel(level: number): void {
+    if (this.window.isDestroyed() || this.window.webContents.isDestroyed()) return
+    this.window.webContents.setZoomLevel(level)
+    this.desiredZoomFactor = normalizeZoomFactor(this.window.webContents.getZoomFactor())
+    this.scheduleSave()
   }
 
   private scheduleSave() {

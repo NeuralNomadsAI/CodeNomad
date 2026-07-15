@@ -43,6 +43,23 @@ test("renderer access is exclusive per document and resettable", async (t) => {
   assert.equal(manager.claimClientStateAccess("document-2"), true)
 })
 
+test("a live Tauri owner blocks Electron snapshot restoration", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "codenomad-cross-host-state-"))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  writeFileSync(join(directory, "client-state.json"), JSON.stringify({
+    version: 1,
+    restoreEnabled: true,
+    snapshot: { tabs: ["must-not-restore"] },
+  }))
+  const secondary = new ClientStateManager(directory, undefined, { primaryBlocked: true })
+  assert.deepEqual(secondary.loadClientState(), { isPrimary: false, restoreEnabled: true, snapshot: null })
+  await secondary.drainAndReleasePrimary()
+
+  const successor = new ClientStateManager(directory)
+  assert.equal(successor.isPrimary, true)
+  await successor.drainAndReleasePrimary()
+})
+
 test("failed preference and clear writes roll memory and suppression back", async (t) => {
   const h = harness(t)
   const manager = h.create()
