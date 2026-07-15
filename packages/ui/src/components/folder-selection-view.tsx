@@ -30,6 +30,7 @@ type HomeTab = "local" | "servers"
 
 interface FolderSelectionViewProps {
   onSelectFolder: (folder: string, binaryPath?: string, options?: { forceNew?: boolean }) => void
+  onSelectExistingInstance: (instanceId: string, recentPath: string, binaryPath: string) => void
   onOpenSidecar?: () => void
   isLoading?: boolean
   onClose?: () => void
@@ -133,6 +134,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     const isEditingField =
       activeElement &&
       (["INPUT", "TEXTAREA", "SELECT"].includes(activeElement.tagName) || activeElement.isContentEditable || Boolean(insideModal))
+    const isInteractiveControl = activeElement && ["BUTTON", "A"].includes(activeElement.tagName)
 
     if (isEditingField) {
       return
@@ -154,6 +156,8 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
       void handleBrowse()
       return
     }
+
+    if (isInteractiveControl && (e.key === "Enter" || e.key === " ")) return
 
     const listLength = getActiveListLength()
     if (listLength === 0) return
@@ -209,7 +213,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     if (activeTab() === "local") {
       const folder = folders()[index]
       if (folder) {
-        handleFolderSelect(folder.path)
+        handleFolderSelect(folder.path, true)
       }
       return
     }
@@ -309,9 +313,14 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     return t("time.relative.justNow")
   }
 
-  function handleFolderSelect(path: string) {
+  function handleFolderSelect(path: string, forceNew = false) {
     if (isLoading()) return
-    props.onSelectFolder(path, selectedBinary())
+    props.onSelectFolder(path, selectedBinary(), forceNew ? { forceNew: true } : undefined)
+  }
+
+  function handleExistingInstanceSelect(instanceId: string, recentPath: string) {
+    if (isLoading()) return
+    props.onSelectExistingInstance(instanceId, recentPath, selectedBinary())
   }
 
   function resetCloneDialog() {
@@ -924,6 +933,9 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                         <For each={folders()}>
                           {(folder, index) => {
                             const existingInstance = () => getExistingInstanceForFolder(folder.path)
+                            const projectName = () => getProjectDisplayName(folder.path, folder.projectName)
+                            const projectLabelId = () => `recent-folder-${index()}-name`
+                            const openActionLabelId = () => `recent-folder-${index()}-open-action`
 
                             return <div
                               class="panel-list-item"
@@ -937,7 +949,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                   data-list-index={index()}
                                   class="panel-list-item-content flex-1"
                                   disabled={isLoading()}
-                                  onClick={() => handleFolderSelect(folder.path)}
+                                  onClick={() => handleFolderSelect(folder.path, true)}
                                   onMouseEnter={() => {
                                     if (isLoading()) return
                                     setFocusMode("recent")
@@ -948,14 +960,9 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                     <div class="flex-1 min-w-0">
                                       <div class="flex items-center gap-2 mb-1">
                                         <Folder class="w-4 h-4 flex-shrink-0 icon-muted" />
-                                        <span class="text-sm font-medium truncate text-primary">
-                                          {getProjectDisplayName(folder.path, folder.projectName)}
+                                        <span id={projectLabelId()} class="text-sm font-medium truncate text-primary">
+                                          {projectName()}
                                         </span>
-                                        <Show when={existingInstance()}>
-                                          <span class="rounded-full border border-base px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-secondary">
-                                            {t("folderSelection.recent.openBadge")}
-                                          </span>
-                                        </Show>
                                       </div>
                                       <div class="flex items-center gap-2 pl-6 text-xs text-muted min-w-0">
                                         <span class="font-mono truncate-start flex-1 min-w-0">
@@ -969,6 +976,21 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                     </Show>
                                   </div>
                                 </button>
+                                <Show when={existingInstance()}>
+                                  {(instance) => (
+                                    <button
+                                      type="button"
+                                      class="folder-home-open-instance-button"
+                                      disabled={isLoading()}
+                                      aria-labelledby={`${openActionLabelId()} ${projectLabelId()}`}
+                                      title={t("folderSelection.recent.switchToOpenProject")}
+                                      onClick={() => handleExistingInstanceSelect(instance().id, folder.path)}
+                                    >
+                                      <span id={openActionLabelId()}>{t("folderSelection.recent.openBadge")}</span>
+                                      <ChevronRight class="w-3 h-3" aria-hidden="true" />
+                                    </button>
+                                  )}
+                                </Show>
                                 <button
                                   onClick={(e) => openProjectRename(folder.path, folder.projectName, e)}
                                   disabled={isLoading()}
