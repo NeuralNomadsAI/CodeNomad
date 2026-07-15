@@ -692,6 +692,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     }}>
       <div
         class="message-stream"
+        tabIndex={-1}
         ref={el => {
           setScrollElement(el)
           props.onScrollElementChange?.(el)

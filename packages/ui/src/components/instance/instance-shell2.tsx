@@ -127,6 +127,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [draftModel, setDraftModel] = createSignal({ providerId: "", modelId: "" })
   const [draftModelManuallySelected, setDraftModelManuallySelected] = createSignal(false)
   const [draftPromptInputApi, setDraftPromptInputApi] = createSignal<PromptInputApi | null>(null)
+  const [focusConversationSessionId, setFocusConversationSessionId] = createSignal<string | null>(null)
 
   // Worktree selector manages its own dialogs.
   const [showSessionSearch, setShowSessionSearch] = createSignal(false)
@@ -952,6 +953,22 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     }
   }
 
+  function getActiveCreatedSessionPane(sessionId: string) {
+    if (activeSessionIdForInstance() !== sessionId) return null
+    const pane = sessionCenterEl()?.querySelector<HTMLElement>('.session-cache-pane[data-session-active="true"]')
+    return pane?.dataset.sessionId === sessionId ? pane : null
+  }
+
+  function focusCreatedSessionPrompt(sessionId: string) {
+    const textarea = getActiveCreatedSessionPane(sessionId)?.querySelector<HTMLTextAreaElement>(".prompt-input")
+    if (!textarea || textarea.disabled) return
+    try {
+      textarea.focus({ preventScroll: true })
+    } catch {
+      textarea.focus()
+    }
+  }
+
   async function createAndActivateDraftSession() {
     const agent = draftAgent()
     const model = draftModel()
@@ -962,23 +979,33 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     if (model.providerId && model.modelId) {
       await updateSessionModel(props.instance.id, session.id, model)
     }
+    if (!window.matchMedia?.("(pointer: coarse)")?.matches || window.matchMedia?.("(any-pointer: fine)")?.matches) {
+      setFocusConversationSessionId(session.id)
+    }
     setActiveParentSession(props.instance.id, session.id)
     return session
   }
 
-  async function handleFirstPromptSend(prompt: string, attachments: Attachment[]) {
+  async function runFirstPromptSubmission(submit: (sessionId: string) => Promise<void>) {
     const session = await createAndActivateDraftSession()
-    await sendMessage(props.instance.id, session.id, prompt, attachments)
+    try {
+      await submit(session.id)
+    } catch (error) {
+      focusCreatedSessionPrompt(session.id)
+      throw error
+    }
+  }
+
+  async function handleFirstPromptSend(prompt: string, attachments: Attachment[]) {
+    await runFirstPromptSubmission((sessionId) => sendMessage(props.instance.id, sessionId, prompt, attachments))
   }
 
   async function handleFirstPromptCommand(commandName: string, args: string) {
-    const session = await createAndActivateDraftSession()
-    await executeCustomCommand(props.instance.id, session.id, commandName, args)
+    await runFirstPromptSubmission((sessionId) => executeCustomCommand(props.instance.id, sessionId, commandName, args))
   }
 
   async function handleFirstPromptShell(command: string) {
-    const session = await createAndActivateDraftSession()
-    await runShellCommand(props.instance.id, session.id, command)
+    await runFirstPromptSubmission((sessionId) => runShellCommand(props.instance.id, sessionId, command))
   }
 
   /** Return to the last conversation */
@@ -1287,6 +1314,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                           escapeInDebounce={props.escapeInDebounce}
                           isPhoneLayout={isPhoneLayout()}
                           compactPromptLayout={compactPromptLayout()}
+                          focusConversationOnActivate={focusConversationSessionId() === sessionId}
+                          onConversationFocusHandled={() => {
+                            if (focusConversationSessionId() === sessionId) setFocusConversationSessionId(null)
+                          }}
                           registerSessionPromptApi={registerSessionPromptApi}
                           showSidebarToggle={showEmbeddedSidebarToggle()}
                           onSidebarToggle={() => setLeftOpen(true)}

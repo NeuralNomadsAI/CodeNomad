@@ -22,6 +22,7 @@ import { closeSessionPreview, getSessionPreview, showSessionChat } from "../../s
 import { SessionPreviewView } from "../session-preview-view"
 import { isSnapshotAutoFollowing } from "../virtual-follow-behavior"
 import { getSubmitBottomPinTargetCount, resolveSessionBottomPinIntent, shouldClearSessionBottomPinIntent, type SessionBottomPinIntent } from "./session-bottom-pin-intent"
+import { focusConversationStream } from "../focus-conversation"
 
 const log = getLogger("session")
 
@@ -37,6 +38,8 @@ interface SessionViewProps {
   escapeInDebounce: boolean
   isPhoneLayout?: boolean
   compactPromptLayout?: boolean
+  focusConversationOnActivate?: boolean
+  onConversationFocusHandled?: () => void
   showSidebarToggle?: boolean
   onSidebarToggle?: () => void
   forceCompactStatusLayout?: boolean
@@ -240,13 +243,13 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       () => props.isActive,
       (isActive) => {
         if (!isActive) {
+          if (props.focusConversationOnActivate) props.onConversationFocusHandled?.()
           clearConversationPlaybackForSession(props.instanceId, props.sessionId)
           return
         }
-        if (!isActive) return
 
         // On phones, focusing the prompt on session switch is disruptive (it raises the OSK).
-        if (props.isPhoneLayout) return
+        if (props.isPhoneLayout && !props.focusConversationOnActivate) return
 
         // Don't steal focus from other inputs (command palette, dialogs, selectors, etc.)
         if (typeof document === "undefined") return
@@ -264,6 +267,19 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         // Defer until the session pane is visible and the textarea is mounted.
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
+            if (!props.isActive) return
+            if (props.focusConversationOnActivate) {
+              const activeElement = document.activeElement
+              const focusIsUnclaimed =
+                !activeElement || activeElement === document.body || activeElement === document.documentElement
+              const modalIsOpen = Boolean(document.querySelector('[role="dialog"][aria-modal="true"]'))
+              if (focusIsUnclaimed && !modalIsOpen && focusConversationStream(rootRef)) {
+                props.onConversationFocusHandled?.()
+                return
+              }
+              props.onConversationFocusHandled?.()
+              if (!focusIsUnclaimed || modalIsOpen) return
+            }
             if (promptInputApi) {
               promptInputApi.focus()
               return
