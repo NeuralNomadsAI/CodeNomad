@@ -182,14 +182,8 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
 
   // Handle item click
   const handleItemClick = (item: IToastHistoryItem) => {
-    // Mark as read
     if (!item.read) {
       markToastHistoryAsRead(item.id);
-    }
-
-    // Open action link if exists
-    if (item.action) {
-      void runToastAction(item.action);
     }
   };
 
