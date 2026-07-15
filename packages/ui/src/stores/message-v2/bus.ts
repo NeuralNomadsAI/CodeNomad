@@ -2,13 +2,24 @@ import { createInstanceMessageStore } from "./instance-store"
 import type { InstanceMessageStore } from "./instance-store"
 import { clearCacheForInstance } from "../../lib/global-cache"
 import { getLogger } from "../../lib/logger"
+import type { ScrollSnapshot } from "./types"
 
 const log = getLogger("session")
+
+export interface MessageScrollSnapshotSeed {
+  sessionId: string
+  scope: string
+  snapshot: ScrollSnapshot
+}
 
 class MessageStoreBus {
   private stores = new Map<string, InstanceMessageStore>()
   private teardownHandlers = new Set<(instanceId: string) => void>()
   private sessionClearHandlers = new Set<(instanceId: string, sessionId: string) => void>()
+  private scrollSnapshotHandlers = new Set<
+    (instanceId: string, sessionId: string, scope: string, snapshot: ScrollSnapshot) => void
+  >()
+  private scrollSnapshotSeeds = new Map<string, MessageScrollSnapshotSeed[]>()
 
   registerInstance(instanceId: string, store?: InstanceMessageStore): InstanceMessageStore {
     if (this.stores.has(instanceId)) {
@@ -19,8 +30,17 @@ class MessageStoreBus {
       store ??
       createInstanceMessageStore(instanceId, {
         onSessionCleared: (id, sessionId) => this.notifySessionCleared(id, sessionId),
+        onScrollSnapshotChanged: (id, sessionId, scope, snapshot) =>
+          this.notifyScrollSnapshotChanged(id, sessionId, scope, snapshot),
       })
     this.stores.set(instanceId, resolved)
+    const seeds = this.scrollSnapshotSeeds.get(instanceId)
+    if (seeds) {
+      this.scrollSnapshotSeeds.delete(instanceId)
+      for (const seed of seeds) {
+        resolved.restoreScrollSnapshot(seed.sessionId, seed.scope, seed.snapshot)
+      }
+    }
     return resolved
   }
 
@@ -41,12 +61,53 @@ class MessageStoreBus {
     }
   }
 
+  onScrollSnapshotChanged(
+    handler: (instanceId: string, sessionId: string, scope: string, snapshot: ScrollSnapshot) => void,
+  ): () => void {
+    this.scrollSnapshotHandlers.add(handler)
+    return () => {
+      this.scrollSnapshotHandlers.delete(handler)
+    }
+  }
+
+  seedScrollSnapshots(instanceId: string, seeds: MessageScrollSnapshotSeed[]): void {
+    if (seeds.length === 0) return
+    const store = this.stores.get(instanceId)
+    if (store) {
+      for (const seed of seeds) {
+        store.restoreScrollSnapshot(seed.sessionId, seed.scope, seed.snapshot)
+      }
+      return
+    }
+    this.scrollSnapshotSeeds.set(instanceId, seeds)
+  }
+
+  private notifyScrollSnapshotChanged(
+    instanceId: string,
+    sessionId: string,
+    scope: string,
+    snapshot: ScrollSnapshot,
+  ): void {
+    for (const handler of this.scrollSnapshotHandlers) {
+      try {
+        handler(instanceId, sessionId, scope, snapshot)
+      } catch (error) {
+        log.error("Failed to run scroll snapshot change handler", error)
+      }
+    }
+  }
+
   getInstance(instanceId: string): InstanceMessageStore | undefined {
     return this.stores.get(instanceId)
   }
 
   getOrCreate(instanceId: string): InstanceMessageStore {
     return this.registerInstance(instanceId)
+  }
+
+  clearInstanceScrollSnapshots(instanceId: string): void {
+    this.stores.get(instanceId)?.clearScrollSnapshots()
+    this.scrollSnapshotSeeds.delete(instanceId)
   }
 
   onInstanceDestroyed(handler: (instanceId: string) => void): () => void {
@@ -64,6 +125,7 @@ class MessageStoreBus {
     clearCacheForInstance(instanceId)
     this.notifyInstanceDestroyed(instanceId)
     this.stores.delete(instanceId)
+    this.scrollSnapshotSeeds.delete(instanceId)
   }
 
   clearAll() {
@@ -72,7 +134,9 @@ class MessageStoreBus {
       clearCacheForInstance(instanceId)
       this.notifyInstanceDestroyed(instanceId)
       this.stores.delete(instanceId)
+      this.scrollSnapshotSeeds.delete(instanceId)
     }
+    this.scrollSnapshotSeeds.clear()
   }
 
   private notifyInstanceDestroyed(instanceId: string) {

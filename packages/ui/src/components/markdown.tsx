@@ -15,6 +15,7 @@ interface ResolvedMarkdownSnapshot {
   themeKey: string
   highlightEnabled: boolean
   escapeRawHtml: boolean
+  defaultCodeBlockWrap: boolean
   partId: string | undefined
   cacheId: string
   version: string
@@ -96,6 +97,7 @@ interface MarkdownProps {
   size?: "base" | "sm" | "tight"
   disableHighlight?: boolean
   escapeRawHtml?: boolean
+  defaultCodeBlockWrap?: boolean
   onRendered?: () => void
 }
 
@@ -105,9 +107,52 @@ export function Markdown(props: MarkdownProps) {
   let containerRef: HTMLDivElement | undefined
   let latestRequestKey = ""
   let cleanupLanguageListener: (() => void) | undefined
+  const codeBlockWrapOverrides = new Map<string, boolean>()
 
   const notifyRendered = () => {
     Promise.resolve().then(() => props.onRendered?.())
+  }
+
+  const codeBlockWrapKey = (codeBlock: HTMLElement): string | null => {
+    const key = codeBlock.getAttribute("data-code-block-key")
+    if (!key) {
+      return null
+    }
+    return `${resolved().cacheId}:${key}`
+  }
+
+  const applyCodeBlockWrapState = (codeBlock: HTMLElement, enabled: boolean) => {
+    codeBlock.setAttribute("data-wrap-lines", enabled ? "true" : "false")
+
+    const button = codeBlock.querySelector<HTMLButtonElement>(".code-block-wrap")
+    if (!button) {
+      return
+    }
+
+    const label = enabled ? t("markdown.codeBlock.wrap.disable") : t("markdown.codeBlock.wrap.enable")
+    button.classList.toggle("active", enabled)
+    button.setAttribute("aria-pressed", enabled ? "true" : "false")
+    button.setAttribute("aria-label", label)
+    button.setAttribute("title", label)
+
+    const text = button.querySelector(".wrap-text")
+    if (text) {
+      text.textContent = label
+    }
+  }
+
+  const syncCodeBlockWrapStates = () => {
+    if (!containerRef) {
+      return
+    }
+
+    const codeBlocks = containerRef.querySelectorAll<HTMLElement>(".markdown-code-block")
+    for (const codeBlock of codeBlocks) {
+      const key = codeBlockWrapKey(codeBlock)
+      const defaultEnabled = codeBlock.getAttribute("data-wrap-lines") !== "false"
+      const enabled = key ? (codeBlockWrapOverrides.get(key) ?? defaultEnabled) : defaultEnabled
+      applyCodeBlockWrapState(codeBlock, enabled)
+    }
   }
 
   const resolved = createMemo(() => {
@@ -117,11 +162,23 @@ export function Markdown(props: MarkdownProps) {
     const themeKey = Boolean(props.isDark) ? "dark" : "light"
     const highlightEnabled = !props.disableHighlight
     const escapeRawHtml = Boolean(props.escapeRawHtml)
+    const defaultCodeBlockWrap = props.defaultCodeBlockWrap ?? true
     const partId = typeof part.id === "string" && part.id.length > 0 ? part.id : undefined
     const cacheId = resolvePartCacheId(part, text)
     const version = resolvePartVersion(part, text)
-    const requestKey = `${cacheId}:${themeKey}:${highlightEnabled ? 1 : 0}:${escapeRawHtml ? 1 : 0}:${version}`
-    return { part, text, themeKey, highlightEnabled, escapeRawHtml, partId, cacheId, version, requestKey }
+    const requestKey = `${cacheId}:${themeKey}:${highlightEnabled ? 1 : 0}:${escapeRawHtml ? 1 : 0}:${defaultCodeBlockWrap ? 1 : 0}:${version}`
+    return {
+      part,
+      text,
+      themeKey,
+      highlightEnabled,
+      escapeRawHtml,
+      defaultCodeBlockWrap,
+      partId,
+      cacheId,
+      version,
+      requestKey,
+    }
   })
 
   const cacheHandle = useGlobalCache({
@@ -129,8 +186,8 @@ export function Markdown(props: MarkdownProps) {
     sessionId: () => props.sessionId,
     scope: "markdown",
     cacheId: () => {
-      const { cacheId, themeKey, highlightEnabled } = resolved()
-      return `${cacheId}:${themeKey}:${highlightEnabled ? 1 : 0}:${resolved().escapeRawHtml ? 1 : 0}`
+      const { cacheId, themeKey, highlightEnabled, escapeRawHtml, defaultCodeBlockWrap } = resolved()
+      return `${cacheId}:${themeKey}:${highlightEnabled ? 1 : 0}:${escapeRawHtml ? 1 : 0}:${defaultCodeBlockWrap ? 1 : 0}`
     },
     version: () => resolved().version,
   })
@@ -144,7 +201,7 @@ export function Markdown(props: MarkdownProps) {
       text: snapshot.text,
       html: renderedHtml,
       theme: snapshot.themeKey,
-      mode: `${snapshot.version}:${snapshot.escapeRawHtml ? "escaped" : "raw"}`,
+      mode: `${snapshot.version}:${snapshot.escapeRawHtml ? "escaped" : "raw"}:${snapshot.defaultCodeBlockWrap ? "wrap" : "nowrap"}`,
     }
     setHtml(renderedHtml)
     if (options?.cache ?? true) {
@@ -159,6 +216,7 @@ export function Markdown(props: MarkdownProps) {
     const rendered = await markdown.renderMarkdown(snapshot.text, {
       suppressHighlight: !snapshot.highlightEnabled,
       escapeRawHtml: snapshot.escapeRawHtml,
+      defaultCodeBlockWrap: snapshot.defaultCodeBlockWrap,
     })
     const shouldCache = !snapshot.highlightEnabled || !markdown.hasPendingCodeHighlight(snapshot.text)
 
@@ -170,7 +228,7 @@ export function Markdown(props: MarkdownProps) {
   createEffect(() => {
     const snapshot = resolved()
     latestRequestKey = snapshot.requestKey
-    const cacheMode = `${snapshot.version}:${snapshot.escapeRawHtml ? "escaped" : "raw"}`
+    const cacheMode = `${snapshot.version}:${snapshot.escapeRawHtml ? "escaped" : "raw"}:${snapshot.defaultCodeBlockWrap ? "wrap" : "nowrap"}`
 
     const cacheMatches = (cache: RenderCache | undefined) => {
       if (!cache) return false
@@ -202,9 +260,33 @@ export function Markdown(props: MarkdownProps) {
     })
   })
 
+  createEffect(() => {
+    html()
+    Promise.resolve().then(syncCodeBlockWrapStates)
+  })
+
   onMount(() => {
     const handleClick = async (event: Event) => {
       const target = event.target as HTMLElement
+      const wrapButton = target.closest(".code-block-wrap") as HTMLButtonElement
+      if (wrapButton) {
+        event.preventDefault()
+        const codeBlock = wrapButton.closest(".markdown-code-block") as HTMLElement | null
+        if (!codeBlock) {
+          return
+        }
+
+        const key = codeBlockWrapKey(codeBlock)
+        const current = codeBlock.getAttribute("data-wrap-lines") !== "false"
+        const next = !current
+        if (key) {
+          codeBlockWrapOverrides.set(key, next)
+        }
+        applyCodeBlockWrapState(codeBlock, next)
+        props.onRendered?.()
+        return
+      }
+
       const copyButton = target.closest(".code-block-copy") as HTMLButtonElement
 
       if (!copyButton) {

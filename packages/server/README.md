@@ -217,3 +217,15 @@ When running as a server CodeNomad can also be installed as a PWA from any suppo
 
 - **Config**: `~/.config/codenomad/config.json`
 - **Instance Data**: `~/.config/codenomad/instances` (chat history, etc.)
+
+### Provider Plan Usage
+
+The Status panel automatically displays quota information for the provider used by the active session. CodeNomad reads existing OpenCode credentials and never returns provider secrets through its API.
+
+Some optional usage integrations require credentials that OpenCode does not expose. They can be enabled without UI configuration through these environment variables:
+
+- Google token refresh: `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`
+- Antigravity token refresh: `ANTIGRAVITY_OAUTH_CLIENT_ID` and `ANTIGRAVITY_OAUTH_CLIENT_SECRET`
+- Cursor: `CURSOR_ACCESS_TOKEN` or `CURSOR_TOKEN`, with optional `CURSOR_REFRESH_TOKEN`
+- Ollama Cloud: `OLLAMA_CLOUD_COOKIE`
+- OpenCode Go: `OPENCODE_GO_WORKSPACE_ID` and `OPENCODE_GO_AUTH_COOKIE`

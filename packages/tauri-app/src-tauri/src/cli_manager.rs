@@ -185,7 +185,7 @@ fn kill_process_tree_windows(pid: u32, force: bool) -> bool {
     }
 }
 fn navigate_main(app: &AppHandle, url: &str) {
-    if let Some(win) = app.webview_windows().get("main") {
+    if app.webview_windows().contains_key("main") {
         let final_url = augment_launch_url(url);
         let mut display = final_url.clone();
         if let Some(hash_index) = display.find('#') {
@@ -193,7 +193,19 @@ fn navigate_main(app: &AppHandle, url: &str) {
         }
         log_line(&format!("navigating main to {display}"));
         if let Ok(parsed) = Url::parse(&final_url) {
-            let _ = win.navigate(parsed);
+            crate::client_state::before_main_window_navigation(
+                app,
+                crate::client_state::NavigationKind::Cli,
+                Some(parsed.clone()),
+                move |app| {
+                    let window = app
+                        .get_webview_window("main")
+                        .ok_or_else(|| "main window not found for CLI navigation".to_string())?;
+                    window
+                        .navigate(parsed)
+                        .map_err(|err| format!("failed to navigate main window to CLI URL: {err}"))
+                },
+            );
         } else {
             log_line("failed to parse URL for navigation");
         }
