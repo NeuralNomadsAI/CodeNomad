@@ -35,6 +35,7 @@ import { requestData } from "../../../../lib/opencode-api"
 import { serverApi } from "../../../../lib/api-client"
 import { showConfirmDialog } from "../../../../stores/alerts"
 import { showToastNotification } from "../../../../lib/notifications"
+import { writeClientLayoutValue } from "../../../../stores/client-state"
 import { useGlobalPointerDrag } from "../useGlobalPointerDrag"
 import { useGitChanges } from "./useGitChanges"
 import {
@@ -97,7 +98,7 @@ interface RightPanelProps {
 
 const RightPanel: Component<RightPanelProps> = (props) => {
   const [rightPanelTab, setRightPanelTab] = createSignal<RightPanelTab>(readStoredRightPanelTab("git-changes"))
-  const defaultStatusSectionIds = ["yolo-mode", "plan", "background-processes", "mcp", "lsp", "plugins"]
+  const defaultStatusSectionIds = ["provider-usage", "yolo-mode", "plan", "background-processes", "mcp", "lsp", "plugins"]
   const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>(defaultStatusSectionIds)
 
   const [browserPath, setBrowserPath] = createSignal(".")
@@ -163,13 +164,11 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   }
 
   const persistListOpen = (tab: "git-changes" | "files", value: boolean) => {
-    if (typeof window === "undefined") return
-    window.localStorage.setItem(listOpenStorageKey(tab), value ? "true" : "false")
+    writeClientLayoutValue(listOpenStorageKey(tab), value ? "true" : "false")
   }
 
   const persistGitSectionOpen = (section: "staged" | "unstaged", value: boolean) => {
-    if (typeof window === "undefined") return
-    window.localStorage.setItem(gitSectionStorageKey(section), value ? "true" : "false")
+    writeClientLayoutValue(gitSectionStorageKey(section), value ? "true" : "false")
   }
 
   createEffect(() => {
@@ -213,28 +212,23 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   })
 
   createEffect(() => {
-    if (typeof window === "undefined") return
-    window.localStorage.setItem(RIGHT_PANEL_TAB_STORAGE_KEY, rightPanelTab())
+    writeClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY, rightPanelTab())
   })
 
   createEffect(() => {
-    if (typeof window === "undefined") return
-    window.localStorage.setItem(RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY, diffViewMode())
+    writeClientLayoutValue(RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY, diffViewMode())
   })
 
   createEffect(() => {
-    if (typeof window === "undefined") return
-    window.localStorage.setItem(RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY, diffContextMode())
+    writeClientLayoutValue(RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY, diffContextMode())
   })
 
   createEffect(() => {
-    if (typeof window === "undefined") return
-    window.localStorage.setItem(RIGHT_PANEL_CHANGES_DIFF_WORD_WRAP_KEY, diffWordWrapMode())
+    writeClientLayoutValue(RIGHT_PANEL_CHANGES_DIFF_WORD_WRAP_KEY, diffWordWrapMode())
   })
 
   createEffect(() => {
-    if (typeof window === "undefined") return
-    window.localStorage.setItem(RIGHT_PANEL_FILES_WORD_WRAP_KEY, filesWordWrapMode())
+    writeClientLayoutValue(RIGHT_PANEL_FILES_WORD_WRAP_KEY, filesWordWrapMode())
   })
 
   const clampSplitWidth = (value: number) => {
@@ -255,9 +249,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   })
 
   const persistSplitWidth = (mode: "git-changes" | "files", width: number) => {
-    if (typeof window === "undefined") return
     const key = mode === "git-changes" ? RIGHT_PANEL_GIT_CHANGES_SPLIT_WIDTH_KEY : RIGHT_PANEL_FILES_SPLIT_WIDTH_KEY
-    window.localStorage.setItem(key, String(width))
+    writeClientLayoutValue(key, String(width))
   }
 
   function stopSplitResize() {

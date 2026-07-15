@@ -21,6 +21,8 @@ anyhow = "1"
 which = "4"
 libc = "0.2"
 keepawake = "0.6"
+fs2 = "0.4"
+tempfile = "3"
 tauri-plugin-dialog = "2"
 dirs = "5"
 tauri-plugin-opener = "2"
@@ -29,6 +31,7 @@ url = "2"
 tauri-plugin-notification = "2"
 
 [target.'cfg(windows)'.dependencies]
+webview2-com = "=0.38.2"
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_UI_Shell", "Win32_Security", "Win32_System_JobObjects"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
