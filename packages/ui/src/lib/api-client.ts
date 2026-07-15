@@ -16,6 +16,7 @@ import type {
   SpeechTranscriptionResponse,
   SideCar,
   PreviewSession,
+  ProviderUsageResponse,
   ServerMeta,
   RemoteProxySessionCreateRequest,
   RemoteProxySessionCreateResponse,
@@ -192,6 +193,13 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
 export const serverApi = {
   fetchWorkspaces(): Promise<WorkspaceDescriptor[]> {
     return request<WorkspaceDescriptor[]>("/api/workspaces")
+  },
+
+  fetchProviderUsage(providerId: string, modelId?: string): Promise<ProviderUsageResponse> {
+    const params = new URLSearchParams()
+    if (modelId) params.set("modelId", modelId)
+    const query = params.toString()
+    return request<ProviderUsageResponse>(`/api/usage/${encodeURIComponent(providerId)}${query ? `?${query}` : ""}`)
   },
 
   fetchWorktrees(id: string): Promise<WorktreeListResponse> {

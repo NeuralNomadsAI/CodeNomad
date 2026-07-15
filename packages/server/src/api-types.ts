@@ -67,6 +67,26 @@ export interface WorkspaceDeleteResponse {
   status: WorkspaceStatus
 }
 
+export interface ProviderUsageWindow {
+  usedPercent: number | null
+  remainingPercent: number | null
+  windowSeconds: number | null
+  resetAt: number | null
+  valueLabel?: string
+}
+
+export interface ProviderUsageResponse {
+  requestedProviderId: string
+  providerId: string | null
+  providerName: string
+  modelId?: string
+  supported: boolean
+  configured: boolean
+  ok: boolean
+  windows: Record<string, ProviderUsageWindow>
+  fetchedAt: number
+}
+
 export type WorktreeKind = "root" | "worktree"
 
 export interface WorktreeDescriptor {
