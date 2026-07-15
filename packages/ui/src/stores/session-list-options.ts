@@ -34,6 +34,10 @@ export function buildProjectSessionListOptions(options: ProjectSessionListInput)
   }
 }
 
+export function isProjectSessionListComplete(resultCount: number): boolean {
+  return resultCount < PROJECT_SESSION_LIST_LIMIT
+}
+
 export function filterProjectScopedSessions<T extends SessionDirectorySource>(
   sessions: T[],
   allowedDirectories: Array<string | null | undefined>,
@@ -45,4 +49,14 @@ export function filterProjectScopedSessions<T extends SessionDirectorySource>(
     const directory = normalizeSessionDirectory(session.directory)
     return !directory || allowed.has(directory)
   })
+}
+
+export function getAuthoritativelyMissingSessionIds(
+  existingIds: Iterable<string>,
+  listedIds: Iterable<string>,
+  complete: boolean,
+): string[] {
+  if (!complete) return []
+  const listed = new Set(listedIds)
+  return Array.from(existingIds).filter((id) => !listed.has(id))
 }

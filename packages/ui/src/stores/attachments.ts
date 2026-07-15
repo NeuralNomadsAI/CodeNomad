@@ -1,139 +1,98 @@
 import { createSignal } from "solid-js"
 import type { Attachment } from "../types/attachment"
 
-const [attachments, setAttachments] = createSignal<Map<string, Attachment[]>>(new Map())
-const [authoritativeAttachmentKeys, setAuthoritativeAttachmentKeys] = createSignal<Set<string>>(new Set())
+interface SessionAttachmentState {
+  values: Attachment[]
+  authoritative: boolean
+}
 
-function getSessionKey(instanceId: string, sessionId: string): string {
-  return `${instanceId}:${sessionId}`
+const [attachments, setAttachments] = createSignal<Map<string, SessionAttachmentState>>(new Map())
+
+const getSessionKey = (instanceId: string, sessionId: string) => `${instanceId}:${sessionId}`
+
+function setSession(instanceId: string, sessionId: string, state?: SessionAttachmentState) {
+  const key = getSessionKey(instanceId, sessionId)
+  setAttachments((previous) => {
+    const next = new Map(previous)
+    if (state) next.set(key, state)
+    else next.delete(key)
+    return next
+  })
 }
 
 function getAttachments(instanceId: string, sessionId: string): Attachment[] {
-  const key = getSessionKey(instanceId, sessionId)
-  return attachments().get(key) || []
+  return attachments().get(getSessionKey(instanceId, sessionId))?.values ?? []
+}
+
+function getInstanceEntries(instanceId: string) {
+  const prefix = `${instanceId}:`
+  return [...attachments()].filter(([key]) => key.startsWith(prefix))
+    .map(([key, state]) => [key.slice(prefix.length), state] as const)
 }
 
 function getSessionAttachmentsForInstance(instanceId: string): Record<string, Attachment[]> {
   if (!instanceId) return {}
-  const prefix = `${instanceId}:`
-  const result: Record<string, Attachment[]> = {}
-  for (const [key, value] of attachments()) {
-    if (!key.startsWith(prefix) || value.length === 0) continue
-    result[key.slice(prefix.length)] = [...value]
-  }
-  return result
+  return Object.fromEntries(
+    getInstanceEntries(instanceId)
+      .filter(([, state]) => state.values.length > 0)
+      .map(([sessionId, state]) => [sessionId, [...state.values]]),
+  )
 }
 
 function getAuthoritativeAttachmentSessionIdsForInstance(instanceId: string): ReadonlySet<string> {
   if (!instanceId) return new Set()
-  const prefix = `${instanceId}:`
   return new Set(
-    [...authoritativeAttachmentKeys()]
-      .filter((key) => key.startsWith(prefix))
-      .map((key) => key.slice(prefix.length)),
+    getInstanceEntries(instanceId)
+      .filter(([, state]) => state.authoritative)
+      .map(([sessionId]) => sessionId),
   )
 }
 
-function markAttachmentsAuthoritative(key: string) {
-  setAuthoritativeAttachmentKeys((prev) => {
-    if (prev.has(key)) return prev
-    const next = new Set(prev)
-    next.add(key)
-    return next
-  })
-}
-
 function addAttachment(instanceId: string, sessionId: string, attachment: Attachment) {
-  const key = getSessionKey(instanceId, sessionId)
-  markAttachmentsAuthoritative(key)
-  setAttachments((prev) => {
-    const next = new Map(prev)
-    const existing = next.get(key) || []
-    next.set(key, [...existing, attachment])
-    return next
+  setSession(instanceId, sessionId, {
+    values: [...getAttachments(instanceId, sessionId), attachment],
+    authoritative: true,
   })
 }
 
 function removeAttachment(instanceId: string, sessionId: string, attachmentId: string) {
-  const key = getSessionKey(instanceId, sessionId)
-  markAttachmentsAuthoritative(key)
-  setAttachments((prev) => {
-    const next = new Map(prev)
-    const existing = next.get(key) || []
-    next.set(
-      key,
-      existing.filter((a) => a.id !== attachmentId),
-    )
-    return next
+  setSession(instanceId, sessionId, {
+    values: getAttachments(instanceId, sessionId).filter((attachment) => attachment.id !== attachmentId),
+    authoritative: true,
   })
 }
 
 function clearAttachments(instanceId: string, sessionId: string) {
-  const key = getSessionKey(instanceId, sessionId)
-  markAttachmentsAuthoritative(key)
-  setAttachments((prev) => {
-    const next = new Map(prev)
-    next.delete(key)
-    return next
-  })
+  setSession(instanceId, sessionId, { values: [], authoritative: true })
 }
 
 function deleteSessionAttachments(instanceId: string, sessionId: string) {
-  const key = getSessionKey(instanceId, sessionId)
-  setAttachments((prev) => {
-    if (!prev.has(key)) return prev
-    const next = new Map(prev)
-    next.delete(key)
-    return next
-  })
-  setAuthoritativeAttachmentKeys((prev) => {
-    if (!prev.has(key)) return prev
-    const next = new Set(prev)
-    next.delete(key)
-    return next
+  setSession(instanceId, sessionId)
+}
+
+function hydrateSessionAttachments(instanceId: string, sessionId: string, values: Attachment[]) {
+  setSession(instanceId, sessionId, {
+    values: [...values],
+    authoritative: attachments().get(getSessionKey(instanceId, sessionId))?.authoritative ?? false,
   })
 }
 
-function hydrateSessionAttachments(instanceId: string, sessionId: string, value: Attachment[]) {
-  const key = getSessionKey(instanceId, sessionId)
-  setAttachments((prev) => {
-    const next = new Map(prev)
-    if (value.length === 0) {
-      next.delete(key)
-    } else {
-      next.set(key, [...value])
+function clearInstanceAttachments(instanceId: string, valuesOnly = false) {
+  if (!instanceId) return
+  const prefix = `${instanceId}:`
+  setAttachments((previous) => {
+    const next = new Map(previous)
+    for (const [key, state] of next) {
+      if (!key.startsWith(prefix)) continue
+      if (valuesOnly && state.authoritative) next.set(key, { ...state, values: [] })
+      else next.delete(key)
     }
     return next
   })
 }
 
 function clearInstanceAttachmentValues(instanceId: string) {
-  if (!instanceId) return
-  const prefix = `${instanceId}:`
-  setAttachments((prev) => {
-    const next = new Map(prev)
-    let changed = false
-    for (const key of next.keys()) {
-      if (!key.startsWith(prefix)) continue
-      next.delete(key)
-      changed = true
-    }
-    return changed ? next : prev
-  })
-}
-
-function clearInstanceAttachmentAuthority(instanceId: string) {
-  if (!instanceId) return
-  const prefix = `${instanceId}:`
-  setAuthoritativeAttachmentKeys((prev) => {
-    const next = new Set([...prev].filter((key) => !key.startsWith(prefix)))
-    return next.size === prev.size ? prev : next
-  })
-}
-
-function clearInstanceAttachments(instanceId: string) {
-  clearInstanceAttachmentValues(instanceId)
-  clearInstanceAttachmentAuthority(instanceId)
+  clearInstanceAttachments(instanceId, true)
 }
 
 export {

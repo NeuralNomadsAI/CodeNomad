@@ -6,88 +6,79 @@ import type { ClientStateManager } from "./client-state"
 import type { CliProcessManager } from "./process-manager"
 import type { WindowStateTracker } from "./window-state"
 
-function createHarness(options: { rendererFlush?: () => Promise<unknown>; timeoutMs?: number } = {}) {
-  const handlers = new Map<string, (event?: { preventDefault(): void }) => void>()
-  let nativeFlushes = 0
-  let rendererFlushes = 0
-  let primaryReleases = 0
-  let cliStops = 0
+const tick = () => new Promise((resolve) => setImmediate(resolve))
+function harness(options: { flush?: () => Promise<unknown>; timeout?: number; otherWindow?: boolean } = {}) {
+  const windows = new Map<string, (event?: { preventDefault(): void }) => void>()
+  const appEvents = new Map<string, (event?: { preventDefault(): void }) => void>()
+  const calls: string[] = []
   let exits = 0
   const window = {
-    on: (event: string, handler: () => void) => {
-      handlers.set(event, handler)
-    },
+    on: (name: string, handler: (event?: { preventDefault(): void }) => void) => windows.set(name, handler),
     isDestroyed: () => false,
-    close: () => {},
-    webContents: {
-      isDestroyed: () => false,
-      getURL: () => "http://127.0.0.1:43123/workspace",
-      executeJavaScript: () => {
-        rendererFlushes += 1
-        return options.rendererFlush?.() ?? Promise.resolve()
-      },
-    },
+    close: () => { calls.push("close"); windows.get("close")?.({ preventDefault: () => assert.fail("approved close prevented") }) },
+    webContents: { isDestroyed: () => false, getURL: () => "http://127.0.0.1:43123/workspace", executeJavaScript: () => { calls.push("renderer"); return options.flush?.() ?? Promise.resolve() } },
   } as unknown as BrowserWindow
-  const app = { on: () => {}, quit: () => {}, exit: () => { exits += 1 } } as unknown as App
-  const clientStateManager = {
-    isPrimary: true,
-    drainAndReleasePrimary: async () => { primaryReleases += 1 },
-  } as ClientStateManager
-  const cliManager = { stop: async () => { cliStops += 1 } } as unknown as CliProcessManager
-  const lifecycle = new ClientStateLifecycle({
-    app,
-    clientStateManager,
-    cliManager,
-    getMainWindow: () => window,
-    getAllWindows: () => [window],
-    getAllowedRendererOrigins: () => ["http://127.0.0.1:43123"],
-    isTrustedRendererOrigin: () => true,
-    windowsSessionEndFlushTimeoutMs: options.timeoutMs,
-    rendererFlushTimeoutMs: options.timeoutMs === undefined ? undefined : options.timeoutMs * 2,
-    isWindows: true,
-  })
-  const tracker = { flush: async () => { nativeFlushes += 1 } } as unknown as WindowStateTracker
-  lifecycle.attachMainWindow(window, tracker)
-  return {
-    handlers,
-    lifecycle,
-    getNativeFlushes: () => nativeFlushes,
-    getRendererFlushes: () => rendererFlushes,
-    getPrimaryReleases: () => primaryReleases,
-    getCliStops: () => cliStops,
-    getExits: () => exits,
-  }
+  const other = { isDestroyed: () => false } as BrowserWindow
+  const app = { on: (name: string, handler: never) => appEvents.set(name, handler), quit: () => calls.push("quit"), exit: () => { exits++ } } as unknown as App
+  const manager = { isPrimary: true, flush: async () => {}, drainAndReleasePrimary: async () => { calls.push("release") } } as ClientStateManager
+  const cli = { stop: async () => { calls.push("stop") } } as unknown as CliProcessManager
+  const lifecycle = new ClientStateLifecycle({ app, clientStateManager: manager, cliManager: cli, getMainWindow: () => window, getAllWindows: () => options.otherWindow ? [window, other] : [window], getAllowedRendererOrigins: () => ["http://127.0.0.1:43123"], isTrustedRendererOrigin: () => true, windowsSessionEndFlushTimeoutMs: options.timeout, rendererFlushTimeoutMs: options.timeout && options.timeout * 2, isWindows: true })
+  lifecycle.attachMainWindow(window, { flush: async () => { calls.push("native") } } as unknown as WindowStateTracker)
+  lifecycle.registerAppEvents()
+  const close = () => { let prevented = false; windows.get("close")?.({ preventDefault: () => { prevented = true } }); return prevented }
+  return { appEvents, calls, close, exits: () => exits, lifecycle, window, windows }
 }
 
-test("Windows session termination flushes renderer and native client state once", async () => {
-  const harness = createHarness()
-
-  let prevented = false
-  harness.handlers.get("query-session-end")?.({ preventDefault: () => { prevented = true } })
-  harness.handlers.get("session-end")?.()
-  await (harness.lifecycle as any).windowsSessionEndFlush
-  await new Promise((resolve) => setImmediate(resolve))
-
-  assert.equal(prevented, true)
-  assert.equal(harness.getRendererFlushes(), 1)
-  assert.equal(harness.getNativeFlushes(), 1)
-  assert.equal(harness.getPrimaryReleases(), 1)
-  assert.equal(harness.getCliStops(), 1)
-  assert.equal(harness.getExits(), 1)
+test("close flushes renderer/native once before approval, even when repeated or renderer fails", async (t) => {
+  await t.test("ordinary", async () => {
+    const h = harness({ otherWindow: true })
+    assert.equal(h.close(), true)
+    await tick()
+    assert.deepEqual(h.calls, ["renderer", "native", "close"])
+  })
+  await t.test("coalesced", async () => {
+    let release!: () => void
+    const h = harness({ otherWindow: true, flush: () => new Promise<void>((resolve) => { release = resolve }) })
+    assert.equal(h.close(), true); assert.equal(h.close(), true)
+    assert.deepEqual(h.calls, ["renderer"])
+    release(); await tick()
+    assert.deepEqual(h.calls, ["renderer", "native", "close"])
+  })
+  await t.test("renderer failure", async () => {
+    const h = harness({ otherWindow: true, flush: async () => { throw new Error("failed") } })
+    assert.equal(h.close(), true); await tick()
+    assert.deepEqual(h.calls, ["renderer", "native", "close"])
+  })
 })
 
-test("Windows session termination flush is globally bounded", async () => {
-  const harness = createHarness({ rendererFlush: () => new Promise(() => {}), timeoutMs: 20 })
-  const startedAt = Date.now()
+test("late old-window detach preserves replacement tracker during shutdown", async () => {
+  const h = harness()
+  const replacement = { on: () => {} } as unknown as BrowserWindow
+  h.lifecycle.attachMainWindow(replacement, { flush: async () => { h.calls.push("replacement-native") } } as unknown as WindowStateTracker)
+  h.lifecycle.detachMainWindow(h.window)
+  h.appEvents.get("before-quit")?.({ preventDefault: () => {} })
+  await (h.lifecycle as any).shutdown
+  assert.deepEqual(h.calls, ["renderer", "replacement-native", "release", "stop"])
+})
 
-  harness.handlers.get("query-session-end")?.({ preventDefault: () => {} })
-  await (harness.lifecycle as any).windowsSessionEndFlush
-  await new Promise((resolve) => setImmediate(resolve))
+test("Windows session end flushes once and exits", async () => {
+  const h = harness()
+  let prevented = false
+  h.windows.get("query-session-end")?.({ preventDefault: () => { prevented = true } })
+  h.windows.get("session-end")?.()
+  await (h.lifecycle as any).sessionEnd; await tick()
+  assert.equal(prevented, true)
+  assert.deepEqual(h.calls, ["renderer", "native", "release", "stop"])
+  assert.equal(h.exits(), 1)
+})
 
-  assert.ok(Date.now() - startedAt < 500)
-  assert.equal(harness.getRendererFlushes(), 1)
-  assert.equal(harness.getNativeFlushes(), 0)
-  assert.equal(harness.getPrimaryReleases(), 0)
-  assert.equal(harness.getCliStops(), 0)
-  assert.equal(harness.getExits(), 1)
+test("session end promotes and bounds an already-hung ordinary shutdown", async () => {
+  const h = harness({ flush: () => new Promise(() => {}), timeout: 20 })
+  const started = Date.now()
+  h.appEvents.get("before-quit")?.({ preventDefault: () => {} })
+  h.windows.get("query-session-end")?.({ preventDefault: () => {} })
+  await (h.lifecycle as any).sessionEnd; await tick()
+  assert.ok(Date.now() - started < 500)
+  assert.deepEqual(h.calls, ["renderer"])
+  assert.equal(h.exits(), 1)
 })

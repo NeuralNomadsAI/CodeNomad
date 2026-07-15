@@ -3,457 +3,207 @@ import { describe, it } from "node:test"
 
 import { createFileAttachment, createTextAttachment } from "../types/attachment.ts"
 import {
-  addAttachment,
-  clearInstanceAttachments,
+  addAttachment, clearInstanceAttachments, getAttachments, hydrateSessionAttachments, removeAttachment,
   getAuthoritativeAttachmentSessionIdsForInstance,
-  getAttachments,
-  hydrateSessionAttachments,
-  removeAttachment,
 } from "./attachments.ts"
 import { addInstance, clearReloadableInstanceState, removeInstance } from "./instances.ts"
 import {
-  activeParentSessionId,
-  activeSessionId,
-  clearActiveParentSession,
-  clearInstanceDraftPromptValues,
-  clearInstanceDraftPrompts,
-  clearInstanceDeletedSessionAuthority,
-  clearInstanceSessionSelection,
-  clearSessionDraftPrompt,
-  getAuthoritativeDraftSessionIdsForInstance,
-  getAuthoritativelyDeletedSessionIdsForInstance,
-  getSessionDraftPromptsForInstance,
-  hasAuthoritativeSessionSelection,
-  hydrateActiveSessionSelection,
-  hydrateSessionDraftPrompt,
-  setActiveParentSession,
-  setActiveSession,
-  setSessions,
-  setSessionDraftPrompt,
+  activeParentSessionId, activeSessionId, clearActiveParentSession, clearInstanceDraftPromptValues,
+  clearInstanceDraftPrompts, clearInstanceDeletedSessionAuthority, clearInstanceSessionSelection,
+  clearSessionDraftPrompt, getAuthoritativeDraftSessionIdsForInstance,
+  getAuthoritativelyDeletedSessionIdsForInstance, getSessionDraftPromptsForInstance,
+  hasAuthoritativeSessionSelection, hydrateActiveSessionSelection, hydrateSessionDraftPrompt,
+  setActiveParentSession, setActiveSession, setSessions, setSessionDraftPrompt,
 } from "./session-state.ts"
 import { removeSessionRuntimeState } from "./session-api.ts"
 import { handleSessionDeleted } from "./session-events.ts"
 import {
-  createRestorableSessionPreservation,
-  mapRestoredWorkspace,
-  mapRestoredWorkspaces,
-  markPreservedWorkspaceRemoved,
-  markPreservedWorkspaceReopened,
-  markRestoredTab,
-  mergeRestorableSessionState,
+  createRestorableSessionPreservation, markPreservedWorkspaceRemoved, markPreservedWorkspaceReopened,
+  mergeRestorableSessionState, recordRestoredTab,
 } from "./app-session-snapshot-merge.ts"
 import type { RestorableWorkspaceTabState } from "./client-state-codec.ts"
 import { onInstanceLifecycleAuthority } from "./instance-lifecycle-authority.ts"
 
+const absent = { tabs: [], activeTabIndex: -1 }
 function workspace(state: Partial<RestorableWorkspaceTabState> = {}): RestorableWorkspaceTabState {
+  return { kind: "workspace", folder: "/work", occurrence: 0, drafts: {}, attachments: {},
+    scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {}, ...state }
+}
+function instance(id: string, folder = "/work", status: "ready" | "error" = "ready") {
+  return { id, folder, port: 0, pid: 0, proxyPath: "", status, client: null }
+}
+function clearSessionState(instanceId: string) {
+  clearInstanceAttachments(instanceId)
+  clearInstanceDraftPrompts(instanceId)
+  clearInstanceDeletedSessionAuthority(instanceId)
+  clearInstanceSessionSelection(instanceId)
+  setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
+}
+function selectParentAndChild(instanceId: string) {
+  const parent = { id: "parent", instanceId, parentId: null, title: "Parent", status: "idle" }
+  const child = { id: "child", instanceId, parentId: "parent", title: "Child", status: "idle" }
+  setSessions((previous) => new Map(previous).set(instanceId, new Map<string, any>([["parent", parent], ["child", child]])))
+  setActiveParentSession(instanceId, "parent")
+  setActiveSession(instanceId, "child")
+}
+function preservationHarness(tabs: RestorableWorkspaceTabState[]) {
+  let value = createRestorableSessionPreservation({ tabs, activeTabIndex: 0 })
+  const stop = onInstanceLifecycleAuthority((event) => {
+    const descriptor = { runtimeTabId: `instance:${event.instanceId}`, folder: event.folder, occurrence: event.occurrence }
+    value = event.type === "removed"
+      ? markPreservedWorkspaceRemoved(value, descriptor)
+      : markPreservedWorkspaceReopened(value, descriptor)
+  })
   return {
-    kind: "workspace",
-    folder: "/work",
-    occurrence: 0,
-    drafts: {},
-    attachments: {},
-    scrollSnapshots: {},
-    unseenIdleSince: {},
-    generationRecovery: {},
-    ...state,
+    get value() { return value },
+    map(sourceIndex: number, instanceId: string, unavailable?: ReadonlySet<string>) {
+      recordRestoredTab(value, sourceIndex, `instance:${instanceId}`, unavailable)
+    },
+    close() { stop() },
   }
 }
 
 describe("instance runtime authority", () => {
   it("preserves pasted and file attachments with prompt content during rehydration cleanup", () => {
-    const instanceId = "rehydrate-unsent-attachments"
-    const sessionId = "draft-session"
+    const id = "rehydrate-unsent-attachments", sessionId = "draft-session"
     const pasted = createTextAttachment("pasted body", "pasted #1 (4 lines)", "paste-1.txt")
     const file = createFileAttachment("/work/notes.txt", "notes.txt", "text/plain", new TextEncoder().encode("notes"))
-    const prompt = "Review [pasted #1] and @notes.txt"
-
-    addAttachment(instanceId, sessionId, pasted)
-    addAttachment(instanceId, sessionId, file)
-    setSessionDraftPrompt(instanceId, sessionId, prompt)
-
-    clearReloadableInstanceState(instanceId)
-
-    assert.equal(getSessionDraftPromptsForInstance(instanceId)[sessionId], prompt)
-    assert.deepEqual(getAttachments(instanceId, sessionId), [pasted, file])
-
-    clearInstanceAttachments(instanceId)
-    clearInstanceDraftPrompts(instanceId)
+    addAttachment(id, sessionId, pasted); addAttachment(id, sessionId, file)
+    setSessionDraftPrompt(id, sessionId, "Review [pasted #1] and @notes.txt")
+    clearReloadableInstanceState(id)
+    assert.equal(getSessionDraftPromptsForInstance(id)[sessionId], "Review [pasted #1] and @notes.txt")
+    assert.deepEqual(getAttachments(id, sessionId), [pasted, file])
+    clearSessionState(id)
   })
 
-  it("removes attachment payloads and attachment authority on definitive session removal", () => {
-    const instanceId = "definitive-session-removal"
-    const sessionId = "deleted-session"
-    addAttachment(instanceId, sessionId, createTextAttachment("pasted", "pasted #1 (4 lines)", "paste.txt"))
-    addAttachment(
-      instanceId,
-      sessionId,
-      createFileAttachment("/work/file.txt", "file.txt", "text/plain", new TextEncoder().encode("file")),
-    )
-    setSessionDraftPrompt(instanceId, sessionId, "[pasted #1] @file.txt")
-
-    removeSessionRuntimeState(instanceId, sessionId)
-
-    assert.deepEqual(getAttachments(instanceId, sessionId), [])
-    assert.equal(getAuthoritativeAttachmentSessionIdsForInstance(instanceId).has(sessionId), false)
-    assert.equal(getSessionDraftPromptsForInstance(instanceId)[sessionId], undefined)
-    assert.equal(getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId), true)
-
-    clearInstanceAttachments(instanceId)
-    clearInstanceDraftPrompts(instanceId)
-    clearInstanceDeletedSessionAuthority(instanceId)
+  for (const test of [
+    { label: "direct definitive session removal", remove: removeSessionRuntimeState },
+    { label: "session.deleted event", remove: (id: string, sessionId: string) => handleSessionDeleted(id,
+      { type: "session.deleted", properties: { info: { id: sessionId } } }) },
+  ]) it(`removes attachment authority on ${test.label}`, () => {
+    const id = `authority-${test.label}`, sessionId = "deleted-session"
+    addAttachment(id, sessionId, createTextAttachment("pasted", "pasted #1", "paste.txt"))
+    setSessionDraftPrompt(id, sessionId, "[pasted #1]")
+    test.remove(id, sessionId)
+    assert.deepEqual(getAttachments(id, sessionId), [])
+    assert.equal(getAuthoritativeAttachmentSessionIdsForInstance(id).has(sessionId), false)
+    assert.equal(getSessionDraftPromptsForInstance(id)[sessionId], undefined)
+    assert.equal(getAuthoritativelyDeletedSessionIdsForInstance(id).has(sessionId), true)
+    clearSessionState(id)
   })
 
-  it("applies definitive session cleanup for session.deleted events", () => {
-    const instanceId = "session-deleted-event"
-    const sessionId = "event-session"
-    addAttachment(instanceId, sessionId, createTextAttachment("event paste", "pasted #1 (4 lines)", "paste.txt"))
-
-    handleSessionDeleted(instanceId, {
-      type: "session.deleted",
-      properties: { info: { id: sessionId } },
-    })
-
-    assert.deepEqual(getAttachments(instanceId, sessionId), [])
-    assert.equal(getAuthoritativeAttachmentSessionIdsForInstance(instanceId).has(sessionId), false)
-    assert.equal(getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId), true)
-
-    clearInstanceAttachments(instanceId)
-    clearInstanceDraftPrompts(instanceId)
-    clearInstanceDeletedSessionAuthority(instanceId)
+  for (const test of [
+    { label: "retained parent when active child is deleted", deleted: "child", parent: "parent", active: "parent" },
+    { label: "no selection when selected parent is deleted", deleted: "parent", parent: undefined, active: undefined },
+  ] as const) it(`selects ${test.label}`, () => {
+    const id = `selection-${test.deleted}`
+    selectParentAndChild(id)
+    removeSessionRuntimeState(id, test.deleted)
+    assert.equal(activeParentSessionId().get(id), test.parent)
+    assert.equal(activeSessionId().get(id), test.active)
+    clearSessionState(id)
   })
 
-  it("selects the retained parent when the active child is deleted remotely", () => {
-    const instanceId = "deleted-active-child"
-    const parentId = "parent"
-    const childId = "child"
-    const parent = { id: parentId, instanceId, parentId: null, title: "Parent", status: "idle" }
-    const child = { id: childId, instanceId, parentId, title: "Child", status: "idle" }
-    setSessions((prev) => {
-      const next = new Map(prev)
-      next.set(instanceId, new Map<string, any>([[parentId, parent], [childId, child]]))
-      return next
-    })
-    setActiveParentSession(instanceId, parentId)
-    setActiveSession(instanceId, childId)
-
-    handleSessionDeleted(instanceId, {
-      type: "session.deleted",
-      properties: { info: { id: childId } },
-    })
-
-    assert.equal(activeParentSessionId().get(instanceId), parentId)
-    assert.equal(activeSessionId().get(instanceId), parentId)
-
-    clearInstanceSessionSelection(instanceId)
-    clearInstanceDeletedSessionAuthority(instanceId)
-    setSessions((prev) => {
-      const next = new Map(prev)
-      next.delete(instanceId)
-      return next
-    })
-  })
-
-  it("clears an active child selection when its selected parent is deleted", () => {
-    const instanceId = "deleted-selected-parent"
-    const parentId = "parent"
-    const childId = "child"
-    const parent = { id: parentId, instanceId, parentId: null, title: "Parent", status: "idle" }
-    const child = { id: childId, instanceId, parentId, title: "Child", status: "idle" }
-    setSessions((prev) => {
-      const next = new Map(prev)
-      next.set(instanceId, new Map<string, any>([[parentId, parent], [childId, child]]))
-      return next
-    })
-    setActiveParentSession(instanceId, parentId)
-    setActiveSession(instanceId, childId)
-
-    removeSessionRuntimeState(instanceId, parentId)
-
-    assert.equal(activeParentSessionId().has(instanceId), false)
-    assert.equal(activeSessionId().has(instanceId), false)
-
-    clearInstanceSessionSelection(instanceId)
-    clearInstanceDeletedSessionAuthority(instanceId)
-    setSessions((prev) => {
-      const next = new Map(prev)
-      next.delete(instanceId)
-      return next
-    })
-  })
-
-  it("tombstones failed hydration preservation only after explicit instance removal", () => {
-    const instanceId = "failed-hydration-removal"
-    let preservation = createRestorableSessionPreservation({
-      tabs: [workspace({ folder: "/failed", drafts: { missing: "retry me" } })],
-      activeTabIndex: 0,
-    })
-    const stop = onInstanceLifecycleAuthority((event) => {
-      const descriptor = {
-        runtimeTabId: `instance:${event.instanceId}`,
-        folder: event.folder,
-        occurrence: event.occurrence,
-      }
-      preservation = event.type === "removed"
-        ? markPreservedWorkspaceRemoved(preservation, descriptor)
-        : markPreservedWorkspaceReopened(preservation, descriptor)
-    })
-
-    addInstance({
-      id: instanceId,
-      folder: "/failed",
-      port: 0,
-      pid: 0,
-      proxyPath: "",
-      status: "error",
-      client: null,
-    })
-    preservation = mapRestoredWorkspace(preservation, 0, `instance:${instanceId}`)
-
+  it("tombstones failed hydration only after removal and reopens it as pending", () => {
+    const id = "failed-hydration-removal"
+    const harness = preservationHarness([workspace({ folder: "/failed", drafts: { missing: "retry me" } })])
+    addInstance(instance(id, "/failed", "error")); harness.map(0, id)
     try {
-      const absent = { tabs: [], activeTabIndex: -1 }
-      assert.equal(mergeRestorableSessionState(absent, preservation).tabs.length, 1)
-
-      removeInstance(instanceId)
-      assert.equal(mergeRestorableSessionState(absent, preservation).tabs.length, 0)
-      assert.equal(preservation.restoredWorkspaceSourceIndexes.size, 0)
-
-      addInstance({
-        id: `${instanceId}-reopened`,
-        folder: "/failed",
-        port: 0,
-        pid: 0,
-        proxyPath: "",
-        status: "ready",
-        client: null,
-      })
-      assert.equal(mergeRestorableSessionState(absent, preservation).tabs.length, 1)
-      assert.equal(preservation.restoredWorkspaceSourceIndexes.size, 0)
+      assert.equal(mergeRestorableSessionState(absent, harness.value).tabs.length, 1)
+      removeInstance(id)
+      assert.equal(mergeRestorableSessionState(absent, harness.value).tabs.length, 0)
+      assert.equal(harness.value.results[0]?.status, "removed")
+      addInstance(instance(`${id}-reopened`, "/failed"))
+      assert.equal(mergeRestorableSessionState(absent, harness.value).tabs.length, 1)
+      assert.equal(harness.value.results[0]?.status, "pending")
     } finally {
-      stop()
-      removeInstance(instanceId, { authoritative: false })
-      removeInstance(`${instanceId}-reopened`, { authoritative: false })
+      harness.close(); removeInstance(id, { authoritative: false }); removeInstance(`${id}-reopened`, { authoritative: false })
     }
   })
 
-  it("tombstones each mapped failed-hydration duplicate after sequential instance closes", () => {
-    const firstId = "failed-hydration-duplicate-first"
-    const secondId = "failed-hydration-duplicate-second"
-    let preservation = createRestorableSessionPreservation({
-      tabs: [
-        workspace({ folder: "/duplicate", occurrence: 0, drafts: { first: "retry first" } }),
-        workspace({ folder: "/duplicate", occurrence: 1, drafts: { second: "retry second" } }),
-      ],
-      activeTabIndex: 0,
-    })
-    const stop = onInstanceLifecycleAuthority((event) => {
-      const descriptor = {
-        runtimeTabId: `instance:${event.instanceId}`,
-        folder: event.folder,
-        occurrence: event.occurrence,
-      }
-      preservation = event.type === "removed"
-        ? markPreservedWorkspaceRemoved(preservation, descriptor)
-        : markPreservedWorkspaceReopened(preservation, descriptor)
-    })
-
-    addInstance({
-      id: firstId,
-      folder: "/duplicate",
-      port: 0,
-      pid: 0,
-      proxyPath: "",
-      status: "error",
-      client: null,
-    })
-    addInstance({
-      id: secondId,
-      folder: "/duplicate",
-      port: 0,
-      pid: 0,
-      proxyPath: "",
-      status: "error",
-      client: null,
-    })
-    preservation = mapRestoredWorkspace(preservation, 0, `instance:${firstId}`)
-    preservation = mapRestoredWorkspace(preservation, 1, `instance:${secondId}`)
-
+  it("tombstones each mapped failed-hydration duplicate after sequential closes", () => {
+    const ids = ["duplicate-first", "duplicate-second"]
+    const harness = preservationHarness(ids.map((id, occurrence) =>
+      workspace({ folder: "/duplicate", occurrence, drafts: { [id]: `retry ${id}` } })))
+    ids.forEach((id, index) => { addInstance(instance(id, "/duplicate", "error")); harness.map(index, id) })
     try {
-      removeInstance(firstId)
-      removeInstance(secondId)
-
-      assert.deepEqual(
-        mergeRestorableSessionState({ tabs: [], activeTabIndex: -1 }, preservation),
-        { tabs: [], activeTabIndex: -1 },
-      )
-      assert.equal(preservation.restoredWorkspaceSourceIndexes.size, 0)
-    } finally {
-      stop()
-      removeInstance(firstId, { authoritative: false })
-      removeInstance(secondId, { authoritative: false })
-    }
+      ids.forEach((id) => removeInstance(id))
+      assert.deepEqual(mergeRestorableSessionState(absent, harness.value), absent)
+      assert.deepEqual(harness.value.results.map(({ status }) => status), ["removed", "removed"])
+    } finally { harness.close(); ids.forEach((id) => removeInstance(id, { authoritative: false })) }
   })
 
-  it("keeps source zero when failed-hydration sources one and two close around occurrence renumbering", () => {
-    for (const closeOrder of [["middle", "last"], ["last", "middle"]] as const) {
-      const suffix = closeOrder.join("-")
-      const ids = {
-        first: `failed-hydration-three-first-${suffix}`,
-        middle: `failed-hydration-three-middle-${suffix}`,
-        last: `failed-hydration-three-last-${suffix}`,
-      }
-      let preservation = createRestorableSessionPreservation({
-        tabs: [
-          workspace({ folder: "/three", occurrence: 0, drafts: { first: "keep open" } }),
-          workspace({ folder: "/three", occurrence: 1, drafts: { middle: "close middle" } }),
-          workspace({ folder: "/three", occurrence: 2, drafts: { last: "close last" } }),
-        ],
-        activeTabIndex: 0,
-      })
-      const stop = onInstanceLifecycleAuthority((event) => {
-        const descriptor = {
-          runtimeTabId: `instance:${event.instanceId}`,
-          folder: event.folder,
-          occurrence: event.occurrence,
-        }
-        preservation = event.type === "removed"
-          ? markPreservedWorkspaceRemoved(preservation, descriptor)
-          : markPreservedWorkspaceReopened(preservation, descriptor)
-      })
-
-      for (const id of [ids.first, ids.middle, ids.last]) {
-        addInstance({
-          id,
-          folder: "/three",
-          port: 0,
-          pid: 0,
-          proxyPath: "",
-          status: "error",
-          client: null,
-        })
-      }
-      preservation = mapRestoredWorkspaces(preservation, [
-        { sourceIndex: 0, runtimeTabId: `instance:${ids.first}` },
-        { sourceIndex: 1, runtimeTabId: `instance:${ids.middle}` },
-        { sourceIndex: 2, runtimeTabId: `instance:${ids.last}` },
+  for (const closeOrder of [["middle", "last"], ["last", "middle"]] as const) {
+    it(`keeps source zero across occurrence renumbering when closing ${closeOrder.join(" then ")}`, () => {
+      const ids = { first: `three-first-${closeOrder[0]}`, middle: `three-middle-${closeOrder[0]}`, last: `three-last-${closeOrder[0]}` }
+      const harness = preservationHarness([
+        workspace({ folder: "/three", occurrence: 0, drafts: { first: "keep open" } }),
+        workspace({ folder: "/three", occurrence: 1, drafts: { middle: "close middle" } }),
+        workspace({ folder: "/three", occurrence: 2, drafts: { last: "close last" } }),
       ])
-
+      Object.values(ids).forEach((id, index) => { addInstance(instance(id, "/three", "error")); harness.map(index, id) })
       try {
-        for (const position of closeOrder) removeInstance(ids[position])
-
-        assert.deepEqual([...preservation.removedWholeTabIndexes].sort(), [1, 2])
+        closeOrder.forEach((position) => removeInstance(ids[position]))
+        assert.deepEqual(harness.value.results.flatMap((result, index) => result.status === "removed" ? [index] : []), [1, 2])
         const merged = mergeRestorableSessionState(
-          { tabs: [workspace({ folder: "/three", occurrence: 0 })], activeTabIndex: 0 },
-          preservation,
+          { tabs: [workspace({ folder: "/three" })], activeTabIndex: 0 }, harness.value,
           { currentTabIds: [`instance:${ids.first}`] },
         )
-        assert.equal(merged.tabs.length, 1)
-        assert.equal(merged.tabs[0]?.kind === "workspace" ? merged.tabs[0].drafts.first : undefined, "keep open")
-        assert.equal(merged.tabs[0]?.kind === "workspace" ? merged.tabs[0].drafts.middle : undefined, undefined)
-        assert.equal(merged.tabs[0]?.kind === "workspace" ? merged.tabs[0].drafts.last : undefined, undefined)
-      } finally {
-        stop()
-        removeInstance(ids.first, { authoritative: false })
-        removeInstance(ids.middle, { authoritative: false })
-        removeInstance(ids.last, { authoritative: false })
-      }
-    }
-  })
+        const drafts = merged.tabs[0]?.kind === "workspace" ? merged.tabs[0].drafts : {}
+        assert.deepEqual(drafts, { first: "keep open" })
+      } finally { harness.close(); Object.values(ids).forEach((id) => removeInstance(id, { authoritative: false })) }
+    })
+  }
 
   it("retains an explicit draft-clear tombstone through rehydrate value cleanup", () => {
-    const instanceId = "draft-rehydrate-authority"
-    const sessionId = "missing-session"
-    const preservation = createRestorableSessionPreservation({
-      tabs: [workspace({ drafts: { [sessionId]: "preserved draft" } })],
-      activeTabIndex: 0,
+    const id = "draft-rehydrate-authority", sessionId = "missing-session"
+    const preserved = createRestorableSessionPreservation({
+      tabs: [workspace({ drafts: { [sessionId]: "preserved draft" } })], activeTabIndex: 0,
     })
-
-    hydrateSessionDraftPrompt(instanceId, sessionId, "restored draft")
-    clearSessionDraftPrompt(instanceId, sessionId)
-    clearInstanceDraftPromptValues(instanceId)
-
-    const authority = getAuthoritativeDraftSessionIdsForInstance(instanceId)
+    hydrateSessionDraftPrompt(id, sessionId, "restored draft"); clearSessionDraftPrompt(id, sessionId); clearInstanceDraftPromptValues(id)
+    const authority = getAuthoritativeDraftSessionIdsForInstance(id)
     assert.equal(authority.has(sessionId), true)
-    assert.deepEqual(getSessionDraftPromptsForInstance(instanceId), {})
-
-    const merged = mergeRestorableSessionState(
-      { tabs: [workspace()], activeTabIndex: 0 },
-      preservation,
-      {
-        currentTabIds: [`instance:${instanceId}`],
-        currentTabAuthorities: [{ drafts: authority }],
-      },
-    )
+    assert.deepEqual(getSessionDraftPromptsForInstance(id), {})
+    const merged = mergeRestorableSessionState({ tabs: [workspace()], activeTabIndex: 0 }, preserved,
+      { currentTabIds: [`instance:${id}`], currentTabAuthorities: [{ drafts: authority }] })
     assert.deepEqual(merged.tabs[0]?.kind === "workspace" ? merged.tabs[0].drafts : undefined, {})
-
-    clearInstanceDraftPrompts(instanceId)
-    assert.equal(getAuthoritativeDraftSessionIdsForInstance(instanceId).has(sessionId), false)
+    clearInstanceDraftPrompts(id)
+    assert.equal(getAuthoritativeDraftSessionIdsForInstance(id).has(sessionId), false)
   })
 
   it("keeps an explicitly closed selection at none and clears authority on final removal", () => {
-    const instanceId = "selection-close-authority"
-    addInstance({
-      id: instanceId,
-      folder: "/work",
-      port: 0,
-      pid: 0,
-      proxyPath: "",
-      status: "ready",
-      client: null,
-    })
-    const preservation = markRestoredTab(
-      createRestorableSessionPreservation({
-        tabs: [workspace({
-          activeParentSessionId: "missing-parent",
-          activeSessionId: "missing-child",
-        })],
-        activeTabIndex: 0,
-      }),
-      0,
-      new Set(["missing-parent", "missing-child"]),
-      `instance:${instanceId}`,
-    )
-
-    hydrateActiveSessionSelection(instanceId, null, null)
-    assert.equal(hasAuthoritativeSessionSelection(instanceId), false)
-
-    setActiveParentSession(instanceId, "current-session")
-    clearActiveParentSession(instanceId)
-    hydrateActiveSessionSelection(instanceId, "missing-parent", "missing-child")
-    assert.equal(activeParentSessionId().has(instanceId), false)
-    assert.equal(activeSessionId().has(instanceId), false)
-    assert.equal(hasAuthoritativeSessionSelection(instanceId), true)
-
-    const merged = mergeRestorableSessionState(
-      { tabs: [workspace()], activeTabIndex: 0 },
-      preservation,
-      {
-        currentTabIds: [`instance:${instanceId}`],
-        currentTabAuthorities: [{ sessionSelection: hasAuthoritativeSessionSelection(instanceId) }],
-      },
-    )
+    const id = "selection-close-authority"
+    addInstance(instance(id))
+    const preserved = createRestorableSessionPreservation({ tabs: [workspace({
+      activeParentSessionId: "missing-parent", activeSessionId: "missing-child",
+    })], activeTabIndex: 0 })
+    recordRestoredTab(preserved, 0, `instance:${id}`, new Set(["missing-parent", "missing-child"]))
+    hydrateActiveSessionSelection(id, null, null)
+    assert.equal(hasAuthoritativeSessionSelection(id), false)
+    setActiveParentSession(id, "current-session"); clearActiveParentSession(id)
+    hydrateActiveSessionSelection(id, "missing-parent", "missing-child")
+    assert.equal(activeParentSessionId().has(id), false); assert.equal(activeSessionId().has(id), false)
+    assert.equal(hasAuthoritativeSessionSelection(id), true)
+    const merged = mergeRestorableSessionState({ tabs: [workspace()], activeTabIndex: 0 }, preserved,
+      { currentTabIds: [`instance:${id}`], currentTabAuthorities: [{ sessionSelection: true }] })
     const tab = merged.tabs[0]
     assert.equal(tab?.kind === "workspace" ? tab.activeParentSessionId : undefined, undefined)
     assert.equal(tab?.kind === "workspace" ? tab.activeSessionId : undefined, undefined)
-
-    clearSessionDraftPrompt(instanceId, "removed-session")
-    const attachment = createTextAttachment("removed", "pasted #1 (1 line)", "removed.txt")
-    hydrateSessionAttachments(instanceId, "removed-session", [attachment])
-    removeAttachment(instanceId, "removed-session", attachment.id)
-
-    removeInstance(instanceId)
-    assert.equal(hasAuthoritativeSessionSelection(instanceId), false)
-    assert.equal(getAuthoritativeDraftSessionIdsForInstance(instanceId).size, 0)
-    assert.equal(getAuthoritativeAttachmentSessionIdsForInstance(instanceId).size, 0)
+    clearSessionDraftPrompt(id, "removed-session")
+    const attachment = createTextAttachment("removed", "pasted #1", "removed.txt")
+    hydrateSessionAttachments(id, "removed-session", [attachment]); removeAttachment(id, "removed-session", attachment.id)
+    removeInstance(id)
+    assert.equal(hasAuthoritativeSessionSelection(id), false)
+    assert.equal(getAuthoritativeDraftSessionIdsForInstance(id).size, 0)
+    assert.equal(getAuthoritativeAttachmentSessionIdsForInstance(id).size, 0)
   })
 
   it("marks info selection as authoritative without restore hydration doing so", () => {
-    const instanceId = "info-selection-authority"
-    hydrateActiveSessionSelection(instanceId, null, "info")
-    assert.equal(hasAuthoritativeSessionSelection(instanceId), false)
-
-    setActiveSession(instanceId, "info")
-    assert.equal(hasAuthoritativeSessionSelection(instanceId), true)
-
-    clearInstanceSessionSelection(instanceId)
+    const id = "info-selection-authority"
+    hydrateActiveSessionSelection(id, null, "info")
+    assert.equal(hasAuthoritativeSessionSelection(id), false)
+    setActiveSession(id, "info")
+    assert.equal(hasAuthoritativeSessionSelection(id), true)
+    clearInstanceSessionSelection(id)
   })
 })

@@ -4,25 +4,32 @@ import { flushRendererClientStateBeforeShutdown } from "./renderer-client-state-
 
 interface ClientStateNavigationDependencies {
   clientStateManager: Pick<ClientStateManager, "isPrimary">
-  getWindow(): BrowserWindow | null
   isTrustedOrigin(url: string): boolean
   reportFlushError(error: unknown): void
 }
 
 export class ClientStateNavigationController {
   private queue: Promise<void> = Promise.resolve()
+  private generation = 0
 
-  constructor(private readonly dependencies: ClientStateNavigationDependencies) {}
+  constructor(
+    private readonly window: BrowserWindow,
+    private readonly dependencies: ClientStateNavigationDependencies,
+  ) {}
 
-  navigate(operation: (window: BrowserWindow) => void | Promise<void>): Promise<void> {
-    const request = this.queue.catch(() => {}).then(() => this.performNavigation(operation))
+  navigate(operation: (window: BrowserWindow, generation: number) => void | Promise<void>): Promise<void> {
+    const generation = ++this.generation
+    const request = this.queue.catch(() => {}).then(() => this.performNavigation(operation, generation))
     this.queue = request
     return request
   }
 
-  private async performNavigation(operation: (window: BrowserWindow) => void | Promise<void>): Promise<void> {
-    const window = this.dependencies.getWindow()
-    if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return
+  private async performNavigation(
+    operation: (window: BrowserWindow, generation: number) => void | Promise<void>,
+    generation: number,
+  ): Promise<void> {
+    const { window } = this
+    if (window.isDestroyed() || window.webContents.isDestroyed()) return
 
     try {
       await flushRendererClientStateBeforeShutdown(
@@ -35,6 +42,15 @@ export class ClientStateNavigationController {
     }
 
     if (window.isDestroyed() || window.webContents.isDestroyed()) return
-    await operation(window)
+    await operation(window, generation)
   }
+}
+
+export function shouldResetRendererAccessTokenForNavigation(
+  url: string,
+  isInPlace: boolean,
+  isMainFrame: boolean,
+  isTrustedOrigin: (url: string) => boolean,
+): boolean {
+  return isMainFrame && !isInPlace && isTrustedOrigin(url)
 }

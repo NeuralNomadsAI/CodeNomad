@@ -1,4 +1,4 @@
-import { app, BrowserView, BrowserWindow, nativeImage, screen, session, shell } from "electron"
+import { app, BrowserView, BrowserWindow, ipcMain, nativeImage, screen, session, shell } from "electron"
 import http from "node:http"
 import https from "node:https"
 import { existsSync, mkdirSync, rmSync } from "fs"
@@ -11,6 +11,7 @@ import { ClientStateLifecycle } from "./client-state-lifecycle"
 import { ClientStateNavigationController } from "./client-state-navigation"
 import { setupCliIPC } from "./ipc"
 import { configureMediaPermissionHandlers, isAllowedRendererOrigin } from "./permissions"
+import { resolveConfiguredRendererOrigins } from "./renderer-origin"
 import { CliProcessManager } from "./process-manager"
 import {
   clampWindowBounds,
@@ -113,6 +114,12 @@ const clientStateLifecycle = new ClientStateLifecycle({
   getAllowedRendererOrigins,
   isTrustedRendererOrigin: isAllowedRendererOrigin,
 })
+const bindClientStateWindow = setupClientStateIPC(
+  ipcMain,
+  clientStateManager,
+  () => mainWindow,
+  getAllowedRendererOrigins,
+)
 
 if (isMac) {
   app.commandLine.appendSwitch("disable-spell-checking")
@@ -173,19 +180,18 @@ function resolveLoadingFilePath() {
   return join(app.getAppPath(), "dist/renderer/loading.html")
 }
 
-function loadLoadingScreen(window: BrowserWindow) {
+async function loadLoadingScreen(window: BrowserWindow): Promise<boolean> {
   const target = resolveLoadingTarget()
-  const loader =
-    target.type === "url"
-      ? window.loadURL(target.source)
-      : window.loadFile(target.source)
-
-  return loader.catch((error) => {
+  try {
+    await (target.type === "url" ? window.loadURL(target.source) : window.loadFile(target.source))
+    return true
+  } catch (error) {
     if (isIgnorableNavigationError(error)) {
-      return
+      return false
     }
     console.error("[cli] failed to load loading screen:", error)
-  })
+    return false
+  }
 }
 
 function isIgnorableNavigationError(error: unknown): boolean {
@@ -205,16 +211,11 @@ function getAllowedRendererOrigins(window?: BrowserWindow | null): string[] {
       origins.add(origin)
     }
   }
-  const rendererCandidates = [currentCliUrl, process.env.VITE_DEV_SERVER_URL, process.env.ELECTRON_RENDERER_URL]
-  for (const candidate of rendererCandidates) {
-    if (!candidate) {
-      continue
-    }
-    try {
-      origins.add(new URL(candidate).origin)
-    } catch (error) {
-      console.warn("[cli] failed to parse origin for", candidate, error)
-    }
+  for (const origin of resolveConfiguredRendererOrigins(currentCliUrl, app.isPackaged, [
+    process.env.VITE_DEV_SERVER_URL,
+    process.env.ELECTRON_RENDERER_URL,
+  ])) {
+    origins.add(origin)
   }
   return Array.from(origins)
 }
@@ -273,6 +274,21 @@ function setWindowAllowedOrigin(window: BrowserWindow, url: string) {
     remoteWindowOrigins.set(window.id, new Set([origin]))
   } catch (error) {
     console.warn("[cli] failed to store allowed origin", url, error)
+  }
+}
+
+function stageWindowAllowedOrigin(window: BrowserWindow, url: string): () => void {
+  const previous = remoteWindowOrigins.get(window.id)
+  try {
+    const origins = new Set(previous)
+    origins.add(new URL(url).origin)
+    remoteWindowOrigins.set(window.id, origins)
+  } catch (error) {
+    console.warn("[cli] failed to stage allowed origin", url, error)
+  }
+  return () => {
+    if (previous) remoteWindowOrigins.set(window.id, previous)
+    else remoteWindowOrigins.delete(window.id)
   }
 }
 
@@ -382,14 +398,16 @@ function createWindow() {
   })
 
   const window = mainWindow
-  const navigationController = new ClientStateNavigationController({
-    clientStateManager,
-    getWindow: () => mainWindow,
-    isTrustedOrigin: (url) => isAllowedRendererOrigin(url, getAllowedRendererOrigins(window)),
-    reportFlushError: (error) => {
-      console.warn("[client-state] renderer pre-navigation flush failed; continuing navigation", error)
+  const navigationController = new ClientStateNavigationController(
+    window,
+    {
+      clientStateManager,
+      isTrustedOrigin: (url) => isAllowedRendererOrigin(url, getAllowedRendererOrigins(window)),
+      reportFlushError: (error) => {
+        console.warn("[client-state] renderer pre-navigation flush failed; continuing navigation", error)
+      },
     },
-  })
+  )
   mainNavigationController = navigationController
 
   let windowStateTracker: WindowStateTracker | null = null
@@ -422,7 +440,7 @@ function createWindow() {
     },
   })
   setupCliIPC(window, cliManager)
-  setupClientStateIPC(window, clientStateManager, () => getAllowedRendererOrigins(window))
+  bindClientStateWindow(window)
   clientStateLifecycle.attachMainWindow(window, windowStateTracker)
 
   window.on("closed", () => {
@@ -454,19 +472,18 @@ function showLoadingScreen(force = false) {
   }
 
   const window = mainWindow
+  const wasShowingLoadingScreen = showingLoadingScreen
   showingLoadingScreen = true
   destroyPreloadingView()
-  currentCliUrl = null
   pendingCliUrl = null
-  const navigate = (target: BrowserWindow) => {
+  void mainNavigationController?.navigate(async (target) => {
+    if (!(await loadLoadingScreen(target))) {
+      showingLoadingScreen = wasShowingLoadingScreen
+      return
+    }
+    currentCliUrl = null
     clearWindowAllowedOrigin(target)
-    return loadLoadingScreen(target)
-  }
-  if (mainNavigationController) {
-    void mainNavigationController.navigate(navigate)
-  } else {
-    navigate(window)
-  }
+  })
 }
 
 function isBootstrapTokenUrl(url: string): boolean {
@@ -539,21 +556,23 @@ function finalizeCliSwap(url: string) {
     return
   }
 
-  const window = mainWindow
   const navigate = async (target: BrowserWindow) => {
+    const rollbackOrigin = stageWindowAllowedOrigin(target, url)
+    try {
+      await target.loadURL(url)
+    } catch (error) {
+      rollbackOrigin()
+      throw error
+    }
     showingLoadingScreen = false
     currentCliUrl = url
     setWindowAllowedOrigin(target, url)
     pendingCliUrl = null
-    await target.loadURL(url)
   }
-  const navigation = mainNavigationController
-    ? mainNavigationController.navigate(navigate)
-    : navigate(window)
-  void navigation.catch((error) => {
-    if (!isIgnorableNavigationError(error)) {
-      console.error("[cli] failed to load CLI view:", error)
-    }
+  void mainNavigationController?.navigate(navigate).then(() => {
+    if (cliManager.getStatus().state !== "ready") showLoadingScreen()
+  }).catch((error) => {
+    if (!isIgnorableNavigationError(error)) console.error("[cli] failed to load CLI view:", error)
   })
 }
 

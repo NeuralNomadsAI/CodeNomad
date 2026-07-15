@@ -140,21 +140,15 @@ export class WindowStateTracker {
   ) {
     this.desiredZoomFactor = normalizeZoomFactor(initialState?.zoomFactor)
 
+    for (const event of ["move", "resize", "maximize", "unmaximize", "enter-full-screen", "leave-full-screen"]) {
+      window.on(event as "move", () => this.scheduleSave())
+    }
     const scheduleSave = () => this.scheduleSave()
-    window.on("move", scheduleSave)
-    window.on("resize", scheduleSave)
-    window.on("maximize", scheduleSave)
-    window.on("unmaximize", scheduleSave)
-    window.on("enter-full-screen", scheduleSave)
-    window.on("leave-full-screen", scheduleSave)
     window.webContents.on("zoom-changed", scheduleSave)
     window.webContents.on("did-finish-load", () => {
       if (!window.webContents.isDestroyed()) {
         window.webContents.setZoomFactor(this.desiredZoomFactor)
       }
-    })
-    window.on("close", () => {
-      void this.saveNow()
     })
     window.on("closed", () => this.clearTimer())
   }

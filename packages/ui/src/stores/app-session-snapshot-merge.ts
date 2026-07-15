@@ -4,19 +4,15 @@ import type {
   RestorableWorkspaceTabState,
 } from "./client-state-codec"
 import { normalizeWorkspacePath } from "./app-session-reconciliation"
-
-export type PreservedTabState =
-  | { mode: "whole"; tab: RestorableTabState }
-  | { mode: "workspace-state"; tab: RestorableWorkspaceTabState }
-
+export interface RestoreTabResult {
+  status: "pending" | "restored" | "removed"
+  runtimeTabId?: string | null
+  unavailableSessionIds?: ReadonlySet<string>
+}
 export interface RestorableSessionPreservation {
   sourceTabs: readonly RestorableTabState[]
-  preservedTabs: readonly (PreservedTabState | null)[]
-  restoredTabIds: readonly (string | null)[]
-  restoredWorkspaceSourceIndexes: ReadonlyMap<string, number>
-  removedWholeTabIndexes: ReadonlySet<number>
+  results: RestoreTabResult[]
 }
-
 export interface RestorableWorkspaceRuntimeAuthority {
   drafts?: ReadonlySet<string>
   attachments?: ReadonlySet<string>
@@ -26,211 +22,103 @@ export interface RestorableWorkspaceRuntimeAuthority {
   deletedSessions?: ReadonlySet<string>
   sessionSelection?: boolean
 }
-
-export interface RestoredWorkspaceMapping {
-  sourceIndex: number
-  runtimeTabId: string
+interface TabIdentity {
+  key: string
+  occurrence: number
+  value: string
 }
-
+function mapTabIdentities(tabs: readonly RestorableTabState[]): TabIdentity[] {
+  const nextOccurrences = new Map<string, number>()
+  return tabs.map((tab) => {
+    const key = tab.kind === "workspace"
+      ? `workspace:${normalizeWorkspacePath(tab.folder)}`
+      : `sidecar:${tab.sidecarId}`
+    const inferred = nextOccurrences.get(key) ?? 0
+    const occurrence = tab.kind === "workspace" ? tab.occurrence ?? inferred : inferred
+    nextOccurrences.set(key, Math.max(inferred, occurrence) + 1)
+    return { key, occurrence, value: `${key}:${occurrence}` }
+  })
+}
 export function createRestorableSessionPreservation(
   snapshot: RestorableSessionState,
 ): RestorableSessionPreservation {
-  return {
-    sourceTabs: snapshot.tabs,
-    preservedTabs: snapshot.tabs.map((tab) => ({ mode: "whole", tab })),
-    restoredTabIds: snapshot.tabs.map(() => null),
-    restoredWorkspaceSourceIndexes: new Map(),
-    removedWholeTabIndexes: new Set(),
-  }
+  return { sourceTabs: snapshot.tabs, results: snapshot.tabs.map(() => ({ status: "pending" })) }
 }
-
-export function mapRestoredWorkspace(
+export function recordRestoredTab(
   preservation: RestorableSessionPreservation,
   sourceIndex: number,
-  runtimeTabId: string,
-): RestorableSessionPreservation {
-  return mapRestoredWorkspaces(preservation, [{ sourceIndex, runtimeTabId }])
+  runtimeTabId: string | null,
+  unavailableSessionIds?: ReadonlySet<string>,
+): void {
+  if (!preservation.sourceTabs[sourceIndex]) return
+  preservation.results[sourceIndex] = unavailableSessionIds
+    ? { status: "restored", runtimeTabId, unavailableSessionIds }
+    : { status: "pending", ...(runtimeTabId ? { runtimeTabId } : {}) }
 }
-
-export function mapRestoredWorkspaces(
-  preservation: RestorableSessionPreservation,
-  mappings: readonly RestoredWorkspaceMapping[],
-): RestorableSessionPreservation {
-  const restoredWorkspaceSourceIndexes = new Map(preservation.restoredWorkspaceSourceIndexes)
-  let changed = false
-  for (const { sourceIndex, runtimeTabId } of mappings) {
-    if (!runtimeTabId || preservation.sourceTabs[sourceIndex]?.kind !== "workspace") continue
-    for (const [mappedRuntimeTabId, mappedSourceIndex] of restoredWorkspaceSourceIndexes) {
-      if (mappedRuntimeTabId === runtimeTabId || mappedSourceIndex === sourceIndex) {
-        restoredWorkspaceSourceIndexes.delete(mappedRuntimeTabId)
-      }
-    }
-    restoredWorkspaceSourceIndexes.set(runtimeTabId, sourceIndex)
-    changed = true
-  }
-  return changed ? { ...preservation, restoredWorkspaceSourceIndexes } : preservation
-}
-
-export function unmapRestoredWorkspace(
-  preservation: RestorableSessionPreservation,
-  runtimeTabId: string,
-): RestorableSessionPreservation {
-  const restoredTabIndex = preservation.restoredTabIds.findIndex((tabId) => tabId === runtimeTabId)
-  if (!preservation.restoredWorkspaceSourceIndexes.has(runtimeTabId) && restoredTabIndex < 0) return preservation
-  const restoredWorkspaceSourceIndexes = new Map(preservation.restoredWorkspaceSourceIndexes)
-  restoredWorkspaceSourceIndexes.delete(runtimeTabId)
-  const restoredTabIds = [...preservation.restoredTabIds]
-  if (restoredTabIndex >= 0) restoredTabIds[restoredTabIndex] = null
-  return { ...preservation, restoredTabIds, restoredWorkspaceSourceIndexes }
-}
-
 function findWorkspaceSourceIndex(
   preservation: RestorableSessionPreservation,
   workspace: { runtimeTabId: string; folder: string; occurrence: number },
 ): number | undefined {
-  const mappedSourceIndex = preservation.restoredWorkspaceSourceIndexes.get(workspace.runtimeTabId)
-  if (mappedSourceIndex !== undefined) return mappedSourceIndex
-
-  const runtimeIndex = preservation.restoredTabIds.findIndex((tabId) => tabId === workspace.runtimeTabId)
+  const runtimeIndex = preservation.results.findIndex((result) => result.runtimeTabId === workspace.runtimeTabId)
   if (runtimeIndex >= 0) return runtimeIndex
-
-  const sourceOccurrences = resolveWorkspaceOccurrences(preservation.sourceTabs)
-  const folder = normalizeWorkspacePath(workspace.folder)
-  const identityIndex = preservation.sourceTabs.findIndex((tab, index) =>
-    tab.kind === "workspace"
-      && normalizeWorkspacePath(tab.folder) === folder
-      && sourceOccurrences[index] === workspace.occurrence,
-  )
-  return identityIndex >= 0 ? identityIndex : undefined
+  const identity = `workspace:${normalizeWorkspacePath(workspace.folder)}:${workspace.occurrence}`
+  const index = mapTabIdentities(preservation.sourceTabs).findIndex((candidate) => candidate.value === identity)
+  return index >= 0 ? index : undefined
 }
-
 export function markPreservedWorkspaceRemoved(
   preservation: RestorableSessionPreservation,
   workspace: { runtimeTabId: string; folder: string; occurrence: number },
 ): RestorableSessionPreservation {
-  const sourceIndex = findWorkspaceSourceIndex(preservation, workspace)
-  const nextPreservation = unmapRestoredWorkspace(preservation, workspace.runtimeTabId)
-  if (sourceIndex === undefined || nextPreservation.preservedTabs[sourceIndex]?.mode !== "whole") {
-    return nextPreservation
+  const index = findWorkspaceSourceIndex(preservation, workspace)
+  if (index !== undefined && preservation.results[index]?.status === "pending") {
+    preservation.results[index] = { status: "removed" }
   }
-  const removedWholeTabIndexes = new Set(nextPreservation.removedWholeTabIndexes)
-  removedWholeTabIndexes.add(sourceIndex)
-  return { ...nextPreservation, removedWholeTabIndexes }
+  return preservation
 }
-
 export function markPreservedWorkspaceReopened(
   preservation: RestorableSessionPreservation,
   workspace: { runtimeTabId: string; folder: string; occurrence: number },
 ): RestorableSessionPreservation {
-  const sourceIndex = findWorkspaceSourceIndex(preservation, workspace)
-  const nextPreservation = unmapRestoredWorkspace(preservation, workspace.runtimeTabId)
-  if (sourceIndex === undefined || !nextPreservation.removedWholeTabIndexes.has(sourceIndex)) {
-    return nextPreservation
+  const index = findWorkspaceSourceIndex(preservation, workspace)
+  if (index === undefined) return preservation
+  const result = preservation.results[index]
+  preservation.results[index] = result?.status === "removed"
+    ? { status: "pending" }
+    : { ...result, status: "pending", runtimeTabId: null }
+  return preservation
+}
+function getPreservedTab(source: RestorableTabState, result: RestoreTabResult): RestorableTabState | null {
+  const unavailable = result.unavailableSessionIds
+  if (result.status === "pending" && !unavailable) return source
+  if ((result.status !== "restored" && result.status !== "pending") || source.kind !== "workspace" || !unavailable?.size) return null
+  const keep = <T>(record: Record<string, T>) => Object.fromEntries(
+    Object.entries(record).filter(([id]) => unavailable.has(id)),
+  )
+  const tab: RestorableWorkspaceTabState = {
+    kind: "workspace",
+    folder: source.folder,
+    drafts: keep(source.drafts),
+    attachments: keep(source.attachments),
+    scrollSnapshots: keep(source.scrollSnapshots),
+    unseenIdleSince: keep(source.unseenIdleSince),
+    generationRecovery: keep(source.generationRecovery),
   }
-  const removedWholeTabIndexes = new Set(nextPreservation.removedWholeTabIndexes)
-  removedWholeTabIndexes.delete(sourceIndex)
-  return { ...nextPreservation, removedWholeTabIndexes }
-}
-
-export function markRestoredTab(
-  preservation: RestorableSessionPreservation,
-  tabIndex: number,
-  unavailableSessionIds: ReadonlySet<string> = new Set(),
-  restoredTabId: string | null = null,
-): RestorableSessionPreservation {
-  const source = preservation.sourceTabs[tabIndex]
-  if (!source) return preservation
-
-  let nextEntry: PreservedTabState | null = null
-  if (source.kind === "workspace" && unavailableSessionIds.size > 0) {
-    const drafts = Object.fromEntries(
-      Object.entries(source.drafts).filter(([sessionId]) => unavailableSessionIds.has(sessionId)),
-    )
-    const attachments = Object.fromEntries(
-      Object.entries(source.attachments).filter(([sessionId]) => unavailableSessionIds.has(sessionId)),
-    )
-    const scrollSnapshots = Object.fromEntries(
-      Object.entries(source.scrollSnapshots).filter(([sessionId]) => unavailableSessionIds.has(sessionId)),
-    )
-    const unseenIdleSince = Object.fromEntries(
-      Object.entries(source.unseenIdleSince).filter(([sessionId]) => unavailableSessionIds.has(sessionId)),
-    )
-    const generationRecovery = Object.fromEntries(
-      Object.entries(source.generationRecovery).filter(([sessionId]) => unavailableSessionIds.has(sessionId)),
-    )
-    const tab: RestorableWorkspaceTabState = {
-      kind: "workspace",
-      folder: source.folder,
-      drafts,
-      attachments,
-      scrollSnapshots,
-      unseenIdleSince,
-      generationRecovery,
-    }
-    if (source.occurrence !== undefined) tab.occurrence = source.occurrence
-    if (unavailableSessionIds.has(source.activeParentSessionId ?? "")) {
-      tab.activeParentSessionId = source.activeParentSessionId
-    }
-    if (unavailableSessionIds.has(source.activeSessionId ?? "")) {
-      tab.activeSessionId = source.activeSessionId
-    }
-    nextEntry = { mode: "workspace-state", tab }
+  if (source.occurrence !== undefined) tab.occurrence = source.occurrence
+  if (source.activeParentSessionId && unavailable.has(source.activeParentSessionId)) {
+    tab.activeParentSessionId = source.activeParentSessionId
   }
-
-  const preservedTabs = [...preservation.preservedTabs]
-  const restoredTabIds = [...preservation.restoredTabIds]
-  preservedTabs[tabIndex] = nextEntry
-  restoredTabIds[tabIndex] = restoredTabId
-  const nextPreservation = { ...preservation, preservedTabs, restoredTabIds }
-  return source.kind === "workspace" && restoredTabId
-    ? mapRestoredWorkspace(nextPreservation, tabIndex, restoredTabId)
-    : nextPreservation
+  if (source.activeSessionId && unavailable.has(source.activeSessionId)) tab.activeSessionId = source.activeSessionId
+  return tab
 }
-
-function resolveWorkspaceOccurrences(tabs: readonly RestorableTabState[]): Array<number | undefined> {
-  const workspaceOccurrences = new Map<string, number>()
-  return tabs.map((tab) => {
-    if (tab.kind !== "workspace") return undefined
-
-    const path = normalizeWorkspacePath(tab.folder)
-    const inferredOccurrence = workspaceOccurrences.get(path) ?? 0
-    const occurrence = tab.occurrence ?? inferredOccurrence
-    workspaceOccurrences.set(path, Math.max(inferredOccurrence, occurrence) + 1)
-    return occurrence
-  })
-}
-
-function buildTabIdentities(
-  tabs: readonly RestorableTabState[],
-  workspaceOccurrences: readonly (number | undefined)[],
-): string[] {
-  const sidecarOccurrences = new Map<string, number>()
-  return tabs.map((tab, index) => {
-    if (tab.kind === "sidecar") {
-      const occurrence = sidecarOccurrences.get(tab.sidecarId) ?? 0
-      sidecarOccurrences.set(tab.sidecarId, occurrence + 1)
-      return `sidecar:${tab.sidecarId}:${occurrence}`
-    }
-
-    const path = normalizeWorkspacePath(tab.folder)
-    return `workspace:${path}:${workspaceOccurrences[index]}`
-  })
-}
-
 function mergeWorkspaceState(
   current: RestorableWorkspaceTabState,
   preserved: RestorableWorkspaceTabState,
   authority: RestorableWorkspaceRuntimeAuthority = {},
 ): RestorableWorkspaceTabState {
-  const mergeRecords = <T>(
-    currentRecord: Record<string, T>,
-    preservedRecord: Record<string, T>,
-    authoritativeIds: ReadonlySet<string> | undefined,
-  ): Record<string, T> => {
-    const fallback = { ...preservedRecord }
-    for (const sessionId of authoritativeIds ?? []) delete fallback[sessionId]
-    for (const sessionId of authority.deletedSessions ?? []) delete fallback[sessionId]
-    return { ...fallback, ...currentRecord }
+  const mergeRecords = <T>(currentRecord: Record<string, T>, fallback: Record<string, T>, owned?: ReadonlySet<string>) => {
+    const preservedRecord = { ...fallback }
+    for (const id of [...(owned ?? []), ...(authority.deletedSessions ?? [])]) delete preservedRecord[id]
+    return { ...preservedRecord, ...currentRecord }
   }
   const result: RestorableWorkspaceTabState = {
     ...current,
@@ -238,23 +126,26 @@ function mergeWorkspaceState(
     attachments: mergeRecords(current.attachments, preserved.attachments, authority.attachments),
     scrollSnapshots: mergeRecords(current.scrollSnapshots, preserved.scrollSnapshots, authority.scrollSnapshots),
     unseenIdleSince: mergeRecords(current.unseenIdleSince, preserved.unseenIdleSince, authority.idleMarkers),
-    generationRecovery: mergeRecords(
-      current.generationRecovery,
-      preserved.generationRecovery,
-      authority.generationRecovery,
-    ),
+    generationRecovery: mergeRecords(current.generationRecovery, preserved.generationRecovery, authority.generationRecovery),
   }
-  if (!authority.sessionSelection && !current.activeParentSessionId && !current.activeSessionId) {
-    if (preserved.activeParentSessionId && !authority.deletedSessions?.has(preserved.activeParentSessionId)) {
-      result.activeParentSessionId = preserved.activeParentSessionId
-    }
-    if (preserved.activeSessionId && !authority.deletedSessions?.has(preserved.activeSessionId)) {
-      result.activeSessionId = preserved.activeSessionId
-    }
+  const restoreSelection = !authority.sessionSelection && !current.activeParentSessionId && !current.activeSessionId
+  if (restoreSelection && preserved.activeParentSessionId && !authority.deletedSessions?.has(preserved.activeParentSessionId)) {
+    result.activeParentSessionId = preserved.activeParentSessionId
+  }
+  if (restoreSelection && preserved.activeSessionId && !authority.deletedSessions?.has(preserved.activeSessionId)) {
+    result.activeSessionId = preserved.activeSessionId
   }
   return result
 }
-
+function nearestInsertionSlot(sourceIndex: number, matches: readonly (number | undefined)[], fallback: number): number {
+  for (let distance = 1; distance < matches.length; distance += 1) {
+    const before = sourceIndex - distance
+    const after = sourceIndex + distance
+    if (before >= 0 && matches[before] !== undefined) return matches[before]! + 1
+    if (after < matches.length && matches[after] !== undefined) return matches[after]!
+  }
+  return fallback
+}
 export function mergeRestorableSessionState(
   current: RestorableSessionState,
   preservation: RestorableSessionPreservation | null,
@@ -264,139 +155,68 @@ export function mergeRestorableSessionState(
   } = {},
 ): RestorableSessionState {
   if (!preservation) return current
-
-  const currentWorkspaceOccurrences = resolveWorkspaceOccurrences(current.tabs)
-  const sourceWorkspaceOccurrences = resolveWorkspaceOccurrences(preservation.sourceTabs)
-  const currentIdentities = buildTabIdentities(current.tabs, currentWorkspaceOccurrences)
-  const sourceIdentities = buildTabIdentities(preservation.sourceTabs, sourceWorkspaceOccurrences)
-  const currentIndexesByIdentity = new Map<string, number[]>()
-  currentIdentities.forEach((identity, index) => {
-    const indexes = currentIndexesByIdentity.get(identity) ?? []
-    indexes.push(index)
-    currentIndexesByIdentity.set(identity, indexes)
+  const currentIdentities = mapTabIdentities(current.tabs)
+  const sourceIdentities = mapTabIdentities(preservation.sourceTabs)
+  const indexesByIdentity = new Map<string, number[]>()
+  currentIdentities.forEach(({ value }, index) => {
+    indexesByIdentity.set(value, [...(indexesByIdentity.get(value) ?? []), index])
   })
-
-  const currentIndexByRuntimeId = new Map(
-    (options.currentTabIds ?? []).map((tabId, index) => [tabId, index]),
-  )
-  const sourceCurrentIndexes: Array<number | undefined> = preservation.sourceTabs.map(() => undefined)
-  const claimedCurrentIndexes = new Set<number>()
-  preservation.restoredTabIds.forEach((tabId, sourceIndex) => {
-    const currentIndex = tabId ? currentIndexByRuntimeId.get(tabId) : undefined
-    if (currentIndex === undefined || !current.tabs[currentIndex] || claimedCurrentIndexes.has(currentIndex)) return
-    sourceCurrentIndexes[sourceIndex] = currentIndex
-    claimedCurrentIndexes.add(currentIndex)
-  })
-  preservation.restoredWorkspaceSourceIndexes.forEach((sourceIndex, runtimeTabId) => {
-    const currentIndex = currentIndexByRuntimeId.get(runtimeTabId)
-    if (currentIndex === undefined || !current.tabs[currentIndex] || claimedCurrentIndexes.has(currentIndex)) return
-    sourceCurrentIndexes[sourceIndex] = currentIndex
-    claimedCurrentIndexes.add(currentIndex)
-  })
-
-  preservation.sourceTabs.forEach((_sourceTab, sourceIndex) => {
-    if (sourceCurrentIndexes[sourceIndex] !== undefined) return
-    const preserved = preservation.removedWholeTabIndexes.has(sourceIndex)
-      ? null
-      : preservation.preservedTabs[sourceIndex]
-    const canMatchByIdentity = preserved?.mode === "whole" || options.currentTabIds === undefined
-    if (!canMatchByIdentity) return
-
-    const identityMatches = currentIndexesByIdentity.get(sourceIdentities[sourceIndex] ?? "")
-    while (identityMatches?.length) {
-      const candidate = identityMatches.shift()!
-      if (claimedCurrentIndexes.has(candidate)) continue
-      sourceCurrentIndexes[sourceIndex] = candidate
-      claimedCurrentIndexes.add(candidate)
-      break
-    }
-  })
-
-  const currentTabs = [...current.tabs]
-  preservation.sourceTabs.forEach((_sourceTab, sourceIndex) => {
-    const currentIndex = sourceCurrentIndexes[sourceIndex]
-    const preserved = preservation.removedWholeTabIndexes.has(sourceIndex)
-      ? null
-      : preservation.preservedTabs[sourceIndex]
-    if (currentIndex === undefined || !preserved) return
-
-    const currentTab = currentTabs[currentIndex]
-    if (currentTab?.kind !== "workspace") return
-    const authority = options.currentTabAuthorities?.[currentIndex]
-    if (preserved.mode === "workspace-state") {
-      currentTabs[currentIndex] = mergeWorkspaceState(currentTab, preserved.tab, authority)
-    } else if (preserved.tab.kind === "workspace") {
-      currentTabs[currentIndex] = mergeWorkspaceState(currentTab, preserved.tab, authority)
-    }
-  })
-
-  const insertionsByCurrentSlot = new Map<number, RestorableTabState[]>()
-  const usedWorkspaceOccurrences = new Map<string, Set<number>>()
-  currentTabs.forEach((tab, index) => {
-    if (tab.kind !== "workspace") return
-    const path = normalizeWorkspacePath(tab.folder)
-    const used = usedWorkspaceOccurrences.get(path) ?? new Set<number>()
-    used.add(currentWorkspaceOccurrences[index]!)
-    usedWorkspaceOccurrences.set(path, used)
-  })
-  preservation.sourceTabs.forEach((sourceTab, sourceIndex) => {
-    const preserved = preservation.removedWholeTabIndexes.has(sourceIndex)
-      ? null
-      : preservation.preservedTabs[sourceIndex]
-    if (sourceCurrentIndexes[sourceIndex] !== undefined || preserved?.mode !== "whole") return
-
-    let nearestMappedSourceIndex: number | undefined
-    for (let distance = 1; distance < preservation.sourceTabs.length; distance += 1) {
-      const previousSourceIndex = sourceIndex - distance
-      if (previousSourceIndex >= 0 && sourceCurrentIndexes[previousSourceIndex] !== undefined) {
-        nearestMappedSourceIndex = previousSourceIndex
-        break
-      }
-      const nextSourceIndex = sourceIndex + distance
-      if (nextSourceIndex < preservation.sourceTabs.length && sourceCurrentIndexes[nextSourceIndex] !== undefined) {
-        nearestMappedSourceIndex = nextSourceIndex
-        break
-      }
-    }
-
-    const nearestCurrentIndex = nearestMappedSourceIndex === undefined
-      ? undefined
-      : sourceCurrentIndexes[nearestMappedSourceIndex]
-    const slot = nearestCurrentIndex === undefined
-      ? currentTabs.length
-      : nearestCurrentIndex + (nearestMappedSourceIndex! < sourceIndex ? 1 : 0)
-    const insertions = insertionsByCurrentSlot.get(slot) ?? []
-    let tab = sourceTab
-    if (sourceTab.kind === "workspace") {
-      const path = normalizeWorkspacePath(sourceTab.folder)
-      const used = usedWorkspaceOccurrences.get(path) ?? new Set<number>()
-      let occurrence = sourceWorkspaceOccurrences[sourceIndex] ?? 0
-      if (used.has(occurrence)) {
-        occurrence = 0
-        while (used.has(occurrence)) occurrence += 1
-      }
-      used.add(occurrence)
-      usedWorkspaceOccurrences.set(path, used)
-      tab = { ...sourceTab, occurrence }
-    }
-    insertions.push(tab)
-    insertionsByCurrentSlot.set(slot, insertions)
-  })
-
-  const currentOutputIndexes = new Map<number, number>()
-  const tabs: RestorableTabState[] = []
-
-  for (let slot = 0; slot <= currentTabs.length; slot += 1) {
-    for (const insertion of insertionsByCurrentSlot.get(slot) ?? []) {
-      tabs.push(insertion)
-    }
-    const currentTab = currentTabs[slot]
-    if (!currentTab) continue
-    currentOutputIndexes.set(slot, tabs.length)
-    tabs.push(currentTab)
+  const indexesByRuntimeId = new Map((options.currentTabIds ?? []).map((id, index) => [id, index]))
+  const matches: Array<number | undefined> = preservation.sourceTabs.map(() => undefined)
+  const claimed = new Set<number>()
+  const claim = (sourceIndex: number, currentIndex: number | undefined) => {
+    if (currentIndex === undefined || !current.tabs[currentIndex] || claimed.has(currentIndex)) return
+    matches[sourceIndex] = currentIndex
+    claimed.add(currentIndex)
   }
-
-  const currentActiveIndex = currentOutputIndexes.get(current.activeTabIndex)
-  const activeTabIndex = currentActiveIndex ?? (tabs.length > 0 ? 0 : -1)
-  return { tabs, activeTabIndex }
+  preservation.results.forEach((result, index) => {
+    if (result.runtimeTabId) claim(index, indexesByRuntimeId.get(result.runtimeTabId))
+  })
+  preservation.results.forEach((result, index) => {
+    if (matches[index] !== undefined || (result.status !== "pending" && options.currentTabIds)) return
+    claim(index, indexesByIdentity.get(sourceIdentities[index]!.value)?.find((candidate) => !claimed.has(candidate)))
+  })
+  const currentTabs = [...current.tabs]
+  preservation.sourceTabs.forEach((source, index) => {
+    const currentIndex = matches[index]
+    const target = currentIndex === undefined ? undefined : currentTabs[currentIndex]
+    const fallback = getPreservedTab(source, preservation.results[index]!)
+    if (target?.kind === "workspace" && fallback?.kind === "workspace") {
+      currentTabs[currentIndex!] = mergeWorkspaceState(target, fallback, options.currentTabAuthorities?.[currentIndex!])
+    }
+  })
+  const insertions = new Map<number, RestorableTabState[]>()
+  const usedOccurrences = new Map<string, Set<number>>()
+  currentIdentities.forEach(({ key, occurrence }) => {
+    const used = usedOccurrences.get(key) ?? new Set<number>()
+    used.add(occurrence)
+    usedOccurrences.set(key, used)
+  })
+  preservation.sourceTabs.forEach((source, index) => {
+    if (matches[index] !== undefined || preservation.results[index]?.status !== "pending") return
+    const slot = nearestInsertionSlot(index, matches, currentTabs.length)
+    let tab = source
+    if (source.kind === "workspace") {
+      const { key, occurrence: sourceOccurrence } = sourceIdentities[index]!
+      const used = usedOccurrences.get(key) ?? new Set<number>()
+      let occurrence = sourceOccurrence
+      while (used.has(occurrence)) occurrence += 1
+      used.add(occurrence)
+      usedOccurrences.set(key, used)
+      tab = { ...source, occurrence }
+    }
+    insertions.set(slot, [...(insertions.get(slot) ?? []), tab])
+  })
+  const outputIndexes = new Map<number, number>()
+  const tabs: RestorableTabState[] = []
+  for (let slot = 0; slot <= currentTabs.length; slot += 1) {
+    tabs.push(...(insertions.get(slot) ?? []))
+    if (!currentTabs[slot]) continue
+    outputIndexes.set(slot, tabs.length)
+    tabs.push(currentTabs[slot]!)
+  }
+  return {
+    tabs,
+    activeTabIndex: outputIndexes.get(current.activeTabIndex) ?? (tabs.length ? 0 : -1),
+  }
 }

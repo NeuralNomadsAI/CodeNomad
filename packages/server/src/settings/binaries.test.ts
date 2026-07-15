@@ -9,19 +9,12 @@ describe("BinaryResolver", () => {
     const settings = {
       getOwner(scope: string, owner: string) {
         if (scope === "config" && owner === "server") return { opencodeBinary: "default-opencode" }
-        if (scope === "state" && owner === "ui") {
-          return { opencodeBinaries: [{ path: "saved-opencode", label: "Saved", version: "1.2.3" }] }
-        }
+        if (scope === "state" && owner === "ui") return { opencodeBinaries: [{ path: "saved-opencode", label: "Saved", version: "1.2.3" }] }
         return {}
       },
     } as unknown as SettingsService
     const resolver = new BinaryResolver(settings)
-
-    assert.deepEqual(resolver.resolve("saved-opencode"), {
-      path: "saved-opencode",
-      label: "Saved",
-      version: "1.2.3",
-    })
+    assert.deepEqual(resolver.resolve("saved-opencode"), { path: "saved-opencode", label: "Saved", version: "1.2.3" })
     assert.equal(resolver.resolveDefault().path, "default-opencode")
   })
 })

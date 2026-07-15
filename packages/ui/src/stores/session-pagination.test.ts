@@ -2,7 +2,13 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { applySessionPage, getDefaultSessionPaginationState } from "./session-pagination-model.ts"
-import { PROJECT_SESSION_LIST_LIMIT, buildProjectSessionListOptions, filterProjectScopedSessions } from "./session-list-options.ts"
+import {
+  PROJECT_SESSION_LIST_LIMIT,
+  buildProjectSessionListOptions,
+  filterProjectScopedSessions,
+  getAuthoritativelyMissingSessionIds,
+  isProjectSessionListComplete,
+} from "./session-list-options.ts"
 
 describe("project session list loading", () => {
   it("builds a one-shot project-scoped request without pagination params", () => {
@@ -62,5 +68,19 @@ describe("project session list loading", () => {
     assert.deepEqual(next.ids, ["new-root"])
     assert.equal(next.hasMore, false)
     assert.equal(next.nextCursor, undefined)
+  })
+
+  it("reconciles sessions deleted while disconnected only from a complete refresh", () => {
+    const existing = ["retained", "outside-current-worktree", "deleted-remotely"]
+    const listed = ["retained", "outside-current-worktree"]
+
+    assert.deepEqual(getAuthoritativelyMissingSessionIds(existing, listed, true), ["deleted-remotely"])
+    assert.equal(isProjectSessionListComplete(PROJECT_SESSION_LIST_LIMIT - 1), true)
+    assert.equal(isProjectSessionListComplete(PROJECT_SESSION_LIST_LIMIT), false)
+    assert.deepEqual(
+      getAuthoritativelyMissingSessionIds(existing, listed, false),
+      [],
+      "a result capped at the request limit may be truncated",
+    )
   })
 })

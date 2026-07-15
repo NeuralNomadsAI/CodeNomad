@@ -54,9 +54,9 @@ const election = electClientStateProcess(
   },
 )
 
-process.stdout.write(`${JSON.stringify({ isPrimary: election.isPrimary, owner, warnings })}\n`)
+process.stdout.write(`${JSON.stringify({ isPrimary: election, owner, warnings })}\n`)
 process.stdin.resume()
 process.stdin.once("end", () => {
-  removeRunningMarkerIfOwned(election.runningMarkerPath, owner)
+  removeRunningMarkerIfOwned(join(directory, `client-state.running.${owner.pid}.${owner.runToken}.json`), owner)
   removeProcessOwnerLockIfOwned(primaryLockPath, owner)
 })

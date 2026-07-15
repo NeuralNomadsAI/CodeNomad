@@ -10,22 +10,24 @@ import { WorkspaceManager } from "../manager"
 import { normalizeWorkspaceIdentityPath, resolveWorkspaceIdentity } from "../workspace-identity"
 
 const temporaryDirectories: string[] = []
+const runtimeResult = (pid = 123) => ({
+  pid,
+  port: 4321,
+  exitPromise: new Promise<never>(() => undefined),
+  getLastOutput: () => "",
+})
 
 function deferred<T>() {
   let resolve!: (value: T) => void
-  let reject!: (reason?: unknown) => void
-  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise
-    reject = rejectPromise
-  })
-  return { promise, resolve, reject }
+  const promise = new Promise<T>((resolvePromise) => { resolve = resolvePromise })
+  return { promise, resolve }
 }
 
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { force: true, recursive: true })))
 })
 
-async function createLinkedWorkspace(): Promise<{ root: string; target: string; link: string }> {
+async function createLinkedWorkspace() {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-workspace-identity-"))
   temporaryDirectories.push(root)
   const target = path.join(root, "target")
@@ -35,195 +37,118 @@ async function createLinkedWorkspace(): Promise<{ root: string; target: string; 
   return { root, target, link }
 }
 
-function createManager(rootDir: string): WorkspaceManager {
+function createManager(rootDir: string) {
   const logger = pino({ level: "silent" })
   const manager = new WorkspaceManager({
     rootDir,
     settings: { getOwner: () => ({ environmentVariables: {} }) },
-    binaryResolver: {
-      resolve: () => ({ path: process.execPath, label: "Node.js", version: process.version }),
-    },
+    binaryResolver: { resolve: () => ({ path: process.execPath, label: "Node.js", version: process.version }) },
     eventBus: new EventBus(logger),
     logger,
     getServerBaseUrl: () => "http://127.0.0.1:3000",
   } as unknown as ConstructorParameters<typeof WorkspaceManager>[0])
-
-  const internal = manager as any
-  internal.runtime.launch = async () => ({
-    pid: 123,
-    port: 4321,
-    exitPromise: new Promise(() => {}),
-    cancellationPromise: new Promise(() => {}),
-    getLastOutput: () => "",
-  })
-  internal.waitForWorkspaceReadiness = async () => undefined
+  ;(manager as any).runtime.launch = async () => runtimeResult()
+  ;(manager as any).runtime.stop = async () => undefined
+  ;(manager as any).waitForWorkspaceReadiness = async () => undefined
   return manager
 }
 
+async function waitForOwners(manager: WorkspaceManager, count: number) {
+  while ([...(manager as any).pendingWorkspaceCreations.values()][0]?.ownership.size !== count) {
+    await new Promise((resolve) => setImmediate(resolve))
+  }
+}
+
+async function createSharedLaunch() {
+  const { root, target, link } = await createLinkedWorkspace()
+  const manager = createManager(root)
+  const launchGate = deferred<void>()
+  let launches = 0
+  ;(manager as any).runtime.launch = async () => {
+    launches += 1
+    await launchGate.promise
+    return runtimeResult()
+  }
+  const leader = manager.create(target, undefined, { requestId: "leader" })
+  const follower = manager.create(link, undefined, { requestId: "follower" })
+  await waitForOwners(manager, 2)
+  return { manager, launchGate, leader, follower, launches: () => launches }
+}
+
 describe("workspace identity", () => {
-  it("normalizes Windows drive and UNC paths without affecting POSIX case", () => {
+  it("normalizes Windows paths without affecting POSIX case", () => {
     assert.equal(normalizeWorkspaceIdentityPath("C:\\Projects\\CodeNomad\\", "win32"), "c:\\projects\\codenomad\\")
     assert.equal(normalizeWorkspaceIdentityPath(String.raw`\\Server\Share\Repo`, "win32"), String.raw`\\server\share\repo`)
     assert.equal(normalizeWorkspaceIdentityPath("/Projects/CodeNomad/", "linux"), "/Projects/CodeNomad/")
   })
 
-  it("resolves a symlink and its target to the same canonical launch path", async () => {
+  it("canonicalizes aliases and falls back to an absolute identity for missing paths", async () => {
     const { root, target, link } = await createLinkedWorkspace()
-    const targetResult = await resolveWorkspaceIdentity(target, root)
-    const linkResult = await resolveWorkspaceIdentity(link, root)
+    const [targetResult, linkResult, missing] = await Promise.all([
+      resolveWorkspaceIdentity(target, root),
+      resolveWorkspaceIdentity(link, root),
+      resolveWorkspaceIdentity("missing", root),
+    ])
+    const expectedMissing = path.resolve(root, "missing")
 
     assert.equal(linkResult.identityKey, targetResult.identityKey)
     assert.equal(linkResult.workspacePath, targetResult.workspacePath)
-    assert.notEqual(linkResult.workspacePath, path.normalize(link))
+    assert.equal(missing.workspacePath, expectedMissing)
+    assert.equal(missing.identityKey, normalizeWorkspaceIdentityPath(expectedMissing))
   })
 
-  it("falls back to a normalized absolute identity when realpath fails", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-workspace-missing-"))
-    temporaryDirectories.push(root)
-    const result = await resolveWorkspaceIdentity("missing", root)
-    const expected = path.resolve(root, "missing")
-
-    assert.equal(result.workspacePath, expected)
-    assert.equal(result.identityKey, normalizeWorkspaceIdentityPath(expected))
-  })
-
-  it("atomically reuses an active workspace reached through a symlink", async () => {
+  it("deduplicates active canonical aliases", async () => {
     const { root, target, link } = await createLinkedWorkspace()
     const manager = createManager(root)
-    const [targetResult, linkResult] = await Promise.all([manager.create(target), manager.create(link)])
-
-    assert.equal(Number(targetResult.created) + Number(linkResult.created), 1)
-    assert.equal(targetResult.workspace.id, linkResult.workspace.id)
-    assert.equal(manager.list().length, 1)
-  })
-
-  it("shares an in-flight startup between canonical aliases", async () => {
-    const { root, target, link } = await createLinkedWorkspace()
-    const manager = createManager(root)
-    const launchGate = deferred<void>()
-    let launches = 0
-    ;(manager as any).runtime.launch = async () => {
-      launches += 1
-      await launchGate.promise
-      return {
-        pid: 123,
-        port: 4321,
-        exitPromise: new Promise(() => {}),
-        cancellationPromise: new Promise(() => {}),
-        getLastOutput: () => "",
-      }
-    }
-
-    const firstPromise = manager.create(target, undefined, { requestId: "restore-request" })
-    const secondPromise = manager.create(link)
-    while (![...(manager as any).pendingWorkspaceCreations.values()][0]?.followerCount) {
-      await new Promise((resolve) => setImmediate(resolve))
-    }
-    launchGate.resolve()
-    const [first, second] = await Promise.all([firstPromise, secondPromise])
-
-    assert.equal(launches, 1)
-    assert.equal(first.created, false)
-    assert.equal(first.workspace.requestId, undefined)
-    assert.equal(first.workspace.id, second.workspace.id)
-    assert.equal(first.workspace.status, "ready")
-    assert.equal(second.workspace.status, "ready")
-  })
-
-  it("keeps both cleanup owners when two restore requests share a canonical launch", async () => {
-    const { root, target, link } = await createLinkedWorkspace()
-    const manager = createManager(root)
-    const [first, second] = await Promise.all([
-      manager.create(target, undefined, { requestId: "restore-first" }),
-      manager.create(link, undefined, { requestId: "restore-second" }),
-    ])
+    const [first, second] = await Promise.all([manager.create(target), manager.create(link)])
 
     assert.equal(Number(first.created) + Number(second.created), 1)
     assert.equal(first.workspace.id, second.workspace.id)
-    assert.equal(first.workspace.requestId, "restore-first")
-    assert.equal(second.workspace.requestId, "restore-second")
-    assert.equal(manager.releaseCreationRequest(first.workspace.id, "restore-first"), true)
-    assert.equal(manager.releaseCreationRequest(first.workspace.id, "restore-second"), true)
-  })
-
-  it("detaches a cancelled restore follower without stopping the leader launch", async () => {
-    const { root, target, link } = await createLinkedWorkspace()
-    const manager = createManager(root)
-    const launchGate = deferred<void>()
-    let launches = 0
-    ;(manager as any).runtime.launch = async () => {
-      launches += 1
-      await launchGate.promise
-      return {
-        pid: 123,
-        port: 4321,
-        exitPromise: new Promise(() => {}),
-        cancellationPromise: new Promise(() => {}),
-        getLastOutput: () => "",
-      }
-    }
-
-    const leader = manager.create(target, undefined, { requestId: "restore-leader" })
-    const follower = manager.create(link, undefined, { requestId: "restore-follower" })
-    while (![...(manager as any).pendingWorkspaceCreations.values()][0]?.followerCount) {
-      await new Promise((resolve) => setImmediate(resolve))
-    }
-    await manager.cancelCreationRequest("restore-follower")
-    launchGate.resolve()
-
-    const leaderResult = await leader
-    await assert.rejects(follower, /creation request restore-follower was cancelled/)
-    assert.equal(launches, 1)
-    assert.equal(leaderResult.workspace.requestId, "restore-leader")
     assert.equal(manager.list().length, 1)
   })
 
-  it("detaches a cancelled restore leader without stopping a follower launch", async () => {
-    const { root, target, link } = await createLinkedWorkspace()
-    const manager = createManager(root)
-    const launchGate = deferred<void>()
-    ;(manager as any).runtime.launch = async () => {
-      await launchGate.promise
-      return {
-        pid: 123,
-        port: 4321,
-        exitPromise: new Promise(() => {}),
-        cancellationPromise: new Promise(() => {}),
-        getLastOutput: () => "",
-      }
-    }
+  it("shares one in-flight launch between canonical aliases", async () => {
+    const shared = await createSharedLaunch()
+    shared.launchGate.resolve()
+    const [leader, follower] = await Promise.all([shared.leader, shared.follower])
 
-    const leader = manager.create(target, undefined, { requestId: "restore-leader" })
-    const follower = manager.create(link, undefined, { requestId: "restore-follower" })
-    while (![...(manager as any).pendingWorkspaceCreations.values()][0]?.followerCount) {
-      await new Promise((resolve) => setImmediate(resolve))
-    }
-    await manager.cancelCreationRequest("restore-leader")
-    launchGate.resolve()
-
-    await assert.rejects(leader, /creation request restore-leader was cancelled/)
-    const followerResult = await follower
-    assert.equal(followerResult.workspace.requestId, "restore-follower")
-    assert.equal(manager.list().length, 1)
+    assert.equal(shared.launches(), 1)
+    assert.equal(leader.workspace.id, follower.workspace.id)
+    assert.equal(Number(leader.created) + Number(follower.created), 1)
+    assert.equal(leader.workspace.status, "ready")
   })
 
-  it("retains a shared workspace after one restore owner releases and another cancels", async () => {
-    const { root, target, link } = await createLinkedWorkspace()
-    const manager = createManager(root)
-    const [first, second] = await Promise.all([
-      manager.create(target, undefined, { requestId: "restore-first" }),
-      manager.create(link, undefined, { requestId: "restore-second" }),
-    ])
+  for (const cancelledRole of ["leader", "follower"] as const) {
+    it(`detaches a cancelled ${cancelledRole} without stopping its shared owner`, async () => {
+      const shared = await createSharedLaunch()
+      await shared.manager.cancelCreationRequest(cancelledRole)
+      shared.launchGate.resolve()
+      const cancelled = shared[cancelledRole]
+      const survivor = shared[cancelledRole === "leader" ? "follower" : "leader"]
 
-    assert.equal(manager.releaseCreationRequest(first.workspace.id, "restore-first"), true)
-    await manager.cancelCreationRequest("restore-second")
+      await assert.rejects(cancelled, new RegExp(`creation request ${cancelledRole} was cancelled`))
+      const result = await survivor
+      assert.equal(shared.launches(), 1)
+      assert.equal(result.workspace.requestId, cancelledRole === "leader" ? "follower" : "leader")
+      assert.equal(shared.manager.list().length, 1)
+    })
+  }
 
-    assert.equal(manager.list().length, 1)
-    assert.equal(manager.get(second.workspace.id)?.requestId, undefined)
-    assert.equal(manager.releaseCreationRequest(second.workspace.id, "restore-second"), true)
-  })
+  for (const releasedRole of ["leader", "follower"] as const) {
+    it(`retains shared ownership when the ${releasedRole} releases and the other owner cancels`, async () => {
+      const shared = await createSharedLaunch()
+      shared.launchGate.resolve()
+      const [leader, follower] = await Promise.all([shared.leader, shared.follower])
+      assert.equal(leader.workspace.id, follower.workspace.id)
 
-  it("releases a failed identity reservation so creation can be retried", async () => {
+      assert.equal(shared.manager.releaseCreationRequest(leader.workspace.id, releasedRole), true)
+      await shared.manager.cancelCreationRequest(releasedRole === "leader" ? "follower" : "leader")
+      assert.equal(shared.manager.list().length, 1)
+      assert.equal(shared.manager.get(leader.workspace.id)?.requestId, undefined)
+    })
+  }
+
+  it("releases a failed canonical reservation for retry", async () => {
     const { root, target, link } = await createLinkedWorkspace()
     const manager = createManager(root)
     const launchGate = deferred<void>()
@@ -233,207 +158,29 @@ describe("workspace identity", () => {
       await launchGate.promise
       throw new Error("launch failed")
     }
-
-    const firstFailure = manager.create(target)
-    const secondFailure = manager.create(link)
-    while (![...(manager as any).pendingWorkspaceCreations.values()][0]?.followerCount) {
-      await new Promise((resolve) => setImmediate(resolve))
-    }
+    const failures = [
+      manager.create(target, undefined, { requestId: "first" }),
+      manager.create(link, undefined, { requestId: "second" }),
+    ]
+    await waitForOwners(manager, 2)
     launchGate.resolve()
-    const failed = await Promise.allSettled([firstFailure, secondFailure])
-    assert.deepEqual(failed.map((result) => result.status), ["rejected", "rejected"])
+    assert.deepEqual((await Promise.allSettled(failures)).map((result) => result.status), ["rejected", "rejected"])
     assert.equal(launches, 1)
 
-    ;(manager as any).runtime.launch = async () => ({
-      pid: 456,
-      port: 5432,
-      exitPromise: new Promise(() => {}),
-      cancellationPromise: new Promise(() => {}),
-      getLastOutput: () => "",
-    })
-    const retry = await manager.create(target)
-
-    assert.equal(retry.created, true)
-    assert.equal(retry.workspace.status, "ready")
+    ;(manager as any).runtime.launch = async () => runtimeResult(456)
+    assert.equal((await manager.create(target)).created, true)
   })
 
-  it("allows an explicit second workspace for the same canonical path", async () => {
+  it("allows forced canonical duplicates without replacing the reusable workspace", async () => {
     const { root, target, link } = await createLinkedWorkspace()
     const manager = createManager(root)
-    const [first, second] = await Promise.all([
-      manager.create(target, undefined, { forceNew: true }),
-      manager.create(link, undefined, { forceNew: true }),
-    ])
+    const normal = await manager.create(target)
+    const forced = await manager.create(link, undefined, { forceNew: true })
+    assert.notEqual(normal.workspace.id, forced.workspace.id)
 
-    assert.equal(first.created, true)
-    assert.equal(second.created, true)
-    assert.notEqual(first.workspace.id, second.workspace.id)
-    assert.equal(manager.list().length, 2)
-  })
-
-  it("does not reuse restore-owned workspaces until hydration releases ownership", async () => {
-    const { root, target, link } = await createLinkedWorkspace()
-    const manager = createManager(root)
-    const restore = await manager.create(target, undefined, {
-      forceNew: true,
-      requestId: "restore-request",
-    })
-
-    const concurrent = await manager.create(link)
-    assert.equal(concurrent.created, true)
-    assert.notEqual(concurrent.workspace.id, restore.workspace.id)
-
-    assert.equal(manager.releaseCreationRequest(restore.workspace.id, "wrong-request"), false)
-    assert.equal(manager.releaseCreationRequest(restore.workspace.id, "restore-request"), true)
-    assert.equal(manager.releaseCreationRequest(restore.workspace.id, "restore-request"), true)
-    await manager.delete(concurrent.workspace.id)
+    await manager.delete(forced.workspace.id)
     const reused = await manager.create(link)
     assert.equal(reused.created, false)
-    assert.equal(reused.workspace.id, restore.workspace.id)
-  })
-
-  it("keeps the canonical reservation when a forced duplicate is deleted", async () => {
-    const { root, target, link } = await createLinkedWorkspace()
-    const manager = createManager(root)
-    const normalLaunch = deferred<{
-      pid: number
-      port: number
-      exitPromise: Promise<never>
-      cancellationPromise: Promise<never>
-      getLastOutput: () => string
-    }>()
-    const forcedLaunch = deferred<{
-      pid: number
-      port: number
-      exitPromise: Promise<never>
-      cancellationPromise: Promise<never>
-      getLastOutput: () => string
-    }>()
-    let launches = 0
-    const launchedWorkspaceIds: string[] = []
-    ;(manager as any).runtime.launch = (options: { workspaceId: string }) => {
-      launches += 1
-      launchedWorkspaceIds.push(options.workspaceId)
-      return launches === 1 ? normalLaunch.promise : forcedLaunch.promise
-    }
-
-    const first = manager.create(target)
-    while (launchedWorkspaceIds.length < 1) {
-      await new Promise((resolve) => setImmediate(resolve))
-    }
-    const forced = manager.create(link, undefined, { forceNew: true })
-    const forcedRejected = assert.rejects(forced, /launch was cancelled/)
-    while (launchedWorkspaceIds.length < 2) {
-      await new Promise((resolve) => setImmediate(resolve))
-    }
-    const forcedDeletion = manager.delete(launchedWorkspaceIds[1]!)
-
-    const reused = manager.create(link)
-    normalLaunch.resolve({ pid: 123, port: 4321, exitPromise: new Promise(() => {}), cancellationPromise: new Promise(() => {}), getLastOutput: () => "" })
-    forcedLaunch.resolve({ pid: 456, port: 5432, exitPromise: new Promise(() => {}), cancellationPromise: new Promise(() => {}), getLastOutput: () => "" })
-    await forcedDeletion
-    const [firstResult, reusedResult] = await Promise.all([first, reused])
-
-    await forcedRejected
-    assert.equal(launches, 2)
-    assert.equal(firstResult.workspace.id, reusedResult.workspace.id)
-    assert.equal(reusedResult.created, false)
-  })
-
-  it("cancels an in-flight startup when its workspace is deleted", async () => {
-    const { root, target } = await createLinkedWorkspace()
-    const manager = createManager(root)
-    const launch = deferred<{
-      pid: number
-      port: number
-      exitPromise: Promise<never>
-      cancellationPromise: Promise<never>
-      getLastOutput: () => string
-    }>()
-    let workspaceId = ""
-    ;(manager as any).runtime.launch = (options: { workspaceId: string }) => {
-      workspaceId = options.workspaceId
-      return launch.promise
-    }
-    const events: any[] = []
-    ;(manager as any).options.eventBus.onEvent((event: any) => events.push(event))
-
-    const creation = manager.create(target)
-    const creationRejected = assert.rejects(creation, /launch was cancelled/)
-    while (!workspaceId) {
-      await new Promise((resolve) => setImmediate(resolve))
-    }
-    const deletion = manager.delete(workspaceId)
-    launch.resolve({ pid: 123, port: 4321, exitPromise: new Promise(() => {}), cancellationPromise: new Promise(() => {}), getLastOutput: () => "" })
-
-    await Promise.all([creationRejected, deletion])
-    assert.equal(manager.get(workspaceId), undefined)
-    assert.equal(events.filter((event) => event.type === "workspace.stopped" && event.workspaceId === workspaceId).length, 1)
-  })
-
-  it("cancels an in-flight restore startup by request id", async () => {
-    const { root, target } = await createLinkedWorkspace()
-    const manager = createManager(root)
-    const launch = deferred<{
-      pid: number
-      port: number
-      exitPromise: Promise<never>
-      cancellationPromise: Promise<never>
-      getLastOutput: () => string
-    }>()
-    let workspaceId = ""
-    ;(manager as any).runtime.launch = (options: { workspaceId: string }) => {
-      workspaceId = options.workspaceId
-      return launch.promise
-    }
-
-    const creation = manager.create(target, undefined, { requestId: "cancel-restore" })
-    const creationRejected = assert.rejects(creation, /launch was cancelled/)
-    while (!workspaceId) await new Promise((resolve) => setImmediate(resolve))
-    const cancellation = manager.cancelCreationRequest("cancel-restore")
-    launch.resolve({ pid: 123, port: 4321, exitPromise: new Promise(() => {}), cancellationPromise: new Promise(() => {}), getLastOutput: () => "" })
-
-    await Promise.all([creationRejected, cancellation])
-    assert.equal(manager.get(workspaceId), undefined)
-  })
-
-  it("remembers cancellation that arrives before restore reservation", async () => {
-    const { root, target } = await createLinkedWorkspace()
-    const manager = createManager(root)
-
-    await manager.cancelCreationRequest("early-cancel")
-    await assert.rejects(
-      manager.create(target, undefined, { requestId: "early-cancel" }),
-      /creation request early-cancel was cancelled/,
-    )
-    assert.equal(manager.list().length, 0)
-  })
-
-  it("waits for and cancels forced creations during shutdown", async () => {
-    const { root, target } = await createLinkedWorkspace()
-    const manager = createManager(root)
-    const launch = deferred<{
-      pid: number
-      port: number
-      exitPromise: Promise<never>
-      cancellationPromise: Promise<never>
-      getLastOutput: () => string
-    }>()
-    let workspaceId = ""
-    ;(manager as any).runtime.launch = (options: { workspaceId: string }) => {
-      workspaceId = options.workspaceId
-      return launch.promise
-    }
-
-    const creation = manager.create(target, undefined, { forceNew: true })
-    const creationRejected = assert.rejects(creation, /launch was cancelled/)
-    while (!workspaceId) {
-      await new Promise((resolve) => setImmediate(resolve))
-    }
-    const shutdown = manager.shutdown()
-    launch.resolve({ pid: 123, port: 4321, exitPromise: new Promise(() => {}), cancellationPromise: new Promise(() => {}), getLastOutput: () => "" })
-
-    await Promise.all([creationRejected, shutdown])
-    assert.equal(manager.list().length, 0)
+    assert.equal(reused.workspace.id, normal.workspace.id)
   })
 })

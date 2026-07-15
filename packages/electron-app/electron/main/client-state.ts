@@ -95,21 +95,18 @@ export class ClientStateManager {
   private readonly userDataPath: string
   private readonly statePath: string
   private readonly lockPath: string
-  private readonly registrationLockPath: string
   private readonly owner: ProcessOwner = {
     pid: process.pid,
     runToken: randomUUID(),
     processStartIdentity: getProcessStartIdentity(process.pid),
   }
-  private readonly runningMarkerPath: string
   private state: PersistedClientState = { version: CLIENT_STATE_VERSION, restoreEnabled: true }
   private writeQueue: Promise<void> = Promise.resolve()
   private drainAndReleasePromise: Promise<void> | undefined
   private primary = false
   private persistenceSuppressed = false
   private unsupportedFutureEnvelope = false
-  private ownershipGeneration = 1
-  private frozenGeneration: number | undefined
+  private frozen = false
   private rendererAccessToken: string | undefined
 
   constructor(userDataPath: string, private readonly writeState: ClientStateWriter = writeClientStateTemporary) {
@@ -117,16 +114,15 @@ export class ClientStateManager {
     this.userDataPath = userDataPath
     this.statePath = join(userDataPath, CLIENT_STATE_FILENAME)
     this.lockPath = join(userDataPath, PRIMARY_LOCK_FILENAME)
-    this.registrationLockPath = join(userDataPath, REGISTRATION_LOCK_FILENAME)
-    this.runningMarkerPath = getRunningMarkerPath(userDataPath, this.owner)
+    const registrationLockPath = join(userDataPath, REGISTRATION_LOCK_FILENAME)
 
     const election = electClientStateProcess(
       userDataPath,
       this.owner,
-      { primaryLockPath: this.lockPath, registrationLockPath: this.registrationLockPath },
+      { primaryLockPath: this.lockPath, registrationLockPath },
       (message, error) => console.warn(`[client-state] ${message}`, error),
     )
-    this.primary = election.isPrimary
+    this.primary = election
     if (this.primary) {
       const persisted = this.readState()
       this.state = persisted.state
@@ -219,7 +215,7 @@ export class ClientStateManager {
     if (!this.primary) {
       return Promise.resolve(false)
     }
-    if (this.frozenGeneration !== undefined) {
+    if (this.frozen) {
       return Promise.reject(new Error("Client state persistence is frozen for shutdown"))
     }
 
@@ -255,16 +251,11 @@ export class ClientStateManager {
       return this.drainAndReleasePromise
     }
 
-    this.frozenGeneration = this.ownershipGeneration
-    this.drainAndReleasePromise = (async () => {
-      try {
-        await this.writeQueue
-      } finally {
-        this.primary = false
-        this.ownershipGeneration += 1
-        this.releaseOwnedProcessFiles()
-      }
-    })()
+    this.frozen = true
+    this.drainAndReleasePromise = this.writeQueue.finally(() => {
+      this.primary = false
+      this.releaseOwnedProcessFiles()
+    })
     return this.drainAndReleasePromise
   }
 
@@ -286,7 +277,7 @@ export class ClientStateManager {
     if (!this.primary) {
       return Promise.resolve(false)
     }
-    if (this.frozenGeneration !== undefined) {
+    if (this.frozen) {
       return Promise.reject(new Error("Client state persistence is frozen for shutdown"))
     }
     if (this.unsupportedFutureEnvelope) {
@@ -299,7 +290,6 @@ export class ClientStateManager {
     mutate: (state: PersistedClientState) => void,
     skipWhenSuppressed = false,
   ): Promise<boolean> {
-    const admittedGeneration = this.ownershipGeneration
     const operation = this.writeQueue.catch(() => {}).then(async () => {
       if (skipWhenSuppressed && this.persistenceSuppressed) {
         return
@@ -310,7 +300,7 @@ export class ClientStateManager {
       const previousUnsupportedFutureEnvelope = this.unsupportedFutureEnvelope
       try {
         mutate(this.state)
-        await this.writeAtomically(JSON.stringify(this.state), admittedGeneration)
+        await this.writeAtomically(JSON.stringify(this.state))
       } catch (error) {
         this.state = previousState
         this.persistenceSuppressed = previousPersistenceSuppressed
@@ -322,14 +312,14 @@ export class ClientStateManager {
     return operation.then(() => true)
   }
 
-  private async writeAtomically(serializedState: string, admittedGeneration: number): Promise<void> {
+  private async writeAtomically(serializedState: string): Promise<void> {
     const temporaryPath = join(
       this.userDataPath,
       `.${CLIENT_STATE_FILENAME}.${this.owner.pid}.${this.owner.runToken}.tmp`,
     )
     try {
       await this.writeState(temporaryPath, serializedState)
-      this.assertReplacementAllowed(admittedGeneration)
+      this.assertReplacementAllowed()
       await rename(temporaryPath, this.statePath)
     } catch (error) {
       await rm(temporaryPath, { force: true }).catch(() => {})
@@ -337,28 +327,23 @@ export class ClientStateManager {
     }
   }
 
-  private assertReplacementAllowed(admittedGeneration: number): void {
-    if (
-      !this.primary ||
-      admittedGeneration !== this.ownershipGeneration ||
-      (this.frozenGeneration !== undefined && admittedGeneration !== this.frozenGeneration) ||
-      !isProcessOwnerLockOwned(this.lockPath, this.owner)
-    ) {
+  private assertReplacementAllowed(): void {
+    if (!this.primary || !isProcessOwnerLockOwned(this.lockPath, this.owner)) {
       throw new Error("Client state ownership changed before atomic replacement")
     }
   }
 
   private releaseOwnedProcessFiles(): void {
-    try {
-      removeRunningMarkerIfOwned(this.runningMarkerPath, this.owner)
-    } catch (error) {
-      console.warn("[client-state] failed to remove running marker", error)
-    }
-
-    try {
-      removeProcessOwnerLockIfOwned(this.lockPath, this.owner)
-    } catch (error) {
-      console.warn("[client-state] failed to release primary lock", error)
+    const releases: Array<[string, () => void]> = [
+      ["remove running marker", () => { removeRunningMarkerIfOwned(getRunningMarkerPath(this.userDataPath, this.owner), this.owner) }],
+      ["release primary lock", () => { removeProcessOwnerLockIfOwned(this.lockPath, this.owner) }],
+    ]
+    for (const [action, release] of releases) {
+      try {
+        release()
+      } catch (error) {
+        console.warn(`[client-state] failed to ${action}`, error)
+      }
     }
   }
 

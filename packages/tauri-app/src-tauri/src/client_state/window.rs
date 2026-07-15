@@ -71,27 +71,23 @@ pub(super) fn clamp_window_bounds(
     bounds: &WindowBounds,
     displays: &[DisplayArea],
 ) -> Option<WindowBounds> {
-    let mut selected: Option<(DisplayArea, i64, i128)> = None;
-    for display in displays
+    let display = displays
         .iter()
         .copied()
         .filter(|display| display.width > 0 && display.height > 0)
-    {
-        let intersection = intersection_area(bounds, display);
-        let distance = center_distance_squared(bounds, display);
-        if selected
-            .as_ref()
-            .map(|(_, best_intersection, best_distance)| {
-                intersection > *best_intersection
-                    || (intersection == *best_intersection && distance < *best_distance)
-            })
-            .unwrap_or(true)
-        {
-            selected = Some((display, intersection, distance));
-        }
-    }
-
-    let (display, _, _) = selected?;
+        .reduce(|best, candidate| {
+            let best_intersection = intersection_area(bounds, best);
+            let candidate_intersection = intersection_area(bounds, candidate);
+            if candidate_intersection > best_intersection
+                || (candidate_intersection == best_intersection
+                    && center_distance_squared(bounds, candidate)
+                        < center_distance_squared(bounds, best))
+            {
+                candidate
+            } else {
+                best
+            }
+        })?;
     let maximum_width = display.width.min(i32::MAX as u32) as i32;
     let maximum_height = display.height.min(i32::MAX as u32) as i32;
     let width = bounds

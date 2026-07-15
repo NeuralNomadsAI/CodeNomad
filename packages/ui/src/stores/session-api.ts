@@ -71,7 +71,13 @@ import {
 } from "./worktrees"
 import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 import { hydrateSessionMetadataWithClient } from "./session-metadata"
-import { PROJECT_SESSION_LIST_LIMIT, buildProjectSessionListOptions, filterProjectScopedSessions } from "./session-list-options"
+import {
+  PROJECT_SESSION_LIST_LIMIT,
+  buildProjectSessionListOptions,
+  filterProjectScopedSessions,
+  getAuthoritativelyMissingSessionIds,
+  isProjectSessionListComplete,
+} from "./session-list-options"
 import { mergeFetchedSessionRuntimeState, resolveAuthoritativeGenerationRecovery } from "./session-generation-recovery"
 
 const log = getLogger("api")
@@ -133,6 +139,8 @@ type V2SessionListOptions = {
 
 type ProjectSessionListResponse = {
   data: SDKSession[]
+  listedIds: Set<string>
+  complete: boolean
 }
 
 function getKnownParentId(session: SDKSession | Session): string | null | undefined {
@@ -164,6 +172,8 @@ async function fetchV2Sessions(instanceId: string, options: V2SessionListOptions
 
   return {
     data: filterProjectScopedSessions(data, allowedDirectories),
+    listedIds: new Set(data.map((session) => session.id)),
+    complete: isProjectSessionListComplete(data.length),
   }
 }
 
@@ -279,6 +289,13 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
           : existingSession?.generationRecovery ?? null,
       })
     }
+
+    const remotelyDeletedSessionIds = getAuthoritativelyMissingSessionIds(
+      existingSessions.keys(),
+      response.listedIds,
+      response.complete,
+    )
+    for (const sessionId of remotelyDeletedSessionIds) removeSessionRuntimeState(instanceId, sessionId)
 
     setSessions((prev) => {
       const next = new Map(prev)

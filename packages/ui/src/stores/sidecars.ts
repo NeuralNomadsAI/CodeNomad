@@ -4,7 +4,7 @@ import { tGlobal } from "../lib/i18n"
 import { serverEvents } from "../lib/server-events"
 import { getLogger } from "../lib/logger"
 import type { SideCar } from "../../../server/src/api-types"
-import { awaitRestoreStep, getAbortReason } from "./app-session-restore-timeout"
+import { getAbortReason, runAbortable } from "./app-session-restore-timeout"
 
 const log = getLogger("api")
 
@@ -116,9 +116,9 @@ async function openSidecarTab(
   options?: { activate?: boolean; propagateLoadErrors?: boolean; signal?: AbortSignal },
 ) {
   if (options?.signal?.aborted) throw getAbortReason(options.signal)
-  await awaitRestoreStep(
-    ensureSidecarsLoaded({ propagateErrors: options?.propagateLoadErrors }),
-    options?.signal,
+  await runAbortable(
+    () => ensureSidecarsLoaded({ propagateErrors: options?.propagateLoadErrors }),
+    { signal: options?.signal },
   )
 
   const sidecar = sidecars().get(sidecarId)

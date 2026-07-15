@@ -14,21 +14,11 @@ describe("CLI shutdown signal registration", () => {
     const exits: number[] = []
     const shutdown = createServerShutdownHandler({
       shutdown: () => cleanup,
-      logger: {
-        info: () => undefined,
-        warn: () => undefined,
-        error: () => undefined,
-      },
+      logger: { info() {}, warn() {}, error() {} },
       forceExit: (code) => exits.push(code),
       setExitCode: () => undefined,
     })
-
-    installShutdownSignalHandlers(
-      {
-        on: (signal, listener) => listeners.set(signal, listener),
-      },
-      shutdown,
-    )
+    installShutdownSignalHandlers({ on: (signal, listener) => listeners.set(signal, listener) }, shutdown)
 
     listeners.get("SIGINT")?.()
     listeners.get("SIGTERM")?.()

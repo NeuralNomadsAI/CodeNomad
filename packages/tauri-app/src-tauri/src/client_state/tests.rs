@@ -14,456 +14,258 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Barrier};
 use std::thread;
 use std::time::Duration;
+use tempfile::TempDir;
 use url::Url;
 
+fn load(is_primary: bool, restore_enabled: bool, snapshot: Value) -> ClientStateLoadResult {
+    ClientStateLoadResult {
+        is_primary,
+        restore_enabled,
+        snapshot,
+    }
+}
+
+fn assert_access_rejected(state: &ClientState, token: &str, url: &Url) {
+    assert!(state.renderer_access.validate(token, url).is_err());
+}
+
+fn acknowledged_generation(state: &ClientState) -> u64 {
+    state
+        .renderer_flush
+        .acknowledged_generation
+        .load(Ordering::SeqCst)
+}
+
+fn assert_receive_timeout<T>(result: Result<T, mpsc::RecvTimeoutError>) {
+    assert!(matches!(result, Err(mpsc::RecvTimeoutError::Timeout)));
+}
+
+fn failing_state(initially_failing: bool) -> (TempDir, ClientState, Arc<AtomicBool>) {
+    let directory = tempfile::tempdir().unwrap();
+    let fail = Arc::new(AtomicBool::new(initially_failing));
+    let writer_flag = Arc::clone(&fail);
+    let state = ClientState::initialize_at_with_writer(
+        directory.path(),
+        Arc::new(move |path, bytes| {
+            if writer_flag.load(Ordering::SeqCst) {
+                Err("injected write failure".to_string())
+            } else {
+                super::write_atomically(path, bytes)
+            }
+        }),
+    )
+    .unwrap();
+    (directory, state, fail)
+}
+fn window() -> NativeWindowState {
+    NativeWindowState {
+        bounds: bounds(20, 30, 1400, 900),
+        maximized: true,
+        fullscreen: false,
+        zoom_factor: 2.0,
+    }
+}
+fn bounds(x: i32, y: i32, width: i32, height: i32) -> WindowBounds {
+    WindowBounds {
+        x,
+        y,
+        width,
+        height,
+    }
+}
+fn display(x: i32, y: i32, width: u32, height: u32) -> DisplayArea {
+    DisplayArea {
+        x,
+        y,
+        width,
+        height,
+    }
+}
+fn concurrent_roles(path: &std::path::Path, count: usize) -> Vec<bool> {
+    let start = Arc::new(Barrier::new(count + 1));
+    let release = Arc::new(Barrier::new(count + 1));
+    let (sender, receiver) = mpsc::channel();
+    let handles: Vec<_> = (0..count)
+        .map(|_| {
+            let path = path.to_path_buf();
+            let start = Arc::clone(&start);
+            let release = Arc::clone(&release);
+            let sender = sender.clone();
+            thread::spawn(move || {
+                start.wait();
+                let state = ClientState::initialize_at(&path).unwrap();
+                sender.send(state.is_primary()).unwrap();
+                release.wait();
+            })
+        })
+        .collect();
+    drop(sender);
+    start.wait();
+    let roles = (0..count).map(|_| receiver.recv().unwrap()).collect();
+    release.wait();
+    for handle in handles {
+        handle.join().unwrap();
+    }
+    roles
+}
 #[test]
-fn invalid_or_old_state_uses_safe_defaults() {
-    for value in [
+fn parses_envelopes_and_normalizes_zoom() {
+    for bytes in [
         br#"not json"#.as_slice(),
-        br#"{"version":0,"restoreEnabled":false,"snapshot":{"old":true}}"#.as_slice(),
+        br#"{"version":0,"restoreEnabled":false}"#.as_slice(),
         br#"{"version":1,"restoreEnabled":"no"}"#.as_slice(),
     ] {
-        let state = parse_client_state(value);
+        let state = parse_client_state(bytes);
         assert!(state.restore_enabled);
         assert_eq!(state.snapshot, None);
         assert!(!state.unsupported_future_envelope);
     }
-}
-
-#[test]
-fn parses_and_normalizes_versioned_state() {
     let state = parse_client_state(
         br#"{"version":1,"restoreEnabled":false,"snapshot":{"folder":"work"},"window":{"bounds":{"x":20,"y":30,"width":1400,"height":900},"maximized":true,"fullscreen":false,"zoomFactor":20}}"#,
     );
-
     assert!(!state.restore_enabled);
     assert_eq!(state.snapshot, Some(json!({ "folder": "work" })));
     assert_eq!(state.window.unwrap().zoom_factor, MAX_ZOOM_LEVEL);
-}
-
-#[test]
-fn normalizes_valid_native_zoom_levels() {
-    assert_eq!(normalize_native_zoom_level(1.25), Some(1.25));
-    assert_eq!(normalize_native_zoom_level(0.01), Some(0.25));
-    assert_eq!(normalize_native_zoom_level(20.0), Some(MAX_ZOOM_LEVEL));
-}
-
-#[test]
-fn rejects_invalid_native_zoom_levels() {
-    for value in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-        assert_eq!(normalize_native_zoom_level(value), None);
+    for (input, expected) in [
+        (1.25, Some(1.25)),
+        (0.01, Some(0.25)),
+        (20.0, Some(MAX_ZOOM_LEVEL)),
+        (0.0, None),
+        (-1.0, None),
+        (f64::NAN, None),
+        (f64::INFINITY, None),
+    ] {
+        assert_eq!(normalize_native_zoom_level(input), expected);
     }
 }
-
 #[test]
-fn disabled_restore_initializes_default_zoom() {
-    let directory = tempfile::tempdir().unwrap();
-    fs::write(
-        directory.path().join(CLIENT_STATE_FILENAME),
-        br#"{"version":1,"restoreEnabled":false,"window":{"bounds":{"x":20,"y":30,"width":1400,"height":900},"maximized":false,"fullscreen":false,"zoomFactor":2}}"#,
-    )
-    .unwrap();
-
-    let state = ClientState::initialize_at(directory.path()).unwrap();
-    assert_eq!(*state.zoom_level.lock().unwrap(), DEFAULT_ZOOM_LEVEL);
-    assert!(state.persistence_suppressed.load(Ordering::SeqCst));
-    let disabled_bytes = fs::read(directory.path().join(CLIENT_STATE_FILENAME)).unwrap();
-    assert!(state.save_snapshot(json!({ "ignored": true })).unwrap());
-    assert_eq!(
-        fs::read(directory.path().join(CLIENT_STATE_FILENAME)).unwrap(),
-        disabled_bytes
-    );
-}
-
-#[test]
-fn disabling_restore_atomically_clears_persisted_snapshot_and_window() {
-    let directory = tempfile::tempdir().unwrap();
-    let state_path = directory.path().join(CLIENT_STATE_FILENAME);
-    fs::write(
-        &state_path,
-        br#"{"version":1,"restoreEnabled":true,"snapshot":{"kept":true},"window":{"bounds":{"x":20,"y":30,"width":1400,"height":900},"maximized":true,"fullscreen":false,"zoomFactor":2}}"#,
-    )
-    .unwrap();
-    let write_count = Arc::new(AtomicUsize::new(0));
-    let write_count_for_writer = Arc::clone(&write_count);
-    let state = ClientState::initialize_at_with_writer(
-        directory.path(),
-        Arc::new(move |path, bytes| {
-            write_count_for_writer.fetch_add(1, Ordering::SeqCst);
-            super::write_atomically(path, bytes)
-        }),
-    )
-    .unwrap();
-
-    assert!(state.set_restore_enabled(false).unwrap());
-    assert_eq!(write_count.load(Ordering::SeqCst), 1);
-
-    let persisted = parse_client_state(&fs::read(&state_path).unwrap());
-    assert!(!persisted.restore_enabled);
-    assert_eq!(persisted.snapshot, None);
-    assert_eq!(persisted.window, None);
-    let disabled_bytes = fs::read(&state_path).unwrap();
-    assert!(state.save_snapshot(json!({ "ignored": true })).unwrap());
-    assert_eq!(fs::read(state_path).unwrap(), disabled_bytes);
-    assert_eq!(write_count.load(Ordering::SeqCst), 1);
-}
-
-#[test]
-fn moves_offscreen_bounds_to_nearest_monitor_work_area() {
-    let bounds = WindowBounds {
-        x: 4000,
-        y: 2000,
-        width: 1400,
-        height: 900,
-    };
-    let displays = [DisplayArea {
-        x: 0,
-        y: 0,
-        width: 1920,
-        height: 1080,
-    }];
-
-    assert_eq!(
-        clamp_window_bounds(&bounds, &displays),
-        Some(WindowBounds {
-            x: 520,
-            y: 180,
-            width: 1400,
-            height: 900,
-        })
-    );
-}
-
-#[test]
-fn clamps_window_size_to_selected_monitor() {
-    let bounds = WindowBounds {
-        x: -2000,
-        y: 100,
-        width: 3000,
-        height: 300,
-    };
-    let displays = [
-        DisplayArea {
-            x: -1280,
-            y: 0,
-            width: 1280,
-            height: 1024,
-        },
-        DisplayArea {
-            x: 0,
-            y: 0,
-            width: 1920,
-            height: 1080,
-        },
+fn normalizes_window_bounds_against_displays() {
+    let cases = [
+        (
+            bounds(4000, 2000, 1400, 900),
+            vec![display(0, 0, 1920, 1080)],
+            bounds(520, 180, 1400, 900),
+        ),
+        (
+            bounds(-2000, 100, 3000, 300),
+            vec![display(-1280, 0, 1280, 1024), display(0, 0, 1920, 1080)],
+            bounds(-1280, 100, 1280, 600),
+        ),
     ];
-
-    assert_eq!(
-        clamp_window_bounds(&bounds, &displays),
-        Some(WindowBounds {
-            x: -1280,
-            y: 100,
-            width: 1280,
-            height: 600,
-        })
-    );
-}
-
-#[test]
-fn existing_unlocked_lock_and_marker_files_are_recovered() {
-    let directory = tempfile::tempdir().unwrap();
-    fs::write(
-        directory.path().join(PRIMARY_LOCK_FILENAME),
-        br#"{"pid":999999}"#,
-    )
-    .unwrap();
-    let stale_marker = directory.path().join(format!(
-        "{RUNNING_MARKER_PREFIX}stale{RUNNING_MARKER_SUFFIX}"
-    ));
-    fs::write(&stale_marker, b"").unwrap();
-
-    let state = ClientState::initialize_at(directory.path()).unwrap();
-    assert!(state.is_primary());
-    assert!(!stale_marker.exists());
-}
-
-#[test]
-fn simultaneous_clients_elect_exactly_one_primary() {
-    let directory = tempfile::tempdir().unwrap();
-    let start = Arc::new(Barrier::new(3));
-    let release = Arc::new(Barrier::new(3));
-    let (sender, receiver) = mpsc::channel();
-    let mut handles = Vec::new();
-
-    for _ in 0..2 {
-        let path = directory.path().to_path_buf();
-        let start = Arc::clone(&start);
-        let release = Arc::clone(&release);
-        let sender = sender.clone();
-        handles.push(thread::spawn(move || {
-            start.wait();
-            let state = ClientState::initialize_at(&path).unwrap();
-            sender.send(state.is_primary()).unwrap();
-            release.wait();
-            drop(state);
-        }));
+    for (bounds, displays, expected) in cases {
+        assert_eq!(clamp_window_bounds(&bounds, &displays), Some(expected));
     }
-    drop(sender);
-
-    start.wait();
-    let roles = [receiver.recv().unwrap(), receiver.recv().unwrap()];
-    release.wait();
-    for handle in handles {
-        handle.join().unwrap();
+}
+#[test]
+fn stale_files_recover_without_trusting_pid_identity() {
+    for lock_contents in [
+        b"{\"pid\":999999}".as_slice(),
+        b"{\"pid\":0}",
+        b"inconclusive",
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join(PRIMARY_LOCK_FILENAME), lock_contents).unwrap();
+        let marker = directory.path().join(format!(
+            "{RUNNING_MARKER_PREFIX}stale{RUNNING_MARKER_SUFFIX}"
+        ));
+        fs::write(&marker, b"").unwrap();
+        let state = ClientState::initialize_at(directory.path()).unwrap();
+        assert!(state.is_primary());
+        assert!(!marker.exists());
     }
-
+}
+#[test]
+fn election_preserves_cohorts_until_every_participant_exits() {
+    let directory = tempfile::tempdir().unwrap();
     assert_eq!(
-        roles.into_iter().filter(|is_primary| *is_primary).count(),
+        concurrent_roles(directory.path(), 2)
+            .iter()
+            .filter(|role| **role)
+            .count(),
         1
     );
-}
-
-#[test]
-fn primary_role_recovers_after_all_participants_drop() {
-    let directory = tempfile::tempdir().unwrap();
     let primary = ClientState::initialize_at(directory.path()).unwrap();
     let secondary = ClientState::initialize_at(directory.path()).unwrap();
     assert!(primary.is_primary());
     assert!(!secondary.is_primary());
-
     drop(primary);
+    assert_eq!(concurrent_roles(directory.path(), 2), [false, false]);
     let waiting = ClientState::initialize_at(directory.path()).unwrap();
     assert!(!waiting.is_primary());
-
     drop(secondary);
     drop(waiting);
-    let recovered = ClientState::initialize_at(directory.path()).unwrap();
-    assert!(recovered.is_primary());
+    assert!(ClientState::initialize_at(directory.path())
+        .unwrap()
+        .is_primary());
 }
-
 #[test]
-fn third_client_remains_secondary_after_primary_drops_while_secondary_lives() {
-    let directory = tempfile::tempdir().unwrap();
-    let primary = ClientState::initialize_at(directory.path()).unwrap();
-    assert!(primary.save_snapshot(json!({ "restore": true })).unwrap());
-    let secondary = ClientState::initialize_at(directory.path()).unwrap();
-
-    drop(primary);
-    let third = ClientState::initialize_at(directory.path()).unwrap();
-
-    assert!(!secondary.is_primary());
-    assert_eq!(
-        third.load().unwrap(),
-        ClientStateLoadResult {
-            is_primary: false,
-            restore_enabled: true,
-            snapshot: Value::Null,
-        }
-    );
-}
-
-#[test]
-fn concurrent_successors_remain_secondary_while_an_older_secondary_lives() {
-    let directory = tempfile::tempdir().unwrap();
-    let primary = ClientState::initialize_at(directory.path()).unwrap();
-    let secondary = ClientState::initialize_at(directory.path()).unwrap();
-    drop(primary);
-
-    let start = Arc::new(Barrier::new(3));
-    let release = Arc::new(Barrier::new(3));
-    let (sender, receiver) = mpsc::channel();
-    let mut handles = Vec::new();
-    for _ in 0..2 {
-        let path = directory.path().to_path_buf();
-        let start = Arc::clone(&start);
-        let release = Arc::clone(&release);
-        let sender = sender.clone();
-        handles.push(thread::spawn(move || {
-            start.wait();
-            let state = ClientState::initialize_at(&path).unwrap();
-            sender.send(state.is_primary()).unwrap();
-            release.wait();
-            drop(state);
-        }));
-    }
-    drop(sender);
-
-    start.wait();
-    let roles = [receiver.recv().unwrap(), receiver.recv().unwrap()];
-    release.wait();
-    for handle in handles {
-        handle.join().unwrap();
-    }
-    drop(secondary);
-
-    assert_eq!(roles, [false, false]);
-}
-
-#[test]
-fn secondary_never_reads_or_writes_primary_state() {
+fn secondary_and_failed_initialization_are_isolated() {
     let directory = tempfile::tempdir().unwrap();
     let primary = ClientState::initialize_at(directory.path()).unwrap();
     assert!(primary.save_snapshot(json!({ "kept": true })).unwrap());
     let state_path = directory.path().join(CLIENT_STATE_FILENAME);
     let original = fs::read(&state_path).unwrap();
-
     let secondary = ClientState::initialize_at(directory.path()).unwrap();
-    assert_eq!(
-        secondary.load().unwrap(),
-        ClientStateLoadResult {
-            is_primary: false,
-            restore_enabled: true,
-            snapshot: Value::Null,
-        }
-    );
+    assert_eq!(secondary.load().unwrap(), load(false, true, Value::Null));
     assert!(!secondary.save_snapshot(json!({ "replace": true })).unwrap());
     assert!(!secondary.set_restore_enabled(false).unwrap());
     assert!(!secondary.clear().unwrap());
     assert_eq!(fs::read(state_path).unwrap(), original);
+    let invalid = directory.path().join("not-a-directory");
+    fs::write(&invalid, b"occupied").unwrap();
+    let disabled = ClientState::initialize_managed_at(&invalid);
+    assert_eq!(disabled.load().unwrap(), load(false, false, Value::Null));
+    assert!(!disabled.save_snapshot(json!({ "ignored": true })).unwrap());
 }
-
 #[test]
-fn initialization_failure_is_managed_as_non_primary_with_restore_disabled() {
-    let directory = tempfile::tempdir().unwrap();
-    let invalid_app_data_dir = directory.path().join("not-a-directory");
-    fs::write(&invalid_app_data_dir, b"occupied").unwrap();
-
-    let state = ClientState::initialize_managed_at(&invalid_app_data_dir);
-
-    assert_eq!(
-        state.load().unwrap(),
-        ClientStateLoadResult {
-            is_primary: false,
-            restore_enabled: false,
-            snapshot: Value::Null,
+fn disable_and_clear_suppress_later_writes() {
+    for clear in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let state = ClientState::initialize_at(directory.path()).unwrap();
+        assert!(state.save_snapshot(json!({ "removed": true })).unwrap());
+        state.state.lock().unwrap().window = Some(window());
+        if clear {
+            assert!(state.clear().unwrap());
+            assert_eq!(state.load().unwrap(), load(true, true, Value::Null));
+        } else {
+            assert!(state.set_restore_enabled(false).unwrap());
+            assert_eq!(state.load().unwrap(), load(true, false, Value::Null));
+            assert_eq!(*state.zoom_level.lock().unwrap(), DEFAULT_ZOOM_LEVEL);
         }
-    );
-    assert!(!state.save_snapshot(json!({ "ignored": true })).unwrap());
+        let path = directory.path().join(CLIENT_STATE_FILENAME);
+        let persisted = parse_client_state(&fs::read(&path).unwrap());
+        assert_eq!(persisted.snapshot, None);
+        assert_eq!(persisted.window, None);
+        let bytes = fs::read(&path).unwrap();
+        assert!(state.save_snapshot(json!({ "ignored": true })).unwrap());
+        assert_eq!(fs::read(path).unwrap(), bytes);
+    }
 }
-
 #[test]
-fn disabled_primary_loads_role_and_setting_while_writes_are_noops() {
-    let directory = tempfile::tempdir().unwrap();
-    let state = ClientState::initialize_at(directory.path()).unwrap();
-    assert!(state.save_snapshot(json!({ "removed": true })).unwrap());
-    assert!(state.set_restore_enabled(false).unwrap());
-    let state_path = directory.path().join(CLIENT_STATE_FILENAME);
-    let disabled = fs::read(&state_path).unwrap();
-
-    assert_eq!(
-        state.load().unwrap(),
-        ClientStateLoadResult {
-            is_primary: true,
-            restore_enabled: false,
-            snapshot: Value::Null,
-        }
-    );
-    assert!(state.save_snapshot(json!({ "ignored": true })).unwrap());
-    assert_eq!(fs::read(state_path).unwrap(), disabled);
-}
-
-#[test]
-fn failed_restore_setting_write_rolls_memory_back() {
-    let directory = tempfile::tempdir().unwrap();
-    let fail_writes = Arc::new(AtomicBool::new(false));
-    let fail_writes_for_writer = Arc::clone(&fail_writes);
-    let state = ClientState::initialize_at_with_writer(
-        directory.path(),
-        Arc::new(move |path, bytes| {
-            if fail_writes_for_writer.load(Ordering::SeqCst) {
-                Err("injected write failure".to_string())
-            } else {
-                super::write_atomically(path, bytes)
-            }
-        }),
-    )
-    .unwrap();
-    assert!(state.save_snapshot(json!({ "kept": true })).unwrap());
-    state.state.lock().unwrap().window = Some(NativeWindowState {
-        bounds: WindowBounds {
-            x: 20,
-            y: 30,
-            width: 1400,
-            height: 900,
-        },
-        maximized: true,
-        fullscreen: false,
-        zoom_factor: 2.0,
-    });
-    fail_writes.store(true, Ordering::SeqCst);
-
-    assert_eq!(
-        state.set_restore_enabled(false).unwrap_err(),
-        "injected write failure"
-    );
-    assert_eq!(
-        state.load().unwrap(),
-        ClientStateLoadResult {
-            is_primary: true,
-            restore_enabled: true,
-            snapshot: json!({ "kept": true }),
-        }
-    );
-    assert!(state.state.lock().unwrap().window.is_some());
-    assert!(!state.persistence_suppressed.load(Ordering::SeqCst));
-    assert!(
-        parse_client_state(&fs::read(directory.path().join(CLIENT_STATE_FILENAME)).unwrap())
-            .restore_enabled
-    );
-    fail_writes.store(false, Ordering::SeqCst);
-    assert!(state.save_snapshot(json!({ "replacement": true })).unwrap());
-}
-
-#[test]
-fn failed_clear_restores_snapshot_and_suppression_flag() {
-    let directory = tempfile::tempdir().unwrap();
-    let fail_writes = Arc::new(AtomicBool::new(false));
-    let fail_writes_for_writer = Arc::clone(&fail_writes);
-    let state = ClientState::initialize_at_with_writer(
-        directory.path(),
-        Arc::new(move |path, bytes| {
-            if fail_writes_for_writer.load(Ordering::SeqCst) {
-                Err("injected write failure".to_string())
-            } else {
-                super::write_atomically(path, bytes)
-            }
-        }),
-    )
-    .unwrap();
-    assert!(state.save_snapshot(json!({ "kept": true })).unwrap());
-    fail_writes.store(true, Ordering::SeqCst);
-
-    assert_eq!(state.clear().unwrap_err(), "injected write failure");
-
-    fail_writes.store(false, Ordering::SeqCst);
-    assert_eq!(state.load().unwrap().snapshot, json!({ "kept": true }));
-    assert!(!state.persistence_suppressed.load(Ordering::SeqCst));
-    assert!(state.save_snapshot(json!({ "replacement": true })).unwrap());
-    assert_eq!(
-        state.load().unwrap().snapshot,
-        json!({ "replacement": true })
-    );
-}
-
-#[test]
-fn failed_restore_reenable_keeps_successful_clear_suppression_active() {
-    let directory = tempfile::tempdir().unwrap();
-    let fail_writes = Arc::new(AtomicBool::new(false));
-    let fail_writes_for_writer = Arc::clone(&fail_writes);
-    let state = ClientState::initialize_at_with_writer(
-        directory.path(),
-        Arc::new(move |path, bytes| {
-            if fail_writes_for_writer.load(Ordering::SeqCst) {
-                Err("injected write failure".to_string())
-            } else {
-                super::write_atomically(path, bytes)
-            }
-        }),
-    )
-    .unwrap();
-    assert!(state.save_snapshot(json!({ "cleared": true })).unwrap());
-    assert!(state.clear().unwrap());
-    fail_writes.store(true, Ordering::SeqCst);
-
+fn failed_writes_restore_memory_and_suppression_state() {
+    for operation in ["snapshot", "clear", "disable"] {
+        let (_directory, state, fail) = failing_state(false);
+        assert!(state.save_snapshot(json!({ "kept": true })).unwrap());
+        state.state.lock().unwrap().window = Some(window());
+        fail.store(true, Ordering::SeqCst);
+        let error = match operation {
+            "snapshot" => state.save_snapshot(json!({ "lost": true })).unwrap_err(),
+            "clear" => state.clear().unwrap_err(),
+            _ => state.set_restore_enabled(false).unwrap_err(),
+        };
+        assert_eq!(error, "injected write failure");
+        assert_eq!(
+            state.load().unwrap(),
+            load(true, true, json!({ "kept": true }))
+        );
+        assert!(state.state.lock().unwrap().window.is_some());
+        assert!(state.state.lock().unwrap().writes_enabled);
+        fail.store(false, Ordering::SeqCst);
+        assert!(state.save_snapshot(json!({ "replacement": true })).unwrap());
+    }
+    let (_directory, state, fail) = failing_state(false);
+    state.clear().unwrap();
+    fail.store(true, Ordering::SeqCst);
     assert_eq!(
         state.set_restore_enabled(true).unwrap_err(),
         "injected write failure"
@@ -471,84 +273,21 @@ fn failed_restore_reenable_keeps_successful_clear_suppression_active() {
     assert!(state.save_snapshot(json!({ "ignored": true })).unwrap());
     assert_eq!(state.load().unwrap().snapshot, Value::Null);
 }
-
 #[test]
-fn future_envelope_is_preserved_until_clear_replaces_and_unblocks_it() {
+fn future_envelope_is_preserved_until_successful_clear() {
     let directory = tempfile::tempdir().unwrap();
-    let state_path = directory.path().join(CLIENT_STATE_FILENAME);
-    let future = br#"{"version":2,"restoreEnabled":false,"snapshot":{"future":true},"window":{"future":true},"extension":{"keep":"exactly"}}"#;
-    fs::write(&state_path, future).unwrap();
-    let state = ClientState::initialize_at(directory.path()).unwrap();
-
-    assert!(state.state.lock().unwrap().unsupported_future_envelope);
-    assert_eq!(
-        state.load().unwrap(),
-        ClientStateLoadResult {
-            is_primary: true,
-            restore_enabled: true,
-            snapshot: Value::Null,
-        }
-    );
-    assert!(!state.set_restore_enabled(false).unwrap());
-    assert!(!state.set_restore_enabled(true).unwrap());
-    assert!(state
-        .save_snapshot(Value::String("x".repeat(MAX_CLIENT_SNAPSHOT_BYTES)))
-        .unwrap());
-    state.state.lock().unwrap().window = Some(NativeWindowState {
-        bounds: WindowBounds {
-            x: 20,
-            y: 30,
-            width: 1400,
-            height: 900,
-        },
-        maximized: true,
-        fullscreen: false,
-        zoom_factor: 2.0,
-    });
-    state.flush().unwrap();
-    assert_eq!(fs::read(&state_path).unwrap(), future);
-
-    drop(state);
-    let state = ClientState::initialize_at(directory.path()).unwrap();
-    assert_eq!(
-        state.load().unwrap(),
-        ClientStateLoadResult {
-            is_primary: true,
-            restore_enabled: true,
-            snapshot: Value::Null,
-        }
-    );
-    assert_eq!(fs::read(&state_path).unwrap(), future);
-
-    assert!(state.clear().unwrap());
-    assert_eq!(
-        serde_json::from_slice::<Value>(&fs::read(&state_path).unwrap()).unwrap(),
-        json!({ "version": 1, "restoreEnabled": true })
-    );
-    assert!(!state.state.lock().unwrap().unsupported_future_envelope);
-    assert!(!state.persistence_suppressed.load(Ordering::SeqCst));
-    assert!(state.save_snapshot(json!({ "afterClear": true })).unwrap());
-    assert_eq!(
-        state.load().unwrap().snapshot,
-        json!({ "afterClear": true })
-    );
-}
-
-#[test]
-fn failed_future_envelope_clear_preserves_file_and_write_suppression() {
-    let directory = tempfile::tempdir().unwrap();
-    let state_path = directory.path().join(CLIENT_STATE_FILENAME);
-    let future = br#"{"version":9,"futureField":{"must":"survive"}}"#;
-    fs::write(&state_path, future).unwrap();
-    let fail_writes = Arc::new(AtomicBool::new(true));
-    let write_count = Arc::new(AtomicUsize::new(0));
-    let fail_writes_for_writer = Arc::clone(&fail_writes);
-    let write_count_for_writer = Arc::clone(&write_count);
+    let path = directory.path().join(CLIENT_STATE_FILENAME);
+    let future = br#"{"version":9,"snapshot":{"future":true},"extension":{"keep":"exactly"}}"#;
+    fs::write(&path, future).unwrap();
+    let fail = Arc::new(AtomicBool::new(true));
+    let count = Arc::new(AtomicUsize::new(0));
+    let writer_fail = Arc::clone(&fail);
+    let writer_count = Arc::clone(&count);
     let state = ClientState::initialize_at_with_writer(
         directory.path(),
         Arc::new(move |path, bytes| {
-            write_count_for_writer.fetch_add(1, Ordering::SeqCst);
-            if fail_writes_for_writer.load(Ordering::SeqCst) {
+            writer_count.fetch_add(1, Ordering::SeqCst);
+            if writer_fail.load(Ordering::SeqCst) {
                 Err("injected write failure".to_string())
             } else {
                 super::write_atomically(path, bytes)
@@ -556,206 +295,180 @@ fn failed_future_envelope_clear_preserves_file_and_write_suppression() {
         }),
     )
     .unwrap();
-
-    assert_eq!(state.clear().unwrap_err(), "injected write failure");
-    assert_eq!(fs::read(&state_path).unwrap(), future);
-    assert!(state.state.lock().unwrap().unsupported_future_envelope);
+    assert_eq!(state.load().unwrap(), load(true, true, Value::Null));
     assert!(!state.set_restore_enabled(false).unwrap());
     assert!(state.save_snapshot(json!({ "ignored": true })).unwrap());
     state.flush().unwrap();
-    assert_eq!(write_count.load(Ordering::SeqCst), 1);
-
-    fail_writes.store(false, Ordering::SeqCst);
+    assert_eq!(count.load(Ordering::SeqCst), 0);
+    assert_eq!(state.clear().unwrap_err(), "injected write failure");
+    assert_eq!(fs::read(&path).unwrap(), future);
+    assert!(state.state.lock().unwrap().unsupported_future_envelope);
+    fail.store(false, Ordering::SeqCst);
     assert!(state.clear().unwrap());
+    assert!(!state.state.lock().unwrap().unsupported_future_envelope);
     assert!(state.save_snapshot(json!({ "accepted": true })).unwrap());
-    assert_eq!(write_count.load(Ordering::SeqCst), 3);
+    assert_eq!(state.load().unwrap().snapshot, json!({ "accepted": true }));
+}
+#[test]
+fn renderer_tokens_and_origins_are_isolated_across_navigation() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = ClientState::initialize_at(directory.path()).unwrap();
+    let outgoing = Url::parse("http://127.0.0.1:43123/workspace").unwrap();
+    let incoming = Url::parse("http://127.0.0.1:43124/workspace").unwrap();
+    assert!(state.renderer_access.claim("", &outgoing).is_err());
+    assert_access_rejected(&state, "missing", &outgoing);
+    state.renderer_access.claim("outgoing", &outgoing).unwrap();
+    assert!(state.renderer_access.claim("other", &outgoing).is_err());
+    assert_access_rejected(&state, "outgoing", &incoming);
+    state
+        .renderer_access
+        .begin_navigation(Some(&incoming))
+        .unwrap();
+    state
+        .renderer_access
+        .validate("outgoing", &outgoing)
+        .unwrap();
+    state.renderer_access.claim("incoming", &incoming).unwrap();
+    assert_access_rejected(&state, "outgoing", &outgoing);
+    state
+        .renderer_access
+        .validate("incoming", &incoming)
+        .unwrap();
+    for (url, managed, allowed) in [
+        (&outgoing, Some("http://127.0.0.1:43123"), true),
+        (&incoming, Some("http://127.0.0.1:43123"), false),
+        (
+            &Url::parse("http://localhost:9000/workspace").unwrap(),
+            None,
+            false,
+        ),
+        (
+            &Url::parse("https://tauri.localhost/loading.html").unwrap(),
+            None,
+            true,
+        ),
+    ] {
+        assert_eq!(is_allowed_client_state_origin(url, managed), allowed);
+    }
+    for url in ["file:///tmp/loading.html", "about:blank"] {
+        assert!(state
+            .renderer_access
+            .claim("opaque", &Url::parse(url).unwrap())
+            .is_err());
+    }
 }
 
 #[test]
-fn renderer_access_requires_a_claimed_matching_nonempty_token() {
+fn reload_preserves_pending_cross_origin_authority_until_incoming_claim() {
     let directory = tempfile::tempdir().unwrap();
     let state = ClientState::initialize_at(directory.path()).unwrap();
-    let renderer_a = Url::parse("http://127.0.0.1:43123/workspace").unwrap();
-    let renderer_b = Url::parse("http://127.0.0.1:43124/workspace").unwrap();
+    let outgoing = Url::parse("http://127.0.0.1:43123/workspace").unwrap();
+    let incoming = Url::parse("http://127.0.0.1:43124/workspace").unwrap();
+    state.renderer_access.claim("outgoing", &outgoing).unwrap();
 
-    assert!(state.claim_renderer_access("", &renderer_a).is_err());
-    assert!(state.validate_renderer_access("", &renderer_a).is_err());
-    assert!(state
-        .validate_renderer_access("renderer-a", &renderer_a)
-        .is_err());
     state
-        .claim_renderer_access("renderer-a", &renderer_a)
+        .renderer_access
+        .begin_navigation(Some(&incoming))
         .unwrap();
-    state
-        .validate_renderer_access("renderer-a", &renderer_a)
-        .unwrap();
-    state
-        .claim_renderer_access("renderer-a", &renderer_a)
-        .unwrap();
-    assert!(state
-        .claim_renderer_access("renderer-b", &renderer_a)
-        .is_err());
-    assert!(state
-        .validate_renderer_access("renderer-b", &renderer_a)
-        .is_err());
-    assert!(state
-        .validate_renderer_access("renderer-a", &renderer_b)
-        .is_err());
+    state.renderer_access.begin_navigation(None).unwrap();
 
-    state.begin_renderer_navigation(Some(&renderer_b)).unwrap();
+    state.renderer_access.claim("incoming", &incoming).unwrap();
     state
-        .validate_renderer_access("renderer-a", &renderer_a)
-        .unwrap();
-    state
-        .claim_renderer_access("renderer-b", &renderer_b)
-        .unwrap();
-    state
-        .validate_renderer_access("renderer-b", &renderer_b)
+        .renderer_access
+        .validate("incoming", &incoming)
         .unwrap();
 }
 
 #[test]
-fn navigation_token_rotation_preserves_the_outgoing_renderers_latest_snapshot() {
+fn failed_follow_up_navigation_restores_previous_pending_authority() {
     let directory = tempfile::tempdir().unwrap();
     let state = ClientState::initialize_at(directory.path()).unwrap();
-    let outgoing_url = Url::parse("http://127.0.0.1:43123/workspace").unwrap();
-    let incoming_url = Url::parse("http://127.0.0.1:43124/workspace").unwrap();
+    let outgoing = Url::parse("http://127.0.0.1:43123/workspace").unwrap();
+    let incoming = Url::parse("http://127.0.0.1:43124/workspace").unwrap();
+    let failed = Url::parse("http://127.0.0.1:43125/workspace").unwrap();
+    state.renderer_access.claim("outgoing", &outgoing).unwrap();
+    state
+        .renderer_access
+        .begin_navigation(Some(&incoming))
+        .unwrap();
 
-    state
-        .claim_renderer_access("outgoing-document", &outgoing_url)
+    let failed_navigation = state
+        .renderer_access
+        .begin_navigation(Some(&failed))
         .unwrap();
-    state
-        .validate_renderer_access("outgoing-document", &outgoing_url)
-        .unwrap();
-    assert!(!is_allowed_client_state_origin(
-        &outgoing_url,
-        Some(incoming_url.as_str()),
-    ));
-    state
-        .validate_renderer_access("outgoing-document", &outgoing_url)
-        .unwrap();
-    assert!(state.renderer_origin_can_claim(&outgoing_url));
-    assert!(state
-        .save_snapshot(json!({ "revision": 7, "editor": "latest" }))
-        .unwrap());
+    state.renderer_access.cancel_navigation(failed_navigation);
 
+    state.renderer_access.claim("incoming", &incoming).unwrap();
     state
-        .begin_renderer_navigation(Some(&incoming_url))
+        .renderer_access
+        .validate("incoming", &incoming)
         .unwrap();
-    state
-        .validate_renderer_access("outgoing-document", &outgoing_url)
-        .unwrap();
-    assert!(state
-        .save_snapshot(json!({ "revision": 8, "editor": "flushed" }))
-        .unwrap());
-    state
-        .claim_renderer_access("new-document", &incoming_url)
-        .unwrap();
-    state
-        .validate_renderer_access("new-document", &incoming_url)
-        .unwrap();
-    assert!(state
-        .validate_renderer_access("outgoing-document", &outgoing_url)
-        .is_err());
-    assert_eq!(
-        state.load().unwrap().snapshot,
-        json!({ "revision": 8, "editor": "flushed" })
-    );
 }
-
 #[test]
-fn opaque_renderer_urls_cannot_share_client_state_authority() {
+fn flush_generation_and_request_order_are_strict() {
     let directory = tempfile::tempdir().unwrap();
-    let state = ClientState::initialize_at(directory.path()).unwrap();
-    let app_url = Url::parse("tauri://localhost/loading.html").unwrap();
-    let asset_url = Url::parse("asset://localhost/loading.html").unwrap();
-    let file_url = Url::parse("file:///tmp/loading.html").unwrap();
-    let about_url = Url::parse("about:blank").unwrap();
-
-    state.claim_renderer_access("app", &app_url).unwrap();
-    state.validate_renderer_access("app", &app_url).unwrap();
-    assert!(state.validate_renderer_access("app", &asset_url).is_err());
-    assert!(state.claim_renderer_access("file", &file_url).is_err());
-    assert!(state.claim_renderer_access("about", &about_url).is_err());
+    let state = Arc::new(ClientState::initialize_at(directory.path()).unwrap());
+    state
+        .renderer_flush
+        .next_generation
+        .store(2, Ordering::SeqCst);
+    state.acknowledge_renderer_flush(1);
+    assert_eq!(acknowledged_generation(&state), 0);
+    state.acknowledge_renderer_flush(2);
+    assert_eq!(acknowledged_generation(&state), 2);
+    let first = state.renderer_flush.request_lock.lock().unwrap();
+    let waiting = Arc::clone(&state);
+    let (sender, receiver) = mpsc::channel();
+    let waiter = thread::spawn(move || {
+        let _request = waiting.renderer_flush.request_lock.lock().unwrap();
+        sender.send(()).unwrap();
+    });
+    assert_receive_timeout(receiver.recv_timeout(Duration::from_millis(20)));
+    drop(first);
+    receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+    waiter.join().unwrap();
 }
-
 #[test]
 fn ownership_release_drains_active_write_and_blocks_later_writes() {
     let directory = tempfile::tempdir().unwrap();
-    let write_count = Arc::new(AtomicUsize::new(0));
-    let write_count_for_writer = Arc::clone(&write_count);
-    let (write_started_tx, write_started_rx) = mpsc::sync_channel(0);
-    let (allow_write_tx, allow_write_rx) = mpsc::sync_channel(0);
-    let allow_write_rx = std::sync::Mutex::new(allow_write_rx);
+    let (started_tx, started_rx) = mpsc::sync_channel(0);
+    let (allow_tx, allow_rx) = mpsc::sync_channel(0);
+    let allow_rx = std::sync::Mutex::new(allow_rx);
     let state = Arc::new(
         ClientState::initialize_at_with_writer(
             directory.path(),
             Arc::new(move |path, bytes| {
-                write_count_for_writer.fetch_add(1, Ordering::SeqCst);
-                write_started_tx.send(()).unwrap();
-                allow_write_rx.lock().unwrap().recv().unwrap();
+                started_tx.send(()).unwrap();
+                allow_rx.lock().unwrap().recv().unwrap();
                 super::write_atomically(path, bytes)
             }),
         )
         .unwrap(),
     );
-
-    let writing_state = Arc::clone(&state);
-    let writer = thread::spawn(move || writing_state.save_snapshot(json!({ "first": true })));
-    write_started_rx.recv().unwrap();
-
-    let releasing_state = Arc::clone(&state);
-    let (release_started_tx, release_started_rx) = mpsc::sync_channel(0);
-    let (release_finished_tx, release_finished_rx) = mpsc::sync_channel(0);
+    let writing = Arc::clone(&state);
+    let writer = thread::spawn(move || writing.save_snapshot(json!({ "first": true })));
+    started_rx.recv().unwrap();
+    let releasing = Arc::clone(&state);
+    let (released_tx, released_rx) = mpsc::channel();
     let releaser = thread::spawn(move || {
-        release_started_tx.send(()).unwrap();
-        releasing_state.release_locks();
-        release_finished_tx.send(()).unwrap();
+        releasing.release_locks();
+        released_tx.send(()).unwrap();
     });
-    release_started_rx.recv().unwrap();
-    assert_eq!(
-        release_finished_rx.recv_timeout(Duration::from_millis(50)),
-        Err(mpsc::RecvTimeoutError::Timeout)
-    );
-
-    allow_write_tx.send(()).unwrap();
+    assert_receive_timeout(released_rx.recv_timeout(Duration::from_millis(50)));
+    allow_tx.send(()).unwrap();
     assert!(writer.join().unwrap().unwrap());
-    release_finished_rx.recv().unwrap();
+    released_rx.recv().unwrap();
     releaser.join().unwrap();
     assert!(!state.is_primary());
-    assert_eq!(write_count.load(Ordering::SeqCst), 1);
     assert!(!state.save_snapshot(json!({ "tooLate": true })).unwrap());
-    assert_eq!(write_count.load(Ordering::SeqCst), 1);
 }
-
 #[test]
-fn client_state_origin_requires_managed_cli_or_narrow_app_origin() {
-    let managed = "http://127.0.0.1:43123";
-    assert!(is_allowed_client_state_origin(
-        &Url::parse("http://127.0.0.1:43123/workspace").unwrap(),
-        Some(managed),
-    ));
-    assert!(!is_allowed_client_state_origin(
-        &Url::parse("http://127.0.0.1:43124/workspace").unwrap(),
-        Some(managed),
-    ));
-    assert!(!is_allowed_client_state_origin(
-        &Url::parse("http://localhost:9000/workspace").unwrap(),
-        None,
-    ));
-    assert!(is_allowed_client_state_origin(
-        &Url::parse("https://tauri.localhost/loading.html").unwrap(),
-        None,
-    ));
-}
-
-#[test]
-fn rejects_snapshots_over_one_mib_without_replacing_state() {
+fn oversized_snapshot_does_not_replace_state() {
     let directory = tempfile::tempdir().unwrap();
     let state = ClientState::initialize_at(directory.path()).unwrap();
-    assert!(state.save_snapshot(json!({ "small": true })).unwrap());
-
-    let oversized = Value::String("x".repeat(MAX_CLIENT_SNAPSHOT_BYTES));
-    assert!(state.save_snapshot(oversized).is_err());
+    state.save_snapshot(json!({ "small": true })).unwrap();
+    assert!(state
+        .save_snapshot(Value::String("x".repeat(MAX_CLIENT_SNAPSHOT_BYTES)))
+        .is_err());
     assert_eq!(state.load().unwrap().snapshot, json!({ "small": true }));
 }

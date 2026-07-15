@@ -1,6 +1,5 @@
 use fs2::FileExt;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -23,8 +22,10 @@ pub(super) struct ProcessState {
 }
 
 pub(super) struct Registration {
-    process: ProcessState,
-    registration_file: Option<File>,
+    primary_lock: Option<File>,
+    running_marker: RunningMarker,
+    registration_file: File,
+    holds_registration_lock: bool,
 }
 
 impl Registration {
@@ -60,7 +61,7 @@ impl Registration {
         let running_marker =
             create_running_marker(app_data_dir, acknowledged_registration.as_deref())?;
         let lock_path = app_data_dir.join(PRIMARY_LOCK_FILENAME);
-        let mut lock_file = OpenOptions::new()
+        let lock_file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
@@ -77,19 +78,7 @@ impl Registration {
                         &running_marker.path,
                         &registration_id,
                     ) {
-                        Ok(false) => {
-                            lock_file
-                                .set_len(0)
-                                .and_then(|_| lock_file.seek(SeekFrom::Start(0)).map(|_| ()))
-                                .and_then(|_| {
-                                    write!(lock_file, "{{\"pid\":{}}}\n", std::process::id())
-                                })
-                                .and_then(|_| lock_file.sync_data())
-                                .map_err(|err| {
-                                    format!("failed to record primary lock owner: {err}")
-                                })?;
-                            Some(lock_file)
-                        }
+                        Ok(false) => Some(lock_file),
                         Ok(true) => {
                             release_primary_file(&lock_file);
                             None
@@ -111,31 +100,28 @@ impl Registration {
         };
 
         Ok(Self {
-            process: ProcessState {
-                primary_lock: Mutex::new(primary_lock),
-                running_marker: Mutex::new(Some(running_marker)),
-                registration_file: Some(
-                    registration_file.try_clone().map_err(|err| {
-                        format!("failed to retain registration lock handle: {err}")
-                    })?,
-                ),
-            },
-            registration_file: has_registration_lock.then_some(registration_file),
+            primary_lock,
+            running_marker,
+            registration_file,
+            holds_registration_lock: has_registration_lock,
         })
     }
 
     pub(super) fn is_primary(&self) -> bool {
-        self.process.is_primary()
+        self.primary_lock.is_some()
     }
 
     pub(super) fn finish(self) -> ProcessState {
-        if let Some(registration_file) = self.registration_file {
-            if let Err(err) = FileExt::unlock(&registration_file) {
+        if self.holds_registration_lock {
+            if let Err(err) = FileExt::unlock(&self.registration_file) {
                 eprintln!("[client-state] failed to release registration lock: {err}");
             }
-            drop(registration_file);
         }
-        self.process
+        ProcessState {
+            primary_lock: Mutex::new(self.primary_lock),
+            running_marker: Mutex::new(Some(self.running_marker)),
+            registration_file: Some(self.registration_file),
+        }
     }
 }
 
@@ -412,16 +398,13 @@ mod tests {
         let registration = Registration::initialize(directory.path()).unwrap();
         assert!(!registration.is_primary());
         assert!(started_at.elapsed() < Duration::from_secs(2));
-        let marker = registration.process.running_marker.lock().unwrap();
-        let marker_name = marker
-            .as_ref()
-            .unwrap()
+        let marker_name = registration
+            .running_marker
             .path
             .file_name()
             .unwrap()
             .to_string_lossy();
         assert!(marker_name.contains(&format!(".acknowledges.{registration_id}")));
-        drop(marker);
 
         FileExt::unlock(&owner).unwrap();
         registration.finish().release_locks();

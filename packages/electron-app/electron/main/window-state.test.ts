@@ -4,31 +4,11 @@ import { clampWindowBounds, normalizeNativeWindowState, normalizeZoomFactor } fr
 
 const primaryDisplay = { x: 0, y: 0, width: 1920, height: 1080 }
 
-test("rejects invalid persisted bounds", () => {
-  assert.equal(
-    normalizeNativeWindowState({
-      bounds: { x: 0, y: 0, width: Number.NaN, height: 900 },
-      maximized: false,
-      fullscreen: false,
-      zoomFactor: 1,
-    }),
-    undefined,
-  )
-})
-
-test("moves off-screen bounds onto the nearest display", () => {
+test("normalizes persisted window state", () => {
+  assert.equal(normalizeNativeWindowState({ bounds: { x: 0, y: 0, width: Number.NaN, height: 900 }, maximized: false, fullscreen: false, zoomFactor: 1 }), undefined)
+  assert.deepEqual(clampWindowBounds({ x: 4000, y: 2000, width: 1400, height: 900 }, [primaryDisplay]), { x: 520, y: 180, width: 1400, height: 900 })
   assert.deepEqual(
-    clampWindowBounds({ x: 4000, y: 2000, width: 1400, height: 900 }, [primaryDisplay]),
-    { x: 520, y: 180, width: 1400, height: 900 },
-  )
-})
-
-test("clamps dimensions to the selected work area", () => {
-  assert.deepEqual(
-    clampWindowBounds({ x: -2000, y: 100, width: 3000, height: 300 }, [
-      { x: -1280, y: 0, width: 1280, height: 1024 },
-      primaryDisplay,
-    ]),
+    clampWindowBounds({ x: -2000, y: 100, width: 3000, height: 300 }, [{ x: -1280, y: 0, width: 1280, height: 1024 }, primaryDisplay]),
     { x: -1280, y: 100, width: 1280, height: 600 },
   )
 })

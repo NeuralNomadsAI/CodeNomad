@@ -26,15 +26,29 @@ use serde_json::Value;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
-use tauri::{AppHandle, Manager};
-use url::Url;
+use std::time::{Duration, Instant};
+use tauri::{AppHandle, Emitter, Manager};
 use window::NativeWindowState;
 
 const CLIENT_STATE_VERSION: u64 = 1;
 const CLIENT_STATE_FILENAME: &str = "client-state.json";
 const MAX_CLIENT_SNAPSHOT_BYTES: usize = 1024 * 1024;
+const RENDERER_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RendererFlushRequest {
+    pub(crate) generation: u64,
+}
+
+#[derive(Default)]
+struct RendererFlush {
+    request_lock: Mutex<()>,
+    next_generation: AtomicU64,
+    acknowledged_generation: AtomicU64,
+}
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -47,6 +61,8 @@ struct PersistedClientState {
     window: Option<NativeWindowState>,
     #[serde(skip)]
     unsupported_future_envelope: bool,
+    #[serde(skip)]
+    writes_enabled: bool,
 }
 
 impl Default for PersistedClientState {
@@ -57,6 +73,7 @@ impl Default for PersistedClientState {
             snapshot: None,
             window: None,
             unsupported_future_envelope: false,
+            writes_enabled: true,
         }
     }
 }
@@ -76,8 +93,8 @@ pub struct ClientState {
     zoom_level: Mutex<f64>,
     write_lock: Mutex<()>,
     save_generation: AtomicU64,
-    persistence_suppressed: AtomicBool,
     renderer_access: access::RendererAccess,
+    renderer_flush: RendererFlush,
     write_state: StateWriter,
 }
 
@@ -104,18 +121,38 @@ impl ClientState {
     fn disabled(state_path: PathBuf) -> Self {
         let state = PersistedClientState {
             restore_enabled: false,
+            writes_enabled: false,
             ..PersistedClientState::default()
         };
+        Self::new(
+            state_path,
+            process::ProcessState::disabled(),
+            state,
+            std::sync::Arc::new(write_atomically),
+        )
+    }
+
+    fn new(
+        state_path: PathBuf,
+        process: process::ProcessState,
+        state: PersistedClientState,
+        write_state: StateWriter,
+    ) -> Self {
+        let zoom_level = state
+            .restore_enabled
+            .then(|| state.window.as_ref().map(|window| window.zoom_factor))
+            .flatten()
+            .unwrap_or(DEFAULT_ZOOM_LEVEL);
         Self {
             state_path,
-            process: process::ProcessState::disabled(),
+            process,
             state: Mutex::new(state),
-            zoom_level: Mutex::new(DEFAULT_ZOOM_LEVEL),
+            zoom_level: Mutex::new(zoom_level),
             write_lock: Mutex::new(()),
             save_generation: AtomicU64::new(0),
-            persistence_suppressed: AtomicBool::new(true),
             renderer_access: access::RendererAccess::default(),
-            write_state: std::sync::Arc::new(write_atomically),
+            renderer_flush: RendererFlush::default(),
+            write_state,
         }
     }
 
@@ -141,29 +178,8 @@ impl ClientState {
         } else {
             PersistedClientState::default()
         };
-        let zoom_level = if state.restore_enabled {
-            state
-                .window
-                .as_ref()
-                .map(|window| window.zoom_factor)
-                .unwrap_or(DEFAULT_ZOOM_LEVEL)
-        } else {
-            DEFAULT_ZOOM_LEVEL
-        };
-        let persistence_suppressed = !state.restore_enabled;
         let process = registration.finish();
-
-        Ok(Self {
-            state_path,
-            process,
-            state: Mutex::new(state),
-            zoom_level: Mutex::new(zoom_level),
-            write_lock: Mutex::new(()),
-            save_generation: AtomicU64::new(0),
-            persistence_suppressed: AtomicBool::new(persistence_suppressed),
-            renderer_access: access::RendererAccess::default(),
-            write_state,
-        })
+        Ok(Self::new(state_path, process, state, write_state))
     }
 
     fn is_primary(&self) -> bool {
@@ -171,24 +187,12 @@ impl ClientState {
     }
 
     fn load(&self) -> Result<ClientStateLoadResult, String> {
-        if !self.is_primary() {
-            let restore_enabled = self
-                .state
-                .lock()
-                .map_err(|err| err.to_string())?
-                .restore_enabled;
-            return Ok(ClientStateLoadResult {
-                is_primary: false,
-                restore_enabled,
-                snapshot: Value::Null,
-            });
-        }
-
         let state = self.state.lock().map_err(|err| err.to_string())?;
+        let is_primary = self.is_primary();
         Ok(ClientStateLoadResult {
-            is_primary: true,
+            is_primary,
             restore_enabled: state.restore_enabled,
-            snapshot: if state.restore_enabled {
+            snapshot: if is_primary && state.restore_enabled {
                 state.snapshot.clone().unwrap_or(Value::Null)
             } else {
                 Value::Null
@@ -208,8 +212,7 @@ impl ClientState {
             return Err("Client snapshot exceeds the 1 MiB limit".to_string());
         }
 
-        self.state.lock().map_err(|err| err.to_string())?.snapshot = Some(snapshot);
-        self.write_current_state()
+        self.mutate_and_write(|state| state.snapshot = Some(snapshot))
     }
 
     fn set_restore_enabled(&self, enabled: bool) -> Result<bool, String> {
@@ -217,7 +220,12 @@ impl ClientState {
         if !self.is_primary() {
             return Ok(false);
         }
-        if self.has_unsupported_future_envelope()? {
+        if self
+            .state
+            .lock()
+            .map_err(|err| err.to_string())?
+            .unsupported_future_envelope
+        {
             return Ok(false);
         }
         self.mutate_and_write(|state| {
@@ -226,8 +234,7 @@ impl ClientState {
                 state.snapshot = None;
                 state.window = None;
             }
-            self.persistence_suppressed
-                .store(!enabled, Ordering::SeqCst);
+            state.writes_enabled = enabled;
         })
     }
 
@@ -239,11 +246,10 @@ impl ClientState {
         self.mutate_and_write(|state| {
             if state.unsupported_future_envelope {
                 *state = PersistedClientState::default();
-                self.persistence_suppressed.store(false, Ordering::SeqCst);
             } else {
                 state.snapshot = None;
                 state.window = None;
-                self.persistence_suppressed.store(true, Ordering::SeqCst);
+                state.writes_enabled = false;
             }
         })
     }
@@ -256,60 +262,26 @@ impl ClientState {
         Ok(())
     }
 
-    fn has_unsupported_future_envelope(&self) -> Result<bool, String> {
+    fn normal_writes_suppressed(&self) -> Result<bool, String> {
         self.state
             .lock()
-            .map(|state| state.unsupported_future_envelope)
+            .map(|state| !state.writes_enabled || state.unsupported_future_envelope)
             .map_err(|err| err.to_string())
     }
 
-    fn normal_writes_suppressed(&self) -> Result<bool, String> {
-        Ok(self.persistence_suppressed.load(Ordering::SeqCst)
-            || self.has_unsupported_future_envelope()?)
-    }
-
-    fn claim_renderer_access(&self, access_token: &str, renderer_url: &Url) -> Result<(), String> {
-        self.renderer_access.claim(access_token, renderer_url)
-    }
-
-    fn validate_renderer_access(
-        &self,
-        access_token: &str,
-        renderer_url: &Url,
-    ) -> Result<(), String> {
-        self.renderer_access.validate(access_token, renderer_url)
-    }
-
-    fn renderer_origin_can_claim(&self, renderer_url: &Url) -> bool {
-        self.renderer_access.allows_claim_origin(renderer_url)
-    }
-
-    fn begin_renderer_navigation(&self, target_url: Option<&Url>) -> Result<(), String> {
-        self.renderer_access.begin_navigation(target_url)
-    }
-
-    fn cancel_renderer_navigation(&self) {
-        self.renderer_access.cancel_navigation();
-    }
-
-    fn renderer_access_is_claimed(&self) -> bool {
-        self.renderer_access.is_claimed()
-    }
-
-    fn write_current_state(&self) -> Result<bool, String> {
+    fn write_current_state(&self) -> Result<(), String> {
         let bytes = {
             let state = self.state.lock().map_err(|err| err.to_string())?;
             serde_json::to_vec(&*state).map_err(|err| err.to_string())?
         };
         (self.write_state)(&self.state_path, &bytes)?;
-        Ok(true)
+        Ok(())
     }
 
     fn mutate_and_write(
         &self,
         mutate: impl FnOnce(&mut PersistedClientState),
     ) -> Result<bool, String> {
-        let previous_persistence_suppressed = self.persistence_suppressed.load(Ordering::SeqCst);
         let previous_state = {
             let mut state = self.state.lock().map_err(|err| err.to_string())?;
             let previous = state.clone();
@@ -318,11 +290,9 @@ impl ClientState {
         };
 
         match self.write_current_state() {
-            Ok(written) => Ok(written),
+            Ok(()) => Ok(true),
             Err(err) => {
                 *self.state.lock().map_err(|lock_err| lock_err.to_string())? = previous_state;
-                self.persistence_suppressed
-                    .store(previous_persistence_suppressed, Ordering::SeqCst);
                 Err(err)
             }
         }
@@ -334,6 +304,52 @@ impl ClientState {
             .lock()
             .unwrap_or_else(|err| err.into_inner());
         self.process.release_locks();
+    }
+
+    pub(crate) fn wait_for_renderer_flush(&self, app: &AppHandle, require_claim: bool) {
+        let _request = self
+            .renderer_flush
+            .request_lock
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        if require_claim && !self.renderer_access.is_claimed() {
+            return;
+        }
+        let Some(window) = app.get_webview_window("main") else {
+            return;
+        };
+        let generation = self
+            .renderer_flush
+            .next_generation
+            .fetch_add(1, Ordering::SeqCst)
+            + 1;
+        if let Err(err) = window.emit(
+            "client-state:navigation-flush-requested",
+            RendererFlushRequest { generation },
+        ) {
+            eprintln!("[client-state] failed to request renderer flush: {err}");
+            return;
+        }
+
+        let deadline = Instant::now() + RENDERER_FLUSH_TIMEOUT;
+        while self.renderer_flush.next_generation.load(Ordering::SeqCst) == generation
+            && self
+                .renderer_flush
+                .acknowledged_generation
+                .load(Ordering::SeqCst)
+                != generation
+            && Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn acknowledge_renderer_flush(&self, generation: u64) {
+        if self.renderer_flush.next_generation.load(Ordering::SeqCst) == generation {
+            self.renderer_flush
+                .acknowledged_generation
+                .store(generation, Ordering::SeqCst);
+        }
     }
 }
 
@@ -383,6 +399,10 @@ fn parse_client_state(bytes: &[u8]) -> PersistedClientState {
         snapshot,
         window: value.get("window").and_then(window::normalize_window_state),
         unsupported_future_envelope: false,
+        writes_enabled: value
+            .get("restoreEnabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
     }
 }
 
