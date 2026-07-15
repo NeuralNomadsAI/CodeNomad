@@ -105,9 +105,51 @@ export function Markdown(props: MarkdownProps) {
   let containerRef: HTMLDivElement | undefined
   let latestRequestKey = ""
   let cleanupLanguageListener: (() => void) | undefined
+  const codeBlockWrapOverrides = new Map<string, boolean>()
 
   const notifyRendered = () => {
     Promise.resolve().then(() => props.onRendered?.())
+  }
+
+  const codeBlockWrapKey = (codeBlock: HTMLElement): string | null => {
+    const index = codeBlock.getAttribute("data-code-block-index")
+    if (index === null) {
+      return null
+    }
+    return `${resolved().cacheId}:${index}`
+  }
+
+  const applyCodeBlockWrapState = (codeBlock: HTMLElement, enabled: boolean) => {
+    codeBlock.setAttribute("data-wrap-lines", enabled ? "true" : "false")
+
+    const button = codeBlock.querySelector<HTMLButtonElement>(".code-block-wrap")
+    if (!button) {
+      return
+    }
+
+    const label = enabled ? t("markdown.codeBlock.wrap.disable") : t("markdown.codeBlock.wrap.enable")
+    button.classList.toggle("active", enabled)
+    button.setAttribute("aria-pressed", enabled ? "true" : "false")
+    button.setAttribute("aria-label", label)
+    button.setAttribute("title", label)
+
+    const text = button.querySelector(".wrap-text")
+    if (text) {
+      text.textContent = label
+    }
+  }
+
+  const syncCodeBlockWrapStates = () => {
+    if (!containerRef) {
+      return
+    }
+
+    const codeBlocks = containerRef.querySelectorAll<HTMLElement>(".markdown-code-block")
+    for (const codeBlock of codeBlocks) {
+      const key = codeBlockWrapKey(codeBlock)
+      const enabled = key ? (codeBlockWrapOverrides.get(key) ?? true) : true
+      applyCodeBlockWrapState(codeBlock, enabled)
+    }
   }
 
   const resolved = createMemo(() => {
@@ -202,9 +244,33 @@ export function Markdown(props: MarkdownProps) {
     })
   })
 
+  createEffect(() => {
+    html()
+    Promise.resolve().then(syncCodeBlockWrapStates)
+  })
+
   onMount(() => {
     const handleClick = async (event: Event) => {
       const target = event.target as HTMLElement
+      const wrapButton = target.closest(".code-block-wrap") as HTMLButtonElement
+      if (wrapButton) {
+        event.preventDefault()
+        const codeBlock = wrapButton.closest(".markdown-code-block") as HTMLElement | null
+        if (!codeBlock) {
+          return
+        }
+
+        const key = codeBlockWrapKey(codeBlock)
+        const current = codeBlock.getAttribute("data-wrap-lines") !== "false"
+        const next = !current
+        if (key) {
+          codeBlockWrapOverrides.set(key, next)
+        }
+        applyCodeBlockWrapState(codeBlock, next)
+        props.onRendered?.()
+        return
+      }
+
       const copyButton = target.closest(".code-block-copy") as HTMLButtonElement
 
       if (!copyButton) {

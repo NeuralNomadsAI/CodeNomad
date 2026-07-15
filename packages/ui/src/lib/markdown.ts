@@ -17,6 +17,7 @@ let escapeRawHtmlEnabled = false
 let rendererSetup = false
 let shikiModulePromise: Promise<typeof import("shiki/bundle/full")> | null = null
 let bundledLanguagesCache: typeof import("shiki/bundle/full")["bundledLanguages"] | null = null
+let codeBlockRenderIndex = 0
 
 // Dollar-delimited math is handled by marked-katex-extension; bracket delimiters
 // use the small parser-native rules registered in setupRenderer.
@@ -502,6 +503,7 @@ function setupRenderer(isDark: boolean) {
   const renderer = new marked.Renderer()
 
   renderer.code = (code: string, lang: string | undefined) => {
+    const codeBlockIndex = codeBlockRenderIndex++
     const decodedCode = decodeHtmlEntities(code)
     const encodedCode = encodeURIComponent(decodedCode)
 
@@ -509,27 +511,39 @@ function setupRenderer(isDark: boolean) {
     const resolvedLang = lang && lang.trim() ? lang.trim() : "text"
     const escapedLang = escapeHtml(resolvedLang)
     const copyLabel = escapeHtml(tGlobal("markdown.copy"))
+    const disableWrapLabel = escapeHtml(tGlobal("markdown.codeBlock.wrap.disable"))
 
     const header = `
  <div class="code-block-header">
    <span class="code-block-language">${escapedLang}</span>
-   <button class="code-block-copy" data-code="${encodedCode}">
-    <svg class="copy-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-     </svg>
-    <span class="copy-text">${copyLabel}</span>
-   </button>
+   <span class="code-block-actions">
+    <button type="button" class="code-block-wrap active" data-code-block-index="${codeBlockIndex}" aria-pressed="true" aria-label="${disableWrapLabel}" title="${disableWrapLabel}">
+     <svg class="wrap-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+       <path d="M3 6h18"></path>
+       <path d="M3 12h15a3 3 0 1 1 0 6h-4"></path>
+       <path d="m16 16-2 2 2 2"></path>
+       <path d="M3 18h7"></path>
+      </svg>
+     <span class="wrap-text">${disableWrapLabel}</span>
+    </button>
+    <button type="button" class="code-block-copy" data-code="${encodedCode}">
+     <svg class="copy-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+       <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+       <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+      </svg>
+     <span class="copy-text">${copyLabel}</span>
+    </button>
+   </span>
  </div>
- `.trim()
+  `.trim()
 
     if (highlightSuppressed) {
-      return `<div class="markdown-code-block" data-language="${escapedLang}" data-code="${encodedCode}">${header}<pre><code class="language-${escapedLang}">${escapeHtml(decodedCode)}</code></pre></div>`
+      return `<div class="markdown-code-block" data-language="${escapedLang}" data-code="${encodedCode}" data-code-block-index="${codeBlockIndex}" data-wrap-lines="true">${header}<pre><code class="language-${escapedLang}">${escapeHtml(decodedCode)}</code></pre></div>`
     }
 
     // Skip highlighting for "text" language or when highlighter is not available
     if (resolvedLang === "text" || !highlighter) {
-      return `<div class="markdown-code-block" data-language="${escapedLang}" data-code="${encodedCode}">${header}<pre><code>${escapeHtml(decodedCode)}</code></pre></div>`
+      return `<div class="markdown-code-block" data-language="${escapedLang}" data-code="${encodedCode}" data-code-block-index="${codeBlockIndex}" data-wrap-lines="true">${header}<pre><code>${escapeHtml(decodedCode)}</code></pre></div>`
     }
 
     // Resolve language and check if it's loaded
@@ -538,23 +552,23 @@ function setupRenderer(isDark: boolean) {
 
     // Skip highlighting for "text" aliases
     if (langKey === "text" || raw === "text") {
-      return `<div class="markdown-code-block" data-language="${escapedLang}" data-code="${encodedCode}">${header}<pre><code class="language-${escapedLang}">${escapeHtml(decodedCode)}</code></pre></div>`
+      return `<div class="markdown-code-block" data-language="${escapedLang}" data-code="${encodedCode}" data-code-block-index="${codeBlockIndex}" data-wrap-lines="true">${header}<pre><code class="language-${escapedLang}">${escapeHtml(decodedCode)}</code></pre></div>`
     }
 
     // Use highlighting if language is loaded, otherwise fall back to plain code
     if (loadedLanguages.has(langKey)) {
       try {
-         const html = highlighter!.codeToHtml(decodedCode, {
-           lang: langKey,
-           theme: currentTheme === "dark" ? "github-dark" : "github-light-high-contrast",
-         })
-        return `<div class="markdown-code-block" data-language="${escapedLang}" data-code="${encodedCode}">${header}${html}</div>`
+        const html = highlighter!.codeToHtml(decodedCode, {
+          lang: langKey,
+          theme: currentTheme === "dark" ? "github-dark" : "github-light-high-contrast",
+        })
+        return `<div class="markdown-code-block" data-language="${escapedLang}" data-code="${encodedCode}" data-code-block-index="${codeBlockIndex}" data-wrap-lines="true">${header}${html}</div>`
       } catch {
         // Fall through to plain code if highlighting fails
       }
     }
 
-    return `<div class="markdown-code-block" data-language="${escapedLang}" data-code="${encodedCode}">${header}<pre><code class="language-${escapedLang}">${escapeHtml(decodedCode)}</code></pre></div>`
+    return `<div class="markdown-code-block" data-language="${escapedLang}" data-code="${encodedCode}" data-code-block-index="${codeBlockIndex}" data-wrap-lines="true">${header}<pre><code class="language-${escapedLang}">${escapeHtml(decodedCode)}</code></pre></div>`
   }
 
   renderer.link = (href: string, title: string | null | undefined, text: string) => {
@@ -622,8 +636,10 @@ export async function renderMarkdown(
 
   try {
     // Proceed to parse immediately - highlighting will be available on next render
+    codeBlockRenderIndex = 0
     return marked.parse(decoded) as Promise<string>
   } finally {
+    codeBlockRenderIndex = 0
     highlightSuppressed = previousSuppressed
     escapeRawHtmlEnabled = previousEscapeRawHtml
   }
