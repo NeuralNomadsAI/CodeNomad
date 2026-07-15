@@ -7,7 +7,7 @@ import MessageBlock from "./message-block"
 import { getMessageAnchorId } from "./message-anchors"
 import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./message-timeline"
 import VirtualFollowList, { type VirtualExplicitBottomPinIntent, type VirtualFollowListApi, type VirtualFollowListState, type VirtualFollowScrollSnapshot } from "./virtual-follow-list"
-import { isSnapshotAutoFollowing } from "./virtual-follow-behavior"
+import { isScrollRestoreGenerationCurrent, isSnapshotAutoFollowing } from "./virtual-follow-behavior"
 import { useConfig } from "../stores/preferences"
 import { getSessionInfo } from "../stores/sessions"
 import { messageStoreBus } from "../stores/message-v2/bus"
@@ -709,6 +709,7 @@ export default function MessageSection(props: MessageSectionProps) {
   const [didRestoreScroll, setDidRestoreScroll] = createSignal(false)
   const lastGoodScrollSnapshots = new Map<string, VirtualFollowScrollSnapshot>()
   let restoringScrollSnapshot = false
+  let scrollRestoreGeneration = 0
 
   function getLastGoodScrollSnapshot(sessionId: string) {
     return lastGoodScrollSnapshots.get(sessionId) ?? store().getScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE)
@@ -722,6 +723,8 @@ export default function MessageSection(props: MessageSectionProps) {
     on(
       () => props.sessionId,
       () => {
+        scrollRestoreGeneration += 1
+        restoringScrollSnapshot = false
         setDidRestoreScroll(false)
         const snapshot = store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE)
         if (snapshot) setLastGoodScrollSnapshot(props.sessionId, snapshot)
@@ -783,7 +786,7 @@ export default function MessageSection(props: MessageSectionProps) {
   createEffect(() => {
     const sessionId = props.sessionId
     onCleanup(() => {
-      persistMessageScrollSnapshot({ sessionId, requireActive: false })
+      persistMessageScrollSnapshot({ sessionId, allowCapture: props.sessionId === sessionId, requireActive: false })
     })
   })
 
@@ -890,25 +893,43 @@ export default function MessageSection(props: MessageSectionProps) {
       return
     }
 
+    const restoreSessionId = props.sessionId
+    const restoreGeneration = ++scrollRestoreGeneration
+    const isCurrentRestore = () => isScrollRestoreGenerationCurrent(
+      restoreSessionId,
+      restoreGeneration,
+      props.sessionId,
+      scrollRestoreGeneration,
+    )
     restoringScrollSnapshot = true
     api.restoreScrollSnapshot(snapshot, {
       behavior: "auto",
       fallback: () => {
+        if (!isCurrentRestore()) return
         api.setAutoScroll(true)
         api.scrollToBottom({ immediate: true })
         restoringScrollSnapshot = false
         setDidRestoreScroll(true)
       },
       onApplied: () => {
+        if (!isCurrentRestore()) return
         restoringScrollSnapshot = false
-        setLastGoodScrollSnapshot(props.sessionId, snapshot)
+        setLastGoodScrollSnapshot(restoreSessionId, snapshot)
+        setDidRestoreScroll(true)
+      },
+      onCancelled: () => {
+        if (!isCurrentRestore()) return
+        restoringScrollSnapshot = false
         setDidRestoreScroll(true)
       },
     })
   })
 
   onCleanup(() => {
-    persistMessageScrollSnapshot({ requireActive: false })
+    const allowCapture = !restoringScrollSnapshot
+    scrollRestoreGeneration += 1
+    restoringScrollSnapshot = false
+    persistMessageScrollSnapshot({ allowCapture, requireActive: false })
   })
 
   function clearQuoteSelection() {

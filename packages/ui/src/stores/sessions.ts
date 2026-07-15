@@ -6,7 +6,10 @@ import {
   activeParentSessionId,
   activeSessionId,
   agents,
+  clearActiveSession,
   clearActiveParentSession,
+  clearInstanceSessionSelection,
+  clearInstanceDraftPromptValues,
   clearInstanceDraftPrompts,
   clearSessionDraftPrompt,
   ensureSessionAncestorsExpanded,
@@ -18,6 +21,15 @@ import {
   getSessionRoot,
   getParentSessions,
   getSessionDraftPrompt,
+  getSessionDraftPromptsForInstance,
+  getAuthoritativeDraftSessionIdsForInstance,
+  getAuthoritativelyDeletedSessionIdsForInstance,
+  hasAuthoritativeSessionSelection,
+  hydrateActiveSessionSelection,
+  hydrateSessionIdleMarkers,
+  hydrateSessionGenerationRecovery,
+  beginSessionGenerationAdmission,
+  cancelSessionGenerationAdmissions,
   getSessionFamily,
   getSessionInfo,
   getSessionListError,
@@ -46,11 +58,15 @@ import {
   toggleSessionExpanded,
   clearSessionSearch,
   getSessionHasMore,
+  hydrateSessionDraftPrompt,
   isSessionSearchLoading,
+  onSessionDraftHydrated,
   resetSessionPagination,
+  clearInstanceDeletedSessionAuthority,
 } from "./session-state"
 
 import { getDefaultModel } from "./session-models"
+import { handleWorktreeReady } from "./worktrees"
 import {
   createSession,
   deleteSession,
@@ -82,6 +98,7 @@ import {
   handleQuestionAnswered,
   handleQuestionAsked,
   handleSessionCompacted,
+  handleSessionDeleted,
   handleSessionError,
   handleSessionIdle,
   handleSessionStatus,
@@ -96,6 +113,7 @@ sseManager.onMessageRemoved = handleMessageRemoved
 sseManager.onMessagePartRemoved = handleMessagePartRemoved
 sseManager.onSessionUpdate = handleSessionUpdate
 sseManager.onSessionCompacted = handleSessionCompacted
+sseManager.onSessionDeleted = handleSessionDeleted
 sseManager.onSessionError = handleSessionError
 sseManager.onSessionIdle = handleSessionIdle
 sseManager.onSessionStatus = handleSessionStatus
@@ -104,13 +122,17 @@ sseManager.onPermissionUpdated = handlePermissionUpdated
 sseManager.onPermissionReplied = handlePermissionReplied
 sseManager.onQuestionAsked = handleQuestionAsked
 sseManager.onQuestionAnswered = handleQuestionAnswered
+sseManager.onWorktreeReady = handleWorktreeReady
 
 export {
   abortSession,
   activeParentSessionId,
   activeSessionId,
   agents,
+  clearActiveSession,
   clearActiveParentSession,
+  clearInstanceSessionSelection,
+  clearInstanceDraftPromptValues,
   clearInstanceDraftPrompts,
   clearSessionDraftPrompt,
   createSession,
@@ -134,6 +156,15 @@ export {
   getDefaultModel,
   getParentSessions,
   getSessionDraftPrompt,
+  getSessionDraftPromptsForInstance,
+  getAuthoritativeDraftSessionIdsForInstance,
+  getAuthoritativelyDeletedSessionIdsForInstance,
+  hasAuthoritativeSessionSelection,
+  hydrateActiveSessionSelection,
+  hydrateSessionIdleMarkers,
+  hydrateSessionGenerationRecovery,
+  beginSessionGenerationAdmission,
+  cancelSessionGenerationAdmissions,
   getSessionFamily,
   getSessionInfo,
   getSessionListError,
@@ -167,7 +198,10 @@ export {
   updateSessionModel,
   clearSessionSearch,
   getSessionHasMore,
+  hydrateSessionDraftPrompt,
   isSessionSearchLoading,
+  onSessionDraftHydrated,
   resetSessionPagination,
+  clearInstanceDeletedSessionAuthority,
 }
 export type { SessionInfo }

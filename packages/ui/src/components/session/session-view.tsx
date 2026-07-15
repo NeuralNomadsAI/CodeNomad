@@ -7,7 +7,7 @@ import { messageStoreBus } from "../../stores/message-v2/bus"
 import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import { getAttachments, removeAttachment } from "../../stores/attachments"
-import { instances } from "../../stores/instances"
+import { instances, waitForInstanceWorkspaceMetadataHydration } from "../../stores/instances"
 import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession } from "../../stores/sessions"
 import { clearSessionIdleFade, IDLE_STATUS_VISIBILITY_MS, getSessionStatus, isSessionBusy as getSessionBusyStatus, markSessionIdleFadeStarted } from "../../stores/session-status"
 import { deleteMessage } from "../../stores/session-actions"
@@ -22,6 +22,7 @@ import { closeSessionPreview, getSessionPreview, showSessionChat } from "../../s
 import { SessionPreviewView } from "../session-preview-view"
 import { isSnapshotAutoFollowing } from "../virtual-follow-behavior"
 import { getSubmitBottomPinTargetCount, resolveSessionBottomPinIntent, shouldClearSessionBottomPinIntent, type SessionBottomPinIntent } from "./session-bottom-pin-intent"
+import { focusConversationStream } from "../focus-conversation"
 
 const log = getLogger("session")
 
@@ -37,6 +38,8 @@ interface SessionViewProps {
   escapeInDebounce: boolean
   isPhoneLayout?: boolean
   compactPromptLayout?: boolean
+  focusConversationOnActivate?: boolean
+  onConversationFocusHandled?: () => void
   showSidebarToggle?: boolean
   onSidebarToggle?: () => void
   forceCompactStatusLayout?: boolean
@@ -61,7 +64,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     if (!currentSession) return false
     return getSessionStatus(props.instanceId, currentSession.id) === "working"
   })
-
   const sessionNeedsInput = createMemo(() => {
     const currentSession = session()
     if (!currentSession) return false
@@ -223,13 +225,10 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       if (pendingIdleSeenTimers.has(timerKey)) continue
       pendingIdleSeenTimers.add(timerKey)
       markSessionIdleFadeStarted(props.instanceId, entry.id)
+      markSessionIdleSeen(props.instanceId, entry.id)
 
       window.setTimeout(() => {
         pendingIdleSeenTimers.delete(timerKey)
-        const latestEntry = props.activeSessions.get(entry.id)
-        if (latestEntry?.status === "idle" && latestEntry.idleSince === entry.idleSince) {
-          markSessionIdleSeen(props.instanceId, entry.id)
-        }
         clearSessionIdleFade(props.instanceId, entry.id, entry.idleSince)
       }, IDLE_STATUS_VISIBILITY_MS)
     }
@@ -240,13 +239,13 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       () => props.isActive,
       (isActive) => {
         if (!isActive) {
+          if (props.focusConversationOnActivate) props.onConversationFocusHandled?.()
           clearConversationPlaybackForSession(props.instanceId, props.sessionId)
           return
         }
-        if (!isActive) return
 
         // On phones, focusing the prompt on session switch is disruptive (it raises the OSK).
-        if (props.isPhoneLayout) return
+        if (props.isPhoneLayout && !props.focusConversationOnActivate) return
 
         // Don't steal focus from other inputs (command palette, dialogs, selectors, etc.)
         if (typeof document === "undefined") return
@@ -264,6 +263,19 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         // Defer until the session pane is visible and the textarea is mounted.
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
+            if (!props.isActive) return
+            if (props.focusConversationOnActivate) {
+              const activeElement = document.activeElement
+              const focusIsUnclaimed =
+                !activeElement || activeElement === document.body || activeElement === document.documentElement
+              const modalIsOpen = Boolean(document.querySelector('[role="dialog"][aria-modal="true"]'))
+              if (focusIsUnclaimed && !modalIsOpen && focusConversationStream(rootRef)) {
+                props.onConversationFocusHandled?.()
+                return
+              }
+              props.onConversationFocusHandled?.()
+              if (!focusIsUnclaimed || modalIsOpen) return
+            }
             if (promptInputApi) {
               promptInputApi.focus()
               return
@@ -285,10 +297,16 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   )
 
   createEffect(() => {
+    if (!props.isActive) return
     const currentSession = session()
-    if (currentSession) {
-      loadMessages(props.instanceId, currentSession.id).catch((error) => log.error("Failed to load messages", error))
-    }
+    if (!currentSession) return
+    const sessionId = currentSession.id
+    void waitForInstanceWorkspaceMetadataHydration(props.instanceId)
+      .then(() => {
+        if (!props.isActive || session()?.id !== sessionId) return
+        return loadMessages(props.instanceId, sessionId)
+      })
+      .catch((error) => log.error("Failed to load messages", error))
   })
 
   function handleReloadMessages() {
@@ -341,7 +359,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       pendingCommentText = `${pendingCommentText ?? ""}${markdown}`
     }
   }
- 
+
   async function handleSendMessage(prompt: string, attachments: Attachment[]) {
     const messageCount = messageStore().getSessionMessageIds(props.sessionId).length
     const submittedExchangeTargetCount = getSubmitBottomPinTargetCount(messageCount, sessionStreamingActive())

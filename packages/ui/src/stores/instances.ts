@@ -18,6 +18,8 @@ import {
   fetchProviders,
   clearInstanceDraftPrompts,
   clearSessionListRequestState,
+  clearInstanceDeletedSessionAuthority,
+  clearInstanceSessionSelection,
   resetSessionPagination,
 } from "./sessions"
 import {
@@ -62,6 +64,13 @@ import { activeSidecarToken } from "./sidecars"
 import { buildV2RequestLocations, type V2Location } from "./request-locations"
 import { showToastNotification } from "../lib/notifications"
 import { tGlobal } from "../lib/i18n"
+import { appSessionRestoreGateActive } from "./app-session-restore-gate"
+import { clearInstanceAttachments } from "./attachments"
+import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
+import { completeAbortableRestoreCreation } from "./abortable-restore-creation"
+import { getAbortReason } from "./app-session-restore-timeout"
+import { AbortCreatedWorkspaceCleanup } from "./abort-created-workspace-cleanup"
+import { TrailingResyncCoordinator, waitForSettledPrerequisite } from "../lib/trailing-resync"
 
 const log = getLogger("api")
 
@@ -212,6 +221,72 @@ const MAX_LOG_ENTRIES = 1000
 
 const pendingDisposeRequests = new Map<string, Promise<boolean>>()
 const pendingRehydrations = new Map<string, Promise<void>>()
+const initialHydrations = new Map<string, Promise<void>>()
+const initialSessionHydrations = new Map<string, Promise<void>>()
+const initialWorkspaceMetadataHydrations = new Map<string, Promise<void>>()
+const restoreCreatedWorkspaceCleanup = new AbortCreatedWorkspaceCleanup<WorkspaceDescriptor>({
+  deleteWorkspace: (workspaceId) => serverApi.deleteWorkspace(workspaceId),
+  restoreWorkspace: (workspace) => upsertWorkspace(workspace),
+  onPermanentFailure: (workspace, error) => {
+    log.error("Failed to dispose workspace created by cancelled restore; restored it to the UI", {
+      workspaceId: workspace.id,
+      error,
+    })
+  },
+})
+let restoreCreationRequestSequence = 0
+
+const connectionResyncs = new TrailingResyncCoordinator(
+  async (instanceId) => {
+    await waitForSettledPrerequisite(initialHydrations.get(instanceId))
+    const instance = instances().get(instanceId)
+    if (!instance?.client || instance.status !== "ready") return
+    await fetchSessions(instanceId, { reset: false })
+  },
+  (instanceId, error) => {
+    log.warn("Failed to resync sessions after instance connection", { instanceId, error })
+  },
+)
+
+function resyncConnectedInstance(instanceId: string): void {
+  void connectionResyncs.request(instanceId)
+}
+
+serverEvents.on("instance.eventStatus", (event) => {
+  if (event.type !== "instance.eventStatus" || event.status !== "connected") return
+  if (disconnectedInstance()?.id === event.instanceId) {
+    setDisconnectedInstance(null)
+  }
+  resyncConnectedInstance(event.instanceId)
+})
+
+function createRestoreCreationRequestId(): string {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return `restore-${globalThis.crypto.randomUUID()}`
+  }
+  restoreCreationRequestSequence += 1
+  return `restore-${Date.now().toString(36)}-${restoreCreationRequestSequence.toString(36)}`
+}
+
+type InstanceReadyWaiter = {
+  resolve: () => void
+  reject: (error: Error) => void
+}
+
+const instanceReadyWaiters = new Map<string, Set<InstanceReadyWaiter>>()
+
+function settleInstanceReadyWaiters(instanceId: string, error?: Error): void {
+  const waiters = instanceReadyWaiters.get(instanceId)
+  if (!waiters) return
+  instanceReadyWaiters.delete(instanceId)
+  for (const waiter of waiters) {
+    if (error) {
+      waiter.reject(error)
+    } else {
+      waiter.resolve()
+    }
+  }
+}
 
 function reconcilePendingSessionIndicators(instanceId: string): void {
   reconcileSessionPendingState(
@@ -242,6 +317,7 @@ function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectN
 }
 
 function ensureActiveInstanceSelected(): void {
+  if (appSessionRestoreGateActive()) return
   if (activeSidecarToken()) return
 
   const current = activeInstanceId()
@@ -269,6 +345,12 @@ function upsertWorkspace(descriptor: WorkspaceDescriptor, projectName?: string) 
     // If no tab is currently selected (common after UI refresh),
     // auto-select the first ready instance.
     ensureActiveInstanceSelected()
+    settleInstanceReadyWaiters(descriptor.id)
+  } else if (descriptor.status === "error" || descriptor.status === "stopped") {
+    settleInstanceReadyWaiters(
+      descriptor.id,
+      new Error(descriptor.error || `Workspace ${descriptor.id} did not become ready`),
+    )
   }
 }
 
@@ -297,10 +379,64 @@ function attachClient(descriptor: WorkspaceDescriptor) {
     proxyPath: nextProxyPath,
     status: "ready",
   })
-  sseManager.seedStatus(descriptor.id, "connecting")
-  void hydrateInstanceData(descriptor.id).catch((error) => {
+  sseManager.seedStatusIfMissing(descriptor.id, "connecting")
+  const sessionHydration = startInstanceSessionHydration(descriptor.id)
+  initialSessionHydrations.set(descriptor.id, sessionHydration.sessions)
+  initialWorkspaceMetadataHydrations.set(descriptor.id, sessionHydration.workspaceMetadata)
+  const hydration = hydrateInstanceData(descriptor.id, {
+    propagateErrors: true,
+    sessionHydration: sessionHydration.sessions,
+    workspaceMetadataHydration: sessionHydration.workspaceMetadata,
+  })
+  initialHydrations.set(descriptor.id, hydration)
+  if (sseManager.getStatuses().get(descriptor.id) === "connected") {
+    resyncConnectedInstance(descriptor.id)
+  }
+  void hydration.catch((error) => {
     log.error("Failed to hydrate instance data", error)
   })
+}
+
+function waitForInstanceReady(instanceId: string): Promise<void> {
+  const instance = instances().get(instanceId)
+  if (instance?.status === "ready" && instance.client) {
+    return Promise.resolve()
+  }
+  if (instance?.status === "error" || instance?.status === "stopped") {
+    return Promise.reject(new Error(instance.error || `Workspace ${instanceId} did not become ready`))
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    const waiter = { resolve, reject }
+    const waiters = instanceReadyWaiters.get(instanceId) ?? new Set<InstanceReadyWaiter>()
+    waiters.add(waiter)
+    instanceReadyWaiters.set(instanceId, waiters)
+
+    const current = instances().get(instanceId)
+    if (current?.status === "ready" && current.client) {
+      settleInstanceReadyWaiters(instanceId)
+    } else if (current?.status === "error" || current?.status === "stopped") {
+      settleInstanceReadyWaiters(
+        instanceId,
+        new Error(current.error || `Workspace ${instanceId} did not become ready`),
+      )
+    }
+  })
+}
+
+async function waitForInstanceInitialHydration(instanceId: string): Promise<void> {
+  await waitForInstanceReady(instanceId)
+  await initialHydrations.get(instanceId)
+}
+
+async function waitForInstanceInitialSessionHydration(instanceId: string): Promise<void> {
+  await waitForInstanceReady(instanceId)
+  await initialSessionHydrations.get(instanceId)
+}
+
+async function waitForInstanceWorkspaceMetadataHydration(instanceId: string): Promise<void> {
+  await waitForInstanceReady(instanceId)
+  await initialWorkspaceMetadataHydrations.get(instanceId)
 }
 
 function releaseInstanceResources(instanceId: string) {
@@ -424,20 +560,43 @@ async function syncPendingQuestions(instanceId: string): Promise<void> {
   }
 }
 
-async function hydrateInstanceData(instanceId: string, options?: { force?: boolean }) {
-  try {
-    if (options?.force) {
-      await reloadWorktrees(instanceId)
-      await reloadWorktreeMap(instanceId)
-    } else {
-      await ensureWorktreesLoaded(instanceId)
-      await ensureWorktreeMapLoaded(instanceId)
-    }
-    await syncOpenCodeWorkspaces(instanceId)
+function startInstanceSessionHydration(instanceId: string, force = false): {
+  sessions: Promise<void>
+  workspaceMetadata: Promise<void>
+} {
+  const worktreeMapHydration = force
+    ? reloadWorktreeMap(instanceId)
+    : ensureWorktreeMapLoaded(instanceId)
+  const worktreeHydration = force
+    ? reloadWorktrees(instanceId)
+    : ensureWorktreesLoaded(instanceId)
+  const sessions = worktreeHydration.then(async () => {
     resetSessionPagination(instanceId)
     await fetchSessions(instanceId).catch((error) => {
       log.error("Failed to hydrate sessions", { instanceId, error })
     })
+  })
+  const workspaceMetadata = worktreeHydration.then(async () => {
+    await Promise.all([worktreeMapHydration, syncOpenCodeWorkspaces(instanceId)])
+  })
+  return { sessions, workspaceMetadata }
+}
+
+async function hydrateInstanceData(instanceId: string, options?: {
+  force?: boolean
+  propagateErrors?: boolean
+  sessionHydration?: Promise<void>
+  workspaceMetadataHydration?: Promise<void>
+}) {
+  try {
+    const hydration = options?.sessionHydration
+      ? {
+          sessions: options.sessionHydration,
+          workspaceMetadata: options.workspaceMetadataHydration ?? Promise.resolve(),
+        }
+      : startInstanceSessionHydration(instanceId, options?.force)
+    await hydration.sessions
+    await hydration.workspaceMetadata
     await fetchAgents(instanceId)
     await fetchProviders(instanceId)
     await ensureInstanceConfigLoaded(instanceId)
@@ -448,6 +607,7 @@ async function hydrateInstanceData(instanceId: string, options?: { force?: boole
     await syncPendingQuestions(instanceId)
   } catch (error) {
     log.error("Failed to fetch initial data", error)
+    if (options?.propagateErrors) throw error
   }
 }
 
@@ -489,6 +649,15 @@ async function postInstanceDispose(instanceId: string): Promise<boolean> {
   return Boolean(text)
 }
 
+function clearReloadableInstanceState(instanceId: string): void {
+  clearCacheForInstance(instanceId)
+  clearCommands(instanceId)
+  clearInstanceMetadata(instanceId)
+  messageStoreBus.clearInstanceScrollSnapshots(instanceId)
+  clearPermissionQueue(instanceId)
+  clearQuestionQueue(instanceId)
+}
+
 async function rehydrateInstance(instanceId: string, options?: { reason?: string }): Promise<void> {
   if (pendingRehydrations.has(instanceId)) {
     return pendingRehydrations.get(instanceId)
@@ -501,12 +670,7 @@ async function rehydrateInstance(instanceId: string, options?: { reason?: string
     }
 
     log.info("Rehydrating instance", { instanceId, reason: options?.reason })
-    clearCacheForInstance(instanceId)
-    clearCommands(instanceId)
-    clearInstanceMetadata(instanceId)
-    clearInstanceDraftPrompts(instanceId)
-    clearPermissionQueue(instanceId)
-    clearQuestionQueue(instanceId)
+    clearReloadableInstanceState(instanceId)
 
     await hydrateInstanceData(instanceId, { force: true })
   })().finally(() => {
@@ -536,21 +700,42 @@ async function disposeInstance(instanceId: string): Promise<boolean> {
   return promise
 }
 
-  void (async function initializeWorkspaces() {
+const initialWorkspaceLoad = (async function initializeWorkspaces(): Promise<{ error?: unknown }> {
   try {
     const workspaces = await serverApi.fetchWorkspaces()
     workspaces.forEach((workspace) => upsertWorkspace(workspace))
     // After a UI refresh, we may have instances but no active selection.
     ensureActiveInstanceSelected()
+    return {}
   } catch (error) {
     log.error("Failed to load workspaces", error)
+    return { error }
   }
 })()
+
+async function waitForInitialWorkspaceLoad(): Promise<void> {
+  const result = await initialWorkspaceLoad
+  if (result.error !== undefined) throw result.error
+}
 
 
 serverEvents.on("*", (event) => handleWorkspaceEvent(event))
 
 function handleWorkspaceEvent(event: WorkspaceEventPayload) {
+  if ("workspace" in event) {
+    restoreCreatedWorkspaceCleanup.trackPendingRequest(event.workspace)
+  }
+  const workspaceId = event.type === "workspace.log"
+    ? event.entry.workspaceId
+    : "workspace" in event
+      ? event.workspace.id
+      : "workspaceId" in event && typeof event.workspaceId === "string"
+        ? event.workspaceId
+        : null
+  if (workspaceId && restoreCreatedWorkspaceCleanup.shouldIgnoreEvent(workspaceId)) {
+    return
+  }
+
   switch (event.type) {
     case "workspace.created":
       upsertWorkspace(event.workspace)
@@ -565,6 +750,7 @@ function handleWorkspaceEvent(event: WorkspaceEventPayload) {
       clearSyncedYoloSessionsForInstance(event.workspace.id)
       break
     case "workspace.stopped":
+      restoreCreatedWorkspaceCleanup.release(event.workspaceId)
       releaseInstanceResources(event.workspaceId)
       removeInstance(event.workspaceId)
       break
@@ -647,6 +833,9 @@ function setInstanceLogStreaming(instanceId: string, enabled: boolean) {
 }
 
 function addInstance(instance: Instance) {
+  const occurrence = Array.from(instances().values())
+    .filter((existing) => normalizeInstanceFolderPath(existing.folder) === normalizeInstanceFolderPath(instance.folder))
+    .length
   setInstances((prev) => {
     const next = new Map(prev)
     next.set(instance.id, instance)
@@ -654,6 +843,12 @@ function addInstance(instance: Instance) {
   })
   ensureLogContainer(instance.id)
   ensureLogStreamingState(instance.id)
+  publishInstanceLifecycleAuthority({
+    type: "opened",
+    instanceId: instance.id,
+    folder: instance.folder,
+    occurrence,
+  })
   syncHasInstancesFlag()
 }
 
@@ -669,7 +864,13 @@ function updateInstance(id: string, updates: Partial<Instance>) {
   syncHasInstancesFlag()
 }
 
-function removeInstance(id: string) {
+function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
+  const removedInstance = instances().get(id)
+  const removedOccurrence = removedInstance
+    ? Array.from(instances().values())
+        .filter((instance) => normalizeInstanceFolderPath(instance.folder) === normalizeInstanceFolderPath(removedInstance.folder))
+        .findIndex((instance) => instance.id === id)
+    : -1
   let nextActiveId: string | null = null
 
   setInstances((prev) => {
@@ -703,6 +904,10 @@ function removeInstance(id: string) {
   clearInstanceMetadata(id)
   clearPermissionAutoAcceptForInstance(id)
   clearSyncedYoloSessionsForInstance(id)
+  initialHydrations.delete(id)
+  initialSessionHydrations.delete(id)
+  initialWorkspaceMetadataHydrations.delete(id)
+  settleInstanceReadyWaiters(id, new Error(`Workspace ${id} was removed before it became ready`))
 
   if (activeInstanceId() === id) {
     setActiveInstanceId(nextActiveId)
@@ -713,26 +918,132 @@ function removeInstance(id: string) {
   messageStoreBus.unregisterInstance(id)
   clearInstanceDraftPrompts(id)
   clearSessionListRequestState(id)
+  clearInstanceAttachments(id)
+  clearInstanceDeletedSessionAuthority(id)
+  clearInstanceSessionSelection(id)
+  if (removedInstance && removedOccurrence >= 0 && options.authoritative !== false) {
+    publishInstanceLifecycleAuthority({
+      type: "removed",
+      instanceId: id,
+      folder: removedInstance.folder,
+      occurrence: removedOccurrence,
+    })
+  }
   syncHasInstancesFlag()
+}
+
+function removeRestoreCreatedInstanceFromUi(instanceId: string): void {
+  if (instances().has(instanceId)) {
+    releaseInstanceResources(instanceId)
+    removeInstance(instanceId, { authoritative: false })
+  }
+}
+
+function disposeNewRestoreCreatedWorkspace(workspace: WorkspaceDescriptor): Promise<void> {
+  removeRestoreCreatedInstanceFromUi(workspace.id)
+  return restoreCreatedWorkspaceCleanup.discardCreated(workspace, { retainTombstone: true })
+}
+
+function disposeRestoreCreatedInstance(instanceId: string): Promise<void> {
+  if (!restoreCreatedWorkspaceCleanup.owns(instanceId)) return Promise.resolve()
+  removeRestoreCreatedInstanceFromUi(instanceId)
+  return restoreCreatedWorkspaceCleanup.discardTracked(instanceId, { retainTombstone: true })
+}
+
+async function releaseRestoreCreatedInstance(instanceId: string, requestId: string): Promise<void> {
+  let lastError: unknown
+  for (const delayMs of [0, 250, 1_000, 2_000]) {
+    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs))
+    try {
+      await serverApi.releaseWorkspaceCreation(instanceId, requestId)
+      restoreCreatedWorkspaceCleanup.release(instanceId)
+      return
+    } catch (error) {
+      lastError = error
+    }
+  }
+  log.warn("Failed to release restore workspace creation ownership", { instanceId, error: lastError })
+  throw lastError
+}
+
+function claimRestoreCreatedInstanceForUser(instanceId: string): void {
+  const workspace = restoreCreatedWorkspaceCleanup.release(instanceId)
+  if (!workspace?.requestId) return
+  void releaseRestoreCreatedInstance(instanceId, workspace.requestId).catch((error) => {
+    log.warn("Failed to transfer restore workspace creation ownership to the user", { instanceId, error })
+  })
 }
 
 async function createInstance(
   folder: string,
-  _binaryPath?: string,
+  binaryPath?: string,
   projectName?: string,
-  options?: { forceNew?: boolean },
-): Promise<{ instanceId: string; reused: boolean }> {
+  options?: {
+    activate?: boolean
+    signal?: AbortSignal
+    onCreateCommit?: (instanceId: string) => void
+    forceNew?: boolean
+  },
+): Promise<{ instanceId: string; reused: boolean; requestId?: string }> {
+  const restoreRequestId = options?.signal ? createRestoreCreationRequestId() : undefined
+  if (restoreRequestId) restoreCreatedWorkspaceCleanup.beginRequest(restoreRequestId)
+  let cancellationRequest: Promise<void> | null = null
+  const cancelPendingCreation = () => {
+    if (!restoreRequestId) return
+    cancellationRequest ??= serverApi.cancelWorkspaceCreation(restoreRequestId).catch((error) => {
+      log.warn("Failed to cancel restore workspace creation", { requestId: restoreRequestId, error })
+    })
+  }
+  options?.signal?.addEventListener("abort", cancelPendingCreation, { once: true })
+
   try {
-    const workspace = await serverApi.createWorkspace({ path: folder, name: projectName, forceNew: options?.forceNew })
+    if (options?.signal?.aborted) throw getAbortReason(options.signal)
+    const workspace = await completeAbortableRestoreCreation(
+      serverApi.createWorkspace({
+        path: folder,
+        name: projectName,
+        binaryPath,
+        requestId: restoreRequestId,
+        forceNew: options?.forceNew,
+      }, { signal: options?.signal }),
+      {
+        signal: options?.signal,
+        commit: (created) => {
+          const reused = created.reused === true
+          if (options?.signal && !reused) {
+            restoreCreatedWorkspaceCleanup.track(created)
+          } else if (!options?.signal) {
+            restoreCreatedWorkspaceCleanup.releaseTombstoneForUserCreate(created.id)
+          }
+          if (restoreCreatedWorkspaceCleanup.shouldIgnoreEvent(created.id)) return
+          upsertWorkspace(created, reused ? undefined : projectName)
+          options?.onCreateCommit?.(created.id)
+          if (!reused && (options?.activate ?? true)) setActiveInstanceId(created.id)
+        },
+        discard: (created) => created.reused === true
+          ? Promise.resolve()
+          : disposeNewRestoreCreatedWorkspace(created),
+      },
+    )
     const reused = workspace.reused === true
-    upsertWorkspace(workspace, reused ? undefined : projectName)
-    if (!reused) {
-      setActiveInstanceId(workspace.id)
+    if (restoreCreatedWorkspaceCleanup.shouldIgnoreEvent(workspace.id)) {
+      if (!reused) await restoreCreatedWorkspaceCleanup.discardCreated(workspace, { retainTombstone: true })
+      throw new Error(`Restore-created workspace ${workspace.id} was closed before startup completed`)
     }
-    return { instanceId: workspace.id, reused }
+    return { instanceId: workspace.id, reused, requestId: restoreRequestId }
   } catch (error) {
-    log.error("Failed to create workspace", error)
+    if (!options?.signal?.aborted) log.error("Failed to create workspace", error)
     throw error
+  } finally {
+    options?.signal?.removeEventListener("abort", cancelPendingCreation)
+    if (restoreRequestId) {
+      const pendingCancellation = cancellationRequest as Promise<void> | null
+      if (pendingCancellation) {
+        void pendingCancellation.finally(() => restoreCreatedWorkspaceCleanup.finishRequest(restoreRequestId))
+      } else {
+        restoreCreatedWorkspaceCleanup.finishRequest(restoreRequestId)
+      }
+    }
   }
 }
 
@@ -778,6 +1089,11 @@ function stopInstance(id: string) {
 
   releaseInstanceResources(id)
   removeInstance(id)
+
+  if (restoreCreatedWorkspaceCleanup.owns(id)) {
+    void restoreCreatedWorkspaceCleanup.discardTracked(id, { retainTombstone: true })
+    return
+  }
 
   void serverApi.deleteWorkspace(id).catch((error) => {
     log.error("Failed to stop workspace", error)
@@ -1461,6 +1777,14 @@ export {
   updateInstance,
   removeInstance,
   createInstance,
+  disposeRestoreCreatedInstance,
+  releaseRestoreCreatedInstance,
+  claimRestoreCreatedInstanceForUser,
+  waitForInitialWorkspaceLoad,
+  waitForInstanceReady,
+  waitForInstanceInitialHydration,
+  waitForInstanceInitialSessionHydration,
+  waitForInstanceWorkspaceMetadataHydration,
   getExistingInstanceForFolder,
   updateProjectNameForFolder,
   stopInstance,
@@ -1502,4 +1826,5 @@ export {
   fetchLspStatus,
   disposeInstance,
   reconcilePendingSessionIndicators,
+  clearReloadableInstanceState,
 }

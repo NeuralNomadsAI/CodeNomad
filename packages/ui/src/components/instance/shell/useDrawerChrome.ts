@@ -15,10 +15,11 @@ import MenuIcon from "@suid/icons-material/Menu"
 import type { TranslateParams } from "../../../lib/i18n"
 
 import type { DrawerViewState, LayoutMode } from "./types"
-import { persistPinState, readStoredPinState } from "./storage"
+import { persistOpenState, persistPinState, readStoredOpenState, readStoredPinState } from "./storage"
 
 export interface UseDrawerChromeOptions {
   t: (key: string, params?: TranslateParams) => string
+  active: Accessor<boolean>
   layoutMode: Accessor<LayoutMode>
   leftPinningSupported: Accessor<boolean>
   rightPinningSupported: Accessor<boolean>
@@ -88,9 +89,9 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
         const leftSaved = readStoredPinState("left", true)
         const rightSaved = readStoredPinState("right", true)
         setLeftPinned(leftSaved)
-        setLeftOpen(leftSaved)
+        setLeftOpen(leftSaved || readStoredOpenState("left", false))
         setRightPinned(rightSaved)
-        setRightOpen(rightSaved)
+        setRightOpen(rightSaved || readStoredOpenState("right", false))
         break
       }
       case "tablet": {
@@ -107,6 +108,12 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
         setRightOpen(false)
         break
     }
+  })
+
+  createEffect(() => {
+    if (options.layoutMode() !== "desktop" || !options.active()) return
+    persistOpenState("left", leftOpen())
+    persistOpenState("right", rightOpen())
   })
 
   const leftDrawerState = createMemo<DrawerViewState>(() => {

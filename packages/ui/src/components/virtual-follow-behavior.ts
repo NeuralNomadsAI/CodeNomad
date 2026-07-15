@@ -1,6 +1,108 @@
 export type FollowMode = { type: "following" } | { type: "escaped" }
 
 export const BOTTOM_FOLLOW_EPSILON_PX = 48
+export const ANCHOR_RESTORE_MAX_FRAMES = 150
+export const ANCHOR_RESTORE_STABLE_FRAMES = 10
+export const ANCHOR_RESTORE_REISSUE_INTERVAL_FRAMES = 12
+export const ANCHOR_RESTORE_TOLERANCE_PX = 1
+
+export interface ViewportAnchorCandidate {
+  key: string
+  top: number
+  bottom: number
+}
+
+export type AnchorRestoreFrameResult =
+  | { type: "retry"; reissueIndex: boolean }
+  | { type: "correct"; delta: number; finishAfterCorrection: boolean }
+  | { type: "finish" }
+  | { type: "fallback" }
+
+export class ScrollRestoreTokenGuard {
+  private token = 0
+
+  begin() {
+    this.token += 1
+    return this.token
+  }
+
+  invalidate() {
+    this.token += 1
+  }
+
+  isCurrent(token: number) {
+    return token === this.token
+  }
+}
+
+export class AnchorRestoreStabilizer {
+  private elapsedFrames = 0
+  private stableFrames = 0
+
+  restartStability() {
+    this.stableFrames = 0
+  }
+
+  snapshot() {
+    return { elapsedFrames: this.elapsedFrames, stableFrames: this.stableFrames }
+  }
+
+  nextFrame(input: { targetExists: boolean; mounted: boolean; delta?: number }): AnchorRestoreFrameResult {
+    this.elapsedFrames += 1
+    if (!input.targetExists) return { type: "fallback" }
+
+    if (input.mounted && typeof input.delta === "number") {
+      if (Math.abs(input.delta) > ANCHOR_RESTORE_TOLERANCE_PX) {
+        this.stableFrames = 0
+        return {
+          type: "correct",
+          delta: input.delta,
+          finishAfterCorrection: this.elapsedFrames >= ANCHOR_RESTORE_MAX_FRAMES,
+        }
+      }
+
+      this.stableFrames += 1
+      if (this.stableFrames >= ANCHOR_RESTORE_STABLE_FRAMES || this.elapsedFrames >= ANCHOR_RESTORE_MAX_FRAMES) {
+        return { type: "finish" }
+      }
+    } else {
+      this.stableFrames = 0
+    }
+
+    if (this.elapsedFrames >= ANCHOR_RESTORE_MAX_FRAMES && input.mounted) return { type: "finish" }
+    if (this.elapsedFrames >= ANCHOR_RESTORE_MAX_FRAMES) return { type: "fallback" }
+    return {
+      type: "retry",
+      reissueIndex: !input.mounted && this.elapsedFrames % ANCHOR_RESTORE_REISSUE_INTERVAL_FRAMES === 0,
+    }
+  }
+}
+
+export function selectTopViewportAnchor(
+  candidates: ViewportAnchorCandidate[],
+  viewportTop: number,
+  viewportBottom: number,
+  preferredKey?: string,
+) {
+  const visible = candidates.filter((candidate) => candidate.bottom > viewportTop && candidate.top < viewportBottom)
+  const crossingTop = visible
+    .filter((candidate) => candidate.top <= viewportTop && candidate.bottom > viewportTop)
+    .sort((a, b) => b.top - a.top)[0]
+  if (crossingTop) return crossingTop
+
+  const preferred = preferredKey ? visible.find((candidate) => candidate.key === preferredKey) : undefined
+  if (preferred) return preferred
+  return visible.sort((a, b) => a.top - b.top)[0]
+}
+
+export function isScrollRestoreGenerationCurrent(
+  startedSessionId: string,
+  startedGeneration: number,
+  currentSessionId: string,
+  currentGeneration: number,
+) {
+  return startedSessionId === currentSessionId && startedGeneration === currentGeneration
+}
 
 export type FollowEffect =
   | { type: "none" }

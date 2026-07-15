@@ -492,8 +492,10 @@ const SessionList: Component<SessionListProps> = (props) => {
     const isActive = () => props.activeSessionId === sessionId()
     const title = () => rowProps.session.title || t("sessionList.session.untitled")
     const status = () => getSessionStatus(props.instanceId, sessionId())
+    const interrupted = () => rowProps.session.generationRecovery === "interrupted"
     const retry = () => getSessionRetry(props.instanceId, sessionId())
     const statusLabel = () => {
+      if (interrupted()) return t("sessionList.status.interrupted")
       const retryState = retry()
       if (retryState) {
         const seconds = getRetrySeconds(retryState.next, now())
@@ -513,11 +515,13 @@ const SessionList: Component<SessionListProps> = (props) => {
     const needsInput = () => needsPermission() || needsQuestion()
     const statusClassName = () => {
       if (needsInput()) return "session-permission"
+      if (interrupted()) return "session-interrupted"
       const base = `session-${retry() ? "retrying" : status()}`
       const fadeClass = getSessionIdleFadeClass(props.instanceId, sessionId())
       return fadeClass ? `${base} ${fadeClass}` : base
     }
     const showStatus = () =>
+      interrupted() ||
       needsInput() ||
       shouldShowSessionStatus(
         props.instanceId,
