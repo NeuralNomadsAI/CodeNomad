@@ -22,6 +22,12 @@ declare global {
     path?: string | null
   }
 
+  interface ElectronClientStateLoadResult {
+    isPrimary: boolean
+    restoreEnabled: boolean
+    snapshot: unknown | null
+  }
+
   interface ElectronAPI {
     onCliStatus?: (callback: (data: unknown) => void) => () => void
     onCliError?: (callback: (data: unknown) => void) => () => void
@@ -32,6 +38,11 @@ declare global {
     getPathForFile?: (file: File) => string | null
     requestMicrophoneAccess?: () => Promise<{ granted: boolean }>
     setWakeLock?: (enabled: boolean) => Promise<{ enabled: boolean }>
+    claimClientStateAccess?: (accessToken: string) => Promise<boolean>
+    loadClientState?: (accessToken: string) => Promise<ElectronClientStateLoadResult>
+    saveClientState?: (accessToken: string, snapshot: unknown) => Promise<boolean>
+    setClientStateRestoreEnabled?: (accessToken: string, enabled: boolean) => Promise<boolean>
+    clearClientState?: (accessToken: string) => Promise<boolean>
 
     showNotification?: (payload: { title: string; body: string }) => Promise<{ ok: boolean; reason?: string }>
     openRemoteWindow?: (payload: {
@@ -66,9 +77,10 @@ declare global {
   interface Window {
       __CODENOMAD_API_BASE__?: string
       __CODENOMAD_EVENTS_URL__?: string
-      __CODENOMAD_RUNTIME_HOST__?: "electron" | "tauri" | "web"
-      __CODENOMAD_WINDOW_CONTEXT__?: "local" | "remote"
-      electronAPI?: ElectronAPI
+       __CODENOMAD_RUNTIME_HOST__?: "electron" | "tauri" | "web"
+       __CODENOMAD_WINDOW_CONTEXT__?: "local" | "remote"
+       __CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__?: () => Promise<void>
+       electronAPI?: ElectronAPI
       __TAURI__?: TauriBridge
       codenomadLogger?: LoggerControls
    }

@@ -69,6 +69,7 @@ import { useDrawerResize } from "./shell/useDrawerResize"
 import { useSessionCache } from "./shell/useSessionCache"
 import { useInstanceSessionContext } from "./shell/useInstanceSessionContext"
 import { isPermissionAutoAcceptEnabled } from "../../stores/permission-auto-accept"
+import { readClientLayoutValue, writeClientLayoutValue } from "../../stores/client-state"
 
 const log = getLogger("session")
 const OPEN_SESSION_SEARCH_EVENT = "codenomad:open-session-search"
@@ -172,6 +173,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const drawerChrome = useDrawerChrome({
     t,
+    active: () => Boolean(props.isActiveInstance),
     layoutMode,
     leftPinningSupported,
     rightPinningSupported,
@@ -255,7 +257,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   onMount(() => {
     if (typeof window === "undefined") return
 
-    const savedLeft = window.localStorage.getItem(LEFT_DRAWER_STORAGE_KEY)
+    const savedLeft = readClientLayoutValue(LEFT_DRAWER_STORAGE_KEY)
     if (savedLeft) {
       const parsed = Number.parseInt(savedLeft, 10)
       if (Number.isFinite(parsed)) {
@@ -264,7 +266,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     }
 
     let didLoadRightWidth = false
-    const savedRight = window.localStorage.getItem(RIGHT_DRAWER_STORAGE_KEY)
+    const savedRight = readClientLayoutValue(RIGHT_DRAWER_STORAGE_KEY)
     if (savedRight) {
       const parsed = Number.parseInt(savedRight, 10)
       if (Number.isFinite(parsed)) {
@@ -292,14 +294,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     onCleanup(() => window.removeEventListener("resize", handleResize))
   })
 
-   createEffect(() => {
-     if (typeof window === "undefined") return
-     window.localStorage.setItem(LEFT_DRAWER_STORAGE_KEY, sessionSidebarWidth().toString())
-   })
+  createEffect(() => {
+    writeClientLayoutValue(LEFT_DRAWER_STORAGE_KEY, sessionSidebarWidth().toString())
+  })
 
   createEffect(() => {
-    if (typeof window === "undefined") return
-    window.localStorage.setItem(RIGHT_DRAWER_STORAGE_KEY, rightDrawerWidth().toString())
+    writeClientLayoutValue(RIGHT_DRAWER_STORAGE_KEY, rightDrawerWidth().toString())
   })
 
   createEffect(() => {

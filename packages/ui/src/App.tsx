@@ -18,6 +18,7 @@ import { initGithubStars } from "./stores/github-stars"
 
 import { useCommands } from "./lib/hooks/use-commands"
 import { useAppLifecycle } from "./lib/hooks/use-app-lifecycle"
+import { useAppSessionRestore } from "./lib/hooks/use-app-session-restore"
 import { getLogger } from "./lib/logger"
 import { launchError, showLaunchError, clearLaunchError } from "./stores/launch-errors"
 import { formatLaunchErrorMessage, isMissingBinaryMessage } from "./lib/launch-errors"
@@ -66,6 +67,7 @@ import {
   ensureActiveAppTab,
   getAdjacentAppTabId,
   getAppTabById,
+  markAppTabUserInteraction,
   moveAppTab,
   selectAppTab,
   selectInstanceTab,
@@ -74,6 +76,7 @@ import {
 const log = getLogger("actions")
 
 const App: Component = () => {
+  useAppSessionRestore()
   const { t } = useI18n()
   const {
     preferences,
@@ -431,6 +434,7 @@ const App: Component = () => {
   async function handleCloseAppTab(tabId: string) {
     const tab = getAppTabById(tabId)
     if (!tab) return
+    markAppTabUserInteraction()
 
     const fallbackTabId = activeAppTabId() === tabId ? getAdjacentAppTabId(tabId) : activeAppTabId()
 
