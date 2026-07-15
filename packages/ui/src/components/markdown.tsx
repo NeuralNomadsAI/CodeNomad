@@ -15,6 +15,7 @@ interface ResolvedMarkdownSnapshot {
   themeKey: string
   highlightEnabled: boolean
   escapeRawHtml: boolean
+  defaultCodeBlockWrap: boolean
   partId: string | undefined
   cacheId: string
   version: string
@@ -96,6 +97,7 @@ interface MarkdownProps {
   size?: "base" | "sm" | "tight"
   disableHighlight?: boolean
   escapeRawHtml?: boolean
+  defaultCodeBlockWrap?: boolean
   onRendered?: () => void
 }
 
@@ -112,11 +114,11 @@ export function Markdown(props: MarkdownProps) {
   }
 
   const codeBlockWrapKey = (codeBlock: HTMLElement): string | null => {
-    const index = codeBlock.getAttribute("data-code-block-index")
-    if (index === null) {
+    const key = codeBlock.getAttribute("data-code-block-key")
+    if (!key) {
       return null
     }
-    return `${resolved().cacheId}:${index}`
+    return `${resolved().cacheId}:${key}`
   }
 
   const applyCodeBlockWrapState = (codeBlock: HTMLElement, enabled: boolean) => {
@@ -147,7 +149,8 @@ export function Markdown(props: MarkdownProps) {
     const codeBlocks = containerRef.querySelectorAll<HTMLElement>(".markdown-code-block")
     for (const codeBlock of codeBlocks) {
       const key = codeBlockWrapKey(codeBlock)
-      const enabled = key ? (codeBlockWrapOverrides.get(key) ?? true) : true
+      const defaultEnabled = codeBlock.getAttribute("data-wrap-lines") !== "false"
+      const enabled = key ? (codeBlockWrapOverrides.get(key) ?? defaultEnabled) : defaultEnabled
       applyCodeBlockWrapState(codeBlock, enabled)
     }
   }
@@ -159,11 +162,23 @@ export function Markdown(props: MarkdownProps) {
     const themeKey = Boolean(props.isDark) ? "dark" : "light"
     const highlightEnabled = !props.disableHighlight
     const escapeRawHtml = Boolean(props.escapeRawHtml)
+    const defaultCodeBlockWrap = props.defaultCodeBlockWrap ?? true
     const partId = typeof part.id === "string" && part.id.length > 0 ? part.id : undefined
     const cacheId = resolvePartCacheId(part, text)
     const version = resolvePartVersion(part, text)
-    const requestKey = `${cacheId}:${themeKey}:${highlightEnabled ? 1 : 0}:${escapeRawHtml ? 1 : 0}:${version}`
-    return { part, text, themeKey, highlightEnabled, escapeRawHtml, partId, cacheId, version, requestKey }
+    const requestKey = `${cacheId}:${themeKey}:${highlightEnabled ? 1 : 0}:${escapeRawHtml ? 1 : 0}:${defaultCodeBlockWrap ? 1 : 0}:${version}`
+    return {
+      part,
+      text,
+      themeKey,
+      highlightEnabled,
+      escapeRawHtml,
+      defaultCodeBlockWrap,
+      partId,
+      cacheId,
+      version,
+      requestKey,
+    }
   })
 
   const cacheHandle = useGlobalCache({
@@ -171,8 +186,8 @@ export function Markdown(props: MarkdownProps) {
     sessionId: () => props.sessionId,
     scope: "markdown",
     cacheId: () => {
-      const { cacheId, themeKey, highlightEnabled } = resolved()
-      return `${cacheId}:${themeKey}:${highlightEnabled ? 1 : 0}:${resolved().escapeRawHtml ? 1 : 0}`
+      const { cacheId, themeKey, highlightEnabled, escapeRawHtml, defaultCodeBlockWrap } = resolved()
+      return `${cacheId}:${themeKey}:${highlightEnabled ? 1 : 0}:${escapeRawHtml ? 1 : 0}:${defaultCodeBlockWrap ? 1 : 0}`
     },
     version: () => resolved().version,
   })
@@ -186,7 +201,7 @@ export function Markdown(props: MarkdownProps) {
       text: snapshot.text,
       html: renderedHtml,
       theme: snapshot.themeKey,
-      mode: `${snapshot.version}:${snapshot.escapeRawHtml ? "escaped" : "raw"}`,
+      mode: `${snapshot.version}:${snapshot.escapeRawHtml ? "escaped" : "raw"}:${snapshot.defaultCodeBlockWrap ? "wrap" : "nowrap"}`,
     }
     setHtml(renderedHtml)
     if (options?.cache ?? true) {
@@ -201,6 +216,7 @@ export function Markdown(props: MarkdownProps) {
     const rendered = await markdown.renderMarkdown(snapshot.text, {
       suppressHighlight: !snapshot.highlightEnabled,
       escapeRawHtml: snapshot.escapeRawHtml,
+      defaultCodeBlockWrap: snapshot.defaultCodeBlockWrap,
     })
     const shouldCache = !snapshot.highlightEnabled || !markdown.hasPendingCodeHighlight(snapshot.text)
 
@@ -212,7 +228,7 @@ export function Markdown(props: MarkdownProps) {
   createEffect(() => {
     const snapshot = resolved()
     latestRequestKey = snapshot.requestKey
-    const cacheMode = `${snapshot.version}:${snapshot.escapeRawHtml ? "escaped" : "raw"}`
+    const cacheMode = `${snapshot.version}:${snapshot.escapeRawHtml ? "escaped" : "raw"}:${snapshot.defaultCodeBlockWrap ? "wrap" : "nowrap"}`
 
     const cacheMatches = (cache: RenderCache | undefined) => {
       if (!cache) return false
