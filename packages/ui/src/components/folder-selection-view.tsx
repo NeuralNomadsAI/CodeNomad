@@ -960,26 +960,71 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                 "folder-home-recent-item-action-active":
                                   hoveredRecentActionPath() === folder.path || focusedRecentActionPath() === folder.path,
                               }}
+                              onMouseEnter={() => {
+                                if (isLoading()) return
+                                setFocusMode("recent")
+                                setSelectedIndex(index())
+                              }}
                             >
                               <div class="flex items-center gap-2 w-full px-1">
-                                <button
-                                  data-list-index={index()}
-                                  class="panel-list-item-content flex-1"
-                                  disabled={isLoading()}
-                                  onClick={() => handleFolderSelect(folder.path, true)}
-                                  onMouseEnter={() => {
-                                    if (isLoading()) return
-                                    setFocusMode("recent")
-                                    setSelectedIndex(index())
-                                  }}
-                                >
-                                  <div class="flex items-center justify-between gap-3 w-full">
+                                <div class="panel-list-item-content relative flex-1">
+                                  <button
+                                    data-list-index={index()}
+                                    type="button"
+                                    class="folder-home-recent-primary-action"
+                                    disabled={isLoading()}
+                                    aria-labelledby={projectLabelId()}
+                                    onClick={() => handleFolderSelect(folder.path, true)}
+                                    onFocus={() => {
+                                      setFocusMode("recent")
+                                      setSelectedIndex(index())
+                                    }}
+                                  />
+                                  <div class="relative z-[1] pointer-events-none flex items-center justify-between gap-3 w-full">
                                     <div class="flex-1 min-w-0">
                                       <div class="flex items-center gap-2 mb-1">
                                         <Folder class="w-4 h-4 flex-shrink-0 icon-muted" />
                                         <span id={projectLabelId()} class="text-sm font-medium truncate text-primary">
                                           {projectName()}
                                         </span>
+                                        <Show when={existingInstance()}>
+                                          {(instance) => {
+                                            let ownsHoverState = false
+                                            let ownsFocusState = false
+                                            onCleanup(() => {
+                                              if (ownsHoverState) setRecentActionHovered(folder.path, false)
+                                              if (ownsFocusState) setRecentActionFocused(folder.path, false)
+                                            })
+                                            return (
+                                              <button
+                                                type="button"
+                                                class="folder-home-open-instance-button folder-home-row-action pointer-events-auto"
+                                                disabled={isLoading()}
+                                                aria-labelledby={`${openActionLabelId()} ${projectLabelId()}`}
+                                                title={t("folderSelection.recent.switchToOpenProject")}
+                                                onClick={() => handleExistingInstanceSelect(instance().id, folder.path)}
+                                                onMouseEnter={() => {
+                                                  ownsHoverState = true
+                                                  setRecentActionHovered(folder.path, true)
+                                                }}
+                                                onMouseLeave={() => {
+                                                  ownsHoverState = false
+                                                  setRecentActionHovered(folder.path, false)
+                                                }}
+                                                onFocus={() => {
+                                                  ownsFocusState = true
+                                                  setRecentActionFocused(folder.path, true)
+                                                }}
+                                                onBlur={() => {
+                                                  ownsFocusState = false
+                                                  setRecentActionFocused(folder.path, false)
+                                                }}
+                                              >
+                                                <span id={openActionLabelId()}>{t("folderSelection.recent.openBadge")}</span>
+                                              </button>
+                                            )
+                                          }}
+                                        </Show>
                                       </div>
                                       <div class="flex items-center gap-2 pl-6 text-xs text-muted min-w-0">
                                         <span class="font-mono truncate-start flex-1 min-w-0">
@@ -992,46 +1037,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                       <kbd class="kbd">↵</kbd>
                                     </Show>
                                   </div>
-                                </button>
-                                <Show when={existingInstance()}>
-                                  {(instance) => {
-                                    let ownsHoverState = false
-                                    let ownsFocusState = false
-                                    onCleanup(() => {
-                                      if (ownsHoverState) setRecentActionHovered(folder.path, false)
-                                      if (ownsFocusState) setRecentActionFocused(folder.path, false)
-                                    })
-                                    return (
-                                      <button
-                                        type="button"
-                                        class="folder-home-open-instance-button folder-home-row-action"
-                                        disabled={isLoading()}
-                                        aria-labelledby={`${openActionLabelId()} ${projectLabelId()}`}
-                                        title={t("folderSelection.recent.switchToOpenProject")}
-                                        onClick={() => handleExistingInstanceSelect(instance().id, folder.path)}
-                                        onMouseEnter={() => {
-                                          ownsHoverState = true
-                                          setRecentActionHovered(folder.path, true)
-                                        }}
-                                        onMouseLeave={() => {
-                                          ownsHoverState = false
-                                          setRecentActionHovered(folder.path, false)
-                                        }}
-                                        onFocus={() => {
-                                          ownsFocusState = true
-                                          setRecentActionFocused(folder.path, true)
-                                        }}
-                                        onBlur={() => {
-                                          ownsFocusState = false
-                                          setRecentActionFocused(folder.path, false)
-                                        }}
-                                      >
-                                        <span id={openActionLabelId()}>{t("folderSelection.recent.openBadge")}</span>
-                                        <ChevronRight class="w-3 h-3" aria-hidden="true" />
-                                      </button>
-                                    )
-                                  }}
-                                </Show>
+                                </div>
                                 <button
                                   onClick={(e) => openProjectRename(folder.path, folder.projectName, e)}
                                   disabled={isLoading()}
