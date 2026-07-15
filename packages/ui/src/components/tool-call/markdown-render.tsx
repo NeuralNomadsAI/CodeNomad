@@ -30,7 +30,8 @@ export function createMarkdownContentRenderer(params: {
 
     const size = options.size || "default"
     const disableHighlight = options.disableHighlight || false
-    const messageClass = `message-text tool-call-markdown${size === "large" ? " tool-call-markdown-large" : ""}${options.wrap ? " tool-call-markdown-wrap" : ""}`
+    const wrapEnabled = options.wrap ?? true
+    const messageClass = `message-text tool-call-markdown${size === "large" ? " tool-call-markdown-large" : ""}${wrapEnabled ? " tool-call-markdown-wrap" : ""}`
     const state = params.toolState()
     const disableScrollTracking = options.disableScrollTracking || (state?.status !== "running" && state?.status !== "pending")
     const registerRef = disableScrollTracking ? registerUntracked : registerTracked
@@ -73,6 +74,7 @@ export function createMarkdownContentRenderer(params: {
           sessionId={params.sessionId}
           isDark={params.isDark()}
           disableHighlight={disableHighlight}
+          defaultCodeBlockWrap={wrapEnabled}
           onRendered={handleMarkdownRendered}
         />
         {params.scrollHelpers.renderSentinel({ disableTracking: disableScrollTracking })}
