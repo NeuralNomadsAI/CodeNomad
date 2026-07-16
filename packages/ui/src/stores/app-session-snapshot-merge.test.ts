@@ -9,6 +9,7 @@ import {
   hasRestoredTabBinding,
   markPreservedWorkspaceRemoved,
   markPreservedWorkspaceReopened,
+  markPreservedWorkspaceUnavailable,
   mergeRestorableSessionState,
   recordRestoredTab,
   settleRestoredTab,
@@ -73,6 +74,18 @@ const mergeOne = (
 ))
 
 describe("app session snapshot merge", () => {
+  it("retains the latest restored tab state after a non-authoritative stop", () => {
+    const saved = session([workspace("/work", 0, { drafts: { session: "saved" } })])
+    const preservation = restored(saved, [{ source: 0, runtime: "instance:work" }])
+    markPreservedWorkspaceUnavailable(
+      preservation,
+      { runtimeTabId: "instance:work", folder: "/work", occurrence: 0 },
+      workspace("/work", 0, { drafts: { session: "latest unsent draft" } }),
+    )
+    const merged = mergeRestorableSessionState(empty(), preservation, { currentTabIds: [] })
+    assert.equal(workspaceAt(merged).drafts.session, "latest unsent draft")
+  })
+
   it("retains missing sessions, transient tabs, and new runtime tabs", () => {
     const savedFile = attachment("path-file", "/work/a/notes.txt")
     const saved = session([

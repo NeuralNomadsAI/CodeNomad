@@ -871,6 +871,14 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
         .filter((instance) => normalizeInstanceFolderPath(instance.folder) === normalizeInstanceFolderPath(removedInstance.folder))
         .findIndex((instance) => instance.id === id)
     : -1
+  if (removedInstance && removedOccurrence >= 0 && options.authoritative === false) {
+    publishInstanceLifecycleAuthority({
+      type: "unavailable",
+      instanceId: id,
+      folder: removedInstance.folder,
+      occurrence: removedOccurrence,
+    })
+  }
   let nextActiveId: string | null = null
 
   setInstances((prev) => {

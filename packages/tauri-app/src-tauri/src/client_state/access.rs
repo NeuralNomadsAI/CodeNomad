@@ -11,6 +11,7 @@ struct RendererAccessState {
     token: Option<String>,
     committed_origin: Option<String>,
     pending_origin: Option<String>,
+    generation: u64,
 }
 
 pub(super) struct PendingNavigation {
@@ -40,6 +41,7 @@ impl RendererAccess {
             state.token = Some(access_token.to_string());
             state.committed_origin = Some(renderer_origin);
             state.pending_origin = None;
+            state.generation = state.generation.wrapping_add(1);
             return Ok(());
         }
         if state.token.as_deref() != Some(access_token) {
@@ -52,7 +54,7 @@ impl RendererAccess {
         }
     }
 
-    pub(super) fn validate(&self, access_token: &str, renderer_url: &Url) -> Result<(), String> {
+    pub(super) fn validate(&self, access_token: &str, renderer_url: &Url) -> Result<u64, String> {
         if access_token.is_empty() {
             return Err("Client state access token must not be empty".to_string());
         }
@@ -62,7 +64,7 @@ impl RendererAccess {
         if state.token.as_deref() == Some(access_token)
             && state.committed_origin.as_deref() == Some(renderer_origin.as_str())
         {
-            return Ok(());
+            return Ok(state.generation);
         }
         match state.token.as_deref() {
             Some(current) if current == access_token => {
@@ -71,6 +73,13 @@ impl RendererAccess {
             Some(_) => Err("Client state access token does not match this renderer".to_string()),
             None => Err("Client state access has not been claimed by this renderer".to_string()),
         }
+    }
+
+    pub(super) fn is_generation_current(&self, generation: u64) -> bool {
+        self.state
+            .lock()
+            .map(|state| state.generation == generation)
+            .unwrap_or(false)
     }
 
     pub(super) fn allows_claim_origin(&self, renderer_url: &Url) -> bool {

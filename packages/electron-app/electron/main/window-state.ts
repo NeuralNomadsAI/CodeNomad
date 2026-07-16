@@ -118,7 +118,8 @@ export function restoreWindowState(window: BrowserWindow, state: NativeWindowSta
   }
 
   if (bounds) {
-    window.setBounds(bounds)
+    window.setPosition(bounds.x, bounds.y)
+    window.setContentSize(bounds.width, bounds.height)
   }
   window.webContents.setZoomFactor(normalizeZoomFactor(state.zoomFactor))
   if (state.maximized) {
@@ -222,8 +223,10 @@ export class WindowStateTracker {
     }
 
     this.desiredZoomFactor = normalizeZoomFactor(this.window.webContents.getZoomFactor())
+    const [x, y] = this.window.getPosition()
+    const [width, height] = this.window.getContentSize()
     return this.clientState.saveWindowState({
-      bounds: this.window.getNormalBounds(),
+      bounds: { x, y, width, height },
       maximized: this.window.isMaximized(),
       fullscreen: this.window.isFullScreen(),
       zoomFactor: this.desiredZoomFactor,

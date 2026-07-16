@@ -118,6 +118,7 @@ function legacyCandidate(path: string, host: "electron" | "tauri"): { host: stri
     const candidate = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>
     if (!candidate || candidate.version !== CLIENT_STATE_VERSION) return undefined
     const parsed = parseClientState(JSON.stringify(candidate)).state
+    delete parsed.window
     const snapshot = candidate.snapshot as Record<string, unknown> | undefined
     const savedAt = typeof snapshot?.savedAt === "number" && Number.isFinite(snapshot.savedAt) ? snapshot.savedAt : -1
     return { host, state: parsed, savedAt, hasSnapshot: snapshot !== undefined }

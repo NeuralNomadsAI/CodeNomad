@@ -31,6 +31,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
+use url::Url;
 use window::NativeWindowState;
 
 const CLIENT_STATE_VERSION: u64 = 1;
@@ -255,6 +256,11 @@ impl ClientState {
         self.process.is_primary()
     }
 
+    fn claim_renderer_access(&self, access_token: &str, renderer_url: &Url) -> Result<(), String> {
+        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        self.renderer_access.claim(access_token, renderer_url)
+    }
+
     fn load(&self) -> Result<ClientStateLoadResult, String> {
         let state = self.state.lock().map_err(|err| err.to_string())?;
         let is_primary = self.is_primary();
@@ -273,8 +279,20 @@ impl ClientState {
         })
     }
 
+    #[cfg(test)]
     fn save_snapshot(&self, snapshot: Value) -> Result<bool, String> {
+        self.save_snapshot_guarded(snapshot, || true)
+    }
+
+    fn save_snapshot_guarded(
+        &self,
+        snapshot: Value,
+        access_valid: impl Fn() -> bool,
+    ) -> Result<bool, String> {
         let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        if !access_valid() {
+            return Err("Client state renderer authority changed before mutation".to_string());
+        }
         if !self.is_primary() {
             return Ok(false);
         }
@@ -285,11 +303,23 @@ impl ClientState {
             return Err("Client snapshot exceeds the 1 MiB limit".to_string());
         }
 
-        self.mutate_and_write(|state| state.snapshot = Some(snapshot))
+        self.mutate_and_write(|state| state.snapshot = Some(snapshot), &access_valid)
     }
 
+    #[cfg(test)]
     fn set_restore_enabled(&self, enabled: bool) -> Result<bool, String> {
+        self.set_restore_enabled_guarded(enabled, || true)
+    }
+
+    fn set_restore_enabled_guarded(
+        &self,
+        enabled: bool,
+        access_valid: impl Fn() -> bool,
+    ) -> Result<bool, String> {
         let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        if !access_valid() {
+            return Err("Client state renderer authority changed before mutation".to_string());
+        }
         if !self.is_primary() {
             return Ok(false);
         }
@@ -301,30 +331,44 @@ impl ClientState {
         {
             return Ok(false);
         }
-        self.mutate_and_write(|state| {
-            state.restore_enabled = enabled;
-            if !enabled {
-                state.snapshot = None;
-                state.window = None;
-            }
-            state.writes_enabled = enabled;
-        })
+        self.mutate_and_write(
+            |state| {
+                state.restore_enabled = enabled;
+                if !enabled {
+                    state.snapshot = None;
+                    state.window = None;
+                }
+                state.writes_enabled = enabled;
+            },
+            &access_valid,
+        )
     }
 
+    #[cfg(test)]
     fn clear(&self) -> Result<bool, String> {
+        self.clear_guarded(|| true)
+    }
+
+    fn clear_guarded(&self, access_valid: impl Fn() -> bool) -> Result<bool, String> {
         let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        if !access_valid() {
+            return Err("Client state renderer authority changed before mutation".to_string());
+        }
         if !self.is_primary() {
             return Ok(false);
         }
-        self.mutate_and_write(|state| {
-            if state.unsupported_future_envelope {
-                *state = PersistedClientState::default();
-            } else {
-                state.snapshot = None;
-                state.window = None;
-                state.writes_enabled = false;
-            }
-        })
+        self.mutate_and_write(
+            |state| {
+                if state.unsupported_future_envelope {
+                    *state = PersistedClientState::default();
+                } else {
+                    state.snapshot = None;
+                    state.window = None;
+                    state.writes_enabled = false;
+                }
+            },
+            &access_valid,
+        )
     }
 
     fn flush(&self) -> Result<(), String> {
@@ -343,17 +387,27 @@ impl ClientState {
     }
 
     fn write_current_state(&self) -> Result<(), String> {
+        self.write_current_state_guarded(&|| true)
+    }
+
+    fn write_current_state_guarded(
+        &self,
+        replacement_valid: &dyn Fn() -> bool,
+    ) -> Result<(), String> {
         let bytes = {
             let state = self.state.lock().map_err(|err| err.to_string())?;
             serde_json::to_vec(&*state).map_err(|err| err.to_string())?
         };
-        (self.write_state)(&self.state_path, &bytes, &|| self.is_primary())?;
+        (self.write_state)(&self.state_path, &bytes, &|| {
+            self.is_primary() && replacement_valid()
+        })?;
         Ok(())
     }
 
     fn mutate_and_write(
         &self,
         mutate: impl FnOnce(&mut PersistedClientState),
+        replacement_valid: &dyn Fn() -> bool,
     ) -> Result<bool, String> {
         let previous_state = {
             let mut state = self.state.lock().map_err(|err| err.to_string())?;
@@ -362,7 +416,7 @@ impl ClientState {
             previous
         };
 
-        match self.write_current_state() {
+        match self.write_current_state_guarded(replacement_valid) {
             Ok(()) => Ok(true),
             Err(err) => {
                 *self.state.lock().map_err(|lock_err| lock_err.to_string())? = previous_state;
@@ -496,12 +550,9 @@ fn legacy_candidate(
         .and_then(|snapshot| snapshot.get("savedAt"))
         .and_then(Value::as_i64)
         .unwrap_or(-1);
-    Some((
-        parse_client_state(&bytes),
-        value.contains_key("snapshot"),
-        saved_at,
-        host,
-    ))
+    let mut parsed = parse_client_state(&bytes);
+    parsed.window = None;
+    Some((parsed, value.contains_key("snapshot"), saved_at, host))
 }
 
 fn migrate_legacy_state(

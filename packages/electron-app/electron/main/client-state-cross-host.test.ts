@@ -122,6 +122,25 @@ test("stale recovery is identity guarded and blocked by live or uncertain partic
   assert.equal(blocked.isPrimary, false)
 })
 
+test("simultaneous claimants deterministically recover a stale owner", (t) => {
+  const directory = temp(t), staleDirectory = join(directory, CROSS_HOST_OWNER_DIRECTORY)
+  const stale = owner(601, "stale"), first = owner(602, "a"), second = owner(603, "b")
+  mkdirSync(staleDirectory)
+  const observed = JSON.stringify(stale)
+  writeFileSync(join(staleDirectory, "owner.json"), observed)
+  writeFileSync(join(directory, "participant.603.b.json"), JSON.stringify(second))
+  writeFileSync(join(directory, "recovery.603.b.claim"), observed)
+  const identities = new Map([[602, first.processStartIdentity], [603, second.processStartIdentity]])
+  const deps = {
+    pidAlive: (pid: number) => pid !== stale.pid,
+    processStartIdentity: (pid: number) => identities.get(pid),
+  }
+  const winner = CrossHostRegistration.register(directory, first, true, deps)!
+  const loser = CrossHostRegistration.register(directory, second, true, deps)!
+  assert.equal(winner.isPrimary, true)
+  assert.equal(loser.isPrimary, false)
+})
+
 test("ordinary release removes only its participant", (t) => {
   const directory = temp(t)
   const registration = CrossHostRegistration.register(directory, owner(401, "primary"), true, dependencies(true, "primary-start"))!

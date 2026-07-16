@@ -94,7 +94,7 @@ export class ClientStateLifecycle {
     if (this.shutdown) return this.shutdown
     const stages = (async () => {
       const rendererFlush = this.runStage("renderer shutdown flush", () => this.flushRenderer(window))
-      const cliStop = this.dependencies.cliManager.stop().then(() => null, (error: unknown) => error)
+      const cliStop = this.dependencies.cliManager.shutdown().then(() => null, (error: unknown) => error)
       await rendererFlush
       await this.runStage("native shutdown flush", () => this.flushNative())
       const cliError = await cliStop

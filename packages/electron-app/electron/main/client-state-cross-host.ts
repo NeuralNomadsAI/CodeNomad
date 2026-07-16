@@ -9,6 +9,8 @@ export const CROSS_HOST_OWNER_DIRECTORY = "primary.owner.json"
 const OWNER_FILENAME = "owner.json"
 const PARTICIPANT_PREFIX = "participant."
 const PARTICIPANT_SUFFIX = ".json"
+const RECOVERY_PREFIX = "recovery."
+const RECOVERY_SUFFIX = ".claim"
 const RETIRED_PREFIX = "retired."
 const ACQUIRE_ATTEMPTS = 10
 
@@ -130,6 +132,10 @@ function participantPath(directory: string, owner: ProcessOwner): string {
   return join(directory, `${PARTICIPANT_PREFIX}${owner.pid}.${owner.runToken}${PARTICIPANT_SUFFIX}`)
 }
 
+function recoveryPath(directory: string, owner: ProcessOwner): string {
+  return join(directory, `${RECOVERY_PREFIX}${owner.pid}.${owner.runToken}${RECOVERY_SUFFIX}`)
+}
+
 function publishParticipant(path: string, owner: ProcessOwner): void {
   const value = serializeOwner(owner)
   try { publishFile(path, value) } catch (error) {
@@ -156,22 +162,37 @@ function removeParticipantIfOwned(path: string, owner: ProcessOwner): void {
   }
 }
 
-function hasLiveParticipants(directory: string, current: ProcessOwner, dependencies: CrossHostLeaseDependencies): boolean {
+function recoveryClaimants(
+  directory: string,
+  current: ProcessOwner,
+  observedOwner: string,
+  dependencies: CrossHostLeaseDependencies,
+): ProcessOwner[] | undefined {
+  const claimants = [current]
   for (const name of readdirSync(directory)) {
     if (!name.startsWith(PARTICIPANT_PREFIX) || !name.endsWith(PARTICIPANT_SUFFIX)) continue
     const path = join(directory, name)
     const participant = parseOwner(readIfExists(path) ?? "")
-    if (!participant) return true
+    if (!participant) return undefined
     if (sameOwner(participant, current)) continue
     const stale = ownerIsStale(participant, dependencies)
-    if (stale !== true) return true
-    removeParticipantIfOwned(path, participant)
+    if (stale === true) {
+      removeParticipantIfOwned(path, participant)
+      try { unlinkSync(recoveryPath(directory, participant)) } catch {}
+      continue
+    }
+    if (readIfExists(recoveryPath(directory, participant)) !== observedOwner) return undefined
+    claimants.push(participant)
   }
-  return false
+  return claimants
 }
 
 function retireOwner(directory: string, observed: string, owner: ProcessOwner, claimant: ProcessOwner, dependencies: CrossHostLeaseDependencies): boolean {
-  if (ownerIsStale(owner, dependencies) !== true || hasLiveParticipants(directory, claimant, dependencies)) return false
+  if (ownerIsStale(owner, dependencies) !== true) return false
+  const claimants = recoveryClaimants(directory, claimant, observed, dependencies)
+  if (!claimants) return false
+  claimants.sort((left, right) => serializeOwner(left) < serializeOwner(right) ? -1 : 1)
+  if (!sameOwner(claimants[0]!, claimant)) return false
   if (readIfExists(ownerPath(directory)) !== observed) return false
   const retired = join(directory, `${RETIRED_PREFIX}${owner.pid}.${owner.runToken}`)
   try {
@@ -220,6 +241,7 @@ export class CrossHostRegistration {
     private readonly directory: string,
     readonly owner: ProcessOwner,
     private readonly participant: string,
+    private readonly recoveryClaim: string | undefined,
     private primary: boolean,
   ) {}
 
@@ -237,6 +259,7 @@ export class CrossHostRegistration {
     publishParticipant(participant, owner)
     dependencies.onParticipantPublished?.()
     let primary = false
+    let recoveryClaim: string | undefined
     try {
       if (typeof primaryCandidate === "function" ? primaryCandidate() : primaryCandidate) {
         for (let attempt = 0; attempt < ACQUIRE_ATTEMPTS; attempt += 1) {
@@ -246,12 +269,19 @@ export class CrossHostRegistration {
           const existing = parseOwner(observed)
           if (!existing) break
           if (sameOwner(existing, owner)) { primary = true; break }
+          if (ownerIsStale(existing, dependencies) === true) {
+            recoveryClaim ??= recoveryPath(directory, owner)
+            try { publishFile(recoveryClaim, observed) } catch (error) {
+              if (!hasErrorCode(error, "EEXIST") || readIfExists(recoveryClaim) !== observed) throw error
+            }
+          }
           if (!retireOwner(directory, observed, existing, owner, dependencies)) break
         }
       }
-      return new CrossHostRegistration(directory, owner, participant, primary)
+      return new CrossHostRegistration(directory, owner, participant, recoveryClaim, primary)
     } catch (error) {
       removeParticipantIfOwned(participant, owner)
+      if (recoveryClaim) try { unlinkSync(recoveryClaim) } catch {}
       throw error
     }
   }
@@ -265,6 +295,7 @@ export class CrossHostRegistration {
   release(): boolean {
     if (this.released) return false
     removeParticipantIfOwned(this.participant, this.owner)
+    if (this.recoveryClaim) try { unlinkSync(this.recoveryClaim) } catch {}
     this.primary = false
     this.released = true
     return true

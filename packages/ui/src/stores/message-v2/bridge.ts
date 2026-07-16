@@ -5,6 +5,7 @@ import { getQuestionCallId, getQuestionMessageId } from "../../types/question"
 import type { Message, MessageInfo, ClientPart } from "../../types/message"
 import type { Session } from "../../types/session"
 import { messageStoreBus } from "./bus"
+import { canHydrateMessages } from "./message-hydration-authority"
 import type { MessageStatus, ReplaceMessageIdOptions, SessionRevertState } from "./types"
 
 interface SessionMetadata {
@@ -40,9 +41,11 @@ export function seedSessionMessagesV2(
   session: Session | SessionMetadata,
   messages: Message[],
   messageInfos?: Map<string, MessageInfo>,
-): void {
-  if (!session || !Array.isArray(messages)) return
+  expectedRevision?: number,
+): boolean {
+  if (!session || !Array.isArray(messages)) return false
   const store = messageStoreBus.getOrCreate(instanceId)
+  if (expectedRevision !== undefined && !canHydrateMessages(expectedRevision, store.getSessionRevision(session.id))) return false
   const metadata: SessionMetadata = "id" in session ? { id: session.id, title: session.title, parentId: session.parentId ?? null } : session
 
   store.addOrUpdateSession({
@@ -65,6 +68,7 @@ export function seedSessionMessagesV2(
   }))
 
   store.hydrateMessages(metadata.id, normalizedMessages, messageInfos?.values())
+  return true
 }
 
 interface MessageInfoOptions {

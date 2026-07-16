@@ -10,7 +10,7 @@ export interface RestoreTabResult {
   unavailableSessionIds?: ReadonlySet<string>
 }
 export interface RestorableSessionPreservation {
-  sourceTabs: readonly RestorableTabState[]
+  sourceTabs: RestorableTabState[]
   activeTabIndex: number
   results: RestoreTabResult[]
   removalRevisions: number[]
@@ -45,7 +45,7 @@ export function createRestorableSessionPreservation(
   snapshot: RestorableSessionState,
 ): RestorableSessionPreservation {
   return {
-    sourceTabs: snapshot.tabs,
+    sourceTabs: [...snapshot.tabs],
     activeTabIndex: snapshot.activeTabIndex,
     results: snapshot.tabs.map(() => ({ status: "pending" })),
     removalRevisions: snapshot.tabs.map(() => 0),
@@ -262,4 +262,15 @@ export function mergeRestorableSessionState(
     tabs,
     activeTabIndex,
   }
+}
+export function markPreservedWorkspaceUnavailable(
+  preservation: RestorableSessionPreservation,
+  workspace: { runtimeTabId: string; folder: string; occurrence: number },
+  current?: RestorableWorkspaceTabState,
+): RestorableSessionPreservation {
+  const index = findWorkspaceSourceIndex(preservation, workspace)
+  if (index === undefined) return preservation
+  if (current) preservation.sourceTabs[index] = current
+  preservation.results[index] = { status: "pending" }
+  return preservation
 }

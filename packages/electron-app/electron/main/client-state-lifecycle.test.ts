@@ -27,7 +27,7 @@ function harness(options: {
   const other = { isDestroyed: () => false, hide: () => { calls.push("hide-other") } } as unknown as BrowserWindow
   const app = { on: (name: string, handler: never) => appEvents.set(name, handler), quit: () => calls.push("quit"), exit: () => { exits++ } } as unknown as App
   const manager = { isPrimary: true, flush: async () => {}, drainAndReleasePrimary: async () => { calls.push("release") } } as ClientStateManager
-  const cli = { stop: async () => { calls.push("stop"); await options.stop?.() } } as unknown as CliProcessManager
+  const cli = { shutdown: async () => { calls.push("stop"); await options.stop?.() } } as unknown as CliProcessManager
   const lifecycle = new ClientStateLifecycle({ app, clientStateManager: manager, cliManager: cli, getMainWindow: () => window, getAllWindows: () => options.otherWindow ? [window, other] : [window], getAllowedRendererOrigins: () => ["http://127.0.0.1:43123"], isTrustedRendererOrigin: () => true, isWindows: true })
   lifecycle.attachMainWindow(window, { flush: async () => { calls.push("native"); await options.nativeFlush?.() } } as unknown as WindowStateTracker)
   lifecycle.registerAppEvents()

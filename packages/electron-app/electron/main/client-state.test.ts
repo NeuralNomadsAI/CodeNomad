@@ -85,9 +85,15 @@ test("first shared primary deterministically migrates legacy host envelopes", as
   mkdirSync(electron, { recursive: true }); mkdirSync(tauri, { recursive: true })
   t.after(() => rmSync(root, { recursive: true, force: true }))
   writeFileSync(join(electron, "client-state.json"), JSON.stringify({ version: 1, restoreEnabled: true, snapshot: { revision: 999, savedAt: 10, host: "electron" } }))
-  writeFileSync(join(tauri, "client-state.json"), JSON.stringify({ version: 1, restoreEnabled: true, snapshot: { savedAt: 20, host: "tauri" } }))
+  writeFileSync(join(tauri, "client-state.json"), JSON.stringify({
+    version: 1,
+    restoreEnabled: true,
+    snapshot: { savedAt: 20, host: "tauri" },
+    window: { bounds: { x: 10, y: 10, width: 1000, height: 700 }, maximized: false, fullscreen: false, zoomFactor: 1 },
+  }))
   const manager = new ClientStateManager(electron, undefined, { crossHostElectionDirectory: election, legacyTauriDataPath: tauri })
   assert.deepEqual(manager.loadClientState().snapshot, { savedAt: 20, host: "tauri" })
+  assert.equal(manager.getWindowState(), undefined)
   assert.equal(existsSync(join(electron, "client-state.json")), true)
   assert.equal(existsSync(join(tauri, "client-state.json")), true)
   await manager.drainAndReleasePrimary()

@@ -14,6 +14,7 @@ import {
   forceCapturedProcessTree,
   stopManagedChild,
 } from "./process-stop"
+import { SerializedLifecycle } from "./serialized-lifecycle"
 import { buildUserShellCommand, getUserShellEnv, supportsUserShell } from "./user-shell"
 
 const nodeRequire = createRequire(import.meta.url)
@@ -139,10 +140,32 @@ export class CliProcessManager extends EventEmitter {
   private authCookieName = `${SESSION_COOKIE_NAME_PREFIX}_${process.pid}_${Date.now()}`
   private requestedStop = false
   private shutdownStatus: "complete" | "incomplete" | null = null
+  private lifecycle = new SerializedLifecycle()
 
-  async start(options: StartOptions): Promise<CliStatus> {
+  start(options: StartOptions): Promise<CliStatus> {
+    return this.lifecycle.enqueue(() => this.startNow(options))
+  }
+
+  restart(options: StartOptions): Promise<CliStatus> {
+    return this.lifecycle.enqueue(async () => {
+      await this.stopNow()
+      if (this.lifecycle.stopped) throw new Error("CLI process manager is shutting down")
+      return this.startNow(options)
+    })
+  }
+
+  stop(): Promise<void> {
+    return this.lifecycle.enqueue(() => this.stopNow())
+  }
+
+  shutdown(): Promise<void> {
+    return this.lifecycle.stop(() => this.stopNow())
+  }
+
+  private async startNow(options: StartOptions): Promise<CliStatus> {
+    if (this.lifecycle.stopped) throw new Error("CLI process manager is shutting down")
     if (this.child) {
-      await this.stop()
+      await this.stopNow()
       if (this.child) throw new Error("CLI process did not exit before restart")
     }
 
@@ -234,7 +257,7 @@ export class CliProcessManager extends EventEmitter {
     })
   }
 
-  async stop(): Promise<void> {
+  private async stopNow(): Promise<void> {
     const child = this.child
     if (!child) {
       this.updateStatus({ state: "stopped" })

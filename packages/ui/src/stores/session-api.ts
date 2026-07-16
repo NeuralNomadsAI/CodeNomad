@@ -1074,6 +1074,7 @@ async function loadMessages(
   }
 
   const loadEpoch = advanceMessageLoadEpoch(instanceId, sessionId)
+  const messageRevision = messageStoreBus.getOrCreate(instanceId).getSessionRevision(sessionId)
 
   setLoading((prev) => {
     const next = { ...prev }
@@ -1099,16 +1100,15 @@ async function loadMessages(
 
     setSessionMessagesLoadError(instanceId, sessionId, null)
 
-    // Treat empty sessions as loaded to avoid re-fetch loops.
-    setMessagesLoaded((prev) => {
-      const next = new Map(prev)
-      const loadedSet = next.get(instanceId) || new Set()
-      loadedSet.add(sessionId)
-      next.set(instanceId, loadedSet)
-      return next
-    })
-
     if (apiMessages.length === 0) {
+      if (messageStoreBus.getOrCreate(instanceId).getSessionRevision(sessionId) !== messageRevision) return
+      setMessagesLoaded((prev) => {
+        const next = new Map(prev)
+        const loadedSet = next.get(instanceId) || new Set()
+        loadedSet.add(sessionId)
+        next.set(instanceId, loadedSet)
+        return next
+      })
       return
     }
 
@@ -1183,14 +1183,6 @@ async function loadMessages(
       return next
     })
 
-    setMessagesLoaded((prev) => {
-      const next = new Map(prev)
-      const loadedSet = next.get(instanceId) || new Set()
-      loadedSet.add(sessionId)
-      next.set(instanceId, loadedSet)
-      return next
-    })
-
     const sessionForV2 = sessions().get(instanceId)?.get(sessionId) ?? {
       id: sessionId,
       title: session?.title,
@@ -1198,7 +1190,14 @@ async function loadMessages(
       revert: session?.revert,
     }
     if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return
-    seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo)
+    if (!seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, messageRevision)) return
+    setMessagesLoaded((prev) => {
+      const next = new Map(prev)
+      const loadedSet = next.get(instanceId) || new Set()
+      loadedSet.add(sessionId)
+      next.set(instanceId, loadedSet)
+      return next
+    })
 
     // Permissions can be hydrated before messages/tool parts exist in the store.
     // After message hydration, try to attach any pending permissions to tool-call part ids.

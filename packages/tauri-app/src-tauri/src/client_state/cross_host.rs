@@ -12,6 +12,8 @@ const OWNER_DIRECTORY: &str = "primary.owner.json";
 const OWNER_FILENAME: &str = "owner.json";
 const PARTICIPANT_PREFIX: &str = "participant.";
 const PARTICIPANT_SUFFIX: &str = ".json";
+const RECOVERY_PREFIX: &str = "recovery.";
+const RECOVERY_SUFFIX: &str = ".claim";
 const RETIRED_PREFIX: &str = "retired.";
 const ACQUIRE_ATTEMPTS: usize = 10;
 
@@ -34,6 +36,7 @@ struct LegacyOwner {
 pub(super) struct Registration {
     election_directory: PathBuf,
     participant_path: PathBuf,
+    recovery_claim: Option<PathBuf>,
     owner: Owner,
     legacy_electron_data: Option<PathBuf>,
     primary: bool,
@@ -220,6 +223,7 @@ impl Registration {
             .map_err(|err| format!("failed to create cross-host election directory: {err}"))?;
         let participant_path = participant_path(election_directory, &owner);
         publish_participant(&participant_path, &owner)?;
+        let mut recovery_claim = None;
 
         let result = (|| {
             let legacy_blocked = legacy_electron_data
@@ -252,6 +256,11 @@ impl Registration {
                         primary = true;
                         break;
                     }
+                    if owner_is_stale(&existing, pid_alive, identity) == Some(true) {
+                        let claim = recovery_path(election_directory, &owner);
+                        publish_file(&claim, &observed, "recovery claim")?;
+                        recovery_claim = Some(claim);
+                    }
                     if !retire_owner(
                         election_directory,
                         &observed,
@@ -267,6 +276,7 @@ impl Registration {
             Ok(Some(Self {
                 election_directory: election_directory.to_path_buf(),
                 participant_path: participant_path.clone(),
+                recovery_claim: recovery_claim.clone(),
                 owner: owner.clone(),
                 legacy_electron_data: legacy_electron_data.map(Path::to_path_buf),
                 primary,
@@ -275,6 +285,9 @@ impl Registration {
         })();
         if result.is_err() {
             let _ = remove_participant_if_owned(&participant_path, &owner);
+            if let Some(claim) = recovery_claim {
+                let _ = fs::remove_file(claim);
+            }
         }
         result
     }
@@ -311,6 +324,13 @@ impl Registration {
             return Ok(false);
         }
         remove_participant_if_owned(&self.participant_path, &self.owner)?;
+        if let Some(claim) = &self.recovery_claim {
+            match fs::remove_file(claim) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(format!("failed to remove recovery claim: {err}")),
+            }
+        }
         self.primary = false;
         self.released = true;
         Ok(true)
@@ -353,6 +373,13 @@ fn participant_path(directory: &Path, owner: &Owner) -> PathBuf {
     ))
 }
 
+fn recovery_path(directory: &Path, owner: &Owner) -> PathBuf {
+    directory.join(format!(
+        "{RECOVERY_PREFIX}{}.{}{RECOVERY_SUFFIX}",
+        owner.pid, owner.run_token
+    ))
+}
+
 fn read_if_exists(path: &Path) -> Result<Option<String>, String> {
     match fs::read_to_string(path) {
         Ok(value) => Ok(Some(value)),
@@ -372,30 +399,36 @@ fn sync(file: &fs::File) -> std::io::Result<()> {
     }
 }
 
-fn publish_participant(path: &Path, owner: &Owner) -> Result<(), String> {
+fn publish_file(path: &Path, value: &str, label: &str) -> Result<(), String> {
     let parent = path
         .parent()
-        .ok_or_else(|| "participant path has no parent".to_string())?;
+        .ok_or_else(|| format!("{label} path has no parent"))?;
     let mut temporary = tempfile::NamedTempFile::new_in(parent)
-        .map_err(|err| format!("failed to create cross-host participant: {err}"))?;
+        .map_err(|err| format!("failed to create cross-host {label}: {err}"))?;
     temporary
-        .write_all(serialize_owner(owner)?.as_bytes())
+        .write_all(value.as_bytes())
         .and_then(|_| sync(temporary.as_file()))
-        .map_err(|err| format!("failed to write cross-host participant: {err}"))?;
+        .map_err(|err| format!("failed to write cross-host {label}: {err}"))?;
     match temporary.persist_noclobber(path) {
         Ok(_) => Ok(()),
         Err(err) if err.error.kind() == std::io::ErrorKind::AlreadyExists => {
-            if read_if_exists(path)?.as_deref() == Some(&serialize_owner(owner)?) {
+            if read_if_exists(path)?.as_deref() == Some(value) {
                 Ok(())
             } else {
-                Err("cross-host participant path belongs to another process".to_string())
+                Err(format!(
+                    "cross-host {label} path belongs to another process"
+                ))
             }
         }
         Err(err) => Err(format!(
-            "failed to publish cross-host participant: {}",
+            "failed to publish cross-host {label}: {}",
             err.error
         )),
     }
+}
+
+fn publish_participant(path: &Path, owner: &Owner) -> Result<(), String> {
+    publish_file(path, &serialize_owner(owner)?, "participant")
 }
 
 fn publish_owner(directory: &Path, owner: &Owner) -> Result<bool, String> {
@@ -449,8 +482,9 @@ fn participants(directory: &Path) -> Result<Vec<(PathBuf, Owner)>, String> {
         if !name.starts_with(PARTICIPANT_PREFIX) || !name.ends_with(PARTICIPANT_SUFFIX) {
             continue;
         }
-        let value = read_if_exists(&entry.path())?
-            .ok_or_else(|| "cross-host participant disappeared".to_string())?;
+        let Some(value) = read_if_exists(&entry.path())? else {
+            continue;
+        };
         let owner = parse_owner(&value)
             .ok_or_else(|| "cross-host participant is incomplete".to_string())?;
         participants.push((entry.path(), owner));
@@ -458,22 +492,35 @@ fn participants(directory: &Path) -> Result<Vec<(PathBuf, Owner)>, String> {
     Ok(participants)
 }
 
-fn has_live_participants(
+fn recovery_claimants(
     directory: &Path,
     current: &Owner,
+    observed_owner: &str,
     pid_alive: impl Fn(u32) -> bool + Copy,
     identity: impl Fn(u32) -> Option<String> + Copy,
-) -> Result<bool, String> {
+) -> Result<Option<Vec<Owner>>, String> {
+    let mut claimants = vec![current.clone()];
     for (path, participant) in participants(directory)? {
         if participant == *current {
             continue;
         }
-        if owner_is_stale(&participant, pid_alive, identity) != Some(true) {
-            return Ok(true);
+        if owner_is_stale(&participant, pid_alive, identity) == Some(true) {
+            remove_participant_if_owned(&path, &participant)?;
+            match fs::remove_file(recovery_path(directory, &participant)) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(format!("failed to remove stale recovery claim: {err}")),
+            }
+            continue;
         }
-        remove_participant_if_owned(&path, &participant)?;
+        if read_if_exists(&recovery_path(directory, &participant))?.as_deref()
+            != Some(observed_owner)
+        {
+            return Ok(None);
+        }
+        claimants.push(participant);
     }
-    Ok(false)
+    Ok(Some(claimants))
 }
 
 fn retire_owner(
@@ -484,8 +531,16 @@ fn retire_owner(
     pid_alive: impl Fn(u32) -> bool + Copy,
     identity: impl Fn(u32) -> Option<String> + Copy,
 ) -> Result<bool, String> {
-    if owner_is_stale(owner, pid_alive, identity) != Some(true)
-        || has_live_participants(directory, claimant, pid_alive, identity)?
+    if owner_is_stale(owner, pid_alive, identity) != Some(true) {
+        return Ok(false);
+    }
+    let Some(mut claimants) =
+        recovery_claimants(directory, claimant, observed, pid_alive, identity)?
+    else {
+        return Ok(false);
+    };
+    claimants.sort_by_key(|candidate| serialize_owner(candidate).unwrap_or_default());
+    if claimants.first() != Some(claimant)
         || read_if_exists(&owner_path(directory))?.as_deref() != Some(observed)
     {
         return Ok(false);
@@ -1062,6 +1117,44 @@ mod tests {
         .unwrap()
         .unwrap();
         assert!(!blocked.is_primary());
+    }
+
+    #[test]
+    fn simultaneous_claimants_deterministically_recover_a_stale_owner() {
+        let directory = tempfile::tempdir().unwrap();
+        let stale = owner(601, "stale", "stale-start");
+        let first = owner(602, "a", "a-start");
+        let second = owner(603, "b", "b-start");
+        publish_owner(directory.path(), &stale).unwrap();
+        let observed = fs::read_to_string(owner_path(directory.path())).unwrap();
+        publish_participant(&participant_path(directory.path(), &second), &second).unwrap();
+        publish_file(
+            &recovery_path(directory.path(), &second),
+            &observed,
+            "recovery claim",
+        )
+        .unwrap();
+        let identities = HashMap::from([(602, "a-start"), (603, "b-start")]);
+        let winner = Registration::register_with(
+            directory.path(),
+            first,
+            true,
+            |pid| pid != stale.pid,
+            |pid| identities.get(&pid).map(|value| value.to_string()),
+        )
+        .unwrap()
+        .unwrap();
+        let loser = Registration::register_with(
+            directory.path(),
+            second,
+            true,
+            |pid| pid != stale.pid,
+            |pid| identities.get(&pid).map(|value| value.to_string()),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(winner.is_primary());
+        assert!(!loser.is_primary());
     }
 
     #[test]

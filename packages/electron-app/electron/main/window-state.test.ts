@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { clampWindowBounds, installWindowZoomInput, normalizeNativeWindowState, normalizeZoomFactor, WindowStateTracker } from "./window-state"
+import { clampWindowBounds, installWindowZoomInput, normalizeNativeWindowState, normalizeZoomFactor, restoreWindowState, WindowStateTracker } from "./window-state"
 import type { BrowserWindow } from "electron"
 import type { ClientStateManager } from "./client-state"
 
@@ -21,12 +21,27 @@ test("normalizes unsafe zoom factors", () => {
   assert.equal(normalizeZoomFactor(9), 5)
 })
 
+test("restores shared outer position and content size", () => {
+  const calls: unknown[] = []
+  const window = {
+    setPosition: (x: number, y: number) => calls.push(["position", x, y]),
+    setContentSize: (width: number, height: number) => calls.push(["content", width, height]),
+    maximize: () => undefined,
+    setFullScreen: () => undefined,
+    webContents: { setZoomFactor: () => undefined },
+  } as unknown as BrowserWindow
+  const bounds = { x: 10, y: 20, width: 1200, height: 800 }
+  restoreWindowState(window, { bounds, maximized: false, fullscreen: false, zoomFactor: 1 }, bounds)
+  assert.deepEqual(calls, [["position", 10, 20], ["content", 1200, 800]])
+})
+
 test("flush captures the current native zoom", async () => {
   let zoomLevel = -0.5
   const window = {
     isDestroyed: () => false,
     on: () => undefined,
-    getNormalBounds: () => ({ x: 0, y: 0, width: 1200, height: 800 }),
+    getPosition: () => [0, 0],
+    getContentSize: () => [1200, 800],
     isMaximized: () => false,
     isFullScreen: () => false,
     webContents: {

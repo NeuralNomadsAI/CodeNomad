@@ -384,6 +384,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: restoredBounds?.width ?? DEFAULT_WINDOW_WIDTH,
     height: restoredBounds?.height ?? DEFAULT_WINDOW_HEIGHT,
+    useContentSize: true,
     ...(restoredBounds ? { x: restoredBounds.x, y: restoredBounds.y } : {}),
     minWidth: 800,
     minHeight: 600,

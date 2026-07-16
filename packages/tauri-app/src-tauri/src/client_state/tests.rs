@@ -655,6 +655,46 @@ fn ownership_loss_blocks_the_final_atomic_replacement() {
     assert_eq!(state.load().unwrap(), load(false, true, Value::Null));
     assert!(!directory.path().join(CLIENT_STATE_FILENAME).exists());
 }
+
+#[test]
+fn renderer_rotation_blocks_an_in_flight_old_renderer_replacement() {
+    let directory = tempfile::tempdir().unwrap();
+    let (started_tx, started_rx) = mpsc::sync_channel(0);
+    let (allow_tx, allow_rx) = mpsc::sync_channel(0);
+    let allow_rx = std::sync::Mutex::new(allow_rx);
+    let state = Arc::new(
+        ClientState::initialize_at_with_writer(
+            directory.path(),
+            Arc::new(move |path, bytes, replacement_valid| {
+                started_tx.send(()).unwrap();
+                allow_rx.lock().unwrap().recv().unwrap();
+                super::write_atomically(path, bytes, replacement_valid)
+            }),
+        )
+        .unwrap(),
+    );
+    let outgoing = Url::parse("http://127.0.0.1:43123/workspace").unwrap();
+    let incoming = Url::parse("http://127.0.0.1:43124/workspace").unwrap();
+    state.renderer_access.claim("old", &outgoing).unwrap();
+    let generation = state.renderer_access.validate("old", &outgoing).unwrap();
+    let writing = Arc::clone(&state);
+    let authority = Arc::clone(&state);
+    let writer = thread::spawn(move || {
+        writing.save_snapshot_guarded(json!({ "stale": true }), || {
+            authority.renderer_access.is_generation_current(generation)
+        })
+    });
+    started_rx.recv().unwrap();
+    state
+        .renderer_access
+        .begin_navigation(Some(&incoming))
+        .unwrap();
+    state.renderer_access.claim("new", &incoming).unwrap();
+    allow_tx.send(()).unwrap();
+    assert!(writer.join().unwrap().is_err());
+    assert_eq!(state.load().unwrap().snapshot, Value::Null);
+    assert!(!directory.path().join(CLIENT_STATE_FILENAME).exists());
+}
 #[test]
 fn oversized_snapshot_does_not_replace_state() {
     let directory = tempfile::tempdir().unwrap();

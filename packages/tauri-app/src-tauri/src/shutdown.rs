@@ -192,11 +192,11 @@ fn close_main_window(app: AppHandle) {
 
 fn start_cleanup(app: AppHandle) {
     std::thread::spawn(move || {
+        client_state::flush_and_release(&app);
         if let Some(state) = app.try_state::<AppState>() {
             state.desktop_events.stop();
             let _ = state.manager.stop();
         }
-        client_state::flush_and_release(&app);
         apply_event(app.clone(), ShutdownEvent::CleanupFinished);
         app.exit(0);
     });

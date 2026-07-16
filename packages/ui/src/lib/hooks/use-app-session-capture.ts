@@ -10,7 +10,7 @@ import {
 import { normalizeWorkspacePath } from "../../stores/app-session-reconciliation"
 import {
   createRestorableSessionPreservation, createRestoredTabCommitGuard, markPreservedWorkspaceRemoved,
-  markPreservedWorkspaceReopened,
+  markPreservedWorkspaceReopened, markPreservedWorkspaceUnavailable,
   hasRestoredTabBinding, mergeRestorableSessionState, recordRestoredTab,
   settleRestoredTab as settlePreservedTab, type RestorableSessionPreservation,
   type RestorableWorkspaceRuntimeAuthority,
@@ -159,6 +159,14 @@ export function useAppSessionCapture() {
     onInstanceLifecycleAuthority((event) => {
       if (!preservation) return
       const workspace = { runtimeTabId: getInstanceAppTabId(event.instanceId), folder: event.folder, occurrence: event.occurrence }
+      if (event.type === "unavailable") {
+        const captured = captureState(scrollAuthority)
+        const index = captured.tabIds.indexOf(workspace.runtimeTabId)
+        const tab = index < 0 ? undefined : captured.state.tabs[index]
+        markPreservedWorkspaceUnavailable(preservation, workspace, tab?.kind === "workspace" ? tab : undefined)
+        schedule()
+        return
+      }
       const mark = event.type === "removed" ? markPreservedWorkspaceRemoved : markPreservedWorkspaceReopened
       mark(preservation, workspace)
       schedule()
