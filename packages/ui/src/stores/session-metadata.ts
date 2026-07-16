@@ -1,6 +1,7 @@
 import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
 import { requestData } from "../lib/opencode-api"
 import { sessions, withSession } from "./session-state"
+import { shouldReplaceSessionMetadata } from "./session-metadata-completeness"
 
 const CODENOMAD_METADATA_KEY = "codenomad"
 const CODENOMAD_METADATA_VERSION = 1
@@ -88,11 +89,12 @@ export async function hydrateSessionMetadataWithClient(
   sessionId: string,
   query?: { workspace?: string },
 ): Promise<MetadataRecord> {
+  const expectedMetadata = sessions().get(instanceId)?.get(sessionId)?.metadata
   const latest = await requestData<any>(client.session.get({ sessionID: sessionId, ...query }), "session.get")
   const metadata = normalizeMetadata(latest?.metadata)
 
   withSession(instanceId, sessionId, (session) => {
-    if (session.metadata !== undefined) return false
+    if (session.metadata !== expectedMetadata || !shouldReplaceSessionMetadata(session.metadata)) return false
     session.metadata = metadata
   })
 

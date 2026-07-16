@@ -128,6 +128,22 @@ export function useAppSessionCapture() {
     if (enabled()) updateRestorableSession(mergedState())
     await flushClientState()
   }
+  const nativeUnlisteners: Array<() => void> = []
+  let nativeDisposed = false
+  const register = <T,>(event: string, acknowledge: (payload: T) => void | Promise<void>) => listen<T>(event, ({ payload }) => {
+    void flush().then(() => acknowledge(payload)).catch((error) => log.error(`Failed to handle ${event}`, error))
+  }).then((unlisten) => {
+    if (nativeDisposed) unlisten()
+    else nativeUnlisteners.push(unlisten)
+  }).catch((error) => log.error(`Failed to listen for ${event}`, error))
+  const ready = isTauriHost() && isLocalWindow()
+    ? Promise.all([
+        register<{ generation: number }>("client-state:flush-requested",
+          ({ generation }) => acknowledgeNativeClientStateRendererFlush(generation)),
+        register<{ generation: number }>("client-state:navigation-flush-requested",
+          ({ generation }) => acknowledgeNativeClientStateNavigationFlush(generation)),
+      ]).then(() => undefined)
+    : Promise.resolve()
   const markScrollAuthority = (instanceId: string, sessionId: string) => {
     const sessionIds = scrollAuthority.get(instanceId) ?? new Set<string>()
     sessionIds.add(sessionId)
@@ -161,37 +177,26 @@ export function useAppSessionCapture() {
   })
   onMount(() => {
     const flushNow = () => void flush()
-    const nativeUnlisteners: Array<() => void> = []
-    let nativeDisposed = false
     window.addEventListener("pagehide", flushNow)
     window.addEventListener("beforeunload", flushNow)
     if (isElectronHost() && isLocalWindow()) window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ = flush
-    else if (isTauriHost() && isLocalWindow()) {
-      const register = <T,>(event: string, acknowledge: (payload: T) => void | Promise<void>) => void listen<T>(event, ({ payload }) => {
-        void flush().then(() => acknowledge(payload)).catch((error) => log.error(`Failed to handle ${event}`, error))
-      }).then((unlisten) => nativeDisposed ? unlisten() : nativeUnlisteners.push(unlisten))
-        .catch((error) => log.error(`Failed to listen for ${event}`, error))
-      register<{ generation: number }>("client-state:flush-requested",
-        ({ generation }) => acknowledgeNativeClientStateRendererFlush(generation))
-      register<{ generation: number }>("client-state:navigation-flush-requested",
-        ({ generation }) => acknowledgeNativeClientStateNavigationFlush(generation))
-    }
     onCleanup(() => {
-      nativeDisposed = true
       window.removeEventListener("pagehide", flushNow)
       window.removeEventListener("beforeunload", flushNow)
-      nativeUnlisteners.forEach((unlisten) => unlisten())
       if (window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ === flush) {
         delete window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__
       }
     })
   })
   onCleanup(() => {
+    nativeDisposed = true
+    nativeUnlisteners.forEach((unlisten) => unlisten())
     void flush()
     disposed = true
     cleanups.forEach((cleanup) => cleanup())
   })
   return {
+    ready,
     start(snapshot?: RestorableSessionState) {
       if (snapshot) preservation = createRestorableSessionPreservation(snapshot)
       setStarted(true)

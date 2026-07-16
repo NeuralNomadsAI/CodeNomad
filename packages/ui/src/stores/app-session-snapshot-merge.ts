@@ -11,6 +11,7 @@ export interface RestoreTabResult {
 }
 export interface RestorableSessionPreservation {
   sourceTabs: readonly RestorableTabState[]
+  activeTabIndex: number
   results: RestoreTabResult[]
   removalRevisions: number[]
 }
@@ -45,6 +46,7 @@ export function createRestorableSessionPreservation(
 ): RestorableSessionPreservation {
   return {
     sourceTabs: snapshot.tabs,
+    activeTabIndex: snapshot.activeTabIndex,
     results: snapshot.tabs.map(() => ({ status: "pending" })),
     removalRevisions: snapshot.tabs.map(() => 0),
   }
@@ -217,7 +219,7 @@ export function mergeRestorableSessionState(
       currentTabs[currentIndex!] = mergeWorkspaceState(target, fallback, options.currentTabAuthorities?.[currentIndex!])
     }
   })
-  const insertions = new Map<number, RestorableTabState[]>()
+  const insertions = new Map<number, Array<{ sourceIndex: number; tab: RestorableTabState }>>()
   const usedOccurrences = new Map<string, Set<number>>()
   currentIdentities.forEach(({ key, occurrence }) => {
     const used = usedOccurrences.get(key) ?? new Set<number>()
@@ -237,18 +239,27 @@ export function mergeRestorableSessionState(
       usedOccurrences.set(key, used)
       tab = { ...source, occurrence }
     }
-    insertions.set(slot, [...(insertions.get(slot) ?? []), tab])
+    insertions.set(slot, [...(insertions.get(slot) ?? []), { sourceIndex: index, tab }])
   })
   const outputIndexes = new Map<number, number>()
+  const sourceOutputIndexes = new Map<number, number>()
   const tabs: RestorableTabState[] = []
   for (let slot = 0; slot <= currentTabs.length; slot += 1) {
-    tabs.push(...(insertions.get(slot) ?? []))
+    for (const insertion of insertions.get(slot) ?? []) {
+      sourceOutputIndexes.set(insertion.sourceIndex, tabs.length)
+      tabs.push(insertion.tab)
+    }
     if (!currentTabs[slot]) continue
     outputIndexes.set(slot, tabs.length)
+    const sourceIndex = matches.findIndex((currentIndex) => currentIndex === slot)
+    if (sourceIndex >= 0) sourceOutputIndexes.set(sourceIndex, tabs.length)
     tabs.push(currentTabs[slot]!)
   }
+  const activeTabIndex = outputIndexes.get(current.activeTabIndex)
+    ?? sourceOutputIndexes.get(preservation.activeTabIndex)
+    ?? (tabs.length ? 0 : -1)
   return {
     tabs,
-    activeTabIndex: outputIndexes.get(current.activeTabIndex) ?? (tabs.length ? 0 : -1),
+    activeTabIndex,
   }
 }

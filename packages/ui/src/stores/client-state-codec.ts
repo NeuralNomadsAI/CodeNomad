@@ -221,7 +221,8 @@ function normalizeSession(value: unknown, budget: StringBudget): RestorableSessi
 }
 
 export function decodeClientSnapshot(value: unknown): ClientSnapshotV1 | null {
-  if (!isRecord(value) || value.version !== 1 || !Number.isSafeInteger(value.revision) || Number(value.revision) < 0) return null
+  if (!isRecord(value) || (value.version !== undefined && value.version !== 1)
+    || !Number.isSafeInteger(value.revision) || Number(value.revision) < 0) return null
   const savedAt = takeNumber(value.savedAt, 0, Number.MAX_SAFE_INTEGER)
   if (savedAt === undefined) return null
   const budget = createBudget()

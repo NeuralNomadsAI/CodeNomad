@@ -361,6 +361,38 @@ describe("app session snapshot merge", () => {
     assert.equal(mergeRestorableSessionState(session(currentTabs, 1), unresolved, options).activeTabIndex, 2)
   })
 
+  it("maps the saved active source tab while startup capture has no active tab", () => {
+    const saved = session([workspace("/a"), workspace("/b"), workspace("/c")], 2)
+    const preservation = restored(saved, [
+      { source: 0, runtime: "instance:a", pending: true },
+      { source: 1, runtime: "instance:b", pending: true },
+      { source: 2, runtime: "instance:c", pending: true },
+    ])
+    const merged = mergeRestorableSessionState(session(saved.tabs, -1), preservation, {
+      currentTabIds: ["instance:a", "instance:b", "instance:c"],
+    })
+    assert.equal(merged.activeTabIndex, 2)
+  })
+
+  it("retains saved session IDs during a sub-debounce startup flush unless selection is authoritative", () => {
+    const saved = session([workspace("/work", 0, {
+      activeParentSessionId: "saved-parent", activeSessionId: "saved-child",
+    })])
+    const preservation = restored(saved, [{ source: 0, runtime: "instance:work", pending: true }])
+    const startup = session([workspace("/work")])
+    const beforeDebounce = mergeRestorableSessionState(startup, preservation, {
+      currentTabIds: ["instance:work"], currentTabAuthorities: [{ sessionSelection: false }],
+    })
+    assert.deepEqual(
+      [workspaceAt(beforeDebounce).activeParentSessionId, workspaceAt(beforeDebounce).activeSessionId],
+      ["saved-parent", "saved-child"],
+    )
+    const cleared = mergeRestorableSessionState(startup, preservation, {
+      currentTabIds: ["instance:work"], currentTabAuthorities: [{ sessionSelection: true }],
+    })
+    assert.deepEqual([workspaceAt(cleared).activeParentSessionId, workspaceAt(cleared).activeSessionId], [undefined, undefined])
+  })
+
   it("inserts an unresolved tab beside its nearest restored source neighbor", () => {
     const saved = session([workspace("/a"), sidecar("unresolved"), workspace("/b")], 1)
     const preservation = restored(saved, [

@@ -43,6 +43,18 @@ export function resolveCrossHostElectionDirectory(
   return pathApi.join(configured ?? fallbackHome, ".codenomad", "client-state", "election")
 }
 
+export function resolveCrossHostStatePath(
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  fallbackHome = homedir(),
+): string {
+  const pathApi = platform === "win32" ? win32 : posix
+  const configured = platform === "win32"
+    ? validHome(environment.USERPROFILE, platform) ?? validHome(environment.HOME, platform)
+    : validHome(environment.HOME, platform)
+  return pathApi.join(configured ?? fallbackHome, ".codenomad", "client-state", "client-state.json")
+}
+
 export function resolveLegacyTauriDataDirectory(
   environment: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,

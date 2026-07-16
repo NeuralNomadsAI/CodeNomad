@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -77,6 +77,45 @@ test("cross-host ownership is required in addition to each host-local election",
   })
   assert.equal(successor.isPrimary, true)
   await successor.drainAndReleasePrimary()
+})
+
+test("first shared primary deterministically migrates legacy host envelopes", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "codenomad-migration-"))
+  const electron = join(root, "electron"), tauri = join(root, "tauri"), election = join(root, "shared", "election")
+  mkdirSync(electron, { recursive: true }); mkdirSync(tauri, { recursive: true })
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  writeFileSync(join(electron, "client-state.json"), JSON.stringify({ version: 1, restoreEnabled: true, snapshot: { revision: 999, savedAt: 10, host: "electron" } }))
+  writeFileSync(join(tauri, "client-state.json"), JSON.stringify({ version: 1, restoreEnabled: true, snapshot: { savedAt: 20, host: "tauri" } }))
+  const manager = new ClientStateManager(electron, undefined, { crossHostElectionDirectory: election, legacyTauriDataPath: tauri })
+  assert.deepEqual(manager.loadClientState().snapshot, { savedAt: 20, host: "tauri" })
+  assert.equal(existsSync(join(electron, "client-state.json")), true)
+  assert.equal(existsSync(join(tauri, "client-state.json")), true)
+  await manager.drainAndReleasePrimary()
+})
+
+test("legacy migration prefers disabled and ignores malformed candidates", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "codenomad-migration-"))
+  const electron = join(root, "electron"), tauri = join(root, "tauri"), election = join(root, "shared", "election")
+  mkdirSync(electron, { recursive: true }); mkdirSync(tauri, { recursive: true })
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  writeFileSync(join(electron, "client-state.json"), "malformed")
+  writeFileSync(join(tauri, "client-state.json"), JSON.stringify({ version: 1, restoreEnabled: false, snapshot: { savedAt: 1 } }))
+  const manager = new ClientStateManager(electron, undefined, { crossHostElectionDirectory: election, legacyTauriDataPath: tauri })
+  assert.deepEqual(manager.loadClientState(), { isPrimary: true, restoreEnabled: false, snapshot: null })
+  assert.equal(JSON.parse(readFileSync(join(root, "shared", "client-state.json"), "utf8")).restoreEnabled, false)
+  await manager.drainAndReleasePrimary()
+})
+
+test("legacy migration does not resurrect a snapshot after clear", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "codenomad-migration-"))
+  const electron = join(root, "electron"), tauri = join(root, "tauri"), election = join(root, "shared", "election")
+  mkdirSync(electron, { recursive: true }); mkdirSync(tauri, { recursive: true })
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  writeFileSync(join(electron, "client-state.json"), JSON.stringify({ version: 1, restoreEnabled: true }))
+  writeFileSync(join(tauri, "client-state.json"), JSON.stringify({ version: 1, restoreEnabled: true, snapshot: { savedAt: 20 } }))
+  const manager = new ClientStateManager(electron, undefined, { crossHostElectionDirectory: election, legacyTauriDataPath: tauri })
+  assert.equal(manager.loadClientState().snapshot, null)
+  await manager.drainAndReleasePrimary()
 })
 
 test("ownership loss immediately disables restore reads and mutations", async (t) => {

@@ -10,6 +10,8 @@ use super::{
 };
 use serde_json::{json, Value};
 use std::fs;
+use std::io::{BufRead, BufReader};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Barrier};
 use std::thread;
@@ -108,6 +110,50 @@ fn concurrent_roles(path: &std::path::Path, count: usize) -> Vec<bool> {
     }
     roles
 }
+
+fn run_node_state_host(
+    election: &std::path::Path,
+    electron_data: &std::path::Path,
+    tauri_data: &std::path::Path,
+    operation: &str,
+    payload: Option<&Value>,
+) -> Value {
+    let root = election.parent().unwrap();
+    fs::create_dir_all(root).unwrap();
+    let start = root.join(format!("node-start-{operation}"));
+    let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../electron-app/electron/main/client-state-cross-host-child.ts");
+    let mut child = Command::new("node")
+        .current_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.."))
+        .args(["--import", "tsx"])
+        .arg(script)
+        .arg(election)
+        .arg(&start)
+        .args(["", "full"])
+        .arg(electron_data)
+        .args(["", ""])
+        .arg(tauri_data)
+        .arg(operation)
+        .arg(payload.map(Value::to_string).unwrap_or_default())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("Node and tsx are required for cross-language state tests");
+    fs::write(start, b"").unwrap();
+    let mut line = String::new();
+    BufReader::new(child.stdout.as_mut().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "Node host failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_str(&line).unwrap()
+}
 #[test]
 fn parses_envelopes_and_normalizes_zoom() {
     for bytes in [
@@ -137,6 +183,125 @@ fn parses_envelopes_and_normalizes_zoom() {
     ] {
         assert_eq!(normalize_native_zoom_level(input), expected);
     }
+}
+
+#[test]
+fn migrates_dual_legacy_files_with_disabled_dominance_and_malformed_fallback() {
+    for malformed_electron in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let electron = root.path().join("electron");
+        let tauri = root.path().join("tauri");
+        let election = root.path().join("shared/election");
+        let shared = root.path().join("shared/client-state.json");
+        fs::create_dir_all(&electron).unwrap();
+        fs::create_dir_all(&tauri).unwrap();
+        fs::write(
+            electron.join(CLIENT_STATE_FILENAME),
+            if malformed_electron {
+                b"malformed".to_vec()
+            } else {
+                serde_json::to_vec(&json!({
+                    "version": 1,
+                    "restoreEnabled": true,
+                    "snapshot": { "revision": 999, "savedAt": 20, "host": "electron" }
+                }))
+                .unwrap()
+            },
+        )
+        .unwrap();
+        fs::write(
+            tauri.join(CLIENT_STATE_FILENAME),
+            serde_json::to_vec(&json!({
+                "version": 1,
+                "restoreEnabled": false,
+                "snapshot": { "savedAt": 1, "host": "tauri" }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let state = ClientState::initialize_at_with_writer_and_election(
+            &tauri,
+            &election,
+            &shared,
+            Some(&electron),
+            Arc::new(super::write_atomically),
+        )
+        .unwrap();
+        assert_eq!(state.load().unwrap(), load(true, false, Value::Null));
+        assert!(!parse_client_state(&fs::read(&shared).unwrap()).restore_enabled);
+        assert!(electron.join(CLIENT_STATE_FILENAME).exists());
+        assert!(tauri.join(CLIENT_STATE_FILENAME).exists());
+    }
+
+    let root = tempfile::tempdir().unwrap();
+    let electron = root.path().join("electron");
+    let tauri = root.path().join("tauri");
+    let election = root.path().join("shared/election");
+    let shared = root.path().join("shared/client-state.json");
+    fs::create_dir_all(&electron).unwrap();
+    fs::create_dir_all(&tauri).unwrap();
+    fs::write(
+        electron.join(CLIENT_STATE_FILENAME),
+        serde_json::to_vec(&json!({ "version": 1, "restoreEnabled": true })).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        tauri.join(CLIENT_STATE_FILENAME),
+        serde_json::to_vec(&json!({
+            "version": 1,
+            "restoreEnabled": true,
+            "snapshot": { "savedAt": 20 }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let state = ClientState::initialize_at_with_writer_and_election(
+        &tauri,
+        &election,
+        &shared,
+        Some(&electron),
+        Arc::new(super::write_atomically),
+    )
+    .unwrap();
+    assert_eq!(state.load().unwrap().snapshot, Value::Null);
+}
+
+#[test]
+fn electron_and_tauri_share_the_complete_envelope_across_handoffs() {
+    let root = tempfile::tempdir().unwrap();
+    let electron = root.path().join("electron");
+    let tauri = root.path().join("tauri");
+    let election = root.path().join("shared/election");
+    let shared = root.path().join("shared/client-state.json");
+    fs::create_dir_all(&electron).unwrap();
+    fs::create_dir_all(&tauri).unwrap();
+
+    let electron_snapshot = json!({ "version": 0, "savedAt": 10, "from": "electron" });
+    let node = run_node_state_host(
+        &election,
+        &electron,
+        &tauri,
+        "save",
+        Some(&electron_snapshot),
+    );
+    assert_eq!(node["acquired"], true);
+    let rust = ClientState::initialize_at_with_writer_and_election(
+        &tauri,
+        &election,
+        &shared,
+        Some(&electron),
+        Arc::new(super::write_atomically),
+    )
+    .unwrap();
+    assert_eq!(rust.load().unwrap().snapshot, electron_snapshot);
+    let tauri_snapshot = json!({ "savedAt": 20, "from": "tauri" });
+    assert!(rust.save_snapshot(tauri_snapshot.clone()).unwrap());
+    rust.release_locks();
+    fs::remove_dir_all(election.join("primary.owner.json")).unwrap();
+
+    let node = run_node_state_host(&election, &electron, &tauri, "load", None);
+    assert_eq!(node["acquired"], true);
+    assert_eq!(node["state"]["snapshot"], tauri_snapshot);
 }
 #[test]
 fn normalizes_window_bounds_against_displays() {

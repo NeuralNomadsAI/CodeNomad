@@ -105,20 +105,23 @@ type StateWriter =
 impl ClientState {
     pub fn initialize(app: &AppHandle) -> Self {
         match app.path().app_data_dir() {
-            Ok(app_data_dir) => match cross_host::election_directory() {
-                Ok(election_dir) => {
-                    let legacy_electron = cross_host::legacy_electron_data_directory();
-                    Self::initialize_managed_at_with_election(
-                        &app_data_dir,
-                        &election_dir,
-                        legacy_electron.as_deref(),
-                    )
+            Ok(app_data_dir) => {
+                match (cross_host::election_directory(), cross_host::state_path()) {
+                    (Ok(election_dir), Ok(state_path)) => {
+                        let legacy_electron = cross_host::legacy_electron_data_directory();
+                        Self::initialize_managed_at_with_election(
+                            &app_data_dir,
+                            &election_dir,
+                            &state_path,
+                            legacy_electron.as_deref(),
+                        )
+                    }
+                    (Err(err), _) | (_, Err(err)) => {
+                        eprintln!("[client-state] initialization failed; restore disabled: {err}");
+                        Self::disabled(app_data_dir.join(CLIENT_STATE_FILENAME))
+                    }
                 }
-                Err(err) => {
-                    eprintln!("[client-state] initialization failed; restore disabled: {err}");
-                    Self::disabled(app_data_dir.join(CLIENT_STATE_FILENAME))
-                }
-            },
+            }
             Err(err) => {
                 eprintln!("[client-state] initialization failed; restore disabled: {err}");
                 Self::disabled(PathBuf::new())
@@ -137,11 +140,13 @@ impl ClientState {
     fn initialize_managed_at_with_election(
         app_data_dir: &Path,
         election_dir: &Path,
+        state_path: &Path,
         legacy_electron_data_dir: Option<&Path>,
     ) -> Self {
         Self::initialize_at_with_writer_and_election(
             app_data_dir,
             election_dir,
+            state_path,
             legacy_electron_data_dir,
             std::sync::Arc::new(write_atomically),
         )
@@ -202,6 +207,7 @@ impl ClientState {
         Self::initialize_at_with_writer_and_election(
             app_data_dir,
             &app_data_dir.join(".cross-host-election"),
+            &app_data_dir.join(CLIENT_STATE_FILENAME),
             None,
             write_state,
         )
@@ -210,6 +216,7 @@ impl ClientState {
     fn initialize_at_with_writer_and_election(
         app_data_dir: &Path,
         election_dir: &Path,
+        state_path: &Path,
         legacy_electron_data_dir: Option<&Path>,
         write_state: StateWriter,
     ) -> Result<Self, String> {
@@ -220,19 +227,28 @@ impl ClientState {
             )
         })?;
 
-        let state_path = app_data_dir.join(CLIENT_STATE_FILENAME);
         let registration = process::Registration::initialize(
             app_data_dir,
             election_dir,
             legacy_electron_data_dir,
         )?;
+        if registration.is_primary() && !state_path.exists() {
+            migrate_legacy_state(state_path, app_data_dir, legacy_electron_data_dir, &|| {
+                registration.is_primary()
+            })?;
+        }
         let state = if registration.is_primary() {
-            read_client_state(&state_path)
+            read_client_state(state_path)
         } else {
             PersistedClientState::default()
         };
         let process = registration.finish();
-        Ok(Self::new(state_path, process, state, write_state))
+        Ok(Self::new(
+            state_path.to_path_buf(),
+            process,
+            state,
+            write_state,
+        ))
     }
 
     fn is_primary(&self) -> bool {
@@ -461,6 +477,64 @@ fn parse_client_state(bytes: &[u8]) -> PersistedClientState {
             .and_then(Value::as_bool)
             .unwrap_or(true),
     }
+}
+
+fn legacy_candidate(
+    path: &Path,
+    host: &'static str,
+) -> Option<(PersistedClientState, bool, i64, &'static str)> {
+    let bytes = fs::read(path).ok()?;
+    let Value::Object(value) = serde_json::from_slice::<Value>(&bytes).ok()? else {
+        return None;
+    };
+    if value.get("version").and_then(Value::as_u64) != Some(CLIENT_STATE_VERSION) {
+        return None;
+    }
+    let saved_at = value
+        .get("snapshot")
+        .and_then(Value::as_object)
+        .and_then(|snapshot| snapshot.get("savedAt"))
+        .and_then(Value::as_i64)
+        .unwrap_or(-1);
+    Some((
+        parse_client_state(&bytes),
+        value.contains_key("snapshot"),
+        saved_at,
+        host,
+    ))
+}
+
+fn migrate_legacy_state(
+    state_path: &Path,
+    tauri_data_dir: &Path,
+    electron_data_dir: Option<&Path>,
+    ownership_valid: &dyn Fn() -> bool,
+) -> Result<(), String> {
+    let mut candidates = [
+        electron_data_dir
+            .and_then(|path| legacy_candidate(&path.join(CLIENT_STATE_FILENAME), "electron")),
+        legacy_candidate(&tauri_data_dir.join(CLIENT_STATE_FILENAME), "tauri"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        left.0
+            .restore_enabled
+            .cmp(&right.0.restore_enabled)
+            .then_with(|| left.1.cmp(&right.1))
+            .then_with(|| right.2.cmp(&left.2))
+            .then_with(|| right.3.cmp(left.3))
+    });
+    let Some((state, _, _, _)) = candidates.first() else {
+        return Ok(());
+    };
+    let bytes = serde_json::to_vec(state).map_err(|err| err.to_string())?;
+    if let Some(parent) = state_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("failed to create shared client-state directory: {err}"))?;
+    }
+    write_atomically(state_path, &bytes, ownership_valid)
 }
 
 fn serialized_value_size(value: &Value) -> Result<usize, String> {

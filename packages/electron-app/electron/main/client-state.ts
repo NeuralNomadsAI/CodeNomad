@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
-import { mkdirSync, readFileSync } from "node:fs"
-import { rename, rm, writeFile } from "node:fs/promises"
-import { join } from "node:path"
+import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { open, rename, rm } from "node:fs/promises"
+import { dirname, join } from "node:path"
 import {
   electClientStateProcess,
   getRunningMarkerPath,
@@ -17,6 +17,7 @@ import {
   CrossHostRegistration,
   crossHostParticipants,
   resolveCrossHostElectionDirectory,
+  resolveCrossHostStatePath,
   resolveLegacyTauriDataDirectory,
   type CrossHostLeaseDependencies,
 } from "./client-state-cross-host"
@@ -69,7 +70,13 @@ interface ClientStateManagerOptions {
 }
 
 async function writeClientStateTemporary(temporaryPath: string, serializedState: string): Promise<void> {
-  await writeFile(temporaryPath, serializedState, { encoding: "utf8", mode: 0o600 })
+  const file = await open(temporaryPath, "w", 0o600)
+  try {
+    await file.writeFile(serializedState, "utf8")
+    await file.sync()
+  } finally {
+    await file.close()
+  }
 }
 
 interface ParsedClientState {
@@ -106,6 +113,19 @@ function parseClientState(value: string): ParsedClientState {
   }
 }
 
+function legacyCandidate(path: string, host: "electron" | "tauri"): { host: string; state: PersistedClientState; savedAt: number; hasSnapshot: boolean } | undefined {
+  try {
+    const candidate = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>
+    if (!candidate || candidate.version !== CLIENT_STATE_VERSION) return undefined
+    const parsed = parseClientState(JSON.stringify(candidate)).state
+    const snapshot = candidate.snapshot as Record<string, unknown> | undefined
+    const savedAt = typeof snapshot?.savedAt === "number" && Number.isFinite(snapshot.savedAt) ? snapshot.savedAt : -1
+    return { host, state: parsed, savedAt, hasSnapshot: snapshot !== undefined }
+  } catch {
+    return undefined
+  }
+}
+
 export class ClientStateManager {
   private readonly userDataPath: string
   private readonly statePath: string
@@ -134,7 +154,11 @@ export class ClientStateManager {
     }
     mkdirSync(userDataPath, { recursive: true })
     this.userDataPath = userDataPath
-    this.statePath = join(userDataPath, CLIENT_STATE_FILENAME)
+    const crossHostElectionDirectory = options?.crossHostElectionDirectory ?? resolveCrossHostElectionDirectory()
+    this.statePath = options?.crossHostElectionDirectory
+      ? join(dirname(crossHostElectionDirectory), CLIENT_STATE_FILENAME)
+      : resolveCrossHostStatePath()
+    mkdirSync(dirname(this.statePath), { recursive: true })
     this.lockPath = join(userDataPath, PRIMARY_LOCK_FILENAME)
     const registrationLockPath = join(userDataPath, REGISTRATION_LOCK_FILENAME)
 
@@ -144,7 +168,6 @@ export class ClientStateManager {
       { primaryLockPath: this.lockPath, registrationLockPath },
       (message, error) => console.warn(`[client-state] ${message}`, error),
     )
-    const crossHostElectionDirectory = options?.crossHostElectionDirectory ?? resolveCrossHostElectionDirectory()
     const legacyTauriDataPath = options?.legacyTauriDataPath === undefined
       ? (options?.crossHostElectionDirectory ? null : resolveLegacyTauriDataDirectory())
       : options.legacyTauriDataPath
@@ -179,6 +202,10 @@ export class ClientStateManager {
       this.primary = false
     }
     if (this.isPrimary) {
+      this.migrateLegacyStateIfNeeded([
+        ["electron", join(userDataPath, CLIENT_STATE_FILENAME)],
+        ...(legacyTauriDataPath ? [["tauri", join(legacyTauriDataPath, CLIENT_STATE_FILENAME)] as const] : []),
+      ])
       const persisted = this.readState()
       this.state = persisted.state
       this.persistenceSuppressed = !this.state.restoreEnabled
@@ -335,6 +362,40 @@ export class ClientStateManager {
     }
   }
 
+  private migrateLegacyStateIfNeeded(paths: ReadonlyArray<readonly ["electron" | "tauri", string]>): void {
+    try {
+      readFileSync(this.statePath)
+      return
+    } catch (error) {
+      if (!hasErrorCode(error, "ENOENT")) return
+    }
+    const winner = paths
+      .map(([host, path]) => legacyCandidate(path, host))
+      .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate))
+      .sort((left, right) =>
+        Number(left.state.restoreEnabled) - Number(right.state.restoreEnabled) ||
+        Number(left.hasSnapshot) - Number(right.hasSnapshot) ||
+        right.savedAt - left.savedAt ||
+        right.host.localeCompare(left.host),
+      )[0]
+    if (!winner) return
+
+    const temporaryPath = join(dirname(this.statePath), `.${CLIENT_STATE_FILENAME}.${this.owner.pid}.${this.owner.runToken}.migration.tmp`)
+    let descriptor: number | undefined
+    try {
+      descriptor = openSync(temporaryPath, "wx", 0o600)
+      writeFileSync(descriptor, JSON.stringify(winner.state), "utf8")
+      fsyncSync(descriptor)
+      closeSync(descriptor)
+      descriptor = undefined
+      this.assertReplacementAllowed()
+      renameSync(temporaryPath, this.statePath)
+    } finally {
+      if (descriptor !== undefined) closeSync(descriptor)
+      rm(temporaryPath, { force: true }).catch(() => {})
+    }
+  }
+
   private getMutationDisposition(futureEnvelopeResult = true): Promise<boolean> | undefined {
     if (!this.isPrimary) {
       return Promise.resolve(false)
@@ -376,7 +437,7 @@ export class ClientStateManager {
 
   private async writeAtomically(serializedState: string): Promise<void> {
     const temporaryPath = join(
-      this.userDataPath,
+      dirname(this.statePath),
       `.${CLIENT_STATE_FILENAME}.${this.owner.pid}.${this.owner.runToken}.tmp`,
     )
     try {

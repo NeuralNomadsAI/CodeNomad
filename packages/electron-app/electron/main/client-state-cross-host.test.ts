@@ -10,6 +10,7 @@ import {
   CrossHostRegistration,
   CROSS_HOST_OWNER_DIRECTORY,
   resolveCrossHostElectionDirectory,
+  resolveCrossHostStatePath,
   type CrossHostLeaseDependencies,
 } from "./client-state-cross-host"
 import type { ProcessOwner } from "./client-state-process"
@@ -150,4 +151,7 @@ test("platform paths match the Rust contract", () => {
   assert.equal(resolveCrossHostElectionDirectory({ HOME: "/Users/dev" }, "darwin", "/fallback"), posix.join("/Users/dev", ".codenomad", "client-state", "election"))
   assert.equal(resolveCrossHostElectionDirectory({ HOME: "/home/dev" }, "linux", "/fallback"), posix.join("/home/dev", ".codenomad", "client-state", "election"))
   assert.equal(resolveCrossHostElectionDirectory({ USERPROFILE: "", HOME: "D:\\Home" }, "win32", "C:\\Fallback"), win32.join("D:\\Home", ".codenomad", "client-state", "election"))
+  assert.equal(resolveCrossHostStatePath({ HOME: "/Users/dev" }, "darwin", "/fallback"), posix.join("/Users/dev", ".codenomad", "client-state", "client-state.json"))
+  assert.equal(resolveCrossHostStatePath({ HOME: "/home/dev" }, "linux", "/fallback"), posix.join("/home/dev", ".codenomad", "client-state", "client-state.json"))
+  assert.equal(resolveCrossHostStatePath({ USERPROFILE: "", HOME: "D:\\Home" }, "win32", "C:\\Fallback"), win32.join("D:\\Home", ".codenomad", "client-state", "client-state.json"))
 })

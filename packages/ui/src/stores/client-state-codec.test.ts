@@ -174,6 +174,15 @@ describe("client state codec", () => {
     assert.deepEqual(decoded?.session?.tabs, [{ kind: "sidecar", sidecarId: "structural-tab" }])
   })
 
+  it("normalizes a valid unversioned legacy snapshot to version 1", () => {
+    const legacy: UnknownRecord = snapshot({ session: { activeTabIndex: 0, tabs: [workspace()] } })
+    delete legacy.version
+    const decoded = decodeClientSnapshot(legacy)
+    assert.equal(decoded?.version, 1)
+    assert.equal(decoded?.session?.tabs[0]?.kind, "workspace")
+    assert.equal(decodeClientSnapshot({ ...legacy, version: 2 }), null)
+  })
+
   for (const [label, activeSessionId] of [
     ["active session", "active-session"],
     ["active no-session prompt", "__no_session_draft__"],

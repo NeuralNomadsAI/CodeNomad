@@ -74,6 +74,7 @@ import {
 } from "./worktrees"
 import { getOpenCodeWorkspaceIdForSession, getOpenCodeWorkspaceIdForWorktree } from "./opencode-workspaces"
 import { hydrateSessionMetadataWithClient } from "./session-metadata"
+import { preferSessionMetadata, shouldReplaceSessionMetadata } from "./session-metadata-completeness"
 import {
   PROJECT_SESSION_LIST_LIMIT,
   buildProjectSessionListOptions,
@@ -247,7 +248,7 @@ async function hydrateMissingSessionMetadata(instanceId: string, sessionIds: str
     while (nextIndex < uniqueIds.length) {
       const sessionId = uniqueIds[nextIndex++]!
       const session = sessions().get(instanceId)?.get(sessionId)
-      if (!session || session.metadata !== undefined) continue
+      if (!session || !shouldReplaceSessionMetadata(session.metadata)) continue
       try {
         await hydrateSessionMetadata(instanceId, sessionId, client)
       } catch (error) {
@@ -337,7 +338,7 @@ async function hydrateRestoredSessionChain(
         log.warn("Failed to hydrate restored session", { instanceId, sessionId, error })
         continue
       }
-    } else if (session.metadata === undefined) {
+    } else if (shouldReplaceSessionMetadata(session.metadata)) {
       try {
         await hydrateSessionMetadata(instanceId, sessionId, client)
       } catch (error) {
@@ -585,6 +586,7 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
       next.set(instanceId, instanceSessions)
       return next
     })
+    void hydrateMissingSessionMetadata(instanceId, searchResults.map((session) => session.id))
 
     await ensureV2ParentChainsLoaded(instanceId, searchResults, instance.folder)
 
@@ -615,6 +617,7 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
 }
 
 function toClientSessionV2(instanceId: string, apiSession: SDKSession, existingSession?: Session): Session {
+  const incomingMetadata = (apiSession as SDKSession & { metadata?: Session["metadata"] }).metadata
   return {
     id: apiSession.id,
     instanceId,
@@ -637,7 +640,7 @@ function toClientSessionV2(instanceId: string, apiSession: SDKSession, existingS
     time: {
       ...apiSession.time,
     },
-    metadata: (apiSession as SDKSession & { metadata?: Session["metadata"] }).metadata ?? existingSession?.metadata,
+    metadata: preferSessionMetadata(incomingMetadata, existingSession?.metadata),
     revert: existingSession?.revert,
     pendingPermission: existingSession?.pendingPermission,
     pendingQuestion: existingSession?.pendingQuestion,

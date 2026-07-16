@@ -50,6 +50,16 @@ pub(super) fn election_directory() -> Result<PathBuf, String> {
     .ok_or_else(|| "user home directory is unavailable".to_string())
 }
 
+pub(super) fn state_path() -> Result<PathBuf, String> {
+    resolve_state_path_for(
+        std::env::consts::OS,
+        |name| std::env::var_os(name),
+        dirs::home_dir().as_deref(),
+    )
+    .map(PathBuf::from)
+    .ok_or_else(|| "user home directory is unavailable".to_string())
+}
+
 pub(super) fn legacy_electron_data_directory() -> Option<PathBuf> {
     resolve_legacy_electron_data_directory_for(
         std::env::consts::OS,
@@ -103,6 +113,25 @@ fn resolve_election_directory_for(
     } else {
         format!(
             "{}/.codenomad/client-state/election",
+            home.trim_end_matches('/')
+        )
+    })
+}
+
+fn resolve_state_path_for(
+    platform: &str,
+    environment: impl Fn(&str) -> Option<OsString>,
+    fallback_home: Option<&Path>,
+) -> Option<String> {
+    let home = configured_home(platform, &environment, fallback_home)?;
+    Some(if platform == "windows" {
+        format!(
+            "{}\\.codenomad\\client-state\\client-state.json",
+            home.trim_end_matches(['\\', '/'])
+        )
+    } else {
+        format!(
+            "{}/.codenomad/client-state/client-state.json",
             home.trim_end_matches('/')
         )
     })
@@ -1117,6 +1146,34 @@ mod tests {
                 "C:\\Fallback"
             ),
             "D:\\Home\\.codenomad\\client-state\\election"
+        );
+        let resolve_state = |platform: &str, values: HashMap<&str, &str>, fallback: &str| {
+            resolve_state_path_for(
+                platform,
+                |name| values.get(name).map(OsString::from),
+                Some(Path::new(fallback)),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            resolve_state(
+                "macos",
+                HashMap::from([("HOME", "/Users/dev")]),
+                "/fallback"
+            ),
+            "/Users/dev/.codenomad/client-state/client-state.json"
+        );
+        assert_eq!(
+            resolve_state("linux", HashMap::from([("HOME", "/home/dev")]), "/fallback"),
+            "/home/dev/.codenomad/client-state/client-state.json"
+        );
+        assert_eq!(
+            resolve_state(
+                "windows",
+                HashMap::from([("USERPROFILE", ""), ("HOME", "D:\\Home")]),
+                "C:\\Fallback"
+            ),
+            "D:\\Home\\.codenomad\\client-state\\client-state.json"
         );
     }
 }
