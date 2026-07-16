@@ -1,4 +1,5 @@
 export type ReconcileTabDescriptor = { kind: string; folderPath?: string; occurrence?: number }
+type LiveWorkspaceDescriptor = { id: string; folderPath: string; status?: string }
 export type SessionDescriptor = { id: string; parentId?: string | null }
 export interface RestoredSessionReferences {
   activeParentSessionId?: string
@@ -16,10 +17,11 @@ export function normalizeWorkspacePath(folderPath: string): string {
 }
 export function reconcileWorkspaceTabs(
   tabs: readonly ReconcileTabDescriptor[],
-  liveWorkspaces: readonly { id: string; folderPath: string }[],
+  liveWorkspaces: readonly LiveWorkspaceDescriptor[],
 ) {
-  const liveByPath = new Map<string, Array<{ id: string; folderPath: string }>>()
+  const liveByPath = new Map<string, LiveWorkspaceDescriptor[]>()
   for (const workspace of liveWorkspaces) {
+    if (workspace.status === "stopped" || workspace.status === "error") continue
     const path = normalizeWorkspacePath(workspace.folderPath)
     liveByPath.set(path, [...(liveByPath.get(path) ?? []), workspace])
   }

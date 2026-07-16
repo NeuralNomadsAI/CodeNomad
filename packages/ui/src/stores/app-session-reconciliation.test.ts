@@ -16,6 +16,23 @@ describe("app session reconciliation", () => {
   for (const [label, saved, live, expected] of workspaceCases) it(label, () => assert.deepEqual(
     reconcileWorkspaceTabs([...saved], [...live]).map(({ existingWorkspaceId }) => existingWorkspaceId), expected,
   ))
+  it("keeps saved order while a restored workspace is still starting", () => {
+    const saved = [
+      { kind: "workspace", folderPath: "D:/DreamX-World" },
+      { kind: "workspace", folderPath: "D:/CodeNomad" },
+      { kind: "workspace", folderPath: "D:/stale" },
+    ]
+    const live = [
+      { id: "codenomad", folderPath: "D:/CodeNomad", status: "ready" },
+      { id: "dreamx", folderPath: "D:/DreamX-World", status: "starting" },
+      { id: "stale", folderPath: "D:/stale", status: "stopped" },
+    ] as const
+
+    assert.deepEqual(
+      reconcileWorkspaceTabs(saved, live).map(({ existingWorkspaceId }) => existingWorkspaceId),
+      ["dreamx", "codenomad", null],
+    )
+  })
   const selectionCases = [
     ["falls back to a valid parent when the active session is stale", [{ id: "parent", parentId: null }, { id: "child", parentId: "parent" }], "parent", "deleted-child", { parentSessionId: "parent", activeSessionId: "parent" }],
     ["restores a grandchild under its root session", [{ id: "root", parentId: null }, { id: "child", parentId: "root" }, { id: "grandchild", parentId: "child" }], "root", "grandchild", { parentSessionId: "root", activeSessionId: "grandchild" }],
