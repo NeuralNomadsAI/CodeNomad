@@ -222,6 +222,7 @@ export function useAppSessionRestore(): void {
     const snapshot = loadedRestorableSession()
     void (async () => {
       try {
+        await capture.ready
         if (!shouldRestoreSessionState(clientStateIsPrimary(), restorePreviousStateEnabled(), snapshot)) return capture.start()
         capture.start(snapshot!)
         await runAbortable(async (signal) => {
