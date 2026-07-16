@@ -27,6 +27,7 @@ import {
 } from "../../stores/sessions"
 import { messageStoreBus, type MessageScrollSnapshotSeed } from "../../stores/message-v2/bus"
 import { hydrateWorkspacePromptState } from "../../stores/app-session-prompt-hydration"
+import { waitForSettledPrerequisite } from "../trailing-resync"
 const log = getLogger("actions")
 const MESSAGE_SCROLL_SCOPE = "message-stream"
 const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
@@ -153,7 +154,11 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
         const created = creation?.reused === false
         if (created) createdId = id
         try {
-          await runAbortable(() => waitForInstanceInitialSessionHydration(id), { signal: operationSignal })
+          // A reconnect can recover the list; saved IDs still restore directly after an initial failure.
+          await runAbortable(
+            () => waitForSettledPrerequisite(waitForInstanceInitialSessionHydration(id)),
+            { signal: operationSignal },
+          )
           const tabId = getInstanceAppTabId(id)
           const isCurrentBinding = () => capture.hasRestoredTabBinding(match.tabIndex, tabId)
           if (!isCurrentBinding()) return id
