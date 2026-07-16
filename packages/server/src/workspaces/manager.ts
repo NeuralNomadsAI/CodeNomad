@@ -269,7 +269,7 @@ export class WorkspaceManager {
         this.options.logger.info({ workspaceId: existing.id, folder: workspacePath }, "Reusing existing workspace")
         const record = this.workspaces.get(existing.id)
         if (options.requestId && record) {
-          record.ownership.set(options.requestId, "active")
+          if (!record.ownership.has(options.requestId)) record.ownership.set(options.requestId, "active")
           this.syncOwnership(record)
           return this.finishCreation({ workspace: existing, created: false }, options.requestId, record.ownership)
         }
@@ -278,7 +278,8 @@ export class WorkspaceManager {
       const pending = this.pendingWorkspaceCreations.get(identityKey)
       if (pending) {
         const state = pending[WORKSPACE_STATE]
-        pending.ownership.set(options.requestId ?? ORDINARY_CREATION_OWNER, "active")
+        const owner = options.requestId ?? ORDINARY_CREATION_OWNER
+        if (!pending.ownership.has(owner)) pending.ownership.set(owner, "active")
         this.syncOwnership(pending)
         const result = await state.creation!
         return this.finishCreation({ workspace: result.workspace, created: false }, options.requestId, pending.ownership)
@@ -517,23 +518,26 @@ export class WorkspaceManager {
   }
 
   async cancelCreationRequest(requestId: string): Promise<void> {
+    let matched = false
     for (const [workspaceId, record] of this.workspaces) {
       const ownership = record.ownership
       const state = ownership.get(requestId)
-      if (state === "released") return
+      if (state === "released") { matched = true; continue }
       if (state === "cancelled") {
-        if (this.hasActiveRequest(ownership) || this.isRetained(ownership)) return
+        matched = true
+        if (this.hasActiveRequest(ownership) || this.isRetained(ownership)) continue
         await this.delete(workspaceId)
         return
       }
       if (state !== "active") continue
+      matched = true
       ownership.set(requestId, "cancelled")
       this.syncOwnership(record)
       if (this.hasActiveRequest(ownership) || this.isRetained(ownership)) return
       await this.delete(workspaceId)
       return
     }
-    this.cancelledCreationRequests.add(requestId)
+    if (!matched) this.cancelledCreationRequests.add(requestId)
   }
 
   private createOwnership(requestId?: string): WorkspaceCreationOwnership {
@@ -633,16 +637,16 @@ export class WorkspaceManager {
     this.workspaces.delete(id)
     this.opencodeAuth.delete(id)
     clearWorkspaceSearchCache(record.path)
-    if (publishStopped) this.publishStopped(record)
+    if (publishStopped) this.publishStopped(record, "deleted")
   }
 
-  private publishStopped(record: WorkspaceRecord): void {
+  private publishStopped(record: WorkspaceRecord, reason: "deleted" | "stopped" = "stopped"): void {
     const state = record[WORKSPACE_STATE]
     if (!state.published || state.stoppedPublished) return
     state.stoppedPublished = true
     record.status = "stopped"
     record.error = undefined
-    this.options.eventBus.publish({ type: "workspace.stopped", workspaceId: record.id })
+    this.options.eventBus.publish({ type: "workspace.stopped", workspaceId: record.id, reason })
   }
 
   resolveBinaryPath(identifier: string, timeoutMs = DEFAULT_LAUNCH_TIMEOUT_MS): string {

@@ -181,7 +181,13 @@ function recoveryClaimants(
       try { unlinkSync(recoveryPath(directory, participant)) } catch {}
       continue
     }
-    if (readIfExists(recoveryPath(directory, participant)) !== observedOwner) return undefined
+    const claimPath = recoveryPath(directory, participant)
+    let claim = readIfExists(claimPath)
+    for (let attempt = 0; claim !== observedOwner && attempt < 20; attempt += 1) {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5)
+      claim = readIfExists(claimPath)
+    }
+    if (claim !== observedOwner) return undefined
     claimants.push(participant)
   }
   return claimants

@@ -513,9 +513,16 @@ fn recovery_claimants(
             }
             continue;
         }
-        if read_if_exists(&recovery_path(directory, &participant))?.as_deref()
-            != Some(observed_owner)
-        {
+        let claim_path = recovery_path(directory, &participant);
+        let mut claim = read_if_exists(&claim_path)?;
+        for _ in 0..20 {
+            if claim.as_deref() == Some(observed_owner) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            claim = read_if_exists(&claim_path)?;
+        }
+        if claim.as_deref() != Some(observed_owner) {
             return Ok(None);
         }
         claimants.push(participant);
@@ -800,7 +807,7 @@ fn process_start_identity(pid: u32) -> Option<String> {
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            &format!("(Get-Process -Id {pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks"),
+            &format!("(Get-CimInstance Win32_Process -Filter \"ProcessId = {pid}\" -ErrorAction Stop).CreationDate.ToUniversalTime().Ticks"),
         ],
     )
     .map(|value| format!("win32:{value}"))

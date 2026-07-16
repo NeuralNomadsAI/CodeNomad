@@ -89,6 +89,7 @@ const sessionListRequestIds = new Map<string, number>()
 let nextSessionListRequestId = 0
 const pendingMetadataHydrations = new Map<string, Promise<void>>()
 const sessionWorkspaceHints = new Map<string, Map<string, string>>()
+messageStoreBus.onInstanceDestroyed((instanceId) => sessionWorkspaceHints.delete(instanceId))
 
 function beginSessionListRequest(instanceId: string): number {
   const requestId = ++nextSessionListRequestId
@@ -150,7 +151,7 @@ function rememberSessionWorkspace(instanceId: string, sessionId: string, workspa
 }
 
 async function recordSessionWorkspaceHints(instanceId: string, apiSessions: SDKSession[]): Promise<void> {
-  const hints = new Map<string, string>()
+  const hints = new Map(sessionWorkspaceHints.get(instanceId) ?? new Map<string, string>())
   const workspaceBySlug = new Map<string, Promise<string | null>>()
   await Promise.all(apiSessions.map(async (session) => {
     const directory = (session as SDKSession & { directory?: string }).directory
@@ -903,6 +904,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
 }
 
 function removeSessionRuntimeState(instanceId: string, sessionId: string): void {
+  sessionWorkspaceHints.get(instanceId)?.delete(sessionId)
   cancelSessionGenerationAdmissions(instanceId, sessionId)
   markSessionDeletedAuthoritative(instanceId, sessionId)
   deleteSessionAttachments(instanceId, sessionId)
@@ -1075,6 +1077,7 @@ async function loadMessages(
 
   const loadEpoch = advanceMessageLoadEpoch(instanceId, sessionId)
   const messageRevision = messageStoreBus.getOrCreate(instanceId).getSessionRevision(sessionId)
+  let retryAfterRevisionConflict = false
 
   setLoading((prev) => {
     const next = { ...prev }
@@ -1101,108 +1104,99 @@ async function loadMessages(
     setSessionMessagesLoadError(instanceId, sessionId, null)
 
     if (apiMessages.length === 0) {
-      if (messageStoreBus.getOrCreate(instanceId).getSessionRevision(sessionId) !== messageRevision) return
-      setMessagesLoaded((prev) => {
+      if (messageStoreBus.getOrCreate(instanceId).getSessionRevision(sessionId) !== messageRevision) {
+        retryAfterRevisionConflict = true
+      } else {
+        setMessagesLoaded((prev) => {
+          const next = new Map(prev)
+          const loadedSet = next.get(instanceId) || new Set()
+          loadedSet.add(sessionId)
+          next.set(instanceId, loadedSet)
+          return next
+        })
+      }
+    } else {
+      const messagesInfo = new Map<string, any>()
+      const messages: Message[] = apiMessages.map((apiMessage: any) => {
+        const info = apiMessage.info || apiMessage
+        const role = info.role || "assistant"
+        const messageId = info.id || String(Date.now())
+
+        messagesInfo.set(messageId, info)
+
+        const parts: any[] = (apiMessage.parts || []).map((part: any) => normalizeMessagePart(part))
+
+        const message: Message = {
+          id: messageId,
+          sessionId,
+          type: role === "user" ? "user" : "assistant",
+          parts,
+          timestamp: info.time?.created || Date.now(),
+          status: "complete" as const,
+          version: 0,
+        }
+
+        return message
+      })
+
+      let agentName = ""
+      let providerID = ""
+      let modelID = ""
+
+      for (let i = apiMessages.length - 1; i >= 0; i--) {
+        const apiMessage = apiMessages[i]
+        const info = apiMessage.info || apiMessage
+
+        if (info.role === "assistant") {
+          agentName = (info as any).mode || (info as any).agent || ""
+          providerID = (info as any).providerID || ""
+          modelID = (info as any).modelID || ""
+          if (agentName && providerID && modelID) break
+        }
+      }
+
+      if (!agentName && !providerID && !modelID) {
+        const defaultModel = await getDefaultModel(instanceId, session.agent)
+        if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return
+        agentName = session.agent
+        providerID = defaultModel.providerId
+        modelID = defaultModel.modelId
+      }
+
+      setSessions((prev) => {
+        if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return prev
         const next = new Map(prev)
-        const loadedSet = next.get(instanceId) || new Set()
-        loadedSet.add(sessionId)
-        next.set(instanceId, loadedSet)
+        const nextInstanceSessions = next.get(instanceId)
+        if (!nextInstanceSessions) return next
+        const existingSession = nextInstanceSessions.get(sessionId)
+        if (!existingSession) return next
+        nextInstanceSessions.set(sessionId, {
+          ...existingSession,
+          agent: agentName || existingSession.agent,
+          model: providerID && modelID ? { providerId: providerID, modelId: modelID } : existingSession.model,
+        })
+        next.set(instanceId, nextInstanceSessions)
         return next
       })
-      return
-    }
 
-    const messagesInfo = new Map<string, any>()
-    const messages: Message[] = apiMessages.map((apiMessage: any) => {
-      const info = apiMessage.info || apiMessage
-      const role = info.role || "assistant"
-      const messageId = info.id || String(Date.now())
-
-      messagesInfo.set(messageId, info)
-
-      const parts: any[] = (apiMessage.parts || []).map((part: any) => normalizeMessagePart(part))
-
-      const message: Message = {
-        id: messageId,
-        sessionId,
-        type: role === "user" ? "user" : "assistant",
-        parts,
-        timestamp: info.time?.created || Date.now(),
-        status: "complete" as const,
-        version: 0,
+      const sessionForV2 = sessions().get(instanceId)?.get(sessionId) ?? {
+        id: sessionId, title: session?.title, parentId: session?.parentId ?? null, revert: session?.revert,
       }
-
-      return message
-    })
-
-    let agentName = ""
-    let providerID = ""
-    let modelID = ""
-
-    for (let i = apiMessages.length - 1; i >= 0; i--) {
-      const apiMessage = apiMessages[i]
-      const info = apiMessage.info || apiMessage
-
-      if (info.role === "assistant") {
-        agentName = (info as any).mode || (info as any).agent || ""
-        providerID = (info as any).providerID || ""
-        modelID = (info as any).modelID || ""
-        if (agentName && providerID && modelID) break
+      if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return
+      if (!seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, messageRevision)) {
+        retryAfterRevisionConflict = true
+      } else {
+        setMessagesLoaded((prev) => {
+          const next = new Map(prev)
+          const loadedSet = next.get(instanceId) || new Set()
+          loadedSet.add(sessionId)
+          next.set(instanceId, loadedSet)
+          return next
+        })
+        reconcilePendingPermissionsV2(instanceId, sessionId)
+        reconcilePendingQuestionsV2(instanceId, sessionId)
       }
     }
-
-    if (!agentName && !providerID && !modelID) {
-      const defaultModel = await getDefaultModel(instanceId, session.agent)
-      if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return
-      agentName = session.agent
-      providerID = defaultModel.providerId
-      modelID = defaultModel.modelId
-    }
-
-    setSessions((prev) => {
-      if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return prev
-      const next = new Map(prev)
-      const nextInstanceSessions = next.get(instanceId)
-      if (!nextInstanceSessions) {
-        return next
-      }
-
-      const existingSession = nextInstanceSessions.get(sessionId)
-      if (!existingSession) {
-        return next
-      }
-
-      const updatedSession = {
-        ...existingSession,
-        agent: agentName || existingSession.agent,
-        model: providerID && modelID ? { providerId: providerID, modelId: modelID } : existingSession.model,
-      }
-
-      nextInstanceSessions.set(sessionId, updatedSession)
-      next.set(instanceId, nextInstanceSessions)
-      return next
-    })
-
-    const sessionForV2 = sessions().get(instanceId)?.get(sessionId) ?? {
-      id: sessionId,
-      title: session?.title,
-      parentId: session?.parentId ?? null,
-      revert: session?.revert,
-    }
-    if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return
-    if (!seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, messageRevision)) return
-    setMessagesLoaded((prev) => {
-      const next = new Map(prev)
-      const loadedSet = next.get(instanceId) || new Set()
-      loadedSet.add(sessionId)
-      next.set(instanceId, loadedSet)
-      return next
-    })
-
-    // Permissions can be hydrated before messages/tool parts exist in the store.
-    // After message hydration, try to attach any pending permissions to tool-call part ids.
-    reconcilePendingPermissionsV2(instanceId, sessionId)
-    reconcilePendingQuestionsV2(instanceId, sessionId)
   
 
 
@@ -1221,6 +1215,11 @@ async function loadMessages(
         return next
       })
     }
+  }
+
+  if (retryAfterRevisionConflict && sessions().get(instanceId)?.has(sessionId)) {
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    return loadMessages(instanceId, sessionId, { force: true, skipChildren })
   }
 
   if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return

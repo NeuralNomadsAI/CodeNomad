@@ -94,8 +94,8 @@ test("first shared primary deterministically migrates legacy host envelopes", as
   const manager = new ClientStateManager(electron, undefined, { crossHostElectionDirectory: election, legacyTauriDataPath: tauri })
   assert.deepEqual(manager.loadClientState().snapshot, { savedAt: 20, host: "tauri" })
   assert.equal(manager.getWindowState(), undefined)
-  assert.equal(existsSync(join(electron, "client-state.json")), true)
-  assert.equal(existsSync(join(tauri, "client-state.json")), true)
+  assert.equal(existsSync(join(electron, "client-state.json")), false)
+  assert.equal(existsSync(join(tauri, "client-state.json")), false)
   await manager.drainAndReleasePrimary()
 })
 

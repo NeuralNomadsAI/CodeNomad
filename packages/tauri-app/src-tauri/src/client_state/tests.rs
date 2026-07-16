@@ -229,8 +229,8 @@ fn migrates_dual_legacy_files_with_disabled_dominance_and_malformed_fallback() {
         .unwrap();
         assert_eq!(state.load().unwrap(), load(true, false, Value::Null));
         assert!(!parse_client_state(&fs::read(&shared).unwrap()).restore_enabled);
-        assert!(electron.join(CLIENT_STATE_FILENAME).exists());
-        assert!(tauri.join(CLIENT_STATE_FILENAME).exists());
+        assert!(!electron.join(CLIENT_STATE_FILENAME).exists());
+        assert!(!tauri.join(CLIENT_STATE_FILENAME).exists());
     }
 
     let root = tempfile::tempdir().unwrap();

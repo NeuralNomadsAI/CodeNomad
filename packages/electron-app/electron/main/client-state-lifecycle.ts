@@ -58,8 +58,9 @@ export class ClientStateLifecycle {
     })
 
     if (this.dependencies.isWindows ?? process.platform === "win32") {
-      window.on("query-session-end", () => {
+      window.on("query-session-end", (event) => {
         if (this.exitAllowed) return
+        event.preventDefault()
         this.promoteToSessionEnd(window)
       })
       window.on("session-end", () => this.promoteToSessionEnd(window))
@@ -93,15 +94,15 @@ export class ClientStateLifecycle {
   private startShutdown(window: BrowserWindow | null): Promise<void> {
     if (this.shutdown) return this.shutdown
     const stages = (async () => {
-      const rendererFlush = this.runStage("renderer shutdown flush", () => this.flushRenderer(window))
-      const cliStop = this.dependencies.cliManager.shutdown().then(() => null, (error: unknown) => error)
-      await rendererFlush
+      await this.runStage("renderer shutdown flush", () => this.flushRenderer(window))
       await this.runStage("native shutdown flush", () => this.flushNative())
-      const cliError = await cliStop
-      if (cliError) throw cliError
+      await this.dependencies.cliManager.shutdown()
       await this.runStage("primary release", () => this.dependencies.clientStateManager.drainAndReleasePrimary())
     })()
-    this.shutdown = stages
+    this.shutdown = stages.catch((error) => {
+      this.shutdown = null
+      throw error
+    })
     return this.shutdown
   }
 
@@ -114,7 +115,8 @@ export class ClientStateLifecycle {
   private promoteToSessionEnd(window: BrowserWindow): void {
     if (this.exitAllowed || this.sessionEnd) return
     this.sessionEnd = this.startShutdown(window)
-    void this.sessionEnd.catch((error) => {
+    void this.sessionEnd.then(() => this.exit()).catch((error) => {
+      this.sessionEnd = null
       console.warn("[client-state] OS session-end cleanup was not contained before termination", error)
     })
   }

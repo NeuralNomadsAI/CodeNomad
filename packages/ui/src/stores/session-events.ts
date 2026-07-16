@@ -642,7 +642,7 @@ function handleMessageRemoved(instanceId: string, event: MessageRemovedEvent): v
   if (!sessionID || !messageID) return
 
   log.info(`[SSE] Message removed from session ${sessionID}`, { messageID })
-  removeMessageV2(instanceId, messageID)
+  removeMessageV2(instanceId, messageID, sessionID)
   updateSessionInfo(instanceId, sessionID)
 }
 
@@ -651,7 +651,7 @@ function handleMessagePartRemoved(instanceId: string, event: MessagePartRemovedE
   if (!sessionID || !messageID || !partID) return
 
   log.info(`[SSE] Message part removed from session ${sessionID}`, { messageID, partID })
-  removeMessagePartV2(instanceId, messageID, partID)
+  removeMessagePartV2(instanceId, messageID, partID, sessionID)
   updateSessionInfo(instanceId, sessionID)
 }
 

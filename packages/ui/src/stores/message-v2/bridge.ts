@@ -121,7 +121,7 @@ export function applyPartDeltaV2(
     partId: input.partId,
     field: input.field,
     delta: input.delta,
-    bumpSessionRevision: false,
+    bumpSessionRevision: true,
   })
 }
 
@@ -285,16 +285,16 @@ export function removePermissionV2(instanceId: string, permissionId: string): vo
   store.removePermission(permissionId)
 }
 
-export function removeMessageV2(instanceId: string, messageId: string): void {
+export function removeMessageV2(instanceId: string, messageId: string, sessionId?: string): void {
   if (!messageId) return
   const store = messageStoreBus.getOrCreate(instanceId)
-  store.removeMessage(messageId)
+  store.removeMessage(messageId, sessionId)
 }
 
-export function removeMessagePartV2(instanceId: string, messageId: string, partId: string): void {
+export function removeMessagePartV2(instanceId: string, messageId: string, partId: string, sessionId?: string): void {
   if (!messageId || !partId) return
   const store = messageStoreBus.getOrCreate(instanceId)
-  store.removeMessagePart(messageId, partId)
+  store.removeMessagePart(messageId, partId, sessionId)
 }
 
 export function ensureSessionMetadataV2(instanceId: string, session: Session | null | undefined): void {

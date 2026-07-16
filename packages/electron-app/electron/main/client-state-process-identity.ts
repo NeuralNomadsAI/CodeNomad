@@ -51,7 +51,7 @@ export function getProcessStartIdentity(pid: number): string | undefined {
           "-NoProfile",
           "-NonInteractive",
           "-Command",
-          `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`,
+          `(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}" -ErrorAction Stop).CreationDate.ToUniversalTime().Ticks`,
         ],
         "win32",
       )

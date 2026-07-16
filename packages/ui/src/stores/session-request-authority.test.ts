@@ -126,6 +126,33 @@ describe("session request authority", () => {
     }
   })
 
+  it("does not reuse message load authority after an instance reopens", async () => {
+    const instanceId = "reopened-message-load", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const oldResponse = deferred<any>()
+    const newResponse = deferred<any>()
+    let calls = 0
+    ;(client.session as any).messages = () => (++calls === 1 ? oldResponse.promise : newResponse.promise)
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+
+    try {
+      const oldRequest = loadMessages(instanceId, sessionId)
+      removeInstance(instanceId, { authoritative: false })
+      addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+      setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+      const newRequest = loadMessages(instanceId, sessionId, { force: true })
+
+      oldResponse.resolve({ data: [apiMessage("old-message", sessionId)] })
+      await oldRequest
+      newResponse.resolve({ data: [apiMessage("new-message", sessionId)] })
+      await newRequest
+
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["new-message"])
+    } finally {
+      cleanup()
+    }
+  })
+
   it("keeps a newer load authoritative when an older request finishes last", async () => {
     const instanceId = "newer-message-load", sessionId = "session"
     const { client, cleanup } = setup(instanceId)

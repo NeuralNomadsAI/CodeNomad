@@ -598,6 +598,10 @@ async function main() {
 
   const shutdown = createServerShutdownHandler({
     logger,
+    setExitCode: (code) => {
+      process.stdin.destroy()
+      process.exitCode = code
+    },
     shutdown: () =>
       orchestrateServerShutdown(
         {

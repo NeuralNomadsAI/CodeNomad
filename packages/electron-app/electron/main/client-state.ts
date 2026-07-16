@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { open, rename, rm } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import {
@@ -127,6 +127,15 @@ function legacyCandidate(path: string, host: "electron" | "tauri"): { host: stri
   }
 }
 
+function isFutureLegacyCandidate(path: string): boolean {
+  try {
+    const candidate = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>
+    return typeof candidate?.version === "number" && candidate.version > CLIENT_STATE_VERSION
+  } catch {
+    return false
+  }
+}
+
 export class ClientStateManager {
   private readonly userDataPath: string
   private readonly statePath: string
@@ -203,14 +212,16 @@ export class ClientStateManager {
       this.primary = false
     }
     if (this.isPrimary) {
-      this.migrateLegacyStateIfNeeded([
+      const legacyPaths = [
         ["electron", join(userDataPath, CLIENT_STATE_FILENAME)],
         ...(legacyTauriDataPath ? [["tauri", join(legacyTauriDataPath, CLIENT_STATE_FILENAME)] as const] : []),
-      ])
+      ] as ReadonlyArray<readonly ["electron" | "tauri", string]>
+      this.migrateLegacyStateIfNeeded(legacyPaths)
+      const futureLegacyBlocked = this.unsupportedFutureEnvelope
       const persisted = this.readState()
       this.state = persisted.state
       this.persistenceSuppressed = !this.state.restoreEnabled
-      this.unsupportedFutureEnvelope = persisted.unsupportedFutureEnvelope
+      this.unsupportedFutureEnvelope = futureLegacyBlocked || persisted.unsupportedFutureEnvelope
     }
   }
 
@@ -263,7 +274,7 @@ export class ClientStateManager {
     this.rendererAccessToken = undefined
   }
 
-  saveClientState(snapshot: unknown): Promise<boolean> {
+  saveClientState(snapshot: unknown, rendererToken?: unknown): Promise<boolean> {
     const disposition = this.getMutationDisposition()
     if (disposition) return disposition
 
@@ -278,10 +289,10 @@ export class ClientStateManager {
     const normalizedSnapshot = JSON.parse(serialized) as unknown
     return this.mutateAndPersist((state) => {
       state.snapshot = normalizedSnapshot
-    }, true)
+    }, true, rendererToken)
   }
 
-  setRestoreEnabled(enabled: boolean): Promise<boolean> {
+  setRestoreEnabled(enabled: boolean, rendererToken?: unknown): Promise<boolean> {
     const disposition = this.getMutationDisposition(false)
     if (disposition) return disposition
 
@@ -298,10 +309,10 @@ export class ClientStateManager {
         delete state.window
         this.persistenceSuppressed = true
       }
-    })
+    }, false, rendererToken)
   }
 
-  clearClientState(): Promise<boolean> {
+  clearClientState(rendererToken?: unknown): Promise<boolean> {
     if (!this.isPrimary) {
       return Promise.resolve(false)
     }
@@ -316,7 +327,7 @@ export class ClientStateManager {
       delete state.window
       this.unsupportedFutureEnvelope = false
       this.persistenceSuppressed = !clearingFutureEnvelope
-    })
+    }, false, rendererToken)
   }
 
   saveWindowState(windowState: NativeWindowState): Promise<boolean> {
@@ -370,6 +381,10 @@ export class ClientStateManager {
     } catch (error) {
       if (!hasErrorCode(error, "ENOENT")) return
     }
+    if (paths.some(([, path]) => isFutureLegacyCandidate(path))) {
+      this.unsupportedFutureEnvelope = true
+      return
+    }
     const winner = paths
       .map(([host, path]) => legacyCandidate(path, host))
       .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate))
@@ -391,6 +406,7 @@ export class ClientStateManager {
       descriptor = undefined
       this.assertReplacementAllowed()
       renameSync(temporaryPath, this.statePath)
+      for (const [, path] of paths) rmSync(path, { force: true })
     } finally {
       if (descriptor !== undefined) closeSync(descriptor)
       rm(temporaryPath, { force: true }).catch(() => {})
@@ -413,8 +429,10 @@ export class ClientStateManager {
   private mutateAndPersist(
     mutate: (state: PersistedClientState) => void,
     skipWhenSuppressed = false,
+    rendererToken?: unknown,
   ): Promise<boolean> {
     const operation = this.writeQueue.catch(() => {}).then(async () => {
+      if (rendererToken !== undefined) this.assertRendererAccessToken(rendererToken)
       if (skipWhenSuppressed && this.persistenceSuppressed) {
         return
       }
@@ -424,7 +442,7 @@ export class ClientStateManager {
       const previousUnsupportedFutureEnvelope = this.unsupportedFutureEnvelope
       try {
         mutate(this.state)
-        await this.writeAtomically(JSON.stringify(this.state))
+        await this.writeAtomically(JSON.stringify(this.state), rendererToken)
       } catch (error) {
         this.state = previousState
         this.persistenceSuppressed = previousPersistenceSuppressed
@@ -436,14 +454,14 @@ export class ClientStateManager {
     return operation.then(() => true)
   }
 
-  private async writeAtomically(serializedState: string): Promise<void> {
+  private async writeAtomically(serializedState: string, rendererToken?: unknown): Promise<void> {
     const temporaryPath = join(
       dirname(this.statePath),
       `.${CLIENT_STATE_FILENAME}.${this.owner.pid}.${this.owner.runToken}.tmp`,
     )
     try {
       await this.writeState(temporaryPath, serializedState)
-      this.assertReplacementAllowed()
+      this.assertReplacementAllowed(rendererToken)
       await rename(temporaryPath, this.statePath)
     } catch (error) {
       await rm(temporaryPath, { force: true }).catch(() => {})
@@ -451,7 +469,8 @@ export class ClientStateManager {
     }
   }
 
-  private assertReplacementAllowed(): void {
+  private assertReplacementAllowed(rendererToken?: unknown): void {
+    if (rendererToken !== undefined) this.assertRendererAccessToken(rendererToken)
     if (!this.isPrimary || !isProcessOwnerLockOwned(this.lockPath, this.owner)) {
       throw new Error("Client state ownership changed before atomic replacement")
     }

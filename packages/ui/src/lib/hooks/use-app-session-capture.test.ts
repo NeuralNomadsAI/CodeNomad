@@ -14,4 +14,5 @@ describe("app session capture listener readiness", () => {
     assert.match(ready, /client-state:navigation-flush-requested/)
     assert.ok(restore.indexOf("await capture.ready") < restore.indexOf("capture.start("))
   })
+
 })

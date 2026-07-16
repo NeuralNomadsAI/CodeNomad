@@ -278,7 +278,13 @@ export class CliProcessManager extends EventEmitter {
     const isAlreadyExited = () => spawnedChild.exitCode !== null || spawnedChild.signalCode !== null
 
     const processTree = captureProcessTree(pid)
-    const forceProcessTree = () => processTree ? forceCapturedProcessTree(processTree) : false
+    const forceProcessTree = () => {
+      const latest = captureProcessTree(pid)
+      const trees = [processTree, latest].filter((tree): tree is NonNullable<typeof tree> => Boolean(tree))
+      if (!trees.length) return isAlreadyExited()
+      const members = new Map(trees.flatMap((tree) => tree.members).map((member) => [member.pid, member]))
+      return forceCapturedProcessTree({ platform: trees[0]!.platform, members: [...members.values()] })
+    }
 
     let forceConfirmed = false
     const enforceIncompleteCleanup = () => {
@@ -334,9 +340,10 @@ export class CliProcessManager extends EventEmitter {
         const forced = processTree ? forceCapturedProcessTree(processTree) : false
         if (!forced) {
           console.warn(`[cli] startup-timeout process tree cleanup was not confirmed (pid=${pid})`)
+        } else {
+          this.child = undefined
         }
       }
-      this.child = undefined
     }
     this.updateStatus({ state: "error", error: "CLI did not start in time" })
     this.emit("error", new Error("CLI did not start in time"))

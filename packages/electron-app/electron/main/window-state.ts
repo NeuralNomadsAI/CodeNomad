@@ -154,6 +154,7 @@ export function installWindowZoomInput(window: BrowserWindow, setZoomLevel: (lev
 export class WindowStateTracker {
   private saveTimer: ReturnType<typeof setTimeout> | undefined
   private desiredZoomFactor: number
+  private normalBounds: WindowBounds
 
   constructor(
     private readonly window: BrowserWindow,
@@ -161,9 +162,20 @@ export class WindowStateTracker {
     initialState?: NativeWindowState,
   ) {
     this.desiredZoomFactor = normalizeZoomFactor(initialState?.zoomFactor)
+    const [x, y] = typeof window.getPosition === "function" ? window.getPosition() : [0, 0]
+    const [width, height] = typeof window.getContentSize === "function"
+      ? window.getContentSize()
+      : [DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT]
+    this.normalBounds = initialState?.bounds ?? { x, y, width, height }
 
-    for (const event of ["move", "resize", "maximize", "unmaximize", "enter-full-screen", "leave-full-screen"]) {
-      window.on(event as "move", () => this.scheduleSave())
+    for (const event of ["move", "resize"]) {
+      window.on(event as "move", () => {
+        if (!window.isMaximized() && !window.isFullScreen()) this.captureNormalBounds()
+        this.scheduleSave()
+      })
+    }
+    for (const event of ["maximize", "unmaximize", "enter-full-screen", "leave-full-screen"]) {
+      window.on(event as "maximize", () => this.scheduleSave())
     }
     window.webContents.on("zoom-changed", () => this.scheduleSave())
     window.webContents.on("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => {
@@ -223,13 +235,18 @@ export class WindowStateTracker {
     }
 
     this.desiredZoomFactor = normalizeZoomFactor(this.window.webContents.getZoomFactor())
-    const [x, y] = this.window.getPosition()
-    const [width, height] = this.window.getContentSize()
+    if (!this.window.isMaximized() && !this.window.isFullScreen()) this.captureNormalBounds()
     return this.clientState.saveWindowState({
-      bounds: { x, y, width, height },
+      bounds: this.normalBounds,
       maximized: this.window.isMaximized(),
       fullscreen: this.window.isFullScreen(),
       zoomFactor: this.desiredZoomFactor,
     })
+  }
+
+  private captureNormalBounds(): void {
+    const [x, y] = this.window.getPosition()
+    const [width, height] = this.window.getContentSize()
+    this.normalBounds = { x, y, width, height }
   }
 }

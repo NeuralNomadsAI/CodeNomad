@@ -6,6 +6,7 @@ import type { RestorableSessionState, RestorableWorkspaceTabState } from "./clie
 import {
   createRestorableSessionPreservation,
   createRestoredTabCommitGuard,
+  getPreservedWorkspaceState,
   hasRestoredTabBinding,
   markPreservedWorkspaceRemoved,
   markPreservedWorkspaceReopened,
@@ -75,15 +76,19 @@ const mergeOne = (
 
 describe("app session snapshot merge", () => {
   it("retains the latest restored tab state after a non-authoritative stop", () => {
-    const saved = session([workspace("/work", 0, { drafts: { session: "saved" } })])
+    const saved = session([workspace("/work", 0, { drafts: { missing: "saved", current: "old" } })])
     const preservation = restored(saved, [{ source: 0, runtime: "instance:work" }])
     markPreservedWorkspaceUnavailable(
       preservation,
       { runtimeTabId: "instance:work", folder: "/work", occurrence: 0 },
-      workspace("/work", 0, { drafts: { session: "latest unsent draft" } }),
+      workspace("/work", 0, { drafts: { current: "latest unsent draft" } }),
     )
     const merged = mergeRestorableSessionState(empty(), preservation, { currentTabIds: [] })
-    assert.equal(workspaceAt(merged).drafts.session, "latest unsent draft")
+    assert.deepEqual(workspaceAt(merged).drafts, { missing: "saved", current: "latest unsent draft" })
+    assert.equal(getPreservedWorkspaceState(
+      preservation,
+      { runtimeTabId: "instance:other", folder: "/work", occurrence: 0 },
+    ), null, "a different runtime cannot claim prompts by folder occurrence alone")
   })
 
   it("retains missing sessions, transient tabs, and new runtime tabs", () => {

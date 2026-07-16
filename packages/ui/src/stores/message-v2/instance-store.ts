@@ -226,8 +226,8 @@ export interface InstanceMessageStore {
     bumpRevision?: boolean
     bumpSessionRevision: boolean
   }) => void
-  removeMessage: (messageId: string) => void
-  removeMessagePart: (messageId: string, partId: string) => void
+  removeMessage: (messageId: string, fallbackSessionId?: string) => void
+  removeMessagePart: (messageId: string, partId: string, fallbackSessionId?: string) => void
   bufferPendingPart: (entry: PendingPartEntry) => void
   flushPendingParts: (messageId: string) => void
   replaceMessageId: (options: ReplaceMessageIdOptions) => void
@@ -732,7 +732,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     }
   }
 
-  function removeMessage(messageId: string) {
+  function removeMessage(messageId: string, fallbackSessionId?: string) {
     if (!messageId) return
 
     const record = state.messages[messageId]
@@ -751,6 +751,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         }
       })
     }
+    if (!sessionIds.size && fallbackSessionId) sessionIds.add(fallbackSessionId)
 
     clearRecordDisplayCacheForMessages(instanceId, [messageId])
 
@@ -800,10 +801,13 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     })
   }
 
-  function removeMessagePart(messageId: string, partId: string) {
+  function removeMessagePart(messageId: string, partId: string, fallbackSessionId?: string) {
     if (!messageId || !partId) return
     const message = state.messages[messageId]
-    if (!message) return
+    if (!message) {
+      if (fallbackSessionId) bumpSessionRevision(fallbackSessionId)
+      return
+    }
 
     clearRecordDisplayCacheForMessages(instanceId, [messageId])
 

@@ -56,3 +56,49 @@ jobs:
       actions_artifacts_retention_days: 7
       actions_artifacts_name_prefix: pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-
       set_versions: false
+
+  tests:
+    needs: authorize
+    if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck desktop clients
+        run: npm run typecheck
+
+      - name: Test Electron client state
+        run: npm run test:native --workspace @neuralnomads/codenomad-electron-app
+
+      - name: Test UI restoration authority
+        run: >-
+          node --import tsx --test
+          packages/ui/src/stores/client-state-codec.test.ts
+          packages/ui/src/stores/app-session-snapshot-merge.test.ts
+          packages/ui/src/stores/message-v2/message-hydration-authority.test.ts
+
+      - name: Test server lifecycle
+        run: >-
+          node --import tsx --test
+          packages/server/src/index.test.ts
+          packages/server/src/shutdown.test.ts
+          packages/server/src/workspaces/manager.test.ts
+
+      - name: Test Tauri client state
+        working-directory: packages/tauri-app/src-tauri
+        run: cargo test --locked client_state

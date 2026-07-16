@@ -29,6 +29,8 @@ pub(crate) struct ShutdownCoordinator {
     state: Mutex<ShutdownState>,
     #[cfg(windows)]
     windows_session_end_started: AtomicBool,
+    #[cfg(windows)]
+    force_exit: AtomicBool,
 }
 
 #[derive(Default)]
@@ -220,6 +222,9 @@ pub(crate) fn request_windows_session_end(app: AppHandle) {
         std::thread::sleep(WINDOWS_SESSION_END_TIMEOUT);
         if !exit_allowed(&app) {
             eprintln!("[client-state] Windows session-end shutdown timed out; forcing exit");
+            app.state::<ShutdownCoordinator>()
+                .force_exit
+                .store(true, Ordering::SeqCst);
             app.exit(0);
         }
     });
@@ -254,7 +259,18 @@ pub(crate) fn main_window_close_allowed(app: &AppHandle) -> bool {
 }
 
 pub(crate) fn exit_allowed(app: &AppHandle) -> bool {
-    phase(app) == ShutdownPhase::ExitAllowed
+    if phase(app) == ShutdownPhase::ExitAllowed {
+        return true;
+    }
+    #[cfg(windows)]
+    if app
+        .state::<ShutdownCoordinator>()
+        .force_exit
+        .load(Ordering::SeqCst)
+    {
+        return true;
+    }
+    false
 }
 
 #[cfg(windows)]

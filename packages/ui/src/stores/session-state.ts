@@ -79,6 +79,7 @@ const [messagesLoaded, setMessagesLoaded] = createSignal<Map<string, Set<string>
 const [messageLoadErrors, setMessageLoadErrors] = createSignal<Map<string, Map<string, string>>>(new Map())
 const [sessionListErrors, setSessionListErrors] = createSignal<Map<string, string>>(new Map())
 const messageLoadEpochs = new Map<string, number>()
+let nextMessageLoadEpoch = 0
 const [sessionInfoByInstance, setSessionInfoByInstance] = createSignal<Map<string, Map<string, SessionInfo>>>(new Map())
 const [threadTotalsByInstance, setThreadTotalsByInstance] = createSignal<Map<string, Map<string, ThreadTotals>>>(new Map())
 
@@ -335,7 +336,7 @@ function clearLoadedFlag(instanceId: string, sessionId: string) {
 
 function advanceMessageLoadEpoch(instanceId: string, sessionId: string): number {
   const key = getDraftKey(instanceId, sessionId)
-  const epoch = (messageLoadEpochs.get(key) ?? 0) + 1
+  const epoch = ++nextMessageLoadEpoch
   messageLoadEpochs.set(key, epoch)
   return epoch
 }

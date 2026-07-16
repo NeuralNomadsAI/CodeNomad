@@ -39,11 +39,11 @@ export function setupClientStateIPC(
   }
   const handle = (
     channel: string,
-    operation: (argument: unknown) => unknown,
+    operation: (argument: unknown, token: unknown) => unknown,
   ) => ipcMain.handle(channel, async (event, token: unknown, argument: unknown) => {
     validate(event)
     clientState.assertRendererAccessToken(token)
-    return operation(argument)
+    return operation(argument, token)
   })
 
   ipcMain.handle("client-state:claimAccess", async (event, token: unknown) => {
@@ -51,12 +51,12 @@ export function setupClientStateIPC(
     return clientState.claimClientStateAccess(token)
   })
   handle("client-state:load", () => clientState.loadClientState())
-  handle("client-state:save", (snapshot) => clientState.saveClientState(snapshot))
-  handle("client-state:setRestoreEnabled", (enabled) => {
+  handle("client-state:save", (snapshot, token) => clientState.saveClientState(snapshot, token))
+  handle("client-state:setRestoreEnabled", (enabled, token) => {
     if (typeof enabled !== "boolean") throw new Error("Restore enabled must be a boolean")
-    return clientState.setRestoreEnabled(enabled)
+    return clientState.setRestoreEnabled(enabled, token)
   })
-  handle("client-state:clear", () => clientState.clearClientState())
+  handle("client-state:clear", (_argument, token) => clientState.clearClientState(token))
 
   return (window: BrowserWindow): void => {
     window.webContents.on("did-navigate", (_event, url) => {

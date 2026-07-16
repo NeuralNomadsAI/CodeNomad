@@ -107,12 +107,18 @@ function normalizeWorkspaceTab(
   value: Record<string, unknown>,
   identity: WorkspaceIdentity,
   budget: StringBudget,
-  prioritizeDrafts: boolean,
+  _prioritizeDrafts: boolean,
 ): RestorableWorkspaceTabState | null {
-  const priorityDrafts = prioritizeDrafts
-    ? [identity.activeSessionId, NO_SESSION_DRAFT_SESSION_ID].filter((id): id is string => Boolean(id))
-    : []
-  const drafts = normalizeStringRecord(value.drafts ?? {}, MAX_DRAFTS, MAX_DRAFT, budget, priorityDrafts)
+  const reservedDrafts = identity.priorityDrafts
+  const remainingDrafts = Object.fromEntries(Object.entries(value.drafts ?? {})
+    .filter(([id]) => !Object.prototype.hasOwnProperty.call(reservedDrafts, id)))
+  const additionalDrafts = normalizeStringRecord(
+    remainingDrafts,
+    Math.max(0, MAX_DRAFTS - Object.keys(reservedDrafts).length),
+    MAX_DRAFT,
+    budget,
+  )
+  const drafts = additionalDrafts ? { ...reservedDrafts, ...additionalDrafts } : null
   const scrollLimit = Math.min(MAX_SCROLLS_PER_TAB, budget.scrollSnapshotsRemaining)
   const scrollSnapshots = normalizeRecord(value.scrollSnapshots ?? {}, scrollLimit, budget,
     (entry) => normalizeScrollSnapshot(entry, budget), undefined,
@@ -124,14 +130,17 @@ function normalizeWorkspaceTab(
     (entry) => entry as PersistedGenerationRecovery,
     (entry) => entry === "working" || entry === "interrupted")
   if (!drafts || !scrollSnapshots || !unseenIdleSince || !generationRecovery) return null
+  const remainingAttachments = Object.fromEntries(Object.entries(value.attachments ?? {})
+    .filter(([id]) => !identity.prioritySessionIds.includes(id)))
   const attachmentResult = normalizeRestorableAttachmentRecord(
-    value.attachments ?? {}, drafts, budget.attachments, priorityDrafts,
+    remainingAttachments, drafts, budget.attachments,
   )
   if (!attachmentResult) return null
 
   const result: RestorableWorkspaceTabState = {
     kind: "workspace", folder: identity.folder,
-    drafts: attachmentResult.drafts, attachments: attachmentResult.attachments,
+    drafts: attachmentResult.drafts,
+    attachments: { ...identity.priorityAttachments, ...attachmentResult.attachments },
     scrollSnapshots, unseenIdleSince, generationRecovery,
   }
   if (Number.isInteger(value.occurrence) && Number(value.occurrence) >= 0 && Number(value.occurrence) < MAX_TABS) {
@@ -149,6 +158,8 @@ function normalizeWorkspaceTab(
 interface WorkspaceIdentity {
   kind: "workspace"; value: Record<string, unknown>; folder: string
   activeParentSessionId?: string; activeSessionId?: string
+  prioritySessionIds: string[]; priorityDrafts: Record<string, string>
+  priorityAttachments: Record<string, RestorableAttachment[]>
 }
 type TabIdentity = WorkspaceIdentity | RestorableSidecarTabState
 
@@ -167,7 +178,42 @@ function normalizeIdentity(value: unknown, budget: StringBudget): TabIdentity | 
   const activeParentSessionId = value.activeParentSessionId === undefined ? undefined
     : takeString(value.activeParentSessionId, MAX_ID, budget)
   const activeSessionId = value.activeSessionId === undefined ? undefined : takeString(value.activeSessionId, MAX_ID, budget)
-  return { kind: "workspace", value, folder, activeParentSessionId, activeSessionId }
+  const prioritySessionIds = [activeSessionId, NO_SESSION_DRAFT_SESSION_ID]
+    .filter((id): id is string => Boolean(id))
+  return {
+    kind: "workspace", value, folder, activeParentSessionId, activeSessionId,
+    prioritySessionIds, priorityDrafts: Object.create(null), priorityAttachments: Object.create(null),
+  }
+}
+
+function reservePriorityDrafts(identity: WorkspaceIdentity, budget: StringBudget): void {
+  const drafts = identity.value.drafts ?? {}
+  if (!isRecord(drafts)) return
+  for (const rawKey of identity.prioritySessionIds) {
+    if (!safeKey(rawKey) || !Object.prototype.hasOwnProperty.call(drafts, rawKey)) continue
+    const remaining = budget.remaining
+    const key = takeString(rawKey, MAX_KEY, budget)
+    const draft = takeString(drafts[rawKey], MAX_DRAFT, budget, true)
+    if (key === undefined || draft === undefined) {
+      budget.remaining = remaining
+      continue
+    }
+    identity.priorityDrafts[key] = draft
+  }
+  const attachments = identity.value.attachments ?? {}
+  if (!isRecord(attachments)) return
+  const priorityAttachments = Object.fromEntries(identity.prioritySessionIds
+    .filter((id) => Object.prototype.hasOwnProperty.call(attachments, id))
+    .map((id) => [id, attachments[id]]))
+  const result = normalizeRestorableAttachmentRecord(
+    priorityAttachments,
+    identity.priorityDrafts,
+    budget.attachments,
+    identity.prioritySessionIds,
+  )
+  if (!result) return
+  identity.priorityDrafts = result.drafts
+  identity.priorityAttachments = result.attachments
 }
 
 export function normalizeRestorableSession(value: unknown): RestorableSessionState | null {
@@ -193,15 +239,15 @@ function normalizeSession(value: unknown, budget: StringBudget): RestorableSessi
       : normalizeWorkspaceTab(identity.value, identity, budget, prioritizeDrafts)
     if (tab) normalizedByIndex.set(originalIndex, tab)
   }
-  if (rawTabs[requested] !== undefined) {
-    normalizeIdentityAt(requested)
-    normalizeTabAt(requested, true)
+  rawTabs.forEach((_tab, index) => normalizeIdentityAt(index))
+  const priorityOrder = [requested, ...rawTabs.map((_tab, index) => index).filter((index) => index !== requested)]
+  for (const index of priorityOrder) {
+    const identity = identityByIndex.get(index)
+    if (identity?.kind === "workspace") reservePriorityDrafts(identity, budget)
   }
+  if (rawTabs[requested] !== undefined) normalizeTabAt(requested, true)
   rawTabs.forEach((_tab, index) => {
-    if (index !== requested) normalizeIdentityAt(index)
-  })
-  rawTabs.forEach((_tab, index) => {
-    if (index !== requested) normalizeTabAt(index, false)
+    if (index !== requested) normalizeTabAt(index, true)
   })
   const identities = rawTabs.flatMap((_tab, originalIndex) => {
     const identity = identityByIndex.get(originalIndex)

@@ -752,7 +752,7 @@ function handleWorkspaceEvent(event: WorkspaceEventPayload) {
     case "workspace.stopped":
       restoreCreatedWorkspaceCleanup.release(event.workspaceId)
       releaseInstanceResources(event.workspaceId)
-      removeInstance(event.workspaceId, { authoritative: false })
+      removeInstance(event.workspaceId, { authoritative: event.reason === "deleted" })
       break
     case "workspace.log":
       handleWorkspaceLog(event.entry)
@@ -1108,6 +1108,8 @@ function stopInstance(id: string) {
 
   if (restoreCreatedWorkspaceCleanup.owns(id)) {
     void restoreCreatedWorkspaceCleanup.discardTracked(id, { retainTombstone: true })
+      .then(() => serverApi.deleteWorkspace(id))
+      .catch((error) => log.error("Failed to stop restore-tracked workspace", error))
     return
   }
 

@@ -108,7 +108,9 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
   if (signal.aborted) return Promise.all(sidecars).then(() => undefined)
   const matches = reconcileWorkspaceTabs(snapshot.tabs.map((tab) => tab.kind === "workspace"
     ? { kind: tab.kind, folderPath: tab.folder, occurrence: tab.occurrence }
-    : { kind: tab.kind }), Array.from(instances().values()).map(({ id, folder }) => ({ id, folderPath: folder })))
+     : { kind: tab.kind }), Array.from(instances().values())
+       .filter(({ status }) => status === "ready")
+       .map(({ id, folder }) => ({ id, folderPath: folder })))
   const existing = matches.filter(({ existingWorkspaceId }) => existingWorkspaceId)
   const missing = matches.filter(({ existingWorkspaceId }) => !existingWorkspaceId)
   existing.forEach(({ tabIndex, existingWorkspaceId }) =>

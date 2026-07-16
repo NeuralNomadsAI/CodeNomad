@@ -226,6 +226,24 @@ describe("client state codec", () => {
     assert.equal(normalized?.tabs[normalized.activeTabIndex], active)
   })
 
+  it("reserves inactive tab identities and selected drafts before active payloads", () => {
+    const normalized = normalizeRestorableSession({ activeTabIndex: 0, tabs: [
+      workspace({ drafts: {
+        first: "a".repeat(32 * 1024), second: "b".repeat(32 * 1024), third: "c".repeat(32 * 1024),
+      } }),
+      workspace({ folder: "/inactive", activeParentSessionId: "parent", activeSessionId: "selected",
+        drafts: Object.fromEntries([
+          ...Array.from({ length: 24 }, (_, index) => [`older-${index}`, `draft-${index}`]),
+          ["selected", "keep inactive"],
+        ]) }),
+    ] })
+    const inactive = normalized?.tabs.find((tab) => tab.kind === "workspace" && tab.folder === "/inactive")
+
+    assert.equal(inactive?.kind === "workspace" ? inactive.activeParentSessionId : undefined, "parent")
+    assert.equal(inactive?.kind === "workspace" ? inactive.activeSessionId : undefined, "selected")
+    assert.equal(inactive?.kind === "workspace" ? inactive.drafts.selected : undefined, "keep inactive")
+  })
+
   it("retains active-session attachments beyond the per-tab session budget", () => {
     const activeAttachment = file("active.png", { id: "active-image", display: "[Image #1]", mediaType: "image/png" })
     const attachments = Object.fromEntries([
@@ -240,6 +258,22 @@ describe("client state codec", () => {
 
     assert.equal(tab?.kind === "workspace" ? tab.attachments.active?.[0]?.id : undefined, "active-image")
     assert.equal(tab?.kind === "workspace" ? tab.drafts.active : undefined, "Review [Image #1]")
+  })
+
+  it("reserves inactive selected attachments before active optional attachments", () => {
+    const activeAttachments = Object.fromEntries(Array.from({ length: 8 }, (_, sessionIndex) => [
+      `active-${sessionIndex}`,
+      Array.from({ length: 8 }, (_, attachmentIndex) => file(`active-${sessionIndex}-${attachmentIndex}.txt`)),
+    ]))
+    const selected = file("inactive.txt", { id: "inactive-selected", display: "@inactive.txt" })
+    const normalized = normalizeRestorableSession({ activeTabIndex: 0, tabs: [
+      workspace({ activeSessionId: "active-0", drafts: { "active-0": "active" }, attachments: activeAttachments }),
+      workspace({ folder: "/inactive", activeSessionId: "selected", drafts: { selected: "Review @inactive.txt" },
+        attachments: { selected: [selected] } }),
+    ] })
+    const inactive = normalized?.tabs.find((tab) => tab.kind === "workspace" && tab.folder === "/inactive")
+
+    assert.equal(inactive?.kind === "workspace" ? inactive.attachments.selected?.[0]?.id : undefined, "inactive-selected")
   })
 
   it("prioritizes active attachments during capture serialization", () => {

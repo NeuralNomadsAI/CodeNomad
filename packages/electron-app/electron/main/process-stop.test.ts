@@ -132,6 +132,18 @@ test("tree capture records immutable root and nested descendant identities", () 
   ] })
 })
 
+test("Windows tree capture ignores the system idle PID without rejecting the process table", () => {
+  const list = (() => ({
+    status: 0,
+    error: undefined,
+    stdout: "0|0|win32:system\n100|0|win32:root\n101|100|win32:child\n",
+  })) as unknown as typeof spawnSync
+  assert.deepEqual(captureProcessTree(100, "win32", list)?.members, [
+    { pid: 100, startIdentity: "win32:root" },
+    { pid: 101, startIdentity: "win32:child" },
+  ])
+})
+
 test("PID reuse is identity-guarded on Windows and POSIX", () => {
   for (const platform of ["win32", "linux"] as const) {
     const taskkills: string[][] = []

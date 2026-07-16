@@ -11,12 +11,13 @@ import { normalizeWorkspacePath } from "../../stores/app-session-reconciliation"
 import {
   createRestorableSessionPreservation, createRestoredTabCommitGuard, markPreservedWorkspaceRemoved,
   markPreservedWorkspaceReopened, markPreservedWorkspaceUnavailable,
+  getPreservedWorkspaceState,
   hasRestoredTabBinding, mergeRestorableSessionState, recordRestoredTab,
   settleRestoredTab as settlePreservedTab, type RestorableSessionPreservation,
   type RestorableWorkspaceRuntimeAuthority,
 } from "../../stores/app-session-snapshot-merge"
 import { activeAppTabId, appTabs, getInstanceAppTabId } from "../../stores/app-tabs"
-import { instances } from "../../stores/instances"
+import { instances, waitForInstanceInitialSessionHydration } from "../../stores/instances"
 import {
   activeParentSessionId, activeSessionId, getAuthoritativeDraftSessionIdsForInstance,
   getAuthoritativelyDeletedSessionIdsForInstance, getSessionDraftPromptsForInstance, getSessions,
@@ -28,8 +29,10 @@ import { getAuthoritativeAttachmentSessionIdsForInstance, getSessionAttachmentsF
 import { serializeDraftAttachments } from "../../stores/client-state-attachments-codec"
 import { onInstanceLifecycleAuthority } from "../../stores/instance-lifecycle-authority"
 import { getPersistedGenerationRecovery, type PersistedGenerationRecovery } from "../../stores/session-generation-recovery"
+import { hydrateWorkspacePromptState } from "../../stores/app-session-prompt-hydration"
 const log = getLogger("actions")
 const MESSAGE_SCROLL_SCOPE = "message-stream"
+const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
 const MAX_CAPTURED_SCROLL_SNAPSHOTS = 96
 const CAPTURE_DEBOUNCE_MS = 100
 function captureScrollSnapshots(instanceId: string): Record<string, ScrollSnapshot> {
@@ -104,9 +107,26 @@ export function useAppSessionCapture() {
   const [started, setStarted] = createSignal(false)
   const enabled = () => started() && clientStateIsPrimary() && restorePreviousStateEnabled()
   const scrollAuthority = new Map<string, Set<string>>()
+  const instanceLifecycleTokens = new Map<string, number>()
+  let nextInstanceLifecycleToken = 0
   let disposed = false
   let timer: ReturnType<typeof setTimeout> | null = null
   let preservation: RestorableSessionPreservation | null = null
+  const hydratePreservedPrompts = (instanceId: string) => {
+    if (!preservation) return
+    const instance = instances().get(instanceId)
+    if (!instance) return
+    const snapshot = getPreservedWorkspaceState(preservation, {
+      runtimeTabId: getInstanceAppTabId(instanceId), folder: instance.folder, occurrence: 0,
+    })
+    if (!snapshot) return
+    hydrateWorkspacePromptState(
+      instanceId,
+      snapshot,
+      new Set(getSessions(instanceId).map(({ id }) => id)),
+      NO_SESSION_DRAFT_SESSION_ID,
+    )
+  }
   const mergedState = () => {
     const captured = captureState(scrollAuthority)
     return mergeRestorableSessionState(captured.state, preservation, {
@@ -155,20 +175,42 @@ export function useAppSessionCapture() {
       if (scope === MESSAGE_SCROLL_SCOPE) markScrollAuthority(instanceId, sessionId)
     }),
     messageStoreBus.onSessionCleared(markScrollAuthority),
-    messageStoreBus.onInstanceDestroyed((instanceId) => scrollAuthority.delete(instanceId)),
+    messageStoreBus.onInstanceDestroyed((instanceId) => {
+      scrollAuthority.delete(instanceId)
+      instanceLifecycleTokens.delete(instanceId)
+    }),
     onInstanceLifecycleAuthority((event) => {
+      const lifecycleToken = ++nextInstanceLifecycleToken
+      instanceLifecycleTokens.set(event.instanceId, lifecycleToken)
       if (!preservation) return
       const workspace = { runtimeTabId: getInstanceAppTabId(event.instanceId), folder: event.folder, occurrence: event.occurrence }
       if (event.type === "unavailable") {
         const captured = captureState(scrollAuthority)
         const index = captured.tabIds.indexOf(workspace.runtimeTabId)
         const tab = index < 0 ? undefined : captured.state.tabs[index]
-        markPreservedWorkspaceUnavailable(preservation, workspace, tab?.kind === "workspace" ? tab : undefined)
+        markPreservedWorkspaceUnavailable(
+          preservation,
+          workspace,
+          tab?.kind === "workspace" ? tab : undefined,
+          index < 0 ? undefined : captured.authorities[index],
+        )
         schedule()
         return
       }
-      const mark = event.type === "removed" ? markPreservedWorkspaceRemoved : markPreservedWorkspaceReopened
-      mark(preservation, workspace)
+      if (event.type === "removed") {
+        markPreservedWorkspaceRemoved(preservation, workspace)
+      } else {
+        const snapshot = getPreservedWorkspaceState(preservation, workspace)
+        markPreservedWorkspaceReopened(preservation, workspace)
+        if (snapshot && instances().has(event.instanceId)) void waitForInstanceInitialSessionHydration(event.instanceId).then(() => {
+          if (instanceLifecycleTokens.get(event.instanceId) !== lifecycleToken || !instances().has(event.instanceId)) return
+          hydratePreservedPrompts(event.instanceId)
+        }).catch((error) => {
+          if (instanceLifecycleTokens.get(event.instanceId) === lifecycleToken && instances().has(event.instanceId)) {
+            log.warn("Failed to restore prompt state for reopened workspace", { instanceId: event.instanceId, error })
+          }
+        })
+      }
       schedule()
     }),
   ]
@@ -180,6 +222,7 @@ export function useAppSessionCapture() {
       getSessions(tab.instance.id)
       getSessionDraftPromptsForInstance(tab.instance.id)
       getSessionAttachmentsForInstance(tab.instance.id)
+      hydratePreservedPrompts(tab.instance.id)
     }
     schedule()
   })

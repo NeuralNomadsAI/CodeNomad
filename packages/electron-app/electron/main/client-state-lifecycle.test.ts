@@ -64,18 +64,18 @@ test("late old-window detach preserves replacement tracker during shutdown", asy
   h.lifecycle.detachMainWindow(h.window)
   h.appEvents.get("before-quit")?.({ preventDefault: () => {} })
   await (h.lifecycle as any).shutdown
-  assert.deepEqual(h.calls, ["hide", "renderer", "stop", "replacement-native", "release"])
+  assert.deepEqual(h.calls, ["hide", "renderer", "replacement-native", "stop", "release"])
 })
 
-test("Windows session end starts cleanup without vetoing or explicitly exiting", async () => {
+test("Windows session end vetoes termination until cleanup exits explicitly", async () => {
   const h = harness()
   let prevented = false
   h.windows.get("query-session-end")?.({ preventDefault: () => { prevented = true } })
   h.windows.get("session-end")?.()
   await (h.lifecycle as any).sessionEnd; await tick()
-  assert.equal(prevented, false)
-  assert.deepEqual(h.calls, ["renderer", "stop", "native", "release"])
-  assert.equal(h.exits(), 0)
+  assert.equal(prevented, true)
+  assert.deepEqual(h.calls, ["renderer", "native", "stop", "release"])
+  assert.equal(h.exits(), 1)
 })
 
 test("session end does not force-exit an already-hung ordinary shutdown", async () => {
@@ -84,8 +84,8 @@ test("session end does not force-exit an already-hung ordinary shutdown", async 
   h.appEvents.get("before-quit")?.({ preventDefault: () => {} })
   h.windows.get("query-session-end")?.({ preventDefault: () => { prevented = true } })
   await tick()
-  assert.equal(prevented, false)
-  assert.deepEqual(h.calls, ["hide", "renderer", "stop"])
+  assert.equal(prevented, true)
+  assert.deepEqual(h.calls, ["hide", "renderer"])
   assert.equal(h.exits(), 0)
 })
 
@@ -94,11 +94,11 @@ test("ordinary quit hides promptly and waits for CLI stop confirmation", async (
   const h = harness({ stop: () => new Promise<void>((resolve) => { confirmStop = resolve }) })
   h.appEvents.get("before-quit")?.({ preventDefault: () => {} })
   await tick()
-  assert.deepEqual(h.calls, ["hide", "renderer", "stop", "native"])
+  assert.deepEqual(h.calls, ["hide", "renderer", "native", "stop"])
   assert.equal(h.exits(), 0)
   confirmStop()
   await (h.lifecycle as any).shutdown; await tick()
-  assert.deepEqual(h.calls, ["hide", "renderer", "stop", "native", "release"])
+  assert.deepEqual(h.calls, ["hide", "renderer", "native", "stop", "release"])
   assert.equal(h.exits(), 1)
 })
 
@@ -108,15 +108,18 @@ test("ordinary quit does not exit when CLI cleanup is unconfirmed", async () => 
   await assert.rejects((h.lifecycle as any).shutdown, /unconfirmed/)
   await tick()
   assert.equal(h.exits(), 0)
-  assert.deepEqual(h.calls, ["hide", "renderer", "stop", "native"])
+  assert.deepEqual(h.calls, ["hide", "renderer", "native", "stop"])
 })
 
-test("CLI termination starts before a hung native flush", async () => {
-  const h = harness({ nativeFlush: () => new Promise(() => {}) })
+test("CLI termination waits for the native snapshot flush", async () => {
+  let release!: () => void
+  const h = harness({ nativeFlush: () => new Promise<void>((resolve) => { release = resolve }) })
   h.appEvents.get("before-quit")?.({ preventDefault: () => {} })
   await tick()
-  assert.deepEqual(h.calls, ["hide", "renderer", "stop", "native"])
+  assert.deepEqual(h.calls, ["hide", "renderer", "native"])
   assert.equal(h.exits(), 0)
+  release(); await (h.lifecycle as any).shutdown
+  assert.deepEqual(h.calls, ["hide", "renderer", "native", "stop", "release"])
 })
 
 test("closing the final window hides it before requesting quit", () => {

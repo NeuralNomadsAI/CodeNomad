@@ -86,10 +86,13 @@ function enqueuePendingSave(): Promise<void> {
     layout: { ...layout },
     session: loadedRestorableSession(),
   }
+  const normalizedSnapshot = decodeClientSnapshot(snapshot)
+  if (!normalizedSnapshot) return Promise.reject(new Error("Client snapshot normalization failed"))
+  layout = { ...normalizedSnapshot.layout }
   dirty = false
   const saveAttempt = writeQueue.then(async () => {
     try {
-      if (!await saveNativeClientState(snapshot)) {
+      if (!await saveNativeClientState(normalizedSnapshot)) {
         setClientStateIsPrimary(false)
         throw new Error("Native client state save was rejected")
       }

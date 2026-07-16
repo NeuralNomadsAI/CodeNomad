@@ -98,7 +98,7 @@ test("stale retirement crash cannot retire a successor", async (t) => {
   assert.equal(JSON.parse(readFileSync(ownerFile(directory), "utf8")).runToken, "successor")
 })
 
-test("stale recovery is identity guarded and blocked by live or uncertain participants", (t) => {
+test("stale recovery is identity guarded and blocked by non-claiming live participants", (t) => {
   for (const value of [
     { alive: false, identity: undefined, recover: true },
     { alive: true, identity: "reused", recover: true },
@@ -149,7 +149,7 @@ test("ordinary release removes only its participant", (t) => {
   assert.deepEqual(readdirSync(directory).filter((name) => name.startsWith("participant.") || name.startsWith("retired.")), [])
 })
 
-test("primary crash remains fenced by its live secondary cohort", async (t) => {
+test("primary crash remains fenced by its non-claiming secondary cohort", async (t) => {
   const directory = temp(t), firstStart = join(directory, "first-start")
   const primary = child(directory, firstStart), secondary = child(directory, firstStart)
   writeFileSync(firstStart, "")

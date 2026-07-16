@@ -233,13 +233,22 @@ impl ClientState {
             election_dir,
             legacy_electron_data_dir,
         )?;
-        if registration.is_primary() && !state_path.exists() {
+        let future_legacy =
+            !state_path.exists() && has_future_legacy_state(app_data_dir, legacy_electron_data_dir);
+        if registration.is_primary() && !state_path.exists() && !future_legacy {
             migrate_legacy_state(state_path, app_data_dir, legacy_electron_data_dir, &|| {
                 registration.is_primary()
             })?;
         }
         let state = if registration.is_primary() {
-            read_client_state(state_path)
+            if future_legacy {
+                PersistedClientState {
+                    unsupported_future_envelope: true,
+                    ..PersistedClientState::default()
+                }
+            } else {
+                read_client_state(state_path)
+            }
         } else {
             PersistedClientState::default()
         };
@@ -555,6 +564,22 @@ fn legacy_candidate(
     Some((parsed, value.contains_key("snapshot"), saved_at, host))
 }
 
+fn has_future_legacy_state(tauri_data_dir: &Path, electron_data_dir: Option<&Path>) -> bool {
+    [
+        electron_data_dir.map(|path| path.join(CLIENT_STATE_FILENAME)),
+        Some(tauri_data_dir.join(CLIENT_STATE_FILENAME)),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|path| {
+        fs::read(path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .and_then(|value| value.get("version").and_then(Value::as_u64))
+            .is_some_and(|version| version > CLIENT_STATE_VERSION)
+    })
+}
+
 fn migrate_legacy_state(
     state_path: &Path,
     tauri_data_dir: &Path,
@@ -585,7 +610,25 @@ fn migrate_legacy_state(
         fs::create_dir_all(parent)
             .map_err(|err| format!("failed to create shared client-state directory: {err}"))?;
     }
-    write_atomically(state_path, &bytes, ownership_valid)
+    write_atomically(state_path, &bytes, ownership_valid)?;
+    for path in [
+        electron_data_dir.map(|path| path.join(CLIENT_STATE_FILENAME)),
+        Some(tauri_data_dir.join(CLIENT_STATE_FILENAME)),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        match fs::remove_file(path) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                return Err(format!(
+                    "failed to remove migrated legacy client state: {err}"
+                ))
+            }
+        }
+    }
+    Ok(())
 }
 
 fn serialized_value_size(value: &Value) -> Result<usize, String> {

@@ -279,14 +279,15 @@ pub fn setup_main_window(app: &AppHandle) -> Result<(), String> {
             .flatten()
     };
     if let Some(mut saved_window) = saved_window {
+        let startup_scale = window.scale_factor().unwrap_or(1.0);
         let displays = window
             .available_monitors()
             .unwrap_or_default()
             .into_iter()
             .map(|monitor| {
                 let work_area = monitor.work_area();
-                let position = work_area.position.to_logical::<i32>(monitor.scale_factor());
-                let size = work_area.size.to_logical::<u32>(monitor.scale_factor());
+                let position = work_area.position.to_logical::<i32>(startup_scale);
+                let size = work_area.size.to_logical::<u32>(startup_scale);
                 DisplayArea {
                     x: position.x,
                     y: position.y,

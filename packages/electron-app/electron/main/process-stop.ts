@@ -66,7 +66,8 @@ done`], { encoding: "utf8", timeout: 1_500 })
     const [pidText, parentPidText, rawIdentity] = fields
     const pid = Number(pidText), parentPid = Number(parentPidText)
     const startIdentity = platform === "darwin" ? `darwin:${rawIdentity}` : rawIdentity
-    if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(parentPid) || !startIdentity) return undefined
+    if (!Number.isInteger(pid) || pid < 0 || !Number.isInteger(parentPid) || !startIdentity) return undefined
+    if (pid === 0) continue
     rows.push({ pid, parentPid, startIdentity })
   }
   const descendants = new Set([rootPid])
