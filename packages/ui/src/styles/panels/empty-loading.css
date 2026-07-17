@@ -64,33 +64,3 @@
   border-top-color: var(--accent-primary);
   animation: spin 1s linear infinite;
 }
-
-.message-load-error-state {
-  @apply flex-1 flex items-center justify-center p-12;
-}
-
-.message-load-error-card {
-  @apply max-w-md rounded-xl border p-6 text-center shadow-sm;
-  background: var(--surface-secondary);
-  border-color: var(--border-base);
-}
-
-.message-load-error-card h3 {
-  @apply text-base font-semibold;
-  color: var(--text-primary);
-}
-
-.message-load-error-card p {
-  @apply mt-3 text-sm leading-6 break-words;
-  color: var(--text-muted);
-}
-
-.message-load-error-retry {
-  @apply mt-5 rounded-md px-4 py-2 text-sm font-medium transition-colors;
-  background: var(--accent-primary);
-  color: var(--text-on-accent);
-}
-
-.message-load-error-retry:hover {
-  background: var(--accent-hover);
-}

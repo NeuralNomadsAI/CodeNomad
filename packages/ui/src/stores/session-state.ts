@@ -13,6 +13,7 @@ import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 import { tGlobal } from "../lib/i18n"
 import { computeThreadTotals, type ThreadTotals } from "../lib/thread-totals"
 import { applySessionPage, getDefaultSessionPaginationState, type SessionPaginationState } from "./session-pagination-model"
+import { applySessionPendingState } from "./session-pending-state"
 import {
   resolveAuthoritativeGenerationRecovery,
   resolveHydratedGenerationRecovery,
@@ -81,6 +82,7 @@ const [loading, setLoading] = createSignal({
 
 const [messagesLoaded, setMessagesLoaded] = createSignal<Map<string, Set<string>>>(new Map())
 const [messageLoadErrors, setMessageLoadErrors] = createSignal<Map<string, Map<string, string>>>(new Map())
+const [sessionListErrors, setSessionListErrors] = createSignal<Map<string, string>>(new Map())
 const [sessionInfoByInstance, setSessionInfoByInstance] = createSignal<Map<string, Map<string, SessionInfo>>>(new Map())
 const [threadTotalsByInstance, setThreadTotalsByInstance] = createSignal<Map<string, Map<string, ThreadTotals>>>(new Map())
 
@@ -562,6 +564,25 @@ function setSessionPendingQuestion(instanceId: string, sessionId: string, pendin
   })
 }
 
+function reconcileSessionPendingState(
+  instanceId: string,
+  permissionSessionIds: ReadonlySet<string>,
+  questionSessionIds: ReadonlySet<string>,
+): void {
+  setSessions((prev) => {
+    const instanceSessions = prev.get(instanceId)
+    if (!instanceSessions) return prev
+
+    const reconciled = applySessionPendingState(instanceSessions, permissionSessionIds, questionSessionIds)
+    if (reconciled === instanceSessions) return prev
+
+    const next = new Map(prev)
+    next.set(instanceId, reconciled)
+    return next
+  })
+  syncInstanceSessionIndicator(instanceId)
+}
+
 function markSessionIdleSeen(instanceId: string, sessionId: string): void {
   withSession(instanceId, sessionId, (session) => {
     if (session.status !== "idle") return false
@@ -1022,6 +1043,22 @@ function getSessionMessagesLoadError(instanceId: string, sessionId: string): str
   return messageLoadErrors().get(instanceId)?.get(sessionId)
 }
 
+function getSessionListError(instanceId: string): string | undefined {
+  return sessionListErrors().get(instanceId)
+}
+
+function setSessionListError(instanceId: string, error: string | null): void {
+  setSessionListErrors((prev) => {
+    const next = new Map(prev)
+    if (error) {
+      next.set(instanceId, error)
+    } else {
+      next.delete(instanceId)
+    }
+    return next
+  })
+}
+
 function setSessionMessagesLoadError(instanceId: string, sessionId: string, error: string | null): void {
   setMessageLoadErrors((prev) => {
     const next = new Map(prev)
@@ -1200,6 +1237,8 @@ export {
   setLoading,
   messagesLoaded,
   setMessagesLoaded,
+  getSessionListError,
+  setSessionListError,
   setSessionMessagesLoadError,
   sessionInfoByInstance,
   setSessionInfoByInstance,
@@ -1223,6 +1262,7 @@ export {
   withSession,
   setSessionPendingPermission,
   setSessionPendingQuestion,
+  reconcileSessionPendingState,
   markSessionIdleSeen,
   markViewedSessionIdleSeen,
   hydrateSessionIdleMarkers,

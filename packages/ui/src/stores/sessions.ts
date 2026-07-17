@@ -32,6 +32,7 @@ import {
   cancelSessionGenerationAdmissions,
   getSessionFamily,
   getSessionInfo,
+  getSessionListError,
   getSessionMessagesLoadError,
   getSessionSearchQuery,
   getSessionSearchThreads,
@@ -76,6 +77,7 @@ import {
   searchSessions,
   forkSession,
   loadMessages,
+  clearSessionListRequestState,
 } from "./session-api"
 import {
   abortSession,
@@ -165,6 +167,7 @@ export {
   cancelSessionGenerationAdmissions,
   getSessionFamily,
   getSessionInfo,
+  getSessionListError,
   getSessionMessagesLoadError,
   getSessionSearchQuery,
   getSessionSearchThreads,
@@ -176,6 +179,7 @@ export {
   isSessionMessagesLoading,
   isSessionExpanded,
   loadMessages,
+  clearSessionListRequestState,
   loading,
   markSessionIdleSeen,
   markViewedSessionIdleSeen,
