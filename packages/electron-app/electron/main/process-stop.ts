@@ -226,7 +226,10 @@ try {
   $user = [CodeNomadProcessHandle+FileTime]::new()
   if (-not [CodeNomadProcessHandle]::GetProcessTimes($handle, [ref]$creation, [ref]$exit, [ref]$kernel, [ref]$user)) { exit 4 }
   $fileTime = ([long]$creation.High -shl 32) -bor $creation.Low
-  if ([DateTime]::FromFileTimeUtc($fileTime).Ticks -ne [long]::Parse('${expectedTicks}')) { 'mismatch'; exit 0 }
+  $nativeTicks = [DateTime]::FromFileTimeUtc($fileTime).Ticks
+  $expectedTicks = [long]::Parse('${expectedTicks}')
+  $nativeTicks -= $nativeTicks % 10
+  if ($nativeTicks -ne $expectedTicks) { 'mismatch'; exit 0 }
   if (-not [CodeNomadProcessHandle]::TerminateProcess($handle, 1)) { exit 5 }
   'terminated'
 } finally {

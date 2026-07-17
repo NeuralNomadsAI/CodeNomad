@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
-import { EventEmitter } from "node:events"
+import { EventEmitter, once } from "node:events"
 import { registerHooks } from "node:module"
 import { setTimeout as delay } from "node:timers/promises"
 import test from "node:test"
@@ -239,6 +239,36 @@ test("Windows native-handle termination refuses a live process with a mismatched
 
   assert.equal(await forceCapturedProcessTree(tree), true)
   assert.doesNotThrow(() => process.kill(process.pid, 0))
+})
+
+test("Windows native-handle termination accepts CIM precision for an owned process", {
+  skip: process.platform !== "win32",
+  timeout: 10_000,
+}, async (t) => {
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" })
+  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL") })
+  assert.ok(child.pid)
+  const exited = once(child, "exit")
+  const tree = await captureProcessTree(child.pid, "win32")
+  assert.ok(tree)
+
+  assert.equal(await forceCapturedProcessTree(tree), true)
+  await exited
+})
+
+test("Windows native-handle termination refuses a sub-microsecond identity mismatch", {
+  skip: process.platform !== "win32",
+  timeout: 10_000,
+}, async (t) => {
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" })
+  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL") })
+  assert.ok(child.pid)
+  const tree = await captureProcessTree(child.pid, "win32")
+  assert.ok(tree)
+  tree.members[0]!.startIdentity = `win32:${BigInt(tree.members[0]!.startIdentity.slice(6)) + 1n}`
+
+  assert.equal(await forceCapturedProcessTree(tree), true)
+  assert.doesNotThrow(() => process.kill(child.pid!, 0))
 })
 
 test("PID reuse is identity-guarded on Windows and POSIX", async () => {
