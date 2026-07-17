@@ -34,15 +34,23 @@ const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
 const INITIAL_LOAD_TIMEOUT_MS = 15_000
 const OPERATION_TIMEOUT_MS = 30_000
 const CREATE_TIMEOUT_MS = OPERATION_TIMEOUT_MS * 2
+const CLEANUP_TIMEOUT_MS = 5_000
 const MINIMUM_STARTUP_TIMEOUT_MS = 60_000
 function startupTimeout(snapshot: RestorableSessionState): number {
-  const counts = new Map<string, number>()
-  for (const tab of snapshot.tabs) if (tab.kind === "workspace") {
-    const path = normalizeWorkspacePath(tab.folder)
-    counts.set(path, (counts.get(path) ?? 0) + 1)
-  }
+  const workspaceCount = snapshot.tabs.filter((tab) => tab.kind === "workspace").length
   return Math.max(MINIMUM_STARTUP_TIMEOUT_MS,
-    INITIAL_LOAD_TIMEOUT_MS + Math.max(1, ...counts.values()) * CREATE_TIMEOUT_MS + 5_000)
+    INITIAL_LOAD_TIMEOUT_MS + Math.max(1, workspaceCount) * (CREATE_TIMEOUT_MS + CLEANUP_TIMEOUT_MS) + 5_000)
+}
+async function disposeFailedRestoreWorkspace(instanceId: string): Promise<void> {
+  const cleanup = disposeRestoreCreatedInstance(instanceId)
+  try {
+    await runAbortable(() => cleanup, {
+      timeoutMs: CLEANUP_TIMEOUT_MS,
+      message: `Timed out cleaning up restored workspace ${instanceId}`,
+    })
+  } catch (error) {
+    log.warn("Restore workspace cleanup continues in the background", { instanceId, error })
+  }
 }
 async function restoreWorkspaceState(
   instanceId: string,
@@ -171,8 +179,8 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
         } catch (error) {
           if (!existingId && creation?.requestId) {
             capture.settleRestoredTab(match.tabIndex, getInstanceAppTabId(id), null)
-            await disposeRestoreCreatedInstance(id)
             if (created) createdId = null
+            await disposeFailedRestoreWorkspace(id)
           }
           throw error
         }
@@ -187,7 +195,7 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
     } catch (error) {
       if (createdId) {
         capture.settleRestoredTab(match.tabIndex, getInstanceAppTabId(createdId), null)
-        await disposeRestoreCreatedInstance(createdId)
+        await disposeFailedRestoreWorkspace(createdId)
       }
       if (!signal.aborted) log.warn("Skipped workspace while restoring app session", { folder: tab.folder, error })
     }
@@ -208,11 +216,11 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
       if (!signal.aborted) log.warn("Skipped SideCar while restoring app session", { sidecarId: tab.sidecarId, error })
     }
   }
-  await Promise.all([
-    ...existing.map(restoreWorkspace),
-    ...Array.from(groups.values(), async (group) => { for (const match of group) await restoreWorkspace(match) }),
-    ...sidecars,
-  ])
+  const restoreMissing = async () => {
+    // ponytail: serialize DOM-heavy workspace mounts; parallel mounts can initialize Virtua before document adoption.
+    for (const group of groups.values()) for (const match of group) await restoreWorkspace(match)
+  }
+  await Promise.all([...existing.map(restoreWorkspace), restoreMissing(), ...sidecars])
 }
 export function useAppSessionRestore(): void {
   const capture = useAppSessionCapture()

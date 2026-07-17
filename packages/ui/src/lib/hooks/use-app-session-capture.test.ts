@@ -15,4 +15,10 @@ describe("app session capture listener readiness", () => {
     assert.ok(restore.indexOf("await capture.ready") < restore.indexOf("capture.start("))
   })
 
+  it("serializes missing workspace mounts during session restore", () => {
+    const restore = source("./use-app-session-restore.ts")
+    assert.match(restore, /for \(const group of groups\.values\(\)\) for \(const match of group\) await restoreWorkspace\(match\)/)
+    assert.doesNotMatch(restore, /Array\.from\(groups\.values\(\), async/)
+  })
+
 })
