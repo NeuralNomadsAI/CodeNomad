@@ -30,6 +30,11 @@ const firstWorkspace = (value: ReturnType<typeof normalizeRestorableSession>) =>
   assert.ok(tab?.kind === "workspace")
   return tab
 }
+
+it("preserves only an explicit active home view", () => {
+  assert.equal(normalizeRestorableSession({ tabs: [], activeTabIndex: -1, homeActive: true })?.homeActive, true)
+  assert.equal(normalizeRestorableSession({ tabs: [], activeTabIndex: -1, homeActive: "true" })?.homeActive, undefined)
+})
 const normalizeWorkspace = (overrides: UnknownRecord) => firstWorkspace(session(workspace(overrides)))
 
 describe("client state codec", () => {

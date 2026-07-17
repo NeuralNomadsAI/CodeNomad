@@ -17,6 +17,7 @@ import {
   type RestorableWorkspaceRuntimeAuthority,
 } from "../../stores/app-session-snapshot-merge"
 import { activeAppTabId, appTabs, getInstanceAppTabId } from "../../stores/app-tabs"
+import { showFolderSelection } from "../../stores/ui"
 import { instances, waitForInstanceInitialSessionHydration } from "../../stores/instances"
 import {
   activeParentSessionId, activeSessionId, getAuthoritativeDraftSessionIdsForInstance,
@@ -99,7 +100,11 @@ function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>)
     }
   })
   return {
-    state: { tabs: restorableTabs, activeTabIndex: tabs.findIndex(({ id }) => id === activeAppTabId()) },
+    state: {
+      tabs: restorableTabs,
+      activeTabIndex: tabs.findIndex(({ id }) => id === activeAppTabId()),
+      ...(showFolderSelection() ? { homeActive: true } : {}),
+    },
     tabIds: tabs.map(({ id }) => id), authorities,
   }
 }
@@ -217,7 +222,7 @@ export function useAppSessionCapture() {
   createEffect(() => {
     if (!enabled()) return
     const tabs = appTabs()
-    activeAppTabId(); activeParentSessionId(); activeSessionId()
+    activeAppTabId(); activeParentSessionId(); activeSessionId(); showFolderSelection()
     for (const tab of tabs) if (tab.kind === "instance") {
       getSessions(tab.instance.id)
       getSessionDraftPromptsForInstance(tab.instance.id)
