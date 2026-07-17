@@ -165,6 +165,23 @@ fn run_node_state_host(
     serde_json::from_str(&line).unwrap()
 }
 #[test]
+fn restore_defaults_on_unless_explicitly_disabled() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = ClientState::initialize_at(directory.path()).unwrap();
+    assert_eq!(state.load().unwrap(), load(true, true, Value::Null));
+    assert!(state.save_snapshot(json!({ "saved": true })).unwrap());
+
+    let disabled_directory = tempfile::tempdir().unwrap();
+    fs::write(
+        disabled_directory.path().join(CLIENT_STATE_FILENAME),
+        br#"{"version":1,"restoreEnabled":false}"#,
+    )
+    .unwrap();
+    let disabled = ClientState::initialize_at(disabled_directory.path()).unwrap();
+    assert_eq!(disabled.load().unwrap(), load(true, false, Value::Null));
+}
+
+#[test]
 fn parses_envelopes_and_normalizes_zoom() {
     for bytes in [
         br#"not json"#.as_slice(),
@@ -172,7 +189,7 @@ fn parses_envelopes_and_normalizes_zoom() {
         br#"{"version":1,"restoreEnabled":"no"}"#.as_slice(),
     ] {
         let state = parse_client_state(bytes);
-        assert!(!state.restore_enabled);
+        assert!(state.restore_enabled);
         assert_eq!(state.snapshot, None);
         assert!(!state.unsupported_future_envelope);
     }

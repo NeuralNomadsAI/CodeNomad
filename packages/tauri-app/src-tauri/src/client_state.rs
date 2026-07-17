@@ -73,11 +73,11 @@ impl Default for PersistedClientState {
     fn default() -> Self {
         Self {
             version: CLIENT_STATE_VERSION,
-            restore_enabled: false,
+            restore_enabled: true,
             snapshot: None,
             window: None,
             unsupported_future_envelope: false,
-            writes_enabled: false,
+            writes_enabled: true,
         }
     }
 }
@@ -245,7 +245,9 @@ impl ClientState {
         let state = if registration.is_primary() {
             if future_legacy {
                 PersistedClientState {
+                    restore_enabled: false,
                     unsupported_future_envelope: true,
+                    writes_enabled: false,
                     ..PersistedClientState::default()
                 }
             } else {
@@ -515,7 +517,9 @@ fn parse_client_state(bytes: &[u8]) -> PersistedClientState {
     let version = value.get("version").and_then(Value::as_u64);
     if version.is_some_and(|version| version > CLIENT_STATE_VERSION) {
         return PersistedClientState {
+            restore_enabled: false,
             unsupported_future_envelope: true,
+            writes_enabled: false,
             ..PersistedClientState::default()
         };
     }
@@ -528,19 +532,17 @@ fn parse_client_state(bytes: &[u8]) -> PersistedClientState {
             .map(|size| size <= MAX_CLIENT_SNAPSHOT_BYTES)
             .unwrap_or(false)
     });
+    let restore_enabled = value
+        .get("restoreEnabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
     PersistedClientState {
         version: CLIENT_STATE_VERSION,
-        restore_enabled: value
-            .get("restoreEnabled")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
+        restore_enabled,
         snapshot,
         window: value.get("window").and_then(window::normalize_window_state),
         unsupported_future_envelope: false,
-        writes_enabled: value
-            .get("restoreEnabled")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
+        writes_enabled: restore_enabled,
     }
 }
 

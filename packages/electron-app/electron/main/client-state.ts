@@ -86,11 +86,11 @@ interface ParsedClientState {
 }
 
 function parseClientState(value: string): ParsedClientState {
-  const defaults: PersistedClientState = { version: CLIENT_STATE_VERSION, restoreEnabled: false }
+  const defaults: PersistedClientState = { version: CLIENT_STATE_VERSION, restoreEnabled: true }
   try {
     const candidate = JSON.parse(value) as Record<string, unknown>
     if (candidate && typeof candidate.version === "number" && candidate.version > CLIENT_STATE_VERSION) {
-      return { state: defaults, unsupportedFutureEnvelope: true }
+      return { state: { ...defaults, restoreEnabled: false }, unsupportedFutureEnvelope: true }
     }
     if (!candidate || candidate.version !== CLIENT_STATE_VERSION) {
       return { state: defaults, unsupportedFutureEnvelope: false }
@@ -98,7 +98,7 @@ function parseClientState(value: string): ParsedClientState {
 
     const state: PersistedClientState = {
       version: CLIENT_STATE_VERSION,
-      restoreEnabled: typeof candidate.restoreEnabled === "boolean" ? candidate.restoreEnabled : false,
+      restoreEnabled: typeof candidate.restoreEnabled === "boolean" ? candidate.restoreEnabled : true,
     }
     if (Object.prototype.hasOwnProperty.call(candidate, "snapshot")) {
       state.snapshot = candidate.snapshot
@@ -143,7 +143,7 @@ export class ClientStateManager {
   private readonly lockPath: string
   private readonly legacyTauriDataPath: string | null
   private readonly owner: ProcessOwner
-  private state: PersistedClientState = { version: CLIENT_STATE_VERSION, restoreEnabled: false }
+  private state: PersistedClientState = { version: CLIENT_STATE_VERSION, restoreEnabled: true }
   private writeQueue: Promise<void> = Promise.resolve()
   private drainAndReleasePromise: Promise<void> | undefined
   private crossHostRegistration: CrossHostRegistration | undefined
@@ -220,7 +220,9 @@ export class ClientStateManager {
       this.migrateLegacyStateIfNeeded(legacyPaths, options?.removeLegacyState)
       const futureLegacyBlocked = this.unsupportedFutureEnvelope
       const persisted = this.readState()
-      this.state = persisted.state
+      this.state = futureLegacyBlocked
+        ? { version: CLIENT_STATE_VERSION, restoreEnabled: false }
+        : persisted.state
       this.persistenceSuppressed = !this.state.restoreEnabled
       this.unsupportedFutureEnvelope = futureLegacyBlocked || persisted.unsupportedFutureEnvelope
     }
@@ -369,7 +371,7 @@ export class ClientStateManager {
         console.warn("[client-state] failed to read state", error)
       }
       return {
-        state: { version: CLIENT_STATE_VERSION, restoreEnabled: false },
+        state: { version: CLIENT_STATE_VERSION, restoreEnabled: true },
         unsupportedFutureEnvelope: false,
       }
     }

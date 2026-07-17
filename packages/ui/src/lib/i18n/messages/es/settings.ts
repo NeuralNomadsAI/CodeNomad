@@ -119,7 +119,7 @@ export const settingsMessages = {
   "settings.appearance.startup.title": "Inicio",
   "settings.appearance.startup.subtitle": "Elige qué restaura este dispositivo al iniciar CodeNomad.",
   "settings.appearance.startup.restore.title": "Restaurar el estado anterior",
-  "settings.appearance.startup.restore.subtitle": "Volver a abrir las pestañas de espacios de trabajo y sidecars, las sesiones activas, los borradores, las posiciones de desplazamiento y el diseño de paneles.",
+  "settings.appearance.startup.restore.subtitle": "Volver a abrir las pestañas de espacios de trabajo y sidecars, las sesiones activas y los mensajes no enviados, y restaurar las posiciones de desplazamiento, el diseño de paneles, la posición de la ventana y el zoom.",
   "settings.appearance.startup.clear.title": "Estado de inicio guardado",
   "settings.appearance.startup.clear.subtitle": "Elimina pestañas, borradores, posiciones de desplazamiento y el diseño de paneles guardados. No se eliminan datos de CodeNomad ni de OpenCode.",
   "settings.appearance.startup.clear.action": "Borrar estado guardado",

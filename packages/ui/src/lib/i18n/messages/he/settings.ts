@@ -119,7 +119,7 @@ export const settingsMessages = {
   "settings.appearance.startup.title": "הפעלה",
   "settings.appearance.startup.subtitle": "בחר מה ישוחזר במכשיר זה בעת הפעלת CodeNomad.",
   "settings.appearance.startup.restore.title": "שחזור המצב הקודם",
-  "settings.appearance.startup.restore.subtitle": "פתיחה מחדש של כרטיסיות סביבות עבודה ו-sidecar, הפעלות פעילות, טיוטות, מיקומי גלילה ופריסת חלוניות.",
+  "settings.appearance.startup.restore.subtitle": "פתיחה מחדש של כרטיסיות סביבות עבודה ו-sidecar, הפעלות פעילות והודעות שלא נשלחו, ושחזור מיקומי גלילה, פריסת חלוניות, מיקום החלון ורמת התקריב.",
   "settings.appearance.startup.clear.title": "מצב הפעלה שמור",
   "settings.appearance.startup.clear.subtitle": "הסרת כרטיסיות, טיוטות, מיקומי גלילה ופריסת חלוניות שנשמרו. נתוני CodeNomad ו-OpenCode לא יימחקו.",
   "settings.appearance.startup.clear.action": "נקה מצב שמור",

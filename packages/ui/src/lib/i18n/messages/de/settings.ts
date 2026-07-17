@@ -119,7 +119,7 @@ export const settingsMessages = {
   "settings.appearance.startup.title": "Startverhalten",
   "settings.appearance.startup.subtitle": "Lege fest, was dieses Gerät beim Start von CodeNomad wiederherstellt.",
   "settings.appearance.startup.restore.title": "Vorherigen Zustand wiederherstellen",
-  "settings.appearance.startup.restore.subtitle": "Arbeitsbereichs- und Sidecar-Tabs, aktive Sitzungen, Entwürfe, Scrollpositionen und das Panel-Layout erneut öffnen.",
+  "settings.appearance.startup.restore.subtitle": "Arbeitsbereichs- und Sidecar-Tabs, aktive Sitzungen und nicht gesendete Nachrichten erneut öffnen sowie Scrollpositionen, Panel-Layout, Fensterposition und Zoom wiederherstellen.",
   "settings.appearance.startup.clear.title": "Gespeicherter Startzustand",
   "settings.appearance.startup.clear.subtitle": "Gespeicherte Tabs, Entwürfe, Scrollpositionen und das Panel-Layout entfernen. CodeNomad- und OpenCode-Daten werden nicht gelöscht.",
   "settings.appearance.startup.clear.action": "Gespeicherten Zustand löschen",

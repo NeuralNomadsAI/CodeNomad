@@ -43,6 +43,12 @@ test("renderer access is exclusive per document and resettable", async (t) => {
   assert.equal(manager.claimClientStateAccess("document-2"), true)
 })
 
+test("restore defaults on unless explicitly disabled", (t) => {
+  assert.equal(harness(t).create().loadClientState().restoreEnabled, true)
+  assert.equal(harness(t, { version: 1 }).create().loadClientState().restoreEnabled, true)
+  assert.equal(harness(t, { version: 1, restoreEnabled: false }).create().loadClientState().restoreEnabled, false)
+})
+
 test("cross-host ownership is required in addition to each host-local election", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "codenomad-cross-host-state-"))
   const electronDirectory = join(root, "electron"), tauriDirectory = join(root, "tauri"), election = join(root, "election")

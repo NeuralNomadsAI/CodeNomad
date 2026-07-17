@@ -119,7 +119,7 @@ export const settingsMessages = {
   "settings.appearance.startup.title": "启动",
   "settings.appearance.startup.subtitle": "选择 CodeNomad 启动时在此设备上恢复的内容。",
   "settings.appearance.startup.restore.title": "恢复上次状态",
-  "settings.appearance.startup.restore.subtitle": "重新打开工作区和边栏标签页、活动会话、草稿、滚动位置和面板布局。",
+  "settings.appearance.startup.restore.subtitle": "重新打开工作区和边栏标签页、活动会话和未发送的消息，并恢复滚动位置、面板布局、窗口位置和缩放级别。",
   "settings.appearance.startup.clear.title": "已保存的启动状态",
   "settings.appearance.startup.clear.subtitle": "移除已保存的标签页、草稿、滚动位置和面板布局。不会删除 CodeNomad 或 OpenCode 数据。",
   "settings.appearance.startup.clear.action": "清除已保存状态",
