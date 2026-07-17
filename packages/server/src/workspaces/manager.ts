@@ -24,6 +24,7 @@ import {
   resolveOpencodeServerAuth,
 } from "./opencode-auth"
 import { resolveWorkspaceIdentity } from "./workspace-identity"
+import { parseWslUncPath } from "./spawn"
 
 const STARTUP_STABILITY_DELAY_MS = 1500
 type ManagerTimeout = ReturnType<typeof setTimeout>
@@ -31,6 +32,20 @@ type ManagerTimeout = ReturnType<typeof setTimeout>
 interface WorkspaceRuntimeController {
   launch: WorkspaceRuntime["launch"]
   stop: WorkspaceRuntime["stop"]
+}
+
+export function binaryPathsEqual(left: string, right: string, platform = process.platform): boolean {
+  const leftWsl = parseWslUncPath(left)
+  const rightWsl = parseWslUncPath(right)
+  if (leftWsl || rightWsl) {
+    return Boolean(
+      leftWsl
+      && rightWsl
+      && leftWsl.distro.toLowerCase() === rightWsl.distro.toLowerCase()
+      && leftWsl.linuxPath === rightWsl.linuxPath,
+    )
+  }
+  return platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right
 }
 
 interface WorkspaceManagerOptions {
@@ -170,6 +185,13 @@ export class WorkspaceManager {
 
   getInstanceAuthorizationHeader(id: string): string | undefined {
     return this.workspaces.get(id)?.published ? this.opencodeAuth.get(id)?.authorization : undefined
+  }
+
+  findReadyInstanceIdByBinary(binaryPath: string): string | undefined {
+    const resolvedPath = this.resolveBinaryPath(binaryPath)
+    return this.list().find((workspace) => {
+      return workspace.status === "ready" && binaryPathsEqual(workspace.binaryId, resolvedPath)
+    })?.id
   }
 
   private findReadyWorkspaceByIdentity(
@@ -710,7 +732,7 @@ export class WorkspaceManager {
     this.options.eventBus.publish({ type: "workspace.stopped", workspaceId: record.descriptor.id })
   }
 
-  private resolveBinaryPath(identifier: string): string {
+  resolveBinaryPath(identifier: string): string {
     if (!identifier) {
       return identifier
     }

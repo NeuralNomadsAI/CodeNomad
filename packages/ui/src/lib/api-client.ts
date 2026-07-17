@@ -11,6 +11,8 @@ import type {
   FileSystemFileContentResponse,
   FileSystemListResponse,
   InstanceData,
+  OpenCodeUpdateResponse,
+  OpenCodeUpdateStatus,
   SpeechCapabilitiesResponse,
   SpeechSynthesisResponse,
   SpeechTranscriptionResponse,
@@ -450,6 +452,12 @@ export const serverApi = {
       method: "POST",
       body: JSON.stringify({ path }),
     })
+  },
+  fetchOpenCodeUpdateStatus(): Promise<OpenCodeUpdateStatus> {
+    return request<OpenCodeUpdateStatus>("/api/opencode/update")
+  },
+  updateOpenCode(): Promise<OpenCodeUpdateResponse> {
+    return request<OpenCodeUpdateResponse>("/api/opencode/update", { method: "POST" })
   },
   fetchSpeechCapabilities(): Promise<SpeechCapabilitiesResponse> {
     return request<SpeechCapabilitiesResponse>("/api/speech/capabilities")

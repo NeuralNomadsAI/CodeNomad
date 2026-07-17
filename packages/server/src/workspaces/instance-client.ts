@@ -4,6 +4,10 @@ import type { WorkspaceManager } from "./manager"
 const INSTANCE_HOST = "127.0.0.1"
 const LOOPBACK_TIMEOUT_MS = 10_000
 
+interface InstanceClientOptions {
+  timeoutMs?: number
+}
+
 /**
  * Creates an OpenCode SDK client for direct loopback communication with a
  * running workspace instance.
@@ -24,6 +28,7 @@ const LOOPBACK_TIMEOUT_MS = 10_000
 export function createInstanceClient(
   workspaceManager: WorkspaceManager,
   instanceId: string,
+  options: InstanceClientOptions = {},
 ): OpencodeClient | null {
   const port = workspaceManager.getInstancePort(instanceId)
   if (!port) return null
@@ -35,6 +40,7 @@ export function createInstanceClient(
   }
 
   const workspace = workspaceManager.get(instanceId)
+  const timeoutMs = options.timeoutMs ?? LOOPBACK_TIMEOUT_MS
 
   return createOpencodeClient({
     baseUrl: `http://${INSTANCE_HOST}:${port}/`,
@@ -42,7 +48,7 @@ export function createInstanceClient(
     fetch: (url, init) =>
       fetch(url, {
         ...(init as RequestInit),
-        signal: (init as RequestInit)?.signal ?? AbortSignal.timeout(LOOPBACK_TIMEOUT_MS),
+        signal: (init as RequestInit)?.signal ?? AbortSignal.timeout(timeoutMs),
       }),
     ...(workspace?.path ? { directory: workspace.path } : {}),
   })
