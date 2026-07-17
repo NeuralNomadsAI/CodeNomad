@@ -32,7 +32,10 @@ const registration = owner && CrossHostRegistration.register(directory, owner, t
   onOwnerPrepared: mode === "owner-crash" ? () => process.exit(91) : undefined,
   onOwnerRetired: mode === "retire-crash" ? () => process.exit(91) : undefined,
 })
-if (manager?.isPrimary && operation === "save") await manager.saveClientState(JSON.parse(payload))
+if (manager?.isPrimary && operation === "save") {
+  await manager.setRestoreEnabled(true)
+  await manager.saveClientState(JSON.parse(payload))
+}
 process.stdout.write(`${JSON.stringify({
   acquired: manager?.isPrimary ?? Boolean(registration?.isPrimary),
   state: operation === "load" ? manager?.loadClientState() : undefined,

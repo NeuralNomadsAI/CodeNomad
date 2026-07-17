@@ -71,11 +71,11 @@ impl Default for PersistedClientState {
     fn default() -> Self {
         Self {
             version: CLIENT_STATE_VERSION,
-            restore_enabled: true,
+            restore_enabled: false,
             snapshot: None,
             window: None,
             unsupported_future_envelope: false,
-            writes_enabled: true,
+            writes_enabled: false,
         }
     }
 }
@@ -531,14 +531,14 @@ fn parse_client_state(bytes: &[u8]) -> PersistedClientState {
         restore_enabled: value
             .get("restoreEnabled")
             .and_then(Value::as_bool)
-            .unwrap_or(true),
+            .unwrap_or(false),
         snapshot,
         window: value.get("window").and_then(window::normalize_window_state),
         unsupported_future_envelope: false,
         writes_enabled: value
             .get("restoreEnabled")
             .and_then(Value::as_bool)
-            .unwrap_or(true),
+            .unwrap_or(false),
     }
 }
 

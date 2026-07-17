@@ -6,7 +6,7 @@ export type NativeClientStateLoadResult = {
   restoreEnabled: boolean
   snapshot: unknown | null
 }
-const SECONDARY_CLIENT_STATE: NativeClientStateLoadResult = { isPrimary: false, restoreEnabled: true, snapshot: null }
+const SECONDARY_CLIENT_STATE: NativeClientStateLoadResult = { isPrimary: false, restoreEnabled: false, snapshot: null }
 const accessToken = (() => {
   const bytes = new Uint8Array(32)
   globalThis.crypto.getRandomValues(bytes)

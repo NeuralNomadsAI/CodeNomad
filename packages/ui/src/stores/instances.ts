@@ -168,6 +168,10 @@ class InterruptionRegistry<T extends { id: string }, S extends string> {
     return next
   }
 
+  sessionIds(instanceId: string): IterableIterator<string> {
+    return this.sessionCounts.get(instanceId)?.keys() ?? new Map<string, number>().keys()
+  }
+
   clear(instanceId: string, requests: readonly T[], clearPending: (sessionId: string) => void): void {
     requests.forEach(({ id }) => this.enqueuedAt.delete(id))
     this.sources.delete(instanceId)
@@ -291,8 +295,8 @@ function settleInstanceReadyWaiters(instanceId: string, error?: Error): void {
 function reconcilePendingSessionIndicators(instanceId: string): void {
   reconcileSessionPendingState(
     instanceId,
-    new Set(permissionSessionCounts.get(instanceId)?.keys() ?? []),
-    new Set(questionSessionCounts.get(instanceId)?.keys() ?? []),
+    new Set(permissionRegistry.sessionIds(instanceId)),
+    new Set(questionRegistry.sessionIds(instanceId)),
   )
 }
 

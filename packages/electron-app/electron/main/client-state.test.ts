@@ -30,7 +30,7 @@ function harness(t: test.TestContext, initial?: object) {
 }
 
 test("renderer access is exclusive per document and resettable", async (t) => {
-  const manager = harness(t).create()
+  const manager = harness(t, { version: 1, restoreEnabled: true }).create()
   assert.throws(() => manager.claimClientStateAccess(""), /nonempty string/)
   assert.throws(() => manager.assertRendererAccessToken("unclaimed"), /has not been claimed/)
   assert.equal(manager.claimClientStateAccess("document-1"), true)
@@ -65,7 +65,7 @@ test("cross-host ownership is required in addition to each host-local election",
     crossHostDependencies,
     processOwner: { pid: 8102, runToken: "electron", processStartIdentity: "electron-start" },
   })
-  assert.deepEqual(secondary.loadClientState(), { isPrimary: false, restoreEnabled: true, snapshot: null })
+  assert.deepEqual(secondary.loadClientState(), { isPrimary: false, restoreEnabled: false, snapshot: null })
   await secondary.drainAndReleasePrimary()
 
   await primary.drainAndReleasePrimary()
@@ -134,13 +134,13 @@ test("ownership loss immediately disables restore reads and mutations", async (t
   const manager = h.create()
   writeFileSync(join(h.directory, "election", "primary.owner.json", "owner.json"), "malformed")
   assert.equal(manager.isPrimary, false)
-  assert.deepEqual(manager.loadClientState(), { isPrimary: false, restoreEnabled: true, snapshot: null })
+  assert.deepEqual(manager.loadClientState(), { isPrimary: false, restoreEnabled: false, snapshot: null })
   assert.equal(manager.getWindowState(), undefined)
   assert.equal(await manager.saveClientState({ ignored: true }), false)
 })
 
 test("failed preference and clear writes roll memory and suppression back", async (t) => {
-  const h = harness(t)
+  const h = harness(t, { version: 1, restoreEnabled: true })
   const manager = h.create()
   await manager.saveClientState({ kept: true })
   h.fail(true)
@@ -157,7 +157,7 @@ test("failed preference and clear writes roll memory and suppression back", asyn
 })
 
 test("successful clear suppresses saves, including after failed re-enable", async (t) => {
-  const h = harness(t)
+  const h = harness(t, { version: 1, restoreEnabled: true })
   const manager = h.create()
   await manager.saveClientState({ kept: true })
   await manager.clearClientState()
@@ -170,7 +170,7 @@ test("successful clear suppresses saves, including after failed re-enable", asyn
 })
 
 test("disabling restore atomically removes snapshot/window and survives restart", async (t) => {
-  const h = harness(t)
+  const h = harness(t, { version: 1, restoreEnabled: true })
   const manager = h.create(undefined, { pid: process.pid, runToken: "before-restart", processStartIdentity: "old-start" })
   await manager.saveClientState({ kept: true })
   await manager.saveWindowState({ bounds: { x: 10, y: 20, width: 1200, height: 800 }, maximized: true, fullscreen: false, zoomFactor: 1.25 })
@@ -188,7 +188,7 @@ test("disabling restore atomically removes snapshot/window and survives restart"
 })
 
 test("drain freezes mutations and waits for admitted writes", async (t) => {
-  const h = harness(t)
+  const h = harness(t, { version: 1, restoreEnabled: true })
   let started!: () => void
   let release!: () => void
   const began = new Promise<void>((resolve) => { started = resolve })
@@ -209,7 +209,7 @@ test("drain freezes mutations and waits for admitted writes", async (t) => {
 })
 
 test("an old writer cannot replace a successor after PID reuse", async (t) => {
-  const h = harness(t)
+  const h = harness(t, { version: 1, restoreEnabled: true })
   let started!: () => void
   let release!: () => void
   const began = new Promise<void>((resolve) => { started = resolve })
@@ -234,7 +234,7 @@ test("future envelopes are preserved until a successful explicit clear", async (
   const future = { version: 7, restoreEnabled: false, snapshot: { future: true }, futurePreference: "keep" }
   const h = harness(t, future)
   const manager = h.create(undefined, { pid: process.pid, runToken: "future-before-restart", processStartIdentity: "old-start" })
-  assert.deepEqual(manager.loadClientState(), { isPrimary: true, restoreEnabled: true, snapshot: null })
+  assert.deepEqual(manager.loadClientState(), { isPrimary: true, restoreEnabled: false, snapshot: null })
   assert.equal(await manager.saveClientState({ ignored: true }), true)
   assert.equal(await manager.setRestoreEnabled(false), false)
   assert.deepEqual(JSON.parse(readFileSync(h.statePath, "utf8")), future)
@@ -242,7 +242,7 @@ test("future envelopes are preserved until a successful explicit clear", async (
   const restarted = h.create()
   assert.deepEqual(JSON.parse(readFileSync(h.statePath, "utf8")), future)
   assert.equal(await restarted.clearClientState(), true)
-  assert.deepEqual(JSON.parse(readFileSync(h.statePath, "utf8")), { version: 1, restoreEnabled: true })
+  assert.deepEqual(JSON.parse(readFileSync(h.statePath, "utf8")), { version: 1, restoreEnabled: false })
   assert.equal(await restarted.saveClientState({ supported: true }), true)
   assert.deepEqual(JSON.parse(readFileSync(h.statePath, "utf8")).snapshot, { supported: true })
 })

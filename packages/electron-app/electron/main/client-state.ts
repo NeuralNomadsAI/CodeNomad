@@ -85,7 +85,7 @@ interface ParsedClientState {
 }
 
 function parseClientState(value: string): ParsedClientState {
-  const defaults: PersistedClientState = { version: CLIENT_STATE_VERSION, restoreEnabled: true }
+  const defaults: PersistedClientState = { version: CLIENT_STATE_VERSION, restoreEnabled: false }
   try {
     const candidate = JSON.parse(value) as Record<string, unknown>
     if (candidate && typeof candidate.version === "number" && candidate.version > CLIENT_STATE_VERSION) {
@@ -97,7 +97,7 @@ function parseClientState(value: string): ParsedClientState {
 
     const state: PersistedClientState = {
       version: CLIENT_STATE_VERSION,
-      restoreEnabled: typeof candidate.restoreEnabled === "boolean" ? candidate.restoreEnabled : true,
+      restoreEnabled: typeof candidate.restoreEnabled === "boolean" ? candidate.restoreEnabled : false,
     }
     if (Object.prototype.hasOwnProperty.call(candidate, "snapshot")) {
       state.snapshot = candidate.snapshot
@@ -142,7 +142,7 @@ export class ClientStateManager {
   private readonly lockPath: string
   private readonly legacyTauriDataPath: string | null
   private readonly owner: ProcessOwner
-  private state: PersistedClientState = { version: CLIENT_STATE_VERSION, restoreEnabled: true }
+  private state: PersistedClientState = { version: CLIENT_STATE_VERSION, restoreEnabled: false }
   private writeQueue: Promise<void> = Promise.resolve()
   private drainAndReleasePromise: Promise<void> | undefined
   private crossHostRegistration: CrossHostRegistration | undefined
@@ -238,7 +238,7 @@ export class ClientStateManager {
 
   loadClientState(): ClientStateLoadResult {
     if (!this.isPrimary) {
-      return { isPrimary: false, restoreEnabled: true, snapshot: null }
+      return { isPrimary: false, restoreEnabled: false, snapshot: null }
     }
     return {
       isPrimary: true,
@@ -368,7 +368,7 @@ export class ClientStateManager {
         console.warn("[client-state] failed to read state", error)
       }
       return {
-        state: { version: CLIENT_STATE_VERSION, restoreEnabled: true },
+        state: { version: CLIENT_STATE_VERSION, restoreEnabled: false },
         unsupportedFutureEnvelope: false,
       }
     }

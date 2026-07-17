@@ -32,6 +32,7 @@ test("renderer access resets only for trusted full main-frame navigation", () =>
 
 test("immediate reload flushes latest state before rotating document access", async (t) => {
   const manager = managerHarness(t)
+  await manager.setRestoreEnabled(true)
   manager.claimClientStateAccess("outgoing")
   const load = (token: string) => { manager.assertRendererAccessToken(token); return manager.loadClientState() }
   const save = (token: string, state: unknown) => { manager.assertRendererAccessToken(token); return manager.saveClientState(state) }

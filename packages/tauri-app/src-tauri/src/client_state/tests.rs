@@ -42,6 +42,16 @@ fn assert_receive_timeout<T>(result: Result<T, mpsc::RecvTimeoutError>) {
     assert!(matches!(result, Err(mpsc::RecvTimeoutError::Timeout)));
 }
 
+fn enable_restore(state: &ClientState) {
+    assert!(state.set_restore_enabled(true).unwrap());
+}
+
+fn enable_restore_in_memory(state: &ClientState) {
+    let mut persisted = state.state.lock().unwrap();
+    persisted.restore_enabled = true;
+    persisted.writes_enabled = true;
+}
+
 fn failing_state(initially_failing: bool) -> (TempDir, ClientState, Arc<AtomicBool>) {
     let directory = tempfile::tempdir().unwrap();
     let fail = Arc::new(AtomicBool::new(initially_failing));
@@ -162,7 +172,7 @@ fn parses_envelopes_and_normalizes_zoom() {
         br#"{"version":1,"restoreEnabled":"no"}"#.as_slice(),
     ] {
         let state = parse_client_state(bytes);
-        assert!(state.restore_enabled);
+        assert!(!state.restore_enabled);
         assert_eq!(state.snapshot, None);
         assert!(!state.unsupported_future_envelope);
     }
@@ -370,6 +380,7 @@ fn election_preserves_cohorts_until_every_participant_exits() {
 fn secondary_and_failed_initialization_are_isolated() {
     let directory = tempfile::tempdir().unwrap();
     let primary = ClientState::initialize_at(directory.path()).unwrap();
+    enable_restore(&primary);
     assert!(primary.save_snapshot(json!({ "kept": true })).unwrap());
     let state_path = directory.path().join(CLIENT_STATE_FILENAME);
     let original = fs::read(&state_path).unwrap();
@@ -390,6 +401,7 @@ fn disable_and_clear_suppress_later_writes() {
     for clear in [false, true] {
         let directory = tempfile::tempdir().unwrap();
         let state = ClientState::initialize_at(directory.path()).unwrap();
+        enable_restore(&state);
         assert!(state.save_snapshot(json!({ "removed": true })).unwrap());
         state.state.lock().unwrap().window = Some(window());
         if clear {
@@ -413,6 +425,7 @@ fn disable_and_clear_suppress_later_writes() {
 fn failed_writes_restore_memory_and_suppression_state() {
     for operation in ["snapshot", "clear", "disable"] {
         let (_directory, state, fail) = failing_state(false);
+        enable_restore(&state);
         assert!(state.save_snapshot(json!({ "kept": true })).unwrap());
         state.state.lock().unwrap().window = Some(window());
         fail.store(true, Ordering::SeqCst);
@@ -463,7 +476,7 @@ fn future_envelope_is_preserved_until_successful_clear() {
         }),
     )
     .unwrap();
-    assert_eq!(state.load().unwrap(), load(true, true, Value::Null));
+    assert_eq!(state.load().unwrap(), load(true, false, Value::Null));
     assert!(!state.set_restore_enabled(false).unwrap());
     assert!(state.save_snapshot(json!({ "ignored": true })).unwrap());
     state.flush().unwrap();
@@ -474,6 +487,7 @@ fn future_envelope_is_preserved_until_successful_clear() {
     fail.store(false, Ordering::SeqCst);
     assert!(state.clear().unwrap());
     assert!(!state.state.lock().unwrap().unsupported_future_envelope);
+    enable_restore(&state);
     assert!(state.save_snapshot(json!({ "accepted": true })).unwrap());
     assert_eq!(state.load().unwrap().snapshot, json!({ "accepted": true }));
 }
@@ -613,6 +627,7 @@ fn ownership_release_drains_active_write_and_blocks_later_writes() {
         )
         .unwrap(),
     );
+    enable_restore_in_memory(&state);
     let writing = Arc::clone(&state);
     let writer = thread::spawn(move || writing.save_snapshot(json!({ "first": true })));
     started_rx.recv().unwrap();
@@ -647,6 +662,7 @@ fn ownership_loss_blocks_the_final_atomic_replacement() {
         }),
     )
     .unwrap();
+    enable_restore_in_memory(&state);
     assert_eq!(
         state.save_snapshot(json!({ "blocked": true })).unwrap_err(),
         "Client state ownership changed before atomic replacement"
@@ -673,6 +689,7 @@ fn renderer_rotation_blocks_an_in_flight_old_renderer_replacement() {
         )
         .unwrap(),
     );
+    enable_restore_in_memory(&state);
     let outgoing = Url::parse("http://127.0.0.1:43123/workspace").unwrap();
     let incoming = Url::parse("http://127.0.0.1:43124/workspace").unwrap();
     state.renderer_access.claim("old", &outgoing).unwrap();
@@ -699,6 +716,7 @@ fn renderer_rotation_blocks_an_in_flight_old_renderer_replacement() {
 fn oversized_snapshot_does_not_replace_state() {
     let directory = tempfile::tempdir().unwrap();
     let state = ClientState::initialize_at(directory.path()).unwrap();
+    enable_restore(&state);
     state.save_snapshot(json!({ "small": true })).unwrap();
     assert!(state
         .save_snapshot(Value::String("x".repeat(MAX_CLIENT_SNAPSHOT_BYTES)))
