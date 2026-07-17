@@ -66,15 +66,16 @@ async function harness(options: WorkspaceRuntimeOptions & { binary?: string; out
       : guarded(true, [[4242, 1, 4242, "100"]]))
     return result(platform === "win32"
       ? windows(alive ? [[4242, 1, "win-start"]] : [])
-      : posix(alive ? [[4242, 1, 4242, "100"]] : []))
+      : posix(alive ? [[4242, 1, 4242, "100"]] : [[1, 0, 1, "10"]]))
   }) as Command
   const runtime = new WorkspaceRuntime(new EventBus(), pino({ level: "silent" }), {
-    gracefulStopTimeoutMs: 10, forcedStopTimeoutMs: 10, ...options,
+    platform, gracefulStopTimeoutMs: 10, forcedStopTimeoutMs: 10, ...options,
     spawnSync: command, setTimeout: timers.set, clearTimeout: timers.clear,
     spawn: (() => child as unknown as ChildProcess) as typeof import("node:child_process").spawn,
   })
   const abort = new AbortController()
-  const launch = runtime.launch({ workspaceId: "w", folder: process.cwd(), binaryPath: options.binary ?? "opencode", signal: abort.signal })
+  const folder = platform === "win32" && process.platform !== "win32" ? `/${process.cwd()}` : process.cwd()
+  const launch = runtime.launch({ workspaceId: "w", folder, binaryPath: options.binary ?? "opencode", signal: abort.signal })
   if (options.report !== false) {
     queueMicrotask(() => child.stdout.write(options.output ?? "opencode server listening on http://127.0.0.1:4321\n"))
     await launch
@@ -95,7 +96,7 @@ describe("workspace runtime lifecycle contracts", () => {
     const h = await harness({ report: false, spawnSync: ((_command: string, args: readonly string[]) => {
       if (isToken(args)) return result(token(alive ? [[4242, 1, 4242, "100"]] : [], isSignal(args)))
       if (isGuarded(args)) return result(guarded(true, [[4242, 1, 4242, "100"]]))
-      return result(posix(alive ? [[4242, 1, 4242, "100"]] : []))
+      return result(posix(alive ? [[4242, 1, 4242, "100"]] : [[1, 0, 1, "10"]]))
     }) as unknown as Command })
     h.abort.abort(new Error("port-cancelled"))
     await assert.rejects(h.launch, /port-cancelled/)
@@ -162,8 +163,7 @@ describe("workspace runtime lifecycle contracts", () => {
       if (!launched) { launched = true; return result(posix([[4242, 1, 4242, "100"]])) }
       return result(posix([[4242, 1, 4242, "300"], [6000, 4242, 4242, "150"]]))
     }) as unknown as Command })
-    const stop = h.runtime.stop("w"); h.timers.run(); h.timers.run()
-    await assert.rejects(stop, WorkspaceStopTimeoutError)
+    await h.runtime.stop("w")
     assert.ok(calls.every((args) => !args.includes("6000") && !args.includes("300")))
   })
   it("retains and cleans a portable process group after its leader exits", async () => {
