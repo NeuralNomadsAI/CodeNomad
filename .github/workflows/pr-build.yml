@@ -88,6 +88,7 @@ jobs:
       - name: Test UI restoration authority
         run: >-
           node --import tsx --test
+          packages/ui/src/stores/app-session-restore-gate.test.ts
           packages/ui/src/stores/client-state-codec.test.ts
           packages/ui/src/stores/app-session-snapshot-merge.test.ts
           packages/ui/src/stores/message-v2/message-hydration-authority.test.ts

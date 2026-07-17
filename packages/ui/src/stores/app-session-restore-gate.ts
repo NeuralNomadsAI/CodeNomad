@@ -11,4 +11,8 @@ function shouldShowEmptyAppHome(snapshot: RestorableSessionState | null, restore
   return !restoreActive || !snapshot?.tabs.length || snapshot.homeActive === true
 }
 
-export { appSessionRestoreGateActive, releaseAppSessionRestoreGate, shouldShowEmptyAppHome }
+function shouldShowAppHomeOverlay(requested: boolean, tabCount: number): boolean {
+  return requested && tabCount > 0
+}
+
+export { appSessionRestoreGateActive, releaseAppSessionRestoreGate, shouldShowAppHomeOverlay, shouldShowEmptyAppHome }
