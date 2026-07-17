@@ -37,31 +37,27 @@ export function mergeFetchedSessionRuntimeState(
 ): Session | null {
   if (deleted) return null
   if (captured && !latest) return null
-  if (!latest || (latest === captured && latest.generationAdmissionToken === undefined)) return fetched
-  if (captured && latest !== captured) {
-    const merged = { ...fetched } as Record<string, unknown>
-    const capturedRecord = captured as unknown as Record<string, unknown>
-    const latestRecord = latest as unknown as Record<string, unknown>
-    for (const key of new Set([...Object.keys(capturedRecord), ...Object.keys(latestRecord)])) {
-      if (!Object.is(capturedRecord[key], latestRecord[key])) merged[key] = latestRecord[key]
-    }
-    if (
-      (fetched.status === "working" || fetched.status === "compacting")
-      && latest.generationAdmissionToken === undefined
-      && latest.runtimeStatusKnown === false
-      && latest.generationRecovery === "pending"
-    ) {
-      merged.status = fetched.status
-      merged.runtimeStatusKnown = fetched.runtimeStatusKnown
-      merged.generationRecovery = fetched.generationRecovery
-      merged.generationAdmissionToken = undefined
-      merged.retry = fetched.retry
-      merged.idleSince = fetched.idleSince
-    }
-    return merged as unknown as Session
+  if (!latest) return fetched
+  if (latest === captured) {
+    return latest.generationAdmissionToken === undefined ? fetched : { ...fetched, ...latest }
   }
-  return {
-    ...fetched,
-    ...latest,
+  const merged = { ...fetched }
+  const keys = new Set<keyof Session>([
+    ...(Object.keys(captured ?? {}) as (keyof Session)[]),
+    ...(Object.keys(latest) as (keyof Session)[]),
+  ])
+  for (const key of keys) {
+    if (captured && Object.is(captured[key], latest[key])) continue
+    if (Object.prototype.hasOwnProperty.call(latest, key)) (merged as any)[key] = latest[key]
+    else delete (merged as any)[key]
   }
+
+  const fetchedActive = fetched.status === "working" || fetched.status === "compacting"
+  if (captured && fetchedActive && latest.generationAdmissionToken === undefined
+    && latest.runtimeStatusKnown === false && latest.generationRecovery === "pending") {
+    for (const key of ["status", "runtimeStatusKnown", "generationRecovery", "generationAdmissionToken", "retry", "idleSince"] as const) {
+      (merged as any)[key] = fetched[key]
+    }
+  }
+  return merged
 }

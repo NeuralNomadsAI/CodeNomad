@@ -29,6 +29,8 @@ import {
   providers,
   setAgents,
   setMessagesLoaded,
+  advanceMessageLoadEpoch,
+  isCurrentMessageLoad,
   setSessionMessagesLoadError,
   setProviders,
   setSessionInfoByInstance,
@@ -63,20 +65,31 @@ import { getRootClient } from "./opencode-client"
 import { tGlobal } from "../lib/i18n"
 import {
   getWorktreeSlugForSession,
+  getWorktreeSlugForDirectory,
   getWorktrees,
   migrateLegacyWorktreeMapToSessionMetadata,
   pruneStaleLegacyWorktreeMapEntries,
   removeLegacyParentSessionMapping,
   setWorktreeSlugForParentSession,
 } from "./worktrees"
-import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
+import { getOpenCodeWorkspaceIdForSession, getOpenCodeWorkspaceIdForWorktree } from "./opencode-workspaces"
 import { hydrateSessionMetadataWithClient } from "./session-metadata"
-import { PROJECT_SESSION_LIST_LIMIT, buildProjectSessionListOptions, filterProjectScopedSessions } from "./session-list-options"
+import { preferSessionMetadata, shouldReplaceSessionMetadata } from "./session-metadata-completeness"
+import {
+  PROJECT_SESSION_LIST_LIMIT,
+  buildProjectSessionListOptions,
+  filterProjectScopedSessions,
+  getAuthoritativelyMissingSessionIds,
+  isProjectSessionListComplete,
+} from "./session-list-options"
 import { mergeFetchedSessionRuntimeState, resolveAuthoritativeGenerationRecovery } from "./session-generation-recovery"
 
 const log = getLogger("api")
 const sessionListRequestIds = new Map<string, number>()
 let nextSessionListRequestId = 0
+const pendingMetadataHydrations = new Map<string, Promise<void>>()
+const sessionWorkspaceHints = new Map<string, Map<string, string>>()
+messageStoreBus.onInstanceDestroyed((instanceId) => sessionWorkspaceHints.delete(instanceId))
 
 function beginSessionListRequest(instanceId: string): number {
   const requestId = ++nextSessionListRequestId
@@ -100,8 +113,59 @@ function clearSessionListRequestState(instanceId: string): void {
 }
 
 async function getSessionWorkspacePayload(instanceId: string, sessionId: string): Promise<{ workspace?: string }> {
+  const hinted = sessionWorkspaceHints.get(instanceId)?.get(sessionId)
+  if (hinted) return { workspace: hinted }
   const workspace = await getOpenCodeWorkspaceIdForSession(instanceId, sessionId)
   return workspace ? { workspace } : {}
+}
+
+async function getSessionWorkspaceCandidates(
+  instanceId: string,
+  sessionId: string,
+  fallback: { workspace?: string } = {},
+): Promise<Array<{ workspace?: string }>> {
+  const candidates: Array<{ workspace?: string }> = []
+  const seen = new Set<string>()
+  const add = (candidate: { workspace?: string }) => {
+    const key = candidate.workspace ?? "root"
+    if (seen.has(key)) return
+    seen.add(key)
+    candidates.push(candidate)
+  }
+  add(await getSessionWorkspacePayload(instanceId, sessionId))
+  add(fallback)
+  add({})
+  for (const worktree of getWorktrees(instanceId)) {
+    if (!worktree.slug || worktree.slug === "root") continue
+    const workspace = await getOpenCodeWorkspaceIdForWorktree(instanceId, worktree.slug)
+    if (workspace) add({ workspace })
+  }
+  return candidates
+}
+
+function rememberSessionWorkspace(instanceId: string, sessionId: string, workspace: string | undefined): void {
+  if (!workspace) return
+  const hints = new Map(sessionWorkspaceHints.get(instanceId) ?? new Map())
+  hints.set(sessionId, workspace)
+  sessionWorkspaceHints.set(instanceId, hints)
+}
+
+async function recordSessionWorkspaceHints(instanceId: string, apiSessions: SDKSession[]): Promise<void> {
+  const hints = new Map(sessionWorkspaceHints.get(instanceId) ?? new Map<string, string>())
+  const workspaceBySlug = new Map<string, Promise<string | null>>()
+  await Promise.all(apiSessions.map(async (session) => {
+    const directory = (session as SDKSession & { directory?: string }).directory
+    const slug = getWorktreeSlugForDirectory(instanceId, directory)
+    if (!slug || slug === "root") return
+    let workspace = workspaceBySlug.get(slug)
+    if (!workspace) {
+      workspace = getOpenCodeWorkspaceIdForWorktree(instanceId, slug)
+      workspaceBySlug.set(slug, workspace)
+    }
+    const workspaceId = await workspace
+    if (workspaceId) hints.set(session.id, workspaceId)
+  }))
+  sessionWorkspaceHints.set(instanceId, hints)
 }
 
 interface SessionForkResponse {
@@ -133,6 +197,8 @@ type V2SessionListOptions = {
 
 type ProjectSessionListResponse = {
   data: SDKSession[]
+  listedIds: Set<string>
+  complete: boolean
 }
 
 function getKnownParentId(session: SDKSession | Session): string | null | undefined {
@@ -164,6 +230,8 @@ async function fetchV2Sessions(instanceId: string, options: V2SessionListOptions
 
   return {
     data: filterProjectScopedSessions(data, allowedDirectories),
+    listedIds: new Set(data.map((session) => session.id)),
+    complete: isProjectSessionListComplete(data.length),
   }
 }
 
@@ -176,14 +244,114 @@ async function hydrateMissingSessionMetadata(instanceId: string, sessionIds: str
   if (uniqueIds.length === 0) return
 
   const client = getRootClient(instanceId)
-  for (const sessionId of uniqueIds) {
-    const session = sessions().get(instanceId)?.get(sessionId)
-    if (!session || session.metadata !== undefined) continue
-    try {
-      await hydrateSessionMetadataWithClient(client, instanceId, sessionId)
-    } catch (error) {
-      log.warn("Failed to hydrate session metadata", { instanceId, sessionId, error })
+  let nextIndex = 0
+  const worker = async () => {
+    while (nextIndex < uniqueIds.length) {
+      const sessionId = uniqueIds[nextIndex++]!
+      const session = sessions().get(instanceId)?.get(sessionId)
+      if (!session || !shouldReplaceSessionMetadata(session.metadata)) continue
+      try {
+        await hydrateSessionMetadata(instanceId, sessionId, client)
+      } catch (error) {
+        log.warn("Failed to hydrate session metadata", { instanceId, sessionId, error })
+      }
     }
+  }
+  await Promise.all(Array.from({ length: Math.min(8, uniqueIds.length) }, worker))
+}
+
+function hydrateSessionMetadata(instanceId: string, sessionId: string, client = getRootClient(instanceId)): Promise<void> {
+  const key = `${instanceId}:${sessionId}`
+  const current = pendingMetadataHydrations.get(key)
+  if (current) return current
+  const hydration = (async () => {
+    const candidates = await getSessionWorkspaceCandidates(instanceId, sessionId)
+    let lastError: unknown
+    for (const delayMs of [0, 100, 400]) {
+      if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs))
+      for (const candidate of candidates) {
+        try {
+          await hydrateSessionMetadataWithClient(client, instanceId, sessionId, candidate)
+          rememberSessionWorkspace(instanceId, sessionId, candidate.workspace)
+          return
+        } catch (error) {
+          lastError = error
+        }
+      }
+    }
+    throw lastError
+  })().finally(() => pendingMetadataHydrations.delete(key))
+  pendingMetadataHydrations.set(key, hydration)
+  return hydration
+}
+
+async function hydrateRestoredSessionChain(
+  instanceId: string,
+  requestedIds: Array<string | null | undefined>,
+  signal?: AbortSignal,
+): Promise<void> {
+  const client = getRootClient(instanceId)
+  const pending = requestedIds.filter((id): id is string => Boolean(id) && id !== "info")
+  const visited = new Set<string>()
+  let chainWorkspacePayload: { workspace?: string } = {}
+  while (pending.length > 0) {
+    signal?.throwIfAborted()
+    const sessionId = pending.shift()!
+    if (visited.has(sessionId)) continue
+    visited.add(sessionId)
+    if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) continue
+
+    let session = sessions().get(instanceId)?.get(sessionId)
+    if (!session) {
+      try {
+        const workspaceCandidates = await getSessionWorkspaceCandidates(instanceId, sessionId, chainWorkspacePayload)
+        signal?.throwIfAborted()
+        let apiSession: SDKSession | undefined
+        let hydratedWorkspace: string | undefined
+        let lastError: unknown
+        for (const workspacePayload of workspaceCandidates) {
+          try {
+            apiSession = await requestData<SDKSession>(
+              client.session.get({ sessionID: sessionId, ...workspacePayload }),
+              "session.get",
+            )
+            hydratedWorkspace = workspacePayload.workspace
+            break
+          } catch (error) {
+            lastError = error
+          }
+        }
+        if (!apiSession) throw lastError
+        signal?.throwIfAborted()
+        rememberSessionWorkspace(instanceId, sessionId, hydratedWorkspace)
+        setSessions((prev) => {
+          if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId) || signal?.aborted) return prev
+          const next = new Map(prev)
+          const instanceSessions = new Map(next.get(instanceId) ?? new Map())
+          instanceSessions.set(sessionId, toClientSessionV2(instanceId, apiSession, instanceSessions.get(sessionId)))
+          next.set(instanceId, instanceSessions)
+          return next
+        })
+        session = sessions().get(instanceId)?.get(sessionId)
+        if (session?.parentId === null) prependSessionListId(instanceId, sessionId)
+      } catch (error) {
+        if (signal?.aborted) throw error
+        log.warn("Failed to hydrate restored session", { instanceId, sessionId, error })
+        continue
+      }
+    } else if (shouldReplaceSessionMetadata(session.metadata)) {
+      try {
+        await hydrateSessionMetadata(instanceId, sessionId, client)
+      } catch (error) {
+        if (signal?.aborted) throw error
+        log.warn("Failed to hydrate restored session metadata", { instanceId, sessionId, error })
+      }
+    }
+    if (session?.parentId === null) {
+      const rootWorkspacePayload = await getSessionWorkspacePayload(instanceId, session.id)
+      if (rootWorkspacePayload.workspace) chainWorkspacePayload = rootWorkspacePayload
+    }
+    if (session?.parentId) pending.push(session.parentId)
   }
 }
 
@@ -201,8 +369,10 @@ async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: SDKSe
   setSessions((prev) => {
     const next = new Map(prev)
     const instanceSessions = new Map(next.get(instanceId) ?? new Map())
+    const deletedSessionIds = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
 
     for (const apiSession of items) {
+      if (deletedSessionIds.has(apiSession.id)) continue
       const existingSession = instanceSessions.get(apiSession.id)
       instanceSessions.set(apiSession.id, toClientSessionV2(instanceId, apiSession, existingSession))
       loaded.set(apiSession.id, apiSession)
@@ -236,6 +406,7 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
     log.info("session.list", { instanceId, limit: PROJECT_SESSION_LIST_LIMIT, directory: sessionListOptions.directory, scope: "project" })
     const response = await fetchV2Sessions(instanceId, sessionListOptions)
     if (!isLatestSessionListRequest(instanceId, requestId)) return
+    await recordSessionWorkspaceHints(instanceId, getV2SessionItems(response))
 
     let statusById: Record<string, any> = {}
     let statusResponseKnown = false
@@ -279,6 +450,13 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
           : existingSession?.generationRecovery ?? null,
       })
     }
+
+    const remotelyDeletedSessionIds = getAuthoritativelyMissingSessionIds(
+      existingSessions.keys(),
+      response.listedIds,
+      response.complete,
+    )
+    for (const sessionId of remotelyDeletedSessionIds) removeSessionRuntimeState(instanceId, sessionId)
 
     setSessions((prev) => {
       const next = new Map(prev)
@@ -398,8 +576,10 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
     setSessions((prev) => {
       const next = new Map(prev)
       const instanceSessions = new Map(next.get(instanceId) ?? new Map())
+      const deletedSessionIds = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
 
       for (const apiSession of searchResults) {
+        if (deletedSessionIds.has(apiSession.id)) continue
         const existingSession = instanceSessions.get(apiSession.id)
         instanceSessions.set(apiSession.id, toClientSessionV2(instanceId, apiSession, existingSession))
       }
@@ -407,13 +587,16 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
       next.set(instanceId, instanceSessions)
       return next
     })
+    void hydrateMissingSessionMetadata(instanceId, searchResults.map((session) => session.id))
 
     await ensureV2ParentChainsLoaded(instanceId, searchResults, instance.folder)
 
     if (!isLatestSessionSearch(instanceId, trimmedQuery, requestId)) return
 
     const hydratedSessions = sessions().get(instanceId)
-    const hasUnrenderableChildResult = searchResults.some((session) => {
+    const deletedSessionIds = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
+    const currentSearchResults = searchResults.filter((session) => !deletedSessionIds.has(session.id))
+    const hasUnrenderableChildResult = currentSearchResults.some((session) => {
       const parentId = session.parentID
       return Boolean(parentId && !hydratedSessions?.has(parentId))
     })
@@ -424,7 +607,7 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
     }
 
     syncInstanceSessionIndicator(instanceId)
-    setSessionSearchResults(instanceId, trimmedQuery, searchResults.map((session) => session.id), requestId)
+    setSessionSearchResults(instanceId, trimmedQuery, currentSearchResults.map((session) => session.id), requestId)
   } catch (error) {
     log.error("Failed to search sessions:", error)
     if (isLatestSessionSearch(instanceId, trimmedQuery, requestId)) {
@@ -435,6 +618,7 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
 }
 
 function toClientSessionV2(instanceId: string, apiSession: SDKSession, existingSession?: Session): Session {
+  const incomingMetadata = (apiSession as SDKSession & { metadata?: Session["metadata"] }).metadata
   return {
     id: apiSession.id,
     instanceId,
@@ -457,7 +641,7 @@ function toClientSessionV2(instanceId: string, apiSession: SDKSession, existingS
     time: {
       ...apiSession.time,
     },
-    metadata: existingSession?.metadata,
+    metadata: preferSessionMetadata(incomingMetadata, existingSession?.metadata),
     revert: existingSession?.revert,
     pendingPermission: existingSession?.pendingPermission,
     pendingQuestion: existingSession?.pendingQuestion,
@@ -720,6 +904,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
 }
 
 function removeSessionRuntimeState(instanceId: string, sessionId: string): void {
+  sessionWorkspaceHints.get(instanceId)?.delete(sessionId)
   cancelSessionGenerationAdmissions(instanceId, sessionId)
   markSessionDeletedAuthoritative(instanceId, sessionId)
   deleteSessionAttachments(instanceId, sessionId)
@@ -873,7 +1058,7 @@ async function loadMessages(
   }
 
   const isLoading = loading().loadingMessages.get(instanceId)?.has(sessionId)
-  if (isLoading) {
+  if (isLoading && !force) {
     return
   }
 
@@ -889,6 +1074,10 @@ async function loadMessages(
   if (!session) {
     throw new Error("Session not found")
   }
+
+  const loadEpoch = advanceMessageLoadEpoch(instanceId, sessionId)
+  const messageRevision = messageStoreBus.getOrCreate(instanceId).getSessionRevision(sessionId)
+  let retryAfterRevisionConflict = false
 
   setLoading((prev) => {
     const next = { ...prev }
@@ -906,132 +1095,134 @@ async function loadMessages(
       "session.messages",
     )
 
+    if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return
+
     if (!Array.isArray(apiMessages)) {
       return
     }
 
     setSessionMessagesLoadError(instanceId, sessionId, null)
 
-    // Treat empty sessions as loaded to avoid re-fetch loops.
-    setMessagesLoaded((prev) => {
-      const next = new Map(prev)
-      const loadedSet = next.get(instanceId) || new Set()
-      loadedSet.add(sessionId)
-      next.set(instanceId, loadedSet)
-      return next
-    })
-
     if (apiMessages.length === 0) {
-      return
-    }
+      if (messageStoreBus.getOrCreate(instanceId).getSessionRevision(sessionId) !== messageRevision) {
+        retryAfterRevisionConflict = true
+      } else {
+        setMessagesLoaded((prev) => {
+          const next = new Map(prev)
+          const loadedSet = next.get(instanceId) || new Set()
+          loadedSet.add(sessionId)
+          next.set(instanceId, loadedSet)
+          return next
+        })
+      }
+    } else {
+      const messagesInfo = new Map<string, any>()
+      const messages: Message[] = apiMessages.map((apiMessage: any) => {
+        const info = apiMessage.info || apiMessage
+        const role = info.role || "assistant"
+        const messageId = info.id || String(Date.now())
 
-    const messagesInfo = new Map<string, any>()
-    const messages: Message[] = apiMessages.map((apiMessage: any) => {
-      const info = apiMessage.info || apiMessage
-      const role = info.role || "assistant"
-      const messageId = info.id || String(Date.now())
+        messagesInfo.set(messageId, info)
 
-      messagesInfo.set(messageId, info)
+        const parts: any[] = (apiMessage.parts || []).map((part: any) => normalizeMessagePart(part))
 
-      const parts: any[] = (apiMessage.parts || []).map((part: any) => normalizeMessagePart(part))
+        const message: Message = {
+          id: messageId,
+          sessionId,
+          type: role === "user" ? "user" : "assistant",
+          parts,
+          timestamp: info.time?.created || Date.now(),
+          status: "complete" as const,
+          version: 0,
+        }
 
-      const message: Message = {
-        id: messageId,
-        sessionId,
-        type: role === "user" ? "user" : "assistant",
-        parts,
-        timestamp: info.time?.created || Date.now(),
-        status: "complete" as const,
-        version: 0,
+        return message
+      })
+
+      let agentName = ""
+      let providerID = ""
+      let modelID = ""
+
+      for (let i = apiMessages.length - 1; i >= 0; i--) {
+        const apiMessage = apiMessages[i]
+        const info = apiMessage.info || apiMessage
+
+        if (info.role === "assistant") {
+          agentName = (info as any).mode || (info as any).agent || ""
+          providerID = (info as any).providerID || ""
+          modelID = (info as any).modelID || ""
+          if (agentName && providerID && modelID) break
+        }
       }
 
-      return message
-    })
-
-    let agentName = ""
-    let providerID = ""
-    let modelID = ""
-
-    for (let i = apiMessages.length - 1; i >= 0; i--) {
-      const apiMessage = apiMessages[i]
-      const info = apiMessage.info || apiMessage
-
-      if (info.role === "assistant") {
-        agentName = (info as any).mode || (info as any).agent || ""
-        providerID = (info as any).providerID || ""
-        modelID = (info as any).modelID || ""
-        if (agentName && providerID && modelID) break
+      if (!agentName && !providerID && !modelID) {
+        const defaultModel = await getDefaultModel(instanceId, session.agent)
+        if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return
+        agentName = session.agent
+        providerID = defaultModel.providerId
+        modelID = defaultModel.modelId
       }
-    }
 
-    if (!agentName && !providerID && !modelID) {
-      const defaultModel = await getDefaultModel(instanceId, session.agent)
-      agentName = session.agent
-      providerID = defaultModel.providerId
-      modelID = defaultModel.modelId
-    }
-
-    setSessions((prev) => {
-      const next = new Map(prev)
-      const nextInstanceSessions = next.get(instanceId)
-      if (!nextInstanceSessions) {
+      setSessions((prev) => {
+        if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return prev
+        const next = new Map(prev)
+        const nextInstanceSessions = next.get(instanceId)
+        if (!nextInstanceSessions) return next
+        const existingSession = nextInstanceSessions.get(sessionId)
+        if (!existingSession) return next
+        nextInstanceSessions.set(sessionId, {
+          ...existingSession,
+          agent: agentName || existingSession.agent,
+          model: providerID && modelID ? { providerId: providerID, modelId: modelID } : existingSession.model,
+        })
+        next.set(instanceId, nextInstanceSessions)
         return next
+      })
+
+      const sessionForV2 = sessions().get(instanceId)?.get(sessionId) ?? {
+        id: sessionId, title: session?.title, parentId: session?.parentId ?? null, revert: session?.revert,
       }
-
-      const existingSession = nextInstanceSessions.get(sessionId)
-      if (!existingSession) {
-        return next
+      if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return
+      if (!seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, messageRevision)) {
+        retryAfterRevisionConflict = true
+      } else {
+        setMessagesLoaded((prev) => {
+          const next = new Map(prev)
+          const loadedSet = next.get(instanceId) || new Set()
+          loadedSet.add(sessionId)
+          next.set(instanceId, loadedSet)
+          return next
+        })
+        reconcilePendingPermissionsV2(instanceId, sessionId)
+        reconcilePendingQuestionsV2(instanceId, sessionId)
       }
-
-      const updatedSession = {
-        ...existingSession,
-        agent: agentName || existingSession.agent,
-        model: providerID && modelID ? { providerId: providerID, modelId: modelID } : existingSession.model,
-      }
-
-      nextInstanceSessions.set(sessionId, updatedSession)
-      next.set(instanceId, nextInstanceSessions)
-      return next
-    })
-
-    setMessagesLoaded((prev) => {
-      const next = new Map(prev)
-      const loadedSet = next.get(instanceId) || new Set()
-      loadedSet.add(sessionId)
-      next.set(instanceId, loadedSet)
-      return next
-    })
-
-    const sessionForV2 = sessions().get(instanceId)?.get(sessionId) ?? {
-      id: sessionId,
-      title: session?.title,
-      parentId: session?.parentId ?? null,
-      revert: session?.revert,
     }
-    seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo)
-
-    // Permissions can be hydrated before messages/tool parts exist in the store.
-    // After message hydration, try to attach any pending permissions to tool-call part ids.
-    reconcilePendingPermissionsV2(instanceId, sessionId)
-    reconcilePendingQuestionsV2(instanceId, sessionId)
   
 
 
   } catch (error) {
     log.error("Failed to load messages:", error)
-    setSessionMessagesLoadError(instanceId, sessionId, getOpencodeErrorMessage(error, tGlobal("messageSection.loadError.detail")))
+    if (isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) {
+      setSessionMessagesLoadError(instanceId, sessionId, getOpencodeErrorMessage(error, tGlobal("messageSection.loadError.detail")))
+    }
     throw error
   } finally {
-    setLoading((prev) => {
-      const next = { ...prev }
-      const loadingSet = next.loadingMessages.get(instanceId)
-      if (loadingSet) {
-        loadingSet.delete(sessionId)
-      }
-      return next
-    })
+    if (isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) {
+      setLoading((prev) => {
+        const next = { ...prev }
+        const loadingSet = next.loadingMessages.get(instanceId)
+        if (loadingSet) loadingSet.delete(sessionId)
+        return next
+      })
+    }
   }
 
+  if (retryAfterRevisionConflict && sessions().get(instanceId)?.has(sessionId)) {
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    return loadMessages(instanceId, sessionId, { force: true, skipChildren })
+  }
+
+  if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return
   updateSessionInfo(instanceId, sessionId)
 
   if (!skipChildren && session.parentId === null) {
@@ -1056,6 +1247,7 @@ export {
   fetchProviders,
 
   fetchSessions,
+  hydrateRestoredSessionChain,
   loadMoreSessions,
   searchSessions,
   forkSession,

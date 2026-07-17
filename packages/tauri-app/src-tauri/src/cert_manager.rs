@@ -84,8 +84,7 @@ fn resolve_tls_asset_paths() -> Result<TlsAssetPaths, String> {
             })
         }
         (Some(_), None) | (None, Some(_)) => Err(
-            "CLI_TLS_KEY and CLI_TLS_CERT must both be set when using custom TLS files"
-                .to_string(),
+            "CLI_TLS_KEY and CLI_TLS_CERT must both be set when using custom TLS files".to_string(),
         ),
         (None, None) => {
             let tls_dir = server_tls_dir()?;
@@ -108,10 +107,12 @@ fn resolve_server_config_base_dir() -> Result<PathBuf, String> {
     let lower = raw.trim().to_lowercase();
 
     if lower.ends_with(".yaml") || lower.ends_with(".yml") || lower.ends_with(".json") {
-        return expanded
-            .parent()
-            .map(Path::to_path_buf)
-            .ok_or_else(|| format!("Failed to determine config base dir from {}", expanded.display()));
+        return expanded.parent().map(Path::to_path_buf).ok_or_else(|| {
+            format!(
+                "Failed to determine config base dir from {}",
+                expanded.display()
+            )
+        });
     }
 
     Ok(expanded)
@@ -239,8 +240,12 @@ pub fn trust_cert_in_store(cert_der: &[u8]) -> Result<(), String> {
         "codenomad-server-ca-{}.cer",
         trusted_marker_file_suffix(cert_der)
     ));
-    fs::write(&temp_path, cert_der)
-        .map_err(|e| format!("Failed to write temporary certificate {}: {e}", temp_path.display()))?;
+    fs::write(&temp_path, cert_der).map_err(|e| {
+        format!(
+            "Failed to write temporary certificate {}: {e}",
+            temp_path.display()
+        )
+    })?;
 
     let keychain_path = resolve_macos_user_keychain()?;
 
@@ -249,9 +254,7 @@ pub fn trust_cert_in_store(cert_der: &[u8]) -> Result<(), String> {
     command.arg(&keychain_path);
 
     let output = command.arg(&temp_path).output().map_err(|e| {
-        format!(
-            "Failed to launch macOS security tool to trust the local CA certificate: {e}"
-        )
+        format!("Failed to launch macOS security tool to trust the local CA certificate: {e}")
     })?;
 
     let _ = fs::remove_file(&temp_path);
@@ -328,7 +331,8 @@ fn resolve_macos_user_keychain() -> Result<PathBuf, String> {
     }
 
     let home = dirs::home_dir().or_else(|| env::var("HOME").ok().map(PathBuf::from));
-    let home = home.ok_or_else(|| "Cannot determine home directory for macOS keychain lookup".to_string())?;
+    let home = home
+        .ok_or_else(|| "Cannot determine home directory for macOS keychain lookup".to_string())?;
     Ok(home.join("Library/Keychains/login.keychain-db"))
 }
 
@@ -340,8 +344,12 @@ fn macos_cert_is_trusted(cert_der: &[u8]) -> Result<bool, String> {
         "codenomad-server-ca-verify-{}.cer",
         trusted_marker_file_suffix(cert_der)
     ));
-    fs::write(&temp_path, cert_der)
-        .map_err(|e| format!("Failed to write temporary certificate {}: {e}", temp_path.display()))?;
+    fs::write(&temp_path, cert_der).map_err(|e| {
+        format!(
+            "Failed to write temporary certificate {}: {e}",
+            temp_path.display()
+        )
+    })?;
 
     let keychain_path = resolve_macos_user_keychain()?;
     let fingerprint = macos_cert_sha256(&temp_path)?;
@@ -353,7 +361,9 @@ fn macos_cert_is_trusted(cert_der: &[u8]) -> Result<bool, String> {
 
     if !find_output.status.success() {
         let _ = fs::remove_file(&temp_path);
-        let stderr = String::from_utf8_lossy(&find_output.stderr).trim().to_string();
+        let stderr = String::from_utf8_lossy(&find_output.stderr)
+            .trim()
+            .to_string();
         let detail = if stderr.is_empty() {
             format!("security exited with status {}", find_output.status)
         } else {
@@ -376,7 +386,9 @@ fn macos_cert_is_trusted(cert_der: &[u8]) -> Result<bool, String> {
         .args(["-k"])
         .arg(&keychain_path)
         .output()
-        .map_err(|e| format!("Failed to verify macOS trust for the local CodeNomad CA certificate: {e}"))?;
+        .map_err(|e| {
+            format!("Failed to verify macOS trust for the local CodeNomad CA certificate: {e}")
+        })?;
 
     let _ = fs::remove_file(&temp_path);
     Ok(verify_output.status.success())

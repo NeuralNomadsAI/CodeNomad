@@ -1,137 +1,58 @@
 import { invoke } from "@tauri-apps/api/core"
 import { isElectronHost, isLocalWindow, isTauriHost } from "../runtime-env"
-
-const LEGACY_WEB_SNAPSHOT_STORAGE_KEY = "codenomad-client-snapshot-v1"
-const LEGACY_WEB_RESTORE_ENABLED_STORAGE_KEY = "codenomad-client-restore-enabled-v1"
-const accessToken = createAccessToken()
-
-let nativeAccessClaimed = false
-
-export interface NativeClientStateLoadResult {
+const LEGACY_WEB_KEYS = ["codenomad-client-snapshot-v1", "codenomad-client-restore-enabled-v1"]
+export type NativeClientStateLoadResult = {
   isPrimary: boolean
   restoreEnabled: boolean
   snapshot: unknown | null
 }
-
-function getWebStorage(): Storage | null {
-  if (typeof window === "undefined") return null
-  try {
-    return window.localStorage
-  } catch {
-    return null
-  }
-}
-
-function createAccessToken(): string {
+const SECONDARY_CLIENT_STATE: NativeClientStateLoadResult = { isPrimary: false, restoreEnabled: false, snapshot: null }
+const accessToken = (() => {
   const bytes = new Uint8Array(32)
   globalThis.crypto.getRandomValues(bytes)
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")
+})()
+let nativeAccessClaimed = false
+const electronApi = () => (window as Window & { electronAPI?: ElectronAPI }).electronAPI
+function dispatchNative<T>(electronOperation: (api: ElectronAPI | undefined) => Promise<T> | undefined, command: string, args: Record<string, unknown> = {}): Promise<T> | undefined {
+  if (isElectronHost()) return electronOperation(electronApi())
+  if (isTauriHost()) return invoke<T>(command, { accessToken, ...args })
 }
-
-function initializeWebClientState(): NativeClientStateLoadResult {
-  const storage = getWebStorage()
-  try {
-    storage?.removeItem(LEGACY_WEB_SNAPSHOT_STORAGE_KEY)
-    storage?.removeItem(LEGACY_WEB_RESTORE_ENABLED_STORAGE_KEY)
-  } catch {
-    // Web client snapshots are retired; inaccessible storage is already non-persistent.
-  }
-  return { isPrimary: false, restoreEnabled: true, snapshot: null }
-}
-
-function electronApi(): ElectronAPI | undefined {
-  if (typeof window === "undefined") return undefined
-  return (window as Window & { electronAPI?: ElectronAPI }).electronAPI
-}
-
 async function claimNativeClientStateAccess(): Promise<boolean> {
-  if (nativeAccessClaimed) return true
   if (!isLocalWindow()) return false
-
   try {
-    if (isElectronHost()) {
-      const claim = electronApi()?.claimClientStateAccess
-      nativeAccessClaimed = typeof claim === "function" && await claim(accessToken)
-      return nativeAccessClaimed
-    }
-
-    if (isTauriHost()) {
-      await invoke<void>("client_state_claim_access", { accessToken })
-      nativeAccessClaimed = true
-      return true
-    }
+    const result = await dispatchNative<boolean | void>((api) => api?.claimClientStateAccess?.(accessToken), "client_state_claim_access")
+    nativeAccessClaimed = isTauriHost() || result === true
   } catch {
     nativeAccessClaimed = false
   }
-  return false
+  return nativeAccessClaimed
 }
-
 export async function loadNativeClientState(): Promise<NativeClientStateLoadResult> {
-  if (isElectronHost()) {
-    const load = electronApi()?.loadClientState
-    if (typeof load !== "function" || !await claimNativeClientStateAccess()) {
-      return { isPrimary: false, restoreEnabled: true, snapshot: null }
-    }
-    return load(accessToken)
+  if (isElectronHost() || isTauriHost()) {
+    if (!await claimNativeClientStateAccess()) return SECONDARY_CLIENT_STATE
+    return await dispatchNative((api) => api?.loadClientState?.(accessToken), "client_state_load") ?? SECONDARY_CLIENT_STATE
   }
-
-  if (isTauriHost()) {
-    if (!await claimNativeClientStateAccess()) {
-      return { isPrimary: false, restoreEnabled: true, snapshot: null }
-    }
-    return invoke<NativeClientStateLoadResult>("client_state_load", { accessToken })
-  }
-
-  return initializeWebClientState()
+  try {
+    for (const key of LEGACY_WEB_KEYS) window.localStorage.removeItem(key)
+  } catch {}
+  return SECONDARY_CLIENT_STATE
 }
-
-export async function saveNativeClientState(snapshot: unknown): Promise<boolean> {
-  if (isElectronHost()) {
-    const save = electronApi()?.saveClientState
-    return nativeAccessClaimed && typeof save === "function" ? save(accessToken, snapshot) : false
-  }
-
-  if (isTauriHost()) {
-    return nativeAccessClaimed ? invoke<boolean>("client_state_save", { accessToken, snapshot }) : false
-  }
-
-  return false
+async function mutateNativeClientState(electronOperation: (api: ElectronAPI) => Promise<boolean> | undefined, command: string, args: Record<string, unknown> = {}): Promise<boolean> {
+  if (!nativeAccessClaimed) return false
+  return await dispatchNative((api) => api && electronOperation(api), command, args) ?? false
 }
-
-export async function setNativeRestoreEnabled(enabled: boolean): Promise<boolean> {
-  if (isElectronHost()) {
-    const setEnabled = electronApi()?.setClientStateRestoreEnabled
-    return nativeAccessClaimed && typeof setEnabled === "function" ? setEnabled(accessToken, enabled) : false
-  }
-
-  if (isTauriHost()) {
-    return nativeAccessClaimed
-      ? invoke<boolean>("client_state_set_restore_enabled", { accessToken, enabled })
-      : false
-  }
-
-  return false
+export const saveNativeClientState = (snapshot: unknown): Promise<boolean> =>
+  mutateNativeClientState((api) => api.saveClientState?.(accessToken, snapshot), "client_state_save", { snapshot })
+export const setNativeRestoreEnabled = (enabled: boolean): Promise<boolean> =>
+  mutateNativeClientState((api) => api.setClientStateRestoreEnabled?.(accessToken, enabled), "client_state_set_restore_enabled", { enabled })
+export const clearNativeClientState = (): Promise<boolean> =>
+  mutateNativeClientState((api) => api.clearClientState?.(accessToken), "client_state_clear")
+function acknowledge(command: string, args: Record<string, unknown> = {}): Promise<void> {
+  if (!isTauriHost() || !nativeAccessClaimed) return Promise.resolve()
+  return invoke(command, { accessToken, ...args })
 }
-
-export async function clearNativeClientState(): Promise<boolean> {
-  if (isElectronHost()) {
-    const clear = electronApi()?.clearClientState
-    return nativeAccessClaimed && typeof clear === "function" ? clear(accessToken) : false
-  }
-
-  if (isTauriHost()) {
-    return nativeAccessClaimed ? invoke<boolean>("client_state_clear", { accessToken }) : false
-  }
-
-  return false
-}
-
-export async function acknowledgeNativeClientStateRendererFlush(): Promise<void> {
-  if (!isTauriHost() || !nativeAccessClaimed) return
-  await invoke("client_state_renderer_flushed", { accessToken })
-}
-
-export async function acknowledgeNativeClientStateNavigationFlush(generation: number): Promise<void> {
-  if (!isTauriHost() || !nativeAccessClaimed) return
-  await invoke("client_state_navigation_flushed", { accessToken, generation })
-}
+export const acknowledgeNativeClientStateNavigationFlush = (generation: number) =>
+  acknowledge("client_state_navigation_flushed", { generation })
+export const acknowledgeNativeClientStateRendererFlush = (generation: number) =>
+  acknowledge("client_state_renderer_flushed", { generation })

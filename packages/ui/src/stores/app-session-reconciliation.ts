@@ -1,36 +1,6 @@
-export interface WorkspaceTabDescriptor {
-  kind: "workspace"
-  folderPath: string
-  occurrence: number
-}
-
-export interface LiveWorkspaceDescriptor {
-  id: string
-  folderPath: string
-}
-
-export interface WorkspaceTabMatch {
-  tabIndex: number
-  descriptor: WorkspaceTabDescriptor
-  existingWorkspaceId: string | null
-}
-
-export interface ReconcileTabDescriptor {
-  kind: string
-  folderPath?: string
-  occurrence?: number
-}
-
-export interface SessionDescriptor {
-  id: string
-  parentId?: string | null
-}
-
-export interface RestoredSessionSelection {
-  parentSessionId: string | null
-  activeSessionId: string
-}
-
+export type ReconcileTabDescriptor = { kind: string; folderPath?: string; occurrence?: number }
+type LiveWorkspaceDescriptor = { id: string; folderPath: string; status?: string }
+export type SessionDescriptor = { id: string; parentId?: string | null }
 export interface RestoredSessionReferences {
   activeParentSessionId?: string
   activeSessionId?: string
@@ -40,121 +10,79 @@ export interface RestoredSessionReferences {
   idleMarkerSessionIds?: readonly string[]
   generationRecoverySessionIds?: readonly string[]
 }
-
-function normalizeWorkspacePath(folderPath: string): string {
+export function normalizeWorkspacePath(folderPath: string): string {
   const windowsLike = /^(?:[A-Za-z]:[/\\]|[/\\]{2})/.test(folderPath)
-  const slashNormalized = windowsLike ? folderPath.replace(/\\/g, "/").toLowerCase() : folderPath
-  if (slashNormalized === "/" || /^[a-z]:\/$/.test(slashNormalized)) return slashNormalized
-  return slashNormalized.replace(/\/+$/, "")
+  const normalized = windowsLike ? folderPath.replace(/\\/g, "/").toLowerCase() : folderPath
+  return normalized === "/" || /^[a-z]:\/$/.test(normalized) ? normalized : normalized.replace(/\/+$/, "")
 }
-
-function reconcileWorkspaceTabs(
+export function getUnavailableWorkspaceIds(
+  localIds: Iterable<string>,
+  remoteIds: ReadonlySet<string>,
+  isProtected: (id: string) => boolean,
+): string[] {
+  return [...localIds].filter((id) => !remoteIds.has(id) && !isProtected(id))
+}
+export function reconcileWorkspaceTabs(
   tabs: readonly ReconcileTabDescriptor[],
   liveWorkspaces: readonly LiveWorkspaceDescriptor[],
-): WorkspaceTabMatch[] {
+) {
   const liveByPath = new Map<string, LiveWorkspaceDescriptor[]>()
   for (const workspace of liveWorkspaces) {
-    const key = normalizeWorkspacePath(workspace.folderPath)
-    const matches = liveByPath.get(key)
-    if (matches) {
-      matches.push(workspace)
-    } else {
-      liveByPath.set(key, [workspace])
-    }
+    if (workspace.status === "stopped" || workspace.status === "error") continue
+    const path = normalizeWorkspacePath(workspace.folderPath)
+    liveByPath.set(path, [...(liveByPath.get(path) ?? []), workspace])
   }
-
-  const result: WorkspaceTabMatch[] = []
-  const inferredOccurrences = new Map<string, number>()
-  const claimedWorkspaceIds = new Set<string>()
-  tabs.forEach((tab, tabIndex) => {
-    if (tab.kind !== "workspace" || typeof tab.folderPath !== "string") return
-    const normalizedPath = normalizeWorkspacePath(tab.folderPath)
-    const inferredOccurrence = inferredOccurrences.get(normalizedPath) ?? 0
-    const occurrence = Number.isInteger(tab.occurrence) && Number(tab.occurrence) >= 0
-      ? Number(tab.occurrence)
-      : inferredOccurrence
-    inferredOccurrences.set(normalizedPath, Math.max(inferredOccurrence, occurrence) + 1)
-    const descriptor: WorkspaceTabDescriptor = {
-      kind: "workspace",
-      folderPath: tab.folderPath,
-      occurrence,
-    }
-    const matches = liveByPath.get(normalizedPath) ?? []
-    const existingWorkspace = matches[occurrence]
-    const existingWorkspaceId = existingWorkspace && !claimedWorkspaceIds.has(existingWorkspace.id)
-      ? existingWorkspace.id
-      : null
-    if (existingWorkspaceId) claimedWorkspaceIds.add(existingWorkspaceId)
-    result.push({
+  const nextOccurrences = new Map<string, number>()
+  const claimed = new Set<string>()
+  return tabs.flatMap((tab, tabIndex) => {
+    if (tab.kind !== "workspace" || typeof tab.folderPath !== "string") return []
+    const path = normalizeWorkspacePath(tab.folderPath)
+    const inferred = nextOccurrences.get(path) ?? 0
+    const occurrence = Number.isInteger(tab.occurrence) && Number(tab.occurrence) >= 0 ? Number(tab.occurrence) : inferred
+    nextOccurrences.set(path, Math.max(inferred, occurrence) + 1)
+    const workspace = liveByPath.get(path)?.[occurrence]
+    const existingWorkspaceId = workspace && !claimed.has(workspace.id) ? workspace.id : null
+    if (existingWorkspaceId) claimed.add(existingWorkspaceId)
+    return [{
       tabIndex,
-      descriptor,
+      descriptor: { kind: "workspace" as const, folderPath: tab.folderPath, occurrence },
       existingWorkspaceId,
-    })
+    }]
   })
-  return result
 }
-
-function resolveRestoredSessionSelection(
+export function resolveRestoredSessionSelection(
   availableSessions: readonly SessionDescriptor[],
   requestedParentSessionId: string | null | undefined,
   requestedActiveSessionId: string | null | undefined,
-): RestoredSessionSelection | null {
-  const sessionsById = new Map(availableSessions.map((session) => [session.id, session]))
-
-  const resolveRootId = (sessionId: string | null | undefined): string | null => {
-    if (!sessionId) return null
-    let current = sessionsById.get(sessionId)
-    if (!current) return null
-
+) {
+  const sessions = new Map(availableSessions.map((session) => [session.id, session]))
+  const rootId = (sessionId: string | null | undefined): string | null => {
+    let current = sessionId ? sessions.get(sessionId) : undefined
     const seen = new Set<string>()
-    while (current.parentId) {
+    while (current?.parentId) {
       if (seen.has(current.id)) return null
       seen.add(current.id)
-      const parent = sessionsById.get(current.parentId)
-      if (!parent) return null
-      current = parent
+      current = sessions.get(current.parentId)
     }
-    return current.id
+    return current?.id ?? null
   }
-
-  const validRequestedParent = resolveRootId(requestedParentSessionId)
-
-  if (requestedActiveSessionId === "info") {
-    return { parentSessionId: validRequestedParent, activeSessionId: "info" }
+  const parentSessionId = rootId(requestedParentSessionId)
+  if (requestedActiveSessionId === "info") return { parentSessionId, activeSessionId: "info" }
+  const active = requestedActiveSessionId ? sessions.get(requestedActiveSessionId) : undefined
+  const activeParentId = rootId(active?.id)
+  if (active && activeParentId && (!parentSessionId || parentSessionId === activeParentId)) {
+    return { parentSessionId: activeParentId, activeSessionId: active.id }
   }
-
-  const requestedActive = requestedActiveSessionId ? sessionsById.get(requestedActiveSessionId) : undefined
-  if (requestedActive) {
-    const validActiveParentId = resolveRootId(requestedActive.id)
-    if (validActiveParentId) {
-      if (!validRequestedParent || validRequestedParent === validActiveParentId) {
-        return { parentSessionId: validActiveParentId, activeSessionId: requestedActive.id }
-      }
-    }
-  }
-
-  if (validRequestedParent) {
-    return { parentSessionId: validRequestedParent, activeSessionId: validRequestedParent }
-  }
-  return null
+  return parentSessionId ? { parentSessionId, activeSessionId: parentSessionId } : null
 }
-
-function areRestoredSessionReferencesAvailable(
-  availableSessions: readonly SessionDescriptor[],
-  references: RestoredSessionReferences,
-  allowedNonSessionIds: readonly string[] = [],
-): boolean {
-  return getUnavailableRestoredSessionIds(availableSessions, references, allowedNonSessionIds).size === 0
-}
-
-function getUnavailableRestoredSessionIds(
+export function getUnavailableRestoredSessionIds(
   availableSessions: readonly SessionDescriptor[],
   references: RestoredSessionReferences,
   allowedNonSessionIds: readonly string[] = [],
 ): Set<string> {
-  const availableIds = new Set(availableSessions.map((session) => session.id))
-  const allowedIds = new Set(allowedNonSessionIds)
-  const requiredIds = [
+  const available = new Set(availableSessions.map(({ id }) => id))
+  const allowed = new Set(allowedNonSessionIds)
+  const referenced = [
     references.activeParentSessionId,
     references.activeSessionId === "info" ? undefined : references.activeSessionId,
     ...references.draftSessionIds,
@@ -163,46 +91,17 @@ function getUnavailableRestoredSessionIds(
     ...(references.idleMarkerSessionIds ?? []),
     ...(references.generationRecoverySessionIds ?? []),
   ]
-  return new Set(
-    requiredIds.filter((sessionId): sessionId is string =>
-      Boolean(sessionId) && !availableIds.has(sessionId!) && !allowedIds.has(sessionId!),
-    ),
-  )
+  return new Set(referenced.filter((id): id is string => Boolean(id) && !available.has(id!) && !allowed.has(id!)))
 }
-
-function resolveRestoredActiveTabId(
+export function resolveRestoredActiveTabId(
   restoredTabIds: readonly (string | null | undefined)[],
   requestedActiveTabIndex: number,
 ): string | null {
-  if (Number.isInteger(requestedActiveTabIndex) && requestedActiveTabIndex >= 0) {
-    const requested = restoredTabIds[requestedActiveTabIndex]
-    if (requested) return requested
-  }
-  return restoredTabIds.find((tabId): tabId is string => Boolean(tabId)) ?? null
+  const requested = Number.isInteger(requestedActiveTabIndex) && requestedActiveTabIndex >= 0
+    ? restoredTabIds[requestedActiveTabIndex]
+    : null
+  return requested || restoredTabIds.find((id): id is string => Boolean(id)) || null
 }
-
-function shouldRestoreSessionState(
-  isPrimary: boolean,
-  restoreEnabled: boolean,
-  snapshot: unknown,
-): boolean {
-  return isPrimary && restoreEnabled && Boolean(snapshot)
-}
-
-function shouldEnableSessionCapture(
-  _snapshotExisted: boolean,
-  _restoreCompleted: boolean,
-): boolean {
-  return true
-}
-
-export {
-  areRestoredSessionReferencesAvailable,
-  getUnavailableRestoredSessionIds,
-  normalizeWorkspacePath,
-  reconcileWorkspaceTabs,
-  resolveRestoredActiveTabId,
-  resolveRestoredSessionSelection,
-  shouldEnableSessionCapture,
-  shouldRestoreSessionState,
+export function shouldRestoreSessionState(isPrimary: boolean, restoreEnabled: boolean, snapshot: unknown): boolean {
+  return Boolean(isPrimary && restoreEnabled && snapshot)
 }

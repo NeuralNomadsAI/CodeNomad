@@ -471,7 +471,7 @@ export type WorkspaceEventPayload =
   | { type: "workspace.created"; workspace: WorkspaceDescriptor }
   | { type: "workspace.started"; workspace: WorkspaceDescriptor }
   | { type: "workspace.error"; workspace: WorkspaceDescriptor }
-  | { type: "workspace.stopped"; workspaceId: string }
+  | { type: "workspace.stopped"; workspaceId: string; reason?: "deleted" | "stopped" }
   | { type: "workspace.log"; entry: WorkspaceLogEntry }
   | { type: "sidecar.updated"; sidecar: SideCar }
   | { type: "sidecar.removed"; sidecarId: string }

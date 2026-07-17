@@ -1,11 +1,8 @@
-import type { App, BrowserWindow, Event } from "electron"
+import type { App, BrowserWindow } from "electron"
 import type { ClientStateManager } from "./client-state"
-import { MainWindowCloseController } from "./main-window-close"
 import type { CliProcessManager } from "./process-manager"
 import { flushRendererClientStateBeforeShutdown } from "./renderer-client-state-flush"
 import type { WindowStateTracker } from "./window-state"
-
-const WINDOWS_SESSION_END_FLUSH_TIMEOUT_MS = 1_500
 
 interface ClientStateLifecycleDependencies {
   app: App
@@ -15,63 +12,62 @@ interface ClientStateLifecycleDependencies {
   getAllWindows(): BrowserWindow[]
   getAllowedRendererOrigins(window?: BrowserWindow | null): string[]
   isTrustedRendererOrigin(url: string, allowedOrigins: string[]): boolean
-  windowsSessionEndFlushTimeoutMs?: number
   rendererFlushTimeoutMs?: number
+  sessionEndCleanupTimeoutMs?: number
+  sessionEndReleaseTimeoutMs?: number
   isWindows?: boolean
 }
 
 export class ClientStateLifecycle {
-  private shutdownStarted = false
-  private shutdownExitAllowed = false
+  private shutdown: Promise<void> | null = null
+  private sessionEnd: Promise<void> | null = null
+  private exitAllowed = false
   private trackedMainWindow: BrowserWindow | null = null
   private windowStateTracker: WindowStateTracker | null = null
-  private windowsSessionEndFlush: Promise<void> | null = null
-  private windowsSessionEndExitAllowed = false
+  private windowsHiddenForShutdown = false
+  private primaryRelease: Promise<void> | null = null
 
   constructor(private readonly dependencies: ClientStateLifecycleDependencies) {}
 
-  attachMainWindow(window: BrowserWindow, windowStateTracker: WindowStateTracker | null): void {
+  attachMainWindow(window: BrowserWindow, tracker: WindowStateTracker | null): void {
     this.trackedMainWindow = window
-    this.windowStateTracker = windowStateTracker
-
-    const closeController = new MainWindowCloseController({
-      flushRenderer: () => this.flushRenderer(window, "main-window close"),
-      flushNative: () => this.flushNative(),
-      closeWindow: () => window.close(),
-      reportError: (stage, error) => {
-        console.warn(`[client-state] ${stage} main-window close flush failed; continuing close`, error)
-      },
-    })
+    this.windowStateTracker = tracker
+    let closeApproved = false
+    let closeInProgress = false
 
     window.on("close", (event) => {
-      if (this.shutdownExitAllowed) return
-      if (this.shutdownStarted) {
-        event.preventDefault()
-        return
-      }
+      if (this.exitAllowed || closeApproved) return
+      event.preventDefault()
+      if (this.shutdown) return
 
       const hasOtherWindow = this.dependencies
         .getAllWindows()
         .some((candidate) => candidate !== window && !candidate.isDestroyed())
-      if (hasOtherWindow) {
-        const decision = closeController.handleClose()
-        if (!decision.allow) {
-          event.preventDefault()
-        }
-        return
+      if (!hasOtherWindow) {
+        window.hide()
+        this.dependencies.app.quit()
+      } else if (!closeInProgress) {
+        closeInProgress = true
+        void this.flushForClose(window).finally(() => {
+          closeApproved = true
+          try {
+            window.close()
+          } catch (error) {
+            closeApproved = false
+            closeInProgress = false
+            console.warn("[client-state] main-window close failed", error)
+          }
+        })
       }
-
-      event.preventDefault()
-      this.dependencies.app.quit()
     })
 
     if (this.dependencies.isWindows ?? process.platform === "win32") {
-      window.on("query-session-end", (event: Event) => {
-        if (this.windowsSessionEndExitAllowed) return
+      window.on("query-session-end", (event) => {
+        if (this.exitAllowed) return
         event.preventDefault()
-        this.startWindowsSessionEnd(window)
+        this.promoteToSessionEnd(window)
       })
-      window.on("session-end", () => this.startWindowsSessionEnd(window))
+      window.on("session-end", () => this.promoteToSessionEnd(window))
     }
   }
 
@@ -83,102 +79,114 @@ export class ClientStateLifecycle {
 
   registerAppEvents(): void {
     const { app } = this.dependencies
-    app.on("before-quit", (event) => this.handleBeforeQuit(event))
-    app.on("window-all-closed", () => {
-      // Closing the final remaining window should quit the app on all platforms.
-      app.quit()
+    app.on("before-quit", (event) => {
+      if (this.exitAllowed) return
+      event.preventDefault()
+      this.hideWindows()
+      void this.startShutdown(this.dependencies.getMainWindow()).then(() => this.exit(), (error) => {
+        if (!this.sessionEnd) this.restoreWindowAfterRejectedShutdown(this.dependencies.getMainWindow())
+        console.warn("[client-state] desktop shutdown remains pending because cleanup was not contained", error)
+      })
     })
+    app.on("window-all-closed", () => app.quit())
   }
 
-  private async handleBeforeQuit(event: { preventDefault(): void }): Promise<void> {
-    event.preventDefault()
-    if (this.shutdownStarted) return
-    this.shutdownStarted = true
-
-    try {
-      await this.flushRenderer(this.dependencies.getMainWindow(), "shutdown")
-    } catch (error) {
-      console.warn("[client-state] renderer shutdown flush failed; continuing shutdown", error)
-    }
-
-    try {
-      await this.flushNative()
-    } catch (error) {
-      console.warn("[client-state] failed to flush state during shutdown", error)
-    }
-
-    try {
-      await this.dependencies.clientStateManager.drainAndReleasePrimary()
-    } catch (error) {
-      console.warn("[client-state] failed to drain state before releasing primary ownership", error)
-    }
-
-    await this.dependencies.cliManager.stop().catch(() => {})
-    this.shutdownExitAllowed = true
-    this.dependencies.app.exit(0)
+  private async flushForClose(window: BrowserWindow): Promise<void> {
+    await this.runStage("renderer main-window close flush", () => this.flushRenderer(window))
+    await this.runStage("native main-window close flush", () => this.flushNative())
   }
 
-  private async flushRenderer(window: BrowserWindow | null, context: "main-window close" | "shutdown"): Promise<void> {
+  private startShutdown(window: BrowserWindow | null): Promise<void> {
+    if (this.shutdown) return this.shutdown
+    const stages = (async () => {
+      await this.runStage("renderer shutdown flush", () => this.flushRenderer(window))
+      await this.runStage("native shutdown flush", () => this.flushNative())
+      await this.dependencies.cliManager.shutdown()
+      await this.releasePrimary()
+    })()
+    this.shutdown = stages.catch((error) => {
+      this.shutdown = null
+      throw error
+    })
+    return this.shutdown
+  }
+
+  private hideWindows(): void {
+    for (const window of this.dependencies.getAllWindows()) {
+      if (!window.isDestroyed()) {
+        window.hide()
+        this.windowsHiddenForShutdown = true
+      }
+    }
+  }
+
+  private restoreWindowAfterRejectedShutdown(preferred: BrowserWindow | null): void {
+    if (!this.windowsHiddenForShutdown) return
+    this.windowsHiddenForShutdown = false
+    const window = preferred && !preferred.isDestroyed()
+      ? preferred
+      : this.dependencies.getAllWindows().find((candidate) => !candidate.isDestroyed())
+    if (window) window.show()
+  }
+
+  private promoteToSessionEnd(window: BrowserWindow): void {
+    if (this.exitAllowed || this.sessionEnd) return
+    const cleanup = this.startShutdown(window)
+    this.sessionEnd = new Promise<void>((resolve) => {
+      const timeoutMs = this.dependencies.sessionEndCleanupTimeoutMs ?? 5_000
+      const releaseTimeoutMs = Math.min(timeoutMs, this.dependencies.sessionEndReleaseTimeoutMs ?? 250)
+      const releaseTimer = setTimeout(() => {
+        void this.releasePrimary()
+      }, Math.max(0, timeoutMs - releaseTimeoutMs))
+      const exitTimer = setTimeout(() => {
+        console.warn(`[client-state] OS session-end cleanup exceeded ${timeoutMs}ms; exiting without containment`)
+        resolve()
+      }, timeoutMs)
+      void cleanup.then(() => {
+        clearTimeout(releaseTimer)
+        clearTimeout(exitTimer)
+        resolve()
+      }, (error) => {
+        console.warn("[client-state] OS session-end cleanup was not contained; waiting for forced exit", error)
+      })
+    }).then(() => this.exit())
+  }
+
+  private releasePrimary(): Promise<void> {
+    if (!this.primaryRelease) {
+      this.primaryRelease = this.runStage("primary release", () => this.dependencies.clientStateManager.drainAndReleasePrimary())
+    }
+    return this.primaryRelease
+  }
+
+  private async flushRenderer(window: BrowserWindow | null): Promise<void> {
     const result = await flushRendererClientStateBeforeShutdown(
       window,
       this.dependencies.clientStateManager.isPrimary,
-      (url) =>
-        this.dependencies.isTrustedRendererOrigin(url, this.dependencies.getAllowedRendererOrigins(window)),
+      (url) => this.dependencies.isTrustedRendererOrigin(url, this.dependencies.getAllowedRendererOrigins(window)),
       this.dependencies.rendererFlushTimeoutMs,
     )
     if (result === "untrusted-origin") {
-      console.warn(`[client-state] skipped renderer ${context} flush for an untrusted origin`)
+      console.warn("[client-state] skipped renderer flush for an untrusted origin")
     }
   }
 
   private async flushNative(): Promise<void> {
-    if (this.windowStateTracker) {
-      await this.windowStateTracker.flush()
-    } else {
-      await this.dependencies.clientStateManager.flush()
+    if (this.windowStateTracker) await this.windowStateTracker.flush()
+    else await this.dependencies.clientStateManager.flush()
+  }
+
+  private async runStage(name: string, operation: () => Promise<unknown>): Promise<void> {
+    try {
+      await operation()
+    } catch (error) {
+      console.warn(`[client-state] ${name} failed; continuing`, error)
     }
   }
 
-  private flushForWindowsSessionEnd(window: BrowserWindow): Promise<void> {
-    if (this.windowsSessionEndFlush) return this.windowsSessionEndFlush
-
-    const flush = async () => {
-      try {
-        await this.flushRenderer(window, "shutdown")
-      } catch (error) {
-        console.warn("[client-state] Windows session-end renderer flush failed", error)
-      }
-      try {
-        await this.flushNative()
-      } catch (error) {
-        console.warn("[client-state] Windows session-end native flush failed", error)
-      }
-      try {
-        await this.dependencies.clientStateManager.drainAndReleasePrimary()
-      } catch (error) {
-        console.warn("[client-state] Windows session-end primary release failed", error)
-      }
-      try {
-        await this.dependencies.cliManager.stop()
-      } catch (error) {
-        console.warn("[client-state] Windows session-end CLI stop failed", error)
-      }
-    }
-    this.windowsSessionEndFlush = Promise.race([
-      flush(),
-      new Promise<void>((resolve) => setTimeout(
-        resolve,
-        this.dependencies.windowsSessionEndFlushTimeoutMs ?? WINDOWS_SESSION_END_FLUSH_TIMEOUT_MS,
-      )),
-    ])
-    return this.windowsSessionEndFlush
-  }
-
-  private startWindowsSessionEnd(window: BrowserWindow): void {
-    if (this.windowsSessionEndFlush) return
-    void this.flushForWindowsSessionEnd(window).finally(() => {
-      this.windowsSessionEndExitAllowed = true
-      this.dependencies.app.exit(0)
-    })
+  private exit(): void {
+    if (this.exitAllowed) return
+    this.exitAllowed = true
+    this.dependencies.app.exit(0)
   }
 }

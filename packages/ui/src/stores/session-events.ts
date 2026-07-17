@@ -62,8 +62,8 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { cancelSessionGenerationAdmissions, ensureSessionAncestorsExpanded, prependSessionListId, sessions, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
-import { resolveAuthoritativeGenerationRecovery } from "./session-generation-recovery"
+import { ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, prependSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
+import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { tGlobal } from "../lib/i18n"
@@ -94,14 +94,6 @@ import { handleConversationAssistantPartUpdated } from "./conversation-speech"
 const log = getLogger("sse")
 const pendingSessionFetches = new Map<string, Promise<void>>()
 let activeRetryToast: ToastHandle | null = null
-
-function isSameRetryState(left: SessionRetryState | null | undefined, right: SessionRetryState | null | undefined): boolean {
-  const a = left ?? null
-  const b = right ?? null
-  if (a === b) return true
-  if (!a || !b) return false
-  return a.attempt === b.attempt && a.message === b.message && a.next === b.next
-}
 
 function shouldSendOsNotification(kind: "needsInput" | "idle"): boolean {
   if (typeof document === "undefined") return false
@@ -166,47 +158,6 @@ interface TuiToastEvent {
 
 const ALLOWED_TOAST_VARIANTS = new Set<ToastVariant>(["info", "success", "warning", "error"])
 
-function applySessionStatus(instanceId: string, sessionId: string, status: SessionStatus, retry?: SessionRetryState | null) {
-  let expandAncestors = false
-
-  withSession(instanceId, sessionId, (session) => {
-    const current = session.status ?? "idle"
-    const nextRetry = retry ?? null
-    const admissionPending = session.generationAdmissionToken !== undefined && status === "idle"
-    const generationRecovery = admissionPending
-      ? "pending"
-      : resolveAuthoritativeGenerationRecovery(session.generationRecovery, status)
-    if (
-      current === status
-      && isSameRetryState(session.retry, nextRetry)
-      && session.runtimeStatusKnown === !admissionPending
-      && (session.generationRecovery ?? null) === generationRecovery
-    ) return false
-
-    if (current === "compacting" && status !== "compacting") {
-      return false
-    }
-
-    session.status = status
-    session.runtimeStatusKnown = !admissionPending
-    session.generationRecovery = generationRecovery
-    if (!admissionPending) {
-      cancelSessionGenerationAdmissions(instanceId, sessionId)
-      session.generationAdmissionToken = undefined
-    }
-    session.retry = status === "working" ? nextRetry : null
-    session.idleSince = getIdleSinceForStatusTransition(current, status, session.idleSince)
-
-    // Auto-expand the parent thread when a child session starts working.
-    // Users can still collapse it; we only expand on the transition.
-    if (session.parentId && status === "working" && current !== "working") {
-      expandAncestors = true
-    }
-  })
-
-  if (expandAncestors) ensureSessionAncestorsExpanded(instanceId, sessionId)
-}
-
 async function fetchSessionInfo(instanceId: string, sessionId: string, directory?: string): Promise<Session | null> {
   const instance = instances().get(instanceId)
   if (!instance?.client) return null
@@ -222,36 +173,19 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
       "session.get",
     )
 
-    let fetchedStatus: SessionStatus = "idle"
-    let fetchedRetry: SessionRetryState | null = null
+    let rawStatus = (info as any)?.status
     let fetchedStatusKnown = false
     try {
-      let statuses: Record<string, any> = {}
-      try {
-        statuses = await requestData<Record<string, any>>(client.session.status(), "session.status")
-      } catch {
-        statuses = await requestData<Record<string, any>>(client.session.status(), "session.status")
-      }
-      // Session status is global-ish; prefer the root context when available.
-      // (OpenCode may scope status by directory in older builds.)
-      // If root fails, fall back to the worktree-scoped client.
-      //
-      // Note: requestData throws on error, so we catch below.
-      const rawStatus = (info as any)?.status ?? statuses?.[sessionId]
-      const hasType = rawStatus && typeof rawStatus === "object" && typeof rawStatus.type === "string"
-      fetchedStatus = hasType ? mapSdkSessionStatus(rawStatus) : "idle"
-      fetchedRetry = hasType ? mapSdkSessionRetry(rawStatus) : null
+      const statuses = await requestData<Record<string, any>>(client.session.status(), "session.status")
+      rawStatus ??= statuses?.[sessionId]
       fetchedStatusKnown = true
     } catch (error) {
       log.error("Failed to fetch session status", error)
-      const rawStatus = (info as any)?.status
-      const hasType = rawStatus && typeof rawStatus === "object" && typeof rawStatus.type === "string"
-      if (hasType) {
-        fetchedStatus = mapSdkSessionStatus(rawStatus)
-        fetchedRetry = mapSdkSessionRetry(rawStatus)
-        fetchedStatusKnown = true
-      }
     }
+    const hasStatus = rawStatus && typeof rawStatus === "object" && typeof rawStatus.type === "string"
+    fetchedStatusKnown ||= Boolean(hasStatus)
+    const fetchedStatus: SessionStatus = hasStatus ? mapSdkSessionStatus(rawStatus) : "idle"
+    const fetchedRetry: SessionRetryState | null = hasStatus ? mapSdkSessionRetry(rawStatus) : null
 
     const fetched = createClientSession(info, instanceId, "", { providerId: "", modelId: "" }, fetchedStatus)
     fetched.retry = fetchedRetry
@@ -264,32 +198,25 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
       const next = new Map(prev)
       const instanceSessions = next.get(instanceId) ?? new Map<string, Session>()
       const existing = instanceSessions.get(sessionId)
-      const admissionPending = existing?.generationAdmissionToken !== undefined
-      const status = admissionPending || existing?.status === "compacting" ? existing!.status : fetched.status
-      const runtimeStatusKnown = admissionPending
-        ? existing?.runtimeStatusKnown ?? false
-        : Boolean(existing?.status === "compacting" || fetchedStatusKnown || existing?.runtimeStatusKnown)
-      const merged: Session = {
+      const compacting = existing?.status === "compacting"
+      const candidate: Session = {
         ...fetched,
         agent: existing?.agent ?? fetched.agent,
         model: existing?.model ?? fetched.model,
-        status,
-        retry: existing?.status === "compacting" ? null : fetched.retry,
-        idleSince: getIdleSinceForStatusTransition(
-          existing?.status,
-          existing?.status === "compacting" ? "compacting" : fetched.status,
-          existing?.idleSince,
-        ),
+        status: compacting ? "compacting" : fetched.status,
+        retry: compacting ? null : fetched.retry,
+        idleSince: getIdleSinceForStatusTransition(existing?.status, compacting ? "compacting" : fetched.status, existing?.idleSince),
         pendingPermission: existing?.pendingPermission ?? fetched.pendingPermission,
         pendingQuestion: existing?.pendingQuestion ?? false,
-        runtimeStatusKnown,
-        generationRecovery: admissionPending
-          ? existing?.generationRecovery ?? "pending"
-          : runtimeStatusKnown
-          ? resolveAuthoritativeGenerationRecovery(existing?.generationRecovery, status)
-          : existing?.generationRecovery ?? null,
-        generationAdmissionToken: admissionPending ? existing?.generationAdmissionToken : undefined,
+        runtimeStatusKnown: compacting || fetched.runtimeStatusKnown,
       }
+      const merged = mergeFetchedSessionRuntimeState(
+        candidate,
+        existing,
+        existing,
+        getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId),
+      )
+      if (!merged) return prev
       instanceSessions.set(sessionId, merged)
       next.set(instanceId, instanceSessions)
       updatedInstanceSessions = instanceSessions
@@ -318,22 +245,19 @@ function ensureSessionStatus(
   directory?: string,
   retry?: SessionRetryState | null,
 ) {
-  const instanceSessions = sessions().get(instanceId)
-  const existing = instanceSessions?.get(sessionId)
+  const existing = sessions().get(instanceId)?.get(sessionId)
   if (existing) {
-    applySessionStatus(instanceId, sessionId, status, retry)
+    setSessionStatus(instanceId, sessionId, status, { retry })
     return
   }
 
   const key = `${instanceId}:${sessionId}`
-  if (pendingSessionFetches.has(key)) {
-    return
-  }
+  if (pendingSessionFetches.has(key)) return
 
   const pending = (async () => {
     const fetched = await fetchSessionInfo(instanceId, sessionId, directory)
     if (!fetched) return
-    applySessionStatus(instanceId, sessionId, status, retry)
+    setSessionStatus(instanceId, sessionId, status, { retry })
   })()
 
   pendingSessionFetches.set(key, pending)
@@ -517,6 +441,7 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
   const info = event.properties?.info
 
   if (!info) return
+  if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(info.id)) return
 
   const instanceSessions = sessions().get(instanceId) ?? new Map<string, Session>()
 
@@ -672,19 +597,8 @@ function handleSessionCompacted(instanceId: string, event: EventSessionCompacted
   log.info(`[SSE] Session compacted: ${sessionID}`)
 
   const existing = sessions().get(instanceId)?.get(sessionID)
-  if (existing) {
-    cancelSessionGenerationAdmissions(instanceId, sessionID)
-    withSession(instanceId, sessionID, (session) => {
-      session.status = "working"
-      session.runtimeStatusKnown = true
-      session.generationRecovery = null
-      session.generationAdmissionToken = undefined
-      session.retry = null
-      session.idleSince = null
-    })
-  } else {
-    ensureSessionStatus(instanceId, sessionID, "working", (event as any)?.directory)
-  }
+  if (existing) setSessionStatus(instanceId, sessionID, "working", { force: true })
+  else ensureSessionStatus(instanceId, sessionID, "working", (event as any)?.directory)
 
   loadMessages(instanceId, sessionID, { force: true }).catch((error) => log.error("Failed to reload session after compaction", error))
 
@@ -728,7 +642,7 @@ function handleMessageRemoved(instanceId: string, event: MessageRemovedEvent): v
   if (!sessionID || !messageID) return
 
   log.info(`[SSE] Message removed from session ${sessionID}`, { messageID })
-  removeMessageV2(instanceId, messageID)
+  removeMessageV2(instanceId, messageID, sessionID)
   updateSessionInfo(instanceId, sessionID)
 }
 
@@ -737,7 +651,7 @@ function handleMessagePartRemoved(instanceId: string, event: MessagePartRemovedE
   if (!sessionID || !messageID || !partID) return
 
   log.info(`[SSE] Message part removed from session ${sessionID}`, { messageID, partID })
-  removeMessagePartV2(instanceId, messageID, partID)
+  removeMessagePartV2(instanceId, messageID, partID, sessionID)
   updateSessionInfo(instanceId, sessionID)
 }
 

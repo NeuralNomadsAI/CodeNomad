@@ -1,21 +1,16 @@
 import type { Attachment, AttachmentSource } from "../types/attachment"
-import {
-  createAttachmentPlaceholderRegex,
-  type AttachmentPlaceholderKind,
-} from "../lib/attachment-placeholders"
-import { createPromptMentionRegex, getAttachmentPromptMentionCandidates } from "../lib/attachment-mentions"
+import { removeAttachmentPromptTokens } from "../lib/attachment-mentions"
 
 export type RestorableAttachmentSource =
   | { type: "file"; path: string; mime: string; data?: string }
   | { type: "text"; value: string }
-  | {
-      type: "symbol"
-      path: string
-      name: string
-      kind: number
-      range: { start: { line: number; char: number }; end: { line: number; char: number } }
-    }
   | { type: "agent"; name: string }
+  | { type: "symbol"; path: string; name: string; kind: number; range: { start: Position; end: Position } }
+
+interface Position {
+  line: number
+  char: number
+}
 
 export interface RestorableAttachment {
   id: string
@@ -26,80 +21,51 @@ export interface RestorableAttachment {
   mediaType: string
   source: RestorableAttachmentSource
 }
-
 export interface AttachmentCodecBudget {
   attachmentsRemaining: number
   metadataCharactersRemaining: number
   fileDataCharactersRemaining: number
 }
 
-const MAX_ATTACHMENT_SESSIONS_PER_TAB = 24
-const MAX_ATTACHMENTS_PER_SESSION = 8
-const MAX_ATTACHMENTS_TOTAL = 64
-const MAX_ATTACHMENT_METADATA_CHARACTERS = 24 * 1024
-const MAX_FILE_DATA_BYTES = 64 * 1024
-const MAX_FILE_DATA_CHARACTERS = 96 * 1024
-const MAX_ID_LENGTH = 512
-const MAX_DISPLAY_LENGTH = 1024
-const MAX_PATH_LENGTH = 4096
-const MAX_MIME_LENGTH = 256
-const MAX_TEXT_LENGTH = 24 * 1024
+const MAX_SESSIONS = 24
+const MAX_PER_SESSION = 8
+const MAX_ATTACHMENTS = 64
+const MAX_METADATA = 24 * 1024
+const MAX_FILE_BYTES = 64 * 1024
+const MAX_FILE_CHARACTERS = 96 * 1024
+const MAX_ID = 512
+const MAX_DISPLAY = 1024
+const MAX_PATH = 4096
+const MAX_MIME = 256
+const MAX_TEXT = 24 * 1024
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+const isSafeKey = (value: string) =>
+  value !== "__proto__" && value !== "constructor" && value !== "prototype"
 
-function isSafeKey(value: string): boolean {
-  return value !== "__proto__" && value !== "constructor" && value !== "prototype"
-}
-
-function takeString(
-  value: unknown,
-  maxLength: number,
-  budget: AttachmentCodecBudget,
-  allowEmpty = false,
-): string | undefined {
-  if (typeof value !== "string" || value.length > maxLength || value.length > budget.metadataCharactersRemaining) {
-    return undefined
-  }
-  if (!allowEmpty && value.trim().length === 0) return undefined
+function takeString(value: unknown, max: number, budget: AttachmentCodecBudget, allowEmpty = false) {
+  if (
+    typeof value !== "string" ||
+    value.length > max ||
+    value.length > budget.metadataCharactersRemaining
+  ) return
+  if (!allowEmpty && value.trim().length === 0) return
   budget.metadataCharactersRemaining -= value.length
   return value
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = ""
-  const chunkSize = 0x8000
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(index, Math.min(index + chunkSize, bytes.length)))
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000))
   }
   return btoa(binary)
 }
 
-function base64ToBytes(value: string): Uint8Array {
-  const binary = atob(value)
-  const result = new Uint8Array(binary.length)
-  for (let index = 0; index < binary.length; index += 1) result[index] = binary.charCodeAt(index)
-  return result
-}
+const base64ToBytes = (value: string) => Uint8Array.from(atob(value), (character) => character.charCodeAt(0))
 
-function normalizeBase64(value: unknown): string | undefined {
-  if (value instanceof Uint8Array) {
-    if (value.byteLength > MAX_FILE_DATA_BYTES) return undefined
-    return bytesToBase64(value)
-  }
-  if (typeof value !== "string" || value.length > MAX_FILE_DATA_CHARACTERS) return undefined
-  if (value.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) return undefined
-  try {
-    if (base64ToBytes(value).byteLength > MAX_FILE_DATA_BYTES) return undefined
-  } catch {
-    return undefined
-  }
-  return value
-}
-
-function isValidFileData(value: unknown): boolean {
-  if (value instanceof Uint8Array) return true
+function validBase64(value: unknown): value is string {
   if (typeof value !== "string" || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) return false
   try {
     base64ToBytes(value)
@@ -109,117 +75,91 @@ function isValidFileData(value: unknown): boolean {
   }
 }
 
-function dataUrlPayload(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined
-  const match = value.match(/^data:[^;,]+;base64,([A-Za-z0-9+/]*={0,2})$/)
-  return match?.[1]
-}
+const dataUrlPayload = (value: unknown): string | undefined => typeof value === "string"
+  ? value.match(/^data:[^;,]+;base64,([A-Za-z0-9+/]*={0,2})$/)?.[1]
+  : undefined
 
 function takeFileData(value: unknown, url: unknown, budget: AttachmentCodecBudget): string | undefined {
-  const rawData = dataUrlPayload(url) ?? value
-  if (rawData === undefined) return undefined
-  const data = normalizeBase64(rawData)
-  if (data === undefined || data.length > budget.fileDataCharactersRemaining) return undefined
+  const raw = dataUrlPayload(url) ?? value
+  if (raw instanceof Uint8Array && raw.byteLength > MAX_FILE_BYTES) return
+  const data = raw instanceof Uint8Array ? bytesToBase64(raw) : raw
+  if (
+    !validBase64(data) ||
+    base64ToBytes(data).byteLength > MAX_FILE_BYTES ||
+    data.length > MAX_FILE_CHARACTERS ||
+    data.length > budget.fileDataCharactersRemaining
+  ) return
   budget.fileDataCharactersRemaining -= data.length
   return data
 }
 
-function takePosition(value: unknown): { line: number; char: number } | undefined {
-  if (!isRecord(value)) return undefined
-  if (!Number.isSafeInteger(value.line) || Number(value.line) < 0) return undefined
-  if (!Number.isSafeInteger(value.char) || Number(value.char) < 0) return undefined
+function takePosition(value: unknown): Position | undefined {
+  if (!isRecord(value) || !Number.isSafeInteger(value.line) || Number(value.line) < 0) return
+  if (!Number.isSafeInteger(value.char) || Number(value.char) < 0) return
   return { line: Number(value.line), char: Number(value.char) }
 }
 
 function normalizeSource(
   value: unknown,
-  rawUrl: unknown,
+  url: unknown,
   budget: AttachmentCodecBudget,
 ): RestorableAttachmentSource | undefined {
-  if (!isRecord(value)) return undefined
-  if (value.type === "file") {
-    const path = takeString(value.path, MAX_PATH_LENGTH, budget)
-    const mime = takeString(value.mime, MAX_MIME_LENGTH, budget)
-    if (path === undefined || mime === undefined) return undefined
-    const hasData = value.data !== undefined || dataUrlPayload(rawUrl) !== undefined
-    const rawData = dataUrlPayload(rawUrl) ?? value.data
-    const data = takeFileData(value.data, rawUrl, budget)
-    const hasRestorablePath = typeof rawUrl === "string" && rawUrl.length > 0 && !rawUrl.startsWith("data:")
-    if (hasData && data === undefined && (!hasRestorablePath || !isValidFileData(rawData))) return undefined
-    return data === undefined ? { type: "file", path, mime } : { type: "file", path, mime, data }
-  }
+  if (!isRecord(value)) return
   if (value.type === "text") {
-    const text = takeString(value.value, MAX_TEXT_LENGTH, budget, true)
+    const text = takeString(value.value, MAX_TEXT, budget, true)
     return text === undefined ? undefined : { type: "text", value: text }
   }
   if (value.type === "agent") {
-    const name = takeString(value.name, MAX_DISPLAY_LENGTH, budget)
+    const name = takeString(value.name, MAX_DISPLAY, budget)
     return name === undefined ? undefined : { type: "agent", name }
   }
-  if (value.type !== "symbol" || !isRecord(value.range)) return undefined
 
-  const path = takeString(value.path, MAX_PATH_LENGTH, budget)
-  const name = takeString(value.name, MAX_DISPLAY_LENGTH, budget)
+  const path = takeString(value.path, MAX_PATH, budget)
+  if (value.type === "file") {
+    const mime = takeString(value.mime, MAX_MIME, budget)
+    if (path === undefined || mime === undefined) return
+    const rawData = dataUrlPayload(url) ?? value.data
+    const data = takeFileData(value.data, url, budget)
+    const pathBacked = typeof url === "string" && url.length > 0 && !url.startsWith("data:")
+    const validPathData = rawData instanceof Uint8Array || validBase64(rawData)
+    if (rawData !== undefined && data === undefined && (!pathBacked || !validPathData)) return
+    return data === undefined ? { type: "file", path, mime } : { type: "file", path, mime, data }
+  }
+  if (value.type !== "symbol" || !isRecord(value.range)) return
+  const name = takeString(value.name, MAX_DISPLAY, budget)
   const start = takePosition(value.range.start)
   const end = takePosition(value.range.end)
-  if (path === undefined || name === undefined || !Number.isSafeInteger(value.kind) || !start || !end) return undefined
+  if (path === undefined || name === undefined || !Number.isSafeInteger(value.kind) || !start || !end) return
   return { type: "symbol", path, name, kind: Number(value.kind), range: { start, end } }
 }
 
 function normalizeAttachment(value: unknown, budget: AttachmentCodecBudget): RestorableAttachment | undefined {
-  if (!isRecord(value) || budget.attachmentsRemaining <= 0) return undefined
-  if (value.type !== "file" && value.type !== "text" && value.type !== "symbol" && value.type !== "agent") {
-    return undefined
-  }
+  if (!isRecord(value) || budget.attachmentsRemaining <= 0) return
+  if (!["file", "text", "symbol", "agent"].includes(String(value.type))) return
 
-  const nextBudget = { ...budget }
-  const id = takeString(value.id, MAX_ID_LENGTH, nextBudget)
-  const display = takeString(value.display, MAX_DISPLAY_LENGTH, nextBudget)
-  const filename = takeString(value.filename, MAX_PATH_LENGTH, nextBudget)
-  const mediaType = takeString(value.mediaType, MAX_MIME_LENGTH, nextBudget)
-  const source = normalizeSource(value.source, value.url, nextBudget)
-  if (id === undefined || display === undefined || filename === undefined || mediaType === undefined || !source) {
-    return undefined
-  }
-  if (source.type !== value.type) return undefined
-
+  const next = { ...budget }
+  const id = takeString(value.id, MAX_ID, next)
+  const display = takeString(value.display, MAX_DISPLAY, next)
+  const filename = takeString(value.filename, MAX_PATH, next)
+  const mediaType = takeString(value.mediaType, MAX_MIME, next)
+  const source = normalizeSource(value.source, value.url, next)
   const rawUrl = typeof value.url === "string" && !value.url.startsWith("data:") ? value.url : ""
-  const url = takeString(rawUrl, MAX_PATH_LENGTH, nextBudget, true)
-  if (url === undefined) return undefined
-  nextBudget.attachmentsRemaining -= 1
-  Object.assign(budget, nextBudget)
-  return { id, type: value.type, display, url, filename, mediaType, source }
-}
+  const url = takeString(rawUrl, MAX_PATH, next, true)
+  if (
+    !id || !display || !filename || !mediaType || !source ||
+    source.type !== value.type || url === undefined
+  ) return
 
-function getDraftPlaceholder(
-  value: unknown,
-): { kind: AttachmentPlaceholderKind; counter: string } | undefined {
-  if (!isRecord(value) || typeof value.display !== "string" || value.display.length > MAX_DISPLAY_LENGTH) return undefined
-  const match = value.display.match(/(pasted|image)\s*#\s*(\d+)/i)
-  if (match?.[1] && match[2]) {
-    return { kind: match[1].toLowerCase() === "image" ? "image" : "pasted", counter: match[2] }
-  }
-  return undefined
-}
-
-function removeAttachmentPromptTokens(draft: string, attachment: unknown): string {
-  const placeholder = getDraftPlaceholder(attachment)
-  if (placeholder) {
-    return draft.replace(createAttachmentPlaceholderRegex(placeholder.kind, placeholder.counter), "")
-  }
-
-  let nextDraft = draft
-  for (const candidate of getAttachmentPromptMentionCandidates(attachment)) {
-    nextDraft = nextDraft.replace(createPromptMentionRegex(candidate, { global: true }), "")
-  }
-  return nextDraft
+  next.attachmentsRemaining -= 1
+  Object.assign(budget, next)
+  return { id, type: value.type as Attachment["type"], display, url, filename, mediaType, source }
 }
 
 export function createAttachmentCodecBudget(): AttachmentCodecBudget {
   return {
-    attachmentsRemaining: MAX_ATTACHMENTS_TOTAL,
-    metadataCharactersRemaining: MAX_ATTACHMENT_METADATA_CHARACTERS,
-    fileDataCharactersRemaining: MAX_FILE_DATA_CHARACTERS,
+    attachmentsRemaining: MAX_ATTACHMENTS,
+    metadataCharactersRemaining: MAX_METADATA,
+    fileDataCharactersRemaining: MAX_FILE_CHARACTERS,
   }
 }
 
@@ -227,30 +167,33 @@ export function normalizeRestorableAttachmentRecord(
   value: unknown,
   drafts: Record<string, string>,
   budget: AttachmentCodecBudget,
+  prioritySessionIds: readonly string[] = [],
 ): { attachments: Record<string, RestorableAttachment[]>; drafts: Record<string, string> } | null {
   if (!isRecord(value)) return null
   const attachments: Record<string, RestorableAttachment[]> = Object.create(null)
   const nextDrafts = { ...drafts }
-  let sessionCount = 0
-
-  for (const [sessionId, rawAttachments] of Object.entries(value)) {
-    if (!isSafeKey(sessionId) || sessionId.length === 0 || sessionId.length > MAX_ID_LENGTH || !Array.isArray(rawAttachments)) {
-      continue
-    }
-    const canPersistSession = sessionCount < MAX_ATTACHMENT_SESSIONS_PER_TAB
-    if (canPersistSession) sessionCount += 1
+  let sessions = 0
+  const priority = [...new Set(prioritySessionIds)]
+  const prioritySet = new Set(priority)
+  const entries = [
+    ...priority.flatMap((sessionId) => Object.prototype.hasOwnProperty.call(value, sessionId)
+      ? [[sessionId, value[sessionId]] as const]
+      : []),
+    ...Object.entries(value).filter(([sessionId]) => !prioritySet.has(sessionId)),
+  ]
+  for (const [sessionId, rawAttachments] of entries) {
+    if (
+      !isSafeKey(sessionId) || !sessionId ||
+      sessionId.length > MAX_ID || !Array.isArray(rawAttachments)
+    ) continue
+    const persist = sessions++ < MAX_SESSIONS
     const normalized: RestorableAttachment[] = []
-    for (const rawAttachment of rawAttachments) {
-      const attachment = canPersistSession && normalized.length < MAX_ATTACHMENTS_PER_SESSION
-        ? normalizeAttachment(rawAttachment, budget)
-        : undefined
-      if (attachment) {
-        normalized.push(attachment)
-      } else if (nextDrafts[sessionId]) {
-        nextDrafts[sessionId] = removeAttachmentPromptTokens(nextDrafts[sessionId], rawAttachment)
-      }
+    for (const raw of rawAttachments) {
+      const attachment = persist && normalized.length < MAX_PER_SESSION ? normalizeAttachment(raw, budget) : undefined
+      if (attachment) normalized.push(attachment)
+      else if (nextDrafts[sessionId]) nextDrafts[sessionId] = removeAttachmentPromptTokens(nextDrafts[sessionId], raw)
     }
-    if (normalized.length > 0) attachments[sessionId] = normalized
+    if (normalized.length) attachments[sessionId] = normalized
   }
   return { attachments, drafts: nextDrafts }
 }
@@ -258,8 +201,9 @@ export function normalizeRestorableAttachmentRecord(
 export function serializeDraftAttachments(
   drafts: Record<string, string>,
   attachments: Record<string, Attachment[]>,
-): { drafts: Record<string, string>; attachments: Record<string, RestorableAttachment[]> } {
-  return normalizeRestorableAttachmentRecord(attachments, drafts, createAttachmentCodecBudget())
+  prioritySessionIds: readonly string[] = [],
+) {
+  return normalizeRestorableAttachmentRecord(attachments, drafts, createAttachmentCodecBudget(), prioritySessionIds)
     ?? { drafts: { ...drafts }, attachments: {} }
 }
 
@@ -267,21 +211,18 @@ export function hydrateRestorableAttachment(value: RestorableAttachment): Attach
   let source: AttachmentSource
   let url = value.url
   if (value.source.type === "file") {
-    let data: Uint8Array | undefined
-    if (value.source.data !== undefined) {
-      try {
-        data = base64ToBytes(value.source.data)
-      } catch {
-        return null
-      }
-      if (!url) url = `data:${value.source.mime};base64,${value.source.data}`
+    try {
+      const data = value.source.data === undefined ? undefined : base64ToBytes(value.source.data)
+      source = { type: "file", path: value.source.path, mime: value.source.mime, data }
+      if (!url && value.source.data) url = `data:${value.source.mime};base64,${value.source.data}`
+    } catch {
+      return null
     }
-    source = { type: "file", path: value.source.path, mime: value.source.mime, data }
-  } else if (value.source.type === "text") {
-    source = value.source
-    if (!url) url = `data:text/plain;base64,${bytesToBase64(new TextEncoder().encode(value.source.value))}`
   } else {
     source = value.source
+    if (value.source.type === "text" && !url) {
+      url = `data:text/plain;base64,${bytesToBase64(new TextEncoder().encode(value.source.value))}`
+    }
   }
   return { ...value, url, source }
 }

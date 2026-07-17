@@ -3,147 +3,87 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import {
-  ClientStateIPCHandlers,
-  createClientStateIPCHandlers,
-  createRendererAccessNavigationCommitHandler,
-} from "./client-state-ipc-handlers"
-import { ClientStateNavigationController } from "./client-state-navigation"
 import { ClientStateManager } from "./client-state"
+import { ClientStateNavigationController, shouldResetRendererAccessTokenForNavigation } from "./client-state-navigation"
 
-test("edit then immediate reload persists the latest snapshot and rotates renderer access", async (testContext) => {
-  const directory = mkdtempSync(join(tmpdir(), "codenomad-client-state-navigation-"))
-  const manager = new ClientStateManager(directory)
-  const handlers: ClientStateIPCHandlers = createClientStateIPCHandlers(manager)
-  testContext.after(async () => {
-    await manager.drainAndReleasePrimary().catch(() => {})
-    rmSync(directory, { recursive: true, force: true })
-  })
+const tick = () => new Promise((resolve) => setImmediate(resolve))
+function window(executeJavaScript: () => Promise<unknown> = async () => {}) {
+  return { isDestroyed: () => false, webContents: { isDestroyed: () => false, getURL: () => "http://127.0.0.1:3000/app", executeJavaScript } }
+}
+function controller(win: ReturnType<typeof window>, manager: { isPrimary: boolean }, report: (error: unknown) => void = (error) => assert.fail(String(error))) {
+  return new ClientStateNavigationController(win as never, { clientStateManager: manager, isTrustedOrigin: () => true, reportFlushError: report })
+}
+function managerHarness(t: test.TestContext) {
+  const directory = mkdtempSync(join(tmpdir(), "codenomad-navigation-"))
+  const manager = new ClientStateManager(directory, undefined, { crossHostElectionDirectory: join(directory, "election") })
+  t.after(async () => { await manager.drainAndReleasePrimary().catch(() => {}); rmSync(directory, { recursive: true, force: true }) })
+  return manager
+}
 
-  handlers.claimAccess("outgoing-document")
+test("renderer access resets only for trusted full main-frame navigation", () => {
+  const trusted = (url: string) => new URL(url).origin === "http://127.0.0.1:3000"
+  for (const [url, inPlace, mainFrame, expected] of [
+    ["http://127.0.0.1:3000/reload", false, true, true],
+    ["http://127.0.0.1:3000/frame", false, false, false],
+    ["http://127.0.0.1:3000/#route", true, true, false],
+    ["https://untrusted.example/reload", false, true, false],
+  ] as const) assert.equal(shouldResetRendererAccessTokenForNavigation(url, inPlace, mainFrame, trusted), expected)
+})
+
+test("immediate reload flushes latest state before rotating document access", async (t) => {
+  const manager = managerHarness(t)
+  await manager.setRestoreEnabled(true)
+  manager.claimClientStateAccess("outgoing")
+  const load = (token: string) => { manager.assertRendererAccessToken(token); return manager.loadClientState() }
+  const save = (token: string, state: unknown) => { manager.assertRendererAccessToken(token); return manager.saveClientState(state) }
+  for (const denied of [() => load("other"), () => save("other", {})]) assert.throws(denied, /has not been claimed/)
   let navigated = false
-  const window = {
-    isDestroyed: () => false,
-    webContents: {
-      isDestroyed: () => false,
-      getURL: () => "http://127.0.0.1:3000/app",
-      executeJavaScript: async () => {
-        await handlers.save("outgoing-document", { revision: 7, editor: "latest" })
-      },
-    },
-  }
-  const controller = new ClientStateNavigationController({
-    clientStateManager: manager,
-    getWindow: () => window as never,
-    isTrustedOrigin: () => true,
-    reportFlushError: (error) => assert.fail(String(error)),
-  })
-  const commitNavigation = createRendererAccessNavigationCommitHandler(manager, () => true)
-
-  await controller.navigate(async () => {
+  await controller(window(() => save("outgoing", { revision: 7, editor: "latest" })), manager).navigate(() => {
     navigated = true
-    assert.deepEqual(handlers.load("outgoing-document").snapshot, { revision: 7, editor: "latest" })
-    commitNavigation("http://127.0.0.1:3000/app", false, true)
+    assert.deepEqual(load("outgoing").snapshot, { revision: 7, editor: "latest" })
+    manager.resetRendererAccessToken()
   })
-
   assert.equal(navigated, true)
-  assert.throws(() => handlers.load("outgoing-document"), /has not been claimed/)
-  handlers.claimAccess("new-document")
-  assert.deepEqual(handlers.load("new-document").snapshot, { revision: 7, editor: "latest" })
+  assert.throws(() => load("outgoing"), /has not been claimed/)
+  manager.claimClientStateAccess("incoming")
+  assert.deepEqual(load("incoming").snapshot, { revision: 7, editor: "latest" })
 })
 
-test("failed loadURL retains access for the current document", async (testContext) => {
-  const directory = mkdtempSync(join(tmpdir(), "codenomad-client-state-navigation-failure-"))
-  const manager = new ClientStateManager(directory)
-  const handlers = createClientStateIPCHandlers(manager)
-  testContext.after(async () => {
-    await manager.drainAndReleasePrimary().catch(() => {})
-    rmSync(directory, { recursive: true, force: true })
+test("failed navigation retains current document access", async (t) => {
+  for (const [name, operation] of [
+    ["loadURL", () => Promise.reject(new Error("loadURL failed"))],
+    ["reload", () => { throw new Error("reload failed") }],
+  ] as const) await t.test(name, async (st) => {
+    const manager = managerHarness(st)
+    manager.claimClientStateAccess("current")
+    await assert.rejects(controller(window(), manager).navigate(operation), new RegExp(`${name} failed`))
+    manager.assertRendererAccessToken("current")
+    assert.equal(await manager.saveClientState({ retained: name }), true)
   })
-  handlers.claimAccess("current-document")
-
-  const controller = new ClientStateNavigationController({
-    clientStateManager: manager,
-    getWindow: () => ({
-      isDestroyed: () => false,
-      webContents: {
-        isDestroyed: () => false,
-        getURL: () => "http://127.0.0.1:3000/app",
-        executeJavaScript: async () => {},
-      },
-    }) as never,
-    isTrustedOrigin: () => true,
-    reportFlushError: (error) => assert.fail(String(error)),
-  })
-
-  await assert.rejects(controller.navigate(() => Promise.reject(new Error("loadURL failed"))), /loadURL failed/)
-  assert.equal(await handlers.save("current-document", { retained: "after-loadURL" }), true)
-  assert.deepEqual(handlers.load("current-document").snapshot, { retained: "after-loadURL" })
 })
 
-test("failed reload retains access for the current document", async (testContext) => {
-  const directory = mkdtempSync(join(tmpdir(), "codenomad-client-state-reload-failure-"))
-  const manager = new ClientStateManager(directory)
-  const handlers = createClientStateIPCHandlers(manager)
-  testContext.after(async () => {
-    await manager.drainAndReleasePrimary().catch(() => {})
-    rmSync(directory, { recursive: true, force: true })
-  })
-  handlers.claimAccess("current-document")
-
-  const controller = new ClientStateNavigationController({
-    clientStateManager: manager,
-    getWindow: () => ({
-      isDestroyed: () => false,
-      webContents: {
-        isDestroyed: () => false,
-        getURL: () => "http://127.0.0.1:3000/app",
-        executeJavaScript: async () => {},
-      },
-    }) as never,
-    isTrustedOrigin: () => true,
-    reportFlushError: (error) => assert.fail(String(error)),
-  })
-
-  await assert.rejects(controller.navigate(() => { throw new Error("reload failed") }), /reload failed/)
-  assert.equal(await handlers.save("current-document", { retained: "after-reload" }), true)
-})
-
-test("hung renderer flush is bounded and does not deadlock reload", async () => {
-  const manager = {
-    isPrimary: true,
-    resetRendererAccessTokenCalls: 0,
-    resetRendererAccessToken() {
-      this.resetRendererAccessTokenCalls += 1
-    },
-  }
-  let navigated = false
-  let reported = false
-  const controller = new ClientStateNavigationController({
-    clientStateManager: manager,
-    getWindow: () => ({
-      isDestroyed: () => false,
-      webContents: {
-        isDestroyed: () => false,
-        getURL: () => "http://127.0.0.1:3000/app",
-        executeJavaScript: () => new Promise(() => {}),
-      },
-    }) as never,
-    isTrustedOrigin: () => true,
-    reportFlushError: () => {
-      reported = true
-    },
-  })
-
-  const startedAt = Date.now()
-  await controller.navigate(() => {
-    navigated = true
-  })
-  const elapsedMs = Date.now() - startedAt
-
+test("hung renderer flush is bounded without rotating access or blocking navigation", async () => {
+  const manager = { isPrimary: true, resets: 0, resetRendererAccessToken() { this.resets++ } }
+  let navigated = false, reported = false
+  const started = Date.now()
+  await controller(window(() => new Promise(() => {})), manager, () => { reported = true }).navigate(() => { navigated = true })
+  const elapsed = Date.now() - started
   assert.equal(reported, true)
-  assert.equal(manager.resetRendererAccessTokenCalls, 0)
+  assert.equal(manager.resets, 0)
   assert.equal(navigated, true)
-  assert.ok(elapsedMs >= 900, `flush timeout ended too early after ${elapsedMs}ms`)
-  assert.ok(elapsedMs < 2_000, `flush timeout was not bounded: ${elapsedMs}ms`)
+  assert.ok(elapsed >= 900 && elapsed < 2_000, `unexpected timeout: ${elapsed}ms`)
+})
+
+test("queued navigation preserves order and distinct generations", async () => {
+  const calls: string[] = []
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const navigation = controller(window(), { isPrimary: true })
+  const first = navigation.navigate(async (_window, generation) => { calls.push(`start-${generation}`); await gate; calls.push(`end-${generation}`) })
+  const second = navigation.navigate((_window, generation) => { calls.push(`run-${generation}`) })
+  await tick()
+  assert.deepEqual(calls, ["start-1"])
+  release()
+  await Promise.all([first, second])
+  assert.deepEqual(calls, ["start-1", "end-1", "run-2"])
 })

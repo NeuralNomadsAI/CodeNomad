@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
-use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WindowEvent};
+use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, WindowEvent};
 
 const MIN_WINDOW_WIDTH: i32 = 800;
 const MIN_WINDOW_HEIGHT: i32 = 600;
@@ -71,27 +71,23 @@ pub(super) fn clamp_window_bounds(
     bounds: &WindowBounds,
     displays: &[DisplayArea],
 ) -> Option<WindowBounds> {
-    let mut selected: Option<(DisplayArea, i64, i128)> = None;
-    for display in displays
+    let display = displays
         .iter()
         .copied()
         .filter(|display| display.width > 0 && display.height > 0)
-    {
-        let intersection = intersection_area(bounds, display);
-        let distance = center_distance_squared(bounds, display);
-        if selected
-            .as_ref()
-            .map(|(_, best_intersection, best_distance)| {
-                intersection > *best_intersection
-                    || (intersection == *best_intersection && distance < *best_distance)
-            })
-            .unwrap_or(true)
-        {
-            selected = Some((display, intersection, distance));
-        }
-    }
-
-    let (display, _, _) = selected?;
+        .reduce(|best, candidate| {
+            let best_intersection = intersection_area(bounds, best);
+            let candidate_intersection = intersection_area(bounds, candidate);
+            if candidate_intersection > best_intersection
+                || (candidate_intersection == best_intersection
+                    && center_distance_squared(bounds, candidate)
+                        < center_distance_squared(bounds, best))
+            {
+                candidate
+            } else {
+                best
+            }
+        })?;
     let maximum_width = display.width.min(i32::MAX as u32) as i32;
     let maximum_height = display.height.min(i32::MAX as u32) as i32;
     let width = bounds
@@ -151,12 +147,15 @@ fn capture_main_window_in_memory(app: &AppHandle) {
     let maximized = window.is_maximized().unwrap_or(false);
     let fullscreen = window.is_fullscreen().unwrap_or(false);
     let minimized = window.is_minimized().unwrap_or(false);
+    let scale_factor = window.scale_factor().unwrap_or(1.0);
     let current_bounds = if !maximized && !fullscreen && !minimized {
         window
             .outer_position()
             .ok()
             .zip(window.inner_size().ok())
             .and_then(|(position, size)| {
+                let position = position.to_logical::<i32>(scale_factor);
+                let size = size.to_logical::<u32>(scale_factor);
                 let bounds = WindowBounds {
                     x: position.x,
                     y: position.y,
@@ -280,26 +279,32 @@ pub fn setup_main_window(app: &AppHandle) -> Result<(), String> {
             .flatten()
     };
     if let Some(mut saved_window) = saved_window {
+        let startup_scale = window.scale_factor().unwrap_or(1.0);
         let displays = window
             .available_monitors()
             .unwrap_or_default()
             .into_iter()
             .map(|monitor| {
                 let work_area = monitor.work_area();
+                let position = work_area.position.to_logical::<i32>(startup_scale);
+                let size = work_area.size.to_logical::<u32>(startup_scale);
                 DisplayArea {
-                    x: work_area.position.x,
-                    y: work_area.position.y,
-                    width: work_area.size.width,
-                    height: work_area.size.height,
+                    x: position.x,
+                    y: position.y,
+                    width: size.width,
+                    height: size.height,
                 }
             })
             .collect::<Vec<_>>();
         if let Some(bounds) = clamp_window_bounds(&saved_window.bounds, &displays) {
-            let _ = window.set_size(PhysicalSize::new(bounds.width as u32, bounds.height as u32));
-            let _ = window.set_position(PhysicalPosition::new(bounds.x, bounds.y));
+            let _ = window.set_size(LogicalSize::new(bounds.width as u32, bounds.height as u32));
+            let _ = window.set_position(LogicalPosition::new(bounds.x, bounds.y));
             saved_window.bounds = bounds;
         } else if let Ok(position) = window.outer_position() {
             if let Ok(size) = window.inner_size() {
+                let scale_factor = window.scale_factor().unwrap_or(1.0);
+                let position = position.to_logical::<i32>(scale_factor);
+                let size = size.to_logical::<u32>(scale_factor);
                 saved_window.bounds = WindowBounds {
                     x: position.x,
                     y: position.y,

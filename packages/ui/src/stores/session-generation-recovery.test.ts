@@ -1,167 +1,77 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-
-import {
-  getPersistedGenerationRecovery,
-  mergeFetchedSessionRuntimeState,
-  resolveAuthoritativeGenerationRecovery,
-  resolveHydratedGenerationRecovery,
-} from "./session-generation-recovery.ts"
 import type { Session } from "../types/session.ts"
-
-function session(state: Partial<Session>): Session {
-  return {
-    id: "session",
-    instanceId: "instance",
-    parentId: null,
-    title: "Session",
-    agent: "build",
-    model: { providerId: "provider", modelId: "model" },
-    version: "1",
-    time: { created: 1, updated: 1 },
-    status: "idle",
-    ...state,
-  } as Session
-}
-
+import { getPersistedGenerationRecovery, mergeFetchedSessionRuntimeState, resolveAuthoritativeGenerationRecovery, resolveHydratedGenerationRecovery } from "./session-generation-recovery.ts"
+const session = (state: Partial<Session> = {}): Session => ({
+  id: "session", instanceId: "instance", parentId: null, title: "Session", agent: "build",
+  model: { providerId: "provider", modelId: "model" }, version: "1",
+  time: { created: 1, updated: 1 }, status: "idle", ...state,
+} as Session)
+const runtime = (value: Session) => ({
+  title: value.title, status: value.status, runtimeStatusKnown: value.runtimeStatusKnown,
+  generationRecovery: value.generationRecovery, token: value.generationAdmissionToken, source: value.metadata?.source, updated: value.time.updated,
+})
 describe("session generation recovery", () => {
-  it("passively reconnects when the runtime is still working", () => {
-    assert.equal(resolveHydratedGenerationRecovery("working", "working", true), null)
-    assert.equal(resolveHydratedGenerationRecovery("working", "compacting", true), null)
+  it("resolves hydrated, authoritative, and persisted recovery states", () => {
+    const cases: Array<[string, () => unknown, unknown]> = [
+      ["working reconnect", () => resolveHydratedGenerationRecovery("working", "working", true), null],
+      ["compacting reconnect", () => resolveHydratedGenerationRecovery("working", "compacting", true), null],
+      ["idle before authority", () => resolveHydratedGenerationRecovery("working", "idle", false), "pending"],
+      ["authoritative idle hydration", () => resolveHydratedGenerationRecovery("working", "idle", true), "interrupted"],
+      ["authoritative idle event", () => resolveAuthoritativeGenerationRecovery("pending", "idle"), "interrupted"],
+      ["interruption survives hydration", () => resolveHydratedGenerationRecovery("interrupted", "idle", false), "interrupted"],
+      ["interruption persists", () => getPersistedGenerationRecovery("idle", "interrupted"), "interrupted"],
+      ["working clears pending", () => resolveAuthoritativeGenerationRecovery("pending", "working"), null],
+      ["working clears interruption", () => resolveAuthoritativeGenerationRecovery("interrupted", "working"), null],
+      ["working persists", () => getPersistedGenerationRecovery("working", null), "working"],
+      ["compacting persists", () => getPersistedGenerationRecovery("compacting", null), "working"],
+      ["pending persists as work", () => getPersistedGenerationRecovery("idle", "pending"), "working"],
+      ["ordinary idle omitted", () => getPersistedGenerationRecovery("idle", null), null],
+    ]
+    for (const [label, actual, expected] of cases) assert.equal(actual(), expected, label)
   })
-
-  it("marks prior work interrupted only after authoritative idle", () => {
-    assert.equal(resolveHydratedGenerationRecovery("working", "idle", false), "pending")
-    assert.equal(resolveHydratedGenerationRecovery("working", "idle", true), "interrupted")
-    assert.equal(resolveAuthoritativeGenerationRecovery("pending", "idle"), "interrupted")
-  })
-
-  it("keeps an interruption across restarts until new work is admitted", () => {
-    assert.equal(resolveHydratedGenerationRecovery("interrupted", "idle", false), "interrupted")
-    assert.equal(getPersistedGenerationRecovery("idle", "interrupted"), "interrupted")
-  })
-
-  it("clears recovery when authoritative work resumes", () => {
-    assert.equal(resolveAuthoritativeGenerationRecovery("pending", "working"), null)
-    assert.equal(resolveAuthoritativeGenerationRecovery("interrupted", "working"), null)
-  })
-
-  it("persists active and unresolved work without persisting ordinary idle sessions", () => {
-    assert.equal(getPersistedGenerationRecovery("working", null), "working")
-    assert.equal(getPersistedGenerationRecovery("compacting", null), "working")
-    assert.equal(getPersistedGenerationRecovery("idle", "pending"), "working")
-    assert.equal(getPersistedGenerationRecovery("idle", null), null)
-  })
-
-  it("preserves a newer SSE state over a stale session fetch", () => {
-    const captured = session({ title: "Captured", status: "idle", runtimeStatusKnown: false })
-    const fetched = session({
-      title: "Stale fetch",
-      metadata: { source: "fetch" },
-      time: { created: 1, updated: 2 },
-      status: "idle",
-      runtimeStatusKnown: true,
-      generationRecovery: "interrupted",
+  const mergeCases = [
+    ["newer SSE state supersedes a stale fetch", {
+      captured: session({ title: "Captured", runtimeStatusKnown: false }),
+      fetched: session({ title: "Stale fetch", metadata: { source: "fetch" }, time: { created: 1, updated: 2 }, runtimeStatusKnown: true, generationRecovery: "interrupted" }),
+      latest: session({ title: "New SSE title", metadata: { source: "sse" }, time: { created: 1, updated: 3 }, status: "working", runtimeStatusKnown: true, generationRecovery: null }),
+      expected: { title: "New SSE title", status: "working", runtimeStatusKnown: true, generationRecovery: null, token: undefined, source: "sse", updated: 3 },
+    }],
+    ["in-flight admission survives a fetch snapshot", {
+      captured: session({ runtimeStatusKnown: false, generationRecovery: "pending", generationAdmissionToken: 1 }),
+      fetched: session({ runtimeStatusKnown: true, generationRecovery: "interrupted" }),
+      latest: null,
+      expected: { title: "Session", status: "idle", runtimeStatusKnown: false, generationRecovery: "pending", token: 1, source: undefined, updated: 1 },
+    }],
+    ["active fetch wins after a captured admission completes", {
+      captured: session({ title: "Captured", runtimeStatusKnown: true, generationRecovery: "interrupted" }),
+      fetched: session({ title: "Fetched", status: "working", runtimeStatusKnown: true, generationRecovery: null }),
+      latest: session({ title: "New SSE title", metadata: { source: "sse" }, time: { created: 1, updated: 3 }, runtimeStatusKnown: false, generationRecovery: "pending" }),
+      expected: { title: "New SSE title", status: "working", runtimeStatusKnown: true, generationRecovery: null, token: undefined, source: "sse", updated: 3 },
+    }],
+    ["active authority clears a captured admission token", {
+      captured: session({ runtimeStatusKnown: false, generationRecovery: "pending", generationAdmissionToken: 1 }),
+      fetched: session({ status: "working", runtimeStatusKnown: true, generationRecovery: null }),
+      latest: session({ runtimeStatusKnown: false, generationRecovery: "pending", generationAdmissionToken: undefined }),
+      expected: { title: "Session", status: "working", runtimeStatusKnown: true, generationRecovery: null, token: undefined, source: undefined, updated: 1 },
+    }],
+    ["newer local state preserves optional field deletion", {
+      captured: session({ retry: { attempt: 1, message: "retrying", next: 10 } }),
+      fetched: session({ retry: { attempt: 2, message: "stale", next: 20 } }),
+      latest: session(),
+      expected: { title: "Session", status: "idle", runtimeStatusKnown: undefined, generationRecovery: undefined, token: undefined, source: undefined, updated: 1 },
+    }],
+  ] as const
+  for (const [label, test] of mergeCases) {
+    it(label, () => {
+      const merged = mergeFetchedSessionRuntimeState(test.fetched, test.captured, test.latest ?? test.captured)
+      assert.ok(merged)
+      assert.deepEqual(runtime(merged), test.expected)
     })
-    const latest = session({
-      title: "New SSE title",
-      metadata: { source: "sse" },
-      time: { created: 1, updated: 3 },
-      status: "working",
-      runtimeStatusKnown: true,
-      generationRecovery: null,
-    })
-
-    const merged = mergeFetchedSessionRuntimeState(fetched, captured, latest)
-    assert.ok(merged)
-    assert.equal(merged.status, "working")
-    assert.equal(merged.generationRecovery, null)
-    assert.equal(merged.title, "New SSE title")
-    assert.deepEqual(merged.metadata, { source: "sse" })
-    assert.equal(merged.time.updated, 3)
-  })
-
-  it("preserves an in-flight admission even when it predates the fetch snapshot", () => {
-    const admission = session({
-      status: "idle",
-      runtimeStatusKnown: false,
-      generationRecovery: "pending",
-      generationAdmissionToken: 1,
-    })
-    const fetched = session({ status: "idle", runtimeStatusKnown: true, generationRecovery: "interrupted" })
-
-    const merged = mergeFetchedSessionRuntimeState(fetched, admission, admission)
-    assert.ok(merged)
-    assert.equal(merged.runtimeStatusKnown, false)
-    assert.equal(merged.generationRecovery, "pending")
-    assert.equal(merged.generationAdmissionToken, 1)
-  })
-
-  it("keeps authoritative active status after a captured admission completes", () => {
-    const captured = session({
-      title: "Captured",
-      status: "idle",
-      runtimeStatusKnown: true,
-      generationRecovery: "interrupted",
-      generationAdmissionToken: undefined,
-    })
-    const latest = session({
-      title: "New SSE title",
-      metadata: { source: "sse" },
-      time: { created: 1, updated: 3 },
-      status: "idle",
-      runtimeStatusKnown: false,
-      generationRecovery: "pending",
-      generationAdmissionToken: undefined,
-    })
-    const fetched = session({
-      title: "Fetched",
-      status: "working",
-      runtimeStatusKnown: true,
-      generationRecovery: null,
-    })
-
-    const merged = mergeFetchedSessionRuntimeState(fetched, captured, latest)
-    assert.ok(merged)
-    assert.equal(merged.status, "working")
-    assert.equal(merged.runtimeStatusKnown, true)
-    assert.equal(merged.generationRecovery, null)
-    assert.equal(merged.generationAdmissionToken, undefined)
-    assert.equal(merged.title, "New SSE title")
-    assert.deepEqual(merged.metadata, { source: "sse" })
-    assert.equal(merged.time.updated, 3)
-  })
-
-  it("clears a captured admission token when authoritative work is active", () => {
-    const captured = session({
-      status: "idle",
-      runtimeStatusKnown: false,
-      generationRecovery: "pending",
-      generationAdmissionToken: 1,
-    })
-    const latest = session({
-      status: "idle",
-      runtimeStatusKnown: false,
-      generationRecovery: "pending",
-      generationAdmissionToken: undefined,
-    })
-    const fetched = session({
-      status: "working",
-      runtimeStatusKnown: true,
-      generationRecovery: null,
-    })
-
-    const merged = mergeFetchedSessionRuntimeState(fetched, captured, latest)
-    assert.equal(merged?.status, "working")
-    assert.equal(merged?.runtimeStatusKnown, true)
-    assert.equal(merged?.generationRecovery, null)
-    assert.equal(merged?.generationAdmissionToken, undefined)
-  })
-
+  }
   it("does not resurrect a session deleted while its fetch was pending", () => {
-    const captured = session({ status: "idle" })
-    const fetched = session({ status: "idle" })
-    assert.equal(mergeFetchedSessionRuntimeState(fetched, captured, undefined), null)
+    const fetched = session()
+    assert.equal(mergeFetchedSessionRuntimeState(fetched, session(), undefined), null)
     assert.equal(mergeFetchedSessionRuntimeState(fetched, undefined, undefined, true), null)
   })
 })

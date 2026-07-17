@@ -1,13 +1,15 @@
-import { ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from "electron"
+import type { BrowserWindow, IpcMainInvokeEvent } from "electron"
 import type { ClientStateManager } from "./client-state"
-import {
-  createClientStateIPCHandlers,
-  createRendererAccessNavigationCommitHandler,
-} from "./client-state-ipc-handlers"
-import { isAllowedRendererOrigin } from "./permissions"
+import { shouldResetRendererAccessTokenForNavigation } from "./client-state-navigation"
+import { isAllowedRendererOrigin } from "./renderer-origin"
 
-function validateSender(event: IpcMainInvokeEvent, mainWindow: BrowserWindow, getAllowedOrigins: () => string[]) {
+interface IPCRegistrar {
+  handle(channel: string, listener: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown): void
+}
+
+function validateSender(event: IpcMainInvokeEvent, mainWindow: BrowserWindow | null, allowedOrigins: string[]) {
   if (
+    !mainWindow ||
     mainWindow.isDestroyed() ||
     event.sender !== mainWindow.webContents ||
     event.senderFrame !== mainWindow.webContents.mainFrame
@@ -15,7 +17,6 @@ function validateSender(event: IpcMainInvokeEvent, mainWindow: BrowserWindow, ge
     throw new Error("Client state IPC is only available to the local main window")
   }
 
-  const allowedOrigins = getAllowedOrigins()
   const currentUrl = mainWindow.webContents.getURL()
   if (
     !isAllowedRendererOrigin(currentUrl, allowedOrigins) ||
@@ -27,42 +28,51 @@ function validateSender(event: IpcMainInvokeEvent, mainWindow: BrowserWindow, ge
 }
 
 export function setupClientStateIPC(
-  mainWindow: BrowserWindow,
+  ipcMain: IPCRegistrar,
   clientState: ClientStateManager,
-  getAllowedOrigins: () => string[],
+  getMainWindow: () => BrowserWindow | null,
+  getAllowedOrigins: (window: BrowserWindow | null) => string[],
 ) {
-  const handlers = createClientStateIPCHandlers(clientState)
-  const handleNavigationCommit = createRendererAccessNavigationCommitHandler(
-    clientState,
-    (url) => isAllowedRendererOrigin(url, getAllowedOrigins()),
-  )
+  const validate = (event: IpcMainInvokeEvent) => {
+    const window = getMainWindow()
+    validateSender(event, window, getAllowedOrigins(window))
+  }
+  const handle = (
+    channel: string,
+    operation: (argument: unknown, token: unknown) => unknown,
+  ) => ipcMain.handle(channel, async (event, token: unknown, argument: unknown) => {
+    validate(event)
+    clientState.assertRendererAccessToken(token)
+    return operation(argument, token)
+  })
 
   ipcMain.handle("client-state:claimAccess", async (event, token: unknown) => {
-    validateSender(event, mainWindow, getAllowedOrigins)
-    return handlers.claimAccess(token)
+    validate(event)
+    return clientState.claimClientStateAccess(token)
   })
+  handle("client-state:load", () => clientState.loadClientState())
+  handle("client-state:save", (snapshot, token) => clientState.saveClientState(snapshot, token))
+  handle("client-state:setRestoreEnabled", (enabled, token) => {
+    if (typeof enabled !== "boolean") throw new Error("Restore enabled must be a boolean")
+    return clientState.setRestoreEnabled(enabled, token)
+  })
+  handle("client-state:clear", (_argument, token) => clientState.clearClientState(token))
 
-  ipcMain.handle("client-state:load", async (event, token: unknown) => {
-    validateSender(event, mainWindow, getAllowedOrigins)
-    return handlers.load(token)
-  })
-
-  ipcMain.handle("client-state:save", async (event, token: unknown, snapshot: unknown) => {
-    validateSender(event, mainWindow, getAllowedOrigins)
-    return handlers.save(token, snapshot)
-  })
-
-  ipcMain.handle("client-state:setRestoreEnabled", async (event, token: unknown, enabled: unknown) => {
-    validateSender(event, mainWindow, getAllowedOrigins)
-    return handlers.setRestoreEnabled(token, enabled)
-  })
-
-  ipcMain.handle("client-state:clear", async (event, token: unknown) => {
-    validateSender(event, mainWindow, getAllowedOrigins)
-    return handlers.clear(token)
-  })
-
-  mainWindow.webContents.on("did-navigate", (_event, url) => {
-    handleNavigationCommit(url, false, true)
-  })
+  return (window: BrowserWindow): void => {
+    window.webContents.on("did-navigate", (_event, url) => {
+      if (getMainWindow() === window && shouldResetRendererAccessTokenForNavigation(
+        url,
+        false,
+        true,
+        (target) => isAllowedRendererOrigin(target, getAllowedOrigins(window)),
+      )) {
+        clientState.resetRendererAccessToken()
+      }
+    })
+    const resetDestroyedRenderer = () => {
+      if (getMainWindow() === window) clientState.resetRendererAccessToken()
+    }
+    window.webContents.on("render-process-gone", resetDestroyedRenderer)
+    window.webContents.on("destroyed", resetDestroyedRenderer)
+  }
 }

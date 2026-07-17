@@ -38,7 +38,7 @@ class MessageStoreBus {
     if (seeds) {
       this.scrollSnapshotSeeds.delete(instanceId)
       for (const seed of seeds) {
-        resolved.restoreScrollSnapshot(seed.sessionId, seed.scope, seed.snapshot)
+        this.applyScrollSeed(resolved, seed)
       }
     }
     return resolved
@@ -75,11 +75,17 @@ class MessageStoreBus {
     const store = this.stores.get(instanceId)
     if (store) {
       for (const seed of seeds) {
-        store.restoreScrollSnapshot(seed.sessionId, seed.scope, seed.snapshot)
+        this.applyScrollSeed(store, seed)
       }
       return
     }
     this.scrollSnapshotSeeds.set(instanceId, seeds)
+  }
+
+  private applyScrollSeed(store: InstanceMessageStore, seed: MessageScrollSnapshotSeed): void {
+    const current = store.getScrollSnapshot(seed.sessionId, seed.scope)
+    if (current && current.updatedAt >= seed.snapshot.updatedAt) return
+    store.restoreScrollSnapshot(seed.sessionId, seed.scope, seed.snapshot)
   }
 
   private notifyScrollSnapshotChanged(

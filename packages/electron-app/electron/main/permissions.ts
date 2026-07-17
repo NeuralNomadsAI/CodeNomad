@@ -1,19 +1,9 @@
 import { session, systemPreferences } from "electron"
+import { isAllowedRendererOrigin } from "./renderer-origin"
+
+export { isAllowedRendererOrigin } from "./renderer-origin"
 
 const isMac = process.platform === "darwin"
-
-export function isAllowedRendererOrigin(origin: string | undefined | null, allowedOrigins: string[]): boolean {
-  if (!origin) {
-    return false
-  }
-
-  try {
-    const normalized = new URL(origin).origin
-    return allowedOrigins.includes(normalized)
-  } catch {
-    return false
-  }
-}
 
 export function configureMediaPermissionHandlers(getAllowedOrigins: () => string[]) {
   const isAudioMediaRequest = (permission: string, details?: unknown) => {

@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js"
+import type { RestorableSessionState } from "./client-state-codec"
 
 const [appSessionRestoreGateActive, setAppSessionRestoreGateActive] = createSignal(true)
 
@@ -6,4 +7,12 @@ function releaseAppSessionRestoreGate(): void {
   setAppSessionRestoreGateActive(false)
 }
 
-export { appSessionRestoreGateActive, releaseAppSessionRestoreGate }
+function shouldShowEmptyAppHome(snapshot: RestorableSessionState | null, restoreActive = appSessionRestoreGateActive()): boolean {
+  return !restoreActive || !snapshot?.tabs.length || snapshot.homeActive === true
+}
+
+function shouldShowAppHomeOverlay(requested: boolean, tabCount: number): boolean {
+  return requested && tabCount > 0
+}
+
+export { appSessionRestoreGateActive, releaseAppSessionRestoreGate, shouldShowAppHomeOverlay, shouldShowEmptyAppHome }

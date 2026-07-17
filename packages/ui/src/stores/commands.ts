@@ -26,5 +26,3 @@ export function clearCommands(instanceId: string): void {
     return next
   })
 }
-
-export { commandMap as commands }

@@ -520,6 +520,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tempfile",
  "url",
+ "uuid",
  "webkit2gtk",
  "webview2-com",
  "which",

@@ -349,6 +349,9 @@ async fn open_remote_window_impl(
     .build()
     .map_err(|err| err.to_string())?;
 
+    #[cfg(windows)]
+    shutdown::schedule_windows_session_end_handler(&window)?;
+
     #[cfg(target_os = "linux")]
     {
         linux_tls::ensure_remote_window_tls_handler(&window, &app, &label)?;
@@ -561,6 +564,11 @@ fn set_windows_app_user_model_id() {
 fn set_windows_app_user_model_id() {}
 
 fn main() {
+    #[cfg(windows)]
+    if let Some(code) = cli_manager::run_windows_cli_launcher_if_requested() {
+        std::process::exit(code);
+    }
+
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let navigation_guard: TauriPlugin<Wry, ()> = PluginBuilder::new("external-link-guard")
@@ -607,10 +615,14 @@ fn main() {
             set_windows_app_user_model_id();
             let client_state = client_state::ClientState::initialize(&app.handle());
             app.manage(client_state);
+            app.manage(shutdown::ShutdownCoordinator::default());
             build_menu(&app.handle())?;
             client_state::setup_main_window(&app.handle())
                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
             if let Some(window) = app.get_webview_window("main") {
+                #[cfg(windows)]
+                shutdown::install_windows_session_end_handler(&window)
+                    .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
                 let _ = window.eval(LOCAL_WINDOW_CONTEXT_SCRIPT);
             }
             if let Some(shortcut) = fullscreen_shortcut() {
@@ -752,7 +764,7 @@ fn main() {
         .expect("error while building tauri application")
         .run(|app_handle, event| match event {
             tauri::RunEvent::ExitRequested { api, .. } => {
-                if shutdown::exit_allowed() {
+                if shutdown::exit_allowed(&app_handle) {
                     return;
                 }
                 api.prevent_exit();
@@ -785,11 +797,11 @@ fn main() {
                 ..
             } => {
                 if label == "main" {
-                    if shutdown::main_window_close_allowed() {
+                    if shutdown::main_window_close_allowed(&app_handle) {
                         return;
                     }
                     let final_window = app_handle.webview_windows().len() == 1;
-                    if shutdown::exit_allowed() {
+                    if shutdown::exit_allowed(&app_handle) {
                         return;
                     }
                     api.prevent_close();

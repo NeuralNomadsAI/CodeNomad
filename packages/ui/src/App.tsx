@@ -19,6 +19,8 @@ import { initGithubStars } from "./stores/github-stars"
 import { useCommands } from "./lib/hooks/use-commands"
 import { useAppLifecycle } from "./lib/hooks/use-app-lifecycle"
 import { useAppSessionRestore } from "./lib/hooks/use-app-session-restore"
+import { loadedRestorableSession } from "./stores/client-state"
+import { shouldShowAppHomeOverlay, shouldShowEmptyAppHome } from "./stores/app-session-restore-gate"
 import { getLogger } from "./lib/logger"
 import { launchError, showLaunchError, clearLaunchError } from "./stores/launch-errors"
 import { formatLaunchErrorMessage, isMissingBinaryMessage } from "./lib/launch-errors"
@@ -628,15 +630,17 @@ const App: Component = () => {
             </>
           }
         >
-          <FolderSelectionView
-            onSelectFolder={handleSelectFolder}
-            onSelectExistingInstance={handleSelectExistingInstance}
-            isLoading={isSelectingFolder()}
-            onOpenSidecar={handleOpenSidecarPicker}
-          />
+          <Show when={shouldShowEmptyAppHome(loadedRestorableSession())}>
+            <FolderSelectionView
+              onSelectFolder={handleSelectFolder}
+              onSelectExistingInstance={handleSelectExistingInstance}
+              isLoading={isSelectingFolder()}
+              onOpenSidecar={handleOpenSidecarPicker}
+            />
+          </Show>
         </Show>
 
-        <Show when={showFolderSelection()}>
+        <Show when={shouldShowAppHomeOverlay(showFolderSelection(), appTabs().length)}>
           <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
             <div class="w-full h-full relative">
               <FolderSelectionView

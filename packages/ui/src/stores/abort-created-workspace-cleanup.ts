@@ -1,17 +1,22 @@
+import { retryWithBackoff } from "../lib/retry-utils"
+
 interface CreatedWorkspace {
   id: string
   requestId?: string
+  reused?: boolean
 }
 
-interface CleanupEntry<T> {
+interface PendingCleanup<T> {
   workspace: T
   completion: Promise<void>
   resolve: () => void
   retainTombstone: boolean
 }
 
+type OwnedWorkspace<T> = { workspace: T } | PendingCleanup<T> | { tombstone: true } | { released: true }
+
 interface AbortCreatedWorkspaceCleanupOptions<T> {
-  deleteWorkspace: (workspaceId: string) => Promise<void>
+  discardWorkspace: (workspace: T) => Promise<void>
   restoreWorkspace: (workspace: T) => void
   retryDelaysMs?: readonly number[]
   wait?: (delayMs: number) => Promise<void>
@@ -20,59 +25,94 @@ interface AbortCreatedWorkspaceCleanupOptions<T> {
 
 const DEFAULT_RETRY_DELAYS_MS = [250, 1_000, 2_000] as const
 
-function waitForDelay(delayMs: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, delayMs))
-}
-
 export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
-  private readonly tracked = new Map<string, T>()
-  private readonly pending = new Map<string, CleanupEntry<T>>()
-  private readonly pendingRequestIds = new Set<string>()
-  private readonly tombstones = new Set<string>()
-  private readonly retryDelaysMs: readonly number[]
-  private readonly wait: (delayMs: number) => Promise<void>
+  private readonly owned = new Map<string, OwnedWorkspace<T>>()
+  private readonly pendingRequestIds = new Map<string, boolean>()
 
-  constructor(private readonly options: AbortCreatedWorkspaceCleanupOptions<T>) {
-    this.retryDelaysMs = options.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS
-    this.wait = options.wait ?? waitForDelay
-  }
+  constructor(private readonly options: AbortCreatedWorkspaceCleanupOptions<T>) {}
 
   track(workspace: T): void {
-    if (!this.pending.has(workspace.id) && !this.tombstones.has(workspace.id)) {
-      this.tracked.set(workspace.id, workspace)
-    }
+    const entry = this.owned.get(workspace.id)
+    if (!entry) this.owned.set(workspace.id, { workspace })
+    else if ("workspace" in entry && !("released" in entry)) entry.workspace = workspace
   }
 
   beginRequest(requestId: string): void {
-    this.pendingRequestIds.add(requestId)
+    this.pendingRequestIds.set(requestId, false)
   }
 
   finishRequest(requestId: string): void {
     this.pendingRequestIds.delete(requestId)
   }
 
+  forgetRequest(workspaceId: string, requestId: string): void {
+    this.pendingRequestIds.delete(requestId)
+    const entry = this.owned.get(workspaceId)
+    if (entry && "workspace" in entry && !("completion" in entry) && entry.workspace.requestId === requestId) {
+      this.owned.delete(workspaceId)
+    }
+  }
+
+  quarantineRequest(requestId: string): Promise<void> | undefined {
+    if (!this.pendingRequestIds.has(requestId)) return undefined
+    this.pendingRequestIds.set(requestId, true)
+    for (const [workspaceId, entry] of this.owned) {
+      if (!("workspace" in entry) || entry.workspace.requestId !== requestId) continue
+      const cleanup = this.discardTracked(workspaceId, { retainTombstone: entry.workspace.reused !== true })
+      void cleanup.finally(() => this.finishRequest(requestId))
+      return cleanup
+    }
+    return undefined
+  }
+
   trackPendingRequest(workspace: T): boolean {
-    if (!workspace.requestId || !this.pendingRequestIds.has(workspace.requestId)) return false
+    if (!workspace.requestId) return false
+    const quarantined = this.pendingRequestIds.get(workspace.requestId)
+    if (quarantined === undefined) return false
     this.track(workspace)
+    if (quarantined) void this.discardTracked(workspace.id, { retainTombstone: workspace.reused !== true })
+      .finally(() => this.finishRequest(workspace.requestId!))
     return true
   }
 
   release(workspaceId: string): T | undefined {
-    const workspace = this.tracked.get(workspaceId)
-    this.tracked.delete(workspaceId)
-    return workspace
+    const entry = this.owned.get(workspaceId)
+    if (!entry || "tombstone" in entry || "released" in entry || "completion" in entry) return undefined
+    this.owned.set(workspaceId, { released: true })
+    return entry.workspace
+  }
+
+  get(workspaceId: string): T | undefined {
+    const entry = this.owned.get(workspaceId)
+    return entry && "workspace" in entry && !("completion" in entry) ? entry.workspace : undefined
+  }
+
+  async releaseAfter(workspaceId: string, operation: (workspace: T) => Promise<void>): Promise<T | undefined> {
+    const workspace = this.release(workspaceId)
+    if (!workspace) return undefined
+    try {
+      await operation(workspace)
+      return workspace
+    } catch (error) {
+      const entry = this.owned.get(workspaceId)
+      if (workspace && entry && "released" in entry) this.owned.set(workspaceId, { workspace })
+      throw error
+    }
   }
 
   releaseTombstoneForUserCreate(workspaceId: string): void {
-    this.tombstones.delete(workspaceId)
+    const entry = this.owned.get(workspaceId)
+    if (entry && ("tombstone" in entry || "released" in entry)) this.owned.delete(workspaceId)
   }
 
   owns(workspaceId: string): boolean {
-    return this.tracked.has(workspaceId) || this.pending.has(workspaceId) || this.tombstones.has(workspaceId)
+    const entry = this.owned.get(workspaceId)
+    return Boolean(entry && !("released" in entry))
   }
 
   shouldIgnoreEvent(workspaceId: string): boolean {
-    return this.pending.has(workspaceId) || this.tombstones.has(workspaceId)
+    const entry = this.owned.get(workspaceId)
+    return !!entry && ("completion" in entry || "tombstone" in entry)
   }
 
   discardCreated(workspace: T, options?: { retainTombstone?: boolean }): Promise<void> {
@@ -80,77 +120,60 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
   }
 
   discardTracked(workspaceId: string, options?: { retainTombstone?: boolean }): Promise<void> {
-    const pending = this.pending.get(workspaceId)
-    if (pending) return pending.completion
-    if (this.tombstones.has(workspaceId)) return Promise.resolve()
-
-    const workspace = this.tracked.get(workspaceId)
-    if (!workspace) return Promise.resolve()
-    return this.start(workspace, options)
+    const entry = this.owned.get(workspaceId)
+    if (!entry || "tombstone" in entry || "released" in entry) return Promise.resolve()
+    if ("completion" in entry) return entry.completion
+    return this.start(entry.workspace, options)
   }
 
   private start(workspace: T, options?: { retainTombstone?: boolean }): Promise<void> {
-    const pending = this.pending.get(workspace.id)
-    if (pending) return pending.completion
-    if (this.tombstones.has(workspace.id)) return Promise.resolve()
+    const current = this.owned.get(workspace.id)
+    if (current && "completion" in current) return current.completion
+    if (current && ("tombstone" in current || "released" in current)) return Promise.resolve()
 
     let resolve!: () => void
-    const completion = new Promise<void>((done) => {
-      resolve = done
-    })
+    const completion = new Promise<void>((done) => { resolve = done })
     const entry = { workspace, completion, resolve, retainTombstone: options?.retainTombstone === true }
-    this.tracked.delete(workspace.id)
-    this.pending.set(workspace.id, entry)
+    this.owned.set(workspace.id, entry)
     void this.run(entry)
     return completion
   }
 
-  private async run(entry: CleanupEntry<T>): Promise<void> {
+  private async run(entry: PendingCleanup<T>): Promise<void> {
     let lastError: unknown
+    let deleted = false
+    const retryDelays = this.options.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS
+    let retryIndex = 0
 
-    for (let attempt = 0; ; attempt += 1) {
-      try {
-        await this.options.deleteWorkspace(entry.workspace.id)
-        this.finish(entry, true)
-        return
-      } catch (error) {
-        lastError = error
-      }
-
-      const delayMs = this.retryDelaysMs[attempt]
-      if (delayMs === undefined) break
-
-      try {
-        await this.wait(delayMs)
-      } catch (error) {
-        lastError = error
-        break
-      }
-      if (this.pending.get(entry.workspace.id) !== entry) return
-    }
-
-    if (this.pending.get(entry.workspace.id) !== entry) return
     try {
-      this.options.restoreWorkspace(entry.workspace)
+      await retryWithBackoff(() => this.options.discardWorkspace(entry.workspace), {
+        maxAttempts: retryDelays.length + 1,
+        wait: () => (this.options.wait ?? ((delay) => new Promise((resolve) => setTimeout(resolve, delay))))(
+          retryDelays[retryIndex++] ?? 0,
+        ),
+      })
+      deleted = true
     } catch (error) {
       lastError = error
     }
-    this.finish(entry, false)
+
+    if (this.owned.get(entry.workspace.id) !== entry) return
+    if (!deleted) {
+      try {
+        this.options.restoreWorkspace(entry.workspace)
+      } catch (error) {
+        lastError = error
+      }
+    }
+    if (deleted && entry.retainTombstone) this.owned.set(entry.workspace.id, { tombstone: true })
+    else this.owned.delete(entry.workspace.id)
+    entry.resolve()
+
+    if (deleted) return
     try {
       this.options.onPermanentFailure?.(entry.workspace, lastError)
     } catch {
       // Cleanup has already reached its safe terminal state.
     }
-  }
-
-  private finish(entry: CleanupEntry<T>, deleted: boolean): void {
-    if (this.pending.get(entry.workspace.id) !== entry) return
-    this.pending.delete(entry.workspace.id)
-    if (deleted && entry.retainTombstone) {
-      this.tombstones.add(entry.workspace.id)
-    } else {
-      this.tombstones.delete(entry.workspace.id)
-    }
-    entry.resolve()
   }
 }

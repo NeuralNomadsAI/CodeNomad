@@ -30,15 +30,17 @@ pub fn ensure_remote_window_tls_handler(
             let webview = platform_webview.inner();
             let app_handle = app_handle.clone();
             let window_label = window_label.clone();
-            webview.connect_load_failed_with_tls_errors(move |view, failing_uri, certificate, _| {
-                allow_remote_tls_certificate(
-                    &app_handle,
-                    &window_label,
-                    view,
-                    failing_uri,
-                    certificate,
-                )
-            });
+            webview.connect_load_failed_with_tls_errors(
+                move |view, failing_uri, certificate, _| {
+                    allow_remote_tls_certificate(
+                        &app_handle,
+                        &window_label,
+                        view,
+                        failing_uri,
+                        certificate,
+                    )
+                },
+            );
         })
         .map_err(|err| err.to_string())
 }

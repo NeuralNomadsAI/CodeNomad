@@ -1,5 +1,5 @@
 export interface InstanceLifecycleAuthorityEvent {
-  type: "removed" | "opened"
+  type: "removed" | "opened" | "unavailable"
   instanceId: string
   folder: string
   occurrence: number

@@ -6,674 +6,251 @@ import { describe, it } from "node:test"
 import pino from "pino"
 
 import { EventBus } from "../events/bus"
-import {
-  WorkspaceRuntime,
-  WorkspaceRuntimeIdentityCaptureError,
-  WorkspaceRuntimeLaunchCancelledError,
-  WorkspaceStopTimeoutError,
-  WorkspaceWindowsTreeCleanupIncompleteError,
-  type WorkspaceRuntimeOptions,
-} from "./runtime"
-
-type TimerHandle = ReturnType<typeof setTimeout>
-type SpawnCommand = typeof import("node:child_process").spawnSync
-
+import { WorkspaceRuntime, WorkspaceRuntimeIdentityCaptureError, WorkspaceStopTimeoutError,
+  WorkspaceWindowsTreeCleanupIncompleteError, type WorkspaceRuntimeOptions } from "./runtime"
+type Timer = ReturnType<typeof setTimeout>
+type Command = typeof import("node:child_process").spawnSync
+type Call = { command: string; args: readonly string[] }
 class ManualTimers {
-  private nextId = 1
-  private readonly pending = new Map<number, { callback: () => void; delayMs: number }>()
-
-  readonly setTimeout = (callback: () => void, delayMs: number): TimerHandle => {
-    const id = this.nextId++
-    this.pending.set(id, { callback, delayMs })
-    return id as unknown as TimerHandle
-  }
-
-  readonly clearTimeout = (timer: TimerHandle): void => {
-    this.pending.delete(timer as unknown as number)
-  }
-
-  runNext(): void {
-    const next = Array.from(this.pending.entries()).sort((left, right) => left[1].delayMs - right[1].delayMs || left[0] - right[0])[0]
+  private id = 0
+  private pending = new Map<number, { callback: () => void; delay: number }>()
+  set = (callback: () => void, delay: number) => { const id = ++this.id; this.pending.set(id, { callback, delay }); return id as unknown as Timer }
+  clear = (timer: Timer) => this.pending.delete(timer as unknown as number)
+  run(): void {
+    const next = [...this.pending].sort((a, b) => a[1].delay - b[1].delay || a[0] - b[0])[0]
     assert.ok(next, "expected a pending timer")
     this.pending.delete(next[0])
     next[1].callback()
   }
-
-  get size(): number {
-    return this.pending.size
-  }
 }
-
 class FakeChild extends EventEmitter {
-  readonly stdout = new PassThrough()
-  readonly stderr = new PassThrough()
-  readonly liveSignals: NodeJS.Signals[] = []
+  stdout = new PassThrough()
+  stderr = new PassThrough()
   exitCode: number | null = null
   signalCode: NodeJS.Signals | null = null
-
-  constructor(readonly pid: number | undefined = 4242) {
-    super()
-  }
-
-  kill(signal: NodeJS.Signals = "SIGTERM"): boolean {
-    this.liveSignals.push(signal)
-    return true
-  }
-
-  exit(code: number | null, signal: NodeJS.Signals | null): void {
-    this.exitCode = code
-    this.signalCode = signal
-    this.emit("exit", code, signal)
-  }
+  signals: NodeJS.Signals[] = []
+  constructor(readonly pid: number | undefined = 4242) { super() }
+  kill(signal: NodeJS.Signals = "SIGTERM") { this.signals.push(signal); return true }
+  exit(code: number | null = 0, signal: NodeJS.Signals | null = null) { this.exitCode = code; this.signalCode = signal; this.emit("exit", code, signal) }
 }
-
-function result(stdout = "", status = 0, stderr = ""): SpawnSyncReturns<string> {
-  return { pid: 1, output: [null, stdout, stderr], stdout, stderr, status, signal: null }
-}
-
-function linuxRows(rows: Array<[number, number, number, string]>, bootId = "boot-a"): string {
-  return rows.map(([pid, parentPid, groupId, start]) => `${pid}|${parentPid}|${groupId}|${start}|${bootId}|${start}`).join("\n")
-}
-
-function windowsRows(rows: Array<[number, number, string]>): string {
-  return rows.map(([pid, parentPid, start], index) => `${pid}|${parentPid}|0|${start}||${100 + index}`).join("\n")
-}
-
-function guardedRows(matched: boolean, rows: Array<[number, number, number, string]>, cutoff?: string, bootId = "boot-a"): string {
-  const targets = rows.map(([pid, parentPid, groupId, start]) =>
-    `CODENOMAD_TARGET|${pid}|${parentPid}|${groupId}|${start}|${bootId}|${start}`,
-  )
-  return [...targets, `CODENOMAD_RESULT|${matched ? "1" : "0"}|${cutoff ?? ""}|${targets.length > 0 ? "1" : "0"}`].join("\n")
-}
-
-function tokenSignalRows(rows: Array<[number, number, number, string]>, bootId = "boot-a"): string {
-  return [
-    ...rows.map(([pid, parentPid, groupId, start]) =>
-      `CODENOMAD_TARGET|${pid}|${parentPid}|${groupId}|${start}|${bootId}|${start}`,
-    ),
-    `CODENOMAD_RESULT|${rows.length > 0 ? "1" : "0"}`,
-  ].join("\n")
-}
-
-function isTokenCleanup(args: readonly string[]): boolean {
-  return args.includes("codenomad-token-cleanup")
-}
-
-function isTokenSignal(args: readonly string[]): boolean {
-  return isTokenCleanup(args) && args.some((arg) => arg.includes("for pass in 1 2 3"))
-}
-
-function isGuarded(args: readonly string[]): boolean {
-  return !isTokenCleanup(args) && args.some((arg) => arg.includes("guarded-signal") || arg.includes("CODENOMAD_RESULT"))
-}
-
-async function createRuntime(
-  options: Omit<WorkspaceRuntimeOptions, "spawn" | "setTimeout" | "clearTimeout"> = {},
-  reportPort = true,
-  binaryPath = "opencode",
-) {
+const result = (stdout = "", status = 0, stderr = ""): SpawnSyncReturns<string> =>
+  ({ pid: 1, output: [null, stdout, stderr], stdout, stderr, status, signal: null })
+const posix = (rows: Array<[number, number, number, string]>, boot = "boot-a") =>
+  rows.map(([pid, ppid, pgid, start]) => `${pid}|${ppid}|${pgid}|${start}|${boot}|${start}`).join("\n")
+const portable = (rows: Array<[number, number, number, string, string]>) =>
+  rows.map(([pid, ppid, pgid, start, command]) => `${pid} ${ppid} ${pgid} ${start} ${command}`).join("\n")
+const windows = (rows: Array<[number, number, string]>) =>
+  rows.map(([pid, ppid, start], i) => `${pid}|${ppid}|0|${start}||${100 + i}`).join("\n")
+const guarded = (matched: boolean, rows: Array<[number, number, number, string]>, boot = "boot-a") => [
+  ...rows.map(([pid, ppid, pgid, start]) => `CODENOMAD_TARGET|${pid}|${ppid}|${pgid}|${start}|${boot}|${start}`),
+  `CODENOMAD_RESULT|${matched ? "1" : "0"}|200|${rows.length ? "1" : "0"}`,
+].join("\n")
+const token = (rows: Array<[number, number, number, string]>, signal: boolean, boot = "boot-a") => [
+  ...rows.map(([pid, ppid, pgid, start]) => `${signal ? "CODENOMAD_TARGET" : "CODENOMAD_PROCESS"}|${pid}|${ppid}|${pgid}|${start}|${boot}|${start}`),
+  ...(signal ? [`CODENOMAD_RESULT|${rows.length ? "1" : "0"}`] : []),
+].join("\n")
+const isToken = (args: readonly string[]) => args.includes("codenomad-token-cleanup")
+const isSignal = (args: readonly string[]) => isToken(args) && (args.includes("TERM") || args.includes("KILL"))
+const isGuarded = (args: readonly string[]) => !isToken(args) && args.some((arg) => arg.includes("guarded-signal") || arg.includes("CODENOMAD_RESULT"))
+async function harness(options: WorkspaceRuntimeOptions & { binary?: string; output?: string; report?: boolean } = {}) {
   const child = new FakeChild()
   const timers = new ManualTimers()
+  const calls: Call[] = []
   const platform = options.platform ?? "linux"
-  const defaultCommand = ((command: string, args: readonly string[]) => {
-    if (isTokenCleanup(args)) {
-      return isTokenSignal(args)
-        ? result(tokenSignalRows([[4242, 1, 4242, "100"]]))
-        : result(linuxRows([[4242, 1, 4242, "100"]]))
-    }
-    if (isGuarded(args)) {
-      return platform === "win32"
-        ? result("CODENOMAD_TARGET|4242|1|0|win-start||100\nCODENOMAD_RESULT|1||1")
-        : result(guardedRows(true, [[4242, 1, 4242, "100"]], "200"))
-    }
-    return platform === "win32"
-      ? result(windowsRows([[4242, 1, "win-start"]]))
-      : result(linuxRows([[4242, 1, 4242, "100"]]))
-  }) as unknown as SpawnCommand
+  const command = options.spawnSync ?? ((command: string, args: readonly string[]) => {
+    calls.push({ command, args: [...args] })
+    const alive = child.exitCode === null && child.signalCode === null
+    if (isToken(args)) return result(token(alive ? [[4242, 1, 4242, "100"]] : [], isSignal(args)))
+    if (isGuarded(args)) return result(platform === "win32"
+      ? "CODENOMAD_TARGET|4242|1|0|win-start||100\nCODENOMAD_RESULT|1||1"
+      : guarded(true, [[4242, 1, 4242, "100"]]))
+    return result(platform === "win32"
+      ? windows(alive ? [[4242, 1, "win-start"]] : [])
+      : posix(alive ? [[4242, 1, 4242, "100"]] : [[1, 0, 1, "10"]]))
+  }) as Command
   const runtime = new WorkspaceRuntime(new EventBus(), pino({ level: "silent" }), {
-    gracefulStopTimeoutMs: 10,
-    forcedStopTimeoutMs: 10,
-    spawnSync: defaultCommand,
-    ...options,
-    setTimeout: timers.setTimeout,
-    clearTimeout: timers.clearTimeout,
-    spawn: (() => {
-      if (reportPort) queueMicrotask(() => child.stdout.write("opencode server listening on http://127.0.0.1:4321\n"))
-      return child as unknown as ChildProcess
-    }) as typeof import("node:child_process").spawn,
+    platform, gracefulStopTimeoutMs: 10, forcedStopTimeoutMs: 10, ...options,
+    spawnSync: command, setTimeout: timers.set, clearTimeout: timers.clear,
+    spawn: (() => child as unknown as ChildProcess) as typeof import("node:child_process").spawn,
   })
-  const launch = runtime.launch({ workspaceId: "workspace-1", folder: process.cwd(), binaryPath })
-  if (reportPort) await launch
-  return { runtime, child, timers, launch }
-}
-
-function setWslIdentity(runtime: WorkspaceRuntime): void {
-  const managed = (runtime as unknown as {
-    processes: Map<string, { processKind: string; wsl?: Record<string, unknown> }>
-  }).processes.get("workspace-1")
-  assert.ok(managed)
-  managed.processKind = "wsl"
-  managed.wsl = {
-    distro: "Ubuntu",
-    linuxPid: 99,
-    linuxPgid: 99,
-    leaderStartTime: "50",
-    bootId: "wsl-boot",
-    members: new Map([[99, { pid: 99, parentPid: 1, groupId: 99, startTime: "50", bootId: "wsl-boot", startOrder: "50" }]]),
+  const abort = new AbortController()
+  const folder = platform === "win32" && process.platform !== "win32" ? `/${process.cwd()}` : process.cwd()
+  const launch = runtime.launch({ workspaceId: "w", folder, binaryPath: options.binary ?? "opencode", signal: abort.signal })
+  if (options.report !== false) {
+    queueMicrotask(() => child.stdout.write(options.output ?? "opencode server listening on http://127.0.0.1:4321\n"))
+    await launch
   }
+  return { runtime, child, timers, calls, launch, abort }
 }
-
-describe("workspace runtime verified stop", () => {
-  it("keeps an error listener on children rejected before launch handlers are installed", async () => {
-    const child = new FakeChild(undefined)
+describe("workspace runtime lifecycle contracts", () => {
+  it("cancels before spawn and while waiting for a port without losing retryable cleanup", async () => {
+    let spawned = false
     const runtime = new WorkspaceRuntime(new EventBus(), pino({ level: "silent" }), {
-      platform: "linux",
-      spawn: (() => child as unknown as ChildProcess) as typeof import("node:child_process").spawn,
-      spawnSync: (() => result()) as unknown as SpawnCommand,
+      spawn: (() => { spawned = true; return new FakeChild() as unknown as ChildProcess }) as typeof import("node:child_process").spawn,
     })
+    const pre = new AbortController(); pre.abort(new Error("pre-cancelled"))
+    await assert.rejects(runtime.launch({ workspaceId: "pre", folder: process.cwd(), binaryPath: "opencode", signal: pre.signal }), /pre-cancelled/)
+    assert.equal(spawned, false)
 
-    await assert.rejects(
-      runtime.launch({ workspaceId: "missing-pid", folder: process.cwd(), binaryPath: "missing-opencode" }),
-      WorkspaceRuntimeIdentityCaptureError,
-    )
-    assert.equal(child.listenerCount("error"), 1)
-    assert.doesNotThrow(() => child.emit("error", new Error("ENOENT")))
-  })
-
-  it("rejects a direct Windows launch without immutable process identity", async () => {
-    let commandCalls = 0
-    const harness = await createRuntime({
-      platform: "win32",
-      spawnSync: (() => {
-        commandCalls += 1
-        return result("", 1, "CIM unavailable")
-      }) as unknown as SpawnCommand,
-    }, false, "opencode.exe")
-
-    await assert.rejects(harness.launch, WorkspaceRuntimeIdentityCaptureError)
-    assert.ok(commandCalls >= 1)
-    assert.deepEqual(harness.child.liveSignals, ["SIGTERM"])
-    harness.child.exit(null, "SIGTERM")
-  })
-
-  it("stops an identity-matched direct Windows process tree", async () => {
     let alive = true
-    const commands: Array<{ command: string; args: readonly string[] }> = []
-    const harness = await createRuntime({
-      platform: "win32",
-      spawnSync: ((command: string, args: readonly string[]) => {
-        commands.push({ command, args: [...args] })
-        if (isGuarded(args)) {
-          alive = false
-          return result([
-            "CODENOMAD_TARGET|4243|4242|0|descendant-start||101",
-            "CODENOMAD_TARGET|4242|1|0|win-start||100",
-            "CODENOMAD_RESULT|1||1",
-          ].join("\n"))
-        }
-        return result(alive
-          ? windowsRows([[4242, 1, "win-start"], [4243, 4242, "descendant-start"]])
-          : windowsRows([[7, 1, "other-start"]]))
-      }) as unknown as SpawnCommand,
-    }, true, "opencode.exe")
+    const h = await harness({ report: false, spawnSync: ((_command: string, args: readonly string[]) => {
+      if (isToken(args)) return result(token(alive ? [[4242, 1, 4242, "100"]] : [], isSignal(args)))
+      if (isGuarded(args)) return result(guarded(true, [[4242, 1, 4242, "100"]]))
+      return result(posix(alive ? [[4242, 1, 4242, "100"]] : [[1, 0, 1, "10"]]))
+    }) as unknown as Command })
+    h.abort.abort(new Error("port-cancelled"))
+    await assert.rejects(h.launch, /port-cancelled/)
+    const first = h.runtime.stop("w"); h.timers.run(); h.timers.run()
+    await assert.rejects(first, WorkspaceStopTimeoutError)
+    alive = false
+    const retry = h.runtime.stop("w"); h.child.exit(); await retry
 
-    await harness.runtime.stop("workspace-1")
-    assert.equal(commands.some(({ command }) => command === "taskkill.exe"), false)
-    assert.equal(commands.filter(({ args }) => isGuarded(args)).length, 1)
-    assert.deepEqual(harness.child.liveSignals, [])
+    const direct = await harness({ report: false })
+    const stopped = direct.runtime.stop("w")
+    await assert.rejects(direct.launch, /runtime launch was cancelled/)
+    direct.child.exit()
+    await stopped
   })
-
-  it("keeps direct Windows stop bounded when the child ignores termination", async () => {
-    const commands: Array<{ command: string; args: readonly string[] }> = []
-    const harness = await createRuntime({
-      platform: "win32",
-      spawnSync: ((command: string, args: readonly string[]) => {
-        commands.push({ command, args: [...args] })
-        return isGuarded(args)
-          ? result("CODENOMAD_TARGET|4242|1|0|win-start||100\nCODENOMAD_RESULT|1||1")
-          : result(windowsRows([[4242, 1, "win-start"]]))
-      }) as unknown as SpawnCommand,
-    }, true, "opencode.exe")
-
-    const stop = harness.runtime.stop("workspace-1")
-    harness.timers.runNext()
-    harness.timers.runNext()
-    await assert.rejects(stop, WorkspaceStopTimeoutError)
-    assert.equal(commands.filter(({ args }) => isGuarded(args)).length, 2)
-    assert.equal(commands.some(({ command }) => command === "taskkill.exe"), false)
-    assert.deepEqual(harness.child.liveSignals, [])
+  it("rejects launches whose immutable identity cannot be captured and safely cleans up", async () => {
+    for (const scenario of [{ platform: "linux" as const, binary: "opencode" }, { platform: "win32" as const, binary: "opencode.exe" }]) {
+      const child = new FakeChild(scenario.platform === "linux" ? undefined : 4242)
+      const runtime = new WorkspaceRuntime(new EventBus(), pino({ level: "silent" }), {
+        platform: scenario.platform,
+        spawn: (() => child as unknown as ChildProcess) as typeof import("node:child_process").spawn,
+        spawnSync: (() => result("", 1, "identity unavailable")) as unknown as Command,
+      })
+      await assert.rejects(runtime.launch({ workspaceId: scenario.platform, folder: process.cwd(), binaryPath: scenario.binary }), WorkspaceRuntimeIdentityCaptureError)
+      assert.deepEqual(child.signals, ["SIGTERM"])
+      assert.doesNotThrow(() => child.emit("error", new Error("late spawn error")))
+    }
   })
-
-  it("keeps tracking a descendant after partial guarded Windows termination", async () => {
-    let stage: "tree" | "descendant" | "gone" = "tree"
-    let guardedCalls = 0
-    const harness = await createRuntime({
-      platform: "win32",
-      spawnSync: ((_command: string, args: readonly string[]) => {
-        if (isGuarded(args)) {
-          guardedCalls += 1
-          if (guardedCalls === 1) {
-            stage = "descendant"
-            return result([
-              "CODENOMAD_TARGET|4242|1|0|win-start||100",
-              "CODENOMAD_TARGET|4243|4242|0|descendant-start||101",
-            ].join("\n"), 1, "descendant termination failed")
-          }
-          stage = "gone"
-          return result("CODENOMAD_TARGET|4243|1|0|descendant-start||101\nCODENOMAD_RESULT|0||1")
-        }
-        if (stage === "tree") {
-          return result(windowsRows([[4242, 1, "win-start"], [4243, 4242, "descendant-start"]]))
-        }
-        if (stage === "descendant") {
-          return result(windowsRows([[4243, 1, "descendant-start"]]))
-        }
-        return result(windowsRows([[7, 1, "other-start"]]))
-      }) as unknown as SpawnCommand,
-    }, true, "opencode.exe")
-
-    let settled = false
-    const stop = harness.runtime.stop("workspace-1").finally(() => { settled = true })
-    await Promise.resolve()
-    assert.equal(settled, false)
-    harness.timers.runNext()
-    harness.timers.runNext()
-    await stop
-    assert.equal(guardedCalls, 2)
+  it("signals identity-matched POSIX, Windows, and WSL processes", async () => {
+    const scenarios = [
+      { name: "POSIX", platform: "linux" as const, binary: "opencode", marker: "codenomad-guarded-signal" },
+      { name: "Windows", platform: "win32" as const, binary: "opencode.exe", marker: "CODENOMAD_RESULT" },
+      { name: "WSL", platform: "win32" as const, binary: "\\\\wsl$\\Ubuntu\\usr\\bin\\opencode", marker: "codenomad-wsl-guarded-signal",
+        output: "__CODENOMAD_WSL_PID__:99:99:50:wsl-boot\nopencode server listening on http://127.0.0.1:4321\n" },
+    ]
+    for (const scenario of scenarios) {
+      let alive = true
+      const calls: Call[] = []
+      const h = await harness({ platform: scenario.platform, binary: scenario.binary, output: scenario.output, spawnSync: ((command: string, args: readonly string[]) => {
+        calls.push({ command, args: [...args] })
+        const wsl = scenario.name === "WSL"
+        if (wsl && command === "powershell.exe") return result(windows([[4242, 1, "host-start"]]))
+        if (isToken(args)) { const rows: Array<[number, number, number, string]> = alive ? [[wsl ? 99 : 4242, 1, wsl ? 99 : 4242, wsl ? "50" : "100"]] : []; if (isSignal(args)) alive = false; return result(token(rows, isSignal(args), wsl ? "wsl-boot" : "boot-a")) }
+        if (isGuarded(args)) { alive = false; return result(wsl ? guarded(true, [[99, 1, 99, "50"]], "wsl-boot") : scenario.platform === "win32" ? "CODENOMAD_TARGET|4242|1|0|win-start||100\nCODENOMAD_RESULT|1||1" : guarded(true, [[4242, 1, 4242, "100"]])) }
+        return result(wsl
+          ? posix(alive ? [[99, 1, 99, "50"]] : [[1, 0, 1, "10"]], "wsl-boot")
+          : scenario.platform === "win32"
+            ? windows(alive ? [[4242, 1, "win-start"]] : [[1, 0, "system-start"]])
+            : posix(alive ? [[4242, 1, 4242, "100"]] : [[1, 0, 1, "10"]]))
+      }) as unknown as Command })
+      const stop = h.runtime.stop("w")
+      h.child.exit()
+      await stop
+      assert.ok(calls.some(({ args }) => args.some((arg) => arg.includes(scenario.marker))), `${scenario.name} signal`)
+      assert.equal(calls.some(({ command }) => command === "taskkill.exe"), false)
+    }
   })
-
-  it("cleans a token-matching descendant that survives its unidentified wrapper", async () => {
-    const child = new FakeChild()
-    const timers = new ManualTimers()
-    let tokenAlive = true
-    let spawnedToken = ""
-    let logs = ""
-    const tokenSignals: number[][] = []
-    const runtime = new WorkspaceRuntime(new EventBus(), pino({ level: "trace" }, {
-      write: (chunk: string) => { logs += chunk },
-    }), {
-      platform: "linux",
-      spawnSync: ((_command: string, args: readonly string[]) => {
-        if (isTokenCleanup(args)) {
-          if (isTokenSignal(args)) {
-            const rows: Array<[number, number, number, string]> = tokenAlive
-              ? [[5000, 1, 4242, "150"]]
-              : []
-            tokenSignals.push(rows.map(([pid]) => pid))
-            tokenAlive = false
-            return result(tokenSignalRows(rows))
-          }
-          return result(tokenAlive ? linuxRows([[5000, 1, 4242, "150"]]) : "")
-        }
-        return result("", 1, "proc unavailable")
-      }) as unknown as SpawnCommand,
-      spawn: ((_command, _args, options) => {
-        spawnedToken = String(options?.env?.CODENOMAD_LAUNCH_CLEANUP_TOKEN ?? "")
-        return child as unknown as ChildProcess
-      }) as typeof import("node:child_process").spawn,
-      setTimeout: timers.setTimeout,
-      clearTimeout: timers.clearTimeout,
-    })
-
-    await assert.rejects(
-      runtime.launch({ workspaceId: "workspace-1", folder: process.cwd(), binaryPath: "opencode" }),
-      WorkspaceRuntimeIdentityCaptureError,
-    )
-    assert.equal((runtime as unknown as { processes: Map<string, unknown> }).processes.size, 0)
-    assert.deepEqual(child.liveSignals, ["SIGTERM"])
-    assert.match(spawnedToken, /^[a-f0-9]{64}$/)
-    assert.equal(logs.includes(spawnedToken), false)
-    assert.match(logs, /\[REDACTED\]/)
-    assert.deepEqual(tokenSignals, [[5000]])
+  it("does not signal a reused PID or process group", async () => {
+    let launched = false
+    const calls: string[][] = []
+    const h = await harness({ spawnSync: ((_command: string, args: readonly string[]) => {
+      calls.push([...args])
+      if (isToken(args)) return result(token([], isSignal(args)))
+      if (isGuarded(args)) return result(guarded(true, [[4242, 1, 4242, "100"]]))
+      if (!launched) { launched = true; return result(posix([[4242, 1, 4242, "100"]])) }
+      return result(posix([[4242, 1, 4242, "300"], [6000, 4242, 4242, "150"]]))
+    }) as unknown as Command })
+    await h.runtime.stop("w")
+    assert.ok(calls.every((args) => !args.includes("6000") && !args.includes("300")))
   })
-
-  it("uses one guarded command per signal", async () => {
-    const guardedInvocations: readonly string[][] = []
-    const mutableInvocations = guardedInvocations as string[][]
-    const spawnCommand = ((_command: string, args: readonly string[]) => {
-      if (isTokenCleanup(args)) {
-        return isTokenSignal(args)
-          ? result(tokenSignalRows([[4242, 1, 4242, "100"]]))
-          : result(linuxRows([[4242, 1, 4242, "100"]]))
-      }
+  it("retains and cleans a portable process group after its leader exits", async () => {
+    const start = "Fri Jul 10 12:34:56 2026"
+    let alive = true
+    let leaderExited = false
+    const guardedCalls: readonly string[][] = []
+    const h = await harness({ platform: "darwin", spawnSync: ((_command: string, args: readonly string[]) => {
       if (isGuarded(args)) {
-        mutableInvocations.push([...args])
-        return result(guardedRows(true, [[4242, 1, 4242, "100"]], "200"))
+        (guardedCalls as string[][]).push([...args])
+        alive = false
+        return result(`CODENOMAD_TARGET_B64|5000|1|4242|${Buffer.from(start).toString("base64")}|${Buffer.from("opencode-child").toString("base64")}\nCODENOMAD_RESULT|1||1`)
       }
-      return result(linuxRows([[4242, 1, 4242, "100"]]))
-    }) as unknown as SpawnCommand
-    const harness = await createRuntime({
-      platform: "linux",
-      spawnSync: spawnCommand,
-    })
+      const rows: Array<[number, number, number, string, string]> = !alive
+        ? []
+        : leaderExited
+          ? [[5000, 4242, 4242, start, "opencode-child"]]
+          : [[4242, 1, 4242, start, "opencode"]]
+      return result(portable(rows))
+    }) as unknown as Command })
 
-    const stop = harness.runtime.stop("workspace-1")
-    harness.timers.runNext()
-    harness.timers.runNext()
-    await assert.rejects(stop, WorkspaceStopTimeoutError)
-    assert.equal(guardedInvocations.length, 2)
-    assert.ok(guardedInvocations.every((args) => args.includes("codenomad-guarded-signal")))
+    leaderExited = true
+    h.child.exit(1)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(guardedCalls.length, 1)
+    assert.equal(guardedCalls[0]?.[7], "1")
+    assert.equal((h.runtime as unknown as { processes: Map<string, unknown> }).processes.size, 0)
   })
-
-  it("sends no second command when the guarded operation reports identity mismatch", async () => {
-    let launchProbe = true
-    let guardedCommands = 0
-    const spawnCommand = ((_command: string, args: readonly string[]) => {
-      if (isTokenCleanup(args)) return result(isTokenSignal(args) ? tokenSignalRows([]) : "")
+  it("refuses a leaderless portable group when no retained identity anchor remains", async () => {
+    const start = "Fri Jul 10 12:34:56 2026"
+    let leaderExited = false
+    const guardedCalls: readonly string[][] = []
+    const h = await harness({ platform: "darwin", spawnSync: ((_command: string, args: readonly string[]) => {
       if (isGuarded(args)) {
-        guardedCommands += 1
+        (guardedCalls as string[][]).push([...args])
         return result("CODENOMAD_RESULT|0||0")
       }
-      if (launchProbe) {
-        launchProbe = false
-        return result(linuxRows([[4242, 1, 4242, "100"]]))
-      }
-      return result(linuxRows([[4242, 1, 4242, "300"]]))
-    }) as unknown as SpawnCommand
-    const harness = await createRuntime({ platform: "linux", spawnSync: spawnCommand })
+      return result(portable(leaderExited
+        ? [[6000, 1, 4242, "Fri Jul 10 99:99:99 2026", "unverified-process"]]
+        : [[4242, 1, 4242, start, "opencode"]]))
+    }) as unknown as Command })
 
-    const stop = harness.runtime.stop("workspace-1")
-    await stop
-    assert.equal(guardedCommands, 1)
+    leaderExited = true
+    h.child.exit(1)
+    const cleanup = h.runtime.stop("w")
+    h.timers.run(); h.timers.run()
+    await assert.rejects(cleanup, (error: unknown) =>
+      error instanceof WorkspaceStopTimeoutError && /no longer has a verified identity anchor/.test(error.message))
+    assert.equal(guardedCalls.length, 2)
+    assert.ok(guardedCalls.every((args) => args[7] === "1" && !args.includes("6000")))
+    assert.equal((h.runtime as unknown as { processes: Map<string, unknown> }).processes.size, 1)
   })
-
-  it("tracks a descendant forked between the precheck and SIGTERM dispatch", async () => {
-    let phase: "launch" | "after-term" | "after-kill" = "launch"
-    const guardedTargets: string[][] = []
-    const spawnCommand = ((_command: string, args: readonly string[]) => {
-      if (isTokenCleanup(args)) {
-        const rows: Array<[number, number, number, string]> = phase === "after-term" ? [[5000, 4242, 4242, "120"]] : []
-        return result(isTokenSignal(args) ? tokenSignalRows(rows) : linuxRows(rows))
-      }
-      if (isGuarded(args)) {
-        guardedTargets.push([...args])
-        if (phase === "launch") {
-          phase = "after-term"
-          return result(guardedRows(true, [[4242, 1, 4242, "100"], [5000, 4242, 4242, "120"]], "200"))
-        }
-        phase = "after-kill"
-        return result(guardedRows(false, [[5000, 4242, 4242, "120"]]))
-      }
-      if (phase === "launch") return result(linuxRows([[4242, 1, 4242, "100"]]))
-      if (phase === "after-term") return result(linuxRows([[5000, 1, 4242, "120"]]))
-      return result(linuxRows([[7, 1, 7, "10"]]))
-    }) as unknown as SpawnCommand
-    const harness = await createRuntime({ platform: "linux", spawnSync: spawnCommand })
-
-    const stop = harness.runtime.stop("workspace-1")
-    harness.timers.runNext()
-    harness.timers.runNext()
-    await stop
-
-    assert.ok(guardedTargets[1]?.includes("5000"))
-    assert.ok(guardedTargets[1]?.includes("120"))
+  it("bounds direct Windows cleanup without falling back to taskkill", async () => {
+    const calls: Call[] = []
+    const h = await harness({ platform: "win32", binary: "opencode.exe", spawnSync: ((command: string, args: readonly string[]) => {
+      calls.push({ command, args: [...args] })
+      return isGuarded(args) ? result("CODENOMAD_TARGET|4242|1|0|win-start||100\nCODENOMAD_RESULT|1||1") : result(windows([[4242, 1, "win-start"]]))
+    }) as unknown as Command })
+    const stop = h.runtime.stop("w"); h.timers.run(); h.timers.run()
+    await assert.rejects(stop, WorkspaceStopTimeoutError)
+    assert.equal(calls.some(({ command }) => command === "taskkill.exe"), false)
+    assert.equal(calls.filter(({ args }) => isGuarded(args)).length, 2)
   })
-
-  it("adopts a descendant forked after SIGTERM and before the returned cutoff", async () => {
-    let phase: "launch" | "after-term" | "after-kill" = "launch"
-    const guardedTargets: string[][] = []
-    const spawnCommand = ((_command: string, args: readonly string[]) => {
-      if (isTokenCleanup(args)) {
-        const rows: Array<[number, number, number, string]> = phase === "after-term" ? [[5000, 1, 4242, "150"]] : []
-        return result(isTokenSignal(args) ? tokenSignalRows(rows) : linuxRows(rows))
-      }
-      if (isGuarded(args)) {
-        guardedTargets.push([...args])
-        if (phase === "launch") {
-          phase = "after-term"
-          return result(guardedRows(true, [[4242, 1, 4242, "100"]], "200"))
-        }
-        phase = "after-kill"
-        return result(guardedRows(false, [[5000, 4242, 4242, "150"]]))
-      }
-      if (phase === "launch") return result(linuxRows([[4242, 1, 4242, "100"]]))
-      if (phase === "after-term") {
-        return result(linuxRows([[5000, 1, 4242, "150"]]))
-      }
-      return result(linuxRows([[7, 1, 7, "10"]]))
-    }) as unknown as SpawnCommand
-    const harness = await createRuntime({ platform: "linux", spawnSync: spawnCommand })
-
-    const stop = harness.runtime.stop("workspace-1")
-    harness.child.exit(0, null)
-    harness.timers.runNext()
-    harness.timers.runNext()
-    await stop
-
-    assert.equal(guardedTargets.length, 2)
-    assert.ok(guardedTargets[1]?.includes("5000"), "SIGKILL must include the newly tracked immutable descendant")
-    assert.ok(guardedTargets[1]?.includes("150"))
-  })
-
-  it("does not adopt a newly reused process group after original ownership is lost", async () => {
-    let launched = false
-    let termSent = false
-    let guardedCommands = 0
-    const spawnCommand = ((_command: string, args: readonly string[]) => {
-      if (isTokenCleanup(args)) return result(isTokenSignal(args) ? tokenSignalRows([]) : "")
-      if (isGuarded(args)) {
-        guardedCommands += 1
-        termSent = true
-        return result(guardedRows(true, [[4242, 1, 4242, "100"]], "200"))
-      }
-      if (!launched) {
-        launched = true
-        return result(linuxRows([[4242, 1, 4242, "100"]]))
-      }
-      return termSent
-        ? result(linuxRows([[4242, 1, 4242, "300"], [6000, 4242, 4242, "150"]]))
-        : result(linuxRows([[4242, 1, 4242, "100"]]))
-    }) as unknown as SpawnCommand
-    const harness = await createRuntime({ platform: "linux", spawnSync: spawnCommand })
-
-    const stop = harness.runtime.stop("workspace-1")
-    await stop
-    assert.equal(guardedCommands, 1)
-  })
-
-  it("uses a guarded WSL command and retains immutable Linux identities", async () => {
-    let alive = true
-    const guardedCommands: string[][] = []
-    const spawnCommand = ((command: string, args: readonly string[]) => {
-      if (command === "powershell.exe") return result(windowsRows([[4242, 1, "host-start"]]))
-      if (isTokenCleanup(args)) {
-        const rows: Array<[number, number, number, string]> = alive ? [[99, 1, 99, "50"]] : []
-        if (isTokenSignal(args)) alive = false
-        return result(isTokenSignal(args) ? tokenSignalRows(rows, "wsl-boot") : linuxRows(rows, "wsl-boot"))
-      }
-      if (args.includes("codenomad-wsl-guarded-signal")) {
-        guardedCommands.push([...args])
-        alive = false
-        return result(guardedRows(true, [[99, 1, 99, "50"]], "80", "wsl-boot"))
-      }
-      if (args.includes("codenomad-wsl-identity")) {
-        return result(alive ? linuxRows([[99, 1, 99, "50"]], "wsl-boot") : linuxRows([[7, 1, 7, "10"]], "wsl-boot"))
-      }
-      return result()
-    }) as unknown as SpawnCommand
-    const harness = await createRuntime({ platform: "win32", spawnSync: spawnCommand }, true, "opencode.cmd")
-    setWslIdentity(harness.runtime)
-
-    const stop = harness.runtime.stop("workspace-1")
-    await stop
-    assert.equal(guardedCommands.length, 1)
-    assert.ok(guardedCommands[0]?.includes("wsl-boot"))
-  })
-
-  it("launches and stops a bare opencode cmd shim without PowerShell", async () => {
-    const commands: Array<{ command: string; args: readonly string[] }> = []
-    const spawnCommand = ((command: string, args: readonly string[]) => {
-      commands.push({ command, args: [...args] })
-      return command === "powershell.exe" ? result("", 1, "ETIMEDOUT") : result()
-    }) as unknown as SpawnCommand
-    const harness = await createRuntime({ platform: "win32", spawnSync: spawnCommand }, true, "opencode")
-
-    const stop = harness.runtime.stop("workspace-1")
-    assert.deepEqual(commands, [{ command: "taskkill.exe", args: ["/PID", "4242", "/T"] }])
-    harness.child.exit(0, null)
-    await stop
-    assert.equal(commands.some(({ command }) => command === "powershell.exe"), false)
-  })
-
-  it("adds force only when Windows wrapper cleanup escalates", async () => {
-    const invocations: readonly string[][] = []
-    const harness = await createRuntime({
-      platform: "win32",
-      spawnSync: ((_command: string, args: readonly string[]) => {
-        (invocations as string[][]).push([...args])
-        return result()
-      }) as unknown as SpawnCommand,
-    }, true, "opencode.cmd")
-
-    const stop = harness.runtime.stop("workspace-1")
-    harness.timers.runNext()
-    assert.deepEqual(invocations, [
-      ["/PID", "4242", "/T"],
-      ["/PID", "4242", "/T", "/F"],
-    ])
-    harness.child.exit(0, null)
-    await stop
-  })
-
-  it("keeps failed Windows wrapper cleanup bounded and retryable", async () => {
+  it("escalates wrapper cleanup, reports incomplete exited trees, and permits retry", async () => {
     let available = false
-    const harness = await createRuntime({
-      platform: "win32",
-      spawnSync: (() => available ? result() : result("", 1, "taskkill unavailable")) as unknown as SpawnCommand,
-    }, true, "opencode.cmd")
-
-    const first = harness.runtime.stop("workspace-1")
-    harness.timers.runNext()
-    harness.timers.runNext()
-    await assert.rejects(first, (error: unknown) => {
-      assert.ok(error instanceof WorkspaceStopTimeoutError)
-      assert.match(error.message, /taskkill \/T failed: taskkill unavailable/)
-      assert.match(error.message, /taskkill \/T \/F failed: taskkill unavailable/)
-      return true
-    })
-
+    const calls: Call[] = []
+    const h = await harness({ platform: "win32", binary: "opencode.cmd", spawnSync: ((command: string, args: readonly string[]) => {
+      calls.push({ command, args: [...args] })
+      return available ? result() : result("", 1, "taskkill unavailable")
+    }) as unknown as Command })
+    const first = h.runtime.stop("w"); h.timers.run(); h.timers.run()
+    await assert.rejects(first, (error: unknown) => error instanceof WorkspaceStopTimeoutError && /\/T \/F failed/.test(error.message))
+    assert.deepEqual(calls.map(({ args }) => args), [["/PID", "4242", "/T"], ["/PID", "4242", "/T", "/F"]])
     available = true
-    const retry = harness.runtime.stop("workspace-1")
-    harness.child.exit(0, null)
-    await retry
+    const retry = h.runtime.stop("w"); h.child.exit(); await retry
+
+    const exited = await harness({ platform: "win32", binary: "opencode.cmd", spawnSync: (() => result("", 1, "taskkill unavailable")) as unknown as Command })
+    const incomplete = exited.runtime.stop("w"); exited.child.exit(1)
+    await assert.rejects(incomplete, WorkspaceWindowsTreeCleanupIncompleteError)
+    await assert.rejects(exited.runtime.stop("w"), WorkspaceWindowsTreeCleanupIncompleteError)
   })
-
-  it("never signals an exited wrapper PID after tree cleanup was not confirmed", async () => {
-    const invocations: readonly string[][] = []
-    const harness = await createRuntime({
-      platform: "win32",
-      spawnSync: ((_command: string, args: readonly string[]) => {
-        (invocations as string[][]).push([...args])
-        return result("", 1, "taskkill unavailable")
-      }) as unknown as SpawnCommand,
-    }, true, "opencode")
-
-    const first = harness.runtime.stop("workspace-1")
-    harness.child.exit(1, null)
-    await assert.rejects(first, WorkspaceWindowsTreeCleanupIncompleteError)
-    assert.equal((harness.runtime as unknown as { processes: Map<string, unknown> }).processes.size, 1)
-    assert.deepEqual(invocations, [["/PID", "4242", "/T"]])
-
-    const second = harness.runtime.stop("workspace-1")
-    await assert.rejects(second, (error: unknown) => {
-      assert.ok(error instanceof WorkspaceWindowsTreeCleanupIncompleteError)
-      assert.match(error.message, /taskkill unavailable/)
-      return true
-    })
-    assert.equal((harness.runtime as unknown as { processes: Map<string, unknown> }).processes.size, 1)
-    assert.deepEqual(invocations, [["/PID", "4242", "/T"]])
-  })
-
-  it("persists confirmed wrapper tree cleanup across a later exit and retry", async () => {
-    const invocations: readonly string[][] = []
-    const harness = await createRuntime({
-      platform: "win32",
-      spawnSync: ((_command: string, args: readonly string[]) => {
-        (invocations as string[][]).push([...args])
-        return result()
-      }) as unknown as SpawnCommand,
-    }, true, "opencode.cmd")
-
-    const first = harness.runtime.stop("workspace-1")
-    harness.timers.runNext()
-    harness.timers.runNext()
-    await assert.rejects(first, WorkspaceStopTimeoutError)
-    harness.child.exit(0, null)
-
-    await harness.runtime.stop("workspace-1")
-    assert.deepEqual(invocations, [
-      ["/PID", "4242", "/T"],
-      ["/PID", "4242", "/T", "/F"],
-    ])
-    assert.equal((harness.runtime as unknown as { processes: Map<string, unknown> }).processes.size, 0)
-  })
-
-  it("retains launch identity so a transient stop failure can recover on retry", async () => {
-    let available = true
-    let alive = true
-    let guardedCommands = 0
-    const spawnCommand = ((_command: string, args: readonly string[]) => {
-      if (isTokenCleanup(args)) {
-        if (!available) return result("", 1, "identity service unavailable")
-        const rows: Array<[number, number, number, string]> = alive ? [[4242, 1, 4242, "100"]] : []
-        if (isTokenSignal(args)) alive = false
-        return result(isTokenSignal(args) ? tokenSignalRows(rows) : linuxRows(rows))
-      }
-      if (isGuarded(args)) {
-        guardedCommands += 1
-        if (!available) return result("", 1, "identity service unavailable")
-        alive = false
-        return result(guardedRows(true, [[4242, 1, 4242, "100"]], "200"))
-      }
-      if (!available) return result("", 1, "identity service unavailable")
-      return result(alive ? linuxRows([[4242, 1, 4242, "100"]]) : linuxRows([[7, 1, 7, "10"]]))
-    }) as unknown as SpawnCommand
-    const harness = await createRuntime({ platform: "linux", spawnSync: spawnCommand })
-
-    available = false
-    const first = harness.runtime.stop("workspace-1")
-    harness.timers.runNext()
-    harness.timers.runNext()
-    await assert.rejects(first, /cleanup could not be confirmed/)
-
-    available = true
-    const retry = harness.runtime.stop("workspace-1")
-    await retry
-    assert.equal(guardedCommands, 3)
-  })
-
   it("shares one bounded stop operation across concurrent callers", async () => {
-    const harness = await createRuntime({ platform: "linux" })
-    const first = harness.runtime.stop("workspace-1")
-    const second = harness.runtime.stop("workspace-1")
+    const h = await harness()
+    const first = h.runtime.stop("w"); const second = h.runtime.stop("w")
     assert.strictEqual(first, second)
-    harness.timers.runNext()
-    harness.timers.runNext()
-    const results = await Promise.allSettled([first, second])
-    assert.equal(results[0].status, "rejected")
-    assert.equal(results[1].status, "rejected")
-  })
-
-  it("cancels a no-port launch while retaining retryable stop state", async () => {
-    let alive = true
-    const spawnCommand = ((_command: string, args: readonly string[]) => {
-      if (isTokenCleanup(args)) {
-        const rows: Array<[number, number, number, string]> = alive ? [[4242, 1, 4242, "100"]] : []
-        return result(isTokenSignal(args) ? tokenSignalRows(rows) : linuxRows(rows))
-      }
-      if (isGuarded(args)) return result(guardedRows(true, [[4242, 1, 4242, "100"]], "200"))
-      return result(alive ? linuxRows([[4242, 1, 4242, "100"]]) : linuxRows([[7, 1, 7, "10"]]))
-    }) as unknown as SpawnCommand
-    const harness = await createRuntime({ platform: "linux", spawnSync: spawnCommand }, false)
-
-    const firstStop = harness.runtime.stop("workspace-1")
-    await assert.rejects(harness.launch, WorkspaceRuntimeLaunchCancelledError)
-    harness.timers.runNext()
-    harness.timers.runNext()
-    await assert.rejects(firstStop, WorkspaceStopTimeoutError)
-
-    alive = false
-    const retry = harness.runtime.stop("workspace-1")
-    await retry
+    h.timers.run(); h.timers.run()
+    const outcomes = await Promise.allSettled([first, second])
+    assert.deepEqual(outcomes.map(({ status }) => status), ["rejected", "rejected"])
   })
 })

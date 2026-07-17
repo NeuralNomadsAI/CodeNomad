@@ -60,7 +60,7 @@ describe("buildWindowsSpawnSpec", () => {
     assert.equal(buildWindowsSpawnSpec("opencode", []).processKind, "windows-wrapper")
   })
 
-  it("resolves a bare cmd shim from a quoted PATH entry and wraps its absolute path", () => {
+  it("resolves a bare cmd shim from a quoted PATH entry and wraps its absolute path", { skip: process.platform !== "win32" }, () => {
     const root = mkdtempSync(path.join(tmpdir(), "codenomad-spawn-"))
     const cwd = path.join(root, "workspace")
     const bin = path.join(root, "bin with spaces")
@@ -84,7 +84,7 @@ describe("buildWindowsSpawnSpec", () => {
     }
   })
 
-  it("honors PATHEXT precedence when both native and shim files exist", () => {
+  it("honors PATHEXT precedence when both native and shim files exist", { skip: process.platform !== "win32" }, () => {
     const root = mkdtempSync(path.join(tmpdir(), "codenomad-spawn-"))
     writeFileSync(path.join(root, "opencode.cmd"), "@echo off\r\n")
     writeFileSync(path.join(root, "opencode.exe"), "")

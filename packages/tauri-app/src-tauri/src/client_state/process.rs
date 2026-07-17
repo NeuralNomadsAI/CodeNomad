@@ -1,10 +1,11 @@
 use fs2::FileExt;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use super::cross_host;
 
 pub(super) const PRIMARY_LOCK_FILENAME: &str = "client-state.primary.lock";
 const REGISTRATION_LOCK_FILENAME: &str = "client-state.registration.lock";
@@ -18,17 +19,25 @@ static NEXT_RUNNING_MARKER_ID: AtomicU64 = AtomicU64::new(0);
 
 pub(super) struct ProcessState {
     primary_lock: Mutex<Option<File>>,
+    cross_host_registration: Mutex<Option<cross_host::Registration>>,
     running_marker: Mutex<Option<RunningMarker>>,
     registration_file: Option<File>,
 }
 
 pub(super) struct Registration {
-    process: ProcessState,
-    registration_file: Option<File>,
+    primary_lock: Option<File>,
+    cross_host_registration: Option<cross_host::Registration>,
+    running_marker: RunningMarker,
+    registration_file: File,
+    holds_registration_lock: bool,
 }
 
 impl Registration {
-    pub(super) fn initialize(app_data_dir: &Path) -> Result<Self, String> {
+    pub(super) fn initialize(
+        app_data_dir: &Path,
+        cross_host_election_dir: &Path,
+        legacy_electron_data_dir: Option<&Path>,
+    ) -> Result<Self, String> {
         let registration_path = app_data_dir.join(REGISTRATION_LOCK_FILENAME);
         let registration_file = OpenOptions::new()
             .read(true)
@@ -60,14 +69,14 @@ impl Registration {
         let running_marker =
             create_running_marker(app_data_dir, acknowledged_registration.as_deref())?;
         let lock_path = app_data_dir.join(PRIMARY_LOCK_FILENAME);
-        let mut lock_file = OpenOptions::new()
+        let lock_file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .open(&lock_path)
             .map_err(|err| format!("failed to open primary lock {}: {err}", lock_path.display()))?;
 
-        let primary_lock = if !has_registration_lock {
+        let mut primary_lock = if !has_registration_lock {
             None
         } else {
             match FileExt::try_lock_exclusive(&lock_file) {
@@ -77,19 +86,7 @@ impl Registration {
                         &running_marker.path,
                         &registration_id,
                     ) {
-                        Ok(false) => {
-                            lock_file
-                                .set_len(0)
-                                .and_then(|_| lock_file.seek(SeekFrom::Start(0)).map(|_| ()))
-                                .and_then(|_| {
-                                    write!(lock_file, "{{\"pid\":{}}}\n", std::process::id())
-                                })
-                                .and_then(|_| lock_file.sync_data())
-                                .map_err(|err| {
-                                    format!("failed to record primary lock owner: {err}")
-                                })?;
-                            Some(lock_file)
-                        }
+                        Ok(false) => Some(lock_file),
                         Ok(true) => {
                             release_primary_file(&lock_file);
                             None
@@ -110,32 +107,56 @@ impl Registration {
             }
         };
 
+        let cross_host_registration = match cross_host::Registration::register(
+            cross_host_election_dir,
+            primary_lock.is_some(),
+            legacy_electron_data_dir,
+        ) {
+            Ok(Some(registration)) => Some(registration),
+            Ok(None) => None,
+            Err(err) => {
+                eprintln!("[client-state] failed to register cross-host ownership: {err}");
+                None
+            }
+        };
+        if !cross_host_registration
+            .as_ref()
+            .is_some_and(cross_host::Registration::is_primary)
+        {
+            if let Some(file) = primary_lock.take() {
+                release_primary_file(&file);
+            }
+        }
+
         Ok(Self {
-            process: ProcessState {
-                primary_lock: Mutex::new(primary_lock),
-                running_marker: Mutex::new(Some(running_marker)),
-                registration_file: Some(
-                    registration_file.try_clone().map_err(|err| {
-                        format!("failed to retain registration lock handle: {err}")
-                    })?,
-                ),
-            },
-            registration_file: has_registration_lock.then_some(registration_file),
+            primary_lock,
+            cross_host_registration,
+            running_marker,
+            registration_file,
+            holds_registration_lock: has_registration_lock,
         })
     }
 
     pub(super) fn is_primary(&self) -> bool {
-        self.process.is_primary()
+        self.primary_lock.is_some()
+            && self
+                .cross_host_registration
+                .as_ref()
+                .is_some_and(cross_host::Registration::is_primary)
     }
 
     pub(super) fn finish(self) -> ProcessState {
-        if let Some(registration_file) = self.registration_file {
-            if let Err(err) = FileExt::unlock(&registration_file) {
+        if self.holds_registration_lock {
+            if let Err(err) = FileExt::unlock(&self.registration_file) {
                 eprintln!("[client-state] failed to release registration lock: {err}");
             }
-            drop(registration_file);
         }
-        self.process
+        ProcessState {
+            primary_lock: Mutex::new(self.primary_lock),
+            cross_host_registration: Mutex::new(self.cross_host_registration),
+            running_marker: Mutex::new(Some(self.running_marker)),
+            registration_file: Some(self.registration_file),
+        }
     }
 }
 
@@ -172,16 +193,32 @@ impl ProcessState {
     pub(super) fn disabled() -> Self {
         Self {
             primary_lock: Mutex::new(None),
+            cross_host_registration: Mutex::new(None),
             running_marker: Mutex::new(None),
             registration_file: None,
         }
     }
 
     pub(super) fn is_primary(&self) -> bool {
-        self.primary_lock
+        let has_local_lock = self
+            .primary_lock
             .lock()
             .map(|lock| lock.is_some())
-            .unwrap_or(false)
+            .unwrap_or(false);
+        has_local_lock
+            && self
+                .cross_host_registration
+                .lock()
+                .map(|registration| {
+                    registration
+                        .as_ref()
+                        .is_some_and(cross_host::Registration::is_primary)
+                })
+                .unwrap_or(false)
+    }
+
+    pub(super) fn is_registered(&self) -> bool {
+        self.registration_file.is_some()
     }
 
     pub(super) fn release_locks(&self) {
@@ -216,6 +253,12 @@ impl ProcessState {
         if let Some(file) = primary_lock {
             release_primary_file(&file);
         }
+        let cross_host_registration = self
+            .cross_host_registration
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .take();
+        drop(cross_host_registration);
         if let Err(err) = FileExt::unlock(registration_file) {
             eprintln!("[client-state] failed to release registration lock: {err}");
         }
@@ -409,19 +452,18 @@ mod tests {
         .unwrap();
 
         let started_at = Instant::now();
-        let registration = Registration::initialize(directory.path()).unwrap();
+        let registration =
+            Registration::initialize(directory.path(), &directory.path().join("cross-host"), None)
+                .unwrap();
         assert!(!registration.is_primary());
         assert!(started_at.elapsed() < Duration::from_secs(2));
-        let marker = registration.process.running_marker.lock().unwrap();
-        let marker_name = marker
-            .as_ref()
-            .unwrap()
+        let marker_name = registration
+            .running_marker
             .path
             .file_name()
             .unwrap()
             .to_string_lossy();
         assert!(marker_name.contains(&format!(".acknowledges.{registration_id}")));
-        drop(marker);
 
         FileExt::unlock(&owner).unwrap();
         registration.finish().release_locks();
@@ -432,7 +474,9 @@ mod tests {
         use std::sync::{mpsc, Arc};
 
         let directory = tempfile::tempdir().unwrap();
-        let registration = Registration::initialize(directory.path()).unwrap();
+        let registration =
+            Registration::initialize(directory.path(), &directory.path().join("cross-host"), None)
+                .unwrap();
         assert!(registration.is_primary());
         let process = Arc::new(registration.finish());
         let registration_file = OpenOptions::new()
