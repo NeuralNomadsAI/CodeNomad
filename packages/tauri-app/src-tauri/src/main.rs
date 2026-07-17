@@ -9,6 +9,7 @@ mod desktop_event_transport;
 mod linux_tls;
 mod managed_node;
 mod shutdown;
+mod windows_update;
 
 use cli_manager::{CliProcessManager, CliStatus};
 use desktop_event_transport::{
@@ -656,7 +657,8 @@ fn main() {
             client_state::client_state_set_restore_enabled,
             client_state::client_state_clear,
             client_state::client_state_renderer_flushed,
-            client_state::client_state_navigation_flushed
+            client_state::client_state_navigation_flushed,
+            windows_update::install_stable_update
         ])
         .on_menu_event(|app_handle, event| {
             match event.id().0.as_str() {
