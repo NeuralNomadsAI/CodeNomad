@@ -17,6 +17,7 @@ export const messagingMessages = {
   "messageSection.empty.tips.attachFilesPrefix": "次でファイルを添付:",
   "messageSection.loading.messages": "メッセージを読み込み中...",
   "messageSection.loadError.title": "メッセージを読み込めませんでした",
+  "messageSection.loadError.detail": "OpenCode からセッションメッセージが返されませんでした。",
   "messageSection.loadError.reload": "メッセージを再読み込み",
   "messageSection.scroll.toFirstAriaLabel": "最初のメッセージへスクロール",
   "messageSection.scroll.toLatestAriaLabel": "最新のメッセージへスクロール",

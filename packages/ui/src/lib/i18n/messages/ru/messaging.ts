@@ -17,6 +17,7 @@ export const messagingMessages = {
   "messageSection.empty.tips.attachFilesPrefix": "Прикрепляйте файлы через",
   "messageSection.loading.messages": "Загрузка сообщений…",
   "messageSection.loadError.title": "Не удалось загрузить сообщения",
+  "messageSection.loadError.detail": "OpenCode не вернул сообщения сессии.",
   "messageSection.loadError.reload": "Перезагрузить сообщения",
   "messageSection.scroll.toFirstAriaLabel": "Прокрутить к первому сообщению",
   "messageSection.scroll.toLatestAriaLabel": "Прокрутить к последнему сообщению",

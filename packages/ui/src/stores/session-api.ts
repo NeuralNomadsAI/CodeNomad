@@ -9,7 +9,7 @@ import {
 import type { Message } from "../types/message"
 import type { Session as SDKSession, SessionListResponse } from "@opencode-ai/sdk/v2/client"
 
-import { instances } from "./instances"
+import { instances, reconcilePendingSessionIndicators } from "./instances"
 import { preferences, setAgentModelPreference } from "./preferences"
 import {
   activeSessionId,
@@ -48,6 +48,7 @@ import {
   clearSessionSearch,
   isLatestSessionSearch,
   setSessionSearchResults,
+  setSessionListError,
 } from "./session-state"
 import { deleteSessionAttachments } from "./attachments"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getDefaultModel, isModelValid } from "./session-models"
@@ -57,8 +58,9 @@ import { seedSessionMessagesV2, reconcilePendingPermissionsV2, reconcilePendingQ
 import { messageStoreBus } from "./message-v2/bus"
 import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
-import { requestData } from "../lib/opencode-api"
+import { getOpencodeErrorMessage, requestData } from "../lib/opencode-api"
 import { getRootClient } from "./opencode-client"
+import { tGlobal } from "../lib/i18n"
 import {
   getWorktreeSlugForSession,
   getWorktrees,
@@ -73,26 +75,28 @@ import { PROJECT_SESSION_LIST_LIMIT, buildProjectSessionListOptions, filterProje
 import { mergeFetchedSessionRuntimeState, resolveAuthoritativeGenerationRecovery } from "./session-generation-recovery"
 
 const log = getLogger("api")
+const sessionListRequestIds = new Map<string, number>()
+let nextSessionListRequestId = 0
 
-function getErrorMessage(error: unknown): string {
-  if (!error) return "Failed to load messages"
+function beginSessionListRequest(instanceId: string): number {
+  const requestId = ++nextSessionListRequestId
+  sessionListRequestIds.set(instanceId, requestId)
+  return requestId
+}
 
-  const cause = (error as any)?.cause
-  if (cause && cause !== error) {
-    const causeMessage = getErrorMessage(cause)
-    if (causeMessage) return causeMessage
-  }
+function isLatestSessionListRequest(instanceId: string, requestId: number): boolean {
+  return sessionListRequestIds.get(instanceId) === requestId
+}
 
-  const dataMessage = (error as any)?.data?.message
-  if (typeof dataMessage === "string" && dataMessage.trim()) return dataMessage
-
-  const errorMessage = (error as any)?.message
-  if (typeof errorMessage === "string" && errorMessage.trim()) return errorMessage
-
-  const errorText = (error as any)?.error
-  if (typeof errorText === "string" && errorText.trim()) return errorText
-
-  return "Failed to load messages"
+function clearSessionListRequestState(instanceId: string): void {
+  sessionListRequestIds.delete(instanceId)
+  setSessionListError(instanceId, null)
+  setLoading((prev) => {
+    if (!prev.fetchingSessions.has(instanceId)) return prev
+    const fetchingSessions = new Map(prev.fetchingSessions)
+    fetchingSessions.delete(instanceId)
+    return { ...prev, fetchingSessions }
+  })
 }
 
 async function getSessionWorkspacePayload(instanceId: string, sessionId: string): Promise<{ workspace?: string }> {
@@ -216,12 +220,14 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
   }
 
   const rootClient = getRootClient(instanceId)
+  const requestId = beginSessionListRequest(instanceId)
 
   setLoading((prev) => {
     const next = { ...prev }
     next.fetchingSessions.set(instanceId, true)
     return next
   })
+  setSessionListError(instanceId, null)
 
   try {
     const sessionListOptions = instance.folder ? { directory: instance.folder } : {}
@@ -229,6 +235,7 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
 
     log.info("session.list", { instanceId, limit: PROJECT_SESSION_LIST_LIMIT, directory: sessionListOptions.directory, scope: "project" })
     const response = await fetchV2Sessions(instanceId, sessionListOptions)
+    if (!isLatestSessionListRequest(instanceId, requestId)) return
 
     let statusById: Record<string, any> = {}
     let statusResponseKnown = false
@@ -241,6 +248,7 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
     } catch (error) {
       log.error("Failed to fetch session status:", error)
     }
+    if (!isLatestSessionListRequest(instanceId, requestId)) return
 
     const sessionMap = new Map<string, Session>()
 
@@ -315,7 +323,7 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
 
     setSessionPage(instanceId, rootIds, false, options?.reset ?? true)
 
-    syncInstanceSessionIndicator(instanceId)
+    reconcilePendingSessionIndicators(instanceId)
 
     setMessagesLoaded((prev) => {
       const next = new Map(prev)
@@ -342,13 +350,18 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
     })
   } catch (error) {
     log.error("Failed to fetch sessions:", error)
+    if (isLatestSessionListRequest(instanceId, requestId)) {
+      setSessionListError(instanceId, getOpencodeErrorMessage(error, tGlobal("sessionList.loadError.detail")))
+    }
     throw error
   } finally {
-    setLoading((prev) => {
-      const next = { ...prev }
-      next.fetchingSessions.set(instanceId, false)
-      return next
-    })
+    if (isLatestSessionListRequest(instanceId, requestId)) {
+      setLoading((prev) => {
+        const next = { ...prev }
+        next.fetchingSessions.set(instanceId, false)
+        return next
+      })
+    }
   }
 }
 
@@ -1006,7 +1019,7 @@ async function loadMessages(
 
   } catch (error) {
     log.error("Failed to load messages:", error)
-    setSessionMessagesLoadError(instanceId, sessionId, getErrorMessage(error))
+    setSessionMessagesLoadError(instanceId, sessionId, getOpencodeErrorMessage(error, tGlobal("messageSection.loadError.detail")))
     throw error
   } finally {
     setLoading((prev) => {
@@ -1047,4 +1060,5 @@ export {
   searchSessions,
   forkSession,
   loadMessages,
+  clearSessionListRequestState,
 }

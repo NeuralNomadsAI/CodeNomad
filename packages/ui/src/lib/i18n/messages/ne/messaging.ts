@@ -17,6 +17,7 @@ export const messagingMessages = {
   "messageSection.empty.tips.attachFilesPrefix": "यसको साथ फाइलहरू संलग्न गर्नुहोस्",
   "messageSection.loading.messages": "सन्देशहरू लोड गर्दै...",
   "messageSection.loadError.title": "सन्देशहरू लोड गर्न सकिएन",
+  "messageSection.loadError.detail": "OpenCode ले सत्रका सन्देशहरू फिर्ता गरेन।",
   "messageSection.loadError.reload": "सन्देशहरू फेरि लोड गर्नुहोस्",
   "messageSection.scroll.toFirstAriaLabel": "पहिलो सन्देशमा जानुहोस्",
   "messageSection.scroll.toLatestAriaLabel": "भर्खरको सन्देशमा जानुहोस्",

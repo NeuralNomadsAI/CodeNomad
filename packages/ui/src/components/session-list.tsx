@@ -4,6 +4,7 @@ import type { SessionThread } from "../stores/session-state"
 import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../stores/session-status"
 import { Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronDown, Search, Square, CheckSquare, MinusSquare, Split, RotateCw } from "lucide-solid"
 import KeyboardHint from "./keyboard-hint"
+import LoadErrorState from "./load-error-state"
 import SessionRenameDialog from "./session-rename-dialog"
 import { keyboardRegistry } from "../lib/keyboard-registry"
 import { showToastNotification } from "../lib/notifications"
@@ -23,7 +24,9 @@ import {
   loadMoreSessions,
   searchSessions,
   getSessionHasMore,
+  getSessionListError,
   clearSessionSearch,
+  fetchSessions,
   getSessionSearchQuery,
   getSessionSearchThreads,
   isSessionSearchLoading,
@@ -83,6 +86,13 @@ const SessionList: Component<SessionListProps> = (props) => {
   const isFetchingSessions = createMemo(() => {
     return loading().fetchingSessions.get(props.instanceId) ?? false
   })
+  const sessionListError = createMemo(() => getSessionListError(props.instanceId))
+
+  const handleRetrySessions = () => {
+    void fetchSessions(props.instanceId, { reset: true }).catch((error) => {
+      log.error("Failed to retry session list:", error)
+    })
+  }
 
   createEffect(() => {
     const el = sentinelEl()
@@ -875,9 +885,27 @@ const SessionList: Component<SessionListProps> = (props) => {
 
        <div class="session-list flex-1 overflow-y-auto" ref={(el) => listEl[1](el)}>
 
-         <Show when={filteredThreads().length > 0}>
-           <div class="session-section">
-             <For each={filteredThreads()}>
+          <Show when={sessionListError()}>
+            {(error) => (
+              <LoadErrorState
+                variant="compact"
+                title={t("sessionList.loadError.title")}
+                error={error()}
+                retryLabel={t("sessionList.loadError.retry")}
+                onRetry={handleRetrySessions}
+              />
+            )}
+          </Show>
+
+          <Show when={!sessionListError() && isFetchingSessions() && filteredThreads().length === 0}>
+            <div class="flex items-center justify-center p-4 text-xs text-muted" role="status">
+              <span class="animate-pulse">{t("sessionList.loading.initial")}</span>
+            </div>
+          </Show>
+
+          <Show when={filteredThreads().length > 0}>
+            <div class="session-section">
+              <For each={filteredThreads()}>
                 {(thread, index) => (
                   <SessionThreadRow
                     thread={thread}
@@ -885,7 +913,7 @@ const SessionList: Component<SessionListProps> = (props) => {
                     isLastChild={index() === filteredThreads().length - 1}
                   />
                 )}
-             </For>
+              </For>
              <Show when={hasMore() || isFetchingSessions()}>
                <div
                  ref={(el) => setSentinelEl(el)}
