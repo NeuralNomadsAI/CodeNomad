@@ -17,6 +17,7 @@ export const messagingMessages = {
   "messageSection.empty.tips.attachFilesPrefix": "Joindre des fichiers avec",
   "messageSection.loading.messages": "Chargement des messages...",
   "messageSection.loadError.title": "Impossible de charger les messages",
+  "messageSection.loadError.detail": "OpenCode n'a pas renvoyé les messages de la session.",
   "messageSection.loadError.reload": "Recharger les messages",
   "messageSection.scroll.toFirstAriaLabel": "Aller au premier message",
   "messageSection.scroll.toLatestAriaLabel": "Aller au dernier message",

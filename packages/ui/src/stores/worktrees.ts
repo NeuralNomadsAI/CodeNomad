@@ -5,6 +5,7 @@ import { getSessionRoot, sessions } from "./session-state"
 import { getLogger } from "../lib/logger"
 import { getCodeNomadSessionMetadata, setSessionWorktreeSlugWithClient } from "./session-metadata"
 import { getRootClient } from "./opencode-client"
+import type { WorktreeReadyEvent } from "../lib/sse-manager"
 
 const log = getLogger("api")
 
@@ -12,9 +13,12 @@ const [worktreesByInstance, setWorktreesByInstance] = createSignal<Map<string, W
 const [worktreeMapByInstance, setWorktreeMapByInstance] = createSignal<Map<string, WorktreeMap>>(new Map())
 const [gitRepoStatusByInstance, setGitRepoStatusByInstance] = createSignal<Map<string, boolean | null>>(new Map())
 
-const worktreeLoads = new Map<string, Promise<void>>()
+const worktreeRequests = new Map<string, Promise<void>>()
+const worktreeReadyRefreshes = new Map<string, Promise<void>>()
 const mapLoads = new Map<string, Promise<void>>()
 const mapMigrations = new Map<string, Promise<void>>()
+
+type WorktreeReadyRefresh = (instanceId: string) => Promise<void>
 
 function normalizeMap(input?: WorktreeMap | null): WorktreeMap {
   if (!input || typeof input !== "object") {
@@ -27,15 +31,11 @@ function normalizeMap(input?: WorktreeMap | null): WorktreeMap {
   }
 }
 
-async function ensureWorktreesLoaded(instanceId: string): Promise<void> {
-  if (!instanceId) return
-  if (worktreesByInstance().has(instanceId) && gitRepoStatusByInstance().has(instanceId)) return
-  const existing = worktreeLoads.get(instanceId)
-  if (existing) return existing
-
-  const task = serverApi
-    .fetchWorktrees(instanceId)
-    .then((response) => {
+async function queueWorktreeRequest(instanceId: string, initial: boolean): Promise<void> {
+  const previous = worktreeRequests.get(instanceId)
+  const task = (previous?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
+    try {
+      const response = await serverApi.fetchWorktrees(instanceId)
       setWorktreesByInstance((prev) => {
         const next = new Map(prev)
         next.set(instanceId, response.worktrees ?? [])
@@ -52,9 +52,10 @@ async function ensureWorktreesLoaded(instanceId: string): Promise<void> {
       if (worktreeMapByInstance().has(instanceId)) {
         void pruneWorktreeMap(instanceId).catch(() => undefined)
       }
-    })
-    .catch((error) => {
-      log.warn("Failed to load worktrees", { instanceId, error })
+    } catch (error) {
+      log.warn(initial ? "Failed to load worktrees" : "Failed to reload worktrees", { instanceId, error })
+      if (!initial) return
+
       setWorktreesByInstance((prev) => {
         const next = new Map(prev)
         next.set(instanceId, [])
@@ -68,39 +69,64 @@ async function ensureWorktreesLoaded(instanceId: string): Promise<void> {
         next.set(instanceId, null)
         return next
       })
-    })
-    .finally(() => {
-      worktreeLoads.delete(instanceId)
-    })
+    }
+  })
 
-  worktreeLoads.set(instanceId, task)
-  return task
+  worktreeRequests.set(instanceId, task)
+  await task.finally(() => {
+    if (worktreeRequests.get(instanceId) === task) {
+      worktreeRequests.delete(instanceId)
+    }
+  })
+}
+
+async function ensureWorktreesLoaded(instanceId: string): Promise<void> {
+  if (!instanceId) return
+  if (worktreesByInstance().has(instanceId) && gitRepoStatusByInstance().has(instanceId)) return
+
+  const existing = worktreeRequests.get(instanceId)
+  if (existing) {
+    await existing
+    if (worktreesByInstance().has(instanceId) && gitRepoStatusByInstance().has(instanceId)) return
+  }
+
+  await queueWorktreeRequest(instanceId, true)
 }
 
 async function reloadWorktrees(instanceId: string): Promise<void> {
   if (!instanceId) return
-  await serverApi
-    .fetchWorktrees(instanceId)
-    .then((response) => {
-      setWorktreesByInstance((prev) => {
-        const next = new Map(prev)
-        next.set(instanceId, response.worktrees ?? [])
-        return next
-      })
+  await queueWorktreeRequest(instanceId, false)
+}
 
-      setGitRepoStatusByInstance((prev) => {
-        const next = new Map(prev)
-        next.set(instanceId, typeof response.isGitRepo === "boolean" ? response.isGitRepo : null)
-        return next
-      })
+async function handleWorktreeReady(
+  instanceId: string,
+  event: WorktreeReadyEvent,
+  refreshWorktrees: WorktreeReadyRefresh = reloadWorktrees,
+  refreshWorkspaces: WorktreeReadyRefresh = async (id) => {
+    const { reloadOpenCodeWorkspaces } = await import("./opencode-workspaces")
+    await reloadOpenCodeWorkspaces(id)
+  },
+): Promise<void> {
+  if (!instanceId) return
 
-      if (worktreeMapByInstance().has(instanceId)) {
-        void pruneWorktreeMap(instanceId).catch(() => undefined)
-      }
-    })
-    .catch((error) => {
-      log.warn("Failed to reload worktrees", { instanceId, error })
-    })
+  log.info("OpenCode worktree ready", {
+    instanceId,
+    directory: event.directory,
+    name: event.properties?.name,
+  })
+
+  const previous = worktreeReadyRefreshes.get(instanceId)
+  const task = (previous?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
+    await refreshWorktrees(instanceId)
+    await refreshWorkspaces(instanceId)
+  })
+
+  worktreeReadyRefreshes.set(instanceId, task)
+  await task.finally(() => {
+    if (worktreeReadyRefreshes.get(instanceId) === task) {
+      worktreeReadyRefreshes.delete(instanceId)
+    }
+  })
 }
 
 function getGitRepoStatus(instanceId: string): boolean | null {
@@ -401,6 +427,7 @@ export {
   gitRepoStatusByInstance,
   ensureWorktreesLoaded,
   reloadWorktrees,
+  handleWorktreeReady,
   reloadWorktreeMap,
   ensureWorktreeMapLoaded,
   getGitRepoStatus,

@@ -13,6 +13,12 @@ import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 import { tGlobal } from "../lib/i18n"
 import { computeThreadTotals, type ThreadTotals } from "../lib/thread-totals"
 import { applySessionPage, getDefaultSessionPaginationState, type SessionPaginationState } from "./session-pagination-model"
+import { applySessionPendingState } from "./session-pending-state"
+import {
+  resolveAuthoritativeGenerationRecovery,
+  resolveHydratedGenerationRecovery,
+  type PersistedGenerationRecovery,
+} from "./session-generation-recovery"
 import {
   buildSessionThreadsFromMap,
   collectVisibleSessionIds,
@@ -25,6 +31,23 @@ import {
 export type { SessionThread } from "./session-tree"
 
 const log = getLogger("session")
+let generationAdmissionSequence = 0
+type GenerationAdmissionBaseline = Pick<Session, "generationRecovery" | "runtimeStatusKnown" | "idleSince">
+interface GenerationAdmissionGroup {
+  id: number
+  tokens: Set<number>
+  accepted: boolean
+  baseline: GenerationAdmissionBaseline
+}
+const generationAdmissionGroups = new Map<string, GenerationAdmissionGroup>()
+
+function generationAdmissionKey(instanceId: string, sessionId: string): string {
+  return `${instanceId}:${sessionId}`
+}
+
+function cancelSessionGenerationAdmissions(instanceId: string, sessionId: string): void {
+  generationAdmissionGroups.delete(generationAdmissionKey(instanceId, sessionId))
+}
 
 export interface SessionInfo {
   cost: number
@@ -44,6 +67,11 @@ const [activeParentSessionId, setActiveParentSessionId] = createSignal<Map<strin
 const [agents, setAgents] = createSignal<Map<string, Agent[]>>(new Map())
 const [providers, setProviders] = createSignal<Map<string, Provider[]>>(new Map())
 const [sessionDraftPrompts, setSessionDraftPrompts] = createSignal<Map<string, string>>(new Map())
+const [authoritativeDraftKeys, setAuthoritativeDraftKeys] = createSignal<Set<string>>(new Set())
+const [authoritativeSessionSelectionInstanceIds, setAuthoritativeSessionSelectionInstanceIds] = createSignal<Set<string>>(new Set())
+const [authoritativelyDeletedSessionKeys, setAuthoritativelyDeletedSessionKeys] = createSignal<Set<string>>(new Set())
+type SessionDraftHydratedListener = (instanceId: string, sessionId: string, draft: string) => void
+const sessionDraftHydratedListeners = new Set<SessionDraftHydratedListener>()
 
 const [loading, setLoading] = createSignal({
   fetchingSessions: new Map<string, boolean>(),
@@ -54,6 +82,7 @@ const [loading, setLoading] = createSignal({
 
 const [messagesLoaded, setMessagesLoaded] = createSignal<Map<string, Set<string>>>(new Map())
 const [messageLoadErrors, setMessageLoadErrors] = createSignal<Map<string, Map<string, string>>>(new Map())
+const [sessionListErrors, setSessionListErrors] = createSignal<Map<string, string>>(new Map())
 const [sessionInfoByInstance, setSessionInfoByInstance] = createSignal<Map<string, Map<string, SessionInfo>>>(new Map())
 const [threadTotalsByInstance, setThreadTotalsByInstance] = createSignal<Map<string, Map<string, ThreadTotals>>>(new Map())
 
@@ -329,7 +358,7 @@ function getSessionDraftPrompt(instanceId: string, sessionId: string): string {
   return sessionDraftPrompts().get(key) ?? ""
 }
 
-function setSessionDraftPrompt(instanceId: string, sessionId: string, value: string) {
+function writeSessionDraftPrompt(instanceId: string, sessionId: string, value: string) {
   const key = getDraftKey(instanceId, sessionId)
   setSessionDraftPrompts((prev) => {
     const next = new Map(prev)
@@ -342,8 +371,84 @@ function setSessionDraftPrompt(instanceId: string, sessionId: string, value: str
   })
 }
 
+function markSessionDraftAuthoritative(instanceId: string, sessionId: string) {
+  const key = getDraftKey(instanceId, sessionId)
+  setAuthoritativeDraftKeys((prev) => {
+    if (prev.has(key)) return prev
+    const next = new Set(prev)
+    next.add(key)
+    return next
+  })
+}
+
+function setSessionDraftPrompt(instanceId: string, sessionId: string, value: string) {
+  markSessionDraftAuthoritative(instanceId, sessionId)
+  writeSessionDraftPrompt(instanceId, sessionId, value)
+}
+
+function hydrateSessionDraftPrompt(instanceId: string, sessionId: string, value: string): void {
+  writeSessionDraftPrompt(instanceId, sessionId, value)
+  for (const listener of sessionDraftHydratedListeners) listener(instanceId, sessionId, value)
+}
+
+function onSessionDraftHydrated(listener: SessionDraftHydratedListener): () => void {
+  sessionDraftHydratedListeners.add(listener)
+  return () => sessionDraftHydratedListeners.delete(listener)
+}
+
+function getSessionDraftPromptsForInstance(instanceId: string): Record<string, string> {
+  if (!instanceId) return {}
+  const prefix = `${instanceId}:`
+  const result: Record<string, string> = {}
+  for (const [key, value] of sessionDraftPrompts()) {
+    if (!key.startsWith(prefix) || !value) continue
+    result[key.slice(prefix.length)] = value
+  }
+  return result
+}
+
+function getAuthoritativeDraftSessionIdsForInstance(instanceId: string): ReadonlySet<string> {
+  if (!instanceId) return new Set()
+  const prefix = `${instanceId}:`
+  return new Set(
+    [...authoritativeDraftKeys()]
+      .filter((key) => key.startsWith(prefix))
+      .map((key) => key.slice(prefix.length)),
+  )
+}
+
+function getAuthoritativelyDeletedSessionIdsForInstance(instanceId: string): ReadonlySet<string> {
+  if (!instanceId) return new Set()
+  const prefix = `${instanceId}:`
+  return new Set(
+    [...authoritativelyDeletedSessionKeys()]
+      .filter((key) => key.startsWith(prefix))
+      .map((key) => key.slice(prefix.length)),
+  )
+}
+
+function markSessionDeletedAuthoritative(instanceId: string, sessionId: string): void {
+  const key = getDraftKey(instanceId, sessionId)
+  setAuthoritativelyDeletedSessionKeys((prev) => {
+    if (prev.has(key)) return prev
+    const next = new Set(prev)
+    next.add(key)
+    return next
+  })
+}
+
+function clearInstanceDeletedSessionAuthority(instanceId: string): void {
+  if (!instanceId) return
+  const prefix = `${instanceId}:`
+  setAuthoritativelyDeletedSessionKeys((prev) => {
+    const next = new Set([...prev].filter((key) => !key.startsWith(prefix)))
+    return next.size === prev.size ? prev : next
+  })
+}
+
 function clearSessionDraftPrompt(instanceId: string, sessionId: string) {
   const key = getDraftKey(instanceId, sessionId)
+  markSessionDraftAuthoritative(instanceId, sessionId)
   setSessionDraftPrompts((prev) => {
     if (!prev.has(key)) return prev
     const next = new Map(prev)
@@ -352,7 +457,7 @@ function clearSessionDraftPrompt(instanceId: string, sessionId: string) {
   })
 }
 
-function clearInstanceDraftPrompts(instanceId: string) {
+function clearInstanceDraftPromptValues(instanceId: string) {
   if (!instanceId) return
   setSessionDraftPrompts((prev) => {
     let changed = false
@@ -366,6 +471,20 @@ function clearInstanceDraftPrompts(instanceId: string) {
     }
     return changed ? next : prev
   })
+}
+
+function clearInstanceDraftPromptAuthority(instanceId: string) {
+  if (!instanceId) return
+  setAuthoritativeDraftKeys((prev) => {
+    const prefix = `${instanceId}:`
+    const next = new Set([...prev].filter((key) => !key.startsWith(prefix)))
+    return next.size === prev.size ? prev : next
+  })
+}
+
+function clearInstanceDraftPrompts(instanceId: string) {
+  clearInstanceDraftPromptValues(instanceId)
+  clearInstanceDraftPromptAuthority(instanceId)
 }
 
 function pruneDraftPrompts(instanceId: string, validSessionIds: Set<string>) {
@@ -422,17 +541,46 @@ function withSession(instanceId: string, sessionId: string, updater: (session: S
 }
 
 function setSessionPendingPermission(instanceId: string, sessionId: string, pending: boolean): void {
+  if (pending) cancelSessionGenerationAdmissions(instanceId, sessionId)
   withSession(instanceId, sessionId, (session) => {
-    if (session.pendingPermission === pending) return false
+    if (session.pendingPermission === pending && (!pending || !session.generationRecovery)) return false
     session.pendingPermission = pending
+    if (pending) {
+      session.generationRecovery = null
+      session.generationAdmissionToken = undefined
+    }
   })
 }
 
 function setSessionPendingQuestion(instanceId: string, sessionId: string, pending: boolean): void {
+  if (pending) cancelSessionGenerationAdmissions(instanceId, sessionId)
   withSession(instanceId, sessionId, (session) => {
-    if (session.pendingQuestion === pending) return false
+    if (session.pendingQuestion === pending && (!pending || !session.generationRecovery)) return false
     session.pendingQuestion = pending
+    if (pending) {
+      session.generationRecovery = null
+      session.generationAdmissionToken = undefined
+    }
   })
+}
+
+function reconcileSessionPendingState(
+  instanceId: string,
+  permissionSessionIds: ReadonlySet<string>,
+  questionSessionIds: ReadonlySet<string>,
+): void {
+  setSessions((prev) => {
+    const instanceSessions = prev.get(instanceId)
+    if (!instanceSessions) return prev
+
+    const reconciled = applySessionPendingState(instanceSessions, permissionSessionIds, questionSessionIds)
+    if (reconciled === instanceSessions) return prev
+
+    const next = new Map(prev)
+    next.set(instanceId, reconciled)
+    return next
+  })
+  syncInstanceSessionIndicator(instanceId)
 }
 
 function markSessionIdleSeen(instanceId: string, sessionId: string): void {
@@ -482,36 +630,190 @@ function markViewedSessionIdleSeen(
   })
 }
 
-function setActiveSession(instanceId: string, sessionId: string): void {
-  setActiveSessionId((prev) => {
-    const next = new Map(prev)
-    next.set(instanceId, sessionId)
+function markSessionSelectionAuthoritative(instanceId: string): void {
+  setAuthoritativeSessionSelectionInstanceIds((prev) => {
+    if (prev.has(instanceId)) return prev
+    const next = new Set(prev)
+    next.add(instanceId)
     return next
   })
-  // Backfill authoritative Yolo state for the now-active session so the badge
-  // matches the server even on first connect / multi-client scenarios.
-  ensureYoloStateSynced(instanceId, sessionId)
+}
+
+function hydrateSessionIdleMarkers(instanceId: string, markers: Readonly<Record<string, number>>): void {
+  setSessions((prev) => {
+    const instanceSessions = prev.get(instanceId)
+    if (!instanceSessions) return prev
+
+    let changed = false
+    const updatedSessions = new Map(instanceSessions)
+    for (const [sessionId, idleSince] of Object.entries(markers)) {
+      const session = updatedSessions.get(sessionId)
+      if (!session || session.status !== "idle" || typeof session.idleSince === "number") continue
+      updatedSessions.set(sessionId, { ...session, idleSince })
+      changed = true
+    }
+    if (!changed) return prev
+
+    const next = new Map(prev)
+    next.set(instanceId, updatedSessions)
+    return next
+  })
+}
+
+function hydrateSessionGenerationRecovery(
+  instanceId: string,
+  markers: Readonly<Record<string, PersistedGenerationRecovery>>,
+): void {
+  setSessions((prev) => {
+    const instanceSessions = prev.get(instanceId)
+    if (!instanceSessions) return prev
+
+    let changed = false
+    const updatedSessions = new Map(instanceSessions)
+    for (const [sessionId, persisted] of Object.entries(markers)) {
+      const session = updatedSessions.get(sessionId)
+      if (!session) continue
+      const generationRecovery = session.pendingPermission || session.pendingQuestion
+        ? null
+        : resolveHydratedGenerationRecovery(
+            persisted,
+            session.status,
+            session.runtimeStatusKnown === true,
+          )
+      if ((session.generationRecovery ?? null) === generationRecovery) continue
+      updatedSessions.set(sessionId, { ...session, generationRecovery })
+      changed = true
+    }
+    if (!changed) return prev
+
+    const next = new Map(prev)
+    next.set(instanceId, updatedSessions)
+    return next
+  })
+}
+
+function beginSessionGenerationAdmission(instanceId: string, sessionId: string): {
+  complete: () => void
+  rollback: () => void
+} {
+  generationAdmissionSequence += 1
+  const token = generationAdmissionSequence
+  const key = generationAdmissionKey(instanceId, sessionId)
+  let group = generationAdmissionGroups.get(key)
+  if (!group) {
+    const session = sessions().get(instanceId)?.get(sessionId)
+    if (!session) return { complete: () => {}, rollback: () => {} }
+    group = {
+      id: token,
+      tokens: new Set(),
+      accepted: false,
+      baseline: {
+        generationRecovery: session.generationRecovery,
+        runtimeStatusKnown: session.runtimeStatusKnown,
+        idleSince: session.idleSince,
+      },
+    }
+    generationAdmissionGroups.set(key, group)
+  }
+  group.tokens.add(token)
+  withSession(instanceId, sessionId, (session) => {
+    session.generationRecovery = "pending"
+    session.runtimeStatusKnown = false
+    session.idleSince = null
+    session.generationAdmissionToken = group!.id
+  })
+  const settle = (accepted: boolean) => {
+    const activeGroup = generationAdmissionGroups.get(key)
+    if (!activeGroup || !activeGroup.tokens.delete(token)) return
+    activeGroup.accepted ||= accepted
+    if (activeGroup.tokens.size > 0) return
+    generationAdmissionGroups.delete(key)
+    withSession(instanceId, sessionId, (session) => {
+      if (session.generationAdmissionToken !== activeGroup.id) return false
+      session.generationAdmissionToken = undefined
+      if (activeGroup.accepted) return
+      session.generationRecovery = activeGroup.baseline.generationRecovery
+      session.runtimeStatusKnown = activeGroup.baseline.runtimeStatusKnown
+      session.idleSince = activeGroup.baseline.idleSince
+    })
+  }
+  return {
+    complete: () => settle(true),
+    rollback: () => settle(false),
+  }
+}
+
+function hasAuthoritativeSessionSelection(instanceId: string): boolean {
+  return authoritativeSessionSelectionInstanceIds().has(instanceId)
+}
+
+function writeActiveSession(instanceId: string, sessionId: string | null): void {
+  setActiveSessionId((prev) => {
+    const next = new Map(prev)
+    if (sessionId) {
+      next.set(instanceId, sessionId)
+    } else {
+      next.delete(instanceId)
+    }
+    return next
+  })
+  if (sessionId) {
+    // Backfill authoritative Yolo state for the now-active session so the badge
+    // matches the server even on first connect / multi-client scenarios.
+    ensureYoloStateSynced(instanceId, sessionId)
+  }
+}
+
+function writeActiveParentSession(instanceId: string, parentSessionId: string | null): void {
+  setActiveParentSessionId((prev) => {
+    const next = new Map(prev)
+    if (parentSessionId) {
+      next.set(instanceId, parentSessionId)
+    } else {
+      next.delete(instanceId)
+    }
+    return next
+  })
+}
+
+function setActiveSession(instanceId: string, sessionId: string): void {
+  markSessionSelectionAuthoritative(instanceId)
+  writeActiveSession(instanceId, sessionId)
 }
 
 function setActiveParentSession(instanceId: string, parentSessionId: string): void {
-  setActiveParentSessionId((prev) => {
-    const next = new Map(prev)
-    next.set(instanceId, parentSessionId)
-    return next
-  })
-
-  setActiveSession(instanceId, parentSessionId)
+  markSessionSelectionAuthoritative(instanceId)
+  writeActiveParentSession(instanceId, parentSessionId)
+  writeActiveSession(instanceId, parentSessionId)
 }
 
 function clearActiveParentSession(instanceId: string): void {
-  setActiveParentSessionId((prev) => {
-    const next = new Map(prev)
-    next.delete(instanceId)
-    return next
-  })
+  markSessionSelectionAuthoritative(instanceId)
+  writeActiveParentSession(instanceId, null)
+  writeActiveSession(instanceId, null)
+}
 
-  setActiveSessionId((prev) => {
-    const next = new Map(prev)
+function clearActiveSession(instanceId: string): void {
+  markSessionSelectionAuthoritative(instanceId)
+  writeActiveSession(instanceId, null)
+}
+
+function hydrateActiveSessionSelection(
+  instanceId: string,
+  parentSessionId: string | null,
+  sessionId: string | null,
+): void {
+  if (hasAuthoritativeSessionSelection(instanceId)) return
+  writeActiveParentSession(instanceId, parentSessionId)
+  writeActiveSession(instanceId, sessionId)
+}
+
+function clearInstanceSessionSelection(instanceId: string): void {
+  writeActiveParentSession(instanceId, null)
+  writeActiveSession(instanceId, null)
+  setAuthoritativeSessionSelectionInstanceIds((prev) => {
+    if (!prev.has(instanceId)) return prev
+    const next = new Set(prev)
     next.delete(instanceId)
     return next
   })
@@ -521,9 +823,23 @@ function setSessionStatus(instanceId: string, sessionId: string, status: Session
   let expandAncestors = false
 
   withSession(instanceId, sessionId, (session) => {
-    if (session.status === status) return false
+    const admissionPending = session.generationAdmissionToken !== undefined && status === "idle"
+    const generationRecovery = admissionPending
+      ? "pending"
+      : resolveAuthoritativeGenerationRecovery(session.generationRecovery, status)
+    if (
+      session.status === status
+      && session.runtimeStatusKnown === !admissionPending
+      && (session.generationRecovery ?? null) === generationRecovery
+    ) return false
     const previous = session.status
     session.status = status
+    session.runtimeStatusKnown = !admissionPending
+    session.generationRecovery = generationRecovery
+    if (!admissionPending) {
+      cancelSessionGenerationAdmissions(instanceId, sessionId)
+      session.generationAdmissionToken = undefined
+    }
     session.idleSince = getIdleSinceForStatusTransition(previous, status, session.idleSince)
     if (status !== "working") {
       session.retry = null
@@ -727,6 +1043,22 @@ function getSessionMessagesLoadError(instanceId: string, sessionId: string): str
   return messageLoadErrors().get(instanceId)?.get(sessionId)
 }
 
+function getSessionListError(instanceId: string): string | undefined {
+  return sessionListErrors().get(instanceId)
+}
+
+function setSessionListError(instanceId: string, error: string | null): void {
+  setSessionListErrors((prev) => {
+    const next = new Map(prev)
+    if (error) {
+      next.set(instanceId, error)
+    } else {
+      next.delete(instanceId)
+    }
+    return next
+  })
+}
+
 function setSessionMessagesLoadError(instanceId: string, sessionId: string, error: string | null): void {
   setMessageLoadErrors((prev) => {
     const next = new Map(prev)
@@ -896,9 +1228,7 @@ export {
   sessions,
   setSessions,
   activeSessionId,
-  setActiveSessionId,
   activeParentSessionId,
-  setActiveParentSessionId,
   agents,
   setAgents,
   providers,
@@ -907,6 +1237,8 @@ export {
   setLoading,
   messagesLoaded,
   setMessagesLoaded,
+  getSessionListError,
+  setSessionListError,
   setSessionMessagesLoadError,
   sessionInfoByInstance,
   setSessionInfoByInstance,
@@ -915,21 +1247,36 @@ export {
   updateThreadTotalsForParent,
   updateThreadTotalsForSession,
   getSessionDraftPrompt,
+  getSessionDraftPromptsForInstance,
+  getAuthoritativeDraftSessionIdsForInstance,
+  getAuthoritativelyDeletedSessionIdsForInstance,
+  markSessionDeletedAuthoritative,
+  clearInstanceDeletedSessionAuthority,
+  hydrateSessionDraftPrompt,
+  onSessionDraftHydrated,
   setSessionDraftPrompt,
   clearSessionDraftPrompt,
+  clearInstanceDraftPromptValues,
   clearInstanceDraftPrompts,
   pruneDraftPrompts,
   withSession,
   setSessionPendingPermission,
   setSessionPendingQuestion,
+  reconcileSessionPendingState,
   markSessionIdleSeen,
   markViewedSessionIdleSeen,
+  hydrateSessionIdleMarkers,
+  hydrateSessionGenerationRecovery,
+  beginSessionGenerationAdmission,
+  cancelSessionGenerationAdmissions,
   setSessionStatus,
   setActiveSession,
-
   setActiveParentSession,
-
+  clearActiveSession,
   clearActiveParentSession,
+  hydrateActiveSessionSelection,
+  hasAuthoritativeSessionSelection,
+  clearInstanceSessionSelection,
   getActiveSession,
   getActiveParentSession,
   getSessions,

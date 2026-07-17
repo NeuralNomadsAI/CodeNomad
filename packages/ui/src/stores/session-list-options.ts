@@ -1,4 +1,4 @@
-export const PROJECT_SESSION_LIST_LIMIT = 1000
+export const PROJECT_SESSION_LIST_LIMIT = 10000
 
 type ProjectSessionListInput = {
   directory?: string

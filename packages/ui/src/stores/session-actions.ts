@@ -4,7 +4,7 @@ import { getRootClient } from "./opencode-client"
 import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 
 import { addRecentModelPreference, getModelThinkingSelection, setAgentModelPreference } from "./preferences"
-import { providers, sessions, withSession } from "./session-state"
+import { beginSessionGenerationAdmission, providers, sessions, withSession } from "./session-state"
 import { getDefaultModel, isModelValid } from "./session-models"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { messageStoreBus } from "./message-v2/bus"
@@ -216,14 +216,21 @@ async function sendMessage(
   try {
     log.info("session.promptAsync", { instanceId, sessionId, requestBody })
     const workspacePayload = await getSessionWorkspacePayload(instanceId, sessionId)
-    await requestData(
-      client.session.promptAsync({
-        sessionID: sessionId,
-        ...workspacePayload,
-        ...(requestBody as any),
-      }),
-      "session.promptAsync",
-    )
+    const admission = beginSessionGenerationAdmission(instanceId, sessionId)
+    try {
+      await requestData(
+        client.session.promptAsync({
+          sessionID: sessionId,
+          ...workspacePayload,
+          ...(requestBody as any),
+        }),
+        "session.promptAsync",
+      )
+      admission.complete()
+    } catch (error) {
+      admission.rollback()
+      throw error
+    }
   } catch (error) {
     log.error("Failed to send prompt", error)
     throw error
@@ -271,14 +278,22 @@ async function executeCustomCommand(
     if (variant) body.variant = variant
   }
 
-  await requestData(
-    client.session.command({
-      sessionID: sessionId,
-      ...(await getSessionWorkspacePayload(instanceId, sessionId)),
-      ...(body as any),
-    }),
-    "session.command",
-  )
+  const workspacePayload = await getSessionWorkspacePayload(instanceId, sessionId)
+  const admission = beginSessionGenerationAdmission(instanceId, sessionId)
+  try {
+    await requestData(
+      client.session.command({
+        sessionID: sessionId,
+        ...workspacePayload,
+        ...(body as any),
+      }),
+      "session.command",
+    )
+    admission.complete()
+  } catch (error) {
+    admission.rollback()
+    throw error
+  }
 }
 
 async function runShellCommand(instanceId: string, sessionId: string, command: string): Promise<void> {
@@ -296,15 +311,23 @@ async function runShellCommand(instanceId: string, sessionId: string, command: s
 
   const agent = session.agent || "build"
 
-  await requestData(
-    client.session.shell({
-      sessionID: sessionId,
-      ...(await getSessionWorkspacePayload(instanceId, sessionId)),
-      agent,
-      command,
-    }),
-    "session.shell",
-  )
+  const workspacePayload = await getSessionWorkspacePayload(instanceId, sessionId)
+  const admission = beginSessionGenerationAdmission(instanceId, sessionId)
+  try {
+    await requestData(
+      client.session.shell({
+        sessionID: sessionId,
+        ...workspacePayload,
+        agent,
+        command,
+      }),
+      "session.shell",
+    )
+    admission.complete()
+  } catch (error) {
+    admission.rollback()
+    throw error
+  }
 }
 
 async function abortSession(instanceId: string, sessionId: string): Promise<void> {

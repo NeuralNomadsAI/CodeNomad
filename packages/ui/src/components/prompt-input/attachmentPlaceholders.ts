@@ -1,3 +1,5 @@
+import { createAttachmentPlaceholderRegex } from "../../lib/attachment-placeholders"
+
 export function formatPastedPlaceholder(value: string | number) {
   return `[pasted #${value}]`
 }
@@ -7,11 +9,11 @@ export function formatImagePlaceholder(value: string | number) {
 }
 
 export function createPastedPlaceholderRegex() {
-  return /\[\s*pasted\s*#\s*(\d+)\s*\]/gi
+  return createAttachmentPlaceholderRegex("pasted")
 }
 
 export function createImagePlaceholderRegex() {
-  return /\[\s*Image\s*#\s*(\d+)\s*\]/gi
+  return createAttachmentPlaceholderRegex("image")
 }
 
 export function createMentionRegex() {

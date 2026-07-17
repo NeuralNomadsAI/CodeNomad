@@ -1,9 +1,11 @@
 import { createEffect, createSignal } from "solid-js"
+import { invoke } from "@tauri-apps/api/core"
 import type { ServerMeta, SupportMeta } from "../../../server/src/api-types"
 import { getServerMeta } from "../lib/server-meta"
 import { showToastNotification, ToastHandle } from "../lib/notifications"
 import { getLogger } from "../lib/logger"
 import { tGlobal } from "../lib/i18n"
+import { isLocalWindow, isTauriHost } from "../lib/runtime-env"
 import { hasInstances, showFolderSelection } from "./ui"
 
 const log = getLogger("actions")
@@ -61,6 +63,7 @@ function ensureVisibilityEffect() {
           ? {
               label: tGlobal("releases.upgradeRequired.action.getUpdate"),
               href: support.latestServerUrl,
+              onClick: isTauriHost() && isLocalWindow() && navigator.userAgent.includes("Windows") ? () => invoke("install_stable_update") : undefined,
             }
           : undefined,
       })

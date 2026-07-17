@@ -16,6 +16,8 @@ export type WorkspaceStatus = "starting" | "ready" | "stopped" | "error"
 
 export interface WorkspaceDescriptor {
   id: string
+  /** Correlates creation events with the client request that initiated them. */
+  requestId?: string
   /** Absolute path on the server host. */
   path: string
   name?: string
@@ -38,6 +40,8 @@ export interface WorkspaceDescriptor {
 export interface WorkspaceCreateRequest {
   path: string
   name?: string
+  binaryPath?: string
+  requestId?: string
   forceNew?: boolean
 }
 
@@ -61,6 +65,26 @@ export type WorkspaceDetailResponse = WorkspaceDescriptor
 export interface WorkspaceDeleteResponse {
   id: string
   status: WorkspaceStatus
+}
+
+export interface ProviderUsageWindow {
+  usedPercent: number | null
+  remainingPercent: number | null
+  windowSeconds: number | null
+  resetAt: number | null
+  valueLabel?: string
+}
+
+export interface ProviderUsageResponse {
+  requestedProviderId: string
+  providerId: string | null
+  providerName: string
+  modelId?: string
+  supported: boolean
+  configured: boolean
+  ok: boolean
+  windows: Record<string, ProviderUsageWindow>
+  fetchedAt: number
 }
 
 export type WorktreeKind = "root" | "worktree"
@@ -330,6 +354,19 @@ export interface BinaryValidationResult {
   valid: boolean
   version?: string
   error?: string
+}
+
+export interface OpenCodeUpdateStatus {
+  currentVersion: string
+  latestVersion: string | null
+  updateAvailable: boolean | null
+  canUpgrade: boolean
+  checkError?: "update_check_failed"
+}
+
+export interface OpenCodeUpdateResponse {
+  success: boolean
+  version: string
 }
 
 export interface SpeechSegment {

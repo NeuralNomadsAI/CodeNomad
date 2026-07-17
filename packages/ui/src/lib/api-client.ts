@@ -11,11 +11,14 @@ import type {
   FileSystemFileContentResponse,
   FileSystemListResponse,
   InstanceData,
+  OpenCodeUpdateResponse,
+  OpenCodeUpdateStatus,
   SpeechCapabilitiesResponse,
   SpeechSynthesisResponse,
   SpeechTranscriptionResponse,
   SideCar,
   PreviewSession,
+  ProviderUsageResponse,
   ServerMeta,
   RemoteProxySessionCreateRequest,
   RemoteProxySessionCreateResponse,
@@ -194,6 +197,13 @@ export const serverApi = {
     return request<WorkspaceDescriptor[]>("/api/workspaces")
   },
 
+  fetchProviderUsage(providerId: string, modelId?: string): Promise<ProviderUsageResponse> {
+    const params = new URLSearchParams()
+    if (modelId) params.set("modelId", modelId)
+    const query = params.toString()
+    return request<ProviderUsageResponse>(`/api/usage/${encodeURIComponent(providerId)}${query ? `?${query}` : ""}`)
+  },
+
   fetchWorktrees(id: string): Promise<WorktreeListResponse> {
     return request<WorktreeListResponse>(`/api/workspaces/${encodeURIComponent(id)}/worktrees`)
   },
@@ -226,10 +236,23 @@ export const serverApi = {
       body: JSON.stringify(map),
     })
   },
-  createWorkspace(payload: WorkspaceCreateRequest): Promise<WorkspaceCreateResponse> {
+  createWorkspace(payload: WorkspaceCreateRequest, options?: { signal?: AbortSignal }): Promise<WorkspaceCreateResponse> {
     return request<WorkspaceCreateResponse>("/api/workspaces", {
       method: "POST",
       body: JSON.stringify(payload),
+      signal: options?.signal,
+    })
+  },
+  cancelWorkspaceCreation(requestId: string): Promise<void> {
+    return request("/api/workspaces/creation/cancel", {
+      method: "POST",
+      body: JSON.stringify({ requestId }),
+    })
+  },
+  releaseWorkspaceCreation(id: string, requestId: string): Promise<void> {
+    return request(`/api/workspaces/${encodeURIComponent(id)}/creation/release`, {
+      method: "POST",
+      body: JSON.stringify({ requestId }),
     })
   },
   fetchSidecars(): Promise<{ sidecars: SideCar[] }> {
@@ -429,6 +452,12 @@ export const serverApi = {
       method: "POST",
       body: JSON.stringify({ path }),
     })
+  },
+  fetchOpenCodeUpdateStatus(): Promise<OpenCodeUpdateStatus> {
+    return request<OpenCodeUpdateStatus>("/api/opencode/update")
+  },
+  updateOpenCode(): Promise<OpenCodeUpdateResponse> {
+    return request<OpenCodeUpdateResponse>("/api/opencode/update", { method: "POST" })
   },
   fetchSpeechCapabilities(): Promise<SpeechCapabilitiesResponse> {
     return request<SpeechCapabilitiesResponse>("/api/speech/capabilities")

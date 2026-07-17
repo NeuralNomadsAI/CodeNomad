@@ -18,6 +18,7 @@ import { initGithubStars } from "./stores/github-stars"
 
 import { useCommands } from "./lib/hooks/use-commands"
 import { useAppLifecycle } from "./lib/hooks/use-app-lifecycle"
+import { useAppSessionRestore } from "./lib/hooks/use-app-session-restore"
 import { getLogger } from "./lib/logger"
 import { launchError, showLaunchError, clearLaunchError } from "./stores/launch-errors"
 import { formatLaunchErrorMessage, isMissingBinaryMessage } from "./lib/launch-errors"
@@ -34,7 +35,6 @@ import {
 import { recentFolders, useConfig } from "./stores/preferences"
 import {
   createInstance,
-  getExistingInstanceForFolder,
   instances,
   stopInstance,
   disconnectedInstance,
@@ -66,6 +66,7 @@ import {
   ensureActiveAppTab,
   getAdjacentAppTabId,
   getAppTabById,
+  markAppTabUserInteraction,
   moveAppTab,
   selectAppTab,
   selectInstanceTab,
@@ -74,6 +75,7 @@ import {
 const log = getLogger("actions")
 
 const App: Component = () => {
+  useAppSessionRestore()
   const { t } = useI18n()
   const {
     preferences,
@@ -99,11 +101,6 @@ const App: Component = () => {
   const [escapeInDebounce, setEscapeInDebounce] = createSignal(false)
   const [instanceTabBarHeight, setInstanceTabBarHeight] = createSignal(0)
   const [sidecarPickerOpen, setSidecarPickerOpen] = createSignal(false)
-  const [alreadyOpenFolderChoice, setAlreadyOpenFolderChoice] = createSignal<{
-    folderPath: string
-    binaryPath: string
-    instanceId: string
-  } | null>(null)
   const phoneQuery = useMediaQuery("(max-width: 767px)")
   const isPhoneLayout = createMemo(() => phoneQuery())
 
@@ -285,25 +282,17 @@ const App: Component = () => {
     const projectName = getProjectNameForFolder(folderPath)
     clearLaunchError()
 
-    if (!options?.forceNew) {
-      const existingInstance = getExistingInstanceForFolder(folderPath)
-      if (existingInstance) {
-        recordWorkspaceLaunch(existingInstance.folder, selectedBinary, folderPath)
-        setAlreadyOpenFolderChoice({ folderPath, binaryPath: selectedBinary, instanceId: existingInstance.id })
-        return
-      }
-    }
-
     setIsSelectingFolder(true)
     try {
       const result = await createInstance(folderPath, selectedBinary, projectName, { forceNew: options?.forceNew })
+      recordWorkspaceLaunch(instances().get(result.instanceId)?.folder ?? folderPath, selectedBinary, folderPath)
       if (result.reused) {
-        recordWorkspaceLaunch(instances().get(result.instanceId)?.folder ?? folderPath, selectedBinary, folderPath)
-        setAlreadyOpenFolderChoice({ folderPath, binaryPath: selectedBinary, instanceId: result.instanceId })
+        selectInstanceTab(result.instanceId)
+        setShowFolderSelection(false)
+        log.info("Selected reused instance", { instanceId: result.instanceId, folderPath })
         return
       }
 
-      recordWorkspaceLaunch(instances().get(result.instanceId)?.folder ?? folderPath, selectedBinary, folderPath)
       selectInstanceTab(result.instanceId)
       setShowFolderSelection(false)
 
@@ -321,24 +310,13 @@ const App: Component = () => {
     }
   }
 
-  function dismissAlreadyOpenFolderChoice() {
-    setAlreadyOpenFolderChoice(null)
-  }
-
-  function switchToAlreadyOpenFolder() {
-    const choice = alreadyOpenFolderChoice()
-    if (!choice) return
-    setAlreadyOpenFolderChoice(null)
-    selectInstanceTab(choice.instanceId)
+  function handleSelectExistingInstance(instanceId: string, recentPath: string, binaryPath: string) {
+    const instance = instances().get(instanceId)
+    if (!instance) return
+    recordWorkspaceLaunch(instance.folder, binaryPath, recentPath)
+    selectInstanceTab(instanceId)
     setShowFolderSelection(false)
-    log.info("Selected existing instance", { instanceId: choice.instanceId, folderPath: choice.folderPath })
-  }
-
-  function openAnotherFolderInstance() {
-    const choice = alreadyOpenFolderChoice()
-    if (!choice) return
-    setAlreadyOpenFolderChoice(null)
-    void handleSelectFolder(choice.folderPath, choice.binaryPath, { forceNew: true })
+    log.info("Selected existing instance", { instanceId, folderPath: instance.folder })
   }
 
   function handleLaunchErrorClose() {
@@ -431,6 +409,7 @@ const App: Component = () => {
   async function handleCloseAppTab(tabId: string) {
     const tab = getAppTabById(tabId)
     if (!tab) return
+    markAppTabUserInteraction()
 
     const fallbackTabId = activeAppTabId() === tabId ? getAdjacentAppTabId(tabId) : activeAppTabId()
 
@@ -651,6 +630,7 @@ const App: Component = () => {
         >
           <FolderSelectionView
             onSelectFolder={handleSelectFolder}
+            onSelectExistingInstance={handleSelectExistingInstance}
             isLoading={isSelectingFolder()}
             onOpenSidecar={handleOpenSidecarPicker}
           />
@@ -661,6 +641,7 @@ const App: Component = () => {
             <div class="w-full h-full relative">
               <FolderSelectionView
                 onSelectFolder={handleSelectFolder}
+                onSelectExistingInstance={handleSelectExistingInstance}
                 isLoading={isSelectingFolder()}
                 onOpenSidecar={handleOpenSidecarPicker}
                 onClose={() => {
@@ -674,31 +655,6 @@ const App: Component = () => {
 
         <SettingsScreen />
         <SideCarPickerDialog open={sidecarPickerOpen()} onClose={() => setSidecarPickerOpen(false)} onOpenSidecar={handleOpenSidecar} />
-        <Show when={alreadyOpenFolderChoice()}>
-          <Dialog open modal onOpenChange={(open) => !open && dismissAlreadyOpenFolderChoice()}>
-            <Dialog.Portal>
-              <Dialog.Overlay class="modal-overlay z-[60]" />
-              <Dialog.Content class="modal-surface fixed left-1/2 top-1/2 z-[1310] w-full max-w-sm -translate-x-1/2 -translate-y-1/2 p-6 border border-base shadow-2xl" tabIndex={-1}>
-                <Dialog.Title class="text-lg font-semibold text-primary">
-                  {t("folderSelection.recent.alreadyOpenTitle")}
-                </Dialog.Title>
-                <Dialog.Description class="text-sm text-secondary mt-1">
-                  {t("folderSelection.recent.alreadyOpenMessage")}
-                </Dialog.Description>
-
-                <div class="mt-6 flex justify-end gap-3">
-                  <button type="button" class="button-secondary" onClick={openAnotherFolderInstance}>
-                    {t("folderSelection.recent.openAnotherInstance")}
-                  </button>
-                  <button type="button" class="button-primary" onClick={switchToAlreadyOpenFolder}>
-                    {t("folderSelection.recent.switchToOpenProject")}
-                  </button>
-                </div>
-              </Dialog.Content>
-            </Dialog.Portal>
-          </Dialog>
-        </Show>
-
         <AlertDialog />
 
         <Toaster
