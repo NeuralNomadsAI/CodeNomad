@@ -67,6 +67,7 @@ interface ClientStateManagerOptions {
   crossHostDependencies?: CrossHostLeaseDependencies
   legacyTauriDataPath?: string | null
   processOwner?: ProcessOwner
+  removeLegacyState?(path: string): void
 }
 
 async function writeClientStateTemporary(temporaryPath: string, serializedState: string): Promise<void> {
@@ -216,7 +217,7 @@ export class ClientStateManager {
         ["electron", join(userDataPath, CLIENT_STATE_FILENAME)],
         ...(legacyTauriDataPath ? [["tauri", join(legacyTauriDataPath, CLIENT_STATE_FILENAME)] as const] : []),
       ] as ReadonlyArray<readonly ["electron" | "tauri", string]>
-      this.migrateLegacyStateIfNeeded(legacyPaths)
+      this.migrateLegacyStateIfNeeded(legacyPaths, options?.removeLegacyState)
       const futureLegacyBlocked = this.unsupportedFutureEnvelope
       const persisted = this.readState()
       this.state = persisted.state
@@ -374,7 +375,10 @@ export class ClientStateManager {
     }
   }
 
-  private migrateLegacyStateIfNeeded(paths: ReadonlyArray<readonly ["electron" | "tauri", string]>): void {
+  private migrateLegacyStateIfNeeded(
+    paths: ReadonlyArray<readonly ["electron" | "tauri", string]>,
+    removeLegacyState = (path: string) => rmSync(path, { force: true }),
+  ): void {
     try {
       readFileSync(this.statePath)
       return
@@ -406,7 +410,13 @@ export class ClientStateManager {
       descriptor = undefined
       this.assertReplacementAllowed()
       renameSync(temporaryPath, this.statePath)
-      for (const [, path] of paths) rmSync(path, { force: true })
+      for (const [, path] of paths) {
+        try {
+          removeLegacyState(path)
+        } catch (error) {
+          console.warn(`[client-state] failed to remove migrated legacy state at ${path}`, error)
+        }
+      }
     } finally {
       if (descriptor !== undefined) closeSync(descriptor)
       rm(temporaryPath, { force: true }).catch(() => {})

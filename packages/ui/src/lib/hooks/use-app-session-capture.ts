@@ -1,4 +1,4 @@
-import { createEffect, createSignal, onCleanup, onMount } from "solid-js"
+import { createEffect, createSignal, onCleanup, onMount, untrack } from "solid-js"
 import { listen } from "@tauri-apps/api/event"
 import { getLogger } from "../logger"
 import { acknowledgeNativeClientStateNavigationFlush, acknowledgeNativeClientStateRendererFlush } from "../native/client-state"
@@ -11,7 +11,7 @@ import { normalizeWorkspacePath } from "../../stores/app-session-reconciliation"
 import {
   createRestorableSessionPreservation, createRestoredTabCommitGuard, markPreservedWorkspaceRemoved,
   markPreservedWorkspaceReopened, markPreservedWorkspaceUnavailable,
-  getPreservedWorkspaceState,
+  getPreservedWorkspaceReopenTarget, getPreservedWorkspaceState,
   hasRestoredTabBinding, mergeRestorableSessionState, recordRestoredTab,
   settleRestoredTab as settlePreservedTab, type RestorableSessionPreservation,
   type RestorableWorkspaceRuntimeAuthority,
@@ -31,9 +31,11 @@ import { serializeDraftAttachments } from "../../stores/client-state-attachments
 import { onInstanceLifecycleAuthority } from "../../stores/instance-lifecycle-authority"
 import { getPersistedGenerationRecovery, type PersistedGenerationRecovery } from "../../stores/session-generation-recovery"
 import { hydrateWorkspacePromptState } from "../../stores/app-session-prompt-hydration"
+import {
+  hydrateRestoredWorkspaceState, NO_SESSION_DRAFT_SESSION_ID,
+} from "../../stores/app-session-workspace-hydration"
 const log = getLogger("actions")
 const MESSAGE_SCROLL_SCOPE = "message-stream"
-const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
 const MAX_CAPTURED_SCROLL_SNAPSHOTS = 96
 const CAPTURE_DEBOUNCE_MS = 100
 function captureScrollSnapshots(instanceId: string): Record<string, ScrollSnapshot> {
@@ -115,6 +117,7 @@ export function useAppSessionCapture() {
   const instanceLifecycleTokens = new Map<string, number>()
   let nextInstanceLifecycleToken = 0
   let disposed = false
+  const hydrationController = new AbortController()
   let timer: ReturnType<typeof setTimeout> | null = null
   let preservation: RestorableSessionPreservation | null = null
   const hydratePreservedPrompts = (instanceId: string) => {
@@ -205,14 +208,26 @@ export function useAppSessionCapture() {
       if (event.type === "removed") {
         markPreservedWorkspaceRemoved(preservation, workspace)
       } else {
-        const snapshot = getPreservedWorkspaceState(preservation, workspace)
+        const target = getPreservedWorkspaceReopenTarget(preservation, workspace)
         markPreservedWorkspaceReopened(preservation, workspace)
+        const snapshot = target?.snapshot
+        const sourceIndex = target?.sourceIndex ?? -1
+        const isCurrentBinding = () => Boolean(
+          preservation
+          && instanceLifecycleTokens.get(event.instanceId) === lifecycleToken
+          && instances().has(event.instanceId)
+          && hasRestoredTabBinding(preservation, sourceIndex, workspace.runtimeTabId),
+        )
         if (snapshot && instances().has(event.instanceId)) void waitForInstanceInitialSessionHydration(event.instanceId).then(() => {
-          if (instanceLifecycleTokens.get(event.instanceId) !== lifecycleToken || !instances().has(event.instanceId)) return
-          hydratePreservedPrompts(event.instanceId)
+          if (!isCurrentBinding()) return null
+          return hydrateRestoredWorkspaceState(event.instanceId, snapshot, hydrationController.signal, isCurrentBinding)
+        }).then((unavailable) => {
+          if (!unavailable || !preservation || !isCurrentBinding()) return
+          settlePreservedTab(preservation, sourceIndex, workspace.runtimeTabId, workspace.runtimeTabId, unavailable)
+          schedule()
         }).catch((error) => {
-          if (instanceLifecycleTokens.get(event.instanceId) === lifecycleToken && instances().has(event.instanceId)) {
-            log.warn("Failed to restore prompt state for reopened workspace", { instanceId: event.instanceId, error })
+          if (!hydrationController.signal.aborted && isCurrentBinding()) {
+            log.warn("Failed to restore preserved state for reopened workspace", { instanceId: event.instanceId, error })
           }
         })
       }
@@ -227,9 +242,16 @@ export function useAppSessionCapture() {
       getSessions(tab.instance.id)
       getSessionDraftPromptsForInstance(tab.instance.id)
       getSessionAttachmentsForInstance(tab.instance.id)
-      hydratePreservedPrompts(tab.instance.id)
     }
     schedule()
+  })
+  createEffect(() => {
+    if (!enabled()) return
+    const tabs = appTabs()
+    for (const tab of tabs) if (tab.kind === "instance") {
+      getSessions(tab.instance.id)
+      untrack(() => hydratePreservedPrompts(tab.instance.id))
+    }
   })
   onMount(() => {
     const flushNow = () => void flush()
@@ -245,6 +267,7 @@ export function useAppSessionCapture() {
     })
   })
   onCleanup(() => {
+    hydrationController.abort(new Error("App session capture disposed"))
     nativeDisposed = true
     nativeUnlisteners.forEach((unlisten) => unlisten())
     void flush()

@@ -4,13 +4,12 @@ import { isWebHost } from "../runtime-env"
 import { useAppSessionCapture, type AppSessionCaptureController } from "./use-app-session-capture"
 import {
   clientStateIsPrimary, loadedRestorableSession, restorePreviousStateEnabled,
-  type RestorableSessionState, type RestorableWorkspaceTabState,
+  type RestorableSessionState,
 } from "../../stores/client-state"
 import { releaseAppSessionRestoreGate } from "../../stores/app-session-restore-gate"
 import { setShowFolderSelection } from "../../stores/ui"
 import {
-  getUnavailableRestoredSessionIds, normalizeWorkspacePath, reconcileWorkspaceTabs,
-  resolveRestoredActiveTabId, resolveRestoredSessionSelection, shouldRestoreSessionState,
+  reconcileWorkspaceTabs, resolveRestoredActiveTabId, shouldRestoreSessionState,
 } from "../../stores/app-session-reconciliation"
 import { getAbortReason, runAbortable } from "../../stores/app-session-restore-timeout"
 import {
@@ -23,15 +22,11 @@ import {
 } from "../../stores/instances"
 import { openSidecarTab, SidecarNotFoundError } from "../../stores/sidecars"
 import {
-  getSessions, hasAuthoritativeSessionSelection, hydrateActiveSessionSelection,
-  hydrateRestoredSessionChain, hydrateSessionGenerationRecovery, hydrateSessionIdleMarkers,
-} from "../../stores/sessions"
-import { messageStoreBus, type MessageScrollSnapshotSeed } from "../../stores/message-v2/bus"
-import { hydrateWorkspacePromptState } from "../../stores/app-session-prompt-hydration"
+  hydrateRestoredWorkspaceState,
+} from "../../stores/app-session-workspace-hydration"
+import { runWithSerializedCommits } from "../../stores/app-session-restore-queue"
 import { waitForSettledPrerequisite } from "../trailing-resync"
 const log = getLogger("actions")
-const MESSAGE_SCROLL_SCOPE = "message-stream"
-const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
 const INITIAL_LOAD_TIMEOUT_MS = 15_000
 const OPERATION_TIMEOUT_MS = 30_000
 const CREATE_TIMEOUT_MS = OPERATION_TIMEOUT_MS * 2
@@ -52,35 +47,6 @@ async function disposeFailedRestoreWorkspace(instanceId: string): Promise<void> 
   } catch (error) {
     log.warn("Restore workspace cleanup continues in the background", { instanceId, error })
   }
-}
-async function restoreWorkspaceState(
-  instanceId: string,
-  snapshot: RestorableWorkspaceTabState,
-  signal: AbortSignal,
-  isCurrentBinding: () => boolean,
-): Promise<Set<string> | null> {
-  await hydrateRestoredSessionChain(instanceId, [snapshot.activeParentSessionId, snapshot.activeSessionId], signal)
-  if (signal.aborted) throw getAbortReason(signal)
-  if (!isCurrentBinding()) return null
-  const sessions = getSessions(instanceId)
-  const validIds = new Set(sessions.map(({ id }) => id))
-  const unavailable = getUnavailableRestoredSessionIds(sessions, {
-    activeParentSessionId: snapshot.activeParentSessionId, activeSessionId: snapshot.activeSessionId,
-    draftSessionIds: Object.keys(snapshot.drafts), attachmentSessionIds: Object.keys(snapshot.attachments),
-    scrollSessionIds: Object.keys(snapshot.scrollSnapshots), idleMarkerSessionIds: Object.keys(snapshot.unseenIdleSince),
-    generationRecoverySessionIds: Object.keys(snapshot.generationRecovery),
-  }, [NO_SESSION_DRAFT_SESSION_ID])
-  hydrateWorkspacePromptState(instanceId, snapshot, validIds, NO_SESSION_DRAFT_SESSION_ID)
-  hydrateSessionIdleMarkers(instanceId, snapshot.unseenIdleSince)
-  hydrateSessionGenerationRecovery(instanceId, snapshot.generationRecovery)
-  const scrollSeeds: MessageScrollSnapshotSeed[] = Object.entries(snapshot.scrollSnapshots)
-    .map(([sessionId, scrollSnapshot]) => ({ sessionId, scope: MESSAGE_SCROLL_SCOPE, snapshot: scrollSnapshot }))
-  messageStoreBus.seedScrollSnapshots(instanceId, scrollSeeds)
-  if (!hasAuthoritativeSessionSelection(instanceId)) {
-    const selection = resolveRestoredSessionSelection(sessions, snapshot.activeParentSessionId, snapshot.activeSessionId)
-    hydrateActiveSessionSelection(instanceId, selection?.parentSessionId ?? null, selection?.activeSessionId ?? null)
-  }
-  return unavailable
 }
 function createRestoreContext(snapshot: RestorableSessionState, signal: AbortSignal, capture: AppSessionCaptureController) {
   const orderRevision = appTabOrderRevision()
@@ -103,6 +69,7 @@ function createRestoreContext(snapshot: RestorableSessionState, signal: AbortSig
   }
 }
 type RestoreContext = ReturnType<typeof createRestoreContext>
+const waitForWorkspaceMountAdoption = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 async function restoreTabs(context: RestoreContext): Promise<void> {
   const { snapshot, signal, capture } = context
   const sidecars = snapshot.tabs.map((tab, index) => tab.kind === "sidecar" ? restoreSidecar(tab, index) : undefined)
@@ -129,14 +96,11 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
   const restoredIds = capture.restoredTabIds()
   const provisionalId = resolveRestoredActiveTabId(restoredIds, snapshot.activeTabIndex)
   if (provisionalId) context.selectActive(provisionalId, provisionalId === restoredIds[snapshot.activeTabIndex])
-  const groups = new Map<string, typeof missing>()
-  for (const match of missing) {
-    const path = normalizeWorkspacePath(match.descriptor.folderPath)
-    groups.set(path, [...groups.get(path) ?? [], match])
-  }
-  for (const group of groups.values()) group.sort((a, b) =>
-    a.descriptor.occurrence - b.descriptor.occurrence || a.tabIndex - b.tabIndex)
-  const restoreWorkspace = async (match: (typeof matches)[number]) => {
+  const restoreWorkspace = async (
+    match: (typeof matches)[number],
+    waitForCreateCommit?: Promise<void>,
+    finishCreateCommit?: () => void,
+  ) => {
     if (signal.aborted) return
     const tab = snapshot.tabs[match.tabIndex]
     if (!tab || tab.kind !== "workspace") return
@@ -147,6 +111,7 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
         const existingId = match.existingWorkspaceId
         const create = (forceNew: boolean) => createInstance(tab.folder, tab.binaryPath, tab.projectName, {
           activate: false, signal: operationSignal, forceNew,
+          waitForCreateCommit: waitForCreateCommit ? () => waitForCreateCommit : undefined,
           shouldCreateCommit: canCommitCreation,
           onCreateCommit: (id) => capture.recordRestoredTab(match.tabIndex, getInstanceAppTabId(id)),
         })
@@ -156,6 +121,8 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
           if (creation.requestId) await cancelRestoreCreationRequest(creation.instanceId, creation.requestId)
           creation = await create(true)
         }
+        if (creation && finishCreateCommit) await waitForWorkspaceMountAdoption()
+        finishCreateCommit?.()
         const id = existingId ?? creation?.instanceId ?? null
         if (!id) return null
         claimedIds.add(id)
@@ -170,7 +137,7 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
           const tabId = getInstanceAppTabId(id)
           const isCurrentBinding = () => capture.hasRestoredTabBinding(match.tabIndex, tabId)
           if (!isCurrentBinding()) return id
-          const unavailable = await restoreWorkspaceState(id, tab, operationSignal, isCurrentBinding)
+          const unavailable = await hydrateRestoredWorkspaceState(id, tab, operationSignal, isCurrentBinding)
           if (operationSignal.aborted) throw getAbortReason(operationSignal)
           if (!unavailable || !isCurrentBinding()) return id
           if (creation?.requestId) await releaseRestoreCreatedInstance(id, creation.requestId)
@@ -217,11 +184,11 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
       if (!signal.aborted) log.warn("Skipped SideCar while restoring app session", { sidecarId: tab.sidecarId, error })
     }
   }
-  const restoreMissing = async () => {
-    // ponytail: serialize DOM-heavy workspace mounts; parallel mounts can initialize Virtua before document adoption.
-    for (const group of groups.values()) for (const match of group) await restoreWorkspace(match)
-  }
-  await Promise.all([...existing.map(restoreWorkspace), restoreMissing(), ...sidecars])
+  const restoreMissing = () => runWithSerializedCommits(
+    [...missing].sort((a, b) => a.tabIndex - b.tabIndex),
+    (match, waitForCommit, finishCommit) => restoreWorkspace(match, waitForCommit, finishCommit),
+  )
+  await Promise.all([...existing.map((match) => restoreWorkspace(match)), restoreMissing(), ...sidecars])
 }
 export function useAppSessionRestore(): void {
   const capture = useAppSessionCapture()

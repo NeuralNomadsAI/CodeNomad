@@ -32,7 +32,9 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
   constructor(private readonly options: AbortCreatedWorkspaceCleanupOptions<T>) {}
 
   track(workspace: T): void {
-    if (!this.owned.has(workspace.id)) this.owned.set(workspace.id, { workspace })
+    const entry = this.owned.get(workspace.id)
+    if (!entry) this.owned.set(workspace.id, { workspace })
+    else if ("workspace" in entry && !("released" in entry)) entry.workspace = workspace
   }
 
   beginRequest(requestId: string): void {

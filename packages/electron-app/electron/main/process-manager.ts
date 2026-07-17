@@ -8,10 +8,12 @@ import path from "path"
 import { fileURLToPath } from "url"
 import { parse as parseYaml } from "yaml"
 import { ensureManagedNodeBinary } from "./managed-node"
+import { getProcessStartIdentity } from "./client-state-process-identity"
 import {
   CLI_STOP_DEADLINE_MS,
   captureProcessTree,
   forceCapturedProcessTree,
+  mergeCapturedProcessTrees,
   stopManagedChild,
 } from "./process-stop"
 import { SerializedLifecycle } from "./serialized-lifecycle"
@@ -277,13 +279,15 @@ export class CliProcessManager extends EventEmitter {
 
     const isAlreadyExited = () => spawnedChild.exitCode !== null || spawnedChild.signalCode !== null
 
-    const processTree = captureProcessTree(pid)
+    const rootStartIdentity = getProcessStartIdentity(pid)
+    const initialCapture = captureProcessTree(pid)
+    let processTree = rootStartIdentity
+      ? mergeCapturedProcessTrees(undefined, initialCapture, pid, rootStartIdentity)
+      : initialCapture
     const forceProcessTree = () => {
       const latest = captureProcessTree(pid)
-      const trees = [processTree, latest].filter((tree): tree is NonNullable<typeof tree> => Boolean(tree))
-      if (!trees.length) return isAlreadyExited()
-      const members = new Map(trees.flatMap((tree) => tree.members).map((member) => [member.pid, member]))
-      return forceCapturedProcessTree({ platform: trees[0]!.platform, members: [...members.values()] })
+      processTree = mergeCapturedProcessTrees(processTree, latest, pid, rootStartIdentity)
+      return processTree ? forceCapturedProcessTree(processTree) : false
     }
 
     let forceConfirmed = false

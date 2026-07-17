@@ -72,12 +72,14 @@ describe("server shutdown signal boundary", () => {
       shutdown: async () => { calls.push("cleanup"); throw new Error("retained child survived") },
       logger: { info: () => calls.push("info"), warn() {}, error: () => calls.push("error") },
       forceExit: (code) => { calls.push("force-exit"); exits.push(code) },
+      setExitCode: () => undefined,
       reportStatus: (status) => statuses.push(status),
       holdAfterFailure: () => hold,
+      retryAttempts: 0,
     })
     const pending = handler("SIGTERM")
     await new Promise<void>((resolve) => setImmediate(resolve))
-    assert.deepEqual([exits, statuses, calls], [[], [SERVER_SHUTDOWN_INCOMPLETE], ["info", "cleanup", "error"]])
+    assert.deepEqual([exits, statuses, calls], [[], [SERVER_SHUTDOWN_INCOMPLETE], ["info", "cleanup", "error", "error"]])
     handler("SIGTERM")
     assert.deepEqual(exits, [1])
     releaseHold()
@@ -115,6 +117,34 @@ describe("server shutdown signal boundary", () => {
     assert.equal(attempts, 2)
     assert.deepEqual(statuses, [SERVER_SHUTDOWN_INCOMPLETE, SERVER_SHUTDOWN_COMPLETE])
     assert.deepEqual(exitCodes, [0])
+  })
+
+  it("preserves containment after the standalone cleanup retry budget", async () => {
+    let attempts = 0
+    const statuses: string[] = [], exitCodes: number[] = [], forcedExits: number[] = []
+    let releaseHold!: () => void
+    const hold = new Promise<void>((resolve) => { releaseHold = resolve })
+    const handler = createServerShutdownHandler({
+      shutdown: async () => { attempts++; throw new Error("process tree remains alive") },
+      logger,
+      reportStatus: (status) => statuses.push(status),
+      setExitCode: (code) => exitCodes.push(code),
+      forceExit: (code) => forcedExits.push(code),
+      holdAfterFailure: () => hold,
+      retryDelayMs: 0,
+      retryAttempts: 2,
+    })
+
+    const pending = handler("stdin")
+    while (attempts < 3) await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    assert.equal(attempts, 3)
+    assert.deepEqual(statuses, [SERVER_SHUTDOWN_INCOMPLETE])
+    assert.deepEqual(exitCodes, [1])
+    assert.deepEqual(forcedExits, [])
+    handler("SIGTERM")
+    assert.deepEqual(forcedExits, [1])
+    releaseHold()
+    await pending
   })
 
   it("escalates a second signal while sharing first-signal cleanup", async () => {

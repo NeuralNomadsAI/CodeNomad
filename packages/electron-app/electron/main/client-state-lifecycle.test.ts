@@ -22,6 +22,7 @@ function harness(options: {
     isDestroyed: () => false,
     close: () => { calls.push("close"); windows.get("close")?.({ preventDefault: () => assert.fail("approved close prevented") }) },
     hide: () => { calls.push("hide") },
+    show: () => { calls.push("show") },
     webContents: { isDestroyed: () => false, getURL: () => "http://127.0.0.1:43123/workspace", executeJavaScript: () => { calls.push("renderer"); return options.flush?.() ?? Promise.resolve() } },
   } as unknown as BrowserWindow
   const other = { isDestroyed: () => false, hide: () => { calls.push("hide-other") } } as unknown as BrowserWindow
@@ -108,7 +109,17 @@ test("ordinary quit does not exit when CLI cleanup is unconfirmed", async () => 
   await assert.rejects((h.lifecycle as any).shutdown, /unconfirmed/)
   await tick()
   assert.equal(h.exits(), 0)
-  assert.deepEqual(h.calls, ["hide", "renderer", "native", "stop"])
+  assert.deepEqual(h.calls, ["hide", "renderer", "native", "stop", "show"])
+})
+
+test("Windows session-end rejection restores a window hidden by an ordinary quit", async () => {
+  const h = harness({ stop: async () => { throw new Error("unconfirmed") } })
+  h.appEvents.get("before-quit")?.({ preventDefault: () => {} })
+  h.windows.get("query-session-end")?.({ preventDefault: () => {} })
+  await assert.rejects((h.lifecycle as any).sessionEnd, /unconfirmed/)
+  await tick()
+  assert.equal(h.exits(), 0)
+  assert.deepEqual(h.calls, ["hide", "renderer", "native", "stop", "show"])
 })
 
 test("CLI termination waits for the native snapshot flush", async () => {

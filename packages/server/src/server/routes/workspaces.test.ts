@@ -83,4 +83,44 @@ describe("workspace routes", () => {
     assert.equal(calls.length, 2)
     await app.close()
   })
+
+  it("rejects release after cancellation wins while deletion is still pending", async () => {
+    const app = Fastify({ logger: false })
+    let state: "active" | "cancelled" | "released" = "active"
+    let cancellationStarted!: () => void
+    let finishDeletion!: () => void
+    const started = new Promise<void>((resolve) => { cancellationStarted = resolve })
+    const deletion = new Promise<void>((resolve) => { finishDeletion = resolve })
+    const workspaceManager = {
+      cancelCreationRequest: async () => {
+        state = "cancelled"
+        cancellationStarted()
+        await deletion
+      },
+      releaseCreationRequest: () => {
+        if (state === "cancelled") return false
+        state = "released"
+        return true
+      },
+    } as unknown as WorkspaceManager
+    registerWorkspaceRoutes(app, { workspaceManager })
+
+    const cancellation = app.inject({
+      method: "POST",
+      url: "/api/workspaces/creation/cancel",
+      payload: { requestId: "restore-request" },
+    })
+    await started
+    const release = await app.inject({
+      method: "POST",
+      url: "/api/workspaces/workspace/creation/release",
+      payload: { requestId: "restore-request" },
+    })
+
+    assert.equal(release.statusCode, 404)
+    assert.equal(release.body, "Workspace creation request not found")
+    finishDeletion()
+    assert.equal((await cancellation).statusCode, 204)
+    await app.close()
+  })
 })

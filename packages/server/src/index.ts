@@ -598,6 +598,7 @@ async function main() {
 
   const shutdown = createServerShutdownHandler({
     logger,
+    holdAfterFailure: () => new Promise<void>(() => { setInterval(() => undefined, 60_000) }),
     setExitCode: (code) => {
       process.stdin.destroy()
       process.exitCode = code

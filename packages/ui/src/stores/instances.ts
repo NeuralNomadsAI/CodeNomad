@@ -67,11 +67,16 @@ import { tGlobal } from "../lib/i18n"
 import { appSessionRestoreGateActive } from "./app-session-restore-gate"
 import { clearInstanceAttachments } from "./attachments"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
+import { getUnavailableWorkspaceIds } from "./app-session-reconciliation"
 import { getAbortReason } from "./app-session-restore-timeout"
 import { AbortCreatedWorkspaceCleanup } from "./abort-created-workspace-cleanup"
 import { TrailingResyncCoordinator, waitForSettledPrerequisite } from "../lib/trailing-resync"
 import { retryWithBackoff } from "../lib/retry-utils"
 import { cancelRestoreCreation } from "./restore-creation-cancellation"
+import {
+  RestoreWorkspaceCommitGates, type RestoreWorkspaceCommitGate, type RestoreWorkspaceTerminal,
+} from "./restore-workspace-commit-gates"
+import { WorkspaceListReconciliationFence } from "./workspace-list-reconciliation-fence"
 
 const log = getLogger("api")
 
@@ -225,13 +230,17 @@ const initialHydrations = new Map<string, Promise<void>>()
 const initialSessionHydrations = new Map<string, Promise<void>>()
 const initialWorkspaceMetadataHydrations = new Map<string, Promise<void>>()
 type RestoreWorkspaceDescriptor = WorkspaceDescriptor & { reused?: boolean }
+const workspaceListReconciliationFence = new WorkspaceListReconciliationFence()
 
 const restoreCreatedWorkspaceCleanup = new AbortCreatedWorkspaceCleanup<RestoreWorkspaceDescriptor>({
   discardWorkspace: (workspace) => {
     if (!workspace.requestId) return Promise.reject(new Error(`Restore workspace ${workspace.id} has no creation request`))
     return serverApi.cancelWorkspaceCreation(workspace.requestId)
   },
-  restoreWorkspace: (workspace) => upsertWorkspace(workspace),
+  restoreWorkspace: (workspace) => {
+    workspaceListReconciliationFence.markMutation(workspace.id)
+    upsertWorkspace(workspace)
+  },
   onPermanentFailure: (workspace, error) => {
     log.error("Failed to cancel restore workspace ownership; restored it to the UI", {
       workspaceId: workspace.id,
@@ -240,6 +249,7 @@ const restoreCreatedWorkspaceCleanup = new AbortCreatedWorkspaceCleanup<RestoreW
   },
 })
 let restoreCreationRequestSequence = 0
+const restoreCreationCommitGates = new RestoreWorkspaceCommitGates<RestoreWorkspaceDescriptor>()
 
 const connectionResyncs = new TrailingResyncCoordinator(
   async (instanceId) => {
@@ -705,31 +715,72 @@ async function disposeInstance(instanceId: string): Promise<boolean> {
   return promise
 }
 
-const initialWorkspaceLoad = (async function initializeWorkspaces(): Promise<{ error?: unknown }> {
+async function refreshWorkspaceList(): Promise<void> {
+  const requestFence = workspaceListReconciliationFence.begin()
+  const removalCandidates = new Set(instances().keys())
   try {
     const workspaces = await serverApi.fetchWorkspaces()
-    workspaces.forEach((workspace) => upsertWorkspace(workspace))
-    // After a UI refresh, we may have instances but no active selection.
+    if (!workspaceListReconciliationFence.isCurrent(requestFence)) return
+    const remoteIds = new Set(workspaces.map(({ id }) => id))
+    for (const workspace of workspaces) {
+      if (!workspaceListReconciliationFence.allows(requestFence, workspace.id)) continue
+      restoreCreatedWorkspaceCleanup.trackPendingRequest(workspace)
+      if (restoreCreationCommitGates.deferRefreshWorkspace(workspace)) continue
+      if (restoreCreatedWorkspaceCleanup.owns(workspace.id)) {
+        restoreCreatedWorkspaceCleanup.track(workspace)
+        continue
+      }
+      upsertWorkspace(workspace)
+    }
+    const unchangedCandidates = [...removalCandidates]
+      .filter((id) => workspaceListReconciliationFence.allows(requestFence, id))
+    for (const instanceId of getUnavailableWorkspaceIds(
+      unchangedCandidates, remoteIds, (id) => restoreCreatedWorkspaceCleanup.owns(id),
+    )) {
+      releaseInstanceResources(instanceId)
+      removeInstance(instanceId, { authoritative: false })
+    }
     ensureActiveInstanceSelected()
+  } finally {
+    workspaceListReconciliationFence.complete(requestFence)
+  }
+}
+
+const initialWorkspaceLoad = (async function initializeWorkspaces(): Promise<{ error?: unknown }> {
+  try {
+    await refreshWorkspaceList()
     return {}
   } catch (error) {
     log.error("Failed to load workspaces", error)
     return { error }
   }
 })()
+let latestWorkspaceLoad = initialWorkspaceLoad
+
+serverEvents.onOpen(() => {
+  latestWorkspaceLoad = refreshWorkspaceList().then(
+    () => ({}),
+    (error) => {
+      log.warn("Failed to reconcile workspaces after event reconnect", error)
+      return { error }
+    },
+  )
+})
 
 async function waitForInitialWorkspaceLoad(): Promise<void> {
-  const result = await initialWorkspaceLoad
-  if (result.error !== undefined) throw result.error
+  let load = initialWorkspaceLoad
+  while (true) {
+    const result = await load
+    if (result.error !== undefined) throw result.error
+    if (load === latestWorkspaceLoad) return
+    load = latestWorkspaceLoad
+  }
 }
 
 
 serverEvents.on("*", (event) => handleWorkspaceEvent(event))
 
 function handleWorkspaceEvent(event: WorkspaceEventPayload) {
-  if ("workspace" in event) {
-    restoreCreatedWorkspaceCleanup.trackPendingRequest(event.workspace)
-  }
   const workspaceId = event.type === "workspace.log"
     ? event.entry.workspaceId
     : "workspace" in event
@@ -737,6 +788,17 @@ function handleWorkspaceEvent(event: WorkspaceEventPayload) {
       : "workspaceId" in event && typeof event.workspaceId === "string"
         ? event.workspaceId
         : null
+  if (workspaceId && event.type !== "workspace.log") {
+    workspaceListReconciliationFence.markMutation(workspaceId)
+  }
+  if ("workspace" in event) {
+    restoreCreatedWorkspaceCleanup.trackPendingRequest(event.workspace)
+    if (restoreCreationCommitGates.deferWorkspace(event.workspace)) return
+  }
+  if (event.type === "workspace.stopped"
+    && restoreCreationCommitGates.deferStopped(event.workspaceId, event.reason)) {
+    return
+  }
   if (workspaceId && restoreCreatedWorkspaceCleanup.shouldIgnoreEvent(workspaceId)) {
     return
   }
@@ -946,6 +1008,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
 }
 
 function removeRestoreCreatedInstanceFromUi(instanceId: string): void {
+  workspaceListReconciliationFence.markMutation(instanceId)
   if (instances().has(instanceId)) {
     releaseInstanceResources(instanceId)
     removeInstance(instanceId, { authoritative: false })
@@ -987,6 +1050,18 @@ function claimRestoreCreatedInstanceForUser(instanceId: string): void {
   })
 }
 
+async function settleRestoreWorkspaceTerminal(
+  workspace: RestoreWorkspaceDescriptor,
+  terminal: RestoreWorkspaceTerminal,
+): Promise<void> {
+  if (terminal.status === "stopped") {
+    restoreCreatedWorkspaceCleanup.release(workspace.id)
+    removeRestoreCreatedInstanceFromUi(workspace.id)
+    return
+  }
+  await disposeRestoreWorkspaceResponse(workspace)
+}
+
 async function createInstance(
   folder: string,
   binaryPath?: string,
@@ -996,13 +1071,18 @@ async function createInstance(
     signal?: AbortSignal
     shouldCreateCommit?: () => boolean
     onCreateCommit?: (instanceId: string) => void
+    waitForCreateCommit?: () => Promise<void>
     forceNew?: boolean
   },
 ): Promise<{ instanceId: string; reused: boolean; requestId?: string }> {
   const restoreRequestId = options?.signal ? createRestoreCreationRequestId() : undefined
   if (restoreRequestId) restoreCreatedWorkspaceCleanup.beginRequest(restoreRequestId)
+  const commitGate: RestoreWorkspaceCommitGate<RestoreWorkspaceDescriptor> | undefined = restoreRequestId && options?.waitForCreateCommit
+    ? restoreCreationCommitGates.begin(restoreRequestId, options.waitForCreateCommit(), folder)
+    : undefined
   let cancellationRequest: Promise<boolean> | null = null
   let requestResolved = false
+  let terminalHandled = false
   const cancelPendingCreation = () => {
     if (!restoreRequestId) return
     const trackedCleanup = restoreCreatedWorkspaceCleanup.quarantineRequest(restoreRequestId)
@@ -1027,16 +1107,49 @@ async function createInstance(
     }, { signal: options?.signal })
     requestResolved = true
     const reused = workspace.reused === true
+    if (restoreRequestId) restoreCreationCommitGates.bindResponse(restoreRequestId, workspace.id)
     if (options?.signal?.aborted) {
       if (workspace.requestId) await disposeRestoreWorkspaceResponse(workspace)
       throw getAbortReason(options.signal)
     }
-    if (options?.signal && workspace.requestId) restoreCreatedWorkspaceCleanup.track(workspace)
+    if (options?.signal && workspace.requestId) {
+      const observed = restoreRequestId
+        ? restoreCreationCommitGates.resolve(restoreRequestId, workspace).workspace
+        : workspace
+      restoreCreatedWorkspaceCleanup.track({
+        ...observed,
+        requestId: observed.requestId ?? workspace.requestId,
+        ...(reused ? { reused: true as const } : {}),
+      })
+    }
     else if (!options?.signal) restoreCreatedWorkspaceCleanup.releaseTombstoneForUserCreate(workspace.id)
+    if (commitGate) await commitGate.wait
+    if (options?.signal?.aborted) {
+      if (workspace.requestId) await disposeRestoreWorkspaceResponse(workspace)
+      throw getAbortReason(options.signal)
+    }
+    const resolution = restoreRequestId
+      ? restoreCreationCommitGates.resolve(restoreRequestId, workspace)
+      : { workspace }
+    const committedWorkspace: RestoreWorkspaceDescriptor = {
+      ...resolution.workspace,
+      requestId: resolution.workspace.requestId ?? workspace.requestId,
+      ...(reused ? { reused: true } : {}),
+    }
+    restoreCreatedWorkspaceCleanup.track(committedWorkspace)
+    const terminal = resolution.terminal ?? (committedWorkspace.status === "error" || committedWorkspace.status === "stopped"
+      ? { status: committedWorkspace.status, message: committedWorkspace.error }
+      : undefined)
+    if (terminal) {
+      terminalHandled = true
+      await settleRestoreWorkspaceTerminal(committedWorkspace, terminal)
+      throw new Error(terminal.message || `Restore-created workspace ${workspace.id} ${terminal.status}`)
+    }
     const discarded = restoreCreatedWorkspaceCleanup.shouldIgnoreEvent(workspace.id)
       || options?.shouldCreateCommit?.() === false
     if (!discarded) {
-      upsertWorkspace(workspace, reused ? undefined : projectName)
+      workspaceListReconciliationFence.markMutation(workspace.id)
+      upsertWorkspace(committedWorkspace, reused ? undefined : projectName)
       options?.onCreateCommit?.(workspace.id)
       if (!reused && (options?.activate ?? true)) setActiveInstanceId(workspace.id)
     }
@@ -1046,11 +1159,16 @@ async function createInstance(
     }
     return { instanceId: workspace.id, reused, requestId: workspace.requestId }
   } catch (error) {
+    if (!terminalHandled && commitGate?.terminal && commitGate.workspace) {
+      terminalHandled = true
+      await settleRestoreWorkspaceTerminal(commitGate.workspace, commitGate.terminal)
+    }
     if (!options?.signal?.aborted) log.error("Failed to create workspace", error)
     throw error
   } finally {
     options?.signal?.removeEventListener("abort", cancelPendingCreation)
     if (restoreRequestId) {
+      restoreCreationCommitGates.end(restoreRequestId)
       const pendingCancellation = cancellationRequest as Promise<boolean> | null
       if (requestResolved || !pendingCancellation) {
         restoreCreatedWorkspaceCleanup.finishRequest(restoreRequestId)
@@ -1103,6 +1221,7 @@ function stopInstance(id: string) {
   const instance = instances().get(id)
   if (!instance) return
 
+  workspaceListReconciliationFence.markMutation(id)
   releaseInstanceResources(id)
   removeInstance(id)
 

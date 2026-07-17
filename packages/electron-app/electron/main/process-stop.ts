@@ -36,6 +36,27 @@ export interface CapturedProcessTree {
   members: Array<{ pid: number; startIdentity: string }>
 }
 
+export function mergeCapturedProcessTrees(
+  captured: CapturedProcessTree | undefined,
+  latest: CapturedProcessTree | undefined,
+  rootPid: number,
+  expectedRootIdentity?: string,
+): CapturedProcessTree | undefined {
+  if (!latest || (captured && latest.platform !== captured.platform)) return captured
+  const capturedRoot = captured?.members.find((member) => member.pid === rootPid)
+  const latestRoot = latest.members.find((member) => member.pid === rootPid)
+  const rootIdentity = capturedRoot?.startIdentity ?? expectedRootIdentity
+  if (!rootIdentity || !latestRoot || rootIdentity !== latestRoot.startIdentity) return captured
+  if (!captured) return latest
+
+  const identityKey = (member: { pid: number; startIdentity: string }) => `${member.pid}\0${member.startIdentity}`
+  const members = new Map(captured.members.map((member) => [identityKey(member), member]))
+  for (const member of latest.members) {
+    members.set(identityKey(member), member)
+  }
+  return { platform: captured.platform, members: [...members.values()] }
+}
+
 export function captureProcessTree(
   rootPid: number,
   platform: NodeJS.Platform = process.platform,

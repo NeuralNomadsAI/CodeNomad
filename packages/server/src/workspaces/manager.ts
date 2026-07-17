@@ -510,7 +510,8 @@ export class WorkspaceManager {
     if (!record?.[WORKSPACE_STATE].published) return false
     const ownership = record.ownership
     const state = ownership.get(requestId)
-    if (state === "released" || state === "cancelled") return true
+    if (state === "released") return true
+    if (state === "cancelled") return false
     if (state !== "active") return false
     ownership.set(requestId, "released")
     this.syncOwnership(record)

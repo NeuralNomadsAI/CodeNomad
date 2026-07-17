@@ -8,8 +8,9 @@ use tauri::WebviewWindow;
 use tauri::{AppHandle, Emitter, Manager};
 
 const RENDERER_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
+const SHUTDOWN_STOP_ATTEMPTS: usize = 2;
 #[cfg(windows)]
-const WINDOWS_SESSION_END_TIMEOUT: Duration = Duration::from_millis(1_500);
+const WINDOWS_SESSION_END_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum ShutdownPhase {
@@ -17,6 +18,7 @@ pub(crate) enum ShutdownPhase {
     Idle,
     WaitingForShutdownRenderer,
     CleanupInProgress,
+    CleanupBlocked,
     ExitAllowed,
     WaitingForMainWindowRenderer,
     FlushingMainWindow,
@@ -29,8 +31,6 @@ pub(crate) struct ShutdownCoordinator {
     state: Mutex<ShutdownState>,
     #[cfg(windows)]
     windows_session_end_started: AtomicBool,
-    #[cfg(windows)]
-    force_exit: AtomicBool,
 }
 
 #[derive(Default)]
@@ -80,6 +80,13 @@ impl ShutdownCoordinator {
             .windows_session_end_started
             .swap(true, Ordering::SeqCst)
     }
+
+    #[cfg(windows)]
+    fn complete_windows_session_end(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|err| err.into_inner());
+        state.phase = ShutdownPhase::ExitAllowed;
+        state.active_flush_generation = None;
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -93,6 +100,7 @@ enum ShutdownEvent {
     MainWindowCloseFailed,
     MainWindowDestroyed,
     CleanupFinished,
+    CleanupFailed,
 }
 
 impl ShutdownEvent {
@@ -141,6 +149,8 @@ fn transition(phase: ShutdownPhase, event: ShutdownEvent) -> (ShutdownPhase, Shu
         (MainWindowCloseAllowed, MainWindowDestroyed | MainWindowCloseFailed) => (Idle, None),
         (MainWindowCloseAllowed, BeginShutdown) => (CleanupInProgress, StartCleanup),
         (CleanupInProgress, CleanupFinished) => (ExitAllowed, None),
+        (CleanupInProgress, CleanupFailed) => (CleanupBlocked, None),
+        (CleanupBlocked, BeginShutdown) => (CleanupInProgress, StartCleanup),
         _ => (phase, None),
     }
 }
@@ -194,14 +204,53 @@ fn close_main_window(app: AppHandle) {
 
 fn start_cleanup(app: AppHandle) {
     std::thread::spawn(move || {
-        client_state::flush_and_release(&app);
-        if let Some(state) = app.try_state::<AppState>() {
-            state.desktop_events.stop();
-            let _ = state.manager.stop();
+        let result = cleanup(&app, true);
+        match result {
+            Ok(()) => {
+                apply_event(app.clone(), ShutdownEvent::CleanupFinished);
+                app.exit(0);
+            }
+            Err(err) => {
+                eprintln!(
+                    "[tauri] shutdown cleanup remains unconfirmed after {SHUTDOWN_STOP_ATTEMPTS} attempts: {err}; keeping the app alive for a later quit retry"
+                );
+                apply_event(app, ShutdownEvent::CleanupFailed);
+            }
         }
-        apply_event(app.clone(), ShutdownEvent::CleanupFinished);
-        app.exit(0);
     });
+}
+
+fn retry_bounded<E>(
+    attempts: usize,
+    mut operation: impl FnMut() -> Result<(), E>,
+) -> Result<(), E> {
+    assert!(attempts > 0);
+    for attempt in 1..=attempts {
+        match operation() {
+            Ok(()) => return Ok(()),
+            Err(err) if attempt == attempts => return Err(err),
+            Err(_) => {}
+        }
+    }
+    unreachable!()
+}
+
+fn cleanup(app: &AppHandle, capture_window: bool) -> Result<(), String> {
+    if capture_window {
+        client_state::capture_and_flush_main_window(app);
+    } else {
+        client_state::flush_and_release_without_window_capture(app);
+    }
+    if let Some(state) = app.try_state::<AppState>() {
+        state.desktop_events.stop();
+        retry_bounded(SHUTDOWN_STOP_ATTEMPTS, || {
+            state.manager.stop().map_err(|err| err.to_string())
+        })?;
+    }
+    if capture_window {
+        client_state::release(app);
+    }
+    Ok(())
 }
 
 pub(crate) fn request(app: AppHandle) {
@@ -217,17 +266,29 @@ pub(crate) fn request_windows_session_end(app: AppHandle) {
         return;
     }
 
-    request(app.clone());
+    let (finished_tx, finished_rx) = std::sync::mpsc::sync_channel(1);
+    let cleanup_app = app.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(WINDOWS_SESSION_END_TIMEOUT);
-        if !exit_allowed(&app) {
-            eprintln!("[client-state] Windows session-end shutdown timed out; forcing exit");
-            app.state::<ShutdownCoordinator>()
-                .force_exit
-                .store(true, Ordering::SeqCst);
-            app.exit(0);
+        // WM_ENDSESSION runs on the window thread. Do not request renderer flushes or
+        // native window state here: either can marshal back to the blocked thread. The
+        // bounded fallback therefore persists only state already captured in memory.
+        let result = cleanup(&cleanup_app, false);
+        if let Err(err) = &result {
+            eprintln!("[tauri] Windows session-end cleanup failed: {err}");
         }
+        cleanup_app
+            .state::<ShutdownCoordinator>()
+            .complete_windows_session_end();
+        let _ = finished_tx.send(result);
     });
+    match finished_rx.recv_timeout(WINDOWS_SESSION_END_TIMEOUT) {
+        Ok(Ok(())) => {}
+        Ok(Err(_)) => {}
+        Err(_) => eprintln!(
+            "[tauri] Windows session-end cleanup exceeded {:?}; returning control to Windows",
+            WINDOWS_SESSION_END_TIMEOUT
+        ),
+    }
 }
 
 pub(crate) fn request_main_window_close(app: AppHandle) {
@@ -259,18 +320,7 @@ pub(crate) fn main_window_close_allowed(app: &AppHandle) -> bool {
 }
 
 pub(crate) fn exit_allowed(app: &AppHandle) -> bool {
-    if phase(app) == ShutdownPhase::ExitAllowed {
-        return true;
-    }
-    #[cfg(windows)]
-    if app
-        .state::<ShutdownCoordinator>()
-        .force_exit
-        .load(Ordering::SeqCst)
-    {
-        return true;
-    }
-    false
+    phase(app) == ShutdownPhase::ExitAllowed
 }
 
 #[cfg(windows)]
@@ -470,6 +520,43 @@ mod tests {
     }
 
     #[test]
+    fn failed_cleanup_stays_alive_and_accepts_a_later_retry() {
+        assert_eq!(
+            transition(
+                ShutdownPhase::CleanupInProgress,
+                ShutdownEvent::CleanupFailed
+            ),
+            (ShutdownPhase::CleanupBlocked, ShutdownAction::None)
+        );
+        assert_eq!(
+            transition(ShutdownPhase::CleanupBlocked, ShutdownEvent::BeginShutdown),
+            (
+                ShutdownPhase::CleanupInProgress,
+                ShutdownAction::StartCleanup
+            )
+        );
+    }
+
+    #[test]
+    fn shutdown_stop_retries_are_bounded() {
+        let mut attempts = 0;
+        retry_bounded(SHUTDOWN_STOP_ATTEMPTS, || {
+            attempts += 1;
+            (attempts == SHUTDOWN_STOP_ATTEMPTS).then_some(()).ok_or(())
+        })
+        .unwrap();
+        assert_eq!(attempts, SHUTDOWN_STOP_ATTEMPTS);
+
+        let mut failures = 0;
+        assert!(retry_bounded(SHUTDOWN_STOP_ATTEMPTS, || {
+            failures += 1;
+            Err::<(), _>("unconfirmed")
+        })
+        .is_err());
+        assert_eq!(failures, SHUTDOWN_STOP_ATTEMPTS);
+    }
+
+    #[test]
     fn shutdown_waits_for_the_final_navigation_invocation() {
         let coordinator = Arc::new(ShutdownCoordinator::default());
         let navigating = Arc::clone(&coordinator);
@@ -506,7 +593,7 @@ mod tests {
         let coordinator = ShutdownCoordinator::default();
         assert!(coordinator.begin_windows_session_end());
         assert!(!coordinator.begin_windows_session_end());
-        assert!(WINDOWS_SESSION_END_TIMEOUT <= Duration::from_millis(1_500));
+        assert!(WINDOWS_SESSION_END_TIMEOUT <= Duration::from_secs(5));
     }
 
     #[cfg(windows)]

@@ -13,7 +13,8 @@ export type ServerShutdownOperations = Record<
 
 export function createServerShutdownHandler(options: { shutdown: () => Promise<void>; logger: ShutdownLogger;
   forceExit?: (code: number) => void; setExitCode?: (code: number) => void;
-  reportStatus?: (status: string) => void; holdAfterFailure?: () => Promise<void>; retryDelayMs?: number }) {
+  reportStatus?: (status: string) => void; holdAfterFailure?: () => Promise<void>;
+  retryDelayMs?: number; retryAttempts?: number }) {
   const forceExit = options.forceExit ?? process.exit
   const setExitCode = options.setExitCode ?? ((code: number) => { process.exitCode = code })
   const reportStatus = options.reportStatus ?? ((status: string) => console.log(status))
@@ -32,11 +33,8 @@ export function createServerShutdownHandler(options: { shutdown: () => Promise<v
     }, async (error) => {
       options.logger.error({ err: error }, "Server shutdown incomplete; awaiting final process-tree enforcement")
       reportStatus(SERVER_SHUTDOWN_INCOMPLETE)
-      if (options.holdAfterFailure) {
-        await options.holdAfterFailure()
-        return
-      }
-      while (true) {
+      const retryAttempts = Math.max(0, Math.floor(options.retryAttempts ?? 3))
+      for (let attempt = 1; attempt <= retryAttempts; attempt += 1) {
         await new Promise<void>((resolve) => setTimeout(resolve, options.retryDelayMs ?? 250))
         try {
           await options.shutdown()
@@ -45,9 +43,12 @@ export function createServerShutdownHandler(options: { shutdown: () => Promise<v
           setExitCode(0)
           return
         } catch (retryError) {
-          options.logger.warn({ err: retryError }, "Shutdown cleanup retry remains incomplete")
+          options.logger.warn({ err: retryError, attempt, attempts: retryAttempts }, "Shutdown cleanup retry remains incomplete")
         }
       }
+      options.logger.error({ attempts: retryAttempts }, "Shutdown cleanup retries exhausted; preserving process-tree containment")
+      setExitCode(1)
+      if (options.holdAfterFailure) await options.holdAfterFailure()
     })
     return pending
   }

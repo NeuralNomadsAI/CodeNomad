@@ -16,7 +16,9 @@ pub use commands::{
     client_state_navigation_flushed, client_state_renderer_flushed, client_state_save,
     client_state_set_restore_enabled,
 };
-pub(crate) use navigation::{before_main_window_navigation, NavigationKind};
+pub(crate) use navigation::{
+    before_main_window_navigation, before_main_window_navigation_if, NavigationKind,
+};
 pub use window::{
     capture_and_flush_main_window, main_window_zoom, set_main_window_zoom, setup_main_window,
     DEFAULT_ZOOM_LEVEL,
@@ -660,9 +662,17 @@ fn write_atomically(
     Ok(())
 }
 
-pub fn flush_and_release(app: &AppHandle) {
-    window::capture_and_flush_main_window(app);
+pub fn release(app: &AppHandle) {
     if let Some(state) = app.try_state::<ClientState>() {
+        state.release_locks();
+    }
+}
+
+pub fn flush_and_release_without_window_capture(app: &AppHandle) {
+    if let Some(state) = app.try_state::<ClientState>() {
+        if let Err(err) = state.flush() {
+            eprintln!("[client-state] failed to flush state: {err}");
+        }
         state.release_locks();
     }
 }

@@ -15,6 +15,13 @@ export function normalizeWorkspacePath(folderPath: string): string {
   const normalized = windowsLike ? folderPath.replace(/\\/g, "/").toLowerCase() : folderPath
   return normalized === "/" || /^[a-z]:\/$/.test(normalized) ? normalized : normalized.replace(/\/+$/, "")
 }
+export function getUnavailableWorkspaceIds(
+  localIds: Iterable<string>,
+  remoteIds: ReadonlySet<string>,
+  isProtected: (id: string) => boolean,
+): string[] {
+  return [...localIds].filter((id) => !remoteIds.has(id) && !isProtected(id))
+}
 export function reconcileWorkspaceTabs(
   tabs: readonly ReconcileTabDescriptor[],
   liveWorkspaces: readonly LiveWorkspaceDescriptor[],

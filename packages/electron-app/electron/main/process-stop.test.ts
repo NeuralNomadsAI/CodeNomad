@@ -8,6 +8,7 @@ import {
   CLI_STOP_DEADLINE_MS,
   captureProcessTree,
   forceCapturedProcessTree,
+  mergeCapturedProcessTrees,
   stopManagedChild,
 } from "./process-stop"
 
@@ -159,6 +160,99 @@ test("PID reuse is identity-guarded on Windows and POSIX", () => {
     assert.deepEqual(taskkills, [])
     assert.deepEqual(signals, [])
   }
+})
+
+test("later captures preserve root ownership and add every descendant identity", () => {
+  const captured = { platform: "linux" as const, members: [
+    { pid: 100, startIdentity: "root" },
+    { pid: 200, startIdentity: "old-child" },
+  ] }
+  const latest = { platform: "linux" as const, members: [
+    { pid: 100, startIdentity: "root" },
+    { pid: 200, startIdentity: "reused-child" },
+    { pid: 300, startIdentity: "new-child" },
+  ] }
+
+  const merged = mergeCapturedProcessTrees(captured, latest, 100)!
+  assert.deepEqual(merged.members, [
+    { pid: 100, startIdentity: "root" },
+    { pid: 200, startIdentity: "old-child" },
+    { pid: 200, startIdentity: "reused-child" },
+    { pid: 300, startIdentity: "new-child" },
+  ])
+  const identities = new Map([[100, "root"], [200, "reused-child"], [300, "new-child"]])
+  const signals: number[] = []
+  const kill = ((pid: number, signal?: NodeJS.Signals | number) => {
+    if (signal === 0) {
+      if (identities.has(pid)) return true
+      const error = new Error("gone") as NodeJS.ErrnoException
+      error.code = "ESRCH"
+      throw error
+    }
+    signals.push(pid)
+    identities.delete(pid)
+    return true
+  }) as typeof process.kill
+  assert.equal(forceCapturedProcessTree(merged, (pid) => identities.get(pid), spawnSync, kill), true)
+  assert.deepEqual(signals, [300, 200, 100])
+
+  const survivingIdentities = new Map([[100, "root"], [200, "reused-child"], [300, "new-child"]])
+  assert.equal(forceCapturedProcessTree(
+    merged,
+    (pid) => survivingIdentities.get(pid),
+    spawnSync,
+    (() => true) as typeof process.kill,
+  ), false)
+
+  const reusedRoot = mergeCapturedProcessTrees(captured, {
+    platform: "linux",
+    members: [{ pid: 100, startIdentity: "reused-root" }, { pid: 400, startIdentity: "foreign-child" }],
+  }, 100)
+  assert.deepEqual(reusedRoot, captured)
+  const rootSignals: number[] = []
+  assert.equal(forceCapturedProcessTree(
+    reusedRoot!,
+    (pid) => pid === 100 ? "reused-root" : undefined,
+    spawnSync,
+    ((pid: number, signal?: NodeJS.Signals | number) => {
+      if (signal === 0) {
+        const error = new Error("gone") as NodeJS.ErrnoException
+        error.code = "ESRCH"
+        throw error
+      }
+      rootSignals.push(pid)
+      return true
+    }) as typeof process.kill,
+  ), true)
+  assert.deepEqual(rootSignals, [])
+  assert.equal(mergeCapturedProcessTrees(undefined, latest, 100), undefined)
+})
+
+test("a matching late capture becomes the baseline after the initial capture fails", () => {
+  const latest = { platform: "linux" as const, members: [
+    { pid: 100, startIdentity: "original-root" },
+    { pid: 200, startIdentity: "child" },
+  ] }
+
+  assert.deepEqual(mergeCapturedProcessTrees(undefined, latest, 100, "original-root"), latest)
+  assert.equal(mergeCapturedProcessTrees(undefined, latest, 100, "reused-root"), undefined)
+})
+
+test("an exited root without a trustworthy capture cannot confirm containment", async () => {
+  const child = new FakeChild()
+  child.exited = true
+  let tree: ReturnType<typeof mergeCapturedProcessTrees>
+
+  await assert.rejects(stopManagedChild({
+    child,
+    isExited: () => child.exited,
+    isCleanupComplete: () => false,
+    forceAttempts: 1,
+    force: () => {
+      tree = mergeCapturedProcessTrees(tree, undefined, 100, "original-root")
+      return tree ? forceCapturedProcessTree(tree) : false
+    },
+  }), /termination was not confirmed/)
 })
 
 test("captured descendants are forced individually in child-first order", () => {

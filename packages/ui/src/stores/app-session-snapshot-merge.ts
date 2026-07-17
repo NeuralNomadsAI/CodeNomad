@@ -106,6 +106,17 @@ export function getPreservedWorkspaceState(
   const source = preservation.sourceTabs[index]
   return source?.kind === "workspace" ? source : null
 }
+export function getPreservedWorkspaceReopenTarget(
+  preservation: RestorableSessionPreservation,
+  workspace: { runtimeTabId: string; folder: string; occurrence: number },
+): { sourceIndex: number; snapshot: RestorableWorkspaceTabState } | null {
+  const sourceIndex = findWorkspaceSourceIndex(preservation, workspace)
+  if (sourceIndex === undefined) return null
+  const result = preservation.results[sourceIndex]
+  const source = preservation.sourceTabs[sourceIndex]
+  if ((!result?.runtimeTabId && result?.status !== "removed") || source?.kind !== "workspace") return null
+  return { sourceIndex, snapshot: source }
+}
 export function markPreservedWorkspaceRemoved(
   preservation: RestorableSessionPreservation,
   workspace: { runtimeTabId: string; folder: string; occurrence: number },
@@ -125,8 +136,8 @@ export function markPreservedWorkspaceReopened(
   if (index === undefined) return preservation
   const result = preservation.results[index]
   preservation.results[index] = result?.status === "removed"
-    ? { status: "pending" }
-    : { ...result, status: "pending", runtimeTabId: null }
+    ? { status: "pending", runtimeTabId: workspace.runtimeTabId }
+    : { ...result, status: "pending", runtimeTabId: workspace.runtimeTabId }
   return preservation
 }
 function getPreservedTab(source: RestorableTabState, result: RestoreTabResult): RestorableTabState | null {

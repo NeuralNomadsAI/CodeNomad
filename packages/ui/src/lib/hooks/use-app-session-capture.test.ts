@@ -15,10 +15,23 @@ describe("app session capture listener readiness", () => {
     assert.ok(restore.indexOf("await capture.ready") < restore.indexOf("capture.start("))
   })
 
-  it("serializes missing workspace mounts during session restore", () => {
+  it("uses the serialized commit queue without serializing create requests", () => {
     const restore = source("./use-app-session-restore.ts")
-    assert.match(restore, /for \(const group of groups\.values\(\)\) for \(const match of group\) await restoreWorkspace\(match\)/)
-    assert.doesNotMatch(restore, /Array\.from\(groups\.values\(\), async/)
+    assert.match(restore, /runWithSerializedCommits/)
+    assert.match(restore, /waitForCreateCommit/)
+    assert.doesNotMatch(restore, /for \(const match of missing\) await restoreWorkspace/)
+  })
+
+  it("does not track prompt hydration writes in the capture effect", () => {
+    const capture = source("./use-app-session-capture.ts")
+    assert.match(capture, /untrack\(\(\) => hydratePreservedPrompts/)
+  })
+
+  it("reapplies full preserved state after transient reopen hydration", () => {
+    const capture = source("./use-app-session-capture.ts")
+    assert.match(capture, /waitForInstanceInitialSessionHydration/)
+    assert.match(capture, /hydrateRestoredWorkspaceState/)
+    assert.match(capture, /settlePreservedTab/)
   })
 
 })

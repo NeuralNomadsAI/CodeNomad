@@ -19,7 +19,7 @@ use std::net::TcpStream;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -33,9 +33,10 @@ use std::os::windows::process::CommandExt;
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
 #[cfg(windows)]
 use windows_sys::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-    SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicAccountingInformation,
+    JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
+    TerminateJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
 
 #[cfg(windows)]
@@ -96,6 +97,36 @@ impl WindowsJobObject {
 
         Ok(())
     }
+
+    fn active_processes(&self) -> anyhow::Result<u32> {
+        let mut info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { zeroed() };
+        let ok = unsafe {
+            QueryInformationJobObject(
+                self.handle,
+                JobObjectBasicAccountingInformation,
+                &mut info as *mut _ as *mut c_void,
+                size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
+                std::ptr::null_mut(),
+            )
+        };
+        if ok == 0 {
+            return Err(anyhow::anyhow!(
+                "QueryInformationJobObject failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        Ok(info.ActiveProcesses)
+    }
+
+    fn terminate(&self) -> anyhow::Result<()> {
+        if unsafe { TerminateJobObject(self.handle, 1) } == 0 {
+            return Err(anyhow::anyhow!(
+                "TerminateJobObject failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(windows)]
@@ -140,9 +171,11 @@ fn workspace_root() -> Option<PathBuf> {
 
 const SESSION_COOKIE_NAME_PREFIX: &str = "codenomad_session";
 
+#[cfg(not(windows))]
 const CLI_STOP_GRACE_SECS: u64 = 30;
 #[cfg(windows)]
 const CLI_WINDOWS_FORCE_GRACE_MS: u64 = 2_000;
+const CLI_FORCE_CONFIRM_GRACE_SECS: u64 = 2;
 
 #[cfg(unix)]
 fn configure_posix_process_group(command: &mut Command) {
@@ -159,32 +192,181 @@ fn configure_posix_process_group(command: &mut Command) {
 }
 
 #[cfg(windows)]
-fn kill_process_tree_windows(pid: u32, force: bool) -> bool {
-    let mut args = vec!["/PID".to_string(), pid.to_string(), "/T".to_string()];
-    if force {
-        args.push("/F".to_string());
+const WINDOWS_CLI_LAUNCHER_ARG: &str = "--codenomad-internal-cli-launcher";
+
+#[cfg(windows)]
+fn wait_for_windows_cli_launch_gate(mut reader: impl Read) -> bool {
+    let mut gate = [0_u8; 1];
+    reader.read_exact(&mut gate).is_ok() && gate[0] == 1
+}
+
+#[cfg(windows)]
+pub(crate) fn run_windows_cli_launcher_if_requested() -> Option<i32> {
+    let mut args = std::env::args_os();
+    args.next();
+    if args.next()?.to_str()? != WINDOWS_CLI_LAUNCHER_ARG {
+        return None;
+    }
+    let Some(program) = args.next() else {
+        return Some(1);
+    };
+    if !wait_for_windows_cli_launch_gate(std::io::stdin().lock()) {
+        return Some(1);
     }
 
-    let mut command = Command::new("taskkill");
-    command.args(&args);
+    let mut command = Command::new(program);
+    command.args(args);
     configure_spawn(&mut command);
+    Some(
+        command
+            .status()
+            .ok()
+            .and_then(|status| status.code())
+            .unwrap_or(1),
+    )
+}
 
-    match command.output() {
-        Ok(output) => {
-            if output.status.success() {
-                return true;
-            }
+#[cfg(windows)]
+fn windows_containment_confirmed(child_exited: bool, job_active_processes: Option<u32>) -> bool {
+    child_exited && job_active_processes == Some(0)
+}
 
-            // If the PID is already gone, treat it as success.
-            let stdout = String::from_utf8_lossy(&output.stdout).to_lowercase();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
-            let combined = format!("{stdout}\n{stderr}");
-            combined.contains("not found") || combined.contains("no running instance")
+fn wait_for_termination(
+    timeout: Duration,
+    poll_interval: Duration,
+    mut is_terminated: impl FnMut() -> anyhow::Result<bool>,
+) -> anyhow::Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if is_terminated()? {
+            return Ok(());
         }
-        Err(_) => false,
+        if Instant::now() >= deadline {
+            return Err(TerminationTimeout.into());
+        }
+        thread::sleep(poll_interval.min(deadline.saturating_duration_since(Instant::now())));
     }
 }
-fn navigate_main(app: &AppHandle, url: &str) {
+
+#[derive(Debug)]
+struct TerminationTimeout;
+
+impl std::fmt::Display for TerminationTimeout {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("process termination was not confirmed")
+    }
+}
+
+impl std::error::Error for TerminationTimeout {}
+
+fn containment_is_complete(root_exited: bool, descendants_gone: bool) -> bool {
+    root_exited && descendants_gone
+}
+
+#[cfg(unix)]
+fn process_group_is_gone(pid: u32) -> anyhow::Result<bool> {
+    if unsafe { libc::kill(-(pid as i32), 0) } == 0 {
+        return Ok(false);
+    }
+    match std::io::Error::last_os_error().raw_os_error() {
+        Some(libc::ESRCH) => Ok(true),
+        Some(libc::EPERM) => Ok(false),
+        _ => Err(anyhow::anyhow!(
+            "failed to inspect CLI process group {pid}: {}",
+            std::io::Error::last_os_error()
+        )),
+    }
+}
+
+fn stop_child(
+    child: &mut Child,
+    #[cfg(windows)] job: Option<&WindowsJobObject>,
+) -> anyhow::Result<()> {
+    let pid = child.id();
+    #[cfg(windows)]
+    if job.is_none() {
+        if child.try_wait()?.is_none() {
+            let _ = child.kill();
+            let _ = wait_for_termination(
+                Duration::from_secs(CLI_FORCE_CONFIRM_GRACE_SECS),
+                Duration::from_millis(25),
+                || Ok(child.try_wait()?.is_some()),
+            );
+        }
+        return Err(anyhow::anyhow!(
+            "CLI pid={pid} descendant cleanup cannot be confirmed without a Windows job"
+        ));
+    }
+
+    #[cfg(unix)]
+    unsafe {
+        if libc::kill(-(pid as i32), libc::SIGTERM) != 0 {
+            let _ = libc::kill(pid as i32, libc::SIGTERM);
+        }
+    }
+    #[cfg(windows)]
+    let graceful_timeout = Duration::from_millis(CLI_WINDOWS_FORCE_GRACE_MS);
+    #[cfg(not(windows))]
+    let graceful_timeout = Duration::from_secs(CLI_STOP_GRACE_SECS);
+    let graceful = wait_for_termination(graceful_timeout, Duration::from_millis(50), || {
+        let child_exited = child.try_wait()?.is_some();
+        #[cfg(unix)]
+        return Ok(child_exited && process_group_is_gone(pid)?);
+        #[cfg(windows)]
+        return Ok(windows_containment_confirmed(
+            child_exited,
+            job.map(WindowsJobObject::active_processes).transpose()?,
+        ));
+        #[cfg(not(any(unix, windows)))]
+        Ok(child_exited)
+    });
+    match graceful {
+        Ok(()) => return Ok(()),
+        Err(err) if !err.is::<TerminationTimeout>() => {
+            return Err(anyhow::anyhow!(
+                "failed to inspect CLI pid={pid} termination: {err}"
+            ))
+        }
+        Err(_) => {}
+    }
+
+    log_line(&format!("CLI shutdown timed out; escalating pid={pid}"));
+    #[cfg(unix)]
+    unsafe {
+        if libc::kill(-(pid as i32), libc::SIGKILL) != 0 {
+            let _ = libc::kill(pid as i32, libc::SIGKILL);
+        }
+    }
+    #[cfg(windows)]
+    {
+        job.expect("Windows job checked above").terminate()?;
+    }
+    #[cfg(not(any(unix, windows)))]
+    child.kill()?;
+
+    wait_for_termination(
+        Duration::from_secs(CLI_FORCE_CONFIRM_GRACE_SECS),
+        Duration::from_millis(25),
+        || {
+            let child_exited = child.try_wait()?.is_some();
+            #[cfg(unix)]
+            return Ok(child_exited && process_group_is_gone(pid)?);
+            #[cfg(windows)]
+            return Ok(windows_containment_confirmed(
+                child_exited,
+                job.map(WindowsJobObject::active_processes).transpose()?,
+            ));
+            #[cfg(not(any(unix, windows)))]
+            Ok(child_exited)
+        },
+    )
+    .map_err(|err| anyhow::anyhow!("CLI pid={pid} termination was not confirmed: {err}"))
+}
+
+fn navigate_main(manager: &CliProcessManager, generation: u64, app: &AppHandle, url: &str) {
+    if !manager.is_current_generation(generation) {
+        return;
+    }
     if app.webview_windows().contains_key("main") {
         let final_url = augment_launch_url(url);
         let mut display = final_url.clone();
@@ -193,17 +375,24 @@ fn navigate_main(app: &AppHandle, url: &str) {
         }
         log_line(&format!("navigating main to {display}"));
         if let Ok(parsed) = Url::parse(&final_url) {
-            crate::client_state::before_main_window_navigation(
+            let current = manager.clone();
+            let navigate = manager.clone();
+            crate::client_state::before_main_window_navigation_if(
                 app,
                 crate::client_state::NavigationKind::Cli,
                 Some(parsed.clone()),
+                move || current.is_current_generation(generation),
                 move |app| {
-                    let window = app
-                        .get_webview_window("main")
-                        .ok_or_else(|| "main window not found for CLI navigation".to_string())?;
-                    window
-                        .navigate(parsed)
-                        .map_err(|err| format!("failed to navigate main window to CLI URL: {err}"))
+                    navigate
+                        .with_current_generation(generation, || {
+                            let window = app.get_webview_window("main").ok_or_else(|| {
+                                "main window not found for CLI navigation".to_string()
+                            })?;
+                            window.navigate(parsed).map_err(|err| {
+                                format!("failed to navigate main window to CLI URL: {err}")
+                            })
+                        })
+                        .unwrap_or_else(|| Err("discarded stale CLI navigation".to_string()))
                 },
             );
         } else {
@@ -502,10 +691,11 @@ pub struct CliProcessManager {
     child: Arc<Mutex<Option<Child>>>,
     #[cfg(windows)]
     job: Arc<Mutex<Option<WindowsJobObject>>>,
-    ready: Arc<AtomicBool>,
     bootstrap_token: Arc<Mutex<Option<String>>>,
     session_cookie: Arc<Mutex<Option<String>>>,
     auth_cookie_name: Arc<Mutex<Option<String>>>,
+    lifecycle: Arc<Mutex<()>>,
+    generation: Arc<AtomicU64>,
 }
 
 impl CliProcessManager {
@@ -515,17 +705,19 @@ impl CliProcessManager {
             child: Arc::new(Mutex::new(None)),
             #[cfg(windows)]
             job: Arc::new(Mutex::new(None)),
-            ready: Arc::new(AtomicBool::new(false)),
             bootstrap_token: Arc::new(Mutex::new(None)),
             session_cookie: Arc::new(Mutex::new(None)),
             auth_cookie_name: Arc::new(Mutex::new(None)),
+            lifecycle: Arc::new(Mutex::new(())),
+            generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
     pub fn start(&self, app: AppHandle, dev: bool) -> anyhow::Result<()> {
+        let _lifecycle = self.lifecycle.lock();
+        let generation = self.advance_generation();
         log_line(&format!("start requested (dev={dev})"));
-        self.stop()?;
-        self.ready.store(false, Ordering::SeqCst);
+        self.stop_tracked_child()?;
         *self.bootstrap_token.lock() = None;
         *self.session_cookie.lock() = None;
         *self.auth_cookie_name.lock() = None;
@@ -539,35 +731,11 @@ impl CliProcessManager {
         }
         Self::emit_status(&app, &self.status.lock());
 
-        let status_arc = self.status.clone();
-        let child_arc = self.child.clone();
-        #[cfg(windows)]
-        let job_arc = self.job.clone();
-        let ready_flag = self.ready.clone();
-        let token_arc = self.bootstrap_token.clone();
-        let session_cookie_arc = self.session_cookie.clone();
-        let auth_cookie_name_arc = self.auth_cookie_name.clone();
+        let manager = self.clone();
         thread::spawn(move || {
-            if let Err(err) = Self::spawn_cli(
-                app.clone(),
-                status_arc.clone(),
-                child_arc,
-                #[cfg(windows)]
-                job_arc,
-                ready_flag,
-                token_arc,
-                session_cookie_arc,
-                auth_cookie_name_arc,
-                dev,
-            ) {
+            if let Err(err) = Self::spawn_cli(manager.clone(), app.clone(), generation, dev) {
                 log_line(&format!("cli spawn failed: {err}"));
-                let mut locked = status_arc.lock();
-                locked.state = CliState::Error;
-                locked.error = Some(err.to_string());
-                let snapshot = locked.clone();
-                drop(locked);
-                let _ = app.emit("cli:error", json!({"message": err.to_string()}));
-                let _ = app.emit("cli:status", snapshot);
+                manager.publish_error(&app, generation, err.to_string());
             }
         });
 
@@ -575,77 +743,73 @@ impl CliProcessManager {
     }
 
     pub fn stop(&self) -> anyhow::Result<()> {
-        #[cfg(windows)]
-        let _job = self.job.lock().take();
+        let _lifecycle = self.lifecycle.lock();
+        self.advance_generation();
+        self.stop_tracked_child()?;
+        self.reset_stopped_status();
+        Ok(())
+    }
 
-        let mut child_opt = self.child.lock();
-        if let Some(mut child) = child_opt.take() {
-            log_line(&format!("stopping CLI pid={}", child.id()));
-            #[cfg(unix)]
-            unsafe {
-                let pid = child.id() as i32;
-                // Prefer signaling the process group to avoid orphaning children
-                // when the CLI was launched via a wrapper shell.
-                let group_res = libc::kill(-pid, libc::SIGTERM);
-                if group_res != 0 {
-                    let _ = libc::kill(pid, libc::SIGTERM);
+    fn advance_generation(&self) -> u64 {
+        self.generation.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    fn is_current_generation(&self, generation: u64) -> bool {
+        self.generation.load(Ordering::SeqCst) == generation
+    }
+
+    fn with_current_generation<T>(
+        &self,
+        generation: u64,
+        operation: impl FnOnce() -> T,
+    ) -> Option<T> {
+        let _lifecycle = self.lock_current_generation(generation)?;
+        Some(operation())
+    }
+
+    fn lock_current_generation(&self, generation: u64) -> Option<parking_lot::MutexGuard<'_, ()>> {
+        let lifecycle = self.lifecycle.lock();
+        self.is_current_generation(generation).then_some(lifecycle)
+    }
+
+    fn stop_tracked_child(&self) -> anyhow::Result<()> {
+        let Some(mut child) = self.child.lock().take() else {
+            #[cfg(windows)]
+            if let Some(job) = self.job.lock().take() {
+                let result = job.terminate().and_then(|()| {
+                    wait_for_termination(
+                        Duration::from_secs(CLI_FORCE_CONFIRM_GRACE_SECS),
+                        Duration::from_millis(25),
+                        || Ok(job.active_processes()? == 0),
+                    )
+                });
+                if let Err(err) = result {
+                    *self.job.lock() = Some(job);
+                    return Err(err);
                 }
             }
+            return Ok(());
+        };
+        #[cfg(windows)]
+        let job = self.job.lock().take();
+        log_line(&format!("stopping CLI pid={}", child.id()));
+        let result = stop_child(
+            &mut child,
+            #[cfg(windows)]
+            job.as_ref(),
+        );
+        if let Err(err) = result {
+            *self.child.lock() = Some(child);
             #[cfg(windows)]
             {
-                let _ = kill_process_tree_windows(child.id(), false);
+                *self.job.lock() = job;
             }
-
-            let start = Instant::now();
-            loop {
-                match child.try_wait() {
-                    Ok(Some(_)) => break,
-                    Ok(None) => {
-                        #[cfg(windows)]
-                        if start.elapsed() > Duration::from_millis(CLI_WINDOWS_FORCE_GRACE_MS) {
-                            log_line(&format!(
-                                "regular Windows shutdown still running after {}ms; escalating pid={}",
-                                CLI_WINDOWS_FORCE_GRACE_MS,
-                                child.id()
-                            ));
-                            if !kill_process_tree_windows(child.id(), true) {
-                                let _ = child.kill();
-                            }
-                            break;
-                        }
-
-                        if start.elapsed() > Duration::from_secs(CLI_STOP_GRACE_SECS) {
-                            log_line(&format!(
-                                "stop timed out after {}s; sending SIGKILL pid={}",
-                                CLI_STOP_GRACE_SECS,
-                                child.id()
-                            ));
-                            #[cfg(unix)]
-                            unsafe {
-                                let pid = child.id() as i32;
-                                let group_res = libc::kill(-pid, libc::SIGKILL);
-                                if group_res != 0 {
-                                    let _ = libc::kill(pid, libc::SIGKILL);
-                                }
-                            }
-                            #[cfg(windows)]
-                            {
-                                if !kill_process_tree_windows(child.id(), true) {
-                                    let _ = child.kill();
-                                }
-                            }
-                            break;
-                        }
-                        thread::sleep(Duration::from_millis(50));
-                    }
-                    Err(_) => break,
-                }
-            }
-        } else {
-            #[cfg(windows)]
-            log_line("tracked CLI process already exited; dropping Windows job object to reap descendants");
+            return Err(err);
         }
+        Ok(())
+    }
 
+    fn reset_stopped_status(&self) {
         let mut status = self.status.lock();
         status.state = CliState::Stopped;
         status.pid = None;
@@ -653,8 +817,18 @@ impl CliProcessManager {
         status.url = None;
         status.error = None;
         *self.session_cookie.lock() = None;
+    }
 
-        Ok(())
+    fn publish_error(&self, app: &AppHandle, generation: u64, message: String) {
+        self.with_current_generation(generation, || {
+            let mut status = self.status.lock();
+            status.state = CliState::Error;
+            status.error = Some(message.clone());
+            let snapshot = status.clone();
+            drop(status);
+            let _ = app.emit("cli:error", json!({"message": message}));
+            let _ = app.emit("cli:status", snapshot);
+        });
     }
 
     pub fn status(&self) -> CliStatus {
@@ -682,16 +856,14 @@ impl CliProcessManager {
     }
 
     fn spawn_cli(
+        manager: CliProcessManager,
         app: AppHandle,
-        status: Arc<Mutex<CliStatus>>,
-        child_holder: Arc<Mutex<Option<Child>>>,
-        #[cfg(windows)] job_holder: Arc<Mutex<Option<WindowsJobObject>>>,
-        ready: Arc<AtomicBool>,
-        bootstrap_token: Arc<Mutex<Option<String>>>,
-        session_cookie: Arc<Mutex<Option<String>>>,
-        auth_cookie_name_holder: Arc<Mutex<Option<String>>>,
+        generation: u64,
         dev: bool,
     ) -> anyhow::Result<()> {
+        let Some(lifecycle) = manager.lock_current_generation(generation) else {
+            return Ok(());
+        };
         log_line("resolving CLI entry");
         let resolution = CliEntry::resolve(&app, dev)?;
         let host = resolve_listening_host();
@@ -700,7 +872,6 @@ impl CliProcessManager {
             resolution.runner, resolution.entry, host
         ));
         let auth_cookie_name = Arc::new(generate_auth_cookie_name());
-        *auth_cookie_name_holder.lock() = Some(auth_cookie_name.as_str().to_string());
         let args = resolution.build_args(dev, &host, auth_cookie_name.as_str());
         log_line(&format!("CLI args: {:?}", args));
         if dev {
@@ -736,7 +907,7 @@ impl CliProcessManager {
             })
         };
 
-        let child = match &command_info {
+        let mut child = match &command_info {
             ShellCommandType::UserShell(cmd) => {
                 log_line(&format!("spawn command: {} {:?}", cmd.shell, cmd.args));
                 let mut c = Command::new(&cmd.shell);
@@ -756,9 +927,23 @@ impl CliProcessManager {
             }
             ShellCommandType::Direct(cmd) => {
                 log_line(&format!("spawn command: {} {:?}", cmd.program, cmd.args));
+                #[cfg(windows)]
+                let mut c = {
+                    // The launcher cannot create Node until its stdin gate opens. Assigning
+                    // the blocked launcher first makes every later descendant inherit the job.
+                    let mut launcher = Command::new(std::env::current_exe()?);
+                    launcher
+                        .arg(WINDOWS_CLI_LAUNCHER_ARG)
+                        .arg(&cmd.program)
+                        .args(&cmd.args)
+                        .stdin(Stdio::piped());
+                    launcher
+                };
+                #[cfg(not(windows))]
                 let mut c = Command::new(&cmd.program);
-                c.args(&cmd.args)
-                    .env("ELECTRON_RUN_AS_NODE", "1")
+                #[cfg(not(windows))]
+                c.args(&cmd.args);
+                c.env("ELECTRON_RUN_AS_NODE", "1")
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped());
                 configure_spawn(&mut c);
@@ -774,201 +959,190 @@ impl CliProcessManager {
         let pid = child.id();
         log_line(&format!("spawned pid={pid}"));
         #[cfg(windows)]
-        match WindowsJobObject::create().and_then(|job| {
+        let job = match WindowsJobObject::create().and_then(|job| {
             job.assign_child(&child)?;
             Ok(job)
         }) {
             Ok(job) => {
                 log_line(&format!("attached pid={pid} to Windows job object"));
-                *job_holder.lock() = Some(job);
+                job
             }
             Err(err) => {
-                log_line(&format!(
-                    "failed to attach pid={pid} to Windows job object; falling back to taskkill-only cleanup: {err}"
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(anyhow::anyhow!(
+                    "failed to contain blocked CLI launcher pid={pid}; launch cancelled: {err}"
                 ));
             }
-        }
-
-        {
-            let mut locked = status.lock();
-            locked.pid = Some(pid);
-        }
-        Self::emit_status(&app, &status.lock());
-
-        {
-            let mut holder = child_holder.lock();
-            *holder = Some(child);
-        }
-
-        let child_clone = child_holder.clone();
-        let status_clone = status.clone();
-        let app_clone = app.clone();
-        let ready_clone = ready.clone();
-        let token_clone = bootstrap_token.clone();
-        let session_cookie_clone = session_cookie.clone();
-        let auth_cookie_name_clone = auth_cookie_name.clone();
-
-        thread::spawn(move || {
-            let stdout = child_clone
-                .lock()
-                .as_mut()
-                .and_then(|c| c.stdout.take())
-                .map(BufReader::new);
-            let stderr = child_clone
-                .lock()
-                .as_mut()
-                .and_then(|c| c.stderr.take())
-                .map(BufReader::new);
-
-            if let Some(reader) = stdout {
-                let app = app_clone.clone();
-                let status = status_clone.clone();
-                let ready = ready_clone.clone();
-                let token = token_clone.clone();
-                let session_cookie = session_cookie_clone.clone();
-                let auth_cookie_name = auth_cookie_name_clone.clone();
-                thread::spawn(move || {
-                    Self::process_stream(
-                        reader,
-                        "stdout",
-                        &app,
-                        &status,
-                        &ready,
-                        &token,
-                        &session_cookie,
-                        auth_cookie_name.as_str(),
-                    );
-                });
-            }
-
-            if let Some(reader) = stderr {
-                let app = app_clone.clone();
-                let status = status_clone.clone();
-                let ready = ready_clone.clone();
-                let token = token_clone.clone();
-                let session_cookie = session_cookie_clone.clone();
-                let auth_cookie_name = auth_cookie_name_clone.clone();
-                thread::spawn(move || {
-                    Self::process_stream(
-                        reader,
-                        "stderr",
-                        &app,
-                        &status,
-                        &ready,
-                        &token,
-                        &session_cookie,
-                        auth_cookie_name.as_str(),
-                    );
-                });
-            }
-        });
-
-        let app_clone = app.clone();
-        let status_clone = status.clone();
-        let ready_clone = ready.clone();
-        let child_holder_clone = child_holder.clone();
+        };
         #[cfg(windows)]
-        let job_holder_clone = job_holder.clone();
-        thread::spawn(move || {
-            let timeout = Duration::from_secs(60);
-            thread::sleep(timeout);
-            if ready_clone.load(Ordering::SeqCst) {
-                return;
-            }
-            let mut locked = status_clone.lock();
-            locked.state = CliState::Error;
-            locked.error = Some("CLI did not start in time".to_string());
-            log_line("timeout waiting for CLI readiness");
-            if let Some(child) = child_holder_clone.lock().as_mut() {
-                #[cfg(unix)]
-                unsafe {
-                    let pid = child.id() as i32;
-                    let group_res = libc::kill(-pid, libc::SIGKILL);
-                    if group_res != 0 {
-                        let _ = libc::kill(pid, libc::SIGKILL);
-                    }
-                }
-                #[cfg(windows)]
-                {
-                    if !kill_process_tree_windows(child.id(), true) {
-                        let _ = child.kill();
-                    }
-                }
-                #[cfg(not(any(unix, windows)))]
-                {
-                    let _ = child.kill();
-                }
-            }
-            let _ = app_clone.emit("cli:error", json!({"message": "CLI did not start in time"}));
-            Self::emit_status(&app_clone, &locked);
-        });
-
-        let status_clone = status.clone();
-        let app_clone = app.clone();
-        thread::spawn(move || {
-            // Do not hold the child mutex while waiting for process exit.
-            // Holding the lock across `wait()` deadlocks `stop()`, which needs the
-            // same lock to send SIGTERM/SIGKILL when the user quits the app.
-            let code = loop {
-                let maybe_exited = {
-                    let mut guard = child_holder.lock();
-                    if guard.is_none() {
-                        return;
-                    }
-                    match guard
-                        .as_mut()
-                        .and_then(|child| child.try_wait().ok().flatten())
-                    {
-                        Some(status) => {
-                            // Drop the handle after the process exits so other callers
-                            // don't attempt to stop/kill a finished process.
-                            *guard = None;
-                            #[cfg(windows)]
-                            {
-                                let _ = job_holder_clone.lock().take();
-                            }
-                            Some(status)
-                        }
-                        None => None,
-                    }
-                };
-
-                if let Some(status) = maybe_exited {
-                    break Some(status);
-                }
-                thread::sleep(Duration::from_millis(100));
-            };
-
-            let mut locked = status_clone.lock();
-            let failed = locked.state != CliState::Ready;
-            let err_msg = if failed {
-                Some(match code {
-                    Some(status) => format!("CLI exited early: {status}"),
-                    None => "CLI exited early".to_string(),
-                })
-            } else {
-                None
-            };
-
-            if failed {
-                locked.state = CliState::Error;
-                if locked.error.is_none() {
-                    locked.error = err_msg.clone();
-                }
-                log_line(&format!(
-                    "cli process exited before ready: {:?}",
-                    locked.error
+        {
+            let gate_result = child
+                .stdin
+                .take()
+                .ok_or_else(|| anyhow::anyhow!("blocked CLI launcher stdin is unavailable"))
+                .and_then(|mut gate| gate.write_all(&[1]).map_err(anyhow::Error::from));
+            if let Err(err) = gate_result {
+                let _ = job.terminate();
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(anyhow::anyhow!(
+                    "failed to release contained CLI launcher pid={pid}: {err}"
                 ));
-                let _ = app_clone.emit(
-                    "cli:error",
-                    json!({"message": locked.error.clone().unwrap_or_default()}),
-                );
-            } else {
-                locked.state = CliState::Stopped;
-                log_line("cli process stopped cleanly");
             }
+        }
 
-            Self::emit_status(&app_clone, &locked);
+        let stdout = child.stdout.take().map(BufReader::new);
+        let stderr = child.stderr.take().map(BufReader::new);
+        debug_assert!(manager.child.lock().is_none());
+        *manager.auth_cookie_name.lock() = Some(auth_cookie_name.as_str().to_string());
+        manager.status.lock().pid = Some(pid);
+        *manager.child.lock() = Some(child);
+        #[cfg(windows)]
+        {
+            *manager.job.lock() = Some(job);
+        }
+        Self::emit_status(&app, &manager.status.lock());
+        drop(lifecycle);
+
+        let ready = Arc::new(AtomicBool::new(false));
+        if let Some(reader) = stdout {
+            let app = app.clone();
+            let manager = manager.clone();
+            let ready = ready.clone();
+            let auth_cookie_name = auth_cookie_name.clone();
+            thread::spawn(move || {
+                Self::process_stream(
+                    reader,
+                    "stdout",
+                    &manager,
+                    generation,
+                    &app,
+                    &ready,
+                    auth_cookie_name.as_str(),
+                );
+            });
+        }
+        if let Some(reader) = stderr {
+            let app = app.clone();
+            let manager = manager.clone();
+            let ready = ready.clone();
+            let auth_cookie_name = auth_cookie_name.clone();
+            thread::spawn(move || {
+                Self::process_stream(
+                    reader,
+                    "stderr",
+                    &manager,
+                    generation,
+                    &app,
+                    &ready,
+                    auth_cookie_name.as_str(),
+                );
+            });
+        }
+
+        {
+            let manager = manager.clone();
+            let app = app.clone();
+            let ready = ready.clone();
+            thread::spawn(move || {
+                thread::sleep(Duration::from_secs(60));
+                let _lifecycle = manager.lifecycle.lock();
+                if !manager.is_current_generation(generation) || ready.load(Ordering::SeqCst) {
+                    return;
+                }
+                manager.advance_generation();
+                log_line("timeout waiting for CLI readiness");
+                let stop_error = manager.stop_tracked_child().err();
+                let message = stop_error.map_or_else(
+                    || "CLI did not start in time".to_string(),
+                    |err| format!("CLI did not start in time; cleanup failed: {err}"),
+                );
+                let mut status = manager.status.lock();
+                status.state = CliState::Error;
+                status.error = Some(message.clone());
+                let snapshot = status.clone();
+                drop(status);
+                let _ = app.emit("cli:error", json!({"message": message}));
+                let _ = app.emit("cli:status", snapshot);
+            });
+        }
+
+        thread::spawn(move || loop {
+            enum Poll {
+                Running,
+                Exited(std::process::ExitStatus),
+                Failed(String),
+            }
+            let poll = {
+                let _lifecycle = manager.lifecycle.lock();
+                if !manager.is_current_generation(generation) {
+                    return;
+                }
+                let mut child = manager.child.lock();
+                let Some(tracked) = child.as_mut() else {
+                    return;
+                };
+                match tracked.try_wait() {
+                    Ok(Some(status)) => {
+                        #[cfg(unix)]
+                        let group_is_gone = process_group_is_gone(pid).map_err(|err| {
+                            format!("failed to inspect exited CLI pid={pid}: {err}")
+                        });
+                        #[cfg(windows)]
+                        let group_is_gone = match manager.job.lock().as_ref() {
+                            Some(job) => job.active_processes().map(|active| active == 0),
+                            None => Ok(false),
+                        };
+                        #[cfg(not(any(unix, windows)))]
+                        let group_is_gone: anyhow::Result<bool> = Ok(true);
+                        match group_is_gone {
+                            Ok(gone) if containment_is_complete(true, gone) => {
+                                *child = None;
+                                #[cfg(windows)]
+                                {
+                                    manager.job.lock().take();
+                                }
+                                Poll::Exited(status)
+                            }
+                            // The root may be only a launcher/wrapper. Keep ownership and
+                            // monitoring until the process group/job is actually empty.
+                            Ok(_) => Poll::Running,
+                            Err(err) => Poll::Failed(format!(
+                                "failed to inspect exited CLI pid={pid}: {err}"
+                            )),
+                        }
+                    }
+                    Ok(None) => Poll::Running,
+                    Err(err) => Poll::Failed(format!("failed to inspect CLI pid={pid}: {err}")),
+                }
+            };
+            match poll {
+                Poll::Running => thread::sleep(Duration::from_millis(100)),
+                Poll::Failed(message) => {
+                    manager.publish_error(&app, generation, message);
+                    return;
+                }
+                Poll::Exited(code) => {
+                    manager.with_current_generation(generation, || {
+                        let mut status = manager.status.lock();
+                        if status.state != CliState::Ready {
+                            status.state = CliState::Error;
+                            if status.error.is_none() {
+                                status.error = Some(format!("CLI exited early: {code}"));
+                            }
+                            let _ = app.emit(
+                                "cli:error",
+                                json!({"message": status.error.clone().unwrap_or_default()}),
+                            );
+                        } else {
+                            status.state = CliState::Stopped;
+                        }
+                        Self::emit_status(&app, &status);
+                    });
+                    return;
+                }
+            }
         });
 
         Ok(())
@@ -977,11 +1151,10 @@ impl CliProcessManager {
     fn process_stream<R: BufRead>(
         mut reader: R,
         stream: &str,
+        manager: &CliProcessManager,
+        generation: u64,
         app: &AppHandle,
-        status: &Arc<Mutex<CliStatus>>,
         ready: &Arc<AtomicBool>,
-        bootstrap_token: &Arc<Mutex<Option<String>>>,
-        session_cookie: &Arc<Mutex<Option<String>>>,
         auth_cookie_name: &str,
     ) {
         let mut buffer = String::new();
@@ -994,15 +1167,20 @@ impl CliProcessManager {
             match reader.read_line(&mut buffer) {
                 Ok(0) => break,
                 Ok(_) => {
+                    if !manager.is_current_generation(generation) {
+                        break;
+                    }
                     let line = buffer.trim_end();
                     if !line.is_empty() {
                         if line.starts_with(token_prefix) {
                             let token = line.trim_start_matches(token_prefix).trim();
                             if !token.is_empty() {
-                                let mut guard = bootstrap_token.lock();
-                                if guard.is_none() {
-                                    *guard = Some(token.to_string());
-                                }
+                                manager.with_current_generation(generation, || {
+                                    let mut guard = manager.bootstrap_token.lock();
+                                    if guard.is_none() {
+                                        *guard = Some(token.to_string());
+                                    }
+                                });
                             }
                             continue;
                         }
@@ -1014,13 +1192,15 @@ impl CliProcessManager {
                         }
 
                         if let Some(node_binary) = line.strip_prefix(MISSING_NODE_PREFIX) {
-                            let mut locked = status.lock();
-                            if locked.error.is_none() {
-                                locked.error = Some(format!(
-                                    "Node binary '{}' not found in the desktop shell environment. CodeNomad desktop currently requires Node.js installed on the system, or set NODE_BINARY to a valid runtime path.",
-                                    node_binary.trim()
-                                ));
-                            }
+                            manager.with_current_generation(generation, || {
+                                let mut locked = manager.status.lock();
+                                if locked.error.is_none() {
+                                    locked.error = Some(format!(
+                                        "Node binary '{}' not found in the desktop shell environment. CodeNomad desktop currently requires Node.js installed on the system, or set NODE_BINARY to a valid runtime path.",
+                                        node_binary.trim()
+                                    ));
+                                }
+                            });
                             continue;
                         }
 
@@ -1030,11 +1210,10 @@ impl CliProcessManager {
                             .map(|m| m.as_str().to_string())
                         {
                             Self::mark_ready(
+                                manager,
+                                generation,
                                 app,
-                                status,
                                 ready,
-                                bootstrap_token,
-                                session_cookie,
                                 auth_cookie_name,
                                 url,
                             );
@@ -1048,62 +1227,78 @@ impl CliProcessManager {
     }
 
     fn mark_ready(
+        manager: &CliProcessManager,
+        generation: u64,
         app: &AppHandle,
-        status: &Arc<Mutex<CliStatus>>,
         ready: &Arc<AtomicBool>,
-        bootstrap_token: &Arc<Mutex<Option<String>>>,
-        session_cookie: &Arc<Mutex<Option<String>>>,
         auth_cookie_name: &str,
         base_url: String,
     ) {
-        ready.store(true, Ordering::SeqCst);
+        if ready.swap(true, Ordering::SeqCst) {
+            return;
+        }
         let port = Url::parse(&base_url)
             .ok()
             .and_then(|u| u.port_or_known_default())
             .map(|p| p as u16);
-        let mut locked = status.lock();
-        locked.port = port;
-        locked.url = Some(base_url.clone());
-        locked.state = CliState::Ready;
-        locked.error = None;
+        let token = manager
+            .with_current_generation(generation, || {
+                let mut locked = manager.status.lock();
+                locked.port = port;
+                locked.url = Some(base_url.clone());
+                locked.state = CliState::Ready;
+                locked.error = None;
+                manager.bootstrap_token.lock().take()
+            })
+            .flatten();
+        if !manager.is_current_generation(generation) {
+            return;
+        }
         log_line(&format!("cli ready on {base_url}"));
-
-        let token = bootstrap_token.lock().take();
 
         if let Some(token) = token {
             // Token exchange is only implemented for loopback HTTP. If localUrl is HTTPS,
             // skip the exchange and let the user authenticate normally.
             let scheme = Url::parse(&base_url).ok().map(|u| u.scheme().to_string());
             if scheme.as_deref() != Some("http") {
-                navigate_main(app, &base_url);
+                navigate_main(manager, generation, app, &base_url);
             } else {
                 match exchange_bootstrap_token(&base_url, &token, &auth_cookie_name) {
                     Ok(Some(session_id)) => {
-                        if let Err(err) =
+                        let cookie_result = manager.with_current_generation(generation, || {
                             set_session_cookie(app, &base_url, &auth_cookie_name, &session_id)
-                        {
+                        });
+                        if cookie_result.is_none() {
+                            return;
+                        }
+                        if let Err(err) = cookie_result.unwrap() {
                             log_line(&format!("failed to set session cookie: {err}"));
-                            navigate_main(app, &format!("{base_url}/login"));
+                            navigate_main(manager, generation, app, &format!("{base_url}/login"));
                         } else {
-                            *session_cookie.lock() = Some(session_id.clone());
-                            navigate_main(app, &base_url);
+                            manager.with_current_generation(generation, || {
+                                *manager.session_cookie.lock() = Some(session_id.clone());
+                            });
+                            navigate_main(manager, generation, app, &base_url);
                         }
                     }
                     Ok(None) => {
                         log_line("bootstrap token exchange failed (invalid token)");
-                        navigate_main(app, &format!("{base_url}/login"));
+                        navigate_main(manager, generation, app, &format!("{base_url}/login"));
                     }
                     Err(err) => {
                         log_line(&format!("bootstrap token exchange failed: {err}"));
-                        navigate_main(app, &format!("{base_url}/login"));
+                        navigate_main(manager, generation, app, &format!("{base_url}/login"));
                     }
                 }
             }
         } else {
-            navigate_main(app, &base_url);
+            navigate_main(manager, generation, app, &base_url);
         }
-        let _ = app.emit("cli:ready", locked.clone());
-        Self::emit_status(app, &locked);
+        manager.with_current_generation(generation, || {
+            let status = manager.status.lock().clone();
+            let _ = app.emit("cli:ready", status.clone());
+            Self::emit_status(app, &status);
+        });
     }
 
     fn emit_status(app: &AppHandle, status: &CliStatus) {
@@ -1500,5 +1695,121 @@ mod tests {
 
         std::env::remove_var("CODENOMAD_UI_LAUNCH_QUERY");
         assert_eq!(augmented, "http://127.0.0.1:3000?existing=true&debug=true");
+    }
+
+    #[test]
+    fn stale_generation_cannot_publish_status() {
+        let manager = CliProcessManager::new();
+        let first = manager.advance_generation();
+        manager.with_current_generation(first, || {
+            manager.status.lock().state = CliState::Starting;
+        });
+        let second = manager.advance_generation();
+
+        assert!(manager
+            .with_current_generation(first, || {
+                manager.status.lock().state = CliState::Ready;
+            })
+            .is_none());
+        assert_eq!(manager.status().state, CliState::Starting);
+        assert!(manager
+            .with_current_generation(second, || {
+                manager.status.lock().state = CliState::Ready;
+            })
+            .is_some());
+        assert_eq!(manager.status().state, CliState::Ready);
+    }
+
+    #[test]
+    fn stop_waits_for_an_authorized_spawn_section() {
+        let manager = CliProcessManager::new();
+        let generation = manager.advance_generation();
+        let worker_manager = manager.clone();
+        let (authorized_tx, authorized_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let _lifecycle = worker_manager.lock_current_generation(generation).unwrap();
+            authorized_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        });
+        authorized_rx.recv().unwrap();
+
+        let stopping_manager = manager.clone();
+        let (stopped_tx, stopped_rx) = std::sync::mpsc::channel();
+        let stopping = std::thread::spawn(move || {
+            stopping_manager.stop().unwrap();
+            stopped_tx.send(()).unwrap();
+        });
+        assert!(stopped_rx.recv_timeout(Duration::from_millis(20)).is_err());
+
+        release_tx.send(()).unwrap();
+        worker.join().unwrap();
+        stopped_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        stopping.join().unwrap();
+        assert!(!manager.is_current_generation(generation));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_launch_gate_requires_parent_release() {
+        assert!(!wait_for_windows_cli_launch_gate(std::io::Cursor::new([])));
+        assert!(!wait_for_windows_cli_launch_gate(std::io::Cursor::new([0])));
+        assert!(wait_for_windows_cli_launch_gate(std::io::Cursor::new([1])));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_requires_an_empty_job_to_confirm_containment() {
+        assert!(windows_containment_confirmed(true, Some(0)));
+        assert!(!windows_containment_confirmed(true, Some(1)));
+        assert!(!windows_containment_confirmed(true, None));
+        assert!(!windows_containment_confirmed(false, Some(0)));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_exited_child_without_job_remains_unconfirmed() {
+        let mut command = Command::new("cmd.exe");
+        command.args(["/C", "exit", "0"]);
+        configure_spawn(&mut command);
+        let mut child = command.spawn().unwrap();
+        child.wait().unwrap();
+
+        let error = stop_child(&mut child, None).unwrap_err().to_string();
+        assert!(error.contains("cannot be confirmed without a Windows job"));
+    }
+
+    #[test]
+    fn exited_root_is_not_complete_while_descendants_remain() {
+        assert!(!containment_is_complete(true, false));
+        assert!(containment_is_complete(true, true));
+    }
+
+    #[test]
+    fn termination_wait_propagates_probe_errors() {
+        let result = wait_for_termination(Duration::ZERO, Duration::ZERO, || {
+            Err(anyhow::anyhow!("try_wait failed"))
+        });
+        assert_eq!(result.unwrap_err().to_string(), "try_wait failed");
+    }
+
+    #[test]
+    fn termination_wait_rejects_unconfirmed_exit() {
+        let result = wait_for_termination(Duration::ZERO, Duration::ZERO, || Ok(false));
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "process termination was not confirmed"
+        );
+    }
+
+    #[test]
+    fn termination_wait_accepts_confirmed_exit() {
+        let mut probes = 0;
+        wait_for_termination(Duration::from_secs(1), Duration::ZERO, || {
+            probes += 1;
+            Ok(probes == 2)
+        })
+        .unwrap();
+        assert_eq!(probes, 2);
     }
 }

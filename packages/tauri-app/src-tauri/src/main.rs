@@ -564,6 +564,11 @@ fn set_windows_app_user_model_id() {
 fn set_windows_app_user_model_id() {}
 
 fn main() {
+    #[cfg(windows)]
+    if let Some(code) = cli_manager::run_windows_cli_launcher_if_requested() {
+        std::process::exit(code);
+    }
+
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let navigation_guard: TauriPlugin<Wry, ()> = PluginBuilder::new("external-link-guard")

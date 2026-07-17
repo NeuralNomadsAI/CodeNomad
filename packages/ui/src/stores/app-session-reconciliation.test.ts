@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { getUnavailableRestoredSessionIds, reconcileWorkspaceTabs, resolveRestoredActiveTabId, resolveRestoredSessionSelection, shouldRestoreSessionState } from "./app-session-reconciliation.ts"
+import { getUnavailableRestoredSessionIds, getUnavailableWorkspaceIds, reconcileWorkspaceTabs, resolveRestoredActiveTabId, resolveRestoredSessionSelection, shouldRestoreSessionState } from "./app-session-reconciliation.ts"
 describe("app session reconciliation", () => {
   const workspaceCases = [
     ["matches duplicate workspace folders by normalized path occurrence", [
@@ -31,6 +31,12 @@ describe("app session reconciliation", () => {
     assert.deepEqual(
       reconcileWorkspaceTabs(saved, live).map(({ existingWorkspaceId }) => existingWorkspaceId),
       ["dreamx", "codenomad", null],
+    )
+  })
+  it("reconciles only workspaces missing from a refresh and not owned by restore cleanup", () => {
+    assert.deepEqual(
+      getUnavailableWorkspaceIds(["present", "stopped", "cancelling"], new Set(["present"]), (id) => id === "cancelling"),
+      ["stopped"],
     )
   })
   const selectionCases = [

@@ -124,6 +124,22 @@ test("legacy migration does not resurrect a snapshot after clear", async (t) => 
   await manager.drainAndReleasePrimary()
 })
 
+test("legacy cleanup failure cannot abort startup after shared state replacement", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "codenomad-migration-"))
+  const electron = join(root, "electron"), shared = join(root, "shared"), election = join(shared, "election")
+  mkdirSync(electron, { recursive: true })
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  writeFileSync(join(electron, "client-state.json"), JSON.stringify({ version: 1, restoreEnabled: true, snapshot: { savedAt: 10 } }))
+
+  const manager = new ClientStateManager(electron, undefined, {
+    crossHostElectionDirectory: election,
+    removeLegacyState: () => { throw new Error("injected cleanup failure") },
+  })
+  assert.deepEqual(manager.loadClientState().snapshot, { savedAt: 10 })
+  assert.equal(existsSync(join(shared, "client-state.json")), true)
+  await manager.drainAndReleasePrimary()
+})
+
 test("ownership loss immediately disables restore reads and mutations", async (t) => {
   const h = harness(t, {
     version: 1,

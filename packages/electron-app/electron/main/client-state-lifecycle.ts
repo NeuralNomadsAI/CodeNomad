@@ -22,6 +22,7 @@ export class ClientStateLifecycle {
   private exitAllowed = false
   private trackedMainWindow: BrowserWindow | null = null
   private windowStateTracker: WindowStateTracker | null = null
+  private windowsHiddenForShutdown = false
 
   constructor(private readonly dependencies: ClientStateLifecycleDependencies) {}
 
@@ -80,6 +81,7 @@ export class ClientStateLifecycle {
       event.preventDefault()
       this.hideWindows()
       void this.startShutdown(this.dependencies.getMainWindow()).then(() => this.exit(), (error) => {
+        this.restoreWindowAfterRejectedShutdown(this.dependencies.getMainWindow())
         console.warn("[client-state] desktop shutdown remains pending because cleanup was not contained", error)
       })
     })
@@ -108,8 +110,20 @@ export class ClientStateLifecycle {
 
   private hideWindows(): void {
     for (const window of this.dependencies.getAllWindows()) {
-      if (!window.isDestroyed()) window.hide()
+      if (!window.isDestroyed()) {
+        window.hide()
+        this.windowsHiddenForShutdown = true
+      }
     }
+  }
+
+  private restoreWindowAfterRejectedShutdown(preferred: BrowserWindow | null): void {
+    if (!this.windowsHiddenForShutdown) return
+    this.windowsHiddenForShutdown = false
+    const window = preferred && !preferred.isDestroyed()
+      ? preferred
+      : this.dependencies.getAllWindows().find((candidate) => !candidate.isDestroyed())
+    if (window) window.show()
   }
 
   private promoteToSessionEnd(window: BrowserWindow): void {
@@ -117,6 +131,7 @@ export class ClientStateLifecycle {
     this.sessionEnd = this.startShutdown(window)
     void this.sessionEnd.then(() => this.exit()).catch((error) => {
       this.sessionEnd = null
+      this.restoreWindowAfterRejectedShutdown(window)
       console.warn("[client-state] OS session-end cleanup was not contained before termination", error)
     })
   }

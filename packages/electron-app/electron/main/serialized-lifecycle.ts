@@ -10,6 +10,13 @@ export class SerializedLifecycle {
 
   stop<T>(operation: () => Promise<T>): Promise<T> {
     this.stopped = true
-    return this.enqueue(operation)
+    return this.enqueue(async () => {
+      try {
+        return await operation()
+      } catch (error) {
+        this.stopped = false
+        throw error
+      }
+    })
   }
 }

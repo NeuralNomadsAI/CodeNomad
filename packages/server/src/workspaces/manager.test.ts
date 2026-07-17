@@ -160,7 +160,45 @@ describe("workspace manager lifecycle", () => {
     assert.deepEqual(harness.stopped, [workspaceId])
   })
 
-  it("retains more than 1024 unresolved pre-creation cancellations", async () => {
+  it("gives release and cancellation one terminal winner", async () => {
+    const cancelled = createHarness()
+    const cancelledCreation = cancelled.manager.create(process.cwd(), undefined, { requestId: "cancel-wins" })
+    const cancelledId = await cancelled.runtime.launchCalled.promise
+    cancelled.runtime.resolveLaunch()
+    cancelled.readiness.resolve(undefined)
+    await cancelledCreation
+    const stopStarted = deferred<void>()
+    const finishStop = deferred<void>()
+    const originalStop = cancelled.runtime.stop
+    cancelled.runtime.stop = async (workspaceId) => {
+      stopStarted.resolve()
+      await finishStop.promise
+      await originalStop(workspaceId)
+    }
+
+    const cancellation = cancelled.manager.cancelCreationRequest("cancel-wins")
+    await stopStarted.promise
+    assert.equal(cancelled.manager.releaseCreationRequest(cancelledId, "cancel-wins"), false)
+    assert.equal(cancelled.manager.get(cancelledId)?.id, cancelledId)
+    finishStop.resolve()
+    await cancellation
+    assert.equal(cancelled.manager.get(cancelledId), undefined)
+
+    const released = createHarness()
+    const releasedCreation = released.manager.create(process.cwd(), undefined, { requestId: "release-wins" })
+    const releasedId = await released.runtime.launchCalled.promise
+    released.runtime.resolveLaunch()
+    released.readiness.resolve(undefined)
+    await releasedCreation
+
+    assert.equal(released.manager.releaseCreationRequest(releasedId, "release-wins"), true)
+    await released.manager.cancelCreationRequest("release-wins")
+    assert.equal(released.manager.releaseCreationRequest(releasedId, "release-wins"), true)
+    assert.equal(released.manager.get(releasedId)?.id, releasedId)
+    assert.equal(released.runtime.active.has(releasedId), true)
+  })
+
+  it("retains unresolved pre-creation cancellation until its delayed create", async () => {
     const harness = createHarness()
     const requestIds = Array.from({ length: 1_025 }, (_, index) => `pending-cancel-${index}`)
     await Promise.all(requestIds.map((requestId) => harness.manager.cancelCreationRequest(requestId)))
@@ -198,6 +236,11 @@ describe("workspace manager lifecycle", () => {
     await harness.manager.cancelCreationRequest("restore-reused")
     assert.equal(harness.manager.get(workspaceId)?.id, workspaceId)
     assert.equal(harness.runtime.active.has(workspaceId), true)
+    await assert.rejects(
+      harness.manager.create(process.cwd(), undefined, { requestId: "restore-reused" }),
+      /was cancelled/,
+    )
+    assert.equal(harness.manager.releaseCreationRequest(workspaceId, "restore-reused"), false)
   })
 
   for (const boundary of ["runtime launch", "health readiness"] as const) {

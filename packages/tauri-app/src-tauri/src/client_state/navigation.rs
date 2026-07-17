@@ -8,6 +8,7 @@ static NAVIGATIONS: LazyLock<Mutex<NavigationQueue<NavigationOperation>>> =
     LazyLock::new(|| Mutex::new(NavigationQueue::default()));
 
 type Operation = Box<dyn FnOnce(AppHandle) -> Result<(), String> + Send + 'static>;
+type NavigationGuard = Box<dyn Fn() -> bool + Send + 'static>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NavigationKind {
@@ -19,6 +20,7 @@ pub(crate) enum NavigationKind {
 struct NavigationOperation {
     app: AppHandle,
     target_url: Option<Url>,
+    is_current: NavigationGuard,
     navigate: Operation,
 }
 
@@ -112,11 +114,22 @@ pub(crate) fn before_main_window_navigation(
     target_url: Option<Url>,
     navigate: impl FnOnce(AppHandle) -> Result<(), String> + Send + 'static,
 ) {
+    before_main_window_navigation_if(app, kind, target_url, || true, navigate);
+}
+
+pub(crate) fn before_main_window_navigation_if(
+    app: &AppHandle,
+    kind: NavigationKind,
+    target_url: Option<Url>,
+    is_current: impl Fn() -> bool + Send + 'static,
+    navigate: impl FnOnce(AppHandle) -> Result<(), String> + Send + 'static,
+) {
     let request = QueuedNavigation::new(
         kind,
         NavigationOperation {
             app: app.clone(),
             target_url,
+            is_current: Box::new(is_current),
             navigate: Box::new(navigate),
         },
     );
@@ -142,10 +155,25 @@ fn run_navigation_queue() {
         let NavigationOperation {
             app,
             target_url,
+            is_current,
             navigate,
         } = request.value;
+        if !is_current() {
+            NAVIGATIONS
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .complete_active();
+            continue;
+        }
         if let Some(state) = app.try_state::<ClientState>() {
             state.wait_for_renderer_flush(&app, true);
+        }
+        if !is_current() {
+            NAVIGATIONS
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .complete_active();
+            continue;
         }
         let result = crate::shutdown::with_navigation_authority(&app, || {
             let state = app.try_state::<ClientState>();

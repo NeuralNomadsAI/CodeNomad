@@ -173,6 +173,19 @@ describe("abort-created workspace cleanup", () => {
     assert.equal(harness.cleanup.owns(item.id), false)
   })
 
+  it("restores the newest correlated descriptor after cancellation failures", async () => {
+    const starting = { ...workspace("progressed", "request"), status: "starting" as const }
+    const ready = { ...starting, status: "ready" as const }
+    const harness = createHarness({ failures: 2, retryDelay: 50 })
+    harness.cleanup.track(starting)
+    const completion = harness.cleanup.discardTracked(starting.id)
+    await flushPromises()
+    harness.cleanup.track(ready)
+    harness.waits[0]?.resolve(); await completion
+    assert.equal(harness.discarded[1]?.status, "ready")
+    assert.deepEqual(harness.restored, [ready])
+  })
+
   it("never discards untracked or released workspaces", async () => {
     const harness = createHarness()
     await harness.cleanup.discardTracked("pre-existing")

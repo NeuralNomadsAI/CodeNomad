@@ -46,7 +46,10 @@ jobs:
           fi
 
   build:
-    needs: authorize
+    needs:
+      - authorize
+      - tests
+      - tests-tauri-windows
     if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}
     uses: ./.github/workflows/build-and-upload.yml
     with:
@@ -76,6 +79,19 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install Linux test dependencies (Tauri)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libgtk-3-dev \
+            libglib2.0-dev \
+            libwebkit2gtk-4.1-dev \
+            libsoup-3.0-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
       - name: Install dependencies
         run: npm ci
 
@@ -85,21 +101,46 @@ jobs:
       - name: Test Electron client state
         run: npm run test:native --workspace @neuralnomads/codenomad-electron-app
 
-      - name: Test UI restoration authority
+      - name: Test changed runnable UI behavior
         run: >-
           node --import tsx --test
+          packages/ui/src/lib/hooks/use-app-session-capture.test.ts
+          packages/ui/src/lib/trailing-resync.test.ts
+          packages/ui/src/stores/abort-created-workspace-cleanup.test.ts
+          packages/ui/src/stores/app-session-reconciliation.test.ts
           packages/ui/src/stores/app-session-restore-gate.test.ts
-          packages/ui/src/stores/client-state-codec.test.ts
+          packages/ui/src/stores/app-session-restore-queue.test.ts
+          packages/ui/src/stores/app-session-restore-timeout.test.ts
           packages/ui/src/stores/app-session-snapshot-merge.test.ts
+          packages/ui/src/stores/restore-workspace-commit-gates.test.ts
+          packages/ui/src/stores/client-state-codec.test.ts
+          packages/ui/src/stores/client-state.test.ts
+          packages/ui/src/stores/instances-restore-cancellation.test.ts
           packages/ui/src/stores/message-v2/message-hydration-authority.test.ts
+          packages/ui/src/stores/session-generation-recovery.test.ts
+          packages/ui/src/stores/session-metadata.test.ts
+          packages/ui/src/stores/session-pagination.test.ts
 
-      - name: Test server lifecycle
-        run: >-
-          node --import tsx --test
-          packages/server/src/index.test.ts
-          packages/server/src/shutdown.test.ts
-          packages/server/src/workspaces/manager.test.ts
+      - name: Test server
+        run: node --import tsx --test "packages/server/src/**/*.test.ts"
 
-      - name: Test Tauri client state
+      - name: Test Tauri crate
         working-directory: packages/tauri-app/src-tauri
-        run: cargo test --locked client_state
+        run: cargo test --locked
+
+  tests-tauri-windows:
+    needs: authorize
+    if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Test Tauri crate on Windows
+        working-directory: packages/tauri-app/src-tauri
+        run: cargo test --locked

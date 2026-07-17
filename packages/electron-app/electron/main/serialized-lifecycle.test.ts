@@ -23,3 +23,16 @@ test("serializes operations and exposes shutdown before queued work resumes", as
   await shutdown
   assert.equal(maximum, 1)
 })
+
+test("failed shutdown reopens the lifecycle before queued retries run", async () => {
+  const lifecycle = new SerializedLifecycle()
+  const shutdown = lifecycle.stop(async () => { throw new Error("cleanup unconfirmed") })
+  const retry = lifecycle.enqueue(async () => {
+    assert.equal(lifecycle.stopped, false)
+    return "restarted"
+  })
+
+  await assert.rejects(shutdown, /cleanup unconfirmed/)
+  assert.equal(await retry, "restarted")
+  assert.equal(lifecycle.stopped, false)
+})

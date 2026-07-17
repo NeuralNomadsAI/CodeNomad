@@ -7,6 +7,7 @@ import {
   createRestorableSessionPreservation,
   createRestoredTabCommitGuard,
   getPreservedWorkspaceState,
+  getPreservedWorkspaceReopenTarget,
   hasRestoredTabBinding,
   markPreservedWorkspaceRemoved,
   markPreservedWorkspaceReopened,
@@ -254,6 +255,7 @@ describe("app session snapshot merge", () => {
       runtimeTabId: "instance:reopened", folder: "/failed", occurrence: 0,
     })
     assert.equal(mergeRestorableSessionState(empty(), preservation).tabs.length, 1, "reopen clears tombstone")
+    assert.equal(preservation.results[0]?.runtimeTabId, "instance:reopened", "reopen binds the new runtime")
     recordRestoredTab(preservation, 0, "instance:partial", new Set(["missing"]))
     markPreservedWorkspaceReopened(preservation, {
       runtimeTabId: "instance:partial", folder: "/failed", occurrence: 0,
@@ -264,13 +266,21 @@ describe("app session snapshot merge", () => {
     assert.deepEqual(partial.drafts, { missing: "retry" }, "reopen retains unavailable payload")
   })
 
-  it("clears a restored binding when its runtime ID is reopened", () => {
+  it("rebinds preserved state when a workspace runtime is reopened", () => {
     const preservation = restored(session([workspace("/work")]), [{ source: 0, runtime: "instance:reused" }])
     assert.equal(preservation.results[0]?.runtimeTabId, "instance:reused")
     markPreservedWorkspaceReopened(preservation, {
       runtimeTabId: "instance:reused", folder: "/work", occurrence: 0,
     })
-    assert.equal(preservation.results[0]?.runtimeTabId, null)
+    assert.equal(preservation.results[0]?.runtimeTabId, "instance:reused")
+  })
+
+  it("hydrates only a genuine unavailable or removed workspace reopen", () => {
+    const preservation = createRestorableSessionPreservation(session([workspace("/work")]))
+    const opened = { runtimeTabId: "instance:new", folder: "/work", occurrence: 0 }
+    assert.equal(getPreservedWorkspaceReopenTarget(preservation, opened), null, "initial restore create owns hydration")
+    recordRestoredTab(preservation, 0, "instance:old")
+    assert.equal(getPreservedWorkspaceReopenTarget(preservation, opened)?.sourceIndex, 0)
   })
 
   it("does not seed or settle after an explicit close during hydration", async () => {
@@ -296,7 +306,7 @@ describe("app session snapshot merge", () => {
     await completion
 
     assert.deepEqual(effects, [])
-    assert.deepEqual(preservation.results[0], { status: "pending" })
+    assert.deepEqual(preservation.results[0], { status: "pending", runtimeTabId: "instance:reopened" })
   })
 
   it("invalidates a pending create commit after close even when the workspace reopens", () => {
