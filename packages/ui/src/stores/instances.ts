@@ -71,6 +71,7 @@ import { getAbortReason } from "./app-session-restore-timeout"
 import { AbortCreatedWorkspaceCleanup } from "./abort-created-workspace-cleanup"
 import { TrailingResyncCoordinator, waitForSettledPrerequisite } from "../lib/trailing-resync"
 import { retryWithBackoff } from "../lib/retry-utils"
+import { cancelRestoreCreation } from "./restore-creation-cancellation"
 
 const log = getLogger("api")
 
@@ -974,12 +975,7 @@ async function releaseRestoreCreatedInstance(instanceId: string, requestId: stri
 }
 
 async function cancelRestoreCreationRequest(instanceId: string | undefined, requestId: string): Promise<void> {
-  await retryWithBackoff(() => serverApi.cancelWorkspaceCreation(requestId), {
-    maxAttempts: 4,
-    initialDelayMs: 250,
-    maxDelayMs: 2_000,
-    backoffMultiplier: 4,
-  })
+  await cancelRestoreCreation(requestId)
   if (instanceId) restoreCreatedWorkspaceCleanup.forgetRequest(instanceId, requestId)
 }
 

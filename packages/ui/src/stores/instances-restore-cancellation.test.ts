@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { it } from "node:test"
 
 import { serverApi } from "../lib/api-client.ts"
-import { cancelRestoreCreationRequest } from "./instances.ts"
+import { cancelRestoreCreation } from "./restore-creation-cancellation.ts"
 
 it("retries pre-response restore cancellation without SSE correlation", async () => {
   const originalCancel = serverApi.cancelWorkspaceCreation
@@ -12,7 +12,7 @@ it("retries pre-response restore cancellation without SSE correlation", async ()
   }
 
   try {
-    await cancelRestoreCreationRequest(undefined, "pre-response-request")
+    await cancelRestoreCreation("pre-response-request")
     assert.equal(calls, 2)
   } finally {
     serverApi.cancelWorkspaceCreation = originalCancel
