@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
-import { spawn, spawnSync } from "node:child_process"
+import { spawn } from "node:child_process"
 import { EventEmitter } from "node:events"
+import { registerHooks } from "node:module"
 import { setTimeout as delay } from "node:timers/promises"
 import test from "node:test"
 import {
@@ -32,16 +33,62 @@ test("force success terminates stop without requiring an exit event", async () =
   const stopped = stopManagedChild({
     child,
     isExited: () => child.exited,
-    deadlineMs: 10,
+    deadlineMs: 100,
+    forceReserveMs: 80,
     force: () => { forces++; return true },
   }).then(() => { resolved = true })
 
   assert.equal(CLI_STOP_DEADLINE_MS, 30_000)
   assert.deepEqual(child.writes, [CLI_SHUTDOWN_COMMAND])
-  await delay(25)
+  await delay(50)
   assert.equal(forces, 1)
   await stopped
   assert.equal(resolved, true)
+})
+
+test("an absolute stop deadline includes work completed before stopManagedChild starts", async () => {
+  const child = new FakeChild()
+  const deadlineAt = Date.now() + 500
+  await delay(100)
+  const started = Date.now()
+
+  await stopManagedChild({
+    child,
+    isExited: () => false,
+    deadlineMs: 1_000,
+    deadlineAt,
+    forceReserveMs: 200,
+    force: () => true,
+  })
+
+  assert.ok(Date.now() - started < 800)
+})
+
+test("the hard stop deadline rejects even when force never settles", { timeout: 500 }, async () => {
+  const child = new FakeChild()
+  const started = Date.now()
+
+  await assert.rejects(stopManagedChild({
+    child,
+    isExited: () => false,
+    deadlineMs: 30,
+    forceReserveMs: 20,
+    force: () => new Promise<boolean>(() => {}),
+  }), /overall deadline/)
+  assert.ok(Date.now() - started < 100)
+})
+
+test("the hard deadline also bounds enforcement for an already-exited child", { timeout: 500 }, async () => {
+  const child = new FakeChild()
+  child.exited = true
+
+  await assert.rejects(stopManagedChild({
+    child,
+    isExited: () => true,
+    isCleanupComplete: () => false,
+    deadlineMs: 20,
+    force: () => new Promise<boolean>(() => {}),
+  }), /overall deadline/)
 })
 
 test("confirmed exit cancels the delayed force command", async () => {
@@ -67,7 +114,8 @@ test("unconfirmed final enforcement retries until the process exits", async () =
   const stopped = stopManagedChild({
     child,
     isExited: () => child.exited,
-    deadlineMs: 5,
+    deadlineMs: 100,
+    forceReserveMs: 90,
     forceRetryMs: 5,
     force: () => {
       forces++
@@ -122,10 +170,10 @@ test("ending CLI stdin permits a real child to exit naturally", { timeout: 5_000
   assert.equal(forces, 0)
 })
 
-test("tree capture records immutable root and nested descendant identities", () => {
+test("tree capture records immutable root and nested descendant identities", async () => {
   const list = (() => ({ status: 0, stdout: "100|1|linux:boot:10\n200|100|linux:boot:20\n201|200|linux:boot:21\n999|1|linux:boot:99\n", stderr: "", pid: 1,
-    signal: null, output: [] })) as unknown as typeof spawnSync
-  const tree = captureProcessTree(100, "linux", list)
+    signal: null, output: [] }))
+  const tree = await captureProcessTree(100, "linux", list)
   assert.deepEqual(tree, { platform: "linux", members: [
     { pid: 100, startIdentity: "linux:boot:10" },
     { pid: 200, startIdentity: "linux:boot:20" },
@@ -133,36 +181,188 @@ test("tree capture records immutable root and nested descendant identities", () 
   ] })
 })
 
-test("Windows tree capture ignores the system idle PID without rejecting the process table", () => {
+test("Windows tree capture ignores the system idle PID without rejecting the process table", async () => {
   const list = (() => ({
     status: 0,
     error: undefined,
-    stdout: "0|0|win32:system\n100|0|win32:root\n101|100|win32:child\n",
-  })) as unknown as typeof spawnSync
-  assert.deepEqual(captureProcessTree(100, "win32", list)?.members, [
-    { pid: 100, startIdentity: "win32:root" },
-    { pid: 101, startIdentity: "win32:child" },
+    stdout: "0|0|win32:system\n100|0|win32:100\n101|100|win32:101\n",
+    stderr: "",
+  }))
+  assert.deepEqual((await captureProcessTree(100, "win32", list))?.members, [
+    { pid: 100, startIdentity: "win32:100" },
+    { pid: 101, startIdentity: "win32:101" },
   ])
 })
 
-test("PID reuse is identity-guarded on Windows and POSIX", () => {
+test("a malformed descendant row invalidates the entire process snapshot", async () => {
+  const list = (() => ({
+    status: 0,
+    stdout: "100|0|win32:100\n101|100|win32:\n",
+    stderr: "",
+  }))
+
+  assert.equal(await captureProcessTree(100, "win32", list), undefined)
+})
+
+test("Windows verifies creation time and terminates through one native process handle", async () => {
+  const commands: Array<{ command: string; args: readonly string[] }> = []
+  let terminated = false
+  const tree = { platform: "win32" as const, members: [{ pid: 42, startIdentity: "win32:638800000000000000" }] }
+  const runner = async (command: string, args: readonly string[]) => {
+    commands.push({ command, args })
+    terminated = true
+    return { status: 0, stdout: "terminated\n", stderr: "" }
+  }
+  const lookup = async () => {
+    assert.equal(terminated, true, "identity was queried separately before the handle-bound termination")
+    return undefined
+  }
+  const kill = (() => { const error = new Error("gone") as NodeJS.ErrnoException; error.code = "ESRCH"; throw error }) as typeof process.kill
+
+  assert.equal(await forceCapturedProcessTree(tree, lookup, runner, kill), true)
+  assert.equal(commands.length, 1)
+  assert.equal(commands[0]!.command, "powershell.exe")
+  const script = commands[0]!.args.join(" ")
+  assert.match(script, /OpenProcess/)
+  assert.match(script, /GetProcessTimes/)
+  assert.match(script, /TerminateProcess/)
+  assert.match(script, /CloseHandle/)
+  assert.match(script, /638800000000000000/)
+  assert.doesNotMatch(script, /taskkill/i)
+})
+
+test("Windows native-handle termination refuses a live process with a mismatched creation time", {
+  skip: process.platform !== "win32",
+  timeout: 5_000,
+}, async () => {
+  const tree = { platform: "win32" as const, members: [{ pid: process.pid, startIdentity: "win32:1" }] }
+
+  assert.equal(await forceCapturedProcessTree(tree), true)
+  assert.doesNotThrow(() => process.kill(process.pid, 0))
+})
+
+test("PID reuse is identity-guarded on Windows and POSIX", async () => {
   for (const platform of ["win32", "linux"] as const) {
-    const taskkills: string[][] = []
+    const commands: string[][] = []
     const signals: number[] = []
-    const tree = { platform, members: [{ pid: 42, startIdentity: "old" }] }
+    const tree = { platform, members: [{ pid: 42, startIdentity: platform === "win32" ? "win32:1" : "old" }] }
     const runTaskkill = ((_command: string, args: readonly string[]) => {
-      taskkills.push([...args])
-      return { status: 0, stdout: "", stderr: "", pid: 1, signal: null, output: [] }
-    }) as unknown as typeof spawnSync
+      commands.push([...args])
+      return { status: 0, stdout: "mismatch\n", stderr: "", pid: 1, signal: null, output: [] }
+    })
     const kill = ((pid: number) => { signals.push(pid); return true }) as typeof process.kill
 
-    assert.equal(forceCapturedProcessTree(tree, () => "reused", runTaskkill, kill), true)
-    assert.deepEqual(taskkills, [])
+    assert.equal(await forceCapturedProcessTree(tree, () => "reused", runTaskkill, kill), true)
+    assert.equal(commands.length, platform === "win32" ? 1 : 0)
     assert.deepEqual(signals, [])
   }
 })
 
-test("later captures preserve root ownership and add every descendant identity", () => {
+test("a stale captured identity cannot authorize termination after handle-bound PID reuse", async () => {
+  let commands = 0
+  const tree = { platform: "win32" as const, members: [{ pid: 42, startIdentity: "win32:1" }] }
+  const runTaskkill = (() => {
+    commands++
+    return { status: 0, stdout: "mismatch\n", stderr: "", pid: 1, signal: null, output: [] }
+  })
+
+  assert.equal(await forceCapturedProcessTree(tree, undefined, runTaskkill, process.kill, {
+    revalidateIdentity: async () => "reused",
+  }), true)
+  assert.equal(commands, 1)
+})
+
+test("a successful snapshot omission still requires a liveness check", async () => {
+  let lookups = 0
+  let livenessChecks = 0
+  const tree = { platform: "win32" as const, members: [{ pid: 42, startIdentity: "win32:1" }] }
+  const runTaskkill = (() => ({ status: 0, stdout: "terminated\n", stderr: "", pid: 1, signal: null, output: [] }))
+  const kill = ((_pid: number, signal?: NodeJS.Signals | number) => {
+    if (signal === 0) livenessChecks++
+    return true
+  }) as typeof process.kill
+
+  assert.equal(await forceCapturedProcessTree(
+    tree,
+    () => { lookups++; return undefined },
+    runTaskkill,
+    kill,
+  ), false)
+  assert.equal(lookups, 1)
+  assert.equal(livenessChecks, 1)
+})
+
+test("enforcement awaits asynchronous commands without blocking timers", async () => {
+  let settled = false
+  let timerFired = false
+  const tree = { platform: "win32" as const, members: [{ pid: 42, startIdentity: "win32:1" }] }
+  const enforcement = Promise.resolve(forceCapturedProcessTree(
+    tree,
+    async () => undefined,
+    (async () => {
+      await delay(30)
+      return { status: 0, stdout: "terminated\n", stderr: "", pid: 1, signal: null, output: [] }
+    }),
+    (() => { const error = new Error("gone") as NodeJS.ErrnoException; error.code = "ESRCH"; throw error }) as typeof process.kill,
+  )).then((value) => { settled = true; return value })
+  setTimeout(() => { timerFired = true }, 1)
+
+  await delay(5)
+  assert.equal(timerFired, true)
+  assert.equal(settled, false)
+  assert.equal(await enforcement, true)
+})
+
+test("failed initial capture retains a bounded spawn-time root identity", async () => {
+  const module = await import("./process-stop") as typeof import("./process-stop") & {
+    captureInitialProcessTree(...args: unknown[]): Promise<{ tree?: unknown; rootStartIdentity?: string }>
+  }
+  const timeouts: number[] = []
+  let lookupStarted = false
+  const result = await module.captureInitialProcessTree(
+    100,
+    "win32",
+    async () => {
+      assert.equal(lookupStarted, true)
+      return { status: 1, stdout: "", stderr: "" }
+    },
+    async (_pid: number, timeoutMs: number) => { lookupStarted = true; timeouts.push(timeoutMs); return "win32:100" },
+    Date.now() + 500,
+  )
+
+  assert.equal(result.rootStartIdentity, "win32:100")
+  assert.ok(timeouts[0]! > 0 && timeouts[0]! <= 500)
+  assert.deepEqual(mergeCapturedProcessTrees(undefined, {
+    platform: "win32",
+    members: [{ pid: 100, startIdentity: "win32:100" }],
+  }, 100, result.rootStartIdentity), {
+    platform: "win32",
+    members: [{ pid: 100, startIdentity: "win32:100" }],
+  })
+})
+
+test("tree enforcement stops launching commands when its deadline is spent", async () => {
+  const tree = { platform: "win32" as const, members: [
+    { pid: 101, startIdentity: "win32:1" },
+    { pid: 102, startIdentity: "win32:2" },
+    { pid: 103, startIdentity: "win32:3" },
+  ] }
+  const timeouts: number[] = []
+  let now = 0
+  const runTaskkill = ((_command: string, _args: readonly string[], options: { timeout?: number }) => {
+    timeouts.push(options.timeout ?? 0)
+    now += options.timeout ?? 0
+    return { status: 0, stdout: "terminated\n", stderr: "", pid: 1, signal: null, output: [] }
+  })
+
+  assert.equal(await forceCapturedProcessTree(tree, undefined, runTaskkill, process.kill, {
+    deadlineAt: 2_500,
+    now: () => now,
+  }), false)
+  assert.deepEqual(timeouts, [1_500, 1_000])
+})
+
+test("later captures preserve root ownership and add every descendant identity", async () => {
   const captured = { platform: "linux" as const, members: [
     { pid: 100, startIdentity: "root" },
     { pid: 200, startIdentity: "old-child" },
@@ -193,14 +393,14 @@ test("later captures preserve root ownership and add every descendant identity",
     identities.delete(pid)
     return true
   }) as typeof process.kill
-  assert.equal(forceCapturedProcessTree(merged, (pid) => identities.get(pid), spawnSync, kill), true)
+  assert.equal(await forceCapturedProcessTree(merged, (pid) => identities.get(pid), undefined, kill), true)
   assert.deepEqual(signals, [300, 200, 100])
 
   const survivingIdentities = new Map([[100, "root"], [200, "reused-child"], [300, "new-child"]])
-  assert.equal(forceCapturedProcessTree(
+  assert.equal(await forceCapturedProcessTree(
     merged,
     (pid) => survivingIdentities.get(pid),
-    spawnSync,
+    undefined,
     (() => true) as typeof process.kill,
   ), false)
 
@@ -210,10 +410,10 @@ test("later captures preserve root ownership and add every descendant identity",
   }, 100)
   assert.deepEqual(reusedRoot, captured)
   const rootSignals: number[] = []
-  assert.equal(forceCapturedProcessTree(
+  assert.equal(await forceCapturedProcessTree(
     reusedRoot!,
     (pid) => pid === 100 ? "reused-root" : undefined,
-    spawnSync,
+    undefined,
     ((pid: number, signal?: NodeJS.Signals | number) => {
       if (signal === 0) {
         const error = new Error("gone") as NodeJS.ErrnoException
@@ -255,7 +455,7 @@ test("an exited root without a trustworthy capture cannot confirm containment", 
   }), /termination was not confirmed/)
 })
 
-test("captured descendants are forced individually in child-first order", () => {
+test("captured descendants are forced individually in child-first order", async () => {
   const signals: number[] = []
   const tree = { platform: "linux" as const, members: [
     { pid: 100, startIdentity: "a" }, { pid: 200, startIdentity: "b" }, { pid: 201, startIdentity: "c" },
@@ -273,13 +473,40 @@ test("captured descendants are forced individually in child-first order", () => 
     return true
   }) as typeof process.kill
 
-  assert.equal(forceCapturedProcessTree(tree, (pid) => identities.get(pid), spawnSync, kill), true)
+  assert.equal(await forceCapturedProcessTree(tree, (pid) => identities.get(pid), undefined, kill), true)
   assert.deepEqual(signals, [201, 200, 100])
 })
 
-test("signal dispatch is not confirmation while the captured identity remains", () => {
+test("signal dispatch is not confirmation while the captured identity remains", async () => {
   const tree = { platform: "linux" as const, members: [{ pid: 42, startIdentity: "owned" }] }
   const kill = (() => true) as typeof process.kill
 
-  assert.equal(forceCapturedProcessTree(tree, () => "owned", spawnSync, kill), false)
+  assert.equal(await forceCapturedProcessTree(tree, () => "owned", undefined, kill), false)
+})
+
+test("incomplete shutdown status remains terminal", async () => {
+  const hooks = registerHooks({
+    resolve(specifier, context, nextResolve) {
+      if (specifier === "electron") {
+        return { shortCircuit: true, url: "data:text/javascript,export const app={isPackaged:false,getAppPath(){return ''}}" }
+      }
+      return nextResolve(specifier, context)
+    },
+  })
+  try {
+    const { CliProcessManager } = await import("./process-manager")
+    const manager = new CliProcessManager()
+    let enforcements = 0
+    ;(manager as EventEmitter).on("shutdownIncomplete", () => { enforcements++ })
+
+    ;(manager as any).handleStream(
+      "CODENOMAD_SHUTDOWN_STATUS:incomplete\nCODENOMAD_SHUTDOWN_STATUS:complete\n",
+      "stdout",
+    )
+
+    assert.equal((manager as any).shutdownStatus, "incomplete")
+    assert.equal(enforcements, 1)
+  } finally {
+    hooks.deregister()
+  }
 })

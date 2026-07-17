@@ -1136,7 +1136,7 @@ async function createInstance(
       requestId: resolution.workspace.requestId ?? workspace.requestId,
       ...(reused ? { reused: true } : {}),
     }
-    restoreCreatedWorkspaceCleanup.track(committedWorkspace)
+    if (restoreRequestId) restoreCreatedWorkspaceCleanup.track(committedWorkspace)
     const terminal = resolution.terminal ?? (committedWorkspace.status === "error" || committedWorkspace.status === "stopped"
       ? { status: committedWorkspace.status, message: committedWorkspace.error }
       : undefined)

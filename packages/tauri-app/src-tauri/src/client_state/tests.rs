@@ -307,7 +307,7 @@ fn electron_and_tauri_share_the_complete_envelope_across_handoffs() {
     let tauri_snapshot = json!({ "savedAt": 20, "from": "tauri" });
     assert!(rust.save_snapshot(tauri_snapshot.clone()).unwrap());
     rust.release_locks();
-    fs::remove_dir_all(election.join("primary.owner.json")).unwrap();
+    assert!(!election.join("primary.owner.json").exists());
 
     let node = run_node_state_host(&election, &electron, &tauri, "load", None);
     assert_eq!(node["acquired"], true);

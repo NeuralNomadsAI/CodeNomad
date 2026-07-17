@@ -9,7 +9,7 @@ import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import test from "node:test"
 import { cleanStaleRunningMarkers, createRunningMarker, electClientStateProcess, getRunningMarkerPath, hasLiveTauriClient, REGISTRATION_LOCK_WAIT_MS, removeProcessOwnerLockIfOwned, removeRunningMarkerIfOwned, type ProcessOwner } from "./client-state-process"
-import { getProcessStartIdentity } from "./client-state-process-identity"
+import { getProcessStartIdentity, getProcessStartIdentityAsync } from "./client-state-process-identity"
 
 function temp(t: test.TestContext) { const directory = mkdtempSync(join(tmpdir(), "codenomad-election-")); t.after(() => rmSync(directory, { recursive: true, force: true })); return directory }
 
@@ -59,6 +59,12 @@ test("current process start identity is stable", () => {
   const identity = getProcessStartIdentity(process.pid)
   assert.ok(identity, `identity unavailable on ${process.platform}`)
   assert.equal(getProcessStartIdentity(process.pid), identity)
+})
+
+test("async process identity matches the spawn-time identity", async () => {
+  const identity = getProcessStartIdentity(process.pid)
+  assert.ok(identity)
+  assert.equal(await getProcessStartIdentityAsync(process.pid, 1_500), identity)
 })
 
 test("marker cleanup preserves only election-relevant live cohorts", async (t) => {

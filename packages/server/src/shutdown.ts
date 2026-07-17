@@ -31,8 +31,7 @@ export function createServerShutdownHandler(options: { shutdown: () => Promise<v
       reportStatus(SERVER_SHUTDOWN_COMPLETE)
       setExitCode(0)
     }, async (error) => {
-      options.logger.error({ err: error }, "Server shutdown incomplete; awaiting final process-tree enforcement")
-      reportStatus(SERVER_SHUTDOWN_INCOMPLETE)
+      options.logger.error({ err: error }, "Server shutdown incomplete; retrying cleanup")
       const retryAttempts = Math.max(0, Math.floor(options.retryAttempts ?? 3))
       for (let attempt = 1; attempt <= retryAttempts; attempt += 1) {
         await new Promise<void>((resolve) => setTimeout(resolve, options.retryDelayMs ?? 250))
@@ -47,6 +46,7 @@ export function createServerShutdownHandler(options: { shutdown: () => Promise<v
         }
       }
       options.logger.error({ attempts: retryAttempts }, "Shutdown cleanup retries exhausted; preserving process-tree containment")
+      reportStatus(SERVER_SHUTDOWN_INCOMPLETE)
       setExitCode(1)
       if (options.holdAfterFailure) await options.holdAfterFailure()
     })

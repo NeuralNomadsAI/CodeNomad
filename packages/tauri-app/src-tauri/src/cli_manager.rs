@@ -42,6 +42,8 @@ use windows_sys::Win32::System::JobObjects::{
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 const MISSING_NODE_PREFIX: &str = "CODENOMAD_MISSING_NODE:";
+#[cfg(windows)]
+const CLI_SHUTDOWN_COMMAND: &[u8] = b"codenomad:shutdown\n";
 
 #[cfg(windows)]
 #[derive(Debug)]
@@ -201,6 +203,20 @@ fn wait_for_windows_cli_launch_gate(mut reader: impl Read) -> bool {
 }
 
 #[cfg(windows)]
+fn relay_windows_cli_control(
+    mut reader: impl Read,
+    mut writer: impl Write,
+) -> std::io::Result<u64> {
+    std::io::copy(&mut reader, &mut writer)
+}
+
+#[cfg(windows)]
+fn request_windows_cli_shutdown(writer: &mut impl Write) -> std::io::Result<()> {
+    writer.write_all(CLI_SHUTDOWN_COMMAND)?;
+    writer.flush()
+}
+
+#[cfg(windows)]
 pub(crate) fn run_windows_cli_launcher_if_requested() -> Option<i32> {
     let mut args = std::env::args_os();
     args.next();
@@ -216,10 +232,20 @@ pub(crate) fn run_windows_cli_launcher_if_requested() -> Option<i32> {
 
     let mut command = Command::new(program);
     command.args(args);
+    command.stdin(Stdio::piped());
     configure_spawn(&mut command);
+    let Ok(mut child) = command.spawn() else {
+        return Some(1);
+    };
+    if let Some(mut node_stdin) = child.stdin.take() {
+        thread::spawn(move || {
+            let stdin = std::io::stdin();
+            let _ = relay_windows_cli_control(stdin.lock(), &mut node_stdin);
+        });
+    }
     Some(
-        command
-            .status()
+        child
+            .wait()
             .ok()
             .and_then(|status| status.code())
             .unwrap_or(1),
@@ -308,6 +334,19 @@ fn stop_child(
     let graceful_timeout = Duration::from_millis(CLI_WINDOWS_FORCE_GRACE_MS);
     #[cfg(not(windows))]
     let graceful_timeout = Duration::from_secs(CLI_STOP_GRACE_SECS);
+    #[cfg(windows)]
+    if child.try_wait()?.is_none() {
+        match child.stdin.take() {
+            Some(mut control) => {
+                if let Err(err) = request_windows_cli_shutdown(&mut control) {
+                    log_line(&format!(
+                        "failed to request graceful CLI shutdown pid={pid}: {err}"
+                    ));
+                }
+            }
+            None => log_line(&format!("CLI control channel is unavailable pid={pid}")),
+        }
+    }
     let graceful = wait_for_termination(graceful_timeout, Duration::from_millis(50), || {
         let child_exited = child.try_wait()?.is_some();
         #[cfg(unix)]
@@ -979,9 +1018,12 @@ impl CliProcessManager {
         {
             let gate_result = child
                 .stdin
-                .take()
+                .as_mut()
                 .ok_or_else(|| anyhow::anyhow!("blocked CLI launcher stdin is unavailable"))
-                .and_then(|mut gate| gate.write_all(&[1]).map_err(anyhow::Error::from));
+                .and_then(|gate| {
+                    gate.write_all(&[1])?;
+                    gate.flush().map_err(anyhow::Error::from)
+                });
             if let Err(err) = gate_result {
                 let _ = job.terminate();
                 let _ = child.kill();
@@ -1755,6 +1797,26 @@ mod tests {
         assert!(!wait_for_windows_cli_launch_gate(std::io::Cursor::new([])));
         assert!(!wait_for_windows_cli_launch_gate(std::io::Cursor::new([0])));
         assert!(wait_for_windows_cli_launch_gate(std::io::Cursor::new([1])));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_launcher_preserves_the_shutdown_control_channel() {
+        let mut control = std::io::Cursor::new(b"\x01codenomad:shutdown\n");
+        let mut node_stdin = Vec::new();
+
+        assert!(wait_for_windows_cli_launch_gate(&mut control));
+        relay_windows_cli_control(&mut control, &mut node_stdin).unwrap();
+
+        assert_eq!(node_stdin, b"codenomad:shutdown\n");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_stop_writes_the_exact_shutdown_command() {
+        let mut control = Vec::new();
+        request_windows_cli_shutdown(&mut control).unwrap();
+        assert_eq!(control, b"codenomad:shutdown\n");
     }
 
     #[cfg(windows)]

@@ -323,6 +323,7 @@ impl Registration {
         if self.released {
             return Ok(false);
         }
+        retire_owner_if_owned(&self.election_directory, &self.owner)?;
         remove_participant_if_owned(&self.participant_path, &self.owner)?;
         if let Some(claim) = &self.recovery_claim {
             match fs::remove_file(claim) {
@@ -580,6 +581,74 @@ fn remove_participant_if_owned(path: &Path, owner: &Owner) -> Result<(), String>
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(format!("failed to remove cross-host participant: {err}")),
     }
+}
+
+fn retire_owner_if_owned(directory: &Path, owner: &Owner) -> Result<(), String> {
+    retire_owner_if_owned_with(directory, owner, || {}, || {})
+}
+
+fn retire_owner_if_owned_with(
+    directory: &Path,
+    owner: &Owner,
+    on_checked: impl FnOnce(),
+    on_retired: impl FnOnce(),
+) -> Result<(), String> {
+    let Some(observed) = read_if_exists(&owner_path(directory))? else {
+        return Ok(());
+    };
+    if parse_owner(&observed).as_ref() != Some(owner) {
+        return Ok(());
+    }
+    on_checked();
+    if read_if_exists(&owner_path(directory))?.as_deref() != Some(&observed) {
+        return Ok(());
+    }
+    let retired = directory.join(format!("{RETIRED_PREFIX}{}.{}", owner.pid, owner.run_token));
+    match fs::rename(directory.join(OWNER_DIRECTORY), &retired) {
+        Ok(()) => {}
+        Err(err)
+            if err.kind() == std::io::ErrorKind::NotFound
+                || err.kind() == std::io::ErrorKind::AlreadyExists
+                || retired.exists() =>
+        {
+            return Ok(());
+        }
+        Err(err) => return Err(format!("failed to retire owned cross-host owner: {err}")),
+    }
+    on_retired();
+    let result: Result<(), String> = (|| {
+        for entry in
+            fs::read_dir(directory).map_err(|err| format!("failed to read participants: {err}"))?
+        {
+            let entry = entry.map_err(|err| format!("failed to read participant: {err}"))?;
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if !name.starts_with(PARTICIPANT_PREFIX) || !name.ends_with(PARTICIPANT_SUFFIX) {
+                continue;
+            }
+            let path = entry.path();
+            let Some(observed_participant) = read_if_exists(&path)? else {
+                continue;
+            };
+            if let Some(participant) = parse_owner(&observed_participant) {
+                remove_participant_if_owned(&path, &participant)?;
+                let _ = fs::remove_file(recovery_path(directory, &participant));
+            } else if read_if_exists(&path)?.as_deref() == Some(&observed_participant) {
+                match fs::remove_file(&path) {
+                    Ok(()) => {}
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(err) => {
+                        return Err(format!(
+                            "failed to remove malformed cross-host participant: {err}"
+                        ))
+                    }
+                }
+            }
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(retired);
+    result
 }
 
 fn has_live_legacy_electron_with(
@@ -1165,9 +1234,9 @@ mod tests {
     }
 
     #[test]
-    fn release_removes_only_the_participant() {
+    fn graceful_primary_release_allows_a_successor_while_a_secondary_remains() {
         let directory = tempfile::tempdir().unwrap();
-        let mut registration = Registration::register_with(
+        let mut primary = Registration::register_with(
             directory.path(),
             owner(601, "primary", "primary-start"),
             true,
@@ -1176,18 +1245,137 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        assert!(registration.release().unwrap());
-        assert!(directory.path().join(OWNER_DIRECTORY).exists());
+        let secondary = Registration::register_with(
+            directory.path(),
+            owner(602, "secondary", "secondary-start"),
+            true,
+            |_| true,
+            |_| Some("primary-start".to_string()),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(!secondary.is_primary());
+
+        assert!(primary.release().unwrap());
+        let successor = Registration::register_with(
+            directory.path(),
+            owner(603, "successor", "successor-start"),
+            true,
+            |_| true,
+            |_| Some("successor-start".to_string()),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(successor.is_primary());
+    }
+
+    #[test]
+    fn graceful_handoff_retires_the_old_cohort_so_a_crashed_successor_can_recover() {
+        let directory = tempfile::tempdir().unwrap();
+        let secondary_owner = owner(622, "secondary", "secondary-start");
+        let successor_owner = owner(623, "successor", "successor-start");
+        let late_owner = owner(625, "late", "late-start");
+        let primary = Registration::register_with(
+            directory.path(),
+            owner(621, "primary", "primary-start"),
+            true,
+            |_| true,
+            |_| Some("primary-start".to_string()),
+        )
+        .unwrap()
+        .unwrap();
+        let _secondary = Registration::register_with(
+            directory.path(),
+            secondary_owner.clone(),
+            true,
+            |_| true,
+            |_| Some("primary-start".to_string()),
+        )
+        .unwrap()
+        .unwrap();
+
+        let malformed = directory.path().join("participant.malformed.json");
+        retire_owner_if_owned_with(
+            directory.path(),
+            &primary.owner,
+            || {
+                publish_participant(
+                    &participant_path(directory.path(), &successor_owner),
+                    &successor_owner,
+                )
+                .unwrap();
+                publish_participant(
+                    &participant_path(directory.path(), &late_owner),
+                    &late_owner,
+                )
+                .unwrap();
+                fs::write(&malformed, b"malformed").unwrap();
+            },
+            || assert!(publish_owner(directory.path(), &successor_owner).unwrap()),
+        )
+        .unwrap();
+        assert!(!directory.path().join("retired.621.primary").exists());
         assert_eq!(
-            fs::read_dir(directory.path())
-                .unwrap()
-                .filter_map(Result::ok)
-                .filter(|entry| entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with(RETIRED_PREFIX))
-                .count(),
-            0
+            parse_owner(&fs::read_to_string(owner_path(directory.path())).unwrap()),
+            Some(successor_owner)
+        );
+        assert!(!participant_path(
+            directory.path(),
+            &owner(623, "successor", "successor-start")
+        )
+        .exists());
+        assert!(!participant_path(directory.path(), &late_owner).exists());
+        assert!(!malformed.exists());
+
+        let claimant_owner = owner(624, "claimant", "claimant-start");
+        let identities = HashMap::from([
+            (secondary_owner.pid, secondary_owner.process_start_identity),
+            (late_owner.pid, late_owner.process_start_identity),
+            (
+                claimant_owner.pid,
+                claimant_owner.process_start_identity.clone(),
+            ),
+        ]);
+        let claimant = Registration::register_with(
+            directory.path(),
+            claimant_owner,
+            true,
+            |pid| identities.contains_key(&pid),
+            |pid| identities.get(&pid).cloned(),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(claimant.is_primary());
+    }
+
+    #[test]
+    fn non_owner_release_does_not_remove_a_live_owners_record() {
+        let directory = tempfile::tempdir().unwrap();
+        let primary_owner = owner(611, "primary", "primary-start");
+        let primary = Registration::register_with(
+            directory.path(),
+            primary_owner.clone(),
+            true,
+            |_| true,
+            |_| Some("primary-start".to_string()),
+        )
+        .unwrap()
+        .unwrap();
+        let mut secondary = Registration::register_with(
+            directory.path(),
+            owner(612, "secondary", "secondary-start"),
+            true,
+            |_| true,
+            |_| Some("primary-start".to_string()),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert!(secondary.release().unwrap());
+        assert!(primary.is_primary());
+        assert_eq!(
+            parse_owner(&fs::read_to_string(owner_path(directory.path())).unwrap()),
+            Some(primary_owner)
         );
     }
 

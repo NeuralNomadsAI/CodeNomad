@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { setTimeout as delay } from "node:timers/promises"
 import test from "node:test"
 import type { App, BrowserWindow } from "electron"
 import { ClientStateLifecycle } from "./client-state-lifecycle"
@@ -12,6 +13,9 @@ function harness(options: {
   stop?: () => Promise<void>
   nativeFlush?: () => Promise<void>
   otherWindow?: boolean
+  sessionEndCleanupTimeoutMs?: number
+  sessionEndReleaseTimeoutMs?: number
+  release?: () => Promise<void>
 } = {}) {
   const windows = new Map<string, (event?: { preventDefault(): void }) => void>()
   const appEvents = new Map<string, (event?: { preventDefault(): void }) => void>()
@@ -27,9 +31,9 @@ function harness(options: {
   } as unknown as BrowserWindow
   const other = { isDestroyed: () => false, hide: () => { calls.push("hide-other") } } as unknown as BrowserWindow
   const app = { on: (name: string, handler: never) => appEvents.set(name, handler), quit: () => calls.push("quit"), exit: () => { exits++ } } as unknown as App
-  const manager = { isPrimary: true, flush: async () => {}, drainAndReleasePrimary: async () => { calls.push("release") } } as ClientStateManager
+  const manager = { isPrimary: true, flush: async () => {}, drainAndReleasePrimary: async () => { calls.push("release"); await options.release?.() } } as ClientStateManager
   const cli = { shutdown: async () => { calls.push("stop"); await options.stop?.() } } as unknown as CliProcessManager
-  const lifecycle = new ClientStateLifecycle({ app, clientStateManager: manager, cliManager: cli, getMainWindow: () => window, getAllWindows: () => options.otherWindow ? [window, other] : [window], getAllowedRendererOrigins: () => ["http://127.0.0.1:43123"], isTrustedRendererOrigin: () => true, isWindows: true })
+  const lifecycle = new ClientStateLifecycle({ app, clientStateManager: manager, cliManager: cli, getMainWindow: () => window, getAllWindows: () => options.otherWindow ? [window, other] : [window], getAllowedRendererOrigins: () => ["http://127.0.0.1:43123"], isTrustedRendererOrigin: () => true, isWindows: true, sessionEndCleanupTimeoutMs: options.sessionEndCleanupTimeoutMs, sessionEndReleaseTimeoutMs: options.sessionEndReleaseTimeoutMs })
   lifecycle.attachMainWindow(window, { flush: async () => { calls.push("native"); await options.nativeFlush?.() } } as unknown as WindowStateTracker)
   lifecycle.registerAppEvents()
   const close = () => { let prevented = false; windows.get("close")?.({ preventDefault: () => { prevented = true } }); return prevented }
@@ -79,15 +83,15 @@ test("Windows session end vetoes termination until cleanup exits explicitly", as
   assert.equal(h.exits(), 1)
 })
 
-test("session end does not force-exit an already-hung ordinary shutdown", async () => {
-  const h = harness({ flush: () => new Promise(() => {}) })
+test("session end force-exits after the bounded window when an ordinary shutdown is hung", async () => {
+  const h = harness({ flush: () => new Promise(() => {}), sessionEndCleanupTimeoutMs: 10 })
   let prevented = false
   h.appEvents.get("before-quit")?.({ preventDefault: () => {} })
   h.windows.get("query-session-end")?.({ preventDefault: () => { prevented = true } })
-  await tick()
+  await delay(25)
   assert.equal(prevented, true)
-  assert.deepEqual(h.calls, ["hide", "renderer"])
-  assert.equal(h.exits(), 0)
+  assert.deepEqual(h.calls, ["hide", "renderer", "release"])
+  assert.equal(h.exits(), 1)
 })
 
 test("ordinary quit hides promptly and waits for CLI stop confirmation", async () => {
@@ -112,14 +116,29 @@ test("ordinary quit does not exit when CLI cleanup is unconfirmed", async () => 
   assert.deepEqual(h.calls, ["hide", "renderer", "native", "stop", "show"])
 })
 
-test("Windows session-end rejection restores a window hidden by an ordinary quit", async () => {
-  const h = harness({ stop: async () => { throw new Error("unconfirmed") } })
+test("Windows session-end rejection fails open at the bounded deadline", async () => {
+  const h = harness({ stop: async () => { throw new Error("unconfirmed") }, sessionEndCleanupTimeoutMs: 10 })
   h.appEvents.get("before-quit")?.({ preventDefault: () => {} })
   h.windows.get("query-session-end")?.({ preventDefault: () => {} })
-  await assert.rejects((h.lifecycle as any).sessionEnd, /unconfirmed/)
-  await tick()
+  await delay(25)
+  assert.equal(h.exits(), 1)
+  assert.deepEqual(h.calls, ["hide", "renderer", "native", "stop", "release"])
+})
+
+test("Windows fail-open bounds a hanging primary release before app.exit", async () => {
+  const h = harness({
+    flush: () => new Promise(() => {}),
+    release: () => new Promise(() => {}),
+    sessionEndCleanupTimeoutMs: 30,
+    sessionEndReleaseTimeoutMs: 10,
+  })
+  h.windows.get("query-session-end")?.({ preventDefault: () => {} })
+
+  await delay(25)
+  assert.deepEqual(h.calls, ["renderer", "release"])
   assert.equal(h.exits(), 0)
-  assert.deepEqual(h.calls, ["hide", "renderer", "native", "stop", "show"])
+  await delay(15)
+  assert.equal(h.exits(), 1)
 })
 
 test("CLI termination waits for the native snapshot flush", async () => {

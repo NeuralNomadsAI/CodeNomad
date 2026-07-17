@@ -120,9 +120,20 @@ jobs:
           packages/ui/src/stores/session-generation-recovery.test.ts
           packages/ui/src/stores/session-metadata.test.ts
           packages/ui/src/stores/session-pagination.test.ts
+          packages/ui/src/stores/workspace-list-reconciliation-fence.test.ts
+
+      - name: Test restore ownership integration
+        run: >-
+          node --conditions=browser --import tsx --test --test-force-exit
+          packages/ui/src/stores/instances-restore-ownership.test.ts
 
       - name: Test server
         run: node --import tsx --test "packages/server/src/**/*.test.ts"
+
+      - name: Prepare Tauri test resources
+        run: >-
+          npm run dev:prep --workspace @codenomad/tauri-app &&
+          node -e "require('fs').mkdirSync('packages/tauri-app/src-tauri/resources/server',{recursive:true})"
 
       - name: Test Tauri crate
         working-directory: packages/tauri-app/src-tauri
@@ -138,8 +149,25 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test Windows server spawn behavior
+        run: node --import tsx --test packages/server/src/workspaces/__tests__/spawn.test.ts
+
+      - name: Prepare Tauri test resources
+        run: >-
+          npm run dev:prep --workspace @codenomad/tauri-app &&
+          node -e "require('fs').mkdirSync('packages/tauri-app/src-tauri/resources/server',{recursive:true})"
 
       - name: Test Tauri crate on Windows
         working-directory: packages/tauri-app/src-tauri

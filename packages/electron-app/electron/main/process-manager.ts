@@ -8,9 +8,10 @@ import path from "path"
 import { fileURLToPath } from "url"
 import { parse as parseYaml } from "yaml"
 import { ensureManagedNodeBinary } from "./managed-node"
-import { getProcessStartIdentity } from "./client-state-process-identity"
+import { getProcessStartIdentityAsync } from "./client-state-process-identity"
 import {
   CLI_STOP_DEADLINE_MS,
+  captureInitialProcessTree,
   captureProcessTree,
   forceCapturedProcessTree,
   mergeCapturedProcessTrees,
@@ -135,6 +136,7 @@ export declare interface CliProcessManager {
 
 export class CliProcessManager extends EventEmitter {
   private child?: ChildProcess
+  private childStartIdentity?: Promise<string | undefined>
   private status: CliStatus = { state: "stopped" }
   private stdoutBuffer = ""
   private stderrBuffer = ""
@@ -177,6 +179,7 @@ export class CliProcessManager extends EventEmitter {
     this.authCookieName = `${SESSION_COOKIE_NAME_PREFIX}_${process.pid}_${Date.now()}`
     this.requestedStop = false
     this.shutdownStatus = null
+    this.childStartIdentity = undefined
     this.updateStatus({ state: "starting", port: undefined, pid: undefined, url: undefined, error: undefined })
 
     const listeningMode = this.resolveListeningMode()
@@ -209,6 +212,7 @@ export class CliProcessManager extends EventEmitter {
     }
 
     this.child = child
+    this.childStartIdentity = child.pid ? getProcessStartIdentityAsync(child.pid, 1_500) : Promise.resolve(undefined)
     this.updateStatus({ pid: child.pid ?? undefined })
 
     const stdout = child.stdout as NodeJS.ReadableStream | undefined
@@ -239,6 +243,7 @@ export class CliProcessManager extends EventEmitter {
       }
       this.emit("exit", this.status)
       this.child = undefined
+      this.childStartIdentity = undefined
     })
 
     return new Promise<CliStatus>((resolve, reject) => {
@@ -279,26 +284,38 @@ export class CliProcessManager extends EventEmitter {
 
     const isAlreadyExited = () => spawnedChild.exitCode !== null || spawnedChild.signalCode !== null
 
-    const rootStartIdentity = getProcessStartIdentity(pid)
-    const initialCapture = captureProcessTree(pid)
+    const deadlineAt = Date.now() + CLI_STOP_DEADLINE_MS
+    const spawnedIdentity = this.childStartIdentity ?? Promise.resolve(undefined)
+    const { tree: initialCapture, rootStartIdentity } = await captureInitialProcessTree(
+      pid,
+      process.platform,
+      undefined,
+      () => spawnedIdentity,
+      deadlineAt,
+    )
     let processTree = rootStartIdentity
       ? mergeCapturedProcessTrees(undefined, initialCapture, pid, rootStartIdentity)
       : initialCapture
-    const forceProcessTree = () => {
-      const latest = captureProcessTree(pid)
-      processTree = mergeCapturedProcessTrees(processTree, latest, pid, rootStartIdentity)
-      return processTree ? forceCapturedProcessTree(processTree) : false
+    let enforcement: Promise<boolean> | null = null
+    const forceProcessTree = (enforcementDeadline = deadlineAt) => {
+      if (enforcement) return enforcement
+      enforcement = (async () => {
+        const latest = await captureProcessTree(pid, process.platform, undefined, Math.min(1_500, enforcementDeadline - Date.now()))
+        processTree = mergeCapturedProcessTrees(processTree, latest, pid, rootStartIdentity)
+        return processTree ? forceCapturedProcessTree(processTree, undefined, undefined, process.kill, { deadlineAt: enforcementDeadline }) : false
+      })().finally(() => { enforcement = null })
+      return enforcement
     }
 
     let forceConfirmed = false
     const enforceIncompleteCleanup = () => {
-      try {
-        forceConfirmed = forceProcessTree()
-      } catch (error) {
+      void forceProcessTree().then((confirmed) => {
+        forceConfirmed = confirmed
+        if (!confirmed) console.warn(`[cli] immediate enforcement after incomplete cleanup was not confirmed (pid=${pid})`)
+      }, (error) => {
         console.warn(`[cli] immediate enforcement after incomplete cleanup failed (pid=${pid})`, error)
         forceConfirmed = false
-      }
-      if (!forceConfirmed) console.warn(`[cli] immediate enforcement after incomplete cleanup was not confirmed (pid=${pid})`)
+      })
     }
     this.once("shutdownIncomplete", enforceIncompleteCleanup)
 
@@ -306,9 +323,11 @@ export class CliProcessManager extends EventEmitter {
       await stopManagedChild({
         child: spawnedChild,
         isExited: isAlreadyExited,
-        force: () => forceConfirmed || forceProcessTree(),
+        force: async (forceDeadline) => forceConfirmed || await forceProcessTree(forceDeadline),
         isCleanupComplete: () => this.shutdownStatus === "complete",
         deadlineMs: CLI_STOP_DEADLINE_MS,
+        deadlineAt,
+        forceReserveMs: 5_000,
         warn: (message, error) => console.warn(`[cli] ${message} (pid=${pid})`, error ?? ""),
       })
     } finally {
@@ -320,6 +339,7 @@ export class CliProcessManager extends EventEmitter {
     console.info("[cli] CLI process exited")
     if (this.child === spawnedChild) {
       this.child = undefined
+      this.childStartIdentity = undefined
       this.updateStatus({ state: "stopped" })
     }
   }
@@ -337,16 +357,22 @@ export class CliProcessManager extends EventEmitter {
   }
 
   private handleTimeout() {
-    if (this.child) {
-      const pid = this.child.pid
+    const timedOutChild = this.child
+    if (timedOutChild) {
+      const pid = timedOutChild.pid
       if (pid) {
-        const processTree = captureProcessTree(pid)
-        const forced = processTree ? forceCapturedProcessTree(processTree) : false
-        if (!forced) {
-          console.warn(`[cli] startup-timeout process tree cleanup was not confirmed (pid=${pid})`)
-        } else {
-          this.child = undefined
-        }
+        const deadlineAt = Date.now() + 5_000
+        const spawnedIdentity = this.childStartIdentity ?? Promise.resolve(undefined)
+        void captureInitialProcessTree(pid, process.platform, undefined, () => spawnedIdentity, deadlineAt).then(async ({ tree, rootStartIdentity }) => {
+          const latest = await captureProcessTree(pid, process.platform, undefined, Math.min(1_500, deadlineAt - Date.now()))
+          const processTree = mergeCapturedProcessTrees(tree, latest, pid, rootStartIdentity)
+          const forced = processTree ? await forceCapturedProcessTree(processTree, undefined, undefined, process.kill, { deadlineAt }) : false
+          if (!forced) console.warn(`[cli] startup-timeout process tree cleanup was not confirmed (pid=${pid})`)
+          else if (this.child === timedOutChild) {
+            this.child = undefined
+            this.childStartIdentity = undefined
+          }
+        }).catch((error) => console.warn(`[cli] startup-timeout process tree cleanup failed (pid=${pid})`, error))
       }
     }
     this.updateStatus({ state: "error", error: "CLI did not start in time" })
@@ -379,11 +405,13 @@ export class CliProcessManager extends EventEmitter {
       if (!trimmed) continue
 
       if (trimmed === SERVER_SHUTDOWN_COMPLETE) {
+        if (this.shutdownStatus === "incomplete") continue
         this.shutdownStatus = "complete"
         console.info("[cli] server confirmed graceful shutdown")
         continue
       }
       if (trimmed === SERVER_SHUTDOWN_INCOMPLETE) {
+        if (this.shutdownStatus === "incomplete") continue
         this.shutdownStatus = "incomplete"
         console.warn("[cli] server reported incomplete cleanup; requesting final process-tree enforcement")
         this.emit("shutdownIncomplete")

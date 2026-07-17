@@ -115,7 +115,7 @@ describe("server shutdown signal boundary", () => {
 
     await handler("stdin")
     assert.equal(attempts, 2)
-    assert.deepEqual(statuses, [SERVER_SHUTDOWN_INCOMPLETE, SERVER_SHUTDOWN_COMPLETE])
+    assert.deepEqual(statuses, [SERVER_SHUTDOWN_COMPLETE])
     assert.deepEqual(exitCodes, [0])
   })
 

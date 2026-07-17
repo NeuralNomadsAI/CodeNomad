@@ -20,6 +20,7 @@ export interface CrossHostLeaseDependencies {
   onParticipantPublished?(): void
   onOwnerPrepared?(): void
   onOwnerRetired?(): void
+  onGracefulOwnerChecked?(): void
 }
 
 const defaultDependencies: CrossHostLeaseDependencies = {
@@ -162,6 +163,38 @@ function removeParticipantIfOwned(path: string, owner: ProcessOwner): void {
   }
 }
 
+function retireOwnerIfOwned(directory: string, owner: ProcessOwner, dependencies: CrossHostLeaseDependencies): void {
+  const observed = readIfExists(ownerPath(directory))
+  const current = parseOwner(observed ?? "")
+  if (!current || !sameOwner(current, owner)) return
+  dependencies.onGracefulOwnerChecked?.()
+  if (readIfExists(ownerPath(directory)) !== observed) return
+  const retired = join(directory, `${RETIRED_PREFIX}${owner.pid}.${owner.runToken}`)
+  try { renameSync(join(directory, CROSS_HOST_OWNER_DIRECTORY), retired) } catch (error) {
+    if (["ENOENT", "EEXIST", "ENOTEMPTY"].some((code) => hasErrorCode(error, code)) || existsSync(retired)) return
+    throw error
+  }
+  try {
+    dependencies.onOwnerRetired?.()
+    for (const name of readdirSync(directory)) {
+      if (!name.startsWith(PARTICIPANT_PREFIX) || !name.endsWith(PARTICIPANT_SUFFIX)) continue
+      const path = join(directory, name), observedParticipant = readIfExists(path)
+      if (observedParticipant === undefined) continue
+      const participant = parseOwner(observedParticipant)
+      if (participant) {
+        removeParticipantIfOwned(path, participant)
+        try { unlinkSync(recoveryPath(directory, participant)) } catch {}
+      } else if (readIfExists(path) === observedParticipant) {
+        try { unlinkSync(path) } catch (error) {
+          if (!hasErrorCode(error, "ENOENT")) throw error
+        }
+      }
+    }
+  } finally {
+    try { rmSync(retired, { recursive: true, force: true }) } catch {}
+  }
+}
+
 function recoveryClaimants(
   directory: string,
   current: ProcessOwner,
@@ -249,6 +282,7 @@ export class CrossHostRegistration {
     private readonly participant: string,
     private readonly recoveryClaim: string | undefined,
     private primary: boolean,
+    private readonly dependencies: CrossHostLeaseDependencies,
   ) {}
 
   get path(): string { return this.directory }
@@ -284,7 +318,7 @@ export class CrossHostRegistration {
           if (!retireOwner(directory, observed, existing, owner, dependencies)) break
         }
       }
-      return new CrossHostRegistration(directory, owner, participant, recoveryClaim, primary)
+      return new CrossHostRegistration(directory, owner, participant, recoveryClaim, primary, dependencies)
     } catch (error) {
       removeParticipantIfOwned(participant, owner)
       if (recoveryClaim) try { unlinkSync(recoveryClaim) } catch {}
@@ -300,6 +334,7 @@ export class CrossHostRegistration {
 
   release(): boolean {
     if (this.released) return false
+    retireOwnerIfOwned(this.directory, this.owner, this.dependencies)
     removeParticipantIfOwned(this.participant, this.owner)
     if (this.recoveryClaim) try { unlinkSync(this.recoveryClaim) } catch {}
     this.primary = false

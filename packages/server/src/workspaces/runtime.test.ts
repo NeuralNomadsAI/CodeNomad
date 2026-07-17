@@ -59,11 +59,14 @@ async function harness(options: WorkspaceRuntimeOptions & { binary?: string; out
   const platform = options.platform ?? "linux"
   const command = options.spawnSync ?? ((command: string, args: readonly string[]) => {
     calls.push({ command, args: [...args] })
-    if (isToken(args)) return result(token([[4242, 1, 4242, "100"]], isSignal(args)))
+    const alive = child.exitCode === null && child.signalCode === null
+    if (isToken(args)) return result(token(alive ? [[4242, 1, 4242, "100"]] : [], isSignal(args)))
     if (isGuarded(args)) return result(platform === "win32"
       ? "CODENOMAD_TARGET|4242|1|0|win-start||100\nCODENOMAD_RESULT|1||1"
       : guarded(true, [[4242, 1, 4242, "100"]]))
-    return result(platform === "win32" ? windows([[4242, 1, "win-start"]]) : posix([[4242, 1, 4242, "100"]]))
+    return result(platform === "win32"
+      ? windows(alive ? [[4242, 1, "win-start"]] : [])
+      : posix(alive ? [[4242, 1, 4242, "100"]] : []))
   }) as Command
   const runtime = new WorkspaceRuntime(new EventBus(), pino({ level: "silent" }), {
     gracefulStopTimeoutMs: 10, forcedStopTimeoutMs: 10, ...options,

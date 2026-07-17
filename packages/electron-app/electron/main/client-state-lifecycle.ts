@@ -13,6 +13,8 @@ interface ClientStateLifecycleDependencies {
   getAllowedRendererOrigins(window?: BrowserWindow | null): string[]
   isTrustedRendererOrigin(url: string, allowedOrigins: string[]): boolean
   rendererFlushTimeoutMs?: number
+  sessionEndCleanupTimeoutMs?: number
+  sessionEndReleaseTimeoutMs?: number
   isWindows?: boolean
 }
 
@@ -23,6 +25,7 @@ export class ClientStateLifecycle {
   private trackedMainWindow: BrowserWindow | null = null
   private windowStateTracker: WindowStateTracker | null = null
   private windowsHiddenForShutdown = false
+  private primaryRelease: Promise<void> | null = null
 
   constructor(private readonly dependencies: ClientStateLifecycleDependencies) {}
 
@@ -81,7 +84,7 @@ export class ClientStateLifecycle {
       event.preventDefault()
       this.hideWindows()
       void this.startShutdown(this.dependencies.getMainWindow()).then(() => this.exit(), (error) => {
-        this.restoreWindowAfterRejectedShutdown(this.dependencies.getMainWindow())
+        if (!this.sessionEnd) this.restoreWindowAfterRejectedShutdown(this.dependencies.getMainWindow())
         console.warn("[client-state] desktop shutdown remains pending because cleanup was not contained", error)
       })
     })
@@ -99,7 +102,7 @@ export class ClientStateLifecycle {
       await this.runStage("renderer shutdown flush", () => this.flushRenderer(window))
       await this.runStage("native shutdown flush", () => this.flushNative())
       await this.dependencies.cliManager.shutdown()
-      await this.runStage("primary release", () => this.dependencies.clientStateManager.drainAndReleasePrimary())
+      await this.releasePrimary()
     })()
     this.shutdown = stages.catch((error) => {
       this.shutdown = null
@@ -128,12 +131,32 @@ export class ClientStateLifecycle {
 
   private promoteToSessionEnd(window: BrowserWindow): void {
     if (this.exitAllowed || this.sessionEnd) return
-    this.sessionEnd = this.startShutdown(window)
-    void this.sessionEnd.then(() => this.exit()).catch((error) => {
-      this.sessionEnd = null
-      this.restoreWindowAfterRejectedShutdown(window)
-      console.warn("[client-state] OS session-end cleanup was not contained before termination", error)
-    })
+    const cleanup = this.startShutdown(window)
+    this.sessionEnd = new Promise<void>((resolve) => {
+      const timeoutMs = this.dependencies.sessionEndCleanupTimeoutMs ?? 5_000
+      const releaseTimeoutMs = Math.min(timeoutMs, this.dependencies.sessionEndReleaseTimeoutMs ?? 250)
+      const releaseTimer = setTimeout(() => {
+        void this.releasePrimary()
+      }, Math.max(0, timeoutMs - releaseTimeoutMs))
+      const exitTimer = setTimeout(() => {
+        console.warn(`[client-state] OS session-end cleanup exceeded ${timeoutMs}ms; exiting without containment`)
+        resolve()
+      }, timeoutMs)
+      void cleanup.then(() => {
+        clearTimeout(releaseTimer)
+        clearTimeout(exitTimer)
+        resolve()
+      }, (error) => {
+        console.warn("[client-state] OS session-end cleanup was not contained; waiting for forced exit", error)
+      })
+    }).then(() => this.exit())
+  }
+
+  private releasePrimary(): Promise<void> {
+    if (!this.primaryRelease) {
+      this.primaryRelease = this.runStage("primary release", () => this.dependencies.clientStateManager.drainAndReleasePrimary())
+    }
+    return this.primaryRelease
   }
 
   private async flushRenderer(window: BrowserWindow | null): Promise<void> {
