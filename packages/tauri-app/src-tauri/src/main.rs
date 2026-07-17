@@ -19,6 +19,8 @@ use keepawake::KeepAwake;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
+#[cfg(any(windows, test))]
+use std::future::Future;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::menu::{AboutMetadata, MenuBuilder, MenuItem, PredefinedMenuItem, SubmenuBuilder};
@@ -726,12 +728,17 @@ fn main() {
                 }
 
                 "get_updates" => {
-                    if let Err(err) = app_handle
-                        .opener()
-                        .open_url(RELEASES_URL, None::<&str>)
+                    #[cfg(windows)]
                     {
-                        eprintln!("[tauri] failed to open the CodeNomad releases page: {err}");
+                        let app_handle = app_handle.clone();
+                        tauri::async_runtime::spawn(run_update_with_fallback(
+                            windows_update::install_stable_update(),
+                            move || open_releases_page(&app_handle),
+                        ));
                     }
+
+                    #[cfg(not(windows))]
+                    open_releases_page(app_handle);
                 }
                 // App menu (macOS)
                 "hide" => {
@@ -1012,6 +1019,23 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+#[cfg(any(windows, test))]
+async fn run_update_with_fallback(
+    update: impl Future<Output = Result<(), String>>,
+    fallback: impl FnOnce(),
+) {
+    if let Err(err) = update.await {
+        eprintln!("[tauri] WinGet update failed, opening the releases page: {err}");
+        fallback();
+    }
+}
+
+fn open_releases_page(app_handle: &AppHandle) {
+    if let Err(err) = app_handle.opener().open_url(RELEASES_URL, None::<&str>) {
+        eprintln!("[tauri] failed to open the CodeNomad releases page: {err}");
+    }
+}
+
 fn build_about_metadata(version: &str, include_update_link: bool) -> AboutMetadata<'static> {
     AboutMetadata {
         name: Some("CodeNomad".to_string()),
@@ -1026,8 +1050,21 @@ fn build_about_metadata(version: &str, include_update_link: bool) -> AboutMetada
 }
 
 #[cfg(test)]
-mod about_tests {
-    use super::{build_about_metadata, RELEASES_URL};
+mod menu_tests {
+    use super::{build_about_metadata, run_update_with_fallback, RELEASES_URL};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn failed_update_uses_release_fallback() {
+        let fallback_called = AtomicBool::new(false);
+
+        tauri::async_runtime::block_on(run_update_with_fallback(
+            async { Err("update failed".to_string()) },
+            || fallback_called.store(true, Ordering::Relaxed),
+        ));
+
+        assert!(fallback_called.load(Ordering::Relaxed));
+    }
 
     #[test]
     fn about_metadata_includes_version_and_supported_update_link() {
