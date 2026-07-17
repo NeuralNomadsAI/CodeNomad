@@ -17,10 +17,7 @@ export const folderSelectionMessages = {
   "folderSelection.recent.rename": "Arbeitsbereich umbenennen",
   "folderSelection.recent.remove": "Aus Liste entfernen",
   "folderSelection.recent.openBadge": "Offen",
-  "folderSelection.recent.alreadyOpenTitle": "Projekt bereits offen",
-  "folderSelection.recent.alreadyOpenMessage": "Wählen Sie, wie dieser Ordner geöffnet werden soll.",
   "folderSelection.recent.switchToOpenProject": "Zum offenen Projekt wechseln",
-  "folderSelection.recent.openAnotherInstance": "Weitere Instanz öffnen",
 
   "folderSelection.browse.title": "Nach Ordner suchen",
   "folderSelection.browse.subtitle": "Wählen Sie einen beliebigen Ordner auf Ihrem Computer aus",

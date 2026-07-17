@@ -17,10 +17,7 @@ export const folderSelectionMessages = {
   "folderSelection.recent.rename": "कार्यस्थान पुन: नामकरण गर्नुहोस्",
   "folderSelection.recent.remove": "भर्खरको सूचीबाट हटाउनुहोस्",
   "folderSelection.recent.openBadge": "खोल्नुहोस्",
-  "folderSelection.recent.alreadyOpenTitle": "परियोजना पहिले नै खुला छ",
-  "folderSelection.recent.alreadyOpenMessage": "यो फोल्डर कसरी खोल्ने छनौट गर्नुहोस्।",
   "folderSelection.recent.switchToOpenProject": "खुला परियोजनामा जानुहोस्",
-  "folderSelection.recent.openAnotherInstance": "अर्को उदाहरण खोल्नुहोस्",
 
   "folderSelection.browse.title": "फोल्डरको लागि ब्राउज गर्नुहोस्",
   "folderSelection.browse.subtitle": "तपाईंको कम्प्युटरमा कुनै पनि फोल्डर चयन गर्नुहोस्",

@@ -17,10 +17,7 @@ export const folderSelectionMessages = {
   "folderSelection.recent.rename": "שנה שם סביבת עבודה",
   "folderSelection.recent.remove": "הסר מהרשימה האחרונה",
   "folderSelection.recent.openBadge": "פתוח",
-  "folderSelection.recent.alreadyOpenTitle": "הפרויקט כבר פתוח",
-  "folderSelection.recent.alreadyOpenMessage": "בחר כיצד לפתוח את התיקייה הזו.",
   "folderSelection.recent.switchToOpenProject": "עבור לפרויקט הפתוח",
-  "folderSelection.recent.openAnotherInstance": "פתח מופע נוסף",
 
   "folderSelection.browse.title": "עיון בתיקייה",
   "folderSelection.browse.subtitle": "בחר כל תיקייה במחשב שלך",

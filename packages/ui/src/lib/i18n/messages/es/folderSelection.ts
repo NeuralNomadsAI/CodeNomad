@@ -17,10 +17,7 @@ export const folderSelectionMessages = {
   "folderSelection.recent.rename": "Renombrar workspace",
   "folderSelection.recent.remove": "Eliminar de recientes",
   "folderSelection.recent.openBadge": "Abierta",
-  "folderSelection.recent.alreadyOpenTitle": "Proyecto ya abierto",
-  "folderSelection.recent.alreadyOpenMessage": "Elige cómo abrir esta carpeta.",
   "folderSelection.recent.switchToOpenProject": "Cambiar al proyecto abierto",
-  "folderSelection.recent.openAnotherInstance": "Abrir otra instancia",
 
   "folderSelection.browse.title": "Buscar carpeta",
   "folderSelection.browse.subtitle": "Selecciona cualquier carpeta en tu ordenador",
