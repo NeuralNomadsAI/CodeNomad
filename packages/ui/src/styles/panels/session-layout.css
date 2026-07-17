@@ -254,11 +254,17 @@ session-sidebar-controls .selector-trigger-primary {
 
 .session-list {
   @apply flex-1;
+  overflow-anchor: none;
+  overscroll-behavior-y: contain;
 }
 
 .session-list-item {
-  @apply border-b last:border-b-0;
+  @apply border-b;
   border-color: var(--border-base);
+}
+
+.session-list-item-last {
+  border-bottom: 0;
 }
 
 .session-item-base {
