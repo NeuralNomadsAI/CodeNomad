@@ -19,9 +19,11 @@ use keepawake::KeepAwake;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
+#[cfg(any(windows, test))]
+use std::future::Future;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::menu::{MenuBuilder, MenuItem, SubmenuBuilder};
+use tauri::menu::{AboutMetadata, MenuBuilder, MenuItem, PredefinedMenuItem, SubmenuBuilder};
 use tauri::plugin::{Builder as PluginBuilder, TauriPlugin};
 use tauri::webview::{PageLoadEvent, Webview};
 use tauri::{
@@ -43,6 +45,7 @@ use std::os::windows::ffi::OsStrExt;
 use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 
 const ZOOM_STEP: f64 = 0.1;
+const RELEASES_URL: &str = "https://github.com/NeuralNomadsAI/CodeNomad/releases/latest";
 const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_WINDOW_CONTEXT__ = 'local';";
 const REMOTE_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_WINDOW_CONTEXT__ = 'remote';";
 
@@ -736,11 +739,20 @@ fn main() {
                     }
                 }
 
-                // App menu (macOS)
-                "about" => {
-                    // TODO: Implement about dialog
-                    println!("About menu item clicked");
+                "get_updates" => {
+                    #[cfg(windows)]
+                    {
+                        let app_handle = app_handle.clone();
+                        tauri::async_runtime::spawn(run_update_with_fallback(
+                            windows_update::install_stable_update(),
+                            move || open_releases_page(&app_handle),
+                        ));
+                    }
+
+                    #[cfg(not(windows))]
+                    open_releases_page(app_handle);
                 }
+                // App menu (macOS)
                 "hide" => {
                     if let Some(window) = app_handle.get_webview_window("main") {
                         let _ = window.hide();
@@ -841,11 +853,27 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
 
     // Create submenus
     let mut submenus = Vec::new();
+    let about_item = PredefinedMenuItem::about(
+        app,
+        Some("About CodeNomad"),
+        Some(build_about_metadata(
+            &app.package_info().version.to_string(),
+            cfg!(target_os = "linux"),
+        )),
+    )?;
+    let get_updates_item = MenuItem::with_id(
+        app,
+        "get_updates",
+        "Get Updates...",
+        true,
+        None::<&str>,
+    )?;
 
     // App menu (macOS only)
     if is_mac {
         let app_menu = SubmenuBuilder::new(app, "CodeNomad")
-            .text("about", "About CodeNomad")
+            .item(&about_item)
+            .item(&get_updates_item)
             .separator()
             .text("hide", "Hide CodeNomad")
             .text("hide_others", "Hide Others")
@@ -983,6 +1011,15 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     };
     submenus.push(window_menu);
 
+    if !is_mac {
+        let help_menu = SubmenuBuilder::new(app, "Help")
+            .item(&get_updates_item)
+            .separator()
+            .item(&about_item)
+            .build()?;
+        submenus.push(help_menu);
+    }
+
     // Build the main menu with all submenus
     let submenu_refs: Vec<&dyn tauri::menu::IsMenuItem<_>> = submenus
         .iter()
@@ -992,4 +1029,70 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
 
     app.set_menu(menu)?;
     Ok(())
+}
+
+#[cfg(any(windows, test))]
+async fn run_update_with_fallback(
+    update: impl Future<Output = Result<(), String>>,
+    fallback: impl FnOnce(),
+) {
+    if let Err(err) = update.await {
+        eprintln!("[tauri] WinGet update failed, opening the releases page: {err}");
+        fallback();
+    }
+}
+
+fn open_releases_page(app_handle: &AppHandle) {
+    if let Err(err) = app_handle.opener().open_url(RELEASES_URL, None::<&str>) {
+        eprintln!("[tauri] failed to open the CodeNomad releases page: {err}");
+    }
+}
+
+fn build_about_metadata(version: &str, include_update_link: bool) -> AboutMetadata<'static> {
+    AboutMetadata {
+        name: Some("CodeNomad".to_string()),
+        version: Some(version.to_string()),
+        authors: Some(vec!["Neural Nomads AI".to_string()]),
+        comments: Some("A desktop workspace for OpenCode.".to_string()),
+        license: Some("MIT".to_string()),
+        website: include_update_link.then(|| RELEASES_URL.to_string()),
+        website_label: include_update_link.then(|| "Get updates".to_string()),
+        ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod menu_tests {
+    use super::{build_about_metadata, run_update_with_fallback, RELEASES_URL};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn failed_update_uses_release_fallback() {
+        let fallback_called = AtomicBool::new(false);
+
+        tauri::async_runtime::block_on(run_update_with_fallback(
+            async { Err("update failed".to_string()) },
+            || fallback_called.store(true, Ordering::Relaxed),
+        ));
+
+        assert!(fallback_called.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn about_metadata_includes_version_and_supported_update_link() {
+        let metadata = build_about_metadata("1.2.3", true);
+
+        assert_eq!(metadata.name.as_deref(), Some("CodeNomad"));
+        assert_eq!(metadata.version.as_deref(), Some("1.2.3"));
+        assert_eq!(metadata.website.as_deref(), Some(RELEASES_URL));
+        assert_eq!(metadata.website_label.as_deref(), Some("Get updates"));
+    }
+
+    #[test]
+    fn about_metadata_omits_unsupported_update_link() {
+        let metadata = build_about_metadata("1.2.3", false);
+
+        assert_eq!(metadata.website, None);
+        assert_eq!(metadata.website_label, None);
+    }
 }
