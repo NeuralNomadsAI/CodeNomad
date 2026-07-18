@@ -191,7 +191,7 @@ export const instanceMessages = {
 
   "instanceShell.yoloMode.noSessionSelected": "בחרו סשן כדי להגדיר מצב Yolo.",
   "instanceShell.yoloMode.title": "מצב Yolo",
-  "instanceShell.yoloMode.description": "מאשר אוטומטית בקשות הרשאה עבור הסשן הזה. כבוי כברירת מחדל.",
+  "instanceShell.yoloMode.description": "מאשר אוטומטית בקשות הרשאה עבור הסשן הזה.",
   "instanceShell.yoloMode.badge": "Yolo",
   "instanceShell.yoloMode.badgeAriaLabel": "מצב Yolo פעיל",
 

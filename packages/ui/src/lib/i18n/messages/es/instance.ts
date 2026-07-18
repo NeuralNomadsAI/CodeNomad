@@ -167,8 +167,8 @@ export const instanceMessages = {
 
   "instanceShell.yoloMode.noSessionSelected": "Selecciona una sesion para configurar el modo yolo.",
   "instanceShell.yoloMode.title": "Modo yolo",
-  "instanceShell.yoloMode.description": "Aprueba automaticamente las solicitudes de permiso de esta sesion. Esta desactivado por defecto.",
-  "instanceShell.yoloMode.badge": "Modo yolo",
+  "instanceShell.yoloMode.description": "Aprueba automaticamente las solicitudes de permiso de esta sesion.",
+  "instanceShell.yoloMode.badge": "Yolo",
   "instanceShell.yoloMode.badgeAriaLabel": "Modo yolo activado",
 
   "instanceShell.backgroundProcesses.empty": "No hay procesos en segundo plano.",

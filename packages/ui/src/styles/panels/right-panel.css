@@ -704,7 +704,7 @@
 }
 
 .status-tab-context-panel {
-  @apply border-b;
+  @apply border-b px-4 py-2;
   border-color: var(--border-base);
   background-color: var(--surface-secondary);
 }

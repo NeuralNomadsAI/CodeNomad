@@ -10,12 +10,12 @@ test("reads the explicit OpenCode auth file without exposing credentials through
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-usage-"))
   const authFile = path.join(directory, "auth.json")
   const previous = process.env.OPENCODE_AUTH_FILE
-  fs.writeFileSync(authFile, JSON.stringify({ anthropic: { type: "oauth", access: "secret-token" } }))
+  fs.writeFileSync(authFile, JSON.stringify({ openai: { type: "oauth", access: "secret-token" } }))
   process.env.OPENCODE_AUTH_FILE = authFile
 
   try {
-    assert.equal((readOpenCodeAuth().anthropic as Record<string, unknown>).access, "secret-token")
-    assert.equal(getCredential(["anthropic"], ["access"]), "secret-token")
+    assert.equal((readOpenCodeAuth().openai as Record<string, unknown>).access, "secret-token")
+    assert.equal(getCredential(["openai"], ["access"]), "secret-token")
   } finally {
     if (previous === undefined) delete process.env.OPENCODE_AUTH_FILE
     else process.env.OPENCODE_AUTH_FILE = previous

@@ -167,7 +167,7 @@ export const instanceMessages = {
 
   "instanceShell.yoloMode.noSessionSelected": "Выберите сессию, чтобы настроить режим Yolo.",
   "instanceShell.yoloMode.title": "Режим Yolo",
-  "instanceShell.yoloMode.description": "Автоматически одобряет запросы разрешений для этой сессии. По умолчанию выключен.",
+  "instanceShell.yoloMode.description": "Автоматически одобряет запросы разрешений для этой сессии.",
   "instanceShell.yoloMode.badge": "Yolo",
   "instanceShell.yoloMode.badgeAriaLabel": "Режим Yolo включен",
 

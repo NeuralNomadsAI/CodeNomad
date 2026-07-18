@@ -10,8 +10,9 @@ interface ContextUsagePanelProps {
   class?: string
 }
 
-const chipClass = "inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary"
-const chipLabelClass = "uppercase text-[10px] tracking-wide text-muted"
+const metricClass = "min-w-0"
+const metricLabelClass = "block truncate text-[10px] uppercase tracking-wide text-muted"
+const metricValueClass = "block truncate text-xs font-semibold tabular-nums text-primary"
 
 const ContextUsagePanel: Component<ContextUsagePanelProps> = (props) => {
   const { t } = useI18n()
@@ -53,42 +54,44 @@ const ContextUsagePanel: Component<ContextUsagePanelProps> = (props) => {
     return value > 0 ? value : 0
   })
 
-  const costDisplay = createMemo(() => `$${costValue().toFixed(2)}`)
+  const costDisplay = createMemo(() => info().isSubscriptionModel ? t("contextUsagePanel.included") : `$${costValue().toFixed(2)}`)
 
   return (
-    <div class={`session-context-panel px-4 py-2 ${props.class ?? ""}`}>
-      <div class="flex flex-wrap items-center gap-2 text-xs text-primary">
-        <div class={chipClass}>
-          <span class={chipLabelClass}>{t("contextUsagePanel.labels.input")}</span>
-          <span class="font-semibold text-primary">{formatTokenTotal(inputTokens())}</span>
+    <div class={`session-context-panel ${props.class ?? ""}`}>
+      <div class="grid grid-cols-3 gap-x-3 gap-y-2">
+        <div class={metricClass}>
+          <span class={metricLabelClass}>{t("contextUsagePanel.labels.input")}</span>
+          <span class={metricValueClass}>{formatTokenTotal(inputTokens())}</span>
         </div>
-        <div class={chipClass}>
-          <span class={chipLabelClass}>{t("contextUsagePanel.labels.output")}</span>
-          <span class="font-semibold text-primary">{formatTokenTotal(outputTokens())}</span>
+        <div class={metricClass}>
+          <span class={metricLabelClass}>{t("contextUsagePanel.labels.output")}</span>
+          <span class={metricValueClass}>{formatTokenTotal(outputTokens())}</span>
         </div>
-        <div class={chipClass}>
-          <span class={chipLabelClass}>{t("contextUsagePanel.labels.cost")}</span>
-          <span class="font-semibold text-primary">{costDisplay()}</span>
+        <div class={metricClass}>
+          <span class={metricLabelClass}>{t("contextUsagePanel.labels.cost")}</span>
+          <span class={metricValueClass}>{costDisplay()}</span>
         </div>
-        <Show when={hasChildren() && showUsage()}>
-          <div class={chipClass}>
-            <span class={chipLabelClass}>{t("contextUsagePanel.labels.totalInput")}</span>
-            <span class="font-semibold text-primary">{formatTokenTotal(totalInputTokens())}</span>
-          </div>
-          <div class={chipClass}>
-            <span class={chipLabelClass}>{t("contextUsagePanel.labels.totalOutput")}</span>
-            <span class="font-semibold text-primary">{formatTokenTotal(totalOutputTokens())}</span>
-          </div>
-          <div class={chipClass}>
-            <span class={chipLabelClass}>{t("contextUsagePanel.labels.totalCost")}</span>
-            <span class="font-semibold text-primary">{totalCostDisplay()}</span>
-          </div>
-          <div class={chipClass}>
-            <span class={chipLabelClass}>{t("contextUsagePanel.labels.totalReasoning")}</span>
-            <span class="font-semibold text-primary">{formatTokenTotal(totalReasoningTokens())}</span>
-          </div>
-        </Show>
       </div>
+      <Show when={hasChildren() && showUsage()}>
+        <div class="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-base pt-2">
+          <div class={metricClass}>
+            <span class={metricLabelClass}>{t("contextUsagePanel.labels.totalInput")}</span>
+            <span class={metricValueClass}>{formatTokenTotal(totalInputTokens())}</span>
+          </div>
+          <div class={metricClass}>
+            <span class={metricLabelClass}>{t("contextUsagePanel.labels.totalOutput")}</span>
+            <span class={metricValueClass}>{formatTokenTotal(totalOutputTokens())}</span>
+          </div>
+          <div class={metricClass}>
+            <span class={metricLabelClass}>{t("contextUsagePanel.labels.totalCost")}</span>
+            <span class={metricValueClass}>{totalCostDisplay()}</span>
+          </div>
+          <div class={metricClass}>
+            <span class={metricLabelClass}>{t("contextUsagePanel.labels.totalReasoning")}</span>
+            <span class={metricValueClass}>{formatTokenTotal(totalReasoningTokens())}</span>
+          </div>
+        </div>
+      </Show>
     </div>
   )
 }

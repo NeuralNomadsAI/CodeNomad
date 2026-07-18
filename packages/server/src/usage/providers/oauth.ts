@@ -11,33 +11,6 @@ import {
   toUsageWindow,
 } from "../shared"
 
-const claudeAliases = ["anthropic", "claude"] as const
-const claude: UsageProvider = {
-  id: "claude",
-  name: "Claude",
-  aliases: claudeAliases,
-  async fetchQuota() {
-    const token = getCredential(claudeAliases, ["access", "token"])
-    if (!token) return notConfigured(this.id, this.name)
-    return safeFetch(this.id, this.name, async () => {
-      const payload = await fetchJson("https://api.anthropic.com/api/oauth/usage", {
-        headers: { Authorization: `Bearer ${token}`, "anthropic-beta": "oauth-2025-04-20" },
-      })
-      const windows: Record<string, ReturnType<typeof toUsageWindow>> = {}
-      for (const [key, source] of [
-        ["5h", payload?.five_hour],
-        ["7d", payload?.seven_day],
-        ["7d-sonnet", payload?.seven_day_sonnet],
-        ["7d-opus", payload?.seven_day_opus],
-      ] as const) {
-        if (!source) continue
-        windows[key] = toUsageWindow({ usedPercent: toNumber(source.utilization), resetAt: toTimestamp(source.resets_at) })
-      }
-      return { windows }
-    })
-  },
-}
-
 const codexAliases = ["openai", "codex", "chatgpt"] as const
 const codex: UsageProvider = {
   id: "codex",
@@ -64,13 +37,6 @@ const codex: UsageProvider = {
           usedPercent: toNumber(source.used_percent),
           windowSeconds: seconds,
           resetAt: toTimestamp(source.reset_at),
-        })
-      }
-      const balance = toNumber(payload?.credits?.balance)
-      if (payload?.credits?.unlimited || balance !== null) {
-        windows.credits_balance = toUsageWindow({
-          usedPercent: null,
-          valueLabel: payload?.credits?.unlimited ? "∞" : `$${balance!.toFixed(2)}`,
         })
       }
       return { windows }
@@ -117,4 +83,4 @@ const copilot: UsageProvider = {
   },
 }
 
-export const oauthProviders: UsageProvider[] = [claude, codex, copilot]
+export const oauthProviders: UsageProvider[] = [codex, copilot]

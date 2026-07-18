@@ -191,8 +191,8 @@ export const instanceMessages = {
 
   "instanceShell.yoloMode.noSessionSelected": "Yolo मोड कन्फिगर गर्न सत्र चयन गर्नुहोस्।",
   "instanceShell.yoloMode.title": "Yolo मोड",
-  "instanceShell.yoloMode.description": "यस सत्रको लागि अनुमति अनुरोधहरू स्वतः स्वीकृत गर्नुहोस्। पूर्वनिर्धारित रूपमा अक्षम।",
-  "instanceShell.yoloMode.badge": "Yolo मोड",
+  "instanceShell.yoloMode.description": "यस सत्रको लागि अनुमति अनुरोधहरू स्वतः स्वीकृत गर्नुहोस्।",
+  "instanceShell.yoloMode.badge": "Yolo",
   "instanceShell.yoloMode.badgeAriaLabel": "Yolo मोड सक्षम गरियो",
 
   "instanceShell.backgroundProcesses.empty": "कुनै पृष्ठभूमि प्रक्रियाहरू छैनन्।",
