@@ -94,7 +94,6 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
 
   return (
     <div>
-      <div class="mb-2 truncate text-right text-sm font-semibold text-primary">{usage()?.providerName ?? props.providerId}</div>
       <Show when={usage() !== undefined} fallback={<div class="text-xs text-tertiary">{t("providerUsage.loading")}</div>}>
         <Show when={usage()} fallback={<div class="text-xs text-tertiary">{t("providerUsage.unavailable")}</div>}>
           {(data) => (
@@ -116,7 +115,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
                 <For each={entries()}>
                   {([label, window]) => (
                     <div>
-                      <div class="mb-1 flex items-baseline justify-between gap-2 text-[11px] text-secondary">
+                      <div class="mb-1 flex items-baseline justify-between gap-2 text-[11px] text-primary">
                         <span class="font-medium">{windowLabel(label)}</span>
                         <div class="flex min-w-0 items-baseline gap-1.5 text-right">
                           <span class="shrink-0 font-medium">{displayValue(window)}</span>
@@ -131,7 +130,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
                         </div>
                       </div>
                       <Show when={window.usedPercent !== null}>
-                        <div class="h-1.5 overflow-hidden border border-base" style={{ "background-color": "var(--surface-base)" }}>
+                        <div class="h-2 overflow-hidden border border-base" style={{ "background-color": "var(--surface-base)" }}>
                           <div
                             class="h-full transition-[width] duration-300"
                             style={{ width: `${Math.max(0, Math.min(100, window.usedPercent ?? 0))}%`, "background-color": barColor(window.usedPercent) }}
@@ -151,6 +150,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
           )}
         </Show>
       </Show>
+      <div class="mt-2 truncate text-right text-sm font-semibold text-secondary">{usage()?.providerName ?? props.providerId}</div>
     </div>
   )
 }
