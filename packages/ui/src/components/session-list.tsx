@@ -37,6 +37,7 @@ import { collectSessionThreadIds, findSessionThread, flattenVisibleSessionThread
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
 import { useConfig } from "../stores/preferences"
+import { shouldRenderSessionRows } from "./session-list-visibility"
 const log = getLogger("session")
 
 
@@ -883,7 +884,10 @@ const SessionList: Component<SessionListProps> = (props) => {
             </div>
           </Show>
 
-          <Show when={visibleProjection().ids.length > 0 || hasMore() || isFetchingSessions()}>
+          <Show when={shouldRenderSessionRows(
+            Boolean(sessionListError()),
+            visibleProjection().ids.length > 0 || hasMore() || isFetchingSessions(),
+          )}>
            <div class="session-section">
              <Show when={visibleProjection().ids.length > 0}>
                <Virtualizer

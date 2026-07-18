@@ -104,6 +104,7 @@ jobs:
       - name: Test changed runnable UI behavior
         run: >-
           node --import tsx --test
+          packages/ui/src/components/session-list-visibility.test.ts
           packages/ui/src/lib/hooks/use-app-session-capture.test.ts
           packages/ui/src/lib/trailing-resync.test.ts
           packages/ui/src/stores/abort-created-workspace-cleanup.test.ts

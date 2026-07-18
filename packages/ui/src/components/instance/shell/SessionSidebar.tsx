@@ -18,6 +18,7 @@ import AgentSelector from "../../agent-selector"
 import ModelSelector from "../../model-selector"
 import ThinkingSelector from "../../thinking-selector"
 import { getLogger } from "../../../lib/logger"
+import { shouldMountSessionList } from "../../session-list-visibility"
 
 const log = getLogger("session")
 
@@ -130,21 +131,23 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
       </div>
 
       <div class="session-sidebar flex flex-col flex-1 min-h-0">
-        <SessionList
-          instanceId={props.instanceId}
-          threads={props.threads()}
-          activeSessionId={props.activeSessionId()}
-          onSelect={props.onSelectSession}
-          onNew={() => {
-            const result = props.onNewSession()
-            if (result instanceof Promise) {
-              void result.catch((error) => log.error("Failed to create session:", error))
-            }
-          }}
-          enableFilterBar={props.showSearch()}
-          showHeader={false}
-          showFooter={false}
-        />
+        <Show when={shouldMountSessionList(props.drawerState())}>
+          <SessionList
+            instanceId={props.instanceId}
+            threads={props.threads()}
+            activeSessionId={props.activeSessionId()}
+            onSelect={props.onSelectSession}
+            onNew={() => {
+              const result = props.onNewSession()
+              if (result instanceof Promise) {
+                void result.catch((error) => log.error("Failed to create session:", error))
+              }
+            }}
+            enableFilterBar={props.showSearch()}
+            showHeader={false}
+            showFooter={false}
+          />
+        </Show>
 
         <div class="session-sidebar-separator" />
         <Show
