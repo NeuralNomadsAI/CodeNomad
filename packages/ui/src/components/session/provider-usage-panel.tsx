@@ -94,7 +94,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
 
   return (
     <div>
-      <div class="mb-2 truncate text-sm font-semibold text-primary">{usage()?.providerName ?? props.providerId}</div>
+      <div class="mb-2 truncate text-right text-sm font-semibold text-primary">{usage()?.providerName ?? props.providerId}</div>
       <Show when={usage() !== undefined} fallback={<div class="text-xs text-tertiary">{t("providerUsage.loading")}</div>}>
         <Show when={usage()} fallback={<div class="text-xs text-tertiary">{t("providerUsage.unavailable")}</div>}>
           {(data) => (
