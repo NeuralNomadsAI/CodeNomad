@@ -65,6 +65,7 @@ const [sessionDraftPrompts, setSessionDraftPrompts] = createSignal<Map<string, s
 const [authoritativeDraftKeys, setAuthoritativeDraftKeys] = createSignal<Set<string>>(new Set())
 const [authoritativeSessionSelectionInstanceIds, setAuthoritativeSessionSelectionInstanceIds] = createSignal<Set<string>>(new Set())
 const [authoritativelyDeletedSessionKeys, setAuthoritativelyDeletedSessionKeys] = createSignal<Set<string>>(new Set())
+const [authoritativeSessionExpansionKeys, setAuthoritativeSessionExpansionKeys] = createSignal<Set<string>>(new Set())
 type SessionDraftHydratedListener = (instanceId: string, sessionId: string, draft: string) => void
 const sessionDraftHydratedListeners = new Set<SessionDraftHydratedListener>()
 
@@ -444,6 +445,10 @@ function getAuthoritativeDraftSessionIdsForInstance(instanceId: string): Readonl
 
 function getAuthoritativelyDeletedSessionIdsForInstance(instanceId: string): ReadonlySet<string> {
   return getAuthoritativeSessionIds(authoritativelyDeletedSessionKeys(), instanceId)
+}
+
+function getAuthoritativeSessionExpansionIdsForInstance(instanceId: string): ReadonlySet<string> {
+  return getAuthoritativeSessionIds(authoritativeSessionExpansionKeys(), instanceId)
 }
 
 function markSessionDeletedAuthoritative(instanceId: string, sessionId: string): void {
@@ -906,14 +911,13 @@ function isSessionExpanded(instanceId: string, sessionId: string): boolean {
 }
 
 function setSessionExpanded(instanceId: string, sessionId: string, expanded: boolean): void {
+  addAuthoritativeKey(setAuthoritativeSessionExpansionKeys, getDraftKey(instanceId, sessionId))
   setExpandedSessions((prev) => {
     const next = new Map(prev)
     const currentSet = next.get(instanceId) ?? new Set<string>()
-    const updated = new Set(currentSet)
+    const updated = expanded ? new Set([sessionId, ...currentSet]) : new Set(currentSet)
 
-    if (expanded) {
-      updated.add(sessionId)
-    } else {
+    if (!expanded) {
       updated.delete(sessionId)
     }
 
@@ -927,21 +931,43 @@ function setSessionExpanded(instanceId: string, sessionId: string, expanded: boo
   })
 }
 
-function toggleSessionExpanded(instanceId: string, sessionId: string): void {
+function clearInstanceSessionExpansionState(instanceId: string): void {
+  if (!instanceId) return
+  const prefix = `${instanceId}:`
   setExpandedSessions((prev) => {
+    if (!prev.has(instanceId)) return prev
     const next = new Map(prev)
-    const currentSet = next.get(instanceId) ?? new Set<string>()
-    const updated = new Set(currentSet)
-
-    if (updated.has(sessionId)) {
-      updated.delete(sessionId)
-    } else {
-      updated.add(sessionId)
-    }
-
-    next.set(instanceId, updated)
+    next.delete(instanceId)
     return next
   })
+  setAuthoritativeSessionExpansionKeys((prev) => {
+    const next = new Set([...prev].filter((key) => !key.startsWith(prefix)))
+    return next.size === prev.size ? prev : next
+  })
+}
+
+function hydrateSessionExpansion(instanceId: string, sessionIds: readonly string[]): void {
+  setExpandedSessions((prev) => {
+    const current = prev.get(instanceId)
+    const authoritative = getAuthoritativeSessionExpansionIdsForInstance(instanceId)
+    const deleted = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
+    const expanded = new Set(sessionIds.filter((id) => !authoritative.has(id) && !deleted.has(id)))
+    for (const id of current ?? []) if (authoritative.has(id) && !deleted.has(id)) expanded.add(id)
+    if (current?.size === expanded.size && [...expanded].every((id) => current.has(id))) return prev
+    const next = new Map(prev)
+    if (expanded.size) next.set(instanceId, expanded)
+    else next.delete(instanceId)
+    return next
+  })
+  setAuthoritativeSessionExpansionKeys((prev) => {
+    const next = new Set(prev)
+    for (const id of sessions().get(instanceId)?.keys() ?? []) next.add(getDraftKey(instanceId, id))
+    return next
+  })
+}
+
+function toggleSessionExpanded(instanceId: string, sessionId: string): void {
+  setSessionExpanded(instanceId, sessionId, !isSessionExpanded(instanceId, sessionId))
 }
 
 function ensureSessionExpanded(instanceId: string, sessionId: string): void {
@@ -957,16 +983,15 @@ function getSessionAncestorIds(instanceId: string, sessionId: string): string[] 
 function ensureSessionAncestorsExpanded(instanceId: string, sessionId: string): void {
   const ancestorIds = getSessionAncestorIds(instanceId, sessionId)
   if (ancestorIds.length === 0) return
+  for (const ancestorId of ancestorIds) {
+    addAuthoritativeKey(setAuthoritativeSessionExpansionKeys, getDraftKey(instanceId, ancestorId))
+  }
   setExpandedSessions((prev) => {
     const next = new Map(prev)
-    const expanded = new Set(next.get(instanceId))
-    let changed = false
-    for (const ancestorId of ancestorIds) {
-      if (expanded.has(ancestorId)) continue
-      expanded.add(ancestorId)
-      changed = true
-    }
-    if (!changed) return prev
+    const current = next.get(instanceId) ?? new Set<string>()
+    const missing = ancestorIds.filter((ancestorId) => !current.has(ancestorId))
+    if (missing.length === 0) return prev
+    const expanded = new Set([...missing, ...current])
     next.set(instanceId, expanded)
     return next
   })
@@ -985,6 +1010,7 @@ function setActiveSessionFromList(instanceId: string, sessionId: string): void {
   if (!session) return
   const root = getSessionRoot(instanceId, sessionId)
   if (!root) return
+  ensureSessionAncestorsExpanded(instanceId, sessionId)
 
   batch(() => {
     setActiveParentSession(instanceId, root.id)
@@ -1210,8 +1236,10 @@ export {
   getSessionDraftPromptsForInstance,
   getAuthoritativeDraftSessionIdsForInstance,
   getAuthoritativelyDeletedSessionIdsForInstance,
+  getAuthoritativeSessionExpansionIdsForInstance,
   markSessionDeletedAuthoritative,
   clearInstanceDeletedSessionAuthority,
+  clearInstanceSessionExpansionState,
   hydrateSessionDraftPrompt,
   onSessionDraftHydrated,
   setSessionDraftPrompt,
@@ -1248,8 +1276,10 @@ export {
   getSessionThreads,
   getSessionSearchThreads,
   getVisibleSessionIds,
+  expandedSessions,
   isSessionExpanded,
   setSessionExpanded,
+  hydrateSessionExpansion,
   toggleSessionExpanded,
   ensureSessionExpanded,
   getSessionAncestorIds,

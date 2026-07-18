@@ -746,14 +746,6 @@ const SessionList: Component<SessionListProps> = (props) => {
     )
   }
 
-  createEffect(() => {
-    const activeId = props.activeSessionId
-    if (!activeId || activeId === "info") return
-    const activeSession = sessionStateSessions().get(props.instanceId)?.get(activeId)
-    if (!activeSession?.parentId) return
-    ensureSessionAncestorsExpanded(props.instanceId, activeId)
-  })
- 
   createEffect(on(
     () => [props.activeSessionId, virtualizerHandle()] as const,
     ([activeId, handle]) => {

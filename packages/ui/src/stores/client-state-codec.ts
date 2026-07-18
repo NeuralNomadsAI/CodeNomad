@@ -9,6 +9,7 @@ export interface RestorableWorkspaceTabState {
   drafts: Record<string, string>; attachments: Record<string, RestorableAttachment[]>
   scrollSnapshots: Record<string, ScrollSnapshot>; unseenIdleSince: Record<string, number>
   generationRecovery: Record<string, PersistedGenerationRecovery>
+  expandedSessionIds?: string[]
 }
 
 export interface RestorableSidecarTabState { kind: "sidecar"; sidecarId: string }
@@ -20,7 +21,7 @@ export interface ClientSnapshotV1 {
 }
 
 const MAX_TABS = 32, MAX_LAYOUT_ENTRIES = 64, MAX_DRAFTS = 24, MAX_SCROLLS_PER_TAB = 96
-const MAX_IDLE_MARKERS = 256, MAX_RECOVERY = 256, MAX_KEY = 256, MAX_PATH = 4096, MAX_ID = 512
+const MAX_IDLE_MARKERS = 256, MAX_RECOVERY = 256, MAX_EXPANDED = 256, MAX_KEY = 256, MAX_PATH = 4096, MAX_ID = 512
 const MAX_LAYOUT_VALUE = 4096, MAX_DRAFT = 32 * 1024, MAX_ANCHOR_KEY = 1024
 const MAX_STRINGS = 96 * 1024, MAX_SCROLLS = 256
 const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
@@ -103,6 +104,20 @@ function normalizeScrollSnapshot(value: unknown, budget: StringBudget): ScrollSn
   return result
 }
 
+function normalizeExpandedSessionIds(value: unknown, budget: StringBudget): string[] | null {
+  if (!Array.isArray(value)) return null
+  const result: string[] = []
+  const seen = new Set<string>()
+  for (const entry of value.slice(0, MAX_EXPANDED)) {
+    if (typeof entry !== "string" || seen.has(entry)) continue
+    const id = takeString(entry, MAX_ID, budget)
+    if (id === undefined) continue
+    seen.add(id)
+    result.push(id)
+  }
+  return result
+}
+
 function normalizeWorkspaceTab(
   value: Record<string, unknown>,
   identity: WorkspaceIdentity,
@@ -129,7 +144,10 @@ function normalizeWorkspaceTab(
     value.generationRecovery ?? {}, MAX_RECOVERY, budget,
     (entry) => entry as PersistedGenerationRecovery,
     (entry) => entry === "working" || entry === "interrupted")
-  if (!drafts || !scrollSnapshots || !unseenIdleSince || !generationRecovery) return null
+  const expandedSessionIds = value.expandedSessionIds === undefined
+    ? undefined
+    : normalizeExpandedSessionIds(value.expandedSessionIds, budget)
+  if (!drafts || !scrollSnapshots || !unseenIdleSince || !generationRecovery || expandedSessionIds === null) return null
   const remainingAttachments = Object.fromEntries(Object.entries(value.attachments ?? {})
     .filter(([id]) => !identity.prioritySessionIds.includes(id)))
   const attachmentResult = normalizeRestorableAttachmentRecord(
@@ -143,6 +161,7 @@ function normalizeWorkspaceTab(
     attachments: { ...identity.priorityAttachments, ...attachmentResult.attachments },
     scrollSnapshots, unseenIdleSince, generationRecovery,
   }
+  if (expandedSessionIds !== undefined) result.expandedSessionIds = expandedSessionIds
   if (Number.isInteger(value.occurrence) && Number(value.occurrence) >= 0 && Number(value.occurrence) < MAX_TABS) {
     result.occurrence = Number(value.occurrence)
   }

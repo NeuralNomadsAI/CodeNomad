@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { EventBus } from "../events/bus"
-import { AutoAcceptManager, type PermissionReplier, type AutoAcceptReply } from "./auto-accept-manager"
+import { AutoAcceptManager, type AutoAcceptPersistence, type PermissionReplier, type AutoAcceptReply } from "./auto-accept-manager"
 import type { InstanceStreamEvent } from "../api-types"
 import type { Logger } from "../logger"
 
@@ -84,6 +84,219 @@ describe("AutoAcceptManager session tree", () => {
     assert.equal(manager.isEnabled("inst", "master"), true)
 
     manager.stop()
+  })
+})
+
+describe("AutoAcceptManager persistence", () => {
+  it("hydrates a persisted family root before processing queued permissions", async () => {
+    const bus = new EventBus(noopLogger)
+    const replier = makeRecordingReplier()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions() {
+        await gate
+        return [
+          { id: "root", parentId: null, yoloEnabled: true },
+          { id: "child", parentId: "root", yoloEnabled: false },
+        ]
+      },
+      async persist() {},
+    }
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier, persistence })
+    manager.start()
+    publishSession(bus, "inst", "session.updated", { id: "child", parentID: "root" })
+    publishInstanceEvent(bus, "inst", {
+      type: "permission.v2.asked",
+      properties: { id: "permission", sessionID: "child" },
+    })
+    await flushMicrotasks()
+    assert.equal(replier.calls.length, 0)
+    release()
+    await manager.hydrateInstance("inst")
+    await flushMicrotasks()
+    assert.equal(manager.isEnabled("inst", "child"), true)
+    assert.equal(replier.calls.length, 1)
+    manager.stop()
+  })
+
+  it("persists before enabling memory and emitting feedback", async () => {
+    const bus = new EventBus(noopLogger)
+    const changes: Record<string, unknown>[] = []
+    bus.on("yolo.stateChanged", (event) => changes.push(event))
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const writes: unknown[][] = []
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions() { return [{ id: "root", parentId: null, yoloEnabled: false }] },
+      async persist(...args) { writes.push(args); await gate },
+    }
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier(), persistence })
+    const toggle = manager.toggle("inst", "root")
+    await flushMicrotasks()
+    assert.deepEqual(writes, [["inst", "root", true, undefined]])
+    assert.equal(manager.isEnabled("inst", "root"), false)
+    assert.equal(changes.length, 0)
+    release()
+    assert.equal(await toggle, true)
+    assert.equal(manager.isEnabled("inst", "root"), true)
+    assert.equal(changes.length, 1)
+  })
+
+  it("serializes concurrent toggles", async () => {
+    const bus = new EventBus(noopLogger)
+    const writes: boolean[] = []
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions() { return [{ id: "root", parentId: null, yoloEnabled: false }] },
+      async persist(_instanceId, _rootSessionId, enabled) { writes.push(enabled) },
+    }
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier(), persistence })
+    assert.deepEqual(await Promise.all([manager.toggle("inst", "root"), manager.toggle("inst", "root")]), [true, false])
+    assert.deepEqual(writes, [true, false])
+    assert.equal(manager.isEnabled("inst", "root"), false)
+  })
+
+  it("keeps queued permissions until a failed hydration can retry", async () => {
+    const bus = new EventBus(noopLogger)
+    const replier = makeRecordingReplier()
+    let attempts = 0
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions() {
+        if (++attempts === 1) throw new Error("temporary failure")
+        return [{ id: "root", parentId: null, yoloEnabled: true }]
+      },
+      async persist() {},
+    }
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier, persistence })
+    manager.start()
+    publishInstanceEvent(bus, "inst", {
+      type: "permission.v2.asked",
+      properties: { id: "permission", sessionID: "root" },
+    })
+    await flushMicrotasks()
+    assert.equal(replier.calls.length, 0)
+    await manager.hydrateInstance("inst")
+    await flushMicrotasks()
+    assert.equal(replier.calls.length, 1)
+    manager.stop()
+  })
+
+  it("does not re-enable memory when a persisted toggle finishes after cleanup", async () => {
+    const bus = new EventBus(noopLogger)
+    const changes: Record<string, unknown>[] = []
+    bus.on("yolo.stateChanged", (event) => changes.push(event))
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    let writes = 0
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions() { return [{ id: "root", parentId: null, yoloEnabled: false }] },
+      async persist() { writes += 1; await gate },
+    }
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier(), persistence })
+    const toggle = manager.toggle("inst", "root")
+    const queued = manager.toggle("inst", "root")
+    await flushMicrotasks()
+    manager.clearInstance("inst")
+    release()
+    assert.equal(await toggle, false)
+    assert.equal(await queued, false)
+    assert.equal(writes, 1)
+    assert.equal(manager.isEnabled("inst", "root"), false)
+    assert.equal(changes.length, 0)
+  })
+
+  it("moves persisted Yolo state when late ancestry changes the family root", async () => {
+    const bus = new EventBus(noopLogger)
+    const writes: unknown[][] = []
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions() {
+        return [
+          { id: "parent", parentId: null, workspaceId: "workspace", yoloEnabled: false },
+          { id: "child", parentId: null, workspaceId: "workspace", yoloEnabled: true },
+        ]
+      },
+      async persist(...args) { writes.push(args) },
+    }
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier(), persistence })
+    manager.start()
+    await manager.hydrateInstance("inst")
+    publishSession(bus, "inst", "session.updated", { id: "child", parentID: "parent", workspaceID: "workspace" })
+    await flushMicrotasks()
+    assert.equal(manager.isEnabled("inst", "parent"), true)
+    assert.deepEqual(writes, [
+      ["inst", "parent", true, "workspace"],
+      ["inst", "child", false, "workspace"],
+    ])
+    manager.stop()
+  })
+
+  it("does not re-enable a family when ancestry repeatedly changes during a disable", async () => {
+    const bus = new EventBus(noopLogger)
+    let releaseFirst!: () => void
+    let releaseSecond!: () => void
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve })
+    const secondGate = new Promise<void>((resolve) => { releaseSecond = resolve })
+    const writes: unknown[][] = []
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions() {
+        return [
+          { id: "grandparent", parentId: null, workspaceId: "workspace", yoloEnabled: false },
+          { id: "parent", parentId: null, workspaceId: "workspace", yoloEnabled: false },
+          { id: "child", parentId: null, workspaceId: "workspace", yoloEnabled: true },
+        ]
+      },
+      async persist(...args) {
+        writes.push(args)
+        if (writes.length === 1) await firstGate
+        if (writes.length === 2) await secondGate
+      },
+    }
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier(), persistence })
+    manager.start()
+    await manager.hydrateInstance("inst")
+    const toggle = manager.toggle("inst", "child")
+    await flushMicrotasks()
+    publishSession(bus, "inst", "session.updated", { id: "child", parentID: "parent", workspaceID: "workspace" })
+    releaseFirst()
+    await flushMicrotasks()
+    publishSession(bus, "inst", "session.updated", { id: "child", parentID: "grandparent", workspaceID: "workspace" })
+    releaseSecond()
+    assert.equal(await toggle, false)
+    await flushMicrotasks()
+    assert.equal(manager.isEnabled("inst", "grandparent"), false)
+    assert.equal(writes.some(([, , enabled]) => enabled === true), false, JSON.stringify(writes))
+    manager.stop()
+  })
+
+  it("allows a queued toggle to continue after an earlier persistence failure", async () => {
+    const bus = new EventBus(noopLogger)
+    let attempts = 0
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions() { return [{ id: "root", parentId: null, yoloEnabled: false }] },
+      async persist() { if (++attempts === 1) throw new Error("write failed") },
+    }
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier(), persistence })
+    const first = manager.toggle("inst", "root")
+    const second = manager.toggle("inst", "root")
+    await assert.rejects(Promise.resolve(first), /write failed/)
+    assert.equal(await second, true)
+    assert.equal(manager.isEnabled("inst", "root"), true)
+  })
+
+  it("does not restore a late hydration after workspace cleanup", async () => {
+    const bus = new EventBus(noopLogger)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions() { await gate; return [{ id: "root", parentId: null, yoloEnabled: true }] },
+      async persist() {},
+    }
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier(), persistence })
+    const hydration = manager.hydrateInstance("inst")
+    manager.clearInstance("inst")
+    release()
+    await hydration
+    assert.equal(manager.isEnabled("inst", "root"), false)
   })
 })
 

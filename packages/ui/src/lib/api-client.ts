@@ -20,6 +20,7 @@ import type {
   PreviewSession,
   ProviderUsageResponse,
   ServerMeta,
+  SessionMetadataResponse,
   RemoteProxySessionCreateRequest,
   RemoteProxySessionCreateResponse,
   RemoteServerProbeRequest,
@@ -560,6 +561,12 @@ export const serverApi = {
     return request<YoloStateResponse>(
       `/workspaces/${encodeURIComponent(instanceId)}/yolo/sessions/${encodeURIComponent(sessionId)}/toggle`,
       { method: "POST" },
+    )
+  },
+  setSessionWorktreeSlug(instanceId: string, sessionId: string, worktreeSlug: string): Promise<SessionMetadataResponse> {
+    return request<SessionMetadataResponse>(
+      `/api/workspaces/${encodeURIComponent(instanceId)}/worktrees/sessions/${encodeURIComponent(sessionId)}`,
+      { method: "PUT", body: JSON.stringify({ worktreeSlug }) },
     )
   },
   sendClientConnectionPong(payload: { clientId: string; connectionId: string; pingTs?: number }, signal?: AbortSignal): Promise<void> {

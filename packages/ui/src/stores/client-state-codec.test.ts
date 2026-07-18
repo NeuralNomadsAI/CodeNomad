@@ -50,6 +50,7 @@ describe("client state codec", () => {
           scrollSnapshots: { session1: { scrollTop: 120, scrollRatio: 0.5, atBottom: false, updatedAt: 1200 } },
           unseenIdleSince: { session1: 1100, malformed: -1 },
           generationRecovery: { session1: "working", session2: "interrupted", malformed: "idle" },
+          expandedSessionIds: ["session1", "session1", 42],
         }), { kind: "sidecar", sidecarId: "docs" }],
       },
     }))
@@ -63,6 +64,7 @@ describe("client state codec", () => {
     assert.deepEqual({ ...tab.drafts }, { session1: "unfinished prompt" })
     assert.deepEqual({ ...tab.unseenIdleSince }, { session1: 1100 })
     assert.deepEqual({ ...tab.generationRecovery }, { session1: "working", session2: "interrupted" })
+    assert.deepEqual(tab.expandedSessionIds, ["session1"])
     assert.deepEqual(tab.scrollSnapshots.session1, { scrollTop: 120, scrollRatio: 0.5, atBottom: false, updatedAt: 1200 })
     assert.deepEqual(decoded?.session?.tabs[1], { kind: "sidecar", sidecarId: "docs" })
   })
@@ -77,6 +79,7 @@ describe("client state codec", () => {
     assert.equal(isFutureClientSnapshot({ version: 2 }), true, "future envelope")
     assert.equal(isFutureClientSnapshot({ version: 1 }), false, "current envelope")
     assert.equal(normalizeRestorableSession({ tabs: [{ kind: "workspace" }], activeTabIndex: 0 }), null)
+    assert.equal(normalizeWorkspace({}).expandedSessionIds, undefined)
   })
 
   it("caps records and drops unsafe or malformed entries", () => {

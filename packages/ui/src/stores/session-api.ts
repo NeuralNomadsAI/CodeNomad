@@ -51,6 +51,7 @@ import {
   isLatestSessionSearch,
   setSessionSearchResults,
   setSessionListError,
+  setSessionExpanded,
 } from "./session-state"
 import { deleteSessionAttachments } from "./attachments"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getDefaultModel, isModelValid } from "./session-models"
@@ -909,6 +910,7 @@ function removeSessionRuntimeState(instanceId: string, sessionId: string): void 
   markSessionDeletedAuthoritative(instanceId, sessionId)
   deleteSessionAttachments(instanceId, sessionId)
   clearSessionDraftPrompt(instanceId, sessionId)
+  setSessionExpanded(instanceId, sessionId, false)
 
   setSessions((prev) => {
     const next = new Map(prev)

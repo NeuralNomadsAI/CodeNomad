@@ -1,6 +1,6 @@
 import type { EventBus } from "../events/bus"
 import type { Logger } from "../logger"
-import { AutoAcceptStore } from "./auto-accept-store"
+import { AutoAcceptStore, type AutoAcceptSessionInfo } from "./auto-accept-store"
 
 /**
  * Server-side owner of Yolo (permission auto-accept).
@@ -39,6 +39,17 @@ interface AutoAcceptManagerDeps {
   eventBus: EventBus
   logger: Logger
   replier: PermissionReplier
+  persistence?: AutoAcceptPersistence
+}
+
+export interface PersistedAutoAcceptSession extends AutoAcceptSessionInfo {
+  yoloEnabled: boolean
+  workspaceId?: string
+}
+
+export interface AutoAcceptPersistence {
+  loadSessions(instanceId: string): Promise<PersistedAutoAcceptSession[]>
+  persist(instanceId: string, rootSessionId: string, enabled: boolean, workspaceId?: string): Promise<void>
 }
 
 const PERMISSION_ASK_TYPES = new Set(["permission.v2.asked", "permission.asked", "permission.updated"])
@@ -55,6 +66,12 @@ export class AutoAcceptManager {
   private readonly pending = new Map<string, Map<string, PendingPermission>>()
   /** instanceId:permissionId -> failure count, to stop retrying stuck permissions */
   private readonly replyAttempts = new Map<string, number>()
+  private readonly hydratedInstances = new Set<string>()
+  private readonly hydration = new Map<string, Promise<void>>()
+  private readonly queuedEvents = new Map<string, InstanceStreamPayload[]>()
+  private readonly instanceGeneration = new Map<string, number>()
+  private readonly sessionWorkspaces = new Map<string, Map<string, string>>()
+  private readonly mutations = new Map<string, Promise<boolean>>()
   private unsubscribe?: () => void
 
   constructor(private readonly deps: AutoAcceptManagerDeps) {}
@@ -63,7 +80,23 @@ export class AutoAcceptManager {
     if (this.unsubscribe) return
     const handler = (payload: { instanceId?: string; event?: InstanceStreamPayload }) => {
       if (!payload || !payload.instanceId || !payload.event) return
+      if (this.deps.persistence && !this.hydratedInstances.has(payload.instanceId)) {
+        const queued = this.queuedEvents.get(payload.instanceId) ?? []
+        queued.push(payload.event)
+        this.queuedEvents.set(payload.instanceId, queued)
+        void this.hydrateInstance(payload.instanceId).catch((error) => {
+          this.deps.logger.warn({ instanceId: payload.instanceId, err: error }, "Failed to hydrate persisted Yolo state")
+        })
+        return
+      }
       this.handleInstanceEvent(payload.instanceId, payload.event)
+    }
+    const onStarted = (event: { workspace?: { id?: string } }) => {
+      const instanceId = event.workspace?.id
+      if (!instanceId) return
+      void this.hydrateInstance(instanceId).catch((error) => {
+        this.deps.logger.warn({ instanceId, err: error }, "Failed to hydrate persisted Yolo state")
+      })
     }
     const onStopped = (event: { workspaceId?: string }) => {
       if (event?.workspaceId) this.clearInstance(event.workspaceId)
@@ -72,10 +105,12 @@ export class AutoAcceptManager {
       if (event?.workspace?.id) this.clearInstance(event.workspace.id)
     }
     this.deps.eventBus.on("instance.event", handler)
+    this.deps.eventBus.on("workspace.started", onStarted)
     this.deps.eventBus.on("workspace.stopped", onStopped)
     this.deps.eventBus.on("workspace.error", onError)
     this.unsubscribe = () => {
       this.deps.eventBus.off("instance.event", handler)
+      this.deps.eventBus.off("workspace.started", onStarted)
       this.deps.eventBus.off("workspace.stopped", onStopped)
       this.deps.eventBus.off("workspace.error", onError)
     }
@@ -90,7 +125,43 @@ export class AutoAcceptManager {
     return this.store.isEnabled(instanceId, sessionId)
   }
 
-  toggle(instanceId: string, sessionId: string): boolean {
+  hydrateInstance(instanceId: string): Promise<void> {
+    if (!this.deps.persistence || this.hydratedInstances.has(instanceId)) return Promise.resolve()
+    const existing = this.hydration.get(instanceId)
+    if (existing) return existing
+    const generation = this.instanceGeneration.get(instanceId) ?? 0
+    let hydrated = false
+    const pending = this.deps.persistence.loadSessions(instanceId).then((sessions) => {
+      if ((this.instanceGeneration.get(instanceId) ?? 0) !== generation) return
+      this.store.clearInstance(instanceId)
+      const workspaces = new Map<string, string>()
+      for (const session of sessions) {
+        this.store.upsertSession(instanceId, session)
+        if (session.workspaceId) workspaces.set(session.id, session.workspaceId)
+      }
+      this.sessionWorkspaces.set(instanceId, workspaces)
+      for (const session of sessions) {
+        if (!session.yoloEnabled || this.store.familyRoot(instanceId, session.id) !== session.id) continue
+        this.store.setEnabled(instanceId, session.id, true)
+        this.deps.eventBus.publish({ type: "yolo.stateChanged", instanceId, sessionId: session.id, enabled: true })
+        this.drainPending(instanceId, session.id)
+      }
+      this.hydratedInstances.add(instanceId)
+      hydrated = true
+    }).finally(() => {
+      if ((this.instanceGeneration.get(instanceId) ?? 0) !== generation) return
+      this.hydration.delete(instanceId)
+      if (!hydrated) return
+      const queued = this.queuedEvents.get(instanceId) ?? []
+      this.queuedEvents.delete(instanceId)
+      for (const event of queued) this.handleInstanceEvent(instanceId, event)
+    })
+    this.hydration.set(instanceId, pending)
+    return pending
+  }
+
+  toggle(instanceId: string, sessionId: string): boolean | Promise<boolean> {
+    if (this.deps.persistence) return this.togglePersisted(instanceId, sessionId)
     const enabled = this.store.toggle(instanceId, sessionId)
     this.deps.eventBus.publish({ type: "yolo.stateChanged", instanceId, sessionId, enabled })
     if (enabled) {
@@ -99,7 +170,74 @@ export class AutoAcceptManager {
     return enabled
   }
 
+  private async togglePersisted(instanceId: string, sessionId: string): Promise<boolean> {
+    await this.hydrateInstance(instanceId)
+    const generation = this.instanceGeneration.get(instanceId) ?? 0
+    const mutation = (this.mutations.get(instanceId) ?? Promise.resolve(false)).catch(() => false).then(async () => {
+      if ((this.instanceGeneration.get(instanceId) ?? 0) !== generation) {
+        return this.store.isEnabled(instanceId, sessionId)
+      }
+      const rootSessionId = this.store.familyRoot(instanceId, sessionId)
+      const traversedRootSessionIds = new Set([rootSessionId])
+      const enabled = !this.store.isEnabled(instanceId, rootSessionId)
+      await this.deps.persistence!.persist(
+        instanceId,
+        rootSessionId,
+        enabled,
+        this.sessionWorkspaces.get(instanceId)?.get(rootSessionId),
+      )
+      if ((this.instanceGeneration.get(instanceId) ?? 0) !== generation) {
+        return this.store.isEnabled(instanceId, rootSessionId)
+      }
+      let persistedRootSessionId = rootSessionId
+      let currentRootSessionId = this.store.familyRoot(instanceId, sessionId)
+      while (currentRootSessionId !== persistedRootSessionId) {
+        traversedRootSessionIds.add(currentRootSessionId)
+        await this.deps.persistence!.persist(
+          instanceId,
+          currentRootSessionId,
+          enabled,
+          this.sessionWorkspaces.get(instanceId)?.get(currentRootSessionId),
+        )
+        if (enabled) {
+          await this.deps.persistence!.persist(
+            instanceId,
+            persistedRootSessionId,
+            false,
+            this.sessionWorkspaces.get(instanceId)?.get(persistedRootSessionId),
+          )
+        }
+        persistedRootSessionId = currentRootSessionId
+        currentRootSessionId = this.store.familyRoot(instanceId, sessionId)
+      }
+      if ((this.instanceGeneration.get(instanceId) ?? 0) !== generation) {
+        return this.store.isEnabled(instanceId, currentRootSessionId)
+      }
+      if (enabled) {
+        this.store.setEnabled(instanceId, currentRootSessionId, true)
+      } else {
+        for (const traversedRootSessionId of traversedRootSessionIds) {
+          this.store.setEnabled(instanceId, traversedRootSessionId, false)
+        }
+      }
+      this.deps.eventBus.publish({ type: "yolo.stateChanged", instanceId, sessionId: currentRootSessionId, enabled })
+      if (enabled) this.drainPending(instanceId, currentRootSessionId)
+      return enabled
+    })
+    const settled = mutation.finally(() => {
+      if (this.mutations.get(instanceId) === settled) this.mutations.delete(instanceId)
+    })
+    this.mutations.set(instanceId, settled)
+    return settled
+  }
+
   clearInstance(instanceId: string): void {
+    this.instanceGeneration.set(instanceId, (this.instanceGeneration.get(instanceId) ?? 0) + 1)
+    this.hydratedInstances.delete(instanceId)
+    this.hydration.delete(instanceId)
+    this.queuedEvents.delete(instanceId)
+    this.sessionWorkspaces.delete(instanceId)
+    this.mutations.delete(instanceId)
     this.store.clearInstance(instanceId)
     this.pending.delete(instanceId)
     const prefix = `${instanceId}:`
@@ -147,12 +285,52 @@ export class AutoAcceptManager {
     if (!session || typeof session.id !== "string") return
     const parentId = session.parentID ?? session.parentId ?? null
     const revert = session.revert ?? undefined
+    const enabledBefore = this.store.enabledRoots(instanceId)
     this.store.upsertSession(instanceId, { id: session.id, parentId, revert })
+    if (typeof session.workspaceID === "string" && session.workspaceID) {
+      const workspaces = this.sessionWorkspaces.get(instanceId) ?? new Map<string, string>()
+      workspaces.set(session.id, session.workspaceID)
+      this.sessionWorkspaces.set(instanceId, workspaces)
+    }
+    this.persistRootMigration(instanceId, enabledBefore, this.store.enabledRoots(instanceId))
     // Session ancestry may have changed (parent discovered, revert toggled).
     // Re-drain pending permissions whose family root may have migrated into
     // an enabled family — mirrors the old UI's drainAutoAcceptPermissions-
     // ForInstance trigger on session.updated (#497).
     this.drainPending(instanceId, session.id)
+  }
+
+  private persistRootMigration(instanceId: string, before: readonly string[], after: readonly string[]): void {
+    if (!this.deps.persistence) return
+    const removed = before.filter((id) => !after.includes(id))
+    const added = after.filter((id) => !before.includes(id))
+    if (removed.length === 0 && added.length === 0) return
+    const generation = this.instanceGeneration.get(instanceId) ?? 0
+    const mutation = (this.mutations.get(instanceId) ?? Promise.resolve(false)).catch(() => false).then(async () => {
+      if ((this.instanceGeneration.get(instanceId) ?? 0) !== generation) return false
+      const enabledRoots = new Set(this.store.enabledRoots(instanceId))
+      for (const rootSessionId of added) {
+        if (!enabledRoots.has(rootSessionId)) continue
+        await this.deps.persistence!.persist(
+          instanceId, rootSessionId, true, this.sessionWorkspaces.get(instanceId)?.get(rootSessionId),
+        )
+      }
+      for (const rootSessionId of removed) {
+        if (enabledRoots.has(rootSessionId)) continue
+        if ((this.instanceGeneration.get(instanceId) ?? 0) !== generation) return false
+        await this.deps.persistence!.persist(
+          instanceId, rootSessionId, false, this.sessionWorkspaces.get(instanceId)?.get(rootSessionId),
+        )
+      }
+      return false
+    })
+    const settled = mutation.finally(() => {
+      if (this.mutations.get(instanceId) === settled) this.mutations.delete(instanceId)
+    })
+    this.mutations.set(instanceId, settled)
+    void settled.catch((error) => {
+      this.deps.logger.warn({ instanceId, err: error }, "Failed to migrate persisted Yolo family root")
+    })
   }
 
   private handlePermissionRequest(instanceId: string, eventType: string, permission: unknown): void {
@@ -275,6 +453,7 @@ interface SessionProperties {
   parentID?: string | null
   parentId?: string | null
   revert?: unknown
+  workspaceID?: string
 }
 
 interface PermissionProperties {

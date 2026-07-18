@@ -3,8 +3,7 @@ import type { WorktreeDescriptor, WorktreeMap } from "../../../server/src/api-ty
 import { serverApi } from "../lib/api-client"
 import { getSessionRoot, sessions } from "./session-state"
 import { getLogger } from "../lib/logger"
-import { getCodeNomadSessionMetadata, setSessionWorktreeSlugWithClient } from "./session-metadata"
-import { getRootClient } from "./opencode-client"
+import { getCodeNomadSessionMetadata, setSessionWorktreeSlug } from "./session-metadata"
 import type { WorktreeReadyEvent } from "../lib/sse-manager"
 
 const log = getLogger("api")
@@ -178,8 +177,7 @@ async function moveSessionsFromDeletedWorktree(instanceId: string, slug: string)
     .map((session) => session.id)
 
   for (const parentSessionId of parentSessionIds) {
-    const client = getRootClient(instanceId)
-    await setSessionWorktreeSlugWithClient(client, instanceId, parentSessionId, "root")
+    await setSessionWorktreeSlug(instanceId, parentSessionId, "root")
     await removeLegacyParentSessionMapping(instanceId, parentSessionId)
   }
 }
@@ -337,16 +335,14 @@ async function setWorktreeSlugForParentSession(
   await ensureWorktreeMapLoaded(instanceId)
   const current = getWorktreeMap(instanceId)
   const normalizedSlug = normalizeWorktreeSlug(instanceId, slug)
-  const client = getRootClient(instanceId)
-  await setSessionWorktreeSlugWithClient(client, instanceId, parentSessionId, normalizedSlug)
+  await setSessionWorktreeSlug(instanceId, parentSessionId, normalizedSlug)
   await removeLegacyParentSessionMapping(instanceId, parentSessionId, current)
 }
 
 async function removeParentSessionMapping(instanceId: string, parentSessionId: string): Promise<void> {
   await ensureWorktreeMapLoaded(instanceId)
   const current = getWorktreeMap(instanceId)
-  const client = getRootClient(instanceId)
-  await setSessionWorktreeSlugWithClient(client, instanceId, parentSessionId, "root")
+  await setSessionWorktreeSlug(instanceId, parentSessionId, "root")
   await removeLegacyParentSessionMapping(instanceId, parentSessionId, current)
 }
 
@@ -385,8 +381,7 @@ async function migrateLegacyWorktreeMapToSessionMetadata(instanceId: string): Pr
       }
 
       const normalizedSlug = normalizeWorktreeSlug(instanceId, legacySlug || "root")
-      const client = getRootClient(instanceId)
-      await setSessionWorktreeSlugWithClient(client, instanceId, parentSessionId, normalizedSlug)
+      await setSessionWorktreeSlug(instanceId, parentSessionId, normalizedSlug)
       await removeLegacyParentSessionMapping(instanceId, parentSessionId)
     }
   })().finally(() => {
