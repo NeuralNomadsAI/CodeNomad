@@ -28,6 +28,8 @@
     "@fastify/cors": "^8.5.0",
     "@fastify/reply-from": "^9.8.0",
     "@fastify/static": "^7.0.4",
+    "@octokit/auth-app": "^7.2.2",
+    "@octokit/rest": "^21.1.1",
     "@opencode-ai/sdk": "^1.17.8",
     "commander": "^12.1.0",
     "fastify": "^4.28.1",

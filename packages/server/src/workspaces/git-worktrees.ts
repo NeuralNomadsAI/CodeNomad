@@ -40,6 +40,67 @@ function runGit(args: string[], cwd: string): Promise<GitResult> {
   })
 }
 
+async function pruneWorktrees(workspaceFolder: string, logger?: LogLike): Promise<void> {
+  const result = await runGit(["worktree", "prune"], workspaceFolder)
+  if (!result.ok) {
+    logger?.debug?.({ err: result.error }, "Failed to prune git worktrees")
+  }
+}
+
+function resolveGitPath(cwd: string, gitPath: string): string {
+  return path.isAbsolute(gitPath) ? path.resolve(gitPath) : path.resolve(cwd, gitPath)
+}
+
+async function resolveWorktreeBranch(cwd: string): Promise<string | undefined> {
+  const branch = await runGit(["branch", "--show-current"], cwd)
+  if (!branch.ok) return undefined
+  const value = branch.stdout.trim()
+  return value || undefined
+}
+
+async function resolveExistingManagedWorktree(params: {
+  repoRoot: string
+  workspaceFolder: string
+  targetDir: string
+  branch: string
+  logger?: LogLike
+}): Promise<{ slug: string; directory: string; branch?: string } | null> {
+  await pruneWorktrees(params.workspaceFolder, params.logger)
+
+  const topLevelResult = await runGit(["rev-parse", "--show-toplevel"], params.targetDir)
+  if (!topLevelResult.ok) {
+    params.logger?.debug?.({ slug: params.branch, targetDir: params.targetDir, err: topLevelResult.error }, "Managed worktree directory failed show-toplevel validation")
+    return null
+  }
+
+  const resolvedTopLevel = path.resolve(topLevelResult.stdout.trim())
+  if (resolvedTopLevel !== path.resolve(params.targetDir)) {
+    params.logger?.debug?.({ slug: params.branch, targetDir: params.targetDir, resolvedTopLevel }, "Managed worktree directory top-level does not match target directory")
+    return null
+  }
+
+  const commonDirResult = await runGit(["rev-parse", "--git-common-dir"], params.targetDir)
+  if (!commonDirResult.ok) {
+    params.logger?.debug?.({ slug: params.branch, targetDir: params.targetDir, err: commonDirResult.error }, "Managed worktree directory failed git-common-dir validation")
+    return null
+  }
+
+  const resolvedCommonDir = resolveGitPath(params.targetDir, commonDirResult.stdout.trim())
+  const expectedCommonDir = path.resolve(params.repoRoot, ".git")
+  if (resolvedCommonDir !== expectedCommonDir) {
+    params.logger?.debug?.({ slug: params.branch, targetDir: params.targetDir, resolvedCommonDir, expectedCommonDir }, "Managed worktree directory common dir does not match repo git dir")
+    return null
+  }
+
+  const worktreeBranch = await resolveWorktreeBranch(params.targetDir)
+  if (worktreeBranch !== params.branch) {
+    params.logger?.debug?.({ slug: params.branch, targetDir: params.targetDir, actualBranch: worktreeBranch }, "Managed worktree directory branch does not match requested slug")
+    return null
+  }
+
+  return { slug: params.branch, directory: params.targetDir, branch: worktreeBranch }
+}
+
 export async function resolveRepoRoot(folder: string, logger?: LogLike): Promise<{ repoRoot: string; isGitRepo: boolean }> {
   const result = await runGit(["rev-parse", "--show-toplevel"], folder)
   if (isGitUnavailableResult(result)) {
@@ -201,7 +262,14 @@ export async function createManagedWorktree(params: {
   try {
     const stat = await fsp.stat(targetDir)
     if (stat.isDirectory()) {
-      throw new Error("Worktree directory already exists")
+      const existing = await resolveExistingManagedWorktree({ repoRoot, workspaceFolder, targetDir, branch, logger })
+      if (existing) {
+        logger?.debug?.({ slug: branch, targetDir }, "Reusing existing managed git worktree directory")
+        return existing
+      }
+
+      logger?.warn?.({ slug: branch, targetDir }, "Removing orphaned managed git worktree directory")
+      await fsp.rm(targetDir, { recursive: true, force: true })
     }
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
@@ -212,23 +280,32 @@ export async function createManagedWorktree(params: {
 
   logger?.debug?.({ slug: branch, branch, targetDir }, "Creating managed git worktree")
 
-  // Prefer creating a new branch from HEAD.
-  const first = await runGit(["worktree", "add", "-b", branch, targetDir, "HEAD"], workspaceFolder)
-  if (first.ok) {
-    return { slug: branch, directory: targetDir, branch }
-  }
-
-  const message = first.stderr?.toLowerCase() ?? first.error.message.toLowerCase()
-  if (message.includes("already exists")) {
-    // If the branch already exists, add worktree for that branch.
-    const second = await runGit(["worktree", "add", targetDir, branch], workspaceFolder)
-    if (second.ok) {
+  const create = async (): Promise<{ slug: string; directory: string; branch?: string }> => {
+    const first = await runGit(["worktree", "add", "-b", branch, targetDir, "HEAD"], workspaceFolder)
+    if (first.ok) {
       return { slug: branch, directory: targetDir, branch }
     }
-    throw second.error
+
+    const message = first.stderr?.toLowerCase() ?? first.error.message.toLowerCase()
+    if (message.includes("already exists")) {
+      const second = await runGit(["worktree", "add", targetDir, branch], workspaceFolder)
+      if (second.ok) {
+        return { slug: branch, directory: targetDir, branch }
+      }
+      throw second.error
+    }
+
+    throw first.error
   }
 
-  throw first.error
+  try {
+    return await create()
+  } catch (error) {
+    const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase()
+    if (!message.includes("already registered worktree")) throw error
+    await pruneWorktrees(workspaceFolder, logger)
+    return await create()
+  }
 }
 
 export async function removeWorktree(params: {

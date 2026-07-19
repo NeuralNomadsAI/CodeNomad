@@ -51,12 +51,73 @@ const OpenCodeBinarySchema = z.object({
   label: z.string().optional(),
 })
 
+const GitHubIntegrationSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    appId: z.string().trim().min(1).optional(),
+    privateKeyPath: z.string().trim().min(1).optional(),
+    webhookSecret: z.string().trim().min(1).optional(),
+    workspaceRoot: z.string().trim().min(1).optional(),
+    mentionHandle: z.string().trim().min(1).optional(),
+    botLogin: z.string().trim().min(1).optional(),
+    commands: z.record(z.string().trim().min(1)).default({}),
+    webhook: z
+      .object({
+        agent: z.string().trim().min(1).optional(),
+        model: ModelPreferenceSchema.optional(),
+        variant: z.string().trim().min(1).optional(),
+      })
+      .default({}),
+    policy: z
+      .object({
+        rules: z
+          .array(
+            z.object({
+              name: z.string().trim().min(1).optional(),
+              match: z
+                .object({
+                  repo: z.string().trim().min(1).optional(),
+                  repoRegex: z.string().trim().min(1).optional(),
+                  event: z.string().trim().min(1).optional(),
+                  eventRegex: z.string().trim().min(1).optional(),
+                })
+                .default({}),
+              allow: z
+                .object({
+                  enabled: z.boolean().default(true),
+                  requireMention: z.boolean().optional(),
+                  allowPrAuthor: z.boolean().optional(),
+                  allowAllActors: z.boolean().optional(),
+                  denyBots: z.boolean().optional(),
+                  allowedUsers: z.array(z.string().trim().min(1)).default([]),
+                  allowedAuthorAssociations: z.array(z.string().trim().min(1)).default([]),
+                  command: z.string().trim().min(1).optional(),
+                  agent: z.string().trim().min(1).optional(),
+                  model: ModelPreferenceSchema.optional(),
+                  variant: z.string().trim().min(1).optional(),
+                })
+                .default({ enabled: true }),
+            }),
+          )
+          .default([]),
+      })
+      .default({}),
+  })
+  .default({})
+
+const IntegrationsSchema = z
+  .object({
+    github: GitHubIntegrationSchema,
+  })
+  .default({ github: {} })
+
 const ConfigFileSchema = z
   .object({
     preferences: PreferencesSchema.default({}),
     recentFolders: z.array(RecentFolderSchema).default([]),
     opencodeBinaries: z.array(OpenCodeBinarySchema).default([]),
     theme: z.enum(["light", "dark", "system"]).optional(),
+    integrations: IntegrationsSchema,
   })
   // Preserve unknown top-level keys so optional future features survive downgrades.
   .passthrough()
@@ -67,6 +128,7 @@ const ConfigYamlSchema = z
     preferences: PreferencesSchema.default({}),
     opencodeBinaries: z.array(OpenCodeBinarySchema).default([]),
     theme: z.enum(["light", "dark", "system"]).optional(),
+    integrations: IntegrationsSchema,
   })
   .passthrough()
 
@@ -88,6 +150,8 @@ export {
   PreferencesSchema,
   RecentFolderSchema,
   OpenCodeBinarySchema,
+  GitHubIntegrationSchema,
+  IntegrationsSchema,
   ConfigFileSchema,
   ConfigYamlSchema,
   StateFileSchema,
@@ -102,6 +166,8 @@ export type AgentModelSelections = z.infer<typeof AgentModelSelectionsSchema>
 export type Preferences = z.infer<typeof PreferencesSchema>
 export type RecentFolder = z.infer<typeof RecentFolderSchema>
 export type OpenCodeBinary = z.infer<typeof OpenCodeBinarySchema>
+export type GitHubIntegration = z.infer<typeof GitHubIntegrationSchema>
+export type Integrations = z.infer<typeof IntegrationsSchema>
 export type ConfigFile = z.infer<typeof ConfigFileSchema>
 export type ConfigYamlFile = z.infer<typeof ConfigYamlSchema>
 export type StateFile = z.infer<typeof StateFileSchema>

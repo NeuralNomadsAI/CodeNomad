@@ -31,6 +31,8 @@ import { registerRemoteProxyRoutes } from "./routes/remote-proxy"
 import { registerSideCarRoutes } from "./routes/sidecars"
 import { registerPreviewRoutes } from "./routes/previews"
 import { registerUsageRoutes } from "./routes/usage"
+import { registerGitHubWebhookRoutes } from "./routes/github-webhook"
+import { registerGitHubPluginRoutes } from "./routes/github-plugin"
 import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import { BackgroundProcessManager } from "../background-processes/manager"
@@ -329,6 +331,16 @@ export function createHttpServer(deps: HttpServerDeps) {
     logger: proxyLogger,
     channel: deps.pluginChannel,
     voiceModeManager: deps.voiceModeManager,
+  })
+  registerGitHubWebhookRoutes(app, {
+    workspaceManager: deps.workspaceManager,
+    settings: deps.settings,
+    logger: proxyLogger,
+  })
+  registerGitHubPluginRoutes(app, {
+    workspaceManager: deps.workspaceManager,
+    settings: deps.settings,
+    logger: proxyLogger,
   })
   registerBackgroundProcessRoutes(app, { backgroundProcessManager })
   registerYoloRoutes(app, { yoloManager: deps.yoloManager })

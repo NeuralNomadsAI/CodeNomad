@@ -122,6 +122,7 @@ export interface WorkspaceCreateOptions {
   binaryPath?: string
   requestId?: string
   forceNew?: boolean
+  extraEnvironment?: Record<string, string>
 }
 type CreationRequestState = "active" | "cancelled" | "released"
 type WorkspaceCreationOwnership = Map<string, CreationRequestState>
@@ -422,6 +423,7 @@ export class WorkspaceManager {
         [OPENCODE_SERVER_BASE_URL_ENV]: `${normalizedServerBaseUrl}${proxyPath}`,
         [OPENCODE_SERVER_USERNAME_ENV]: opencodeUsername,
         [OPENCODE_SERVER_PASSWORD_ENV]: opencodePassword,
+        ...(options.extraEnvironment ?? {}),
       }
 
       const logLevel = (serverConfig as any)?.logLevel

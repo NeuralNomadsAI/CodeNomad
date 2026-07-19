@@ -1,17 +1,23 @@
 import type { PluginInput } from "@opencode-ai/plugin"
 import { createCodeNomadClient, getCodeNomadConfig } from "./lib/client.js"
 import { createBackgroundProcessTools } from "./lib/background-process.js"
+import { createGitHubTool } from "./lib/github.js"
+import { loadGithubModeCommands } from "./lib/commands.js"
 
 let voiceModeEnabled = false
 
 export async function CodeNomadPlugin(input: PluginInput): Promise<{
-  tool: ReturnType<typeof createBackgroundProcessTools>
+  tool: ReturnType<typeof createBackgroundProcessTools> & Record<string, unknown>
   "chat.message": CodeNomadChatMessageHook
+  config: (cfg: any) => Promise<void>
+  "permission.ask": (permission: any, output: any) => Promise<void>
   event: CodeNomadEventHook
 }> {
   const config = getCodeNomadConfig()
   const client = createCodeNomadClient(config)
   const backgroundProcessTools = createBackgroundProcessTools(config, { baseDir: input.directory })
+  const githubMode = (process.env.CODENOMAD_MODE ?? "").toLowerCase() === "github"
+  const githubTool = githubMode ? createGitHubTool(config, { directory: input.directory }) : null
 
   await client.startEvents((event) => {
     if (event.type === "codenomad.ping") {
@@ -33,8 +39,45 @@ export async function CodeNomadPlugin(input: PluginInput): Promise<{
   return {
     tool: {
       ...backgroundProcessTools,
+      ...(githubTool ? { github: githubTool } : {}),
+    },
+    config: async (cfg: any) => {
+      if (!cfg || typeof cfg !== "object") return
+      if (!cfg.command || typeof cfg.command !== "object") cfg.command = {}
+      const commandMap = cfg.command as Record<string, any>
+      for (const name of Object.keys(commandMap)) {
+        if (name.startsWith("codenomad-github-")) delete commandMap[name]
+      }
+      if (!githubMode) return
+      for (const [name, def] of Object.entries(loadGithubModeCommands())) {
+        commandMap[name] = {
+          template: def.template,
+          ...(def.description ? { description: def.description } : {}),
+          ...(def.agent ? { agent: def.agent } : {}),
+          ...(def.model ? { model: def.model } : {}),
+          ...(typeof def.subtask === "boolean" ? { subtask: def.subtask } : {}),
+        }
+      }
+    },
+    "permission.ask": async (permission: any, output: any) => {
+      if (!githubMode) return
+      const kind = permission?.type
+      if (kind === "external_directory" || kind === "question") {
+        output.status = "deny"
+        return
+      }
+      output.status = "allow"
     },
     async "chat.message"(_input: { sessionID: string }, output: { message: { system?: string } }) {
+      if (githubMode) {
+        output.message.system = [
+          output.message.system,
+          "You are running in GitHub mention automation mode.",
+          "Do not ask interactive questions. Make reasonable assumptions and proceed.",
+          "If you change files and want to open a PR, commit changes to the current branch before calling the github tool.",
+        ].filter(Boolean).join("\n\n")
+      }
+
       if (!voiceModeEnabled) {
         return
       }
