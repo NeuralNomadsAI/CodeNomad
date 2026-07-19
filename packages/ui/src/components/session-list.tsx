@@ -37,6 +37,7 @@ import { collectSessionThreadIds, findSessionThread, flattenVisibleSessionThread
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
 import { useConfig } from "../stores/preferences"
+import { isSessionListViewportAttached, shouldRenderSessionRows } from "./session-list-visibility"
 const log = getLogger("session")
 
 
@@ -71,8 +72,28 @@ const SessionList: Component<SessionListProps> = (props) => {
   const [reloadingSessionIds, setReloadingSessionIds] = createSignal<Set<string>>(new Set())
   const [now, setNow] = createSignal(Date.now())
   const [listEl, setListEl] = createSignal<HTMLDivElement>()
+  const [listViewportAttached, setListViewportAttached] = createSignal(false)
   const [virtualizerHandle, setVirtualizerHandle] = createSignal<VirtualizerHandle>()
   const [focusedSessionId, setFocusedSessionId] = createSignal<string>()
+  let attachmentFrame: number | undefined
+
+  const setListElement = (element: HTMLDivElement) => {
+    setListEl(element)
+    const detectAttachment = () => {
+      if (isSessionListViewportAttached(element)) {
+        attachmentFrame = undefined
+        setListViewportAttached(true)
+        return
+      }
+      setListViewportAttached(false)
+      if (typeof requestAnimationFrame !== "undefined") attachmentFrame = requestAnimationFrame(detectAttachment)
+    }
+    detectAttachment()
+  }
+
+  onCleanup(() => {
+    if (attachmentFrame !== undefined) cancelAnimationFrame(attachmentFrame)
+  })
 
   createEffect(() => {
     if (typeof window === "undefined") return
@@ -843,7 +864,7 @@ const SessionList: Component<SessionListProps> = (props) => {
 
        <div
          class="session-list flex-1 overflow-y-auto"
-         ref={setListEl}
+         ref={setListElement}
          onFocusIn={(event) => {
            const target = event.target
            if (!(target instanceof Element)) return
@@ -875,7 +896,10 @@ const SessionList: Component<SessionListProps> = (props) => {
             </div>
           </Show>
 
-          <Show when={visibleProjection().ids.length > 0 || hasMore() || isFetchingSessions()}>
+          <Show when={shouldRenderSessionRows(
+            Boolean(sessionListError()),
+            listViewportAttached() && (visibleProjection().ids.length > 0 || hasMore() || isFetchingSessions()),
+          )}>
            <div class="session-section">
              <Show when={visibleProjection().ids.length > 0}>
                <Virtualizer
