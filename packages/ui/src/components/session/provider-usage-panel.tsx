@@ -1,6 +1,6 @@
-import { For, Show, createMemo, createResource, onCleanup, type Component } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, type Component } from "solid-js"
 
-import type { ProviderUsageWindow } from "../../../../server/src/api-types"
+import type { ProviderUsageResponse, ProviderUsageWindow } from "../../../../server/src/api-types"
 import { serverApi } from "../../lib/api-client"
 import { useI18n } from "../../lib/i18n"
 
@@ -18,12 +18,38 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
     if (!providerId) return null
     return { providerId, modelId: props.modelId.trim() }
   })
-  const [usage, { refetch }] = createResource(source, ({ providerId, modelId }) => serverApi.fetchProviderUsage(providerId, modelId))
+  const [usage, setUsage] = createSignal<ProviderUsageResponse | null>()
+  let requestId = 0
+
+  const refreshUsage = async (providerId: string, modelId: string, clear: boolean) => {
+    const currentRequestId = ++requestId
+    if (clear) setUsage(undefined)
+    try {
+      const response = await serverApi.fetchProviderUsage(providerId, modelId)
+      if (currentRequestId === requestId) setUsage(response)
+    } catch {
+      if (currentRequestId === requestId && usage() === undefined) setUsage(null)
+    }
+  }
+
+  createEffect(() => {
+    const current = source()
+    if (!current) {
+      requestId += 1
+      setUsage(undefined)
+      return
+    }
+    void refreshUsage(current.providerId, current.modelId, true)
+  })
 
   const refreshTimer = setInterval(() => {
-    if (source()) void refetch()
+    const current = source()
+    if (current) void refreshUsage(current.providerId, current.modelId, false)
   }, REFRESH_INTERVAL_MS)
-  onCleanup(() => clearInterval(refreshTimer))
+  onCleanup(() => {
+    requestId += 1
+    clearInterval(refreshTimer)
+  })
 
   const entries = createMemo(() => Object.entries(usage()?.windows ?? {}))
 
@@ -37,7 +63,6 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
       daily: "daily",
       monthly: "monthly",
       credits: "credits",
-      credits_balance: "creditsBalance",
       billing_cycle: "billingCycle",
       session: "session",
       premium: "premium",
@@ -69,13 +94,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
 
   return (
     <div>
-      <div class="mb-2 flex justify-end text-xs">
-        <Show when={usage()?.providerName} fallback={<span class="text-secondary">{props.providerId}</span>}>
-          {(name) => <span class="truncate text-secondary">{name()}</span>}
-        </Show>
-      </div>
-
-      <Show when={!usage.loading} fallback={<div class="text-xs text-tertiary">{t("providerUsage.loading")}</div>}>
+      <Show when={usage() !== undefined} fallback={<div class="text-xs text-tertiary">{t("providerUsage.loading")}</div>}>
         <Show when={usage()} fallback={<div class="text-xs text-tertiary">{t("providerUsage.unavailable")}</div>}>
           {(data) => (
             <Show
@@ -92,15 +111,22 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
                 </div>
               }
             >
-              <div class="space-y-2.5">
+              <div class="space-y-2">
                 <For each={entries()}>
                   {([label, window]) => (
                     <div>
-                      <div class="mb-1 flex items-start justify-between gap-2 text-xs">
-                        <span class="font-medium text-primary">{windowLabel(label)}</span>
-                        <div class="text-right">
-                          <div class="font-semibold text-primary">{displayValue(window)}</div>
-                          <Show when={resetLabel(window.resetAt)}>{(reset) => <div class="text-[10px] text-tertiary">{reset()}</div>}</Show>
+                      <div class="mb-1 flex items-baseline justify-between gap-2 text-[11px] text-primary">
+                        <span class="font-medium">{windowLabel(label)}</span>
+                        <div class="flex min-w-0 items-baseline gap-1.5 text-right">
+                          <span class="shrink-0 font-medium">{displayValue(window)}</span>
+                          <Show when={resetLabel(window.resetAt)}>
+                            {(reset) => (
+                              <>
+                                <span class="text-tertiary" aria-hidden="true">·</span>
+                                <span class="truncate text-[10px] text-tertiary">{reset()}</span>
+                              </>
+                            )}
+                          </Show>
                         </div>
                       </div>
                       <Show when={window.usedPercent !== null}>
@@ -124,6 +150,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
           )}
         </Show>
       </Show>
+      <div class="mt-2 truncate text-right text-sm font-semibold text-secondary">{usage()?.providerName ?? props.providerId}</div>
     </div>
   )
 }

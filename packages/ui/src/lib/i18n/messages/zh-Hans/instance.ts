@@ -167,7 +167,7 @@ export const instanceMessages = {
 
   "instanceShell.yoloMode.noSessionSelected": "请选择一个会话来配置 Yolo 模式。",
   "instanceShell.yoloMode.title": "Yolo 模式",
-  "instanceShell.yoloMode.description": "自动批准此会话的权限请求。默认关闭。",
+  "instanceShell.yoloMode.description": "自动批准此会话的权限请求。",
   "instanceShell.yoloMode.badge": "Yolo",
   "instanceShell.yoloMode.badgeAriaLabel": "Yolo 模式已启用",
 

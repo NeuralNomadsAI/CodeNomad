@@ -5,7 +5,6 @@ import { getProviderUsage, resolveUsageProvider, selectModelWindows } from "./se
 import type { ProviderResult } from "./types"
 
 const providerIds = [
-  "claude",
   "codex",
   "github-copilot",
   "google",
@@ -29,11 +28,15 @@ test("registers every supported usage provider", () => {
 })
 
 test("maps OpenCode provider aliases to their usage provider", () => {
-  assert.equal(resolveUsageProvider("anthropic")?.id, "claude")
   assert.equal(resolveUsageProvider("openai")?.id, "codex")
   assert.equal(resolveUsageProvider("copilot")?.id, "github-copilot")
   assert.equal(resolveUsageProvider("gemini")?.id, "google")
   assert.equal(resolveUsageProvider("opencode")?.id, "opencode-go")
+})
+
+test("does not use Claude subscription OAuth credentials", () => {
+  assert.equal(resolveUsageProvider("anthropic"), null)
+  assert.equal(resolveUsageProvider("claude"), null)
 })
 
 test("selects model-specific windows by normalized model id", () => {

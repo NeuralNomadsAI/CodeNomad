@@ -507,13 +507,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const renderSessionHeaderIndicators = () => (
     <div class="flex items-center flex-wrap justify-center gap-2">
-      {renderYoloModePill()}
       <Show when={hasPendingRequests()} fallback={renderActiveSessionStatusPill()}>
         <PermissionNotificationBanner
           instanceId={props.instance.id}
           onClick={() => setPermissionModalOpen(true)}
         />
       </Show>
+      {renderYoloModePill()}
     </div>
   )
 

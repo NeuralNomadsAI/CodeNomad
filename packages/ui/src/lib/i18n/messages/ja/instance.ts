@@ -167,7 +167,7 @@ export const instanceMessages = {
 
   "instanceShell.yoloMode.noSessionSelected": "Yoloモードを設定するにはセッションを選択してください。",
   "instanceShell.yoloMode.title": "Yoloモード",
-  "instanceShell.yoloMode.description": "このセッションの権限リクエストを自動承認します。デフォルトでは無効です。",
+  "instanceShell.yoloMode.description": "このセッションの権限リクエストを自動承認します。",
   "instanceShell.yoloMode.badge": "Yolo",
   "instanceShell.yoloMode.badgeAriaLabel": "Yoloモードが有効",
 
