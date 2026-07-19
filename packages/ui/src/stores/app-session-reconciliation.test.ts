@@ -57,6 +57,7 @@ describe("app session reconciliation", () => {
     assert.deepEqual(unavailable({ activeParentSessionId: "loaded", activeSessionId: "info", draftSessionIds: ["loaded", "__no_session_draft__"], attachmentSessionIds: ["loaded"], scrollSessionIds: ["loaded"] }, ["__no_session_draft__"]), [])
     assert.notEqual(unavailable({ activeParentSessionId: "missing-parent", activeSessionId: "missing-active", draftSessionIds: ["missing-draft"], attachmentSessionIds: ["missing-attachment"], scrollSessionIds: ["missing-scroll"] }).length, 0)
     assert.deepEqual(unavailable({ activeSessionId: "missing-active", draftSessionIds: ["missing-draft"], attachmentSessionIds: ["missing-attachment"], scrollSessionIds: ["loaded"] }), ["missing-active", "missing-draft", "missing-attachment"])
+    assert.deepEqual(unavailable({ draftSessionIds: [], scrollSessionIds: [], expandedSessionIds: ["loaded", "later"] }), ["later"])
   })
 
   it("falls back to the first restored tab when the active SideCar failed", () => {

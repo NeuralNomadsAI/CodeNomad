@@ -21,6 +21,7 @@ export interface RestorableWorkspaceRuntimeAuthority {
   scrollSnapshots?: ReadonlySet<string>
   idleMarkers?: ReadonlySet<string>
   generationRecovery?: ReadonlySet<string>
+  sessionExpansion?: ReadonlySet<string>
   deletedSessions?: ReadonlySet<string>
   sessionSelection?: boolean
 }
@@ -155,6 +156,7 @@ function getPreservedTab(source: RestorableTabState, result: RestoreTabResult): 
     scrollSnapshots: keep(source.scrollSnapshots),
     unseenIdleSince: keep(source.unseenIdleSince),
     generationRecovery: keep(source.generationRecovery),
+    expandedSessionIds: (source.expandedSessionIds ?? []).filter((id) => unavailable.has(id)),
   }
   if (source.occurrence !== undefined) tab.occurrence = source.occurrence
   if (source.activeParentSessionId && unavailable.has(source.activeParentSessionId)) {
@@ -180,6 +182,11 @@ function mergeWorkspaceState(
     scrollSnapshots: mergeRecords(current.scrollSnapshots, preserved.scrollSnapshots, authority.scrollSnapshots),
     unseenIdleSince: mergeRecords(current.unseenIdleSince, preserved.unseenIdleSince, authority.idleMarkers),
     generationRecovery: mergeRecords(current.generationRecovery, preserved.generationRecovery, authority.generationRecovery),
+    expandedSessionIds: [
+      ...(current.expandedSessionIds ?? []).filter((id) => !authority.deletedSessions?.has(id)),
+      ...(preserved.expandedSessionIds ?? []).filter((id) =>
+        !authority.sessionExpansion?.has(id) && !authority.deletedSessions?.has(id)),
+    ].filter((id, index, values) => values.indexOf(id) === index),
   }
   const restoreSelection = !authority.sessionSelection && !current.activeParentSessionId && !current.activeSessionId
   if (restoreSelection && preserved.activeParentSessionId && !authority.deletedSessions?.has(preserved.activeParentSessionId)) {

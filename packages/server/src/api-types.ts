@@ -415,6 +415,10 @@ export interface YoloStateResponse {
   enabled: boolean
 }
 
+export interface SessionMetadataResponse {
+  metadata: Record<string, unknown>
+}
+
 export interface RemoteServerProfile {
   id: string
   name: string

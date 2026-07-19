@@ -8,8 +8,8 @@
  *   - a session with a `revert` snapshot is treated as its own root (fork)
  *   - enabling any session enables its whole family root and vice-versa
  *
- * No persistence: state is lost on server restart, matching the "no
- * persistence for now" milestone.
+ * This store remains in-memory; AutoAcceptManager hydrates and persists it
+ * through OpenCode session metadata.
  */
 
 export interface AutoAcceptSessionInfo {
@@ -106,6 +106,10 @@ export class AutoAcceptStore {
   familyRoot(instanceId: string, sessionId: string): string {
     const tree = this.sessions.get(instanceId)
     return resolveFamilyRoot(sessionId, (id) => tree?.get(id))
+  }
+
+  enabledRoots(instanceId: string): string[] {
+    return [...(this.enabled.get(instanceId) ?? [])]
   }
 
   /**

@@ -10,6 +10,7 @@ export function registerYoloRoutes(app: FastifyInstance, deps: RouteDeps) {
     "/workspaces/:id/yolo/sessions/:sessionId",
     async (request) => {
       const { id, sessionId } = request.params
+      await deps.yoloManager.hydrateInstance(id)
       return { enabled: deps.yoloManager.isEnabled(id, sessionId) }
     },
   )
@@ -18,7 +19,7 @@ export function registerYoloRoutes(app: FastifyInstance, deps: RouteDeps) {
     "/workspaces/:id/yolo/sessions/:sessionId/toggle",
     async (request, reply) => {
       const { id, sessionId } = request.params
-      const enabled = deps.yoloManager.toggle(id, sessionId)
+      const enabled = await deps.yoloManager.toggle(id, sessionId)
       reply.code(200)
       return { enabled }
     },

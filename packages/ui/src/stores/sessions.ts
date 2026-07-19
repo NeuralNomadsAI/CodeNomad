@@ -14,6 +14,7 @@ import {
   clearSessionDraftPrompt,
   ensureSessionAncestorsExpanded,
   ensureSessionExpanded,
+  expandedSessions,
   getActiveParentSession,
   getActiveSession,
   getChildSessions,
@@ -24,10 +25,12 @@ import {
   getSessionDraftPromptsForInstance,
   getAuthoritativeDraftSessionIdsForInstance,
   getAuthoritativelyDeletedSessionIdsForInstance,
+  getAuthoritativeSessionExpansionIdsForInstance,
   hasAuthoritativeSessionSelection,
   hydrateActiveSessionSelection,
   hydrateSessionIdleMarkers,
   hydrateSessionGenerationRecovery,
+  hydrateSessionExpansion,
   beginSessionGenerationAdmission,
   cancelSessionGenerationAdmissions,
   getSessionFamily,
@@ -63,6 +66,7 @@ import {
   onSessionDraftHydrated,
   resetSessionPagination,
   clearInstanceDeletedSessionAuthority,
+  clearInstanceSessionExpansionState,
 } from "./session-state"
 
 import { getDefaultModel } from "./session-models"
@@ -140,6 +144,7 @@ export {
   deleteSession,
   ensureSessionAncestorsExpanded,
   ensureSessionExpanded,
+  expandedSessions,
   executeCustomCommand,
   renameSession,
   runShellCommand,
@@ -161,10 +166,12 @@ export {
   getSessionDraftPromptsForInstance,
   getAuthoritativeDraftSessionIdsForInstance,
   getAuthoritativelyDeletedSessionIdsForInstance,
+  getAuthoritativeSessionExpansionIdsForInstance,
   hasAuthoritativeSessionSelection,
   hydrateActiveSessionSelection,
   hydrateSessionIdleMarkers,
   hydrateSessionGenerationRecovery,
+  hydrateSessionExpansion,
   beginSessionGenerationAdmission,
   cancelSessionGenerationAdmissions,
   getSessionFamily,
@@ -205,5 +212,6 @@ export {
   onSessionDraftHydrated,
   resetSessionPagination,
   clearInstanceDeletedSessionAuthority,
+  clearInstanceSessionExpansionState,
 }
 export type { SessionInfo }

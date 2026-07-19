@@ -9,10 +9,12 @@ import {
   removeWorktree,
 } from "../../workspaces/git-worktrees"
 import type { WorktreeListResponse, WorktreeMap } from "../../api-types"
+import type { OpencodeYoloPersistence } from "../../permissions/opencode-yolo-metadata"
 import { ensureCodenomadGitExclude, readWorktreeMap, writeWorktreeMap } from "../../workspaces/worktree-map"
 
 interface RouteDeps {
   workspaceManager: WorkspaceManager
+  sessionMetadataPersistence: OpencodeYoloPersistence
 }
 
 const WorktreeMapSchema = z.object({
@@ -26,7 +28,34 @@ const WorktreeCreateSchema = z.object({
   branch: z.string().trim().min(1).optional(),
 })
 
+const WorktreeSessionSchema = z.object({ worktreeSlug: z.string().trim().refine(isValidWorktreeSlug) })
+
 export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
+  app.put<{ Params: { id: string; sessionId: string }; Body: unknown }>(
+    "/api/workspaces/:id/worktrees/sessions/:sessionId",
+    async (request, reply) => {
+      if (!deps.workspaceManager.get(request.params.id)) {
+        reply.code(404)
+        return { error: "Workspace not found" }
+      }
+      try {
+        const body = WorktreeSessionSchema.parse(request.body)
+        if (!await deps.sessionMetadataPersistence.hasProjectSession(request.params.id, request.params.sessionId)) {
+          reply.code(404)
+          return { error: "Session not found" }
+        }
+        const metadata = await deps.sessionMetadataPersistence.setWorktreeSlug(
+          request.params.id,
+          request.params.sessionId,
+          body.worktreeSlug,
+        )
+        return { metadata }
+      } catch (error) {
+        return handleError(error, reply)
+      }
+    },
+  )
+
   app.get<{ Params: { id: string } }>("/api/workspaces/:id/worktrees", async (request, reply) => {
     const workspace = deps.workspaceManager.get(request.params.id)
     if (!workspace) {

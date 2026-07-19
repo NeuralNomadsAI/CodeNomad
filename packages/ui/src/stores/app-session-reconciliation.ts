@@ -9,6 +9,7 @@ export interface RestoredSessionReferences {
   scrollSessionIds: readonly string[]
   idleMarkerSessionIds?: readonly string[]
   generationRecoverySessionIds?: readonly string[]
+  expandedSessionIds?: readonly string[]
 }
 export function normalizeWorkspacePath(folderPath: string): string {
   const windowsLike = /^(?:[A-Za-z]:[/\\]|[/\\]{2})/.test(folderPath)
@@ -90,6 +91,7 @@ export function getUnavailableRestoredSessionIds(
     ...references.scrollSessionIds,
     ...(references.idleMarkerSessionIds ?? []),
     ...(references.generationRecoverySessionIds ?? []),
+    ...(references.expandedSessionIds ?? []),
   ]
   return new Set(referenced.filter((id): id is string => Boolean(id) && !available.has(id!) && !allowed.has(id!)))
 }

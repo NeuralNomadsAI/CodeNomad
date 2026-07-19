@@ -223,6 +223,19 @@ describe("app session snapshot merge", () => {
     assert.equal(tab.generationRecovery.id, "interrupted")
   })
 
+  it("keeps later expansion while loaded collapse and deletion remain authoritative", () => {
+    const saved = session([workspace("/work", 0, { expandedSessionIds: ["loaded", "later", "deleted"] })])
+    const merged = mergeRestorableSessionState(
+      session([workspace("/work", 0, { expandedSessionIds: ["current", "deleted"] })]),
+      restored(saved, [{ source: 0, runtime: "instance:work", unavailable: ["later", "deleted"] }]),
+      {
+        currentTabIds: ["instance:work"],
+        currentTabAuthorities: [{ sessionExpansion: new Set(["loaded"]), deletedSessions: new Set(["deleted"]) }],
+      },
+    )
+    assert.deepEqual(workspaceAt(merged).expandedSessionIds, ["current", "later"])
+  })
+
   for (const testCase of [
     { label: "later parent/child selection", current: { activeParentSessionId: "current-parent", activeSessionId: "current-child" },
       expected: ["current-parent", "current-child"] },

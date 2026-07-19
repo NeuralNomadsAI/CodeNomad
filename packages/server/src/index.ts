@@ -33,6 +33,9 @@ import { PluginChannelManager } from "./plugins/channel"
 import { VoiceModeManager } from "./plugins/voice-mode"
 import { runCliUpgrade } from "./cli-upgrade"
 import { createServerShutdownHandler, orchestrateServerShutdown, type ServerShutdownTrigger } from "./shutdown"
+import { AutoAcceptManager } from "./permissions/auto-accept-manager"
+import { createOpencodePermissionReplier } from "./permissions/opencode-replier"
+import { createOpencodeYoloPersistence } from "./permissions/opencode-yolo-metadata"
 
 const require = createRequire(import.meta.url)
 
@@ -384,6 +387,15 @@ async function main() {
     logger: logger.child({ component: "sidecars" }),
   })
   const previewManager = new PreviewManager()
+  const yoloLogger = logger.child({ component: "yolo" })
+  const sessionMetadataPersistence = createOpencodeYoloPersistence(workspaceManager)
+  const yoloManager = new AutoAcceptManager({
+    eventBus,
+    logger: yoloLogger,
+    replier: createOpencodePermissionReplier({ workspaceManager, logger: yoloLogger }),
+    persistence: sessionMetadataPersistence,
+  })
+  yoloManager.start()
   const instanceEventBridge = new InstanceEventBridge({
     workspaceManager,
     eventBus,
@@ -485,6 +497,8 @@ async function main() {
         pluginChannel,
         voiceModeManager,
         remoteProxySessionManager,
+        yoloManager,
+        sessionMetadataPersistence,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: uiResolution.uiDevServerUrl,
         logger,
@@ -512,6 +526,8 @@ async function main() {
         pluginChannel,
         voiceModeManager,
         remoteProxySessionManager,
+        yoloManager,
+        sessionMetadataPersistence,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: undefined,
         logger,
@@ -612,6 +628,7 @@ async function main() {
           stopRemoteProxySessions: () => remoteProxySessionManager.shutdown(),
           stopWorkspaces: () => workspaceManager.shutdown(),
           stopHttpServers: async () => {
+            yoloManager.stop()
             const results = await Promise.allSettled(servers.map((srv) => srv.stop()))
             const failures = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []))
             if (failures.length > 0) {

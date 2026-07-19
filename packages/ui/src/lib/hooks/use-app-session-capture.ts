@@ -20,8 +20,9 @@ import { activeAppTabId, appTabs, getInstanceAppTabId } from "../../stores/app-t
 import { showFolderSelection } from "../../stores/ui"
 import { instances, waitForInstanceInitialSessionHydration } from "../../stores/instances"
 import {
-  activeParentSessionId, activeSessionId, getAuthoritativeDraftSessionIdsForInstance,
-  getAuthoritativelyDeletedSessionIdsForInstance, getSessionDraftPromptsForInstance, getSessions,
+  activeParentSessionId, activeSessionId, expandedSessions, getAuthoritativeDraftSessionIdsForInstance,
+  getAuthoritativeSessionExpansionIdsForInstance, getAuthoritativelyDeletedSessionIdsForInstance,
+  getSessionDraftPromptsForInstance, getSessions,
   hasAuthoritativeSessionSelection,
 } from "../../stores/sessions"
 import { messageStoreBus } from "../../stores/message-v2/bus"
@@ -75,6 +76,8 @@ function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>)
     const id = tab.instance.id
     const parentId = activeParentSessionId().get(id)
     const sessionId = activeSessionId().get(id)
+    const expansionAuthority = getAuthoritativeSessionExpansionIdsForInstance(id)
+    const expanded = [...(expandedSessions().get(id) ?? [])]
     const prioritySessionIds = [sessionId, "__no_session_draft__"].filter((value): value is string => Boolean(value))
     const result: RestorableWorkspaceTabState = {
       kind: "workspace", folder: tab.instance.folder, occurrence: occurrenceByInstance.get(id) ?? 0,
@@ -82,6 +85,10 @@ function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>)
         getSessionDraftPromptsForInstance(id), getSessionAttachmentsForInstance(id), prioritySessionIds,
       ),
       ...captureRuntimeState(id), scrollSnapshots: captureScrollSnapshots(id),
+      expandedSessionIds: [
+        ...expanded.filter((sessionId) => expansionAuthority.has(sessionId)),
+        ...expanded.filter((sessionId) => !expansionAuthority.has(sessionId)),
+      ],
     }
     if (tab.instance.projectName) result.projectName = tab.instance.projectName
     if (tab.instance.binaryPath) result.binaryPath = tab.instance.binaryPath
@@ -97,6 +104,7 @@ function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>)
       drafts: getAuthoritativeDraftSessionIdsForInstance(id),
       attachments: getAuthoritativeAttachmentSessionIdsForInstance(id),
       scrollSnapshots: scrollAuthority.get(id), idleMarkers: sessionIds, generationRecovery: sessionIds,
+      sessionExpansion: getAuthoritativeSessionExpansionIdsForInstance(id),
       deletedSessions: getAuthoritativelyDeletedSessionIdsForInstance(id),
       sessionSelection: hasAuthoritativeSessionSelection(id),
     }
@@ -237,7 +245,7 @@ export function useAppSessionCapture() {
   createEffect(() => {
     if (!enabled()) return
     const tabs = appTabs()
-    activeAppTabId(); activeParentSessionId(); activeSessionId(); showFolderSelection()
+    activeAppTabId(); activeParentSessionId(); activeSessionId(); expandedSessions(); showFolderSelection()
     for (const tab of tabs) if (tab.kind === "instance") {
       getSessions(tab.instance.id)
       getSessionDraftPromptsForInstance(tab.instance.id)

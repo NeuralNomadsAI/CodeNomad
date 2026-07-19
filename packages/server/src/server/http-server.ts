@@ -34,8 +34,8 @@ import { registerUsageRoutes } from "./routes/usage"
 import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import { BackgroundProcessManager } from "../background-processes/manager"
-import { AutoAcceptManager } from "../permissions/auto-accept-manager"
-import { createOpencodePermissionReplier } from "../permissions/opencode-replier"
+import type { AutoAcceptManager } from "../permissions/auto-accept-manager"
+import type { OpencodeYoloPersistence } from "../permissions/opencode-yolo-metadata"
 import type { AuthManager } from "../auth/manager"
 import { registerAuthRoutes } from "./routes/auth"
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth"
@@ -69,6 +69,8 @@ interface HttpServerDeps {
   pluginChannel: PluginChannelManager
   voiceModeManager: VoiceModeManager
   remoteProxySessionManager: RemoteProxySessionManager
+  yoloManager: AutoAcceptManager
+  sessionMetadataPersistence: OpencodeYoloPersistence
   uiStaticDir: string
   uiDevServerUrl?: string
   logger: Logger
@@ -198,16 +200,6 @@ export function createHttpServer(deps: HttpServerDeps) {
     logger: deps.logger.child({ component: "background-processes" }),
   })
 
-  const yoloManager = new AutoAcceptManager({
-    eventBus: deps.eventBus,
-    logger: deps.logger.child({ component: "yolo" }),
-    replier: createOpencodePermissionReplier({
-      workspaceManager: deps.workspaceManager,
-      logger: deps.logger.child({ component: "yolo" }),
-    }),
-  })
-  yoloManager.start()
-
   registerAuthRoutes(app, { authManager: deps.authManager })
 
   app.addHook("preHandler", (request, reply, done) => {
@@ -298,7 +290,10 @@ export function createHttpServer(deps: HttpServerDeps) {
     logger: sseLogger,
     connectionManager: deps.clientConnectionManager,
   })
-  registerWorktreeRoutes(app, { workspaceManager: deps.workspaceManager })
+  registerWorktreeRoutes(app, {
+    workspaceManager: deps.workspaceManager,
+    sessionMetadataPersistence: deps.sessionMetadataPersistence,
+  })
   registerStorageRoutes(app, {
     instanceStore: deps.instanceStore,
     eventBus: deps.eventBus,
@@ -330,7 +325,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     voiceModeManager: deps.voiceModeManager,
   })
   registerBackgroundProcessRoutes(app, { backgroundProcessManager })
-  registerYoloRoutes(app, { yoloManager })
+  registerYoloRoutes(app, { yoloManager: deps.yoloManager })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger })
 
 
@@ -393,7 +388,6 @@ export function createHttpServer(deps: HttpServerDeps) {
       return { port: actualPort, url: serverUrl, displayHost }
     },
     stop: () => {
-      yoloManager.stop()
       closeSseClients()
       return app.close()
     },

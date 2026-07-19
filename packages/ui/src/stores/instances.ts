@@ -19,6 +19,7 @@ import {
   clearInstanceDraftPrompts,
   clearSessionListRequestState,
   clearInstanceDeletedSessionAuthority,
+  clearInstanceSessionExpansionState,
   clearInstanceSessionSelection,
   resetSessionPagination,
 } from "./sessions"
@@ -995,6 +996,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   clearSessionListRequestState(id)
   clearInstanceAttachments(id)
   clearInstanceDeletedSessionAuthority(id)
+  clearInstanceSessionExpansionState(id)
   clearInstanceSessionSelection(id)
   if (removedInstance && removedOccurrence >= 0 && options.authoritative !== false) {
     publishInstanceLifecycleAuthority({
