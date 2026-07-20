@@ -268,8 +268,8 @@ export const settingsMessages = {
   "settings.providers.errors.envDisconnectUnavailable": "Ce fournisseur est configuré depuis des variables d'environnement et ne peut pas être déconnecté depuis l'interface.",
 
   "settings.appearance.behavior.title": "Interaction",
-  "settings.appearance.behavior.subtitle": "Parametres par defaut pour les messages, les diffs et la saisie.",
-  "settings.behavior.expansionPresets.ariaLabel": "Transcript detail presets",
+  "settings.appearance.behavior.subtitle": "Controlez ensemble le niveau de detail des messages, outils, diagnostics et metriques.",
+  "settings.behavior.expansionPresets.ariaLabel": "Prereglages de detail de conversation",
   "settings.behavior.expansionPreset.minimal.title": "Minimal",
   "settings.behavior.expansionPreset.minimal.description": "Keep most generated detail tucked away until needed.",
   "settings.behavior.expansionPreset.balanced.title": "Balanced",

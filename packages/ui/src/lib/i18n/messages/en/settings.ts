@@ -269,7 +269,7 @@ export const settingsMessages = {
 
 
   "settings.appearance.behavior.title": "Interaction",
-  "settings.appearance.behavior.subtitle": "Message, diff, and input defaults.",
+  "settings.appearance.behavior.subtitle": "Control message, tool, diagnostics, and usage detail together.",
   "settings.behavior.expansionPresets.ariaLabel": "Transcript detail presets",
   "settings.behavior.expansionPreset.minimal.title": "Minimal",
   "settings.behavior.expansionPreset.minimal.description": "Keep most generated detail tucked away until needed.",

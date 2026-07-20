@@ -268,8 +268,8 @@ export const settingsMessages = {
   "settings.providers.errors.envDisconnectUnavailable": "Этот провайдер настроен через переменные окружения и не может быть отключён из интерфейса.",
 
   "settings.appearance.behavior.title": "Взаимодействие",
-  "settings.appearance.behavior.subtitle": "Значения по умолчанию для сообщений, диффов и ввода.",
-  "settings.behavior.expansionPresets.ariaLabel": "Transcript detail presets",
+  "settings.appearance.behavior.subtitle": "Общее управление детализацией сообщений, инструментов, диагностики и использования.",
+  "settings.behavior.expansionPresets.ariaLabel": "Предустановки детализации диалога",
   "settings.behavior.expansionPreset.minimal.title": "Minimal",
   "settings.behavior.expansionPreset.minimal.description": "Keep most generated detail tucked away until needed.",
   "settings.behavior.expansionPreset.balanced.title": "Balanced",

@@ -269,8 +269,8 @@ export const settingsMessages = {
 
 
   "settings.appearance.behavior.title": "अन्तरक्रिया",
-  "settings.appearance.behavior.subtitle": "सन्देश, डिफ र इनपुट पूर्वनिर्धारितहरू।",
-  "settings.behavior.expansionPresets.ariaLabel": "Transcript detail presets",
+  "settings.appearance.behavior.subtitle": "सन्देश, उपकरण, निदान र प्रयोग विवरण एकै ठाउँबाट नियन्त्रण गर्नुहोस्।",
+  "settings.behavior.expansionPresets.ariaLabel": "संवाद विवरण प्रिसेटहरू",
   "settings.behavior.expansionPreset.minimal.title": "Minimal",
   "settings.behavior.expansionPreset.minimal.description": "Keep most generated detail tucked away until needed.",
   "settings.behavior.expansionPreset.balanced.title": "Balanced",

@@ -268,8 +268,8 @@ export const settingsMessages = {
   "settings.providers.errors.envDisconnectUnavailable": "このプロバイダーは環境変数から設定されているため、UI から切断できません。",
 
   "settings.appearance.behavior.title": "操作",
-  "settings.appearance.behavior.subtitle": "メッセージ、差分、入力の既定値。",
-  "settings.behavior.expansionPresets.ariaLabel": "Transcript detail presets",
+  "settings.appearance.behavior.subtitle": "メッセージ、ツール、診断、使用量の詳細表示をまとめて制御します。",
+  "settings.behavior.expansionPresets.ariaLabel": "会話詳細プリセット",
   "settings.behavior.expansionPreset.minimal.title": "Minimal",
   "settings.behavior.expansionPreset.minimal.description": "Keep most generated detail tucked away until needed.",
   "settings.behavior.expansionPreset.balanced.title": "Balanced",

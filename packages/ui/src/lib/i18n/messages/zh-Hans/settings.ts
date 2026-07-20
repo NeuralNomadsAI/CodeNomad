@@ -268,8 +268,8 @@ export const settingsMessages = {
   "settings.providers.errors.envDisconnectUnavailable": "此提供商由环境变量配置，无法从界面断开连接。",
 
   "settings.appearance.behavior.title": "交互",
-  "settings.appearance.behavior.subtitle": "消息、差异与输入的默认值。",
-  "settings.behavior.expansionPresets.ariaLabel": "Transcript detail presets",
+  "settings.appearance.behavior.subtitle": "统一控制消息、工具、诊断和用量详情。",
+  "settings.behavior.expansionPresets.ariaLabel": "对话详情预设",
   "settings.behavior.expansionPreset.minimal.title": "Minimal",
   "settings.behavior.expansionPreset.minimal.description": "Keep most generated detail tucked away until needed.",
   "settings.behavior.expansionPreset.balanced.title": "Balanced",

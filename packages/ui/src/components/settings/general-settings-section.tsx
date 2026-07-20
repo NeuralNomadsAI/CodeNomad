@@ -1,7 +1,7 @@
 import { Check, Laptop, Moon, Sun } from "lucide-solid"
 import { createMemo, type Component } from "solid-js"
 import { useI18n } from "../../lib/i18n"
-import { getBehaviorSettings } from "../../lib/settings/behavior-registry"
+import { getBehaviorSettings, type BehaviorSetting } from "../../lib/settings/behavior-registry"
 import { useTheme, type ThemeMode } from "../../lib/theme"
 import { useConfig } from "../../stores/preferences"
 import { LocaleSelector } from "../locale-selector"
@@ -18,16 +18,26 @@ export const GeneralSettingsSection: Component = () => {
   const { t } = useI18n()
   const { themeMode, setThemeMode } = useTheme()
   const config = useConfig()
-  const generalSettings = createMemo(() =>
-    getBehaviorSettings(config).filter(
+  const { updatePreferences } = config
+  const generalSettings = createMemo<BehaviorSetting[]>(() => [
+    ...getBehaviorSettings(config).filter(
       (setting) =>
         setting.id === "behavior.keyboardShortcutHints" ||
         setting.id === "behavior.messageTimeline" ||
+        setting.id === "behavior.diffViewMode" ||
         setting.id === "behavior.autoCleanupBlankSessions" ||
         setting.id === "behavior.keepUnseenSubagentIdleStatus" ||
         setting.id === "behavior.promptSubmitOnEnter",
     ),
-  )
+    {
+      kind: "toggle",
+      id: "behavior.holdLongAssistantReplies",
+      titleKey: "settings.behavior.holdLongAssistantReplies.title",
+      subtitleKey: "settings.behavior.holdLongAssistantReplies.subtitle",
+      get: (current) => Boolean(current.holdLongAssistantReplies ?? true),
+      set: (next) => updatePreferences({ holdLongAssistantReplies: next }),
+    },
+  ])
 
   const modeLabel = (mode: ThemeMode) => {
     if (mode === "system") return t("theme.mode.system")

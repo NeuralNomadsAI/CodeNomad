@@ -269,8 +269,8 @@ export const settingsMessages = {
 
 
   "settings.appearance.behavior.title": "Interaktion",
-  "settings.appearance.behavior.subtitle": "Standardwerte für Nachrichten, Diffs und Eingaben.",
-  "settings.behavior.expansionPresets.ariaLabel": "Transcript detail presets",
+  "settings.appearance.behavior.subtitle": "Steuere Details fuer Nachrichten, Tools, Diagnosen und Nutzung gemeinsam.",
+  "settings.behavior.expansionPresets.ariaLabel": "Voreinstellungen fuer Gespraechsdetails",
   "settings.behavior.expansionPreset.minimal.title": "Minimal",
   "settings.behavior.expansionPreset.minimal.description": "Keep most generated detail tucked away until needed.",
   "settings.behavior.expansionPreset.balanced.title": "Balanced",

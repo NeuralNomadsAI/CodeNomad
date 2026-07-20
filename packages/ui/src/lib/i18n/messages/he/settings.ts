@@ -268,8 +268,8 @@ export const settingsMessages = {
   "settings.providers.errors.envDisconnectUnavailable": "ספק זה מוגדר ממשתני סביבה ולא ניתן לנתק אותו מהממשק.",
 
   "settings.appearance.behavior.title": "אינטראקציה",
-  "settings.appearance.behavior.subtitle": "ברירות מחדל להודעות, diff וקלט.",
-  "settings.behavior.expansionPresets.ariaLabel": "Transcript detail presets",
+  "settings.appearance.behavior.subtitle": "שליטה משותפת ברמת הפירוט של הודעות, כלים, אבחון ושימוש.",
+  "settings.behavior.expansionPresets.ariaLabel": "הגדרות קבועות מראש לפירוט השיחה",
   "settings.behavior.expansionPreset.minimal.title": "Minimal",
   "settings.behavior.expansionPreset.minimal.description": "Keep most generated detail tucked away until needed.",
   "settings.behavior.expansionPreset.balanced.title": "Balanced",
