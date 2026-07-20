@@ -1,6 +1,6 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
-import { Settings, Bell, ChevronDown, FileCog, Info, MonitorUp, Paintbrush, Terminal, Volume2, Globe, X } from "lucide-solid"
+import { Settings, Bell, ChevronDown, FileCog, Info, MessageSquare, SlidersHorizontal, Terminal, Volume2, Wifi, X } from "lucide-solid"
 import { createMemo, For, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import {
@@ -10,15 +10,14 @@ import {
   setActiveSettingsSection,
   type SettingsSectionId,
 } from "../stores/settings-screen"
-import { AppearanceSettingsSection } from "./settings/appearance-settings-section"
+import { GeneralSettingsSection } from "./settings/general-settings-section"
+import { ChatSettingsSection } from "./settings/chat-settings-section"
 import { InfoSettingsSection } from "./settings/info-settings-section"
 import { NotificationsSettingsSection } from "./settings/notifications-settings-section"
-import { OpenCodeSettingsSection } from "./settings/opencode-settings-section"
-import { ConfigFilesSettingsSection } from "./settings/config-files-settings-section"
-import { RemoteAccessSettingsSection } from "./settings/remote-access-settings-section"
 import { SpeechSettingsSection } from "./settings/speech-settings-section"
-import { SideCarsSettingsSection } from "./settings/sidecars-settings-section"
-import { canOpenRemoteWindows } from "../lib/runtime-env"
+import { ConnectionsSettingsSection } from "./settings/connections-settings-section"
+import { RuntimeSettingsSection } from "./settings/runtime-settings-section"
+import { AdvancedSettingsSection } from "./settings/advanced-settings-section"
 import { confirmSettingsDiscard } from "../stores/settings-dirty-guard"
 
 type SettingsSectionOption = {
@@ -32,19 +31,15 @@ export const SettingsScreen: Component = () => {
 
   const sections = createMemo(() => {
     const items: SettingsSectionOption[] = [
-      { id: "appearance", icon: Paintbrush, label: t("settings.nav.appearance") },
+      { id: "general", icon: SlidersHorizontal, label: t("settings.nav.general") },
+      { id: "chat", icon: MessageSquare, label: t("settings.nav.chat") },
       { id: "notifications", icon: Bell, label: t("settings.nav.notifications") },
-      { id: "speech", icon: Volume2, label: t("settings.nav.speech") },
-      { id: "sidecars", icon: Globe, label: t("settings.nav.sidecars") },
-      { id: "opencode", icon: Terminal, label: t("settings.nav.opencode") },
-      { id: "config-files", icon: FileCog, label: t("settings.nav.configFiles") },
-      { id: "info", icon: Info, label: t("settings.nav.info") },
+      { id: "voice", icon: Volume2, label: t("settings.nav.voice") },
+      { id: "connections", icon: Wifi, label: t("settings.nav.connections") },
+      { id: "runtime", icon: Terminal, label: t("settings.nav.runtime") },
+      { id: "advanced", icon: FileCog, label: t("settings.nav.advanced") },
+      { id: "about", icon: Info, label: t("settings.nav.about") },
     ]
-
-    if (canOpenRemoteWindows()) {
-      items.splice(2, 0, { id: "remote", icon: MonitorUp, label: t("settings.nav.remote") })
-    }
-
     return items
   })
 
@@ -52,23 +47,23 @@ export const SettingsScreen: Component = () => {
 
   const renderSection = () => {
     switch (activeSettingsSection()) {
+      case "chat":
+        return <ChatSettingsSection />
       case "notifications":
         return <NotificationsSettingsSection />
-      case "remote":
-        return canOpenRemoteWindows() ? <RemoteAccessSettingsSection /> : <AppearanceSettingsSection />
-      case "speech":
+      case "voice":
         return <SpeechSettingsSection />
-      case "sidecars":
-        return <SideCarsSettingsSection />
-      case "opencode":
-        return <OpenCodeSettingsSection />
-      case "config-files":
-        return <ConfigFilesSettingsSection />
-      case "info":
+      case "connections":
+        return <ConnectionsSettingsSection />
+      case "runtime":
+        return <RuntimeSettingsSection />
+      case "advanced":
+        return <AdvancedSettingsSection />
+      case "about":
         return <InfoSettingsSection />
-      case "appearance":
+      case "general":
       default:
-        return <AppearanceSettingsSection />
+        return <GeneralSettingsSection />
     }
   }
 

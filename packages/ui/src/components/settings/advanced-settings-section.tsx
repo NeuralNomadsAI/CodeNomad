@@ -1,22 +1,20 @@
 import { Select } from "@kobalte/core/select"
-import { createEffect, createMemo, createSignal, type Component } from "solid-js"
-import { ChevronDown, Terminal } from "lucide-solid"
-import OpenCodeBinarySelector from "../opencode-binary-selector"
-import EnvironmentVariablesEditor from "../environment-variables-editor"
-import { useConfig } from "../../stores/preferences"
-import type { ServerLogLevel } from "../../stores/preferences"
+import { ChevronDown } from "lucide-solid"
+import { createMemo, Show, type Component } from "solid-js"
 import { useI18n } from "../../lib/i18n"
-import { OpenCodeUpdateCard } from "./opencode-update-card"
+import { getBehaviorSettings } from "../../lib/settings/behavior-registry"
+import { isTauriHost } from "../../lib/runtime-env"
+import { useConfig, type ServerLogLevel } from "../../stores/preferences"
+import EnvironmentVariablesEditor from "../environment-variables-editor"
+import { BehaviorSettingRows } from "./behavior-setting-rows"
+import { ConfigFilesSettingsSection } from "./config-files-settings-section"
 
-type LogLevelOption = {
-  value: ServerLogLevel
-  label: string
-}
+type LogLevelOption = { value: ServerLogLevel; label: string }
 
-export const OpenCodeSettingsSection: Component = () => {
+export const AdvancedSettingsSection: Component = () => {
   const { t } = useI18n()
-  const { serverSettings, updateLastUsedBinary, updateLogLevel } = useConfig()
-  const [selectedBinary, setSelectedBinary] = createSignal(serverSettings().opencodeBinary || "opencode")
+  const config = useConfig()
+  const { serverSettings, updateLogLevel } = config
   const logLevelOptions = createMemo<LogLevelOption[]>(() => [
     { value: "DEBUG", label: t("settings.opencode.logLevel.option.debug") },
     { value: "INFO", label: t("settings.opencode.logLevel.option.info") },
@@ -26,36 +24,12 @@ export const OpenCodeSettingsSection: Component = () => {
   const selectedLogLevel = createMemo(
     () => logLevelOptions().find((option) => option.value === serverSettings().logLevel) ?? logLevelOptions()[0],
   )
-
-  createEffect(() => {
-    const binary = serverSettings().opencodeBinary || "opencode"
-    setSelectedBinary((current) => (current === binary ? current : binary))
-  })
-
-  const handleBinaryChange = (binary: string) => {
-    setSelectedBinary(binary)
-    updateLastUsedBinary(binary)
-  }
+  const transportSettings = createMemo(() =>
+    getBehaviorSettings(config).filter((setting) => setting.id === "behavior.tauriNativeEventTransport"),
+  )
 
   return (
     <div class="settings-section-stack">
-      <div class="settings-card">
-        <div class="settings-card-header">
-          <div class="settings-card-heading-with-icon">
-            <Terminal class="settings-card-heading-icon" />
-            <div>
-              <h3 class="settings-card-title">{t("settings.opencode.runtime.title")}</h3>
-              <p class="settings-card-subtitle">{t("settings.opencode.runtime.subtitle")}</p>
-            </div>
-          </div>
-          <span class="settings-scope-badge settings-scope-badge-server">{t("settings.scope.server")}</span>
-        </div>
-
-        <OpenCodeBinarySelector selectedBinary={selectedBinary()} onBinaryChange={handleBinaryChange} isVisible />
-      </div>
-
-      <OpenCodeUpdateCard />
-
       <div class="settings-card">
         <div class="settings-card-header">
           <div>
@@ -72,10 +46,7 @@ export const OpenCodeSettingsSection: Component = () => {
             </div>
             <Select<LogLevelOption>
               value={selectedLogLevel()}
-              onChange={(option) => {
-                if (!option) return
-                updateLogLevel(option.value)
-              }}
+              onChange={(option) => option && updateLogLevel(option.value)}
               options={logLevelOptions()}
               optionValue="value"
               optionTextValue="label"
@@ -88,22 +59,13 @@ export const OpenCodeSettingsSection: Component = () => {
               <Select.Trigger class="selector-trigger" aria-label={t("settings.opencode.logLevel.title")}>
                 <div class="flex-1 min-w-0">
                   <Select.Value<LogLevelOption>>
-                    {(state) => (
-                      <span class="selector-trigger-primary selector-trigger-primary--align-left">
-                        {state.selectedOption()?.label}
-                      </span>
-                    )}
+                    {(state) => <span class="selector-trigger-primary selector-trigger-primary--align-left">{state.selectedOption()?.label}</span>}
                   </Select.Value>
                 </div>
-                <Select.Icon class="selector-trigger-icon">
-                  <ChevronDown class="w-3 h-3" />
-                </Select.Icon>
+                <Select.Icon class="selector-trigger-icon"><ChevronDown class="w-3 h-3" /></Select.Icon>
               </Select.Trigger>
-
               <Select.Portal>
-                <Select.Content class="selector-popover">
-                  <Select.Listbox class="selector-listbox" />
-                </Select.Content>
+                <Select.Content class="selector-popover"><Select.Listbox class="selector-listbox" /></Select.Content>
               </Select.Portal>
             </Select>
           </div>
@@ -119,6 +81,27 @@ export const OpenCodeSettingsSection: Component = () => {
           <span class="settings-scope-badge settings-scope-badge-server">{t("settings.scope.server")}</span>
         </div>
         <EnvironmentVariablesEditor />
+      </div>
+
+      <Show when={isTauriHost()}>
+        <div class="settings-card">
+          <div class="settings-stack">
+            <BehaviorSettingRows settings={transportSettings} preferences={config.preferences} />
+          </div>
+        </div>
+      </Show>
+
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <div>
+            <h3 class="settings-card-title">{t("settings.configFiles.title")}</h3>
+            <p class="settings-card-subtitle">{t("settings.configFiles.subtitle")}</p>
+          </div>
+          <span class="settings-scope-badge settings-scope-badge-server">{t("settings.scope.server")}</span>
+        </div>
+        <div class="advanced-config-files">
+          <ConfigFilesSettingsSection />
+        </div>
       </div>
     </div>
   )

@@ -1,7 +1,6 @@
 import { Dialog } from "@kobalte/core/dialog"
-import { Select } from "@kobalte/core/select"
 import { Component, createMemo, createSignal, Show, For, onMount, onCleanup, createEffect } from "solid-js"
-import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, Languages, ChevronDown, X, Globe, Loader2, GitBranch, Pencil } from "lucide-solid"
+import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, X, Globe, Loader2, GitBranch, Pencil } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
 import Kbd from "./kbd"
@@ -12,14 +11,16 @@ import VersionPill from "./version-pill"
 import { DiscordSymbolIcon, GitHubMarkIcon } from "./brand-icons"
 import { githubStars } from "../stores/github-stars"
 import { formatCompactCount } from "../lib/formatters"
-import { useI18n, type Locale } from "../lib/i18n"
+import { useI18n } from "../lib/i18n"
 import { showAlertDialog } from "../stores/alerts"
 import { openSettings, settingsOpen } from "../stores/settings-screen"
 import { openExternalUrl } from "../lib/external-url"
 import { serverApi } from "../lib/api-client"
-import { canOpenRemoteWindows, isTauriHost } from "../lib/runtime-env"
-import { openRemoteServerWindow } from "../lib/native/remote-window"
+import { canOpenRemoteWindows } from "../lib/runtime-env"
 import { getExistingInstanceForFolder, updateProjectNameForFolder } from "../stores/instances"
+import { LocaleSelector } from "./locale-selector"
+import { RemoteServerDialog } from "./remote-server-dialog"
+import { useRemoteServerProfiles } from "../lib/hooks/use-remote-server-profiles"
 
 const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
 const GITHUB_URL = "https://github.com/NeuralNomadsAI/CodeNomad"
@@ -41,15 +42,10 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     recentFolders,
     removeRecentFolder,
     renameRecentFolderProject,
-    preferences,
-    updatePreferences,
     serverSettings,
-    remoteServers,
-    saveRemoteServerProfile,
-    markRemoteServerConnected,
-    removeRemoteServerProfile,
   } = useConfig()
-  const { t, locale } = useI18n()
+  const { remoteServers, connectingServerId, saveServer, connectSavedServer, removeRemoteServerProfile } = useRemoteServerProfiles()
+  const { t } = useI18n()
   const [selectedIndex, setSelectedIndex] = createSignal(0)
   const [hoveredRecentActionPath, setHoveredRecentActionPath] = createSignal<string | null>(null)
   const [focusedRecentActionPath, setFocusedRecentActionPath] = createSignal<string | null>(null)
@@ -67,32 +63,10 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const [isCloningRepository, setIsCloningRepository] = createSignal(false)
   const [activeTab, setActiveTab] = createSignal<HomeTab>("local")
   const [isServerDialogOpen, setIsServerDialogOpen] = createSignal(false)
-  const [serverName, setServerName] = createSignal("")
-  const [serverUrl, setServerUrl] = createSignal("")
-  const [skipTlsVerify, setSkipTlsVerify] = createSignal(false)
-  const [serverDialogError, setServerDialogError] = createSignal<string | null>(null)
-  const [isSavingServer, setIsSavingServer] = createSignal(false)
-  const [connectingServerId, setConnectingServerId] = createSignal<string | null>(null)
   let homeRootRef: HTMLDivElement | undefined
   let actionsColumnRef: HTMLDivElement | undefined
   let recentListRef: HTMLDivElement | undefined
 
-  type LanguageOption = { value: Locale; label: string }
-
-  const languageOptions: LanguageOption[] = [
-    { value: "en", label: "English" },
-    { value: "es", label: "Español" },
-    { value: "fr", label: "Français" },
-    { value: "ru", label: "Русский" },
-    { value: "ja", label: "日本語" },
-    { value: "zh-Hans", label: "简体中文" },
-    { value: "he", label: "עברית" },
-    { value: "de", label: "Deutsch" },
-    { value: "ne", label: "नेपाली" },
-  ]
-
-  const selectedLanguageOption = () => languageOptions.find((opt) => opt.value === locale()) ?? languageOptions[0]
-  
   const folders = () => recentFolders()
   const serverList = () => remoteServers()
   const isLoading = () => Boolean(props.isLoading)
@@ -222,7 +196,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
     const server = serverList()[index]
     if (server) {
-      void handleConnectSavedServer(server.id)
+      void connectSavedServer(server.id)
     }
   }
 
@@ -378,107 +352,9 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     }
   }
 
-  function resetServerDialog() {
-    setServerName("")
-    setServerUrl("")
-    setSkipTlsVerify(false)
-    setServerDialogError(null)
-  }
-
   function openServerDialog() {
     if (!canUseRemoteServerWindows()) return
-    resetServerDialog()
     setIsServerDialogOpen(true)
-  }
-
-  async function probeAndOpenServer(input: { id?: string; name: string; baseUrl: string; skipTlsVerify: boolean }, openWindow: boolean) {
-    if (openWindow && !canUseRemoteServerWindows()) {
-      throw new Error("Remote server windows can only be opened from a local desktop window")
-    }
-
-    const trimmedName = input.name.trim()
-    const trimmedUrl = input.baseUrl.trim()
-    if (!trimmedName || !trimmedUrl) {
-      throw new Error(t("folderSelection.servers.dialog.errorRequired"))
-    }
-
-    const probe = await serverApi.probeRemoteServer({
-      baseUrl: trimmedUrl,
-      skipTlsVerify: input.skipTlsVerify,
-    })
-
-    if (!probe.ok) {
-      throw new Error(probe.error || t("folderSelection.servers.dialog.errorConnect"))
-    }
-
-    const profile = await saveRemoteServerProfile({
-      id: input.id,
-      name: trimmedName,
-      baseUrl: probe.normalizedUrl,
-      skipTlsVerify: input.skipTlsVerify,
-    })
-
-    if (openWindow) {
-      const remoteProxySession =
-        isTauriHost() && profile.skipTlsVerify && profile.baseUrl.startsWith("https://")
-          ? await serverApi.createRemoteProxySession({
-              baseUrl: profile.baseUrl,
-              skipTlsVerify: profile.skipTlsVerify,
-            })
-          : undefined
-
-      try {
-        await openRemoteServerWindow(profile, remoteProxySession?.windowUrl, remoteProxySession?.sessionId)
-      } catch (error) {
-        if (remoteProxySession) {
-          void serverApi.deleteRemoteProxySession(remoteProxySession.sessionId).catch(() => {})
-        }
-        throw error
-      }
-
-      await markRemoteServerConnected(profile.id)
-    }
-
-    return profile
-  }
-
-  async function handleSaveServer(openWindow: boolean) {
-    if (isSavingServer()) return
-    setIsSavingServer(true)
-    setServerDialogError(null)
-    try {
-      await probeAndOpenServer(
-        {
-          name: serverName(),
-          baseUrl: serverUrl(),
-          skipTlsVerify: skipTlsVerify(),
-        },
-        openWindow,
-      )
-      setIsServerDialogOpen(false)
-      resetServerDialog()
-    } catch (error) {
-      setServerDialogError(error instanceof Error ? error.message : String(error))
-    } finally {
-      setIsSavingServer(false)
-    }
-  }
-
-  async function handleConnectSavedServer(id: string) {
-    if (!canUseRemoteServerWindows()) return
-    const target = remoteServers().find((entry) => entry.id === id)
-    if (!target || connectingServerId()) return
-    setConnectingServerId(id)
-    try {
-      await probeAndOpenServer(target, true)
-    } catch (error) {
-      showAlertDialog(error instanceof Error ? error.message : String(error), {
-        title: t("folderSelection.servers.errorTitle"),
-        variant: "warning",
-      })
-    } finally {
-      setConnectingServerId(null)
-    }
   }
 
   async function handleBrowse() {
@@ -647,54 +523,13 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
           aria-busy={isLoading() ? "true" : "false"}
         >
           <div class="absolute top-4" style="inset-inline-start: 1.5rem;">
-            <Select<LanguageOption>
-              value={selectedLanguageOption()}
-              onChange={(value) => {
-                if (!value) return
-                if (value.value === locale()) return
-                updatePreferences({ locale: value.value })
-              }}
-              options={languageOptions}
-              optionValue="value"
-              optionTextValue="label"
-              itemComponent={(itemProps) => (
-                <Select.Item item={itemProps.item} class="selector-option">
-                  <Select.ItemLabel class="selector-option-label">{itemProps.item.rawValue.label}</Select.ItemLabel>
-                </Select.Item>
-              )}
-            >
-              <Select.Trigger
-                class="selector-trigger"
-                aria-label={t("folderSelection.language.ariaLabel")}
-                title={t("folderSelection.language.ariaLabel")}
-              >
-                <Languages class="w-4 h-4 icon-muted" aria-hidden="true" />
-                <div class="flex-1 min-w-0">
-                  <Select.Value<LanguageOption>>
-                    {(state) => (
-                      <span class="selector-trigger-primary selector-trigger-primary--align-left">
-                        {state.selectedOption()?.label}
-                      </span>
-                    )}
-                  </Select.Value>
-                </div>
-                <Select.Icon class="selector-trigger-icon">
-                  <ChevronDown class="w-3 h-3" />
-                </Select.Icon>
-              </Select.Trigger>
-
-              <Select.Portal>
-                <Select.Content class="selector-popover min-w-[180px]">
-                  <Select.Listbox class="selector-listbox" />
-                </Select.Content>
-              </Select.Portal>
-            </Select>
+            <LocaleSelector />
           </div>
           <div class="absolute top-4 flex items-center gap-2" style="inset-inline-end: 1.5rem;">
             <button
               type="button"
               class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center"
-              onClick={() => openSettings("appearance")}
+              onClick={() => openSettings("general")}
               aria-label={t("settings.open.title")}
               title={t("settings.open.title")}
             >
@@ -704,7 +539,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
               <button
                 type="button"
                 class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center"
-                onClick={() => openSettings("remote")}
+                onClick={() => openSettings("connections")}
                 aria-label={t("instanceTabs.remote.ariaLabel")}
                 title={t("instanceTabs.remote.title")}
               >
@@ -893,7 +728,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                   <button
                                     data-list-index={index()}
                                     class="panel-list-item-content flex-1"
-                                    onClick={() => void handleConnectSavedServer(server.id)}
+                                    onClick={() => void connectSavedServer(server.id)}
                                     onMouseEnter={() => {
                                       setFocusMode("recent")
                                       setSelectedIndex(index())
@@ -917,7 +752,8 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                   <button
                                     onClick={() => removeRemoteServerProfile(server.id)}
                                     class="p-2 transition-all hover:bg-red-100 dark:hover:bg-red-900/30 opacity-70 hover:opacity-100 rounded"
-                                    title={t("folderSelection.servers.remove")}
+                                    title={`${t("folderSelection.servers.remove")}: ${server.name}`}
+                                    aria-label={`${t("folderSelection.servers.remove")}: ${server.name}`}
                                   >
                                     <Trash2 class="w-3.5 h-3.5 transition-colors icon-muted hover:text-red-600 dark:hover:text-red-400" />
                                   </button>
@@ -1143,7 +979,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
                 {/* OpenCode settings section */}
                 <div class="panel-section w-full">
-                  <button onClick={() => openSettings("opencode")} class="panel-section-header w-full justify-between">
+                  <button onClick={() => openSettings("runtime")} class="panel-section-header w-full justify-between">
                     <div class="flex items-center gap-2">
                       <Settings class="w-4 h-4 icon-muted" />
                       <span class="text-sm font-medium text-secondary">{t("folderSelection.opencode")}</span>
@@ -1325,81 +1161,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
         </Dialog.Portal>
       </Dialog>
 
-      <Dialog open={isServerDialogOpen()} onOpenChange={(open) => !open && setIsServerDialogOpen(false)}>
-        <Dialog.Portal>
-          <Dialog.Overlay class="modal-overlay" />
-          <div class="fixed inset-0 z-[1300] flex items-center justify-center p-4">
-            <Dialog.Content class="modal-surface w-full max-w-lg p-6 flex flex-col gap-5" tabIndex={-1}>
-              <div>
-                <Dialog.Title class="text-xl font-semibold text-primary">
-                  {t("folderSelection.servers.dialog.title")}
-                </Dialog.Title>
-                <Dialog.Description class="text-sm text-secondary mt-2">
-                  {t("folderSelection.servers.dialog.description")}
-                </Dialog.Description>
-              </div>
-
-              <label class="flex flex-col gap-2 text-sm text-secondary">
-                <span>{t("folderSelection.servers.dialog.name")}</span>
-                <input
-                  class="selector-input w-full"
-                  value={serverName()}
-                  onInput={(event) => setServerName(event.currentTarget.value)}
-                  placeholder={t("folderSelection.servers.dialog.namePlaceholder")}
-                />
-              </label>
-
-              <label class="flex flex-col gap-2 text-sm text-secondary">
-                <span>{t("folderSelection.servers.dialog.url")}</span>
-                <input
-                  class="selector-input w-full"
-                  value={serverUrl()}
-                  onInput={(event) => setServerUrl(event.currentTarget.value)}
-                  placeholder={t("folderSelection.servers.dialog.urlPlaceholder")}
-                />
-              </label>
-
-              <label class="flex items-start gap-3 text-sm text-secondary">
-                <input
-                  type="checkbox"
-                  checked={skipTlsVerify()}
-                  onChange={(event) => setSkipTlsVerify(event.currentTarget.checked)}
-                />
-                <span>{t("folderSelection.servers.dialog.skipTls")}</span>
-              </label>
-
-              <Show when={serverDialogError()}>
-                {(message) => <p class="text-sm text-red-500 break-words">{message()}</p>}
-              </Show>
-
-              <div class="flex items-center justify-end gap-3">
-                <button class="selector-button selector-button-secondary w-auto px-4" onClick={() => setIsServerDialogOpen(false)}>
-                  {t("folderSelection.servers.dialog.cancel")}
-                </button>
-                <button
-                  class="selector-button selector-button-secondary w-auto px-4"
-                  disabled={isSavingServer()}
-                  onClick={() => void handleSaveServer(false)}
-                >
-                  {t("folderSelection.servers.dialog.save")}
-                </button>
-                <button
-                  class="selector-button selector-button-secondary w-auto px-4"
-                  disabled={isSavingServer()}
-                  onClick={() => void handleSaveServer(true)}
-                >
-                  <Show when={isSavingServer()} fallback={<span>{t("folderSelection.servers.dialog.connect")}</span>}>
-                    <span class="inline-flex items-center gap-2">
-                      <Loader2 class="w-4 h-4 animate-spin" />
-                      {t("folderSelection.servers.dialog.connecting")}
-                    </span>
-                  </Show>
-                </button>
-              </div>
-            </Dialog.Content>
-          </div>
-        </Dialog.Portal>
-      </Dialog>
+      <RemoteServerDialog open={isServerDialogOpen()} onOpenChange={setIsServerDialogOpen} onSubmit={saveServer} />
     </>
   )
 }
