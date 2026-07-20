@@ -503,7 +503,7 @@ export class GitHubJobRunner {
     let sessionId: string | null = null
     let reusedSession = false
     try {
-      const listed = await unwrap<any>(client.session.list({ directory, search: threadTitle, limit: 20 }, { signal: params.signal }), "session.list")
+      const listed = await unwrap<any>(client.session.list({ directory, search: threadTitle, limit: 20 }, { signal: params.signal }), "session.list", this.deps.logger)
       const items = Array.isArray((listed as any)?.data) ? (listed as any).data : Array.isArray(listed) ? listed : []
       const matches = items.filter((s: any) => s?.title === threadTitle && typeof s?.id === "string")
       matches.sort((a: any, b: any) => Number(b?.time?.updated ?? b?.time?.created ?? 0) - Number(a?.time?.updated ?? a?.time?.created ?? 0))
@@ -516,7 +516,7 @@ export class GitHubJobRunner {
     }
 
     if (!sessionId) {
-      const created = await unwrap<any>(client.session.create({ directory, title: threadTitle }, { signal: params.signal }), "session.create")
+      const created = await unwrap<any>(client.session.create({ directory, title: threadTitle }, { signal: params.signal }), "session.create", this.deps.logger)
       if (!created?.id || typeof created.id !== "string") throw new Error("OpenCode session.create returned no id")
       sessionId = created.id
     }
@@ -536,7 +536,7 @@ export class GitHubJobRunner {
       ...(params.agent ? { agent: params.agent } : {}),
       ...(params.model ? { model: `${params.model.providerId}/${params.model.modelId}` } : {}),
       ...(params.variant ? { variant: params.variant } : {}),
-    }, { signal: params.signal }), "session.command")
+    }, { signal: params.signal }), "session.command", this.deps.logger)
 
     const infoError = response?.info?.error
     if (infoError) {
@@ -604,11 +604,32 @@ export class GitHubJobRunner {
   }
 }
 
-async function unwrap<T>(promise: Promise<RequestResultLike<T> | undefined>, label: string): Promise<T> {
+async function unwrap<T>(promise: Promise<RequestResultLike<T> | undefined>, label: string, logger?: Logger): Promise<T> {
   const result = await promise
   if (!result) throw new Error(`${label} returned no result`)
   if ((result as any).error) {
     const err = (result as any).error
+    try {
+      const errName = err && typeof err === "object" ? (err as any).name : undefined
+      const cause = err && typeof err === "object" ? (err as any).cause : undefined
+      if (cause) {
+        const causeName = cause && typeof cause === "object" ? (cause as any).name : undefined
+        const causeCode = cause && typeof cause === "object" ? (cause as any).code : undefined
+        const causeMessage = cause instanceof Error ? cause.message : String(cause)
+        logger?.error(
+          {
+            label,
+            errorName: errName,
+            causeName,
+            causeCode,
+            causeMessage,
+          },
+          "OpenCode request failed (error cause)",
+        )
+      }
+    } catch {
+      // best-effort diagnostics only
+    }
     const msg = err instanceof Error ? err.message : JSON.stringify(err)
     throw new Error(`${label} failed: ${msg}`)
   }
