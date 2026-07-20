@@ -931,7 +931,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
             </div>
             <button
               type="button"
-              class="button-tertiary px-2 py-1 text-xs"
+              class="right-panel-customization-button"
               onClick={() => updateRightPanelCustomization(() => parseRightPanelCustomization(null))}
             >
               {props.t("instanceShell.rightPanel.customize.reset")}
@@ -943,6 +943,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               <div class="right-panel-customization-group-title">{props.t("instanceShell.rightPanel.customize.tabs")}</div>
               <For each={orderedRightPanelTabs()}>
                 {(tab) => {
+                  const label = () => props.t(tab.labelKey)
                   const visible = () => !rightPanelCustomization().hiddenTabIds.includes(tab.id)
                   const disableHide = () => visible() && visibleRightPanelTabs().length <= 1
                   return (
@@ -959,12 +960,14 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                             }))
                           }
                         />
-                        <span>{props.t(tab.labelKey)}</span>
+                        <span>{label()}</span>
                       </label>
                       <div class="right-panel-customization-actions">
                         <button
                           type="button"
-                          class="button-tertiary px-2 py-1 text-xs"
+                          class="right-panel-customization-button"
+                          aria-label={props.t("instanceShell.rightPanel.customize.moveTabUp", { label: label() })}
+                          title={props.t("instanceShell.rightPanel.customize.moveTabUp", { label: label() })}
                           onClick={() =>
                             updateRightPanelCustomization((current) => ({
                               ...current,
@@ -976,7 +979,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                         </button>
                         <button
                           type="button"
-                          class="button-tertiary px-2 py-1 text-xs"
+                          class="right-panel-customization-button"
+                          aria-label={props.t("instanceShell.rightPanel.customize.moveTabDown", { label: label() })}
+                          title={props.t("instanceShell.rightPanel.customize.moveTabDown", { label: label() })}
                           onClick={() =>
                             updateRightPanelCustomization((current) => ({
                               ...current,
@@ -997,6 +1002,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               <div class="right-panel-customization-group-title">{props.t("instanceShell.rightPanel.customize.statusSections")}</div>
               <For each={orderedStatusSections()}>
                 {(section) => {
+                  const label = () => props.t(section.labelKey)
                   const visible = () => !rightPanelCustomization().hiddenStatusSectionIds.includes(section.id)
                   const disableHide = () => visible() && visibleStatusSections().length <= 1
                   return (
@@ -1017,12 +1023,14 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                             }))
                           }
                         />
-                        <span>{props.t(section.labelKey)}</span>
+                        <span>{label()}</span>
                       </label>
                       <div class="right-panel-customization-actions">
                         <button
                           type="button"
-                          class="button-tertiary px-2 py-1 text-xs"
+                          class="right-panel-customization-button"
+                          aria-label={props.t("instanceShell.rightPanel.customize.moveStatusSectionUp", { label: label() })}
+                          title={props.t("instanceShell.rightPanel.customize.moveStatusSectionUp", { label: label() })}
                           onClick={() =>
                             updateRightPanelCustomization((current) => ({
                               ...current,
@@ -1039,7 +1047,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                         </button>
                         <button
                           type="button"
-                          class="button-tertiary px-2 py-1 text-xs"
+                          class="right-panel-customization-button"
+                          aria-label={props.t("instanceShell.rightPanel.customize.moveStatusSectionDown", { label: label() })}
+                          title={props.t("instanceShell.rightPanel.customize.moveStatusSectionDown", { label: label() })}
                           onClick={() =>
                             updateRightPanelCustomization((current) => ({
                               ...current,

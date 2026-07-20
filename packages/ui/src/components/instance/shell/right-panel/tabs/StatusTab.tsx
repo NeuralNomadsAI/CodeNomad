@@ -189,18 +189,18 @@ const StatusTab: Component<StatusTabProps> = (props) => {
   const statusSections = createMemo<RightPanelSectionModule[]>(() => {
     const sections: RightPanelSectionModule[] = [
       {
-        id: "provider-usage",
-        labelKey: "providerUsage.title",
-        tooltipKey: "providerUsage.tooltip",
-        order: 10,
-        render: renderProviderUsage,
-      },
-      {
         id: "yolo-mode",
         labelKey: "instanceShell.rightPanel.sections.yoloMode",
         tooltipKey: "instanceShell.rightPanel.sections.yoloMode.tooltip",
-        order: 20,
+        order: 10,
         render: renderYoloModeSection,
+      },
+      {
+        id: "provider-usage",
+        labelKey: "providerUsage.title",
+        tooltipKey: "providerUsage.tooltip",
+        order: 20,
+        render: renderProviderUsage,
       },
       {
         id: "plan",

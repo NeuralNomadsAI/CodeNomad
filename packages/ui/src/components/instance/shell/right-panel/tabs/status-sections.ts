@@ -2,15 +2,15 @@ import type { RightPanelItem } from "../registry"
 
 export const CORE_STATUS_SECTION_ITEMS: readonly (RightPanelItem & { tooltipKey: string; defaultExpanded?: boolean })[] = [
   {
-    id: "provider-usage",
-    labelKey: "providerUsage.title",
-    tooltipKey: "providerUsage.tooltip",
-    order: 10,
-  },
-  {
     id: "yolo-mode",
     labelKey: "instanceShell.rightPanel.sections.yoloMode",
     tooltipKey: "instanceShell.rightPanel.sections.yoloMode.tooltip",
+    order: 10,
+  },
+  {
+    id: "provider-usage",
+    labelKey: "providerUsage.title",
+    tooltipKey: "providerUsage.tooltip",
     order: 20,
   },
   {

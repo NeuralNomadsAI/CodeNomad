@@ -776,6 +776,7 @@
 
 .right-panel-customization-header {
   display: flex;
+  flex-direction: column;
   align-items: flex-start;
   justify-content: space-between;
   gap: 0.75rem;
@@ -784,14 +785,13 @@
 
 .right-panel-customization-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 0.75rem;
 }
 
 .right-panel-customization-group {
   min-width: 0;
   border: 1px solid var(--border-base);
-  border-radius: 0.5rem;
   background-color: var(--surface-primary);
   padding: 0.5rem;
 }
@@ -805,7 +805,8 @@
 
 .right-panel-customization-row {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   justify-content: space-between;
   gap: 0.5rem;
   padding: 0.25rem 0;
@@ -824,13 +825,36 @@
   display: flex;
   align-items: center;
   gap: 0.25rem;
-  flex-shrink: 0;
+  width: 100%;
 }
 
-@media (max-width: 720px) {
-  .right-panel-customization-grid {
-    grid-template-columns: 1fr;
-  }
+.right-panel-customization-actions > button {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.right-panel-customization-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-base);
+  background-color: transparent;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1rem;
+  padding: 0.25rem 0.5rem;
+  transition: color 150ms, background-color 150ms;
+}
+
+.right-panel-customization-button:hover:not(:disabled) {
+  color: var(--text-primary);
+  background-color: var(--surface-hover);
+}
+
+.right-panel-customization-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring-offset), 0 0 0 4px var(--focus-ring-color);
 }
 
 /* Section info tooltip */
