@@ -84,6 +84,46 @@ type ThreadItem = {
 
 type RequestResultLike<T> = { data: T; error?: undefined } | { data?: undefined; error: unknown }
 
+type GitHubJobRunnerOperations = {
+  verifyGitHubWebhookSignature: typeof verifyGitHubWebhookSignature
+  createAppOctokit: typeof createAppOctokit
+  createInstallationOctokit: typeof createInstallationOctokit
+  getInstallationToken: typeof getInstallationToken
+  ensureClonedAndUpdated: typeof ensureClonedAndUpdated
+  ensureCodenomadGitExclude: typeof ensureCodenomadGitExclude
+  gitRemoteRefExists: typeof gitRemoteRefExists
+  gitFetchAndResetToRemote: typeof gitFetchAndResetToRemote
+  resolveRepoRoot: typeof resolveRepoRoot
+  listWorktrees: typeof listWorktrees
+  createManagedWorktree: typeof createManagedWorktree
+  resolveWorktreeDirectory: typeof resolveWorktreeDirectory
+  createOpencodeClient: typeof createOpencodeClient
+  setGitHubWorkspaceContext: typeof setGitHubWorkspaceContext
+  clearGitHubWorkspaceContext: typeof clearGitHubWorkspaceContext
+  setGitHubWorktreeContext: typeof setGitHubWorktreeContext
+  clearGitHubWorktreeContext: typeof clearGitHubWorktreeContext
+}
+
+const DEFAULT_JOB_RUNNER_OPERATIONS: GitHubJobRunnerOperations = {
+  verifyGitHubWebhookSignature,
+  createAppOctokit,
+  createInstallationOctokit,
+  getInstallationToken,
+  ensureClonedAndUpdated,
+  ensureCodenomadGitExclude,
+  gitRemoteRefExists,
+  gitFetchAndResetToRemote,
+  resolveRepoRoot,
+  listWorktrees,
+  createManagedWorktree,
+  resolveWorktreeDirectory,
+  createOpencodeClient,
+  setGitHubWorkspaceContext,
+  clearGitHubWorkspaceContext,
+  setGitHubWorktreeContext,
+  clearGitHubWorktreeContext,
+}
+
 export class GitHubJobRunner {
   private readonly repoWorkspaceId = new Map<string, string>()
   private readonly activeByRepo = new Map<string, number>()
@@ -95,8 +135,18 @@ export class GitHubJobRunner {
     pending?: ThreadItem
     current?: { controller: AbortController; cancelRequested: boolean; abortSession?: () => Promise<void> }
   }>()
+  private readonly deps: { workspaceManager: WorkspaceManager; settings: SettingsService; logger: Logger }
+  private readonly ops: GitHubJobRunnerOperations
 
-  constructor(private readonly deps: { workspaceManager: WorkspaceManager; settings: SettingsService; logger: Logger }) {}
+  constructor(deps: {
+    workspaceManager: WorkspaceManager
+    settings: SettingsService
+    logger: Logger
+    operations?: Partial<GitHubJobRunnerOperations>
+  }) {
+    this.deps = deps
+    this.ops = { ...DEFAULT_JOB_RUNNER_OPERATIONS, ...(deps.operations ?? {}) }
+  }
 
   enqueue(job: EnqueuedJob) {
     if (job.deliveryId) {
@@ -108,7 +158,7 @@ export class GitHubJobRunner {
     const settings = this.readSettings()
     if (!settings.enabled) return this.logReject(job, { enabled: false }, "integration disabled")
     if (!settings.webhookSecret) return this.logReject(job, { enabled: true, webhookSecret: false }, "missing webhookSecret")
-    if (!verifyGitHubWebhookSignature({ secret: settings.webhookSecret, signatureHeader: job.signature, body: job.body })) {
+    if (!this.ops.verifyGitHubWebhookSignature({ secret: settings.webhookSecret, signatureHeader: job.signature, body: job.body })) {
       return this.logReject(job, { enabled: true, webhookSecret: true, signature: false }, "invalid signature")
     }
 
@@ -239,7 +289,7 @@ export class GitHubJobRunner {
     if (this.cachedBotLogin) return this.cachedBotLogin
     if (!settings.appId || !settings.privateKeyPath) return null
     try {
-      const appOctokit = createAppOctokit({ appId: settings.appId, privateKeyPath: settings.privateKeyPath })
+      const appOctokit = this.ops.createAppOctokit({ appId: settings.appId, privateKeyPath: settings.privateKeyPath })
       const response = await appOctokit.request("GET /app")
       const slug = (response.data as any)?.slug
       if (typeof slug === "string" && slug.trim()) {
@@ -260,8 +310,8 @@ export class GitHubJobRunner {
     }
 
     const { owner, repo } = ctx
-    const octokit = createInstallationOctokit({ appId: settings.appId, privateKeyPath: settings.privateKeyPath }, ctx.installationId)
-    const token = await getInstallationToken({ appId: settings.appId, privateKeyPath: settings.privateKeyPath }, ctx.installationId)
+    const octokit = this.ops.createInstallationOctokit({ appId: settings.appId, privateKeyPath: settings.privateKeyPath }, ctx.installationId)
+    const token = await this.ops.getInstallationToken({ appId: settings.appId, privateKeyPath: settings.privateKeyPath }, ctx.installationId)
     const botLogin = await this.ensureBotLogin(settings)
     if (botLogin && ctx.actorLogin === botLogin) return
     if (eventKey === "pull_request.synchronize") {
@@ -282,15 +332,15 @@ export class GitHubJobRunner {
 
     const workspaceRoot = this.resolveWorkspaceRoot(settings)
     const repoDir = path.join(workspaceRoot, owner, repo)
-    await ensureClonedAndUpdated({ repoUrl: ctx.repoUrl, directory: repoDir, defaultBranch: ctx.defaultBranch, token })
-    await ensureCodenomadGitExclude(repoDir, this.deps.logger).catch(() => undefined)
+    await this.ops.ensureClonedAndUpdated({ repoUrl: ctx.repoUrl, directory: repoDir, defaultBranch: ctx.defaultBranch, token })
+    await this.ops.ensureCodenomadGitExclude(repoDir, this.deps.logger).catch(() => undefined)
 
     const fullName = `${owner}/${repo}`
     const workspaceId = await this.ensureWorkspace(fullName, repoDir)
     this.acquireWorkspace(fullName, workspaceId)
 
     try {
-      setGitHubWorkspaceContext(workspaceId, { installationId: ctx.installationId, owner, repo, defaultBranch: ctx.defaultBranch, repoUrl: ctx.repoUrl, botLogin: botLogin ?? undefined })
+      this.ops.setGitHubWorkspaceContext(workspaceId, { installationId: ctx.installationId, owner, repo, defaultBranch: ctx.defaultBranch, repoUrl: ctx.repoUrl, botLogin: botLogin ?? undefined })
       const { worktreeSlug, worktreeDir } = await this.prepareWorktree({ workspaceId, repoDir, ctx, octokit, token, botLogin })
       const selected = policy.command ? { command: policy.command } : selectGitHubWebhookCommand({ eventKey, serverCommands: settings.commands })
       await this.runOpencode({
@@ -350,28 +400,28 @@ export class GitHubJobRunner {
       const botOwned = Boolean(params.botLogin && prAuthorLogin && prAuthorLogin === params.botLogin)
       const worktreeSlug = botOwned && typeof headRef === "string" && headRef.trim() ? headRef.trim() : `codenomad/pr-${ctx.number}`
       const worktreeDir = (await this.ensureWorktree({ repoDir, workspaceFolder: repoDir, slug: worktreeSlug })).directory
-      const hasRemoteBranch = await gitRemoteRefExists({ cwd: worktreeDir, remoteUrl: ctx.repoUrl, ref: `refs/heads/${worktreeSlug}`, token })
-      await gitFetchAndResetToRemote({ cwd: worktreeDir, remoteUrl: ctx.repoUrl, ref: hasRemoteBranch ? worktreeSlug : `pull/${ctx.number}/head`, token })
+      const hasRemoteBranch = await this.ops.gitRemoteRefExists({ cwd: worktreeDir, remoteUrl: ctx.repoUrl, ref: `refs/heads/${worktreeSlug}`, token })
+      await this.ops.gitFetchAndResetToRemote({ cwd: worktreeDir, remoteUrl: ctx.repoUrl, ref: hasRemoteBranch ? worktreeSlug : `pull/${ctx.number}/head`, token })
       const publishBase = botOwned ? baseRef.trim() : typeof headRef === "string" && headRef.trim() && !isFromFork ? headRef.trim() : baseRef.trim()
-      setGitHubWorktreeContext(params.workspaceId, worktreeSlug, { issueNumber: ctx.number, isPullRequest: true, publishBase, prNumber: ctx.number, prFromFork: isFromFork, prAuthorLogin })
+      this.ops.setGitHubWorktreeContext(params.workspaceId, worktreeSlug, { issueNumber: ctx.number, isPullRequest: true, publishBase, prNumber: ctx.number, prFromFork: isFromFork, prAuthorLogin })
       return { worktreeSlug, worktreeDir }
     }
 
     const worktreeSlug = `codenomad/issue-${ctx.number}`
     const worktreeDir = (await this.ensureWorktree({ repoDir, workspaceFolder: repoDir, slug: worktreeSlug })).directory
-    const hasRemoteBotBranch = await gitRemoteRefExists({ cwd: worktreeDir, remoteUrl: ctx.repoUrl, ref: `refs/heads/${worktreeSlug}`, token })
-    await gitFetchAndResetToRemote({ cwd: worktreeDir, remoteUrl: ctx.repoUrl, ref: hasRemoteBotBranch ? worktreeSlug : ctx.defaultBranch, token })
-    setGitHubWorktreeContext(params.workspaceId, worktreeSlug, { issueNumber: ctx.number, isPullRequest: false, publishBase: ctx.defaultBranch })
+    const hasRemoteBotBranch = await this.ops.gitRemoteRefExists({ cwd: worktreeDir, remoteUrl: ctx.repoUrl, ref: `refs/heads/${worktreeSlug}`, token })
+    await this.ops.gitFetchAndResetToRemote({ cwd: worktreeDir, remoteUrl: ctx.repoUrl, ref: hasRemoteBotBranch ? worktreeSlug : ctx.defaultBranch, token })
+    this.ops.setGitHubWorktreeContext(params.workspaceId, worktreeSlug, { issueNumber: ctx.number, isPullRequest: false, publishBase: ctx.defaultBranch })
     return { worktreeSlug, worktreeDir }
   }
 
   private async ensureWorktree(params: { repoDir: string; workspaceFolder: string; slug: string }) {
-    const { repoRoot, isGitRepo } = await resolveRepoRoot(params.workspaceFolder, this.deps.logger)
+    const { repoRoot, isGitRepo } = await this.ops.resolveRepoRoot(params.workspaceFolder, this.deps.logger)
     if (!isGitRepo) throw new Error("Workspace is not a Git repository")
-    const existing = await listWorktrees({ repoRoot, workspaceFolder: params.workspaceFolder, logger: this.deps.logger })
+    const existing = await this.ops.listWorktrees({ repoRoot, workspaceFolder: params.workspaceFolder, logger: this.deps.logger })
     const match = existing.find((wt) => wt.slug === params.slug)
     if (match) return { slug: match.slug, directory: match.directory, branch: match.branch }
-    return createManagedWorktree({ repoRoot, workspaceFolder: params.workspaceFolder, slug: params.slug, logger: this.deps.logger })
+    return this.ops.createManagedWorktree({ repoRoot, workspaceFolder: params.workspaceFolder, slug: params.slug, logger: this.deps.logger })
   }
 
   private resolveWorkspaceRoot(settings: GitHubAppSettings): string {
@@ -409,11 +459,12 @@ export class GitHubJobRunner {
     const timer = setTimeout(() => {
       void this.deps.workspaceManager.delete(workspaceId).catch((error) => this.deps.logger.warn({ err: error, workspaceId }, "Failed to stop GitHub workspace")).finally(() => {
         this.stopTimersByWorkspace.delete(workspaceId)
-        clearGitHubWorkspaceContext(workspaceId)
-        clearGitHubWorktreeContext(workspaceId)
+        this.ops.clearGitHubWorkspaceContext(workspaceId)
+        this.ops.clearGitHubWorktreeContext(workspaceId)
         if (this.repoWorkspaceId.get(repoFullName) === workspaceId) this.repoWorkspaceId.delete(repoFullName)
       })
     }, 30_000)
+    timer.unref?.()
     this.stopTimersByWorkspace.set(workspaceId, timer)
   }
 
@@ -438,10 +489,10 @@ export class GitHubJobRunner {
     if (!workspace) throw new Error("Workspace not found")
     const port = this.deps.workspaceManager.getInstancePort(params.workspaceId)
     if (!port) throw new Error("Workspace instance is not ready")
-    const directory = await resolveWorktreeDirectory({ workspaceId: params.workspaceId, workspacePath: workspace.path, worktreeSlug: params.worktreeSlug, logger: this.deps.logger })
+    const directory = await this.ops.resolveWorktreeDirectory({ workspaceId: params.workspaceId, workspacePath: workspace.path, worktreeSlug: params.worktreeSlug, logger: this.deps.logger })
     if (!directory) throw new Error("Worktree not found")
     const authorization = this.deps.workspaceManager.getInstanceAuthorizationHeader(params.workspaceId)
-    const client = createOpencodeClient({
+    const client = this.ops.createOpencodeClient({
       baseUrl: `http://127.0.0.1:${port}/`,
       ...(authorization ? { headers: { authorization } } : {}),
       fetch: opencodeNoTimeoutFetch,

@@ -23,7 +23,7 @@
     "prepare-plugin": "node ./scripts/package-opencode-plugin.mjs",
     "dev": "cross-env CODENOMAD_DEV=1 CODENOMAD_SERVER_PASSWORD=codenomad-dev CLI_UI_DEV_SERVER=http://localhost:3000 CLI_HTTPS=false CLI_HTTP=true tsx src/index.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "tsx --test src/**/*.test.ts"
+    "test": "tsx --test \"src/**/*.test.ts\" \"src/**/__tests__/*.test.ts\""
   },
   "dependencies": {
     "@fastify/cors": "^8.5.0",
