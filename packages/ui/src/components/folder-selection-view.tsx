@@ -974,6 +974,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                     class="folder-home-recent-primary-action"
                                     disabled={isLoading()}
                                     aria-labelledby={projectLabelId()}
+                                    title={t("folderSelection.recent.openNewInstance")}
                                     onClick={() => handleFolderSelect(folder.path, true)}
                                     onFocus={() => {
                                       setFocusMode("recent")
