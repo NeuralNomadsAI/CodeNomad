@@ -80,6 +80,8 @@ import {
   type RightPanelSectionModule,
   type RightPanelTabModule,
 } from "./registry"
+import { loadRightPanelPluginManifests } from "./plugin-manifest"
+import { RIGHT_PANEL_PLUGIN_MANIFESTS } from "./plugins"
 import { CORE_STATUS_SECTION_ITEMS } from "./tabs/status-sections"
 
 const LazyGitChangesTab = lazy(() => import("./tabs/GitChangesTab"))
@@ -152,6 +154,10 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const [rightPanelCustomization, setRightPanelCustomization] = createSignal<RightPanelCustomization>(
     parseRightPanelCustomization(readClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY)),
   )
+  const rightPanelPluginRuntime = loadRightPanelPluginManifests(RIGHT_PANEL_PLUGIN_MANIFESTS, { instanceId: props.instanceId })
+  onCleanup(() => {
+    rightPanelPluginRuntime.unload()
+  })
 
   const [browserPath, setBrowserPath] = createSignal(".")
   const [browserEntries, setBrowserEntries] = createSignal<FileNode[] | null>(null)
@@ -848,6 +854,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
         },
       ],
     },
+    ...rightPanelPluginRuntime.modules,
   ])
 
   const allRightPanelTabs = createMemo(() => collectRightPanelItems<RightPanelTabModule>(rightPanelModules(), "tabs"))
