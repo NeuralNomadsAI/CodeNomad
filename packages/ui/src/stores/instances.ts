@@ -316,6 +316,7 @@ function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectN
   const existing = instances().get(descriptor.id)
   return {
     id: descriptor.id,
+    lineageId: descriptor.lineageId ?? existing?.lineageId,
     folder: descriptor.path,
     projectName: projectName ?? existing?.projectName ?? descriptor.name,
     port: descriptor.port ?? existing?.port ?? 0,
@@ -916,6 +917,7 @@ function addInstance(instance: Instance) {
     instanceId: instance.id,
     folder: instance.folder,
     occurrence,
+    lineageId: instance.lineageId,
   })
   syncHasInstancesFlag()
 }
@@ -945,6 +947,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
       instanceId: id,
       folder: removedInstance.folder,
       occurrence: removedOccurrence,
+      lineageId: removedInstance.lineageId,
     })
   }
   let nextActiveId: string | null = null
@@ -1004,6 +1007,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
       instanceId: id,
       folder: removedInstance.folder,
       occurrence: removedOccurrence,
+      lineageId: removedInstance.lineageId,
     })
   }
   syncHasInstancesFlag()
@@ -1075,6 +1079,7 @@ async function createInstance(
     onCreateCommit?: (instanceId: string) => void
     waitForCreateCommit?: () => Promise<void>
     forceNew?: boolean
+    lineageId?: string
   },
 ): Promise<{ instanceId: string; reused: boolean; requestId?: string }> {
   const restoreRequestId = options?.signal ? createRestoreCreationRequestId() : undefined
@@ -1106,6 +1111,7 @@ async function createInstance(
       binaryPath,
       requestId: restoreRequestId,
       forceNew: options?.forceNew,
+      ...(options?.lineageId ? { lineageId: options.lineageId } : {}),
     }, { signal: options?.signal })
     requestResolved = true
     const reused = workspace.reused === true

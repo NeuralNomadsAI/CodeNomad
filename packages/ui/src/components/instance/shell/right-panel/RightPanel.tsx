@@ -4,6 +4,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  createUniqueId,
   lazy,
   onCleanup,
   type Accessor,
@@ -62,7 +63,9 @@ import {
 
 const LazyGitChangesTab = lazy(() => import("./tabs/GitChangesTab"))
 const LazyFilesTab = lazy(() => import("./tabs/FilesTab"))
+const LazyWorkflowsTab = lazy(() => import("./tabs/WorkflowsTab"))
 const LazyStatusTab = lazy(() => import("./tabs/StatusTab"))
+const RIGHT_PANEL_TABS: readonly RightPanelTab[] = ["workflows", "git-changes", "files", "status"]
 
 function RightPanelTabFallback() {
   return <div class="flex-1 min-h-0" />
@@ -98,6 +101,9 @@ interface RightPanelProps {
 
 const RightPanel: Component<RightPanelProps> = (props) => {
   const [rightPanelTab, setRightPanelTab] = createSignal<RightPanelTab>(readStoredRightPanelTab("git-changes"))
+  const [workflowsVisited, setWorkflowsVisited] = createSignal(rightPanelTab() === "workflows")
+  const tabGroupId = `right-panel-${createUniqueId()}`
+  const tabButtons: Partial<Record<RightPanelTab, HTMLButtonElement>> = {}
   const defaultStatusSectionIds = ["provider-usage", "yolo-mode", "plan", "background-processes", "mcp", "lsp", "plugins"]
   const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>(defaultStatusSectionIds)
 
@@ -213,6 +219,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   createEffect(() => {
     writeClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY, rightPanelTab())
+    if (rightPanelTab() === "workflows") setWorkflowsVisited(true)
   })
 
   createEffect(() => {
@@ -651,6 +658,24 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const tabClass = (tab: RightPanelTab) =>
     `right-panel-tab ${rightPanelTab() === tab ? "right-panel-tab-active" : "right-panel-tab-inactive"}`
 
+  const tabId = (tab: RightPanelTab) => `${tabGroupId}-tab-${tab}`
+  const tabPanelId = (tab: RightPanelTab) => `${tabGroupId}-panel-${tab}`
+  const selectTabFromKeyboard = (tab: RightPanelTab) => {
+    setRightPanelTab(tab)
+    tabButtons[tab]?.focus()
+  }
+  const handleTabKeyDown = (event: KeyboardEvent, tab: RightPanelTab) => {
+    const index = RIGHT_PANEL_TABS.indexOf(tab)
+    let target: RightPanelTab | undefined
+    if (event.key === "ArrowLeft") target = RIGHT_PANEL_TABS[(index - 1 + RIGHT_PANEL_TABS.length) % RIGHT_PANEL_TABS.length]
+    if (event.key === "ArrowRight") target = RIGHT_PANEL_TABS[(index + 1) % RIGHT_PANEL_TABS.length]
+    if (event.key === "Home") target = RIGHT_PANEL_TABS[0]
+    if (event.key === "End") target = RIGHT_PANEL_TABS[RIGHT_PANEL_TABS.length - 1]
+    if (!target) return
+    event.preventDefault()
+    selectTabFromKeyboard(target)
+  }
+
   return (
     <div class="flex flex-col h-full" ref={props.setContentEl}>
       <div class="right-panel-tab-bar">
@@ -682,28 +707,57 @@ const RightPanel: Component<RightPanelProps> = (props) => {
             <div class="tab-strip">
               <div class="tab-strip-tabs" role="tablist" aria-label={props.t("instanceShell.rightPanel.tabs.ariaLabel")}> 
                 <button
+                  ref={(element) => { tabButtons.workflows = element }}
+                  id={tabId("workflows")}
+                  type="button"
+                  role="tab"
+                  class={tabClass("workflows")}
+                  aria-selected={rightPanelTab() === "workflows"}
+                  aria-controls={tabPanelId("workflows")}
+                  tabIndex={rightPanelTab() === "workflows" ? 0 : -1}
+                  onKeyDown={(event) => handleTabKeyDown(event, "workflows")}
+                  onClick={() => setRightPanelTab("workflows")}
+                >
+                  <span class="tab-label">{props.t("instanceShell.rightPanel.tabs.workflows")}</span>
+                </button>
+                <button
+                  ref={(element) => { tabButtons["git-changes"] = element }}
+                  id={tabId("git-changes")}
                   type="button"
                   role="tab"
                   class={tabClass("git-changes")}
                   aria-selected={rightPanelTab() === "git-changes"}
+                  aria-controls={tabPanelId("git-changes")}
+                  tabIndex={rightPanelTab() === "git-changes" ? 0 : -1}
+                  onKeyDown={(event) => handleTabKeyDown(event, "git-changes")}
                   onClick={() => setRightPanelTab("git-changes")}
                 >
                   <span class="tab-label">{props.t("instanceShell.rightPanel.tabs.gitChanges")}</span>
                 </button>
                 <button
+                  ref={(element) => { tabButtons.files = element }}
+                  id={tabId("files")}
                   type="button"
                   role="tab"
                   class={tabClass("files")}
                   aria-selected={rightPanelTab() === "files"}
+                  aria-controls={tabPanelId("files")}
+                  tabIndex={rightPanelTab() === "files" ? 0 : -1}
+                  onKeyDown={(event) => handleTabKeyDown(event, "files")}
                   onClick={() => setRightPanelTab("files")}
                 >
                   <span class="tab-label">{props.t("instanceShell.rightPanel.tabs.files")}</span>
                 </button>
                 <button
+                  ref={(element) => { tabButtons.status = element }}
+                  id={tabId("status")}
                   type="button"
                   role="tab"
                   class={tabClass("status")}
                   aria-selected={rightPanelTab() === "status"}
+                  aria-controls={tabPanelId("status")}
+                  tabIndex={rightPanelTab() === "status" ? 0 : -1}
+                  onKeyDown={(event) => handleTabKeyDown(event, "status")}
                   onClick={() => setRightPanelTab("status")}
                 >
                   <span class="tab-label">{props.t("instanceShell.rightPanel.tabs.status")}</span>
@@ -717,6 +771,13 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       </div>
 
       <div class="flex-1 overflow-y-auto">
+        <div
+          id={tabPanelId("git-changes")}
+          role="tabpanel"
+          aria-labelledby={tabId("git-changes")}
+          hidden={rightPanelTab() !== "git-changes"}
+          class="h-full min-h-0"
+        >
         <Show when={rightPanelTab() === "git-changes"}>
           <Suspense fallback={<RightPanelTabFallback />}>
             <LazyGitChangesTab
@@ -770,7 +831,15 @@ const RightPanel: Component<RightPanelProps> = (props) => {
             />
           </Suspense>
         </Show>
+        </div>
 
+        <div
+          id={tabPanelId("files")}
+          role="tabpanel"
+          aria-labelledby={tabId("files")}
+          hidden={rightPanelTab() !== "files"}
+          class="h-full min-h-0"
+        >
         <Show when={rightPanelTab() === "files"}>
           <Suspense fallback={<RightPanelTabFallback />}>
             <LazyFilesTab
@@ -803,7 +872,15 @@ const RightPanel: Component<RightPanelProps> = (props) => {
             />
           </Suspense>
         </Show>
+        </div>
 
+        <div
+          id={tabPanelId("status")}
+          role="tabpanel"
+          aria-labelledby={tabId("status")}
+          hidden={rightPanelTab() !== "status"}
+          class="h-full min-h-0"
+        >
         <Show when={rightPanelTab() === "status"}>
           <Suspense fallback={<RightPanelTabFallback />}>
             <LazyStatusTab
@@ -822,6 +899,25 @@ const RightPanel: Component<RightPanelProps> = (props) => {
             />
           </Suspense>
         </Show>
+        </div>
+        <div
+          id={tabPanelId("workflows")}
+          role="tabpanel"
+          aria-labelledby={tabId("workflows")}
+          hidden={rightPanelTab() !== "workflows"}
+          class="min-h-0"
+        >
+        <Show when={workflowsVisited()}>
+          <Suspense fallback={<RightPanelTabFallback />}>
+            <LazyWorkflowsTab
+              t={props.t}
+              instanceId={props.instanceId}
+              activeSessionId={props.activeSessionId}
+              active={() => rightPanelTab() === "workflows"}
+            />
+          </Suspense>
+        </Show>
+        </div>
       </div>
     </div>
   )

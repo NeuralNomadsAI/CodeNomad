@@ -32,6 +32,7 @@ export interface InstanceMetadata {
 
 export interface Instance {
   id: string
+  lineageId?: string
   folder: string
   projectName?: string
   port: number

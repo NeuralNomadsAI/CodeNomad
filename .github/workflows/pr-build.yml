@@ -122,6 +122,8 @@ jobs:
           packages/ui/src/stores/session-metadata.test.ts
           packages/ui/src/stores/session-pagination.test.ts
           packages/ui/src/stores/workspace-list-reconciliation-fence.test.ts
+          packages/ui/src/stores/workflows.test.ts
+          packages/opencode-plugin/plugin/lib/workflows.test.ts
 
       - name: Test restore ownership integration
         run: >-

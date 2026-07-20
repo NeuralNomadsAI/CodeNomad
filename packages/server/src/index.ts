@@ -36,6 +36,7 @@ import { createServerShutdownHandler, orchestrateServerShutdown, type ServerShut
 import { AutoAcceptManager } from "./permissions/auto-accept-manager"
 import { createOpencodePermissionReplier } from "./permissions/opencode-replier"
 import { createOpencodeYoloPersistence } from "./permissions/opencode-yolo-metadata"
+import { WorkflowManager } from "./workflows/manager"
 
 const require = createRequire(import.meta.url)
 
@@ -375,6 +376,12 @@ async function main() {
     getServerBaseUrl: () => serverMeta.localUrl,
     nodeExtraCaCertsPath,
   })
+  const workflowManager = new WorkflowManager({
+    workspaceManager,
+    eventBus,
+    storageDir: path.join(configDir, "workflow-runs"),
+    logger: logger.child({ component: "workflows" }),
+  })
   const fileSystemBrowser = new FileSystemBrowser({
     rootDir: options.rootDir,
     unrestricted: options.unrestrictedRoot,
@@ -499,6 +506,7 @@ async function main() {
         remoteProxySessionManager,
         yoloManager,
         sessionMetadataPersistence,
+        workflowManager,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: uiResolution.uiDevServerUrl,
         logger,
@@ -528,6 +536,7 @@ async function main() {
         remoteProxySessionManager,
         yoloManager,
         sessionMetadataPersistence,
+        workflowManager,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: undefined,
         logger,
@@ -623,6 +632,7 @@ async function main() {
       orchestrateServerShutdown(
         {
           stopInstanceEventBridge: () => instanceEventBridge.shutdown(),
+          stopWorkflowRuns: () => workflowManager.shutdown(),
           stopSidecars: () => sidecarManager.shutdown(),
           stopClientConnections: () => clientConnectionManager.shutdown(),
           stopRemoteProxySessions: () => remoteProxySessionManager.shutdown(),

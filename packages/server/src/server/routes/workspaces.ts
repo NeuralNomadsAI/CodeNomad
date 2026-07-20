@@ -13,6 +13,7 @@ interface RouteDeps {
 
 const WorkspaceCreateSchema = z.object({
   path: z.string(),
+  lineageId: z.string().uuid().optional(),
   name: z.string().optional(),
   binaryPath: z.string().trim().min(1).max(4096).optional(),
   requestId: z.string().trim().min(1).max(128).optional(),
@@ -79,6 +80,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
         binaryPath: body.binaryPath,
         requestId: body.requestId,
         forceNew: body.forceNew,
+        ...(body.lineageId ? { lineageId: body.lineageId } : {}),
       })
       reply.code(201)
       return result.created ? result.workspace : { ...result.workspace, reused: true as const }

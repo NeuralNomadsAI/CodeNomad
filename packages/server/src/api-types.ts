@@ -16,6 +16,8 @@ export type WorkspaceStatus = "starting" | "ready" | "stopped" | "error"
 
 export interface WorkspaceDescriptor {
   id: string
+  /** Stable across desktop restore; distinct for force-created instances of the same path. */
+  lineageId?: string
   /** Correlates creation events with the client request that initiated them. */
   requestId?: string
   /** Absolute path on the server host. */
@@ -39,6 +41,7 @@ export interface WorkspaceDescriptor {
 
 export interface WorkspaceCreateRequest {
   path: string
+  lineageId?: string
   name?: string
   binaryPath?: string
   requestId?: string
@@ -291,6 +294,57 @@ export interface InstanceStreamEvent {
   type: string
   properties?: Record<string, unknown>
   [key: string]: unknown
+}
+
+export type WorkflowRunStatus = "running" | "waiting_for_review" | "completed" | "failed" | "cancelled" | "interrupted"
+export type WorkflowStepStatus = "pending" | "running" | "completed" | "failed" | "cancelled"
+
+export interface WorkflowModelSelection {
+  providerID: string
+  modelID: string
+}
+
+export interface WorkflowStageConfig {
+  id: string
+  title: string
+  instructions: string
+  agent?: string
+  model?: WorkflowModelSelection
+  requiresApproval?: boolean
+}
+
+export interface WorkflowRunStep extends WorkflowStageConfig {
+  status: WorkflowStepStatus
+  sessionId?: string
+  output?: unknown
+  outputTruncated?: boolean
+  error?: string
+  startedAt?: string
+  completedAt?: string
+}
+
+export interface WorkflowRun {
+  id: string
+  workspaceId: string
+  workspaceLineageId: string
+  workspacePath: string
+  initiatorSessionId?: string
+  objective: string
+  status: WorkflowRunStatus
+  rootSessionId?: string
+  activeStepId?: string
+  pendingReviewStepId?: string
+  steps: WorkflowRunStep[]
+  error?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface WorkflowRunCreateRequest {
+  workspaceId: string
+  initiatorSessionId?: string
+  objective: string
+  stages: WorkflowStageConfig[]
 }
 
 export type SideCarKind = "port"

@@ -92,6 +92,7 @@ function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>)
     }
     if (tab.instance.projectName) result.projectName = tab.instance.projectName
     if (tab.instance.binaryPath) result.binaryPath = tab.instance.binaryPath
+    if (tab.instance.lineageId) result.lineageId = tab.instance.lineageId
     if (parentId) result.activeParentSessionId = parentId
     if (sessionId) result.activeSessionId = sessionId
     return result
@@ -199,7 +200,10 @@ export function useAppSessionCapture() {
       const lifecycleToken = ++nextInstanceLifecycleToken
       instanceLifecycleTokens.set(event.instanceId, lifecycleToken)
       if (!preservation) return
-      const workspace = { runtimeTabId: getInstanceAppTabId(event.instanceId), folder: event.folder, occurrence: event.occurrence }
+       const workspace = {
+         runtimeTabId: getInstanceAppTabId(event.instanceId), folder: event.folder,
+         occurrence: event.occurrence, lineageId: event.lineageId,
+       }
       if (event.type === "unavailable") {
         const captured = captureState(scrollAuthority)
         const index = captured.tabIds.indexOf(workspace.runtimeTabId)

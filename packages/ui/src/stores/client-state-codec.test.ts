@@ -45,7 +45,8 @@ describe("client state codec", () => {
       session: {
         activeTabIndex: 8,
         tabs: [workspace({
-          type: "instance", kind: undefined, folder: "C:/work/project", occurrence: 1, projectName: "Project",
+          type: "instance", kind: undefined, folder: "C:/work/project", occurrence: 1,
+          lineageId: "00000000-0000-4000-8000-000000000001", projectName: "Project",
           drafts: { session1: "unfinished prompt" },
           scrollSnapshots: { session1: { scrollTop: 120, scrollRatio: 0.5, atBottom: false, updatedAt: 1200 } },
           unseenIdleSince: { session1: 1100, malformed: -1 },
@@ -61,6 +62,7 @@ describe("client state codec", () => {
     assert.equal(tab?.kind, "workspace")
     if (tab?.kind !== "workspace") return
     assert.equal(tab.occurrence, 1)
+    assert.equal(tab.lineageId, "00000000-0000-4000-8000-000000000001")
     assert.deepEqual({ ...tab.drafts }, { session1: "unfinished prompt" })
     assert.deepEqual({ ...tab.unseenIdleSince }, { session1: 1100 })
     assert.deepEqual({ ...tab.generationRecovery }, { session1: "working", session2: "interrupted" })
@@ -232,6 +234,20 @@ describe("client state codec", () => {
 
     assert.equal(active?.kind === "workspace" ? active.drafts.active : undefined, "keep me")
     assert.equal(normalized?.tabs[normalized.activeTabIndex], active)
+  })
+
+  it("reserves workspace lineage before optional payloads consume the string budget", () => {
+    const lineageId = "l".repeat(512)
+    const tab = normalizeWorkspace({
+      lineageId,
+      drafts: {
+        first: "a".repeat(32 * 1024),
+        second: "b".repeat(32 * 1024),
+        third: "c".repeat(32 * 1024),
+      },
+    })
+
+    assert.equal(tab.lineageId, lineageId)
   })
 
   it("reserves inactive tab identities and selected drafts before active payloads", () => {

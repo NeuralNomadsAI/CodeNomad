@@ -39,6 +39,8 @@ import type {
   WorkspaceDescriptor,
   WorkspaceFileResponse,
   WorkspaceFileSearchResponse,
+  WorkflowRun,
+  WorkflowRunCreateRequest,
 
   WorkspaceLogEntry,
   WorkspaceEventPayload,
@@ -531,6 +533,42 @@ export const serverApi = {
   listBackgroundProcesses(instanceId: string): Promise<BackgroundProcessListResponse> {
     return request<BackgroundProcessListResponse>(
       `/workspaces/${encodeURIComponent(instanceId)}/plugin/background-processes`,
+    )
+  },
+  listWorkflowRuns(instanceId: string): Promise<{ runs: WorkflowRun[] }> {
+    return request<{ runs: WorkflowRun[] }>(`/workspaces/${encodeURIComponent(instanceId)}/plugin/workflow-runs`)
+  },
+  createWorkflowRun(
+    instanceId: string,
+    payload: Omit<WorkflowRunCreateRequest, "workspaceId" | "stages"> & {
+      stages: Array<Omit<WorkflowRunCreateRequest["stages"][number], "model"> & {
+        model?: { providerId: string; modelId: string }
+      }>
+    },
+  ): Promise<WorkflowRun> {
+    return request<WorkflowRun>(`/workspaces/${encodeURIComponent(instanceId)}/plugin/workflow-runs`, {
+      method: "POST",
+      body: JSON.stringify({
+        ...payload,
+        stages: payload.stages.map((stage) => ({
+          ...stage,
+          model: stage.model ? { providerID: stage.model.providerId, modelID: stage.model.modelId } : undefined,
+        })),
+      }),
+    })
+  },
+  getWorkflowRun(instanceId: string, runId: string): Promise<WorkflowRun> {
+    return request<WorkflowRun>(
+      `/workspaces/${encodeURIComponent(instanceId)}/plugin/workflow-runs/${encodeURIComponent(runId)}`,
+    )
+  },
+  approveWorkflowRun(_instanceId: string, runId: string): Promise<WorkflowRun> {
+    return request<WorkflowRun>(`/api/workflow-runs/${encodeURIComponent(runId)}/approve`, { method: "POST" })
+  },
+  cancelWorkflowRun(instanceId: string, runId: string): Promise<WorkflowRun> {
+    return request<WorkflowRun>(
+      `/workspaces/${encodeURIComponent(instanceId)}/plugin/workflow-runs/${encodeURIComponent(runId)}/cancel`,
+      { method: "POST" },
     )
   },
   stopBackgroundProcess(instanceId: string, processId: string): Promise<BackgroundProcess> {

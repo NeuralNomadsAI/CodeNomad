@@ -40,6 +40,7 @@ describe("workspace routes", () => {
         path: "C:/work",
         name: "Work",
         binaryPath: " C:/tools/opencode.exe ",
+        lineageId: "00000000-0000-4000-8000-000000000001",
         requestId: " restore-request ",
         forceNew: true,
       },
@@ -48,6 +49,7 @@ describe("workspace routes", () => {
     assert.equal(response.statusCode, 201)
     assert.deepEqual(calls, [["C:/work", "Work", {
       binaryPath: "C:/tools/opencode.exe",
+      lineageId: "00000000-0000-4000-8000-000000000001",
       requestId: "restore-request",
       forceNew: true,
     }]])

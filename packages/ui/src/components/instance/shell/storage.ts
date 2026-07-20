@@ -66,13 +66,14 @@ export function persistOpenState(side: "left" | "right", value: boolean) {
 }
 
 export function readStoredRightPanelTab(
-  defaultValue: "git-changes" | "files" | "status",
-): "git-changes" | "files" | "status" {
+  defaultValue: "git-changes" | "files" | "workflows" | "status",
+): "git-changes" | "files" | "workflows" | "status" {
   const stored = readClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY)
   if (stored === "status") return "status"
   if (stored === "changes") return "git-changes"
   if (stored === "git-changes") return "git-changes"
   if (stored === "files") return "files"
+  if (stored === "workflows") return "workflows"
 
   // Migrate from v1 (where the stored values were the internal tab ids).
   const legacy = readClientLayoutValue(LEGACY_RIGHT_PANEL_TAB_STORAGE_KEY)

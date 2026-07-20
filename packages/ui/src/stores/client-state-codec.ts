@@ -4,7 +4,7 @@ import { createAttachmentCodecBudget, normalizeRestorableAttachmentRecord,
 import type { PersistedGenerationRecovery } from "./session-generation-recovery"
 
 export interface RestorableWorkspaceTabState {
-  kind: "workspace"; folder: string; occurrence?: number; projectName?: string; binaryPath?: string
+  kind: "workspace"; folder: string; occurrence?: number; lineageId?: string; projectName?: string; binaryPath?: string
   activeParentSessionId?: string; activeSessionId?: string
   drafts: Record<string, string>; attachments: Record<string, RestorableAttachment[]>
   scrollSnapshots: Record<string, ScrollSnapshot>; unseenIdleSince: Record<string, number>
@@ -169,6 +169,7 @@ function normalizeWorkspaceTab(
   const binaryPath = value.binaryPath === undefined ? undefined : takeString(value.binaryPath, MAX_PATH, budget)
   if (projectName !== undefined) result.projectName = projectName
   if (binaryPath !== undefined) result.binaryPath = binaryPath
+  if (identity.lineageId !== undefined) result.lineageId = identity.lineageId
   if (identity.activeParentSessionId !== undefined) result.activeParentSessionId = identity.activeParentSessionId
   if (identity.activeSessionId !== undefined) result.activeSessionId = identity.activeSessionId
   return result
@@ -176,6 +177,7 @@ function normalizeWorkspaceTab(
 
 interface WorkspaceIdentity {
   kind: "workspace"; value: Record<string, unknown>; folder: string
+  lineageId?: string
   activeParentSessionId?: string; activeSessionId?: string
   prioritySessionIds: string[]; priorityDrafts: Record<string, string>
   priorityAttachments: Record<string, RestorableAttachment[]>
@@ -194,13 +196,14 @@ function normalizeIdentity(value: unknown, budget: StringBudget): TabIdentity | 
     .every((key) => isRecord(value[key] ?? {}))) return null
   const folder = takeString(value.folder, MAX_PATH, budget)
   if (folder === undefined) return null
+  const lineageId = value.lineageId === undefined ? undefined : takeString(value.lineageId, MAX_ID, budget)
   const activeParentSessionId = value.activeParentSessionId === undefined ? undefined
     : takeString(value.activeParentSessionId, MAX_ID, budget)
   const activeSessionId = value.activeSessionId === undefined ? undefined : takeString(value.activeSessionId, MAX_ID, budget)
   const prioritySessionIds = [activeSessionId, NO_SESSION_DRAFT_SESSION_ID]
     .filter((id): id is string => Boolean(id))
   return {
-    kind: "workspace", value, folder, activeParentSessionId, activeSessionId,
+    kind: "workspace", value, folder, lineageId, activeParentSessionId, activeSessionId,
     prioritySessionIds, priorityDrafts: Object.create(null), priorityAttachments: Object.create(null),
   }
 }

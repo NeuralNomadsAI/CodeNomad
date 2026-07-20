@@ -3,6 +3,7 @@ export interface InstanceLifecycleAuthorityEvent {
   instanceId: string
   folder: string
   occurrence: number
+  lineageId?: string
 }
 
 const listeners = new Set<(event: InstanceLifecycleAuthorityEvent) => void>()

@@ -10,7 +10,7 @@ import {
 
 const logger = { info() {}, warn() {}, error() {} }
 const operations = (overrides: Partial<ServerShutdownOperations> = {}): ServerShutdownOperations => ({
-  stopInstanceEventBridge() {}, stopSidecars() {}, stopClientConnections() {},
+  stopInstanceEventBridge() {}, stopWorkflowRuns() {}, stopSidecars() {}, stopClientConnections() {},
   stopRemoteProxySessions() {}, stopWorkspaces() {}, stopHttpServers() {}, stopReleaseMonitor() {},
   ...overrides,
 })

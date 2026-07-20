@@ -47,6 +47,8 @@ import type { SideCarManager } from "../sidecars/manager"
 import type { PreviewManager } from "../previews/manager"
 import type { RemoteProxySessionManager } from "./remote-proxy"
 import { createOpenCodeUpdateService } from "../opencode-update/service"
+import type { WorkflowManager } from "../workflows/manager"
+import { registerWorkflowRoutes } from "./routes/workflows"
 
 interface HttpServerDeps {
   bindHost: string
@@ -71,6 +73,7 @@ interface HttpServerDeps {
   remoteProxySessionManager: RemoteProxySessionManager
   yoloManager: AutoAcceptManager
   sessionMetadataPersistence: OpencodeYoloPersistence
+  workflowManager: WorkflowManager
   uiStaticDir: string
   uiDevServerUrl?: string
   logger: Logger
@@ -326,6 +329,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
   registerBackgroundProcessRoutes(app, { backgroundProcessManager })
   registerYoloRoutes(app, { yoloManager: deps.yoloManager })
+  registerWorkflowRoutes(app, { workflowManager: deps.workflowManager })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger })
 
 

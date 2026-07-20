@@ -121,6 +121,7 @@ export interface WorkspaceCreateOptions {
   binaryPath?: string
   requestId?: string
   forceNew?: boolean
+  lineageId?: string
 }
 type CreationRequestState = "active" | "cancelled" | "released"
 type WorkspaceCreationOwnership = Map<string, CreationRequestState>
@@ -258,7 +259,23 @@ export class WorkspaceManager {
       if (this.shuttingDown) {
         throw new Error("Workspace manager is shutting down")
       }
-      if (options.forceNew) {
+      if (options.lineageId) {
+        const lineageRecord = Array.from(this.workspaces.values()).find((record) =>
+          record.lineageId === options.lineageId && !record[WORKSPACE_STATE].abortController.signal.aborted)
+        if (lineageRecord) {
+          if (lineageRecord.identityKey !== identityKey) {
+            throw new Error("Workspace lineage belongs to a different workspace")
+          }
+          const owner = options.requestId ?? ORDINARY_CREATION_OWNER
+          if (!lineageRecord.ownership.has(owner)) lineageRecord.ownership.set(owner, "active")
+          this.syncOwnership(lineageRecord)
+          const workspace = lineageRecord[WORKSPACE_STATE].creation
+            ? (await lineageRecord[WORKSPACE_STATE].creation).workspace
+            : lineageRecord
+          return this.finishCreation({ workspace, created: false }, options.requestId, lineageRecord.ownership)
+        }
+      }
+      if (options.forceNew || options.lineageId) {
         const ownership = this.createOwnership(options.requestId)
         const record = this.reserveWorkspace(workspacePath, identityKey, name, options, ownership, launchDeadlineAt)
         const result = await this.startCreation(record, options, launchDeadlineAt, launchTimeoutMs)
@@ -319,6 +336,7 @@ export class WorkspaceManager {
 
     const record = {
       id,
+      lineageId: options.lineageId ?? randomUUID(),
       requestId: options.requestId,
       path: workspacePath,
       name,

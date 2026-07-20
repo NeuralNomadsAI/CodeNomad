@@ -526,6 +526,25 @@ describe("app session snapshot merge", () => {
     ).map((match) => match.existingWorkspaceId), ["second"])
   })
 
+  it("keeps same-path workspace lineages distinct during snapshot preservation", () => {
+    const saved = session([
+      workspace("/same", 0, { lineageId: "lineage-a", drafts: { a: "saved a" } }),
+      workspace("/same", 1, { lineageId: "lineage-b", drafts: { b: "saved b" } }),
+    ])
+    const preservation = createRestorableSessionPreservation(saved)
+    markPreservedWorkspaceRemoved(preservation, {
+      runtimeTabId: "instance:unknown", folder: "/same", occurrence: 0, lineageId: "lineage-b",
+    })
+    const merged = mergeRestorableSessionState(
+      session([workspace("/same", 0, { lineageId: "lineage-a", drafts: { current: "current a" } })]),
+      preservation,
+    )
+
+    assert.equal(merged.tabs.length, 1)
+    assert.equal(workspaceAt(merged).lineageId, "lineage-a")
+    assert.deepEqual(workspaceAt(merged).drafts, { a: "saved a", current: "current a" })
+  })
+
   it("assigns unresolved duplicate a distinct occurrence and reconciliation slot", () => {
     const saved = session([
       workspace("/same", 0, { drafts: { failed: "retry" } }),

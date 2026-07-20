@@ -14,6 +14,7 @@ interface ModelSelectorProps {
   sessionId: string
   currentModel: { providerId: string; modelId: string }
   onModelChange: (model: { providerId: string; modelId: string }) => Promise<void>
+  square?: boolean
 }
 
 interface FlatModel extends Model {
@@ -378,7 +379,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
         </Combobox.Control>
 
         <Combobox.Portal>
-          <Combobox.Content class="selector-popover">
+          <Combobox.Content class={`selector-popover${props.square ? " workflow-selector-popover" : ""}`}>
             <div class="selector-search-container">
               <div class="selector-input-group">
                 <Combobox.Input
