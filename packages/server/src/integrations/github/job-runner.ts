@@ -1,6 +1,7 @@
 import os from "os"
 import path from "path"
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client"
+import { Agent, fetch as undiciFetch } from "undici"
 import type { Logger } from "../../logger"
 import type { SettingsService } from "../../settings/service"
 import type { WorkspaceManager } from "../../workspaces/manager"
@@ -18,6 +19,37 @@ import { selectGitHubWebhookPolicyDecision, type GitHubWebhookPolicyDecision, ty
 import { selectGitHubWebhookCommand } from "./webhook-command"
 import { sanitizeGitHubWebhookPayload } from "./sanitize-webhook"
 import { appendCodeNomadBotSignature } from "./bot-signature"
+
+// GitHub automation commands can run longer than Node/undici's default response
+// header timeout because OpenCode returns the command response only after the
+// assistant finishes. Use a dedicated dispatcher with timeouts disabled for this
+// local loopback path.
+const OPENCODE_FETCH_DISPATCHER = new Agent({ headersTimeout: 0, bodyTimeout: 0 })
+
+const opencodeNoTimeoutFetch: typeof fetch = ((input: any, init?: any) => {
+  const mergedInit: any = { ...(init ?? {}), dispatcher: OPENCODE_FETCH_DISPATCHER }
+
+  if (input && typeof input === "object" && typeof input.url === "string" && init === undefined) {
+    const req = input as Request
+    mergedInit.method = req.method
+    mergedInit.headers = req.headers
+    mergedInit.redirect = req.redirect
+    mergedInit.signal = req.signal
+    if (req.body !== null && req.body !== undefined) {
+      mergedInit.body = req.body
+    }
+    if (mergedInit.body !== undefined && mergedInit.duplex === undefined) {
+      mergedInit.duplex = "half"
+    }
+    return (undiciFetch as any)(req.url, mergedInit)
+  }
+
+  if (mergedInit.body !== undefined && mergedInit.duplex === undefined) {
+    mergedInit.duplex = "half"
+  }
+
+  return (undiciFetch as any)(input, mergedInit)
+}) as typeof fetch
 
 type GitHubAppSettings = {
   enabled: boolean
@@ -412,6 +444,7 @@ export class GitHubJobRunner {
     const client = createOpencodeClient({
       baseUrl: `http://127.0.0.1:${port}/`,
       ...(authorization ? { headers: { authorization } } : {}),
+      fetch: opencodeNoTimeoutFetch,
       directory,
     } as any)
 

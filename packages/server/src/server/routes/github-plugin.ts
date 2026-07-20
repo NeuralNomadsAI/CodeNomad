@@ -144,7 +144,11 @@ export function registerGitHubPluginRoutes(app: FastifyInstance, deps: RouteDeps
       }
 
       if (parsed.op === "publish_pr") {
-        return await publishPr({ parsed, workspace, workspaceId, context, octokit, token, logger: deps.logger })
+        const result = await publishPr({ parsed, workspace, workspaceId, context, octokit, token, logger: deps.logger })
+        if (!(result as any)?.ok && (result as any)?.error) {
+          reply.code(400)
+        }
+        return result
       }
 
       reply.code(400)
@@ -226,7 +230,7 @@ async function publishPr(params: {
   const workspaceRoot = path.resolve(params.workspace.path)
   const rel = path.relative(workspaceRoot, absDir)
   if (!(rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel)))) {
-    return { error: "Invalid directory" }
+    return { ok: false, op: "publish_pr", error: "Invalid directory" }
   }
 
   let base = params.parsed.base ?? params.context.defaultBranch
@@ -244,9 +248,9 @@ async function publishPr(params: {
   }
 
   const branch = await gitCurrentBranch(absDir)
-  if (!branch) return { error: "No current branch" }
+  if (!branch) return { ok: false, op: "publish_pr", error: "No current branch" }
   const clean = await gitIsClean(absDir)
-  if (!clean) return { error: "Working tree has uncommitted changes" }
+  if (!clean) return { ok: false, op: "publish_pr", error: "Working tree has uncommitted changes" }
 
   await gitPushHead({ cwd: absDir, remoteUrl: params.context.repoUrl, branch, token: params.token })
 
