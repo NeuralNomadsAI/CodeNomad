@@ -682,12 +682,10 @@ function handlePermissionUpdated(instanceId: string, event: EventPermissionV2Ask
     log.info(`[SSE] Ignoring stale permission request after local reply: ${permissionId}`)
     return
   }
-  const isUpdate = event.type === "permission.updated"
-  if (isUpdate && !getPermissionQueue(instanceId).some((pending) => pending.id === permissionId)) {
-    log.info(`[SSE] Ignoring permission update without a pending request: ${permissionId}`)
-    return
-  }
-  const source = isUpdate ? undefined : event.type === "permission.v2.asked" ? "v2" : "legacy"
+  const isPending = getPermissionQueue(instanceId).some((pending) => pending.id === permissionId)
+  const source = event.type === "permission.v2.asked"
+    ? "v2"
+    : event.type === "permission.updated" && isPending ? undefined : "legacy"
 
   log.info(`[SSE] Permission request: ${permissionId} (${getPermissionKind(permission)})`)
   const queuedPermission = addPermissionToQueue(instanceId, permission, source) ?? permission

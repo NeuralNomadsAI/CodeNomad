@@ -63,16 +63,34 @@ test("permission.updated preserves the V2 reply route", async () => {
 
   assert.equal(v2Replies, 1)
   assert.equal(legacyReplies, 0)
-})
-
-test("orphan permission.updated does not create a pending permission", () => {
-  const client = {} as OpencodeClient
-  addTestInstance("permission-orphan-update", client)
-
-  handlePermissionUpdated("permission-orphan-update", {
+  handlePermissionUpdated("permission-v2-source", {
     type: "permission.updated",
     properties: { id: "permission", sessionID: "session", patterns: ["C:/work"] },
   })
+  assert.deepEqual(getPermissionQueue("permission-v2-source"), [])
+})
 
-  assert.deepEqual(getPermissionQueue("permission-orphan-update"), [])
+test("standalone permission.updated remains a legacy permission request", async () => {
+  let legacyReplies = 0
+  let v2Replies = 0
+  const client = {
+    permission: {
+      reply: async () => { legacyReplies += 1; return { data: true } },
+    },
+    v2: { session: { permission: {
+      reply: async () => { v2Replies += 1; return { data: true } },
+    } } },
+  } as unknown as OpencodeClient
+  sdkManager.createClient = (() => client) as typeof sdkManager.createClient
+  addTestInstance("permission-legacy-update", client)
+
+  handlePermissionUpdated("permission-legacy-update", {
+    type: "permission.updated",
+    properties: { id: "permission", sessionID: "session", patterns: ["C:/work"] },
+  })
+  assert.equal(getPermissionQueue("permission-legacy-update").length, 1)
+  await sendPermissionResponse("permission-legacy-update", "session", "permission", "always")
+
+  assert.equal(legacyReplies, 1)
+  assert.equal(v2Replies, 0)
 })
