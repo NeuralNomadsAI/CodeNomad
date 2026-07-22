@@ -550,10 +550,6 @@
 
 .settings-expansion-table {
   margin-bottom: 1.25rem;
-  border: 1px solid var(--border-base);
-  border-radius: 0;
-  background: var(--surface-base);
-  overflow: hidden;
 }
 
 .settings-expansion-table-header,
