@@ -95,7 +95,7 @@
 
       async function submit() {
         hideError()
-        const username = $("username").value.trim()
+        const username = $("username").value
         const password = $("password").value
         if (!username || !password) {
           showError("Username and password are required.")
