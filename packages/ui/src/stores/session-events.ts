@@ -46,6 +46,7 @@ import { preferences } from "./preferences"
 import {
   instances,
   addPermissionToQueue,
+  getPermissionQueue,
   removePermissionFromQueue,
   markPermissionReplied,
   hasRepliedPermission,
@@ -675,12 +676,18 @@ function handleTuiToast(_instanceId: string, event: TuiToastEvent): void {
 function handlePermissionUpdated(instanceId: string, event: EventPermissionV2Asked | LegacyPermissionAskedEvent): void {
   const permission = event?.properties as PermissionRequest | undefined
   if (!permission) return
-  const source = event.type === "permission.v2.asked" ? "v2" : "legacy"
   const permissionId = getPermissionId(permission)
-  if (permissionId && hasRepliedPermission(instanceId, permissionId)) {
+  if (!permissionId) return
+  if (hasRepliedPermission(instanceId, permissionId)) {
     log.info(`[SSE] Ignoring stale permission request after local reply: ${permissionId}`)
     return
   }
+  const isUpdate = event.type === "permission.updated"
+  if (isUpdate && !getPermissionQueue(instanceId).some((pending) => pending.id === permissionId)) {
+    log.info(`[SSE] Ignoring permission update without a pending request: ${permissionId}`)
+    return
+  }
+  const source = isUpdate ? undefined : event.type === "permission.v2.asked" ? "v2" : "legacy"
 
   log.info(`[SSE] Permission request: ${permissionId} (${getPermissionKind(permission)})`)
   const queuedPermission = addPermissionToQueue(instanceId, permission, source) ?? permission
