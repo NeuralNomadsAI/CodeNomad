@@ -23,7 +23,7 @@ import { buildRecordDisplayData } from "../stores/message-v2/record-display-cach
 import { getPartCharCount } from "../lib/token-utils"
 import { buildSessionSearchMatches } from "../lib/session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
-import { resolveThinkingExpansionDefault } from "./tool-call/tool-registry"
+import { resolveThinkingExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
 import { collectToolDeletionCompanionPartIds, executeBulkDeletionPlan } from "./tool-deletion-companions"
 
 const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
@@ -57,7 +57,8 @@ export interface MessageSectionProps {
 export default function MessageSection(props: MessageSectionProps) {
   const { preferences, updatePreferences } = useConfig()
   const { t } = useI18n()
-  const showUsagePreference = () => preferences().showUsageMetrics ?? true
+  const usageMetricsVisibility = () =>
+    preferences().showUsageMetrics ? preferences().usageMetricsExpansion : "hidden"
   const showMessageTimelinePreference = () => preferences().showMessageTimeline ?? true
   const showTimelineToolsPreference = () => preferences().showTimelineTools ?? true
   const holdLongAssistantRepliesEnabled = () => preferences().holdLongAssistantReplies ?? true
@@ -121,8 +122,8 @@ export default function MessageSection(props: MessageSectionProps) {
     const pref = preferences()
     const showThinking = pref.showThinkingBlocks ? 1 : 0
     const thinkingExpansion = resolveThinkingExpansionDefault(pref) ? "expanded" : "collapsed"
-    const showUsage = (pref.showUsageMetrics ?? true) ? 1 : 0
-    return `${showThinking}|${thinkingExpansion}|${showUsage}`
+    const usageVisibility = pref.showUsageMetrics ? pref.usageMetricsExpansion : "hidden"
+    return `${showThinking}|${thinkingExpansion}|${usageVisibility}`
   })
 
   const handleTimelineSegmentClick = (segment: TimelineSegment) => {
@@ -1605,7 +1606,8 @@ export default function MessageSection(props: MessageSectionProps) {
               lastAssistantIndex={lastAssistantIndex}
               showThinking={() => preferences().showThinkingBlocks}
               thinkingDefaultExpanded={() => resolveThinkingExpansionDefault(preferences())}
-              showUsageMetrics={showUsagePreference}
+              usageMetricsVisibility={usageMetricsVisibility}
+              toolVisibility={(toolName) => resolveToolVisibility(preferences(), toolName)}
               deleteHover={deleteHover}
               onDeleteHoverChange={setDeleteHover}
               selectedMessageIds={selectedForDeletion}

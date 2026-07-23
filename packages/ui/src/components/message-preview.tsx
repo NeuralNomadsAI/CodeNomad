@@ -29,7 +29,8 @@ const MessagePreview: Component<MessagePreviewProps> = (props) => {
         lastAssistantIndex={lastAssistantIndex}
         showThinking={() => false}
         thinkingDefaultExpanded={() => false}
-        showUsageMetrics={() => false}
+        usageMetricsVisibility={() => "hidden"}
+        toolVisibility={() => "expanded"}
         deleteHover={props.deleteHover}
         onDeleteHoverChange={props.onDeleteHoverChange}
         onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}

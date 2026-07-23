@@ -1,6 +1,11 @@
 import { createSignal, onMount } from "solid-js"
 import type { Accessor } from "solid-js"
-import type { Preferences, ExpansionPreference, ToolInputsVisibilityPreference } from "../../stores/preferences"
+import type {
+  Preferences,
+  ExpansionPreference,
+  ToolInputsVisibilityPreference,
+  VisibilityPreference,
+} from "../../stores/preferences"
 import { createCommandRegistry, type Command } from "../commands"
 import { activeInstanceId } from "../../stores/instances"
 import { selectNextAppTab, selectPreviousAppTab } from "../../stores/app-tabs"
@@ -40,8 +45,8 @@ export interface UseCommandsOptions {
   togglePromptSubmitOnEnter: () => void
   toggleShowPromptVoiceInput: () => void
   setDiffViewMode: (mode: "split" | "unified") => void
-  setToolOutputExpansion: (mode: ExpansionPreference) => void
-  setDiagnosticsExpansion: (mode: ExpansionPreference) => void
+  setToolOutputExpansion: (mode: VisibilityPreference) => void
+  setDiagnosticsExpansion: (mode: VisibilityPreference) => void
   setThinkingBlocksExpansion: (mode: ExpansionPreference) => void
   setToolInputsVisibility: (mode: ToolInputsVisibilityPreference) => void
   handleNewInstanceRequest: () => void

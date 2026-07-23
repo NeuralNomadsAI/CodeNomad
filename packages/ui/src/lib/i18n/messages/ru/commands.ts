@@ -123,12 +123,12 @@ export const commandMessages = {
   "commands.diffViewUnified.keywords": "diff, unified, просмотр",
 
   "commands.toolOutputsDefault.label": "Выводы инструментов по умолчанию · {state}",
-  "commands.toolOutputsDefault.description": "Переключить, разворачивать ли выводы инструментов по умолчанию",
-  "commands.toolOutputsDefault.keywords": "tool, output, развернуть, свернуть",
+  "commands.toolOutputsDefault.description": "Задать видимость выводов инструментов по умолчанию",
+  "commands.toolOutputsDefault.keywords": "tool, output, скрыть, развернуть, свернуть",
 
   "commands.diagnosticsDefault.label": "Диагностика по умолчанию · {state}",
-  "commands.diagnosticsDefault.description": "Переключить, разворачивать ли вывод диагностики по умолчанию",
-  "commands.diagnosticsDefault.keywords": "diagnostics, развернуть, свернуть",
+  "commands.diagnosticsDefault.description": "Задать видимость вывода диагностики по умолчанию",
+  "commands.diagnosticsDefault.keywords": "diagnostics, скрыть, развернуть, свернуть",
 
   "commands.toolInputsVisibility.label": "Видимость входных данных инструмента · {state}",
   "commands.toolInputsVisibility.description": "Установить видимость аргументов входа вызовов инструментов по умолчанию",

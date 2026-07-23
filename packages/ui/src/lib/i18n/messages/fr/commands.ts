@@ -123,12 +123,12 @@ export const commandMessages = {
   "commands.diffViewUnified.keywords": "diff, unifiée, vue",
 
   "commands.toolOutputsDefault.label": "Sorties d'outil par défaut · {state}",
-  "commands.toolOutputsDefault.description": "Choisir l'ouverture par défaut des sorties d'outil",
-  "commands.toolOutputsDefault.keywords": "outil, sortie, développer, réduire",
+  "commands.toolOutputsDefault.description": "Choisir la visibilité par défaut des sorties d'outil",
+  "commands.toolOutputsDefault.keywords": "outil, sortie, masquer, développer, réduire",
 
   "commands.diagnosticsDefault.label": "Diagnostics par défaut · {state}",
-  "commands.diagnosticsDefault.description": "Choisir l'ouverture par défaut de la sortie des diagnostics",
-  "commands.diagnosticsDefault.keywords": "diagnostics, développer, réduire",
+  "commands.diagnosticsDefault.description": "Choisir la visibilité par défaut de la sortie des diagnostics",
+  "commands.diagnosticsDefault.keywords": "diagnostics, masquer, développer, réduire",
 
   "commands.toolInputsVisibility.label": "Visibilité des entrées d'outil · {state}",
   "commands.toolInputsVisibility.description": "Définir la visibilité par défaut des arguments d'entrée des appels d'outil",

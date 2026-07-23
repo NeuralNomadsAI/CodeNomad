@@ -123,12 +123,12 @@ export const commandMessages = {
   "commands.diffViewUnified.keywords": "diff, einheitlich, ansicht",
 
   "commands.toolOutputsDefault.label": "Standard für Tool-Ausgaben · {state}",
-  "commands.toolOutputsDefault.description": "Standardmäßige Erweiterung für Tool-Ausgaben umschalten",
-  "commands.toolOutputsDefault.keywords": "tool, ausgabe, erweitern, einklappen",
+  "commands.toolOutputsDefault.description": "Standardsichtbarkeit für Tool-Ausgaben festlegen",
+  "commands.toolOutputsDefault.keywords": "tool, ausgabe, ausblenden, erweitern, einklappen",
 
   "commands.diagnosticsDefault.label": "Standard für Diagnose · {state}",
-  "commands.diagnosticsDefault.description": "Standardmäßige Erweiterung für die Diagnoseausgabe umschalten",
-  "commands.diagnosticsDefault.keywords": "diagnose, erweitern, einklappen",
+  "commands.diagnosticsDefault.description": "Standardsichtbarkeit für Diagnoseausgaben festlegen",
+  "commands.diagnosticsDefault.keywords": "diagnose, ausblenden, erweitern, einklappen",
 
   "commands.toolInputsVisibility.label": "Sichtbarkeit von Tool-Eingaben · {state}",
   "commands.toolInputsVisibility.description": "Standardsichtbarkeit für Argumente von Tool-Aufrufen festlegen",

@@ -24,6 +24,7 @@ export const GeneralSettingsSection: Component = () => {
       (setting) =>
         setting.id === "behavior.keyboardShortcutHints" ||
         setting.id === "behavior.messageTimeline" ||
+        setting.id === "behavior.timelineToolCalls" ||
         setting.id === "behavior.diffViewMode" ||
         setting.id === "behavior.autoCleanupBlankSessions" ||
         setting.id === "behavior.keepUnseenSubagentIdleStatus" ||
