@@ -40,16 +40,19 @@ export function searchWorkspaceFiles(
   const limit = normalizeLimit(options.limit)
   const typeFilter: WorkspaceFileSearchType = options.type ?? "all"
   const refreshRequested = options.refresh === true
+  const cacheScope = `${typeFilter}\0${trimmedQuery.toLowerCase()}`
 
   let entries: FileSystemEntry[] | undefined
 
   try {
     if (!refreshRequested) {
-      entries = getWorkspaceCandidates(normalizedRoot)
+      entries = getWorkspaceCandidates(normalizedRoot, cacheScope)
     }
 
     if (!entries) {
-      entries = refreshWorkspaceCandidates(normalizedRoot, () => collectCandidates(normalizedRoot))
+      entries = refreshWorkspaceCandidates(normalizedRoot, cacheScope, () =>
+        collectCandidates(normalizedRoot, trimmedQuery, typeFilter),
+      )
     }
   } catch (error) {
     clearWorkspaceSearchCache(normalizedRoot)
@@ -57,7 +60,6 @@ export function searchWorkspaceFiles(
   }
 
   if (!entries || entries.length === 0) {
-    clearWorkspaceSearchCache(normalizedRoot)
     return []
   }
 
@@ -80,16 +82,25 @@ export function searchWorkspaceFiles(
 }
 
 
-function collectCandidates(rootDir: string): FileSystemEntry[] {
-  const queue: string[] = [""]
+function collectCandidates(rootDir: string, query: string, filter: WorkspaceFileSearchType): FileSystemEntry[] {
+  const queue: Array<{ relativeDir: string; ancestors: ReadonlySet<string> }> = [
+    { relativeDir: "", ancestors: new Set() },
+  ]
   const entries: FileSystemEntry[] = []
 
   while (queue.length > 0 && entries.length < MAX_CANDIDATES) {
-    const relativeDir = queue.pop() || ""
+    const queuedDirectory = queue.pop()!
+    const { relativeDir, ancestors } = queuedDirectory
     const absoluteDir = relativeDir ? path.join(rootDir, relativeDir) : rootDir
 
     let dirents: fs.Dirent[]
+    let branchAncestors: ReadonlySet<string>
     try {
+      const realDir = normalizeDirectoryIdentity(fs.realpathSync.native(absoluteDir))
+      if (ancestors.has(realDir)) {
+        continue
+      }
+      branchAncestors = new Set([...ancestors, realDir])
       dirents = fs.readdirSync(absoluteDir, { withFileTypes: true })
     } catch {
       continue
@@ -115,9 +126,7 @@ function collectCandidates(rootDir: string): FileSystemEntry[] {
       const isDirectory = stats.isDirectory()
 
       if (isDirectory && !IGNORED_DIRECTORIES.has(lowerName)) {
-        if (entries.length < MAX_CANDIDATES) {
-          queue.push(relativePath)
-        }
+        queue.push({ relativeDir: relativePath, ancestors: branchAncestors })
       }
 
       const entryType: FileSystemEntry["type"] = isDirectory ? "directory" : "file"
@@ -131,8 +140,11 @@ function collectCandidates(rootDir: string): FileSystemEntry[] {
         modifiedAt: stats.mtime.toISOString(),
       }
 
-      entries.push(entry)
+      if (!shouldInclude(entry.type, filter) || !fuzzysort.single(query, buildSearchKey(entry))) {
+        continue
+      }
 
+      entries.push(entry)
       if (entries.length >= MAX_CANDIDATES) {
         break
       }
@@ -181,4 +193,8 @@ function normalizeRelativeEntryPath(relativePath: string): string {
 
 function buildSearchKey(entry: FileSystemEntry) {
   return entry.path.toLowerCase()
+}
+
+function normalizeDirectoryIdentity(directoryPath: string) {
+  return process.platform === "win32" ? directoryPath.toLowerCase() : directoryPath
 }

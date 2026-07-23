@@ -443,7 +443,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     <Show when={props.open}>
       <div
         ref={containerRef}
-        class="dropdown-surface bottom-full left-0 mb-1 max-w-md"
+        class="dropdown-surface bottom-full left-0 mb-1"
       >
         <div class="dropdown-header">
           <div class="dropdown-header-title">
@@ -456,7 +456,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
           </div>
         </div>
 
-        <div ref={scrollContainerRef} class="dropdown-content max-h-60">
+        <div ref={scrollContainerRef} class="dropdown-content max-h-60 overflow-x-auto">
           <Show when={(mode() === "command" ? commandCount() === 0 : agentCount() === 0 && fileCount() === 0)}>
             <div class="dropdown-empty">{t("unifiedPicker.empty")}</div>
           </Show>
@@ -593,7 +593,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                     data-picker-selected={itemIndex === selectedIndex()}
                     onClick={() => props.onSelect({ type: "file", file }, "click")}
                   >
-                    <div class="flex items-center gap-2 text-sm">
+                    <div class="flex min-w-full w-max items-center gap-2 text-sm">
                       <Show
                         when={isFolder}
                         fallback={
@@ -616,7 +616,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                           />
                         </svg>
                       </Show>
-                      <span class="truncate">{file.path}</span>
+                      <span class="whitespace-nowrap">{file.path}</span>
                     </div>
                   </div>
                 )
