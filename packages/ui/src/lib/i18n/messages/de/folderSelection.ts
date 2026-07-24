@@ -17,6 +17,7 @@ export const folderSelectionMessages = {
   "folderSelection.recent.rename": "Arbeitsbereich umbenennen",
   "folderSelection.recent.remove": "Aus Liste entfernen",
   "folderSelection.recent.openBadge": "Offen",
+  "folderSelection.recent.openNewInstance": "Neue Instanz öffnen",
   "folderSelection.recent.switchToOpenProject": "Zum offenen Projekt wechseln",
 
   "folderSelection.browse.title": "Nach Ordner suchen",

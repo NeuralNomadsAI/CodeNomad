@@ -17,6 +17,7 @@ export const folderSelectionMessages = {
   "folderSelection.recent.rename": "שנה שם סביבת עבודה",
   "folderSelection.recent.remove": "הסר מהרשימה האחרונה",
   "folderSelection.recent.openBadge": "פתוח",
+  "folderSelection.recent.openNewInstance": "פתיחת מופע חדש",
   "folderSelection.recent.switchToOpenProject": "עבור לפרויקט הפתוח",
 
   "folderSelection.browse.title": "עיון בתיקייה",

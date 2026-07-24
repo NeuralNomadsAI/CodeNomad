@@ -17,6 +17,7 @@ export const folderSelectionMessages = {
   "folderSelection.recent.rename": "Переименовать рабочее пространство",
   "folderSelection.recent.remove": "Убрать из недавних",
   "folderSelection.recent.openBadge": "Открыта",
+  "folderSelection.recent.openNewInstance": "Открыть новый экземпляр",
   "folderSelection.recent.switchToOpenProject": "Перейти к открытому проекту",
 
   "folderSelection.browse.title": "Выбрать папку",
