@@ -65,7 +65,6 @@ import {
 import {
   applyRightPanelItemCustomization,
   collectRightPanelItems,
-  moveRightPanelItem,
   parseRightPanelCustomization,
   setRightPanelItemHidden,
   type RightPanelCustomization,
@@ -845,7 +844,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   })
 
   return (
-    <div class="flex flex-col h-full" ref={props.setContentEl}>
+    <div class="relative flex flex-col h-full" ref={props.setContentEl}>
       <div class="right-panel-tab-bar">
         <div class="tab-container">
           <div class="tab-strip-shortcuts text-primary">
@@ -875,6 +874,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               color="inherit"
               aria-label={props.t("instanceShell.rightPanel.customize.toggle")}
               title={props.t("instanceShell.rightPanel.customize.toggle")}
+              aria-expanded={rightPanelCustomizationOpen()}
               onClick={() => setRightPanelCustomizationOpen((open) => !open)}
             >
               <Settings2 class="h-4 w-4" />
@@ -890,6 +890,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                       role="tab"
                       class={tabClass(tab.id)}
                       aria-selected={rightPanelTab() === tab.id}
+                      title={props.t("instanceShell.rightPanel.customize.dragToReorder")}
                       onClick={() => setRightPanelTab(tab.id)}
                       draggable
                       onDragStart={(event) => {
@@ -923,7 +924,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       </div>
 
       <Show when={rightPanelCustomizationOpen()}>
-        <div class="right-panel-customization-panel">
+        <div class="right-panel-customization-popover" role="dialog" aria-label={props.t("instanceShell.rightPanel.customize.title")}>
           <div class="right-panel-customization-header">
             <div>
               <div class="text-sm font-medium text-primary">{props.t("instanceShell.rightPanel.customize.title")}</div>
@@ -962,36 +963,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                         />
                         <span>{label()}</span>
                       </label>
-                      <div class="right-panel-customization-actions">
-                        <button
-                          type="button"
-                          class="right-panel-customization-button"
-                          aria-label={props.t("instanceShell.rightPanel.customize.moveTabUp", { label: label() })}
-                          title={props.t("instanceShell.rightPanel.customize.moveTabUp", { label: label() })}
-                          onClick={() =>
-                            updateRightPanelCustomization((current) => ({
-                              ...current,
-                              tabOrder: moveRightPanelItem(current.tabOrder, allRightPanelTabs().map((item) => item.id), tab.id, -1),
-                            }))
-                          }
-                        >
-                          {props.t("instanceShell.rightPanel.customize.moveUp")}
-                        </button>
-                        <button
-                          type="button"
-                          class="right-panel-customization-button"
-                          aria-label={props.t("instanceShell.rightPanel.customize.moveTabDown", { label: label() })}
-                          title={props.t("instanceShell.rightPanel.customize.moveTabDown", { label: label() })}
-                          onClick={() =>
-                            updateRightPanelCustomization((current) => ({
-                              ...current,
-                              tabOrder: moveRightPanelItem(current.tabOrder, allRightPanelTabs().map((item) => item.id), tab.id, 1),
-                            }))
-                          }
-                        >
-                          {props.t("instanceShell.rightPanel.customize.moveDown")}
-                        </button>
-                      </div>
                     </div>
                   )
                 }}
@@ -1025,52 +996,13 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                         />
                         <span>{label()}</span>
                       </label>
-                      <div class="right-panel-customization-actions">
-                        <button
-                          type="button"
-                          class="right-panel-customization-button"
-                          aria-label={props.t("instanceShell.rightPanel.customize.moveStatusSectionUp", { label: label() })}
-                          title={props.t("instanceShell.rightPanel.customize.moveStatusSectionUp", { label: label() })}
-                          onClick={() =>
-                            updateRightPanelCustomization((current) => ({
-                              ...current,
-                              statusSectionOrder: moveRightPanelItem(
-                                current.statusSectionOrder,
-                                allStatusSections().map((item) => item.id),
-                                section.id,
-                                -1,
-                              ),
-                            }))
-                          }
-                        >
-                          {props.t("instanceShell.rightPanel.customize.moveUp")}
-                        </button>
-                        <button
-                          type="button"
-                          class="right-panel-customization-button"
-                          aria-label={props.t("instanceShell.rightPanel.customize.moveStatusSectionDown", { label: label() })}
-                          title={props.t("instanceShell.rightPanel.customize.moveStatusSectionDown", { label: label() })}
-                          onClick={() =>
-                            updateRightPanelCustomization((current) => ({
-                              ...current,
-                              statusSectionOrder: moveRightPanelItem(
-                                current.statusSectionOrder,
-                                allStatusSections().map((item) => item.id),
-                                section.id,
-                                1,
-                              ),
-                            }))
-                          }
-                        >
-                          {props.t("instanceShell.rightPanel.customize.moveDown")}
-                        </button>
-                      </div>
                     </div>
                   )
                 }}
               </For>
             </div>
           </div>
+          <div class="right-panel-customization-hint">{props.t("instanceShell.rightPanel.customize.dragToReorder")}</div>
         </div>
       </Show>
 
