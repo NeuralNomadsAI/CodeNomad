@@ -1,5 +1,13 @@
-import { For, Show, createMemo, createSignal, type Accessor, type Component } from "solid-js"
+import { For, Show, createMemo, type Accessor, type Component } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk/v2"
+import {
+  DragDropProvider,
+  DragDropSensors,
+  SortableProvider,
+  closestCenter,
+  createSortable,
+  type DragEvent as SolidDndDragEvent,
+} from "@thisbeyond/solid-dnd"
 import { Accordion } from "@kobalte/core"
 import { Tooltip } from "@kobalte/core/tooltip"
 import Switch from "@suid/material/Switch"
@@ -41,9 +49,42 @@ interface StatusTabProps {
   extraSections?: readonly RightPanelSectionModule[]
 }
 
+interface SortableStatusSectionProps {
+  section: RightPanelSectionModule
+  expanded: boolean
+  t: (key: string, vars?: Record<string, any>) => string
+}
+
+const SortableStatusSection: Component<SortableStatusSectionProps> = (props) => {
+  const sortable = createSortable(props.section.id)
+  return (
+    <div ref={sortable} class={`right-panel-section-draggable ${sortable.isActiveDraggable ? "right-panel-section-draggable-active" : ""}`}>
+      <Accordion.Item value={props.section.id} class="right-panel-accordion-item">
+        <Accordion.Header class="right-panel-accordion-header-row">
+          <Accordion.Trigger class="right-panel-accordion-trigger">
+            <span class="section-left">
+              <GripVertical class="h-3.5 w-3.5 text-tertiary" aria-hidden="true" />
+              <span class="section-label">{props.t(props.section.labelKey)}</span>
+            </span>
+            <ChevronDown class={`right-panel-accordion-chevron ${props.expanded ? "right-panel-accordion-chevron-expanded" : ""}`} />
+          </Accordion.Trigger>
+          <Tooltip openDelay={200} gutter={4} placement="top">
+            <Tooltip.Trigger as="button" type="button" class="section-info-trigger" aria-label={props.t(props.section.tooltipKey)}>
+              <Info class="section-info-icon" />
+            </Tooltip.Trigger>
+            <Tooltip.Portal>
+              <Tooltip.Content class="section-info-tooltip">{props.t(props.section.tooltipKey)}</Tooltip.Content>
+            </Tooltip.Portal>
+          </Tooltip>
+        </Accordion.Header>
+        <Accordion.Content class="right-panel-accordion-content">{props.section.render()}</Accordion.Content>
+      </Accordion.Item>
+    </div>
+  )
+}
+
 const StatusTab: Component<StatusTabProps> = (props) => {
   const isSectionExpanded = (id: string) => props.expandedItems().includes(id)
-  const [draggedSectionId, setDraggedSectionId] = createSignal<string | null>(null)
 
   const renderYoloModeSection = () => {
     const session = props.activeSession()
@@ -259,6 +300,11 @@ const StatusTab: Component<StatusTabProps> = (props) => {
     props.onCustomizationChange((current) => ({ ...current, statusSectionOrder: next }))
   }
 
+  const handleSectionDragEnd = ({ draggable, droppable }: SolidDndDragEvent) => {
+    if (!droppable) return
+    moveSection(String(draggable.id), String(droppable.id))
+  }
+
   return (
     <div class="status-tab-container">
       <Show when={props.activeSession()}>
@@ -274,53 +320,15 @@ const StatusTab: Component<StatusTabProps> = (props) => {
         value={props.expandedItems()}
         onChange={props.onExpandedItemsChange}
       >
-        <For each={statusSections()}>
-          {(section) => (
-            <Accordion.Item
-              value={section.id}
-              class="right-panel-accordion-item"
-              draggable
-              onDragStart={(event) => {
-                setDraggedSectionId(section.id)
-                event.dataTransfer?.setData("text/plain", section.id)
-                if (event.dataTransfer) event.dataTransfer.effectAllowed = "move"
-              }}
-              onDragOver={(event) => {
-                if (!draggedSectionId() || draggedSectionId() === section.id) return
-                event.preventDefault()
-                if (event.dataTransfer) event.dataTransfer.dropEffect = "move"
-              }}
-              onDrop={(event) => {
-                event.preventDefault()
-                const sourceId = event.dataTransfer?.getData("text/plain") || draggedSectionId()
-                if (sourceId) moveSection(sourceId, section.id)
-                setDraggedSectionId(null)
-              }}
-              onDragEnd={() => setDraggedSectionId(null)}
-            >
-              <Accordion.Header class="right-panel-accordion-header-row">
-                <Accordion.Trigger class="right-panel-accordion-trigger">
-                  <span class="section-left">
-                    <GripVertical class="h-3.5 w-3.5 text-tertiary" aria-hidden="true" />
-                    <span class="section-label">{props.t(section.labelKey)}</span>
-                  </span>
-                  <ChevronDown
-                    class={`right-panel-accordion-chevron ${isSectionExpanded(section.id) ? "right-panel-accordion-chevron-expanded" : ""}`}
-                  />
-                </Accordion.Trigger>
-                <Tooltip openDelay={200} gutter={4} placement="top">
-                  <Tooltip.Trigger as="button" type="button" class="section-info-trigger" aria-label={props.t(section.tooltipKey)}>
-                    <Info class="section-info-icon" />
-                  </Tooltip.Trigger>
-                  <Tooltip.Portal>
-                    <Tooltip.Content class="section-info-tooltip">{props.t(section.tooltipKey)}</Tooltip.Content>
-                  </Tooltip.Portal>
-                </Tooltip>
-              </Accordion.Header>
-              <Accordion.Content class="right-panel-accordion-content">{section.render()}</Accordion.Content>
-            </Accordion.Item>
-          )}
-        </For>
+        <DragDropProvider collisionDetector={closestCenter} onDragEnd={handleSectionDragEnd}>
+          <DragDropSensors>
+            <SortableProvider ids={statusSections().map((section) => section.id)}>
+              <For each={statusSections()}>
+                {(section) => <SortableStatusSection section={section} expanded={isSectionExpanded(section.id)} t={props.t} />}
+              </For>
+            </SortableProvider>
+          </DragDropSensors>
+        </DragDropProvider>
       </Accordion.Root>
     </div>
   )

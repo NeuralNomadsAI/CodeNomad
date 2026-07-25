@@ -12,6 +12,14 @@ import {
 } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk/v2"
 import type { FileContent, FileNode } from "@opencode-ai/sdk/v2/client"
+import {
+  DragDropProvider,
+  DragDropSensors,
+  SortableProvider,
+  closestCenter,
+  createSortable,
+  type DragEvent as SolidDndDragEvent,
+} from "@thisbeyond/solid-dnd"
 import IconButton from "@suid/material/IconButton"
 import MenuOpenIcon from "@suid/icons-material/MenuOpen"
 import PushPinIcon from "@suid/icons-material/PushPin"
@@ -82,6 +90,32 @@ function RightPanelTabFallback() {
   return <div class="flex-1 min-h-0" />
 }
 
+interface SortableRightPanelTabProps {
+  tab: RightPanelTabModule
+  active: boolean
+  label: string
+  dragTitle: string
+  onSelect: () => void
+}
+
+const SortableRightPanelTab: Component<SortableRightPanelTabProps> = (props) => {
+  const sortable = createSortable(props.tab.id)
+  return (
+    <div ref={sortable} class={`right-panel-tab-draggable ${sortable.isActiveDraggable ? "right-panel-tab-draggable-active" : ""}`}>
+      <button
+        type="button"
+        role="tab"
+        class={`right-panel-tab ${props.active ? "right-panel-tab-active" : "right-panel-tab-inactive"}`}
+        aria-selected={props.active}
+        title={props.dragTitle}
+        onClick={props.onSelect}
+      >
+        <span class="tab-label">{props.label}</span>
+      </button>
+    </div>
+  )
+}
+
 interface RightPanelProps {
   t: (key: string, vars?: Record<string, any>) => string
 
@@ -118,7 +152,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const [rightPanelCustomization, setRightPanelCustomization] = createSignal<RightPanelCustomization>(
     parseRightPanelCustomization(readClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY)),
   )
-  const [draggedTabId, setDraggedTabId] = createSignal<string | null>(null)
 
   const [browserPath, setBrowserPath] = createSignal(".")
   const [browserEntries, setBrowserEntries] = createSignal<FileNode[] | null>(null)
@@ -689,8 +722,10 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     }))
   }
 
-  const tabClass = (tab: RightPanelTab) =>
-    `right-panel-tab ${rightPanelTab() === tab ? "right-panel-tab-active" : "right-panel-tab-inactive"}`
+  const handleTabDragEnd = ({ draggable, droppable }: SolidDndDragEvent) => {
+    if (!droppable) return
+    moveTab(String(draggable.id), String(droppable.id))
+  }
 
   const rightPanelModules = createMemo<RightPanelModule[]>(() => [
     {
@@ -883,38 +918,23 @@ const RightPanel: Component<RightPanelProps> = (props) => {
           <div class="tab-scroll">
             <div class="tab-strip">
               <div class="tab-strip-tabs" role="tablist" aria-label={props.t("instanceShell.rightPanel.tabs.ariaLabel")}>
-                <For each={visibleRightPanelTabs()}>
-                  {(tab) => (
-                    <button
-                      type="button"
-                      role="tab"
-                      class={tabClass(tab.id)}
-                      aria-selected={rightPanelTab() === tab.id}
-                      title={props.t("instanceShell.rightPanel.customize.dragToReorder")}
-                      onClick={() => setRightPanelTab(tab.id)}
-                      draggable
-                      onDragStart={(event) => {
-                        setDraggedTabId(tab.id)
-                        event.dataTransfer?.setData("text/plain", tab.id)
-                        if (event.dataTransfer) event.dataTransfer.effectAllowed = "move"
-                      }}
-                      onDragOver={(event) => {
-                        if (!draggedTabId() || draggedTabId() === tab.id) return
-                        event.preventDefault()
-                        if (event.dataTransfer) event.dataTransfer.dropEffect = "move"
-                      }}
-                      onDrop={(event) => {
-                        event.preventDefault()
-                        const sourceId = event.dataTransfer?.getData("text/plain") || draggedTabId()
-                        if (sourceId) moveTab(sourceId, tab.id)
-                        setDraggedTabId(null)
-                      }}
-                      onDragEnd={() => setDraggedTabId(null)}
-                    >
-                      <span class="tab-label">{props.t(tab.labelKey)}</span>
-                    </button>
-                  )}
-                </For>
+                <DragDropProvider collisionDetector={closestCenter} onDragEnd={handleTabDragEnd}>
+                  <DragDropSensors>
+                    <SortableProvider ids={visibleRightPanelTabs().map((tab) => tab.id)}>
+                      <For each={visibleRightPanelTabs()}>
+                        {(tab) => (
+                          <SortableRightPanelTab
+                            tab={tab}
+                            active={rightPanelTab() === tab.id}
+                            label={props.t(tab.labelKey)}
+                            dragTitle={props.t("instanceShell.rightPanel.customize.dragToReorder")}
+                            onSelect={() => setRightPanelTab(tab.id)}
+                          />
+                        )}
+                      </For>
+                    </SortableProvider>
+                  </DragDropSensors>
+                </DragDropProvider>
               </div>
 
               <div class="tab-strip-spacer" />

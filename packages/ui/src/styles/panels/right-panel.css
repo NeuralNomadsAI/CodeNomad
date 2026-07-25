@@ -47,6 +47,14 @@
   z-index: 1;
 }
 
+.right-panel-tab-draggable {
+  display: inline-flex;
+}
+
+.right-panel-tab-draggable-active {
+  opacity: 0.75;
+}
+
 .right-panel-tab:focus-visible {
   @apply ring-2 ring-offset-1;
   ring-color: var(--accent-primary);
@@ -767,6 +775,10 @@
 
 .right-panel-accordion-content [data-accordion-content] {
   min-height: 0;
+}
+
+.right-panel-section-draggable-active {
+  opacity: 0.75;
 }
 
 .right-panel-customization-popover {
