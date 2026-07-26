@@ -11,7 +11,6 @@ import { isScrollRestoreGenerationCurrent, isSnapshotAutoFollowing } from "./vir
 import { useConfig } from "../stores/preferences"
 import { getSessionInfo } from "../stores/sessions"
 import { messageStoreBus } from "../stores/message-v2/bus"
-import { isRestoringCachedSessionMessages } from "../stores/session-message-cache"
 import { useI18n } from "../lib/i18n"
 import { copyToClipboard } from "../lib/clipboard"
 import { showToastNotification } from "../lib/notifications"
@@ -884,6 +883,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const api = listApi()
     if (!element || !api) return
     if (!isActive()) return
+    if (props.loading) return
     if (visibleMessageIds().length === 0) return
     if (didRestoreScroll()) return
 
@@ -1056,7 +1056,7 @@ export default function MessageSection(props: MessageSectionProps) {
     // to prevent O(n) per-element reactive subscriptions.  The effect
     // only needs to re-run when `messageIds` (memo) changes.
     untrack(() => {
-      if (loading && ids.length === 0) {
+      if (loading) {
         handleClearTimelineSelection()
         previousTimelineIds = []
         setTimelineSegments([])
@@ -1121,14 +1121,6 @@ export default function MessageSection(props: MessageSectionProps) {
             return
           }
         }
-      }
-
-      const prefixAdded = previousTimelineIds.length > 0 && ids.length > previousTimelineIds.length &&
-        previousTimelineIds.every((id, index) => ids[ids.length - previousTimelineIds.length + index] === id)
-      if (prefixAdded) {
-        seedTimeline()
-        previousTimelineIds = [...ids]
-        return
       }
 
       const newIds: string[] = []
@@ -1430,7 +1422,6 @@ export default function MessageSection(props: MessageSectionProps) {
           getAnchorId={getMessageAnchorId}
           overscanPx={800}
           streamingActive={streamingActive}
-          shift={() => isRestoringCachedSessionMessages(props.instanceId, props.sessionId)}
           isActive={isActive}
           scrollToBottomOnActivate={() => false}
           initialScrollToBottom={() => false}
@@ -1586,7 +1577,7 @@ export default function MessageSection(props: MessageSectionProps) {
                 </Show>
               </Show>
 
-              <Show when={props.loading && visibleMessageIds().length === 0}>
+              <Show when={props.loading}>
                 <div class="loading-state">
                   <div class="spinner" />
                   <p>{t("messageSection.loading.messages")}</p>

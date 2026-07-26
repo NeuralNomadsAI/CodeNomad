@@ -23,7 +23,6 @@ import { SessionPreviewView } from "../session-preview-view"
 import { isSnapshotAutoFollowing } from "../virtual-follow-behavior"
 import { getSubmitBottomPinTargetCount, resolveSessionBottomPinIntent, shouldClearSessionBottomPinIntent, type SessionBottomPinIntent } from "./session-bottom-pin-intent"
 import { focusConversationStream } from "../focus-conversation"
-import { invalidateSessionMessageCache } from "../../stores/session-message-cache"
 
 const log = getLogger("session")
 
@@ -432,7 +431,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         }),
         "session.revert",
       )
-      invalidateSessionMessageCache(props.instanceId, props.sessionId)
 
       const restoredText = getUserMessageText(messageId)
       if (restoredText) {

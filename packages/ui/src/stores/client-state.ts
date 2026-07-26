@@ -2,7 +2,6 @@ import { createSignal } from "solid-js"
 import { clearNativeClientState, loadNativeClientState, saveNativeClientState, setNativeRestoreEnabled } from "../lib/native/client-state"
 import { decodeClientSnapshot, isFutureClientSnapshot, normalizeRestorableSession } from "./client-state-codec"
 import type { ClientSnapshotV1, RestorableSessionState, RestorableSidecarTabState, RestorableTabState, RestorableWorkspaceTabState } from "./client-state-codec"
-import { clearSessionMessageCache, setSessionMessageCacheEnabled } from "../lib/session-message-cache"
 export type { ClientSnapshotV1, RestorableSessionState, RestorableSidecarTabState, RestorableTabState, RestorableWorkspaceTabState }
 const SAVE_DEBOUNCE_MS = 250
 const FLUSH_MAX_ATTEMPTS = 3
@@ -234,8 +233,6 @@ export async function clearRestoredClientState(): Promise<void> {
   await runDestructiveTransition(async () => {
     if (!clientStateIsPrimary()) throw new Error("Client state is not owned by this window")
     await executeDestructiveTransaction(clearNativeClientState, "Native client state clear was rejected", true)
-    setSessionMessageCacheEnabled(false)
-    await clearSessionMessageCache()
   })
 }
 
@@ -247,19 +244,15 @@ export async function setRestorePreviousStateEnabled(enabled: boolean): Promise<
       if (!await setNativeRestoreEnabled(true)) throw new Error("Native restore preference update was rejected")
       writeBlock = false
       setRestorePreviousStateEnabledSignal(true)
-      setSessionMessageCacheEnabled(true)
       return
     }
     setRestorePreviousStateEnabledSignal(false)
-    setSessionMessageCacheEnabled(false)
     try {
       await executeDestructiveTransaction(() => setNativeRestoreEnabled(false), "Native restore preference update was rejected")
     } catch (error) {
       setRestorePreviousStateEnabledSignal(true)
-      setSessionMessageCacheEnabled(true)
       throw error
     }
-    await clearSessionMessageCache()
   })
 }
 
@@ -280,12 +273,10 @@ export function initializeClientState(): Promise<void> {
       writeBlock = isFutureClientSnapshot(loaded.snapshot) ? "snapshot" : false
       const snapshot = decodeClientSnapshot(loaded.snapshot)
       resetLoadedState(snapshot, true)
-      setSessionMessageCacheEnabled(!writeBlock)
       if (!writeBlock && migrateLegacyLayoutValues()) scheduleSave()
     } catch (error) {
       initialized = true
       setClientStateIsPrimary(false)
-      setSessionMessageCacheEnabled(false)
       resetLoadedState()
       console.warn("[client-state] failed to initialize client state", error)
     }

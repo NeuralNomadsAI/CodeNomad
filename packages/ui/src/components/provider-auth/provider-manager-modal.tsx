@@ -1,6 +1,6 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
-import { createEffect, createMemo, createSignal, For, onCleanup, Show, type Component } from "solid-js"
+import { createEffect, createMemo, createSignal, For, Show, type Component } from "solid-js"
 import { Check, ChevronDown, ExternalLink, KeyRound, Loader2, PlugZap, RefreshCw, ShieldCheck, X } from "lucide-solid"
 import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
 import { openExternalUrl } from "../../lib/external-url"
@@ -45,9 +45,8 @@ type DisconnectMode = "auth-remove" | "disable-in-config" | "not-disconnectable"
 
 interface ProviderManagerModalProps {
   instanceId: string
-  open?: boolean
-  embedded?: boolean
-  onOpenChange?: (open: boolean) => void
+  open: boolean
+  onOpenChange: (open: boolean) => void
 }
 
 function modelCountFromProvider(provider: any): number {
@@ -79,15 +78,9 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   const [authorizationLinkCopied, setAuthorizationLinkCopied] = createSignal(false)
   let callbackAbortController: AbortController | null = null
   let pendingOauthPopup: Window | null = null
-  let loadVersion = 0
-  let authOperationVersion = 0
-  let oauthCodeInput: HTMLInputElement | undefined
 
   const instance = createMemo(() => instances().get(props.instanceId) ?? null)
-  const client = createMemo<OpencodeClient | null>(() => {
-    const current = instance()
-    return current?.status === "ready" ? current.client ?? null : null
-  })
+  const client = createMemo<OpencodeClient | null>(() => instance()?.client ?? null)
 
   const providerNameById = createMemo(() => {
     const names = new Map<string, string>()
@@ -182,7 +175,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
 
   function handleModalOpenChange(open: boolean) {
     if (!open) resetFlow(null)
-    props.onOpenChange?.(open)
+    props.onOpenChange(open)
   }
 
   function isBrowserHostForOAuth(): boolean {
@@ -241,24 +234,13 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   }
 
   createEffect(() => {
-    const version = ++loadVersion
-    resetProviderData()
-    if (!props.embedded && !props.open) return
+    if (!props.open) return
     const authClient = client()
     if (!authClient) return
-    void loadProviderData(authClient, version)
+    void loadProviderData(authClient)
   })
 
-  createEffect(() => {
-    if (stage() === "code") queueMicrotask(() => oauthCodeInput?.focus())
-  })
-
-  onCleanup(() => {
-    loadVersion += 1
-    disposePendingAuth()
-  })
-
-  async function loadProviderData(authClient: OpencodeClient, version = ++loadVersion): Promise<void> {
+  async function loadProviderData(authClient: OpencodeClient): Promise<void> {
     setLoading(true)
     setLoadError(null)
     try {
@@ -267,7 +249,6 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
         (authClient as any).provider.auth(),
         (authClient as any).config.get(),
       ])
-      if (version !== loadVersion) return
       const nextConfigData = (configResponse?.data ?? {}) as Record<string, any>
       const nextConfiguredIds = new Set(Object.keys((nextConfigData.provider ?? {}) as Record<string, unknown>))
       const listed = ((providerListResponse?.data?.all ?? []) as any[]).map((provider) => ({
@@ -286,35 +267,19 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
       setMethodsByProvider((authResponse?.data ?? {}) as Record<string, ProviderAuthMethod[]>)
       setSelectedProviderId((current) => current ?? listed[0]?.id ?? Object.keys(authResponse?.data ?? {})[0] ?? null)
     } catch (error) {
-      if (version !== loadVersion) return
       setLoadError(extractProviderAuthErrorMessage(error, t("settings.providers.errors.loadFailed")))
     } finally {
-      if (version === loadVersion) setLoading(false)
+      setLoading(false)
     }
   }
 
-  function disposePendingAuth() {
-    authOperationVersion += 1
+  function resetFlow(nextProviderId: string | null = null) {
     callbackAbortController?.abort()
     callbackAbortController = null
-    if (pendingOauthPopup && !pendingOauthPopup.closed) pendingOauthPopup.close()
+    if (pendingOauthPopup && !pendingOauthPopup.closed) {
+      pendingOauthPopup.close()
+    }
     pendingOauthPopup = null
-  }
-
-  function resetProviderData() {
-    resetFlow(null)
-    setMethodsByProvider({})
-    setAvailableProviders([])
-    setConnectedProviderIds(new Set<string>())
-    setConfiguredProviderIds(new Set<string>())
-    setConfigData({})
-    setSelectedProviderId(null)
-    setLoadError(null)
-    setLoading(false)
-  }
-
-  function resetFlow(nextProviderId: string | null = null) {
-    disposePendingAuth()
     setActiveProviderId(nextProviderId)
     setSelectedMethodIndex(0)
     setApiKey("")
@@ -331,40 +296,30 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     setPromptValues((current) => ({ ...current, [key]: value }))
   }
 
-  function isCurrentOperation(version: number, instanceId: string, authClient: OpencodeClient) {
-    return version === authOperationVersion && props.instanceId === instanceId && client() === authClient
-  }
-
-  async function refreshAfterAuth(authClient: OpencodeClient, instanceId: string, operationVersion: number) {
-    if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
+  async function refreshAfterAuth(authClient: OpencodeClient) {
     await (authClient as any).global.dispose().catch(() => undefined)
-    if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
-    await fetchProviders(instanceId).catch(() => undefined)
-    if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
+    await fetchProviders(props.instanceId).catch(() => undefined)
     await loadProviderData(authClient).catch(() => undefined)
   }
 
-  async function submitApiAuth(providerId: string, authClient: OpencodeClient, instanceId: string, operationVersion: number) {
+  async function submitApiAuth(providerId: string, authClient: OpencodeClient) {
     await requestData(
       (authClient as any).auth.set({ providerID: providerId, auth: { type: "api", key: apiKey().trim() } }),
       "auth.set",
     )
-    if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
-    await refreshAfterAuth(authClient, instanceId, operationVersion)
-    if (isCurrentOperation(operationVersion, instanceId, authClient)) resetFlow(null)
+    await refreshAfterAuth(authClient)
+    resetFlow(null)
   }
 
-  async function submitOAuthAuthorize(providerId: string, authClient: OpencodeClient, instanceId: string, operationVersion: number) {
+  async function submitOAuthAuthorize(providerId: string, authClient: OpencodeClient) {
     const response = await (authClient as any).provider.oauth.authorize(
       { providerID: providerId, method: selectedMethodIndex() },
       { throwOnError: true },
     )
-    if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
     const data = response?.data as ProviderAuthAuthorization | undefined
     if (!data) throw new Error(t("settings.providers.errors.noAuthorization"))
     setAuthorization(data)
     const opened = await launchAuthorizationUrl(data.url, { popup: pendingOauthPopup })
-    if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
     pendingOauthPopup = null
     setAuthorizationLaunchBlocked(!opened)
     if (data.method === "code") {
@@ -380,30 +335,26 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
       ),
       "provider.oauth.callback",
     )
-    if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
     callbackAbortController = null
-    await refreshAfterAuth(authClient, instanceId, operationVersion)
-    if (isCurrentOperation(operationVersion, instanceId, authClient)) resetFlow(null)
+    await refreshAfterAuth(authClient)
+    resetFlow(null)
   }
 
   async function submitAuth() {
     const providerId = activeProviderId()
     const authClient = client()
     if (!providerId || !authClient || !canSubmit()) return
-    const instanceId = props.instanceId
-    const operationVersion = ++authOperationVersion
     setStage("authorizing")
     setActionError(null)
     try {
       if (selectedMethod().type === "api") {
-        await submitApiAuth(providerId, authClient, instanceId, operationVersion)
+        await submitApiAuth(providerId, authClient)
         return
       }
       pendingOauthPopup = prepareOAuthPopupWindow()
       setAuthorizationLaunchBlocked(isBrowserHostForOAuth() && pendingOauthPopup === null)
-      await submitOAuthAuthorize(providerId, authClient, instanceId, operationVersion)
+      await submitOAuthAuthorize(providerId, authClient)
     } catch (error) {
-      if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
       if (pendingOauthPopup && !pendingOauthPopup.closed) {
         pendingOauthPopup.close()
       }
@@ -421,8 +372,6 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     const providerId = activeProviderId()
     const authClient = client()
     if (!providerId || !authClient || !code().trim()) return
-    const instanceId = props.instanceId
-    const operationVersion = ++authOperationVersion
     setStage("authorizing")
     setActionError(null)
     try {
@@ -430,11 +379,9 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
         (authClient as any).provider.oauth.callback({ providerID: providerId, method: selectedMethodIndex(), code: code().trim() }),
         "provider.oauth.callback",
       )
-      if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
-      await refreshAfterAuth(authClient, instanceId, operationVersion)
-      if (isCurrentOperation(operationVersion, instanceId, authClient)) resetFlow(null)
+      await refreshAfterAuth(authClient)
+      resetFlow(null)
     } catch (error) {
-      if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
       setActionError(extractProviderAuthErrorMessage(error, t("settings.providers.errors.authorizationFailed")))
       setStage("code")
     }
@@ -444,9 +391,6 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     const authClient = client()
     const provider = availableProviders().find((item) => item.id === providerId)
     if (!authClient || !provider) return
-    const instanceId = props.instanceId
-    disposePendingAuth()
-    const operationVersion = ++authOperationVersion
     setActionError(null)
     setStage("authorizing")
     try {
@@ -476,18 +420,17 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
       } else {
         await requestData((authClient as any).auth.remove({ providerID: providerId }), "auth.remove")
       }
-      if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
-      await refreshAfterAuth(authClient, instanceId, operationVersion)
-      if (isCurrentOperation(operationVersion, instanceId, authClient)) resetFlow(null)
+      await refreshAfterAuth(authClient)
+      resetFlow(null)
     } catch (error) {
-      if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
       setActionError(extractProviderAuthErrorMessage(error, t("settings.providers.errors.removeFailed")))
-      setStage("idle")
+      setStage("error")
     }
   }
 
   function cancelOAuthWait() {
-    disposePendingAuth()
+    callbackAbortController?.abort()
+    callbackAbortController = null
     setStage("prompts")
     setAuthorization(null)
     setActionError(null)
@@ -502,31 +445,27 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     return t("settings.providers.method.api")
   }
 
-  const content = () => (
-    <>
+  return (
+    <Dialog open={props.open} onOpenChange={handleModalOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay class="modal-overlay" />
+        <Dialog.Content class="modal-surface providers-manager-modal">
           <div class="providers-manager-header">
             <div class="settings-card-heading-with-icon">
               <PlugZap class="settings-card-heading-icon" />
               <div>
-                <Show
-                  when={!props.embedded}
-                  fallback={<h2 class="providers-manager-title">{t("settings.providers.title")}</h2>}
-                >
-                  <Dialog.Title class="providers-manager-title">{t("settings.providers.title")}</Dialog.Title>
-                </Show>
+                <Dialog.Title class="providers-manager-title">{t("settings.providers.title")}</Dialog.Title>
                 <p class="settings-card-subtitle">{t("settings.providers.subtitle")}</p>
               </div>
             </div>
-            <Show when={!props.embedded}>
-              <button type="button" class="selector-button selector-button-secondary settings-screen-close" onClick={() => handleModalOpenChange(false)} aria-label={t("settings.close")}>
-                <X class="w-4 h-4" />
-              </button>
-            </Show>
+            <button type="button" class="selector-button selector-button-secondary settings-screen-close" onClick={() => handleModalOpenChange(false)} aria-label={t("settings.close")}>
+              <X class="w-4 h-4" />
+            </button>
           </div>
 
           <div class="providers-manager-body">
             <Show when={!client()}>
-              <div class="settings-card-message" role="status">{t("settings.providers.empty.noInstance")}</div>
+              <div class="settings-card-message">{t("settings.providers.empty.noInstance")}</div>
             </Show>
 
             <Show when={client()}>
@@ -585,10 +524,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
               </div>
 
               <Show when={loadError()}>
-                <div class="settings-error-message" role="alert">{loadError()}</div>
-              </Show>
-              <Show when={actionError()}>
-                <div class="settings-error-message" role="alert">{actionError()}</div>
+                <div class="settings-error-message">{loadError()}</div>
               </Show>
 
               <Show when={activeProviderId()}>
@@ -627,7 +563,6 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                         options={methodOptions()}
                         optionValue="value"
                         optionTextValue="label"
-                        disabled={stage() !== "prompts" && stage() !== "error"}
                         itemComponent={(itemProps) => <Select.Item item={itemProps.item} class="selector-option"><Select.ItemLabel class="selector-option-label">{itemProps.item.rawValue.label}</Select.ItemLabel></Select.Item>}
                       >
                         <Select.Trigger class="selector-trigger providers-method-trigger" aria-label={t("settings.providers.method.title")}>
@@ -646,9 +581,9 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                   <Show when={selectedMethod().type === "oauth" && (stage() === "prompts" || stage() === "error" || stage() === "authorizing")}>
                     <div class="providers-form-stack">
                       <Show when={oauthPromptsUnsupported()}>
-                        <div class="settings-error-message" role="alert">{t("settings.providers.oauth.promptsUnsupported")}</div>
+                        <div class="settings-error-message">{t("settings.providers.oauth.promptsUnsupported")}</div>
                       </Show>
-                      <Show when={visiblePrompts().length === 0}><div class="settings-card-message" role="status">{t("settings.providers.oauth.noPrompts")}</div></Show>
+                      <Show when={visiblePrompts().length === 0}><div class="settings-card-message">{t("settings.providers.oauth.noPrompts")}</div></Show>
                       <For each={oauthPromptsUnsupported() ? [] : visiblePrompts()}>{(prompt) => (
                         <div class="providers-field">
                           <label class="settings-form-label" for={`provider-prompt-${prompt.key}`}>{prompt.message}</label>
@@ -663,8 +598,8 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                     </div>
                   </Show>
 
-                  <Show when={stage() === "code"}><div class="providers-form-stack"><div class="providers-oauth-instructions"><ExternalLink class="providers-instructions-icon" /><span>{authorization()?.instructions || t("settings.providers.oauth.enterCode")}</span></div><label class="providers-field"><span class="settings-form-label">{t("settings.providers.oauth.codeLabel")}</span><input ref={(element) => { oauthCodeInput = element }} type="text" class="providers-input" value={code()} onInput={(event) => setCode(event.currentTarget.value)} placeholder={t("settings.providers.oauth.codePlaceholder")} autocomplete="one-time-code" /></label></div></Show>
-                  <Show when={stage() === "waiting"}><div class="providers-waiting-card" role="status"><Loader2 class="providers-spin-icon" /><div><div class="settings-toggle-title">{t("settings.providers.oauth.waitingTitle")}</div><div class="settings-toggle-caption">{authorization()?.instructions}</div></div><button type="button" class="selector-button selector-button-secondary providers-wait-cancel" onClick={cancelOAuthWait}>{t("settings.providers.oauth.cancelWait")}</button></div></Show>
+                  <Show when={stage() === "code"}><div class="providers-form-stack"><div class="providers-oauth-instructions"><ExternalLink class="providers-instructions-icon" /><span>{authorization()?.instructions || t("settings.providers.oauth.enterCode")}</span></div><label class="providers-field"><span class="settings-form-label">{t("settings.providers.oauth.codeLabel")}</span><input type="text" class="providers-input" value={code()} onInput={(event) => setCode(event.currentTarget.value)} placeholder={t("settings.providers.oauth.codePlaceholder")} autocomplete="one-time-code" /></label></div></Show>
+                  <Show when={stage() === "waiting"}><div class="providers-waiting-card"><Loader2 class="providers-spin-icon" /><div><div class="settings-toggle-title">{t("settings.providers.oauth.waitingTitle")}</div><div class="settings-toggle-caption">{authorization()?.instructions}</div></div><button type="button" class="selector-button selector-button-secondary providers-wait-cancel" onClick={cancelOAuthWait}>{t("settings.providers.oauth.cancelWait")}</button></div></Show>
                   <Show when={authorization() && (stage() === "code" || stage() === "waiting")}>
                     <div class="providers-oauth-actions">
                       <a href={authorization()?.url} target="_blank" rel="noopener noreferrer" class="selector-button selector-button-secondary providers-oauth-link">
@@ -680,9 +615,10 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                     </div>
                   </Show>
                   <Show when={authorizationLaunchBlocked() && authorization()}>
-                    <div class="settings-card-message" role="alert">{t("settings.providers.oauth.popupBlocked")}</div>
+                    <div class="settings-card-message">{t("settings.providers.oauth.popupBlocked")}</div>
                   </Show>
-                  <Show when={stage() === "success"}><div class="providers-success-card" role="status"><Check class="providers-success-icon" /><span>{t("settings.providers.success")}</span></div></Show>
+                  <Show when={stage() === "success"}><div class="providers-success-card"><Check class="providers-success-icon" /><span>{t("settings.providers.success")}</span></div></Show>
+                  <Show when={actionError()}><div class="settings-error-message">{actionError()}</div></Show>
 
                   <div class="providers-actions-row">
                     <Show when={stage() === "code"} fallback={<button type="button" class="selector-button selector-button-primary" disabled={!canSubmit()} onClick={() => void submitAuth()}><Show when={stage() === "authorizing"} fallback={t("settings.providers.actions.continue")}><Loader2 class="providers-spin-icon" />{t("settings.providers.actions.working")}</Show></button>}>
@@ -694,32 +630,19 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
 
               <section class="providers-list-section">
                 <h3 class="settings-card-title">{t("settings.providers.configured.title")}</h3>
-                <Show when={loading()}><div class="providers-loading-row" role="status"><Loader2 class="providers-spin-icon" /><span>{t("settings.providers.loading")}</span></div></Show>
-                <Show when={!loading() && configuredProviders().length === 0}><div class="settings-card-message" role="status">{t("settings.providers.empty.noConfiguredProviders")}</div></Show>
+                <Show when={loading()}><div class="providers-loading-row"><Loader2 class="providers-spin-icon" /><span>{t("settings.providers.loading")}</span></div></Show>
+                <Show when={!loading() && configuredProviders().length === 0}><div class="settings-card-message">{t("settings.providers.empty.noConfiguredProviders")}</div></Show>
                 <div class="providers-grid">
                   <For each={configuredProviders()}>{(provider) => (
                     <article class="providers-card">
                       <div class="providers-card-main"><div class="providers-card-mark"><ShieldCheck class="providers-card-mark-icon" /></div><div class="providers-card-copy"><div class="providers-card-title-row"><h4 class="providers-card-title">{provider.name || provider.id}</h4></div><p class="providers-card-meta">{provider.id}</p><p class="providers-card-methods">{methodSummary(provider.id)}</p><p class="providers-card-source">{describeProviderSource(provider)}</p></div></div>
-                       <div class="providers-card-footer"><span class="providers-model-count">{provider.modelCount === 1 ? t("settings.providers.models.one", { count: provider.modelCount }) : t("settings.providers.models.other", { count: provider.modelCount })}</span><Show when={getDisconnectMode(provider) !== "disable-in-config"}><button type="button" class="selector-button selector-button-secondary providers-disconnect-button" disabled={getDisconnectMode(provider) === "not-disconnectable" || stage() !== "idle"} onClick={() => void disconnectProvider(provider.id)} title={getDisconnectMode(provider) === "not-disconnectable" ? t("settings.providers.source.env") : t("settings.providers.actions.disconnect")}>{t("settings.providers.actions.disconnect")}</button></Show></div>
+                      <div class="providers-card-footer"><span class="providers-model-count">{provider.modelCount === 1 ? t("settings.providers.models.one", { count: provider.modelCount }) : t("settings.providers.models.other", { count: provider.modelCount })}</span><Show when={getDisconnectMode(provider) !== "disable-in-config"}><button type="button" class="selector-button selector-button-secondary providers-disconnect-button" disabled={getDisconnectMode(provider) === "not-disconnectable"} onClick={() => void disconnectProvider(provider.id)} title={getDisconnectMode(provider) === "not-disconnectable" ? t("settings.providers.source.env") : t("settings.providers.actions.disconnect")}>{t("settings.providers.actions.disconnect")}</button></Show></div>
                     </article>
                   )}</For>
                 </div>
               </section>
             </Show>
           </div>
-    </>
-  )
-
-  if (props.embedded) {
-    return <div class="providers-manager-modal providers-manager-embedded">{content()}</div>
-  }
-
-  return (
-    <Dialog open={Boolean(props.open)} onOpenChange={handleModalOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay class="modal-overlay" />
-        <Dialog.Content class="modal-surface providers-manager-modal">
-          {content()}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog>

@@ -1,6 +1,6 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
-import { Settings, Bell, ChevronDown, FileCog, Globe, Info, MessageSquare, MonitorUp, PlugZap, SlidersHorizontal, Terminal, Volume2, X } from "lucide-solid"
+import { Settings, Bell, ChevronDown, FileCog, Info, MessageSquare, SlidersHorizontal, Terminal, Volume2, Wifi, X } from "lucide-solid"
 import { createMemo, For, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import {
@@ -15,14 +15,9 @@ import { ChatSettingsSection } from "./settings/chat-settings-section"
 import { InfoSettingsSection } from "./settings/info-settings-section"
 import { NotificationsSettingsSection } from "./settings/notifications-settings-section"
 import { SpeechSettingsSection } from "./settings/speech-settings-section"
-import { ProvidersSettingsSection } from "./settings/providers-settings-section"
-import { OpenCodeSettingsSection } from "./settings/opencode-settings-section"
+import { ConnectionsSettingsSection } from "./settings/connections-settings-section"
+import { RuntimeSettingsSection } from "./settings/runtime-settings-section"
 import { AdvancedSettingsSection } from "./settings/advanced-settings-section"
-import { ConfigFilesSettingsSection } from "./settings/config-files-settings-section"
-import { RemoteAccessSettingsSection } from "./settings/remote-access-settings-section"
-import { SavedRemoteServersCard } from "./settings/saved-remote-servers-card"
-import { SideCarsSettingsSection } from "./settings/sidecars-settings-section"
-import { canOpenRemoteWindows } from "../lib/runtime-env"
 import { confirmSettingsDiscard } from "../stores/settings-dirty-guard"
 
 type SettingsSectionOption = {
@@ -39,17 +34,12 @@ export const SettingsScreen: Component = () => {
       { id: "general", icon: SlidersHorizontal, label: t("settings.nav.general") },
       { id: "chat", icon: MessageSquare, label: t("settings.nav.chat") },
       { id: "notifications", icon: Bell, label: t("settings.nav.notifications") },
-      { id: "speech", icon: Volume2, label: t("settings.nav.speech") },
-      { id: "opencode", icon: Terminal, label: t("settings.nav.opencode") },
-      { id: "providers", icon: PlugZap, label: t("settings.nav.providers") },
-      { id: "sidecars", icon: Globe, label: t("settings.nav.sidecars") },
-      { id: "config-files", icon: FileCog, label: t("settings.nav.configFiles") },
-      { id: "advanced", icon: Settings, label: t("settings.nav.advanced") },
-      { id: "info", icon: Info, label: t("settings.nav.info") },
+      { id: "voice", icon: Volume2, label: t("settings.nav.voice") },
+      { id: "connections", icon: Wifi, label: t("settings.nav.connections") },
+      { id: "runtime", icon: Terminal, label: t("settings.nav.runtime") },
+      { id: "advanced", icon: FileCog, label: t("settings.nav.advanced") },
+      { id: "about", icon: Info, label: t("settings.nav.about") },
     ]
-    if (canOpenRemoteWindows()) {
-      items.splice(4, 0, { id: "remote", icon: MonitorUp, label: t("settings.nav.remote") })
-    }
     return items
   })
 
@@ -61,26 +51,15 @@ export const SettingsScreen: Component = () => {
         return <ChatSettingsSection />
       case "notifications":
         return <NotificationsSettingsSection />
-      case "speech":
+      case "voice":
         return <SpeechSettingsSection />
-      case "remote":
-        return canOpenRemoteWindows() ? (
-          <div class="settings-section-stack">
-            <RemoteAccessSettingsSection />
-            <SavedRemoteServersCard />
-          </div>
-        ) : <GeneralSettingsSection />
-      case "opencode":
-        return <OpenCodeSettingsSection />
-      case "providers":
-        return <ProvidersSettingsSection />
-      case "sidecars":
-        return <SideCarsSettingsSection />
-      case "config-files":
-        return <ConfigFilesSettingsSection />
+      case "connections":
+        return <ConnectionsSettingsSection />
+      case "runtime":
+        return <RuntimeSettingsSection />
       case "advanced":
         return <AdvancedSettingsSection />
-      case "info":
+      case "about":
         return <InfoSettingsSection />
       case "general":
       default:
@@ -187,7 +166,6 @@ export const SettingsScreen: Component = () => {
                         type="button"
                         class="settings-nav-button"
                         data-selected={activeSettingsSection() === section.id ? "true" : "false"}
-                        aria-current={activeSettingsSection() === section.id ? "page" : undefined}
                         onClick={() => void handleSectionChange(section.id)}
                       >
                         <Icon class="settings-nav-button-icon" />

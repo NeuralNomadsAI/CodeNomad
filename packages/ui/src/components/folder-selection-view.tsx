@@ -539,7 +539,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
               <button
                 type="button"
                 class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center"
-                onClick={() => openSettings("remote")}
+                onClick={() => openSettings("connections")}
                 aria-label={t("instanceTabs.remote.ariaLabel")}
                 title={t("instanceTabs.remote.title")}
               >
@@ -980,7 +980,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
                 {/* OpenCode settings section */}
                 <div class="panel-section w-full">
-                  <button onClick={() => openSettings("opencode")} class="panel-section-header w-full justify-between">
+                  <button onClick={() => openSettings("runtime")} class="panel-section-header w-full justify-between">
                     <div class="flex items-center gap-2">
                       <Settings class="w-4 h-4 icon-muted" />
                       <span class="text-sm font-medium text-secondary">{t("folderSelection.opencode")}</span>

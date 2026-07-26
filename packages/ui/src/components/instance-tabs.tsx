@@ -257,7 +257,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
               <Show when={canOpenRemoteWindows()}>
                 <button
                   class="new-tab-button tab-remote-button"
-                  onClick={() => openSettings("remote")}
+                  onClick={() => openSettings("connections")}
                   title={t("instanceTabs.remote.title")}
                   aria-label={t("instanceTabs.remote.ariaLabel")}
                 >

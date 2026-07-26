@@ -6,7 +6,7 @@ import {
   type Session,
   type SessionStatus,
 } from "../types/session"
-import type { Message, MessageInfo } from "../types/message"
+import type { Message } from "../types/message"
 import type { Session as SDKSession, SessionListResponse } from "@opencode-ai/sdk/v2/client"
 
 import { instances, reconcilePendingSessionIndicators } from "./instances"
@@ -57,7 +57,7 @@ import { deleteSessionAttachments } from "./attachments"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getDefaultModel, isModelValid } from "./session-models"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
-import { mergeCachedSessionMessagePageV2, seedSessionMessagesV2, reconcilePendingPermissionsV2, reconcilePendingQuestionsV2 } from "./message-v2/bridge"
+import { seedSessionMessagesV2, reconcilePendingPermissionsV2, reconcilePendingQuestionsV2 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
 import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
@@ -84,14 +84,6 @@ import {
   isProjectSessionListComplete,
 } from "./session-list-options"
 import { mergeFetchedSessionRuntimeState, resolveAuthoritativeGenerationRecovery } from "./session-generation-recovery"
-import {
-  cacheAuthoritativeSessionMessages,
-  cancelCachedSessionMessageRestore,
-  clearCachedSessionMessageShift,
-  invalidateSessionMessageCache,
-  restoreCachedSessionMessagePages,
-} from "./session-message-cache"
-import { restorePreviousStateEnabled } from "./client-state"
 
 const log = getLogger("api")
 const sessionListRequestIds = new Map<string, number>()
@@ -99,25 +91,6 @@ let nextSessionListRequestId = 0
 const pendingMetadataHydrations = new Map<string, Promise<void>>()
 const sessionWorkspaceHints = new Map<string, Map<string, string>>()
 messageStoreBus.onInstanceDestroyed((instanceId) => sessionWorkspaceHints.delete(instanceId))
-
-function adaptApiMessages(sessionId: string, apiMessages: any[]): { messages: Message[]; infos: Map<string, MessageInfo> } {
-  const infos = new Map<string, MessageInfo>()
-  const messages = apiMessages.map((apiMessage: any) => {
-    const info = (apiMessage.info || apiMessage) as MessageInfo
-    const messageId = info.id || String(Date.now())
-    infos.set(messageId, info)
-    return {
-      id: messageId,
-      sessionId,
-      type: info.role === "user" ? "user" as const : "assistant" as const,
-      parts: (apiMessage.parts || []).map((part: any) => normalizeMessagePart(part)),
-      timestamp: info.time?.created || Date.now(),
-      status: (info as any).error ? "error" as const : "complete" as const,
-      version: 0,
-    }
-  })
-  return { messages, infos }
-}
 
 function beginSessionListRequest(instanceId: string): number {
   const requestId = ++nextSessionListRequestId
@@ -932,7 +905,6 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
 }
 
 function removeSessionRuntimeState(instanceId: string, sessionId: string): void {
-  invalidateSessionMessageCache(instanceId, sessionId)
   sessionWorkspaceHints.get(instanceId)?.delete(sessionId)
   cancelSessionGenerationAdmissions(instanceId, sessionId)
   markSessionDeletedAuthoritative(instanceId, sessionId)
@@ -1065,6 +1037,7 @@ async function loadMessages(
 ): Promise<void> {
   const force = options?.force ?? false
   const skipChildren = options?.skipChildren ?? false
+
   if (force) {
     setMessagesLoaded((prev) => {
       const next = new Map(prev)
@@ -1104,12 +1077,9 @@ async function loadMessages(
     throw new Error("Session not found")
   }
 
-  cancelCachedSessionMessageRestore(instanceId, sessionId)
   const loadEpoch = advanceMessageLoadEpoch(instanceId, sessionId)
-  const store = messageStoreBus.getOrCreate(instanceId)
-  let expectedRevision = store.getSessionRevision(sessionId)
+  const messageRevision = messageStoreBus.getOrCreate(instanceId).getSessionRevision(sessionId)
   let retryAfterRevisionConflict = false
-  const sessionForV2 = session
 
   setLoading((prev) => {
     const next = { ...prev }
@@ -1122,66 +1092,10 @@ async function loadMessages(
 
   try {
     log.info(`[HTTP] GET /session.${"messages"} for instance ${instanceId}`, { sessionId })
-    const apiMessagesRequest = getSessionWorkspacePayload(instanceId, sessionId).then((workspacePayload) =>
-      requestData<any[]>(client.session.messages({ sessionID: sessionId, ...workspacePayload }), "session.messages"),
+    const apiMessages = await requestData<any[]>(
+      client.session.messages({ sessionID: sessionId, ...(await getSessionWorkspacePayload(instanceId, sessionId)) }),
+      "session.messages",
     )
-    const apiOutcome = apiMessagesRequest.then(
-      (messages) => ({ ok: true as const, messages }),
-      (error) => ({ ok: false as const, error }),
-    )
-    let outcome: Awaited<typeof apiOutcome> | undefined
-
-    if (!force && restorePreviousStateEnabled() && store.getSessionMessageIds(sessionId).length === 0) {
-      const pages = restoreCachedSessionMessagePages(instanceId, sessionId)
-      const iterator = pages[Symbol.asyncIterator]()
-      try {
-        while (!outcome) {
-          const winner = await Promise.race([
-            apiOutcome.then((value) => ({ kind: "http" as const, value })),
-            iterator.next().then((value) => ({ kind: "cache" as const, value })),
-          ])
-          if (winner.kind === "http") {
-            outcome = winner.value
-            cancelCachedSessionMessageRestore(instanceId, sessionId, { preserveShift: true })
-            void iterator.return?.(undefined).catch(() => undefined)
-            break
-          }
-          if (winner.value.done) {
-            outcome = await apiOutcome
-            break
-          }
-          if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) {
-            cancelCachedSessionMessageRestore(instanceId, sessionId)
-            return
-          }
-          const cached = adaptApiMessages(sessionId, winner.value.value.messages)
-          const revision = mergeCachedSessionMessagePageV2(
-            instanceId,
-            sessionForV2,
-            cached.messages,
-            cached.infos,
-            expectedRevision,
-          )
-          if (revision === null) {
-            cancelCachedSessionMessageRestore(instanceId, sessionId)
-            void iterator.return?.(undefined).catch(() => undefined)
-            outcome = await apiOutcome
-            break
-          }
-          expectedRevision = revision
-          reconcilePendingPermissionsV2(instanceId, sessionId)
-          reconcilePendingQuestionsV2(instanceId, sessionId)
-        }
-      } catch (error) {
-        log.warn("Failed to restore cached session messages", { instanceId, sessionId, error })
-        invalidateSessionMessageCache(instanceId, sessionId)
-      }
-    }
-
-    outcome ??= await apiOutcome
-    cancelCachedSessionMessageRestore(instanceId, sessionId, { preserveShift: true })
-    if (!outcome.ok) throw outcome.error
-    const apiMessages = outcome.messages
 
     if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return
 
@@ -1191,9 +1105,41 @@ async function loadMessages(
 
     setSessionMessagesLoadError(instanceId, sessionId, null)
 
-    const adapted = adaptApiMessages(sessionId, apiMessages)
+    if (apiMessages.length === 0) {
+      if (messageStoreBus.getOrCreate(instanceId).getSessionRevision(sessionId) !== messageRevision) {
+        retryAfterRevisionConflict = true
+      } else {
+        setMessagesLoaded((prev) => {
+          const next = new Map(prev)
+          const loadedSet = next.get(instanceId) || new Set()
+          loadedSet.add(sessionId)
+          next.set(instanceId, loadedSet)
+          return next
+        })
+      }
+    } else {
+      const messagesInfo = new Map<string, any>()
+      const messages: Message[] = apiMessages.map((apiMessage: any) => {
+        const info = apiMessage.info || apiMessage
+        const role = info.role || "assistant"
+        const messageId = info.id || String(Date.now())
 
-    if (apiMessages.length > 0) {
+        messagesInfo.set(messageId, info)
+
+        const parts: any[] = (apiMessage.parts || []).map((part: any) => normalizeMessagePart(part))
+
+        const message: Message = {
+          id: messageId,
+          sessionId,
+          type: role === "user" ? "user" : "assistant",
+          parts,
+          timestamp: info.time?.created || Date.now(),
+          status: "complete" as const,
+          version: 0,
+        }
+
+        return message
+      })
 
       let agentName = ""
       let providerID = ""
@@ -1235,26 +1181,22 @@ async function loadMessages(
         return next
       })
 
-    }
-
-    const latestSession = sessions().get(instanceId)?.get(sessionId) ?? sessionForV2
-    if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return
-    if (!seedSessionMessagesV2(instanceId, latestSession, adapted.messages, adapted.infos, expectedRevision)) {
-      retryAfterRevisionConflict = true
-    } else {
-      setMessagesLoaded((prev) => {
-        const next = new Map(prev)
-        const loadedSet = next.get(instanceId) || new Set()
-        loadedSet.add(sessionId)
-        next.set(instanceId, loadedSet)
-        return next
-      })
-      reconcilePendingPermissionsV2(instanceId, sessionId)
-      reconcilePendingQuestionsV2(instanceId, sessionId)
-      if (restorePreviousStateEnabled()) {
-        void cacheAuthoritativeSessionMessages(instanceId, sessionId, apiMessages, store.getSessionRevision(sessionId)).catch((error) =>
-          log.warn("Failed to persist authoritative session messages", { instanceId, sessionId, error }),
-        )
+      const sessionForV2 = sessions().get(instanceId)?.get(sessionId) ?? {
+        id: sessionId, title: session?.title, parentId: session?.parentId ?? null, revert: session?.revert,
+      }
+      if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return
+      if (!seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, messageRevision)) {
+        retryAfterRevisionConflict = true
+      } else {
+        setMessagesLoaded((prev) => {
+          const next = new Map(prev)
+          const loadedSet = next.get(instanceId) || new Set()
+          loadedSet.add(sessionId)
+          next.set(instanceId, loadedSet)
+          return next
+        })
+        reconcilePendingPermissionsV2(instanceId, sessionId)
+        reconcilePendingQuestionsV2(instanceId, sessionId)
       }
     }
   
@@ -1267,13 +1209,6 @@ async function loadMessages(
     }
     throw error
   } finally {
-    if (isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) {
-      const clearShift = () => {
-        if (isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) clearCachedSessionMessageShift(instanceId, sessionId)
-      }
-      if (typeof requestAnimationFrame === "function") requestAnimationFrame(clearShift)
-      else setTimeout(clearShift, 0)
-    }
     if (isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) {
       setLoading((prev) => {
         const next = { ...prev }

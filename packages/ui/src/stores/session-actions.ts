@@ -12,7 +12,6 @@ import { removeMessagePartV2, removeMessageV2 } from "./message-v2/bridge"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
 import { clearConversationPlaybackForSession } from "./conversation-speech"
-import { cancelCachedSessionMessageRestore, invalidateSessionMessageCache } from "./session-message-cache"
 
 const log = getLogger("actions")
 
@@ -99,7 +98,6 @@ async function sendMessage(
   if (!session) {
     throw new Error("Session not found")
   }
-  cancelCachedSessionMessageRestore(instanceId, sessionId)
 
   const messageId = createId("msg")
   const textPartId = createId("prt")
@@ -467,7 +465,6 @@ async function deleteMessagePart(instanceId: string, sessionId: string, messageI
   )
 
   // Optimistic removal; SSE will also broadcast a part-removed event.
-  invalidateSessionMessageCache(instanceId, sessionId)
   removeMessagePartV2(instanceId, messageId, partId)
   updateSessionInfo(instanceId, sessionId)
 }
@@ -492,7 +489,6 @@ async function deleteMessage(instanceId: string, sessionId: string, messageId: s
   )
 
   // Optimistic removal; SSE will also broadcast a message-removed event.
-  invalidateSessionMessageCache(instanceId, sessionId)
   removeMessageV2(instanceId, messageId)
   updateSessionInfo(instanceId, sessionId)
 }

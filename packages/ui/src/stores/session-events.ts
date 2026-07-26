@@ -62,7 +62,7 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, messagesLoaded, prependSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
+import { ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, prependSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
@@ -90,8 +90,6 @@ import {
 import { messageStoreBus } from "./message-v2/bus"
 import type { InstanceMessageStore } from "./message-v2/instance-store"
 import { handleConversationAssistantPartUpdated } from "./conversation-speech"
-import { cancelCachedSessionMessageRestore, invalidateSessionMessageCache, scheduleSessionMessageCacheWrite } from "./session-message-cache"
-import { restorePreviousStateEnabled } from "./client-state"
 
 const log = getLogger("sse")
 const pendingSessionFetches = new Map<string, Promise<void>>()
@@ -307,7 +305,6 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     const sessionId = typeof part.sessionID === "string" ? part.sessionID : fallbackSessionId
     const messageId = typeof part.messageID === "string" ? part.messageID : fallbackMessageId
     if (!sessionId || !messageId) return
-    cancelCachedSessionMessageRestore(instanceId, sessionId)
     if (part.type === "compaction") {
       ensureSessionStatus(instanceId, sessionId, "compacting", (event as any)?.directory)
     }
@@ -365,7 +362,6 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     const sessionId = typeof info.sessionID === "string" ? info.sessionID : undefined
     const messageId = typeof info.id === "string" ? info.id : undefined
     if (!sessionId || !messageId) return
-    cancelCachedSessionMessageRestore(instanceId, sessionId)
 
     // Flush any pending deltas for this message before applying the update.
     // Deltas are buffered for up to 50ms; if message.updated arrives before
@@ -375,17 +371,15 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     // message status/metadata update runs on the complete content.
     flushPendingDeltasForMessage(instanceId, messageId, applyPartDeltaV2)
 
-    const timeInfo = (info.time ?? {}) as { created?: number; updated?: number; end?: number; completed?: number }
+    const timeInfo = (info.time ?? {}) as { created?: number; updated?: number; end?: number }
     const nextUpdated =
       typeof timeInfo.end === "number" && timeInfo.end > 0
         ? timeInfo.end
-        : typeof timeInfo.completed === "number" && timeInfo.completed > 0
-          ? timeInfo.completed
-          : typeof timeInfo.updated === "number" && timeInfo.updated > 0
-            ? timeInfo.updated
-            : typeof timeInfo.created === "number" && timeInfo.created > 0
-              ? timeInfo.created
-              : Date.now()
+        : typeof timeInfo.updated === "number" && timeInfo.updated > 0
+          ? timeInfo.updated
+          : typeof timeInfo.created === "number" && timeInfo.created > 0
+            ? timeInfo.created
+            : Date.now()
 
     withSession(instanceId, sessionId, (session) => {
       const currentUpdated = session.time?.updated ?? 0
@@ -397,9 +391,7 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
 
     const role: MessageRole = info.role === "user" ? "user" : "assistant"
     const hasError = Boolean((info as any).error)
-    const hasEnded =
-      (typeof timeInfo.end === "number" && timeInfo.end > 0) ||
-      (typeof timeInfo.completed === "number" && timeInfo.completed > 0)
+    const hasEnded = typeof timeInfo.end === "number" && timeInfo.end > 0
     const status: MessageStatus = hasError ? "error" : hasEnded ? "complete" : "streaming"
 
     let record = store.getMessage(messageId)
@@ -413,7 +405,7 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
 
     if (!record) {
       const createdAt = info.time?.created ?? Date.now()
-      const endAt = timeInfo.end ?? timeInfo.completed
+      const endAt = (info.time as { end?: number } | undefined)?.end
       store.upsertMessage({
         id: messageId,
         sessionId,
@@ -427,13 +419,6 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     upsertMessageInfoV2(instanceId, info, { status, bumpRevision: true })
 
     updateSessionInfo(instanceId, sessionId)
-    if (
-      restorePreviousStateEnabled() &&
-      messagesLoaded().get(instanceId)?.has(sessionId) &&
-      (status === "complete" || status === "error")
-    ) {
-      scheduleSessionMessageCacheWrite(instanceId, sessionId)
-    }
   }
 }
 
@@ -449,7 +434,6 @@ function handleMessagePartDelta(instanceId: string, event: MessagePartDeltaEvent
   if (!props) return
   const { messageID, partID, field, delta } = props
   if (!messageID || !partID || !field || typeof delta !== "string") return
-  cancelCachedSessionMessageRestore(instanceId, props.sessionID)
   enqueueDelta(instanceId, messageID, partID, field, delta)
 }
 
@@ -458,7 +442,6 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
 
   if (!info) return
   if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(info.id)) return
-  if ((info as any).revert !== undefined) invalidateSessionMessageCache(instanceId, info.id)
 
   const instanceSessions = sessions().get(instanceId) ?? new Map<string, Session>()
 
@@ -612,7 +595,6 @@ function handleSessionCompacted(instanceId: string, event: EventSessionCompacted
   if (!sessionID) return
 
   log.info(`[SSE] Session compacted: ${sessionID}`)
-  invalidateSessionMessageCache(instanceId, sessionID)
 
   const existing = sessions().get(instanceId)?.get(sessionID)
   if (existing) setSessionStatus(instanceId, sessionID, "working", { force: true })
@@ -660,7 +642,6 @@ function handleMessageRemoved(instanceId: string, event: MessageRemovedEvent): v
   if (!sessionID || !messageID) return
 
   log.info(`[SSE] Message removed from session ${sessionID}`, { messageID })
-  invalidateSessionMessageCache(instanceId, sessionID)
   removeMessageV2(instanceId, messageID, sessionID)
   updateSessionInfo(instanceId, sessionID)
 }
@@ -670,7 +651,6 @@ function handleMessagePartRemoved(instanceId: string, event: MessagePartRemovedE
   if (!sessionID || !messageID || !partID) return
 
   log.info(`[SSE] Message part removed from session ${sessionID}`, { messageID, partID })
-  invalidateSessionMessageCache(instanceId, sessionID)
   removeMessagePartV2(instanceId, messageID, partID, sessionID)
   updateSessionInfo(instanceId, sessionID)
 }
