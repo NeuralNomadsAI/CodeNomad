@@ -21,6 +21,7 @@ import type { DeleteHoverState } from "../types/delete-hover"
 import { partHasRenderableText } from "../types/message"
 import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
 import { getPartCharCount } from "../lib/token-utils"
+import { getMessageSelectionActionPosition } from "../lib/message-selection-position"
 import { buildSessionSearchMatches } from "../lib/session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
 import { resolveThinkingExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
@@ -998,15 +999,22 @@ export default function MessageSection(props: MessageSectionProps) {
       clearQuoteSelection()
       return
     }
-    const rects = range.getClientRects()
-    const anchorRect = rects.length > 0 ? rects[0] : range.getBoundingClientRect()
+    const rects = Array.from(range.getClientRects())
+    const fallbackRect = range.getBoundingClientRect()
     const shellRect = shell.getBoundingClientRect()
-    const relativeTop = Math.max(anchorRect.top - shellRect.top - 40, 8)
-    // Keep the popover within the stream shell. The quote popover currently
-    // renders 3 actions; keep enough horizontal room for the pill.
-    const maxLeft = Math.max(shell.clientWidth - 260, 8)
-    const relativeLeft = Math.min(Math.max(anchorRect.left - shellRect.left, 8), maxLeft)
-    setQuoteSelection({ text: limited, top: relativeTop, left: relativeLeft })
+    const touchOnly = Boolean(
+      window.matchMedia?.("(pointer: coarse)")?.matches
+      && !window.matchMedia?.("(any-pointer: fine)")?.matches,
+    )
+    const position = getMessageSelectionActionPosition(
+      rects,
+      fallbackRect,
+      shellRect,
+      shell.clientWidth,
+      shell.clientHeight,
+      touchOnly,
+    )
+    setQuoteSelection({ text: limited, ...position })
   }
 
   function handleStreamMouseUp() {
