@@ -83,6 +83,15 @@ async function harness(options: WorkspaceRuntimeOptions & { binary?: string; out
   return { runtime, child, timers, calls, launch, abort }
 }
 describe("workspace runtime lifecycle contracts", () => {
+  it("captures the Linux launch group with one bounded shell command", async () => {
+    let launchCall: Call | undefined
+    await harness({ spawnSync: ((command: string, args: readonly string[]) => {
+      launchCall ??= { command, args: [...args] }
+      return result(posix([[4242, 1, 4242, "100"]]))
+    }) as unknown as Command })
+    assert.deepEqual(launchCall?.args.slice(-1), ["4242"])
+  })
+
   it("cancels before spawn and while waiting for a port without losing retryable cleanup", async () => {
     let spawned = false
     const runtime = new WorkspaceRuntime(new EventBus(), pino({ level: "silent" }), {
