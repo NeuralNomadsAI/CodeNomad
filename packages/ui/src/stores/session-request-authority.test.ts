@@ -176,4 +176,42 @@ describe("session request authority", () => {
       cleanup()
     }
   })
+
+  it("preserves historical assistant error status during hydration", async () => {
+    const instanceId = "errored-message-load", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    ;(client.session as any).messages = async () => ({
+      data: [{ ...apiMessage("errored-message", sessionId), info: { ...apiMessage("errored-message", sessionId).info, error: { name: "ProviderError" } } }],
+    })
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+
+    try {
+      await loadMessages(instanceId, sessionId)
+      assert.equal(messageStoreBus.getOrCreate(instanceId).getMessage("errored-message")?.status, "error")
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("loads subagent messages on demand instead of hydrating an entire family", async () => {
+    const instanceId = "lazy-subagent-messages", parentId = "parent", childId = "child"
+    const { client, cleanup } = setup(instanceId)
+    const calls: string[] = []
+    ;(client.session as any).messages = async ({ sessionID }: { sessionID: string }) => {
+      calls.push(sessionID)
+      return { data: [apiMessage(`${sessionID}-message`, sessionID)] }
+    }
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([
+      [parentId, session(instanceId, parentId)],
+      [childId, session(instanceId, childId, parentId)],
+    ])))
+
+    try {
+      await loadMessages(instanceId, parentId)
+      assert.deepEqual(calls, [parentId])
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(childId), [])
+    } finally {
+      cleanup()
+    }
+  })
 })

@@ -102,6 +102,7 @@ export function buildDiagnosticEntries(diagnostics: DiagnosticsMap, preferredPat
   if (!Array.isArray(list) || list.length === 0) return []
 
   const entries: DiagnosticEntry[] = []
+  const limit = 100
   const normalizedPath = normalizeDiagnosticPath(key)
   for (let index = 0; index < list.length; index++) {
     const diagnostic = list[index]
@@ -111,17 +112,18 @@ export function buildDiagnosticEntries(diagnostics: DiagnosticsMap, preferredPat
     const line = typeof diagnostic.range?.start?.line === "number" ? diagnostic.range.start.line + 1 : 0
     const column = typeof diagnostic.range?.start?.character === "number" ? diagnostic.range.start.character + 1 : 0
     entries.push({
-      id: `${normalizedPath}-${index}-${diagnostic.message}`,
+      id: String(index),
       severity: severityMeta.rank,
       tone,
       label: severityMeta.label,
       icon: severityMeta.icon,
-      message: diagnostic.message,
+      message: diagnostic.message.slice(0, 2_000),
       filePath: normalizedPath,
       displayPath: getRelativePath(normalizedPath),
       line,
       column,
     })
+    if (entries.length >= limit) break
   }
 
   return entries.sort((a, b) => a.severity - b.severity)

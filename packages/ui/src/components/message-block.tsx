@@ -188,6 +188,7 @@ function clearInstanceCaches(instanceId: string) {
 }
 
 messageStoreBus.onInstanceDestroyed(clearInstanceCaches)
+messageStoreBus.onSessionCleared(clearSessionRenderCache)
 
 function removeSearchMarks(root: HTMLElement) {
   const marks = Array.from(root.querySelectorAll("mark.session-search-match"))

@@ -1,11 +1,15 @@
-import { For, Index, Show, createEffect, createMemo, createSignal, untrack } from "solid-js"
+import { For, Index, Show, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk/v2"
 import type { ToolRenderer } from "../types"
-import { ensureMarkdownContent, getDefaultToolAction, getToolIcon, getToolName, readToolStatePayload } from "../utils"
+import { ensureMarkdownContent, getDefaultToolAction, getToolIcon, getToolName, limitToolOutputForRender, readToolStatePayload } from "../utils"
 import { messageStoreBus } from "../../../stores/message-v2/bus"
+import { activeInstanceId } from "../../../stores/instances"
 import { loadMessages } from "../../../stores/session-api"
-import { loading, messagesLoaded } from "../../../stores/session-state"
+import { activeSessionId, loading, messagesLoaded } from "../../../stores/session-state"
+import { setVisibleSessionMemory } from "../../../stores/session-memory"
 import { getTaskToolSearchText } from "../search-text"
+import { Copy } from "lucide-solid"
+import { copyToClipboard } from "../../../lib/clipboard"
 
 interface TaskSummaryItem {
   id: string
@@ -16,6 +20,8 @@ interface TaskSummaryItem {
   status?: ToolState["status"]
   title?: string
 }
+
+const TASK_STEP_RENDER_LIMIT = 200
 
 function extractSessionIdFromTaskState(state?: ToolState): string {
   if (!state) return ""
@@ -38,6 +44,7 @@ function TaskToolCallRow(props: {
   toolKey: string
   store: ReturnType<typeof messageStoreBus.getOrCreate>
   sessionId: string
+  visibilitySessionId: string
   renderToolCall: NonNullable<import("../types").ToolRendererContext["renderToolCall"]>
 }) {
   const parts = createMemo(() => splitToolKey(props.toolKey))
@@ -74,6 +81,7 @@ function TaskToolCallRow(props: {
       messageVersion: messageVersion(),
       partVersion: partVersion(),
       sessionId: props.sessionId,
+      visibilitySessionId: props.visibilitySessionId,
       forceCollapsed: true,
     })
   })
@@ -169,9 +177,31 @@ export const taskRenderer: ToolRenderer = {
     const { input } = readToolStatePayload(state)
     return describeTaskTitle(input)
   },
-  renderBody({ toolState, instanceId, renderToolCall, messageVersion, partVersion, scrollHelpers, renderMarkdown, t, onContentRendered }) {
+  getOutputChrome({ toolState, t }) {
+    const state = toolState()
+    if (!state) return undefined
+    const { input } = readToolStatePayload(state)
+    const prompt = typeof input.prompt === "string" ? input.prompt : ""
+    const output = state && "output" in state && typeof state.output === "string" ? state.output : null
+    if (prompt.length > 10_000) {
+      return {
+        actions: (
+          <button
+            type="button"
+            class="file-viewer-toolbar-icon-button"
+            onClick={() => void copyToClipboard([prompt, output].filter(Boolean).join("\n\n"))}
+            aria-label={t("toolCall.header.copyOutputAriaLabel")}
+            title={t("toolCall.header.copyOutputTitle")}
+          >
+            <Copy class="h-4 w-4" aria-hidden="true" />
+          </button>
+        ),
+      }
+    }
+    return output ? { copyText: output } : undefined
+  },
+  renderBody({ toolState, instanceId, visibilitySessionId, renderToolCall, messageVersion, partVersion, scrollHelpers, renderMarkdown, t, onContentRendered }) {
     const store = messageStoreBus.getOrCreate(instanceId)
-    const [requestedChildLoad, setRequestedChildLoad] = createSignal(false)
 
     const childSessionId = createMemo(() => {
       const state = toolState()
@@ -195,11 +225,18 @@ export const taskRenderer: ToolRenderer = {
     createEffect(() => {
       const id = childSessionId()
       if (!id) return
-      if (requestedChildLoad()) return
+      if (activeInstanceId() !== instanceId) return
+      if (activeSessionId().get(instanceId) !== visibilitySessionId) return
       if (childSessionLoaded()) return
       if (childSessionLoading()) return
-      setRequestedChildLoad(true)
       void loadMessages(instanceId, id)
+    })
+
+    createEffect(() => {
+      const id = childSessionId()
+      if (!id || activeInstanceId() !== instanceId || activeSessionId().get(instanceId) !== visibilitySessionId) return
+      setVisibleSessionMemory(instanceId, id, true)
+      onCleanup(() => setVisibleSessionMemory(instanceId, id, false))
     })
 
     const [childToolKeys, setChildToolKeys] = createSignal<string[]>([])
@@ -241,10 +278,10 @@ export const taskRenderer: ToolRenderer = {
       indexedPartCounts.clear()
 
       const nextKeys: string[] = []
-      for (const messageId of messageIds) {
-        nextKeys.push(...scanMessageToolParts(messageId, 0))
+      for (let index = messageIds.length - 1; index >= 0 && nextKeys.length < TASK_STEP_RENDER_LIMIT; index -= 1) {
+        nextKeys.unshift(...scanMessageToolParts(messageIds[index], 0))
       }
-      setChildToolKeys(nextKeys)
+      setChildToolKeys(nextKeys.slice(-TASK_STEP_RENDER_LIMIT))
     }
 
     createEffect(() => {
@@ -310,7 +347,7 @@ export const taskRenderer: ToolRenderer = {
         indexedMessageTail = messageIds[messageIds.length - 1] ?? ""
 
         if (appendedKeys.length > 0) {
-          setChildToolKeys((prev) => [...prev, ...appendedKeys])
+          setChildToolKeys((prev) => [...prev, ...appendedKeys].slice(-TASK_STEP_RENDER_LIMIT))
         }
       })
     })
@@ -319,14 +356,14 @@ export const taskRenderer: ToolRenderer = {
       if (!state) return null
       const { input } = readToolStatePayload(state)
       const prompt = typeof input.prompt === "string" ? input.prompt : null
-      return ensureMarkdownContent(prompt, undefined, false)
+      return ensureMarkdownContent(prompt ? limitToolOutputForRender(prompt) : prompt, undefined, false)
     })
 
     const outputContent = createMemo(() => {
       const state = toolState()
       if (!state) return null
       const output = typeof (state as { output?: unknown }).output === "string" ? ((state as { output?: string }).output as string) : null
-      return ensureMarkdownContent(output, undefined, false)
+      return ensureMarkdownContent(output ? limitToolOutputForRender(output) : output, undefined, false)
     })
 
     const agentLabel = createMemo(() => {
@@ -372,7 +409,7 @@ export const taskRenderer: ToolRenderer = {
       const { metadata } = readToolStatePayload(state)
       const summary = Array.isArray((metadata as any).summary) ? ((metadata as any).summary as any[]) : []
 
-      return summary.map((entry, index) => {
+      return summary.slice(-TASK_STEP_RENDER_LIMIT).map((entry, index) => {
         const tool = typeof entry?.tool === "string" ? (entry.tool as string) : "unknown"
         const stateValue = typeof entry?.state === "object" ? (entry.state as ToolState) : undefined
         const metadataFromEntry = typeof entry?.metadata === "object" && entry.metadata ? entry.metadata : {}
@@ -420,10 +457,13 @@ export const taskRenderer: ToolRenderer = {
             <header class="tool-call-task-section-header">
               <span class="tool-call-task-section-title">{t("toolCall.task.sections.steps")}</span>
               <span class="tool-call-task-section-meta">
-                {t("toolCall.task.steps.count", { count: childToolKeys().length > 0 ? childToolKeys().length : legacyItems().length })}
+                {t("toolCall.task.steps.count", { count: childToolKeys().length >= TASK_STEP_RENDER_LIMIT ? `${TASK_STEP_RENDER_LIMIT}+` : childToolKeys().length > 0 ? childToolKeys().length : legacyItems().length })}
               </span>
             </header>
             <div class="tool-call-task-section-body">
+              <Show when={childToolKeys().length >= TASK_STEP_RENDER_LIMIT || legacyItems().length >= TASK_STEP_RENDER_LIMIT}>
+                <div class="tool-call-diagnostic-message">{t("toolCall.output.truncated")}</div>
+              </Show>
               <Show
                 when={childToolKeys().length > 0}
                 fallback={
@@ -483,6 +523,7 @@ export const taskRenderer: ToolRenderer = {
                               toolKey={key()}
                               store={store}
                               sessionId={childSessionId()}
+                              visibilitySessionId={visibilitySessionId}
                               renderToolCall={render()}
                             />
                           )}

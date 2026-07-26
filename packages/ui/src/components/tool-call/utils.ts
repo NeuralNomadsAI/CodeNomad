@@ -4,6 +4,7 @@ import type { ToolState } from "@opencode-ai/sdk/v2"
 import type { DiffPayload } from "./types"
 import { getLogger } from "../../lib/logger"
 import { tGlobal } from "../../lib/i18n"
+import { exceedsRetainedByteLimit } from "../../lib/session-memory-budget"
 const log = getLogger("session")
 
 
@@ -12,6 +13,13 @@ export type ToolStateCompleted = import("@opencode-ai/sdk/v2").ToolStateComplete
 export type ToolStateError = import("@opencode-ai/sdk/v2").ToolStateError
 
 export const diffCapableTools = new Set(["edit", "patch"])
+export const TOOL_OUTPUT_RENDER_CHARACTER_LIMIT = 10_000
+
+export function limitToolOutputForRender(text: string): string {
+  if (text.length <= TOOL_OUTPUT_RENDER_CHARACTER_LIMIT) return text
+  const half = Math.floor(TOOL_OUTPUT_RENDER_CHARACTER_LIMIT / 2)
+  return `${text.slice(0, half)}\n\n${tGlobal("toolCall.output.truncated")}\n\n${text.slice(-half)}`
+}
 
 export function isToolStateRunning(state: ToolState): state is ToolStateRunning {
   return state.status === "running"
@@ -150,6 +158,19 @@ export function formatUnknown(value: unknown): { text: string; language?: string
   return null
 }
 
+export function formatUnknownForRender(value: unknown): { text: string; language?: string } | null {
+  if (typeof value !== "string" && exceedsRetainedByteLimit(value, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT)) {
+    return { text: tGlobal("toolCall.output.tooLarge") }
+  }
+  const result = formatUnknown(value)
+  return result ? { ...result, text: limitToolOutputForRender(result.text) } : null
+}
+
+export function formatUnknownForCopy(value: unknown): { text: string; language?: string } | null {
+  if (typeof value !== "string" && exceedsRetainedByteLimit(value, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT)) return null
+  return formatUnknown(value)
+}
+
 export function inferLanguageFromPath(path?: string): string | undefined {
   return getLanguageFromPath(path || "")
 }
@@ -236,13 +257,14 @@ export function buildToolSpeechText(options: {
 }): string {
   const sections: string[] = []
 
-  if (options.title.trim()) {
-    sections.push(options.title.trim())
+  const title = limitToolOutputForRender(options.title).trim()
+  if (title) {
+    sections.push(title)
   }
 
   const { input, output } = readToolStatePayload(options.state)
-  const formattedInput = formatUnknown(input)
-  const formattedOutput = formatUnknown(output)
+  const formattedInput = formatUnknownForRender(input)
+  const formattedOutput = formatUnknownForRender(output)
 
   if (formattedInput?.text?.trim()) {
     sections.push(`${options.t("toolCall.io.input")}:\n${formattedInput.text.trim()}`)
@@ -252,13 +274,14 @@ export function buildToolSpeechText(options: {
     sections.push(`${options.t("toolCall.io.output")}:\n${formattedOutput.text.trim()}`)
   }
 
-  if (options.state?.status === "error" && options.state.error?.trim()) {
-    sections.push(`${options.t("toolCall.error.label")} ${options.state.error.trim()}`)
+  const error = options.state?.status === "error" ? limitToolOutputForRender(options.state.error ?? "").trim() : ""
+  if (error) {
+    sections.push(`${options.t("toolCall.error.label")} ${error}`)
   }
 
   if (sections.length === 1 && options.state?.status === "pending") {
     sections.push(options.t("toolCall.pending.waitingToRun"))
   }
 
-  return sections.join("\n\n").trim()
+  return limitToolOutputForRender(sections.join("\n\n").trim())
 }

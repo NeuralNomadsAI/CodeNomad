@@ -1207,6 +1207,52 @@ async function cleanupBlankSessions(instanceId: string, excludeSessionId?: strin
   }
 }
 
+function removeInstanceMapEntry<T>(map: Map<string, T>, instanceId: string): Map<string, T> {
+  if (!map.has(instanceId)) return map
+  const next = new Map(map)
+  next.delete(instanceId)
+  return next
+}
+
+function purgeInstanceSessionState(instanceId: string): void {
+  if (!instanceId) return
+  const prefix = `${instanceId}:`
+  batch(() => {
+    setSessions((prev) => removeInstanceMapEntry(prev, instanceId))
+    setActiveSessionId((prev) => removeInstanceMapEntry(prev, instanceId))
+    setActiveParentSessionId((prev) => removeInstanceMapEntry(prev, instanceId))
+    setAgents((prev) => removeInstanceMapEntry(prev, instanceId))
+    setProviders((prev) => removeInstanceMapEntry(prev, instanceId))
+    setMessagesLoaded((prev) => removeInstanceMapEntry(prev, instanceId))
+    setMessageLoadErrors((prev) => removeInstanceMapEntry(prev, instanceId))
+    setSessionListErrors((prev) => removeInstanceMapEntry(prev, instanceId))
+    setSessionInfoByInstance((prev) => removeInstanceMapEntry(prev, instanceId))
+    setThreadTotalsByInstance((prev) => removeInstanceMapEntry(prev, instanceId))
+    setExpandedSessions((prev) => removeInstanceMapEntry(prev, instanceId))
+    setSessionPagination((prev) => removeInstanceMapEntry(prev, instanceId))
+    setSessionSearch((prev) => removeInstanceMapEntry(prev, instanceId))
+    setInstanceIndicatorCounts((prev) => removeInstanceMapEntry(prev, instanceId))
+    setLoading((prev) => ({
+      fetchingSessions: removeInstanceMapEntry(prev.fetchingSessions, instanceId),
+      creatingSession: removeInstanceMapEntry(prev.creatingSession, instanceId),
+      deletingSession: removeInstanceMapEntry(prev.deletingSession, instanceId),
+      loadingMessages: removeInstanceMapEntry(prev.loadingMessages, instanceId),
+    }))
+    setAuthoritativeSessionSelectionInstanceIds((prev) => {
+      if (!prev.has(instanceId)) return prev
+      const next = new Set(prev)
+      next.delete(instanceId)
+      return next
+    })
+    setSessionDraftPrompts((prev) => new Map([...prev].filter(([key]) => !key.startsWith(prefix))))
+    setAuthoritativeDraftKeys((prev) => new Set([...prev].filter((key) => !key.startsWith(prefix))))
+    setAuthoritativelyDeletedSessionKeys((prev) => new Set([...prev].filter((key) => !key.startsWith(prefix))))
+    setAuthoritativeSessionExpansionKeys((prev) => new Set([...prev].filter((key) => !key.startsWith(prefix))))
+  })
+  for (const key of generationAdmissions.keys()) if (key.startsWith(prefix)) generationAdmissions.delete(key)
+  for (const key of messageLoadEpochs.keys()) if (key.startsWith(prefix)) messageLoadEpochs.delete(key)
+}
+
 export {
   sessions,
   setSessions,
@@ -1291,6 +1337,7 @@ export {
   getSessionInfo,
   isBlankSession,
   cleanupBlankSessions,
+  purgeInstanceSessionState,
   SESSION_PAGE_SIZE,
   sessionPagination,
   sessionSearch,

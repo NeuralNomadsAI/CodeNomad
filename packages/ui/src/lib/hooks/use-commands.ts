@@ -15,12 +15,13 @@ import { showAlertDialog } from "../../stores/alerts"
 import type { Instance } from "../../types/instance"
 import type { MessageRecord } from "../../stores/message-v2/types"
 import { messageStoreBus } from "../../stores/message-v2/bus"
-import { cleanupBlankSessions } from "../../stores/session-state"
+import { cleanupBlankSessions, invalidateSessionMessageLoad } from "../../stores/session-state"
 import { getLogger } from "../logger"
 import { requestData } from "../opencode-api"
 import { emitSessionSidebarRequest } from "../session-sidebar-events"
 import { tGlobal } from "../i18n"
 import { registerBehaviorCommands } from "../settings/behavior-registry"
+import { invalidateSessionMessageCache } from "../../stores/session-message-cache"
 
 const log = getLogger("actions")
 
@@ -344,6 +345,11 @@ export function useCommands(options: UseCommandsOptions) {
             }),
             "session.revert",
           )
+          if (activeInstance() !== instance) return
+          if (store.getSessionRevert(sessionId)?.messageID !== messageID) {
+            invalidateSessionMessageLoad(instance.id, sessionId)
+            invalidateSessionMessageCache(instance.id, sessionId)
+          }
 
           if (!restoredText) {
             const fallbackRecord = store.getMessage(messageID)

@@ -6,6 +6,7 @@ import {
   clearPendingDeltasForPart,
   enqueueDelta,
   flushPendingDeltasForMessage,
+  holdDelta,
   resetDeltaBufferForTests,
   setFlushCallback,
 } from "./delta-buffer.ts"
@@ -98,5 +99,23 @@ describe("delta buffer", () => {
         { instanceId: "instance-2", messageId: "message-1", partId: "part-1", field: "text", delta: "other instance" },
       ],
     ])
+  })
+
+  it("holds an orphan delta until its HTTP baseline is resident", () => {
+    holdDelta("instance-1", "message-1", "part-1", "text", "late")
+    let attempts = 0
+    flushPendingDeltasForMessage("instance-1", "message-1", () => {
+      attempts += 1
+      return false
+    })
+    flushPendingDeltasForMessage("instance-1", "message-1", () => {
+      attempts += 1
+      return true
+    })
+    flushPendingDeltasForMessage("instance-1", "message-1", () => {
+      attempts += 1
+      return true
+    })
+    assert.equal(attempts, 2)
   })
 })

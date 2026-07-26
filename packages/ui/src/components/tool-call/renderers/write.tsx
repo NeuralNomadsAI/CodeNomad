@@ -1,5 +1,5 @@
 import type { ToolRenderer } from "../types"
-import { ensureMarkdownContent, getRelativePath, getToolName, inferLanguageFromPath, readToolStatePayload } from "../utils"
+import { ensureMarkdownContent, getRelativePath, getToolName, inferLanguageFromPath, limitToolOutputForRender, readToolStatePayload } from "../utils"
 import { tGlobal } from "../../../lib/i18n"
 import { getWriteToolSearchText } from "../search-text"
 
@@ -35,7 +35,7 @@ export const writeRenderer: ToolRenderer = {
     const { metadata, input } = readToolStatePayload(state)
     const contentValue = typeof input.content === "string" ? input.content : metadata.content
     const filePath = typeof input.filePath === "string" ? input.filePath : undefined
-    const content = ensureMarkdownContent(contentValue ?? null, inferLanguageFromPath(filePath), true)
+    const content = ensureMarkdownContent(typeof contentValue === "string" ? limitToolOutputForRender(contentValue) : null, inferLanguageFromPath(filePath), true)
     if (!content) return null
     return renderMarkdown({ content, size: "large", disableHighlight: state.status === "running" })
   },

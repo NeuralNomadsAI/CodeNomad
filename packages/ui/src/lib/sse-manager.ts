@@ -166,6 +166,7 @@ class SSEManager {
       log.warn("Dropping malformed event", event)
       return
     }
+    if (this.shouldHandleEvent && !this.shouldHandleEvent(instanceId)) return
 
     log.info("Received event", { type: event.type, event })
 
@@ -293,6 +294,7 @@ class SSEManager {
   onInstanceDisposed?: (instanceId: string, event: ServerInstanceDisposedEvent) => void
   onWorktreeReady?: (instanceId: string, event: WorktreeReadyEvent) => void | Promise<void>
   onConnectionLost?: (instanceId: string, reason: string) => void | Promise<void>
+  shouldHandleEvent?: (instanceId: string) => boolean
 
   getStatus(instanceId: string): ConnectionStatus | null {
     return deriveDisplayConnectionStatus(connectionStatus().get(instanceId) ?? null, transportStatus())

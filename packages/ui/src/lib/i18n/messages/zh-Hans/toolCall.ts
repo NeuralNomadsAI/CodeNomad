@@ -56,6 +56,9 @@ export const toolCallMessages = {
   "toolCall.renderer.action.listingDirectory": "正在列出目录...",
 
   "toolCall.renderer.bash.title.timeout": "超时：{timeout}",
+  "toolCall.output.truncated": "[输出已截断以便显示；复制即可访问完整输出]",
+  "toolCall.input.tooLarge": "输入内容过大，已省略显示。",
+  "toolCall.output.tooLarge": "结构化输出过大，已省略显示。",
   "toolCall.renderer.read.detail.offset": "偏移：{offset}",
   "toolCall.renderer.read.detail.limit": "限制：{limit}",
 

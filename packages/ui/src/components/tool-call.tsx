@@ -11,6 +11,7 @@ import type { PermissionRequest } from "../types/permission"
 import { getPermissionSessionId } from "../types/permission"
 import type { QuestionRequest } from "../types/question"
 import { useI18n } from "../lib/i18n"
+import { exceedsRetainedByteLimit } from "../lib/session-memory-budget"
 import { resolveToolRenderer } from "./tool-call/renderers"
 import { resolveToolExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
 import { QuestionToolBlock } from "./tool-call/question-block"
@@ -39,7 +40,9 @@ import {
   isToolStateError,
   isToolStateRunning,
   getDefaultToolAction,
+  limitToolOutputForRender,
   readToolStatePayload,
+  TOOL_OUTPUT_RENDER_CHARACTER_LIMIT,
 } from "./tool-call/utils"
 import { getLogger } from "../lib/logger"
 import { useSpeech } from "../lib/hooks/use-speech"
@@ -73,6 +76,7 @@ interface ToolCallProps {
   partVersion?: number
   instanceId: string
   sessionId: string
+  visibilitySessionId?: string
   onContentRendered?: () => void
   /**
    * When true, tool call starts collapsed regardless of user preferences.
@@ -111,6 +115,7 @@ function ToolCallDetails(props: {
   toolCallIdentifier: () => string
   instanceId: string
   sessionId: string
+  visibilitySessionId: string
   messageId?: string
   messageVersion?: number
   partVersion?: number
@@ -354,9 +359,12 @@ function ToolCallDetails(props: {
 
   const status = () => props.toolState()?.status || ""
 
-  const toolInputDisplay = createMemo((): { content: string; copyText: string; language: string } | null => {
+  const toolInputDisplay = createMemo((): { content: string; copyText: string | null; language: string } | null => {
     const input = props.toolInput()
     if (!input || Object.keys(input).length === 0) return null
+    if (exceedsRetainedByteLimit(input, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT)) {
+      return { content: props.t("toolCall.input.tooLarge"), copyText: null, language: "text" }
+    }
 
     try {
       const yamlText = stringifyYaml(input)
@@ -418,6 +426,7 @@ function ToolCallDetails(props: {
     toolName: props.toolName,
     instanceId: props.instanceId,
     sessionId: props.sessionId,
+    visibilitySessionId: props.visibilitySessionId,
     t: props.t,
     messageVersion: messageVersionAccessor,
     partVersion: partVersionAccessor,
@@ -435,6 +444,7 @@ function ToolCallDetails(props: {
           partVersion={options.partVersion}
           instanceId={props.instanceId}
           sessionId={options.sessionId}
+          visibilitySessionId={options.visibilitySessionId ?? props.visibilitySessionId ?? props.sessionId}
           onContentRendered={props.onContentRendered}
           forceCollapsed={options.forceCollapsed}
         />
@@ -475,7 +485,7 @@ function ToolCallDetails(props: {
     if (state?.status === "error" && state.error) {
       return (
         <div class="tool-call-error-content">
-          <strong>{props.t("toolCall.error.label")}</strong> {state.error}
+      <strong>{props.t("toolCall.error.label")}</strong> {limitToolOutputForRender(state.error)}
         </div>
       )
     }
@@ -522,6 +532,18 @@ function ToolCallDetails(props: {
     await copyToClipboard(text)
   }
 
+  const copyToolInput = async (event: MouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const input = props.toolInput()
+    if (!input) return
+    try {
+      await copyToClipboard(stringifyYaml(input))
+    } catch {
+      await copyToClipboard(JSON.stringify(input, null, 2))
+    }
+  }
+
   const outputWrapTitle = () =>
     props.outputWrapEnabled()
       ? props.t("toolCall.diff.disableWordWrap")
@@ -535,6 +557,7 @@ function ToolCallDetails(props: {
     copyText?: () => string | null | undefined
     copyTitle?: () => string
     copyAriaLabel?: () => string
+    onCopy?: (event: MouseEvent) => void
     actions?: () => JSXElement
     wrapToggle?: () => boolean | undefined
   }) => (
@@ -551,18 +574,16 @@ function ToolCallDetails(props: {
         {(actions) => <span class="tool-call-io-actions">{actions()}</span>}
       </Show>
 
-      <Show when={options.copyText?.()}>
-        {(copyText) => (
-          <button
-            type="button"
-            class="tool-call-header-icon-button tool-call-header-copy tool-call-io-copy"
-            onClick={(event) => void copyIoText(event, copyText())}
-            aria-label={options.copyAriaLabel?.() ?? props.t("toolCall.io.copyOutputAriaLabel")}
-            title={options.copyTitle?.() ?? props.t("toolCall.io.copyOutputTitle")}
-          >
-            <Copy class="w-3.5 h-3.5" aria-hidden="true" />
-          </button>
-        )}
+      <Show when={Boolean(options.copyText?.() || options.onCopy)}>
+        <button
+          type="button"
+          class="tool-call-header-icon-button tool-call-header-copy tool-call-io-copy"
+          onClick={(event) => options.onCopy ? options.onCopy(event) : void copyIoText(event, options.copyText?.())}
+          aria-label={options.copyAriaLabel?.() ?? props.t("toolCall.io.copyOutputAriaLabel")}
+          title={options.copyTitle?.() ?? props.t("toolCall.io.copyOutputTitle")}
+        >
+          <Copy class="w-3.5 h-3.5" aria-hidden="true" />
+        </button>
       </Show>
 
       <Show when={options.wrapToggle?.()}>
@@ -644,6 +665,7 @@ function ToolCallDetails(props: {
                   expanded: props.inputSectionExpanded,
                   onToggle: props.toggleInputSection,
                   copyText: () => toolInputDisplay()?.copyText,
+                  onCopy: toolInputDisplay()?.copyText === null ? (event) => void copyToolInput(event) : undefined,
                   copyTitle: () => props.t("toolCall.io.copyInputTitle"),
                   copyAriaLabel: () => props.t("toolCall.io.copyInputAriaLabel"),
                 })
@@ -887,6 +909,7 @@ export default function ToolCall(props: ToolCallProps) {
     toolName,
     instanceId: props.instanceId,
     sessionId: props.sessionId,
+    visibilitySessionId: props.visibilitySessionId ?? props.sessionId,
     t,
     messageVersion: () => props.messageVersion,
     partVersion: () => props.partVersion,
@@ -1145,6 +1168,7 @@ export default function ToolCall(props: ToolCallProps) {
           toolCallIdentifier={toolCallIdentifier}
           instanceId={props.instanceId}
           sessionId={props.sessionId}
+          visibilitySessionId={props.visibilitySessionId ?? props.sessionId}
           messageId={props.messageId}
           messageVersion={props.messageVersion}
           partVersion={props.partVersion}

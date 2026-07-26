@@ -36,6 +36,7 @@ import { fetchCommands, clearCommands } from "./commands"
 import { serverSettings } from "./preferences"
 import {
   reconcileSessionPendingState,
+  purgeInstanceSessionState,
   sessions,
   setSessionPendingPermission,
   setSessionPendingQuestion,
@@ -113,6 +114,7 @@ serverEvents.on("yolo.autoAccepted", (event) => {
 })
 
 const [instances, setInstances] = createSignal<Map<string, Instance>>(new Map())
+sseManager.shouldHandleEvent = (instanceId) => instances().has(instanceId)
 
 const [activeInstanceId, setActiveInstanceId] = createSignal<string | null>(null)
 const [instanceLogs, setInstanceLogs] = createSignal<Map<string, LogEntry[]>>(new Map())
@@ -679,8 +681,8 @@ async function rehydrateInstance(instanceId: string, options?: { reason?: string
     return pendingRehydrations.get(instanceId)
   }
 
+  const instance = instances().get(instanceId)
   const promise = (async () => {
-    const instance = instances().get(instanceId)
     if (!instance?.client) {
       return
     }
@@ -689,8 +691,9 @@ async function rehydrateInstance(instanceId: string, options?: { reason?: string
     clearReloadableInstanceState(instanceId)
 
     await hydrateInstanceData(instanceId, { force: true })
+    if (instances().get(instanceId) !== instance) return
   })().finally(() => {
-    pendingRehydrations.delete(instanceId)
+    if (pendingRehydrations.get(instanceId) === promise) pendingRehydrations.delete(instanceId)
   })
 
   pendingRehydrations.set(instanceId, promise)
@@ -702,14 +705,15 @@ async function disposeInstance(instanceId: string): Promise<boolean> {
     return pendingDisposeRequests.get(instanceId)!
   }
 
+  const instance = instances().get(instanceId)
   const promise = (async () => {
     const ok = await postInstanceDispose(instanceId)
-    if (ok) {
+    if (ok && instances().get(instanceId) === instance) {
       await rehydrateInstance(instanceId, { reason: "disposed" })
     }
     return ok
   })().finally(() => {
-    pendingDisposeRequests.delete(instanceId)
+    if (pendingDisposeRequests.get(instanceId) === promise) pendingDisposeRequests.delete(instanceId)
   })
 
   pendingDisposeRequests.set(instanceId, promise)
@@ -983,6 +987,8 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   initialHydrations.delete(id)
   initialSessionHydrations.delete(id)
   initialWorkspaceMetadataHydrations.delete(id)
+  pendingDisposeRequests.delete(id)
+  pendingRehydrations.delete(id)
   settleInstanceReadyWaiters(id, new Error(`Workspace ${id} was removed before it became ready`))
 
   if (activeInstanceId() === id) {
@@ -998,6 +1004,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   clearInstanceDeletedSessionAuthority(id)
   clearInstanceSessionExpansionState(id)
   clearInstanceSessionSelection(id)
+  purgeInstanceSessionState(id)
   if (removedInstance && removedOccurrence >= 0 && options.authoritative !== false) {
     publishInstanceLifecycleAuthority({
       type: "removed",

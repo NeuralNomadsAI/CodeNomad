@@ -56,6 +56,9 @@ export const toolCallMessages = {
   "toolCall.renderer.action.listingDirectory": "Просмотр каталога…",
 
   "toolCall.renderer.bash.title.timeout": "Таймаут: {timeout}",
+  "toolCall.output.truncated": "[Вывод сокращён для отображения; скопируйте его для доступа к полному выводу]",
+  "toolCall.input.tooLarge": "Ввод не отображается, поскольку он слишком большой.",
+  "toolCall.output.tooLarge": "Структурированный вывод не отображается, поскольку он слишком большой.",
   "toolCall.renderer.read.detail.offset": "Смещение: {offset}",
   "toolCall.renderer.read.detail.limit": "Лимит: {limit}",
 

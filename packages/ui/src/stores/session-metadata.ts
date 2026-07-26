@@ -44,10 +44,12 @@ export async function hydrateSessionMetadataWithClient(
   instanceId: string,
   sessionId: string,
   query?: { workspace?: string },
+  isCurrent: () => boolean = () => true,
 ): Promise<MetadataRecord> {
   const expectedMetadata = sessions().get(instanceId)?.get(sessionId)?.metadata
   const latest = await requestData<any>(client.session.get({ sessionID: sessionId, ...query }), "session.get")
   const metadata = normalizeMetadata(latest?.metadata)
+  if (!isCurrent()) return metadata
 
   withSession(instanceId, sessionId, (session) => {
     if (session.metadata !== expectedMetadata || !shouldReplaceSessionMetadata(session.metadata)) return false

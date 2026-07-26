@@ -4,19 +4,31 @@ import {
   isToolStateCompleted,
   isToolStateError,
   isToolStateRunning,
+  limitToolOutputForRender,
   readToolStatePayload,
 } from "./utils"
+import { exceedsRetainedByteLimit } from "../../lib/session-memory-budget"
 
 type QuestionOption = { label?: unknown; description?: unknown }
 type QuestionPrompt = { header?: unknown; question?: unknown; options?: unknown; multiple?: unknown; answer?: unknown }
+const TOOL_SEARCH_CHARACTER_LIMIT = 10_000
+const searchSizes = new WeakMap<string[], number>()
 
 function appendString(values: string[], value: unknown) {
-  if (typeof value === "string" && value.trim().length > 0) values.push(value)
+  if (typeof value !== "string" || value.trim().length === 0) return
+  const used = searchSizes.get(values) ?? 0
+  const remaining = TOOL_SEARCH_CHARACTER_LIMIT - used
+  if (remaining <= 0) return
+  const text = limitToolOutputForRender(value).slice(0, remaining)
+  values.push(text)
+  searchSizes.set(values, used + text.length)
 }
 
 function appendFormatted(values: string[], value: unknown) {
+  if ((searchSizes.get(values) ?? 0) >= TOOL_SEARCH_CHARACTER_LIMIT) return
+  if (exceedsRetainedByteLimit(value, 10_000)) return
   const result = formatUnknown(value)
-  if (result?.text.trim()) values.push(result.text)
+  if (result?.text.trim()) appendString(values, result.text)
 }
 
 function appendBaseToolText(values: string[], context: ToolSearchTextContext) {

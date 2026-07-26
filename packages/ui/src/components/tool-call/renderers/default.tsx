@@ -1,5 +1,5 @@
 import type { ToolRenderer } from "../types"
-import { ensureMarkdownContent, formatUnknown, isToolStateCompleted, isToolStateError, isToolStateRunning, readToolStatePayload } from "../utils"
+import { ensureMarkdownContent, formatUnknownForCopy, formatUnknownForRender, isToolStateCompleted, isToolStateError, isToolStateRunning, readToolStatePayload } from "../utils"
 import { getDefaultToolSearchText } from "../search-text"
 
 export const defaultRenderer: ToolRenderer = {
@@ -16,7 +16,7 @@ export const defaultRenderer: ToolRenderer = {
         ? metadata.output
         : metadata.diff ?? metadata.preview ?? input.content
 
-    const result = formatUnknown(primaryOutput)
+    const result = formatUnknownForCopy(primaryOutput)
     if (!result) return undefined
 
     return {
@@ -37,7 +37,7 @@ export const defaultRenderer: ToolRenderer = {
         ? metadata.output
         : metadata.diff ?? metadata.preview ?? input.content
 
-    const result = formatUnknown(primaryOutput)
+    const result = formatUnknownForRender(primaryOutput)
     if (!result) return null
 
     const content = ensureMarkdownContent(result.text, result.language, true)

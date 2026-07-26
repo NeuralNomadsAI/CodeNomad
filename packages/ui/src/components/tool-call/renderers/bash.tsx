@@ -1,7 +1,7 @@
 import { Show, createEffect, createMemo, onCleanup, type Accessor } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk/v2"
 import type { ToolRenderer, ToolScrollHelpers } from "../types"
-import { ensureMarkdownContent, formatUnknown, getToolName, isToolStateCompleted, isToolStateError, isToolStateRunning, readToolStatePayload } from "../utils"
+import { ensureMarkdownContent, formatUnknownForCopy, formatUnknownForRender, getToolName, isToolStateCompleted, isToolStateError, isToolStateRunning, limitToolOutputForRender, readToolStatePayload } from "../utils"
 import { tGlobal } from "../../../lib/i18n"
 import { createStableAnsiStreamUpdater } from "../ansi-render"
 import { ansiToHtml, hasAnsi } from "../../../lib/ansi"
@@ -99,7 +99,7 @@ function getBashCopyText(state: ToolState | undefined): string {
 
   const { input, metadata } = readToolStatePayload(state)
   const command = typeof input.command === "string" && input.command.length > 0 ? `$ ${input.command}` : ""
-  const outputResult = formatUnknown(
+  const outputResult = formatUnknownForCopy(
     isToolStateCompleted(state)
       ? state.output
       : (isToolStateRunning(state) || isToolStateError(state)) && metadata.output
@@ -122,8 +122,8 @@ function BashToolBody(props: {
     if (!current || current.status === "pending") return ""
 
     const { input, metadata } = readToolStatePayload(current)
-    const command = typeof input.command === "string" && input.command.length > 0 ? `$ ${input.command}` : ""
-    const outputResult = formatUnknown(
+    const command = typeof input.command === "string" && input.command.length > 0 ? limitToolOutputForRender(`$ ${input.command}`) : ""
+    const outputResult = formatUnknownForRender(
       isToolStateCompleted(current)
         ? current.output
         : (isToolStateRunning(current) || isToolStateError(current)) && metadata.output
@@ -132,10 +132,11 @@ function BashToolBody(props: {
     )
     return [command, outputResult?.text].filter(Boolean).join("\n")
   })
+  const renderedContent = createMemo(() => limitToolOutputForRender(joinedContent()))
 
   const finalMarkdown = createMemo(() => {
     const current = state()
-    const content = joinedContent()
+    const content = renderedContent()
     if (!current || current.status === "pending" || current.status === "running" || content.length === 0) {
       return null
     }
@@ -147,7 +148,7 @@ function BashToolBody(props: {
 
   const finalAnsiHtml = createMemo(() => {
     const current = state()
-    const content = joinedContent()
+    const content = renderedContent()
     if (!current || current.status === "pending" || current.status === "running" || content.length === 0) {
       return null
     }
@@ -169,7 +170,7 @@ function BashToolBody(props: {
           </Show>
         }
       >
-        <RunningBashOutput content={joinedContent} scrollHelpers={props.scrollHelpers} onContentRendered={props.onContentRendered} />
+        <RunningBashOutput content={renderedContent} scrollHelpers={props.scrollHelpers} onContentRendered={props.onContentRendered} />
       </Show>
     </Show>
   )

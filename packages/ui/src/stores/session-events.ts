@@ -20,8 +20,11 @@ import type { EventSessionDeleted } from "../lib/sse-manager"
 import { requestData } from "../lib/opencode-api"
 import {
   enqueueDelta,
+  clearPendingDeltasForInstance,
   clearPendingDeltasForPart,
+  clearPendingDeltasForSession,
   flushPendingDeltasForMessage,
+  holdDelta,
   setFlushCallback,
 } from "./delta-buffer"
 import {
@@ -63,7 +66,7 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, prependSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
+import { ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, messagesLoaded, prependSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
@@ -91,10 +94,21 @@ import {
 import { messageStoreBus } from "./message-v2/bus"
 import type { InstanceMessageStore } from "./message-v2/instance-store"
 import { handleConversationAssistantPartUpdated } from "./conversation-speech"
+import { cancelCachedSessionMessageRestore, invalidateSessionMessageCache, scheduleSessionMessageCacheWrite } from "./session-message-cache"
+import { restorePreviousStateEnabled } from "./client-state"
+import { scheduleSessionMemorySweep } from "./session-memory"
 
 const log = getLogger("sse")
 const pendingSessionFetches = new Map<string, Promise<void>>()
+const pendingSessionStatuses = new Map<string, { status: SessionStatus; retry?: SessionRetryState | null }>()
 let activeRetryToast: ToastHandle | null = null
+
+messageStoreBus.onInstanceDestroyed((instanceId) => {
+  const prefix = `${instanceId}:`
+  for (const key of pendingSessionFetches.keys()) if (key.startsWith(prefix)) pendingSessionFetches.delete(key)
+  for (const key of pendingSessionStatuses.keys()) if (key.startsWith(prefix)) pendingSessionStatuses.delete(key)
+  clearPendingDeltasForInstance(instanceId)
+})
 
 function shouldSendOsNotification(kind: "needsInput" | "idle"): boolean {
   if (typeof document === "undefined") return false
@@ -167,17 +181,20 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
   const slug = slugFromDirectory ?? getWorktreeSlugForSession(instanceId, sessionId)
   const client = getRootClient(instanceId)
   const workspace = await getOpenCodeWorkspaceIdForWorktree(instanceId, slug)
+  if (instances().get(instanceId) !== instance) return null
 
   try {
     const info = await requestData<any>(
       client.session.get({ sessionID: sessionId, ...(workspace ? { workspace } : {}) }),
       "session.get",
     )
+    if (instances().get(instanceId) !== instance) return null
 
     let rawStatus = (info as any)?.status
     let fetchedStatusKnown = false
     try {
       const statuses = await requestData<Record<string, any>>(client.session.status(), "session.status")
+      if (instances().get(instanceId) !== instance) return null
       rawStatus ??= statuses?.[sessionId]
       fetchedStatusKnown = true
     } catch (error) {
@@ -249,20 +266,29 @@ function ensureSessionStatus(
   const existing = sessions().get(instanceId)?.get(sessionId)
   if (existing) {
     setSessionStatus(instanceId, sessionId, status, { retry })
+    scheduleSessionMemorySweep()
     return
   }
 
   const key = `${instanceId}:${sessionId}`
+  pendingSessionStatuses.set(key, { status, retry })
   if (pendingSessionFetches.has(key)) return
 
   const pending = (async () => {
     const fetched = await fetchSessionInfo(instanceId, sessionId, directory)
     if (!fetched) return
-    setSessionStatus(instanceId, sessionId, status, { retry })
+    const latest = pendingSessionStatuses.get(key) ?? { status, retry }
+    setSessionStatus(instanceId, sessionId, latest.status, { retry: latest.retry, force: true })
+    scheduleSessionMemorySweep()
   })()
 
   pendingSessionFetches.set(key, pending)
-  void pending.finally(() => pendingSessionFetches.delete(key))
+  void pending.finally(() => {
+    if (pendingSessionFetches.get(key) === pending) {
+      pendingSessionFetches.delete(key)
+      pendingSessionStatuses.delete(key)
+    }
+  })
 }
 
 type MessageRole = "user" | "assistant"
@@ -306,6 +332,8 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     const sessionId = typeof part.sessionID === "string" ? part.sessionID : fallbackSessionId
     const messageId = typeof part.messageID === "string" ? part.messageID : fallbackMessageId
     if (!sessionId || !messageId) return
+    if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return
+    cancelCachedSessionMessageRestore(instanceId, sessionId)
     if (part.type === "compaction") {
       ensureSessionStatus(instanceId, sessionId, "compacting", (event as any)?.directory)
     }
@@ -347,6 +375,7 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
       clearPendingDeltasForPart(instanceId, messageId, part.id)
     }
     applyPartUpdateV2(instanceId, { ...part, sessionID: sessionId, messageID: messageId })
+    if (messagesLoaded().get(instanceId)?.has(sessionId)) scheduleSessionMessageCacheWrite(instanceId, sessionId)
     handleConversationAssistantPartUpdated(instanceId, { ...part, sessionID: sessionId, messageID: messageId }, messageInfo)
 
     if (part.type === "tool") {
@@ -363,6 +392,8 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     const sessionId = typeof info.sessionID === "string" ? info.sessionID : undefined
     const messageId = typeof info.id === "string" ? info.id : undefined
     if (!sessionId || !messageId) return
+    if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return
+    cancelCachedSessionMessageRestore(instanceId, sessionId)
 
     // Flush any pending deltas for this message before applying the update.
     // Deltas are buffered for up to 50ms; if message.updated arrives before
@@ -372,15 +403,17 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     // message status/metadata update runs on the complete content.
     flushPendingDeltasForMessage(instanceId, messageId, applyPartDeltaV2)
 
-    const timeInfo = (info.time ?? {}) as { created?: number; updated?: number; end?: number }
+    const timeInfo = (info.time ?? {}) as { created?: number; updated?: number; end?: number; completed?: number }
     const nextUpdated =
       typeof timeInfo.end === "number" && timeInfo.end > 0
         ? timeInfo.end
-        : typeof timeInfo.updated === "number" && timeInfo.updated > 0
-          ? timeInfo.updated
-          : typeof timeInfo.created === "number" && timeInfo.created > 0
-            ? timeInfo.created
-            : Date.now()
+        : typeof timeInfo.completed === "number" && timeInfo.completed > 0
+          ? timeInfo.completed
+          : typeof timeInfo.updated === "number" && timeInfo.updated > 0
+            ? timeInfo.updated
+            : typeof timeInfo.created === "number" && timeInfo.created > 0
+              ? timeInfo.created
+              : Date.now()
 
     withSession(instanceId, sessionId, (session) => {
       const currentUpdated = session.time?.updated ?? 0
@@ -392,7 +425,9 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
 
     const role: MessageRole = info.role === "user" ? "user" : "assistant"
     const hasError = Boolean((info as any).error)
-    const hasEnded = typeof timeInfo.end === "number" && timeInfo.end > 0
+    const hasEnded =
+      (typeof timeInfo.end === "number" && timeInfo.end > 0) ||
+      (typeof timeInfo.completed === "number" && timeInfo.completed > 0)
     const status: MessageStatus = hasError ? "error" : hasEnded ? "complete" : "streaming"
 
     let record = store.getMessage(messageId)
@@ -406,7 +441,7 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
 
     if (!record) {
       const createdAt = info.time?.created ?? Date.now()
-      const endAt = (info.time as { end?: number } | undefined)?.end
+      const endAt = timeInfo.end ?? timeInfo.completed
       store.upsertMessage({
         id: messageId,
         sessionId,
@@ -420,13 +455,22 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     upsertMessageInfoV2(instanceId, info, { status, bumpRevision: true })
 
     updateSessionInfo(instanceId, sessionId)
+    if (
+      restorePreviousStateEnabled() &&
+      messagesLoaded().get(instanceId)?.has(sessionId) &&
+      (status === "complete" || status === "error")
+    ) {
+      scheduleSessionMessageCacheWrite(instanceId, sessionId)
+    }
   }
 }
 
 // Delta buffer callback setup
 setFlushCallback((batch) => {
-  for (const { instanceId, messageId, partId, field, delta } of batch) {
-    applyPartDeltaV2(instanceId, { messageId, partId, field, delta })
+  for (const { instanceId, sessionId, messageId, partId, field, delta } of batch) {
+    if (!applyPartDeltaV2(instanceId, { messageId, partId, field, delta })) {
+      holdDelta(instanceId, messageId, partId, field, delta, sessionId)
+    }
   }
 })
 
@@ -435,7 +479,12 @@ function handleMessagePartDelta(instanceId: string, event: MessagePartDeltaEvent
   if (!props) return
   const { messageID, partID, field, delta } = props
   if (!messageID || !partID || !field || typeof delta !== "string") return
-  enqueueDelta(instanceId, messageID, partID, field, delta)
+  const sessionId = props.sessionID ?? messageStoreBus.getInstance(instanceId)?.getMessage(messageID)?.sessionId
+  if (sessionId) {
+    if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return
+    cancelCachedSessionMessageRestore(instanceId, sessionId)
+  }
+  enqueueDelta(instanceId, messageID, partID, field, delta, sessionId)
 }
 
 function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): void {
@@ -443,10 +492,21 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
 
   if (!info) return
   if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(info.id)) return
-
   const instanceSessions = sessions().get(instanceId) ?? new Map<string, Session>()
-
   const existingSession = instanceSessions.get(info.id)
+  const hasRevert = Object.prototype.hasOwnProperty.call(info, "revert")
+  const incomingRevert = info.revert ?? null
+  const previousRevert = existingSession?.revert ?? null
+  const revertChanged = hasRevert && (
+    incomingRevert?.messageID !== previousRevert?.messageID ||
+    incomingRevert?.partID !== previousRevert?.partID ||
+    incomingRevert?.snapshot !== previousRevert?.snapshot ||
+    incomingRevert?.diff !== previousRevert?.diff
+  )
+  if (revertChanged) {
+    invalidateSessionMessageLoad(instanceId, info.id)
+    invalidateSessionMessageCache(instanceId, info.id)
+  }
 
   if (!existingSession) {
     const newSession = {
@@ -492,7 +552,7 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
     })
 
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
-    setSessionRevertV2(instanceId, info.id, info.revert ?? null)
+    if (hasRevert) setSessionRevertV2(instanceId, info.id, incomingRevert)
     if (!newSession.parentId) {
       prependSessionListId(instanceId, newSession.id)
     }
@@ -511,14 +571,14 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
       retry: existingSession.retry ?? null,
       metadata: (info as any).metadata ?? existingSession.metadata,
       time: mergedTime,
-      revert: info.revert
+      revert: hasRevert && info.revert
         ? {
             messageID: info.revert.messageID,
             partID: info.revert.partID,
             snapshot: info.revert.snapshot,
             diff: info.revert.diff,
           }
-        : existingSession.revert,
+        : hasRevert ? undefined : existingSession.revert,
     }
 
     let updatedInstanceSessions: Map<string, Session> | undefined
@@ -533,7 +593,7 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
     })
 
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
-    setSessionRevertV2(instanceId, info.id, info.revert ?? null)
+    if (hasRevert) setSessionRevertV2(instanceId, info.id, incomingRevert)
   }
 }
 
@@ -541,6 +601,7 @@ function handleSessionDeleted(instanceId: string, event: EventSessionDeleted): v
   const properties = event.properties
   const sessionId = properties?.info?.id ?? properties?.sessionID ?? properties?.id
   if (!sessionId) return
+  clearPendingDeltasForSession(instanceId, sessionId)
 
   log.info(`[SSE] Session deleted: ${sessionId}`)
   removeSessionRuntimeState(instanceId, sessionId)
@@ -558,6 +619,7 @@ function handleSessionIdle(instanceId: string, event: EventSessionIdle): void {
   }
 
   ensureSessionStatus(instanceId, sessionId, "idle", (event as any)?.directory)
+  scheduleSessionMemorySweep()
   log.info(`[SSE] Session idle: ${sessionId}`)
 }
 
@@ -569,6 +631,7 @@ function handleSessionStatus(instanceId: string, event: EventSessionStatus): voi
   const status = mapSdkSessionStatus(rawStatus)
   const retry = mapSdkSessionRetry(rawStatus)
   ensureSessionStatus(instanceId, sessionId, status, (event as any)?.directory, retry)
+  scheduleSessionMemorySweep()
   if (retry) {
     const remainingSeconds = Math.max(0, Math.round((retry.next - Date.now()) / 1000))
     const countdown =
@@ -596,6 +659,7 @@ function handleSessionCompacted(instanceId: string, event: EventSessionCompacted
   if (!sessionID) return
 
   log.info(`[SSE] Session compacted: ${sessionID}`)
+  invalidateSessionMessageCache(instanceId, sessionID)
 
   const existing = sessions().get(instanceId)?.get(sessionID)
   if (existing) setSessionStatus(instanceId, sessionID, "working", { force: true })
@@ -631,6 +695,7 @@ function handleSessionError(_instanceId: string, event: EventSessionError): void
       message = error.message
     }
   }
+  if (message.length > 10_000) message = `${message.slice(0, 10_000)}...`
 
   showAlertDialog(tGlobal("sessionEvents.sessionError.message", { message }), {
     title: tGlobal("sessionEvents.sessionError.title"),
@@ -641,8 +706,10 @@ function handleSessionError(_instanceId: string, event: EventSessionError): void
 function handleMessageRemoved(instanceId: string, event: MessageRemovedEvent): void {
   const { sessionID, messageID } = event.properties
   if (!sessionID || !messageID) return
+  if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionID)) return
 
   log.info(`[SSE] Message removed from session ${sessionID}`, { messageID })
+  invalidateSessionMessageCache(instanceId, sessionID)
   removeMessageV2(instanceId, messageID, sessionID)
   updateSessionInfo(instanceId, sessionID)
 }
@@ -650,8 +717,10 @@ function handleMessageRemoved(instanceId: string, event: MessageRemovedEvent): v
 function handleMessagePartRemoved(instanceId: string, event: MessagePartRemovedEvent): void {
   const { sessionID, messageID, partID } = event.properties
   if (!sessionID || !messageID || !partID) return
+  if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionID)) return
 
   log.info(`[SSE] Message part removed from session ${sessionID}`, { messageID, partID })
+  invalidateSessionMessageCache(instanceId, sessionID)
   removeMessagePartV2(instanceId, messageID, partID, sessionID)
   updateSessionInfo(instanceId, sessionID)
 }

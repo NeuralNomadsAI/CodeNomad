@@ -76,6 +76,7 @@ export interface VirtualFollowListProps<T> {
   resolveAutoPinHoldElement?: HoldTargetElementResolver
   autoPinHoldTopThresholdPx?: number
   suspendAutoPinToBottom?: Accessor<boolean>
+  shift?: Accessor<boolean>
   renderBeforeItems?: Accessor<JSX.Element>
   renderOverlay?: Accessor<JSX.Element>
   scrollToTopAriaLabel?: Accessor<string>
@@ -755,6 +756,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
           scrollRef={scrollElement()}
           data={props.items()}
           bufferSize={props.overscanPx ?? 400}
+          shift={props.shift?.() ?? false}
           onScroll={handleScroll}
         >
           {(item, index) => {

@@ -57,6 +57,7 @@ export interface ToolRendererContext {
   toolName: Accessor<string>
   instanceId: string
   sessionId: string
+  visibilitySessionId: string
   t: (key: string, params?: Record<string, unknown>) => string
   messageVersion?: Accessor<number | undefined>
   partVersion?: Accessor<number | undefined>
@@ -73,6 +74,7 @@ export interface ToolRendererContext {
     messageVersion?: number
     partVersion?: number
     sessionId: string
+    visibilitySessionId?: string
     forceCollapsed?: boolean
   }) => JSXElement | null
   outputWrapEnabled?: Accessor<boolean>

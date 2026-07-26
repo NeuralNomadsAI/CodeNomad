@@ -5,7 +5,7 @@ import { AlignJustify, Copy, Split, WrapText } from "lucide-solid"
 import type { RenderCache } from "../../types/message"
 import type { DiffViewMode } from "../../stores/preferences"
 import type { DiffPayload, DiffRenderOptions, ToolScrollHelpers } from "./types"
-import { getRelativePath } from "./utils"
+import { getRelativePath, limitToolOutputForRender, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT } from "./utils"
 import { getCacheEntry } from "../../lib/global-cache"
 import { copyToClipboard } from "../../lib/clipboard"
 
@@ -65,6 +65,8 @@ export function createDiffContentRenderer(params: {
   }
 
   function renderDiffContent(payload: DiffPayload, options?: DiffRenderOptions): JSXElement | null {
+    const renderedDiffText = limitToolOutputForRender(payload.diffText)
+    const diffWasTruncated = payload.diffText.length > TOOL_OUTPUT_RENDER_CHARACTER_LIMIT
     const relativePath = payload.filePath ? getRelativePath(payload.filePath) : ""
     const toolbarLabel = options?.label || (relativePath
       ? params.t("toolCall.diff.label.withPath", { path: relativePath })
@@ -100,7 +102,7 @@ export function createDiffContentRenderer(params: {
       const cached = getCacheEntry<RenderCache>(cacheEntryParams)
       if (
         cached
-        && cached.text === payload.diffText
+        && cached.text === renderedDiffText
         && cached.theme === themeKey
         && cached.mode === currentMode()
         && cached.wrap === currentWrap()
@@ -172,12 +174,14 @@ export function createDiffContentRenderer(params: {
             </button>
           </div>
         </div>
-        {cachedHtml() ? (
+        {diffWasTruncated ? (
+          <pre class="tool-call-diff-fallback">{renderedDiffText}</pre>
+        ) : cachedHtml() ? (
           <CachedDiffMarkup html={cachedHtml()!} onRendered={handleDiffRendered} />
         ) : (
-          <Suspense fallback={<pre class="tool-call-diff-fallback">{payload.diffText}</pre>}>
+          <Suspense fallback={<pre class="tool-call-diff-fallback">{renderedDiffText}</pre>}>
             <LazyToolCallDiffViewer
-              diffText={payload.diffText}
+              diffText={renderedDiffText}
               filePath={payload.filePath}
               theme={themeKey}
               mode={currentMode()}
