@@ -276,7 +276,7 @@ export class WorkspaceRuntime {
                 this.spawnCommand,
                 this.stopCommandTimeoutMs,
                 this.platform,
-                this.platform === "linux" ? undefined : { pids: [child.pid], groupId: child.pid },
+                { pids: [child.pid], groupId: child.pid },
               )
           : { ok: false as const, error: "spawned child did not expose a PID" }
         const launchLeader = launchSnapshot.ok && child.pid ? launchSnapshot.processes.get(child.pid) : undefined

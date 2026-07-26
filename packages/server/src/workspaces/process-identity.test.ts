@@ -1,5 +1,7 @@
 import assert from "node:assert/strict"
-import type { SpawnSyncReturns } from "node:child_process"
+import { spawn as spawnChild, spawnSync, type SpawnSyncReturns } from "node:child_process"
+import { once } from "node:events"
+import { readFileSync } from "node:fs"
 import { describe, it } from "node:test"
 
 import {
@@ -26,6 +28,33 @@ describe("process identity probes", () => {
     const probe = probePosixProcesses(spawn("42|1|42|123456|boot-a|123456\n", call), 25, "linux")
     assert.deepEqual([call.command, call.args.includes("codenomad-posix-identity"), call.script.trimEnd().endsWith("exit 0")], ["sh", true, true])
     assert.deepEqual(probe.ok && probe.processes.get(42), identity())
+  })
+
+  it("queries the requested Linux launch group without per-process subprocesses", () => {
+    const call = {} as Call
+    const probe = probePosixProcesses(spawn("42|1|42|123456|boot-a|123456\n", call), 25, "linux", { pids: [42], groupId: 42 })
+    assert.deepEqual(call.args.slice(-1), ["42"])
+    assert.match(call.script, /expected_group=\$stat_group/)
+    assert.doesNotMatch(call.script, /\b(?:cat|cut|sed|basename|dirname)\b/)
+    assert.deepEqual(probe.ok && probe.processes.get(42), identity())
+  })
+
+  it("captures real Linux start ticks and launch-group members within the deadline", { skip: process.platform !== "linux" }, async () => {
+    const child = spawnChild("sh", ["-c", "sleep 5"], { stdio: "ignore" })
+    await once(child, "spawn")
+    try {
+      const stat = readFileSync(`/proc/${process.pid}/stat`, "utf8")
+      const expectedStart = stat.slice(stat.lastIndexOf(") ") + 2).split(" ")[19]
+      const probe = probePosixProcesses(spawnSync, 1_000, "linux", { pids: [process.pid], groupId: process.pid })
+      assert.equal(probe.ok && probe.processes.get(process.pid)?.startTime, expectedStart)
+      assert.equal(probe.ok && probe.processes.has(child.pid!), true)
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        const exited = once(child, "exit")
+        child.kill()
+        await exited
+      }
+    }
   })
 
   it("uses one delimiter-safe process-table query on portable POSIX", () => {

@@ -36,20 +36,36 @@ export type TokenSignalResult = { ok: boolean; signalSent: boolean; targets: Pro
 export const LAUNCH_CLEANUP_TOKEN_ENV = "CODENOMAD_LAUNCH_CLEANUP_TOKEN"
 
 type SpawnCommand = typeof spawnSync
+const SHELL_DOLLAR = "$"
 
 const LINUX_IDENTITY_FUNCTIONS = String.raw`
-boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null) || exit 20
+IFS= read -r boot 2>/dev/null < /proc/sys/kernel/random/boot_id || exit 20
 read_stat() {
-  line=$(cat "/proc/$1/stat" 2>/dev/null) || return 1
-  stat_pid=$(printf '%s\n' "$line" | cut -d' ' -f1); rest=$(printf '%s\n' "$line" | sed 's/^.*) //'); set -- $rest
-  stat_ppid=$2; stat_group=$3; stat_start=$20
+  line=
+  while IFS= read -r chunk || test -n "$chunk"; do line=$line$chunk; done 2>/dev/null < "/proc/$1/stat"
+  test -n "$line" || return 1
+  stat_pid=$1; rest=${SHELL_DOLLAR}{line##*) }; set -- $rest
+  test "$#" -ge 20 || return 1
+  stat_ppid=$2; stat_group=$3; shift 19; stat_start=$1
 }
-emit_linux() { printf '%s|%s|%s|%s|%s|%s|%s\n' "$1" "$stat_pid" "$stat_ppid" "$stat_group" "$stat_start" "$boot" "$stat_start"; }
+emit_linux() {
+  test -n "$1" && printf '%s|' "$1"
+  printf '%s|%s|%s|%s|%s|%s\n' "$stat_pid" "$stat_ppid" "$stat_group" "$stat_start" "$boot" "$stat_start"
+}
 `
 
 const LINUX_SNAPSHOT_SCRIPT = String.raw`${LINUX_IDENTITY_FUNCTIONS}
 for stat in /proc/[0-9]*/stat; do
-  pid=$(basename "$(dirname "$stat")"); read_stat "$pid" && emit_linux "" | cut -c2-
+  directory=${SHELL_DOLLAR}{stat%/stat}; pid=${SHELL_DOLLAR}{directory##*/}; read_stat "$pid" && emit_linux ""
+done
+exit 0
+`
+
+const LINUX_LAUNCH_GROUP_SNAPSHOT_SCRIPT = String.raw`${LINUX_IDENTITY_FUNCTIONS}
+leader_pid=$1; read_stat "$leader_pid" || exit 22; expected_group=$stat_group; emit_linux ""
+for stat in /proc/[0-9]*/stat; do
+  directory=${SHELL_DOLLAR}{stat%/stat}; pid=${SHELL_DOLLAR}{directory##*/}; test "$pid" = "$leader_pid" && continue
+  read_stat "$pid" && test "$stat_group" = "$expected_group" && emit_linux ""
 done
 exit 0
 `
@@ -60,7 +76,7 @@ shift 5; matched=0; cutoff=; signal_sent=0
 if read_stat "$leader_pid" && test "$boot" = "$leader_boot" && test "$stat_start" = "$leader_start" && test "$stat_group" = "$expected_group"; then
   matched=1
   for stat in /proc/[0-9]*/stat; do
-    candidate=$(basename "$(dirname "$stat")"); read_stat "$candidate" && test "$stat_group" = "$expected_group" && emit_linux CODENOMAD_TARGET
+    directory=${SHELL_DOLLAR}{stat%/stat}; candidate=${SHELL_DOLLAR}{directory##*/}; read_stat "$candidate" && test "$stat_group" = "$expected_group" && emit_linux CODENOMAD_TARGET
   done
   if kill "-$requested_signal" -- "-$expected_group" 2>/dev/null; then
     signal_sent=1
@@ -111,7 +127,7 @@ pass=0
 while test "$pass" -lt "$passes"; do
   pass=$((pass + 1))
   for environ in /proc/[0-9]*/environ; do
-    pid=$(basename "$(dirname "$environ")")
+    directory=${SHELL_DOLLAR}{environ%/environ}; pid=${SHELL_DOLLAR}{directory##*/}
     if matches_token "$pid" && read_stat "$pid"; then
       test -n "$requested_signal" && prefix=CODENOMAD_TARGET || prefix=CODENOMAD_PROCESS
       emit_linux "$prefix"
@@ -416,10 +432,16 @@ export function descendantsOf(processes: Map<number, ProcessIdentity>, rootPid: 
 
 export function probePosixProcesses(spawnCommand: SpawnCommand, timeoutMs: number,
   platform: NodeJS.Platform = process.platform, filter?: PosixProcessFilter): ProcessSnapshot {
-  if (platform === "linux") return querySnapshot(
-    () => runLinuxScript(spawnCommand, LINUX_SNAPSHOT_SCRIPT, [], timeoutMs, "codenomad-posix-identity"),
-    (output) => parseDelimitedSnapshot(output, true),
-  )
+  if (platform === "linux") {
+    const pids = filter?.pids?.filter((pid) => Number.isInteger(pid) && pid > 0).map(String) ?? []
+    const launchGroupProbe = pids.length === 1 && filter?.groupId === Number(pids[0])
+    return querySnapshot(
+      () => runLinuxScript(spawnCommand, launchGroupProbe ? LINUX_LAUNCH_GROUP_SNAPSHOT_SCRIPT : LINUX_SNAPSHOT_SCRIPT,
+        launchGroupProbe ? pids : [], timeoutMs, "codenomad-posix-identity"),
+      (output) => parseDelimitedSnapshot(output, true),
+      { allowEmpty: Boolean(filter) },
+    )
+  }
   // POSIX has no portable pidfd/start ticks; collect one coherent table instead of probing every PID.
   return querySnapshot(
     () => spawnCommand("ps", ["-axo", "pid=,ppid=,pgid=,lstart=,comm="], {
