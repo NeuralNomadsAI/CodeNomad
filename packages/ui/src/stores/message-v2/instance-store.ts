@@ -216,6 +216,7 @@ export interface InstanceMessageStore {
   setState: SetStoreFunction<InstanceMessageState>
   addOrUpdateSession: (input: SessionUpsertInput) => void
   hydrateMessages: (sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>) => void
+  mergeCachedMessages: (sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>) => void
   upsertMessage: (input: MessageUpsertInput) => void
   applyPartUpdate: (input: PartUpdateInput) => void
   applyPartDelta: (input: {
@@ -432,11 +433,15 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   }
 
   function hydrateMessages(sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>) {
-    if (!Array.isArray(inputs) || inputs.length === 0) return
+    if (!Array.isArray(inputs)) return
 
     ensureSessionEntry(sessionId)
 
     const incomingIds = inputs.map((item) => item.id)
+    const incomingIdSet = new Set(incomingIds)
+    const staleIds = Object.values(state.messages)
+      .filter((record) => record.sessionId === sessionId && !incomingIdSet.has(record.id))
+      .map((record) => record.id)
 
     const normalizedRecords: Record<string, MessageRecord> = {}
     const now = Date.now()
@@ -471,6 +476,22 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     const nextPermissionsByMessage: Record<string, Record<string, PermissionEntry>> = {
       ...state.permissions.byMessage,
     }
+    const nextQuestionsByMessage: Record<string, Record<string, QuestionEntry>> = {
+      ...state.questions.byMessage,
+    }
+
+    if (staleIds.length > 0) {
+      clearRecordDisplayCacheForMessages(instanceId, staleIds)
+      for (const id of staleIds) {
+        delete nextMessages[id]
+        delete nextMessageInfoVersion[id]
+        delete nextPendingParts[id]
+        delete nextPermissionsByMessage[id]
+        delete nextQuestionsByMessage[id]
+        messageInfoCache.delete(id)
+        clearPromptDisplayOverride(instanceId, sessionId, id)
+      }
+    }
 
     Object.entries(normalizedRecords).forEach(([id, record]) => {
       nextMessages[id] = record
@@ -486,10 +507,11 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     }
 
     batch(() => {
-      setState("messages", () => nextMessages)
-      setState("messageInfoVersion", () => nextMessageInfoVersion)
-      setState("pendingParts", () => nextPendingParts)
-      setState("permissions", "byMessage", () => nextPermissionsByMessage)
+      setState("messages", reconcile(nextMessages))
+      setState("messageInfoVersion", reconcile(nextMessageInfoVersion))
+      setState("pendingParts", reconcile(nextPendingParts))
+      setState("permissions", "byMessage", reconcile(nextPermissionsByMessage))
+      setState("questions", "byMessage", reconcile(nextQuestionsByMessage))
 
       if (usageState) {
         setState("usage", sessionId, usageState)
@@ -502,10 +524,66 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       }))
       recomputeLastAssistantMessageId(sessionId, incomingIds)
 
+      clearLatestTodoSnapshot(sessionId)
       Object.values(normalizedRecords).forEach((record) => {
         maybeUpdateLatestTodoFromRecord(record)
       })
 
+      bumpSessionRevision(sessionId)
+    })
+  }
+
+  function mergeCachedMessages(sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>) {
+    if (!Array.isArray(inputs) || inputs.length === 0) return
+    ensureSessionEntry(sessionId)
+    const existingIds = new Set(state.sessions[sessionId]?.messageIds ?? [])
+    const additions = inputs.filter((input) => !existingIds.has(input.id) && !state.messages[input.id])
+    if (additions.length === 0) return
+
+    const infoById = new Map<string, MessageInfo>()
+    if (infos) {
+      for (const info of infos) {
+        if (typeof info.id === "string") infoById.set(info.id, info)
+      }
+    }
+    const additionIds = additions.map((input) => input.id)
+    const now = Date.now()
+    const normalizedRecords: Record<string, MessageRecord> = {}
+    for (const input of additions) {
+      const normalizedParts = normalizeParts(input.id, input.parts)
+      const clientPromptDisplayMetadata = resolveClientPromptDisplayText(instanceId, input)
+      normalizedRecords[input.id] = {
+        id: input.id,
+        sessionId: input.sessionId,
+        role: input.role,
+        status: input.status,
+        createdAt: input.createdAt ?? now,
+        updatedAt: input.updatedAt ?? now,
+        isEphemeral: input.isEphemeral ?? false,
+        clientPromptDisplayMetadata,
+        revision: 0,
+        partIds: normalizedParts?.ids ?? [],
+        parts: normalizedParts?.map ?? {},
+      }
+      setPromptDisplayOverride(instanceId, input.sessionId, input.id, clientPromptDisplayMetadata)
+    }
+
+    batch(() => {
+      setState("messages", (current) => ({ ...current, ...normalizedRecords }))
+      for (const messageId of additionIds) {
+        const info = infoById.get(messageId)
+        if (!info) continue
+        messageInfoCache.set(messageId, info)
+        setState("messageInfoVersion", messageId, (version = 0) => version + 1)
+        updateUsageWithInfo(info)
+      }
+      setState("sessions", sessionId, (session) => ({
+        ...session,
+        messageIds: [...additionIds, ...(session?.messageIds ?? [])],
+        updatedAt: Date.now(),
+      }))
+      recomputeLastAssistantMessageId(sessionId)
+      Object.values(normalizedRecords).forEach((record) => maybeUpdateLatestTodoFromRecord(record))
       bumpSessionRevision(sessionId)
     })
   }
@@ -1344,6 +1422,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
      setState,
      addOrUpdateSession,
       hydrateMessages,
+      mergeCachedMessages,
       upsertMessage,
       applyPartUpdate,
       applyPartDelta,

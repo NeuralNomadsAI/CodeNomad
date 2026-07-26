@@ -21,6 +21,7 @@ import { requestData } from "../opencode-api"
 import { emitSessionSidebarRequest } from "../session-sidebar-events"
 import { tGlobal } from "../i18n"
 import { registerBehaviorCommands } from "../settings/behavior-registry"
+import { invalidateSessionMessageCache } from "../../stores/session-message-cache"
 
 const log = getLogger("actions")
 
@@ -344,6 +345,7 @@ export function useCommands(options: UseCommandsOptions) {
             }),
             "session.revert",
           )
+          invalidateSessionMessageCache(instance.id, sessionId)
 
           if (!restoredText) {
             const fallbackRecord = store.getMessage(messageID)

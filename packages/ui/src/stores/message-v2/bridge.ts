@@ -14,7 +14,7 @@ interface SessionMetadata {
   parentId?: string | null
 }
 
-function resolveSessionMetadata(session?: Session | null): SessionMetadata | undefined {
+function resolveSessionMetadata(session?: Session | SessionMetadata | null): SessionMetadata | undefined {
   if (!session) return undefined
   return {
     id: session.id,
@@ -71,6 +71,38 @@ export function seedSessionMessagesV2(
   return true
 }
 
+export function mergeCachedSessionMessagePageV2(
+  instanceId: string,
+  session: Session | SessionMetadata,
+  messages: Message[],
+  messageInfos: Map<string, MessageInfo>,
+  expectedRevision: number,
+): number | null {
+  if (!session || !Array.isArray(messages)) return null
+  const store = messageStoreBus.getOrCreate(instanceId)
+  if (!canHydrateMessages(expectedRevision, store.getSessionRevision(session.id))) return null
+  const metadata = resolveSessionMetadata(session)
+  if (!metadata) return null
+  store.addOrUpdateSession({
+    id: metadata.id,
+    title: metadata.title,
+    parentId: metadata.parentId ?? null,
+    revert: (session as Session)?.revert ?? undefined,
+  })
+  store.mergeCachedMessages(metadata.id, messages.map((message) => ({
+    id: message.id,
+    sessionId: message.sessionId,
+    role: message.type,
+    status: normalizeStatus(message.status),
+    createdAt: message.timestamp,
+    updatedAt: message.timestamp,
+    parts: message.parts,
+    isEphemeral: false,
+    bumpRevision: false,
+  })), messageInfos.values())
+  return store.getSessionRevision(metadata.id)
+}
+
 interface MessageInfoOptions {
   status?: MessageStatus
   bumpRevision?: boolean
@@ -81,17 +113,19 @@ export function upsertMessageInfoV2(instanceId: string, info: MessageInfo | null
     return
   }
   const store = messageStoreBus.getOrCreate(instanceId)
-  const timeInfo = (info.time ?? {}) as { created?: number; end?: number }
+  const timeInfo = (info.time ?? {}) as { created?: number; end?: number; completed?: number }
   const createdAt = typeof timeInfo.created === "number" ? timeInfo.created : Date.now()
-  const endAt = typeof timeInfo.end === "number" ? timeInfo.end : undefined
+  const endAt = typeof timeInfo.end === "number" ? timeInfo.end : timeInfo.completed
+  const status = options?.status ?? "complete"
 
   store.upsertMessage({
     id: info.id,
     sessionId: info.sessionID,
     role: info.role === "user" ? "user" : "assistant",
-    status: options?.status ?? "complete",
+    status,
     createdAt,
     updatedAt: endAt ?? createdAt,
+    isEphemeral: status === "sending" || status === "streaming",
     bumpRevision: Boolean(options?.bumpRevision),
   })
   store.setMessageInfo(info.id, info)

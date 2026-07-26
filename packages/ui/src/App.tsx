@@ -327,7 +327,7 @@ const App: Component = () => {
 
   function handleLaunchErrorAdvanced() {
     clearLaunchError()
-    openSettings("runtime")
+    openSettings("opencode")
   }
 
   function handleNewInstanceRequest() {

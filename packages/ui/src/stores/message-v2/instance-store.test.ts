@@ -42,3 +42,41 @@ describe("message-v2 permission state", () => {
   })
 
 })
+
+describe("message-v2 authoritative hydration", () => {
+  const message = (id: string) => ({
+    id,
+    sessionId: "session-1",
+    role: "assistant" as const,
+    status: "complete" as const,
+    parts: [{ id: `part-${id}`, type: "text", text: id, messageID: id, sessionID: "session-1" }] as any,
+  })
+  const info = (id: string) => ({ id, sessionID: "session-1", role: "assistant", time: { created: 1 } }) as any
+
+  it("replaces stale messages and accepts an authoritative empty session", () => {
+    const store = createInstanceMessageStore("instance-1")
+    store.hydrateMessages("session-1", [message("message-1"), message("message-2")], [info("message-1"), info("message-2")])
+
+    store.hydrateMessages("session-1", [message("message-2")], [info("message-2")])
+    assert.equal(store.getMessage("message-1"), undefined)
+    assert.equal(store.getMessageInfo("message-1"), undefined)
+    assert.deepEqual(store.getSessionMessageIds("session-1"), ["message-2"])
+
+    store.hydrateMessages("session-1", [], [])
+    assert.equal(store.getMessage("message-2"), undefined)
+    assert.deepEqual(store.getSessionMessageIds("session-1"), [])
+  })
+
+  it("prepends older cache pages without overwriting live messages", () => {
+    const store = createInstanceMessageStore("instance-1")
+    store.mergeCachedMessages("session-1", [message("message-3"), message("message-4")])
+    store.upsertMessage({
+      ...message("message-4"),
+      parts: [{ id: "part-message-4", type: "text", text: "live", messageID: "message-4", sessionID: "session-1" }] as any,
+    })
+    store.mergeCachedMessages("session-1", [message("message-1"), message("message-2"), message("message-4")])
+
+    assert.deepEqual(store.getSessionMessageIds("session-1"), ["message-1", "message-2", "message-3", "message-4"])
+    assert.equal((store.getMessage("message-4")?.parts["part-message-4"]?.data as any).text, "live")
+  })
+})

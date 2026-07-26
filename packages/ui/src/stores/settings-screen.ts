@@ -4,11 +4,14 @@ export type SettingsSectionId =
   | "general"
   | "chat"
   | "notifications"
-  | "voice"
-  | "connections"
-  | "runtime"
+  | "speech"
+  | "remote"
+  | "opencode"
+  | "providers"
+  | "sidecars"
+  | "config-files"
   | "advanced"
-  | "about"
+  | "info"
 
 const [settingsOpen, setSettingsOpen] = createSignal(false)
 const [activeSettingsSection, setActiveSettingsSection] = createSignal<SettingsSectionId>("general")

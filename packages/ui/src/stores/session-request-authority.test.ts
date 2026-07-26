@@ -176,4 +176,20 @@ describe("session request authority", () => {
       cleanup()
     }
   })
+
+  it("preserves historical assistant error status during hydration", async () => {
+    const instanceId = "errored-message-load", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    ;(client.session as any).messages = async () => ({
+      data: [{ ...apiMessage("errored-message", sessionId), info: { ...apiMessage("errored-message", sessionId).info, error: { name: "ProviderError" } } }],
+    })
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+
+    try {
+      await loadMessages(instanceId, sessionId)
+      assert.equal(messageStoreBus.getOrCreate(instanceId).getMessage("errored-message")?.status, "error")
+    } finally {
+      cleanup()
+    }
+  })
 })
