@@ -74,6 +74,8 @@ export const messagingMessages = {
   "messageBlock.usage.cacheRead": "Чтение кэша",
   "messageBlock.usage.cacheWrite": "Запись кэша",
   "messageBlock.usage.cost": "Стоимость",
+  "messageBlock.usage.expandAriaLabel": "Развернуть метрики токенов",
+  "messageBlock.usage.collapseAriaLabel": "Свернуть метрики токенов",
   "messageBlock.step.agentLabel": "Агент: {agent}",
   "messageBlock.step.modelLabel": "Модель: {model}",
   "messageBlock.reasoning.thinkingLabel": "Размышления",

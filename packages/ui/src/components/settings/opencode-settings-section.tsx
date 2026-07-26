@@ -2,16 +2,11 @@ import { Select } from "@kobalte/core/select"
 import { createEffect, createMemo, createSignal, type Component } from "solid-js"
 import { ChevronDown, Terminal } from "lucide-solid"
 import OpenCodeBinarySelector from "../opencode-binary-selector"
-import EnvironmentVariablesEditor from "../environment-variables-editor"
-import { useConfig } from "../../stores/preferences"
-import type { ServerLogLevel } from "../../stores/preferences"
+import { useConfig, type ServerLogLevel } from "../../stores/preferences"
 import { useI18n } from "../../lib/i18n"
 import { OpenCodeUpdateCard } from "./opencode-update-card"
 
-type LogLevelOption = {
-  value: ServerLogLevel
-  label: string
-}
+type LogLevelOption = { value: ServerLogLevel; label: string }
 
 export const OpenCodeSettingsSection: Component = () => {
   const { t } = useI18n()
@@ -72,10 +67,7 @@ export const OpenCodeSettingsSection: Component = () => {
             </div>
             <Select<LogLevelOption>
               value={selectedLogLevel()}
-              onChange={(option) => {
-                if (!option) return
-                updateLogLevel(option.value)
-              }}
+              onChange={(option) => option && updateLogLevel(option.value)}
               options={logLevelOptions()}
               optionValue="value"
               optionTextValue="label"
@@ -88,37 +80,17 @@ export const OpenCodeSettingsSection: Component = () => {
               <Select.Trigger class="selector-trigger" aria-label={t("settings.opencode.logLevel.title")}>
                 <div class="flex-1 min-w-0">
                   <Select.Value<LogLevelOption>>
-                    {(state) => (
-                      <span class="selector-trigger-primary selector-trigger-primary--align-left">
-                        {state.selectedOption()?.label}
-                      </span>
-                    )}
+                    {(state) => <span class="selector-trigger-primary selector-trigger-primary--align-left">{state.selectedOption()?.label}</span>}
                   </Select.Value>
                 </div>
-                <Select.Icon class="selector-trigger-icon">
-                  <ChevronDown class="w-3 h-3" />
-                </Select.Icon>
+                <Select.Icon class="selector-trigger-icon"><ChevronDown class="w-3 h-3" /></Select.Icon>
               </Select.Trigger>
-
               <Select.Portal>
-                <Select.Content class="selector-popover">
-                  <Select.Listbox class="selector-listbox" />
-                </Select.Content>
+                <Select.Content class="selector-popover"><Select.Listbox class="selector-listbox" /></Select.Content>
               </Select.Portal>
             </Select>
           </div>
         </div>
-      </div>
-
-      <div class="settings-card">
-        <div class="settings-card-header">
-          <div>
-            <h3 class="settings-card-title">{t("advancedSettings.environmentVariables.title")}</h3>
-            <p class="settings-card-subtitle">{t("advancedSettings.environmentVariables.subtitle")}</p>
-          </div>
-          <span class="settings-scope-badge settings-scope-badge-server">{t("settings.scope.server")}</span>
-        </div>
-        <EnvironmentVariablesEditor />
       </div>
     </div>
   )

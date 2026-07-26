@@ -214,6 +214,15 @@
   @apply flex flex-wrap items-center gap-1 text-[10px] text-[var(--text-muted)];
 }
 
+.message-step-usage-toggle {
+  @apply flex min-w-0 items-center gap-1 text-left;
+}
+
+.message-step-usage-disclosure {
+  @apply shrink-0 text-[9px];
+  color: var(--text-muted);
+}
+
 .message-step-usage-chip {
   @apply inline-flex items-center rounded-full border border-[var(--border-base)] px-2 py-0.5 text-[10px];
   color: var(--text-primary);

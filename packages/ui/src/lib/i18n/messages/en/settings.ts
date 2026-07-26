@@ -98,6 +98,16 @@ export const settingsMessages = {
   "settings.open.title": "Open settings",
   "settings.open.ariaLabel": "Open settings",
   "settings.nav.appearance": "Appearance",
+  "settings.nav.general": "General",
+  "settings.nav.chat": "Chat",
+  "settings.nav.voice": "Voice",
+  "settings.nav.connections": "Connections",
+  "settings.nav.runtime": "Runtime",
+  "settings.nav.advanced": "Advanced",
+  "settings.nav.about": "About",
+  "settings.general.language.subtitle": "Choose the language used throughout the application.",
+  "settings.behavior.holdLongAssistantReplies.title": "Hold long assistant replies",
+  "settings.behavior.holdLongAssistantReplies.subtitle": "Stop following automatically when a streaming reply grows beyond the viewport.",
   "settings.nav.notifications": "Notifications",
   "settings.nav.remote": "Remote Access",
   "settings.nav.speech": "Speech",
@@ -200,6 +210,7 @@ export const settingsMessages = {
   "settings.configFiles.confirmDiscard.cancelLabel": "Keep editing",
 
   "settings.providers.title": "Provider Authentication",
+  "settings.providers.target": "OpenCode instance: {workspace}",
   "settings.providers.subtitle": "Connect API keys or OAuth accounts for the active OpenCode instance.",
   "settings.providers.refresh": "Refresh",
   "settings.providers.selectProvider": "Select provider",
@@ -258,7 +269,7 @@ export const settingsMessages = {
 
 
   "settings.appearance.behavior.title": "Interaction",
-  "settings.appearance.behavior.subtitle": "Message, diff, and input defaults.",
+  "settings.appearance.behavior.subtitle": "Control message, tool, diagnostics, and usage detail together.",
   "settings.behavior.expansionPresets.ariaLabel": "Transcript detail presets",
   "settings.behavior.expansionPreset.minimal.title": "Minimal",
   "settings.behavior.expansionPreset.minimal.description": "Keep most generated detail tucked away until needed.",
