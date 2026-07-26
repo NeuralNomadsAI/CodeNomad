@@ -12,7 +12,7 @@ import { getPermissionSessionId } from "../types/permission"
 import type { QuestionRequest } from "../types/question"
 import { useI18n } from "../lib/i18n"
 import { resolveToolRenderer } from "./tool-call/renderers"
-import { resolveToolExpansionDefault } from "./tool-call/tool-registry"
+import { resolveToolExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
 import { QuestionToolBlock } from "./tool-call/question-block"
 import { PermissionToolBlock } from "./tool-call/permission-block"
 import { createAnsiContentRenderer } from "./tool-call/ansi-render"
@@ -744,7 +744,9 @@ export default function ToolCall(props: ToolCallProps) {
     return undefined
   })
 
-  const diagnosticsDefaultExpanded = createMemo(() => (preferences().diagnosticsExpansion || "expanded") === "expanded")
+  const diagnosticsVisibility = createMemo(() => preferences().diagnosticsExpansion || "expanded")
+  const diagnosticsDefaultExpanded = createMemo(() => diagnosticsVisibility() === "expanded")
+  const toolVisibility = createMemo(() => resolveToolVisibility(preferences(), toolCallMemo()?.tool || ""))
 
   const defaultExpandedForTool = createMemo(() => {
     if (props.forceCollapsed) {
@@ -792,6 +794,8 @@ export default function ToolCall(props: ToolCallProps) {
     const active = activeRequest()
     return active?.kind === "question" && active.id === pending.request.id
   })
+
+  const isToolVisible = createMemo(() => toolVisibility() !== "hidden" || isPermissionActive() || isQuestionActive())
 
   const expanded = () => {
     if (isPermissionActive() || isQuestionActive()) return true
@@ -1046,6 +1050,7 @@ export default function ToolCall(props: ToolCallProps) {
   const status = () => toolState()?.status || ""
 
   return (
+    <Show when={isToolVisible()}>
       <div
 
         ref={(element) => {
@@ -1168,7 +1173,7 @@ export default function ToolCall(props: ToolCallProps) {
         />
       </Show>
  
-      <Show when={diagnosticsEntries().length}>
+      <Show when={diagnosticsEntries().length && diagnosticsVisibility() !== "hidden"}>
 
         {renderDiagnosticsSection(
           t,
@@ -1182,5 +1187,6 @@ export default function ToolCall(props: ToolCallProps) {
         )}
       </Show>
     </div>
+    </Show>
   )
 }

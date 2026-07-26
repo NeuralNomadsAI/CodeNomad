@@ -32,9 +32,10 @@ export interface ModelPreference {
 
 export type DiffViewMode = "split" | "unified"
 export type ExpansionPreference = "expanded" | "collapsed"
+export type VisibilityPreference = "hidden" | ExpansionPreference
 export type ToolCallExpansionPreset = "minimal" | "balanced" | "detailed" | "everything"
 export type ToolCallExpansionPresetSelection = ToolCallExpansionPreset | "custom"
-export type ToolInputsVisibilityPreference = "hidden" | "collapsed" | "expanded"
+export type ToolInputsVisibilityPreference = VisibilityPreference
 export type ListeningMode = "local" | "all"
 export type ServerLogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR"
 export type SpeechProviderPreference = "openai-compatible"
@@ -44,7 +45,7 @@ export type SpeechTtsFormat = "mp3" | "wav" | "opus" | "aac"
 export interface ToolCallExpansionDefaults {
   preset: ToolCallExpansionPresetSelection
   thinking: ExpansionPreference
-  tools: Record<string, ExpansionPreference>
+  tools: Record<string, VisibilityPreference>
 }
 
 export interface SpeechSettings {
@@ -96,9 +97,10 @@ export interface UiSettings {
   diffViewMode: DiffViewMode
   toolCallExpansionDefaults: ToolCallExpansionDefaults
   toolOutputExpansion: ExpansionPreference
-  diagnosticsExpansion: ExpansionPreference
+  diagnosticsExpansion: VisibilityPreference
   toolInputsVisibility: ToolInputsVisibilityPreference
   showUsageMetrics: boolean
+  usageMetricsExpansion: ExpansionPreference
   autoCleanupBlankSessions: boolean
   keepUnseenSubagentIdleStatus: boolean
 
@@ -188,6 +190,7 @@ const defaultUiSettings: UiSettings = {
   diagnosticsExpansion: "expanded",
   toolInputsVisibility: "collapsed",
   showUsageMetrics: true,
+  usageMetricsExpansion: "collapsed",
   autoCleanupBlankSessions: true,
   keepUnseenSubagentIdleStatus: false,
 
@@ -201,6 +204,10 @@ function normalizeExpansionPreference(value: unknown, fallback: ExpansionPrefere
   return value === "expanded" || value === "collapsed" ? value : fallback
 }
 
+function normalizeVisibilityPreference(value: unknown, fallback: VisibilityPreference): VisibilityPreference {
+  return value === "hidden" || value === "expanded" || value === "collapsed" ? value : fallback
+}
+
 function normalizeToolCallExpansionPreset(value: unknown): ToolCallExpansionPresetSelection {
   if (value === "minimal" || value === "balanced" || value === "detailed" || value === "everything" || value === "custom") {
     return value
@@ -208,12 +215,12 @@ function normalizeToolCallExpansionPreset(value: unknown): ToolCallExpansionPres
   return defaultToolCallExpansionDefaults.preset
 }
 
-function normalizeToolCallExpansionTools(value: unknown): Record<string, ExpansionPreference> {
+function normalizeToolCallExpansionTools(value: unknown): Record<string, VisibilityPreference> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {}
-  const next: Record<string, ExpansionPreference> = {}
+  const next: Record<string, VisibilityPreference> = {}
   for (const [tool, mode] of Object.entries(value as Record<string, unknown>)) {
     if (!tool) continue
-    if (mode === "expanded" || mode === "collapsed") {
+    if (mode === "hidden" || mode === "expanded" || mode === "collapsed") {
       next[tool] = mode
     }
   }
@@ -226,7 +233,7 @@ function normalizeToolCallExpansionDefaults(input: unknown, legacySettings: Part
     : undefined
   const legacyThinking = normalizeExpansionPreference(
     legacySettings.thinkingBlocksExpansion,
-    defaultToolCallExpansionDefaults.thinking,
+    "collapsed",
   )
 
   return {
@@ -257,6 +264,11 @@ const defaultSpeechSettings: SpeechSettings = {
 
 function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
   const sanitized = input ?? {}
+  const toolCallExpansionDefaults = normalizeToolCallExpansionDefaults(sanitized.toolCallExpansionDefaults, sanitized)
+  const usageMetricsFallback =
+    toolCallExpansionDefaults.preset === "minimal" || toolCallExpansionDefaults.preset === "balanced"
+      ? "collapsed"
+      : "expanded"
   return {
     showThinkingBlocks: sanitized.showThinkingBlocks ?? defaultUiSettings.showThinkingBlocks,
     showKeyboardShortcutHints:
@@ -269,14 +281,21 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     showPromptVoiceInput: sanitized.showPromptVoiceInput ?? defaultUiSettings.showPromptVoiceInput,
     locale: sanitized.locale ?? defaultUiSettings.locale,
     diffViewMode: sanitized.diffViewMode ?? defaultUiSettings.diffViewMode,
-    toolCallExpansionDefaults: normalizeToolCallExpansionDefaults(sanitized.toolCallExpansionDefaults, sanitized),
+    toolCallExpansionDefaults,
     toolOutputExpansion: sanitized.toolOutputExpansion ?? defaultUiSettings.toolOutputExpansion,
-    diagnosticsExpansion: sanitized.diagnosticsExpansion ?? defaultUiSettings.diagnosticsExpansion,
+    diagnosticsExpansion: normalizeVisibilityPreference(
+      sanitized.diagnosticsExpansion,
+      defaultUiSettings.diagnosticsExpansion,
+    ),
     toolInputsVisibility:
       sanitized.toolInputsVisibility === "hidden" || sanitized.toolInputsVisibility === "collapsed" || sanitized.toolInputsVisibility === "expanded"
         ? sanitized.toolInputsVisibility
         : defaultUiSettings.toolInputsVisibility,
     showUsageMetrics: sanitized.showUsageMetrics ?? defaultUiSettings.showUsageMetrics,
+    usageMetricsExpansion: normalizeExpansionPreference(
+      sanitized.usageMetricsExpansion,
+      usageMetricsFallback,
+    ),
     autoCleanupBlankSessions: sanitized.autoCleanupBlankSessions ?? defaultUiSettings.autoCleanupBlankSessions,
     keepUnseenSubagentIdleStatus:
       sanitized.keepUnseenSubagentIdleStatus ?? defaultUiSettings.keepUnseenSubagentIdleStatus,
@@ -822,11 +841,11 @@ function setDiffViewMode(mode: DiffViewMode): void {
   updateUiSettings({ diffViewMode: mode })
 }
 
-function setToolOutputExpansion(mode: ExpansionPreference): void {
+function setToolOutputExpansion(mode: VisibilityPreference): void {
   const current = preferences()
-  if (current.toolOutputExpansion === mode && current.toolCallExpansionDefaults.tools.other === mode) return
+  if (current.toolCallExpansionDefaults.tools.other === mode) return
   updateUiSettings({
-    toolOutputExpansion: mode,
+    toolOutputExpansion: mode === "hidden" ? current.toolOutputExpansion : mode,
     toolCallExpansionDefaults: {
       ...current.toolCallExpansionDefaults,
       preset: "custom",
@@ -838,7 +857,7 @@ function setToolOutputExpansion(mode: ExpansionPreference): void {
   })
 }
 
-function setDiagnosticsExpansion(mode: ExpansionPreference): void {
+function setDiagnosticsExpansion(mode: VisibilityPreference): void {
   if (preferences().diagnosticsExpansion === mode) return
   updateUiSettings({ diagnosticsExpansion: mode })
 }

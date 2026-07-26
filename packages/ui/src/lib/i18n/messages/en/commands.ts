@@ -123,12 +123,12 @@ export const commandMessages = {
   "commands.diffViewUnified.keywords": "diff, unified, view",
 
   "commands.toolOutputsDefault.label": "Tool Outputs Default · {state}",
-  "commands.toolOutputsDefault.description": "Toggle default expansion for tool outputs",
-  "commands.toolOutputsDefault.keywords": "tool, output, expand, collapse",
+  "commands.toolOutputsDefault.description": "Set default visibility for tool outputs",
+  "commands.toolOutputsDefault.keywords": "tool, output, hide, expand, collapse",
 
   "commands.diagnosticsDefault.label": "Diagnostics Default · {state}",
-  "commands.diagnosticsDefault.description": "Toggle default expansion for diagnostics output",
-  "commands.diagnosticsDefault.keywords": "diagnostics, expand, collapse",
+  "commands.diagnosticsDefault.description": "Set default visibility for diagnostics output",
+  "commands.diagnosticsDefault.keywords": "diagnostics, hide, expand, collapse",
 
   "commands.toolInputsVisibility.label": "Tool Inputs Visibility · {state}",
   "commands.toolInputsVisibility.description": "Set default visibility for tool call input arguments",

@@ -4,16 +4,17 @@ import type { FileSystemEntry } from "../api-types"
 export const WORKSPACE_CANDIDATE_CACHE_TTL_MS = 30_000
 
 interface WorkspaceCandidateCacheEntry {
+  scope: string
   expiresAt: number
   candidates: FileSystemEntry[]
 }
 
 const workspaceCandidateCache = new Map<string, WorkspaceCandidateCacheEntry>()
 
-export function getWorkspaceCandidates(rootDir: string, now = Date.now()): FileSystemEntry[] | undefined {
+export function getWorkspaceCandidates(rootDir: string, scope: string, now = Date.now()): FileSystemEntry[] | undefined {
   const key = normalizeKey(rootDir)
   const cached = workspaceCandidateCache.get(key)
-  if (!cached) {
+  if (!cached || cached.scope !== scope) {
     return undefined
   }
 
@@ -27,19 +28,16 @@ export function getWorkspaceCandidates(rootDir: string, now = Date.now()): FileS
 
 export function refreshWorkspaceCandidates(
   rootDir: string,
+  scope: string,
   builder: () => FileSystemEntry[],
   now = Date.now(),
 ): FileSystemEntry[] {
   const key = normalizeKey(rootDir)
   const freshCandidates = builder()
 
-  if (!freshCandidates || freshCandidates.length === 0) {
-    workspaceCandidateCache.delete(key)
-    return []
-  }
-
   const storedCandidates = cloneEntries(freshCandidates)
   workspaceCandidateCache.set(key, {
+    scope,
     expiresAt: now + WORKSPACE_CANDIDATE_CACHE_TTL_MS,
     candidates: storedCandidates,
   })
@@ -53,8 +51,7 @@ export function clearWorkspaceSearchCache(rootDir?: string) {
     return
   }
 
-  const key = normalizeKey(rootDir)
-  workspaceCandidateCache.delete(key)
+  workspaceCandidateCache.delete(normalizeKey(rootDir))
 }
 
 function cloneEntries(entries: FileSystemEntry[]): FileSystemEntry[] {

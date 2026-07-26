@@ -12,6 +12,19 @@
   border-radius: 0;
 }
 
+.providers-manager-embedded {
+  position: static;
+  transform: none;
+  width: 100%;
+  max-height: none;
+  border: 1px solid var(--border-base);
+  background: var(--surface-base);
+}
+
+.providers-manager-embedded .providers-manager-body {
+  overflow: visible;
+}
+
 .providers-manager-header {
   display: flex;
   align-items: flex-start;
@@ -336,6 +349,12 @@
     width: 100vw;
     max-height: 100dvh;
     height: 100dvh;
+  }
+
+  .providers-manager-embedded {
+    width: 100%;
+    max-height: none;
+    height: auto;
   }
 
   .providers-connect-bar,

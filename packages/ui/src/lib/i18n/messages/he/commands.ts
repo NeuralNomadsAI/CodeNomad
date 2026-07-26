@@ -123,12 +123,12 @@ export const commandMessages = {
   "commands.diffViewUnified.keywords": "diff, מאוחד, תצוגה",
 
   "commands.toolOutputsDefault.label": "ברירת מחדל לפלטי כלים · {state}",
-  "commands.toolOutputsDefault.description": "החלף ברירת מחדל לפריסת פלטי כלים",
-  "commands.toolOutputsDefault.keywords": "כלי, פלט, פרוס, כווץ",
+  "commands.toolOutputsDefault.description": "הגדר נראות ברירת מחדל לפלטי כלים",
+  "commands.toolOutputsDefault.keywords": "כלי, פלט, הסתר, פרוס, כווץ",
 
   "commands.diagnosticsDefault.label": "ברירת מחדל לאבחון · {state}",
-  "commands.diagnosticsDefault.description": "החלף ברירת מחדל לפריסת פלט אבחון",
-  "commands.diagnosticsDefault.keywords": "אבחון, פרוס, כווץ",
+  "commands.diagnosticsDefault.description": "הגדר נראות ברירת מחדל לפלט אבחון",
+  "commands.diagnosticsDefault.keywords": "אבחון, הסתר, פרוס, כווץ",
 
   "commands.toolInputsVisibility.label": "נראות קלטי כלים · {state}",
   "commands.toolInputsVisibility.description": "הגדר נראות ברירת מחדל לארגומנטים של קריאות כלי",

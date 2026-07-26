@@ -122,6 +122,7 @@ export const ConfigFilesSettingsSection: Component = () => {
 
   return (
     <div class="settings-section-stack config-files-section">
+      <h2 class="sr-only">{t("settings.configFiles.title")}</h2>
       <div class="config-files-card">
         <div class="config-files-toolbar">
           <div class="config-files-selector-field">

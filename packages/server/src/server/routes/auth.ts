@@ -39,7 +39,7 @@ function getLoginHtml(defaultUsername: string): string {
   }
 
   const escapedUsername = escapeHtml(defaultUsername)
-  return cachedLoginTemplate.replace(/\{\{DEFAULT_USERNAME\}\}/g, escapedUsername)
+  return cachedLoginTemplate.replace(/\{\{DEFAULT_USERNAME\}\}/g, () => escapedUsername)
 }
 
 function getTokenHtml(): string {
