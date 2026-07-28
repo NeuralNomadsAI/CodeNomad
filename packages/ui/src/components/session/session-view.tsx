@@ -7,7 +7,7 @@ import { messageStoreBus } from "../../stores/message-v2/bus"
 import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import { getAttachments, removeAttachment } from "../../stores/attachments"
-import { instances, waitForInstanceWorkspaceMetadataHydration } from "../../stores/instances"
+import { instances, isInstanceRuntimeCurrent, waitForInstanceWorkspaceMetadataHydration } from "../../stores/instances"
 import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession } from "../../stores/sessions"
 import { clearSessionIdleFade, IDLE_STATUS_VISIBILITY_MS, getSessionStatus, isSessionBusy as getSessionBusyStatus, markSessionIdleFadeStarted } from "../../stores/session-status"
 import { deleteMessage } from "../../stores/session-actions"
@@ -426,6 +426,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     if (!instance || !instance.client) return
 
     try {
+      invalidateSessionMessageCache(props.instanceId, props.sessionId)
       await requestData(
         instance.client.session.revert({
           sessionID: props.sessionId,
@@ -433,7 +434,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         }),
         "session.revert",
       )
-      if (instances().get(props.instanceId) !== instance) return
+      if (!isInstanceRuntimeCurrent(props.instanceId, instance)) return
       if (messageStore().getSessionRevert(props.sessionId)?.messageID !== messageId) {
         invalidateSessionMessageLoad(props.instanceId, props.sessionId)
         invalidateSessionMessageCache(props.instanceId, props.sessionId)

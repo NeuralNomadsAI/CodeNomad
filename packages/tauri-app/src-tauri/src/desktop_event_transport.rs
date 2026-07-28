@@ -316,11 +316,16 @@ fn coalesced_payload_event<'a>(event: &'a Value) -> &'a Value {
     }
 }
 
-fn coalesced_instance_id(event: &Value) -> &str {
-    event
+fn coalesced_instance_id(event: &Value) -> String {
+    let instance_id = event
         .get("instanceId")
         .and_then(Value::as_str)
-        .unwrap_or_default()
+        .unwrap_or_default();
+    let stream_id = event
+        .get("streamId")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    format!("{}@{}", instance_id, stream_id)
 }
 
 fn snapshot_key(event: &Value) -> Option<String> {
@@ -467,7 +472,11 @@ fn coalesced_payload_event_mut(event: &mut Value) -> Option<&mut serde_json::Map
 
 fn status_key(event: &Value) -> Option<String> {
     match event.get("type")?.as_str()? {
-        "instance.eventStatus" => Some(coalesced_instance_id(event).to_string()),
+        "instance.eventStatus" => Some(format!(
+            "{}:{}",
+            coalesced_instance_id(event),
+            event.get("status").and_then(Value::as_str).unwrap_or_default()
+        )),
         "session.status" => snapshot_key(event),
         _ => None,
     }

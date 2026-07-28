@@ -54,26 +54,32 @@ async function syncOpenCodeWorkspaces(instanceId: string): Promise<void> {
   const existing = workspaceSyncs.get(instanceId)
   if (existing) return existing
 
+  let runtimeToken: symbol | undefined
+  const isCurrent = async () => (await getInstance(instanceId))?.runtimeToken === runtimeToken
   const task = (async () => {
     const instance = await getInstance(instanceId)
     if (!instance?.client || !instance.folder) return
+    runtimeToken = instance.runtimeToken
 
     const rootClient = getRootClient(instanceId) as any
     const workspaceApi = rootClient.experimental?.workspace
     if (!workspaceApi?.syncList || !workspaceApi?.list) {
       log.warn("OpenCode experimental workspace API unavailable", { instanceId })
-      workspaceIdByWorktreeSlug.set(instanceId, new Map())
+      if (await isCurrent()) workspaceIdByWorktreeSlug.set(instanceId, new Map())
       return
     }
 
     await withWorkspaceSyncTimeout(workspaceApi.syncList({ directory: instance.folder }))
+    if (!await isCurrent()) return
     const result = await withWorkspaceSyncTimeout<any>(workspaceApi.list({ directory: instance.folder }))
+    if (!await isCurrent()) return
     const workspaces = Array.isArray(result?.data) ? (result.data as OpenCodeWorkspace[]) : []
     const next = mapOpenCodeWorkspacesToWorktreeSlugs(getWorktrees(instanceId), workspaces)
 
     workspaceIdByWorktreeSlug.set(instanceId, next)
   })()
-    .catch((error) => {
+    .catch(async (error) => {
+      if (!await isCurrent()) return
       log.warn("Failed to sync OpenCode workspaces", { instanceId, error })
       if (!workspaceIdByWorktreeSlug.has(instanceId)) {
         workspaceIdByWorktreeSlug.set(instanceId, new Map())

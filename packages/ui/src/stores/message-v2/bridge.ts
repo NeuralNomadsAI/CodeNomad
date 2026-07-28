@@ -125,7 +125,7 @@ export function upsertMessageInfoV2(instanceId: string, info: MessageInfo | null
     status,
     createdAt,
     updatedAt: endAt ?? createdAt,
-    isEphemeral: status === "sending" || status === "streaming",
+    isEphemeral: info.role === "user" ? false : status === "sending" || status === "streaming",
     bumpRevision: Boolean(options?.bumpRevision),
   })
   store.setMessageInfo(info.id, info)

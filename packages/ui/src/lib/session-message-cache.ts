@@ -1,5 +1,6 @@
 const DATABASE_NAME = "codenomad-session-messages"
 const DATABASE_VERSION = 2
+const UNSAFE_CACHE_STORAGE_KEY = "codenomad-session-message-cache-unsafe-v1"
 const MANIFEST_STORE = "session-manifests"
 const MESSAGE_STORE = "session-messages"
 const SESSION_INDEX = "by-session"
@@ -8,6 +9,7 @@ export const DEFAULT_SESSION_MESSAGE_CACHE_PAGE_SIZE = 50
 export const MAX_SESSION_MESSAGE_CACHE_BYTES = 16 * 1024 * 1024
 export const MAX_TOTAL_MESSAGE_CACHE_BYTES = 64 * 1024 * 1024
 export const MAX_SESSION_MESSAGE_CACHE_ENTRIES = 64
+const MAX_SESSION_MESSAGE_CACHE_MESSAGES = 20_000
 
 export interface SessionMessageCacheManifest {
   key: string
@@ -36,6 +38,7 @@ export interface SessionMessageCacheCursor {
   startIndex: number
   totalCount: number
   complete: boolean
+  remainingByteSize: number
 }
 
 export interface SessionMessageCachePage {
@@ -56,6 +59,36 @@ let clearGeneration = 0
 let cacheEnabled = false
 const resetListeners = new Set<() => void>()
 let mutationQueue: Promise<void> = Promise.resolve()
+
+function cacheStorage(): Storage | undefined {
+  try {
+    const storage = (globalThis as any).window?.localStorage ?? globalThis.localStorage
+    return storage && typeof storage.getItem === "function" && typeof storage.setItem === "function" && typeof storage.removeItem === "function"
+      ? storage
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+export function isSessionMessageCacheUnsafe(): boolean {
+  try {
+    return cacheStorage()?.getItem(UNSAFE_CACHE_STORAGE_KEY) === "1"
+  } catch {
+    return false
+  }
+}
+
+export function markSessionMessageCacheUnsafe(unsafe: boolean): void {
+  try {
+    const storage = cacheStorage()
+    if (!storage) return
+    if (unsafe) storage.setItem(UNSAFE_CACHE_STORAGE_KEY, "1")
+    else storage.removeItem(UNSAFE_CACHE_STORAGE_KEY)
+  } catch {
+    // The native restore preference remains the durable fallback.
+  }
+}
 
 export function isSessionMessageCacheEnabled(): boolean {
   return cacheEnabled
@@ -156,11 +189,12 @@ function isValidManifest(value: unknown, expectedKey: string): value is SessionM
   return manifest.key === expectedKey &&
     typeof manifest.snapshotId === "string" && manifest.snapshotId.length > 0 &&
     Array.isArray(manifest.messageIds) && manifest.messageIds.every((id) => typeof id === "string" && id.length > 0) &&
+    manifest.messageIds.length <= MAX_SESSION_MESSAGE_CACHE_MESSAGES &&
     new Set(manifest.messageIds).size === manifest.messageIds.length &&
     Number.isSafeInteger(manifest.startIndex) && manifest.startIndex >= 0 &&
     Number.isSafeInteger(manifest.totalCount) && manifest.totalCount === manifest.startIndex + manifest.messageIds.length &&
     manifest.complete === (manifest.startIndex === 0) &&
-    Number.isFinite(manifest.byteSize) && manifest.byteSize >= 0 &&
+    Number.isFinite(manifest.byteSize) && manifest.byteSize >= 0 && manifest.byteSize <= MAX_SESSION_MESSAGE_CACHE_BYTES &&
     Number.isFinite(manifest.savedAt)
 }
 
@@ -215,13 +249,16 @@ export function prepareSessionMessageCache(
   snapshotId = createSnapshotId(),
   byteLimit = MAX_SESSION_MESSAGE_CACHE_BYTES,
   savedAt = Date.now(),
+  source = { startIndex: 0, totalCount: messages.length },
 ): PreparedSessionMessageCache | null {
+  if (source.startIndex < 0 || source.totalCount !== source.startIndex + messages.length) return null
   let byteSize = 0
   let startIndex = messages.length
   const records: SessionMessageCacheRecord[] = []
   const seen = new Set<string>()
   try {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (records.length >= MAX_SESSION_MESSAGE_CACHE_MESSAGES) break
       const messageId = messageIdOf(messages[index])
       if (!messageId || seen.has(messageId)) return null
       seen.add(messageId)
@@ -236,7 +273,7 @@ export function prepareSessionMessageCache(
         sessionKey: key,
         snapshotId,
         messageId,
-        ordinal: index,
+        ordinal: source.startIndex + index,
         payload,
       })
     }
@@ -250,9 +287,9 @@ export function prepareSessionMessageCache(
       key,
       snapshotId,
       messageIds: records.map((record) => record.messageId),
-      startIndex,
-      totalCount: messages.length,
-      complete: startIndex === 0,
+      startIndex: source.startIndex + startIndex,
+      totalCount: source.totalCount,
+      complete: source.startIndex + startIndex === 0,
       byteSize,
       savedAt,
     },
@@ -284,17 +321,14 @@ function enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {
   return result
 }
 
-async function readSessionRecordKeys(database: IDBDatabase, sessionKeys: readonly string[]): Promise<Map<string, IDBValidKey[]>> {
+async function readSessionRecordKeys(transaction: IDBTransaction, sessionKeys: readonly string[]): Promise<Map<string, IDBValidKey[]>> {
   if (sessionKeys.length === 0) return new Map()
-  const transaction = database.transaction(MESSAGE_STORE, "readonly")
-  const completion = transactionDone(transaction)
   const index = transaction.objectStore(MESSAGE_STORE).index(SESSION_INDEX)
   const requests = sessionKeys.map(async (sessionKey) => [
     sessionKey,
     await requestResult(index.getAllKeys(IDBKeyRange.only(sessionKey))),
   ] as const)
   const entries = await Promise.all(requests)
-  await completion
   return new Map(entries)
 }
 
@@ -324,6 +358,7 @@ export async function openSessionMessageCache(
     startIndex: manifest.startIndex,
     totalCount: manifest.totalCount,
     complete: manifest.complete,
+    remainingByteSize: manifest.byteSize,
   }
 }
 
@@ -353,13 +388,18 @@ export async function readSessionMessageCachePage(
   }
 
   try {
+    const pageBytes = records.reduce((total, record) => total + record!.payload.length * 2, 0)
+    if (pageBytes > cursor.remainingByteSize) {
+      await deleteCorruptSessionMessageCacheKey(cursor.key, manifest)
+      return null
+    }
     const messages = records.map((record) => JSON.parse(record!.payload))
     const sessionId = sessionIdFromKey(cursor.key)
     if (messages.some((message, index) => messageIdOf(message) !== ids[index] || messageSessionIdOf(message) !== sessionId)) {
       await deleteCorruptSessionMessageCacheKey(cursor.key, manifest)
       return null
     }
-    const nextCursor = { ...cursor, beforeIndex: start }
+    const nextCursor = { ...cursor, beforeIndex: start, remainingByteSize: cursor.remainingByteSize - pageBytes }
     return {
       page: {
         messages,
@@ -376,10 +416,15 @@ export async function readSessionMessageCachePage(
   }
 }
 
-export async function writeSessionMessageCache(workspace: string, sessionId: string, messages: unknown[]): Promise<boolean> {
+export async function writeSessionMessageCache(
+  workspace: string,
+  sessionId: string,
+  messages: unknown[],
+  source?: { startIndex: number; totalCount: number },
+): Promise<boolean> {
   const generation = clearGeneration
   const key = createSessionMessageCacheKey(workspace, sessionId)
-  const prepared = prepareSessionMessageCache(key, messages)
+  const prepared = prepareSessionMessageCache(key, messages, undefined, undefined, undefined, source)
   if (!prepared) {
     await deleteSessionMessageCache(workspace, sessionId)
     return false
@@ -387,10 +432,11 @@ export async function writeSessionMessageCache(workspace: string, sessionId: str
   return enqueueMutation(async () => {
     const database = await openDatabase()
     if (!database || generation !== clearGeneration) return false
-    const manifestRead = database.transaction(MANIFEST_STORE, "readonly")
-    const manifestReadDone = transactionDone(manifestRead)
-    const existing = await requestResult(manifestRead.objectStore(MANIFEST_STORE).getAll()) as unknown[]
-    await manifestReadDone
+    const transaction = database.transaction([MANIFEST_STORE, MESSAGE_STORE], "readwrite")
+    const completion = transactionDone(transaction)
+    const manifestStore = transaction.objectStore(MANIFEST_STORE)
+    const messageStore = transaction.objectStore(MESSAGE_STORE)
+    const existing = await requestResult(manifestStore.getAll()) as unknown[]
     const validExisting = existing.filter((manifest): manifest is SessionMessageCacheManifest => {
       const manifestKey = (manifest as { key?: unknown })?.key
       return typeof manifestKey === "string" && isValidManifest(manifest, manifestKey)
@@ -402,13 +448,7 @@ export async function writeSessionMessageCache(workspace: string, sessionId: str
     prepared.manifest.savedAt = Math.max(prepared.manifest.savedAt, ...validExisting.map((manifest) => manifest.savedAt + 1))
     const projected = [...validExisting.filter((manifest) => manifest.key !== key), prepared.manifest]
     const evictions = selectSessionMessageCacheEvictions(projected)
-    const recordKeys = await readSessionRecordKeys(database, [key, ...evictions, ...invalidKeys])
-    if (generation !== clearGeneration) return false
-
-    const transaction = database.transaction([MANIFEST_STORE, MESSAGE_STORE], "readwrite")
-    const completion = transactionDone(transaction)
-    const manifestStore = transaction.objectStore(MANIFEST_STORE)
-    const messageStore = transaction.objectStore(MESSAGE_STORE)
+    const recordKeys = await readSessionRecordKeys(transaction, [key, ...evictions, ...invalidKeys])
     for (const recordKey of recordKeys.get(key) ?? []) messageStore.delete(recordKey)
     for (const record of prepared.records) messageStore.put(record)
     manifestStore.put(prepared.manifest)
@@ -434,10 +474,10 @@ async function deleteSessionMessageCacheKey(key: string): Promise<void> {
   await enqueueMutation(async () => {
     const database = await openDatabase()
     if (!database) return
-    const recordKeys = await readSessionRecordKeys(database, [key])
     const transaction = database.transaction([MANIFEST_STORE, MESSAGE_STORE], "readwrite")
     const completion = transactionDone(transaction)
     const messageStore = transaction.objectStore(MESSAGE_STORE)
+    const recordKeys = await readSessionRecordKeys(transaction, [key])
     for (const recordKey of recordKeys.get(key) ?? []) messageStore.delete(recordKey)
     transaction.objectStore(MANIFEST_STORE).delete(key)
     await completion
@@ -449,22 +489,20 @@ async function deleteCorruptSessionMessageCacheKey(key: string, observed: unknow
   await enqueueMutation(async () => {
     const database = await openDatabase()
     if (!database) return
-    const manifestRead = database.transaction(MANIFEST_STORE, "readonly")
-    const manifestReadDone = transactionDone(manifestRead)
-    const current = await requestResult(manifestRead.objectStore(MANIFEST_STORE).get(key)) as unknown
-    await manifestReadDone
+    const transaction = database.transaction([MANIFEST_STORE, MESSAGE_STORE], "readwrite")
+    const completion = transactionDone(transaction)
+    const manifestStore = transaction.objectStore(MANIFEST_STORE)
+    const messageStore = transaction.objectStore(MESSAGE_STORE)
+    const current = await requestResult(manifestStore.get(key)) as unknown
     if (!current) return
     if (typeof observedSnapshotId === "string") {
       if ((current as { snapshotId?: unknown }).snapshotId !== observedSnapshotId) return
     } else if (isValidManifest(current, key)) {
       return
     }
-    const recordKeys = await readSessionRecordKeys(database, [key])
-    const transaction = database.transaction([MANIFEST_STORE, MESSAGE_STORE], "readwrite")
-    const completion = transactionDone(transaction)
-    const messageStore = transaction.objectStore(MESSAGE_STORE)
+    const recordKeys = await readSessionRecordKeys(transaction, [key])
     for (const recordKey of recordKeys.get(key) ?? []) messageStore.delete(recordKey)
-    transaction.objectStore(MANIFEST_STORE).delete(key)
+    manifestStore.delete(key)
     await completion
   })
 }
@@ -480,4 +518,5 @@ export async function clearSessionMessageCache(): Promise<void> {
     transaction.objectStore(MESSAGE_STORE).clear()
     await completion
   })
+  markSessionMessageCacheUnsafe(false)
 }

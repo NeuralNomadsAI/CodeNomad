@@ -87,6 +87,14 @@ describe("message-v2 authoritative hydration", () => {
     assert.equal((store.getMessage("message-4")?.parts["part-message-4"]?.data as any).text, "live")
   })
 
+  it("releases a directly removed message and its info version", () => {
+    const store = createInstanceMessageStore("instance-1")
+    store.hydrateMessages("session-1", [message("message-1")], [info("message-1")])
+    store.removeMessage("message-1")
+    assert.equal("message-1" in store.state.messages, false)
+    assert.equal("message-1" in store.state.messageInfoVersion, false)
+  })
+
   it("bumps authority when a revert anchor is not resident", () => {
     const store = createInstanceMessageStore("instance-1")
     store.hydrateMessages("session-1", [message("message-1")], [info("message-1")])

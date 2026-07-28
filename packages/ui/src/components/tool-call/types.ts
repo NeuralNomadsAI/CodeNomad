@@ -105,6 +105,7 @@ export interface ToolOutputChrome {
   title?: string
   language?: string
   copyText?: string | null
+  getCopyText?: () => string | null
   actions?: JSXElement
   wrapToggle?: boolean
   suppressInnerHeader?: boolean

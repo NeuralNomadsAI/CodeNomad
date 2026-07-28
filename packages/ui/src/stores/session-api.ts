@@ -7,9 +7,10 @@ import {
   type SessionStatus,
 } from "../types/session"
 import type { Message, MessageInfo } from "../types/message"
+import type { Instance } from "../types/instance"
 import type { Session as SDKSession, SessionListResponse } from "@opencode-ai/sdk/v2/client"
 
-import { instances, reconcilePendingSessionIndicators } from "./instances"
+import { clearSessionInterruptions, instances, isInstanceRuntimeCurrent, reconcilePendingSessionIndicators } from "./instances"
 import { preferences, setAgentModelPreference } from "./preferences"
 import {
   activeSessionId,
@@ -56,8 +57,8 @@ import { deleteSessionAttachments } from "./attachments"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getDefaultModel, isModelValid } from "./session-models"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
-import { mergeCachedSessionMessagePageV2, seedSessionMessagesV2, reconcilePendingPermissionsV2, reconcilePendingQuestionsV2 } from "./message-v2/bridge"
-import { clearPendingDeltasForMessage, clearPendingDeltasForSession } from "./delta-buffer"
+import { mergeCachedSessionMessagePageV2, seedSessionMessagesV2, reconcilePendingPermissionsV2, reconcilePendingQuestionsV2, setSessionRevertV2 } from "./message-v2/bridge"
+import { clearPendingDeltasForMessage, clearPendingDeltasForSession, requestDeltaRecovery } from "./delta-buffer"
 import { messageStoreBus } from "./message-v2/bus"
 import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
@@ -104,9 +105,13 @@ messageStoreBus.onInstanceDestroyed((instanceId) => {
   for (const key of pendingMetadataHydrations.keys()) if (key.startsWith(prefix)) pendingMetadataHydrations.delete(key)
 })
 
-function adaptApiMessages(sessionId: string, apiMessages: any[]): { messages: Message[]; infos: Map<string, MessageInfo> } {
+function adaptApiMessages(
+  sessionId: string,
+  apiMessages: any[],
+  sessionStatus: SessionStatus = "idle",
+): { messages: Message[]; infos: Map<string, MessageInfo> } {
   const infos = new Map<string, MessageInfo>()
-  const messages = apiMessages.map((apiMessage: any) => {
+  const messages = apiMessages.map((apiMessage: any, index: number) => {
     const info = (apiMessage.info || apiMessage) as MessageInfo
     const messageId = info.id || String(Date.now())
     infos.set(messageId, info)
@@ -116,7 +121,13 @@ function adaptApiMessages(sessionId: string, apiMessages: any[]): { messages: Me
       type: info.role === "user" ? "user" as const : "assistant" as const,
       parts: (apiMessage.parts || []).map((part: any) => normalizeMessagePart(part)),
       timestamp: info.time?.created || Date.now(),
-      status: (info as any).error ? "error" as const : "complete" as const,
+      status: (info as any).error
+        ? "error" as const
+        : info.role === "assistant" && index === apiMessages.length - 1 &&
+            !info.time?.completed && !(info.time as { end?: number } | undefined)?.end &&
+            (sessionStatus === "working" || sessionStatus === "compacting")
+          ? "streaming" as const
+          : "complete" as const,
       version: 0,
     }
   })
@@ -304,8 +315,8 @@ function hydrateSessionMetadata(instanceId: string, sessionId: string, client = 
       if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs))
       for (const candidate of candidates) {
         try {
-          await hydrateSessionMetadataWithClient(client, instanceId, sessionId, candidate, () => instances().get(instanceId) === instance)
-          if (instances().get(instanceId) !== instance) return
+          await hydrateSessionMetadataWithClient(client, instanceId, sessionId, candidate, () => isInstanceRuntimeCurrent(instanceId, instance))
+          if (!isInstanceRuntimeCurrent(instanceId, instance)) return
           rememberSessionWorkspace(instanceId, sessionId, candidate.workspace)
           return
         } catch (error) {
@@ -326,12 +337,16 @@ async function hydrateRestoredSessionChain(
   requestedIds: Array<string | null | undefined>,
   signal?: AbortSignal,
 ): Promise<void> {
+  const instance = instances().get(instanceId)
+  if (!instance) throw new Error("Instance not ready")
   const client = getRootClient(instanceId)
+  const isCurrentInstance = () => isInstanceRuntimeCurrent(instanceId, instance)
   const pending = requestedIds.filter((id): id is string => Boolean(id) && id !== "info")
   const visited = new Set<string>()
   let chainWorkspacePayload: { workspace?: string } = {}
   while (pending.length > 0) {
     signal?.throwIfAborted()
+    if (!isCurrentInstance()) return
     const sessionId = pending.shift()!
     if (visited.has(sessionId)) continue
     visited.add(sessionId)
@@ -342,6 +357,7 @@ async function hydrateRestoredSessionChain(
       try {
         const workspaceCandidates = await getSessionWorkspaceCandidates(instanceId, sessionId, chainWorkspacePayload)
         signal?.throwIfAborted()
+        if (!isCurrentInstance()) return
         let apiSession: SDKSession | undefined
         let hydratedWorkspace: string | undefined
         let lastError: unknown
@@ -351,6 +367,7 @@ async function hydrateRestoredSessionChain(
               client.session.get({ sessionID: sessionId, ...workspacePayload }),
               "session.get",
             )
+            if (!isCurrentInstance()) return
             hydratedWorkspace = workspacePayload.workspace
             break
           } catch (error) {
@@ -361,7 +378,7 @@ async function hydrateRestoredSessionChain(
         signal?.throwIfAborted()
         rememberSessionWorkspace(instanceId, sessionId, hydratedWorkspace)
         setSessions((prev) => {
-          if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId) || signal?.aborted) return prev
+          if (!isCurrentInstance() || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId) || signal?.aborted) return prev
           const next = new Map(prev)
           const instanceSessions = new Map(next.get(instanceId) ?? new Map())
           instanceSessions.set(sessionId, toClientSessionV2(instanceId, apiSession, instanceSessions.get(sessionId)))
@@ -391,7 +408,7 @@ async function hydrateRestoredSessionChain(
   }
 }
 
-async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: SDKSession[], directory?: string): Promise<void> {
+async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: SDKSession[], instance: Instance, directory?: string): Promise<void> {
   const currentSessions = sessions().get(instanceId) ?? new Map<string, Session>()
   const loaded = new Map<string, SDKSession | Session>(currentSessions)
   for (const session of apiSessions) loaded.set(session.id, session)
@@ -399,6 +416,7 @@ async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: SDKSe
   if (!apiSessions.some((session) => hasMissingParentChain(session, loaded))) return
 
   const page = await fetchV2Sessions(instanceId, { directory })
+  if (!isInstanceRuntimeCurrent(instanceId, instance)) return
   const items = getV2SessionItems(page)
   if (items.length === 0) return
 
@@ -441,8 +459,9 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
 
     log.info("session.list", { instanceId, limit: PROJECT_SESSION_LIST_LIMIT, directory: sessionListOptions.directory, scope: "project" })
     const response = await fetchV2Sessions(instanceId, sessionListOptions)
-    if (!isLatestSessionListRequest(instanceId, requestId)) return
+    if (!isInstanceRuntimeCurrent(instanceId, instance) || !isLatestSessionListRequest(instanceId, requestId)) return
     await recordSessionWorkspaceHints(instanceId, getV2SessionItems(response))
+    if (!isInstanceRuntimeCurrent(instanceId, instance) || !isLatestSessionListRequest(instanceId, requestId)) return
 
     let statusById: Record<string, any> = {}
     let statusResponseKnown = false
@@ -455,7 +474,7 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
     } catch (error) {
       log.error("Failed to fetch session status:", error)
     }
-    if (!isLatestSessionListRequest(instanceId, requestId)) return
+    if (!isInstanceRuntimeCurrent(instanceId, instance) || !isLatestSessionListRequest(instanceId, requestId)) return
 
     const sessionMap = new Map<string, Session>()
 
@@ -564,12 +583,12 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
     })
   } catch (error) {
     log.error("Failed to fetch sessions:", error)
-    if (isLatestSessionListRequest(instanceId, requestId)) {
+    if (isInstanceRuntimeCurrent(instanceId, instance) && isLatestSessionListRequest(instanceId, requestId)) {
       setSessionListError(instanceId, getOpencodeErrorMessage(error, tGlobal("sessionList.loadError.detail")))
     }
     throw error
   } finally {
-    if (isLatestSessionListRequest(instanceId, requestId)) {
+    if (isInstanceRuntimeCurrent(instanceId, instance) && isLatestSessionListRequest(instanceId, requestId)) {
       setLoading((prev) => {
         const next = { ...prev }
         next.fetchingSessions.set(instanceId, false)
@@ -600,7 +619,7 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
       search: trimmedQuery,
       directory: instance.folder,
     })
-    if (!isLatestSessionSearch(instanceId, trimmedQuery, requestId)) return
+    if (!isInstanceRuntimeCurrent(instanceId, instance) || !isLatestSessionSearch(instanceId, trimmedQuery, requestId)) return
 
     const searchResults = getV2SessionItems(response)
 
@@ -625,9 +644,9 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
     })
     void hydrateMissingSessionMetadata(instanceId, searchResults.map((session) => session.id))
 
-    await ensureV2ParentChainsLoaded(instanceId, searchResults, instance.folder)
+    await ensureV2ParentChainsLoaded(instanceId, searchResults, instance, instance.folder)
 
-    if (!isLatestSessionSearch(instanceId, trimmedQuery, requestId)) return
+    if (!isInstanceRuntimeCurrent(instanceId, instance) || !isLatestSessionSearch(instanceId, trimmedQuery, requestId)) return
 
     const hydratedSessions = sessions().get(instanceId)
     const deletedSessionIds = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
@@ -646,7 +665,7 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
     setSessionSearchResults(instanceId, trimmedQuery, currentSearchResults.map((session) => session.id), requestId)
   } catch (error) {
     log.error("Failed to search sessions:", error)
-    if (isLatestSessionSearch(instanceId, trimmedQuery, requestId)) {
+    if (isInstanceRuntimeCurrent(instanceId, instance) && isLatestSessionSearch(instanceId, trimmedQuery, requestId)) {
       clearSessionSearch(instanceId)
     }
     throw error
@@ -701,10 +720,11 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
   const selectedAgent = agent || (primaryAgents.length > 0 ? primaryAgents[0].name : "")
 
   const defaultModel = await getDefaultModel(instanceId, selectedAgent)
-  if (instances().get(instanceId) !== instance) throw new Error("Instance no longer active")
+  if (!isInstanceRuntimeCurrent(instanceId, instance)) throw new Error("Instance no longer active")
 
   if (selectedAgent && isModelValid(instanceId, defaultModel)) {
     await setAgentModelPreference(instanceId, selectedAgent, defaultModel)
+    if (!isInstanceRuntimeCurrent(instanceId, instance)) throw new Error("Instance no longer active")
   }
 
   setLoading((prev) => {
@@ -716,7 +736,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
   try {
     log.info(`[HTTP] POST /session.create for instance ${instanceId}`)
     const response = await client.session.create()
-    if (instances().get(instanceId) !== instance) throw new Error("Instance no longer active")
+    if (!isInstanceRuntimeCurrent(instanceId, instance)) throw new Error("Instance no longer active")
 
     if (!response.data) {
       throw new Error("Failed to create session: No data returned")
@@ -796,12 +816,13 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
       log.warn("Failed to persist session worktree mapping", { instanceId, sessionId: session.id, worktreeSlug, error })
     })
 
+    if (!isInstanceRuntimeCurrent(instanceId, instance)) throw new Error("Instance no longer active")
     return session
   } catch (error) {
     log.error("Failed to create session:", error)
     throw error
   } finally {
-    if (instances().get(instanceId) === instance) {
+    if (isInstanceRuntimeCurrent(instanceId, instance)) {
       setLoading((prev) => {
         const next = { ...prev }
         next.creatingSession.set(instanceId, false)
@@ -828,14 +849,14 @@ async function forkSession(
     ...(await getSessionWorkspacePayload(instanceId, sourceSessionId)),
     messageID: options?.messageId,
   }
-  if (instances().get(instanceId) !== instance) throw new Error("Instance no longer active")
+  if (!isInstanceRuntimeCurrent(instanceId, instance)) throw new Error("Instance no longer active")
 
   log.info(`[HTTP] POST /session.fork for instance ${instanceId}`, request)
   const info = await requestData<SessionForkResponse>(
     client.session.fork(request),
     "session.fork",
   )
-  if (instances().get(instanceId) !== instance) throw new Error("Instance no longer active")
+  if (!isInstanceRuntimeCurrent(instanceId, instance)) throw new Error("Instance no longer active")
   const forkedSession = {
     id: info.id,
     instanceId,
@@ -922,8 +943,10 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
 
   try {
     log.info(`[HTTP] DELETE /session.delete for instance ${instanceId}`, { sessionId })
-    await requestData(client.session.delete({ sessionID: sessionId, ...(await getSessionWorkspacePayload(instanceId, sessionId)) }), "session.delete")
-    if (instances().get(instanceId) !== instance) return
+    const workspace = await getSessionWorkspacePayload(instanceId, sessionId)
+    if (!isInstanceRuntimeCurrent(instanceId, instance)) throw new Error("Instance no longer active")
+    await requestData(client.session.delete({ sessionID: sessionId, ...workspace }), "session.delete")
+    if (!isInstanceRuntimeCurrent(instanceId, instance)) throw new Error("Instance no longer active")
 
     removeSessionRuntimeState(instanceId, sessionId)
 
@@ -935,7 +958,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
     log.error("Failed to delete session:", error)
     throw error
   } finally {
-    if (instances().get(instanceId) === instance) {
+    if (isInstanceRuntimeCurrent(instanceId, instance)) {
       setLoading((prev) => {
         const next = { ...prev }
         const deleting = next.deletingSession.get(instanceId)
@@ -955,6 +978,7 @@ function removeSessionRuntimeState(instanceId: string, sessionId: string): void 
   deleteSessionAttachments(instanceId, sessionId)
   clearSessionDraftPrompt(instanceId, sessionId)
   setSessionExpanded(instanceId, sessionId, false)
+  clearSessionInterruptions(instanceId, sessionId)
 
   setSessions((prev) => {
     const next = new Map(prev)
@@ -1014,7 +1038,7 @@ async function fetchAgents(instanceId: string): Promise<void> {
   try {
     log.info(`[HTTP] GET /app.agents for instance ${instanceId}`)
     const response = await rootClient.app.agents()
-    if (instances().get(instanceId) !== instance) return
+    if (!isInstanceRuntimeCurrent(instanceId, instance)) return
     const agentList = (response.data ?? []).map((agent) => ({
       name: agent.name,
       description: agent.description || "",
@@ -1049,7 +1073,7 @@ async function fetchProviders(instanceId: string): Promise<void> {
   try {
     log.info(`[HTTP] GET /config.providers for instance ${instanceId}`)
     const response = await rootClient.config.providers()
-    if (instances().get(instanceId) !== instance) return
+    if (!isInstanceRuntimeCurrent(instanceId, instance)) return
     if (!response.data) return
 
     const providerList = response.data.providers.map((provider) => ({
@@ -1079,7 +1103,7 @@ async function fetchProviders(instanceId: string): Promise<void> {
 async function loadMessages(
   instanceId: string,
   sessionId: string,
-  options?: { force?: boolean },
+  options?: { force?: boolean; revisionRetryCount?: number },
 ): Promise<void> {
   const force = options?.force ?? false
   if (force) {
@@ -1147,17 +1171,28 @@ async function loadMessages(
       (error) => ({ ok: false as const, error }),
     )
     let outcome: Awaited<typeof apiOutcome> | undefined
+    let failedOutcome: Extract<Awaited<typeof apiOutcome>, { ok: false }> | undefined
+    let restoredCache = false
+    let restoredCacheComplete = true
+    let restoredCacheFinished = false
 
     if (!force && restorePreviousStateEnabled() && store.getSessionMessageIds(sessionId).length === 0) {
       const pages = restoreCachedSessionMessagePages(instanceId, sessionId)
       const iterator = pages[Symbol.asyncIterator]()
+      let cacheNext = iterator.next()
       try {
         while (!outcome) {
           const winner = await Promise.race([
-            apiOutcome.then((value) => ({ kind: "http" as const, value })),
-            iterator.next().then((value) => ({ kind: "cache" as const, value })),
+            failedOutcome
+              ? new Promise<never>(() => undefined)
+              : apiOutcome.then((value) => ({ kind: "http" as const, value })),
+            cacheNext.then((value) => ({ kind: "cache" as const, value })),
           ])
           if (winner.kind === "http") {
+            if (!winner.value.ok) {
+              failedOutcome = winner.value
+              continue
+            }
             outcome = winner.value
             cancelCachedSessionMessageRestore(instanceId, sessionId, { preserveShift: true })
             void iterator.return?.(undefined).catch(() => undefined)
@@ -1167,11 +1202,13 @@ async function loadMessages(
             outcome = await apiOutcome
             break
           }
+          cacheNext = iterator.next()
           if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) {
             cancelCachedSessionMessageRestore(instanceId, sessionId)
             return
           }
-          const cached = adaptApiMessages(sessionId, winner.value.value.messages)
+          if (!isInstanceRuntimeCurrent(instanceId, instance)) return
+          const cached = adaptApiMessages(sessionId, winner.value.value.messages, "idle")
           const revision = mergeCachedSessionMessagePageV2(
             instanceId,
             sessionForV2,
@@ -1186,6 +1223,9 @@ async function loadMessages(
             break
           }
           expectedRevision = revision
+          restoredCache = true
+          restoredCacheComplete &&= winner.value.value.complete
+          restoredCacheFinished ||= winner.value.value.done
           reconcilePendingPermissionsV2(instanceId, sessionId)
           reconcilePendingQuestionsV2(instanceId, sessionId)
         }
@@ -1195,12 +1235,24 @@ async function loadMessages(
       }
     }
 
-    outcome ??= await apiOutcome
+    outcome ??= failedOutcome ?? await apiOutcome
     cancelCachedSessionMessageRestore(instanceId, sessionId, { preserveShift: true })
+    if (!isInstanceRuntimeCurrent(instanceId, instance) || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return
+    if (!outcome.ok && restoredCache && restoredCacheComplete && restoredCacheFinished) {
+      setMessagesLoaded((prev) => {
+        const next = new Map(prev)
+        const loadedSet = next.get(instanceId) ?? new Set<string>()
+        loadedSet.add(sessionId)
+        next.set(instanceId, loadedSet)
+        return next
+      })
+      log.warn("Using cached session messages after HTTP failure", { instanceId, sessionId, error: outcome.error })
+      return
+    }
     if (!outcome.ok) throw outcome.error
     const apiMessages = outcome.messages
 
-    if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return
+    if (!isInstanceRuntimeCurrent(instanceId, instance) || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return
 
     if (!Array.isArray(apiMessages)) {
       return
@@ -1208,7 +1260,8 @@ async function loadMessages(
 
     setSessionMessagesLoadError(instanceId, sessionId, null)
 
-    const adapted = adaptApiMessages(sessionId, apiMessages)
+    const latestStatus = sessions().get(instanceId)?.get(sessionId)?.status ?? sessionForV2.status
+    const adapted = adaptApiMessages(sessionId, apiMessages, latestStatus)
 
     if (apiMessages.length > 0) {
 
@@ -1230,14 +1283,14 @@ async function loadMessages(
 
       if (!agentName && !providerID && !modelID) {
         const defaultModel = await getDefaultModel(instanceId, session.agent)
-        if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return
+        if (!isInstanceRuntimeCurrent(instanceId, instance) || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return
         agentName = session.agent
         providerID = defaultModel.providerId
         modelID = defaultModel.modelId
       }
 
       setSessions((prev) => {
-        if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return prev
+        if (!isInstanceRuntimeCurrent(instanceId, instance) || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return prev
         const next = new Map(prev)
         const nextInstanceSessions = next.get(instanceId)
         if (!nextInstanceSessions) return next
@@ -1255,13 +1308,14 @@ async function loadMessages(
     }
 
     const latestSession = sessions().get(instanceId)?.get(sessionId) ?? sessionForV2
-    if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return
+    if (!isInstanceRuntimeCurrent(instanceId, instance) || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return
+    for (const message of adapted.messages) {
+      if (clearPendingDeltasForMessage(instanceId, message.id)) retryAfterRevisionConflict = true
+    }
     if (!seedSessionMessagesV2(instanceId, latestSession, adapted.messages, adapted.infos, expectedRevision)) {
       retryAfterRevisionConflict = true
     } else {
-      for (const message of adapted.messages) {
-        retryAfterRevisionConflict ||= clearPendingDeltasForMessage(instanceId, message.id)
-      }
+      if (latestSession.revert) setSessionRevertV2(instanceId, sessionId, latestSession.revert)
       setMessagesLoaded((prev) => {
         const next = new Map(prev)
         const loadedSet = next.get(instanceId) || new Set()
@@ -1282,19 +1336,19 @@ async function loadMessages(
 
   } catch (error) {
     log.error("Failed to load messages:", error)
-    if (isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) {
+    if (isInstanceRuntimeCurrent(instanceId, instance) && isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) {
       setSessionMessagesLoadError(instanceId, sessionId, getOpencodeErrorMessage(error, tGlobal("messageSection.loadError.detail")))
     }
     throw error
   } finally {
-    if (isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) {
+    if (isInstanceRuntimeCurrent(instanceId, instance) && isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) {
       const clearShift = () => {
-        if (isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) clearCachedSessionMessageShift(instanceId, sessionId)
+        if (isInstanceRuntimeCurrent(instanceId, instance) && isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) clearCachedSessionMessageShift(instanceId, sessionId)
       }
       if (typeof requestAnimationFrame === "function") requestAnimationFrame(clearShift)
       else setTimeout(clearShift, 0)
     }
-    if (isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) {
+    if (isInstanceRuntimeCurrent(instanceId, instance) && isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) {
       setLoading((prev) => {
         const next = { ...prev }
         const loadingSet = next.loadingMessages.get(instanceId)
@@ -1305,12 +1359,21 @@ async function loadMessages(
   }
 
   if (retryAfterRevisionConflict && sessions().get(instanceId)?.has(sessionId)) {
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return
-    return loadMessages(instanceId, sessionId, { force: true })
+    if ((options?.revisionRetryCount ?? 0) < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      if (!isInstanceRuntimeCurrent(instanceId, instance) || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return
+      return loadMessages(instanceId, sessionId, { force: true, revisionRetryCount: (options?.revisionRetryCount ?? 0) + 1 })
+    }
+    setMessagesLoaded((prev) => {
+      const next = new Map(prev)
+      next.get(instanceId)?.delete(sessionId)
+      return next
+    })
+    requestDeltaRecovery({ instanceId, sessionId, messageId: "reconcile", partId: "reconcile", field: "text" })
+    return
   }
 
-  if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return
+  if (!isInstanceRuntimeCurrent(instanceId, instance) || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return
   updateSessionInfo(instanceId, sessionId)
 
 }

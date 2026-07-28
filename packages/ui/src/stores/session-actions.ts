@@ -1,5 +1,5 @@
 import { preparePromptDisplayText } from "../lib/prompt-display-metadata"
-import { instances } from "./instances"
+import { instances, isInstanceRuntimeCurrent } from "./instances"
 import { getRootClient } from "./opencode-client"
 import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 
@@ -12,7 +12,7 @@ import { removeMessagePartV2, removeMessageV2 } from "./message-v2/bridge"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
 import { clearConversationPlaybackForSession } from "./conversation-speech"
-import { cancelCachedSessionMessageRestore, invalidateSessionMessageCache } from "./session-message-cache"
+import { invalidateSessionMessageCache } from "./session-message-cache"
 
 const log = getLogger("actions")
 
@@ -42,6 +42,13 @@ const BASE62_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuv
 
 let lastTimestamp = 0
 let localCounter = 0
+
+function uncertainDeliveryError(error: unknown): Error {
+  const result = new Error(error instanceof Error ? error.message : String(error))
+  ;(result as any).cause = error
+  ;(result as any).suppressPromptRecovery = true
+  return result
+}
 
 function randomBase62(length: number): string {
   let result = ""
@@ -99,7 +106,7 @@ async function sendMessage(
   if (!session) {
     throw new Error("Session not found")
   }
-  cancelCachedSessionMessageRestore(instanceId, sessionId)
+  invalidateSessionMessageCache(instanceId, sessionId)
 
   const messageId = createId("msg")
   const textPartId = createId("prt")
@@ -218,20 +225,47 @@ async function sendMessage(
   try {
     log.info("session.promptAsync", { instanceId, sessionId, requestBody })
     const workspacePayload = await getSessionWorkspacePayload(instanceId, sessionId)
+    if (!isInstanceRuntimeCurrent(instanceId, instance)) {
+      removeMessageV2(instanceId, messageId)
+      throw new Error("Instance no longer active")
+    }
     const admission = beginSessionGenerationAdmission(instanceId, sessionId)
     try {
       await requestData(
         client.session.promptAsync({
           sessionID: sessionId,
+          messageID: messageId,
           ...workspacePayload,
           ...(requestBody as any),
         }),
         "session.promptAsync",
       )
-      admission.complete()
+      if (isInstanceRuntimeCurrent(instanceId, instance)) admission.complete()
     } catch (error) {
-      admission.rollback()
-      throw error
+      let verified = false
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          const messages = await requestData<any[]>(
+            client.session.messages({ sessionID: sessionId, ...workspacePayload }),
+            "session.messages",
+          )
+          verified = true
+          if (messages.some((message) => message?.info?.id === messageId)) {
+            if (isInstanceRuntimeCurrent(instanceId, instance)) admission.complete()
+            return
+          }
+        } catch {
+          // A failed verification leaves delivery ambiguous.
+        }
+        if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      if (store.getMessageInfo(messageId)) {
+        if (isInstanceRuntimeCurrent(instanceId, instance)) admission.complete()
+        return
+      }
+      if (store.getMessage(messageId)?.isEphemeral) removeMessageV2(instanceId, messageId)
+      if (isInstanceRuntimeCurrent(instanceId, instance)) admission.rollback()
+      throw verified ? error : uncertainDeliveryError(error)
     }
   } catch (error) {
     log.error("Failed to send prompt", error)
@@ -281,6 +315,8 @@ async function executeCustomCommand(
   }
 
   const workspacePayload = await getSessionWorkspacePayload(instanceId, sessionId)
+  if (!isInstanceRuntimeCurrent(instanceId, instance)) throw new Error("Instance no longer active")
+  invalidateSessionMessageCache(instanceId, sessionId)
   const admission = beginSessionGenerationAdmission(instanceId, sessionId)
   try {
     await requestData(
@@ -291,10 +327,10 @@ async function executeCustomCommand(
       }),
       "session.command",
     )
-    admission.complete()
+    if (isInstanceRuntimeCurrent(instanceId, instance)) admission.complete()
   } catch (error) {
-    admission.rollback()
-    throw error
+    if (isInstanceRuntimeCurrent(instanceId, instance)) admission.rollback()
+    throw uncertainDeliveryError(error)
   }
 }
 
@@ -314,6 +350,8 @@ async function runShellCommand(instanceId: string, sessionId: string, command: s
   const agent = session.agent || "build"
 
   const workspacePayload = await getSessionWorkspacePayload(instanceId, sessionId)
+  if (!isInstanceRuntimeCurrent(instanceId, instance)) throw new Error("Instance no longer active")
+  invalidateSessionMessageCache(instanceId, sessionId)
   const admission = beginSessionGenerationAdmission(instanceId, sessionId)
   try {
     await requestData(
@@ -325,10 +363,10 @@ async function runShellCommand(instanceId: string, sessionId: string, command: s
       }),
       "session.shell",
     )
-    admission.complete()
+    if (isInstanceRuntimeCurrent(instanceId, instance)) admission.complete()
   } catch (error) {
-    admission.rollback()
-    throw error
+    if (isInstanceRuntimeCurrent(instanceId, instance)) admission.rollback()
+    throw uncertainDeliveryError(error)
   }
 }
 
@@ -344,10 +382,12 @@ async function abortSession(instanceId: string, sessionId: string): Promise<void
 
   try {
     log.info("session.abort", { instanceId, sessionId })
+    const workspace = await getSessionWorkspacePayload(instanceId, sessionId)
+    if (!isInstanceRuntimeCurrent(instanceId, instance)) return
     await requestData(
       client.session.abort({
         sessionID: sessionId,
-        ...(await getSessionWorkspacePayload(instanceId, sessionId)),
+        ...workspace,
       }),
       "session.abort",
     )
@@ -359,6 +399,8 @@ async function abortSession(instanceId: string, sessionId: string): Promise<void
 }
 
 async function updateSessionAgent(instanceId: string, sessionId: string, agent: string): Promise<void> {
+  const instance = instances().get(instanceId)
+  if (!instance?.client) throw new Error("Instance not ready")
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionId)
   if (!session) {
@@ -366,6 +408,7 @@ async function updateSessionAgent(instanceId: string, sessionId: string, agent: 
   }
 
   const nextModel = await getDefaultModel(instanceId, agent)
+  if (!isInstanceRuntimeCurrent(instanceId, instance)) return
   const shouldApplyModel = isModelValid(instanceId, nextModel)
 
   withSession(instanceId, sessionId, (current) => {
@@ -377,6 +420,7 @@ async function updateSessionAgent(instanceId: string, sessionId: string, agent: 
 
   if (agent && shouldApplyModel) {
     await setAgentModelPreference(instanceId, agent, nextModel)
+    if (!isInstanceRuntimeCurrent(instanceId, instance)) return
   }
 
   if (shouldApplyModel) {
@@ -389,6 +433,8 @@ async function updateSessionModel(
   sessionId: string,
   model: { providerId: string; modelId: string },
 ): Promise<void> {
+  const instance = instances().get(instanceId)
+  if (!instance?.client) throw new Error("Instance not ready")
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionId)
   if (!session) {
@@ -406,6 +452,7 @@ async function updateSessionModel(
 
   if (session.agent) {
     await setAgentModelPreference(instanceId, session.agent, model)
+    if (!isInstanceRuntimeCurrent(instanceId, instance)) return
   }
   addRecentModelPreference(model)
 
@@ -430,14 +477,17 @@ async function renameSession(instanceId: string, sessionId: string, nextTitle: s
     throw new Error("Session title is required")
   }
 
+  const workspace = await getSessionWorkspacePayload(instanceId, sessionId)
+  if (!isInstanceRuntimeCurrent(instanceId, instance)) return
   await requestData(
     client.session.update({
       sessionID: sessionId,
-      ...(await getSessionWorkspacePayload(instanceId, sessionId)),
+      ...workspace,
       title: trimmedTitle,
     }),
     "session.update",
   )
+  if (!isInstanceRuntimeCurrent(instanceId, instance)) return
 
   withSession(instanceId, sessionId, (current) => {
     current.title = trimmedTitle
@@ -455,17 +505,20 @@ async function deleteMessagePart(instanceId: string, sessionId: string, messageI
   }
 
   const client = getRootClient(instanceId)
+  const workspace = await getSessionWorkspacePayload(instanceId, sessionId)
+  if (!isInstanceRuntimeCurrent(instanceId, instance)) return
+  invalidateSessionMessageCache(instanceId, sessionId)
 
   await requestData(
     client.part.delete({
       sessionID: sessionId,
-      ...(await getSessionWorkspacePayload(instanceId, sessionId)),
+      ...workspace,
       messageID: messageId,
       partID: partId,
     }),
     "part.delete",
   )
-  if (instances().get(instanceId) !== instance) return
+  if (!isInstanceRuntimeCurrent(instanceId, instance)) return
 
   // Optimistic removal; SSE will also broadcast a part-removed event.
   invalidateSessionMessageCache(instanceId, sessionId)
@@ -481,17 +534,20 @@ async function deleteMessage(instanceId: string, sessionId: string, messageId: s
   }
 
   const client = getRootClient(instanceId)
+  const workspace = await getSessionWorkspacePayload(instanceId, sessionId)
+  if (!isInstanceRuntimeCurrent(instanceId, instance)) return
+  invalidateSessionMessageCache(instanceId, sessionId)
 
   // The SDK generator does not currently expose a typed method for deleting a message,
   // but the API is available at DELETE /session/:sessionID/message/:messageID.
   await requestData(
     (client as any).client.delete({
       url: `/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(messageId)}`,
-      query: await getSessionWorkspacePayload(instanceId, sessionId),
+      query: workspace,
     }),
     "session.message.delete",
   )
-  if (instances().get(instanceId) !== instance) return
+  if (!isInstanceRuntimeCurrent(instanceId, instance)) return
 
   // Optimistic removal; SSE will also broadcast a message-removed event.
   invalidateSessionMessageCache(instanceId, sessionId)

@@ -113,7 +113,22 @@ fn coalesces_message_part_delta_events() {
 }
 
 #[test]
-fn last_write_wins_for_status_events() {
+fn does_not_coalesce_events_across_instance_streams() {
+    let mut pending = PendingBatch::default();
+    let mut stats = fresh_stats();
+    let mut old = delta_event("old");
+    old["streamId"] = Value::String("old-stream".to_string());
+    let mut new = delta_event("new");
+    new["streamId"] = Value::String("new-stream".to_string());
+
+    pending.push(old, &mut stats);
+    pending.push(new, &mut stats);
+
+    assert_eq!(pending.take_events().len(), 2);
+}
+
+#[test]
+fn preserves_connecting_before_connected_status() {
     let mut pending = PendingBatch::default();
     let mut stats = fresh_stats();
     pending.push(
@@ -134,8 +149,9 @@ fn last_write_wins_for_status_events() {
     );
 
     let events = pending.take_events();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0]["status"].as_str(), Some("connected"));
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["status"].as_str(), Some("connecting"));
+    assert_eq!(events[1]["status"].as_str(), Some("connected"));
 }
 
 #[test]

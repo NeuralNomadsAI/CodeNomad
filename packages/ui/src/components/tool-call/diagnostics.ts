@@ -1,6 +1,7 @@
 import type { ToolState } from "@opencode-ai/sdk/v2"
 import { getRelativePath, isToolStateCompleted, isToolStateError, isToolStateRunning } from "./utils"
 import { tGlobal } from "../../lib/i18n"
+import { selectSeverityBounded } from "./diagnostic-selection"
 
 interface LspRangePosition {
   line?: number
@@ -64,10 +65,8 @@ export function extractDiagnostics(state: ToolState | undefined): DiagnosticEntr
 }
 
 export function resolveDiagnosticsKey(diagnostics: DiagnosticsMap, preferredPaths: Array<string | undefined>): string | undefined {
-  if (Object.keys(diagnostics).length === 0) return undefined
-
   const normalizedPreferred = preferredPaths
-    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .filter((value): value is string => typeof value === "string" && value.length > 0 && value.length <= 4_096)
     .map((value) => normalizeDiagnosticPath(value))
 
   if (normalizedPreferred.length === 0) return undefined
@@ -76,7 +75,16 @@ export function resolveDiagnosticsKey(diagnostics: DiagnosticsMap, preferredPath
     if (diagnostics[preferred]) return preferred
   }
 
-  const keys = Object.keys(diagnostics)
+  const keys: string[] = []
+  let scannedKeys = 0
+  for (const key in diagnostics) {
+    if (!Object.prototype.hasOwnProperty.call(diagnostics, key)) continue
+    scannedKeys += 1
+    if (scannedKeys > 10_000) break
+    if (key.length > 4_096) continue
+    keys.push(key)
+  }
+  if (keys.length === 0) return undefined
 
   for (const preferred of normalizedPreferred) {
     const direct = keys.find((key) => normalizeDiagnosticPath(key) === preferred)
@@ -101,11 +109,18 @@ export function buildDiagnosticEntries(diagnostics: DiagnosticsMap, preferredPat
   const list = diagnostics[key]
   if (!Array.isArray(list) || list.length === 0) return []
 
-  const entries: DiagnosticEntry[] = []
   const limit = 100
   const normalizedPath = normalizeDiagnosticPath(key)
-  for (let index = 0; index < list.length; index++) {
-    const diagnostic = list[index]
+  const selected = selectSeverityBounded(
+    list,
+    (diagnostic) => diagnostic && typeof diagnostic.message === "string"
+      ? getSeverityMeta(determineSeverityTone(diagnostic.severity)).rank
+      : undefined,
+    limit,
+  )
+  const entries: DiagnosticEntry[] = []
+  for (const diagnostic of selected) {
+    const index = entries.length
     if (!diagnostic || typeof diagnostic.message !== "string") continue
     const tone = determineSeverityTone(typeof diagnostic.severity === "number" ? diagnostic.severity : undefined)
     const severityMeta = getSeverityMeta(tone)
@@ -123,10 +138,9 @@ export function buildDiagnosticEntries(diagnostics: DiagnosticsMap, preferredPat
       line,
       column,
     })
-    if (entries.length >= limit) break
   }
 
-  return entries.sort((a, b) => a.severity - b.severity)
+  return entries
 }
 
 export function diagnosticFileName(entries: DiagnosticEntry[]) {

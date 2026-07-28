@@ -1,7 +1,7 @@
 import { getLogger } from "../lib/logger"
 import { MAX_HOT_SESSION_MESSAGE_BYTES, selectSessionMemoryEvictions, type SessionMemoryEntry } from "../lib/session-memory-budget"
 import { messageStoreBus } from "./message-v2/bus"
-import { cancelCachedSessionMessageRestore, isRestoringCachedSessionMessages } from "./session-message-cache"
+import { cancelCachedSessionMessageRestore, isRestoringCachedSessionMessages, isSessionMessageCacheWritePending, setSessionMessageCacheWriteSettledCallback } from "./session-message-cache"
 import { isSessionMessagesLoading, sessions } from "./session-state"
 
 const log = getLogger("session")
@@ -23,9 +23,8 @@ function splitSessionKey(key: string): [string, string] {
 function hasProtectedSessionWork(
   store: ReturnType<typeof messageStoreBus.getOrCreate>,
   sessionId: string,
-  status: string | undefined,
 ): boolean {
-  return status === "idle" ? store.hasSessionPendingInput(sessionId) : store.hasSessionActiveWork(sessionId)
+  return store.hasSessionActiveWork(sessionId)
 }
 
 export function scheduleSessionMemorySweep(): void {
@@ -57,10 +56,13 @@ export function evictResidentSessionMessages(instanceId: string, sessionId: stri
     visibleLeases.has(sessionKey(instanceId, sessionId)) ||
     status === "working" ||
     status === "compacting" ||
-    hasProtectedSessionWork(store, sessionId, status)
+    isSessionMessageCacheWritePending(instanceId, sessionId) ||
+    isSessionMessagesLoading(instanceId, sessionId) ||
+    isRestoringCachedSessionMessages(instanceId, sessionId) ||
+    hasProtectedSessionWork(store, sessionId)
   ) return false
   cancelCachedSessionMessageRestore(instanceId, sessionId)
-  store.clearSession(sessionId, { preserveScroll: true })
+  store.clearSession(sessionId, { preserveScroll: true, preservePromptDisplay: true })
   log.info("Evicted resident session messages", { instanceId, sessionId })
   return true
 }
@@ -75,8 +77,9 @@ export function runSessionMemorySweep(byteLimit = MAX_HOT_SESSION_MESSAGE_BYTES)
         key,
         byteSize: store.getSessionApproximateByteSize(sessionId),
         lastTouched: touched.get(key) ?? 0,
-        protected: visibleLeases.has(key) || status === "working" || status === "compacting" || hasProtectedSessionWork(store, sessionId, status) ||
-          isSessionMessagesLoading(instanceId, sessionId) || isRestoringCachedSessionMessages(instanceId, sessionId),
+        protected: visibleLeases.has(key) || status === "working" || status === "compacting" || hasProtectedSessionWork(store, sessionId) ||
+          isSessionMessagesLoading(instanceId, sessionId) || isRestoringCachedSessionMessages(instanceId, sessionId) ||
+          isSessionMessageCacheWritePending(instanceId, sessionId),
       })
     }
   }
@@ -105,3 +108,5 @@ messageStoreBus.onInstanceDestroyed((instanceId) => {
   for (const key of touched.keys()) if (key.startsWith(prefix)) touched.delete(key)
   for (const key of visibleLeases.keys()) if (key.startsWith(prefix)) visibleLeases.delete(key)
 })
+
+setSessionMessageCacheWriteSettledCallback(scheduleSessionMemorySweep)

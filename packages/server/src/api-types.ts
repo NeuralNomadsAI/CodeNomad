@@ -482,8 +482,8 @@ export type WorkspaceEventPayload =
   | { type: "storage.configChanged"; owner: SettingsOwner; value: SettingsBucket }
   | { type: "storage.stateChanged"; owner: SettingsOwner; value: SettingsBucket }
   | { type: "instance.dataChanged"; instanceId: string; data: InstanceData }
-  | { type: "instance.event"; instanceId: string; event: InstanceStreamEvent }
-  | { type: "instance.eventStatus"; instanceId: string; status: InstanceStreamStatus; reason?: string }
+  | { type: "instance.event"; instanceId: string; streamId?: string; event: InstanceStreamEvent }
+  | { type: "instance.eventStatus"; instanceId: string; streamId?: string; status: InstanceStreamStatus; reason?: string }
   | { type: "yolo.stateChanged"; instanceId: string; sessionId: string; enabled: boolean }
   | { type: "yolo.autoAccepted"; instanceId: string; sessionId: string; permissionId: string }
 

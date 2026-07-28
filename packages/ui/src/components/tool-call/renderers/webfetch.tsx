@@ -21,16 +21,13 @@ export const webfetchRenderer: ToolRenderer = {
     if (!state || state.status === "pending") return undefined
 
     const { metadata } = readToolStatePayload(state)
-    const result = formatUnknownForCopy(
-      state.status === "completed"
-        ? state.output
-        : metadata.output,
-    )
-    if (!result) return undefined
+    const output = state.status === "completed" ? state.output : metadata.output
+    if (output === undefined || output === null) return undefined
+    const rendered = formatUnknownForRender(output)
 
     return {
-      language: result.language ?? "text",
-      copyText: result.text,
+      language: rendered?.language ?? "text",
+      getCopyText: () => formatUnknownForCopy(output)?.text ?? null,
       wrapToggle: true,
       suppressInnerHeader: true,
     }

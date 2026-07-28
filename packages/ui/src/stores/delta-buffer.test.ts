@@ -6,9 +6,9 @@ import {
   clearPendingDeltasForPart,
   enqueueDelta,
   flushPendingDeltasForMessage,
-  holdDelta,
   resetDeltaBufferForTests,
   setFlushCallback,
+  setRecoveryCallback,
 } from "./delta-buffer.ts"
 
 type DeltaBatch = Array<{ instanceId: string; messageId: string; partId: string; field: string; delta: string }>
@@ -101,21 +101,18 @@ describe("delta buffer", () => {
     ])
   })
 
-  it("holds an orphan delta until its HTTP baseline is resident", () => {
-    holdDelta("instance-1", "message-1", "part-1", "text", "late")
-    let attempts = 0
-    flushPendingDeltasForMessage("instance-1", "message-1", () => {
-      attempts += 1
-      return false
-    })
-    flushPendingDeltasForMessage("instance-1", "message-1", () => {
-      attempts += 1
-      return true
-    })
-    flushPendingDeltasForMessage("instance-1", "message-1", () => {
-      attempts += 1
-      return true
-    })
-    assert.equal(attempts, 2)
+  it("drops oversized deltas and requests bounded authoritative recovery", async () => {
+    const recoveries: unknown[] = []
+    const flushed: DeltaBatch[] = []
+    setRecoveryCallback((pending) => recoveries.push(pending))
+    setFlushCallback((batch) => flushed.push(batch))
+
+    enqueueDelta("instance-1", "message-1", "part-1", "text", "x".repeat(300_000), "session-1")
+    await delay(75)
+
+    assert.deepEqual(flushed, [])
+    assert.deepEqual(recoveries, [{
+      instanceId: "instance-1", sessionId: "session-1", messageId: "message-1", partId: "part-1", field: "text",
+    }])
   })
 })

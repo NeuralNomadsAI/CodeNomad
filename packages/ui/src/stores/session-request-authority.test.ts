@@ -3,9 +3,9 @@ import { describe, it } from "node:test"
 
 import { sdkManager } from "../lib/sdk-manager.ts"
 import type { Session } from "../types/session.ts"
-import { addInstance, removeInstance } from "./instances.ts"
+import { addInstance, instances, isInstanceRuntimeCurrent, removeInstance, updateInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
-import { loadMessages, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
+import { fetchSessions, loadMessages, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
 import {
   clearInstanceDeletedSessionAuthority,
   getSessionSearchResultIds,
@@ -61,6 +61,20 @@ function setup(instanceId: string) {
 }
 
 describe("session request authority", () => {
+  it("keeps metadata refreshes in the same runtime but fences client replacement", () => {
+    const instanceId = "instance-runtime-token"
+    const { cleanup } = setup(instanceId)
+    try {
+      const captured = instances().get(instanceId)!
+      updateInstance(instanceId, { projectName: "refreshed" })
+      assert.equal(isInstanceRuntimeCurrent(instanceId, captured), true)
+      updateInstance(instanceId, { client: { session: {} } as any })
+      assert.equal(isInstanceRuntimeCurrent(instanceId, captured), false)
+    } finally {
+      cleanup()
+    }
+  })
+
   it("does not restore deleted search results or their parent chain", async () => {
     const instanceId = "late-search-delete"
     const { client, cleanup } = setup(instanceId)
@@ -148,6 +162,69 @@ describe("session request authority", () => {
       await newRequest
 
       assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["new-message"])
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("rejects message hydration after in-place client replacement", async () => {
+    const instanceId = "replaced-message-client", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const response = deferred<any>()
+    ;(client.session as any).messages = () => response.promise
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+
+    try {
+      const request = loadMessages(instanceId, sessionId)
+      updateInstance(instanceId, { client: { session: {} } as any })
+      response.resolve({ data: [apiMessage("stale-message", sessionId)] })
+      await request
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), [])
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("rejects session-list deletion after in-place client replacement", async () => {
+    const instanceId = "replaced-session-list", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const response = deferred<any>()
+    ;(client.session as any).list = () => response.promise
+    ;(client.session as any).status = async () => ({ data: {} })
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+
+    try {
+      const request = fetchSessions(instanceId)
+      updateInstance(instanceId, { client: { session: {} } as any })
+      response.resolve({ data: [] })
+      await request
+      assert.equal(sessions().get(instanceId)?.has(sessionId), true)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("does not reuse search authority after an instance reopens", async () => {
+    const instanceId = "reopened-session-search"
+    const { client, cleanup } = setup(instanceId)
+    const oldResponse = deferred<any>()
+    const newResponse = deferred<any>()
+    let calls = 0
+    ;(client.session as any).list = () => (++calls === 1 ? oldResponse.promise : newResponse.promise)
+
+    try {
+      const oldRequest = searchSessions(instanceId, "same")
+      removeInstance(instanceId, { authoritative: false })
+      addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+      const newRequest = searchSessions(instanceId, "same")
+
+      newResponse.resolve({ data: [apiSession("new-session")] })
+      await newRequest
+      oldResponse.resolve({ data: [apiSession("old-session")] })
+      await oldRequest
+
+      assert.deepEqual(getSessionSearchResultIds(instanceId), ["new-session"])
+      assert.equal(sessions().get(instanceId)?.has("old-session") ?? false, false)
     } finally {
       cleanup()
     }

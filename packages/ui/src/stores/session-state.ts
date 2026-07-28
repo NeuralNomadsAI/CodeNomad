@@ -44,6 +44,26 @@ function cancelSessionGenerationAdmissions(instanceId: string, sessionId: string
   generationAdmissions.delete(`${instanceId}:${sessionId}`)
 }
 
+function resetInstanceSessionRequestState(instanceId: string): void {
+  const prefix = `${instanceId}:`
+  for (const [key, admission] of generationAdmissions) {
+    if (!key.startsWith(prefix)) continue
+    const sessionId = key.slice(prefix.length)
+    withSession(instanceId, sessionId, (session) => {
+      if (session.generationAdmissionToken !== admission.token) return false
+      session.generationAdmissionToken = undefined
+      Object.assign(session, admission.baseline)
+    })
+    generationAdmissions.delete(key)
+  }
+  setLoading((prev) => ({
+    fetchingSessions: removeInstanceMapEntry(prev.fetchingSessions, instanceId),
+    creatingSession: removeInstanceMapEntry(prev.creatingSession, instanceId),
+    deletingSession: removeInstanceMapEntry(prev.deletingSession, instanceId),
+    loadingMessages: removeInstanceMapEntry(prev.loadingMessages, instanceId),
+  }))
+}
+
 export interface SessionInfo {
   cost: number
   contextWindow: number
@@ -1303,6 +1323,7 @@ export {
   hydrateSessionGenerationRecovery,
   beginSessionGenerationAdmission,
   cancelSessionGenerationAdmissions,
+  resetInstanceSessionRequestState,
   setSessionStatus,
   setActiveSession,
   setActiveParentSession,

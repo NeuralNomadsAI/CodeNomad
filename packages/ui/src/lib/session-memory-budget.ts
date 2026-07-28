@@ -7,6 +7,32 @@ export interface SessionMemoryEntry {
   protected: boolean
 }
 
+const arrayBufferByteLength = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "byteLength")?.get
+const arrayBufferResizable = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "resizable")?.get
+const sharedBufferPrototype = typeof SharedArrayBuffer === "undefined" ? undefined : SharedArrayBuffer.prototype
+const sharedBufferByteLength = sharedBufferPrototype && Object.getOwnPropertyDescriptor(sharedBufferPrototype, "byteLength")?.get
+const sharedBufferGrowable = sharedBufferPrototype && Object.getOwnPropertyDescriptor(sharedBufferPrototype, "growable")?.get
+
+function readBufferSize(value: object): { byteLength: number; growable: boolean } | undefined {
+  try {
+    if (arrayBufferByteLength) {
+      const byteLength = arrayBufferByteLength.call(value) as number
+      return { byteLength, growable: Boolean(arrayBufferResizable?.call(value)) }
+    }
+  } catch {
+    // Not an ArrayBuffer.
+  }
+  try {
+    if (sharedBufferByteLength) {
+      const byteLength = sharedBufferByteLength.call(value) as number
+      return { byteLength, growable: Boolean(sharedBufferGrowable?.call(value)) }
+    }
+  } catch {
+    // Not a SharedArrayBuffer.
+  }
+  return undefined
+}
+
 function measureRetainedBytes(value: unknown, limit: number): number {
   const seen = new WeakSet<object>()
   const pending: unknown[] = [value]
@@ -17,8 +43,14 @@ function measureRetainedBytes(value: unknown, limit: number): number {
     else if (typeof current === "number" || typeof current === "bigint") total += 8
     else if (typeof current === "boolean") total += 4
     else if (current && typeof current === "object") {
+      const buffer = readBufferSize(current)
+      if (buffer) {
+        total += buffer.growable ? limit + 1 : buffer.byteLength
+        continue
+      }
       if (ArrayBuffer.isView(current)) {
-        total += current.byteLength
+        const backing = readBufferSize(current.buffer)
+        total += backing?.growable ? limit + 1 : backing?.byteLength ?? current.byteLength
         continue
       }
       if (seen.has(current)) continue

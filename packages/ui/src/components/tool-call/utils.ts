@@ -17,8 +17,7 @@ export const TOOL_OUTPUT_RENDER_CHARACTER_LIMIT = 10_000
 
 export function limitToolOutputForRender(text: string): string {
   if (text.length <= TOOL_OUTPUT_RENDER_CHARACTER_LIMIT) return text
-  const half = Math.floor(TOOL_OUTPUT_RENDER_CHARACTER_LIMIT / 2)
-  return `${text.slice(0, half)}\n\n${tGlobal("toolCall.output.truncated")}\n\n${text.slice(-half)}`
+  return `${text.slice(0, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT)}\n\n${tGlobal("toolCall.output.truncated")}`
 }
 
 export function isToolStateRunning(state: ToolState): state is ToolStateRunning {
@@ -167,8 +166,12 @@ export function formatUnknownForRender(value: unknown): { text: string; language
 }
 
 export function formatUnknownForCopy(value: unknown): { text: string; language?: string } | null {
-  if (typeof value !== "string" && exceedsRetainedByteLimit(value, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT)) return null
-  return formatUnknown(value)
+  try {
+    return formatUnknown(value)
+  } catch (error) {
+    log.error("Failed to format tool call output for copy", error)
+    return { text: tGlobal("toolCall.output.tooLarge") }
+  }
 }
 
 export function inferLanguageFromPath(path?: string): string | undefined {

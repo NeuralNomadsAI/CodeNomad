@@ -8,21 +8,36 @@ import {
   readSessionMessageCachePage,
   writeSessionMessageCache,
   MAX_SESSION_MESSAGE_CACHE_BYTES,
+  markSessionMessageCacheUnsafe,
+  setSessionMessageCacheEnabled,
 } from "../lib/session-message-cache"
 import { createSignal } from "solid-js"
 import { getLogger } from "../lib/logger"
 import { instances } from "./instances"
+import { isInstanceRuntimeCurrent } from "./instances"
+import type { Instance } from "../types/instance"
 import { messageStoreBus } from "./message-v2/bus"
 import { estimateRetainedBytes } from "../lib/session-memory-budget"
 
 const log = getLogger("session")
 const WRITE_DEBOUNCE_MS = 500
+
+function disablePersistentCacheAfterInvalidationFailure(context: Record<string, unknown>): void {
+  markSessionMessageCacheUnsafe(true)
+  setSessionMessageCacheEnabled(false)
+  void import("./client-state")
+    .then(({ setRestorePreviousStateEnabled }) => setRestorePreviousStateEnabled(false))
+    .catch((error) => log.warn("Failed to persist disabled session cache state", { ...context, error }))
+}
 const pendingWrites = new Map<string, ReturnType<typeof setTimeout>>()
 const cacheGenerations = new Map<string, number>()
 const pendingInvalidations = new Map<string, Promise<void>>()
 const invalidatedEntries = new Set<string>()
 const invalidationVersions = new Map<string, number>()
 const pendingEntryInvalidations = new Map<string, number>()
+const activeEntryInvalidations = new Map<string, Promise<void>>()
+const entryInvalidationKeys = new Map<string, Set<string>>()
+const trailingEntryInvalidations = new Map<string, { instanceId: string; sessionId: string; workspace: string }>()
 const activeRestores = new Map<string, symbol>()
 type CacheWriteRequest = {
   instanceId: string
@@ -31,16 +46,18 @@ type CacheWriteRequest = {
   allowEmpty: boolean
   generation: number
   reset: number
-  instanceToken: unknown
+  instanceToken: Instance
   workspace: string
   entryKey: string
   invalidationVersion: number
   done: Array<() => void>
 }
 const queuedWrites = new Map<string, CacheWriteRequest>()
+const activeWriteKeys = new Map<string, string>()
 let writeWorkerRunning = false
 const [restoringSessions, setRestoringSessions] = createSignal<ReadonlySet<string>>(new Set())
 let resetGeneration = 0
+let writeSettledCallback: (() => void) | undefined
 
 function pendingKey(instanceId: string, sessionId: string): string {
   return `${instanceId}:${sessionId}`
@@ -48,6 +65,37 @@ function pendingKey(instanceId: string, sessionId: string): string {
 
 function cacheGeneration(key: string): number {
   return cacheGenerations.get(key) ?? 0
+}
+
+function normalizedWorkspace(workspace: string): string {
+  const normalized = workspace.replace(/\\/g, "/").replace(/\/+$/, "")
+  return /^[a-z]:/i.test(normalized) ? normalized.toLowerCase() : normalized
+}
+
+function hasSingleWorkspaceOwner(instanceId: string, workspace: string): boolean {
+  const expected = normalizedWorkspace(workspace)
+  let owners = 0
+  for (const instance of instances().values()) {
+    if (normalizedWorkspace(instance.folder) !== expected) continue
+    owners += 1
+    if (owners > 1) return false
+  }
+  return owners === 1 && normalizedWorkspace(instances().get(instanceId)?.folder ?? "") === expected
+}
+
+function cleanupCacheFenceState(key: string, entryKey: string): void {
+  if (!pendingWrites.has(key) && !queuedWrites.has(key) && !activeWriteKeys.has(key) && !activeRestores.has(key) && !pendingInvalidations.has(key)) {
+    cacheGenerations.delete(key)
+  }
+  if (
+    !pendingEntryInvalidations.has(entryKey) &&
+    ![...queuedWrites.values()].some((request) => request.entryKey === entryKey) &&
+    ![...activeWriteKeys.values()].includes(entryKey)
+  ) invalidationVersions.delete(entryKey)
+}
+
+export function setSessionMessageCacheWriteSettledCallback(callback: () => void): void {
+  writeSettledCallback = callback
 }
 
 function setRestoreActive(key: string, active: boolean): void {
@@ -91,7 +139,11 @@ function waitForIdle(): Promise<void> {
   })
 }
 
-function snapshotSession(instanceId: string, sessionId: string, allowEmpty = false): unknown[] | null {
+function snapshotSession(
+  instanceId: string,
+  sessionId: string,
+  allowEmpty = false,
+): { messages: unknown[]; startIndex: number; totalCount: number } | null {
   const store = messageStoreBus.getInstance(instanceId)
   if (!store) return null
   const messageIds = store.getSessionMessageIds(sessionId)
@@ -118,7 +170,9 @@ function snapshotSession(instanceId: string, sessionId: string, allowEmpty = fal
     result.unshift({ info, parts })
     bytes += messageBytes
   }
-  return result.length > 0 || messageIds.length === 0 ? result : null
+  return result.length > 0 || messageIds.length === 0
+    ? { messages: result, startIndex: messageIds.length - result.length, totalCount: messageIds.length }
+    : null
 }
 
 async function drainQueuedWrites(): Promise<void> {
@@ -128,28 +182,47 @@ async function drainQueuedWrites(): Promise<void> {
     while (queuedWrites.size > 0) {
       const [key, request] = queuedWrites.entries().next().value as [string, CacheWriteRequest]
       queuedWrites.delete(key)
+      activeWriteKeys.set(key, request.entryKey)
       try {
         await waitForIdle()
         if (cacheGeneration(key) !== request.generation || resetGeneration !== request.reset) continue
-        if (instances().get(request.instanceId) !== request.instanceToken) continue
+        if (!isInstanceRuntimeCurrent(request.instanceId, request.instanceToken)) continue
         if ((invalidationVersions.get(request.entryKey) ?? 0) !== request.invalidationVersion) continue
+        if (!hasSingleWorkspaceOwner(request.instanceId, request.workspace)) {
+          await deleteSessionMessageCache(request.workspace, request.sessionId)
+          continue
+        }
         const store = messageStoreBus.getInstance(request.instanceId)
         if (!store) continue
-        if (request.expectedRevision !== undefined && store.getSessionRevision(request.sessionId) !== request.expectedRevision) continue
-        const messages = snapshotSession(request.instanceId, request.sessionId, request.allowEmpty)
-        if (!messages) continue
-        const written = await writeSessionMessageCache(request.workspace, request.sessionId, messages)
+        if (request.expectedRevision !== undefined && store.getSessionRevision(request.sessionId) !== request.expectedRevision) {
+          await deleteSessionMessageCache(request.workspace, request.sessionId)
+          continue
+        }
+        const snapshot = snapshotSession(request.instanceId, request.sessionId, request.allowEmpty)
+        if (!snapshot) {
+          await deleteSessionMessageCache(request.workspace, request.sessionId)
+          continue
+        }
+        const written = await writeSessionMessageCache(
+          request.workspace,
+          request.sessionId,
+          snapshot.messages,
+          { startIndex: snapshot.startIndex, totalCount: snapshot.totalCount },
+        )
         if (
           written &&
           cacheGeneration(key) === request.generation &&
           resetGeneration === request.reset &&
-          instances().get(request.instanceId) === request.instanceToken &&
+          isInstanceRuntimeCurrent(request.instanceId, request.instanceToken) &&
           (invalidationVersions.get(request.entryKey) ?? 0) === request.invalidationVersion &&
           pendingEntryInvalidations.get(request.entryKey) !== request.invalidationVersion
         ) invalidatedEntries.delete(request.entryKey)
       } catch (error) {
         log.warn("Failed to cache completed session messages", { instanceId: request.instanceId, sessionId: request.sessionId, error })
       } finally {
+        activeWriteKeys.delete(key)
+        cleanupCacheFenceState(key, request.entryKey)
+        writeSettledCallback?.()
         request.done.forEach((resolve) => resolve())
       }
     }
@@ -157,6 +230,11 @@ async function drainQueuedWrites(): Promise<void> {
     writeWorkerRunning = false
     if (queuedWrites.size > 0) void drainQueuedWrites()
   }
+}
+
+export function isSessionMessageCacheWritePending(instanceId: string, sessionId: string): boolean {
+  const key = pendingKey(instanceId, sessionId)
+  return pendingWrites.has(key) || queuedWrites.has(key) || activeWriteKeys.has(key)
 }
 
 function enqueueSessionMessageCacheWrite(
@@ -168,6 +246,10 @@ function enqueueSessionMessageCacheWrite(
   const instanceToken = instances().get(instanceId)
   const workspace = instanceToken?.folder
   if (!instanceToken || !workspace) return Promise.resolve()
+  if (!hasSingleWorkspaceOwner(instanceId, workspace)) {
+    invalidateSessionMessageCache(instanceId, sessionId)
+    return Promise.resolve()
+  }
   const entryKey = createSessionMessageCacheKey(workspace, sessionId)
   const invalidationVersion = invalidationVersions.get(entryKey) ?? 0
   return new Promise((resolve) => {
@@ -206,8 +288,10 @@ export async function* restoreCachedSessionMessagePages(
   sessionId: string,
 ): AsyncGenerator<SessionMessageCachePage> {
   if (!isSessionMessageCacheEnabled()) return
-  const workspace = workspaceForInstance(instanceId)
+  const instanceToken = instances().get(instanceId)
+  const workspace = instanceToken?.folder
   if (!workspace) return
+  if (!hasSingleWorkspaceOwner(instanceId, workspace)) return
   const entryKey = createSessionMessageCacheKey(workspace, sessionId)
   if (invalidatedEntries.has(entryKey)) return
   const key = pendingKey(instanceId, sessionId)
@@ -226,6 +310,7 @@ export async function* restoreCachedSessionMessagePages(
     while (
       cursor &&
       cursor.beforeIndex > 0 &&
+      isInstanceRuntimeCurrent(instanceId, instanceToken) &&
       activeRestores.get(key) === token &&
       cacheGeneration(key) === generation &&
       resetGeneration === reset &&
@@ -234,6 +319,7 @@ export async function* restoreCachedSessionMessagePages(
       const result = await readSessionMessageCachePage(cursor)
       if (!result) return
       if (
+        !isInstanceRuntimeCurrent(instanceId, instanceToken) ||
         activeRestores.get(key) !== token ||
         cacheGeneration(key) !== generation ||
         resetGeneration !== reset ||
@@ -281,13 +367,17 @@ export function scheduleSessionMessageCacheWrite(instanceId: string, sessionId: 
   const instanceToken = instances().get(instanceId)
   const workspace = instanceToken?.folder
   if (!instanceToken || !workspace) return
+  if (!hasSingleWorkspaceOwner(instanceId, workspace)) {
+    invalidateSessionMessageCache(instanceId, sessionId)
+    return
+  }
   const entryKey = createSessionMessageCacheKey(workspace, sessionId)
   const invalidationVersion = invalidationVersions.get(entryKey) ?? 0
   const existing = pendingWrites.get(key)
   if (existing) clearTimeout(existing)
   pendingWrites.set(key, setTimeout(() => {
     pendingWrites.delete(key)
-    if (instances().get(instanceId) !== instanceToken) return
+    if (!isInstanceRuntimeCurrent(instanceId, instanceToken)) return
     if ((invalidationVersions.get(entryKey) ?? 0) !== invalidationVersion) return
     void enqueueSessionMessageCacheWrite(instanceId, sessionId)
   }, WRITE_DEBOUNCE_MS))
@@ -296,7 +386,6 @@ export function scheduleSessionMessageCacheWrite(instanceId: string, sessionId: 
 export function invalidateSessionMessageCache(instanceId: string, sessionId: string): void {
   const key = pendingKey(instanceId, sessionId)
   cancelCachedSessionMessageRestore(instanceId, sessionId)
-  cacheGenerations.set(key, cacheGeneration(key) + 1)
   const pending = pendingWrites.get(key)
   if (pending) {
     clearTimeout(pending)
@@ -310,19 +399,57 @@ export function invalidateSessionMessageCache(instanceId: string, sessionId: str
   const workspace = workspaceForInstance(instanceId)
   if (!workspace) return
   const entryKey = createSessionMessageCacheKey(workspace, sessionId)
+  const generation = cacheGeneration(key) + 1
+  cacheGenerations.set(key, generation)
+  const activeInvalidation = activeEntryInvalidations.get(entryKey)
+  if (activeInvalidation) {
+    invalidatedEntries.add(entryKey)
+    trailingEntryInvalidations.set(entryKey, { instanceId, sessionId, workspace })
+    const keys = entryInvalidationKeys.get(entryKey) ?? new Set<string>()
+    keys.add(key)
+    entryInvalidationKeys.set(entryKey, keys)
+    pendingInvalidations.set(key, activeInvalidation)
+    return
+  }
   const invalidationVersion = (invalidationVersions.get(entryKey) ?? 0) + 1
   invalidationVersions.set(entryKey, invalidationVersion)
   pendingEntryInvalidations.set(entryKey, invalidationVersion)
   invalidatedEntries.add(entryKey)
   const invalidation = deleteSessionMessageCache(workspace, sessionId)
-    .then(() => {
-      if ((invalidationVersions.get(entryKey) ?? 0) === invalidationVersion) invalidatedEntries.delete(entryKey)
+    .catch((error) => {
+      log.warn("Failed to invalidate cached session messages; disabling persistent cache", { instanceId, sessionId, error })
+      disablePersistentCacheAfterInvalidationFailure({ instanceId, sessionId })
     })
-    .catch((error) => log.warn("Failed to invalidate cached session messages", { instanceId, sessionId, error }))
     .finally(() => {
-      if (pendingInvalidations.get(key) === invalidation) pendingInvalidations.delete(key)
+      if (activeEntryInvalidations.get(entryKey) === invalidation) activeEntryInvalidations.delete(entryKey)
       if (pendingEntryInvalidations.get(entryKey) === invalidationVersion) pendingEntryInvalidations.delete(entryKey)
+      const keys = entryInvalidationKeys.get(entryKey) ?? new Set([key])
+      entryInvalidationKeys.delete(entryKey)
+      for (const pendingKey of keys) {
+        if (pendingInvalidations.get(pendingKey) === invalidation) pendingInvalidations.delete(pendingKey)
+        cleanupCacheFenceState(pendingKey, entryKey)
+      }
+      const trailing = trailingEntryInvalidations.get(entryKey)
+      trailingEntryInvalidations.delete(entryKey)
+      if (trailing && isSessionMessageCacheEnabled()) {
+        queueMicrotask(() => {
+          if (workspaceForInstance(trailing.instanceId)) {
+            invalidateSessionMessageCache(trailing.instanceId, trailing.sessionId)
+            return
+          }
+          void deleteSessionMessageCache(trailing.workspace, trailing.sessionId)
+            .then(() => invalidatedEntries.delete(entryKey))
+            .catch((error) => {
+              log.warn("Failed trailing cached session invalidation; disabling persistent cache", { sessionId: trailing.sessionId, error })
+              disablePersistentCacheAfterInvalidationFailure({ sessionId: trailing.sessionId })
+            })
+        })
+      } else if ((invalidationVersions.get(entryKey) ?? 0) === invalidationVersion) {
+        invalidatedEntries.delete(entryKey)
+      }
     })
+  activeEntryInvalidations.set(entryKey, invalidation)
+  entryInvalidationKeys.set(entryKey, new Set([key]))
   pendingInvalidations.set(key, invalidation)
 }
 
@@ -334,10 +461,15 @@ function resetPendingSessionMessageCacheWork(): void {
   pendingWrites.clear()
   for (const request of queuedWrites.values()) request.done.forEach((resolve) => resolve())
   queuedWrites.clear()
+  activeWriteKeys.clear()
   pendingInvalidations.clear()
   invalidatedEntries.clear()
   invalidationVersions.clear()
   pendingEntryInvalidations.clear()
+  activeEntryInvalidations.clear()
+  entryInvalidationKeys.clear()
+  trailingEntryInvalidations.clear()
+  cacheGenerations.clear()
 }
 
 onSessionMessageCacheReset(resetPendingSessionMessageCacheWork)
@@ -354,9 +486,7 @@ messageStoreBus.onInstanceDestroyed((instanceId) => {
     queuedWrites.delete(key)
     request.done.forEach((resolve) => resolve())
   }
-  for (const key of cacheGenerations.keys()) {
-    if (key.startsWith(prefix)) cacheGenerations.set(key, cacheGeneration(key) + 1)
-  }
+  for (const key of cacheGenerations.keys()) if (key.startsWith(prefix)) cacheGenerations.delete(key)
   for (const key of activeRestores.keys()) {
     if (key.startsWith(prefix)) activeRestores.delete(key)
   }

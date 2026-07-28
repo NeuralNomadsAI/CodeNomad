@@ -264,7 +264,7 @@ export interface InstanceMessageStore {
   getLastCompactionMessageIndex: (sessionId: string) => number
   getMessage: (messageId: string) => MessageRecord | undefined
   getLatestTodoSnapshot: (sessionId: string) => LatestTodoSnapshot | undefined
-  clearSession: (sessionId: string, options?: { preserveScroll?: boolean; notify?: boolean }) => void
+  clearSession: (sessionId: string, options?: { preserveScroll?: boolean; preservePromptDisplay?: boolean; notify?: boolean }) => void
   clearScrollSnapshots: () => void
   clearInstance: () => void
 }
@@ -882,19 +882,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         setState("sessions", sessionId, "messageIds", (ids = []) => ids.filter((id) => id !== messageId))
       })
 
-      setState("messages", (prev) => {
-        if (!prev[messageId]) return prev
-        const next = { ...prev }
-        delete next[messageId]
-        return next
-      })
-
-      setState("messageInfoVersion", (prev) => {
-        if (!(messageId in prev)) return prev
-        const next = { ...prev }
-        delete next[messageId]
-        return next
-      })
+      setState("messages", messageId, undefined as any)
+      setState("messageInfoVersion", messageId, undefined as any)
 
       messageInfoCache.delete(messageId)
 
@@ -1355,56 +1344,37 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return state.scrollState[key]
   }
 
-  function clearSession(sessionId: string, options?: { preserveScroll?: boolean; notify?: boolean }) {
+  function clearSession(sessionId: string, options?: { preserveScroll?: boolean; preservePromptDisplay?: boolean; notify?: boolean }) {
     if (!sessionId) return
 
-    clearPromptDisplayOverridesForSession(instanceId, sessionId)
+    if (!options?.preservePromptDisplay) clearPromptDisplayOverridesForSession(instanceId, sessionId)
 
-    const messageIds = Object.values(state.messages)
-      .filter((record) => record.sessionId === sessionId)
-      .map((record) => record.id)
+    const messageIds = [...(state.sessions[sessionId]?.messageIds ?? [])]
  
     storeLog.info("Clearing session data", { instanceId, sessionId, messageCount: messageIds.length })
     clearRecordDisplayCacheForMessages(instanceId, messageIds)
  
     batch(() => {
-      setState("messages", (prev) => {
-        const next = { ...prev }
-        messageIds.forEach((id) => delete next[id])
-        return next
-      })
+      const permissionQueue = state.permissions.queue.filter((entry) => getPermissionSessionId(entry.permission) !== sessionId)
+      const questionQueue = state.questions.queue.filter((entry) => getQuestionSessionId(entry.request) !== sessionId)
+      setState("permissions", "queue", permissionQueue)
+      setState("permissions", "active", (active) =>
+        active && getPermissionSessionId(active.permission) === sessionId ? permissionQueue[0] ?? null : active)
+      setState("questions", "queue", questionQueue)
+      setState("questions", "active", (active) =>
+        active && getQuestionSessionId(active.request) === sessionId ? questionQueue[0] ?? null : active)
 
-      setState("messageInfoVersion", (prev) => {
-        const next = { ...prev }
-        messageIds.forEach((id) => delete next[id])
-        return next
-      })
+      setState("messages", produce((next) => { messageIds.forEach((id) => delete next[id]) }))
+
+      setState("messageInfoVersion", produce((next) => { messageIds.forEach((id) => delete next[id]) }))
 
       messageIds.forEach((id) => messageInfoCache.delete(id))
 
-      setState("pendingParts", (prev) => {
-        const next = { ...prev }
-        messageIds.forEach((id) => {
-          if (next[id]) delete next[id]
-        })
-        return next
-      })
+      setState("pendingParts", produce((next) => { messageIds.forEach((id) => delete next[id]) }))
 
-      setState("permissions", "byMessage", (prev) => {
-        const next = { ...prev }
-        messageIds.forEach((id) => {
-          if (next[id]) delete next[id]
-        })
-        return next
-      })
+      setState("permissions", "byMessage", produce((next) => { messageIds.forEach((id) => delete next[id]) }))
 
-      setState("questions", "byMessage", (prev) => {
-        const next = { ...prev }
-        messageIds.forEach((id) => {
-          if (next[id]) delete next[id]
-        })
-        return next
-      })
+      setState("questions", "byMessage", produce((next) => { messageIds.forEach((id) => delete next[id]) }))
 
       setState("usage", (prev) => {
         const next = { ...prev }

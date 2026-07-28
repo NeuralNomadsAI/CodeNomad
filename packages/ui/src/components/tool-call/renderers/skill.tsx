@@ -12,9 +12,8 @@ export const skillRenderer: ToolRenderer = {
     const state = toolState()
     if (!state || state.status !== "completed") return undefined
 
-    const output = formatUnknownForCopy(state.output)?.text ?? null
-    if (!output) return undefined
-    return { copyText: output, suppressInnerHeader: true }
+    if (state.output === undefined || state.output === null) return undefined
+    return { getCopyText: () => formatUnknownForCopy(state.output)?.text ?? null, suppressInnerHeader: true }
   },
   renderBody({ toolState, renderMarkdown }) {
     const state = toolState()

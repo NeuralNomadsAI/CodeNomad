@@ -480,12 +480,26 @@ function ToolCallDetails(props: {
 
   const outputChrome = createMemo<ToolOutputChrome>(() => renderer().getOutputChrome?.(rendererContext) ?? {})
 
+  const resolveOutputCopyText = () => outputChrome().copyText || outputChrome().getCopyText?.() || ""
+
   const renderError = () => {
     const state = props.toolState()
     if (state?.status === "error" && state.error) {
+      const truncated = state.error.length > TOOL_OUTPUT_RENDER_CHARACTER_LIMIT
       return (
         <div class="tool-call-error-content">
-      <strong>{props.t("toolCall.error.label")}</strong> {limitToolOutputForRender(state.error)}
+          <strong>{props.t("toolCall.error.label")}</strong> {limitToolOutputForRender(state.error)}
+          <Show when={truncated}>
+            <button
+              type="button"
+              class="tool-call-header-icon-button tool-call-header-copy"
+              onClick={(event) => void copyIoText(event, state.error)}
+              aria-label={props.t("toolCall.io.copyOutputAriaLabel")}
+              title={props.t("toolCall.io.copyOutputTitle")}
+            >
+              <Copy class="w-3.5 h-3.5" aria-hidden="true" />
+            </button>
+          </Show>
         </div>
       )
     }
@@ -653,7 +667,14 @@ function ToolCallDetails(props: {
     <div class="tool-call-details">
       <Show
         when={props.isToolInputVisible() && props.hasToolInput()}
-        fallback={renderToolOutputBody()}
+        fallback={(
+          <>
+            <Show when={outputChrome().actions}>
+              {(actions) => <div class="tool-call-io-actions">{actions()}</div>}
+            </Show>
+            {renderToolOutputBody()}
+          </>
+        )}
       >
         <div class="tool-call-body">
           <div class="tool-call-io-sections">
@@ -690,6 +711,7 @@ function ToolCallDetails(props: {
                     expanded: props.outputSectionExpanded,
                     onToggle: props.toggleOutputSection,
                     copyText: () => outputChrome().copyText,
+                    onCopy: outputChrome().getCopyText ? (event) => void copyIoText(event, resolveOutputCopyText()) : undefined,
                     copyTitle: () => props.t("toolCall.io.copyOutputTitle"),
                     copyAriaLabel: () => props.t("toolCall.io.copyOutputAriaLabel"),
                     actions: () => outputChrome().actions,
@@ -983,8 +1005,8 @@ export default function ToolCall(props: ToolCallProps) {
     return [typeLabel, detail].filter(Boolean).join(" ")
   })
 
-  const headerCopyText = createMemo(() => headerOutputChrome().copyText || "")
-  const canCopyHeaderOutput = () => headerCopyText().length > 0
+  const headerCopyText = () => headerOutputChrome().copyText || headerOutputChrome().getCopyText?.() || ""
+  const canCopyHeaderOutput = () => Boolean(headerOutputChrome().copyText || headerOutputChrome().getCopyText)
   const canToggleOutputWrap = () => Boolean(headerOutputChrome().wrapToggle)
   const outputWrapTitle = () =>
     outputWrapEnabled()

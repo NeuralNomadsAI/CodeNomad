@@ -8,6 +8,8 @@
  */
 
 const DELTA_FLUSH_INTERVAL = 50
+const MAX_PENDING_DELTA_CHARACTERS = 64_000
+const MAX_PENDING_DELTA_ENTRIES = 64
 
 type PendingDelta = { instanceId: string; sessionId?: string; messageId: string; partId: string; field: string; delta: string }
 const pendingDeltas = new Map<string, PendingDelta>()
@@ -18,17 +20,19 @@ export function enqueueDelta(instanceId: string, messageId: string, partId: stri
   const existing = pendingDeltas.get(key)
   const accumulated = existing ? existing.delta + delta : delta
   const resolvedSessionId = sessionId ?? existing?.sessionId
+  if (accumulated.length > MAX_PENDING_DELTA_CHARACTERS || (!existing && pendingDeltas.size >= MAX_PENDING_DELTA_ENTRIES)) {
+    pendingDeltas.delete(key)
+    recoveryCallback?.({ instanceId, ...(resolvedSessionId ? { sessionId: resolvedSessionId } : {}), messageId, partId, field })
+    return
+  }
   pendingDeltas.set(key, { instanceId, ...(resolvedSessionId ? { sessionId: resolvedSessionId } : {}), messageId, partId, field, delta: accumulated })
   if (deltaFlushTimer === null) {
     deltaFlushTimer = setTimeout(flushDeltas, DELTA_FLUSH_INTERVAL)
   }
 }
 
-export function holdDelta(instanceId: string, messageId: string, partId: string, field: string, delta: string, sessionId?: string) {
-  const key = `${instanceId}:${messageId}:${partId}:${field}`
-  const existing = pendingDeltas.get(key)
-  const resolvedSessionId = sessionId ?? existing?.sessionId
-  pendingDeltas.set(key, { instanceId, ...(resolvedSessionId ? { sessionId: resolvedSessionId } : {}), messageId, partId, field, delta: existing ? existing.delta + delta : delta })
+export function requestDeltaRecovery(pending: Omit<PendingDelta, "delta">): void {
+  recoveryCallback?.(pending)
 }
 
 export function clearPendingDeltasForSession(instanceId: string, sessionId: string): void {
@@ -94,6 +98,10 @@ export function setFlushCallback(
   flushCallback = callback
 }
 
+export function setRecoveryCallback(callback: (pending: Omit<PendingDelta, "delta">) => void) {
+  recoveryCallback = callback
+}
+
 export function resetDeltaBufferForTests() {
   pendingDeltas.clear()
   if (deltaFlushTimer !== null) {
@@ -101,9 +109,11 @@ export function resetDeltaBufferForTests() {
     deltaFlushTimer = null
   }
   flushCallback = null
+  recoveryCallback = null
 }
 
 let flushCallback: ((batch: PendingDelta[]) => void) | null = null
+let recoveryCallback: ((pending: Omit<PendingDelta, "delta">) => void) | null = null
 
 function flushDeltas() {
   deltaFlushTimer = null

@@ -197,9 +197,9 @@ export const bashRenderer: ToolRenderer = {
     return `${baseTitle} · ${tGlobal("toolCall.renderer.bash.title.timeout", { timeout: timeoutLabel })}`
   },
   getOutputChrome({ toolState }) {
-    const text = getBashCopyText(toolState())
-    if (!text) return undefined
-    return { language: "bash", copyText: text, wrapToggle: true, suppressInnerHeader: true }
+    const state = toolState()
+    if (!state || state.status === "pending") return undefined
+    return { language: "bash", getCopyText: () => getBashCopyText(state), wrapToggle: true, suppressInnerHeader: true }
   },
   renderBody({ toolState, renderMarkdown, scrollHelpers, onContentRendered }) {
     return <BashToolBody toolState={toolState} renderMarkdown={renderMarkdown as any} scrollHelpers={scrollHelpers} onContentRendered={onContentRendered} />

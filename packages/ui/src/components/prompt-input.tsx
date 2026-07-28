@@ -1,13 +1,13 @@
 import { Suspense, createEffect, createSignal, lazy, on, onCleanup, onMount, Show } from "solid-js"
 import { ArrowBigUp, ArrowBigDown, Loader2, Mic, Paperclip, Volume2, X } from "lucide-solid"
 import ExpandButton from "./expand-button"
-import { clearAttachments, removeAttachment } from "../stores/attachments"
+import { addAttachment, clearAttachments, getAttachments, removeAttachment } from "../stores/attachments"
 import { createPastedPlaceholderRegex, pastedDisplayCounterRegex } from "./prompt-input/attachmentPlaceholders"
-import { preparePromptSubmission } from "./prompt-input/submitPrompt"
+import { prepareFailedPromptRecovery, preparePromptSubmission } from "./prompt-input/submitPrompt"
 import { focusConversationStream } from "./focus-conversation"
 import Kbd from "./kbd"
 import { getActiveInstance } from "../stores/instances"
-import { agents, executeCustomCommand } from "../stores/sessions"
+import { agents, executeCustomCommand, getSessionDraftPrompt, hydrateSessionDraftPrompt, setSessionDraftPrompt } from "../stores/sessions"
 import { getCommands } from "../stores/commands"
 import { showAlertDialog } from "../stores/alerts"
 import { useI18n } from "../lib/i18n"
@@ -540,6 +540,34 @@ export default function PromptInput(props: PromptInputProps) {
       }
     } catch (error) {
       log.error("Failed to send message:", error)
+      const suppressRecovery = (error as any)?.suppressPromptRecovery === true
+      const recoverySessionId = typeof (error as any)?.promptRecoverySessionId === "string"
+        ? (error as any).promptRecoverySessionId
+        : props.sessionId
+      const currentPrompt = recoverySessionId === props.sessionId
+        ? prompt()
+        : getSessionDraftPrompt(props.instanceId, recoverySessionId)
+      const currentRecoveryAttachments = recoverySessionId === props.sessionId
+        ? attachments()
+        : getAttachments(props.instanceId, recoverySessionId)
+      if (!suppressRecovery) {
+        const recovery = prepareFailedPromptRecovery({
+          submittedText: text,
+          submittedAttachments: currentAttachments,
+          currentText: currentPrompt,
+          currentAttachments: currentRecoveryAttachments,
+        })
+        if (recoverySessionId === props.sessionId) setPrompt(recovery.text)
+        else {
+          setSessionDraftPrompt(props.instanceId, recoverySessionId, recovery.text)
+          hydrateSessionDraftPrompt(props.instanceId, recoverySessionId, recovery.text)
+        }
+        clearAttachments(props.instanceId, recoverySessionId)
+        for (const attachment of recovery.attachments) addAttachment(props.instanceId, recoverySessionId, attachment)
+        if (recoverySessionId === props.sessionId) syncAttachmentCounters(recovery.text)
+      } else if (!isKnownSlashCommand) {
+        void refreshHistory()
+      }
       showAlertDialog(t("promptInput.send.errorFallback"), {
         title: t("promptInput.send.errorTitle"),
         detail: error instanceof Error ? error.message : String(error),

@@ -70,3 +70,18 @@ test("authoritative working status protects a resident session", () => {
     messageStoreBus.unregisterInstance(instanceId)
   }
 })
+
+test("idle metadata cannot evict a normalized streaming message", () => {
+  const instanceId = "memory-idle-streaming", sessionId = "session"
+  try {
+    addMessage(instanceId, sessionId, "streaming")
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, { id: sessionId, status: "idle" } as any]])))
+    assert.deepEqual(runSessionMemorySweep(0), [])
+
+    addMessage(instanceId, sessionId, "complete")
+    assert.deepEqual(runSessionMemorySweep(0), [`${instanceId}\u0000${sessionId}`])
+  } finally {
+    setSessions((prev) => { const next = new Map(prev); next.delete(instanceId); return next })
+    messageStoreBus.unregisterInstance(instanceId)
+  }
+})

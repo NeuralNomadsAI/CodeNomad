@@ -45,4 +45,6 @@ export interface Instance {
   binaryLabel?: string
   binaryVersion?: string
   environmentVariables?: Record<string, string>
+  runtimeToken?: symbol
+  attachedPid?: number
 }

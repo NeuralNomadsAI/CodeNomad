@@ -1,6 +1,13 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { createSessionMessageCacheKey, prepareSessionMessageCache, selectSessionMessageCacheEvictions } from "./session-message-cache.ts"
+import {
+  createSessionMessageCacheKey,
+  clearSessionMessageCache,
+  isSessionMessageCacheUnsafe,
+  markSessionMessageCacheUnsafe,
+  prepareSessionMessageCache,
+  selectSessionMessageCacheEvictions,
+} from "./session-message-cache.ts"
 
 test("session message cache keys normalize path separators", () => {
   assert.equal(createSessionMessageCacheKey("C:\\work\\repo\\", "session-1"), "C:/work/repo\u0000session-1")
@@ -31,4 +38,47 @@ test("session message cache stores an authoritative empty manifest", () => {
   assert.deepEqual(prepared?.manifest.messageIds, [])
   assert.equal(prepared?.manifest.complete, true)
   assert.equal(prepared?.manifest.totalCount, 0)
+})
+
+test("session message cache persists an unsafe marker until a successful clear", async () => {
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window")
+  const values = new Map<string, string>()
+  const localStorage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+    removeItem: (key: string) => values.delete(key),
+  }
+  try {
+    Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage } })
+    markSessionMessageCacheUnsafe(true)
+    assert.equal(isSessionMessageCacheUnsafe(), true)
+    await clearSessionMessageCache()
+    assert.equal(isSessionMessageCacheUnsafe(), false)
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: { localStorage: { ...localStorage, setItem: () => { throw new Error("denied") } } },
+    })
+    assert.doesNotThrow(() => markSessionMessageCacheUnsafe(true))
+  } finally {
+    if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow)
+    else delete (globalThis as any).window
+  }
+})
+
+test("session message cache preserves the source range of a pre-truncated tail", () => {
+  const messages = ["six", "seven", "eight"].map((id) => ({ info: { id }, parts: [] }))
+  const prepared = prepareSessionMessageCache("session", messages, "snapshot", 10_000, 1, {
+    startIndex: 5,
+    totalCount: 8,
+  })
+  assert.equal(prepared?.manifest.startIndex, 5)
+  assert.equal(prepared?.manifest.totalCount, 8)
+  assert.equal(prepared?.manifest.complete, false)
+})
+
+test("session message cache preparation enforces the manifest message limit", () => {
+  const messages = Array.from({ length: 20_001 }, (_, index) => ({ info: { id: String(index) }, parts: [] }))
+  const prepared = prepareSessionMessageCache("session", messages, "snapshot", 16 * 1024 * 1024, 1)
+  assert.equal(prepared?.manifest.messageIds.length, 20_000)
+  assert.equal(prepared?.manifest.startIndex, 1)
 })

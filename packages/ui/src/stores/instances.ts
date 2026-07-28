@@ -16,6 +16,7 @@ import {
   fetchSessions,
   fetchAgents,
   fetchProviders,
+  loadMessages,
   clearInstanceDraftPrompts,
   clearSessionListRequestState,
   clearInstanceDeletedSessionAuthority,
@@ -36,13 +37,17 @@ import { fetchCommands, clearCommands } from "./commands"
 import { serverSettings } from "./preferences"
 import {
   reconcileSessionPendingState,
+  activeSessionId,
+  invalidateSessionMessageLoad,
   purgeInstanceSessionState,
   sessions,
   setSessionPendingPermission,
   setSessionPendingQuestion,
+  resetInstanceSessionRequestState,
 } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
+import { clearPendingDeltasForInstance } from "./delta-buffer"
 import { upsertPermissionV2, removePermissionV2, upsertQuestionV2, removeQuestionV2 } from "./message-v2/bridge"
 import {
   clearRepliedPermissions,
@@ -114,7 +119,8 @@ serverEvents.on("yolo.autoAccepted", (event) => {
 })
 
 const [instances, setInstances] = createSignal<Map<string, Instance>>(new Map())
-sseManager.shouldHandleEvent = (instanceId) => instances().has(instanceId)
+let workspaceListInitialized = false
+sseManager.shouldHandleEvent = (instanceId) => !workspaceListInitialized || instances().has(instanceId)
 
 const [activeInstanceId, setActiveInstanceId] = createSignal<string | null>(null)
 const [instanceLogs, setInstanceLogs] = createSignal<Map<string, LogEntry[]>>(new Map())
@@ -260,6 +266,10 @@ const connectionResyncs = new TrailingResyncCoordinator(
     const instance = instances().get(instanceId)
     if (!instance?.client || instance.status !== "ready") return
     await fetchSessions(instanceId, { reset: false })
+    const residentSessionIds = messageStoreBus.getInstance(instanceId)?.getResidentSessionIds() ?? []
+    for (const sessionId of residentSessionIds) invalidateSessionMessageLoad(instanceId, sessionId)
+    const activeId = activeSessionId().get(instanceId)
+    if (activeId && residentSessionIds.includes(activeId)) await loadMessages(instanceId, activeId, { force: true })
   },
   (instanceId, error) => {
     log.warn("Failed to resync sessions after instance connection", { instanceId, error })
@@ -270,13 +280,12 @@ function resyncConnectedInstance(instanceId: string): void {
   void connectionResyncs.request(instanceId)
 }
 
-serverEvents.on("instance.eventStatus", (event) => {
-  if (event.type !== "instance.eventStatus" || event.status !== "connected") return
-  if (disconnectedInstance()?.id === event.instanceId) {
+sseManager.onConnectionRestored = (instanceId) => {
+  if (disconnectedInstance()?.id === instanceId) {
     setDisconnectedInstance(null)
   }
-  resyncConnectedInstance(event.instanceId)
-})
+  resyncConnectedInstance(instanceId)
+}
 
 function createRestoreCreationRequestId(): string {
   if (typeof globalThis.crypto?.randomUUID === "function") {
@@ -353,7 +362,8 @@ function ensureActiveInstanceSelected(): void {
 function upsertWorkspace(descriptor: WorkspaceDescriptor, projectName?: string) {
   const mapped = workspaceDescriptorToInstance(descriptor, projectName)
   if (instances().has(descriptor.id)) {
-    updateInstance(descriptor.id, mapped)
+    const { client: _client, port: _port, proxyPath: _proxyPath, ...metadata } = mapped
+    updateInstance(descriptor.id, metadata)
   } else {
     addInstance(mapped)
   }
@@ -378,8 +388,11 @@ function attachClient(descriptor: WorkspaceDescriptor) {
 
   const nextPort = descriptor.port ?? instance.port
   const nextProxyPath = descriptor.proxyPath
+  const runtimeChanged = Boolean(instance.client && (
+    (descriptor.pid && instance.attachedPid !== descriptor.pid) || instance.proxyPath !== nextProxyPath
+  ))
 
-  if (instance.client && instance.proxyPath === nextProxyPath) {
+  if (!runtimeChanged && instance.client && instance.proxyPath === nextProxyPath) {
     if (nextPort && instance.port !== nextPort) {
       updateInstance(descriptor.id, { port: nextPort })
     }
@@ -387,6 +400,9 @@ function attachClient(descriptor: WorkspaceDescriptor) {
   }
 
   if (instance.client) {
+    clearOpenCodeWorkspaceCache(descriptor.id)
+    clearPendingDeltasForInstance(descriptor.id)
+    if (runtimeChanged) clearReloadableInstanceState(descriptor.id)
     sdkManager.destroyClientsForInstance(descriptor.id)
   }
 
@@ -395,6 +411,7 @@ function attachClient(descriptor: WorkspaceDescriptor) {
     client,
     port: nextPort ?? 0,
     proxyPath: nextProxyPath,
+    attachedPid: descriptor.pid ?? instance.pid,
     status: "ready",
   })
   sseManager.seedStatusIfMissing(descriptor.id, "connecting")
@@ -471,6 +488,7 @@ function releaseInstanceResources(instanceId: string) {
 async function syncPendingPermissions(instanceId: string): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance?.client) return
+  const isCurrent = () => isInstanceRuntimeCurrent(instanceId, instance)
 
   try {
     const syncStartedAt = Date.now()
@@ -482,16 +500,20 @@ async function syncPendingPermissions(instanceId: string): Promise<void> {
       log.warn("Failed to list legacy pending permissions", { instanceId, error })
       return []
     })
+    if (!isCurrent()) return
     for (const permission of legacyRemote) {
       permissionRegistry.setSource(instanceId, permission.id, "legacy")
       remote.push({ request: permission, source: "legacy" })
     }
 
-    for (const location of await getV2RequestLocations(instanceId)) {
+    const locations = await getV2RequestLocations(instanceId)
+    if (!isCurrent()) return
+    for (const location of locations) {
       const response = await requestData<{ location?: unknown; data: PermissionRequest[] }>(
         instance.client.v2.permission.request.list({ location }),
         "v2.permission.request.list",
       )
+      if (!isCurrent()) return
       log.info("v2.permission.request.list", { instanceId, location, resolvedLocation: response.location })
       for (const permission of response.data) {
         permissionRegistry.setSource(instanceId, permission.id, "v2")
@@ -528,6 +550,7 @@ async function syncPendingPermissions(instanceId: string): Promise<void> {
 async function syncPendingQuestions(instanceId: string): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance?.client) return
+  const isCurrent = () => isInstanceRuntimeCurrent(instanceId, instance)
 
   try {
     const remote: Array<{ request: QuestionRequest; source: QuestionSource }> = []
@@ -538,16 +561,20 @@ async function syncPendingQuestions(instanceId: string): Promise<void> {
       log.warn("Failed to list legacy pending questions", { instanceId, error })
       return []
     })
+    if (!isCurrent()) return
     for (const request of legacyRemote) {
       questionRegistry.setSource(instanceId, request.id, "legacy")
       remote.push({ request, source: "legacy" })
     }
 
-    for (const location of await getV2RequestLocations(instanceId)) {
+    const locations = await getV2RequestLocations(instanceId)
+    if (!isCurrent()) return
+    for (const location of locations) {
       const response = await requestData<{ location?: unknown; data: QuestionRequest[] }>(
         instance.client.v2.question.request.list({ location }),
         "v2.question.request.list",
       )
+      if (!isCurrent()) return
       log.info("v2.question.request.list", { instanceId, location, resolvedLocation: response.location })
       for (const request of response.data) {
         questionRegistry.setSource(instanceId, request.id, "v2")
@@ -620,7 +647,7 @@ async function hydrateInstanceData(instanceId: string, options?: {
     await ensureInstanceConfigLoaded(instanceId)
     const instance = instances().get(instanceId)
     if (!instance?.client) return
-    await fetchCommands(instanceId, instance.client)
+    await fetchCommands(instanceId, instance.client, () => isInstanceRuntimeCurrent(instanceId, instance))
     await syncPendingPermissions(instanceId)
     await syncPendingQuestions(instanceId)
   } catch (error) {
@@ -668,6 +695,7 @@ async function postInstanceDispose(instanceId: string): Promise<boolean> {
 }
 
 function clearReloadableInstanceState(instanceId: string): void {
+  resetInstanceSessionRequestState(instanceId)
   clearCacheForInstance(instanceId)
   clearCommands(instanceId)
   clearInstanceMetadata(instanceId)
@@ -691,7 +719,7 @@ async function rehydrateInstance(instanceId: string, options?: { reason?: string
     clearReloadableInstanceState(instanceId)
 
     await hydrateInstanceData(instanceId, { force: true })
-    if (instances().get(instanceId) !== instance) return
+    if (!isInstanceRuntimeCurrent(instanceId, instance)) return
   })().finally(() => {
     if (pendingRehydrations.get(instanceId) === promise) pendingRehydrations.delete(instanceId)
   })
@@ -708,7 +736,7 @@ async function disposeInstance(instanceId: string): Promise<boolean> {
   const instance = instances().get(instanceId)
   const promise = (async () => {
     const ok = await postInstanceDispose(instanceId)
-    if (ok && instances().get(instanceId) === instance) {
+    if (ok && isInstanceRuntimeCurrent(instanceId, instance)) {
       await rehydrateInstance(instanceId, { reason: "disposed" })
     }
     return ok
@@ -758,6 +786,8 @@ const initialWorkspaceLoad = (async function initializeWorkspaces(): Promise<{ e
   } catch (error) {
     log.error("Failed to load workspaces", error)
     return { error }
+  } finally {
+    workspaceListInitialized = true
   }
 })()
 let latestWorkspaceLoad = initialWorkspaceLoad
@@ -910,7 +940,7 @@ function addInstance(instance: Instance) {
     .length
   setInstances((prev) => {
     const next = new Map(prev)
-    next.set(instance.id, instance)
+    next.set(instance.id, { ...instance, runtimeToken: Symbol(instance.id) })
     return next
   })
   ensureLogContainer(instance.id)
@@ -929,11 +959,24 @@ function updateInstance(id: string, updates: Partial<Instance>) {
     const next = new Map(prev)
     const instance = next.get(id)
     if (instance) {
-      next.set(id, { ...instance, ...updates })
+      next.set(id, {
+        ...instance,
+        ...updates,
+        runtimeToken: (updates.client !== undefined && updates.client !== instance.client) ||
+          (updates.pid !== undefined && updates.pid !== instance.pid) ||
+          (updates.proxyPath !== undefined && updates.proxyPath !== instance.proxyPath)
+          ? Symbol(id)
+          : instance.runtimeToken,
+      })
     }
     return next
   })
   syncHasInstancesFlag()
+}
+
+function isInstanceRuntimeCurrent(instanceId: string, captured: Instance | undefined): boolean {
+  const current = instances().get(instanceId)
+  return Boolean(current && captured && current.runtimeToken === captured.runtimeToken)
 }
 
 function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
@@ -1637,6 +1680,19 @@ function clearQuestionQueue(instanceId: string): void {
   recomputeActiveInterruption(instanceId)
 }
 
+function clearSessionInterruptions(instanceId: string, sessionId: string): void {
+  for (const permission of [...getPermissionQueue(instanceId)]) {
+    if (getPermissionSessionId(permission) !== sessionId) continue
+    removePermissionFromQueue(instanceId, permission.id)
+    removePermissionV2(instanceId, permission.id)
+  }
+  for (const question of [...getQuestionQueue(instanceId)]) {
+    if (getQuestionSessionId(question) !== sessionId) continue
+    removeQuestionFromQueue(instanceId, question.id)
+    removeQuestionV2(instanceId, question.id)
+  }
+}
+
 function setActivePermissionIdForInstance(instanceId: string, permissionId: string): void {
   setActiveInterruptionForInstance(instanceId, { kind: "permission", id: permissionId })
 }
@@ -1662,6 +1718,7 @@ async function sendQuestionReply(
 
     if (source === "legacy") {
       const workspace = sessionId ? await getOpenCodeWorkspaceIdForSession(instanceId, sessionId) : null
+      if (!isInstanceRuntimeCurrent(instanceId, instance)) return
       await requestData(
         client.question.reply({
           requestID: requestId,
@@ -1681,7 +1738,9 @@ async function sendQuestionReply(
       )
     }
 
+    if (!isInstanceRuntimeCurrent(instanceId, instance)) return
     removeQuestionFromQueue(instanceId, requestId)
+    removeQuestionV2(instanceId, requestId)
   } catch (error) {
     log.error("Failed to send question reply", error)
     throw error
@@ -1700,6 +1759,7 @@ async function sendQuestionReject(instanceId: string, sessionId: string, request
 
     if (source === "legacy") {
       const workspace = sessionId ? await getOpenCodeWorkspaceIdForSession(instanceId, sessionId) : null
+      if (!isInstanceRuntimeCurrent(instanceId, instance)) return
       await requestData(
         client.question.reject({
           requestID: requestId,
@@ -1717,7 +1777,9 @@ async function sendQuestionReject(instanceId: string, sessionId: string, request
       )
     }
 
+    if (!isInstanceRuntimeCurrent(instanceId, instance)) return
     removeQuestionFromQueue(instanceId, requestId)
+    removeQuestionV2(instanceId, requestId)
   } catch (error) {
     log.error("Failed to send question reject", error)
     throw error
@@ -1742,6 +1804,7 @@ async function sendPermissionResponse(
 
     if (source === "legacy") {
       const workspace = sessionId ? await getOpenCodeWorkspaceIdForSession(instanceId, sessionId) : null
+      if (!isInstanceRuntimeCurrent(instanceId, instance)) return
       await requestData(
         client.permission.reply({
           requestID: requestId,
@@ -1763,6 +1826,7 @@ async function sendPermissionResponse(
       )
     }
 
+    if (!isInstanceRuntimeCurrent(instanceId, instance)) return
     markPermissionReplied(instanceId, requestId)
     // Remove from both local queues after successful response; the SSE replied event
     // is still accepted, but the UI no longer depends on receiving it.
@@ -1845,7 +1909,9 @@ export {
   setActiveInstanceId,
   addInstance,
   updateInstance,
+  isInstanceRuntimeCurrent,
   removeInstance,
+  clearSessionInterruptions,
   createInstance,
   cancelRestoreCreationRequest,
   disposeRestoreCreatedInstance,

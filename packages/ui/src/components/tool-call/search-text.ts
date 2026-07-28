@@ -15,17 +15,22 @@ const TOOL_SEARCH_CHARACTER_LIMIT = 10_000
 const searchSizes = new WeakMap<string[], number>()
 
 function appendString(values: string[], value: unknown) {
-  if (typeof value !== "string" || value.trim().length === 0) return
+  if (typeof value !== "string") return
   const used = searchSizes.get(values) ?? 0
   const remaining = TOOL_SEARCH_CHARACTER_LIMIT - used
   if (remaining <= 0) return
   const text = limitToolOutputForRender(value).slice(0, remaining)
-  values.push(text)
   searchSizes.set(values, used + text.length)
+  if (text.trim().length === 0) return
+  values.push(text)
 }
 
 function appendFormatted(values: string[], value: unknown) {
   if ((searchSizes.get(values) ?? 0) >= TOOL_SEARCH_CHARACTER_LIMIT) return
+  if (typeof value === "string") {
+    appendString(values, value)
+    return
+  }
   if (exceedsRetainedByteLimit(value, 10_000)) return
   const result = formatUnknown(value)
   if (result?.text.trim()) appendString(values, result.text)
@@ -122,7 +127,9 @@ export function getApplyPatchToolSearchText(context: ToolSearchTextContext): str
   const { metadata, output } = readToolStatePayload(context.toolState)
   const files = Array.isArray((metadata as any).files) ? ((metadata as any).files as any[]) : []
 
-  for (const file of files) {
+  for (let index = 0; index < files.length && index < 1_000; index += 1) {
+    if ((searchSizes.get(values) ?? 0) >= TOOL_SEARCH_CHARACTER_LIMIT) break
+    const file = files[index]
     appendString(values, file?.filePath)
     appendString(values, file?.relativePath)
     appendString(values, file?.diff)
@@ -149,11 +156,11 @@ export function getTaskToolSearchText(context: ToolSearchTextContext): string[] 
   const values: string[] = []
   const { input, metadata, output } = readToolStatePayload(context.toolState)
   appendBaseToolText(values, context)
-  appendString(values, input.prompt)
-  appendString(values, input.subagent_type)
+  appendToolErrorText(values, context)
   appendFormatted(values, output)
   appendFormatted(values, metadata.summary)
-  appendToolErrorText(values, context)
+  appendString(values, input.subagent_type)
+  appendString(values, input.prompt)
   return values
 }
 
@@ -163,7 +170,9 @@ export function getTodoToolSearchText(context: ToolSearchTextContext): string[] 
   const todos = Array.isArray((metadata as any).todos) ? ((metadata as any).todos as any[]) : []
   appendBaseToolText(values, context)
 
-  for (const todo of todos) {
+  for (let index = 0; index < todos.length && index < 1_000; index += 1) {
+    if ((searchSizes.get(values) ?? 0) >= TOOL_SEARCH_CHARACTER_LIMIT) break
+    const todo = todos[index]
     appendString(values, todo?.content)
     appendString(values, todo?.status)
   }
@@ -179,11 +188,15 @@ export function getQuestionToolSearchText(context: ToolSearchTextContext): strin
   const answers = Array.isArray((metadata as any).answers) ? ((metadata as any).answers as unknown[]) : []
   appendBaseToolText(values, context)
 
-  for (const question of questions) {
+  for (let questionIndex = 0; questionIndex < questions.length && questionIndex < 100; questionIndex += 1) {
+    if ((searchSizes.get(values) ?? 0) >= TOOL_SEARCH_CHARACTER_LIMIT) break
+    const question = questions[questionIndex]
     appendString(values, question.header)
     appendString(values, question.question)
     const options = Array.isArray(question.options) ? (question.options as QuestionOption[]) : []
-    for (const option of options) {
+    for (let optionIndex = 0; optionIndex < options.length && optionIndex < 100; optionIndex += 1) {
+      if ((searchSizes.get(values) ?? 0) >= TOOL_SEARCH_CHARACTER_LIMIT) break
+      const option = options[optionIndex]
       appendString(values, option.label)
       appendString(values, option.description)
     }

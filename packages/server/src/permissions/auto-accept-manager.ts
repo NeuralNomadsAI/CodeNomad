@@ -70,6 +70,7 @@ export class AutoAcceptManager {
   private readonly hydration = new Map<string, Promise<void>>()
   private readonly queuedEvents = new Map<string, InstanceStreamPayload[]>()
   private readonly instanceGeneration = new Map<string, number>()
+  private readonly streamIds = new Map<string, string>()
   private readonly sessionWorkspaces = new Map<string, Map<string, string>>()
   private readonly mutations = new Map<string, Promise<boolean>>()
   private unsubscribe?: () => void
@@ -78,8 +79,13 @@ export class AutoAcceptManager {
 
   start(): void {
     if (this.unsubscribe) return
-    const handler = (payload: { instanceId?: string; event?: InstanceStreamPayload }) => {
+    const handler = (payload: { instanceId?: string; streamId?: string; event?: InstanceStreamPayload }) => {
       if (!payload || !payload.instanceId || !payload.event) return
+      if (payload.streamId) {
+        const current = this.streamIds.get(payload.instanceId)
+        if (current && current !== payload.streamId) return
+        this.streamIds.set(payload.instanceId, payload.streamId)
+      }
       if (this.deps.persistence && !this.hydratedInstances.has(payload.instanceId)) {
         const queued = this.queuedEvents.get(payload.instanceId) ?? []
         queued.push(payload.event)
@@ -104,12 +110,19 @@ export class AutoAcceptManager {
     const onError = (event: { workspace?: { id?: string } }) => {
       if (event?.workspace?.id) this.clearInstance(event.workspace.id)
     }
+    const onStreamStatus = (event: { instanceId?: string; streamId?: string; status?: string }) => {
+      if (!event.instanceId || !event.streamId || event.status !== "connecting") return
+      if (this.streamIds.get(event.instanceId) !== event.streamId) this.queuedEvents.delete(event.instanceId)
+      this.streamIds.set(event.instanceId, event.streamId)
+    }
     this.deps.eventBus.on("instance.event", handler)
+    this.deps.eventBus.on("instance.eventStatus", onStreamStatus)
     this.deps.eventBus.on("workspace.started", onStarted)
     this.deps.eventBus.on("workspace.stopped", onStopped)
     this.deps.eventBus.on("workspace.error", onError)
     this.unsubscribe = () => {
       this.deps.eventBus.off("instance.event", handler)
+      this.deps.eventBus.off("instance.eventStatus", onStreamStatus)
       this.deps.eventBus.off("workspace.started", onStarted)
       this.deps.eventBus.off("workspace.stopped", onStopped)
       this.deps.eventBus.off("workspace.error", onError)
@@ -237,6 +250,7 @@ export class AutoAcceptManager {
     this.hydration.delete(instanceId)
     this.queuedEvents.delete(instanceId)
     this.sessionWorkspaces.delete(instanceId)
+    this.streamIds.delete(instanceId)
     this.mutations.delete(instanceId)
     this.store.clearInstance(instanceId)
     this.pending.delete(instanceId)
