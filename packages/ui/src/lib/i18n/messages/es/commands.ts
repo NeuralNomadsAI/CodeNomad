@@ -123,12 +123,12 @@ export const commandMessages = {
   "commands.diffViewUnified.keywords": "diff, unificada, vista",
 
   "commands.toolOutputsDefault.label": "Salidas de herramientas por defecto · {state}",
-  "commands.toolOutputsDefault.description": "Alternar la expansión por defecto de las salidas de herramientas",
-  "commands.toolOutputsDefault.keywords": "herramienta, salida, expandir, colapsar",
+  "commands.toolOutputsDefault.description": "Configurar la visibilidad por defecto de las salidas de herramientas",
+  "commands.toolOutputsDefault.keywords": "herramienta, salida, ocultar, expandir, colapsar",
 
   "commands.diagnosticsDefault.label": "Diagnósticos por defecto · {state}",
-  "commands.diagnosticsDefault.description": "Alternar la expansión por defecto de la salida de diagnósticos",
-  "commands.diagnosticsDefault.keywords": "diagnósticos, expandir, colapsar",
+  "commands.diagnosticsDefault.description": "Configurar la visibilidad por defecto de la salida de diagnósticos",
+  "commands.diagnosticsDefault.keywords": "diagnósticos, ocultar, expandir, colapsar",
 
   "commands.toolInputsVisibility.label": "Visibilidad de entradas de herramientas · {state}",
   "commands.toolInputsVisibility.description": "Configurar la visibilidad por defecto de los argumentos de entrada de llamadas de herramienta",

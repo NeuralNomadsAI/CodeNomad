@@ -123,12 +123,12 @@ export const commandMessages = {
   "commands.diffViewUnified.keywords": "diff, ユニファイド, 表示, unified, view",
 
   "commands.toolOutputsDefault.label": "ツール出力の既定 · {state}",
-  "commands.toolOutputsDefault.description": "ツール出力を既定で展開するか切り替え",
-  "commands.toolOutputsDefault.keywords": "ツール, 出力, 展開, 折りたたみ, tool, output, expand, collapse",
+  "commands.toolOutputsDefault.description": "ツール出力の既定の表示状態を設定",
+  "commands.toolOutputsDefault.keywords": "ツール, 出力, 非表示, 展開, 折りたたみ, tool, output, hide, expand, collapse",
 
   "commands.diagnosticsDefault.label": "診断の既定 · {state}",
-  "commands.diagnosticsDefault.description": "診断出力を既定で展開するか切り替え",
-  "commands.diagnosticsDefault.keywords": "診断, 展開, 折りたたみ, diagnostics, expand, collapse",
+  "commands.diagnosticsDefault.description": "診断出力の既定の表示状態を設定",
+  "commands.diagnosticsDefault.keywords": "診断, 非表示, 展開, 折りたたみ, diagnostics, hide, expand, collapse",
 
   "commands.toolInputsVisibility.label": "ツール入力の表示 · {state}",
   "commands.toolInputsVisibility.description": "ツール呼び出しの入力引数の既定の表示状態を設定します",

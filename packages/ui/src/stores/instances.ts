@@ -1397,12 +1397,12 @@ function recomputeActiveInterruption(instanceId: string): void {
   setActiveInterruptionForInstance(instanceId, computeActiveInterruption(instanceId))
 }
 
-function addPermissionToQueue(instanceId: string, permission: PermissionRequest, source: PermissionSource = "v2"): PermissionRequest | undefined {
+function addPermissionToQueue(instanceId: string, permission: PermissionRequest, source?: PermissionSource): PermissionRequest | undefined {
   let inserted = false
   let updated = false
   let previousPermission: PermissionRequest | undefined
   let queuedPermission = permission
-  permissionRegistry.setSource(instanceId, permission.id, source)
+  if (source) permissionRegistry.setSource(instanceId, permission.id, source)
 
   setPermissionQueues((prev) => {
     const next = new Map(prev)

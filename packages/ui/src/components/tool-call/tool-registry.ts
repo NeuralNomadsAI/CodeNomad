@@ -1,4 +1,9 @@
-import type { ExpansionPreference, Preferences, ToolCallExpansionPreset } from "../../stores/preferences"
+import type {
+  ExpansionPreference,
+  Preferences,
+  ToolCallExpansionPreset,
+  VisibilityPreference,
+} from "../../stores/preferences"
 import type { ToolRenderer } from "./types"
 import { applyPatchRenderer } from "./renderers/apply-patch"
 import { bashRenderer } from "./renderers/bash"
@@ -30,14 +35,14 @@ export interface ToolRegistryEntry {
   labelKey?: string
   renderer: ToolRenderer
   configurable: boolean
-  expansionPresets: Record<ToolCallExpansionPreset, ExpansionPreference>
+  expansionPresets: Record<ToolCallExpansionPreset, VisibilityPreference>
   aliases?: string[]
 }
 
 const expanded = "expanded" satisfies ExpansionPreference
 const collapsed = "collapsed" satisfies ExpansionPreference
 
-function presets(values: Record<ToolCallExpansionPreset, ExpansionPreference>) {
+function presets(values: Record<ToolCallExpansionPreset, VisibilityPreference>) {
   return values
 }
 
@@ -172,26 +177,29 @@ export function getConfigurableToolEntries(): ToolRegistryEntry[] {
   return TOOL_REGISTRY.filter((entry) => entry.configurable)
 }
 
-export function buildToolExpansionPresetDefaults(preset: ToolCallExpansionPreset): Record<string, ExpansionPreference> {
-  const defaults: Record<string, ExpansionPreference> = {}
+export function buildToolExpansionPresetDefaults(preset: ToolCallExpansionPreset): Record<string, VisibilityPreference> {
+  const defaults: Record<string, VisibilityPreference> = {}
   for (const entry of getConfigurableToolEntries()) {
     defaults[entry.tool] = entry.expansionPresets[preset]
   }
   return defaults
 }
 
-export function resolveToolExpansionDefault(preferences: Preferences, toolName: string): boolean {
+export function resolveToolVisibility(preferences: Preferences, toolName: string): VisibilityPreference {
   const entry = getToolRegistryEntry(toolName)
   const defaults = preferences.toolCallExpansionDefaults
   const presetMode = defaults.preset === "custom" ? undefined : entry.expansionPresets[defaults.preset]
   const otherPresetMode = defaults.preset === "custom" ? undefined : otherToolEntry.expansionPresets[defaults.preset]
-  const mode = defaults.tools[entry.tool]
+  return defaults.tools[entry.tool]
     ?? presetMode
     ?? defaults.tools[OTHER_TOOL_NAME]
     ?? otherPresetMode
     ?? preferences.toolOutputExpansion
     ?? "expanded"
-  return mode === "expanded"
+}
+
+export function resolveToolExpansionDefault(preferences: Preferences, toolName: string): boolean {
+  return resolveToolVisibility(preferences, toolName) === "expanded"
 }
 
 export function resolveThinkingExpansionDefault(preferences: Preferences): boolean {

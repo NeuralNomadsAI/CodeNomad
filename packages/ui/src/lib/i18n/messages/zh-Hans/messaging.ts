@@ -74,6 +74,8 @@ export const messagingMessages = {
   "messageBlock.usage.cacheRead": "缓存读取",
   "messageBlock.usage.cacheWrite": "缓存写入",
   "messageBlock.usage.cost": "费用",
+  "messageBlock.usage.expandAriaLabel": "展开令牌指标",
+  "messageBlock.usage.collapseAriaLabel": "折叠令牌指标",
   "messageBlock.step.agentLabel": "智能体：{agent}",
   "messageBlock.step.modelLabel": "模型：{model}",
   "messageBlock.reasoning.thinkingLabel": "思考",

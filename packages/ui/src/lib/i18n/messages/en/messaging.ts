@@ -72,6 +72,8 @@ export const messagingMessages = {
   "messageBlock.usage.cacheRead": "Cache Read",
   "messageBlock.usage.cacheWrite": "Cache Write",
   "messageBlock.usage.cost": "Cost",
+  "messageBlock.usage.expandAriaLabel": "Expand token metrics",
+  "messageBlock.usage.collapseAriaLabel": "Collapse token metrics",
   "messageBlock.step.agentLabel": "Agent: {agent}",
   "messageBlock.step.modelLabel": "Model: {model}",
   "messageBlock.reasoning.thinkingLabel": "Thinking",

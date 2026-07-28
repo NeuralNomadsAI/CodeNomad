@@ -21,9 +21,10 @@ import type { DeleteHoverState } from "../types/delete-hover"
 import { partHasRenderableText } from "../types/message"
 import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
 import { getPartCharCount } from "../lib/token-utils"
+import { getMessageSelectionActionPosition } from "../lib/message-selection-position"
 import { buildSessionSearchMatches } from "../lib/session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
-import { resolveThinkingExpansionDefault } from "./tool-call/tool-registry"
+import { resolveThinkingExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
 import { collectToolDeletionCompanionPartIds, executeBulkDeletionPlan } from "./tool-deletion-companions"
 
 const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
@@ -57,7 +58,8 @@ export interface MessageSectionProps {
 export default function MessageSection(props: MessageSectionProps) {
   const { preferences, updatePreferences } = useConfig()
   const { t } = useI18n()
-  const showUsagePreference = () => preferences().showUsageMetrics ?? true
+  const usageMetricsVisibility = () =>
+    preferences().showUsageMetrics ? preferences().usageMetricsExpansion : "hidden"
   const showMessageTimelinePreference = () => preferences().showMessageTimeline ?? true
   const showTimelineToolsPreference = () => preferences().showTimelineTools ?? true
   const holdLongAssistantRepliesEnabled = () => preferences().holdLongAssistantReplies ?? true
@@ -121,8 +123,8 @@ export default function MessageSection(props: MessageSectionProps) {
     const pref = preferences()
     const showThinking = pref.showThinkingBlocks ? 1 : 0
     const thinkingExpansion = resolveThinkingExpansionDefault(pref) ? "expanded" : "collapsed"
-    const showUsage = (pref.showUsageMetrics ?? true) ? 1 : 0
-    return `${showThinking}|${thinkingExpansion}|${showUsage}`
+    const usageVisibility = pref.showUsageMetrics ? pref.usageMetricsExpansion : "hidden"
+    return `${showThinking}|${thinkingExpansion}|${usageVisibility}`
   })
 
   const handleTimelineSegmentClick = (segment: TimelineSegment) => {
@@ -997,15 +999,22 @@ export default function MessageSection(props: MessageSectionProps) {
       clearQuoteSelection()
       return
     }
-    const rects = range.getClientRects()
-    const anchorRect = rects.length > 0 ? rects[0] : range.getBoundingClientRect()
+    const rects = Array.from(range.getClientRects())
+    const fallbackRect = range.getBoundingClientRect()
     const shellRect = shell.getBoundingClientRect()
-    const relativeTop = Math.max(anchorRect.top - shellRect.top - 40, 8)
-    // Keep the popover within the stream shell. The quote popover currently
-    // renders 3 actions; keep enough horizontal room for the pill.
-    const maxLeft = Math.max(shell.clientWidth - 260, 8)
-    const relativeLeft = Math.min(Math.max(anchorRect.left - shellRect.left, 8), maxLeft)
-    setQuoteSelection({ text: limited, top: relativeTop, left: relativeLeft })
+    const touchOnly = Boolean(
+      window.matchMedia?.("(pointer: coarse)")?.matches
+      && !window.matchMedia?.("(any-pointer: fine)")?.matches,
+    )
+    const position = getMessageSelectionActionPosition(
+      rects,
+      fallbackRect,
+      shellRect,
+      shell.clientWidth,
+      shell.clientHeight,
+      touchOnly,
+    )
+    setQuoteSelection({ text: limited, ...position })
   }
 
   function handleStreamMouseUp() {
@@ -1605,7 +1614,8 @@ export default function MessageSection(props: MessageSectionProps) {
               lastAssistantIndex={lastAssistantIndex}
               showThinking={() => preferences().showThinkingBlocks}
               thinkingDefaultExpanded={() => resolveThinkingExpansionDefault(preferences())}
-              showUsageMetrics={showUsagePreference}
+              usageMetricsVisibility={usageMetricsVisibility}
+              toolVisibility={(toolName) => resolveToolVisibility(preferences(), toolName)}
               deleteHover={deleteHover}
               onDeleteHoverChange={setDeleteHover}
               selectedMessageIds={selectedForDeletion}

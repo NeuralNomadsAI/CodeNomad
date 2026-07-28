@@ -72,6 +72,8 @@ export const messagingMessages = {
   "messageBlock.usage.cacheRead": "क्यास पढाइ",
   "messageBlock.usage.cacheWrite": "क्यास लेखाइ",
   "messageBlock.usage.cost": "लागत (Cost)",
+  "messageBlock.usage.expandAriaLabel": "टोकन मेट्रिक्स विस्तार गर्नुहोस्",
+  "messageBlock.usage.collapseAriaLabel": "टोकन मेट्रिक्स संकुचित गर्नुहोस्",
   "messageBlock.step.agentLabel": "एजेन्ट: {agent}",
   "messageBlock.step.modelLabel": "मोडेल: {model}",
   "messageBlock.reasoning.thinkingLabel": "सोच्दै",

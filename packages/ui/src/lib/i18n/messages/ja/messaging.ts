@@ -74,6 +74,8 @@ export const messagingMessages = {
   "messageBlock.usage.cacheRead": "キャッシュ読み込み",
   "messageBlock.usage.cacheWrite": "キャッシュ書き込み",
   "messageBlock.usage.cost": "コスト",
+  "messageBlock.usage.expandAriaLabel": "トークン使用量を展開",
+  "messageBlock.usage.collapseAriaLabel": "トークン使用量を折りたたむ",
   "messageBlock.step.agentLabel": "エージェント: {agent}",
   "messageBlock.step.modelLabel": "モデル: {model}",
   "messageBlock.reasoning.thinkingLabel": "思考",

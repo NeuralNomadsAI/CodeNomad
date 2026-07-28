@@ -1,4 +1,5 @@
 import {
+  For,
   Show,
   Suspense,
   createEffect,
@@ -12,10 +13,19 @@ import {
 } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk/v2"
 import type { FileContent, FileNode } from "@opencode-ai/sdk/v2/client"
+import {
+  DragDropProvider,
+  DragDropSensors,
+  SortableProvider,
+  closestCenter,
+  createSortable,
+  type DragEvent as SolidDndDragEvent,
+} from "@thisbeyond/solid-dnd"
 import IconButton from "@suid/material/IconButton"
 import MenuOpenIcon from "@suid/icons-material/MenuOpen"
 import PushPinIcon from "@suid/icons-material/PushPin"
 import PushPinOutlinedIcon from "@suid/icons-material/PushPinOutlined"
+import { Settings2 } from "lucide-solid"
 
 import type { Instance } from "../../../../types/instance"
 import type { BackgroundProcess } from "../../../../../../server/src/api-types"
@@ -36,7 +46,7 @@ import { requestData } from "../../../../lib/opencode-api"
 import { serverApi } from "../../../../lib/api-client"
 import { showConfirmDialog } from "../../../../stores/alerts"
 import { showToastNotification } from "../../../../lib/notifications"
-import { writeClientLayoutValue } from "../../../../stores/client-state"
+import { readClientLayoutValue, writeClientLayoutValue } from "../../../../stores/client-state"
 import { useGlobalPointerDrag } from "../useGlobalPointerDrag"
 import { useGitChanges } from "./useGitChanges"
 import {
@@ -54,21 +64,66 @@ import {
   RIGHT_PANEL_GIT_CHANGES_SPLIT_WIDTH_KEY,
   RIGHT_PANEL_GIT_CHANGES_UNSTAGED_OPEN_NONPHONE_KEY,
   RIGHT_PANEL_GIT_CHANGES_UNSTAGED_OPEN_PHONE_KEY,
+  RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY,
   RIGHT_PANEL_TAB_STORAGE_KEY,
   readStoredBool,
   readStoredEnum,
   readStoredPanelWidth,
   readStoredRightPanelTab,
 } from "../storage"
+import {
+  applyRightPanelItemCustomization,
+  collectRightPanelItems,
+  parseRightPanelCustomization,
+  setRightPanelItemHidden,
+  type RightPanelCustomization,
+  type RightPanelModule,
+  type RightPanelSectionModule,
+  type RightPanelTabModule,
+} from "./registry"
+import { CORE_STATUS_SECTION_ITEMS } from "./tabs/status-sections"
 
 const LazyGitChangesTab = lazy(() => import("./tabs/GitChangesTab"))
 const LazyFilesTab = lazy(() => import("./tabs/FilesTab"))
 const LazyWorkflowsTab = lazy(() => import("./tabs/WorkflowsTab"))
 const LazyStatusTab = lazy(() => import("./tabs/StatusTab"))
-const RIGHT_PANEL_TABS: readonly RightPanelTab[] = ["workflows", "git-changes", "files", "status"]
 
 function RightPanelTabFallback() {
   return <div class="flex-1 min-h-0" />
+}
+
+interface SortableRightPanelTabProps {
+  tab: RightPanelTabModule
+  active: boolean
+  label: string
+  dragTitle: string
+  id: string
+  panelId: string
+  tabIndex: number
+  onSelect: () => void
+  onKeyDown: (event: KeyboardEvent) => void
+}
+
+const SortableRightPanelTab: Component<SortableRightPanelTabProps> = (props) => {
+  const sortable = createSortable(props.tab.id)
+  return (
+    <div ref={sortable} class={`right-panel-tab-draggable ${sortable.isActiveDraggable ? "right-panel-tab-draggable-active" : ""}`}>
+      <button
+        type="button"
+        role="tab"
+        id={props.id}
+        class={`right-panel-tab ${props.active ? "right-panel-tab-active" : "right-panel-tab-inactive"}`}
+        aria-selected={props.active}
+        aria-controls={props.panelId}
+        tabIndex={props.tabIndex}
+        title={props.dragTitle}
+        onKeyDown={props.onKeyDown}
+        onClick={props.onSelect}
+      >
+        <span class="tab-label">{props.label}</span>
+      </button>
+    </div>
+  )
 }
 
 interface RightPanelProps {
@@ -101,11 +156,12 @@ interface RightPanelProps {
 
 const RightPanel: Component<RightPanelProps> = (props) => {
   const [rightPanelTab, setRightPanelTab] = createSignal<RightPanelTab>(readStoredRightPanelTab("git-changes"))
-  const [workflowsVisited, setWorkflowsVisited] = createSignal(rightPanelTab() === "workflows")
-  const tabGroupId = `right-panel-${createUniqueId()}`
-  const tabButtons: Partial<Record<RightPanelTab, HTMLButtonElement>> = {}
-  const defaultStatusSectionIds = ["provider-usage", "yolo-mode", "plan", "background-processes", "mcp", "lsp", "plugins"]
+  const defaultStatusSectionIds = CORE_STATUS_SECTION_ITEMS.map((section) => section.id)
   const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>(defaultStatusSectionIds)
+  const [rightPanelCustomizationOpen, setRightPanelCustomizationOpen] = createSignal(false)
+  const [rightPanelCustomization, setRightPanelCustomization] = createSignal<RightPanelCustomization>(
+    parseRightPanelCustomization(readClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY)),
+  )
 
   const [browserPath, setBrowserPath] = createSignal(".")
   const [browserEntries, setBrowserEntries] = createSignal<FileNode[] | null>(null)
@@ -219,7 +275,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   createEffect(() => {
     writeClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY, rightPanelTab())
-    if (rightPanelTab() === "workflows") setWorkflowsVisited(true)
   })
 
   createEffect(() => {
@@ -655,131 +710,55 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setRightPanelExpandedItems(values)
   }
 
-  const tabClass = (tab: RightPanelTab) =>
-    `right-panel-tab ${rightPanelTab() === tab ? "right-panel-tab-active" : "right-panel-tab-inactive"}`
-
-  const tabId = (tab: RightPanelTab) => `${tabGroupId}-tab-${tab}`
-  const tabPanelId = (tab: RightPanelTab) => `${tabGroupId}-panel-${tab}`
-  const selectTabFromKeyboard = (tab: RightPanelTab) => {
-    setRightPanelTab(tab)
-    tabButtons[tab]?.focus()
-  }
-  const handleTabKeyDown = (event: KeyboardEvent, tab: RightPanelTab) => {
-    const index = RIGHT_PANEL_TABS.indexOf(tab)
-    let target: RightPanelTab | undefined
-    if (event.key === "ArrowLeft") target = RIGHT_PANEL_TABS[(index - 1 + RIGHT_PANEL_TABS.length) % RIGHT_PANEL_TABS.length]
-    if (event.key === "ArrowRight") target = RIGHT_PANEL_TABS[(index + 1) % RIGHT_PANEL_TABS.length]
-    if (event.key === "Home") target = RIGHT_PANEL_TABS[0]
-    if (event.key === "End") target = RIGHT_PANEL_TABS[RIGHT_PANEL_TABS.length - 1]
-    if (!target) return
-    event.preventDefault()
-    selectTabFromKeyboard(target)
+  const updateRightPanelCustomization = (updater: (current: RightPanelCustomization) => RightPanelCustomization) => {
+    const next = updater(rightPanelCustomization())
+    setRightPanelCustomization(next)
+    writeClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY, JSON.stringify(next))
   }
 
-  return (
-    <div class="flex flex-col h-full" ref={props.setContentEl}>
-      <div class="right-panel-tab-bar">
-        <div class="tab-container">
-          <div class="tab-strip-shortcuts text-primary">
-            <Show when={props.rightDrawerState() === "floating-open"}>
-              <IconButton
-                size="small"
-                color="inherit"
-                aria-label={props.t("instanceShell.rightDrawer.toggle.close")}
-                title={props.t("instanceShell.rightDrawer.toggle.close")}
-                onClick={props.onCloseRightDrawer}
-              >
-                <MenuOpenIcon fontSize="small" sx={{ transform: "scaleX(-1)" }} />
-              </IconButton>
-            </Show>
-            <Show when={!props.isPhoneLayout()}>
-              <IconButton
-                size="small"
-                color="inherit"
-                aria-label={props.rightPinned() ? props.t("instanceShell.rightDrawer.unpin") : props.t("instanceShell.rightDrawer.pin")}
-                onClick={() => (props.rightPinned() ? props.onUnpinRightDrawer() : props.onPinRightDrawer())}
-              >
-                {props.rightPinned() ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
-              </IconButton>
-            </Show>
-          </div>
-          <div class="tab-scroll">
-            <div class="tab-strip">
-              <div class="tab-strip-tabs" role="tablist" aria-label={props.t("instanceShell.rightPanel.tabs.ariaLabel")}> 
-                <button
-                  ref={(element) => { tabButtons.workflows = element }}
-                  id={tabId("workflows")}
-                  type="button"
-                  role="tab"
-                  class={tabClass("workflows")}
-                  aria-selected={rightPanelTab() === "workflows"}
-                  aria-controls={tabPanelId("workflows")}
-                  tabIndex={rightPanelTab() === "workflows" ? 0 : -1}
-                  onKeyDown={(event) => handleTabKeyDown(event, "workflows")}
-                  onClick={() => setRightPanelTab("workflows")}
-                >
-                  <span class="tab-label">{props.t("instanceShell.rightPanel.tabs.workflows")}</span>
-                </button>
-                <button
-                  ref={(element) => { tabButtons["git-changes"] = element }}
-                  id={tabId("git-changes")}
-                  type="button"
-                  role="tab"
-                  class={tabClass("git-changes")}
-                  aria-selected={rightPanelTab() === "git-changes"}
-                  aria-controls={tabPanelId("git-changes")}
-                  tabIndex={rightPanelTab() === "git-changes" ? 0 : -1}
-                  onKeyDown={(event) => handleTabKeyDown(event, "git-changes")}
-                  onClick={() => setRightPanelTab("git-changes")}
-                >
-                  <span class="tab-label">{props.t("instanceShell.rightPanel.tabs.gitChanges")}</span>
-                </button>
-                <button
-                  ref={(element) => { tabButtons.files = element }}
-                  id={tabId("files")}
-                  type="button"
-                  role="tab"
-                  class={tabClass("files")}
-                  aria-selected={rightPanelTab() === "files"}
-                  aria-controls={tabPanelId("files")}
-                  tabIndex={rightPanelTab() === "files" ? 0 : -1}
-                  onKeyDown={(event) => handleTabKeyDown(event, "files")}
-                  onClick={() => setRightPanelTab("files")}
-                >
-                  <span class="tab-label">{props.t("instanceShell.rightPanel.tabs.files")}</span>
-                </button>
-                <button
-                  ref={(element) => { tabButtons.status = element }}
-                  id={tabId("status")}
-                  type="button"
-                  role="tab"
-                  class={tabClass("status")}
-                  aria-selected={rightPanelTab() === "status"}
-                  aria-controls={tabPanelId("status")}
-                  tabIndex={rightPanelTab() === "status" ? 0 : -1}
-                  onKeyDown={(event) => handleTabKeyDown(event, "status")}
-                  onClick={() => setRightPanelTab("status")}
-                >
-                  <span class="tab-label">{props.t("instanceShell.rightPanel.tabs.status")}</span>
-                </button>
-              </div>
+  const moveTab = (sourceId: string, targetId: string) => {
+    if (!sourceId || sourceId === targetId) return
+    const visibleIds = visibleRightPanelTabs().map((tab) => tab.id)
+    const sourceIndex = visibleIds.indexOf(sourceId)
+    const targetIndex = visibleIds.indexOf(targetId)
+    if (sourceIndex === -1 || targetIndex === -1) return
+    const nextVisibleIds = [...visibleIds]
+    const [moved] = nextVisibleIds.splice(sourceIndex, 1)
+    nextVisibleIds.splice(targetIndex, 0, moved)
+    const allIds = allRightPanelTabs().map((tab) => tab.id)
+    updateRightPanelCustomization((current) => ({
+      ...current,
+      tabOrder: [...nextVisibleIds, ...allIds.filter((id) => !nextVisibleIds.includes(id))],
+    }))
+  }
 
-              <div class="tab-strip-spacer" />
-            </div>
-          </div>
-        </div>
-      </div>
+  const handleTabDragEnd = ({ draggable, droppable }: SolidDndDragEvent) => {
+    if (!droppable) return
+    moveTab(String(draggable.id), String(droppable.id))
+  }
 
-      <div class="flex-1 overflow-y-auto">
-        <div
-          id={tabPanelId("git-changes")}
-          role="tabpanel"
-          aria-labelledby={tabId("git-changes")}
-          hidden={rightPanelTab() !== "git-changes"}
-          class="h-full min-h-0"
-        >
-        <Show when={rightPanelTab() === "git-changes"}>
-          <Suspense fallback={<RightPanelTabFallback />}>
+  const rightPanelModules = createMemo<RightPanelModule[]>(() => [
+    {
+      id: "core-right-panel",
+      tabs: [
+        {
+          id: "workflows",
+          labelKey: "instanceShell.rightPanel.tabs.workflows",
+          order: 5,
+          render: () => (
+            <LazyWorkflowsTab
+              t={props.t}
+              instanceId={props.instanceId}
+              activeSessionId={props.activeSessionId}
+              active={() => rightPanelTab() === "workflows"}
+            />
+          ),
+        },
+        {
+          id: "git-changes",
+          labelKey: "instanceShell.rightPanel.tabs.gitChanges",
+          order: 10,
+          render: () => (
             <LazyGitChangesTab
               t={props.t}
               activeSessionId={props.activeSessionId}
@@ -829,19 +808,13 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               onResizeTouchStart={handleSplitResizeTouchStart("git-changes")}
               isPhoneLayout={props.isPhoneLayout}
             />
-          </Suspense>
-        </Show>
-        </div>
-
-        <div
-          id={tabPanelId("files")}
-          role="tabpanel"
-          aria-labelledby={tabId("files")}
-          hidden={rightPanelTab() !== "files"}
-          class="h-full min-h-0"
-        >
-        <Show when={rightPanelTab() === "files"}>
-          <Suspense fallback={<RightPanelTabFallback />}>
+          ),
+        },
+        {
+          id: "files",
+          labelKey: "instanceShell.rightPanel.tabs.files",
+          order: 20,
+          render: () => (
             <LazyFilesTab
               t={props.t}
               browserPath={browserPath}
@@ -870,19 +843,13 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               onResizeTouchStart={handleSplitResizeTouchStart("files")}
               isPhoneLayout={props.isPhoneLayout}
             />
-          </Suspense>
-        </Show>
-        </div>
-
-        <div
-          id={tabPanelId("status")}
-          role="tabpanel"
-          aria-labelledby={tabId("status")}
-          hidden={rightPanelTab() !== "status"}
-          class="h-full min-h-0"
-        >
-        <Show when={rightPanelTab() === "status"}>
-          <Suspense fallback={<RightPanelTabFallback />}>
+          ),
+        },
+        {
+          id: "status",
+          labelKey: "instanceShell.rightPanel.tabs.status",
+          order: 30,
+          render: () => (
             <LazyStatusTab
               t={props.t}
               instanceId={props.instanceId}
@@ -896,28 +863,218 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               onTerminateBackgroundProcess={props.onTerminateBackgroundProcess}
               expandedItems={rightPanelExpandedItems}
               onExpandedItemsChange={handleAccordionChange}
+              customization={rightPanelCustomization}
+              onCustomizationChange={updateRightPanelCustomization}
+              extraSections={extraStatusSections()}
             />
-          </Suspense>
-        </Show>
+          ),
+        },
+      ],
+    },
+  ])
+
+  const allRightPanelTabs = createMemo(() => collectRightPanelItems<RightPanelTabModule>(rightPanelModules(), "tabs"))
+  const visibleRightPanelTabs = createMemo(() =>
+    applyRightPanelItemCustomization(
+      allRightPanelTabs(),
+      rightPanelCustomization().tabOrder,
+      rightPanelCustomization().hiddenTabIds,
+    ),
+  )
+  const orderedRightPanelTabs = createMemo(() => applyRightPanelItemCustomization(allRightPanelTabs(), rightPanelCustomization().tabOrder, []))
+  const extraStatusSections = createMemo(() => collectRightPanelItems<RightPanelSectionModule>(rightPanelModules(), "statusSections"))
+  const allStatusSections = createMemo(() => [...CORE_STATUS_SECTION_ITEMS, ...extraStatusSections()])
+  const orderedStatusSections = createMemo(() => applyRightPanelItemCustomization(allStatusSections(), rightPanelCustomization().statusSectionOrder, []))
+  const visibleStatusSections = createMemo(() =>
+    applyRightPanelItemCustomization(
+      allStatusSections(),
+      rightPanelCustomization().statusSectionOrder,
+      rightPanelCustomization().hiddenStatusSectionIds,
+    ),
+  )
+  const activeRightPanelTab = createMemo(() => visibleRightPanelTabs().find((tab) => tab.id === rightPanelTab()) ?? visibleRightPanelTabs()[0])
+  const tabGroupId = `right-panel-${createUniqueId()}`
+  const tabId = (id: string) => `${tabGroupId}-tab-${id}`
+  const tabPanelId = (id: string) => `${tabGroupId}-panel-${id}`
+  const handleTabKeyDown = (event: KeyboardEvent, id: string) => {
+    const tabs = visibleRightPanelTabs()
+    const index = tabs.findIndex((tab) => tab.id === id)
+    let target: RightPanelTabModule | undefined
+    if (event.key === "ArrowLeft") target = tabs[(index - 1 + tabs.length) % tabs.length]
+    if (event.key === "ArrowRight") target = tabs[(index + 1) % tabs.length]
+    if (event.key === "Home") target = tabs[0]
+    if (event.key === "End") target = tabs[tabs.length - 1]
+    if (!target) return
+    event.preventDefault()
+    setRightPanelTab(target.id)
+    document.getElementById(tabId(target.id))?.focus()
+  }
+
+  createEffect(() => {
+    const active = activeRightPanelTab()
+    if (active && active.id !== rightPanelTab()) {
+      setRightPanelTab(active.id)
+    }
+  })
+
+  return (
+    <div class="relative flex flex-col h-full" ref={props.setContentEl}>
+      <div class="right-panel-tab-bar">
+        <div class="tab-container">
+          <div class="tab-strip-shortcuts text-primary">
+            <Show when={props.rightDrawerState() === "floating-open"}>
+              <IconButton
+                size="small"
+                color="inherit"
+                aria-label={props.t("instanceShell.rightDrawer.toggle.close")}
+                title={props.t("instanceShell.rightDrawer.toggle.close")}
+                onClick={props.onCloseRightDrawer}
+              >
+                <MenuOpenIcon fontSize="small" sx={{ transform: "scaleX(-1)" }} />
+              </IconButton>
+            </Show>
+            <Show when={!props.isPhoneLayout()}>
+              <IconButton
+                size="small"
+                color="inherit"
+                aria-label={props.rightPinned() ? props.t("instanceShell.rightDrawer.unpin") : props.t("instanceShell.rightDrawer.pin")}
+                onClick={() => (props.rightPinned() ? props.onUnpinRightDrawer() : props.onPinRightDrawer())}
+              >
+                {props.rightPinned() ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
+              </IconButton>
+            </Show>
+            <IconButton
+              size="small"
+              color="inherit"
+              aria-label={props.t("instanceShell.rightPanel.customize.toggle")}
+              title={props.t("instanceShell.rightPanel.customize.toggle")}
+              aria-expanded={rightPanelCustomizationOpen()}
+              onClick={() => setRightPanelCustomizationOpen((open) => !open)}
+            >
+              <Settings2 class="h-4 w-4" />
+            </IconButton>
+          </div>
+          <div class="tab-scroll">
+            <div class="tab-strip">
+              <div class="tab-strip-tabs" role="tablist" aria-label={props.t("instanceShell.rightPanel.tabs.ariaLabel")}>
+                <DragDropProvider collisionDetector={closestCenter} onDragEnd={handleTabDragEnd}>
+                  <DragDropSensors>
+                    <SortableProvider ids={visibleRightPanelTabs().map((tab) => tab.id)}>
+                      <For each={visibleRightPanelTabs()}>
+                        {(tab) => (
+                          <SortableRightPanelTab
+                            tab={tab}
+                            active={rightPanelTab() === tab.id}
+                             label={props.t(tab.labelKey)}
+                             dragTitle={props.t("instanceShell.rightPanel.customize.dragToReorder")}
+                             id={tabId(tab.id)}
+                             panelId={tabPanelId(tab.id)}
+                             tabIndex={rightPanelTab() === tab.id ? 0 : -1}
+                             onSelect={() => setRightPanelTab(tab.id)}
+                             onKeyDown={(event) => handleTabKeyDown(event, tab.id)}
+                          />
+                        )}
+                      </For>
+                    </SortableProvider>
+                  </DragDropSensors>
+                </DragDropProvider>
+              </div>
+
+              <div class="tab-strip-spacer" />
+            </div>
+          </div>
         </div>
-        <div
-          id={tabPanelId("workflows")}
-          role="tabpanel"
-          aria-labelledby={tabId("workflows")}
-          hidden={rightPanelTab() !== "workflows"}
-          class="min-h-0"
-        >
-        <Show when={workflowsVisited()}>
-          <Suspense fallback={<RightPanelTabFallback />}>
-            <LazyWorkflowsTab
-              t={props.t}
-              instanceId={props.instanceId}
-              activeSessionId={props.activeSessionId}
-              active={() => rightPanelTab() === "workflows"}
-            />
-          </Suspense>
-        </Show>
+      </div>
+
+      <Show when={rightPanelCustomizationOpen()}>
+        <div class="right-panel-customization-popover" role="dialog" aria-label={props.t("instanceShell.rightPanel.customize.title")}>
+          <div class="right-panel-customization-header">
+            <div>
+              <div class="text-sm font-medium text-primary">{props.t("instanceShell.rightPanel.customize.title")}</div>
+              <div class="text-xs text-secondary">{props.t("instanceShell.rightPanel.customize.description")}</div>
+            </div>
+            <button
+              type="button"
+              class="right-panel-customization-button"
+              onClick={() => updateRightPanelCustomization(() => parseRightPanelCustomization(null))}
+            >
+              {props.t("instanceShell.rightPanel.customize.reset")}
+            </button>
+          </div>
+
+          <div class="right-panel-customization-grid">
+            <div class="right-panel-customization-group">
+              <div class="right-panel-customization-group-title">{props.t("instanceShell.rightPanel.customize.tabs")}</div>
+              <For each={orderedRightPanelTabs()}>
+                {(tab) => {
+                  const label = () => props.t(tab.labelKey)
+                  const visible = () => !rightPanelCustomization().hiddenTabIds.includes(tab.id)
+                  const disableHide = () => visible() && visibleRightPanelTabs().length <= 1
+                  return (
+                    <div class="right-panel-customization-row">
+                      <label class="right-panel-customization-label">
+                        <input
+                          type="checkbox"
+                          checked={visible()}
+                          disabled={disableHide()}
+                          onChange={(event) =>
+                            updateRightPanelCustomization((current) => ({
+                              ...current,
+                              hiddenTabIds: setRightPanelItemHidden(current.hiddenTabIds, tab.id, !event.currentTarget.checked),
+                            }))
+                          }
+                        />
+                        <span>{label()}</span>
+                      </label>
+                    </div>
+                  )
+                }}
+              </For>
+            </div>
+
+            <div class="right-panel-customization-group">
+              <div class="right-panel-customization-group-title">{props.t("instanceShell.rightPanel.customize.statusSections")}</div>
+              <For each={orderedStatusSections()}>
+                {(section) => {
+                  const label = () => props.t(section.labelKey)
+                  const visible = () => !rightPanelCustomization().hiddenStatusSectionIds.includes(section.id)
+                  const disableHide = () => visible() && visibleStatusSections().length <= 1
+                  return (
+                    <div class="right-panel-customization-row">
+                      <label class="right-panel-customization-label">
+                        <input
+                          type="checkbox"
+                          checked={visible()}
+                          disabled={disableHide()}
+                          onChange={(event) =>
+                            updateRightPanelCustomization((current) => ({
+                              ...current,
+                              hiddenStatusSectionIds: setRightPanelItemHidden(
+                                current.hiddenStatusSectionIds,
+                                section.id,
+                                !event.currentTarget.checked,
+                              ),
+                            }))
+                          }
+                        />
+                        <span>{label()}</span>
+                      </label>
+                    </div>
+                  )
+                }}
+              </For>
+            </div>
+          </div>
+          <div class="right-panel-customization-hint">{props.t("instanceShell.rightPanel.customize.dragToReorder")}</div>
         </div>
+      </Show>
+
+      <div class="flex-1 overflow-y-auto">
+        <Show keyed when={activeRightPanelTab()}>{(tab) => (
+          <div id={tabPanelId(tab.id)} role="tabpanel" aria-labelledby={tabId(tab.id)} class="h-full min-h-0">
+            <Suspense fallback={<RightPanelTabFallback />}>{tab.render()}</Suspense>
+          </div>
+        )}</Show>
       </div>
     </div>
   )

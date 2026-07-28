@@ -72,6 +72,8 @@ export const messagingMessages = {
   "messageBlock.usage.cacheRead": "קריאת מטמון",
   "messageBlock.usage.cacheWrite": "כתיבת מטמון",
   "messageBlock.usage.cost": "עלות",
+  "messageBlock.usage.expandAriaLabel": "הרחבת מדדי טוקנים",
+  "messageBlock.usage.collapseAriaLabel": "כיווץ מדדי טוקנים",
   "messageBlock.step.agentLabel": "סוכן: {agent}",
   "messageBlock.step.modelLabel": "מודל: {model}",
   "messageBlock.reasoning.thinkingLabel": "חשיבה",

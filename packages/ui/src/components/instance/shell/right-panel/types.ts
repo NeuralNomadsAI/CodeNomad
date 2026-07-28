@@ -1,4 +1,4 @@
-export type RightPanelTab = "git-changes" | "files" | "workflows" | "status"
+export type RightPanelTab = string
 
 export type DiffViewMode = "split" | "unified"
 
@@ -27,7 +27,7 @@ export type GitChangeSection = "staged" | "unstaged"
 export interface GitChangeListItem {
   id: string
   path: string
-   originalPath?: string | null
+  originalPath?: string | null
   section: GitChangeSection
   status: GitChangeStatus
   additions: number

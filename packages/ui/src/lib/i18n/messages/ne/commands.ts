@@ -123,12 +123,12 @@ export const commandMessages = {
   "commands.diffViewUnified.keywords": "डिफ, एकीकृत, दृश्य",
 
   "commands.toolOutputsDefault.label": "उपकरण आउटपुट पूर्वनिर्धारित · {state}",
-  "commands.toolOutputsDefault.description": "उपकरण आउटपुटहरूको लागि पूर्वनिर्धारित विस्तार टगल गर्नुहोस्",
-  "commands.toolOutputsDefault.keywords": "उपकरण, आउटपुट, विस्तार, संकुचित",
+  "commands.toolOutputsDefault.description": "उपकरण आउटपुटहरूको पूर्वनिर्धारित दृश्यता सेट गर्नुहोस्",
+  "commands.toolOutputsDefault.keywords": "उपकरण, आउटपुट, लुकाउनुहोस्, विस्तार, संकुचित",
 
   "commands.diagnosticsDefault.label": "निदान (Diagnostics) पूर्वनिर्धारित · {state}",
-  "commands.diagnosticsDefault.description": "निदान आउटपुटको लागि पूर्वनिर्धारित विस्तार टगल गर्नुहोस्",
-  "commands.diagnosticsDefault.keywords": "निदान, विस्तार, संकुचित",
+  "commands.diagnosticsDefault.description": "निदान आउटपुटको पूर्वनिर्धारित दृश्यता सेट गर्नुहोस्",
+  "commands.diagnosticsDefault.keywords": "निदान, लुकाउनुहोस्, विस्तार, संकुचित",
 
   "commands.toolInputsVisibility.label": "उपकरण इनपुट दृश्यता · {state}",
   "commands.toolInputsVisibility.description": "उपकरण कल इनपुट तर्कहरूको लागि पूर्वनिर्धारित दृश्यता सेट गर्नुहोस्",

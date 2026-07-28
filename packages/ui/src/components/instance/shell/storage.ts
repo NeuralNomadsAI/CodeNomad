@@ -16,6 +16,7 @@ export const LEFT_OPEN_STORAGE_KEY = "opencode-session-left-drawer-open-v1"
 export const RIGHT_OPEN_STORAGE_KEY = "opencode-session-right-drawer-open-v1"
 export const RIGHT_PANEL_TAB_STORAGE_KEY = "opencode-session-right-panel-tab-v2"
 export const LEGACY_RIGHT_PANEL_TAB_STORAGE_KEY = "opencode-session-right-panel-tab-v1"
+export const RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY = "opencode-session-right-panel-customization-v1"
 export const RIGHT_PANEL_FILES_SPLIT_WIDTH_KEY = "opencode-session-right-panel-files-split-width-v1"
 export const RIGHT_PANEL_GIT_CHANGES_SPLIT_WIDTH_KEY = "opencode-session-right-panel-git-changes-split-width-v1"
 export const RIGHT_PANEL_FILES_LIST_OPEN_NONPHONE_KEY = "opencode-session-right-panel-files-list-open-nonphone-v1"
@@ -65,15 +66,13 @@ export function persistOpenState(side: "left" | "right", value: boolean) {
   writeClientLayoutValue(getOpenStorageKey(side), value ? "true" : "false")
 }
 
-export function readStoredRightPanelTab(
-  defaultValue: "git-changes" | "files" | "workflows" | "status",
-): "git-changes" | "files" | "workflows" | "status" {
+export function readStoredRightPanelTab(defaultValue: string): string {
   const stored = readClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY)
   if (stored === "status") return "status"
   if (stored === "changes") return "git-changes"
   if (stored === "git-changes") return "git-changes"
   if (stored === "files") return "files"
-  if (stored === "workflows") return "workflows"
+  if (stored) return stored
 
   // Migrate from v1 (where the stored values were the internal tab ids).
   const legacy = readClientLayoutValue(LEGACY_RIGHT_PANEL_TAB_STORAGE_KEY)

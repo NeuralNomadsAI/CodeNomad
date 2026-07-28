@@ -72,10 +72,10 @@
       <p>This CodeNomad server is protected. Enter your credentials to continue.</p>
 
       <label for="username">Username</label>
-      <input id="username" autocomplete="username" placeholder="{{DEFAULT_USERNAME}}" value="" />
+      <input id="username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="{{DEFAULT_USERNAME}}" value="{{DEFAULT_USERNAME}}" />
 
       <label for="password">Password</label>
-      <input id="password" type="password" autocomplete="current-password" value="" />
+      <input id="password" type="password" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" value="" />
 
       <button id="submit" type="button">Continue</button>
       <div id="error" class="error" style="display: none"></div>
@@ -95,7 +95,7 @@
 
       async function submit() {
         hideError()
-        const username = $("username").value.trim()
+        const username = $("username").value
         const password = $("password").value
         if (!username || !password) {
           showError("Username and password are required.")
