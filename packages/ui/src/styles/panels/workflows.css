@@ -86,12 +86,19 @@
 .workflow-run { border: 1px solid var(--border-base); background: var(--surface-base); }
 .workflow-run > header { padding: var(--space-md); background: var(--surface-secondary); border-bottom: 1px solid var(--border-base); align-items: flex-start; }
 .workflow-run h3 { overflow-wrap: anywhere; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
+.workflow-run-toggle { border: 0; padding: 0; background: transparent; color: inherit; font: inherit; text-align: start; }
+.workflow-run-toggle:hover { color: var(--accent-primary); }
+.workflow-run-toggle:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
 .workflow-status { flex: 0 0 auto; border: 1px solid var(--border-base); padding: 2px var(--space-xs); font-size: 10px; color: var(--text-secondary); }
 .workflow-status-completed { border-color: var(--status-success); color: var(--status-success); }
 .workflow-status-failed,
 .workflow-status-cancelled { border-color: var(--status-error); color: var(--status-error); }
 .workflow-status-running,
-.workflow-status-waiting_for_review { border-color: var(--status-warning); color: var(--status-warning); }
+.workflow-status-pausing,
+.workflow-status-waiting,
+.workflow-status-waiting_for_input,
+.workflow-status-waiting_for_review,
+.workflow-status-recovery_required { border-color: var(--status-warning); color: var(--status-warning); }
 .workflow-steps { padding: var(--space-md); }
 .workflow-step { min-width: 0; border-inline-start: 2px solid var(--border-base); padding-inline-start: var(--space-sm); }
 .workflow-step-heading { align-items: flex-start; font-size: var(--font-size-xs); }
@@ -102,6 +109,7 @@
 .workflow-error { margin: var(--space-sm) var(--space-md); border-inline-start: 2px solid var(--status-error); padding: var(--space-sm); background: var(--status-error-bg); color: var(--status-error); font-size: var(--font-size-xs); overflow-wrap: anywhere; }
 .workflow-session-link { margin-top: var(--space-sm); color: var(--accent-primary); text-decoration: underline; font-size: var(--font-size-xs); }
 .workflow-run-actions { justify-content: flex-end; border-top: 1px solid var(--border-base); padding: var(--space-sm) var(--space-md); }
+.workflow-history-more { align-self: center; }
 
 @media (max-width: 360px) {
   .workflow-builder,

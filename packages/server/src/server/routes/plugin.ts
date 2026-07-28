@@ -1,4 +1,4 @@
-import { FastifyInstance } from "fastify"
+import { FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify"
 import { z } from "zod"
 import type { VoiceModeStateResponse } from "../../api-types"
 import type { WorkspaceManager } from "../../workspaces/manager"
@@ -7,6 +7,7 @@ import type { Logger } from "../../logger"
 import { PluginChannelManager } from "../../plugins/channel"
 import { buildPingEvent, handlePluginEvent } from "../../plugins/handlers"
 import { VoiceModeManager } from "../../plugins/voice-mode"
+import { sendUnauthorized } from "../../auth/http-auth"
 
 interface RouteDeps {
   workspaceManager: WorkspaceManager
@@ -29,15 +30,24 @@ const VoiceModeStateSchema = z.object({
 
 export function registerPluginRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get<{ Params: { id: string } }>("/workspaces/:id/plugin/events", (request, reply) => {
+    if (!isCanonicalPluginPath(request, request.params.id, "events")) {
+      reply.code(404).send({ error: "Unknown plugin endpoint" })
+      return
+    }
+    if (!hasPluginCapability(request, request.params.id, deps)) {
+      sendUnauthorized(request, reply)
+      return
+    }
     const workspace = deps.workspaceManager.get(request.params.id)
     if (!workspace) {
       reply.code(404).send({ error: "Workspace not found" })
       return
     }
 
-    reply.raw.setHeader("Content-Type", "text/event-stream")
-    reply.raw.setHeader("Cache-Control", "no-cache")
-    reply.raw.setHeader("Connection", "keep-alive")
+    reply.header("Content-Type", "text/event-stream")
+    reply.header("Cache-Control", "no-cache")
+    reply.header("Connection", "keep-alive")
+    copyReplyHeadersToRaw(reply)
     reply.raw.flushHeaders?.()
     reply.hijack()
 
@@ -80,27 +90,46 @@ export function registerPluginRoutes(app: FastifyInstance, deps: RouteDeps) {
     return { enabled: payload.enabled }
   })
 
-  const handleWildcard = async (request: any, reply: any) => {
-    const workspaceId = request.params.id as string
+  app.post<{ Params: { id: string } }>("/workspaces/:id/plugin/event", async (request, reply) => {
+    const workspaceId = request.params.id
+    if (!isCanonicalPluginPath(request, workspaceId, "event")) {
+      reply.code(404).send({ error: "Unknown plugin endpoint" })
+      return
+    }
+    if (!hasPluginCapability(request, workspaceId, deps)) {
+      sendUnauthorized(request, reply)
+      return
+    }
     const workspace = deps.workspaceManager.get(workspaceId)
     if (!workspace) {
       reply.code(404).send({ error: "Workspace not found" })
       return
     }
 
-    const suffix = (request.params["*"] as string | undefined) ?? ""
-    const normalized = suffix.replace(/^\/+/, "")
+    const parsed = PluginEventSchema.parse(request.body ?? {})
+    handlePluginEvent(workspaceId, parsed, { workspaceManager: deps.workspaceManager, eventBus: deps.eventBus, logger: deps.logger })
+    reply.code(204).send()
+  })
 
-    if (normalized === "event" && request.method === "POST") {
-      const parsed = PluginEventSchema.parse(request.body ?? {})
-      handlePluginEvent(workspaceId, parsed, { workspaceManager: deps.workspaceManager, eventBus: deps.eventBus, logger: deps.logger })
-      reply.code(204).send()
-      return
-    }
+  app.all("/workspaces/:id/plugin/*", (_request, reply) => reply.code(404).send({ error: "Unknown plugin endpoint" }))
+  app.all("/workspaces/:id/plugin", (_request, reply) => reply.code(404).send({ error: "Unknown plugin endpoint" }))
+}
 
-    reply.code(404).send({ error: "Unknown plugin endpoint" })
+function isCanonicalPluginPath(request: FastifyRequest, workspaceId: string, endpoint: string): boolean {
+  const pathname = (request.raw.url ?? request.url).split("?")[0]
+  return pathname === `/workspaces/${encodeURIComponent(workspaceId)}/plugin/${endpoint}`
+}
+
+function hasPluginCapability(request: FastifyRequest, workspaceId: string, deps: RouteDeps): boolean {
+  const provided = Array.isArray(request.headers.authorization)
+    ? request.headers.authorization[0]
+    : request.headers.authorization
+  const expected = deps.workspaceManager.getPluginCallbackAuthorizationHeader(workspaceId)
+  return Boolean(expected && provided === expected)
+}
+
+function copyReplyHeadersToRaw(reply: FastifyReply): void {
+  for (const [name, value] of Object.entries(reply.getHeaders())) {
+    if (value !== undefined) reply.raw.setHeader(name, value)
   }
-
-  app.all("/workspaces/:id/plugin/*", handleWildcard)
-  app.all("/workspaces/:id/plugin", handleWildcard)
 }

@@ -24,7 +24,9 @@ describe("server shutdown orchestration", () => {
       stopWorkspaces: () => { calls.push(`workspaces-${++attempts}`); if (attempts === 1) throw new Error("still alive") },
       stopHttpServers: () => { calls.push("http") },
     }), logger)
-    assert.deepEqual(calls, ["workspaces-1", "remote-proxy", "workspaces-2", "http"])
+    assert.ok(calls.indexOf("remote-proxy") < calls.indexOf("http"))
+    assert.ok(calls.indexOf("workspaces-1") < calls.indexOf("workspaces-2"))
+    assert.ok(calls.indexOf("workspaces-2") < calls.indexOf("http"))
   })
 
   it("closes remaining resources and aggregates the concrete current error", async () => {
@@ -45,19 +47,34 @@ describe("server shutdown orchestration", () => {
     assert.deepEqual([attempts, closed], [2, ["http", "release-monitor"]])
   })
 
-  it("starts workspace cleanup without waiting for preliminary shutdown", async () => {
-    let releasePreliminary!: () => void
-    const preliminary = new Promise<void>((resolve) => { releasePreliminary = resolve })
+  it("finishes workflow cancellation before workspace cleanup without blocking unrelated cleanup", async () => {
+    let releaseWorkflow!: () => void
+    const workflow = new Promise<void>((resolve) => { releaseWorkflow = resolve })
+    let releaseUnrelated!: () => void
+    const unrelated = new Promise<void>((resolve) => { releaseUnrelated = resolve })
     let workspaceStarted = false
     const shutdown = orchestrateServerShutdown(operations({
-      stopRemoteProxySessions: () => preliminary,
+      stopWorkflowRuns: () => workflow,
+      stopRemoteProxySessions: () => unrelated,
       stopWorkspaces: () => { workspaceStarted = true },
     }), logger)
 
     await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(workspaceStarted, false)
+    releaseWorkflow()
+    await new Promise<void>((resolve) => setImmediate(resolve))
     assert.equal(workspaceStarted, true)
-    releasePreliminary()
+    releaseUnrelated()
     await shutdown
+  })
+
+  it("still cleans workspaces after workflow cancellation fails", async () => {
+    let workspaceStarted = false
+    await assert.rejects(orchestrateServerShutdown(operations({
+      stopWorkflowRuns: () => { throw new Error("abort failed") },
+      stopWorkspaces: () => { workspaceStarted = true },
+    }), logger), AggregateError)
+    assert.equal(workspaceStarted, true)
   })
 })
 

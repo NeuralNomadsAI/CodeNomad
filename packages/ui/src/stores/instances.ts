@@ -10,7 +10,7 @@ import { buildInstanceBaseUrl, sdkManager } from "../lib/sdk-manager"
 import { sseManager } from "../lib/sse-manager"
 import { serverApi } from "../lib/api-client"
 import { serverEvents } from "../lib/server-events"
-import type { WorkspaceDescriptor, WorkspaceEventPayload, WorkspaceLogEntry } from "../../../server/src/api-types"
+import type { InstanceStreamStatus, WorkspaceDescriptor, WorkspaceEventPayload, WorkspaceLogEntry } from "../../../server/src/api-types"
 import { ensureInstanceConfigLoaded } from "./instance-config"
 import {
   fetchSessions,
@@ -222,6 +222,7 @@ interface DisconnectedInstanceInfo {
   reason: string
 }
 const [disconnectedInstance, setDisconnectedInstance] = createSignal<DisconnectedInstanceInfo | null>(null)
+const openCodeConnectionStatuses = new Map<string, InstanceStreamStatus>()
 
 const MAX_LOG_ENTRIES = 1000
 
@@ -269,11 +270,22 @@ function resyncConnectedInstance(instanceId: string): void {
 }
 
 serverEvents.on("instance.eventStatus", (event) => {
-  if (event.type !== "instance.eventStatus" || event.status !== "connected") return
+  if (event.type !== "instance.eventStatus") return
+  openCodeConnectionStatuses.set(event.instanceId, event.status)
+  if (event.status !== "connected") return
   if (disconnectedInstance()?.id === event.instanceId) {
     setDisconnectedInstance(null)
   }
   resyncConnectedInstance(event.instanceId)
+})
+
+serverEvents.on("instance.event", (event) => {
+  if (event.type !== "instance.event") return
+  if (event.event.type === "workflow.run.updated") {
+    sseManager.seedStatus(event.instanceId, openCodeConnectionStatuses.get(event.instanceId) ?? "disconnected")
+    return
+  }
+  openCodeConnectionStatuses.set(event.instanceId, "connected")
 })
 
 function createRestoreCreationRequestId(): string {
@@ -396,6 +408,7 @@ function attachClient(descriptor: WorkspaceDescriptor) {
     proxyPath: nextProxyPath,
     status: "ready",
   })
+  if (!openCodeConnectionStatuses.has(descriptor.id)) openCodeConnectionStatuses.set(descriptor.id, "connecting")
   sseManager.seedStatusIfMissing(descriptor.id, "connecting")
   const sessionHydration = startInstanceSessionHydration(descriptor.id)
   initialSessionHydrations.set(descriptor.id, sessionHydration.sessions)
@@ -464,6 +477,7 @@ function releaseInstanceResources(instanceId: string) {
     sdkManager.destroyClientsForInstance(instanceId)
   }
   clearOpenCodeWorkspaceCache(instanceId)
+  openCodeConnectionStatuses.set(instanceId, "disconnected")
   sseManager.seedStatus(instanceId, "disconnected")
 }
 
@@ -1225,28 +1239,35 @@ function updateProjectNameForFolder(folder: string, projectName: string): void {
   }
 }
 
-function stopInstance(id: string) {
+const pendingStopRequests = new Map<string, Promise<void>>()
+
+function stopInstance(id: string): Promise<void> {
+  const pending = pendingStopRequests.get(id)
+  if (pending) return pending
   const instance = instances().get(id)
-  if (!instance) return
+  if (!instance) return Promise.resolve()
 
-  workspaceListReconciliationFence.markMutation(id)
-  releaseInstanceResources(id)
-  removeInstance(id)
-
-  if (restoreCreatedWorkspaceCleanup.owns(id)) {
-    void restoreCreatedWorkspaceCleanup.discardTracked(id, { retainTombstone: true })
-      .then(() => serverApi.deleteWorkspace(id))
-      .catch((error) => log.error("Failed to stop restore-tracked workspace", error))
-    return
-  }
-
-  void serverApi.deleteWorkspace(id).catch((error) => {
-    log.error("Failed to stop workspace", error)
-    showToastNotification({
-      message: tGlobal("app.stopInstance.toast.error"),
-      variant: "error",
-    })
-  })
+  const request = (async () => {
+    try {
+      if (restoreCreatedWorkspaceCleanup.owns(id)) {
+        await restoreCreatedWorkspaceCleanup.discardTracked(id, { retainTombstone: true })
+      }
+      await serverApi.deleteWorkspace(id)
+      workspaceListReconciliationFence.markMutation(id)
+      releaseInstanceResources(id)
+      removeInstance(id)
+    } catch (error) {
+      log.error("Failed to stop workspace", error)
+      showToastNotification({
+        message: tGlobal("app.stopInstance.toast.error"),
+        variant: "error",
+      })
+    } finally {
+      pendingStopRequests.delete(id)
+    }
+  })()
+  pendingStopRequests.set(id, request)
+  return request
 }
 
 async function fetchLspStatus(instanceId: string): Promise<LspStatus[] | undefined> {
@@ -1830,7 +1851,7 @@ async function acknowledgeDisconnectedInstance(): Promise<void> {
   }
 
   try {
-    stopInstance(pending.id)
+    await stopInstance(pending.id)
   } catch (error) {
     log.error("Failed to stop disconnected instance", error)
   } finally {

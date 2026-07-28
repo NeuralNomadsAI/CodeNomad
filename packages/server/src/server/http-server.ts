@@ -8,7 +8,7 @@ import path from "path"
 import { connect as connectTls, type TLSSocket } from "tls"
 import { fetch, type Headers } from "undici"
 import type { Logger } from "../logger"
-import { WorkspaceManager } from "../workspaces/manager"
+import { WorkspaceDeletionBlockedError, WorkspaceManager } from "../workspaces/manager"
 
 import type { SettingsService } from "../settings/service"
 import { FileSystemBrowser } from "../filesystem/browser"
@@ -86,6 +86,16 @@ interface HttpServerStartResult {
 }
 
 export function createHttpServer(deps: HttpServerDeps) {
+  deps.workspaceManager.setDeletionGuard?.((workspace, operation) =>
+    deps.workflowManager.withWorkspaceOwnershipLease({
+      id: workspace.id,
+      lineageId: workspace.lineageId,
+      path: workspace.path,
+    }, async (owned) => {
+      if (owned) throw new WorkspaceDeletionBlockedError(workspace.id)
+      return operation()
+    }))
+
   // Fastify's type-level RawServer inference gets noisy when toggling HTTP vs HTTPS.
   // We keep the runtime behavior correct and cast the instance to a generic FastifyInstance.
   const app = Fastify(
@@ -133,12 +143,9 @@ export function createHttpServer(deps: HttpServerDeps) {
     done()
   })
 
-  const allowedDevOrigins = new Set(["http://localhost:3000", "http://127.0.0.1:3000"])
-  const isLoopbackHost = (host: string) => host === "127.0.0.1" || host === "::1" || host.startsWith("127.")
-
-  const getSelfOrigins = (): Set<string> => {
+  const getAllowedOrigins = (): Set<string> => {
     const origins = new Set<string>()
-    const candidates: Array<string | undefined> = [deps.serverMeta.localUrl, deps.serverMeta.remoteUrl]
+    const candidates: Array<string | undefined> = [deps.serverMeta.localUrl, deps.serverMeta.remoteUrl, deps.uiDevServerUrl]
     for (const candidate of candidates) {
       if (!candidate) continue
       try {
@@ -164,23 +171,10 @@ export function createHttpServer(deps: HttpServerDeps) {
         return
       }
 
-      const selfOrigins = getSelfOrigins()
-      if (selfOrigins.has(origin)) {
+      if (getAllowedOrigins().has(origin)) {
         cb(null, true)
         return
       }
-
-       if (allowedDevOrigins.has(origin)) {
-         cb(null, true)
-         return
-       }
-
-       // When we bind to a non-loopback host (e.g., 0.0.0.0 or LAN IP), allow cross-origin UI access.
-       if (deps.bindHost === "0.0.0.0" || !isLoopbackHost(deps.bindHost)) {
-         cb(null, true)
-         return
-       }
-
 
       cb(null, false)
     },
@@ -208,6 +202,25 @@ export function createHttpServer(deps: HttpServerDeps) {
   app.addHook("preHandler", (request, reply, done) => {
     const rawUrl = request.raw.url ?? request.url
     const pathname = (rawUrl.split("?")[0] ?? "").trim()
+    const session = deps.authManager.getSessionFromRequest(request)
+    const originHeader = request.headers.origin
+    const origin = Array.isArray(originHeader) ? originHeader[0] : originHeader
+    const fetchSiteHeader = request.headers["sec-fetch-site"]
+    const fetchSite = Array.isArray(fetchSiteHeader) ? fetchSiteHeader[0] : fetchSiteHeader
+    let requestOrigin: string | undefined
+    try {
+      if (request.headers.host) requestOrigin = new URL(`${request.protocol}://${request.headers.host}`).origin
+    } catch {
+      // Invalid Host values cannot establish a trusted browser origin.
+    }
+    if (
+      session
+      && ["POST", "PUT", "PATCH", "DELETE"].includes(request.method)
+      && ((origin && origin !== requestOrigin && !getAllowedOrigins().has(origin)) || fetchSite === "cross-site")
+    ) {
+      reply.code(403).send({ error: "Cross-origin mutation forbidden" })
+      return
+    }
 
     const publicApiPaths = new Set(["/api/auth/login", "/api/auth/token", "/api/auth/status", "/api/auth/logout"])
     const publicPagePaths = new Set(["/login"])
@@ -225,23 +238,29 @@ export function createHttpServer(deps: HttpServerDeps) {
       return
     }
 
-    const session = deps.authManager.getSessionFromRequest(request)
+    const pluginMatch = pathname.match(/^\/workspaces\/([^/]+)\/plugin(?:\/|$)/)
+    const provided = Array.isArray(request.headers.authorization)
+      ? request.headers.authorization[0]
+      : request.headers.authorization
+    let pluginAuthorized = false
+    if (pluginMatch) {
+      const expected = deps.workspaceManager.getPluginCallbackAuthorizationHeader(pluginMatch[1] ?? "")
+      pluginAuthorized = Boolean(expected && provided && provided === expected)
+    }
+    const requiresPluginCapability = Boolean(pluginMatch) && (
+      (request.method === "GET" && pathname.endsWith("/plugin/events"))
+      || (request.method === "POST" && pathname.endsWith("/plugin/event"))
+    )
+    if (requiresPluginCapability && !pluginAuthorized) {
+      sendUnauthorized(request, reply)
+      return
+    }
 
     const requiresAuthForApi = pathname.startsWith("/api/") || pathname.startsWith("/workspaces/") || pathname.startsWith("/sidecars/") || pathname.startsWith("/previews/")
     if (requiresAuthForApi && !session) {
-      // Allow OpenCode plugin -> CodeNomad calls with per-instance basic auth.
-      const pluginMatch = pathname.match(/^\/workspaces\/([^/]+)\/plugin(?:\/|$)/)
-      if (pluginMatch) {
-        const workspaceId = pluginMatch[1]
-        const expected = deps.workspaceManager.getInstanceAuthorizationHeader(workspaceId)
-        const provided = Array.isArray(request.headers.authorization)
-          ? request.headers.authorization[0]
-          : request.headers.authorization
-
-        if (expected && provided && provided === expected) {
-          done()
-          return
-        }
+      if (pluginAuthorized) {
+        done()
+        return
       }
 
       sendUnauthorized(request, reply)
@@ -296,6 +315,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerWorktreeRoutes(app, {
     workspaceManager: deps.workspaceManager,
     sessionMetadataPersistence: deps.sessionMetadataPersistence,
+    workflowManager: deps.workflowManager,
   })
   registerStorageRoutes(app, {
     instanceStore: deps.instanceStore,

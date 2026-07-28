@@ -380,6 +380,7 @@ async function main() {
     workspaceManager,
     eventBus,
     storageDir: path.join(configDir, "workflow-runs"),
+    definitionsDir: path.join(configDir, "workflow-definitions"),
     logger: logger.child({ component: "workflows" }),
   })
   const fileSystemBrowser = new FileSystemBrowser({

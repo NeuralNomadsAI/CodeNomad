@@ -10,12 +10,14 @@ export type PluginEvent = {
 export type CodeNomadConfig = {
   instanceId: string
   baseUrl: string
+  callbackToken: string
 }
 
 export function getCodeNomadConfig(): CodeNomadConfig {
   return {
     instanceId: requireEnv("CODENOMAD_INSTANCE_ID"),
     baseUrl: requireEnv("CODENOMAD_BASE_URL"),
+    callbackToken: requireEnv("CODENOMAD_CALLBACK_TOKEN"),
   }
 }
 
@@ -23,7 +25,7 @@ export function createCodeNomadRequester(config: CodeNomadConfig) {
   const rawBaseUrl = (config.baseUrl ?? "").trim()
   const baseUrl = rawBaseUrl.replace(/\/+$/, "")
   const pluginBase = `${baseUrl}/workspaces/${encodeURIComponent(config.instanceId)}/plugin`
-  const authorization = buildInstanceAuthorizationHeader()
+  const authorization = `Bearer ${config.callbackToken}`
 
   const buildUrl = (path: string) => {
     if (path.startsWith("http://") || path.startsWith("https://")) {
@@ -60,7 +62,7 @@ export function createCodeNomadRequester(config: CodeNomadConfig) {
       throw new Error(message || `Request failed with ${response.status}`)
     }
 
-    if (response.status === 204) {
+    if ((init?.method ?? "GET").toUpperCase() === "HEAD" || response.status === 204 || response.status === 205) {
       return undefined as T
     }
 
@@ -117,6 +119,7 @@ async function nodeFetch(
         ...(isHttps ? { rejectUnauthorized: tls.rejectUnauthorized } : {}),
       },
       (res) => {
+        const status = res.statusCode ?? 0
         const responseHeaders = new Headers()
         for (const [key, value] of Object.entries(res.headers)) {
           if (value === undefined) continue
@@ -127,9 +130,10 @@ async function nodeFetch(
           }
         }
 
-        // Convert Node stream -> Web ReadableStream for Response.
-        const webBody = Readable.toWeb(res) as unknown as ReadableStream<Uint8Array>
-        resolve(new Response(webBody, { status: res.statusCode ?? 0, headers: responseHeaders }))
+        const bodyForbidden = method === "HEAD" || status === 204 || status === 205 || status === 304
+        if (bodyForbidden) res.resume()
+        const webBody = bodyForbidden ? null : Readable.toWeb(res) as unknown as ReadableStream<Uint8Array>
+        resolve(new Response(webBody, { status, headers: responseHeaders }))
       },
     )
 
@@ -183,13 +187,6 @@ function requireEnv(key: string): string {
     throw new Error(`[CodeNomadPlugin] Missing required env var ${key}`)
   }
   return value
-}
-
-function buildInstanceAuthorizationHeader(): string {
-  const username = requireEnv("OPENCODE_SERVER_USERNAME")
-  const password = requireEnv("OPENCODE_SERVER_PASSWORD")
-  const token = Buffer.from(`${username}:${password}`, "utf8").toString("base64")
-  return `Basic ${token}`
 }
 
 function normalizeHeaders(headers: HeadersInit | undefined): Record<string, string> {

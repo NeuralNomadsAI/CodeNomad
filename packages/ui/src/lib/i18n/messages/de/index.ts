@@ -14,6 +14,7 @@ import { sessionMessages } from "./session"
 import { settingsMessages } from "./settings"
 import { timeMessages } from "./time"
 import { toolCallMessages } from "./toolCall"
+import { workflowMessages } from "./workflows"
 import { mergeMessageParts } from "../merge"
 
 export const deMessages = mergeMessageParts(
@@ -33,4 +34,5 @@ export const deMessages = mergeMessageParts(
   settingsMessages,
   remoteAccessMessages,
   commandMessages,
+  workflowMessages,
 )

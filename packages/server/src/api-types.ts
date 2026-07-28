@@ -296,7 +296,17 @@ export interface InstanceStreamEvent {
   [key: string]: unknown
 }
 
-export type WorkflowRunStatus = "running" | "waiting_for_review" | "completed" | "failed" | "cancelled" | "interrupted"
+export type WorkflowRunStatus =
+  | "running"
+  | "pausing"
+  | "paused"
+  | "waiting_for_review"
+  | "waiting_for_input"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted"
+  | "recovery_required"
 export type WorkflowStepStatus = "pending" | "running" | "completed" | "failed" | "cancelled"
 
 export interface WorkflowModelSelection {
@@ -311,6 +321,215 @@ export interface WorkflowStageConfig {
   agent?: string
   model?: WorkflowModelSelection
   requiresApproval?: boolean
+}
+
+export interface WorkflowValueRef {
+  /** Dot path rooted at inputs, nodes, or vars, for example `nodes.plan.output.steps`. */
+  $ref: string
+}
+
+export type WorkflowValue = null | boolean | number | string | WorkflowValueRef | WorkflowValue[] | {
+  [key: string]: WorkflowValue
+}
+
+export type WorkflowCondition = boolean | {
+  value: WorkflowValue
+  equals?: WorkflowValue
+  notEquals?: WorkflowValue
+  exists?: boolean
+  truthy?: boolean
+}
+
+export interface WorkflowRetryPolicy {
+  maxAttempts: number
+  delayMs?: number
+  /** Required when maxAttempts > 1 because an admitted operation may have completed before an error was observed. */
+  idempotent?: boolean
+}
+
+export interface WorkflowNodeBase {
+  id: string
+  title?: string
+  if?: WorkflowCondition
+}
+
+export interface WorkflowSequenceNode extends WorkflowNodeBase {
+  type: "sequence"
+  steps: WorkflowNode[]
+}
+
+export interface WorkflowParallelNode extends WorkflowNodeBase {
+  type: "parallel"
+  branches: WorkflowNode[]
+  maxConcurrency?: number
+}
+
+export interface WorkflowForeachNode extends WorkflowNodeBase {
+  type: "foreach"
+  items: WorkflowValue
+  item: string
+  body: WorkflowNode
+  maxItems: number
+  maxConcurrency?: number
+}
+
+export interface WorkflowRepeatNode extends WorkflowNodeBase {
+  type: "repeat"
+  body: WorkflowNode
+  maxIterations: number
+  while?: WorkflowCondition
+}
+
+export interface WorkflowAgentNode extends WorkflowNodeBase {
+  type: "agent"
+  instructions: string
+  context?: WorkflowValue
+  agent?: string
+  model?: WorkflowModelSelection
+  /** Model tool access only. The installed SDK cannot invoke an arbitrary tool deterministically. */
+  tools?: string[]
+  outputSchema?: Record<string, unknown>
+  retry?: WorkflowRetryPolicy
+  timeoutMs?: number
+}
+
+export interface WorkflowShellNode extends WorkflowNodeBase {
+  type: "shell"
+  command: string
+  agent: string
+  model?: WorkflowModelSelection
+  retry?: WorkflowRetryPolicy
+  timeoutMs?: number
+}
+
+export interface WorkflowGateNode extends WorkflowNodeBase {
+  type: "gate"
+  gate: "approval" | "input"
+  prompt: string
+  inputSchema?: Record<string, unknown>
+}
+
+export interface WorkflowSavedCallNode extends WorkflowNodeBase {
+  type: "workflow"
+  definitionId: string
+  /** Omitted definitions are resolved and pinned to the current revision when the run is admitted. */
+  definitionRevision?: number
+  inputs?: Record<string, WorkflowValue>
+}
+
+export interface WorkflowBranchNode extends WorkflowNodeBase {
+  type: "condition"
+  condition: WorkflowCondition
+  then: WorkflowNode
+  else?: WorkflowNode
+}
+
+export type WorkflowNode =
+  | WorkflowSequenceNode
+  | WorkflowParallelNode
+  | WorkflowForeachNode
+  | WorkflowRepeatNode
+  | WorkflowAgentNode
+  | WorkflowShellNode
+  | WorkflowGateNode
+  | WorkflowBranchNode
+  | WorkflowSavedCallNode
+
+export interface WorkflowBudget {
+  /** Stops admitting actions once observed cost reaches this value; provider reporting may let the final admitted action overshoot. */
+  maxCost?: number
+  /** Stops admitting actions once observed tokens reach this value; provider reporting may let the final admitted action overshoot. */
+  maxTokens?: number
+}
+
+export interface WorkflowDefinitionV1 {
+  version: 1
+  id: string
+  name: string
+  description?: string
+  root: WorkflowNode
+  budget?: WorkflowBudget
+  maxConcurrency?: number
+  maxExpandedNodes?: number
+}
+
+export interface WorkflowDefinitionRecord {
+  id: string
+  revision: number
+  definition: WorkflowDefinitionV1
+  canonical: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface WorkflowSavedDefinitionSnapshot {
+  id: string
+  revision: number
+  definition: WorkflowDefinitionV1
+}
+
+export type WorkflowRunWorktreePolicy =
+  | { mode: "current" }
+  | { mode: "existing"; slug: string }
+  | { mode: "new"; slug: string }
+
+export interface WorkflowRunWorktreeSelection {
+  policy: WorkflowRunWorktreePolicy
+  sourceWorkspaceId: string
+  sourceWorkspaceLineageId: string
+  sourceWorkspacePath: string
+  workspaceId: string
+  directory: string
+  slug?: string
+  branch?: string
+  created: boolean
+}
+
+export interface WorkflowUsage {
+  cost: number
+  tokens: number
+  inputTokens: number
+  outputTokens: number
+  reasoningTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+}
+
+export type WorkflowExecutionNodeStatus =
+  | "pending"
+  | "running"
+  | "waiting"
+  | "completed"
+  | "skipped"
+  | "failed"
+  | "cancelled"
+  | "interrupted"
+
+export interface WorkflowExecutionNode {
+  id: string
+  instanceKey: string
+  /** Identifies one root or saved-definition invocation for nodes.<id> reference isolation. */
+  definitionInvocationKey?: string
+  definitionNodeId: string
+  type: WorkflowNode["type"]
+  status: WorkflowExecutionNodeStatus
+  attempt: number
+  parentInstanceKey?: string
+  sessionIds?: string[]
+  output?: unknown
+  outputTruncated?: boolean
+  error?: string
+  usage?: WorkflowUsage
+  startedAt?: string
+  completedAt?: string
+}
+
+export interface WorkflowPendingGate {
+  executionNodeId: string
+  definitionNodeId: string
+  gate: "approval" | "input"
+  prompt: string
+  inputSchema?: Record<string, unknown>
 }
 
 export interface WorkflowRunStep extends WorkflowStageConfig {
@@ -335,6 +554,17 @@ export interface WorkflowRun {
   activeStepId?: string
   pendingReviewStepId?: string
   steps: WorkflowRunStep[]
+  revision?: number
+  definitionId?: string
+  definitionRevision?: number
+  definitionSnapshot?: WorkflowDefinitionV1
+  savedDefinitionSnapshots?: WorkflowSavedDefinitionSnapshot[]
+  worktreeSelection?: WorkflowRunWorktreeSelection
+  inputs?: Record<string, unknown>
+  executionNodes?: WorkflowExecutionNode[]
+  pendingGate?: WorkflowPendingGate
+  usage?: WorkflowUsage
+  pauseRequested?: boolean
   error?: string
   createdAt: string
   updatedAt: string
@@ -345,6 +575,33 @@ export interface WorkflowRunCreateRequest {
   initiatorSessionId?: string
   objective: string
   stages: WorkflowStageConfig[]
+}
+
+export interface WorkflowDefinitionRunCreateRequest {
+  workspaceId: string
+  initiatorSessionId?: string
+  objective?: string
+  definitionId: string
+  definitionRevision?: number
+  inputs?: Record<string, unknown>
+  worktree?: WorkflowRunWorktreePolicy
+}
+
+export type WorkflowRunStartRequest = WorkflowRunCreateRequest | WorkflowDefinitionRunCreateRequest
+
+export type WorkflowDefinitionPayload =
+  | { source: string; definition?: never }
+  | { definition: WorkflowDefinitionV1; source?: never }
+
+export type WorkflowDefinitionUpdateRequest = WorkflowDefinitionPayload & { expectedRevision: number }
+
+export interface WorkflowGateAnswerRequest {
+  executionNodeId: string
+  answer: unknown
+}
+
+export interface WorkflowResumeRequest {
+  confirmRecovery?: boolean
 }
 
 export type SideCarKind = "port"

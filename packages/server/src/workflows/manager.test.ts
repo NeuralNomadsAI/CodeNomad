@@ -10,6 +10,97 @@ import type { WorkspaceManager } from "../workspaces/manager"
 import { WorkflowManager } from "./manager"
 
 describe("WorkflowManager", () => {
+  it("rejects a stale saved definition inside the admission queue", async () => {
+    const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-workflow-latest-"))
+    const manager = new WorkflowManager({
+      workspaceManager: { list: () => [] } as unknown as WorkspaceManager,
+      eventBus: { publish: () => true } as unknown as EventBus,
+      logger: { warn() {}, error() {} } as unknown as Logger,
+      storageDir,
+      createClient: () => null,
+    })
+    try {
+      const definition = { version: 1 as const, id: "latest", name: "Latest", root: {
+        type: "agent" as const, id: "work", instructions: "Work",
+      } }
+      await manager.createDefinition(definition)
+      await manager.listDefinitions()
+      const [updated, stale] = await Promise.allSettled([
+        manager.updateDefinition("latest", 1, { ...definition, name: "Updated" }),
+        manager.startLatest({ workspaceId: "workspace", definitionId: "latest", definitionRevision: 1 }),
+      ])
+      assert.equal(updated.status, "fulfilled")
+      assert.equal(stale.status, "rejected")
+      assert.match((stale as PromiseRejectedResult).reason.message, /revision is stale/)
+    } finally {
+      await manager.shutdown()
+      await fs.rm(storageDir, { recursive: true, force: true })
+    }
+  })
+
+  it("resolves an omitted latest revision inside admission", async () => {
+    const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-workflow-current-"))
+    let sessions = 0
+    const client = { session: {
+      create: async () => ({ data: { id: `latest-${++sessions}` } }),
+      abort: async () => ({ data: true }),
+    } } as unknown as OpencodeClient
+    const manager = new WorkflowManager({
+      workspaceManager: {
+        get: () => ({ id: "workspace", lineageId: "lineage", path: "C:/workspace", status: "ready" }),
+        list: () => [{ id: "workspace", lineageId: "lineage", path: "C:/workspace", status: "ready" }],
+      } as unknown as WorkspaceManager,
+      eventBus: { publish: () => true } as unknown as EventBus,
+      logger: { warn() {}, error() {} } as unknown as Logger,
+      storageDir,
+      createClient: () => client,
+    })
+    try {
+      const definition = { version: 1 as const, id: "current", name: "Current", root: {
+        type: "gate" as const, id: "gate", gate: "approval" as const, prompt: "Wait",
+      } }
+      await manager.createDefinition(definition)
+      const [updated, started] = await Promise.all([
+        manager.updateDefinition("current", 1, { ...definition, name: "Updated" }),
+        manager.startLatest({ workspaceId: "workspace", definitionId: "current" }),
+      ])
+      assert.equal(updated.revision, 2)
+      assert.equal(started.definitionRevision, 2)
+      assert.equal(started.definitionSnapshot?.name, "Updated")
+    } finally {
+      await manager.shutdown()
+      await fs.rm(storageDir, { recursive: true, force: true })
+    }
+  })
+
+  it("retries transient creation cleanup on later admission", async () => {
+    const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-workflow-cleanup-"))
+    let attempts = 0
+    const manager = new WorkflowManager({
+      workspaceManager: {
+        list: () => [],
+        cancelCreationRequest: async () => {
+          if (++attempts === 1) throw new Error("transient cleanup failure")
+        },
+      } as unknown as WorkspaceManager,
+      eventBus: { publish: () => true } as unknown as EventBus,
+      logger: { warn() {}, error() {} } as unknown as Logger,
+      storageDir,
+    })
+    try {
+      ;(manager as any).deferCreationCleanup("request")
+      await (manager as any).drainCreationCleanups()
+      assert.equal(attempts, 1)
+      assert.equal((manager as any).deferredCreationCleanups.has("request"), true)
+      await assert.rejects(manager.startLatest({ workspaceId: "workspace", definitionId: "missing" }), /not found/)
+      assert.equal(attempts, 2)
+      assert.equal((manager as any).deferredCreationCleanups.size, 0)
+    } finally {
+      await manager.shutdown()
+      await fs.rm(storageDir, { recursive: true, force: true })
+    }
+  })
+
   it("persists and hands a structured planner result to the implementer", async () => {
     const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-workflows-"))
     const creates: Array<Record<string, unknown> | undefined> = []
@@ -77,7 +168,7 @@ describe("WorkflowManager", () => {
         ["implementer", "pending", undefined],
       ])
 
-      run = (await manager.approve(started.id))!
+      run = (await manager.approve(started.id, "planner"))!
       for (let attempt = 0; attempt < 50 && run.status === "running"; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 5))
         run = (await manager.get(started.id))!
@@ -90,7 +181,7 @@ describe("WorkflowManager", () => {
         ["implementer", "pending", undefined],
       ])
 
-      run = (await manager.approve(started.id))!
+      run = (await manager.approve(started.id, "reviewer"))!
       for (let attempt = 0; attempt < 50 && run.status === "running"; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 5))
         run = (await manager.get(started.id))!
@@ -130,7 +221,7 @@ describe("WorkflowManager", () => {
         }),
         /workspace lineage/,
       )
-      run = (await reloaded.approve(started.id))!
+      run = (await reloaded.approve(started.id, "implementer"))!
       for (let attempt = 0; attempt < 50 && run.status === "running"; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 5))
         run = (await reloaded.get(started.id))!
@@ -157,7 +248,7 @@ describe("WorkflowManager", () => {
           if (!signal) return
           signal.addEventListener("abort", () => reject(signal.reason), { once: true })
         }),
-        abort: async () => { aborts += 1; return { error: "abort failed" } },
+        abort: async () => ++aborts === 1 ? { error: "abort failed" } : { data: true },
       },
     } as unknown as OpencodeClient
     const workspaceManager = {
@@ -185,7 +276,7 @@ describe("WorkflowManager", () => {
         await new Promise((resolve) => setTimeout(resolve, 5))
         run = (await manager.get(started.id))!
       }
-      assert.equal(run.status, "failed")
+      assert.equal(run.status, "recovery_required")
       assert.equal(run.steps[0]?.status, "failed")
       assert.equal(aborts, 1)
       await assert.rejects(manager.start({
@@ -193,6 +284,8 @@ describe("WorkflowManager", () => {
         objective: "Must remain blocked",
         stages: [{ id: "next", title: "Next", instructions: "Do not start" }],
       }), /already running/)
+      assert.equal((await manager.cancel(started.id))?.status, "cancelled")
+      assert.equal(aborts, 2)
     } finally {
       await manager.shutdown()
       await fs.rm(storageDir, { recursive: true, force: true })
@@ -276,6 +369,28 @@ describe("WorkflowManager", () => {
       assert.equal(warnings, 1)
     } finally {
       await manager.shutdown()
+      await fs.rm(storageDir, { recursive: true, force: true })
+    }
+  })
+
+  it("clears a rejected cached shutdown so shutdown can be retried", async () => {
+    const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-workflow-shutdown-retry-"))
+    const manager = new WorkflowManager({
+      workspaceManager: { list: () => [] } as unknown as WorkspaceManager,
+      eventBus: { publish: () => true } as unknown as EventBus,
+      logger: { warn() {}, error() {} } as unknown as Logger,
+      storageDir,
+    })
+    await manager.list()
+    let attempts = 0
+    ;(manager as any).performShutdown = async () => {
+      if (++attempts === 1) throw new Error("shutdown failed")
+    }
+    try {
+      await assert.rejects(manager.shutdown(), /shutdown failed/)
+      await assert.doesNotReject(manager.shutdown())
+      assert.equal(attempts, 2)
+    } finally {
       await fs.rm(storageDir, { recursive: true, force: true })
     }
   })

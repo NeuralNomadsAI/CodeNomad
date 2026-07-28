@@ -5,16 +5,20 @@ import {
   resolveRepoRoot,
   listWorktrees,
   isValidWorktreeSlug,
+  isManagedWorktree,
   createManagedWorktree,
   removeWorktree,
 } from "../../workspaces/git-worktrees"
 import type { WorktreeListResponse, WorktreeMap } from "../../api-types"
 import type { OpencodeYoloPersistence } from "../../permissions/opencode-yolo-metadata"
 import { ensureCodenomadGitExclude, readWorktreeMap, writeWorktreeMap } from "../../workspaces/worktree-map"
+import { resolveWorkspaceIdentity } from "../../workspaces/workspace-identity"
+import type { WorkflowManager } from "../../workflows/manager"
 
 interface RouteDeps {
   workspaceManager: WorkspaceManager
   sessionMetadataPersistence: OpencodeYoloPersistence
+  workflowManager: WorkflowManager
 }
 
 const WorktreeMapSchema = z.object({
@@ -146,36 +150,60 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
         reply.code(404)
         return { error: "Worktree not found" }
       }
+      if (!await isManagedWorktree({ repoRoot, worktree: match })) {
+        reply.code(404)
+        return { error: "Managed worktree not found" }
+      }
+      return await deps.workflowManager.withWorktreeOwnershipLease(
+        { id: workspace.id, lineageId: workspace.lineageId, path: workspace.path },
+        { slug, path: match.directory },
+        async (owned) => {
+          if (owned) {
+            reply.code(409)
+            return { error: "Worktree is owned by an active workflow" }
+          }
+          const targetIdentity = await resolveWorkspaceIdentity(match.directory, process.cwd())
+          for (const listed of deps.workspaceManager.list()) {
+            const live = deps.workspaceManager.get(listed.id)
+            if (!live) continue
+            if (live.status !== "starting" && live.status !== "ready") continue
+            const liveIdentity = await resolveWorkspaceIdentity(live.path, process.cwd())
+            if (liveIdentity.identityKey !== targetIdentity.identityKey) continue
+            reply.code(409)
+            return { error: "Worktree is in use by an active workspace" }
+          }
 
-      await removeWorktree({ workspaceFolder: workspace.path, directory: match.directory, force, logger: request.log })
+          await removeWorktree({ workspaceFolder: workspace.path, directory: match.directory, force, logger: request.log })
 
-      // Best-effort: prune any mappings that point at the deleted worktree.
-      const current = await readWorktreeMap(workspace.path, request.log)
-      let changed = false
-      const nextMapping: Record<string, string> = { ...(current.parentSessionWorktreeSlug ?? {}) }
-      for (const [sessionId, mapped] of Object.entries(nextMapping)) {
-        if (mapped === slug) {
-          delete nextMapping[sessionId]
-          changed = true
+          // Best-effort: prune any mappings that point at the deleted worktree.
+          const current = await readWorktreeMap(workspace.path, request.log)
+          let changed = false
+          const nextMapping: Record<string, string> = { ...(current.parentSessionWorktreeSlug ?? {}) }
+          for (const [sessionId, mapped] of Object.entries(nextMapping)) {
+            if (mapped === slug) {
+              delete nextMapping[sessionId]
+              changed = true
+            }
+          }
+          const nextDefault = current.defaultWorktreeSlug === slug ? "root" : current.defaultWorktreeSlug
+          if (nextDefault !== current.defaultWorktreeSlug) {
+            changed = true
+          }
+          if (changed) {
+            await writeWorktreeMap(
+              workspace.path,
+              {
+                version: 1,
+                defaultWorktreeSlug: nextDefault,
+                parentSessionWorktreeSlug: nextMapping,
+              },
+              request.log,
+            )
+          }
+
+          reply.code(204)
         }
-      }
-      const nextDefault = current.defaultWorktreeSlug === slug ? "root" : current.defaultWorktreeSlug
-      if (nextDefault !== current.defaultWorktreeSlug) {
-        changed = true
-      }
-      if (changed) {
-        await writeWorktreeMap(
-          workspace.path,
-          {
-            version: 1,
-            defaultWorktreeSlug: nextDefault,
-            parentSessionWorktreeSlug: nextMapping,
-          },
-          request.log,
-        )
-      }
-
-      reply.code(204)
+      )
     } catch (error) {
       return handleError(error, reply)
     }

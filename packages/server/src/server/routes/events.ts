@@ -1,4 +1,4 @@
-import { FastifyInstance } from "fastify"
+import { FastifyInstance, type FastifyReply } from "fastify"
 import { z } from "zod"
 import { EventBus } from "../../events/bus"
 import { WorkspaceEventPayload } from "../../api-types"
@@ -29,12 +29,10 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
     const connection = ConnectionQuerySchema.parse(request.query ?? {})
     deps.logger.debug({ clientId }, "SSE client connected")
 
-    const origin = request.headers.origin ?? "*"
-    reply.raw.setHeader("Access-Control-Allow-Origin", origin)
-    reply.raw.setHeader("Access-Control-Allow-Credentials", "true")
-    reply.raw.setHeader("Content-Type", "text/event-stream")
-    reply.raw.setHeader("Cache-Control", "no-cache")
-    reply.raw.setHeader("Connection", "keep-alive")
+    reply.header("Content-Type", "text/event-stream")
+    reply.header("Cache-Control", "no-cache")
+    reply.header("Connection", "keep-alive")
+    copyReplyHeadersToRaw(reply)
     reply.raw.flushHeaders?.()
     reply.hijack()
 
@@ -86,4 +84,10 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
     }
     reply.code(204).send()
   })
+}
+
+function copyReplyHeadersToRaw(reply: FastifyReply): void {
+  for (const [name, value] of Object.entries(reply.getHeaders())) {
+    if (value !== undefined) reply.raw.setHeader(name, value)
+  }
 }

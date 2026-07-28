@@ -3,7 +3,7 @@ import { describe, it } from "node:test"
 import Fastify from "fastify"
 
 import type { WorkspaceDescriptor } from "../../api-types"
-import type { WorkspaceManager } from "../../workspaces/manager"
+import { WorkspaceDeletionBlockedError, type WorkspaceManager } from "../../workspaces/manager"
 import { registerWorkspaceRoutes } from "./workspaces"
 
 describe("workspace routes", () => {
@@ -123,6 +123,32 @@ describe("workspace routes", () => {
     assert.equal(release.body, "Workspace creation request not found")
     finishDeletion()
     assert.equal((await cancellation).statusCode, 204)
+    await app.close()
+  })
+
+  it("reports workflow-owned deletion and restore cancellation as conflicts", async () => {
+    let deleted = false
+    const app = Fastify({ logger: false })
+    const workspaceManager = {
+      get: () => ({ id: "workspace", lineageId: "lineage", path: "C:/worktree" }),
+      delete: async () => {
+        deleted = true
+        throw new WorkspaceDeletionBlockedError("workspace")
+      },
+      cancelCreationRequest: async () => { throw new WorkspaceDeletionBlockedError("workspace") },
+    } as unknown as WorkspaceManager
+    registerWorkspaceRoutes(app, { workspaceManager })
+
+    const response = await app.inject({ method: "DELETE", url: "/api/workspaces/workspace" })
+    const cancellation = await app.inject({
+      method: "POST",
+      url: "/api/workspaces/creation/cancel",
+      payload: { requestId: "restore-request" },
+    })
+
+    assert.equal(response.statusCode, 409)
+    assert.equal(cancellation.statusCode, 409)
+    assert.equal(deleted, true)
     await app.close()
   })
 })

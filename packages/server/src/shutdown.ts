@@ -75,7 +75,7 @@ export async function orchestrateServerShutdown(
     }
   }
 
-  const workspaceShutdown = (async () => {
+  const workspaceShutdown = async () => {
     const attempts = Math.max(1, Math.floor(workspaceAttempts))
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       const [result] = await Promise.allSettled([Promise.resolve().then(operations.stopWorkspaces)])
@@ -88,14 +88,13 @@ export async function orchestrateServerShutdown(
       errors.push(error)
       logger.error({ err: error, attempts }, "Workspace manager shutdown failed")
     }
-  })()
+  }
   await Promise.all([
     settle([
       ["stopInstanceEventBridge", operations.stopInstanceEventBridge], ["stopSidecars", operations.stopSidecars],
-      ["stopWorkflowRuns", operations.stopWorkflowRuns],
       ["stopClientConnections", operations.stopClientConnections], ["stopRemoteProxySessions", operations.stopRemoteProxySessions],
     ]),
-    workspaceShutdown,
+    settle([["stopWorkflowRuns", operations.stopWorkflowRuns]]).then(workspaceShutdown),
   ])
   await settle([["stopHttpServers", operations.stopHttpServers], ["stopReleaseMonitor", operations.stopReleaseMonitor]])
   if (errors.length) throw new AggregateError(errors, "Server shutdown failed")

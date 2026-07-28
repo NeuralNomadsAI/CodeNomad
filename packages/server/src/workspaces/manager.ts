@@ -18,8 +18,11 @@ import {
   resolveExistingOpencodeConfigContent,
 } from "../opencode-plugin.js"
 import {
+  CODENOMAD_CALLBACK_TOKEN_ENV,
   OPENCODE_SERVER_BASE_URL_ENV,
+  buildCodeNomadCallbackAuthorizationHeader,
   buildOpencodeBasicAuthHeader,
+  generateCodeNomadCallbackToken,
   OPENCODE_SERVER_PASSWORD_ENV,
   OPENCODE_SERVER_USERNAME_ENV,
   resolveOpencodeServerAuth,
@@ -69,6 +72,11 @@ interface WorkspaceManagerOptions {
   clearTimeout?: (timer: ManagerTimeout) => void
 }
 
+export type WorkspaceDeletionGuard = (
+  workspace: WorkspaceDescriptor,
+  operation: () => Promise<WorkspaceDescriptor | undefined>,
+) => Promise<WorkspaceDescriptor | undefined>
+
 interface WorkspaceRecord extends WorkspaceDescriptor {
   identityKey: string
   ownership: WorkspaceCreationOwnership
@@ -103,6 +111,13 @@ export class WorkspaceCleanupTimeoutError extends Error {
   constructor(operation: string, timeoutMs: number) {
     super(`Workspace ${operation} did not finish within ${timeoutMs}ms; cleanup can be retried`)
     this.name = "WorkspaceCleanupTimeoutError"
+  }
+}
+export class WorkspaceDeletionBlockedError extends Error {
+  readonly code = "WORKSPACE_OWNED_BY_WORKFLOW"
+  constructor(workspaceId: string) {
+    super(`Workspace ${workspaceId} is owned by an active workflow`)
+    this.name = "WorkspaceDeletionBlockedError"
   }
 }
 export class WorkspaceShutdownError extends AggregateError {
@@ -140,6 +155,8 @@ export class WorkspaceManager {
   private readonly runtime: Pick<WorkspaceRuntime, "launch" | "stop">
   private readonly codeNomadPluginUrl: string
   private readonly opencodeAuth = new Map<string, { username: string; password: string; authorization: string }>()
+  private readonly pluginCallbackAuth = new Map<string, string>()
+  private deletionGuard?: WorkspaceDeletionGuard
 
   constructor(private readonly options: WorkspaceManagerOptions) {
     this.runtime = options.runtime ?? new WorkspaceRuntime(this.options.eventBus, this.options.logger)
@@ -164,6 +181,14 @@ export class WorkspaceManager {
     return this.workspaces.get(id)?.[WORKSPACE_STATE].published ? this.opencodeAuth.get(id)?.authorization : undefined
   }
 
+  getPluginCallbackAuthorizationHeader(id: string): string | undefined {
+    return this.workspaces.get(id)?.[WORKSPACE_STATE].published ? this.pluginCallbackAuth.get(id) : undefined
+  }
+
+  setDeletionGuard(guard: WorkspaceDeletionGuard): void {
+    this.deletionGuard = guard
+  }
+
   findReadyInstanceIdByBinary(binaryPath: string): string | undefined {
     const resolvedPath = this.resolveBinaryPath(binaryPath)
     return this.list().find((workspace) => {
@@ -180,6 +205,7 @@ export class WorkspaceManager {
       if (
         state.published
         && !state.abortController.signal.aborted
+        && !state.deletePromise
         && (includeRestoreOwned || !record.requestId)
         && record.status === "ready"
         && record.identityKey === identityKey
@@ -261,7 +287,10 @@ export class WorkspaceManager {
       }
       if (options.lineageId) {
         const lineageRecord = Array.from(this.workspaces.values()).find((record) =>
-          record.lineageId === options.lineageId && !record[WORKSPACE_STATE].abortController.signal.aborted)
+          record.lineageId === options.lineageId
+          && (record.status === "starting" || record.status === "ready")
+          && !record[WORKSPACE_STATE].deletePromise
+          && !record[WORKSPACE_STATE].abortController.signal.aborted)
         if (lineageRecord) {
           if (lineageRecord.identityKey !== identityKey) {
             throw new Error("Workspace lineage belongs to a different workspace")
@@ -293,7 +322,12 @@ export class WorkspaceManager {
         return { workspace: existing, created: false }
       }
       const pending = this.pendingWorkspaceCreations.get(identityKey)
-      if (pending) {
+      if (
+        pending
+        && !pending[WORKSPACE_STATE].deletePromise
+        && !pending[WORKSPACE_STATE].abortController.signal.aborted
+        && (pending.status === "starting" || pending.status === "ready")
+      ) {
         const state = pending[WORKSPACE_STATE]
         const owner = options.requestId ?? ORDINARY_CREATION_OWNER
         if (!pending.ownership.has(owner)) pending.ownership.set(owner, "active")
@@ -428,6 +462,8 @@ export class WorkspaceManager {
         throw new Error("Failed to build OpenCode auth header")
       }
       this.opencodeAuth.set(id, { username: opencodeUsername, password: opencodePassword, authorization })
+      const callbackToken = generateCodeNomadCallbackToken()
+      this.pluginCallbackAuth.set(id, buildCodeNomadCallbackAuthorizationHeader(callbackToken))
 
       const environment = {
         ...userEnvironment,
@@ -435,6 +471,7 @@ export class WorkspaceManager {
         OPENCODE_EXPERIMENTAL_WORKSPACES: "true",
         CODENOMAD_INSTANCE_ID: id,
         CODENOMAD_BASE_URL: serverBaseUrl,
+        [CODENOMAD_CALLBACK_TOKEN_ENV]: callbackToken,
         ...(this.options.nodeExtraCaCertsPath ? { NODE_EXTRA_CA_CERTS: this.options.nodeExtraCaCertsPath } : {}),
         [OPENCODE_SERVER_BASE_URL_ENV]: `${normalizedServerBaseUrl}${proxyPath}`,
         [OPENCODE_SERVER_USERNAME_ENV]: opencodeUsername,
@@ -505,19 +542,24 @@ export class WorkspaceManager {
     const record = this.workspaces.get(id)
     if (!record) return Promise.resolve(undefined)
     const state = record[WORKSPACE_STATE]
-    if (!state.abortController.signal.aborted) {
-      state.abortController.abort(new WorkspaceLaunchCancelledError(id))
-    }
-    const pending = this.pendingWorkspaceCreations.get(record.identityKey)
-    if (pending === record) {
-      this.pendingWorkspaceCreations.delete(record.identityKey)
-    }
     if (!state.deletePromise) {
-      let deletePromise!: Promise<WorkspaceDescriptor | undefined>
-      deletePromise = this.cleanupDeletedWorkspace(id, record).catch((error) => {
-        if (state.deletePromise === deletePromise) state.deletePromise = undefined
-        throw error
-      })
+      const cleanup = () => {
+        if (!state.abortController.signal.aborted) {
+          state.abortController.abort(new WorkspaceLaunchCancelledError(id))
+        }
+        if (this.pendingWorkspaceCreations.get(record.identityKey) === record) {
+          this.pendingWorkspaceCreations.delete(record.identityKey)
+        }
+        return this.cleanupDeletedWorkspace(id, record)
+      }
+      const deletePromise = Promise.resolve()
+        .then(() => this.shuttingDown || !this.deletionGuard
+          ? cleanup()
+          : this.deletionGuard(record, cleanup))
+        .catch((error) => {
+          if (state.deletePromise === deletePromise) state.deletePromise = undefined
+          throw error
+        })
       state.deletePromise = deletePromise
     }
     return state.deletePromise
@@ -655,6 +697,7 @@ export class WorkspaceManager {
     if (this.workspaces.get(id) !== record) return
     this.workspaces.delete(id)
     this.opencodeAuth.delete(id)
+    this.pluginCallbackAuth.delete(id)
     clearWorkspaceSearchCache(record.path)
     if (publishStopped) this.publishStopped(record, "deleted")
   }
@@ -875,6 +918,7 @@ export class WorkspaceManager {
     const workspace = record
 
     this.opencodeAuth.delete(workspaceId)
+    this.pluginCallbackAuth.delete(workspaceId)
 
     this.options.logger.info({ workspaceId, ...info }, "Workspace process exited")
 

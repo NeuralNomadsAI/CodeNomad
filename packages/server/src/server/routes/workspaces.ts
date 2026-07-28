@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyReply } from "fastify"
 import { z } from "zod"
-import { WorkspaceManager } from "../../workspaces/manager"
+import { WorkspaceDeletionBlockedError, WorkspaceManager } from "../../workspaces/manager"
 import { getWorktreeGitDiff, getWorktreeGitStatus } from "../../workspaces/git-status"
 import { commitWorktreeChanges, isGitMutationError, stageWorktreePaths, unstageWorktreePaths } from "../../workspaces/git-mutations"
 import { cloneGitRepository, isGitCloneError } from "../../workspaces/git-clone"
@@ -112,8 +112,12 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
   })
 
   app.delete<{ Params: { id: string } }>("/api/workspaces/:id", async (request, reply) => {
-    await deps.workspaceManager.delete(request.params.id)
-    reply.code(204)
+    try {
+      await deps.workspaceManager.delete(request.params.id)
+      reply.code(204)
+    } catch (error) {
+      return handleWorkspaceError(error, reply)
+    }
   })
 
   app.post("/api/workspaces/creation/cancel", async (request, reply) => {
@@ -122,8 +126,12 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
       reply.code(400).type("text/plain").send("Invalid workspace creation request")
       return
     }
-    await deps.workspaceManager.cancelCreationRequest(parsed.data.requestId)
-    reply.code(204)
+    try {
+      await deps.workspaceManager.cancelCreationRequest(parsed.data.requestId)
+      reply.code(204)
+    } catch (error) {
+      return handleWorkspaceError(error, reply)
+    }
   })
 
   app.post<{ Params: { id: string } }>("/api/workspaces/:id/creation/release", async (request, reply) => {
@@ -333,6 +341,10 @@ async function resolveGitWorktreeDirectory(
 
 
 function handleWorkspaceError(error: unknown, reply: FastifyReply) {
+  if (error instanceof WorkspaceDeletionBlockedError) {
+    reply.code(409)
+    return { error: error.message }
+  }
   if (isGitCloneError(error)) {
     reply.code(error.statusCode)
     return { error: error.message }

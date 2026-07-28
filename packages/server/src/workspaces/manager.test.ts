@@ -10,6 +10,7 @@ import {
 } from "./runtime"
 import {
   WorkspaceCleanupTimeoutError,
+  WorkspaceDeletionBlockedError,
   WorkspaceLaunchCancelledError,
   WorkspaceLaunchTimeoutError,
   WorkspaceManager,
@@ -33,8 +34,10 @@ class ControlledRuntime {
   stopCalls = 0
   failStops = 0
   onExit?: (info: ProcessExitInfo) => void
+  launchEnvironment?: Record<string, string>
 
   launch: WorkspaceRuntime["launch"] = (options) => {
+    this.launchEnvironment = options.environment
     this.active.add(options.workspaceId)
     this.onExit = options.onExit
     this.launchCalled.resolve(options.workspaceId)
@@ -102,6 +105,115 @@ async function createReady(harness: ReturnType<typeof createHarness>) {
 }
 
 describe("workspace manager lifecycle", () => {
+  it("guards restore cancellation before aborting or deleting its workspace", async () => {
+    const harness = createHarness()
+    const creation = harness.manager.create(process.cwd(), undefined, { requestId: "restore-request" })
+    const workspaceId = await harness.runtime.launchCalled.promise
+    harness.runtime.resolveLaunch()
+    harness.readiness.resolve(undefined)
+    await creation
+    let guardedWorkspaceId: string | undefined
+    harness.manager.setDeletionGuard(async (workspace) => {
+      guardedWorkspaceId = workspace.id
+      throw new WorkspaceDeletionBlockedError(workspace.id)
+    })
+
+    await assert.rejects(harness.manager.cancelCreationRequest("restore-request"), WorkspaceDeletionBlockedError)
+    assert.equal(guardedWorkspaceId, workspaceId)
+    assert.equal(harness.manager.get(workspaceId)?.status, "ready")
+    assert.equal(harness.runtime.stopCalls, 0)
+
+    harness.manager.setDeletionGuard(async (_workspace, operation) => operation())
+    await harness.manager.cancelCreationRequest("restore-request")
+    assert.equal(harness.manager.get(workspaceId), undefined)
+  })
+
+  it("does not reuse a ready workspace while guarded deletion is pending", async () => {
+    const harness = createHarness()
+    const workspaceId = await createReady(harness)
+    const guardEntered = deferred<void>()
+    const finishGuard = deferred<void>()
+    harness.manager.setDeletionGuard(async (workspace) => {
+      guardEntered.resolve()
+      await finishGuard.promise
+      throw new WorkspaceDeletionBlockedError(workspace.id)
+    })
+
+    const deletion = harness.manager.delete(workspaceId)
+    await guardEntered.promise
+    const replacement = await harness.manager.create(process.cwd())
+
+    assert.equal(replacement.created, true)
+    assert.notEqual(replacement.workspace.id, workspaceId)
+    finishGuard.resolve()
+    await assert.rejects(deletion, WorkspaceDeletionBlockedError)
+    assert.equal(harness.manager.get(workspaceId)?.status, "ready")
+  })
+
+  it("does not reuse a pending workspace while its guarded deletion is pending", async () => {
+    const harness = createHarness()
+    const firstCreation = harness.manager.create(process.cwd())
+    const workspaceId = await harness.runtime.launchCalled.promise
+    const guardEntered = deferred<void>()
+    const finishGuard = deferred<void>()
+    harness.manager.setDeletionGuard(async (_workspace, operation) => {
+      guardEntered.resolve()
+      await finishGuard.promise
+      return operation()
+    })
+
+    const deletion = harness.manager.delete(workspaceId)
+    await guardEntered.promise
+    const replacement = harness.manager.create(process.cwd())
+    while ((harness.manager as any).workspaces.size < 2) {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+    }
+
+    assert.equal((harness.manager as any).workspaces.size, 2)
+    const pending = [...(harness.manager as any).pendingWorkspaceCreations.values()] as Array<{ id: string }>
+    assert.equal(pending.length, 1)
+    assert.notEqual(pending[0]?.id, workspaceId)
+    finishGuard.resolve()
+    await assert.rejects(firstCreation, WorkspaceLaunchCancelledError)
+    await deletion
+    await assert.rejects(replacement, WorkspaceLaunchCancelledError)
+  })
+
+  for (const status of ["stopped", "error"] as const) {
+    it(`does not reuse a ${status} lineage record`, async () => {
+      const harness = createHarness()
+      const first = await (async () => {
+        const creation = harness.manager.create(process.cwd(), undefined, { lineageId: "terminal-lineage" })
+        harness.runtime.resolveLaunch()
+        harness.readiness.resolve(undefined)
+        return creation
+      })()
+      ;(harness.manager.get(first.workspace.id) as { status: string }).status = status
+
+      const second = await harness.manager.create(process.cwd(), undefined, { lineageId: "terminal-lineage" })
+
+      assert.equal(second.created, true)
+      assert.notEqual(second.workspace.id, first.workspace.id)
+    })
+  }
+
+  it("uses a distinct generated capability for plugin callbacks", async () => {
+    const harness = createHarness()
+    ;(harness.manager as any).options.settings = {
+      getOwner: () => ({ environmentVariables: { OPENCODE_SERVER_PASSWORD: "shared-opencode-secret" } }),
+    }
+    const workspaceId = await createReady(harness)
+    const callbackToken = harness.runtime.launchEnvironment?.CODENOMAD_CALLBACK_TOKEN
+
+    assert.ok(callbackToken)
+    assert.notEqual(callbackToken, "shared-opencode-secret")
+    assert.equal(harness.manager.getPluginCallbackAuthorizationHeader(workspaceId), `Bearer ${callbackToken}`)
+    assert.equal(
+      harness.manager.getInstanceAuthorizationHeader(workspaceId),
+      `Basic ${Buffer.from("codenomad:shared-opencode-secret").toString("base64")}`,
+    )
+  })
+
   for (const boundary of ["launch", "readiness", "shutdown"] as const) {
     it(`cancels and cleans a workspace during ${boundary}`, async () => {
       const harness = createHarness()

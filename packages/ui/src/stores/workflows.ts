@@ -1,9 +1,15 @@
 import { createSignal } from "solid-js"
-import type { WorkflowRun } from "../../../server/src/api-types"
+import type { WorkflowDefinitionRecord, WorkflowRun } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
 import { serverEvents } from "../lib/server-events"
 import { sseManager } from "../lib/sse-manager"
-import { reconcileWorkflowRunList, reconcileWorkflowRuns } from "./workflow-reconciliation"
+import {
+  compareWorkflowRuns,
+  createWorkflowResponseFence,
+  reconcileWorkflowDefinitions,
+  reconcileWorkflowRunList,
+  reconcileWorkflowRuns,
+} from "./workflow-reconciliation"
 
 export interface WorkflowDraftStage {
   id: string
@@ -20,6 +26,14 @@ export interface WorkflowDraft {
   stages: WorkflowDraftStage[]
 }
 
+export interface WorkflowDeclarativeDraft {
+  selectedDefinitionId: string
+  baselineRevision?: number
+  source: string
+  objective: string
+  inputs: string
+}
+
 export interface WorkflowStatusTransition {
   runId: string
   status: WorkflowRun["status"]
@@ -28,12 +42,22 @@ export interface WorkflowStatusTransition {
 
 const [workflowRuns, setWorkflowRuns] = createSignal<Map<string, WorkflowRun[]>>(new Map())
 const [workflowLoading, setWorkflowLoading] = createSignal<Map<string, boolean>>(new Map())
-const [workflowErrors, setWorkflowErrors] = createSignal<Map<string, string>>(new Map())
+const [workflowErrors, setWorkflowErrors] = createSignal<Map<string, unknown>>(new Map())
 const [workflowStatusTransitions, setWorkflowStatusTransitions] = createSignal<Map<string, WorkflowStatusTransition>>(new Map())
 const [workflowDrafts, setWorkflowDrafts] = createSignal<Map<string, WorkflowDraft>>(new Map())
+const [workflowDeclarativeDrafts, setWorkflowDeclarativeDrafts] = createSignal<Map<string, WorkflowDeclarativeDraft>>(new Map())
+const [workflowDefinitions, setWorkflowDefinitions] = createSignal<WorkflowDefinitionRecord[]>([])
+const [workflowDefinitionsLoading, setWorkflowDefinitionsLoading] = createSignal(false)
+const [workflowDefinitionsError, setWorkflowDefinitionsError] = createSignal<unknown>()
+const [workflowDefinitionTombstones, setWorkflowDefinitionTombstones] = createSignal<ReadonlySet<string>>(new Set())
 const trackedInstances = new Set<string>()
 const workflowRunRevisions = new Map<string, Map<string, number>>()
+const workflowRunLoadGenerations = new Map<string, number>()
+const workflowDefinitionListFence = createWorkflowResponseFence()
+const workflowDefinitionMutationGenerations = new Map<string, number>()
+const pendingWorkflowDefinitionMutations = new Set<string>()
 let workflowRevision = 0
+let workflowDefinitionMutationGeneration = 0
 
 function setMapValue<T>(setter: (value: (previous: Map<string, T>) => Map<string, T>) => void, instanceId: string, value: T) {
   setter((previous) => {
@@ -43,8 +67,10 @@ function setMapValue<T>(setter: (value: (previous: Map<string, T>) => Map<string
   })
 }
 
-function upsertWorkflowRun(instanceId: string, run: WorkflowRun) {
+function upsertWorkflowRun(instanceId: string, run: WorkflowRun): boolean {
   trackedInstances.add(instanceId)
+  const existing = getWorkflowRuns(instanceId).find((entry) => entry.id === run.id)
+  if (existing && compareWorkflowRuns(run, existing) < 0) return false
   const revisions = workflowRunRevisions.get(instanceId) ?? new Map<string, number>()
   revisions.set(run.id, ++workflowRevision)
   workflowRunRevisions.set(instanceId, revisions)
@@ -53,15 +79,19 @@ function upsertWorkflowRun(instanceId: string, run: WorkflowRun) {
     next.set(instanceId, reconcileWorkflowRuns(next.get(instanceId) ?? [], [run]))
     return next
   })
+  return true
 }
 
 async function loadWorkflowRuns(instanceId: string): Promise<void> {
   trackedInstances.add(instanceId)
   setMapValue(setWorkflowLoading, instanceId, true)
-  setMapValue(setWorkflowErrors, instanceId, "")
+  setMapValue(setWorkflowErrors, instanceId, undefined)
   const requestedRevision = workflowRevision
+  const generation = (workflowRunLoadGenerations.get(instanceId) ?? 0) + 1
+  workflowRunLoadGenerations.set(instanceId, generation)
   try {
     const response = await serverApi.listWorkflowRuns(instanceId)
+    if (workflowRunLoadGenerations.get(instanceId) !== generation) return
     setWorkflowRuns((previous) => {
       const next = new Map(previous)
       const concurrentRunIds = new Set([...(workflowRunRevisions.get(instanceId) ?? [])]
@@ -71,9 +101,11 @@ async function loadWorkflowRuns(instanceId: string): Promise<void> {
       return next
     })
   } catch (error) {
-    setMapValue(setWorkflowErrors, instanceId, error instanceof Error ? error.message : String(error))
+    if (workflowRunLoadGenerations.get(instanceId) === generation) {
+      setMapValue(setWorkflowErrors, instanceId, error)
+    }
   } finally {
-    setMapValue(setWorkflowLoading, instanceId, false)
+    if (workflowRunLoadGenerations.get(instanceId) === generation) setMapValue(setWorkflowLoading, instanceId, false)
   }
 }
 
@@ -83,14 +115,163 @@ async function createWorkflowRun(instanceId: string, draft: WorkflowDraft): Prom
   return run
 }
 
-async function approveWorkflowRun(instanceId: string, runId: string): Promise<WorkflowRun> {
-  const run = await serverApi.approveWorkflowRun(instanceId, runId)
+async function loadWorkflowDefinitions(): Promise<void> {
+  const generation = workflowDefinitionListFence.next()
+  setWorkflowDefinitionsLoading(true)
+  setWorkflowDefinitionsError(undefined)
+  try {
+    const incoming = (await serverApi.listWorkflowDefinitions()).definitions
+    if (workflowDefinitionListFence.isCurrent(generation)) {
+      setWorkflowDefinitions((current) => reconcileWorkflowDefinitions(
+        current, incoming, pendingWorkflowDefinitionMutations, workflowDefinitionTombstones(),
+      ))
+    }
+  } catch (error) {
+    if (workflowDefinitionListFence.isCurrent(generation)) setWorkflowDefinitionsError(error)
+  } finally {
+    if (workflowDefinitionListFence.isCurrent(generation)) setWorkflowDefinitionsLoading(false)
+  }
+}
+
+function upsertWorkflowDefinition(record: WorkflowDefinitionRecord): void {
+  if (workflowDefinitionTombstones().has(record.id)) return
+  setWorkflowDefinitions((current) => {
+    const existing = current.find(({ id }) => id === record.id)
+    if (existing && existing.revision > record.revision) return current
+    return [...current.filter(({ id }) => id !== record.id), record]
+      .sort((left, right) => left.definition.name.localeCompare(right.definition.name))
+  })
+}
+
+function invalidateWorkflowDefinitionLists(): void {
+  workflowDefinitionListFence.next()
+  setWorkflowDefinitionsLoading(false)
+}
+
+async function createWorkflowDefinition(source: string): Promise<WorkflowDefinitionRecord> {
+  const record = await serverApi.createWorkflowDefinition(source)
+  invalidateWorkflowDefinitionLists()
+  setWorkflowDefinitionTombstones((current) => {
+    if (!current.has(record.id)) return current
+    const next = new Set(current)
+    next.delete(record.id)
+    return next
+  })
+  upsertWorkflowDefinition(record)
+  return record
+}
+
+async function updateWorkflowDefinition(id: string, revision: number, source: string): Promise<WorkflowDefinitionRecord> {
+  const current = workflowDefinitions().find((record) => record.id === id)
+  if (!current || current.revision !== revision || workflowDefinitionTombstones().has(id)) throw new Error("workflow_definition_stale")
+  const generation = ++workflowDefinitionMutationGeneration
+  workflowDefinitionMutationGenerations.set(id, generation)
+  pendingWorkflowDefinitionMutations.add(id)
+  try {
+    const record = await serverApi.updateWorkflowDefinition(id, revision, source)
+    if (workflowDefinitionMutationGenerations.get(id) !== generation || workflowDefinitionTombstones().has(id)) {
+      throw new Error("workflow_definition_stale")
+    }
+    invalidateWorkflowDefinitionLists()
+    upsertWorkflowDefinition(record)
+    return record
+  } finally {
+    if (workflowDefinitionMutationGenerations.get(id) === generation) pendingWorkflowDefinitionMutations.delete(id)
+  }
+}
+
+async function reloadWorkflowDefinition(id: string): Promise<WorkflowDefinitionRecord> {
+  if (workflowDefinitionTombstones().has(id)) throw new Error("workflow_definition_stale")
+  const generation = ++workflowDefinitionMutationGeneration
+  workflowDefinitionMutationGenerations.set(id, generation)
+  pendingWorkflowDefinitionMutations.add(id)
+  try {
+    const record = await serverApi.getWorkflowDefinition(id)
+    if (workflowDefinitionMutationGenerations.get(id) !== generation || workflowDefinitionTombstones().has(id)) {
+      throw new Error("workflow_definition_stale")
+    }
+    invalidateWorkflowDefinitionLists()
+    upsertWorkflowDefinition(record)
+    return record
+  } finally {
+    if (workflowDefinitionMutationGenerations.get(id) === generation) pendingWorkflowDefinitionMutations.delete(id)
+  }
+}
+
+async function deleteWorkflowDefinition(id: string, revision: number): Promise<void> {
+  const generation = ++workflowDefinitionMutationGeneration
+  workflowDefinitionMutationGenerations.set(id, generation)
+  pendingWorkflowDefinitionMutations.add(id)
+  try {
+    await serverApi.deleteWorkflowDefinition(id, revision)
+    invalidateWorkflowDefinitionLists()
+    setWorkflowDefinitionTombstones((current) => new Set(current).add(id))
+    setWorkflowDefinitions((current) => current.filter((definition) => definition.id !== id))
+    setWorkflowDeclarativeDrafts((current) => new Map([...current].map(([instanceId, draft]) => [
+      instanceId,
+      draft.selectedDefinitionId === id
+        ? { selectedDefinitionId: "", source: "", objective: "", inputs: "{}" }
+        : draft,
+    ])))
+  } finally {
+    if (workflowDefinitionMutationGenerations.get(id) === generation) pendingWorkflowDefinitionMutations.delete(id)
+  }
+}
+
+async function startWorkflowDefinition(
+  instanceId: string,
+  id: string,
+  revision: number,
+  objective: string | undefined,
+  inputs: Record<string, unknown> | undefined,
+  initiatorSessionId?: string,
+): Promise<WorkflowRun> {
+  const selected = workflowDefinitions().find((record) => record.id === id)
+  if (!selected || selected.revision !== revision || workflowDefinitionTombstones().has(id)) throw new Error("workflow_definition_stale")
+  const latest = await serverApi.getWorkflowDefinition(id)
+  if (workflowDefinitionTombstones().has(id)) throw new Error("workflow_definition_stale")
+  upsertWorkflowDefinition(latest)
+  const current = workflowDefinitions().find((record) => record.id === id)
+  if (latest.revision !== revision || current?.revision !== revision || workflowDefinitionTombstones().has(id)) {
+    throw new Error("workflow_definition_stale")
+  }
+  const run = await serverApi.startWorkflowDefinition(id, {
+    workspaceId: instanceId,
+    definitionRevision: revision,
+    objective,
+    inputs,
+    initiatorSessionId,
+  })
+  upsertWorkflowRun(instanceId, run)
+  return run
+}
+
+async function approveWorkflowRun(instanceId: string, runId: string, expectedStepId: string): Promise<WorkflowRun> {
+  const run = await serverApi.approveWorkflowRun(instanceId, runId, expectedStepId)
   upsertWorkflowRun(instanceId, run)
   return run
 }
 
 async function cancelWorkflowRun(instanceId: string, runId: string): Promise<WorkflowRun> {
   const run = await serverApi.cancelWorkflowRun(instanceId, runId)
+  upsertWorkflowRun(instanceId, run)
+  return run
+}
+
+async function pauseWorkflowRun(instanceId: string, runId: string): Promise<WorkflowRun> {
+  const run = await serverApi.pauseWorkflowRun(runId)
+  upsertWorkflowRun(instanceId, run)
+  return run
+}
+
+async function resumeWorkflowRun(instanceId: string, runId: string, confirmRecovery = false): Promise<WorkflowRun> {
+  const run = await serverApi.resumeWorkflowRun(runId, { confirmRecovery })
+  upsertWorkflowRun(instanceId, run)
+  return run
+}
+
+async function answerWorkflowGate(instanceId: string, runId: string, executionNodeId: string, answer: unknown): Promise<WorkflowRun> {
+  const run = await serverApi.answerWorkflowGate(runId, { executionNodeId, answer })
   upsertWorkflowRun(instanceId, run)
   return run
 }
@@ -107,12 +288,19 @@ function setWorkflowDraft(instanceId: string, draft: WorkflowDraft): void {
   setMapValue(setWorkflowDrafts, instanceId, { ...draft, stages: draft.stages.map((stage) => ({ ...stage })) })
 }
 
+function getWorkflowDeclarativeDraft(instanceId: string): WorkflowDeclarativeDraft | undefined {
+  return workflowDeclarativeDrafts().get(instanceId)
+}
+
+function setWorkflowDeclarativeDraft(instanceId: string, draft: WorkflowDeclarativeDraft): void {
+  setMapValue(setWorkflowDeclarativeDrafts, instanceId, { ...draft })
+}
+
 sseManager.onWorkflowRunUpdated = (instanceId, event) => {
   const run = event.properties?.run
   if (!run) return
   const previousStatus = getWorkflowRuns(instanceId).find((entry) => entry.id === run.id)?.status
-  upsertWorkflowRun(instanceId, run)
-  if (previousStatus !== run.status) {
+  if (upsertWorkflowRun(instanceId, run) && previousStatus !== run.status) {
     setMapValue(setWorkflowStatusTransitions, instanceId, {
       runId: run.id,
       status: run.status,
@@ -123,6 +311,7 @@ sseManager.onWorkflowRunUpdated = (instanceId, event) => {
 
 serverEvents.onOpen(() => {
   for (const instanceId of trackedInstances) void loadWorkflowRuns(instanceId)
+  void loadWorkflowDefinitions()
 })
 
 export {
@@ -131,12 +320,28 @@ export {
   workflowErrors,
   workflowStatusTransitions,
   workflowDrafts,
+  workflowDeclarativeDrafts,
+  workflowDefinitions,
+  workflowDefinitionsLoading,
+  workflowDefinitionsError,
+  workflowDefinitionTombstones,
   getWorkflowRuns,
   getWorkflowDraft,
   setWorkflowDraft,
+  getWorkflowDeclarativeDraft,
+  setWorkflowDeclarativeDraft,
   loadWorkflowRuns,
   upsertWorkflowRun,
   createWorkflowRun,
+  loadWorkflowDefinitions,
+  createWorkflowDefinition,
+  updateWorkflowDefinition,
+  reloadWorkflowDefinition,
+  deleteWorkflowDefinition,
+  startWorkflowDefinition,
   approveWorkflowRun,
   cancelWorkflowRun,
+  pauseWorkflowRun,
+  resumeWorkflowRun,
+  answerWorkflowGate,
 }

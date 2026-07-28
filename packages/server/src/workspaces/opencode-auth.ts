@@ -3,10 +3,15 @@ import crypto from "node:crypto"
 export const OPENCODE_SERVER_USERNAME_ENV = "OPENCODE_SERVER_USERNAME" as const
 export const OPENCODE_SERVER_PASSWORD_ENV = "OPENCODE_SERVER_PASSWORD" as const
 export const OPENCODE_SERVER_BASE_URL_ENV = "OPENCODE_SERVER_BASE_URL" as const
+export const CODENOMAD_CALLBACK_TOKEN_ENV = "CODENOMAD_CALLBACK_TOKEN" as const
 
 export const DEFAULT_OPENCODE_USERNAME = "codenomad" as const
 
 export function generateOpencodeServerPassword(): string {
+  return crypto.randomBytes(32).toString("base64url")
+}
+
+export function generateCodeNomadCallbackToken(): string {
   return crypto.randomBytes(32).toString("base64url")
 }
 
@@ -46,4 +51,8 @@ export function buildOpencodeBasicAuthHeader(params: { username?: string; passwo
 
   const token = Buffer.from(`${username}:${password}`, "utf8").toString("base64")
   return `Basic ${token}`
+}
+
+export function buildCodeNomadCallbackAuthorizationHeader(token: string): string {
+  return `Bearer ${token}`
 }
