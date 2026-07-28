@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
+import { createCoreRightPanelManifest, createCoreStatusSectionManifest } from "./core-plugin"
 import { loadRightPanelPluginManifests, type RightPanelPluginManifest } from "./plugin-manifest"
 
 const manifest = (id: string, events: string[]): RightPanelPluginManifest => ({
@@ -49,5 +50,34 @@ describe("right panel plugin manifests", () => {
     assert.deepEqual(runtime.modules.map((entry) => entry.id), ["good"])
     assert.equal(runtime.errors.length, 1)
     assert.equal(runtime.errors[0]?.pluginId, "bad")
+  })
+
+  it("defines core right panel tabs and status sections as manifests", () => {
+    const render = () => undefined as any
+    const rightPanel = createCoreRightPanelManifest({
+      renderGitChangesTab: render,
+      renderFilesTab: render,
+      renderStatusTab: render,
+    })
+    const statusSections = createCoreStatusSectionManifest({
+      renderYoloModeSection: render,
+      renderProviderUsage: render,
+      renderPlanSectionContent: render,
+      renderBackgroundProcesses: render,
+      renderMcpStatus: render,
+      renderLspStatus: render,
+      renderPluginStatus: render,
+    })
+
+    assert.deepEqual(rightPanel.tabs?.map((entry) => entry.id), ["git-changes", "files", "status"])
+    assert.deepEqual(statusSections.statusSections?.map((entry) => entry.id), [
+      "yolo-mode",
+      "provider-usage",
+      "plan",
+      "background-processes",
+      "mcp",
+      "lsp",
+      "plugins",
+    ])
   })
 })

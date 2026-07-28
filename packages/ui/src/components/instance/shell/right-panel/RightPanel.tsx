@@ -76,10 +76,10 @@ import {
   parseRightPanelCustomization,
   setRightPanelItemHidden,
   type RightPanelCustomization,
-  type RightPanelModule,
   type RightPanelSectionModule,
   type RightPanelTabModule,
 } from "./registry"
+import { createCoreRightPanelManifest } from "./core-plugin"
 import { loadRightPanelPluginManifests } from "./plugin-manifest"
 import { RIGHT_PANEL_PLUGIN_MANIFESTS } from "./plugins"
 import { CORE_STATUS_SECTION_ITEMS } from "./tabs/status-sections"
@@ -154,10 +154,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const [rightPanelCustomization, setRightPanelCustomization] = createSignal<RightPanelCustomization>(
     parseRightPanelCustomization(readClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY)),
   )
-  const rightPanelPluginRuntime = loadRightPanelPluginManifests(RIGHT_PANEL_PLUGIN_MANIFESTS, { instanceId: props.instanceId })
-  onCleanup(() => {
-    rightPanelPluginRuntime.unload()
-  })
 
   const [browserPath, setBrowserPath] = createSignal(".")
   const [browserEntries, setBrowserEntries] = createSignal<FileNode[] | null>(null)
@@ -733,129 +729,119 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     moveTab(String(draggable.id), String(droppable.id))
   }
 
-  const rightPanelModules = createMemo<RightPanelModule[]>(() => [
-    {
-      id: "core-right-panel",
-      tabs: [
-        {
-          id: "git-changes",
-          labelKey: "instanceShell.rightPanel.tabs.gitChanges",
-          order: 10,
-          render: () => (
-            <LazyGitChangesTab
-              t={props.t}
-              activeSessionId={props.activeSessionId}
-              entries={gitStatusEntries}
-              statusLoading={gitStatusLoading}
-              statusError={gitStatusError}
-              selectedItemId={gitSelectedItemId}
-              selectedBulkItemIds={gitBulkSelectedItemIds}
-              selectedLoading={gitSelectedLoading}
-              selectedError={gitSelectedError}
-              selectedBefore={gitSelectedBefore}
-              selectedAfter={gitSelectedAfter}
-              mostChangedItemId={gitMostChangedItemId}
-              scopeKey={gitScopeKey}
-              diffViewMode={diffViewMode}
-              diffContextMode={diffContextMode}
-              diffWordWrapMode={diffWordWrapMode}
-              onViewModeChange={setDiffViewMode}
-              onContextModeChange={setDiffContextMode}
-              onWordWrapModeChange={setDiffWordWrapMode}
-              onRowClick={handleGitRowClick}
-              onRefresh={() => void refreshGitStatus()}
-              onInsertContext={insertGitChangeContext}
-              onStageFile={stageGitFile}
-              onUnstageFile={unstageGitFile}
-              commitMessage={gitCommitMessage}
-              commitSubmitting={gitCommitSubmitting}
-              onCommitMessageInput={setGitCommitMessage}
-              onSubmitCommit={() => void submitGitCommit()}
-              branchLabel={gitChangesBranchLabel}
-              stagedOpen={gitStagedOpen}
-              unstagedOpen={gitUnstagedOpen}
-              onToggleStagedOpen={() => {
-                const next = !gitStagedOpen()
-                setGitStagedOpen(next)
-                persistGitSectionOpen("staged", next)
-              }}
-              onToggleUnstagedOpen={() => {
-                const next = !gitUnstagedOpen()
-                setGitUnstagedOpen(next)
-                persistGitSectionOpen("unstaged", next)
-              }}
-              listOpen={gitChangesListOpen}
-              onToggleList={toggleGitList}
-              splitWidth={gitChangesSplitWidth}
-              onResizeMouseDown={handleSplitResizeMouseDown("git-changes")}
-              onResizeTouchStart={handleSplitResizeTouchStart("git-changes")}
-              isPhoneLayout={props.isPhoneLayout}
-            />
-          ),
-        },
-        {
-          id: "files",
-          labelKey: "instanceShell.rightPanel.tabs.files",
-          order: 20,
-          render: () => (
-            <LazyFilesTab
-              t={props.t}
-              browserPath={browserPath}
-              browserEntries={browserEntries}
-              browserLoading={browserLoading}
-              browserError={browserError}
-              browserSelectedPath={browserSelectedPath}
-              browserSelectedContent={browserSelectedContent}
-              browserSelectedLoading={browserSelectedLoading}
-              browserSelectedError={browserSelectedError}
-              browserSelectedDirty={browserSelectedDirty}
-              browserSelectedSaving={browserSelectedSaving}
-              wordWrapMode={filesWordWrapMode}
-              parentPath={browserParentPath}
-              scopeKey={browserScopeKey}
-              onLoadEntries={(path: string) => void loadBrowserEntries(path)}
-              onRequestOpenFile={(path: string) => void handleOpenBrowserFileRequest(path)}
-              onRefresh={() => void refreshFilesTab()}
-              onSave={(content: string) => void saveBrowserFile(content)}
-              onContentChange={(content: string) => handleBrowserFileChange(content)}
-              onWordWrapModeChange={setFilesWordWrapMode}
-              listOpen={filesListOpen}
-              onToggleList={toggleFilesList}
-              splitWidth={filesSplitWidth}
-              onResizeMouseDown={handleSplitResizeMouseDown("files")}
-              onResizeTouchStart={handleSplitResizeTouchStart("files")}
-              isPhoneLayout={props.isPhoneLayout}
-            />
-          ),
-        },
-        {
-          id: "status",
-          labelKey: "instanceShell.rightPanel.tabs.status",
-          order: 30,
-          render: () => (
-            <LazyStatusTab
-              t={props.t}
-              instanceId={props.instanceId}
-              instance={props.instance}
-              activeSessionId={props.activeSessionId}
-              activeSession={props.activeSession}
-              latestTodoState={props.latestTodoState}
-              backgroundProcessList={props.backgroundProcessList}
-              onOpenBackgroundOutput={props.onOpenBackgroundOutput}
-              onStopBackgroundProcess={props.onStopBackgroundProcess}
-              onTerminateBackgroundProcess={props.onTerminateBackgroundProcess}
-              expandedItems={rightPanelExpandedItems}
-              onExpandedItemsChange={handleAccordionChange}
-              customization={rightPanelCustomization}
-              onCustomizationChange={updateRightPanelCustomization}
-              extraSections={extraStatusSections()}
-            />
-          ),
-        },
-      ],
-    },
-    ...rightPanelPluginRuntime.modules,
-  ])
+  const rightPanelPluginRuntime = loadRightPanelPluginManifests(
+    [
+      createCoreRightPanelManifest({
+        renderGitChangesTab: () => (
+          <LazyGitChangesTab
+            t={props.t}
+            activeSessionId={props.activeSessionId}
+            entries={gitStatusEntries}
+            statusLoading={gitStatusLoading}
+            statusError={gitStatusError}
+            selectedItemId={gitSelectedItemId}
+            selectedBulkItemIds={gitBulkSelectedItemIds}
+            selectedLoading={gitSelectedLoading}
+            selectedError={gitSelectedError}
+            selectedBefore={gitSelectedBefore}
+            selectedAfter={gitSelectedAfter}
+            mostChangedItemId={gitMostChangedItemId}
+            scopeKey={gitScopeKey}
+            diffViewMode={diffViewMode}
+            diffContextMode={diffContextMode}
+            diffWordWrapMode={diffWordWrapMode}
+            onViewModeChange={setDiffViewMode}
+            onContextModeChange={setDiffContextMode}
+            onWordWrapModeChange={setDiffWordWrapMode}
+            onRowClick={handleGitRowClick}
+            onRefresh={() => void refreshGitStatus()}
+            onInsertContext={insertGitChangeContext}
+            onStageFile={stageGitFile}
+            onUnstageFile={unstageGitFile}
+            commitMessage={gitCommitMessage}
+            commitSubmitting={gitCommitSubmitting}
+            onCommitMessageInput={setGitCommitMessage}
+            onSubmitCommit={() => void submitGitCommit()}
+            branchLabel={gitChangesBranchLabel}
+            stagedOpen={gitStagedOpen}
+            unstagedOpen={gitUnstagedOpen}
+            onToggleStagedOpen={() => {
+              const next = !gitStagedOpen()
+              setGitStagedOpen(next)
+              persistGitSectionOpen("staged", next)
+            }}
+            onToggleUnstagedOpen={() => {
+              const next = !gitUnstagedOpen()
+              setGitUnstagedOpen(next)
+              persistGitSectionOpen("unstaged", next)
+            }}
+            listOpen={gitChangesListOpen}
+            onToggleList={toggleGitList}
+            splitWidth={gitChangesSplitWidth}
+            onResizeMouseDown={handleSplitResizeMouseDown("git-changes")}
+            onResizeTouchStart={handleSplitResizeTouchStart("git-changes")}
+            isPhoneLayout={props.isPhoneLayout}
+          />
+        ),
+        renderFilesTab: () => (
+          <LazyFilesTab
+            t={props.t}
+            browserPath={browserPath}
+            browserEntries={browserEntries}
+            browserLoading={browserLoading}
+            browserError={browserError}
+            browserSelectedPath={browserSelectedPath}
+            browserSelectedContent={browserSelectedContent}
+            browserSelectedLoading={browserSelectedLoading}
+            browserSelectedError={browserSelectedError}
+            browserSelectedDirty={browserSelectedDirty}
+            browserSelectedSaving={browserSelectedSaving}
+            wordWrapMode={filesWordWrapMode}
+            parentPath={browserParentPath}
+            scopeKey={browserScopeKey}
+            onLoadEntries={(path: string) => void loadBrowserEntries(path)}
+            onRequestOpenFile={(path: string) => void handleOpenBrowserFileRequest(path)}
+            onRefresh={() => void refreshFilesTab()}
+            onSave={(content: string) => void saveBrowserFile(content)}
+            onContentChange={(content: string) => handleBrowserFileChange(content)}
+            onWordWrapModeChange={setFilesWordWrapMode}
+            listOpen={filesListOpen}
+            onToggleList={toggleFilesList}
+            splitWidth={filesSplitWidth}
+            onResizeMouseDown={handleSplitResizeMouseDown("files")}
+            onResizeTouchStart={handleSplitResizeTouchStart("files")}
+            isPhoneLayout={props.isPhoneLayout}
+          />
+        ),
+        renderStatusTab: () => (
+          <LazyStatusTab
+            t={props.t}
+            instanceId={props.instanceId}
+            instance={props.instance}
+            activeSessionId={props.activeSessionId}
+            activeSession={props.activeSession}
+            latestTodoState={props.latestTodoState}
+            backgroundProcessList={props.backgroundProcessList}
+            onOpenBackgroundOutput={props.onOpenBackgroundOutput}
+            onStopBackgroundProcess={props.onStopBackgroundProcess}
+            onTerminateBackgroundProcess={props.onTerminateBackgroundProcess}
+            expandedItems={rightPanelExpandedItems}
+            onExpandedItemsChange={handleAccordionChange}
+            customization={rightPanelCustomization}
+            onCustomizationChange={updateRightPanelCustomization}
+            extraSections={extraStatusSections()}
+          />
+        ),
+      }),
+      ...RIGHT_PANEL_PLUGIN_MANIFESTS,
+    ],
+    { instanceId: props.instanceId },
+  )
+  onCleanup(() => {
+    rightPanelPluginRuntime.unload()
+  })
+
+  const rightPanelModules = createMemo(() => rightPanelPluginRuntime.modules)
 
   const allRightPanelTabs = createMemo(() => collectRightPanelItems<RightPanelTabModule>(rightPanelModules(), "tabs"))
   const visibleRightPanelTabs = createMemo(() =>
