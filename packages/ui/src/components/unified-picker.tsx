@@ -115,6 +115,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     setTimeout(() => {
       if (scrollContainerRef) {
         scrollContainerRef.scrollTop = 0
+        scrollContainerRef.scrollLeft = 0
       }
     }, 0)
   }
@@ -595,7 +596,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                     data-picker-selected={itemIndex === selectedIndex()}
                     onClick={() => props.onSelect({ type: "file", file }, "click")}
                   >
-                    <div class="flex min-w-0 items-center gap-2 text-sm">
+                    <div class="flex min-w-full w-max items-center gap-2 text-sm">
                       <Show
                         when={isFolder}
                         fallback={
@@ -621,17 +622,14 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                       <span class="min-w-0 flex-1" title={file.path}>
                         <span class="sr-only">{file.path}</span>
                         <span aria-hidden="true">
-                          <span class="block break-all">{displayPath.name}</span>
-                          <Show when={displayPath.start}>
-                            <span class="flex min-w-0 items-center text-[11px]" style="color: var(--text-muted)">
-                              <span class="min-w-0 shrink truncate">{displayPath.start}</span>
-                              <Show when={displayPath.hasMiddle}>
-                                <span class="shrink-0">/…</span>
-                              </Show>
-                              <Show when={displayPath.parent}>
-                                <span class="min-w-0 shrink truncate">/{displayPath.parent}</span>
-                              </Show>
-                            </span>
+                          <span class="block whitespace-nowrap">
+                            {displayPath.name}
+                          </span>
+                          <Show when={displayPath.parent}>
+                            <span class="block whitespace-nowrap text-[11px]" style="color: var(--text-muted)">{displayPath.parent}/</span>
+                          </Show>
+                          <Show when={displayPath.directory && displayPath.directory !== displayPath.parent}>
+                            <span class="block whitespace-nowrap text-[10px]" style="color: var(--text-muted)">{displayPath.directory}</span>
                           </Show>
                         </span>
                       </span>

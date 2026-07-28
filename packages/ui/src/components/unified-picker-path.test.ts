@@ -2,23 +2,20 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { splitDisplayPath } from "./unified-picker-path"
 
-test("splits paths into file and abbreviated directory context", () => {
+test("splits paths into file and directory context", () => {
   assert.deepEqual(splitDisplayPath("packages/ui/src/components/unified-picker.tsx"), {
     name: "unified-picker.tsx",
-    start: "packages",
     parent: "components",
-    hasMiddle: true,
+    directory: "packages/ui/src/components",
   })
   assert.deepEqual(splitDisplayPath("src/components/"), {
     name: "components/",
-    start: "src",
-    parent: "",
-    hasMiddle: false,
+    parent: "src",
+    directory: "src",
   })
   assert.deepEqual(splitDisplayPath("README.md"), {
     name: "README.md",
-    start: "",
     parent: "",
-    hasMiddle: false,
+    directory: "",
   })
 })
