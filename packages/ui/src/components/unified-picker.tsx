@@ -5,6 +5,7 @@ import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
 import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
+import { splitDisplayPath } from "./unified-picker-path"
 const log = getLogger("actions")
 
 
@@ -585,6 +586,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                   (item) => item.type === "file" && item.file.relativePath === file.relativePath,
                 )
                 const isFolder = file.isDirectory
+                const displayPath = splitDisplayPath(file.path)
                 return (
                   <div
                     class={`dropdown-item py-1.5 ${
@@ -593,7 +595,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                     data-picker-selected={itemIndex === selectedIndex()}
                     onClick={() => props.onSelect({ type: "file", file }, "click")}
                   >
-                    <div class="flex min-w-full w-max items-center gap-2 text-sm">
+                    <div class="flex min-w-0 items-center gap-2 text-sm">
                       <Show
                         when={isFolder}
                         fallback={
@@ -616,7 +618,23 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                           />
                         </svg>
                       </Show>
-                      <span class="whitespace-nowrap">{file.path}</span>
+                      <span class="min-w-0 flex-1" title={file.path}>
+                        <span class="sr-only">{file.path}</span>
+                        <span aria-hidden="true">
+                          <span class="block break-all">{displayPath.name}</span>
+                          <Show when={displayPath.start}>
+                            <span class="flex min-w-0 items-center text-[11px]" style="color: var(--text-muted)">
+                              <span class="min-w-0 shrink truncate">{displayPath.start}</span>
+                              <Show when={displayPath.hasMiddle}>
+                                <span class="shrink-0">/…</span>
+                              </Show>
+                              <Show when={displayPath.parent}>
+                                <span class="min-w-0 shrink truncate">/{displayPath.parent}</span>
+                              </Show>
+                            </span>
+                          </Show>
+                        </span>
+                      </span>
                     </div>
                   </div>
                 )
