@@ -1,11 +1,18 @@
 import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2/client"
 import type { WorkspaceManager } from "./manager"
+import { LOOPBACK_HOST } from "./loopback"
 
-const INSTANCE_HOST = "127.0.0.1"
 const LOOPBACK_TIMEOUT_MS = 10_000
 
 interface InstanceClientOptions {
   timeoutMs?: number
+  /**
+   * Directory the instance should scope the call to. Defaults to the
+   * workspace root; pass an explicit path when targeting a session that
+   * lives elsewhere (e.g. a worktree) so OpenCode resolves the right
+   * project context.
+   */
+  directory?: string
 }
 
 /**
@@ -18,8 +25,8 @@ interface InstanceClientOptions {
  * OpenCode instance directly should use this factory rather than building
  * `http://127.0.0.1:{port}/...` URLs by hand.
  *
- * All requests carry a 10-second timeout — loopback calls should be
- * near-instant; a hang indicates a stuck instance.
+ * Requests carry a 10-second timeout (configurable via `timeoutMs`) —
+ * loopback calls should be near-instant; a hang indicates a stuck instance.
  *
  * The client is cheap to create (object only, no connection); create one per
  * call or cache per instance as needed. Returns `null` when the instance has
@@ -41,15 +48,16 @@ export function createInstanceClient(
 
   const workspace = workspaceManager.get(instanceId)
   const timeoutMs = options.timeoutMs ?? LOOPBACK_TIMEOUT_MS
+  const directory = options.directory ?? workspace?.path
 
   return createOpencodeClient({
-    baseUrl: `http://${INSTANCE_HOST}:${port}/`,
+    baseUrl: `http://${LOOPBACK_HOST}:${port}/`,
     headers,
     fetch: (url, init) =>
       fetch(url, {
         ...(init as RequestInit),
         signal: (init as RequestInit)?.signal ?? AbortSignal.timeout(timeoutMs),
       }),
-    ...(workspace?.path ? { directory: workspace.path } : {}),
+    ...(directory ? { directory } : {}),
   })
 }

@@ -4,6 +4,7 @@ import path from "path"
 import { randomBytes } from "crypto"
 import type { EventBus } from "../events/bus"
 import type { WorkspaceManager } from "../workspaces/manager"
+import { createInstanceClient } from "../workspaces/instance-client"
 import type { Logger } from "../logger"
 import type { BackgroundProcess, BackgroundProcessStatus, BackgroundProcessTerminalReason } from "../api-types"
 
@@ -625,29 +626,16 @@ export class BackgroundProcessManager {
     const notify = record.notify
     if (!notify || !record.terminalReason) return
 
-    if (!this.deps.workspaceManager.get(workspaceId)) {
-      throw new Error("Workspace not found")
-    }
-
-    const port = this.deps.workspaceManager.getInstancePort(workspaceId)
-    if (!port) {
+    const client = createInstanceClient(this.deps.workspaceManager, workspaceId, {
+      directory: notify.directory,
+    })
+    if (!client) {
       throw new Error("Workspace instance is not ready")
     }
 
-    const targetUrl = `http://127.0.0.1:${port}/session/${encodeURIComponent(notify.sessionID)}/prompt_async`
-    const headers: Record<string, string> = {
-      "content-type": "application/json",
-    }
-
-    const authorization = this.deps.workspaceManager.getInstanceAuthorizationHeader(workspaceId)
-    if (authorization) {
-      headers.authorization = authorization
-    }
-
-    const response = await fetch(targetUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
+    await client.session.promptAsync(
+      {
+        sessionID: notify.sessionID,
         parts: [
           {
             type: "text",
@@ -655,13 +643,9 @@ export class BackgroundProcessManager {
             synthetic: true,
           },
         ],
-      }),
-    })
-
-    if (!response.ok) {
-      const message = await response.text().catch(() => "")
-      throw new Error(message || `Prompt request failed with ${response.status}`)
-    }
+      },
+      { throwOnError: true },
+    )
   }
 
   private buildCompletionPrompt(record: PersistedBackgroundProcess): string {
