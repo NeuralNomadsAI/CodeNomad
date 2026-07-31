@@ -1,4 +1,4 @@
-import { For, Show, createMemo, type Accessor, type Component } from "solid-js"
+import { For, Show, createMemo, createSignal, type Accessor, type Component } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk/v2"
 import {
   DragDropProvider,
@@ -12,7 +12,7 @@ import { Accordion } from "@kobalte/core"
 import { Tooltip } from "@kobalte/core/tooltip"
 import Switch from "@suid/material/Switch"
 
-import { BellRing, ChevronDown, GripVertical, Info, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
+import { BellRing, ChevronDown, GripVertical, Info, Settings2, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
 
 import type { Instance } from "../../../../../types/instance"
 import type { BackgroundProcess } from "../../../../../../../server/src/api-types"
@@ -24,7 +24,7 @@ import { TodoListView } from "../../../../tool-call/renderers/todo"
 import InstanceServiceStatus from "../../../../instance-service-status"
 import { togglePermissionAutoAcceptForSession } from "../../../../../stores/instances"
 import { isPermissionAutoAcceptEnabled } from "../../../../../stores/permission-auto-accept"
-import { applyRightPanelItemCustomization, type RightPanelCustomization, type RightPanelSectionModule } from "../registry"
+import { applyRightPanelItemCustomization, setRightPanelItemHidden, type RightPanelCustomization, type RightPanelSectionModule } from "../registry"
 import { createCoreStatusSectionManifest } from "../core-plugin"
 
 interface StatusTabProps {
@@ -85,6 +85,7 @@ const SortableStatusSection: Component<SortableStatusSectionProps> = (props) => 
 }
 
 const StatusTab: Component<StatusTabProps> = (props) => {
+  const [sectionCustomizationOpen, setSectionCustomizationOpen] = createSignal(false)
   const isSectionExpanded = (id: string) => props.expandedItems().includes(id)
 
   const renderYoloModeSection = () => {
@@ -228,7 +229,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
     )
   }
 
-  const statusSections = createMemo<RightPanelSectionModule[]>(() => {
+  const allStatusSections = createMemo<RightPanelSectionModule[]>(() => {
     const sections = createCoreStatusSectionManifest({
       renderYoloModeSection,
       renderProviderUsage,
@@ -241,12 +242,16 @@ const StatusTab: Component<StatusTabProps> = (props) => {
       ),
     }).statusSections ?? []
 
-    return applyRightPanelItemCustomization(
-      [...sections, ...(props.extraSections ?? [])],
+    return [...sections, ...(props.extraSections ?? [])]
+  })
+  const orderedStatusSections = createMemo(() => applyRightPanelItemCustomization(allStatusSections(), props.customization().statusSectionOrder, []))
+  const statusSections = createMemo<RightPanelSectionModule[]>(() =>
+    applyRightPanelItemCustomization(
+      allStatusSections(),
       props.customization().statusSectionOrder,
       props.customization().hiddenStatusSectionIds,
-    )
-  })
+    ),
+  )
 
   const moveSection = (sourceId: string, targetId: string) => {
     if (!sourceId || sourceId === targetId) return
@@ -271,6 +276,54 @@ const StatusTab: Component<StatusTabProps> = (props) => {
         {(activeSession) => (
           <ContextUsagePanel instanceId={props.instanceId} sessionId={activeSession().id} class="status-tab-context-panel" />
         )}
+      </Show>
+
+      <div class="right-panel-customization-row px-3 pt-2">
+        <div class="text-xs font-medium text-secondary">{props.t("instanceShell.rightPanel.customize.statusSections")}</div>
+        <button
+          type="button"
+          class="right-panel-customization-button"
+          aria-expanded={sectionCustomizationOpen()}
+          onClick={() => setSectionCustomizationOpen((open) => !open)}
+        >
+          <Settings2 class="h-3.5 w-3.5" aria-hidden="true" />
+          {props.t("instanceShell.rightPanel.customize.sections")}
+        </button>
+      </div>
+
+      <Show when={sectionCustomizationOpen()}>
+        <div class="right-panel-customization-group mx-3 mt-2">
+          <For each={orderedStatusSections()}>
+            {(section) => {
+              const label = () => props.t(section.labelKey)
+              const visible = () => !props.customization().hiddenStatusSectionIds.includes(section.id)
+              const disableHide = () => visible() && statusSections().length <= 1
+              return (
+                <div class="right-panel-customization-row">
+                  <label class="right-panel-customization-label">
+                    <input
+                      type="checkbox"
+                      checked={visible()}
+                      disabled={disableHide()}
+                      onChange={(event) =>
+                        props.onCustomizationChange((current) => ({
+                          ...current,
+                          hiddenStatusSectionIds: setRightPanelItemHidden(
+                            current.hiddenStatusSectionIds,
+                            section.id,
+                            !event.currentTarget.checked,
+                          ),
+                        }))
+                      }
+                    />
+                    <span>{label()}</span>
+                  </label>
+                </div>
+              )
+            }}
+          </For>
+          <div class="right-panel-customization-hint">{props.t("instanceShell.rightPanel.customize.dragToReorder")}</div>
+        </div>
       </Show>
 
       <Accordion.Root

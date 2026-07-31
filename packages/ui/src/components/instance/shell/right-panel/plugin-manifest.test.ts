@@ -2,36 +2,43 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { createCoreRightPanelManifest, createCoreStatusSectionManifest } from "./core-plugin"
-import { loadRightPanelPluginManifests, type RightPanelPluginManifest } from "./plugin-manifest"
+import { loadRightPanelPluginManifests, type RightPanelHostContext, type RightPanelManifest } from "./plugin-manifest"
 
-const manifest = (id: string, events: string[]): RightPanelPluginManifest => ({
+const host: RightPanelHostContext = {
+  instanceId: "abc",
+  t: (key) => key,
+  activeSessionId: () => "session-1",
+  isTabActive: () => false,
+  openTab: () => {},
+}
+
+const manifest = (id: string, events: string[]): RightPanelManifest => ({
   id,
-  tabs: [{ id: `${id}-tab`, labelKey: id, order: 10, render: () => undefined as any }],
-  lifecycle: {
-    onLoad: (context) => {
-      events.push(`${id}:load:${context.instanceId}`)
-      return () => events.push(`${id}:cleanup`)
-    },
-    onUnload: () => events.push(`${id}:unload`),
+  displayNameKey: id,
+  origin: "first-party",
+  create: (context) => {
+    events.push(`${id}:create:${context.instanceId}:${context.activeSessionId()}`)
+    return {
+      id,
+      displayNameKey: id,
+      origin: "first-party",
+      tabs: [{ id: `${id}-tab`, labelKey: id, order: 10, render: () => undefined as any }],
+    }
   },
 })
 
 describe("right panel plugin manifests", () => {
-  it("loads modules and unloads lifecycle hooks in reverse order", () => {
+  it("creates modules with host context", () => {
     const events: string[] = []
-    const runtime = loadRightPanelPluginManifests([manifest("first", events), manifest("second", events)], { instanceId: "abc" })
+    const runtime = loadRightPanelPluginManifests([manifest("first", events), manifest("second", events)], host)
 
     assert.deepEqual(runtime.modules.map((entry) => entry.id), ["first", "second"])
-    assert.deepEqual(events, ["first:load:abc", "second:load:abc"])
-    assert.deepEqual(runtime.unload(), [])
-    assert.deepEqual(events, ["first:load:abc", "second:load:abc", "second:cleanup", "second:unload", "first:cleanup", "first:unload"])
+    assert.deepEqual(events, ["first:create:abc:session-1", "second:create:abc:session-1"])
   })
 
   it("skips duplicate ids without blocking other plugins", () => {
     const events: string[] = []
-    const runtime = loadRightPanelPluginManifests([manifest("plugin", events), manifest("plugin", events), manifest("other", events)], {
-      instanceId: "abc",
-    })
+    const runtime = loadRightPanelPluginManifests([manifest("plugin", events), manifest("plugin", events), manifest("other", events)], host)
 
     assert.deepEqual(runtime.modules.map((entry) => entry.id), ["plugin", "other"])
     assert.equal(runtime.errors.length, 1)
@@ -41,10 +48,10 @@ describe("right panel plugin manifests", () => {
   it("skips plugins that fail during load", () => {
     const runtime = loadRightPanelPluginManifests(
       [
-        { id: "bad", lifecycle: { onLoad: () => { throw new Error("boom") } } },
-        { id: "good", tabs: [{ id: "good-tab", labelKey: "good", order: 10, render: () => undefined as any }] },
+        { id: "bad", displayNameKey: "bad", origin: "first-party", create: () => { throw new Error("boom") } },
+        manifest("good", []),
       ],
-      { instanceId: "abc" },
+      host,
     )
 
     assert.deepEqual(runtime.modules.map((entry) => entry.id), ["good"])
@@ -69,7 +76,10 @@ describe("right panel plugin manifests", () => {
       renderPluginStatus: render,
     })
 
-    assert.deepEqual(rightPanel.tabs?.map((entry) => entry.id), ["git-changes", "files", "status"])
+    const rightPanelModule = rightPanel.create(host)
+
+    assert.deepEqual(rightPanelModule.tabs?.map((entry) => entry.id), ["git-changes", "files", "status"])
+    assert.equal(rightPanelModule.tabs?.find((entry) => entry.id === "status")?.alwaysVisible, true)
     assert.deepEqual(statusSections.statusSections?.map((entry) => entry.id), [
       "yolo-mode",
       "provider-usage",

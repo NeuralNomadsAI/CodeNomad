@@ -1,74 +1,75 @@
-import type { RightPanelModule, RightPanelSectionModule, RightPanelTabModule } from "./registry"
+import type { Accessor } from "solid-js"
+import type { RightPanelModule } from "./registry"
 
-export type RightPanelPluginCleanup = () => void
-
-export interface RightPanelPluginContext {
+export interface RightPanelHostContext {
   instanceId: string
+  t: (key: string, vars?: Record<string, any>) => string
+  activeSessionId: Accessor<string | null>
+  isTabActive: (tabId: string) => boolean
+  openTab: (tabId: string) => void
+  reportAttention?: (attention: RightPanelAttention) => void
 }
 
-export interface RightPanelPluginLifecycle {
-  onLoad?: (context: RightPanelPluginContext) => void | RightPanelPluginCleanup
-  onUnload?: (context: RightPanelPluginContext) => void
+export interface RightPanelAttention {
+  moduleId: string
+  tabId?: string
+  messageKey: string
+  severity: "info" | "warning" | "critical"
 }
 
-export interface RightPanelPluginManifest {
+export interface RightPanelManifest {
   id: string
-  tabs?: readonly RightPanelTabModule[]
-  statusSections?: readonly RightPanelSectionModule[]
-  lifecycle?: RightPanelPluginLifecycle
+  displayNameKey: string
+  descriptionKey?: string
+  origin: "first-party"
+  create: (host: RightPanelHostContext) => RightPanelModule
 }
 
 export interface RightPanelPluginLoadError {
   pluginId: string
-  phase: "load" | "unload"
+  displayNameKey?: string
+  phase: "create"
   error: unknown
 }
 
 export interface LoadedRightPanelPlugins {
   modules: RightPanelModule[]
   errors: RightPanelPluginLoadError[]
-  unload: () => RightPanelPluginLoadError[]
 }
 
 export function loadRightPanelPluginManifests(
-  manifests: readonly RightPanelPluginManifest[],
-  context: RightPanelPluginContext,
+  manifests: readonly RightPanelManifest[],
+  context: RightPanelHostContext,
 ): LoadedRightPanelPlugins {
   const modules: RightPanelModule[] = []
-  const cleanupStack: { manifest: RightPanelPluginManifest; cleanup?: RightPanelPluginCleanup }[] = []
   const errors: RightPanelPluginLoadError[] = []
   const seen = new Set<string>()
 
   for (const manifest of manifests) {
     if (!manifest.id || seen.has(manifest.id)) {
-      errors.push({ pluginId: manifest.id || "<missing>", phase: "load", error: new Error("Duplicate or missing right panel plugin id") })
+      errors.push({
+        pluginId: manifest.id || "<missing>",
+        displayNameKey: manifest.displayNameKey,
+        phase: "create",
+        error: new Error("Duplicate or missing right panel plugin id"),
+      })
       continue
     }
     seen.add(manifest.id)
 
     try {
-      const cleanup = manifest.lifecycle?.onLoad?.(context)
-      modules.push({ id: manifest.id, tabs: manifest.tabs, statusSections: manifest.statusSections })
-      cleanupStack.push({ manifest, cleanup: typeof cleanup === "function" ? cleanup : undefined })
+      const module = manifest.create(context)
+      modules.push({
+        ...module,
+        id: manifest.id,
+        displayNameKey: manifest.displayNameKey,
+        descriptionKey: manifest.descriptionKey ?? module.descriptionKey,
+        origin: manifest.origin,
+      })
     } catch (error) {
-      errors.push({ pluginId: manifest.id, phase: "load", error })
+      errors.push({ pluginId: manifest.id, displayNameKey: manifest.displayNameKey, phase: "create", error })
     }
   }
 
-  return {
-    modules,
-    errors,
-    unload: () => {
-      const unloadErrors: RightPanelPluginLoadError[] = []
-      for (const { manifest, cleanup } of cleanupStack.slice().reverse()) {
-        try {
-          cleanup?.()
-          manifest.lifecycle?.onUnload?.(context)
-        } catch (error) {
-          unloadErrors.push({ pluginId: manifest.id, phase: "unload", error })
-        }
-      }
-      return unloadErrors
-    },
-  }
+  return { modules, errors }
 }

@@ -1,3 +1,3 @@
-import type { RightPanelPluginManifest } from "./plugin-manifest"
+import type { RightPanelManifest } from "./plugin-manifest"
 
-export const RIGHT_PANEL_PLUGIN_MANIFESTS: readonly RightPanelPluginManifest[] = []
+export const RIGHT_PANEL_PLUGIN_MANIFESTS: readonly RightPanelManifest[] = []

@@ -1,4 +1,4 @@
-import { For, Show, Suspense, createEffect, createMemo, createSignal, onCleanup, type Accessor, type Component } from "solid-js"
+import { For, Show, Suspense, createEffect, createMemo, createSignal, createUniqueId, type Accessor, type Component } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk/v2"
 import {
   DragDropProvider,
@@ -33,7 +33,7 @@ import {
   type RightPanelTabModule,
 } from "./registry"
 import { createCoreRightPanelRuntime } from "./core-runtime"
-import { loadRightPanelPluginManifests } from "./plugin-manifest"
+import { loadRightPanelPluginManifests, type RightPanelPluginLoadError } from "./plugin-manifest"
 import { RIGHT_PANEL_PLUGIN_MANIFESTS } from "./plugins"
 import { CORE_STATUS_SECTION_ITEMS } from "./tabs/status-sections"
 
@@ -44,9 +44,13 @@ function RightPanelTabFallback() {
 interface SortableRightPanelTabProps {
   tab: RightPanelTabModule
   active: boolean
+  tabId: string
+  panelId: string
   label: string
   dragTitle: string
+  tabIndex: number
   onSelect: () => void
+  onKeyDown: (event: KeyboardEvent) => void
 }
 
 const SortableRightPanelTab: Component<SortableRightPanelTabProps> = (props) => {
@@ -56,10 +60,14 @@ const SortableRightPanelTab: Component<SortableRightPanelTabProps> = (props) => 
       <button
         type="button"
         role="tab"
+        id={props.tabId}
         class={`right-panel-tab ${props.active ? "right-panel-tab-active" : "right-panel-tab-inactive"}`}
         aria-selected={props.active}
+        aria-controls={props.panelId}
+        tabIndex={props.tabIndex}
         title={props.dragTitle}
         onClick={props.onSelect}
+        onKeyDown={props.onKeyDown}
       >
         <span class="tab-label">{props.label}</span>
       </button>
@@ -103,6 +111,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const [rightPanelCustomization, setRightPanelCustomization] = createSignal<RightPanelCustomization>(
     parseRightPanelCustomization(readClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY)),
   )
+  const tabGroupId = `right-panel-${createUniqueId()}`
+  const tabId = (id: string) => `${tabGroupId}-tab-${id}`
+  const tabPanelId = (id: string) => `${tabGroupId}-panel-${id}`
 
   createEffect(() => {
     writeClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY, rightPanelTab())
@@ -139,6 +150,31 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     moveTab(String(draggable.id), String(droppable.id))
   }
 
+  const openRightPanelTab = (tabId: string) => {
+    updateRightPanelCustomization((current) => ({
+      ...current,
+      hiddenTabIds: current.hiddenTabIds.filter((id) => id !== tabId),
+    }))
+    setRightPanelTab(tabId)
+  }
+
+  const handleTabKeyDown = (event: KeyboardEvent, currentTabId: string) => {
+    const tabs = visibleRightPanelTabs()
+    const index = tabs.findIndex((tab) => tab.id === currentTabId)
+    if (index === -1) return
+
+    let target: RightPanelTabModule | undefined
+    if (event.key === "ArrowLeft") target = tabs[(index - 1 + tabs.length) % tabs.length]
+    if (event.key === "ArrowRight") target = tabs[(index + 1) % tabs.length]
+    if (event.key === "Home") target = tabs[0]
+    if (event.key === "End") target = tabs[tabs.length - 1]
+    if (!target) return
+
+    event.preventDefault()
+    setRightPanelTab(target.id)
+    queueMicrotask(() => document.getElementById(tabId(target.id))?.focus())
+  }
+
   const rightPanelPluginRuntime = loadRightPanelPluginManifests(
     [
       createCoreRightPanelRuntime({
@@ -165,13 +201,18 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       }),
       ...RIGHT_PANEL_PLUGIN_MANIFESTS,
     ],
-    { instanceId: props.instanceId },
+    {
+      instanceId: props.instanceId,
+      t: props.t,
+      activeSessionId: props.activeSessionId,
+      isTabActive: (tabId) => rightPanelTab() === tabId,
+      openTab: openRightPanelTab,
+      reportAttention: () => undefined,
+    },
   )
-  onCleanup(() => {
-    rightPanelPluginRuntime.unload()
-  })
 
   const rightPanelModules = createMemo(() => rightPanelPluginRuntime.modules)
+  const rightPanelPluginErrors = createMemo(() => rightPanelPluginRuntime.errors)
   const allRightPanelTabs = createMemo(() => collectRightPanelItems<RightPanelTabModule>(rightPanelModules(), "tabs"))
   const visibleRightPanelTabs = createMemo(() =>
     applyRightPanelItemCustomization(
@@ -182,15 +223,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   )
   const orderedRightPanelTabs = createMemo(() => applyRightPanelItemCustomization(allRightPanelTabs(), rightPanelCustomization().tabOrder, []))
   const extraStatusSections = createMemo(() => collectRightPanelItems<RightPanelSectionModule>(rightPanelModules(), "statusSections"))
-  const allStatusSections = createMemo(() => [...CORE_STATUS_SECTION_ITEMS, ...extraStatusSections()])
-  const orderedStatusSections = createMemo(() => applyRightPanelItemCustomization(allStatusSections(), rightPanelCustomization().statusSectionOrder, []))
-  const visibleStatusSections = createMemo(() =>
-    applyRightPanelItemCustomization(
-      allStatusSections(),
-      rightPanelCustomization().statusSectionOrder,
-      rightPanelCustomization().hiddenStatusSectionIds,
-    ),
-  )
   const activeRightPanelTab = createMemo(() => visibleRightPanelTabs().find((tab) => tab.id === rightPanelTab()) ?? visibleRightPanelTabs()[0])
 
   createEffect(() => {
@@ -248,9 +280,13 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                           <SortableRightPanelTab
                             tab={tab}
                             active={rightPanelTab() === tab.id}
+                            tabId={tabId(tab.id)}
+                            panelId={tabPanelId(tab.id)}
                             label={props.t(tab.labelKey)}
                             dragTitle={props.t("instanceShell.rightPanel.customize.dragToReorder")}
+                            tabIndex={rightPanelTab() === tab.id ? 0 : -1}
                             onSelect={() => setRightPanelTab(tab.id)}
+                            onKeyDown={(event) => handleTabKeyDown(event, tab.id)}
                           />
                         )}
                       </For>
@@ -282,67 +318,65 @@ const RightPanel: Component<RightPanelProps> = (props) => {
           </div>
 
           <div class="right-panel-customization-grid">
-            <div class="right-panel-customization-group">
-              <div class="right-panel-customization-group-title">{props.t("instanceShell.rightPanel.customize.tabs")}</div>
-              <For each={orderedRightPanelTabs()}>
-                {(tab) => {
-                  const label = () => props.t(tab.labelKey)
-                  const visible = () => !rightPanelCustomization().hiddenTabIds.includes(tab.id)
-                  const disableHide = () => visible() && visibleRightPanelTabs().length <= 1
-                  return (
-                    <div class="right-panel-customization-row">
-                      <label class="right-panel-customization-label">
-                        <input
-                          type="checkbox"
-                          checked={visible()}
-                          disabled={disableHide()}
-                          onChange={(event) =>
-                            updateRightPanelCustomization((current) => ({
-                              ...current,
-                              hiddenTabIds: setRightPanelItemHidden(current.hiddenTabIds, tab.id, !event.currentTarget.checked),
-                            }))
-                          }
-                        />
-                        <span>{label()}</span>
-                      </label>
+            <For each={rightPanelModules()}>
+              {(module) => {
+                const moduleTabs = () => orderedRightPanelTabs().filter((tab) => module.tabs?.some((entry) => entry.id === tab.id))
+                return (
+                  <Show when={moduleTabs().length > 0}>
+                    <div class="right-panel-customization-group">
+                      <div class="right-panel-customization-group-title">{props.t(module.displayNameKey)}</div>
+                      <Show when={module.descriptionKey}>
+                        {(descriptionKey) => <div class="right-panel-customization-hint">{props.t(descriptionKey())}</div>}
+                      </Show>
+                      <For each={moduleTabs()}>
+                        {(tab) => {
+                          const label = () => props.t(tab.labelKey)
+                          const visible = () => tab.alwaysVisible || !rightPanelCustomization().hiddenTabIds.includes(tab.id)
+                          return (
+                            <div class="right-panel-customization-row">
+                              <label class="right-panel-customization-label">
+                                <input
+                                  type="checkbox"
+                                  checked={visible()}
+                                  disabled={tab.alwaysVisible}
+                                  onChange={(event) =>
+                                    updateRightPanelCustomization((current) => ({
+                                      ...current,
+                                      hiddenTabIds: setRightPanelItemHidden(current.hiddenTabIds, tab.id, !event.currentTarget.checked),
+                                    }))
+                                  }
+                                />
+                                <span>{label()}</span>
+                              </label>
+                              <Show when={tab.alwaysVisible}>
+                                <span class="right-panel-customization-hint">{props.t("instanceShell.rightPanel.customize.alwaysVisible")}</span>
+                              </Show>
+                            </div>
+                          )
+                        }}
+                      </For>
                     </div>
-                  )
-                }}
-              </For>
-            </div>
+                  </Show>
+                )
+              }}
+            </For>
 
-            <div class="right-panel-customization-group">
-              <div class="right-panel-customization-group-title">{props.t("instanceShell.rightPanel.customize.statusSections")}</div>
-              <For each={orderedStatusSections()}>
-                {(section) => {
-                  const label = () => props.t(section.labelKey)
-                  const visible = () => !rightPanelCustomization().hiddenStatusSectionIds.includes(section.id)
-                  const disableHide = () => visible() && visibleStatusSections().length <= 1
-                  return (
+            <Show when={rightPanelPluginErrors().length > 0}>
+              <div class="right-panel-customization-group">
+                <div class="right-panel-customization-group-title">{props.t("instanceShell.rightPanel.customize.unavailableModules")}</div>
+                <For each={rightPanelPluginErrors()}>
+                  {(error: RightPanelPluginLoadError) => (
                     <div class="right-panel-customization-row">
-                      <label class="right-panel-customization-label">
-                        <input
-                          type="checkbox"
-                          checked={visible()}
-                          disabled={disableHide()}
-                          onChange={(event) =>
-                            updateRightPanelCustomization((current) => ({
-                              ...current,
-                              hiddenStatusSectionIds: setRightPanelItemHidden(
-                                current.hiddenStatusSectionIds,
-                                section.id,
-                                !event.currentTarget.checked,
-                              ),
-                            }))
-                          }
-                        />
-                        <span>{label()}</span>
-                      </label>
+                      <span class="right-panel-customization-label">
+                        {props.t("instanceShell.rightPanel.customize.moduleUnavailable", {
+                          module: error.displayNameKey ? props.t(error.displayNameKey) : error.pluginId,
+                        })}
+                      </span>
                     </div>
-                  )
-                }}
-              </For>
-            </div>
+                  )}
+                </For>
+              </div>
+            </Show>
           </div>
           <div class="right-panel-customization-hint">{props.t("instanceShell.rightPanel.customize.dragToReorder")}</div>
         </div>
@@ -350,7 +384,11 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
       <div class="flex-1 overflow-y-auto">
         <Show keyed when={activeRightPanelTab()}>
-          {(tab) => <Suspense fallback={<RightPanelTabFallback />}>{tab.render()}</Suspense>}
+          {(tab) => (
+            <div id={tabPanelId(tab.id)} role="tabpanel" aria-labelledby={tabId(tab.id)} class="h-full min-h-0">
+              <Suspense fallback={<RightPanelTabFallback />}>{tab.render()}</Suspense>
+            </div>
+          )}
         </Show>
       </div>
     </div>

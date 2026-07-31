@@ -8,18 +8,20 @@ import {
   parseRightPanelCustomization,
   setRightPanelItemHidden,
   type RightPanelItem,
+  type RightPanelModule,
   type RightPanelTabModule,
 } from "./registry"
 
 const item = (id: string, order: number, alwaysVisible = false): RightPanelItem => ({ id, labelKey: id, order, alwaysVisible })
 const tab = (id: string, order: number): RightPanelTabModule => ({ ...item(id, order), render: () => undefined as any })
+const module = (id: string, tabs: RightPanelTabModule[]): RightPanelModule => ({ id, displayNameKey: id, origin: "first-party", tabs })
 
 describe("right panel registry", () => {
   it("collects and orders module items", () => {
     const items = collectRightPanelItems(
       [
-        { id: "core", tabs: [tab("status", 40), tab("changes", 10)] },
-        { id: "plugin", tabs: [tab("custom", 30)] },
+        module("core", [tab("status", 40), tab("changes", 10)]),
+        module("plugin", [tab("custom", 30)]),
       ],
       "tabs",
     )
@@ -28,7 +30,7 @@ describe("right panel registry", () => {
   })
 
   it("rejects duplicate item ids", () => {
-    assert.throws(() => collectRightPanelItems([{ id: "core", tabs: [tab("status", 10), tab("status", 20)] }], "tabs"))
+    assert.throws(() => collectRightPanelItems([module("core", [tab("status", 10), tab("status", 20)])], "tabs"))
   })
 
   it("applies visibility and user order", () => {
