@@ -26,6 +26,7 @@ import {
 } from "./opencode-auth"
 import { resolveWorkspaceIdentity } from "./workspace-identity"
 import { parseWslUncPath } from "./spawn"
+import { LOOPBACK_HOST } from "./loopback"
 
 const STARTUP_STABILITY_DELAY_MS = 1500
 const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
@@ -749,7 +750,7 @@ export class WorkspaceManager {
     port: number,
     signal?: AbortSignal,
   ): Promise<{ ok: boolean; reason?: string; version?: string }> {
-    const url = `http://127.0.0.1:${port}/global/health`
+    const url = `http://${LOOPBACK_HOST}:${port}/global/health`
 
     try {
       const headers: Record<string, string> = {}
@@ -811,7 +812,7 @@ export class WorkspaceManager {
 
       const tryConnect = () => {
         if (settled) return
-        const socket = connect({ port, host: "127.0.0.1", signal }, () => {
+        const socket = connect({ port, host: LOOPBACK_HOST, signal }, () => {
           cleanup()
           socket.end()
           resolve()
