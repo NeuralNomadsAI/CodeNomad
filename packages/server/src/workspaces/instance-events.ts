@@ -3,9 +3,9 @@ import { Agent as UndiciAgent } from "undici"
 import { EventBus } from "../events/bus"
 import { Logger } from "../logger"
 import { WorkspaceManager } from "./manager"
+import { LOOPBACK_HOST } from "./loopback"
 import { InstanceStreamEvent, InstanceStreamStatus } from "../api-types"
 
-const INSTANCE_HOST = "127.0.0.1"
 const STREAM_AGENT = new UndiciAgent({ bodyTimeout: 0, headersTimeout: 0 })
 const RECONNECT_DELAY_MS = 1000
 
@@ -95,7 +95,7 @@ export class InstanceEventBridge {
   }
 
   private async consumeStream(workspaceId: string, port: number, signal: AbortSignal) {
-    const url = `http://${INSTANCE_HOST}:${port}/global/event`
+    const url = `http://${LOOPBACK_HOST}:${port}/global/event`
 
     const headers: Record<string, string> = { Accept: "text/event-stream" }
     const authHeader = this.options.workspaceManager.getInstanceAuthorizationHeader(workspaceId)
