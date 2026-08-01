@@ -272,27 +272,26 @@ const StatusTab: Component<StatusTabProps> = (props) => {
 
   return (
     <div class="status-tab-container">
-      <Show when={props.activeSession()}>
-        {(activeSession) => (
-          <ContextUsagePanel instanceId={props.instanceId} sessionId={activeSession().id} class="status-tab-context-panel" />
-        )}
-      </Show>
-
-      <div class="right-panel-customization-row px-3 pt-2">
-        <div class="text-xs font-medium text-secondary">{props.t("instanceShell.rightPanel.customize.statusSections")}</div>
+      <div class="status-tab-header">
+        <Show when={props.activeSession()}>
+          {(activeSession) => (
+            <ContextUsagePanel instanceId={props.instanceId} sessionId={activeSession().id} class="status-tab-context-panel" />
+          )}
+        </Show>
         <button
           type="button"
-          class="right-panel-customization-button"
+          class="status-tab-customization-trigger"
+          aria-label={props.t("instanceShell.rightPanel.customize.sections")}
+          title={props.t("instanceShell.rightPanel.customize.sections")}
           aria-expanded={sectionCustomizationOpen()}
           onClick={() => setSectionCustomizationOpen((open) => !open)}
         >
-          <Settings2 class="h-3.5 w-3.5" aria-hidden="true" />
-          {props.t("instanceShell.rightPanel.customize.sections")}
+          <Settings2 class="h-4 w-4" aria-hidden="true" />
         </button>
       </div>
 
       <Show when={sectionCustomizationOpen()}>
-        <div class="right-panel-customization-group mx-3 mt-2">
+        <div class="status-tab-customization-popover" role="dialog" aria-label={props.t("instanceShell.rightPanel.customize.sections")}>
           <For each={orderedStatusSections()}>
             {(section) => {
               const label = () => props.t(section.labelKey)
@@ -322,7 +321,6 @@ const StatusTab: Component<StatusTabProps> = (props) => {
               )
             }}
           </For>
-          <div class="right-panel-customization-hint">{props.t("instanceShell.rightPanel.customize.dragToReorder")}</div>
         </div>
       </Show>
 

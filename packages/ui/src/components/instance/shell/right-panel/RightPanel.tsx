@@ -306,7 +306,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
           <div class="right-panel-customization-header">
             <div>
               <div class="text-sm font-medium text-primary">{props.t("instanceShell.rightPanel.customize.title")}</div>
-              <div class="text-xs text-secondary">{props.t("instanceShell.rightPanel.customize.description")}</div>
             </div>
             <button
               type="button"
@@ -325,9 +324,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                   <Show when={moduleTabs().length > 0}>
                     <div class="right-panel-customization-group">
                       <div class="right-panel-customization-group-title">{props.t(module.displayNameKey)}</div>
-                      <Show when={module.descriptionKey}>
-                        {(descriptionKey) => <div class="right-panel-customization-hint">{props.t(descriptionKey())}</div>}
-                      </Show>
                       <For each={moduleTabs()}>
                         {(tab) => {
                           const label = () => props.t(tab.labelKey)
@@ -348,9 +344,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                                 />
                                 <span>{label()}</span>
                               </label>
-                              <Show when={tab.alwaysVisible}>
-                                <span class="right-panel-customization-hint">{props.t("instanceShell.rightPanel.customize.alwaysVisible")}</span>
-                              </Show>
                             </div>
                           )
                         }}
@@ -378,7 +371,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               </div>
             </Show>
           </div>
-          <div class="right-panel-customization-hint">{props.t("instanceShell.rightPanel.customize.dragToReorder")}</div>
         </div>
       </Show>
 
