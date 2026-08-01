@@ -100,6 +100,7 @@ const [messagesLoaded, setMessagesLoaded] = createSignal<Map<string, Set<string>
 const [messageLoadErrors, setMessageLoadErrors] = createSignal<Map<string, Map<string, string>>>(new Map())
 const [sessionListErrors, setSessionListErrors] = createSignal<Map<string, string>>(new Map())
 const messageLoadEpochs = new Map<string, number>()
+const messageLoadControllers = new Map<string, { epoch: number; ownerSessionId: string; controller: AbortController }>()
 let nextMessageLoadEpoch = 0
 const [sessionInfoByInstance, setSessionInfoByInstance] = createSignal<Map<string, Map<string, SessionInfo>>>(new Map())
 const [threadTotalsByInstance, setThreadTotalsByInstance] = createSignal<Map<string, Map<string, ThreadTotals>>>(new Map())
@@ -357,9 +358,32 @@ function clearLoadedFlag(instanceId: string, sessionId: string) {
 
 function advanceMessageLoadEpoch(instanceId: string, sessionId: string): number {
   const key = getDraftKey(instanceId, sessionId)
+  messageLoadControllers.get(key)?.controller.abort()
+  messageLoadControllers.delete(key)
   const epoch = ++nextMessageLoadEpoch
   messageLoadEpochs.set(key, epoch)
   return epoch
+}
+
+function beginSessionMessageLoad(instanceId: string, sessionId: string): { epoch: number; signal: AbortSignal } {
+  const epoch = advanceMessageLoadEpoch(instanceId, sessionId)
+  const controller = new AbortController()
+  const ownerId = getSessionRoot(instanceId, sessionId)?.id ?? sessionId
+  messageLoadControllers.set(getDraftKey(instanceId, sessionId), { epoch, ownerSessionId: ownerId, controller })
+  return { epoch, signal: controller.signal }
+}
+
+function finishSessionMessageLoad(instanceId: string, sessionId: string, epoch: number): void {
+  const key = getDraftKey(instanceId, sessionId)
+  if (messageLoadControllers.get(key)?.epoch === epoch) messageLoadControllers.delete(key)
+}
+
+function invalidateOwnedSessionMessageLoads(instanceId: string, ownerSessionId: string): void {
+  const prefix = `${instanceId}:`
+  const sessionIds = [...messageLoadControllers]
+    .filter(([key, load]) => key.startsWith(prefix) && load.ownerSessionId === ownerSessionId)
+    .map(([key]) => key.slice(prefix.length))
+  for (const sessionId of sessionIds) invalidateSessionMessageLoad(instanceId, sessionId)
 }
 
 function isCurrentMessageLoad(instanceId: string, sessionId: string, epoch: number): boolean {
@@ -744,6 +768,10 @@ function writeSessionSelection(
 }
 
 function writeActiveSession(instanceId: string, sessionId: string | null): void {
+  const previousSessionId = activeSessionId().get(instanceId)
+  if (previousSessionId && previousSessionId !== sessionId) {
+    invalidateOwnedSessionMessageLoads(instanceId, getSessionRoot(instanceId, previousSessionId)?.id ?? previousSessionId)
+  }
   writeSessionSelection(setActiveSessionId, instanceId, sessionId)
   if (sessionId) {
     // Backfill authoritative Yolo state for the now-active session so the badge
@@ -1270,6 +1298,11 @@ function purgeInstanceSessionState(instanceId: string): void {
     setAuthoritativeSessionExpansionKeys((prev) => new Set([...prev].filter((key) => !key.startsWith(prefix))))
   })
   for (const key of generationAdmissions.keys()) if (key.startsWith(prefix)) generationAdmissions.delete(key)
+  for (const [key, load] of messageLoadControllers) {
+    if (!key.startsWith(prefix)) continue
+    load.controller.abort()
+    messageLoadControllers.delete(key)
+  }
   for (const key of messageLoadEpochs.keys()) if (key.startsWith(prefix)) messageLoadEpochs.delete(key)
 }
 
@@ -1289,6 +1322,9 @@ export {
   getSessionListError,
   setSessionListError,
   advanceMessageLoadEpoch,
+  beginSessionMessageLoad,
+  finishSessionMessageLoad,
+  invalidateOwnedSessionMessageLoads,
   isCurrentMessageLoad,
   invalidateSessionMessageLoad,
   setSessionMessagesLoadError,

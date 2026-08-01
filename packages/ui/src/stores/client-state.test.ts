@@ -36,7 +36,7 @@ const transact = (state: ClientState, kind: TransactionKind) => kind === "clear"
 describe("client state ownership and persistence", () => {
   it("keeps persistent message caching disabled during desktop restore", async () => {
     const cache = await import("../lib/session-message-cache.ts")
-    cache.setSessionMessageCacheEnabled(false)
+    cache.setSessionMessageCacheEnabled(true)
     await boot({ loadClientState: async () => loadResult(snapshot("project")) })
     assert.equal(cache.isSessionMessageCacheEnabled(), false)
   })

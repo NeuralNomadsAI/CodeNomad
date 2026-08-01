@@ -129,7 +129,7 @@ export const settingsMessages = {
   "settings.appearance.startup.title": "Startup",
   "settings.appearance.startup.subtitle": "Choose what this device restores when CodeNomad starts.",
   "settings.appearance.startup.restore.title": "Restore previous state",
-  "settings.appearance.startup.restore.subtitle": "Reopen workspace and sidecar tabs, active sessions, and unsent messages; restore layout; and cache recent session messages on this device for faster reopening.",
+  "settings.appearance.startup.restore.subtitle": "Reopen workspace and sidecar tabs, active sessions, and unsent messages, and restore the layout.",
   "settings.appearance.startup.clear.title": "Saved startup state",
   "settings.appearance.startup.clear.subtitle": "Remove saved tabs, drafts, layout, and cached session messages from this device. OpenCode conversation data is not deleted.",
   "settings.appearance.startup.clear.action": "Clear saved state",

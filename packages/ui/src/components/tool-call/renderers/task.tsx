@@ -234,7 +234,7 @@ export const taskRenderer: ToolRenderer = {
       if (activeSessionId().get(instanceId) !== visibilitySessionId) return
       if (childSessionLoaded()) return
       if (childSessionLoading()) return
-      void loadMessages(instanceId, id)
+      void loadMessages(instanceId, id).catch(() => undefined)
     })
 
     createEffect(() => {

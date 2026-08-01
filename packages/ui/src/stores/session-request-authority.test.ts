@@ -3,7 +3,7 @@ import { describe, it } from "node:test"
 
 import { sdkManager } from "../lib/sdk-manager.ts"
 import type { Session } from "../types/session.ts"
-import { addInstance, instances, isInstanceRuntimeCurrent, removeInstance, updateInstance } from "./instances.ts"
+import { addInstance, instances, isInstanceRuntimeCurrent, removeInstance, setActiveInstanceId, updateInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { fetchSessions, loadMessages, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
 import {
@@ -12,6 +12,7 @@ import {
   invalidateSessionMessageLoad,
   loading,
   messagesLoaded,
+  setActiveSession,
   sessions,
   setSessions,
 } from "./session-state.ts"
@@ -163,6 +164,141 @@ describe("session request authority", () => {
 
       assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["new-message"])
     } finally {
+      cleanup()
+    }
+  })
+
+  it("cancels the previous session load when selection moves to another session", async () => {
+    const instanceId = "switched-message-load", firstSessionId = "first", secondSessionId = "second"
+    const { client, cleanup } = setup(instanceId)
+    const firstRequestStarted = deferred<void>()
+    let firstSignal: AbortSignal | undefined
+    ;(client.session as any).messages = ({ sessionID }: { sessionID: string }, options?: { signal?: AbortSignal }) => {
+      if (sessionID !== firstSessionId) return Promise.resolve({ data: [apiMessage("second-message", secondSessionId)] })
+      firstSignal = options?.signal
+      firstRequestStarted.resolve()
+      return new Promise((_resolve, reject) => {
+        options?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true })
+      })
+    }
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([
+      [firstSessionId, session(instanceId, firstSessionId)],
+      [secondSessionId, session(instanceId, secondSessionId)],
+    ])))
+
+    try {
+      setActiveSession(instanceId, firstSessionId)
+      const request = loadMessages(instanceId, firstSessionId)
+      await firstRequestStarted.promise
+      setActiveSession(instanceId, secondSessionId)
+      assert.equal(firstSignal?.aborted, true)
+      await loadMessages(instanceId, secondSessionId)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(secondSessionId), ["second-message"])
+
+      await request
+
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(firstSessionId), [])
+      assert.equal(messagesLoaded().get(instanceId)?.has(firstSessionId) ?? false, false)
+      assert.equal(loading().loadingMessages.get(instanceId)?.has(firstSessionId) ?? false, false)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("cancels child loads owned by the session being left", async () => {
+    const instanceId = "switched-child-load", parentSessionId = "parent", childSessionId = "child"
+    const { client, cleanup } = setup(instanceId)
+    const started = deferred<void>()
+    let childSignal: AbortSignal | undefined
+    ;(client.session as any).messages = (_parameters: unknown, options?: { signal?: AbortSignal }) => {
+      childSignal = options?.signal
+      started.resolve()
+      return new Promise((_resolve, reject) => options?.signal?.addEventListener(
+        "abort",
+        () => reject(new DOMException("aborted", "AbortError")),
+        { once: true },
+      ))
+    }
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([
+      [parentSessionId, session(instanceId, parentSessionId)],
+      [childSessionId, session(instanceId, childSessionId, parentSessionId)],
+      ["next", session(instanceId, "next")],
+    ])))
+
+    try {
+      setActiveSession(instanceId, parentSessionId)
+      const request = loadMessages(instanceId, childSessionId)
+      await started.promise
+      setActiveSession(instanceId, "next")
+      assert.equal(childSignal?.aborted, true)
+      await request
+      assert.equal(loading().loadingMessages.get(instanceId)?.has(childSessionId) ?? false, false)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("cancels a selected child load through its root ownership", async () => {
+    const instanceId = "selected-child-load", parentSessionId = "parent", childSessionId = "child"
+    const { client, cleanup } = setup(instanceId)
+    const started = deferred<void>()
+    let childSignal: AbortSignal | undefined
+    ;(client.session as any).messages = (_parameters: unknown, options?: { signal?: AbortSignal }) => {
+      childSignal = options?.signal
+      started.resolve()
+      return new Promise((_resolve, reject) => options?.signal?.addEventListener(
+        "abort",
+        () => reject(new DOMException("aborted", "AbortError")),
+        { once: true },
+      ))
+    }
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([
+      [parentSessionId, session(instanceId, parentSessionId)],
+      [childSessionId, session(instanceId, childSessionId, parentSessionId)],
+      ["next", session(instanceId, "next")],
+    ])))
+
+    try {
+      setActiveSession(instanceId, childSessionId)
+      const request = loadMessages(instanceId, childSessionId)
+      await started.promise
+      setActiveSession(instanceId, "next")
+      assert.equal(childSignal?.aborted, true)
+      await request
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("cancels child loads when their workspace loses visibility", async () => {
+    const instanceId = "hidden-child-load", parentSessionId = "parent", childSessionId = "child"
+    const { client, cleanup } = setup(instanceId)
+    const started = deferred<void>()
+    let childSignal: AbortSignal | undefined
+    ;(client.session as any).messages = (_parameters: unknown, options?: { signal?: AbortSignal }) => {
+      childSignal = options?.signal
+      started.resolve()
+      return new Promise((_resolve, reject) => options?.signal?.addEventListener(
+        "abort",
+        () => reject(new DOMException("aborted", "AbortError")),
+        { once: true },
+      ))
+    }
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([
+      [parentSessionId, session(instanceId, parentSessionId)],
+      [childSessionId, session(instanceId, childSessionId, parentSessionId)],
+    ])))
+
+    try {
+      setActiveInstanceId(instanceId)
+      setActiveSession(instanceId, parentSessionId)
+      const request = loadMessages(instanceId, childSessionId)
+      await started.promise
+      setActiveInstanceId("another-instance")
+      assert.equal(childSignal?.aborted, true)
+      await request
+    } finally {
+      setActiveInstanceId(null)
       cleanup()
     }
   })

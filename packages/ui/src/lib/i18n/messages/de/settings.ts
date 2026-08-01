@@ -129,7 +129,7 @@ export const settingsMessages = {
   "settings.appearance.startup.title": "Startverhalten",
   "settings.appearance.startup.subtitle": "Lege fest, was dieses Gerät beim Start von CodeNomad wiederherstellt.",
   "settings.appearance.startup.restore.title": "Vorherigen Zustand wiederherstellen",
-  "settings.appearance.startup.restore.subtitle": "Tabs, aktive Sitzungen und nicht gesendete Nachrichten erneut öffnen, das Layout wiederherstellen und aktuelle Sitzungsnachrichten für schnelleres Öffnen auf diesem Gerät zwischenspeichern.",
+  "settings.appearance.startup.restore.subtitle": "Tabs, aktive Sitzungen und nicht gesendete Nachrichten erneut öffnen und das Layout wiederherstellen.",
   "settings.appearance.startup.clear.title": "Gespeicherter Startzustand",
   "settings.appearance.startup.clear.subtitle": "Gespeicherte Tabs, Entwürfe, Layouts und zwischengespeicherte Sitzungsnachrichten von diesem Gerät entfernen. OpenCode-Unterhaltungen werden nicht gelöscht.",
   "settings.appearance.startup.clear.action": "Gespeicherten Zustand löschen",

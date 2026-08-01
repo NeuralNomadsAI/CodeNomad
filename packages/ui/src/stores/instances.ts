@@ -39,6 +39,8 @@ import {
   reconcileSessionPendingState,
   activeSessionId,
   invalidateSessionMessageLoad,
+  invalidateOwnedSessionMessageLoads,
+  getSessionRoot,
   purgeInstanceSessionState,
   sessions,
   setSessionPendingPermission,
@@ -122,7 +124,18 @@ const [instances, setInstances] = createSignal<Map<string, Instance>>(new Map())
 let workspaceListInitialized = false
 sseManager.shouldHandleEvent = (instanceId) => !workspaceListInitialized || instances().has(instanceId)
 
-const [activeInstanceId, setActiveInstanceId] = createSignal<string | null>(null)
+const [activeInstanceId, writeActiveInstanceId] = createSignal<string | null>(null)
+
+function setActiveInstanceId(instanceId: string | null): void {
+  const previousInstanceId = activeInstanceId()
+  if (previousInstanceId && previousInstanceId !== instanceId) {
+    const previousSessionId = activeSessionId().get(previousInstanceId)
+    if (previousSessionId) {
+      invalidateOwnedSessionMessageLoads(previousInstanceId, getSessionRoot(previousInstanceId, previousSessionId)?.id ?? previousSessionId)
+    }
+  }
+  writeActiveInstanceId(instanceId)
+}
 const [instanceLogs, setInstanceLogs] = createSignal<Map<string, LogEntry[]>>(new Map())
 const [logStreamingState, setLogStreamingState] = createSignal<Map<string, boolean>>(new Map())
 

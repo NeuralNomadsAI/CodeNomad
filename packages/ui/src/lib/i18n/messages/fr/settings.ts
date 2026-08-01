@@ -129,7 +129,7 @@ export const settingsMessages = {
   "settings.appearance.startup.title": "Démarrage",
   "settings.appearance.startup.subtitle": "Choisissez ce que cet appareil restaure au démarrage de CodeNomad.",
   "settings.appearance.startup.restore.title": "Restaurer l’état précédent",
-  "settings.appearance.startup.restore.subtitle": "Rouvrir les onglets, les sessions actives et les messages non envoyés, restaurer la disposition et mettre en cache les messages récents sur cet appareil pour accélérer leur réouverture.",
+  "settings.appearance.startup.restore.subtitle": "Rouvrir les onglets, les sessions actives et les messages non envoyés, et restaurer la disposition.",
   "settings.appearance.startup.clear.title": "État de démarrage enregistré",
   "settings.appearance.startup.clear.subtitle": "Supprime de cet appareil les onglets, brouillons, dispositions et messages de session mis en cache. Les conversations OpenCode ne sont pas supprimées.",
   "settings.appearance.startup.clear.action": "Effacer l’état enregistré",

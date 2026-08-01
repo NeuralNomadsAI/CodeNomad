@@ -642,7 +642,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   }
 
   function normalizeParts(messageId: string, parts: ClientPart[] | undefined) {
-    if (!parts || parts.length === 0) {
+    if (parts == null) {
       return null
     }
     const map: MessageRecord["parts"] = {}

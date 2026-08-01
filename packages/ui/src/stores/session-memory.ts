@@ -8,8 +8,37 @@ const log = getLogger("session")
 const SWEEP_DELAY_MS = 1_000
 const touched = new Map<string, number>()
 const visibleLeases = new Map<string, number>()
+const measuredBytes = new Map<string, number>()
+const pendingMeasurements = new Map<string, { idle: boolean; handle: number | ReturnType<typeof setTimeout> }>()
 let sequence = 0
 let sweepTimer: ReturnType<typeof setTimeout> | undefined
+
+function cancelSessionMeasurement(key: string): void {
+  const pending = pendingMeasurements.get(key)
+  if (!pending) return
+  if (pending.idle) (globalThis as any).cancelIdleCallback?.(pending.handle)
+  else clearTimeout(pending.handle)
+  pendingMeasurements.delete(key)
+}
+
+function scheduleSessionMeasurement(instanceId: string, sessionId: string): void {
+  const key = sessionKey(instanceId, sessionId)
+  if (pendingMeasurements.has(key)) return
+  const measure = () => {
+    pendingMeasurements.delete(key)
+    const store = messageStoreBus.getInstance(instanceId)
+    if (!store?.getResidentSessionIds().includes(sessionId)) return
+    measuredBytes.set(key, store.getSessionApproximateByteSize(sessionId))
+    scheduleSessionMemorySweep()
+  }
+  if (typeof (globalThis as any).requestIdleCallback === "function") {
+    const handle = (globalThis as any).requestIdleCallback(measure, { timeout: 2_000 }) as number
+    pendingMeasurements.set(key, { idle: true, handle })
+  } else {
+    const handle = setTimeout(measure, 50)
+    pendingMeasurements.set(key, { idle: false, handle })
+  }
+}
 
 function sessionKey(instanceId: string, sessionId: string): string {
   return `${instanceId}\u0000${sessionId}`
@@ -73,13 +102,21 @@ export function runSessionMemorySweep(byteLimit = MAX_HOT_SESSION_MESSAGE_BYTES)
     for (const sessionId of store.getResidentSessionIds()) {
       const key = sessionKey(instanceId, sessionId)
       const status = sessions().get(instanceId)?.get(sessionId)?.status
+      const protectedSession = visibleLeases.has(key) || status === "working" || status === "compacting" || hasProtectedSessionWork(store, sessionId) ||
+        isSessionMessagesLoading(instanceId, sessionId) || isRestoringCachedSessionMessages(instanceId, sessionId) ||
+        isSessionMessageCacheWritePending(instanceId, sessionId)
+      let byteSize = measuredBytes.get(key)
+      if (!protectedSession) {
+        byteSize = store.getSessionApproximateByteSize(sessionId)
+        measuredBytes.set(key, byteSize)
+      }
+      byteSize ??= byteLimit
       entries.push({
         key,
-        byteSize: store.getSessionApproximateByteSize(sessionId),
+        // ponytail: reuse the last full measurement while a protected session is changing rapidly.
+        byteSize,
         lastTouched: touched.get(key) ?? 0,
-        protected: visibleLeases.has(key) || status === "working" || status === "compacting" || hasProtectedSessionWork(store, sessionId) ||
-          isSessionMessagesLoading(instanceId, sessionId) || isRestoringCachedSessionMessages(instanceId, sessionId) ||
-          isSessionMessageCacheWritePending(instanceId, sessionId),
+        protected: protectedSession,
       })
     }
   }
@@ -94,6 +131,7 @@ export function runSessionMemorySweep(byteLimit = MAX_HOT_SESSION_MESSAGE_BYTES)
 
 messageStoreBus.onSessionChanged((instanceId, sessionId) => {
   touched.set(sessionKey(instanceId, sessionId), ++sequence)
+  scheduleSessionMeasurement(instanceId, sessionId)
   scheduleSessionMemorySweep()
 })
 
@@ -101,12 +139,16 @@ messageStoreBus.onSessionCleared((instanceId, sessionId) => {
   const key = sessionKey(instanceId, sessionId)
   touched.delete(key)
   visibleLeases.delete(key)
+  measuredBytes.delete(key)
+  cancelSessionMeasurement(key)
 })
 
 messageStoreBus.onInstanceDestroyed((instanceId) => {
   const prefix = `${instanceId}\u0000`
   for (const key of touched.keys()) if (key.startsWith(prefix)) touched.delete(key)
   for (const key of visibleLeases.keys()) if (key.startsWith(prefix)) visibleLeases.delete(key)
+  for (const key of measuredBytes.keys()) if (key.startsWith(prefix)) measuredBytes.delete(key)
+  for (const key of pendingMeasurements.keys()) if (key.startsWith(prefix)) cancelSessionMeasurement(key)
 })
 
 setSessionMessageCacheWriteSettledCallback(scheduleSessionMemorySweep)

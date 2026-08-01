@@ -29,7 +29,8 @@ import {
   providers,
   setAgents,
   setMessagesLoaded,
-  advanceMessageLoadEpoch,
+  beginSessionMessageLoad,
+  finishSessionMessageLoad,
   isCurrentMessageLoad,
   setSessionMessagesLoadError,
   setProviders,
@@ -1146,7 +1147,7 @@ async function loadMessages(
   }
 
   cancelCachedSessionMessageRestore(instanceId, sessionId)
-  const loadEpoch = advanceMessageLoadEpoch(instanceId, sessionId)
+  const { epoch: loadEpoch, signal: loadSignal } = beginSessionMessageLoad(instanceId, sessionId)
   const store = messageStoreBus.getOrCreate(instanceId)
   let expectedRevision = store.getSessionRevision(sessionId)
   let retryAfterRevisionConflict = false
@@ -1164,7 +1165,7 @@ async function loadMessages(
   try {
     log.info(`[HTTP] GET /session.${"messages"} for instance ${instanceId}`, { sessionId })
     const apiMessagesRequest = getSessionWorkspacePayload(instanceId, sessionId).then((workspacePayload) =>
-      requestData<any[]>(client.session.messages({ sessionID: sessionId, ...workspacePayload }), "session.messages"),
+      requestData<any[]>(client.session.messages({ sessionID: sessionId, ...workspacePayload }, { signal: loadSignal }), "session.messages"),
     )
     const apiOutcome = apiMessagesRequest.then(
       (messages) => ({ ok: true as const, messages }),
@@ -1341,6 +1342,7 @@ async function loadMessages(
     }
     throw error
   } finally {
+    finishSessionMessageLoad(instanceId, sessionId, loadEpoch)
     if (isInstanceRuntimeCurrent(instanceId, instance) && isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) {
       const clearShift = () => {
         if (isInstanceRuntimeCurrent(instanceId, instance) && isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) clearCachedSessionMessageShift(instanceId, sessionId)
@@ -1362,7 +1364,10 @@ async function loadMessages(
     if ((options?.revisionRetryCount ?? 0) < 2) {
       await new Promise((resolve) => setTimeout(resolve, 50))
       if (!isInstanceRuntimeCurrent(instanceId, instance) || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return
-      return loadMessages(instanceId, sessionId, { force: true, revisionRetryCount: (options?.revisionRetryCount ?? 0) + 1 })
+      return loadMessages(instanceId, sessionId, {
+        force: true,
+        revisionRetryCount: (options?.revisionRetryCount ?? 0) + 1,
+      })
     }
     setMessagesLoaded((prev) => {
       const next = new Map(prev)

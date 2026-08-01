@@ -25,9 +25,7 @@ const WRITE_DEBOUNCE_MS = 500
 function disablePersistentCacheAfterInvalidationFailure(context: Record<string, unknown>): void {
   markSessionMessageCacheUnsafe(true)
   setSessionMessageCacheEnabled(false)
-  void import("./client-state")
-    .then(({ setRestorePreviousStateEnabled }) => setRestorePreviousStateEnabled(false))
-    .catch((error) => log.warn("Failed to persist disabled session cache state", { ...context, error }))
+  log.warn("Disabled persistent session message cache after invalidation failure", context)
 }
 const pendingWrites = new Map<string, ReturnType<typeof setTimeout>>()
 const cacheGenerations = new Map<string, number>()
@@ -384,6 +382,7 @@ export function scheduleSessionMessageCacheWrite(instanceId: string, sessionId: 
 }
 
 export function invalidateSessionMessageCache(instanceId: string, sessionId: string): void {
+  if (!isSessionMessageCacheEnabled()) return
   const key = pendingKey(instanceId, sessionId)
   cancelCachedSessionMessageRestore(instanceId, sessionId)
   const pending = pendingWrites.get(key)

@@ -129,7 +129,7 @@ export const settingsMessages = {
   "settings.appearance.startup.title": "सुरुआत",
   "settings.appearance.startup.subtitle": "CodeNomad सुरु हुँदा यस यन्त्रमा के पुनर्स्थापना गर्ने छान्नुहोस्।",
   "settings.appearance.startup.restore.title": "अघिल्लो अवस्था पुनर्स्थापना गर्नुहोस्",
-  "settings.appearance.startup.restore.subtitle": "ट्याब, सक्रिय सत्र र नपठाइएका सन्देशहरू फेरि खोल्नुहोस्, लेआउट पुनर्स्थापना गर्नुहोस् र छिटो खोल्न हालका सत्र सन्देशहरू यस यन्त्रमा क्यास गर्नुहोस्।",
+  "settings.appearance.startup.restore.subtitle": "ट्याब, सक्रिय सत्र र नपठाइएका सन्देशहरू फेरि खोल्नुहोस् र लेआउट पुनर्स्थापना गर्नुहोस्।",
   "settings.appearance.startup.clear.title": "सुरक्षित सुरुआत अवस्था",
   "settings.appearance.startup.clear.subtitle": "यस यन्त्रबाट सुरक्षित ट्याब, मस्यौदा, लेआउट र क्यास गरिएका सत्र सन्देशहरू हटाउनुहोस्। OpenCode कुराकानीहरू मेटिँदैनन्।",
   "settings.appearance.startup.clear.action": "सुरक्षित अवस्था खाली गर्नुहोस्",
