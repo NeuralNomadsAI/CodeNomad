@@ -272,7 +272,8 @@ export async function setRestorePreviousStateEnabled(enabled: boolean): Promise<
       if (!await setNativeRestoreEnabled(true)) throw new Error("Native restore preference update was rejected")
       writeBlock = false
       setRestorePreviousStateEnabledSignal(true)
-      setSessionMessageCacheEnabled(true)
+      // ponytail: keep message caching off until restore no longer blocks the renderer on large sessions.
+      setSessionMessageCacheEnabled(false)
       return
     }
     setRestorePreviousStateEnabledSignal(false)
@@ -287,7 +288,7 @@ export async function setRestorePreviousStateEnabled(enabled: boolean): Promise<
       await executeDestructiveTransaction(() => setNativeRestoreEnabled(false), "Native restore preference update was rejected")
     } catch (error) {
       setRestorePreviousStateEnabledSignal(true)
-      setSessionMessageCacheEnabled(!isSessionMessageCacheUnsafe())
+      setSessionMessageCacheEnabled(false)
       throw error
     }
     cacheClearPending = true
@@ -341,7 +342,7 @@ export function initializeClientState(): Promise<void> {
       writeBlock = isFutureClientSnapshot(loaded.snapshot) ? "snapshot" : false
       const snapshot = decodeClientSnapshot(loaded.snapshot)
       resetLoadedState(snapshot, true)
-      setSessionMessageCacheEnabled(!writeBlock)
+      setSessionMessageCacheEnabled(false)
       if (!writeBlock && migrateLegacyLayoutValues()) scheduleSave()
     } catch (error) {
       initialized = true

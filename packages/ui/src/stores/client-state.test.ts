@@ -34,6 +34,12 @@ const boot = async (api?: NativeApi, storage?: MemoryStorage) => {
 const transact = (state: ClientState, kind: TransactionKind) => kind === "clear"
   ? state.clearRestoredClientState() : state.setRestorePreviousStateEnabled(false)
 describe("client state ownership and persistence", () => {
+  it("keeps persistent message caching disabled during desktop restore", async () => {
+    const cache = await import("../lib/session-message-cache.ts")
+    cache.setSessionMessageCacheEnabled(false)
+    await boot({ loadClientState: async () => loadResult(snapshot("project")) })
+    assert.equal(cache.isSessionMessageCacheEnabled(), false)
+  })
   it("treats a rejected access claim as secondary without loading", async () => {
     let loads = 0
     const state = await boot({
