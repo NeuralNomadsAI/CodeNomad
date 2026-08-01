@@ -29,6 +29,7 @@ import {
   parseRightPanelCustomization,
   setRightPanelItemHidden,
   type RightPanelCustomization,
+  type RightPanelItem,
   type RightPanelSectionModule,
   type RightPanelTabModule,
 } from "./registry"
@@ -223,6 +224,15 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   )
   const orderedRightPanelTabs = createMemo(() => applyRightPanelItemCustomization(allRightPanelTabs(), rightPanelCustomization().tabOrder, []))
   const extraStatusSections = createMemo(() => collectRightPanelItems<RightPanelSectionModule>(rightPanelModules(), "statusSections"))
+  const allStatusSections = createMemo<RightPanelItem[]>(() => [...CORE_STATUS_SECTION_ITEMS, ...extraStatusSections()])
+  const orderedStatusSections = createMemo(() => applyRightPanelItemCustomization(allStatusSections(), rightPanelCustomization().statusSectionOrder, []))
+  const visibleStatusSections = createMemo(() =>
+    applyRightPanelItemCustomization(
+      allStatusSections(),
+      rightPanelCustomization().statusSectionOrder,
+      rightPanelCustomization().hiddenStatusSectionIds,
+    ),
+  )
   const activeRightPanelTab = createMemo(() => visibleRightPanelTabs().find((tab) => tab.id === rightPanelTab()) ?? visibleRightPanelTabs()[0])
 
   createEffect(() => {
@@ -303,74 +313,86 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
       <Show when={rightPanelCustomizationOpen()}>
         <div class="right-panel-customization-popover" role="dialog" aria-label={props.t("instanceShell.rightPanel.customize.title")}>
-          <div class="right-panel-customization-header">
-            <div>
-              <div class="text-sm font-medium text-primary">{props.t("instanceShell.rightPanel.customize.title")}</div>
-            </div>
-            <button
-              type="button"
-              class="right-panel-customization-button"
-              onClick={() => updateRightPanelCustomization(() => parseRightPanelCustomization(null))}
-            >
-              {props.t("instanceShell.rightPanel.customize.reset")}
-            </button>
-          </div>
-
           <div class="right-panel-customization-grid">
-            <For each={rightPanelModules()}>
-              {(module) => {
-                const moduleTabs = () => orderedRightPanelTabs().filter((tab) => module.tabs?.some((entry) => entry.id === tab.id))
+            <For each={orderedRightPanelTabs()}>
+              {(tab) => {
+                const label = () => props.t(tab.labelKey)
+                const visible = () => tab.alwaysVisible || !rightPanelCustomization().hiddenTabIds.includes(tab.id)
                 return (
-                  <Show when={moduleTabs().length > 0}>
-                    <div class="right-panel-customization-group">
-                      <div class="right-panel-customization-group-title">{props.t(module.displayNameKey)}</div>
-                      <For each={moduleTabs()}>
-                        {(tab) => {
-                          const label = () => props.t(tab.labelKey)
-                          const visible = () => tab.alwaysVisible || !rightPanelCustomization().hiddenTabIds.includes(tab.id)
+                  <>
+                    <div class="right-panel-customization-row">
+                      <label class="right-panel-customization-label">
+                        <input
+                          type="checkbox"
+                          checked={visible()}
+                          disabled={tab.alwaysVisible}
+                          onChange={(event) =>
+                            updateRightPanelCustomization((current) => ({
+                              ...current,
+                              hiddenTabIds: setRightPanelItemHidden(current.hiddenTabIds, tab.id, !event.currentTarget.checked),
+                            }))
+                          }
+                        />
+                        <span>{label()}</span>
+                      </label>
+                    </div>
+                    <Show when={tab.id === "status"}>
+                      <For each={orderedStatusSections()}>
+                        {(section) => {
+                          const sectionLabel = () => props.t(section.labelKey)
+                          const sectionVisible = () => !rightPanelCustomization().hiddenStatusSectionIds.includes(section.id)
+                          const disableHide = () => sectionVisible() && visibleStatusSections().length <= 1
                           return (
-                            <div class="right-panel-customization-row">
+                            <div class="right-panel-customization-row right-panel-customization-row-indent">
                               <label class="right-panel-customization-label">
                                 <input
                                   type="checkbox"
-                                  checked={visible()}
-                                  disabled={tab.alwaysVisible}
+                                  checked={sectionVisible()}
+                                  disabled={disableHide()}
                                   onChange={(event) =>
                                     updateRightPanelCustomization((current) => ({
                                       ...current,
-                                      hiddenTabIds: setRightPanelItemHidden(current.hiddenTabIds, tab.id, !event.currentTarget.checked),
+                                      hiddenStatusSectionIds: setRightPanelItemHidden(
+                                        current.hiddenStatusSectionIds,
+                                        section.id,
+                                        !event.currentTarget.checked,
+                                      ),
                                     }))
                                   }
                                 />
-                                <span>{label()}</span>
+                                <span>{sectionLabel()}</span>
                               </label>
                             </div>
                           )
                         }}
                       </For>
-                    </div>
-                  </Show>
+                    </Show>
+                  </>
                 )
               }}
             </For>
 
             <Show when={rightPanelPluginErrors().length > 0}>
-              <div class="right-panel-customization-group">
-                <div class="right-panel-customization-group-title">{props.t("instanceShell.rightPanel.customize.unavailableModules")}</div>
-                <For each={rightPanelPluginErrors()}>
-                  {(error: RightPanelPluginLoadError) => (
-                    <div class="right-panel-customization-row">
-                      <span class="right-panel-customization-label">
-                        {props.t("instanceShell.rightPanel.customize.moduleUnavailable", {
-                          module: error.displayNameKey ? props.t(error.displayNameKey) : error.pluginId,
-                        })}
-                      </span>
-                    </div>
-                  )}
-                </For>
-              </div>
+              <For each={rightPanelPluginErrors()}>
+                {(error: RightPanelPluginLoadError) => (
+                  <div class="right-panel-customization-row">
+                    <span class="right-panel-customization-label">
+                      {props.t("instanceShell.rightPanel.customize.moduleUnavailable", {
+                        module: error.displayNameKey ? props.t(error.displayNameKey) : error.pluginId,
+                      })}
+                    </span>
+                  </div>
+                )}
+              </For>
             </Show>
           </div>
+          <button
+            type="button"
+            class="right-panel-customization-button mt-2 w-full"
+            onClick={() => updateRightPanelCustomization(() => parseRightPanelCustomization(null))}
+          >
+            {props.t("instanceShell.rightPanel.customize.reset")}
+          </button>
         </div>
       </Show>
 

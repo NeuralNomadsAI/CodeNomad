@@ -710,55 +710,12 @@
 /* Status tab layout */
 .status-tab-container {
   @apply flex flex-col h-full min-h-0;
-  position: relative;
-}
-
-.status-tab-header {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  border-bottom: 1px solid var(--border-base);
-  background-color: var(--surface-secondary);
-  padding-inline-end: 0.5rem;
 }
 
 .status-tab-context-panel {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.status-tab-customization-trigger {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: 1.75rem;
-  height: 1.75rem;
-  border: 1px solid var(--border-base);
-  background-color: transparent;
-  color: var(--text-secondary);
-}
-
-.status-tab-customization-trigger:hover {
-  background-color: var(--surface-hover);
-  color: var(--text-primary);
-}
-
-.status-tab-customization-trigger:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--focus-ring-offset), 0 0 0 4px var(--focus-ring-color);
-}
-
-.status-tab-customization-popover {
-  position: absolute;
-  top: 2.75rem;
-  inset-inline-end: 0.5rem;
-  z-index: 20;
-  width: min(16rem, calc(100% - 1rem));
-  border: 1px solid var(--border-base);
+  @apply border-b;
+  border-color: var(--border-base);
   background-color: var(--surface-secondary);
-  box-shadow: var(--popover-shadow);
-  padding: 0.5rem;
 }
 
 /* Accordion improvements for right panel */
@@ -833,16 +790,7 @@
   border: 1px solid var(--border-base);
   background-color: var(--surface-secondary);
   box-shadow: var(--popover-shadow);
-  padding: 0.75rem;
-}
-
-.right-panel-customization-header {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
+  padding: 0.5rem;
 }
 
 .right-panel-customization-grid {
@@ -851,26 +799,16 @@
   gap: 0.5rem;
 }
 
-.right-panel-customization-group {
-  min-width: 0;
-  border: 1px solid var(--border-base);
-  background-color: var(--surface-primary);
-  padding: 0.5rem;
-}
-
-.right-panel-customization-group-title {
-  color: var(--text-secondary);
-  font-size: 0.75rem;
-  font-weight: 600;
-  margin-bottom: 0.35rem;
-}
-
 .right-panel-customization-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
   padding: 0.25rem 0;
+}
+
+.right-panel-customization-row-indent {
+  padding-inline-start: 1.5rem;
 }
 
 .right-panel-customization-label {
