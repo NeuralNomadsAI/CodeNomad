@@ -53,11 +53,14 @@ export function createInstanceClient(
   return createOpencodeClient({
     baseUrl: `http://${LOOPBACK_HOST}:${port}/`,
     headers,
-    fetch: (url, init) =>
-      fetch(url, {
-        ...(init as RequestInit),
-        signal: (init as RequestInit)?.signal ?? AbortSignal.timeout(timeoutMs),
-      }),
+    fetch: (url, init) => {
+      const requestInit = init as RequestInit
+      if (requestInit?.signal) return fetch(url, requestInit)
+
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(new DOMException("Request timed out", "TimeoutError")), timeoutMs)
+      return fetch(url, { ...requestInit, signal: controller.signal }).finally(() => clearTimeout(timeout))
+    },
     ...(directory ? { directory } : {}),
   })
 }
