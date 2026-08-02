@@ -131,7 +131,7 @@ export const settingsMessages = {
   "settings.appearance.startup.restore.title": "Restaurar el estado anterior",
   "settings.appearance.startup.restore.subtitle": "Volver a abrir pestañas, sesiones activas y mensajes no enviados, y restaurar el diseño.",
   "settings.appearance.startup.clear.title": "Estado de inicio guardado",
-  "settings.appearance.startup.clear.subtitle": "Elimina de este dispositivo las pestañas, borradores, diseños y mensajes de sesión en caché. No se eliminan las conversaciones de OpenCode.",
+  "settings.appearance.startup.clear.subtitle": "Elimina pestañas, borradores, posiciones de desplazamiento y el diseño de paneles guardados. No se eliminan los archivos del proyecto ni las conversaciones de OpenCode.",
   "settings.appearance.startup.clear.action": "Borrar estado guardado",
   "settings.appearance.startup.clearSuccess": "Se borró el estado de inicio guardado.",
   "settings.appearance.startup.clearError": "No se pudo borrar el estado de inicio guardado.",

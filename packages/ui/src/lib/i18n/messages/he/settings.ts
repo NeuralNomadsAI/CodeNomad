@@ -131,7 +131,7 @@ export const settingsMessages = {
   "settings.appearance.startup.restore.title": "שחזור המצב הקודם",
   "settings.appearance.startup.restore.subtitle": "פתיחה מחדש של כרטיסיות, הפעלות פעילות והודעות שלא נשלחו, ושחזור הפריסה.",
   "settings.appearance.startup.clear.title": "מצב הפעלה שמור",
-  "settings.appearance.startup.clear.subtitle": "הסרת כרטיסיות, טיוטות, פריסות והודעות הפעלה שמורות במטמון ממכשיר זה. שיחות OpenCode לא יימחקו.",
+  "settings.appearance.startup.clear.subtitle": "הסרת כרטיסיות, טיוטות, מיקומי גלילה ופריסת חלוניות שנשמרו. קובצי הפרויקט ושיחות OpenCode לא יימחקו.",
   "settings.appearance.startup.clear.action": "נקה מצב שמור",
   "settings.appearance.startup.clearSuccess": "מצב ההפעלה השמור נוקה.",
   "settings.appearance.startup.clearError": "לא ניתן לנקות את מצב ההפעלה השמור.",

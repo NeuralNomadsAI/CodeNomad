@@ -131,7 +131,7 @@ export const settingsMessages = {
   "settings.appearance.startup.restore.title": "अघिल्लो अवस्था पुनर्स्थापना गर्नुहोस्",
   "settings.appearance.startup.restore.subtitle": "ट्याब, सक्रिय सत्र र नपठाइएका सन्देशहरू फेरि खोल्नुहोस् र लेआउट पुनर्स्थापना गर्नुहोस्।",
   "settings.appearance.startup.clear.title": "सुरक्षित सुरुआत अवस्था",
-  "settings.appearance.startup.clear.subtitle": "यस यन्त्रबाट सुरक्षित ट्याब, मस्यौदा, लेआउट र क्यास गरिएका सत्र सन्देशहरू हटाउनुहोस्। OpenCode कुराकानीहरू मेटिँदैनन्।",
+  "settings.appearance.startup.clear.subtitle": "सुरक्षित ट्याब, मस्यौदा, स्क्रोल स्थिति र प्यानल लेआउट हटाउनुहोस्। परियोजना फाइलहरू र OpenCode संवादहरू मेटिँदैनन्।",
   "settings.appearance.startup.clear.action": "सुरक्षित अवस्था खाली गर्नुहोस्",
   "settings.appearance.startup.clearSuccess": "सुरक्षित सुरुआत अवस्था खाली गरियो।",
   "settings.appearance.startup.clearError": "सुरक्षित सुरुआत अवस्था खाली गर्न सकिएन।",

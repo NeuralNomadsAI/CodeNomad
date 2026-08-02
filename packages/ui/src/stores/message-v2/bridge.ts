@@ -71,38 +71,6 @@ export function seedSessionMessagesV2(
   return true
 }
 
-export function mergeCachedSessionMessagePageV2(
-  instanceId: string,
-  session: Session | SessionMetadata,
-  messages: Message[],
-  messageInfos: Map<string, MessageInfo>,
-  expectedRevision: number,
-): number | null {
-  if (!session || !Array.isArray(messages)) return null
-  const store = messageStoreBus.getOrCreate(instanceId)
-  if (!canHydrateMessages(expectedRevision, store.getSessionRevision(session.id))) return null
-  const metadata = resolveSessionMetadata(session)
-  if (!metadata) return null
-  store.addOrUpdateSession({
-    id: metadata.id,
-    title: metadata.title,
-    parentId: metadata.parentId ?? null,
-    revert: (session as Session)?.revert ?? undefined,
-  })
-  store.mergeCachedMessages(metadata.id, messages.map((message) => ({
-    id: message.id,
-    sessionId: message.sessionId,
-    role: message.type,
-    status: normalizeStatus(message.status),
-    createdAt: message.timestamp,
-    updatedAt: message.timestamp,
-    parts: message.parts,
-    isEphemeral: false,
-    bumpRevision: false,
-  })), messageInfos.values())
-  return store.getSessionRevision(metadata.id)
-}
-
 interface MessageInfoOptions {
   status?: MessageStatus
   bumpRevision?: boolean

@@ -110,7 +110,6 @@ jobs:
           packages/ui/src/lib/global-cache.test.ts
           packages/ui/src/lib/message-selection-position.test.ts
           packages/ui/src/lib/session-memory-budget.test.ts
-          packages/ui/src/lib/session-message-cache.test.ts
           packages/ui/src/lib/session-search.test.ts
           packages/ui/src/lib/trailing-resync.test.ts
           packages/ui/src/stores/abort-created-workspace-cleanup.test.ts

@@ -23,7 +23,6 @@ import { SessionPreviewView } from "../session-preview-view"
 import { isSnapshotAutoFollowing } from "../virtual-follow-behavior"
 import { getSubmitBottomPinTargetCount, resolveSessionBottomPinIntent, shouldClearSessionBottomPinIntent, type SessionBottomPinIntent } from "./session-bottom-pin-intent"
 import { focusConversationStream } from "../focus-conversation"
-import { invalidateSessionMessageCache } from "../../stores/session-message-cache"
 import { invalidateSessionMessageLoad } from "../../stores/session-state"
 
 const log = getLogger("session")
@@ -426,7 +425,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     if (!instance || !instance.client) return
 
     try {
-      invalidateSessionMessageCache(props.instanceId, props.sessionId)
       await requestData(
         instance.client.session.revert({
           sessionID: props.sessionId,
@@ -437,7 +435,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       if (!isInstanceRuntimeCurrent(props.instanceId, instance)) return
       if (messageStore().getSessionRevert(props.sessionId)?.messageID !== messageId) {
         invalidateSessionMessageLoad(props.instanceId, props.sessionId)
-        invalidateSessionMessageCache(props.instanceId, props.sessionId)
       }
 
       const restoredText = getUserMessageText(messageId)

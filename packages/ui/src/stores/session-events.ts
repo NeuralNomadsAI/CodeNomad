@@ -70,7 +70,7 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, messagesLoaded, prependSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
+import { ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, prependSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
@@ -98,8 +98,6 @@ import {
 import { messageStoreBus } from "./message-v2/bus"
 import type { InstanceMessageStore } from "./message-v2/instance-store"
 import { handleConversationAssistantPartUpdated } from "./conversation-speech"
-import { cancelCachedSessionMessageRestore, invalidateSessionMessageCache, scheduleSessionMessageCacheWrite } from "./session-message-cache"
-import { restorePreviousStateEnabled } from "./client-state"
 import { scheduleSessionMemorySweep } from "./session-memory"
 
 const log = getLogger("sse")
@@ -350,7 +348,6 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     const messageId = typeof part.messageID === "string" ? part.messageID : fallbackMessageId
     if (!sessionId || !messageId) return
     if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return
-    cancelCachedSessionMessageRestore(instanceId, sessionId)
     if (part.type === "compaction") {
       ensureSessionStatus(instanceId, sessionId, "compacting", (event as any)?.directory)
     }
@@ -392,11 +389,6 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
       clearPendingDeltasForPart(instanceId, messageId, part.id)
     }
     applyPartUpdateV2(instanceId, { ...part, sessionID: sessionId, messageID: messageId })
-    if (messagesLoaded().get(instanceId)?.has(sessionId)) {
-      scheduleSessionMessageCacheWrite(instanceId, sessionId)
-    } else {
-      invalidateSessionMessageCache(instanceId, sessionId)
-    }
     handleConversationAssistantPartUpdated(instanceId, { ...part, sessionID: sessionId, messageID: messageId }, messageInfo)
 
     if (part.type === "tool") {
@@ -414,7 +406,6 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     const messageId = typeof info.id === "string" ? info.id : undefined
     if (!sessionId || !messageId) return
     if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return
-    cancelCachedSessionMessageRestore(instanceId, sessionId)
 
     // Flush any pending deltas for this message before applying the update.
     // Deltas are buffered for up to 50ms; if message.updated arrives before
@@ -476,15 +467,6 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     upsertMessageInfoV2(instanceId, info, { status, bumpRevision: true })
 
     updateSessionInfo(instanceId, sessionId)
-    if (
-      restorePreviousStateEnabled() &&
-      messagesLoaded().get(instanceId)?.has(sessionId) &&
-      (status === "complete" || status === "error")
-    ) {
-      scheduleSessionMessageCacheWrite(instanceId, sessionId)
-    } else {
-      invalidateSessionMessageCache(instanceId, sessionId)
-    }
   }
 }
 
@@ -541,7 +523,6 @@ function handleMessagePartDelta(instanceId: string, event: MessagePartDeltaEvent
   const sessionId = props.sessionID ?? messageStoreBus.getInstance(instanceId)?.getMessage(messageID)?.sessionId
   if (sessionId) {
     if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return
-    cancelCachedSessionMessageRestore(instanceId, sessionId)
   }
   enqueueDelta(instanceId, messageID, partID, field, delta, sessionId)
 }
@@ -563,7 +544,6 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
   )
   if (revertChanged) {
     invalidateSessionMessageLoad(instanceId, info.id)
-    invalidateSessionMessageCache(instanceId, info.id)
   }
 
   if (!existingSession) {
@@ -729,7 +709,6 @@ function handleSessionCompacted(instanceId: string, event: EventSessionCompacted
   if (!sessionID) return
 
   log.info(`[SSE] Session compacted: ${sessionID}`)
-  invalidateSessionMessageCache(instanceId, sessionID)
 
   const existing = sessions().get(instanceId)?.get(sessionID)
   if (existing) setSessionStatus(instanceId, sessionID, "working", { force: true })
@@ -780,7 +759,6 @@ function handleMessageRemoved(instanceId: string, event: MessageRemovedEvent): v
 
   log.info(`[SSE] Message removed from session ${sessionID}`, { messageID })
   clearPendingDeltasForMessage(instanceId, messageID)
-  invalidateSessionMessageCache(instanceId, sessionID)
   removeMessageV2(instanceId, messageID, sessionID)
   updateSessionInfo(instanceId, sessionID)
 }
@@ -792,7 +770,6 @@ function handleMessagePartRemoved(instanceId: string, event: MessagePartRemovedE
 
   log.info(`[SSE] Message part removed from session ${sessionID}`, { messageID, partID })
   clearPendingDeltasForPart(instanceId, messageID, partID)
-  invalidateSessionMessageCache(instanceId, sessionID)
   removeMessagePartV2(instanceId, messageID, partID, sessionID)
   updateSessionInfo(instanceId, sessionID)
 }

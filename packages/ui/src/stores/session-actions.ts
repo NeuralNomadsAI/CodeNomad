@@ -12,7 +12,6 @@ import { removeMessagePartV2, removeMessageV2 } from "./message-v2/bridge"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
 import { clearConversationPlaybackForSession } from "./conversation-speech"
-import { invalidateSessionMessageCache } from "./session-message-cache"
 
 const log = getLogger("actions")
 
@@ -106,7 +105,6 @@ async function sendMessage(
   if (!session) {
     throw new Error("Session not found")
   }
-  invalidateSessionMessageCache(instanceId, sessionId)
 
   const messageId = createId("msg")
   const textPartId = createId("prt")
@@ -316,7 +314,6 @@ async function executeCustomCommand(
 
   const workspacePayload = await getSessionWorkspacePayload(instanceId, sessionId)
   if (!isInstanceRuntimeCurrent(instanceId, instance)) throw new Error("Instance no longer active")
-  invalidateSessionMessageCache(instanceId, sessionId)
   const admission = beginSessionGenerationAdmission(instanceId, sessionId)
   try {
     await requestData(
@@ -351,7 +348,6 @@ async function runShellCommand(instanceId: string, sessionId: string, command: s
 
   const workspacePayload = await getSessionWorkspacePayload(instanceId, sessionId)
   if (!isInstanceRuntimeCurrent(instanceId, instance)) throw new Error("Instance no longer active")
-  invalidateSessionMessageCache(instanceId, sessionId)
   const admission = beginSessionGenerationAdmission(instanceId, sessionId)
   try {
     await requestData(
@@ -507,7 +503,6 @@ async function deleteMessagePart(instanceId: string, sessionId: string, messageI
   const client = getRootClient(instanceId)
   const workspace = await getSessionWorkspacePayload(instanceId, sessionId)
   if (!isInstanceRuntimeCurrent(instanceId, instance)) return
-  invalidateSessionMessageCache(instanceId, sessionId)
 
   await requestData(
     client.part.delete({
@@ -521,7 +516,6 @@ async function deleteMessagePart(instanceId: string, sessionId: string, messageI
   if (!isInstanceRuntimeCurrent(instanceId, instance)) return
 
   // Optimistic removal; SSE will also broadcast a part-removed event.
-  invalidateSessionMessageCache(instanceId, sessionId)
   removeMessagePartV2(instanceId, messageId, partId)
   updateSessionInfo(instanceId, sessionId)
 }
@@ -536,7 +530,6 @@ async function deleteMessage(instanceId: string, sessionId: string, messageId: s
   const client = getRootClient(instanceId)
   const workspace = await getSessionWorkspacePayload(instanceId, sessionId)
   if (!isInstanceRuntimeCurrent(instanceId, instance)) return
-  invalidateSessionMessageCache(instanceId, sessionId)
 
   // The SDK generator does not currently expose a typed method for deleting a message,
   // but the API is available at DELETE /session/:sessionID/message/:messageID.
@@ -550,7 +543,6 @@ async function deleteMessage(instanceId: string, sessionId: string, messageId: s
   if (!isInstanceRuntimeCurrent(instanceId, instance)) return
 
   // Optimistic removal; SSE will also broadcast a message-removed event.
-  invalidateSessionMessageCache(instanceId, sessionId)
   removeMessageV2(instanceId, messageId)
   updateSessionInfo(instanceId, sessionId)
 }

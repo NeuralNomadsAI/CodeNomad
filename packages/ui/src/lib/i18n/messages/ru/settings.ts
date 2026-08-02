@@ -131,7 +131,7 @@ export const settingsMessages = {
   "settings.appearance.startup.restore.title": "Восстанавливать предыдущее состояние",
   "settings.appearance.startup.restore.subtitle": "Повторно открывать вкладки, активные сессии и неотправленные сообщения и восстанавливать макет.",
   "settings.appearance.startup.clear.title": "Сохранённое состояние запуска",
-  "settings.appearance.startup.clear.subtitle": "Удалить с этого устройства вкладки, черновики, макеты и кэшированные сообщения сессий. Диалоги OpenCode не удаляются.",
+  "settings.appearance.startup.clear.subtitle": "Удалить сохранённые вкладки, черновики, позиции прокрутки и расположение панелей. Файлы проекта и разговоры OpenCode не удаляются.",
   "settings.appearance.startup.clear.action": "Очистить сохранённое состояние",
   "settings.appearance.startup.clearSuccess": "Сохранённое состояние запуска очищено.",
   "settings.appearance.startup.clearError": "Не удалось очистить сохранённое состояние запуска.",

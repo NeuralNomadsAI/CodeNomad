@@ -205,6 +205,42 @@ describe("session request authority", () => {
     }
   })
 
+  it("cancels a revision retry while the session is hidden", async () => {
+    const instanceId = "hidden-message-retry", sessionId = "session", nextSessionId = "next"
+    const { client, cleanup } = setup(instanceId)
+    const firstResponse = deferred<any>()
+    let calls = 0
+    ;(client.session as any).messages = () => {
+      calls += 1
+      return calls === 1 ? firstResponse.promise : Promise.resolve({ data: [apiMessage("retried-message", sessionId)] })
+    }
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([
+      [sessionId, session(instanceId, sessionId)],
+      [nextSessionId, session(instanceId, nextSessionId)],
+    ])))
+
+    try {
+      setActiveSession(instanceId, sessionId)
+      const request = loadMessages(instanceId, sessionId)
+      messageStoreBus.getOrCreate(instanceId).upsertMessage({
+        id: "live-message",
+        sessionId,
+        role: "assistant",
+        status: "complete",
+        parts: [],
+      })
+      firstResponse.resolve({ data: [apiMessage("http-message", sessionId)] })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      setActiveSession(instanceId, nextSessionId)
+      await request
+
+      assert.equal(calls, 1)
+      assert.equal(messagesLoaded().get(instanceId)?.has(sessionId) ?? false, false)
+    } finally {
+      cleanup()
+    }
+  })
+
   it("cancels child loads owned by the session being left", async () => {
     const instanceId = "switched-child-load", parentSessionId = "parent", childSessionId = "child"
     const { client, cleanup } = setup(instanceId)

@@ -131,7 +131,7 @@ export const settingsMessages = {
   "settings.appearance.startup.restore.title": "Restaurer l’état précédent",
   "settings.appearance.startup.restore.subtitle": "Rouvrir les onglets, les sessions actives et les messages non envoyés, et restaurer la disposition.",
   "settings.appearance.startup.clear.title": "État de démarrage enregistré",
-  "settings.appearance.startup.clear.subtitle": "Supprime de cet appareil les onglets, brouillons, dispositions et messages de session mis en cache. Les conversations OpenCode ne sont pas supprimées.",
+  "settings.appearance.startup.clear.subtitle": "Supprime les onglets, brouillons, positions de défilement et la disposition des panneaux enregistrés. Les fichiers du projet et les conversations OpenCode ne sont pas supprimés.",
   "settings.appearance.startup.clear.action": "Effacer l’état enregistré",
   "settings.appearance.startup.clearSuccess": "L’état de démarrage enregistré a été effacé.",
   "settings.appearance.startup.clearError": "Impossible d’effacer l’état de démarrage enregistré.",

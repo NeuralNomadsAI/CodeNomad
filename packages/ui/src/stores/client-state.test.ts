@@ -34,12 +34,6 @@ const boot = async (api?: NativeApi, storage?: MemoryStorage) => {
 const transact = (state: ClientState, kind: TransactionKind) => kind === "clear"
   ? state.clearRestoredClientState() : state.setRestorePreviousStateEnabled(false)
 describe("client state ownership and persistence", () => {
-  it("keeps persistent message caching disabled during desktop restore", async () => {
-    const cache = await import("../lib/session-message-cache.ts")
-    cache.setSessionMessageCacheEnabled(true)
-    await boot({ loadClientState: async () => loadResult(snapshot("project")) })
-    assert.equal(cache.isSessionMessageCacheEnabled(), false)
-  })
   it("treats a rejected access claim as secondary without loading", async () => {
     let loads = 0
     const state = await boot({
@@ -121,67 +115,8 @@ describe("failed destructive transactions", () => {
     it(`${kind}: rolls back and persists mutations buffered during delayed failure`, () => destructiveContract(kind, false))
     it(`${kind}: preserves retry dirt from an in-flight failed save`, () => destructiveContract(kind, true))
   }
-  for (const kind of ["clear", "disable"] as const) {
-    it(`${kind}: retries only cache clearing after native acceptance`, async () => {
-      const originalIndexedDb = Object.getOwnPropertyDescriptor(globalThis, "indexedDB")
-      let nativeCalls = 0
-      try {
-        Object.defineProperty(globalThis, "indexedDB", {
-          configurable: true,
-          value: {
-            open: () => {
-              const request: any = { error: new Error("cache clear failed") }
-              queueMicrotask(() => request.onerror?.())
-              return request
-            },
-          },
-        })
-        const state = await boot({
-          loadClientState: async () => loadResult(),
-          clearClientState: async () => { nativeCalls += 1; return true },
-          setClientStateRestoreEnabled: async (_token, enabled) => { if (!enabled) nativeCalls += 1; return true },
-        })
-        await assert.rejects(transact(state, kind), /cache clear failed/)
-        Object.defineProperty(globalThis, "indexedDB", { configurable: true, value: undefined })
-        await transact(state, kind)
-        assert.equal(nativeCalls, 1)
-      } finally {
-        if (originalIndexedDb) Object.defineProperty(globalThis, "indexedDB", originalIndexedDb)
-        else delete (globalThis as any).indexedDB
-      }
-    })
-  }
 })
 describe("future envelopes and clear races", () => {
-  it("keeps primary ownership when startup cache clearing must retry", async () => {
-    const originalIndexedDb = Object.getOwnPropertyDescriptor(globalThis, "indexedDB")
-    let restoreUpdates = 0
-    try {
-      Object.defineProperty(globalThis, "indexedDB", {
-        configurable: true,
-        value: {
-          open: () => {
-            const request: any = { error: new Error("open failed") }
-            queueMicrotask(() => request.onerror?.())
-            return request
-          },
-        },
-      })
-      const state = await boot({
-        loadClientState: async () => ({ isPrimary: true, restoreEnabled: false, snapshot: null }),
-        setClientStateRestoreEnabled: async (_token, enabled) => { if (enabled) restoreUpdates += 1; return true },
-      })
-      assert.equal(state.clientStateIsPrimary(), true)
-      Object.defineProperty(globalThis, "indexedDB", { configurable: true, value: undefined })
-      await state.setRestorePreviousStateEnabled(true)
-      assert.equal(state.restorePreviousStateEnabled(), true)
-      assert.equal(restoreUpdates, 1)
-    } finally {
-      if (originalIndexedDb) Object.defineProperty(globalThis, "indexedDB", originalIndexedDb)
-      else delete (globalThis as any).indexedDB
-    }
-  })
-
   it("serializes overlapping clear and disable transactions without stranding writes", async () => {
     const clear = deferred<boolean>(), disable = deferred<boolean>()
     const clearStarted = deferred<void>(), disableStarted = deferred<void>()
@@ -240,21 +175,6 @@ describe("future envelopes and clear races", () => {
     await state.clearRestoredClientState()
     assert.equal(state.clientStateIsPrimary(), true)
     assert.equal(clears, 1)
-  })
-  it("keeps a known-unsafe cache disabled when native disable is rejected", async () => {
-    const cache = await import("../lib/session-message-cache.ts")
-    const state = await boot({
-      loadClientState: async () => loadResult(),
-      setClientStateRestoreEnabled: async () => false,
-    })
-    cache.markSessionMessageCacheUnsafe(true)
-    cache.setSessionMessageCacheEnabled(false)
-    try {
-      await assert.rejects(state.setRestorePreviousStateEnabled(false), /update was rejected/)
-      assert.equal(cache.isSessionMessageCacheEnabled(), false)
-    } finally {
-      cache.markSessionMessageCacheUnsafe(false)
-    }
   })
   it("blocks captures before an in-flight clear reaches the native host", async () => {
     const clear = deferred<boolean>(); let saves = 0

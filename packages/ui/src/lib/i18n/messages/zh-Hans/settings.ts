@@ -131,7 +131,7 @@ export const settingsMessages = {
   "settings.appearance.startup.restore.title": "恢复上次状态",
   "settings.appearance.startup.restore.subtitle": "重新打开标签页、活动会话和未发送的消息，并恢复布局。",
   "settings.appearance.startup.clear.title": "已保存的启动状态",
-  "settings.appearance.startup.clear.subtitle": "从此设备移除已保存的标签页、草稿、布局和缓存的会话消息。不会删除 OpenCode 对话。",
+  "settings.appearance.startup.clear.subtitle": "移除已保存的标签页、草稿、滚动位置和面板布局。不会删除项目文件或 OpenCode 对话。",
   "settings.appearance.startup.clear.action": "清除已保存状态",
   "settings.appearance.startup.clearSuccess": "已清除保存的启动状态。",
   "settings.appearance.startup.clearError": "无法清除保存的启动状态。",

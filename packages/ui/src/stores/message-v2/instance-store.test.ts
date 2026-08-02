@@ -74,19 +74,6 @@ describe("message-v2 authoritative hydration", () => {
     assert.deepEqual(store.getSessionMessageIds("session-1"), [])
   })
 
-  it("prepends older cache pages without overwriting live messages", () => {
-    const store = createInstanceMessageStore("instance-1")
-    store.mergeCachedMessages("session-1", [message("message-3"), message("message-4")])
-    store.upsertMessage({
-      ...message("message-4"),
-      parts: [{ id: "part-message-4", type: "text", text: "live", messageID: "message-4", sessionID: "session-1" }] as any,
-    })
-    store.mergeCachedMessages("session-1", [message("message-1"), message("message-2"), message("message-4")])
-
-    assert.deepEqual(store.getSessionMessageIds("session-1"), ["message-1", "message-2", "message-3", "message-4"])
-    assert.equal((store.getMessage("message-4")?.parts["part-message-4"]?.data as any).text, "live")
-  })
-
   it("removes stale parts when authoritative hydration returns an empty part list", () => {
     const store = createInstanceMessageStore("instance-1")
     store.hydrateMessages("session-1", [message("message-1")], [info("message-1")])

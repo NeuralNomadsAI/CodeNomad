@@ -131,7 +131,7 @@ export const settingsMessages = {
   "settings.appearance.startup.restore.title": "Vorherigen Zustand wiederherstellen",
   "settings.appearance.startup.restore.subtitle": "Tabs, aktive Sitzungen und nicht gesendete Nachrichten erneut öffnen und das Layout wiederherstellen.",
   "settings.appearance.startup.clear.title": "Gespeicherter Startzustand",
-  "settings.appearance.startup.clear.subtitle": "Gespeicherte Tabs, Entwürfe, Layouts und zwischengespeicherte Sitzungsnachrichten von diesem Gerät entfernen. OpenCode-Unterhaltungen werden nicht gelöscht.",
+  "settings.appearance.startup.clear.subtitle": "Gespeicherte Tabs, Entwürfe, Scrollpositionen und das Panel-Layout entfernen. Projektdateien und OpenCode-Unterhaltungen werden nicht gelöscht.",
   "settings.appearance.startup.clear.action": "Gespeicherten Zustand löschen",
   "settings.appearance.startup.clearSuccess": "Gespeicherter Startzustand wurde gelöscht.",
   "settings.appearance.startup.clearError": "Der gespeicherte Startzustand konnte nicht gelöscht werden.",

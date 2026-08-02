@@ -131,7 +131,7 @@ export const settingsMessages = {
   "settings.appearance.startup.restore.title": "前回の状態を復元",
   "settings.appearance.startup.restore.subtitle": "タブ、アクティブなセッション、未送信メッセージを再度開き、配置を復元します。",
   "settings.appearance.startup.clear.title": "保存された起動状態",
-  "settings.appearance.startup.clear.subtitle": "保存されたタブ、下書き、配置、キャッシュ済みセッションメッセージをこのデバイスから削除します。OpenCode の会話は削除されません。",
+  "settings.appearance.startup.clear.subtitle": "保存されたタブ、下書き、スクロール位置、パネル配置を削除します。プロジェクトファイルと OpenCode の会話は削除されません。",
   "settings.appearance.startup.clear.action": "保存状態を消去",
   "settings.appearance.startup.clearSuccess": "保存された起動状態を消去しました。",
   "settings.appearance.startup.clearError": "保存された起動状態を消去できませんでした。",

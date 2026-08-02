@@ -21,7 +21,6 @@ import { requestData } from "../opencode-api"
 import { emitSessionSidebarRequest } from "../session-sidebar-events"
 import { tGlobal } from "../i18n"
 import { registerBehaviorCommands } from "../settings/behavior-registry"
-import { invalidateSessionMessageCache } from "../../stores/session-message-cache"
 
 const log = getLogger("actions")
 
@@ -255,7 +254,6 @@ export function useCommands(options: UseCommandsOptions) {
             }),
             "session.summarize",
           )
-          invalidateSessionMessageCache(instance.id, sessionId)
         } catch (error) {
           log.error("Failed to compact session", error)
           const message = error instanceof Error ? error.message : tGlobal("commands.compactSession.errorFallback")
@@ -335,7 +333,6 @@ export function useCommands(options: UseCommandsOptions) {
         }
 
         try {
-          invalidateSessionMessageCache(instance.id, sessionId)
           await requestData(
             instance.client.session.revert({
               sessionID: sessionId,
@@ -346,7 +343,6 @@ export function useCommands(options: UseCommandsOptions) {
           if (!isInstanceRuntimeCurrent(instance.id, instance)) return
           if (store.getSessionRevert(sessionId)?.messageID !== messageID) {
             invalidateSessionMessageLoad(instance.id, sessionId)
-            invalidateSessionMessageCache(instance.id, sessionId)
           }
 
           if (!restoredText) {

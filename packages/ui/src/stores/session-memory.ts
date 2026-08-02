@@ -1,7 +1,6 @@
 import { getLogger } from "../lib/logger"
 import { MAX_HOT_SESSION_MESSAGE_BYTES, selectSessionMemoryEvictions, type SessionMemoryEntry } from "../lib/session-memory-budget"
 import { messageStoreBus } from "./message-v2/bus"
-import { cancelCachedSessionMessageRestore, isRestoringCachedSessionMessages, isSessionMessageCacheWritePending, setSessionMessageCacheWriteSettledCallback } from "./session-message-cache"
 import { isSessionMessagesLoading, sessions } from "./session-state"
 
 const log = getLogger("session")
@@ -85,12 +84,9 @@ export function evictResidentSessionMessages(instanceId: string, sessionId: stri
     visibleLeases.has(sessionKey(instanceId, sessionId)) ||
     status === "working" ||
     status === "compacting" ||
-    isSessionMessageCacheWritePending(instanceId, sessionId) ||
     isSessionMessagesLoading(instanceId, sessionId) ||
-    isRestoringCachedSessionMessages(instanceId, sessionId) ||
     hasProtectedSessionWork(store, sessionId)
   ) return false
-  cancelCachedSessionMessageRestore(instanceId, sessionId)
   store.clearSession(sessionId, { preserveScroll: true, preservePromptDisplay: true })
   log.info("Evicted resident session messages", { instanceId, sessionId })
   return true
@@ -103,8 +99,7 @@ export function runSessionMemorySweep(byteLimit = MAX_HOT_SESSION_MESSAGE_BYTES)
       const key = sessionKey(instanceId, sessionId)
       const status = sessions().get(instanceId)?.get(sessionId)?.status
       const protectedSession = visibleLeases.has(key) || status === "working" || status === "compacting" || hasProtectedSessionWork(store, sessionId) ||
-        isSessionMessagesLoading(instanceId, sessionId) || isRestoringCachedSessionMessages(instanceId, sessionId) ||
-        isSessionMessageCacheWritePending(instanceId, sessionId)
+        isSessionMessagesLoading(instanceId, sessionId)
       let byteSize = measuredBytes.get(key)
       if (!protectedSession) {
         byteSize = store.getSessionApproximateByteSize(sessionId)
@@ -150,5 +145,3 @@ messageStoreBus.onInstanceDestroyed((instanceId) => {
   for (const key of measuredBytes.keys()) if (key.startsWith(prefix)) measuredBytes.delete(key)
   for (const key of pendingMeasurements.keys()) if (key.startsWith(prefix)) cancelSessionMeasurement(key)
 })
-
-setSessionMessageCacheWriteSettledCallback(scheduleSessionMemorySweep)

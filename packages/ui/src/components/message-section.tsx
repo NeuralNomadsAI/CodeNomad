@@ -11,7 +11,6 @@ import { isScrollRestoreGenerationCurrent, isSnapshotAutoFollowing } from "./vir
 import { useConfig } from "../stores/preferences"
 import { getSessionInfo } from "../stores/sessions"
 import { messageStoreBus } from "../stores/message-v2/bus"
-import { isRestoringCachedSessionMessages } from "../stores/session-message-cache"
 import { useI18n } from "../lib/i18n"
 import { copyToClipboard } from "../lib/clipboard"
 import { showToastNotification } from "../lib/notifications"
@@ -1438,7 +1437,6 @@ export default function MessageSection(props: MessageSectionProps) {
           getAnchorId={getMessageAnchorId}
           overscanPx={800}
           streamingActive={streamingActive}
-          shift={() => isRestoringCachedSessionMessages(props.instanceId, props.sessionId)}
           isActive={isActive}
           scrollToBottomOnActivate={() => false}
           initialScrollToBottom={() => false}

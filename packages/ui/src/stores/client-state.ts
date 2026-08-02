@@ -2,11 +2,6 @@ import { createSignal } from "solid-js"
 import { clearNativeClientState, loadNativeClientState, saveNativeClientState, setNativeRestoreEnabled } from "../lib/native/client-state"
 import { decodeClientSnapshot, isFutureClientSnapshot, normalizeRestorableSession } from "./client-state-codec"
 import type { ClientSnapshotV1, RestorableSessionState, RestorableSidecarTabState, RestorableTabState, RestorableWorkspaceTabState } from "./client-state-codec"
-import {
-  clearSessionMessageCache,
-  isSessionMessageCacheUnsafe,
-  setSessionMessageCacheEnabled,
-} from "../lib/session-message-cache"
 export type { ClientSnapshotV1, RestorableSessionState, RestorableSidecarTabState, RestorableTabState, RestorableWorkspaceTabState }
 const SAVE_DEBOUNCE_MS = 250
 const FLUSH_MAX_ATTEMPTS = 3
@@ -29,13 +24,7 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null
 let writeQueue: Promise<void> = Promise.resolve()
 let destructiveQueue: Promise<void> = Promise.resolve()
 let lastSaveError: unknown
-let cacheClearPending = false
-let pendingCacheClearOwner: "clear" | "disable" | null = null
 const transactionLayoutWrites = new Set<string>()
-function loseClientStateOwnership(): void {
-  setClientStateIsPrimary(false)
-  setSessionMessageCacheEnabled(false)
-}
 function useLocalStorage<T>(fallback: T, operation: (storage: Storage) => T): T {
   try {
     return operation(window.localStorage)
@@ -104,7 +93,7 @@ function enqueuePendingSave(): Promise<void> {
   const saveAttempt = writeQueue.then(async () => {
     try {
       if (!await saveNativeClientState(normalizedSnapshot)) {
-        loseClientStateOwnership()
+        setClientStateIsPrimary(false)
         throw new Error("Native client state save was rejected")
       }
       lastSaveError = undefined
@@ -143,7 +132,7 @@ async function executeDestructiveTransaction(operation: () => Promise<boolean>, 
     retryDirty ||= dirty
     dirty = false
     if (!await operation()) {
-      if (loseOwnershipOnRejection) loseClientStateOwnership()
+      if (loseOwnershipOnRejection) setClientStateIsPrimary(false)
       throw new Error(rejectedMessage)
     }
     useLocalStorage(undefined, (storage) => {
@@ -243,59 +232,27 @@ export async function flushClientState(): Promise<void> {
 export async function clearRestoredClientState(): Promise<void> {
   await runDestructiveTransition(async () => {
     if (!clientStateIsPrimary()) throw new Error("Client state is not owned by this window")
-    if (cacheClearPending && pendingCacheClearOwner === "clear") {
-      await clearSessionMessageCache()
-      cacheClearPending = false
-      pendingCacheClearOwner = null
-      return
-    }
     await executeDestructiveTransaction(clearNativeClientState, "Native client state clear was rejected", true)
-    setSessionMessageCacheEnabled(false)
-    cacheClearPending = true
-    pendingCacheClearOwner = "clear"
-    await clearSessionMessageCache()
-    cacheClearPending = false
-    pendingCacheClearOwner = null
   })
 }
 
 export async function setRestorePreviousStateEnabled(enabled: boolean): Promise<void> {
   await runDestructiveTransition(async () => {
-    if (enabled === restorePreviousStateEnabled() && (!enabled || writeBlock === false) && !cacheClearPending && !isSessionMessageCacheUnsafe()) return
+    if (enabled === restorePreviousStateEnabled() && (!enabled || writeBlock === false)) return
     if (!clientStateIsPrimary()) throw new Error("Client state is not owned by this window")
     if (enabled) {
-      if (cacheClearPending || isSessionMessageCacheUnsafe()) {
-        await clearSessionMessageCache()
-        cacheClearPending = false
-        pendingCacheClearOwner = null
-      }
       if (!await setNativeRestoreEnabled(true)) throw new Error("Native restore preference update was rejected")
       writeBlock = false
       setRestorePreviousStateEnabledSignal(true)
-      // ponytail: keep message caching off until restore no longer blocks the renderer on large sessions.
-      setSessionMessageCacheEnabled(false)
       return
     }
     setRestorePreviousStateEnabledSignal(false)
-    setSessionMessageCacheEnabled(false)
-    if (cacheClearPending && pendingCacheClearOwner === "disable") {
-      await clearSessionMessageCache()
-      cacheClearPending = false
-      pendingCacheClearOwner = null
-      return
-    }
     try {
       await executeDestructiveTransaction(() => setNativeRestoreEnabled(false), "Native restore preference update was rejected")
     } catch (error) {
       setRestorePreviousStateEnabledSignal(true)
-      setSessionMessageCacheEnabled(false)
       throw error
     }
-    cacheClearPending = true
-    pendingCacheClearOwner = "disable"
-    await clearSessionMessageCache()
-    cacheClearPending = false
-    pendingCacheClearOwner = null
   })
 }
 
@@ -312,41 +269,14 @@ export function initializeClientState(): Promise<void> {
       writeBlock = false
       transactionLayoutWrites.clear()
       initialized = true
-      if (!loaded.isPrimary || !loaded.restoreEnabled) {
-        setSessionMessageCacheEnabled(false)
-        if (loaded.isPrimary && !loaded.restoreEnabled) {
-          cacheClearPending = true
-          pendingCacheClearOwner = "disable"
-          try {
-            await clearSessionMessageCache()
-            cacheClearPending = false
-            pendingCacheClearOwner = null
-          } catch (error) {
-            console.warn("[client-state] failed to clear disabled session cache", error)
-          }
-        }
-        return
-      }
-      if (isSessionMessageCacheUnsafe()) {
-        setSessionMessageCacheEnabled(false)
-        cacheClearPending = true
-        pendingCacheClearOwner = null
-        try {
-          await clearSessionMessageCache()
-          cacheClearPending = false
-        } catch (error) {
-          console.warn("[client-state] failed to clear unsafe session cache", error)
-          return
-        }
-      }
+      if (!loaded.isPrimary || !loaded.restoreEnabled) return
       writeBlock = isFutureClientSnapshot(loaded.snapshot) ? "snapshot" : false
       const snapshot = decodeClientSnapshot(loaded.snapshot)
       resetLoadedState(snapshot, true)
-      setSessionMessageCacheEnabled(false)
       if (!writeBlock && migrateLegacyLayoutValues()) scheduleSave()
     } catch (error) {
       initialized = true
-      loseClientStateOwnership()
+      setClientStateIsPrimary(false)
       resetLoadedState()
       console.warn("[client-state] failed to initialize client state", error)
     }

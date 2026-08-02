@@ -131,7 +131,7 @@ export const settingsMessages = {
   "settings.appearance.startup.restore.title": "Restore previous state",
   "settings.appearance.startup.restore.subtitle": "Reopen workspace and sidecar tabs, active sessions, and unsent messages, and restore the layout.",
   "settings.appearance.startup.clear.title": "Saved startup state",
-  "settings.appearance.startup.clear.subtitle": "Remove saved tabs, drafts, layout, and cached session messages from this device. OpenCode conversation data is not deleted.",
+  "settings.appearance.startup.clear.subtitle": "Remove saved tabs, drafts, scroll positions, and panel layout. Project files and OpenCode conversations are not deleted.",
   "settings.appearance.startup.clear.action": "Clear saved state",
   "settings.appearance.startup.clearSuccess": "Saved startup state cleared.",
   "settings.appearance.startup.clearError": "Could not clear the saved startup state.",
