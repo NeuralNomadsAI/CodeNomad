@@ -127,6 +127,7 @@ type CreationRequestState = "active" | "cancelled" | "released"
 type WorkspaceCreationOwnership = Map<string, CreationRequestState>
 interface WorkspaceReadiness {
   workspaceId: string
+  directory: string
   port: number
   exitPromise: Promise<ProcessExitInfo>
   getLastOutput: () => string
@@ -443,6 +444,7 @@ export class WorkspaceManager {
       this.throwIfCancelled(record)
       const runtimeVersion = await this.waitForWorkspaceReadiness({
         workspaceId: id,
+        directory: workspacePath,
         port,
         exitPromise,
         getLastOutput,
@@ -714,6 +716,11 @@ export class WorkspaceManager {
     const version = await this.waitForInstanceHealth(params)
 
     await Promise.race([
+      this.validateInstanceConfiguration(params),
+      this.exitDuringStartup(params, "exited during configuration validation"),
+    ])
+
+    await Promise.race([
       delay(STARTUP_STABILITY_DELAY_MS, undefined, { signal: params.signal }),
       this.exitDuringStartup(params, "exited shortly after start"),
     ])
@@ -753,13 +760,7 @@ export class WorkspaceManager {
     const url = `http://${LOOPBACK_HOST}:${port}/global/health`
 
     try {
-      const headers: Record<string, string> = {}
-      const authHeader = this.opencodeAuth.get(workspaceId)?.authorization
-      if (authHeader) {
-        headers["Authorization"] = authHeader
-      }
-
-      const response = await fetch(url, { headers, signal })
+      const response = await fetch(url, { headers: this.getInstanceRequestHeaders(workspaceId), signal })
       if (!response.ok) {
         const reason = `/global/health returned HTTP ${response.status}`
         this.options.logger.debug({ workspaceId, status: response.status }, "Health probe returned server error")
@@ -782,6 +783,27 @@ export class WorkspaceManager {
       this.options.logger.debug({ workspaceId, err: error }, "Health probe failed")
       return { ok: false, reason }
     }
+  }
+
+  private async validateInstanceConfiguration(params: WorkspaceReadiness): Promise<void> {
+    const url = new URL(`http://${LOOPBACK_HOST}:${params.port}/config`)
+    url.searchParams.set("directory", params.directory)
+    const response = await fetch(url, {
+      headers: this.getInstanceRequestHeaders(params.workspaceId),
+      signal: params.signal,
+    })
+    if (response.ok) {
+      await response.body?.cancel()
+      return
+    }
+
+    const body = (await response.text()).trim()
+    throw new Error(body || `OpenCode /config returned HTTP ${response.status}`)
+  }
+
+  private getInstanceRequestHeaders(workspaceId: string): Record<string, string> {
+    const authorization = this.opencodeAuth.get(workspaceId)?.authorization
+    return authorization ? { Authorization: authorization } : {}
   }
 
   private buildStartupError(
