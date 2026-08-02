@@ -29,7 +29,11 @@ export function clearLaunchError() {
 export function showWorkspaceLaunchError(workspace: WorkspaceDescriptor) {
   const instanceId = workspace.id
   const rawMessage = workspace.error
-  const message = formatLaunchErrorMessage(rawMessage, tGlobal("app.launchError.fallbackMessage"))
+  const message = formatLaunchErrorMessage(
+    rawMessage,
+    tGlobal("app.launchError.fallbackMessage"),
+    tGlobal("app.launchError.invalidConfig"),
+  )
 
   const previous = lastWorkspaceErrorByInstanceId.get(instanceId)
   if (previous && previous === message) {

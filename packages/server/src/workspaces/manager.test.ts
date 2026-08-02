@@ -140,7 +140,7 @@ describe("workspace manager lifecycle", () => {
         return true
       })
       assert.deepEqual(requests.map((url) => new URL(url).pathname), ["/global/health", "/config"])
-      assert.equal(new URL(requests[1]).searchParams.get("directory"), process.cwd())
+      assert.equal(new URL(requests[1]).search, "")
       assert.equal(harness.runtime.active.has(workspaceId), false)
       assert.deepEqual(harness.started, [])
       assert.deepEqual(harness.manager.list(), [])

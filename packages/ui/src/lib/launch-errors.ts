@@ -1,4 +1,4 @@
-export function formatLaunchErrorMessage(error: unknown, fallbackMessage: string): string {
+export function formatLaunchErrorMessage(error: unknown, fallbackMessage: string, invalidConfigMessage: string): string {
   if (!error) {
     return fallbackMessage
   }
@@ -7,7 +7,7 @@ export function formatLaunchErrorMessage(error: unknown, fallbackMessage: string
 
   try {
     const parsed = JSON.parse(raw) as unknown
-    const configError = formatConfigInvalidError(parsed)
+    const configError = formatConfigError(parsed, invalidConfigMessage)
     if (configError) return configError
     if (parsed && typeof parsed === "object" && "error" in parsed && typeof (parsed as any).error === "string") {
       return (parsed as any).error
@@ -19,15 +19,29 @@ export function formatLaunchErrorMessage(error: unknown, fallbackMessage: string
   return raw
 }
 
-function formatConfigInvalidError(value: unknown): string | undefined {
+function formatConfigError(value: unknown, invalidConfigMessage: string): string | undefined {
   if (!value || typeof value !== "object") return undefined
-  const error = value as { name?: unknown; data?: { path?: unknown; issues?: unknown } }
-  if (error.name !== "ConfigInvalidError" || !error.data || typeof error.data !== "object") return undefined
+  type ConfigErrorDetails = {
+    path?: unknown
+    message?: unknown
+    issues?: unknown
+    dir?: unknown
+    suggestion?: unknown
+  }
+  const error = value as ConfigErrorDetails & { name?: unknown; _tag?: unknown; data?: ConfigErrorDetails }
+  const name = typeof error.name === "string" ? error.name : error._tag
+  if (!["ConfigInvalidError", "ConfigJsonError", "ConfigFrontmatterError", "ConfigDirectoryTypoError"].includes(String(name))) return undefined
+  const details = error.data && typeof error.data === "object" ? error.data : error
 
-  const lines = [error.name]
-  if (typeof error.data.path === "string" && error.data.path.trim()) lines.push(error.data.path.trim())
-  if (Array.isArray(error.data.issues)) {
-    for (const issue of error.data.issues) {
+  const lines = [invalidConfigMessage]
+  if (typeof details.path === "string" && details.path.trim()) lines.push(details.path.trim())
+  if (typeof details.message === "string" && details.message.trim()) lines.push(details.message.trim())
+  const dir = typeof details.dir === "string" ? details.dir.trim() : ""
+  const suggestion = typeof details.suggestion === "string" ? details.suggestion.trim() : ""
+  if (dir && suggestion) lines.push(`${dir} → ${suggestion}`)
+  else if (dir || suggestion) lines.push(dir || suggestion)
+  if (Array.isArray(details.issues)) {
+    for (const issue of details.issues) {
       if (!issue || typeof issue !== "object") continue
       const candidate = issue as { path?: unknown; message?: unknown }
       const location = Array.isArray(candidate.path) ? candidate.path.map(String).join(".") : ""

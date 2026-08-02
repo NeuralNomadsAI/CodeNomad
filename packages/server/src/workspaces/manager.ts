@@ -127,7 +127,6 @@ type CreationRequestState = "active" | "cancelled" | "released"
 type WorkspaceCreationOwnership = Map<string, CreationRequestState>
 interface WorkspaceReadiness {
   workspaceId: string
-  directory: string
   port: number
   exitPromise: Promise<ProcessExitInfo>
   getLastOutput: () => string
@@ -444,7 +443,6 @@ export class WorkspaceManager {
       this.throwIfCancelled(record)
       const runtimeVersion = await this.waitForWorkspaceReadiness({
         workspaceId: id,
-        directory: workspacePath,
         port,
         exitPromise,
         getLastOutput,
@@ -786,9 +784,7 @@ export class WorkspaceManager {
   }
 
   private async validateInstanceConfiguration(params: WorkspaceReadiness): Promise<void> {
-    const url = new URL(`http://${LOOPBACK_HOST}:${params.port}/config`)
-    url.searchParams.set("directory", params.directory)
-    const response = await fetch(url, {
+    const response = await fetch(`http://${LOOPBACK_HOST}:${params.port}/config`, {
       headers: this.getInstanceRequestHeaders(params.workspaceId),
       signal: params.signal,
     })
