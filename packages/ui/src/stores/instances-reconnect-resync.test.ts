@@ -330,7 +330,7 @@ describe("reconnect interruption resync", () => {
     const instanceId = "reconnect-session-list-failure"
     const permission = { id: "permission", sessionID: "session", permission: "read", patterns: [] } as any
     const harness = setup(instanceId, {
-      sessions: Promise.reject(new Error("session list unavailable")),
+      sessions: async () => { throw new Error("session list unavailable") },
       permissions: Promise.resolve({ data: { data: [permission] } }),
     })
 
