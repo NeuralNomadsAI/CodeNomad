@@ -1,9 +1,8 @@
 use parking_lot::Mutex;
-use reqwest::blocking::{Client, Response};
 use reqwest::StatusCode;
+use reqwest::{Client, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::io::{BufRead, BufReader};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
 use std::sync::Arc;
@@ -23,12 +22,23 @@ const EVENT_STATUS_NAME: &str = "desktop:event-stream-status";
 const FLUSH_INTERVAL_MS: u64 = 16;
 const DELTA_STREAM_WINDOW_MS: u64 = 48;
 const MAX_BATCH_EVENTS: usize = 256;
+const MAX_BATCH_BYTES: usize = 2 * 1024 * 1024;
 const DEFAULT_RECONNECT_INITIAL_DELAY_MS: u64 = 1_000;
 const DEFAULT_RECONNECT_MAX_DELAY_MS: u64 = 10_000;
 const DEFAULT_RECONNECT_MULTIPLIER: f64 = 2.0;
 const STREAM_CONNECT_TIMEOUT_MS: u64 = 5_000;
 const STREAM_TCP_KEEPALIVE_MS: u64 = 30_000;
-const STREAM_STALL_TIMEOUT_MS: u64 = 30_000;
+const STREAM_READ_TIMEOUT_MS: u64 = 30_000;
+const STREAM_STALL_TIMEOUT_MS: u64 = 35_000;
+const SSE_READ_BUFFER_BYTES: usize = 8 * 1024;
+const SERVER_MAX_EVENT_CHARACTERS: usize = 16 * 1024 * 1024;
+const MAX_UTF8_BYTES_PER_CHARACTER: usize = 4;
+const MAX_WORKSPACE_EVENT_ENVELOPE_BYTES: usize = 64 * 1024;
+const MAX_SSE_LINE_BYTES: usize =
+    SERVER_MAX_EVENT_CHARACTERS * MAX_UTF8_BYTES_PER_CHARACTER + MAX_WORKSPACE_EVENT_ENVELOPE_BYTES;
+const MAX_SSE_FRAME_BYTES: usize = MAX_SSE_LINE_BYTES + MAX_WORKSPACE_EVENT_ENVELOPE_BYTES;
+const MAX_COALESCED_DELTA_BYTES: usize = 1024 * 1024;
+const READER_CHANNEL_CAPACITY: usize = 1;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DesktopEventStreamConfig {
@@ -198,12 +208,14 @@ enum EventDeliveryPolicy {
     Passthrough,
 }
 
+#[derive(Debug)]
 enum OpenStreamErrorKind {
     Unauthorized,
     Http,
     Transport,
 }
 
+#[derive(Debug)]
 struct OpenStreamError {
     kind: OpenStreamErrorKind,
     message: String,
@@ -213,6 +225,7 @@ struct OpenStreamError {
 #[derive(Default)]
 struct PendingBatch {
     events: Vec<PendingEntry>,
+    estimated_bytes: usize,
 }
 
 impl DesktopEventTransportManager {
@@ -445,7 +458,7 @@ fn snapshot_superseded_delta_scope(event: &Value) -> Option<String> {
     ))
 }
 
-fn append_delta(target: &mut Value, event: &Value) {
+fn append_delta(target: &mut Value, event: &Value) -> bool {
     let next_delta = coalesced_payload_event(event)
         .get("properties")
         .and_then(|value| value.get("delta"))
@@ -457,9 +470,39 @@ fn append_delta(target: &mut Value, event: &Value) {
         .and_then(Value::as_object_mut)
         .and_then(|props| props.get_mut("delta"))
     {
-        let combined = existing_delta.as_str().unwrap_or_default().to_string() + next_delta;
+        let existing = existing_delta.as_str().unwrap_or_default();
+        let Some(combined_len) = existing.len().checked_add(next_delta.len()) else {
+            return false;
+        };
+        if combined_len > MAX_COALESCED_DELTA_BYTES {
+            return false;
+        }
+
+        let mut combined = String::with_capacity(combined_len);
+        combined.push_str(existing);
+        combined.push_str(next_delta);
         *existing_delta = Value::String(combined);
     }
+
+    true
+}
+
+fn serialized_value_bytes(value: &Value) -> usize {
+    struct Counter(usize);
+
+    impl std::io::Write for Counter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 = self.0.saturating_add(bytes.len());
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut counter = Counter(0);
+    serde_json::to_writer(&mut counter, value).map_or(usize::MAX, |_| counter.0)
 }
 
 fn coalesced_payload_event_mut(event: &mut Value) -> Option<&mut serde_json::Map<String, Value>> {
@@ -475,7 +518,10 @@ fn status_key(event: &Value) -> Option<String> {
         "instance.eventStatus" => Some(format!(
             "{}:{}",
             coalesced_instance_id(event),
-            event.get("status").and_then(Value::as_str).unwrap_or_default()
+            event
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
         )),
         "session.status" => snapshot_key(event),
         _ => None,

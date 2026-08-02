@@ -127,6 +127,7 @@ describe("handleWorktreeReady", () => {
       await Promise.resolve()
 
       assert.equal(requestCount, 2)
+      assert.deepEqual(getWorktrees(instanceId).map((worktree) => worktree.slug), ["root"])
 
       resolveReload({
         isGitRepo: true,
@@ -138,6 +139,40 @@ describe("handleWorktreeReady", () => {
       await reload
 
       assert.deepEqual(getWorktrees(instanceId).map((worktree) => worktree.slug), ["root", "feature"])
+    } finally {
+      serverApi.fetchWorktrees = originalFetchWorktrees
+    }
+  })
+
+  it("does not let an aborted waiter expose an older request to overwrite a newer reload", async () => {
+    const instanceId = "instance-aborted-waiter"
+    const originalFetchWorktrees = serverApi.fetchWorktrees
+    const requests: Array<(value: Awaited<ReturnType<typeof serverApi.fetchWorktrees>>) => void> = []
+    serverApi.fetchWorktrees = () => new Promise((resolve) => requests.push(resolve))
+
+    try {
+      const first = reloadWorktrees(instanceId)
+      await Promise.resolve()
+      const controller = new AbortController()
+      const aborted = reloadWorktrees(instanceId, controller.signal)
+      controller.abort(new Error("reload timed out"))
+      await assert.rejects(aborted, /reload timed out/)
+
+      const latest = reloadWorktrees(instanceId)
+      await Promise.resolve()
+      await Promise.resolve()
+      requests[1]({
+        isGitRepo: true,
+        worktrees: [{ slug: "new", directory: "/new", kind: "worktree" }],
+      })
+      await latest
+      requests[0]({
+        isGitRepo: true,
+        worktrees: [{ slug: "old", directory: "/old", kind: "worktree" }],
+      })
+      await first
+
+      assert.deepEqual(getWorktrees(instanceId).map((worktree) => worktree.slug), ["new"])
     } finally {
       serverApi.fetchWorktrees = originalFetchWorktrees
     }

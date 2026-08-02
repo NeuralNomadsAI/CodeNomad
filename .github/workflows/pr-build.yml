@@ -104,11 +104,14 @@ jobs:
       - name: Test changed runnable UI behavior
         run: >-
           node --import tsx --test
+          packages/ui/src/components/prompt-input/submitPrompt.test.ts
           packages/ui/src/components/tool-call/diagnostics.test.ts
           packages/ui/src/components/session-list-visibility.test.ts
           packages/ui/src/lib/hooks/use-app-session-capture.test.ts
           packages/ui/src/lib/global-cache.test.ts
           packages/ui/src/lib/message-selection-position.test.ts
+          packages/ui/src/lib/native/desktop-events-reconnect.test.ts
+          packages/ui/src/lib/opencode-api.test.ts
           packages/ui/src/lib/session-memory-budget.test.ts
           packages/ui/src/lib/session-search.test.ts
           packages/ui/src/lib/trailing-resync.test.ts
@@ -124,6 +127,8 @@ jobs:
           packages/ui/src/stores/commands.test.ts
           packages/ui/src/stores/delta-buffer.test.ts
           packages/ui/src/stores/instances-restore-cancellation.test.ts
+          packages/ui/src/stores/permission-replies.test.ts
+          packages/ui/src/stores/request-locations.test.ts
           packages/ui/src/stores/message-v2/message-hydration-authority.test.ts
           packages/ui/src/stores/message-v2/instance-store.test.ts
           packages/ui/src/stores/session-generation-recovery.test.ts
@@ -142,6 +147,10 @@ jobs:
           packages/ui/src/components/tool-call/utils.test.ts
           packages/ui/src/lib/sse-manager-generation.test.ts
           packages/ui/src/stores/session-state-purge.test.ts
+          packages/ui/src/stores/instances-reconnect-resync.test.ts
+          packages/ui/src/stores/session-revision-recovery.test.ts
+          packages/ui/src/stores/session-actions-delivery.test.ts
+          packages/ui/src/components/virtual-follow-behavior.test.ts
 
       - name: Test server
         run: node --import tsx --test "packages/server/src/**/*.test.ts"

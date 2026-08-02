@@ -76,6 +76,13 @@ export function setVisibleSessionMemory(instanceId: string, sessionId: string, i
   scheduleSessionMemorySweep()
 }
 
+export function getVisibleSessionMemoryIds(instanceId: string): string[] {
+  const prefix = `${instanceId}\u0000`
+  const result: string[] = []
+  for (const key of visibleLeases.keys()) if (key.startsWith(prefix)) result.push(key.slice(prefix.length))
+  return result
+}
+
 export function evictResidentSessionMessages(instanceId: string, sessionId: string): boolean {
   const store = messageStoreBus.getInstance(instanceId)
   const status = sessions().get(instanceId)?.get(sessionId)?.status

@@ -18,6 +18,7 @@ import { useSpeech } from "../lib/hooks/use-speech"
 import { createFollowScroll } from "../lib/follow-scroll"
 import { inferReasoningDurationMs } from "../lib/message-timing"
 import type { SessionSearchMatch } from "../lib/session-search"
+import { iterateTextSearchOccurrences } from "../lib/session-search-matches"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
 import { copyToClipboard } from "../lib/clipboard"
 import SpeechActionButton from "./speech-action-button"
@@ -208,8 +209,8 @@ function getPartIdForSearchContainer(container: HTMLElement): string | undefined
 
 function applySearchMarks(root: HTMLElement, query: string, activeMatch?: SessionSearchMatch | null, scrollActive = false) {
   removeSearchMarks(root)
-  const normalizedQuery = query.trim().toLocaleLowerCase()
-  if (!normalizedQuery) return
+  const needle = query.trim()
+  if (!needle) return
 
   const containers = Array.from(root.querySelectorAll<HTMLElement>(".message-text, .tool-call, .message-reasoning-text"))
   let occurrenceInActivePart = 0
@@ -223,7 +224,7 @@ function applySearchMarks(root: HTMLElement, query: string, activeMatch?: Sessio
         const parent = node.parentElement
         if (!parent) return NodeFilter.FILTER_REJECT
         if (parent.closest("button, input, textarea, select, mark.session-search-match")) return NodeFilter.FILTER_REJECT
-        if (!node.nodeValue || !node.nodeValue.toLocaleLowerCase().includes(normalizedQuery)) return NodeFilter.FILTER_REJECT
+        if (!node.nodeValue || iterateTextSearchOccurrences(node.nodeValue, needle).next().done) return NodeFilter.FILTER_REJECT
         return NodeFilter.FILTER_ACCEPT
       },
     })
@@ -235,25 +236,22 @@ function applySearchMarks(root: HTMLElement, query: string, activeMatch?: Sessio
 
     for (const textNode of textNodes) {
       const original = textNode.nodeValue ?? ""
-      const lower = original.toLocaleLowerCase()
       const fragment = document.createDocumentFragment()
       let cursor = 0
-      while (cursor < original.length) {
-        const index = lower.indexOf(normalizedQuery, cursor)
-        if (index === -1) break
-        if (index > cursor) {
-          fragment.appendChild(document.createTextNode(original.slice(cursor, index)))
+      for (const occurrence of iterateTextSearchOccurrences(original, needle)) {
+        if (occurrence.start > cursor) {
+          fragment.appendChild(document.createTextNode(original.slice(cursor, occurrence.start)))
         }
         const mark = document.createElement("mark")
         const isActive = Boolean(canContainActiveMatch && activeMatch && occurrenceInActivePart === activeMatch.occurrence)
         mark.className = isActive ? "session-search-match session-search-match-active" : "session-search-match"
-        mark.textContent = original.slice(index, index + normalizedQuery.length)
+        mark.textContent = original.slice(occurrence.start, occurrence.end)
         fragment.appendChild(mark)
         if (canContainActiveMatch) {
           if (isActive) activeMark = mark
           occurrenceInActivePart += 1
         }
-        cursor = index + normalizedQuery.length
+        cursor = occurrence.end
       }
       if (cursor < original.length) {
         fragment.appendChild(document.createTextNode(original.slice(cursor)))

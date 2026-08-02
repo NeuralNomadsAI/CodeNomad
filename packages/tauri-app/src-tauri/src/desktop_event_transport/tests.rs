@@ -113,6 +113,48 @@ fn coalesces_message_part_delta_events() {
 }
 
 #[test]
+fn splits_coalesced_delta_run_before_size_overflow_without_losing_content() {
+    let mut pending = PendingBatch::default();
+    let mut stats = fresh_stats();
+    let first = "a".repeat(MAX_COALESCED_DELTA_BYTES / 2);
+    let second = "b".repeat(MAX_COALESCED_DELTA_BYTES - first.len());
+    pending.push(delta_event(&first), &mut stats);
+    pending.push(delta_event(&second), &mut stats);
+
+    let PendingEntry::Delta { event, .. } = &pending.events[0] else {
+        panic!("expected coalesced delta");
+    };
+    assert_eq!(
+        event["event"]["properties"]["delta"].as_str().map(str::len),
+        Some(MAX_COALESCED_DELTA_BYTES)
+    );
+    pending.push(delta_event("b"), &mut stats);
+
+    let events = pending.take_events();
+    assert_eq!(events.len(), 2);
+    assert_eq!(
+        events[0]["event"]["properties"]["delta"]
+            .as_str()
+            .map(str::len),
+        Some(MAX_COALESCED_DELTA_BYTES)
+    );
+    assert_eq!(events[1]["event"]["properties"]["delta"], "b");
+    assert_eq!(stats.delta_coalesces, 1);
+}
+
+#[test]
+fn tracks_cumulative_batch_bytes_for_flush_budget() {
+    let mut pending = PendingBatch::default();
+    let mut stats = fresh_stats();
+    let chunk = "x".repeat(MAX_BATCH_BYTES / 2);
+
+    pending.push(delta_event_for("part-1", &chunk), &mut stats);
+    pending.push(delta_event_for("part-2", &chunk), &mut stats);
+
+    assert!(pending.pending_bytes() >= MAX_BATCH_BYTES);
+}
+
+#[test]
 fn does_not_coalesce_events_across_instance_streams() {
     let mut pending = PendingBatch::default();
     let mut stats = fresh_stats();
@@ -318,6 +360,7 @@ fn holds_single_delta_within_stream_window() {
             event: delta_event("Hello"),
             started_at: Instant::now(),
         }],
+        ..PendingBatch::default()
     };
 
     assert!(pending.should_hold_single_delta(Instant::now()));
@@ -333,6 +376,7 @@ fn flushes_single_delta_after_stream_window() {
             event: delta_event("Hello"),
             started_at,
         }],
+        ..PendingBatch::default()
     };
 
     assert!(!pending.should_hold_single_delta(Instant::now()));

@@ -19,7 +19,8 @@ fn send_connection_pong(
         ))
         .json(&body);
 
-    let _ = attach_session_cookie(request, app, config).send();
+    let request = attach_session_cookie(request, app, config);
+    let _ = tauri::async_runtime::block_on(async { request.send().await });
 }
 
 pub(super) fn run_transport_loop(
@@ -224,16 +225,18 @@ fn consume_stream(
     stop: Arc<AtomicBool>,
     stats: &mut DesktopEventTransportStats,
 ) -> Option<String> {
-    let (tx, rx) = mpsc::sync_channel::<ReaderMessage>(4096);
+    let (tx, rx) = mpsc::sync_channel::<ReaderMessage>(READER_CHANNEL_CAPACITY);
+    let (reader_cancel_tx, reader_cancel_rx) = tokio::sync::oneshot::channel();
     let reader_stop = stop.clone();
     let reader_generation_atomic = generation_atomic.clone();
-    thread::spawn(move || {
+    let reader = thread::spawn(move || {
         read_sse(
             response,
             tx,
             reader_stop,
             reader_generation_atomic,
             generation,
+            reader_cancel_rx,
         )
     });
 
@@ -241,9 +244,9 @@ fn consume_stream(
     let mut sequence = 0_u64;
     let mut last_reader_activity = Instant::now();
 
-    loop {
+    let disconnect_reason = loop {
         if stop.load(Ordering::SeqCst) || !generation_matches(generation_atomic, generation) {
-            return Some("stopped".to_string());
+            break Some("stopped".to_string());
         }
 
         match rx.recv_timeout(Duration::from_millis(FLUSH_INTERVAL_MS)) {
@@ -259,7 +262,9 @@ fn consume_stream(
                 stats.raw_events = stats.raw_events.saturating_add(1);
 
                 pending.push(event, stats);
-                if pending.pending_len() >= MAX_BATCH_EVENTS {
+                if pending.pending_len() >= MAX_BATCH_EVENTS
+                    || pending.pending_bytes() >= MAX_BATCH_BYTES
+                {
                     emit_pending_batch(
                         app,
                         generation,
@@ -281,7 +286,7 @@ fn consume_stream(
                         stats,
                     );
                 }
-                return reason;
+                break reason;
             }
             Err(RecvTimeoutError::Timeout) => {
                 if last_reader_activity.elapsed() >= Duration::from_millis(STREAM_STALL_TIMEOUT_MS)
@@ -297,7 +302,7 @@ fn consume_stream(
                             stats,
                         );
                     }
-                    return Some("stream stalled".to_string());
+                    break Some("stream stalled".to_string());
                 }
 
                 if !pending.is_empty() {
@@ -325,10 +330,15 @@ fn consume_stream(
                         stats,
                     );
                 }
-                return Some("reader disconnected".to_string());
+                break Some("reader disconnected".to_string());
             }
         }
-    }
+    };
+
+    drop(rx);
+    let _ = reader_cancel_tx.send(());
+    let _ = reader.join();
+    disconnect_reason
 }
 
 fn emit_pending_batch(

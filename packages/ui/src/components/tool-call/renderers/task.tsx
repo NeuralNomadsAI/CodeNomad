@@ -1,7 +1,7 @@
 import { For, Index, Show, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk/v2"
 import type { ToolRenderer } from "../types"
-import { ensureMarkdownContent, getDefaultToolAction, getToolIcon, getToolName, limitToolOutputForRender, readToolStatePayload } from "../utils"
+import { ensureMarkdownContent, getDefaultToolAction, getToolIcon, getToolName, limitToolOutputForRender, limitToolTitleForRender, readToolStatePayload } from "../utils"
 import { messageStoreBus } from "../../../stores/message-v2/bus"
 import { activeInstanceId } from "../../../stores/instances"
 import { loadMessages } from "../../../stores/session-api"
@@ -500,8 +500,8 @@ export const taskRenderer: ToolRenderer = {
                       <For each={legacyItems()}>
                         {(item) => {
                           const icon = getToolIcon(item.tool)
-                          const description = describeToolTitle(item)
-                          const toolLabel = getToolName(item.tool)
+                          const description = limitToolTitleForRender(describeToolTitle(item))
+                          const toolLabel = limitToolTitleForRender(getToolName(item.tool))
                           const status = normalizeStatus(item.status ?? item.state?.status)
                           const statusIcon = summarizeStatusIcon(status)
                           const statusKey = summarizeStatusLabel(status)

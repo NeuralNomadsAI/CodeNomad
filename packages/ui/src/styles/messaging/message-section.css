@@ -381,6 +381,15 @@
   border-top: 1px solid var(--border-base);
 }
 
+.message-search-preview {
+  padding: 0.625rem 0.75rem 0;
+  border-top: 1px solid var(--border-base);
+  margin-top: 0.625rem;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  overflow-wrap: anywhere;
+}
+
 .message-stream-block[data-search-result="true"] {
   border-radius: 0.75rem;
 }

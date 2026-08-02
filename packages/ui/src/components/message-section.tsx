@@ -7,7 +7,7 @@ import MessageBlock from "./message-block"
 import { getMessageAnchorId } from "./message-anchors"
 import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./message-timeline"
 import VirtualFollowList, { type VirtualExplicitBottomPinIntent, type VirtualFollowListApi, type VirtualFollowListState, type VirtualFollowScrollSnapshot } from "./virtual-follow-list"
-import { isScrollRestoreGenerationCurrent, isSnapshotAutoFollowing } from "./virtual-follow-behavior"
+import { canRestoreMessageScroll, isScrollRestoreGenerationCurrent, isSnapshotAutoFollowing, shouldCancelPendingMessageScrollRestore } from "./virtual-follow-behavior"
 import { useConfig } from "../stores/preferences"
 import { getSessionInfo } from "../stores/sessions"
 import { messageStoreBus } from "../stores/message-v2/bus"
@@ -22,10 +22,12 @@ import { partHasRenderableText } from "../types/message"
 import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
 import { getPartCharCount } from "../lib/token-utils"
 import { getMessageSelectionActionPosition } from "../lib/message-selection-position"
-import { buildSessionSearchMatches } from "../lib/session-search"
-import type { SessionSearchMatch } from "../lib/session-search"
+import { createSessionSearchPager, findLastSessionSearchPage, retainSessionSearchPage, SESSION_SEARCH_PAGE_SIZE } from "../lib/session-search"
+import type { SessionSearchMatch, SessionSearchPager, SessionSearchResult } from "../lib/session-search"
 import { resolveThinkingExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
+import { resolveToolRenderer } from "./tool-call/renderers"
 import { collectToolDeletionCompanionPartIds, executeBulkDeletionPlan } from "./tool-deletion-companions"
+import { getLogger } from "../lib/logger"
 
 const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 const QUOTE_SELECTION_MAX_LENGTH = 2000
@@ -33,11 +35,13 @@ const STREAMING_TEXT_HOLD_TOP_THRESHOLD_PX = 8
 const SEARCH_DEBOUNCE_MS = 250
 const SEARCH_MIN_CHARS = 3
 const OPEN_SESSION_SEARCH_EVENT = "codenomad:open-session-search"
+const log = getLogger("session")
 
 export interface MessageSectionProps {
   instanceId: string
   sessionId: string
   loading?: boolean
+  loadComplete?: boolean
   loadError?: string | null
   emptyStateVariant?: "messages" | "no-session"
   onRevert?: (messageId: string) => void
@@ -161,7 +165,23 @@ export default function MessageSection(props: MessageSectionProps) {
   const [searchedQuery, setSearchedQuery] = createSignal("")
   const [isSearchPending, setIsSearchPending] = createSignal(false)
   const [searchMatches, setSearchMatches] = createSignal<SessionSearchMatch[]>([])
+  const [searchTotalMatches, setSearchTotalMatches] = createSignal<number | null>(0)
+  const [searchPageOffset, setSearchPageOffset] = createSignal(0)
+  const [searchHasMore, setSearchHasMore] = createSignal(false)
+  const [searchPageIndex, setSearchPageIndex] = createSignal(0)
   const [activeSearchIndex, setActiveSearchIndex] = createSignal(0)
+  let searchGeneration = 0
+  let searchAbortController: AbortController | null = null
+  let searchPager: SessionSearchPager | null = null
+  let searchPages = new Map<number, SessionSearchResult>()
+  let searchPagerNextPageIndex = 0
+  let searchLastPageIndex: number | null = null
+  let searchKnownTotalMatches: number | null = null
+  let searchRunQuery = ""
+  let searchRunIncludeThinking = false
+  let searchRefreshTimeout: number | undefined
+  let searchRefreshRequested = false
+  let lastCompletedSearchRevision = -1
   let deleteMenuRef: HTMLDivElement | undefined
   let deleteMenuButtonRef: HTMLButtonElement | undefined
   let searchInputRef: HTMLInputElement | undefined
@@ -721,6 +741,12 @@ export default function MessageSection(props: MessageSectionProps) {
     lastGoodScrollSnapshots.set(sessionId, snapshot)
   }
 
+  function cancelPendingScrollRestoreFromUser() {
+    if (!shouldCancelPendingMessageScrollRestore(didRestoreScroll(), restoringScrollSnapshot)) return
+    scrollRestoreGeneration += 1
+    setDidRestoreScroll(true)
+  }
+
   createEffect(
     on(
       () => props.sessionId,
@@ -884,10 +910,18 @@ export default function MessageSection(props: MessageSectionProps) {
     const api = listApi()
     if (!element || !api) return
     if (!isActive()) return
-    if (visibleMessageIds().length === 0) return
+    const visibleIds = visibleMessageIds()
+    if (visibleIds.length === 0) return
     if (didRestoreScroll()) return
 
     const snapshot = store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE)
+    const failedLoadAnchorAvailable = !snapshot?.anchorKey || visibleIds.includes(snapshot.anchorKey)
+    if (!canRestoreMessageScroll(
+      Boolean(props.loading),
+      props.loadComplete,
+      Boolean(props.loadError),
+      failedLoadAnchorAvailable,
+    )) return
     if (!snapshot) {
       api.setAutoScroll(true)
       api.scrollToBottom({ immediate: true })
@@ -944,19 +978,164 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   function closeSearch() {
+    cancelSearchRun()
     setIsSearchOpen(false)
     setSearchQuery("")
     setDebouncedSearchQuery("")
     setSearchedQuery("")
     setIsSearchPending(false)
     setSearchMatches([])
+    setSearchTotalMatches(0)
+    setSearchPageOffset(0)
+    setSearchHasMore(false)
+    setSearchPageIndex(0)
     setActiveSearchIndex(0)
   }
 
+  function cancelSearchRun() {
+    searchGeneration += 1
+    searchAbortController?.abort()
+    searchAbortController = null
+    searchPager = null
+    searchPages.clear()
+    searchPagerNextPageIndex = 0
+    searchLastPageIndex = null
+    searchKnownTotalMatches = null
+    searchRunQuery = ""
+    if (searchRefreshTimeout !== undefined) window.clearTimeout(searchRefreshTimeout)
+    searchRefreshTimeout = undefined
+    searchRefreshRequested = false
+  }
+
+  function scheduleSearchRefresh() {
+    if (searchRefreshTimeout !== undefined) window.clearTimeout(searchRefreshTimeout)
+    searchRefreshTimeout = window.setTimeout(() => {
+      searchRefreshTimeout = undefined
+      if (isSearchPending()) {
+        searchRefreshRequested = true
+        return
+      }
+      const query = debouncedSearchQuery()
+      if (query.trim().length < SEARCH_MIN_CHARS) return
+      void startSearch(query, Boolean(preferences().showThinkingBlocks))
+    }, SEARCH_DEBOUNCE_MS)
+  }
+
+  async function startSearch(query: string, includeThinking: boolean) {
+    cancelSearchRun()
+    const generation = searchGeneration
+    const controller = new AbortController()
+    searchAbortController = controller
+    searchRunQuery = query
+    searchRunIncludeThinking = includeThinking
+    resetSearchPager()
+    searchPages.clear()
+    await loadSearchPage(query, generation, 0, 0)
+  }
+
+  function resetSearchPager() {
+    const controller = searchAbortController
+    if (!controller) return
+    searchPager = createSessionSearchPager({
+      store: store(),
+      sessionId: props.sessionId,
+      query: searchRunQuery,
+      includeThinking: searchRunIncludeThinking,
+      resolveToolSearchText: (context) => resolveToolRenderer(context.toolName).getSearchText?.(context),
+      limit: SESSION_SEARCH_PAGE_SIZE,
+      signal: controller.signal,
+    })
+    searchPagerNextPageIndex = 0
+  }
+
+  async function readSearchPage(pageIndex: number): Promise<SessionSearchResult> {
+    const cached = searchPages.get(pageIndex)
+    if (cached) {
+      retainSessionSearchPage(searchPages, pageIndex, cached)
+      return cached
+    }
+    if (pageIndex < searchPagerNextPageIndex) resetSearchPager()
+    if (!searchPager) throw new Error("Session search pager unavailable")
+
+    while (searchPagerNextPageIndex <= pageIndex) {
+      const currentIndex = searchPagerNextPageIndex
+      const result = await searchPager.nextPage()
+      retainSessionSearchPage(searchPages, currentIndex, result)
+      searchPagerNextPageIndex += 1
+      if (result.totalMatches !== null) searchKnownTotalMatches = result.totalMatches
+      if (!result.hasMore) searchLastPageIndex = currentIndex
+      if (!result.hasMore && currentIndex < pageIndex) throw new Error("Session search page unavailable")
+    }
+    return searchPages.get(pageIndex)!
+  }
+
+  async function loadSearchPage(query: string, generation: number, requestedPage: number | "last", targetIndex: number) {
+    const startedRevision = store().getSessionRevision(props.sessionId)
+    const controller = searchAbortController
+    if (!controller || !searchPager) return
+    setIsSearchPending(true)
+
+    try {
+      const resolved = requestedPage === "last"
+        ? searchLastPageIndex === null
+          ? await findLastSessionSearchPage(readSearchPage)
+          : { pageIndex: searchLastPageIndex, result: await readSearchPage(searchLastPageIndex) }
+        : { pageIndex: requestedPage, result: await readSearchPage(requestedPage) }
+      if (generation !== searchGeneration || controller.signal.aborted) return
+      const { pageIndex, result } = resolved
+      setSearchMatches(result.matches)
+      setSearchTotalMatches(result.totalMatches ?? searchKnownTotalMatches)
+      setSearchPageOffset(result.offset)
+      setSearchHasMore(result.hasMore)
+      setSearchPageIndex(pageIndex)
+      setSearchedQuery(query)
+      setActiveSearchIndex(Math.min(Math.max(targetIndex, 0), Math.max(result.matches.length - 1, 0)))
+      lastCompletedSearchRevision = startedRevision
+    } catch (error) {
+      if (generation !== searchGeneration || controller.signal.aborted || (error as Error)?.name === "AbortError") return
+      log.error("Failed to search session", error)
+      lastCompletedSearchRevision = store().getSessionRevision(props.sessionId)
+      searchRefreshRequested = false
+      setSearchMatches([])
+      setSearchTotalMatches(0)
+      setSearchPageOffset(0)
+      setSearchHasMore(false)
+      setSearchPageIndex(0)
+      setSearchedQuery(query)
+      setActiveSearchIndex(0)
+    } finally {
+      if (generation === searchGeneration) {
+        setIsSearchPending(false)
+        if (searchRefreshRequested || store().getSessionRevision(props.sessionId) !== lastCompletedSearchRevision) {
+          searchRefreshRequested = false
+          scheduleSearchRefresh()
+        }
+      }
+    }
+  }
+
   function moveSearchMatch(direction: 1 | -1) {
-    const count = searchMatches().length
-    if (count === 0) return
-    setActiveSearchIndex((index) => (index + direction + count) % count)
+    const matches = searchMatches()
+    if (matches.length === 0 || isSearchPending()) return
+    const target = activeSearchIndex() + direction
+    if (target >= 0 && target < matches.length) {
+      setActiveSearchIndex(target)
+      return
+    }
+    const page = searchPageIndex()
+    if (direction === 1 && searchHasMore()) {
+      void loadSearchPage(searchedQuery(), searchGeneration, page + 1, 0)
+      return
+    }
+    if (direction === -1 && page > 0) {
+      void loadSearchPage(searchedQuery(), searchGeneration, page - 1, Number.MAX_SAFE_INTEGER)
+      return
+    }
+    if (direction === 1) {
+      void loadSearchPage(searchedQuery(), searchGeneration, 0, 0)
+      return
+    }
+    void loadSearchPage(searchedQuery(), searchGeneration, "last", Number.MAX_SAFE_INTEGER)
   }
 
   function isSelectionWithinStream(range: Range | null) {
@@ -1277,12 +1456,18 @@ export default function MessageSection(props: MessageSectionProps) {
 
   createEffect(() => {
     const query = searchQuery()
+    cancelSearchRun()
+    lastCompletedSearchRevision = -1
     if (query.trim().length < SEARCH_MIN_CHARS) {
       setDebouncedSearchQuery("")
       setActiveSearchIndex(0)
       setSearchedQuery("")
       setIsSearchPending(false)
       setSearchMatches([])
+      setSearchTotalMatches(0)
+      setSearchPageOffset(0)
+      setSearchHasMore(false)
+      setSearchPageIndex(0)
       return
     }
     setIsSearchPending(true)
@@ -1293,7 +1478,6 @@ export default function MessageSection(props: MessageSectionProps) {
   })
 
   createEffect(() => {
-    sessionRevision()
     const query = debouncedSearchQuery()
     const includeThinking = Boolean(preferences().showThinkingBlocks)
     if (query.trim().length < SEARCH_MIN_CHARS) {
@@ -1302,18 +1486,19 @@ export default function MessageSection(props: MessageSectionProps) {
 
     setIsSearchPending(true)
     const frame = requestAnimationFrame(() => {
-      const matches = buildSessionSearchMatches({
-        store: store(),
-        sessionId: props.sessionId,
-        query,
-        includeThinking,
-      })
-      setSearchMatches(matches)
-      setSearchedQuery(query)
-      setActiveSearchIndex(0)
-      setIsSearchPending(false)
+      void startSearch(query, includeThinking)
     })
-    onCleanup(() => cancelAnimationFrame(frame))
+    onCleanup(() => {
+      cancelAnimationFrame(frame)
+      cancelSearchRun()
+    })
+  })
+
+  createEffect(() => {
+    const revision = sessionRevision()
+    const query = debouncedSearchQuery()
+    if (query.trim().length < SEARCH_MIN_CHARS || lastCompletedSearchRevision < 0) return
+    if (revision !== lastCompletedSearchRevision) scheduleSearchRefresh()
   })
 
   createEffect(() => {
@@ -1456,6 +1641,7 @@ export default function MessageSection(props: MessageSectionProps) {
             clearQuoteSelection()
             persistMessageScrollSnapshot()
           }}
+          onUserScrollIntent={cancelPendingScrollRestoreFromUser}
           onMouseUp={() => handleStreamMouseUp()}
           onClick={(e) => {
             if (selectedTimelineIds().size === 0) return
@@ -1528,7 +1714,10 @@ export default function MessageSection(props: MessageSectionProps) {
                   <button
                     type="button"
                     class="message-scroll-button"
-                    onPointerUp={(event) => runScrollControlAction(event, () => api.scrollToTop())}
+                    onPointerUp={(event) => runScrollControlAction(event, () => {
+                      cancelPendingScrollRestoreFromUser()
+                      api.scrollToTop()
+                    })}
                     aria-label={t("messageSection.scroll.toFirstAriaLabel")}
                   >
                     <span class="message-scroll-icon" aria-hidden="true">
@@ -1540,7 +1729,10 @@ export default function MessageSection(props: MessageSectionProps) {
                   <button
                     type="button"
                     class="message-scroll-button"
-                    onPointerUp={(event) => runScrollControlAction(event, () => api.scrollToBottom())}
+                    onPointerUp={(event) => runScrollControlAction(event, () => {
+                      cancelPendingScrollRestoreFromUser()
+                      api.scrollToBottom()
+                    })}
                     aria-label={t("messageSection.scroll.toLatestAriaLabel")}
                   >
                     <span class="message-scroll-icon" aria-hidden="true">
@@ -1678,15 +1870,17 @@ export default function MessageSection(props: MessageSectionProps) {
                           : searchMatches().length === 0
                             ? t("messageSection.search.count.none")
                             : t("messageSection.search.count.matches", {
-                                current: String(activeSearchIndex() + 1),
-                                total: String(searchMatches().length),
+                                current: String(searchPageOffset() + activeSearchIndex() + 1),
+                                total: searchTotalMatches() === null
+                                  ? `${searchPageOffset() + searchMatches().length + (searchHasMore() ? 1 : 0)}+`
+                                  : String(searchTotalMatches()),
                               })}
                       </span>
                       <button
                         type="button"
                         class="message-search-button"
                         onClick={() => moveSearchMatch(-1)}
-                        disabled={searchMatches().length === 0}
+                        disabled={searchMatches().length === 0 || isSearchPending()}
                         aria-label={t("messageSection.search.previousAriaLabel")}
                         title={t("messageSection.search.previousAriaLabel")}
                       >
@@ -1696,7 +1890,7 @@ export default function MessageSection(props: MessageSectionProps) {
                         type="button"
                         class="message-search-button"
                         onClick={() => moveSearchMatch(1)}
-                        disabled={searchMatches().length === 0}
+                        disabled={searchMatches().length === 0 || isSearchPending()}
                         aria-label={t("messageSection.search.nextAriaLabel")}
                         title={t("messageSection.search.nextAriaLabel")}
                       >
@@ -1718,6 +1912,9 @@ export default function MessageSection(props: MessageSectionProps) {
                   </Show>
                   <Show when={isSearchSettled() && searchMatches().length === 0}>
                     <div class="modal-empty-state message-search-empty">{t("messageSection.search.noVisibleMatches")}</div>
+                  </Show>
+                  <Show when={activeSearchMatch()?.preview}>
+                    {(preview) => <div class="message-search-preview" aria-live="polite">{preview()}</div>}
                   </Show>
                 </div>
               </Show>

@@ -56,19 +56,21 @@ export async function connectTauriWorkspaceEvents(
   bridge: DesktopEventTransportBridge = defaultDesktopEventTransportBridge,
 ): Promise<WorkspaceEventConnection> {
   let closed = false
-  let opened = false
+  let connected = false
   let expectedGeneration: number | null = null
   const notifyTerminalError = createTerminalErrorNotifier(callbacks)
-  const pendingBatches: WorkspaceEventBatchPayload[] = []
-  const pendingStatuses: DesktopEventTransportStatusPayload[] = []
+  const pendingEvents: Array<
+    | { type: "batch"; payload: WorkspaceEventBatchPayload }
+    | { type: "status"; payload: DesktopEventTransportStatusPayload }
+  > = []
 
   const matchesGeneration = (generation: number) => expectedGeneration === generation
 
   const handleBatchPayload = (payload: WorkspaceEventBatchPayload) => {
     if (!payload || !matchesGeneration(payload.generation)) return
 
-    if (!opened) {
-      opened = true
+    if (!connected) {
+      connected = true
       callbacks.onStatus?.("connected")
       callbacks.onOpen?.()
     }
@@ -86,9 +88,13 @@ export async function connectTauriWorkspaceEvents(
 
     callbacks.onStatus?.(mapDesktopEventTransportStatus(payload.state))
 
-    if (payload.state === "connected" && !opened) {
-      opened = true
-      callbacks.onOpen?.()
+    if (payload.state === "connected") {
+      if (!connected) {
+        connected = true
+        callbacks.onOpen?.()
+      }
+    } else {
+      connected = false
     }
 
     if (payload.state === "unauthorized") {
@@ -126,11 +132,9 @@ export async function connectTauriWorkspaceEvents(
 
   const flushPending = () => {
     if (expectedGeneration === null) return
-    for (const payload of pendingStatuses.splice(0, pendingStatuses.length)) {
-      handleStatusPayload(payload)
-    }
-    for (const payload of pendingBatches.splice(0, pendingBatches.length)) {
-      handleBatchPayload(payload)
+    for (const event of pendingEvents.splice(0, pendingEvents.length)) {
+      if (event.type === "status") handleStatusPayload(event.payload)
+      else handleBatchPayload(event.payload)
     }
   }
 
@@ -139,7 +143,7 @@ export async function connectTauriWorkspaceEvents(
     const payload = event.payload
     if (!payload) return
     if (expectedGeneration === null) {
-      pendingBatches.push(payload)
+      pendingEvents.push({ type: "batch", payload })
       return
     }
     handleBatchPayload(payload)
@@ -150,7 +154,7 @@ export async function connectTauriWorkspaceEvents(
     const payload = event.payload
     if (!payload) return
     if (expectedGeneration === null) {
-      pendingStatuses.push(payload)
+      pendingEvents.push({ type: "status", payload })
       return
     }
     handleStatusPayload(payload)

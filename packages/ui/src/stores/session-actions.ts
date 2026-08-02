@@ -10,7 +10,7 @@ import { updateSessionInfo } from "./message-v2/session-info"
 import { messageStoreBus } from "./message-v2/bus"
 import { removeMessagePartV2, removeMessageV2 } from "./message-v2/bridge"
 import { getLogger } from "../lib/logger"
-import { requestData } from "../lib/opencode-api"
+import { isDeliveryAmbiguousError, requestData } from "../lib/opencode-api"
 import { clearConversationPlaybackForSession } from "./conversation-speech"
 
 const log = getLogger("actions")
@@ -47,6 +47,10 @@ function uncertainDeliveryError(error: unknown): Error {
   ;(result as any).cause = error
   ;(result as any).suppressPromptRecovery = true
   return result
+}
+
+function classifyDeliveryError(error: unknown): unknown {
+  return isDeliveryAmbiguousError(error) ? uncertainDeliveryError(error) : error
 }
 
 function randomBase62(length: number): string {
@@ -240,14 +244,12 @@ async function sendMessage(
       )
       if (isInstanceRuntimeCurrent(instanceId, instance)) admission.complete()
     } catch (error) {
-      let verified = false
       for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
           const messages = await requestData<any[]>(
             client.session.messages({ sessionID: sessionId, ...workspacePayload }),
             "session.messages",
           )
-          verified = true
           if (messages.some((message) => message?.info?.id === messageId)) {
             if (isInstanceRuntimeCurrent(instanceId, instance)) admission.complete()
             return
@@ -263,7 +265,7 @@ async function sendMessage(
       }
       if (store.getMessage(messageId)?.isEphemeral) removeMessageV2(instanceId, messageId)
       if (isInstanceRuntimeCurrent(instanceId, instance)) admission.rollback()
-      throw verified ? error : uncertainDeliveryError(error)
+      throw classifyDeliveryError(error)
     }
   } catch (error) {
     log.error("Failed to send prompt", error)
@@ -327,7 +329,7 @@ async function executeCustomCommand(
     if (isInstanceRuntimeCurrent(instanceId, instance)) admission.complete()
   } catch (error) {
     if (isInstanceRuntimeCurrent(instanceId, instance)) admission.rollback()
-    throw uncertainDeliveryError(error)
+    throw classifyDeliveryError(error)
   }
 }
 
@@ -362,7 +364,7 @@ async function runShellCommand(instanceId: string, sessionId: string, command: s
     if (isInstanceRuntimeCurrent(instanceId, instance)) admission.complete()
   } catch (error) {
     if (isInstanceRuntimeCurrent(instanceId, instance)) admission.rollback()
-    throw uncertainDeliveryError(error)
+    throw classifyDeliveryError(error)
   }
 }
 

@@ -1,5 +1,5 @@
 export class TrailingResyncCoordinator {
-  private readonly tails = new Map<string, Promise<void>>()
+  private readonly active = new Map<string, { dirty: boolean; promise: Promise<void> }>()
 
   constructor(
     private readonly run: (key: string) => Promise<void>,
@@ -7,19 +7,27 @@ export class TrailingResyncCoordinator {
   ) {}
 
   request(key: string): Promise<void> {
-    const previous = this.tails.get(key) ?? Promise.resolve()
-    const task = previous.then(async () => {
-      try {
-        await this.run(key)
-      } catch (error) {
-        this.onError(key, error)
-      }
+    const existing = this.active.get(key)
+    if (existing) {
+      existing.dirty = true
+      return existing.promise
+    }
+
+    const state = { dirty: false, promise: undefined as unknown as Promise<void> }
+    this.active.set(key, state)
+    state.promise = (async () => {
+      do {
+        state.dirty = false
+        try {
+          await this.run(key)
+        } catch (error) {
+          this.onError(key, error)
+        }
+      } while (state.dirty)
+    })().finally(() => {
+      if (this.active.get(key) === state) this.active.delete(key)
     })
-    const tracked = task.finally(() => {
-      if (this.tails.get(key) === tracked) this.tails.delete(key)
-    })
-    this.tails.set(key, tracked)
-    return tracked
+    return state.promise
   }
 }
 

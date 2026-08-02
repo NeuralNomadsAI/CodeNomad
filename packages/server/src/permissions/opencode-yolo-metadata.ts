@@ -62,14 +62,18 @@ export function createOpencodeYoloPersistence(
     sessionId: string,
     workspaceId: string | undefined,
     update: (metadata: unknown) => Metadata,
+    signal?: AbortSignal,
   ): Promise<Metadata> => {
     const writeKey = sessionId
     const write = (writes.get(writeKey) ?? Promise.resolve()).catch(() => undefined).then(async () => {
+      throwIfAborted(signal)
       const client = clientFor(instanceId)
       const scope = { sessionID: sessionId, ...(workspaceId ? { workspace: workspaceId } : {}) }
-      const { data: session } = await client.session.get(scope, { throwOnError: true })
+      const options = { throwOnError: true, ...(signal ? { signal } : {}) } as const
+      const { data: session } = await client.session.get(scope, options)
+      throwIfAborted(signal)
       const metadata = update(session.metadata)
-      const { data } = await client.session.update({ ...scope, metadata }, { throwOnError: true })
+      const { data } = await client.session.update({ ...scope, metadata }, options)
       return record(data?.metadata ?? metadata)
     })
     const settled = write.finally(() => {
@@ -79,10 +83,11 @@ export function createOpencodeYoloPersistence(
     return settled
   }
   return {
-    async loadSessions(instanceId): Promise<PersistedAutoAcceptSession[]> {
+    async loadSessions(instanceId, signal): Promise<PersistedAutoAcceptSession[]> {
+      throwIfAborted(signal)
       const { data } = await clientFor(instanceId).session.list(
         { scope: "project", limit: SESSION_LIST_LIMIT },
-        { throwOnError: true },
+        { throwOnError: true, signal },
       )
       return (data ?? []).map((session) => ({
         id: session.id,
@@ -92,9 +97,9 @@ export function createOpencodeYoloPersistence(
         yoloEnabled: hasPersistedYolo(session.id, session.metadata),
       }))
     },
-    persist(instanceId, rootSessionId, enabled, workspaceId): Promise<void> {
+    persist(instanceId, rootSessionId, enabled, workspaceId, signal): Promise<void> {
       return updateMetadata(instanceId, rootSessionId, workspaceId,
-        (metadata) => mergePersistedYolo(metadata, rootSessionId, enabled)).then(() => undefined)
+        (metadata) => mergePersistedYolo(metadata, rootSessionId, enabled), signal).then(() => undefined)
     },
     async hasProjectSession(instanceId, sessionId): Promise<boolean> {
       const { data } = await clientFor(instanceId).session.list(
@@ -108,4 +113,8 @@ export function createOpencodeYoloPersistence(
         (metadata) => mergePersistedWorktreeSlug(metadata, worktreeSlug))
     },
   }
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw signal.reason ?? new DOMException("Operation aborted", "AbortError")
 }

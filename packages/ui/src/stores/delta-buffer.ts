@@ -98,6 +98,25 @@ export function setFlushCallback(
   flushCallback = callback
 }
 
+export function hasPendingDeltasForMessage(instanceId: string, messageId: string): boolean {
+  const prefix = `${instanceId}:${messageId}:`
+  for (const key of pendingDeltas.keys()) if (key.startsWith(prefix)) return true
+  return false
+}
+
+export function getPendingDeltasForMessage(
+  instanceId: string,
+  messageId: string,
+): Array<{ partId: string; field: string; delta: string }> {
+  const result: Array<{ partId: string; field: string; delta: string }> = []
+  for (const pending of pendingDeltas.values()) {
+    if (pending.instanceId === instanceId && pending.messageId === messageId) {
+      result.push({ partId: pending.partId, field: pending.field, delta: pending.delta })
+    }
+  }
+  return result
+}
+
 export function setRecoveryCallback(callback: (pending: Omit<PendingDelta, "delta">) => void) {
   recoveryCallback = callback
 }

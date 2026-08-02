@@ -23,7 +23,7 @@ import { SessionPreviewView } from "../session-preview-view"
 import { isSnapshotAutoFollowing } from "../virtual-follow-behavior"
 import { getSubmitBottomPinTargetCount, resolveSessionBottomPinIntent, shouldClearSessionBottomPinIntent, type SessionBottomPinIntent } from "./session-bottom-pin-intent"
 import { focusConversationStream } from "../focus-conversation"
-import { invalidateSessionMessageLoad } from "../../stores/session-state"
+import { invalidateSessionMessageLoad, messagesLoaded } from "../../stores/session-state"
 
 const log = getLogger("session")
 
@@ -53,6 +53,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   const { preferences } = useConfig()
   const session = () => props.activeSessions.get(props.sessionId)
   const messagesLoading = createMemo(() => isSessionMessagesLoading(props.instanceId, props.sessionId))
+  const messagesLoadComplete = createMemo(() => messagesLoaded().get(props.instanceId)?.has(props.sessionId) ?? false)
   const messagesLoadError = createMemo(() => getSessionMessagesLoadError(props.instanceId, props.sessionId))
   const messageStore = createMemo(() => messageStoreBus.getOrCreate(props.instanceId))
   const sessionBusy = createMemo(() => {
@@ -540,6 +541,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
                   instanceId={props.instanceId}
                   sessionId={activeSession.id}
                   loading={messagesLoading()}
+                  loadComplete={messagesLoadComplete()}
                   loadError={messagesLoadError()}
                   onReloadMessages={handleReloadMessages}
                   sessionStreamingActive={sessionStreamingActive()}

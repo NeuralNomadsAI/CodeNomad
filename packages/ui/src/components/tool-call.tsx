@@ -41,6 +41,7 @@ import {
   isToolStateRunning,
   getDefaultToolAction,
   limitToolOutputForRender,
+  limitToolTitleForRender,
   readToolStatePayload,
   TOOL_OUTPUT_RENDER_CHARACTER_LIMIT,
 } from "./tool-call/utils"
@@ -983,6 +984,7 @@ export default function ToolCall(props: ToolCallProps) {
   }
 
   const toolTypeLabel = createMemo(() => toolName())
+  const renderedToolTypeLabel = createMemo(() => limitToolTitleForRender(toolTypeLabel()))
 
   const headerTitleDetail = createMemo(() => {
     const rawTitle = renderToolTitle().trim()
@@ -1004,6 +1006,7 @@ export default function ToolCall(props: ToolCallProps) {
     const detail = headerTitleDetail()
     return [typeLabel, detail].filter(Boolean).join(" ")
   })
+  const renderedHeaderTitleDetail = createMemo(() => limitToolTitleForRender(headerTitleDetail()))
 
   const headerCopyText = () => headerOutputChrome().copyText || headerOutputChrome().getCopyText?.() || ""
   const canCopyHeaderOutput = () => Boolean(headerOutputChrome().copyText || headerOutputChrome().getCopyText)
@@ -1118,8 +1121,8 @@ export default function ToolCall(props: ToolCallProps) {
         >
           <span class="tool-call-disclosure" aria-hidden="true">{expanded() ? "▼" : "▶"}</span>
           <span class="tool-call-summary">
-            <span class="tool-call-summary-type">{toolTypeLabel()}</span>
-            <Show when={headerTitleDetail()}>
+            <span class="tool-call-summary-type">{renderedToolTypeLabel()}</span>
+            <Show when={renderedHeaderTitleDetail()}>
               {(detail) => <span class="tool-call-summary-title">{detail()}</span>}
             </Show>
             <ToolStatusIndicator status={status} />

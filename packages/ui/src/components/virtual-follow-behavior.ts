@@ -104,6 +104,19 @@ export function isScrollRestoreGenerationCurrent(
   return startedSessionId === currentSessionId && startedGeneration === currentGeneration
 }
 
+export function canRestoreMessageScroll(
+  loading: boolean,
+  loadComplete?: boolean,
+  loadFailed = false,
+  failedLoadAnchorAvailable = true,
+) {
+  return !loading && (loadComplete !== false || (loadFailed && failedLoadAnchorAvailable))
+}
+
+export function shouldCancelPendingMessageScrollRestore(didRestore: boolean, restoring: boolean): boolean {
+  return !didRestore && !restoring
+}
+
 export type FollowEffect =
   | { type: "none" }
   | { type: "scroll-top"; immediate: boolean }

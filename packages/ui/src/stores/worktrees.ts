@@ -12,12 +12,13 @@ const [worktreesByInstance, setWorktreesByInstance] = createSignal<Map<string, W
 const [worktreeMapByInstance, setWorktreeMapByInstance] = createSignal<Map<string, WorktreeMap>>(new Map())
 const [gitRepoStatusByInstance, setGitRepoStatusByInstance] = createSignal<Map<string, boolean | null>>(new Map())
 
-const worktreeRequests = new Map<string, Promise<void>>()
+const worktreeRequests = new Map<string, Promise<boolean>>()
+const worktreeRequestGenerations = new Map<string, number>()
 const worktreeReadyRefreshes = new Map<string, Promise<void>>()
 const mapLoads = new Map<string, Promise<void>>()
 const mapMigrations = new Map<string, Promise<void>>()
 
-type WorktreeReadyRefresh = (instanceId: string) => Promise<void>
+type WorktreeReadyRefresh = (instanceId: string) => Promise<unknown>
 
 function normalizeMap(input?: WorktreeMap | null): WorktreeMap {
   if (!input || typeof input !== "object") {
@@ -30,11 +31,29 @@ function normalizeMap(input?: WorktreeMap | null): WorktreeMap {
   }
 }
 
-async function queueWorktreeRequest(instanceId: string, initial: boolean): Promise<void> {
+async function queueWorktreeRequest(instanceId: string, initial: boolean, signal?: AbortSignal): Promise<boolean> {
   const previous = worktreeRequests.get(instanceId)
-  const task = (previous?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
+  let generation = 0
+  const isCurrent = () => generation > 0 && worktreeRequestGenerations.get(instanceId) === generation
+  const task = (async () => {
+    if (previous) {
+      if (signal) {
+        await Promise.race([
+          previous.catch(() => undefined),
+          new Promise<never>((_, reject) => {
+            if (signal.aborted) reject(signal.reason)
+            else signal.addEventListener("abort", () => reject(signal.reason), { once: true })
+          }),
+        ])
+      } else {
+        await previous.catch(() => undefined)
+      }
+    }
+    generation = (worktreeRequestGenerations.get(instanceId) ?? 0) + 1
+    worktreeRequestGenerations.set(instanceId, generation)
     try {
-      const response = await serverApi.fetchWorktrees(instanceId)
+      const response = await serverApi.fetchWorktrees(instanceId, signal)
+      if (!isCurrent()) return false
       setWorktreesByInstance((prev) => {
         const next = new Map(prev)
         next.set(instanceId, response.worktrees ?? [])
@@ -51,9 +70,11 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean): Promi
       if (worktreeMapByInstance().has(instanceId)) {
         void pruneWorktreeMap(instanceId).catch(() => undefined)
       }
+      return true
     } catch (error) {
+      if (!isCurrent()) return false
       log.warn(initial ? "Failed to load worktrees" : "Failed to reload worktrees", { instanceId, error })
-      if (!initial) return
+      if (!initial) return false
 
       setWorktreesByInstance((prev) => {
         const next = new Map(prev)
@@ -68,12 +89,13 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean): Promi
         next.set(instanceId, null)
         return next
       })
+      return false
     }
-  })
+  })()
 
   worktreeRequests.set(instanceId, task)
-  await task.finally(() => {
-    if (worktreeRequests.get(instanceId) === task) {
+  return task.finally(() => {
+    if (isCurrent() && worktreeRequests.get(instanceId) === task) {
       worktreeRequests.delete(instanceId)
     }
   })
@@ -92,9 +114,9 @@ async function ensureWorktreesLoaded(instanceId: string): Promise<void> {
   await queueWorktreeRequest(instanceId, true)
 }
 
-async function reloadWorktrees(instanceId: string): Promise<void> {
-  if (!instanceId) return
-  await queueWorktreeRequest(instanceId, false)
+async function reloadWorktrees(instanceId: string, signal?: AbortSignal): Promise<boolean> {
+  if (!instanceId) return false
+  return queueWorktreeRequest(instanceId, false, signal)
 }
 
 async function handleWorktreeReady(

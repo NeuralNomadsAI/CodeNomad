@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
+import { estimateRetainedBytes } from "../../lib/session-memory-budget.ts"
 import { createInstanceMessageStore } from "./instance-store.ts"
 
 describe("message-v2 permission state", () => {
@@ -43,9 +44,44 @@ describe("message-v2 permission state", () => {
 
   it("protects legacy pending permissions that use sessionId", () => {
     const store = createInstanceMessageStore("instance-1")
-    store.addOrUpdateSession({ id: "session-1" })
     store.upsertPermission({ permission: { id: "legacy", sessionId: "session-1", permission: "edit" }, enqueuedAt: 1 })
     assert.equal(store.hasSessionActiveWork("session-1"), true)
+  })
+
+  it("charges large canonical interruption payloads once to their session", () => {
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+    store.addOrUpdateSession({ id: "session-2" })
+    const baseline = store.getSessionApproximateByteSize("session-1")
+    const permission = {
+      id: "permission-large",
+      sessionID: "session-1",
+      action: "edit",
+      resources: ["p".repeat(256 * 1024)],
+    }
+    const question = {
+      id: "question-large",
+      sessionID: "session-1",
+      questions: [{ header: "Confirm", question: "q".repeat(256 * 1024), options: [] }],
+    }
+
+    store.upsertPermission({ permission, messageId: "message-1", partId: "part-1", enqueuedAt: 1 })
+    store.upsertQuestion({ request: question as any, messageId: "message-1", partId: "part-1", enqueuedAt: 2 })
+    const expected = baseline + 3 * (
+      estimateRetainedBytes(store.state.permissions.queue[0]?.permission) +
+      estimateRetainedBytes(store.state.questions.queue[0]?.request)
+    )
+    assert.equal(store.getSessionApproximateByteSize("session-1"), expected)
+    assert.ok(store.getSessionApproximateByteSize("session-2") < expected / 2)
+
+    store.upsertPermission({ permission, messageId: "message-1", partId: "part-1", enqueuedAt: 1 })
+    store.upsertQuestion({ request: question as any, messageId: "message-1", partId: "part-1", enqueuedAt: 2 })
+    assert.equal(store.state.permissions.queue.length, 1)
+    assert.equal(store.state.questions.queue.length, 1)
+    assert.equal(store.getSessionApproximateByteSize("session-1"), baseline + 3 * (
+      estimateRetainedBytes(store.state.permissions.queue[0]?.permission) +
+      estimateRetainedBytes(store.state.questions.queue[0]?.request)
+    ))
   })
 
 })

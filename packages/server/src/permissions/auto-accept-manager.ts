@@ -27,7 +27,7 @@ export interface AutoAcceptReply {
   reply: PermissionReplyValue
 }
 
-export type PermissionReplier = (reply: AutoAcceptReply) => Promise<void>
+export type PermissionReplier = (reply: AutoAcceptReply, signal: AbortSignal) => Promise<void>
 
 interface PendingPermission {
   permissionId: string
@@ -48,14 +48,21 @@ export interface PersistedAutoAcceptSession extends AutoAcceptSessionInfo {
 }
 
 export interface AutoAcceptPersistence {
-  loadSessions(instanceId: string): Promise<PersistedAutoAcceptSession[]>
-  persist(instanceId: string, rootSessionId: string, enabled: boolean, workspaceId?: string): Promise<void>
+  loadSessions(instanceId: string, signal: AbortSignal): Promise<PersistedAutoAcceptSession[]>
+  persist(
+    instanceId: string,
+    rootSessionId: string,
+    enabled: boolean,
+    workspaceId: string | undefined,
+    signal: AbortSignal,
+  ): Promise<void>
 }
 
 const PERMISSION_ASK_TYPES = new Set(["permission.v2.asked", "permission.asked", "permission.updated"])
 const PERMISSION_REPLIED_TYPES = new Set(["permission.v2.replied", "permission.replied"])
 const SESSION_UPSERT_TYPES = new Set(["session.updated", "session.created"])
 const SESSION_REMOVE_TYPES = new Set(["session.deleted"])
+const REBIND_TOGGLE_AFTER_ROTATION = new Error("Rebind Yolo toggle after runtime rotation")
 
 export class AutoAcceptManager {
   private static readonly MAX_REPLY_ATTEMPTS = 3
@@ -70,15 +77,18 @@ export class AutoAcceptManager {
   private readonly hydration = new Map<string, Promise<void>>()
   private readonly queuedEvents = new Map<string, InstanceStreamPayload[]>()
   private readonly instanceGeneration = new Map<string, number>()
+  private readonly generationControllers = new Map<string, AbortController>()
   private readonly streamIds = new Map<string, string>()
   private readonly sessionWorkspaces = new Map<string, Map<string, string>>()
   private readonly mutations = new Map<string, Promise<boolean>>()
   private unsubscribe?: () => void
+  private stopped = false
 
   constructor(private readonly deps: AutoAcceptManagerDeps) {}
 
   start(): void {
     if (this.unsubscribe) return
+    this.stopped = false
     const handler = (payload: { instanceId?: string; streamId?: string; event?: InstanceStreamPayload }) => {
       if (!payload || !payload.instanceId || !payload.event) return
       if (payload.streamId) {
@@ -112,7 +122,15 @@ export class AutoAcceptManager {
     }
     const onStreamStatus = (event: { instanceId?: string; streamId?: string; status?: string }) => {
       if (!event.instanceId || !event.streamId || event.status !== "connecting") return
-      if (this.streamIds.get(event.instanceId) !== event.streamId) this.queuedEvents.delete(event.instanceId)
+      const current = this.streamIds.get(event.instanceId)
+      if (current && current !== event.streamId) {
+        this.invalidateRuntimeState(event.instanceId)
+        this.streamIds.set(event.instanceId, event.streamId)
+        void this.hydrateInstance(event.instanceId).catch((error) => {
+          this.deps.logger.warn({ instanceId: event.instanceId, err: error }, "Failed to hydrate persisted Yolo state")
+        })
+        return
+      }
       this.streamIds.set(event.instanceId, event.streamId)
     }
     this.deps.eventBus.on("instance.event", handler)
@@ -132,6 +150,20 @@ export class AutoAcceptManager {
   stop(): void {
     this.unsubscribe?.()
     this.unsubscribe = undefined
+    this.stopped = true
+    const instanceIds = new Set([
+      ...this.generationControllers.keys(),
+      ...this.instanceGeneration.keys(),
+      ...this.streamIds.keys(),
+      ...this.hydratedInstances,
+      ...this.hydration.keys(),
+      ...this.queuedEvents.keys(),
+      ...this.sessionWorkspaces.keys(),
+      ...this.mutations.keys(),
+      ...this.pending.keys(),
+    ])
+    for (const instanceId of instanceIds) this.invalidateRuntimeState(instanceId)
+    this.streamIds.clear()
   }
 
   isEnabled(instanceId: string, sessionId: string): boolean {
@@ -139,13 +171,22 @@ export class AutoAcceptManager {
   }
 
   hydrateInstance(instanceId: string): Promise<void> {
-    if (!this.deps.persistence || this.hydratedInstances.has(instanceId)) return Promise.resolve()
+    if (this.stopped || !this.deps.persistence || this.hydratedInstances.has(instanceId)) return Promise.resolve()
     const existing = this.hydration.get(instanceId)
     if (existing) return existing
     const generation = this.instanceGeneration.get(instanceId) ?? 0
+    const signal = this.generationSignal(instanceId)
     let hydrated = false
-    const pending = this.deps.persistence.loadSessions(instanceId).then((sessions) => {
-      if ((this.instanceGeneration.get(instanceId) ?? 0) !== generation) return
+    const priorMutation = this.mutations.get(instanceId)
+    const load = priorMutation
+      ? priorMutation.catch(() => false).then(() => {
+          if (!this.hasRuntimeAuthority(instanceId, generation, signal)) return undefined
+          return this.deps.persistence!.loadSessions(instanceId, signal)
+        })
+      : this.deps.persistence.loadSessions(instanceId, signal)
+    const pending = load.then((sessions) => {
+      if (!sessions) return
+      if (!this.hasRuntimeAuthority(instanceId, generation, signal)) return
       this.store.clearInstance(instanceId)
       const workspaces = new Map<string, string>()
       for (const session of sessions) {
@@ -161,9 +202,13 @@ export class AutoAcceptManager {
       }
       this.hydratedInstances.add(instanceId)
       hydrated = true
+    }).catch((error) => {
+      if (!this.hasRuntimeAuthority(instanceId, generation, signal)) return
+      this.releaseFailedHydration(instanceId, signal)
+      throw error
     }).finally(() => {
-      if ((this.instanceGeneration.get(instanceId) ?? 0) !== generation) return
-      this.hydration.delete(instanceId)
+      if (this.hydration.get(instanceId) === pending) this.hydration.delete(instanceId)
+      if (!this.hasRuntimeAuthority(instanceId, generation, signal)) return
       if (!hydrated) return
       const queued = this.queuedEvents.get(instanceId) ?? []
       this.queuedEvents.delete(instanceId)
@@ -174,6 +219,7 @@ export class AutoAcceptManager {
   }
 
   toggle(instanceId: string, sessionId: string): boolean | Promise<boolean> {
+    if (this.stopped) return this.store.isEnabled(instanceId, sessionId)
     if (this.deps.persistence) return this.togglePersisted(instanceId, sessionId)
     const enabled = this.store.toggle(instanceId, sessionId)
     this.deps.eventBus.publish({ type: "yolo.stateChanged", instanceId, sessionId, enabled })
@@ -184,10 +230,12 @@ export class AutoAcceptManager {
   }
 
   private async togglePersisted(instanceId: string, sessionId: string): Promise<boolean> {
-    await this.hydrateInstance(instanceId)
     const generation = this.instanceGeneration.get(instanceId) ?? 0
+    const signal = this.generationSignal(instanceId)
+    await this.hydrateInstance(instanceId)
     const mutation = (this.mutations.get(instanceId) ?? Promise.resolve(false)).catch(() => false).then(async () => {
-      if ((this.instanceGeneration.get(instanceId) ?? 0) !== generation) {
+      if (!this.hasRuntimeAuthority(instanceId, generation, signal)) {
+        if (!this.stopped && this.streamIds.has(instanceId)) throw REBIND_TOGGLE_AFTER_ROTATION
         return this.store.isEnabled(instanceId, sessionId)
       }
       const rootSessionId = this.store.familyRoot(instanceId, sessionId)
@@ -198,9 +246,10 @@ export class AutoAcceptManager {
         rootSessionId,
         enabled,
         this.sessionWorkspaces.get(instanceId)?.get(rootSessionId),
+        signal,
       )
-      if ((this.instanceGeneration.get(instanceId) ?? 0) !== generation) {
-        return this.store.isEnabled(instanceId, rootSessionId)
+      if (!this.hasRuntimeAuthority(instanceId, generation, signal)) {
+        return enabled
       }
       let persistedRootSessionId = rootSessionId
       let currentRootSessionId = this.store.familyRoot(instanceId, sessionId)
@@ -211,6 +260,7 @@ export class AutoAcceptManager {
           currentRootSessionId,
           enabled,
           this.sessionWorkspaces.get(instanceId)?.get(currentRootSessionId),
+          signal,
         )
         if (enabled) {
           await this.deps.persistence!.persist(
@@ -218,13 +268,14 @@ export class AutoAcceptManager {
             persistedRootSessionId,
             false,
             this.sessionWorkspaces.get(instanceId)?.get(persistedRootSessionId),
+            signal,
           )
         }
         persistedRootSessionId = currentRootSessionId
         currentRootSessionId = this.store.familyRoot(instanceId, sessionId)
       }
-      if ((this.instanceGeneration.get(instanceId) ?? 0) !== generation) {
-        return this.store.isEnabled(instanceId, currentRootSessionId)
+      if (!this.hasRuntimeAuthority(instanceId, generation, signal)) {
+        return enabled
       }
       if (enabled) {
         this.store.setEnabled(instanceId, currentRootSessionId, true)
@@ -236,22 +287,55 @@ export class AutoAcceptManager {
       this.deps.eventBus.publish({ type: "yolo.stateChanged", instanceId, sessionId: currentRootSessionId, enabled })
       if (enabled) this.drainPending(instanceId, currentRootSessionId)
       return enabled
+    }).catch((error) => {
+      if (error === REBIND_TOGGLE_AFTER_ROTATION) throw error
+      if (!this.hasRuntimeAuthority(instanceId, generation, signal)) {
+        if (!this.stopped && this.streamIds.has(instanceId)) throw error
+        return this.store.isEnabled(instanceId, sessionId)
+      }
+      throw error
     })
     const settled = mutation.finally(() => {
       if (this.mutations.get(instanceId) === settled) this.mutations.delete(instanceId)
     })
     this.mutations.set(instanceId, settled)
-    return settled
+    try {
+      const enabled = await settled
+      if (!this.hasRuntimeAuthority(instanceId, generation, signal) && !this.stopped && this.streamIds.has(instanceId)) {
+        return this.resolveToggleAfterRotation(instanceId, sessionId)
+      }
+      return enabled
+    } catch (error) {
+      if (error === REBIND_TOGGLE_AFTER_ROTATION) return this.togglePersisted(instanceId, sessionId)
+      if (!this.hasRuntimeAuthority(instanceId, generation, signal) && !this.stopped && this.streamIds.has(instanceId)) {
+        return this.resolveToggleAfterRotation(instanceId, sessionId)
+      }
+      throw error
+    }
+  }
+
+  private async resolveToggleAfterRotation(instanceId: string, sessionId: string): Promise<boolean> {
+    await this.hydrateInstance(instanceId)
+    const rootSessionId = this.store.familyRoot(instanceId, sessionId)
+    const enabled = this.store.isEnabled(instanceId, rootSessionId)
+    // Hydration publishes enabled roots; disabled roots need an explicit UI update.
+    if (!enabled) this.deps.eventBus.publish({ type: "yolo.stateChanged", instanceId, sessionId: rootSessionId, enabled })
+    return enabled
   }
 
   clearInstance(instanceId: string): void {
+    this.invalidateRuntimeState(instanceId)
+    this.streamIds.delete(instanceId)
+  }
+
+  private invalidateRuntimeState(instanceId: string): void {
+    this.generationControllers.get(instanceId)?.abort()
+    this.generationControllers.delete(instanceId)
     this.instanceGeneration.set(instanceId, (this.instanceGeneration.get(instanceId) ?? 0) + 1)
     this.hydratedInstances.delete(instanceId)
     this.hydration.delete(instanceId)
     this.queuedEvents.delete(instanceId)
     this.sessionWorkspaces.delete(instanceId)
-    this.streamIds.delete(instanceId)
-    this.mutations.delete(instanceId)
     this.store.clearInstance(instanceId)
     this.pending.delete(instanceId)
     const prefix = `${instanceId}:`
@@ -264,7 +348,7 @@ export class AutoAcceptManager {
   }
 
   handleInstanceEvent(instanceId: string, event: InstanceStreamPayload): void {
-    if (!event || typeof event.type !== "string") return
+    if (this.stopped || !event || typeof event.type !== "string") return
 
     if (SESSION_UPSERT_TYPES.has(event.type)) {
       this.ingestSession(instanceId, event.properties)
@@ -320,20 +404,21 @@ export class AutoAcceptManager {
     const added = after.filter((id) => !before.includes(id))
     if (removed.length === 0 && added.length === 0) return
     const generation = this.instanceGeneration.get(instanceId) ?? 0
+    const signal = this.generationSignal(instanceId)
     const mutation = (this.mutations.get(instanceId) ?? Promise.resolve(false)).catch(() => false).then(async () => {
-      if ((this.instanceGeneration.get(instanceId) ?? 0) !== generation) return false
+      if (!this.hasRuntimeAuthority(instanceId, generation, signal)) return false
       const enabledRoots = new Set(this.store.enabledRoots(instanceId))
       for (const rootSessionId of added) {
         if (!enabledRoots.has(rootSessionId)) continue
         await this.deps.persistence!.persist(
-          instanceId, rootSessionId, true, this.sessionWorkspaces.get(instanceId)?.get(rootSessionId),
+          instanceId, rootSessionId, true, this.sessionWorkspaces.get(instanceId)?.get(rootSessionId), signal,
         )
       }
       for (const rootSessionId of removed) {
         if (enabledRoots.has(rootSessionId)) continue
-        if ((this.instanceGeneration.get(instanceId) ?? 0) !== generation) return false
+        if (!this.hasRuntimeAuthority(instanceId, generation, signal)) return false
         await this.deps.persistence!.persist(
-          instanceId, rootSessionId, false, this.sessionWorkspaces.get(instanceId)?.get(rootSessionId),
+          instanceId, rootSessionId, false, this.sessionWorkspaces.get(instanceId)?.get(rootSessionId), signal,
         )
       }
       return false
@@ -343,6 +428,7 @@ export class AutoAcceptManager {
     })
     this.mutations.set(instanceId, settled)
     void settled.catch((error) => {
+      if (!this.hasRuntimeAuthority(instanceId, generation, signal)) return
       this.deps.logger.warn({ instanceId, err: error }, "Failed to migrate persisted Yolo family root")
     })
   }
@@ -393,25 +479,29 @@ export class AutoAcceptManager {
     if (this.inFlight.has(key)) return
     const attempts = this.replyAttempts.get(key) ?? 0
     if (attempts >= AutoAcceptManager.MAX_REPLY_ATTEMPTS) return
+    const generation = this.instanceGeneration.get(instanceId) ?? 0
+    const signal = this.generationSignal(instanceId)
     this.inFlight.add(key)
     this.replyAttempts.set(key, attempts + 1)
 
     const reply: AutoAcceptReply = { instanceId, permissionId, sessionId, source, reply: "once" }
 
-    void this.deps.replier(reply)
+    void this.deps.replier(reply, signal)
       .then(() => {
+        if (!this.hasRuntimeAuthority(instanceId, generation, signal)) return
         this.replyAttempts.delete(key)
         this.removePending(instanceId, permissionId)
         this.deps.eventBus.publish({ type: "yolo.autoAccepted", instanceId, sessionId, permissionId })
       })
       .catch((error) => {
+        if (!this.hasRuntimeAuthority(instanceId, generation, signal)) return
         this.deps.logger.error({ instanceId, permissionId, err: error, attempt: attempts + 1 }, "Yolo auto-accept reply failed")
         if (attempts + 1 >= AutoAcceptManager.MAX_REPLY_ATTEMPTS) {
           this.removePending(instanceId, permissionId)
         }
       })
       .finally(() => {
-        this.inFlight.delete(key)
+        if (this.hasRuntimeAuthority(instanceId, generation, signal)) this.inFlight.delete(key)
       })
   }
 
@@ -454,6 +544,31 @@ export class AutoAcceptManager {
       }
     }
     if (instancePending.size === 0) this.pending.delete(instanceId)
+  }
+
+  private generationSignal(instanceId: string): AbortSignal {
+    if (this.stopped) {
+      const controller = new AbortController()
+      controller.abort()
+      return controller.signal
+    }
+    let controller = this.generationControllers.get(instanceId)
+    if (!controller || controller.signal.aborted) {
+      controller = new AbortController()
+      this.generationControllers.set(instanceId, controller)
+    }
+    return controller.signal
+  }
+
+  private releaseFailedHydration(instanceId: string, signal: AbortSignal): void {
+    const controller = this.generationControllers.get(instanceId)
+    if (controller?.signal !== signal) return
+    controller.abort()
+    this.generationControllers.delete(instanceId)
+  }
+
+  private hasRuntimeAuthority(instanceId: string, generation: number, signal: AbortSignal): boolean {
+    return !this.stopped && !signal.aborted && (this.instanceGeneration.get(instanceId) ?? 0) === generation
   }
 }
 

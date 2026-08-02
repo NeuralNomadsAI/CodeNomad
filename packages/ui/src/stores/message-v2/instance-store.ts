@@ -364,31 +364,46 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   }
 
   function getResidentSessionIds() {
-    return Object.values(state.sessions)
+    const sessionIds = new Set(Object.values(state.sessions)
       .filter((session) => session.messageIds.length > 0)
-      .map((session) => session.id)
+      .map((session) => session.id))
+    for (const entry of state.permissions.queue) {
+      const sessionId = getPermissionSessionId(entry.permission)
+      if (sessionId) sessionIds.add(sessionId)
+    }
+    for (const entry of state.questions.queue) {
+      const sessionId = getQuestionSessionId(entry.request)
+      if (sessionId) sessionIds.add(sessionId)
+    }
+    return [...sessionIds]
   }
 
   function getSessionApproximateByteSize(sessionId: string) {
     const session = state.sessions[sessionId]
-    if (!session) return 0
     let bytes = estimateRetainedBytes(session) + estimateRetainedBytes(state.usage[sessionId])
-    for (const messageId of session.messageIds) {
+    for (const messageId of session?.messageIds ?? []) {
       bytes += estimateRetainedBytes(state.messages[messageId])
       bytes += estimateRetainedBytes(messageInfoCache.get(messageId))
+    }
+    for (const entry of state.permissions.queue) {
+      if (getPermissionSessionId(entry.permission) === sessionId) bytes += estimateRetainedBytes(entry.permission)
+    }
+    for (const entry of state.questions.queue) {
+      if (getQuestionSessionId(entry.request) === sessionId) bytes += estimateRetainedBytes(entry.request)
     }
     // ponytail: account conservatively for parsed Markdown/diff caches without walking every renderer cache.
     return bytes * DERIVED_RENDER_MEMORY_MULTIPLIER
   }
 
   function hasSessionActiveWork(sessionId: string) {
+    if (hasSessionPendingInput(sessionId)) return true
     const session = state.sessions[sessionId]
     if (!session) return false
     if (session.messageIds.some((messageId) => {
       const status = state.messages[messageId]?.status
       return status === "sending" || status === "streaming"
     })) return true
-    return hasSessionPendingInput(sessionId)
+    return false
   }
 
   function hasSessionPendingInput(sessionId: string) {

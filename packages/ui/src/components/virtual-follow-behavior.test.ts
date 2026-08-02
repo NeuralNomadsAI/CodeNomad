@@ -5,6 +5,7 @@ import {
   ANCHOR_RESTORE_MAX_FRAMES,
   ANCHOR_RESTORE_STABLE_FRAMES,
   AnchorRestoreStabilizer,
+  canRestoreMessageScroll,
   BOTTOM_FOLLOW_EPSILON_PX,
   ScrollRestoreTokenGuard,
   VirtualScrollController,
@@ -12,6 +13,7 @@ import {
   isAutoFollowing,
   isScrollRestoreGenerationCurrent,
   isSnapshotAutoFollowing,
+  shouldCancelPendingMessageScrollRestore,
   resolveAutoPinHoldElement,
   restoreFollowModeFromSnapshot,
   selectTopViewportAnchor,
@@ -334,5 +336,21 @@ describe("virtual follow behavior", () => {
     assert.equal(isScrollRestoreGenerationCurrent("session-a", 3, "session-a", 3), true)
     assert.equal(isScrollRestoreGenerationCurrent("session-a", 3, "session-b", 4), false)
     assert.equal(isScrollRestoreGenerationCurrent("session-a", 3, "session-a", 4), false)
+  })
+
+  it("waits for message hydration before restoring while preserving resident defaults", () => {
+    assert.equal(canRestoreMessageScroll(false, false), false)
+    assert.equal(canRestoreMessageScroll(true, false), false)
+    assert.equal(canRestoreMessageScroll(false, true), true)
+    assert.equal(canRestoreMessageScroll(false, false, true), true)
+    assert.equal(canRestoreMessageScroll(false, false, true, false), false)
+    assert.equal(canRestoreMessageScroll(true, false, true), false)
+    assert.equal(canRestoreMessageScroll(false), true)
+  })
+
+  it("cancels only a pending delayed restore for user scroll intent", () => {
+    assert.equal(shouldCancelPendingMessageScrollRestore(false, false), true)
+    assert.equal(shouldCancelPendingMessageScrollRestore(true, false), false)
+    assert.equal(shouldCancelPendingMessageScrollRestore(false, true), false)
   })
 })

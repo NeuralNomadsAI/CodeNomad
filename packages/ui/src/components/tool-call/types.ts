@@ -86,6 +86,7 @@ export interface ToolSearchTextContext {
   toolCall: ToolCallPart
   toolState: ToolState | undefined
   toolName: string
+  checkpoint?: () => Promise<void>
 }
 
 export interface ToolRenderer {
@@ -97,7 +98,7 @@ export interface ToolRenderer {
    * Text that is visible or directly revealable through this renderer. Keep this
    * in sync with custom renderBody output when adding specialized tool UIs.
    */
-  getSearchText?(context: ToolSearchTextContext): string[]
+  getSearchText?(context: ToolSearchTextContext): AsyncIterable<string> | Promise<string[]> | string[]
   renderBody(context: ToolRendererContext): JSXElement | null
 }
 

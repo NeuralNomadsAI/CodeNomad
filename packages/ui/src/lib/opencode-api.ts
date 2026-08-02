@@ -33,14 +33,35 @@ export function getOpencodeErrorMessage(error: unknown, fallback: string): strin
   return extract(error) ?? fallback
 }
 
+export function isDeliveryAmbiguousError(error: unknown): boolean {
+  const seen = new Set<unknown>()
+  const pending = [error]
+  while (pending.length > 0) {
+    const value = pending.pop()
+    if (!value || typeof value !== "object" || seen.has(value)) continue
+    seen.add(value)
+    const candidate = value as any
+    const status = candidate.status ?? candidate.statusCode ?? candidate.response?.status
+    if (typeof status === "number") {
+      if (status >= 400 && status < 500 && status !== 408) return false
+    }
+    pending.push(candidate.cause, candidate.error, candidate.response)
+  }
+  // Once dispatch has started, unknown failures are ambiguous unless the server
+  // returned a definitive client rejection.
+  return true
+}
+
 type RequestResultLike<T> =
   | {
       data: T
       error?: undefined
+      response?: { status?: number }
     }
   | {
       data?: undefined
       error: unknown
+      response?: { status?: number }
     }
 
 export async function requestData<T>(
@@ -52,7 +73,10 @@ export async function requestData<T>(
     throw new OpencodeApiError(`${label} returned no result`)
   }
   if ((result as any).error) {
-    throw new OpencodeApiError(`${label} failed`, { cause: (result as any).error })
+    const response = (result as any).response
+    throw new OpencodeApiError(`${label} failed`, {
+      cause: response ? { error: (result as any).error, response } : (result as any).error,
+    })
   }
   return (result as any).data as T
 }

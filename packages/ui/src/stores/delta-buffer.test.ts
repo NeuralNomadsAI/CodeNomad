@@ -6,6 +6,7 @@ import {
   clearPendingDeltasForPart,
   enqueueDelta,
   flushPendingDeltasForMessage,
+  hasPendingDeltasForMessage,
   resetDeltaBufferForTests,
   setFlushCallback,
   setRecoveryCallback,
@@ -114,5 +115,16 @@ describe("delta buffer", () => {
     assert.deepEqual(recoveries, [{
       instanceId: "instance-1", sessionId: "session-1", messageId: "message-1", partId: "part-1", field: "text",
     }])
+  })
+
+  it("reports buffered message deltas without consuming them", async () => {
+    const flushed: DeltaBatch[] = []
+    setFlushCallback((batch) => flushed.push(batch))
+    enqueueDelta("instance-1", "message-1", "part-1", "text", "pending")
+
+    assert.equal(hasPendingDeltasForMessage("instance-1", "message-1"), true)
+    assert.equal(hasPendingDeltasForMessage("instance-1", "message-2"), false)
+    await delay(75)
+    assert.equal(flushed[0]?.[0]?.delta, "pending")
   })
 })

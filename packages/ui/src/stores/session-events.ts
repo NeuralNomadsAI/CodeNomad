@@ -58,6 +58,8 @@ import {
   markPermissionReplied,
   hasRepliedPermission,
   addQuestionToQueue,
+  hasAnsweredQuestion,
+  markQuestionAnswered,
   removeQuestionFromQueue,
 } from "./instances"
 import { showAlertDialog } from "./alerts"
@@ -70,13 +72,13 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, prependSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
+import { activeSessionId, ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, prependSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { tGlobal } from "../lib/i18n"
 
-import { loadMessages, removeSessionRuntimeState } from "./session-api"
+import { clearBufferedDeltaSnapshotFence, loadMessages, removeSessionRuntimeState } from "./session-api"
 import { getRootClient } from "./opencode-client"
 import { getWorktreeSlugForDirectory, getWorktreeSlugForSession } from "./worktrees"
 import { getOpenCodeWorkspaceIdForWorktree } from "./opencode-workspaces"
@@ -104,8 +106,19 @@ const log = getLogger("sse")
 const pendingSessionFetches = new Map<string, Promise<void>>()
 const pendingSessionFetchRuntimes = new Map<string, Instance>()
 const pendingSessionStatuses = new Map<string, { status: SessionStatus; retry?: SessionRetryState | null }>()
-const pendingDeltaRecoveries = new Map<string, { dirty: boolean }>()
-const pendingIdleMessageReconciliations = new Set<string>()
+const MAX_DELTA_RECOVERY_ATTEMPTS = 3
+const DELTA_RECOVERY_BACKOFF_MS = 100
+const DELTA_RECOVERY_LOAD_TIMEOUT_MS = 10_000
+type DeltaRecovery = {
+  dirty: boolean
+  running: boolean
+  attempts: number
+  requireActive: boolean
+  idleReconcileRequested: boolean
+  instance: Instance
+}
+const pendingDeltaRecoveries = new Map<string, DeltaRecovery>()
+const pendingIdleMessageReconciliations = new Map<string, Instance>()
 let activeRetryToast: ToastHandle | null = null
 
 messageStoreBus.onInstanceDestroyed((instanceId) => {
@@ -114,8 +127,14 @@ messageStoreBus.onInstanceDestroyed((instanceId) => {
   for (const key of pendingSessionFetchRuntimes.keys()) if (key.startsWith(prefix)) pendingSessionFetchRuntimes.delete(key)
   for (const key of pendingSessionStatuses.keys()) if (key.startsWith(prefix)) pendingSessionStatuses.delete(key)
   for (const key of pendingDeltaRecoveries.keys()) if (key.startsWith(prefix)) pendingDeltaRecoveries.delete(key)
-  for (const key of pendingIdleMessageReconciliations) if (key.startsWith(prefix)) pendingIdleMessageReconciliations.delete(key)
+  for (const key of pendingIdleMessageReconciliations.keys()) if (key.startsWith(prefix)) pendingIdleMessageReconciliations.delete(key)
   clearPendingDeltasForInstance(instanceId)
+})
+
+messageStoreBus.onSessionCleared((instanceId, sessionId) => {
+  const key = `${instanceId}:${sessionId}`
+  pendingDeltaRecoveries.delete(key)
+  pendingIdleMessageReconciliations.delete(key)
 })
 
 function shouldSendOsNotification(kind: "needsInput" | "idle"): boolean {
@@ -387,6 +406,7 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     // deltas would be stale and cause duplication if flushed later.
     if (part.id) {
       clearPendingDeltasForPart(instanceId, messageId, part.id)
+      clearBufferedDeltaSnapshotFence(instanceId, sessionId, messageId, part.id)
     }
     applyPartUpdateV2(instanceId, { ...part, sessionID: sessionId, messageID: messageId })
     handleConversationAssistantPartUpdated(instanceId, { ...part, sessionID: sessionId, messageID: messageId }, messageInfo)
@@ -484,36 +504,87 @@ setRecoveryCallback(({ instanceId, sessionId, messageId, partId }) => {
     log.warn("Dropped orphan delta without a session", { instanceId, messageId, partId })
     return
   }
+  const instance = instances().get(instanceId)
+  if (!instance) return
   const key = `${instanceId}:${sessionId}`
   const existing = pendingDeltaRecoveries.get(key)
-  if (existing) {
+  if (existing && isInstanceRuntimeCurrent(instanceId, existing.instance)) {
     existing.dirty = true
+    runDeltaRecovery(instanceId, sessionId, existing)
     return
   }
-  const recovery = { dirty: false }
+  if (existing) pendingDeltaRecoveries.delete(key)
+  const recovery: DeltaRecovery = {
+    dirty: true,
+    running: false,
+    attempts: 0,
+    requireActive: activeSessionId().get(instanceId) === sessionId,
+    idleReconcileRequested: false,
+    instance,
+  }
   pendingDeltaRecoveries.set(key, recovery)
+  runDeltaRecovery(instanceId, sessionId, recovery)
+})
+
+function runDeltaRecovery(instanceId: string, sessionId: string, recovery: DeltaRecovery): void {
+  if (recovery.running) return
+  const key = `${instanceId}:${sessionId}`
+  if (!isInstanceRuntimeCurrent(instanceId, recovery.instance)) {
+    if (pendingDeltaRecoveries.get(key) === recovery) pendingDeltaRecoveries.delete(key)
+    return
+  }
+  const session = sessions().get(instanceId)?.get(sessionId)
+  if (session?.status === "working" || session?.status === "compacting") return
+  recovery.running = true
   void (async () => {
     try {
-      let failures = 0
-      do {
-        recovery.dirty = false
-        try {
-          await loadMessages(instanceId, sessionId, { force: true })
-          failures = 0
-        } catch (error) {
-          failures += 1
-          if (failures >= 3) throw error
-          recovery.dirty = true
-          await new Promise((resolve) => setTimeout(resolve, failures * 100))
+      while (recovery.dirty && recovery.attempts < MAX_DELTA_RECOVERY_ATTEMPTS) {
+        if (!isInstanceRuntimeCurrent(instanceId, recovery.instance) || !sessions().get(instanceId)?.has(sessionId)) return
+        if (recovery.requireActive && activeSessionId().get(instanceId) !== sessionId) {
+          invalidateSessionMessageLoad(instanceId, sessionId)
+          return
         }
-      } while (recovery.dirty && instances().has(instanceId) && sessions().get(instanceId)?.has(sessionId))
+        const currentStatus = sessions().get(instanceId)?.get(sessionId)?.status
+        if (currentStatus === "working" || currentStatus === "compacting") return
+
+        await new Promise((resolve) => setTimeout(resolve, (recovery.attempts + 1) * DELTA_RECOVERY_BACKOFF_MS))
+        if (!isInstanceRuntimeCurrent(instanceId, recovery.instance) || !sessions().get(instanceId)?.has(sessionId)) return
+        if (recovery.requireActive && activeSessionId().get(instanceId) !== sessionId) {
+          invalidateSessionMessageLoad(instanceId, sessionId)
+          return
+        }
+        const statusAfterBackoff = sessions().get(instanceId)?.get(sessionId)?.status
+        if (statusAfterBackoff === "working" || statusAfterBackoff === "compacting") return
+
+        recovery.dirty = false
+        recovery.attempts += 1
+        try {
+          await loadMessages(instanceId, sessionId, { force: true, timeoutMs: DELTA_RECOVERY_LOAD_TIMEOUT_MS })
+          if (!isInstanceRuntimeCurrent(instanceId, recovery.instance)) return
+        } catch (error) {
+          recovery.dirty = true
+          if (recovery.attempts >= MAX_DELTA_RECOVERY_ATTEMPTS) throw error
+        }
+      }
+      if (recovery.dirty) {
+        log.warn("Revision recovery exhausted", { instanceId, sessionId, attempts: recovery.attempts })
+      }
     } catch (error) {
       log.warn("Failed to recover orphan delta", { instanceId, sessionId, error })
     } finally {
-      if (pendingDeltaRecoveries.get(key) === recovery) pendingDeltaRecoveries.delete(key)
+      recovery.running = false
+      const latestStatus = sessions().get(instanceId)?.get(sessionId)?.status
+      const waitingForIdle = isInstanceRuntimeCurrent(instanceId, recovery.instance) &&
+        recovery.attempts < MAX_DELTA_RECOVERY_ATTEMPTS && recovery.dirty &&
+        (latestStatus === "working" || latestStatus === "compacting")
+      const forceIdleReconcile = isInstanceRuntimeCurrent(instanceId, recovery.instance) &&
+        (!recovery.requireActive || activeSessionId().get(instanceId) === sessionId) &&
+        recovery.idleReconcileRequested && !waitingForIdle
+      if (!waitingForIdle && pendingDeltaRecoveries.get(key) === recovery) pendingDeltaRecoveries.delete(key)
+      if (forceIdleReconcile) reconcileIdleSessionMessages(instanceId, sessionId, true, recovery.instance)
     }
   })()
-})
+}
 
 function handleMessagePartDelta(instanceId: string, event: MessagePartDeltaEvent): void {
   const props = event.properties
@@ -694,14 +765,34 @@ function handleSessionStatus(instanceId: string, event: EventSessionStatus): voi
   log.info(`[SSE] Session status updated: ${sessionId}`, { status })
 }
 
-function reconcileIdleSessionMessages(instanceId: string, sessionId: string): void {
-  if (!messageStoreBus.getInstance(instanceId)?.hasSessionActiveWork(sessionId)) return
+function reconcileIdleSessionMessages(instanceId: string, sessionId: string, force = false, expectedInstance?: Instance): void {
+  const instance = expectedInstance ?? instances().get(instanceId)
+  if (!instance || !isInstanceRuntimeCurrent(instanceId, instance)) return
+  const recoveryKey = `${instanceId}:${sessionId}`
+  const recovery = pendingDeltaRecoveries.get(recoveryKey)
+  let forceReconcile = false
+  if (recovery) {
+    if ((recovery.running || recovery.attempts < MAX_DELTA_RECOVERY_ATTEMPTS) && isInstanceRuntimeCurrent(instanceId, recovery.instance)) {
+      recovery.idleReconcileRequested = true
+      runDeltaRecovery(instanceId, sessionId, recovery)
+      return
+    }
+    forceReconcile = recovery.dirty && isInstanceRuntimeCurrent(instanceId, recovery.instance)
+    pendingDeltaRecoveries.delete(recoveryKey)
+  }
+  if (!force && !forceReconcile && !messageStoreBus.getInstance(instanceId)?.hasSessionActiveWork(sessionId)) return
   const key = `${instanceId}:${sessionId}`
-  if (pendingIdleMessageReconciliations.has(key)) return
-  pendingIdleMessageReconciliations.add(key)
-  void loadMessages(instanceId, sessionId, { force: true })
+  const pendingRuntime = pendingIdleMessageReconciliations.get(key)
+  if (pendingRuntime && isInstanceRuntimeCurrent(instanceId, pendingRuntime)) return
+  pendingIdleMessageReconciliations.set(key, instance)
+  void loadMessages(instanceId, sessionId, {
+    force: true,
+    ...(expectedInstance ? { timeoutMs: DELTA_RECOVERY_LOAD_TIMEOUT_MS } : {}),
+  })
     .catch((error) => log.warn("Failed to reconcile idle session messages", { instanceId, sessionId, error }))
-    .finally(() => pendingIdleMessageReconciliations.delete(key))
+    .finally(() => {
+      if (pendingIdleMessageReconciliations.get(key) === instance) pendingIdleMessageReconciliations.delete(key)
+    })
 }
 
 function handleSessionCompacted(instanceId: string, event: EventSessionCompacted): void {
@@ -833,6 +924,7 @@ function handlePermissionReplied(instanceId: string, event: EventPermissionV2Rep
 function handleQuestionAsked(instanceId: string, event: EventQuestionV2Asked | LegacyQuestionAskedEvent): void {
   const request = event?.properties as QuestionRequest | undefined
   if (!request) return
+  if (hasAnsweredQuestion(instanceId, request.id)) return
   const source = event.type === "question.asked" ? "legacy" : "v2"
 
   log.info(`[SSE] Question asked: ${getQuestionId(request)}`)
@@ -858,6 +950,7 @@ function handleQuestionAnswered(
   if (!requestId) return
 
   log.info(`[SSE] Question answered: ${requestId}`)
+  markQuestionAnswered(instanceId, requestId)
   removeQuestionFromQueue(instanceId, requestId)
   removeQuestionV2(instanceId, requestId)
 }

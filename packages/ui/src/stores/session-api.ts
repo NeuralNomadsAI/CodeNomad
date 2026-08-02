@@ -59,7 +59,7 @@ import { DEFAULT_MODEL_OUTPUT_LIMIT, getDefaultModel, isModelValid } from "./ses
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { seedSessionMessagesV2, reconcilePendingPermissionsV2, reconcilePendingQuestionsV2, setSessionRevertV2 } from "./message-v2/bridge"
-import { clearPendingDeltasForMessage, clearPendingDeltasForSession, requestDeltaRecovery } from "./delta-buffer"
+import { clearPendingDeltasForSession, getPendingDeltasForMessage, hasPendingDeltasForMessage, requestDeltaRecovery } from "./delta-buffer"
 import { messageStoreBus } from "./message-v2/bus"
 import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
@@ -92,11 +92,27 @@ const sessionListRequestIds = new Map<string, number>()
 let nextSessionListRequestId = 0
 const pendingMetadataHydrations = new Map<string, Promise<void>>()
 const sessionWorkspaceHints = new Map<string, Map<string, string>>()
+type BufferedDeltaExpectation = { partId: string; field: string; value: string }
+const bufferedDeltaSnapshotFences = new Map<string, Map<string, BufferedDeltaExpectation[]>>()
+
+function clearBufferedDeltaSnapshotFence(instanceId: string, sessionId: string, messageId: string, partId: string): void {
+  const key = `${instanceId}:${sessionId}`
+  const fence = bufferedDeltaSnapshotFences.get(key)
+  const expectations = fence?.get(messageId)
+  if (!fence || !expectations) return
+  const remaining = expectations.filter((expectation) => expectation.partId !== partId)
+  if (remaining.length > 0) fence.set(messageId, remaining)
+  else fence.delete(messageId)
+  if (fence.size === 0) bufferedDeltaSnapshotFences.delete(key)
+}
+
 messageStoreBus.onInstanceDestroyed((instanceId) => {
   sessionWorkspaceHints.delete(instanceId)
   const prefix = `${instanceId}:`
   for (const key of pendingMetadataHydrations.keys()) if (key.startsWith(prefix)) pendingMetadataHydrations.delete(key)
+  for (const key of bufferedDeltaSnapshotFences.keys()) if (key.startsWith(prefix)) bufferedDeltaSnapshotFences.delete(key)
 })
+messageStoreBus.onSessionCleared((instanceId, sessionId) => bufferedDeltaSnapshotFences.delete(`${instanceId}:${sessionId}`))
 
 function adaptApiMessages(
   sessionId: string,
@@ -186,7 +202,11 @@ function rememberSessionWorkspace(instanceId: string, sessionId: string, workspa
   sessionWorkspaceHints.set(instanceId, hints)
 }
 
-async function recordSessionWorkspaceHints(instanceId: string, apiSessions: SDKSession[]): Promise<void> {
+async function recordSessionWorkspaceHints(
+  instanceId: string,
+  apiSessions: SDKSession[],
+  hasCommitAuthority: () => boolean,
+): Promise<void> {
   const hints = new Map(sessionWorkspaceHints.get(instanceId) ?? new Map<string, string>())
   const workspaceBySlug = new Map<string, Promise<string | null>>()
   await Promise.all(apiSessions.map(async (session) => {
@@ -201,6 +221,7 @@ async function recordSessionWorkspaceHints(instanceId: string, apiSessions: SDKS
     const workspaceId = await workspace
     if (workspaceId) hints.set(session.id, workspaceId)
   }))
+  if (!hasCommitAuthority()) return
   sessionWorkspaceHints.set(instanceId, hints)
 }
 
@@ -258,10 +279,10 @@ function hasMissingParentChain(session: SDKSession, loaded: Map<string, SDKSessi
   return false
 }
 
-async function fetchV2Sessions(instanceId: string, options: V2SessionListOptions): Promise<ProjectSessionListResponse> {
+async function fetchV2Sessions(instanceId: string, options: V2SessionListOptions, signal?: AbortSignal): Promise<ProjectSessionListResponse> {
   const client = getRootClient(instanceId)
   const listOptions = buildProjectSessionListOptions(options)
-  const data = await requestData<SessionListResponse>(client.session.list(listOptions), "session.list")
+  const data = await requestData<SessionListResponse>((client.session.list as any)(listOptions, signal ? { signal } : undefined), "session.list")
   const allowedDirectories = [options.directory, ...getWorktrees(instanceId).map((worktree) => worktree.directory)]
 
   return {
@@ -430,7 +451,10 @@ async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: SDKSe
   })
 }
 
-async function fetchSessions(instanceId: string, options?: { reset?: boolean }): Promise<void> {
+async function fetchSessions(
+  instanceId: string,
+  options?: { reset?: boolean; authoritativeDeletes?: boolean; signal?: AbortSignal },
+): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -438,6 +462,9 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
 
   const rootClient = getRootClient(instanceId)
   const requestId = beginSessionListRequest(instanceId)
+  const hasCommitAuthority = () => !options?.signal?.aborted &&
+    isInstanceRuntimeCurrent(instanceId, instance) &&
+    isLatestSessionListRequest(instanceId, requestId)
 
   setLoading((prev) => {
     const next = { ...prev }
@@ -451,15 +478,15 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
     const existingSessions = new Map(sessions().get(instanceId) ?? new Map<string, Session>())
 
     log.info("session.list", { instanceId, limit: PROJECT_SESSION_LIST_LIMIT, directory: sessionListOptions.directory, scope: "project" })
-    const response = await fetchV2Sessions(instanceId, sessionListOptions)
-    if (!isInstanceRuntimeCurrent(instanceId, instance) || !isLatestSessionListRequest(instanceId, requestId)) return
-    await recordSessionWorkspaceHints(instanceId, getV2SessionItems(response))
-    if (!isInstanceRuntimeCurrent(instanceId, instance) || !isLatestSessionListRequest(instanceId, requestId)) return
+    const response = await fetchV2Sessions(instanceId, sessionListOptions, options?.signal)
+    if (!hasCommitAuthority()) return
+    await recordSessionWorkspaceHints(instanceId, getV2SessionItems(response), hasCommitAuthority)
+    if (!hasCommitAuthority()) return
 
     let statusById: Record<string, any> = {}
     let statusResponseKnown = false
     try {
-      const statusResponse = await rootClient.session.status()
+      const statusResponse = await (rootClient.session.status as any)(undefined, options?.signal ? { signal: options.signal } : undefined)
       if (statusResponse.data && typeof statusResponse.data === "object") {
         statusResponseKnown = true
         statusById = statusResponse.data as Record<string, any>
@@ -467,7 +494,7 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
     } catch (error) {
       log.error("Failed to fetch session status:", error)
     }
-    if (!isInstanceRuntimeCurrent(instanceId, instance) || !isLatestSessionListRequest(instanceId, requestId)) return
+    if (!hasCommitAuthority()) return
 
     const sessionMap = new Map<string, Session>()
 
@@ -502,7 +529,7 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
     const remotelyDeletedSessionIds = getAuthoritativelyMissingSessionIds(
       existingSessions.keys(),
       response.listedIds,
-      response.complete,
+      response.complete && options?.authoritativeDeletes !== false,
     )
     for (const sessionId of remotelyDeletedSessionIds) removeSessionRuntimeState(instanceId, sessionId)
 
@@ -576,7 +603,7 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
     })
   } catch (error) {
     log.error("Failed to fetch sessions:", error)
-    if (isInstanceRuntimeCurrent(instanceId, instance) && isLatestSessionListRequest(instanceId, requestId)) {
+    if (hasCommitAuthority()) {
       setSessionListError(instanceId, getOpencodeErrorMessage(error, tGlobal("sessionList.loadError.detail")))
     }
     throw error
@@ -1095,7 +1122,7 @@ async function fetchProviders(instanceId: string): Promise<void> {
 async function loadMessages(
   instanceId: string,
   sessionId: string,
-  options?: { force?: boolean; revisionRetryCount?: number },
+  options?: { force?: boolean; timeoutMs?: number },
 ): Promise<void> {
   const force = options?.force ?? false
   if (force) {
@@ -1137,7 +1164,10 @@ async function loadMessages(
     throw new Error("Session not found")
   }
 
-  const { epoch: loadEpoch, signal: loadSignal } = beginSessionMessageLoad(instanceId, sessionId)
+  const { epoch: loadEpoch, signal: loadSignal, abort: abortLoad } = beginSessionMessageLoad(instanceId, sessionId)
+  const loadTimeout = options?.timeoutMs
+    ? setTimeout(() => abortLoad(new Error(`Session message load timed out after ${options.timeoutMs}ms`)), options.timeoutMs)
+    : undefined
   const store = messageStoreBus.getOrCreate(instanceId)
   const expectedRevision = store.getSessionRevision(sessionId)
   let retryAfterRevisionConflict = false
@@ -1177,11 +1207,10 @@ async function loadMessages(
     const latestStatus = sessions().get(instanceId)?.get(sessionId)?.status ?? sessionForV2.status
     const adapted = adaptApiMessages(sessionId, apiMessages, latestStatus)
 
+    let agentName = ""
+    let providerID = ""
+    let modelID = ""
     if (apiMessages.length > 0) {
-
-      let agentName = ""
-      let providerID = ""
-      let modelID = ""
 
       for (let i = apiMessages.length - 1; i >= 0; i--) {
         const apiMessage = apiMessages[i]
@@ -1203,32 +1232,60 @@ async function loadMessages(
         modelID = defaultModel.modelId
       }
 
-      setSessions((prev) => {
-        if (!isInstanceRuntimeCurrent(instanceId, instance) || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return prev
-        const next = new Map(prev)
-        const nextInstanceSessions = next.get(instanceId)
-        if (!nextInstanceSessions) return next
-        const existingSession = nextInstanceSessions.get(sessionId)
-        if (!existingSession) return next
-        nextInstanceSessions.set(sessionId, {
-          ...existingSession,
-          agent: agentName || existingSession.agent,
-          model: providerID && modelID ? { providerId: providerID, modelId: modelID } : existingSession.model,
-        })
-        next.set(instanceId, nextInstanceSessions)
-        return next
-      })
-
     }
 
     const latestSession = sessions().get(instanceId)?.get(sessionId) ?? sessionForV2
     if (!isInstanceRuntimeCurrent(instanceId, instance) || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return
-    for (const message of adapted.messages) {
-      if (clearPendingDeltasForMessage(instanceId, message.id)) retryAfterRevisionConflict = true
+    const snapshotFenceKey = `${instanceId}:${sessionId}`
+    const residentMessageIds = new Set(store.getSessionMessageIds(sessionId))
+    const snapshotFence = bufferedDeltaSnapshotFences.get(snapshotFenceKey) ?? new Map<string, BufferedDeltaExpectation[]>()
+    for (const messageId of snapshotFence.keys()) if (!residentMessageIds.has(messageId)) snapshotFence.delete(messageId)
+    for (const messageId of residentMessageIds) {
+      const pendingDeltas = getPendingDeltasForMessage(instanceId, messageId)
+      if (pendingDeltas.length === 0) continue
+      const record = store.getMessage(messageId)
+      snapshotFence.set(messageId, pendingDeltas.map(({ partId, field, delta }) => {
+        const current = (record?.parts[partId]?.data as any)?.[field]
+        return { partId, field, value: `${current ?? ""}${delta}` }
+      }))
     }
-    if (!seedSessionMessagesV2(instanceId, latestSession, adapted.messages, adapted.infos, expectedRevision)) {
+    if (snapshotFence.size > 0) bufferedDeltaSnapshotFences.set(snapshotFenceKey, snapshotFence)
+    else bufferedDeltaSnapshotFences.delete(snapshotFenceKey)
+
+    const incomingMessages = new Map(adapted.messages.map((message) => [message.id, message]))
+    const hasBufferedDeltas = adapted.messages.some((message) => hasPendingDeltasForMessage(instanceId, message.id)) ||
+      [...snapshotFence].some(([messageId, expectations]) => {
+        const incoming = incomingMessages.get(messageId)
+        if (!incoming || hasPendingDeltasForMessage(instanceId, messageId)) return true
+        return expectations.some(({ partId, field, value }) => {
+          const part = incoming.parts.find((candidate: any) => candidate.id === partId) as any
+          const incomingValue = part?.[field]
+          return typeof incomingValue !== "string" || !incomingValue.startsWith(value)
+        })
+      })
+    if (hasBufferedDeltas) {
+      retryAfterRevisionConflict = true
+    } else if (!seedSessionMessagesV2(instanceId, latestSession, adapted.messages, adapted.infos, expectedRevision)) {
       retryAfterRevisionConflict = true
     } else {
+      bufferedDeltaSnapshotFences.delete(snapshotFenceKey)
+      if (apiMessages.length > 0) {
+        setSessions((prev) => {
+          if (!isInstanceRuntimeCurrent(instanceId, instance) || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return prev
+          const next = new Map(prev)
+          const nextInstanceSessions = next.get(instanceId)
+          if (!nextInstanceSessions) return next
+          const existingSession = nextInstanceSessions.get(sessionId)
+          if (!existingSession) return next
+          nextInstanceSessions.set(sessionId, {
+            ...existingSession,
+            agent: agentName || existingSession.agent,
+            model: providerID && modelID ? { providerId: providerID, modelId: modelID } : existingSession.model,
+          })
+          next.set(instanceId, nextInstanceSessions)
+          return next
+        })
+      }
       if (latestSession.revert) setSessionRevertV2(instanceId, sessionId, latestSession.revert)
       setMessagesLoaded((prev) => {
         const next = new Map(prev)
@@ -1250,8 +1307,8 @@ async function loadMessages(
     }
     throw error
   } finally {
-    const retryPending = retryAfterRevisionConflict && (options?.revisionRetryCount ?? 0) < 2
-    if (!retryPending) finishSessionMessageLoad(instanceId, sessionId, loadEpoch)
+    if (loadTimeout) clearTimeout(loadTimeout)
+    finishSessionMessageLoad(instanceId, sessionId, loadEpoch)
     if (isInstanceRuntimeCurrent(instanceId, instance) && isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) {
       setLoading((prev) => {
         const next = { ...prev }
@@ -1263,17 +1320,6 @@ async function loadMessages(
   }
 
   if (retryAfterRevisionConflict && sessions().get(instanceId)?.has(sessionId)) {
-    if ((options?.revisionRetryCount ?? 0) < 2) {
-      await new Promise((resolve) => setTimeout(resolve, 50))
-      if (!isInstanceRuntimeCurrent(instanceId, instance) || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) {
-        finishSessionMessageLoad(instanceId, sessionId, loadEpoch)
-        return
-      }
-      return loadMessages(instanceId, sessionId, {
-        force: true,
-        revisionRetryCount: (options?.revisionRetryCount ?? 0) + 1,
-      })
-    }
     setMessagesLoaded((prev) => {
       const next = new Map(prev)
       next.get(instanceId)?.delete(sessionId)
@@ -1289,6 +1335,7 @@ async function loadMessages(
 }
 
 export {
+  clearBufferedDeltaSnapshotFence,
   createSession,
   deleteSession,
   removeSessionRuntimeState,

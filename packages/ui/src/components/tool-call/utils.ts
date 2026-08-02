@@ -14,10 +14,16 @@ export type ToolStateError = import("@opencode-ai/sdk/v2").ToolStateError
 
 export const diffCapableTools = new Set(["edit", "patch"])
 export const TOOL_OUTPUT_RENDER_CHARACTER_LIMIT = 10_000
+export const TOOL_TITLE_RENDER_CHARACTER_LIMIT = 384
 
 export function limitToolOutputForRender(text: string): string {
   if (text.length <= TOOL_OUTPUT_RENDER_CHARACTER_LIMIT) return text
   return `${text.slice(0, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT)}\n\n${tGlobal("toolCall.output.truncated")}`
+}
+
+export function limitToolTitleForRender(text: string): string {
+  if (text.length <= TOOL_TITLE_RENDER_CHARACTER_LIMIT) return text
+  return `${text.slice(0, TOOL_TITLE_RENDER_CHARACTER_LIMIT - 3)}...`
 }
 
 export function isToolStateRunning(state: ToolState): state is ToolStateRunning {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { formatUnknownForCopy, limitToolOutputForRender, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT } from "./utils.ts"
+import { formatUnknownForCopy, limitToolOutputForRender, limitToolTitleForRender, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT, TOOL_TITLE_RENDER_CHARACTER_LIMIT } from "./utils.ts"
 
 test("tool output rendering keeps a bounded prefix without exposing fenced tail content", () => {
   const text = `HEAD${"x".repeat(20_000)}TAIL`
@@ -14,6 +14,14 @@ test("tool output rendering keeps a bounded prefix without exposing fenced tail 
 test("tool output truncation cannot expose HTML from the tail of a fenced block", () => {
   const rendered = limitToolOutputForRender(`\`\`\`text\n${"x".repeat(20_000)}\n\`\`\`\n<img onerror=alert(1)>`)
   assert.equal(rendered.includes("<img"), false)
+})
+
+test("tool titles use a small plain-text limit", () => {
+  const title = `title ${"x".repeat(20_000)}`
+  const rendered = limitToolTitleForRender(title)
+  assert.equal(rendered.length, TOOL_TITLE_RENDER_CHARACTER_LIMIT)
+  assert.ok(rendered.endsWith("..."))
+  assert.equal(rendered.includes("truncated"), false)
 })
 
 test("oversized structured output remains available for an explicit copy", () => {

@@ -30,8 +30,9 @@ describe("OpenCode Yolo metadata", () => {
       },
     }
     const persistence = createOpencodeYoloPersistence({} as never, () => client as never)
-    const [session] = await persistence.loadSessions("instance")
-    await persistence.persist("instance", "root", true, session?.workspaceId)
+    const signal = new AbortController().signal
+    const [session] = await persistence.loadSessions("instance", signal)
+    await persistence.persist("instance", "root", true, session?.workspaceId, signal)
     assert.equal(session?.workspaceId, "workspace")
     assert.equal(calls[0]?.workspace, "workspace")
     assert.equal(calls[1]?.workspace, "workspace")
@@ -49,13 +50,46 @@ describe("OpenCode Yolo metadata", () => {
       },
     }
     const persistence = createOpencodeYoloPersistence({} as never, () => client as never)
+    const signal = new AbortController().signal
     await Promise.all([
-      persistence.persist("instance-a", "root", true),
+      persistence.persist("instance-a", "root", true, undefined, signal),
       persistence.setWorktreeSlug("instance-b", "root", "feature"),
     ])
     assert.deepEqual(metadata, {
       thirdParty: true,
       codenomad: { version: 1, yolo: { enabled: true, rootSessionId: "root" }, worktreeSlug: "feature" },
     })
+  })
+
+  it("does not start a queued metadata write after its generation is aborted", async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    let gets = 0
+    let updates = 0
+    const client = {
+      session: {
+        async get() {
+          gets += 1
+          if (gets === 1) await gate
+          return { data: { metadata: {} } }
+        },
+        async update() {
+          updates += 1
+          return { data: {} }
+        },
+      },
+    }
+    const persistence = createOpencodeYoloPersistence({} as never, () => client as never)
+    const blocker = persistence.setWorktreeSlug("instance", "root", "feature")
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const controller = new AbortController()
+    const stale = persistence.persist("instance", "root", true, undefined, controller.signal)
+    controller.abort()
+    release()
+
+    await blocker
+    await assert.rejects(stale, (error: Error) => error.name === "AbortError")
+    assert.equal(gets, 1)
+    assert.equal(updates, 1)
   })
 })

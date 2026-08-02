@@ -3,7 +3,7 @@ import { ArrowBigUp, ArrowBigDown, Loader2, Mic, Paperclip, Volume2, X } from "l
 import ExpandButton from "./expand-button"
 import { addAttachment, clearAttachments, getAttachments, removeAttachment } from "../stores/attachments"
 import { createPastedPlaceholderRegex, pastedDisplayCounterRegex } from "./prompt-input/attachmentPlaceholders"
-import { prepareFailedPromptRecovery, preparePromptSubmission } from "./prompt-input/submitPrompt"
+import { prepareFailedPromptRecovery, preparePromptSubmission, shouldSuppressFailedPromptRecovery } from "./prompt-input/submitPrompt"
 import { focusConversationStream } from "./focus-conversation"
 import Kbd from "./kbd"
 import { getActiveInstance } from "../stores/instances"
@@ -540,7 +540,7 @@ export default function PromptInput(props: PromptInputProps) {
       }
     } catch (error) {
       log.error("Failed to send message:", error)
-      const suppressRecovery = (error as any)?.suppressPromptRecovery === true
+      const suppressRecovery = shouldSuppressFailedPromptRecovery(error)
       const recoverySessionId = typeof (error as any)?.promptRecoverySessionId === "string"
         ? (error as any).promptRecoverySessionId
         : props.sessionId

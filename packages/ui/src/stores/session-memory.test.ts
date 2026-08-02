@@ -148,3 +148,26 @@ test("idle metadata cannot evict a normalized streaming message", () => {
     messageStoreBus.unregisterInstance(instanceId)
   }
 })
+
+test("interruption-only sessions contribute protected bytes to the global budget", async () => {
+  const instanceId = "memory-pending-only", pendingSessionId = "pending", hiddenSessionId = "hidden"
+  try {
+    addMessage(instanceId, hiddenSessionId)
+    const store = messageStoreBus.getOrCreate(instanceId)
+    store.upsertQuestion({
+      request: {
+        id: "large-question",
+        sessionID: pendingSessionId,
+        questions: [{ header: "Confirm", question: "q".repeat(100_000), options: [] }],
+      } as any,
+      enqueuedAt: 1,
+    })
+    await new Promise((resolve) => setTimeout(resolve, 75))
+
+    const limit = store.getSessionApproximateByteSize(pendingSessionId)
+    assert.ok(store.getResidentSessionIds().includes(pendingSessionId))
+    assert.deepEqual(runSessionMemorySweep(limit), [`${instanceId}\u0000${hiddenSessionId}`])
+  } finally {
+    messageStoreBus.unregisterInstance(instanceId)
+  }
+})

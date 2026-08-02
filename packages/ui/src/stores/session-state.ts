@@ -365,12 +365,16 @@ function advanceMessageLoadEpoch(instanceId: string, sessionId: string): number 
   return epoch
 }
 
-function beginSessionMessageLoad(instanceId: string, sessionId: string): { epoch: number; signal: AbortSignal } {
+function beginSessionMessageLoad(instanceId: string, sessionId: string): {
+  epoch: number
+  signal: AbortSignal
+  abort: (reason?: unknown) => void
+} {
   const epoch = advanceMessageLoadEpoch(instanceId, sessionId)
   const controller = new AbortController()
   const ownerId = getSessionRoot(instanceId, sessionId)?.id ?? sessionId
   messageLoadControllers.set(getDraftKey(instanceId, sessionId), { epoch, ownerSessionId: ownerId, controller })
-  return { epoch, signal: controller.signal }
+  return { epoch, signal: controller.signal, abort: (reason) => controller.abort(reason) }
 }
 
 function finishSessionMessageLoad(instanceId: string, sessionId: string, epoch: number): void {

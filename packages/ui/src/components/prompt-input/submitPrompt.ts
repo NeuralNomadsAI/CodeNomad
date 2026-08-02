@@ -9,6 +9,10 @@ export interface PromptSubmissionResult {
   resolvedCommandArgs: string
 }
 
+export function shouldSuppressFailedPromptRecovery(error: unknown): boolean {
+  return (error as any)?.suppressPromptRecovery === true
+}
+
 export function prepareFailedPromptRecovery(input: {
   submittedText: string
   submittedAttachments: Attachment[]

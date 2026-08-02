@@ -97,6 +97,7 @@ async function syncOpenCodeWorkspaces(instanceId: string): Promise<void> {
 
 async function reloadOpenCodeWorkspaces(instanceId: string): Promise<void> {
   await workspaceSyncs.get(instanceId)
+  workspaceIdByWorktreeSlug.delete(instanceId)
   await syncOpenCodeWorkspaces(instanceId)
 }
 

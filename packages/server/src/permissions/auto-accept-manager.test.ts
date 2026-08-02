@@ -20,8 +20,8 @@ const noopLogger: Logger = {
   },
 } as unknown as Logger
 
-function publishInstanceEvent(bus: EventBus, instanceId: string, event: Record<string, unknown>) {
-  bus.publish({ type: "instance.event", instanceId, event: { ...event } as InstanceStreamEvent })
+function publishInstanceEvent(bus: EventBus, instanceId: string, event: Record<string, unknown>, streamId?: string) {
+  bus.publish({ type: "instance.event", instanceId, streamId, event: { ...event } as InstanceStreamEvent })
 }
 
 /** Publish a `session.*` event using the real OpenCode shape (`properties.info`). */
@@ -129,7 +129,7 @@ describe("AutoAcceptManager persistence", () => {
     const writes: unknown[][] = []
     const persistence: AutoAcceptPersistence = {
       async loadSessions() { return [{ id: "root", parentId: null, yoloEnabled: false }] },
-      async persist(...args) { writes.push(args); await gate },
+      async persist(...args) { writes.push(args.slice(0, 4)); await gate },
     }
     const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier(), persistence })
     const toggle = manager.toggle("inst", "root")
@@ -160,8 +160,10 @@ describe("AutoAcceptManager persistence", () => {
     const bus = new EventBus(noopLogger)
     const replier = makeRecordingReplier()
     let attempts = 0
+    const signals: AbortSignal[] = []
     const persistence: AutoAcceptPersistence = {
-      async loadSessions() {
+      async loadSessions(_instanceId, signal) {
+        signals.push(signal)
         if (++attempts === 1) throw new Error("temporary failure")
         return [{ id: "root", parentId: null, yoloEnabled: true }]
       },
@@ -175,10 +177,34 @@ describe("AutoAcceptManager persistence", () => {
     })
     await flushMicrotasks()
     assert.equal(replier.calls.length, 0)
+    assert.equal(signals[0]?.aborted, true)
     await manager.hydrateInstance("inst")
     await flushMicrotasks()
+    assert.notEqual(signals[1], signals[0])
     assert.equal(replier.calls.length, 1)
     manager.stop()
+  })
+
+  it("releases generation controllers after arbitrary hydration failures", async () => {
+    const bus = new EventBus(noopLogger)
+    const signals: AbortSignal[] = []
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions(instanceId, signal) {
+        signals.push(signal)
+        throw new Error(`unknown workspace: ${instanceId}`)
+      },
+      async persist() {},
+    }
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier(), persistence })
+
+    await assert.rejects(manager.hydrateInstance("invalid-a"), /unknown workspace/)
+    await assert.rejects(manager.hydrateInstance("invalid-b"), /unknown workspace/)
+
+    assert.equal(signals.every((signal) => signal.aborted), true)
+    assert.equal(
+      (manager as unknown as { generationControllers: Map<string, AbortController> }).generationControllers.size,
+      0,
+    )
   })
 
   it("does not re-enable memory when a persisted toggle finishes after cleanup", async () => {
@@ -188,21 +214,137 @@ describe("AutoAcceptManager persistence", () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => { release = resolve })
     let writes = 0
+    let staleSignal: AbortSignal | undefined
     const persistence: AutoAcceptPersistence = {
       async loadSessions() { return [{ id: "root", parentId: null, yoloEnabled: false }] },
-      async persist() { writes += 1; await gate },
+      async persist(_instanceId, _rootSessionId, _enabled, _workspaceId, signal) {
+        staleSignal = signal
+        await gate
+        if (signal.aborted) throw signal.reason
+        writes += 1
+      },
     }
     const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier(), persistence })
     const toggle = manager.toggle("inst", "root")
     const queued = manager.toggle("inst", "root")
     await flushMicrotasks()
     manager.clearInstance("inst")
+    assert.equal(staleSignal?.aborted, true)
     release()
     assert.equal(await toggle, false)
     assert.equal(await queued, false)
-    assert.equal(writes, 1)
+    assert.equal(writes, 0)
     assert.equal(manager.isEnabled("inst", "root"), false)
     assert.equal(changes.length, 0)
+  })
+
+  it("reports a committed toggle after runtime rotation and hydrates the durable value", async () => {
+    const bus = new EventBus(noopLogger)
+    const changes: Array<{ enabled?: boolean }> = []
+    let durableEnabled = false
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions() {
+        return [{ id: "root", parentId: null, yoloEnabled: durableEnabled }]
+      },
+      async persist(_instanceId, _rootSessionId, enabled) {
+        durableEnabled = enabled
+        bus.publish({ type: "instance.eventStatus", instanceId: "inst", streamId: "new", status: "connecting" })
+      },
+    }
+    bus.on("yolo.stateChanged", (event) => changes.push(event))
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier(), persistence })
+    manager.start()
+    bus.publish({ type: "instance.eventStatus", instanceId: "inst", streamId: "old", status: "connecting" })
+    await manager.hydrateInstance("inst")
+
+    assert.equal(await manager.toggle("inst", "root"), true)
+    await manager.hydrateInstance("inst")
+
+    assert.equal(durableEnabled, true)
+    assert.equal(manager.isEnabled("inst", "root"), true)
+    assert.deepEqual(changes.map((event) => event.enabled), [true])
+    manager.stop()
+  })
+
+  it("publishes the authoritative disabled state when rotation aborts persistence after commit", async () => {
+    const bus = new EventBus(noopLogger)
+    const changes: Array<{ sessionId?: string; enabled?: boolean }> = []
+    let durableEnabled = true
+    let loads = 0
+    let persistSignal: AbortSignal | undefined
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions() {
+        loads += 1
+        return [
+          { id: "root", parentId: null, yoloEnabled: durableEnabled },
+          ...(loads === 1 ? [] : [{ id: "unrelated", parentId: null, yoloEnabled: true }]),
+        ]
+      },
+      async persist(_instanceId, _rootSessionId, enabled, _workspaceId, signal) {
+        durableEnabled = enabled
+        persistSignal = signal
+        bus.publish({ type: "instance.eventStatus", instanceId: "inst", streamId: "replacement", status: "connecting" })
+        throw signal.reason
+      },
+    }
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier(), persistence })
+    manager.start()
+    bus.publish({ type: "instance.eventStatus", instanceId: "inst", streamId: "old", status: "connecting" })
+    await manager.hydrateInstance("inst")
+    bus.on("yolo.stateChanged", (event) => changes.push(event))
+
+    assert.equal(await manager.toggle("inst", "root"), false)
+
+    assert.equal(persistSignal?.aborted, true)
+    assert.equal(loads, 2)
+    assert.equal(manager.isEnabled("inst", "root"), false)
+    assert.equal(manager.isEnabled("inst", "unrelated"), true)
+    assert.deepEqual(changes.map(({ sessionId, enabled }) => [sessionId, enabled]), [
+      ["unrelated", true],
+      ["root", false],
+    ])
+    manager.stop()
+  })
+
+  it("rebinds a toggle behind replacement hydration when runtime rotation interrupts initial hydration", async () => {
+    const bus = new EventBus(noopLogger)
+    const changes: Array<{ enabled?: boolean }> = []
+    const writes: boolean[] = []
+    let releaseOld!: () => void
+    let releaseReplacement!: () => void
+    let loads = 0
+    const oldGate = new Promise<void>((resolve) => { releaseOld = resolve })
+    const replacementGate = new Promise<void>((resolve) => { releaseReplacement = resolve })
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions() {
+        await (++loads === 1 ? oldGate : replacementGate)
+        return [{ id: "root", parentId: null, yoloEnabled: false }]
+      },
+      async persist(_instanceId, _rootSessionId, enabled) { writes.push(enabled) },
+    }
+    bus.on("yolo.stateChanged", (event) => changes.push(event))
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier(), persistence })
+    manager.start()
+    bus.publish({ type: "instance.eventStatus", instanceId: "inst", streamId: "old", status: "connecting" })
+    const oldHydration = manager.hydrateInstance("inst")
+    const toggle = manager.toggle("inst", "root")
+
+    bus.publish({ type: "instance.eventStatus", instanceId: "inst", streamId: "replacement", status: "connecting" })
+    releaseOld()
+    await oldHydration
+    await flushMicrotasks()
+
+    assert.equal(loads, 2)
+    assert.deepEqual(writes, [], "stale authority must not persist before replacement hydration")
+    assert.equal(changes.length, 0, "stale authority must not publish replacement state")
+    assert.equal(manager.isEnabled("inst", "root"), false)
+
+    releaseReplacement()
+    assert.equal(await toggle, true)
+    assert.deepEqual(writes, [true])
+    assert.equal(manager.isEnabled("inst", "root"), true)
+    assert.deepEqual(changes.map((event) => event.enabled), [true])
+    manager.stop()
   })
 
   it("moves persisted Yolo state when late ancestry changes the family root", async () => {
@@ -215,7 +357,7 @@ describe("AutoAcceptManager persistence", () => {
           { id: "child", parentId: null, workspaceId: "workspace", yoloEnabled: true },
         ]
       },
-      async persist(...args) { writes.push(args) },
+      async persist(...args) { writes.push(args.slice(0, 4)) },
     }
     const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier(), persistence })
     manager.start()
@@ -503,6 +645,166 @@ describe("AutoAcceptManager lifecycle", () => {
     await flushMicrotasks()
 
     assert.equal(replier.calls.length, 0)
+  })
+
+  it("stop() fences late hydration and refuses new work until restarted", async () => {
+    const bus = new EventBus(noopLogger)
+    const changes: Record<string, unknown>[] = []
+    const signals: AbortSignal[] = []
+    let release!: () => void
+    let loads = 0
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions(_instanceId, signal) {
+        loads += 1
+        signals.push(signal)
+        if (loads === 1) await gate
+        return [{ id: "root", parentId: null, yoloEnabled: true }]
+      },
+      async persist() {},
+    }
+    bus.on("yolo.stateChanged", (event) => changes.push(event))
+    const manager = new AutoAcceptManager({
+      eventBus: bus,
+      logger: noopLogger,
+      replier: makeRecordingReplier(),
+      persistence,
+    })
+    manager.start()
+
+    const hydration = manager.hydrateInstance("inst")
+    manager.stop()
+    assert.equal(signals[0]?.aborted, true)
+    release()
+    await hydration
+    await manager.hydrateInstance("inst")
+
+    assert.equal(loads, 1, "stopped managers must not create new generation work")
+    assert.equal(manager.isEnabled("inst", "root"), false)
+    assert.equal(changes.length, 0)
+
+    manager.start()
+    await manager.hydrateInstance("inst")
+    assert.equal(loads, 2)
+    assert.equal(signals[1]?.aborted, false)
+    assert.equal(manager.isEnabled("inst", "root"), true)
+    manager.stop()
+  })
+
+  it("stop() ignores a reply that settles after cancellation", async () => {
+    const bus = new EventBus(noopLogger)
+    const accepted: Record<string, unknown>[] = []
+    let signal: AbortSignal | undefined
+    let release!: () => void
+    const replier: PermissionReplier = (_reply, replySignal) => {
+      signal = replySignal
+      return new Promise<void>((resolve) => { release = resolve })
+    }
+    bus.on("yolo.autoAccepted", (event) => accepted.push(event))
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier })
+    manager.start()
+    publishSession(bus, "inst", "session.updated", { id: "root", parentID: null })
+    manager.toggle("inst", "root")
+    publishInstanceEvent(bus, "inst", {
+      type: "permission.v2.asked",
+      properties: { id: "permission", sessionID: "root" },
+    })
+
+    manager.stop()
+    assert.equal(signal?.aborted, true)
+    release()
+    await flushMicrotasks()
+
+    assert.equal(accepted.length, 0)
+  })
+})
+
+describe("AutoAcceptManager runtime rotation", () => {
+  it("clears runtime state and rehydrates persisted roots for the new stream", async () => {
+    const bus = new EventBus(noopLogger)
+    const replier = makeRecordingReplier()
+    let loads = 0
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions() {
+        loads += 1
+        return loads === 1
+          ? [
+              { id: "old-root", parentId: null, yoloEnabled: true },
+              { id: "old-child", parentId: "old-root", yoloEnabled: false },
+              { id: "stale", parentId: null, yoloEnabled: false },
+            ]
+          : [{ id: "new-root", parentId: null, yoloEnabled: true }]
+      },
+      async persist() {},
+    }
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier, persistence })
+    manager.start()
+    bus.publish({ type: "instance.eventStatus", instanceId: "inst", streamId: "old", status: "connecting" })
+    await manager.hydrateInstance("inst")
+    publishInstanceEvent(bus, "inst", {
+      type: "permission.v2.asked",
+      properties: { id: "stale-permission", sessionID: "stale" },
+    }, "old")
+
+    bus.publish({ type: "instance.eventStatus", instanceId: "inst", streamId: "new", status: "connecting" })
+    await manager.hydrateInstance("inst")
+    await flushMicrotasks()
+
+    assert.equal(loads, 2)
+    assert.equal(manager.isEnabled("inst", "old-child"), false)
+    assert.equal(manager.isEnabled("inst", "new-root"), true)
+    assert.equal(replier.calls.length, 0, "stale pending permission must not drain into the new runtime")
+    manager.stop()
+  })
+
+  it("ignores an old reply completion without disturbing the new in-flight reply", async () => {
+    const bus = new EventBus(noopLogger)
+    const completions: Array<() => void> = []
+    const calls: AutoAcceptReply[] = []
+    const accepted: Record<string, unknown>[] = []
+    const signals: AbortSignal[] = []
+    const replier: PermissionReplier = (reply, signal) => {
+      calls.push(reply)
+      signals.push(signal)
+      return new Promise<void>((resolve) => completions.push(resolve))
+    }
+    bus.on("yolo.autoAccepted", (event) => accepted.push(event))
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier })
+    manager.start()
+
+    bus.publish({ type: "instance.eventStatus", instanceId: "inst", streamId: "old", status: "connecting" })
+    publishSession(bus, "inst", "session.updated", { id: "root", parentID: null })
+    manager.toggle("inst", "root")
+    publishInstanceEvent(bus, "inst", {
+      type: "permission.v2.asked",
+      properties: { id: "same-permission", sessionID: "root" },
+    }, "old")
+
+    bus.publish({ type: "instance.eventStatus", instanceId: "inst", streamId: "new", status: "connecting" })
+    assert.equal(signals[0]?.aborted, true)
+    publishSession(bus, "inst", "session.updated", { id: "root", parentID: null })
+    manager.toggle("inst", "root")
+    publishInstanceEvent(bus, "inst", {
+      type: "permission.v2.asked",
+      properties: { id: "same-permission", sessionID: "root" },
+    }, "new")
+    assert.equal(calls.length, 2)
+    assert.equal(signals[1]?.aborted, false)
+
+    completions[0]()
+    await flushMicrotasks()
+    assert.equal(accepted.length, 0)
+    publishInstanceEvent(bus, "inst", {
+      type: "permission.v2.asked",
+      properties: { id: "same-permission", sessionID: "root" },
+    }, "new")
+    assert.equal(calls.length, 2, "old completion must not clear the new in-flight marker")
+
+    completions[1]()
+    await flushMicrotasks()
+    assert.equal(accepted.length, 1)
+    assert.equal(accepted[0].permissionId, "same-permission")
+    manager.stop()
   })
 })
 

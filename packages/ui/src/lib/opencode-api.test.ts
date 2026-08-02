@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { getOpencodeErrorMessage } from "./opencode-api.ts"
+import { getOpencodeErrorMessage, isDeliveryAmbiguousError } from "./opencode-api.ts"
 
 describe("getOpencodeErrorMessage", () => {
   it("uses the detailed message from a nested SDK error", () => {
@@ -36,5 +36,29 @@ describe("getOpencodeErrorMessage", () => {
     const second: { cause?: unknown } = { cause: first }
     first.cause = second
     assert.equal(getOpencodeErrorMessage(first, "Unable to load sessions"), "Unable to load sessions")
+  })
+})
+
+describe("isDeliveryAmbiguousError", () => {
+  it("recognizes standard transport codes and status zero", () => {
+    assert.equal(isDeliveryAmbiguousError({ code: "ECONNRESET", message: "socket hang up" }), true)
+    assert.equal(isDeliveryAmbiguousError({ code: "ETIMEDOUT", message: "timed out" }), true)
+    assert.equal(isDeliveryAmbiguousError({ status: 0, cause: new TypeError("Failed to fetch") }), true)
+  })
+
+  it("recognizes common browser fetch failure messages", () => {
+    for (const message of ["Network request failed", "Load failed", "fetch failed"]) {
+      assert.equal(isDeliveryAmbiguousError(new TypeError(message)), true)
+    }
+  })
+
+  it("keeps definite HTTP failures replayable", () => {
+    assert.equal(isDeliveryAmbiguousError({ response: { status: 400 }, error: { message: "Bad command" } }), false)
+    assert.equal(isDeliveryAmbiguousError({ response: { status: 429 }, error: { message: "Rate limited" } }), false)
+  })
+
+  it("treats unknown and post-success parsing failures as ambiguous", () => {
+    assert.equal(isDeliveryAmbiguousError(new SyntaxError("Unexpected end of JSON input")), true)
+    assert.equal(isDeliveryAmbiguousError({ response: { status: 200 }, error: new TypeError("terminated") }), true)
   })
 })
