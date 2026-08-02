@@ -145,6 +145,7 @@ export async function* getWriteToolSearchText(context: ToolSearchTextContext): A
   const { input, metadata } = readToolStatePayload(context.toolState)
   yield* base(context)
   yield* strings(input.filePath, typeof input.content === "string" ? input.content : metadata.content)
+  yield* formatted((metadata as any).diagnostics, context)
   yield* errors(context)
 }
 
@@ -154,20 +155,20 @@ export async function* getDiffToolSearchText(context: ToolSearchTextContext): As
   yield* strings(input.filePath, input.path, metadata.diff)
   yield* formatted(output, context)
   yield* formatted(metadata.output, context)
+  yield* formatted((metadata as any).diagnostics, context)
   yield* errors(context)
 }
 
 export async function* getApplyPatchToolSearchText(context: ToolSearchTextContext): AsyncGenerator<string> {
   yield* getDiffToolSearchText(context)
-  const { metadata, output } = readToolStatePayload(context.toolState)
+  const { input, metadata } = readToolStatePayload(context.toolState)
+  yield* formatted(input, context)
   const files = Array.isArray((metadata as any).files) ? ((metadata as any).files as any[]) : []
   for (let index = 0; index < files.length; index += 1) {
     const file = files[index]
     yield* strings(file?.filePath, file?.relativePath, file?.diff, file?.patch)
     if (index % 64 === 63) await context.checkpoint?.()
   }
-  yield* formatted((metadata as any).diagnostics, context)
-  yield* formatted(output, context)
 }
 
 export async function* getWebfetchToolSearchText(context: ToolSearchTextContext): AsyncGenerator<string> {
@@ -181,11 +182,15 @@ export async function* getWebfetchToolSearchText(context: ToolSearchTextContext)
 
 export async function* getTaskToolSearchText(context: ToolSearchTextContext): AsyncGenerator<string> {
   const { input, metadata, output } = readToolStatePayload(context.toolState)
+  const model = (metadata as any).model
+  const providerId = model && typeof model === "object" && typeof model.providerID === "string" ? model.providerID : undefined
+  const modelId = model && typeof model === "object" && typeof model.modelID === "string" ? model.modelID : undefined
   yield* base(context)
   yield* errors(context)
   yield* formatted(output, context)
   yield* formatted(metadata.summary, context)
   yield* strings(input.description, input.subagent_type, input.prompt)
+  yield* strings(providerId && modelId ? `${providerId}/${modelId}` : providerId ?? modelId)
 }
 
 export async function* getTodoToolSearchText(context: ToolSearchTextContext): AsyncGenerator<string> {

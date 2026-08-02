@@ -8,13 +8,18 @@ const SWEEP_DELAY_MS = 1_000
 const touched = new Map<string, number>()
 const visibleLeases = new Map<string, number>()
 const measuredBytes = new Map<string, number>()
-const pendingMeasurements = new Map<string, { idle: boolean; handle: number | ReturnType<typeof setTimeout> }>()
+const pendingMeasurements = new Map<string, {
+  idle: boolean
+  handle: number | ReturnType<typeof setTimeout>
+  controller: AbortController
+}>()
 let sequence = 0
 let sweepTimer: ReturnType<typeof setTimeout> | undefined
 
 function cancelSessionMeasurement(key: string): void {
   const pending = pendingMeasurements.get(key)
   if (!pending) return
+  pending.controller.abort(new Error("Session memory measurement superseded"))
   if (pending.idle) (globalThis as any).cancelIdleCallback?.(pending.handle)
   else clearTimeout(pending.handle)
   pendingMeasurements.delete(key)
@@ -22,21 +27,29 @@ function cancelSessionMeasurement(key: string): void {
 
 function scheduleSessionMeasurement(instanceId: string, sessionId: string): void {
   const key = sessionKey(instanceId, sessionId)
-  if (pendingMeasurements.has(key)) return
-  const measure = () => {
-    pendingMeasurements.delete(key)
-    const store = messageStoreBus.getInstance(instanceId)
-    if (!store?.getResidentSessionIds().includes(sessionId)) return
-    measuredBytes.set(key, store.getSessionApproximateByteSize(sessionId))
-    scheduleSessionMemorySweep()
+  cancelSessionMeasurement(key)
+  const pending = { idle: false, handle: 0 as number | ReturnType<typeof setTimeout>, controller: new AbortController() }
+  const measure = async () => {
+    try {
+      const store = messageStoreBus.getInstance(instanceId)
+      if (!store?.getResidentSessionIds().includes(sessionId)) return
+      const bytes = await store.getSessionApproximateByteSizeIncrementally(sessionId, pending.controller.signal)
+      if (pendingMeasurements.get(key) !== pending || pending.controller.signal.aborted) return
+      measuredBytes.set(key, bytes)
+      scheduleSessionMemorySweep()
+    } catch (error) {
+      if (!pending.controller.signal.aborted) log.warn("Failed to measure resident session messages", { instanceId, sessionId, error })
+    } finally {
+      if (pendingMeasurements.get(key) === pending) pendingMeasurements.delete(key)
+    }
   }
   if (typeof (globalThis as any).requestIdleCallback === "function") {
-    const handle = (globalThis as any).requestIdleCallback(measure, { timeout: 2_000 }) as number
-    pendingMeasurements.set(key, { idle: true, handle })
+    pending.idle = true
+    pending.handle = (globalThis as any).requestIdleCallback(() => void measure(), { timeout: 2_000 }) as number
   } else {
-    const handle = setTimeout(measure, 50)
-    pendingMeasurements.set(key, { idle: false, handle })
+    pending.handle = setTimeout(() => void measure(), 50)
   }
+  pendingMeasurements.set(key, pending)
 }
 
 function sessionKey(instanceId: string, sessionId: string): string {
@@ -94,7 +107,7 @@ export function evictResidentSessionMessages(instanceId: string, sessionId: stri
     isSessionMessagesLoading(instanceId, sessionId) ||
     hasProtectedSessionWork(store, sessionId)
   ) return false
-  store.clearSession(sessionId, { preserveScroll: true, preservePromptDisplay: true })
+  store.clearSession(sessionId, { preserveScroll: true })
   log.info("Evicted resident session messages", { instanceId, sessionId })
   return true
 }
@@ -105,18 +118,15 @@ export function runSessionMemorySweep(byteLimit = MAX_HOT_SESSION_MESSAGE_BYTES)
     for (const sessionId of store.getResidentSessionIds()) {
       const key = sessionKey(instanceId, sessionId)
       const status = sessions().get(instanceId)?.get(sessionId)?.status
-      const protectedSession = visibleLeases.has(key) || status === "working" || status === "compacting" || hasProtectedSessionWork(store, sessionId) ||
-        isSessionMessagesLoading(instanceId, sessionId)
-      let byteSize = measuredBytes.get(key)
-      if (!protectedSession) {
-        byteSize = store.getSessionApproximateByteSize(sessionId)
-        measuredBytes.set(key, byteSize)
-      }
-      byteSize ??= byteLimit
+      const byteSize = measuredBytes.get(key)
+      const awaitingMeasurement = byteSize === undefined
+      if (awaitingMeasurement && !pendingMeasurements.has(key)) scheduleSessionMeasurement(instanceId, sessionId)
+      const protectedSession = awaitingMeasurement || visibleLeases.has(key) || status === "working" || status === "compacting" ||
+        hasProtectedSessionWork(store, sessionId) || isSessionMessagesLoading(instanceId, sessionId)
       entries.push({
         key,
-        // ponytail: reuse the last full measurement while a protected session is changing rapidly.
-        byteSize,
+        // ponytail: unknown sessions stay protected until their first yielding measurement completes.
+        byteSize: byteSize ?? byteLimit,
         lastTouched: touched.get(key) ?? 0,
         protected: protectedSession,
       })
@@ -132,7 +142,10 @@ export function runSessionMemorySweep(byteLimit = MAX_HOT_SESSION_MESSAGE_BYTES)
 }
 
 messageStoreBus.onSessionChanged((instanceId, sessionId) => {
-  touched.set(sessionKey(instanceId, sessionId), ++sequence)
+  const key = sessionKey(instanceId, sessionId)
+  touched.set(key, ++sequence)
+  const measured = measuredBytes.get(key)
+  if (measured !== undefined) measuredBytes.set(key, Math.max(measured, MAX_HOT_SESSION_MESSAGE_BYTES + 1))
   scheduleSessionMeasurement(instanceId, sessionId)
   scheduleSessionMemorySweep()
 })

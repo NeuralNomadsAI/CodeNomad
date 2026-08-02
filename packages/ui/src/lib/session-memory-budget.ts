@@ -71,6 +71,65 @@ export function estimateRetainedBytes(value: unknown, limit = Number.POSITIVE_IN
   return measureRetainedBytes(value, limit)
 }
 
+export async function estimateRetainedValuesIncrementally(
+  values: Iterable<unknown>,
+  options: {
+    signal?: AbortSignal
+    yieldEvery?: number
+    yieldControl?: () => Promise<void>
+  } = {},
+): Promise<number> {
+  const yieldEvery = Math.max(1, options.yieldEvery ?? 250)
+  const yieldControl = options.yieldControl ?? (() => new Promise<void>((resolve) => setTimeout(resolve, 0)))
+  let processed = 0
+  let total = 0
+
+  const checkpoint = (): Promise<void> | undefined => {
+    if (options.signal?.aborted) throw options.signal.reason ?? new Error("Session memory measurement aborted")
+    processed += 1
+    if (processed % yieldEvery !== 0) return
+    return yieldControl().then(() => {
+      if (options.signal?.aborted) throw options.signal.reason ?? new Error("Session memory measurement aborted")
+    })
+  }
+
+  for (const value of values) {
+    const seen = new WeakSet<object>()
+    const pending: unknown[] = [value]
+    while (pending.length > 0) {
+      const pause = checkpoint()
+      if (pause) await pause
+      const current = pending.pop()
+      if (typeof current === "string") total += current.length * 2 + 16
+      else if (typeof current === "number" || typeof current === "bigint") total += 8
+      else if (typeof current === "boolean") total += 4
+      else if (current && typeof current === "object") {
+        const buffer = readBufferSize(current)
+        if (buffer) {
+          total += buffer.growable ? Number.POSITIVE_INFINITY : buffer.byteLength
+          continue
+        }
+        if (ArrayBuffer.isView(current)) {
+          const backing = readBufferSize(current.buffer)
+          total += backing?.growable ? Number.POSITIVE_INFINITY : backing?.byteLength ?? current.byteLength
+          continue
+        }
+        if (seen.has(current)) continue
+        seen.add(current)
+        total += Array.isArray(current) ? 24 + current.length * 8 : 32
+        for (const key in current) {
+          if (!Object.prototype.hasOwnProperty.call(current, key)) continue
+          const propertyPause = checkpoint()
+          if (propertyPause) await propertyPause
+          total += key.length * 2 + 8
+          pending.push((current as Record<string, unknown>)[key])
+        }
+      }
+    }
+  }
+  return total
+}
+
 export function exceedsRetainedByteLimit(value: unknown, limit: number): boolean {
   return measureRetainedBytes(value, limit) > limit
 }

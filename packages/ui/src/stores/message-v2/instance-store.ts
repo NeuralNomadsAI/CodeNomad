@@ -14,7 +14,7 @@ import type { ClientPart, MessageInfo } from "../../types/message"
 import { getPermissionSessionId, mergePermissionRequest } from "../../types/permission"
 import { getQuestionSessionId } from "../../types/question"
 import { clearRecordDisplayCacheForMessages } from "./record-display-cache"
-import { estimateRetainedBytes } from "../../lib/session-memory-budget"
+import { estimateRetainedValuesIncrementally } from "../../lib/session-memory-budget"
 import { mergePendingRequestEntry, shouldSkipPendingRequestUpsert } from "./pending-request-dedupe"
 
 const DERIVED_RENDER_MEMORY_MULTIPLIER = 3
@@ -254,7 +254,8 @@ export interface InstanceMessageStore {
   getSessionRevision: (sessionId: string) => number
   getSessionMessageIds: (sessionId: string) => string[]
   getResidentSessionIds: () => string[]
-  getSessionApproximateByteSize: (sessionId: string) => number
+  getSessionApproximateByteSizeIncrementally: (sessionId: string, signal?: AbortSignal) => Promise<number>
+  interruptSessionActiveMessages: (sessionId: string) => void
   hasSessionActiveWork: (sessionId: string) => boolean
   hasSessionPendingInput: (sessionId: string) => boolean
   getLastAssistantMessageId: (sessionId: string) => string | undefined
@@ -274,6 +275,27 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   const TODO_TOOL_NAME = "todowrite"
 
   const messageInfoCache = new Map<string, MessageInfo>()
+  const activeMessageCounts = new Map<string, number>()
+
+  function isActiveMessage(record: MessageRecord | undefined): boolean {
+    return record?.status === "sending" || record?.status === "streaming"
+  }
+
+  function updateActiveMessageCount(previous: MessageRecord | undefined, next: MessageRecord | undefined) {
+    if (isActiveMessage(previous)) {
+      const count = (activeMessageCounts.get(previous!.sessionId) ?? 1) - 1
+      if (count > 0) activeMessageCounts.set(previous!.sessionId, count)
+      else activeMessageCounts.delete(previous!.sessionId)
+    }
+    if (isActiveMessage(next)) activeMessageCounts.set(next!.sessionId, (activeMessageCounts.get(next!.sessionId) ?? 0) + 1)
+  }
+
+  function setActiveMessageCount(sessionId: string, records: Iterable<MessageRecord>) {
+    let count = 0
+    for (const record of records) if (isActiveMessage(record)) count += 1
+    if (count > 0) activeMessageCounts.set(sessionId, count)
+    else activeMessageCounts.delete(sessionId)
+  }
 
   function findLastAssistantMessageId(messageIds: readonly string[]): string | undefined {
     for (let index = messageIds.length - 1; index >= 0; index -= 1) {
@@ -378,32 +400,48 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return [...sessionIds]
   }
 
-  function getSessionApproximateByteSize(sessionId: string) {
-    const session = state.sessions[sessionId]
-    let bytes = estimateRetainedBytes(session) + estimateRetainedBytes(state.usage[sessionId])
-    for (const messageId of session?.messageIds ?? []) {
-      bytes += estimateRetainedBytes(state.messages[messageId])
-      bytes += estimateRetainedBytes(messageInfoCache.get(messageId))
+  async function getSessionApproximateByteSizeIncrementally(sessionId: string, signal?: AbortSignal) {
+    function* values(): Iterable<unknown> {
+      const session = state.sessions[sessionId]
+      yield session
+      yield state.usage[sessionId]
+      for (const messageId of session?.messageIds ?? []) {
+        yield state.messages[messageId]
+        yield messageInfoCache.get(messageId)
+      }
+      for (const entry of state.permissions.queue) {
+        if (getPermissionSessionId(entry.permission) === sessionId) yield entry.permission
+      }
+      for (const entry of state.questions.queue) {
+        if (getQuestionSessionId(entry.request) === sessionId) yield entry.request
+      }
     }
-    for (const entry of state.permissions.queue) {
-      if (getPermissionSessionId(entry.permission) === sessionId) bytes += estimateRetainedBytes(entry.permission)
+    return (await estimateRetainedValuesIncrementally(values(), { signal })) * DERIVED_RENDER_MEMORY_MULTIPLIER
+  }
+
+  function interruptSessionActiveMessages(sessionId: string) {
+    const messageIds = state.sessions[sessionId]?.messageIds ?? []
+    let changed = false
+    setState("messages", produce((draft) => {
+      for (const messageId of messageIds) {
+        const message = draft[messageId]
+        if (!message || (message.status !== "sending" && message.status !== "streaming")) continue
+        message.status = "error"
+        message.isEphemeral = false
+        message.updatedAt = Date.now()
+        message.revision += 1
+        changed = true
+      }
+    }))
+    if (changed) {
+      activeMessageCounts.delete(sessionId)
+      bumpSessionRevision(sessionId)
     }
-    for (const entry of state.questions.queue) {
-      if (getQuestionSessionId(entry.request) === sessionId) bytes += estimateRetainedBytes(entry.request)
-    }
-    // ponytail: account conservatively for parsed Markdown/diff caches without walking every renderer cache.
-    return bytes * DERIVED_RENDER_MEMORY_MULTIPLIER
   }
 
   function hasSessionActiveWork(sessionId: string) {
     if (hasSessionPendingInput(sessionId)) return true
-    const session = state.sessions[sessionId]
-    if (!session) return false
-    if (session.messageIds.some((messageId) => {
-      const status = state.messages[messageId]?.status
-      return status === "sending" || status === "streaming"
-    })) return true
-    return false
+    return (activeMessageCounts.get(sessionId) ?? 0) > 0
   }
 
   function hasSessionPendingInput(sessionId: string) {
@@ -536,6 +574,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     const nextQuestionsByMessage: Record<string, Record<string, QuestionEntry>> = {
       ...state.questions.byMessage,
     }
+    setActiveMessageCount(sessionId, Object.values(normalizedRecords))
 
     if (staleIds.length > 0) {
       clearRecordDisplayCacheForMessages(instanceId, staleIds)
@@ -627,8 +666,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     const now = Date.now()
 
     let nextRecord: MessageRecord | undefined
+    let previousRecord: MessageRecord | undefined
 
     setState("messages", input.id, (previous) => {
+      previousRecord = previous ? { ...previous } : undefined
       const revision = previous ? previous.revision + (shouldBump ? 1 : 0) : 0
       const clientPromptDisplayMetadata = resolveClientPromptDisplayText(instanceId, input, previous)
       const record: MessageRecord = {
@@ -650,6 +691,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     })
 
     if (nextRecord) {
+      updateActiveMessageCount(previousRecord, nextRecord)
       maybeUpdateLatestTodoFromRecord(nextRecord)
     }
 
@@ -866,6 +908,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
           clearLatestTodoSnapshot(sessionId)
         }
         recomputeLastAssistantMessageId(sessionId)
+        setActiveMessageCount(sessionId, (state.sessions[sessionId]?.messageIds ?? []).flatMap((id) => state.messages[id] ? [state.messages[id]] : []))
         bumpSessionRevision(sessionId)
       })
     })
@@ -1266,6 +1309,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     })
 
     recomputeLastAssistantMessageId(sessionId, keptIds)
+    setActiveMessageCount(sessionId, keptIds.flatMap((id) => state.messages[id] ? [state.messages[id]] : []))
     bumpSessionRevision(sessionId)
     return true
   }
@@ -1381,14 +1425,16 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     })
 
     clearLatestTodoSnapshot(sessionId)
+    activeMessageCounts.delete(sessionId)
  
     if (options?.notify !== false) hooks?.onSessionCleared?.(instanceId, sessionId)
   }
 
  
-   function clearInstance() {
-     clearPromptDisplayOverridesForInstance(instanceId, Object.keys(state.sessions))
-     messageInfoCache.clear()
+    function clearInstance() {
+      clearPromptDisplayOverridesForInstance(instanceId, Object.keys(state.sessions))
+      messageInfoCache.clear()
+      activeMessageCounts.clear()
       setState(reconcile(createInitialState(instanceId)))
     }
 
@@ -1430,7 +1476,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       getSessionRevision: getSessionRevisionValue,
       getSessionMessageIds: (sessionId: string) => state.sessions[sessionId]?.messageIds ?? [],
       getResidentSessionIds,
-      getSessionApproximateByteSize,
+      getSessionApproximateByteSizeIncrementally,
+      interruptSessionActiveMessages,
       hasSessionActiveWork,
       hasSessionPendingInput,
       getLastAssistantMessageId: getLastAssistantMessageIdValue,

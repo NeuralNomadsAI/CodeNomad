@@ -12,6 +12,7 @@ const MAX_PENDING_DELTA_CHARACTERS = 64_000
 const MAX_PENDING_DELTA_ENTRIES = 64
 
 type PendingDelta = { instanceId: string; sessionId?: string; messageId: string; partId: string; field: string; delta: string }
+type DeltaRecoveryRequest = Omit<PendingDelta, "delta"> & { delta?: string }
 const pendingDeltas = new Map<string, PendingDelta>()
 let deltaFlushTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -31,7 +32,7 @@ export function enqueueDelta(instanceId: string, messageId: string, partId: stri
   }
 }
 
-export function requestDeltaRecovery(pending: Omit<PendingDelta, "delta">): void {
+export function requestDeltaRecovery(pending: DeltaRecoveryRequest): void {
   recoveryCallback?.(pending)
 }
 
@@ -117,7 +118,7 @@ export function getPendingDeltasForMessage(
   return result
 }
 
-export function setRecoveryCallback(callback: (pending: Omit<PendingDelta, "delta">) => void) {
+export function setRecoveryCallback(callback: (pending: DeltaRecoveryRequest) => void) {
   recoveryCallback = callback
 }
 
@@ -132,14 +133,17 @@ export function resetDeltaBufferForTests() {
 }
 
 let flushCallback: ((batch: PendingDelta[]) => void) | null = null
-let recoveryCallback: ((pending: Omit<PendingDelta, "delta">) => void) | null = null
+let recoveryCallback: ((pending: DeltaRecoveryRequest) => void) | null = null
 
 function flushDeltas() {
   deltaFlushTimer = null
   if (pendingDeltas.size === 0) return
   const batch = Array.from(pendingDeltas.values())
-  pendingDeltas.clear()
   if (flushCallback) {
     flushCallback(batch)
+  }
+  for (const pending of batch) {
+    const key = `${pending.instanceId}:${pending.messageId}:${pending.partId}:${pending.field}`
+    if (pendingDeltas.get(key) === pending) pendingDeltas.delete(key)
   }
 }

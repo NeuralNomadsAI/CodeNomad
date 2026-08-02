@@ -200,6 +200,8 @@ export const messagingMessages = {
   "promptInput.send.ariaLabel": "Отправить сообщение",
   "promptInput.send.errorFallback": "Не удалось отправить сообщение",
   "promptInput.send.errorTitle": "Не удалось отправить",
+  "promptInput.send.ambiguousTitle": "Не удалось подтвердить доставку",
+  "promptInput.send.ambiguousMessage": "Возможно, сервер получил это сообщение. Оно восстановлено как черновик и не будет отправлено повторно, пока вы не выберете Отправить.",
   "promptInput.conversationMode.enable.title": "Включить режим разговора",
   "promptInput.conversationMode.disable.title": "Выключить режим разговора",
   "promptInput.conversationMode.error.title": "Сбой озвучивания разговора",

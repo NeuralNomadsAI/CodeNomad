@@ -197,6 +197,8 @@ export const messagingMessages = {
   "promptInput.send.ariaLabel": "Send message",
   "promptInput.send.errorFallback": "Failed to send message",
   "promptInput.send.errorTitle": "Send failed",
+  "promptInput.send.ambiguousTitle": "Delivery could not be confirmed",
+  "promptInput.send.ambiguousMessage": "The server may have received this message. It was restored as a draft and will not be sent again unless you choose Send.",
   "promptInput.conversationMode.enable.title": "Enable conversation mode",
   "promptInput.conversationMode.disable.title": "Disable conversation mode",
   "promptInput.conversationMode.error.title": "Conversation playback failed",

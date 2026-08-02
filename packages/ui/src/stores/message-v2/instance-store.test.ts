@@ -48,11 +48,11 @@ describe("message-v2 permission state", () => {
     assert.equal(store.hasSessionActiveWork("session-1"), true)
   })
 
-  it("charges large canonical interruption payloads once to their session", () => {
+  it("charges large canonical interruption payloads once to their session", async () => {
     const store = createInstanceMessageStore("instance-1")
     store.addOrUpdateSession({ id: "session-1" })
     store.addOrUpdateSession({ id: "session-2" })
-    const baseline = store.getSessionApproximateByteSize("session-1")
+    const baseline = await store.getSessionApproximateByteSizeIncrementally("session-1")
     const permission = {
       id: "permission-large",
       sessionID: "session-1",
@@ -71,14 +71,14 @@ describe("message-v2 permission state", () => {
       estimateRetainedBytes(store.state.permissions.queue[0]?.permission) +
       estimateRetainedBytes(store.state.questions.queue[0]?.request)
     )
-    assert.equal(store.getSessionApproximateByteSize("session-1"), expected)
-    assert.ok(store.getSessionApproximateByteSize("session-2") < expected / 2)
+    assert.equal(await store.getSessionApproximateByteSizeIncrementally("session-1"), expected)
+    assert.ok(await store.getSessionApproximateByteSizeIncrementally("session-2") < expected / 2)
 
     store.upsertPermission({ permission, messageId: "message-1", partId: "part-1", enqueuedAt: 1 })
     store.upsertQuestion({ request: question as any, messageId: "message-1", partId: "part-1", enqueuedAt: 2 })
     assert.equal(store.state.permissions.queue.length, 1)
     assert.equal(store.state.questions.queue.length, 1)
-    assert.equal(store.getSessionApproximateByteSize("session-1"), baseline + 3 * (
+    assert.equal(await store.getSessionApproximateByteSizeIncrementally("session-1"), baseline + 3 * (
       estimateRetainedBytes(store.state.permissions.queue[0]?.permission) +
       estimateRetainedBytes(store.state.questions.queue[0]?.request)
     ))

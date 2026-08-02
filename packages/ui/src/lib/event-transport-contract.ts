@@ -9,6 +9,14 @@ export interface DesktopEventTransportStartOptions {
   reconnect?: Partial<DesktopEventTransportReconnectPolicy>
 }
 
+export interface DesktopEventsStartRequest extends DesktopEventTransportStartOptions {
+  logicalStartEpoch: number
+}
+
+export interface DesktopEventsStartReservation {
+  logicalStartEpoch: number
+}
+
 export type DesktopEventTransportState =
   | "connecting"
   | "connected"
@@ -41,6 +49,7 @@ export interface DesktopEventTransportStatusPayload {
 export interface DesktopEventsStartResult {
   started: boolean
   generation?: number
+  lease?: number
   reason?: string
 }
 

@@ -72,7 +72,7 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean, signal
       }
       return true
     } catch (error) {
-      if (!isCurrent()) return false
+      if (!isCurrent() || signal?.aborted) return false
       log.warn(initial ? "Failed to load worktrees" : "Failed to reload worktrees", { instanceId, error })
       if (!initial) return false
 
@@ -101,17 +101,23 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean, signal
   })
 }
 
-async function ensureWorktreesLoaded(instanceId: string): Promise<void> {
+async function ensureWorktreesLoaded(instanceId: string, signal?: AbortSignal): Promise<void> {
   if (!instanceId) return
   if (worktreesByInstance().has(instanceId) && gitRepoStatusByInstance().has(instanceId)) return
 
   const existing = worktreeRequests.get(instanceId)
   if (existing) {
-    await existing
+    await Promise.race([
+      existing,
+      new Promise<never>((_, reject) => {
+        if (signal?.aborted) reject(signal.reason)
+        else signal?.addEventListener("abort", () => reject(signal.reason), { once: true })
+      }),
+    ])
     if (worktreesByInstance().has(instanceId) && gitRepoStatusByInstance().has(instanceId)) return
   }
 
-  await queueWorktreeRequest(instanceId, true)
+  await queueWorktreeRequest(instanceId, true, signal)
 }
 
 async function reloadWorktrees(instanceId: string, signal?: AbortSignal): Promise<boolean> {

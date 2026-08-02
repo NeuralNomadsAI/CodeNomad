@@ -197,6 +197,8 @@ export const messagingMessages = {
   "promptInput.send.ariaLabel": "שלח הודעה",
   "promptInput.send.errorFallback": "שליחת ההודעה נכשלה",
   "promptInput.send.errorTitle": "השליחה נכשלה",
+  "promptInput.send.ambiguousTitle": "לא ניתן לאשר את המסירה",
+  "promptInput.send.ambiguousMessage": "ייתכן שהשרת קיבל את ההודעה. היא שוחזרה כטיוטה ולא תישלח שוב אלא אם תבחרו לשלוח.",
   "promptInput.conversationMode.enable.title": "הפעל מצב שיחה",
   "promptInput.conversationMode.disable.title": "כבה מצב שיחה",
   "promptInput.conversationMode.error.title": "ניגון השיחה נכשל",

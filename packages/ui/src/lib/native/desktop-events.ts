@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
 import type { WorkspaceEventPayload } from "../../../../server/src/api-types"
 import type {
+  DesktopEventsStartRequest,
+  DesktopEventsStartReservation,
   DesktopEventsStartResult,
   DesktopEventTransportStartOptions,
   DesktopEventTransportState,
@@ -55,8 +57,17 @@ export async function connectTauriWorkspaceEvents(
   options: DesktopEventTransportStartOptions,
   bridge: DesktopEventTransportBridge = defaultDesktopEventTransportBridge,
 ): Promise<WorkspaceEventConnection> {
+  const reservation = await bridge.invoke<DesktopEventsStartReservation>("desktop_events_reserve_start")
+  if (!Number.isSafeInteger(reservation?.logicalStartEpoch) || reservation.logicalStartEpoch < 1) {
+    throw new Error("desktop event transport did not return a valid start reservation")
+  }
+  const request: DesktopEventsStartRequest = {
+    ...options,
+    logicalStartEpoch: reservation.logicalStartEpoch,
+  }
   let closed = false
   let connected = false
+  let lease!: number
   let expectedGeneration: number | null = null
   const notifyTerminalError = createTerminalErrorNotifier(callbacks)
   const pendingEvents: Array<
@@ -161,11 +172,18 @@ export async function connectTauriWorkspaceEvents(
   })
 
   try {
-    const result = await bridge.invoke<DesktopEventsStartResult>("desktop_events_start", { request: options })
+    const result = await bridge.invoke<DesktopEventsStartResult>("desktop_events_start", { request })
     if (!result?.started) {
       throw new Error(result?.reason ?? "desktop event transport unavailable")
     }
-    expectedGeneration = result.generation ?? null
+    if (result.generation === undefined) {
+      throw new Error("desktop event transport did not return a generation")
+    }
+    if (result.lease === undefined) {
+      throw new Error("desktop event transport did not return a lease")
+    }
+    lease = result.lease
+    expectedGeneration = result.generation
     flushPending()
   } catch (error) {
     unlistenBatch()
@@ -182,7 +200,7 @@ export async function connectTauriWorkspaceEvents(
       closed = true
       unlistenBatch()
       unlistenStatus()
-      void bridge.invoke("desktop_events_stop").catch((error) => {
+      void bridge.invoke("desktop_events_stop", { lease }).catch((error) => {
         log.warn("Failed to stop native desktop event transport", error)
       })
     },

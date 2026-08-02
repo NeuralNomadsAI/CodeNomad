@@ -105,12 +105,12 @@ jobs:
         run: >-
           node --import tsx --test
           packages/ui/src/components/prompt-input/submitPrompt.test.ts
-          packages/ui/src/components/tool-call/diagnostics.test.ts
           packages/ui/src/components/session-list-visibility.test.ts
           packages/ui/src/lib/hooks/use-app-session-capture.test.ts
           packages/ui/src/lib/global-cache.test.ts
           packages/ui/src/lib/message-selection-position.test.ts
           packages/ui/src/lib/native/desktop-events-reconnect.test.ts
+          packages/ui/src/lib/native/desktop-events.test.ts
           packages/ui/src/lib/opencode-api.test.ts
           packages/ui/src/lib/session-memory-budget.test.ts
           packages/ui/src/lib/session-search.test.ts
@@ -131,6 +131,7 @@ jobs:
           packages/ui/src/stores/request-locations.test.ts
           packages/ui/src/stores/message-v2/message-hydration-authority.test.ts
           packages/ui/src/stores/message-v2/instance-store.test.ts
+          packages/ui/src/stores/message-prompt-display.test.ts
           packages/ui/src/stores/session-generation-recovery.test.ts
           packages/ui/src/stores/session-metadata.test.ts
           packages/ui/src/stores/session-pagination.test.ts
@@ -144,12 +145,15 @@ jobs:
           packages/ui/src/stores/session-request-authority.test.ts
           packages/ui/src/stores/session-memory.test.ts
           packages/ui/src/components/tool-call/search-text.test.ts
+          packages/ui/src/components/tool-call/diagnostics.test.ts
+          packages/ui/src/components/tool-call/renderers/task-transcript-load.test.ts
           packages/ui/src/components/tool-call/utils.test.ts
           packages/ui/src/lib/sse-manager-generation.test.ts
           packages/ui/src/stores/session-state-purge.test.ts
           packages/ui/src/stores/instances-reconnect-resync.test.ts
           packages/ui/src/stores/session-revision-recovery.test.ts
           packages/ui/src/stores/session-actions-delivery.test.ts
+          packages/ui/src/stores/opencode-workspaces.test.ts
           packages/ui/src/components/virtual-follow-behavior.test.ts
 
       - name: Test server

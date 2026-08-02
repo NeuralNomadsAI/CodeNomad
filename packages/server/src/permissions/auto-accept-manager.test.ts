@@ -207,6 +207,187 @@ describe("AutoAcceptManager persistence", () => {
     )
   })
 
+  it("deduplicates one bounded hydration retry run and fails closed at the bounded event queue", { timeout: 2_000 }, async () => {
+    const bus = new EventBus(noopLogger)
+    const replier = makeRecordingReplier()
+    let loads = 0
+    let failLoads = true
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions() {
+        loads += 1
+        if (failLoads) throw new Error("temporary hydration outage")
+        return [{ id: "root", parentId: null, yoloEnabled: true }]
+      },
+      async persist() {},
+    }
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier, persistence })
+    manager.start()
+    bus.publish({ type: "instance.eventStatus", instanceId: "inst", streamId: "current", status: "connecting" })
+
+    for (let index = 0; index < 700; index += 1) {
+      publishSession(bus, "inst", "session.updated", { id: `session-${index}`, parentID: null })
+    }
+    for (let index = 0; index < 100; index += 1) {
+      publishSession(bus, "inst", "session.updated", { id: "same-session", parentID: null, title: String(index) })
+    }
+    publishInstanceEvent(bus, "inst", {
+      type: "permission.v2.asked",
+      properties: { id: "open", sessionID: "root" },
+    })
+    publishInstanceEvent(bus, "inst", {
+      type: "permission.updated",
+      properties: { id: "open", sessionID: "root", detail: "latest" },
+    })
+    publishInstanceEvent(bus, "inst", {
+      type: "permission.v2.asked",
+      properties: { id: "closed", sessionID: "root" },
+    })
+    publishInstanceEvent(bus, "inst", {
+      type: "permission.v2.replied",
+      properties: { id: "closed" },
+    })
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 100))
+    assert.equal(loads, 4, "all queued events must share the initial load and three retries")
+    const queued = (manager as unknown as {
+      queuedEvents: Map<string, Map<string, unknown>>
+    }).queuedEvents.get("inst")
+    assert.equal(queued?.size, 512)
+    assert.equal(queued?.has("session:same-session"), true)
+    assert.equal(queued?.has("permission:open"), false)
+    assert.equal(queued?.has("permission:closed"), false)
+
+    publishSession(bus, "inst", "session.updated", { id: "after-exhaustion", parentID: null })
+    await new Promise<void>((resolve) => setTimeout(resolve, 30))
+    assert.equal(loads, 4, "new events must not start one load each after retry exhaustion")
+
+    failLoads = false
+    await manager.hydrateInstance("inst")
+    await flushMicrotasks()
+
+    assert.equal(loads, 6, "overflow must force a second authoritative load before replay")
+    assert.deepEqual(replier.calls, [])
+    assert.equal((manager as unknown as { queuedEvents: Map<string, unknown> }).queuedEvents.has("inst"), false)
+    manager.stop()
+  })
+
+  it("replays deduplicated session topology before queued permissions", async () => {
+    const bus = new EventBus(noopLogger)
+    const replier = makeRecordingReplier()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions() {
+        await gate
+        return [
+          { id: "enabled", parentId: null, yoloEnabled: true },
+          { id: "disabled", parentId: null, yoloEnabled: false },
+        ]
+      },
+      async persist() {},
+    }
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier, persistence })
+    manager.start()
+
+    publishSession(bus, "inst", "session.updated", { id: "child", parentID: "enabled" })
+    publishInstanceEvent(bus, "inst", {
+      type: "permission.v2.asked",
+      properties: { id: "permission", sessionID: "child" },
+    })
+    publishSession(bus, "inst", "session.updated", { id: "child", parentID: "disabled" })
+
+    const hydration = manager.hydrateInstance("inst")
+    release()
+    await hydration
+    await flushMicrotasks()
+
+    assert.deepEqual(replier.calls, [])
+    assert.equal(manager.isEnabled("inst", "child"), false)
+    manager.stop()
+  })
+
+  it("keeps permissions queued until microtask-delayed topology replay is authoritative", async () => {
+    const bus = new EventBus(noopLogger)
+    const replier = makeRecordingReplier()
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions() {
+        return [
+          { id: "enabled", parentId: null, yoloEnabled: true },
+          { id: "disabled", parentId: null, yoloEnabled: false },
+          { id: "child", parentId: "enabled", yoloEnabled: false },
+        ]
+      },
+      async persist() {},
+    }
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier, persistence })
+    let permissionScheduled = false
+    bus.on("yolo.stateChanged", () => {
+      if (permissionScheduled) return
+      permissionScheduled = true
+      queueMicrotask(() => publishInstanceEvent(bus, "inst", {
+        type: "permission.v2.asked",
+        properties: { id: "permission", sessionID: "child" },
+      }))
+    })
+    manager.start()
+
+    publishSession(bus, "inst", "session.updated", { id: "child", parentID: "disabled" })
+    await manager.hydrateInstance("inst")
+    await flushMicrotasks()
+
+    assert.deepEqual(replier.calls, [])
+    assert.equal(manager.isEnabled("inst", "child"), false)
+    manager.stop()
+  })
+
+  it("drops permission auto-accept and rehydrates when the 513th queued event reaches the cap", async () => {
+    const bus = new EventBus(noopLogger)
+    const replier = makeRecordingReplier()
+    let release!: () => void
+    let loads = 0
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions() {
+        const load = ++loads
+        if (load === 1) await gate
+        return [
+          { id: "enabled", parentId: null, yoloEnabled: true },
+          { id: "disabled", parentId: null, yoloEnabled: false },
+          { id: "child", parentId: load === 1 ? "enabled" : "disabled", yoloEnabled: false },
+        ]
+      },
+      async persist() {},
+    }
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier, persistence })
+    manager.start()
+
+    publishSession(bus, "inst", "session.updated", { id: "child", parentID: "disabled" })
+    for (let index = 0; index < 511; index += 1) {
+      publishSession(bus, "inst", "session.updated", { id: `filler-${index}`, parentID: null })
+    }
+    publishInstanceEvent(bus, "inst", {
+      type: "permission.v2.asked",
+      properties: { id: "permission", sessionID: "child" },
+    })
+
+    const queued = (manager as unknown as {
+      queuedEvents: Map<string, Map<string, unknown>>
+    }).queuedEvents.get("inst")
+    assert.equal(queued?.size, 512)
+    assert.equal(queued?.has("session:child"), true)
+    assert.equal(queued?.has("permission:permission"), false)
+
+    const hydration = manager.hydrateInstance("inst")
+    release()
+    await hydration
+    await flushMicrotasks()
+
+    assert.equal(loads, 2)
+    assert.deepEqual(replier.calls, [])
+    assert.equal(manager.isEnabled("inst", "child"), false)
+    manager.stop()
+  })
+
   it("does not re-enable memory when a persisted toggle finishes after cleanup", async () => {
     const bus = new EventBus(noopLogger)
     const changes: Record<string, unknown>[] = []
@@ -263,6 +444,44 @@ describe("AutoAcceptManager persistence", () => {
     assert.equal(durableEnabled, true)
     assert.equal(manager.isEnabled("inst", "root"), true)
     assert.deepEqual(changes.map((event) => event.enabled), [true])
+    manager.stop()
+  })
+
+  it("rebinds the requested toggle when rotation drops the first persistence attempt", async () => {
+    const bus = new EventBus(noopLogger)
+    const changes: Array<{ enabled?: boolean }> = []
+    const writes: Array<{ enabled: boolean; signal: AbortSignal }> = []
+    let durableEnabled = false
+    let loads = 0
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions() {
+        loads += 1
+        return [{ id: "root", parentId: null, yoloEnabled: durableEnabled }]
+      },
+      async persist(_instanceId, _rootSessionId, enabled, _workspaceId, signal) {
+        writes.push({ enabled, signal })
+        if (writes.length === 1) {
+          bus.publish({ type: "instance.eventStatus", instanceId: "inst", streamId: "replacement", status: "connecting" })
+          return
+        }
+        durableEnabled = enabled
+      },
+    }
+    bus.on("yolo.stateChanged", (event) => changes.push(event))
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier(), persistence })
+    manager.start()
+    bus.publish({ type: "instance.eventStatus", instanceId: "inst", streamId: "old", status: "connecting" })
+    await manager.hydrateInstance("inst")
+
+    assert.equal(await manager.toggle("inst", "root"), true)
+
+    assert.equal(loads, 2)
+    assert.deepEqual(writes.map(({ enabled }) => enabled), [true, true])
+    assert.equal(writes[0]?.signal.aborted, true)
+    assert.equal(writes[1]?.signal.aborted, false)
+    assert.equal(durableEnabled, true)
+    assert.equal(manager.isEnabled("inst", "root"), true)
+    assert.deepEqual(changes.map(({ enabled }) => enabled), [true])
     manager.stop()
   })
 
@@ -370,6 +589,368 @@ describe("AutoAcceptManager persistence", () => {
       ["inst", "child", false, "workspace"],
     ])
     manager.stop()
+  })
+
+  it("re-resolves the authoritative root when topology advances during migration rebind", async () => {
+    const bus = new EventBus(noopLogger)
+    const changes: Array<{ sessionId?: string; enabled?: boolean }> = []
+    const durableEnabled = new Map<string, boolean>([["grandparent", false], ["parent", false], ["child", true]])
+    const writes: Array<{ rootSessionId: string; enabled: boolean; signal: AbortSignal }> = []
+    let rotated = false
+    let releaseStale!: () => void
+    let markStaleStarted!: () => void
+    let markMigrated!: () => void
+    const staleGate = new Promise<void>((resolve) => { releaseStale = resolve })
+    const staleStarted = new Promise<void>((resolve) => { markStaleStarted = resolve })
+    const migrated = new Promise<void>((resolve) => { markMigrated = resolve })
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions() {
+        return [
+          { id: "grandparent", parentId: null, workspaceId: "workspace", yoloEnabled: durableEnabled.get("grandparent") ?? false },
+          { id: "parent", parentId: null, workspaceId: "workspace", yoloEnabled: durableEnabled.get("parent") ?? false },
+          {
+            id: "child",
+            parentId: rotated ? "grandparent" : null,
+            workspaceId: "workspace",
+            yoloEnabled: durableEnabled.get("child") ?? false,
+          },
+        ]
+      },
+      async persist(_instanceId, rootSessionId, enabled, _workspaceId, signal) {
+        writes.push({ rootSessionId, enabled, signal })
+        if (!rotated) {
+          rotated = true
+          bus.publish({ type: "instance.eventStatus", instanceId: "inst", streamId: "replacement", status: "connecting" })
+          markStaleStarted()
+          await staleGate
+          return
+        }
+        durableEnabled.set(rootSessionId, enabled)
+        if (rootSessionId === "child" && !enabled) markMigrated()
+      },
+    }
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier(), persistence })
+    manager.start()
+    bus.publish({ type: "instance.eventStatus", instanceId: "inst", streamId: "old", status: "connecting" })
+    await manager.hydrateInstance("inst")
+    bus.on("yolo.stateChanged", (event) => changes.push(event))
+
+    publishSession(bus, "inst", "session.updated", { id: "child", parentID: "parent", workspaceID: "workspace" })
+    await staleStarted
+
+    assert.equal(writes[0]?.signal.aborted, true)
+    assert.equal(manager.isEnabled("inst", "parent"), false)
+    assert.equal(changes.length, 0, "stale migration must not publish replacement state")
+
+    releaseStale()
+    await migrated
+    await flushMicrotasks()
+
+    assert.deepEqual(writes.map(({ rootSessionId, enabled }) => [rootSessionId, enabled]), [
+      ["parent", true],
+      ["grandparent", true],
+      ["child", false],
+    ])
+    assert.notEqual(writes[1]?.signal, writes[0]?.signal)
+    assert.equal(writes[1]?.signal.aborted, false)
+    assert.equal(durableEnabled.get("grandparent"), true)
+    assert.equal(durableEnabled.get("parent"), false)
+    assert.equal(durableEnabled.get("child"), false)
+    assert.equal(manager.isEnabled("inst", "grandparent"), true)
+    assert.equal(manager.isEnabled("inst", "parent"), false)
+    assert.deepEqual(changes.map(({ sessionId, enabled }) => [sessionId, enabled]), [
+      ["grandparent", true],
+    ])
+    manager.stop()
+  })
+
+  it("automatically retries replacement hydration for the same current generation", { timeout: 1_000 }, async () => {
+    const bus = new EventBus(noopLogger)
+    const changes: Array<{ sessionId?: string; enabled?: boolean }> = []
+    const durableEnabled = new Map<string, boolean>([["parent", false], ["child", true]])
+    const writes: Array<{ rootSessionId: string; enabled: boolean; signal: AbortSignal }> = []
+    const loadSignals: AbortSignal[] = []
+    let loads = 0
+    let releaseFailedHydration!: () => void
+    let markFailedHydrationStarted!: () => void
+    let markMigrated!: () => void
+    const failedHydrationGate = new Promise<void>((resolve) => { releaseFailedHydration = resolve })
+    const failedHydrationStarted = new Promise<void>((resolve) => { markFailedHydrationStarted = resolve })
+    const migrated = new Promise<void>((resolve) => { markMigrated = resolve })
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions(_instanceId, signal) {
+        loadSignals.push(signal)
+        loads += 1
+        if (loads === 2) {
+          markFailedHydrationStarted()
+          await failedHydrationGate
+          throw new Error("temporary hydration failure")
+        }
+        return [
+          { id: "parent", parentId: null, workspaceId: "workspace", yoloEnabled: durableEnabled.get("parent") ?? false },
+          {
+            id: "child",
+            parentId: loads === 1 ? null : "parent",
+            workspaceId: "workspace",
+            yoloEnabled: durableEnabled.get("child") ?? false,
+          },
+        ]
+      },
+      async persist(_instanceId, rootSessionId, enabled, _workspaceId, signal) {
+        writes.push({ rootSessionId, enabled, signal })
+        if (writes.length === 1) {
+          bus.publish({ type: "instance.eventStatus", instanceId: "inst", streamId: "replacement", status: "connecting" })
+          return
+        }
+        durableEnabled.set(rootSessionId, enabled)
+        if (rootSessionId === "child" && !enabled) markMigrated()
+      },
+    }
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier(), persistence })
+    manager.start()
+    bus.publish({ type: "instance.eventStatus", instanceId: "inst", streamId: "old", status: "connecting" })
+    await manager.hydrateInstance("inst")
+    bus.on("yolo.stateChanged", (event) => changes.push(event))
+
+    publishSession(bus, "inst", "session.updated", { id: "child", parentID: "parent", workspaceID: "workspace" })
+    await markFailedHydrationStarted
+    releaseFailedHydration()
+    await flushMicrotasks()
+
+    assert.equal(loads, 2)
+    assert.equal(manager.isEnabled("inst", "parent"), false)
+    assert.equal(changes.length, 0)
+
+    await migrated
+    await flushMicrotasks()
+
+    assert.equal(loads, 3)
+    assert.equal(loadSignals[1]?.aborted, true)
+    assert.notEqual(loadSignals[2], loadSignals[1])
+    assert.equal(loadSignals[2]?.aborted, false)
+    assert.deepEqual(writes.map(({ rootSessionId, enabled }) => [rootSessionId, enabled]), [
+      ["parent", true],
+      ["parent", true],
+      ["child", false],
+    ])
+    assert.equal(writes[0]?.signal.aborted, true)
+    assert.notEqual(writes[1]?.signal, writes[0]?.signal)
+    assert.equal(durableEnabled.get("parent"), true)
+    assert.equal(durableEnabled.get("child"), false)
+    assert.equal(manager.isEnabled("inst", "parent"), true)
+    assert.deepEqual(changes.map(({ sessionId, enabled }) => [sessionId, enabled]), [["parent", true]])
+    manager.stop()
+  })
+
+  it("retries a current-generation rebound migration after a transient persistence outage", { timeout: 1_000 }, async () => {
+    const bus = new EventBus(noopLogger)
+    const changes: Array<{ sessionId?: string; enabled?: boolean }> = []
+    const durableEnabled = new Map<string, boolean>([["parent", false], ["child", true]])
+    const writes: Array<{ rootSessionId: string; enabled: boolean; signal: AbortSignal }> = []
+    let loads = 0
+    let outageInjected = false
+    let markMigrated!: () => void
+    const migrated = new Promise<void>((resolve) => { markMigrated = resolve })
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions() {
+        loads += 1
+        return [
+          { id: "parent", parentId: null, workspaceId: "workspace", yoloEnabled: durableEnabled.get("parent") ?? false },
+          {
+            id: "child",
+            parentId: loads === 1 ? null : "parent",
+            workspaceId: "workspace",
+            yoloEnabled: durableEnabled.get("child") ?? false,
+          },
+        ]
+      },
+      async persist(_instanceId, rootSessionId, enabled, _workspaceId, signal) {
+        writes.push({ rootSessionId, enabled, signal })
+        if (writes.length === 1) {
+          bus.publish({ type: "instance.eventStatus", instanceId: "inst", streamId: "replacement", status: "connecting" })
+          return
+        }
+        if (!outageInjected) {
+          outageInjected = true
+          throw new Error("temporary persistence outage")
+        }
+        durableEnabled.set(rootSessionId, enabled)
+        if (rootSessionId === "child" && !enabled) markMigrated()
+      },
+    }
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier(), persistence })
+    manager.start()
+    bus.publish({ type: "instance.eventStatus", instanceId: "inst", streamId: "old", status: "connecting" })
+    await manager.hydrateInstance("inst")
+    bus.on("yolo.stateChanged", (event) => changes.push(event))
+
+    publishSession(bus, "inst", "session.updated", { id: "child", parentID: "parent", workspaceID: "workspace" })
+    await migrated
+    await flushMicrotasks()
+
+    assert.equal(loads, 3, "recovery must not require manual hydration")
+    assert.deepEqual(writes.map(({ rootSessionId, enabled }) => [rootSessionId, enabled]), [
+      ["parent", true],
+      ["parent", true],
+      ["parent", true],
+      ["child", false],
+    ])
+    assert.equal(writes[0]?.signal.aborted, true)
+    assert.equal(writes[1]?.signal.aborted, true)
+    assert.notEqual(writes[2]?.signal, writes[1]?.signal)
+    assert.equal(writes[2]?.signal.aborted, false)
+    assert.equal(writes[3]?.signal, writes[2]?.signal)
+    assert.equal(durableEnabled.get("parent"), true)
+    assert.equal(durableEnabled.get("child"), false)
+    assert.equal(manager.isEnabled("inst", "parent"), true)
+    assert.equal(manager.isEnabled("inst", "child"), true)
+    assert.deepEqual(changes.map(({ sessionId, enabled }) => [sessionId, enabled]), [["parent", true]])
+    manager.stop()
+  })
+
+  it("does not let a repaired migration override a newer successful disable", { timeout: 1_000 }, async () => {
+    const bus = new EventBus(noopLogger)
+    const durableEnabled = new Map<string, boolean>([["parent", false], ["child", true]])
+    const writes: Array<{ rootSessionId: string; enabled: boolean }> = []
+    let loads = 0
+    let childClearAttempts = 0
+    let markChildClearFailed!: () => void
+    let markChildCleared!: () => void
+    const childClearFailed = new Promise<void>((resolve) => { markChildClearFailed = resolve })
+    const childCleared = new Promise<void>((resolve) => { markChildCleared = resolve })
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions() {
+        loads += 1
+        return [
+          { id: "parent", parentId: null, workspaceId: "workspace", yoloEnabled: durableEnabled.get("parent") ?? false },
+          {
+            id: "child",
+            parentId: loads === 1 ? null : "parent",
+            workspaceId: "workspace",
+            yoloEnabled: durableEnabled.get("child") ?? false,
+          },
+        ]
+      },
+      async persist(_instanceId, rootSessionId, enabled) {
+        writes.push({ rootSessionId, enabled })
+        durableEnabled.set(rootSessionId, enabled)
+        if (writes.length === 1) {
+          bus.publish({ type: "instance.eventStatus", instanceId: "inst", streamId: "replacement", status: "connecting" })
+          return
+        }
+        if (rootSessionId === "child" && !enabled && ++childClearAttempts === 1) {
+          durableEnabled.set(rootSessionId, true)
+          markChildClearFailed()
+          throw new Error("temporary child clear failure")
+        }
+        if (rootSessionId === "child" && !enabled) markChildCleared()
+      },
+    }
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier(), persistence })
+    manager.start()
+    bus.publish({ type: "instance.eventStatus", instanceId: "inst", streamId: "old", status: "connecting" })
+    await manager.hydrateInstance("inst")
+
+    publishSession(bus, "inst", "session.updated", { id: "child", parentID: "parent", workspaceID: "workspace" })
+    await childClearFailed
+    await childCleared
+
+    assert.equal(await manager.toggle("inst", "parent"), false)
+    await new Promise<void>((resolve) => setTimeout(resolve, 50))
+
+    const disableIndex = writes.findIndex(({ rootSessionId, enabled }) => rootSessionId === "parent" && !enabled)
+    assert.notEqual(disableIndex, -1)
+    assert.equal(
+      writes.slice(disableIndex + 1).some(({ rootSessionId, enabled }) => rootSessionId === "parent" && enabled),
+      false,
+    )
+    assert.equal(durableEnabled.get("parent"), false)
+    assert.equal(durableEnabled.get("child"), false)
+    assert.equal(manager.isEnabled("inst", "parent"), false)
+    manager.stop()
+  })
+
+  it("self-heals a partial migration after retry exhaustion and process restart", { timeout: 1_000 }, async () => {
+    const bus = new EventBus(noopLogger)
+    const durableEnabled = new Map<string, boolean>([
+      ["parent", false],
+      ["child", true],
+      ["unrelated", false],
+      ["isolated-fork", true],
+    ])
+    let loads = 0
+    let childClearAttempts = 0
+    let markRetryBudgetExhausted!: () => void
+    const retryBudgetExhausted = new Promise<void>((resolve) => { markRetryBudgetExhausted = resolve })
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions() {
+        loads += 1
+        return [
+          { id: "parent", parentId: null, workspaceId: "workspace", yoloEnabled: durableEnabled.get("parent") ?? false },
+          {
+            id: "child",
+            parentId: loads === 1 ? null : "parent",
+            workspaceId: "workspace",
+            yoloEnabled: durableEnabled.get("child") ?? false,
+          },
+          { id: "unrelated", parentId: null, workspaceId: "workspace", yoloEnabled: false },
+          {
+            id: "isolated-fork",
+            parentId: "unrelated",
+            revert: { snapshot: "fork" },
+            workspaceId: "workspace",
+            yoloEnabled: durableEnabled.get("isolated-fork") ?? false,
+          },
+        ]
+      },
+      async persist(_instanceId, rootSessionId, enabled) {
+        durableEnabled.set(rootSessionId, enabled)
+        if (rootSessionId === "parent" && enabled && loads === 1) {
+          bus.publish({ type: "instance.eventStatus", instanceId: "inst", streamId: "replacement", status: "connecting" })
+          return
+        }
+        if (rootSessionId === "child" && !enabled) {
+          childClearAttempts += 1
+          if (childClearAttempts <= 4) {
+            durableEnabled.set(rootSessionId, true)
+            if (childClearAttempts === 4) markRetryBudgetExhausted()
+            throw new Error("child clear unavailable")
+          }
+        }
+      },
+    }
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier(), persistence })
+    manager.start()
+    bus.publish({ type: "instance.eventStatus", instanceId: "inst", streamId: "old", status: "connecting" })
+    await manager.hydrateInstance("inst")
+
+    publishSession(bus, "inst", "session.updated", { id: "child", parentID: "parent", workspaceID: "workspace" })
+    await retryBudgetExhausted
+    await flushMicrotasks()
+    assert.equal(durableEnabled.get("parent"), true)
+    assert.equal(durableEnabled.get("child"), true)
+
+    manager.stop()
+
+    const restartedBus = new EventBus(noopLogger)
+    const restartedManager = new AutoAcceptManager({
+      eventBus: restartedBus,
+      logger: noopLogger,
+      replier: makeRecordingReplier(),
+      persistence,
+    })
+    restartedManager.start()
+    restartedBus.publish({ type: "instance.eventStatus", instanceId: "inst", streamId: "after-restart", status: "connecting" })
+    await restartedManager.hydrateInstance("inst")
+
+    assert.equal(childClearAttempts, 5)
+    assert.equal(durableEnabled.get("parent"), true)
+    assert.equal(durableEnabled.get("child"), false)
+    assert.equal(restartedManager.isEnabled("inst", "parent"), true)
+    assert.equal(restartedManager.isEnabled("inst", "unrelated"), false)
+    assert.equal(restartedManager.isEnabled("inst", "isolated-fork"), true)
+    assert.equal(durableEnabled.get("isolated-fork"), true)
+    restartedManager.stop()
   })
 
   it("does not re-enable a family when ancestry repeatedly changes during a disable", async () => {

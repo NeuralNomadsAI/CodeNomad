@@ -37,11 +37,14 @@ export function mergeFetchedSessionRuntimeState(
 ): Session | null {
   if (deleted) return null
   if (captured && !latest) return null
-  if (!latest) return fetched
+  const fetchedActive = fetched.status === "working" || fetched.status === "compacting"
+  const authoritativeFetched = fetchedActive ? { ...fetched, generationAdmissionToken: undefined } : fetched
+  if (!latest) return authoritativeFetched
   if (latest === captured) {
-    return latest.generationAdmissionToken === undefined ? fetched : { ...fetched, ...latest }
+    if (fetchedActive) return authoritativeFetched
+    return latest.generationAdmissionToken === undefined ? fetched : { ...fetched, ...latest, revert: fetched.revert }
   }
-  const merged = { ...fetched }
+  const merged = { ...authoritativeFetched }
   const keys = new Set<keyof Session>([
     ...(Object.keys(captured ?? {}) as (keyof Session)[]),
     ...(Object.keys(latest) as (keyof Session)[]),
@@ -52,11 +55,10 @@ export function mergeFetchedSessionRuntimeState(
     else delete (merged as any)[key]
   }
 
-  const fetchedActive = fetched.status === "working" || fetched.status === "compacting"
   if (captured && fetchedActive && latest.generationAdmissionToken === undefined
     && latest.runtimeStatusKnown === false && latest.generationRecovery === "pending") {
     for (const key of ["status", "runtimeStatusKnown", "generationRecovery", "generationAdmissionToken", "retry", "idleSince"] as const) {
-      (merged as any)[key] = fetched[key]
+      (merged as any)[key] = authoritativeFetched[key]
     }
   }
   return merged

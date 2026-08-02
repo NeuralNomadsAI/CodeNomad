@@ -1,6 +1,11 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { estimateRetainedBytes, exceedsRetainedByteLimit, selectSessionMemoryEvictions } from "./session-memory-budget.ts"
+import {
+  estimateRetainedBytes,
+  estimateRetainedValuesIncrementally,
+  exceedsRetainedByteLimit,
+  selectSessionMemoryEvictions,
+} from "./session-memory-budget.ts"
 
 test("session memory eviction applies one byte budget across workspaces and subagents", () => {
   const entries = Array.from({ length: 5 }, (_, workspace) => [
@@ -27,4 +32,32 @@ test("retained byte estimates handle cycles without allocating serialized copies
   value.self = value
   assert.ok(estimateRetainedBytes(value) >= 26)
   assert.equal(exceedsRetainedByteLimit(Array.from({ length: 1_000 }, () => ({})), 10_000), true)
+})
+
+test("incremental retained byte estimates yield without changing the estimate", async () => {
+  const values = Array.from({ length: 20 }, (_, index) => ({ index, text: `message-${index}` }))
+  let yields = 0
+  const measured = await estimateRetainedValuesIncrementally(values, {
+    yieldEvery: 5,
+    yieldControl: async () => { yields += 1 },
+  })
+
+  assert.equal(measured, values.reduce((total, value) => total + estimateRetainedBytes(value), 0))
+  assert.ok(yields > 1)
+})
+
+test("incremental retained byte estimates stop at a cancellation checkpoint", async () => {
+  const controller = new AbortController()
+  let yields = 0
+  await assert.rejects(estimateRetainedValuesIncrementally([
+    Array.from({ length: 1_000 }, (_, index) => ({ index })),
+  ], {
+    signal: controller.signal,
+    yieldEvery: 10,
+    yieldControl: async () => {
+      yields += 1
+      controller.abort(new Error("measurement replaced"))
+    },
+  }), /measurement replaced/)
+  assert.equal(yields, 1)
 })

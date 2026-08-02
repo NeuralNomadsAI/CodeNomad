@@ -39,6 +39,20 @@ interface GenerationAdmission {
   baseline: Pick<Session, "generationRecovery" | "runtimeStatusKnown" | "idleSince">
 }
 const generationAdmissions = new Map<string, GenerationAdmission>()
+let sessionMetadataMutationSequence = 0
+const sessionMetadataMutationVersions = new Map<string, number>()
+
+function snapshotSessionMetadataMutationVersion(): number {
+  return sessionMetadataMutationSequence
+}
+
+function markSessionMetadataMutation(instanceId: string, sessionId: string): void {
+  sessionMetadataMutationVersions.set(`${instanceId}:${sessionId}`, ++sessionMetadataMutationSequence)
+}
+
+function wasSessionMetadataMutatedAfter(instanceId: string, sessionId: string, version: number): boolean {
+  return (sessionMetadataMutationVersions.get(`${instanceId}:${sessionId}`) ?? 0) > version
+}
 
 function cancelSessionGenerationAdmissions(instanceId: string, sessionId: string): void {
   generationAdmissions.delete(`${instanceId}:${sessionId}`)
@@ -1308,6 +1322,7 @@ function purgeInstanceSessionState(instanceId: string): void {
     messageLoadControllers.delete(key)
   }
   for (const key of messageLoadEpochs.keys()) if (key.startsWith(prefix)) messageLoadEpochs.delete(key)
+  for (const key of sessionMetadataMutationVersions.keys()) if (key.startsWith(prefix)) sessionMetadataMutationVersions.delete(key)
 }
 
 export {
@@ -1364,6 +1379,9 @@ export {
   beginSessionGenerationAdmission,
   cancelSessionGenerationAdmissions,
   resetInstanceSessionRequestState,
+  snapshotSessionMetadataMutationVersion,
+  markSessionMetadataMutation,
+  wasSessionMetadataMutatedAfter,
   setSessionStatus,
   setActiveSession,
   setActiveParentSession,

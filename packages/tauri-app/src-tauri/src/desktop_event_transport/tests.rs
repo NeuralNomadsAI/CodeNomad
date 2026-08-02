@@ -155,6 +155,18 @@ fn tracks_cumulative_batch_bytes_for_flush_budget() {
 }
 
 #[test]
+fn tracks_exact_bytes_when_appending_escaped_deltas() {
+    let mut pending = PendingBatch::default();
+    let mut stats = fresh_stats();
+    pending.push(delta_event("first\\\n"), &mut stats);
+    pending.push(delta_event("\"second\""), &mut stats);
+
+    let expected = delta_event("first\\\n\"second\"");
+    assert_eq!(pending.pending_bytes(), serialized_value_bytes(&expected));
+    assert_eq!(pending.take_events(), vec![expected]);
+}
+
+#[test]
 fn does_not_coalesce_events_across_instance_streams() {
     let mut pending = PendingBatch::default();
     let mut stats = fresh_stats();
@@ -194,6 +206,33 @@ fn preserves_connecting_before_connected_status() {
     assert_eq!(events.len(), 2);
     assert_eq!(events[0]["status"].as_str(), Some("connecting"));
     assert_eq!(events[1]["status"].as_str(), Some("connected"));
+}
+
+#[test]
+fn preserves_working_before_idle_session_status() {
+    let mut pending = PendingBatch::default();
+    let mut stats = fresh_stats();
+    for status in ["busy", "idle"] {
+        pending.push(
+            json!({
+                "type": "instance.event",
+                "instanceId": "inst-1",
+                "event": {
+                    "type": "session.status",
+                    "properties": {
+                        "sessionID": "sess-1",
+                        "status": { "type": status }
+                    }
+                }
+            }),
+            &mut stats,
+        );
+    }
+
+    let events = pending.take_events();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["event"]["properties"]["status"]["type"], "busy");
+    assert_eq!(events[1]["event"]["properties"]["status"]["type"], "idle");
 }
 
 #[test]
@@ -358,6 +397,8 @@ fn holds_single_delta_within_stream_window() {
             key: "delta-key".to_string(),
             scope: "delta-scope".to_string(),
             event: delta_event("Hello"),
+            serialized_bytes: serialized_value_bytes(&delta_event("Hello")),
+            delta_bytes: "Hello".len(),
             started_at: Instant::now(),
         }],
         ..PendingBatch::default()
@@ -374,6 +415,8 @@ fn flushes_single_delta_after_stream_window() {
             key: "delta-key".to_string(),
             scope: "delta-scope".to_string(),
             event: delta_event("Hello"),
+            serialized_bytes: serialized_value_bytes(&delta_event("Hello")),
+            delta_bytes: "Hello".len(),
             started_at,
         }],
         ..PendingBatch::default()
@@ -431,4 +474,58 @@ fn equivalent_transport_start_detects_material_stream_changes() {
     let second = DesktopEventTransportConfig::new(changed_stream, &request);
 
     assert!(!first.is_equivalent_start(&second));
+}
+
+#[test]
+fn only_latest_lease_can_stop_a_reused_stream_generation() {
+    let manager = DesktopEventTransportManager::new();
+    let current_stop = Arc::new(AtomicBool::new(false));
+    manager.generation.store(1, Ordering::SeqCst);
+    {
+        let mut state = manager.state.lock();
+        state.stop = Some(current_stop.clone());
+        state.lease = Some(2);
+    }
+
+    assert!(!manager.stop_lease(1));
+    assert!(!current_stop.load(Ordering::SeqCst));
+    assert_eq!(manager.generation.load(Ordering::SeqCst), 1);
+    assert!(manager.state.lock().stop.is_some());
+
+    assert!(manager.stop_lease(2));
+    assert!(current_stop.load(Ordering::SeqCst));
+    assert_eq!(manager.generation.load(Ordering::SeqCst), 2);
+    assert!(manager.state.lock().stop.is_none());
+}
+
+#[test]
+fn start_reservations_remain_monotonic_across_renderer_reload() {
+    let manager = DesktopEventTransportManager::new();
+
+    let before_reload = manager.reserve_start().unwrap().logical_start_epoch;
+    let after_reload = manager.reserve_start().unwrap().logical_start_epoch;
+
+    assert_eq!(before_reload, 1);
+    assert_eq!(after_reload, 2);
+}
+
+#[test]
+fn newer_reservation_rejects_an_older_start_arriving_out_of_order() {
+    let manager = DesktopEventTransportManager::new();
+    let current_stop = Arc::new(AtomicBool::new(false));
+    let older_epoch = manager.reserve_start().unwrap().logical_start_epoch;
+    let newer_epoch = manager.reserve_start().unwrap().logical_start_epoch;
+    let (current_lease, stale_lease) = {
+        let mut state = manager.state.lock();
+        state.stop = Some(current_stop.clone());
+        let current_lease = manager.claim_start_lease(&mut state, newer_epoch).unwrap();
+        let stale_lease = manager.claim_start_lease(&mut state, older_epoch);
+        assert_eq!(state.lease, Some(current_lease));
+        (current_lease, stale_lease)
+    };
+
+    assert_eq!(stale_lease, None);
+    assert!(!current_stop.load(Ordering::SeqCst));
+    assert!(manager.stop_lease(current_lease));
+    assert!(current_stop.load(Ordering::SeqCst));
 }

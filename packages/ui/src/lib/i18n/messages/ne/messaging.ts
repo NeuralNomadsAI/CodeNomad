@@ -197,6 +197,8 @@ export const messagingMessages = {
   "promptInput.send.ariaLabel": "सन्देश पठाउनुहोस्",
   "promptInput.send.errorFallback": "सन्देश पठाउन असफल भयो",
   "promptInput.send.errorTitle": "पठाउन असफल",
+  "promptInput.send.ambiguousTitle": "डेलिभरी पुष्टि गर्न सकिएन",
+  "promptInput.send.ambiguousMessage": "सर्भरले यो सन्देश प्राप्त गरेको हुन सक्छ। यसलाई ड्राफ्टका रूपमा पुनर्स्थापित गरिएको छ र तपाईंले पठाउनुहोस् नचुनेसम्म फेरि पठाइने छैन।",
   "promptInput.conversationMode.enable.title": "कुराकानी मोड सक्षम गर्नुहोस्",
   "promptInput.conversationMode.disable.title": "कुराकानी मोड अक्षम गर्नुहोस्",
   "promptInput.conversationMode.error.title": "कुराकानी वाचन असफल भयो",

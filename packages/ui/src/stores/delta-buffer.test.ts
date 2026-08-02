@@ -127,4 +127,17 @@ describe("delta buffer", () => {
     await delay(75)
     assert.equal(flushed[0]?.[0]?.delta, "pending")
   })
+
+  it("retains a delta until the flush callback has attempted application", async () => {
+    let pendingDuringApplication = false
+    setFlushCallback(() => {
+      pendingDuringApplication = hasPendingDeltasForMessage("instance-1", "message-1")
+    })
+    enqueueDelta("instance-1", "message-1", "part-1", "text", "orphan", "session-1")
+
+    await delay(75)
+
+    assert.equal(pendingDuringApplication, true)
+    assert.equal(hasPendingDeltasForMessage("instance-1", "message-1"), false)
+  })
 })

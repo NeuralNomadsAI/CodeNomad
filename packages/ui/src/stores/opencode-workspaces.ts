@@ -5,20 +5,29 @@ import { mapOpenCodeWorkspacesToWorktreeSlugs } from "./opencode-workspace-match
 
 const WORKSPACE_SYNC_TIMEOUT_MS = 5_000
 
-function withWorkspaceSyncTimeout<T>(operation: Promise<T>): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("OpenCode workspace sync timed out")), WORKSPACE_SYNC_TIMEOUT_MS)
-    operation.then(
-      (value) => {
-        clearTimeout(timer)
-        resolve(value)
-      },
-      (error) => {
-        clearTimeout(timer)
-        reject(error)
-      },
-    )
+async function withWorkspaceSyncTimeout<T>(
+  controller: AbortController,
+  operation: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let rejectAbort!: (reason?: unknown) => void
+  const aborted = new Promise<never>((_resolve, reject) => { rejectAbort = reject })
+  const onAbort = () => rejectAbort(controller.signal.reason)
+  if (controller.signal.aborted) onAbort()
+  else controller.signal.addEventListener("abort", onAbort, { once: true })
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error("OpenCode workspace sync timed out")
+      controller.abort(error)
+      reject(error)
+    }, WORKSPACE_SYNC_TIMEOUT_MS)
   })
+  try {
+    return await Promise.race([operation(controller.signal), timeout, aborted])
+  } finally {
+    if (timer) clearTimeout(timer)
+    controller.signal.removeEventListener("abort", onAbort)
+  }
 }
 
 const log = getLogger("api")
@@ -33,7 +42,12 @@ type OpenCodeWorkspace = {
 }
 
 const workspaceIdByWorktreeSlug = new Map<string, Map<string, string>>()
-const workspaceSyncs = new Map<string, Promise<void>>()
+type WorkspaceSync = {
+  promise: Promise<void>
+  controller: AbortController
+  controllers: Set<AbortController>
+}
+const workspaceSyncs = new Map<string, WorkspaceSync>()
 
 async function getInstance(instanceId: string) {
   const { instances } = await import("./instances")
@@ -49,14 +63,15 @@ function getCachedOpenCodeWorkspaceIdForSession(instanceId: string, sessionId: s
   return getCachedOpenCodeWorkspaceIdForWorktree(instanceId, getWorktreeSlugForSession(instanceId, sessionId))
 }
 
-async function syncOpenCodeWorkspaces(instanceId: string): Promise<void> {
-  if (!instanceId) return
-  const existing = workspaceSyncs.get(instanceId)
-  if (existing) return existing
-
+function startWorkspaceSync(instanceId: string, previous?: WorkspaceSync, reset = false): WorkspaceSync {
   let runtimeToken: symbol | undefined
+  const controller = new AbortController()
   const isCurrent = async () => (await getInstance(instanceId))?.runtimeToken === runtimeToken
-  const task = (async () => {
+  let task!: Promise<void>
+  task = (async () => {
+    await previous?.promise
+    controller.signal.throwIfAborted()
+    if (reset) workspaceIdByWorktreeSlug.delete(instanceId)
     const instance = await getInstance(instanceId)
     if (!instance?.client || !instance.folder) return
     runtimeToken = instance.runtimeToken
@@ -69,9 +84,12 @@ async function syncOpenCodeWorkspaces(instanceId: string): Promise<void> {
       return
     }
 
-    await withWorkspaceSyncTimeout(workspaceApi.syncList({ directory: instance.folder }))
-    if (!await isCurrent()) return
-    const result = await withWorkspaceSyncTimeout<any>(workspaceApi.list({ directory: instance.folder }))
+    const result = await withWorkspaceSyncTimeout<any>(controller, async (signal) => {
+      await workspaceApi.syncList({ directory: instance.folder }, { signal })
+      signal.throwIfAborted()
+      if (!await isCurrent()) return null
+      return workspaceApi.list({ directory: instance.folder }, { signal })
+    })
     if (!await isCurrent()) return
     const workspaces = Array.isArray(result?.data) ? (result.data as OpenCodeWorkspace[]) : []
     const next = mapOpenCodeWorkspacesToWorktreeSlugs(getWorktrees(instanceId), workspaces)
@@ -79,6 +97,13 @@ async function syncOpenCodeWorkspaces(instanceId: string): Promise<void> {
     workspaceIdByWorktreeSlug.set(instanceId, next)
   })()
     .catch(async (error) => {
+      if (controller.signal.aborted) {
+        if (controller.signal.reason instanceof Error && controller.signal.reason.message === "OpenCode workspace sync timed out" && await isCurrent()) {
+          log.warn("Failed to sync OpenCode workspaces", { instanceId, error })
+          workspaceIdByWorktreeSlug.set(instanceId, new Map())
+        }
+        return
+      }
       if (!await isCurrent()) return
       log.warn("Failed to sync OpenCode workspaces", { instanceId, error })
       if (!workspaceIdByWorktreeSlug.has(instanceId)) {
@@ -86,25 +111,45 @@ async function syncOpenCodeWorkspaces(instanceId: string): Promise<void> {
       }
     })
     .finally(() => {
-      if (workspaceSyncs.get(instanceId) === task) {
+      if (workspaceSyncs.get(instanceId)?.promise === task) {
         workspaceSyncs.delete(instanceId)
       }
     })
 
-  workspaceSyncs.set(instanceId, task)
-  return task
+  const sync = {
+    promise: task,
+    controller,
+    controllers: new Set([...(previous?.controllers ?? []), controller]),
+  }
+  workspaceSyncs.set(instanceId, sync)
+  return sync
+}
+
+async function awaitWorkspaceSync(instanceId: string, initial: WorkspaceSync): Promise<void> {
+  let current = initial
+  while (true) {
+    await current.promise
+    const replacement = workspaceSyncs.get(instanceId)
+    if (!replacement || replacement === current) return
+    current = replacement
+  }
+}
+
+async function syncOpenCodeWorkspaces(instanceId: string): Promise<void> {
+  if (!instanceId) return
+  const sync = workspaceSyncs.get(instanceId) ?? startWorkspaceSync(instanceId)
+  await awaitWorkspaceSync(instanceId, sync)
 }
 
 async function reloadOpenCodeWorkspaces(instanceId: string): Promise<void> {
-  await workspaceSyncs.get(instanceId)
-  workspaceIdByWorktreeSlug.delete(instanceId)
-  await syncOpenCodeWorkspaces(instanceId)
+  if (!instanceId) return
+  const replacement = startWorkspaceSync(instanceId, workspaceSyncs.get(instanceId), true)
+  await awaitWorkspaceSync(instanceId, replacement)
 }
 
 async function getOpenCodeWorkspaceIdForWorktree(instanceId: string, slug: string): Promise<string | null> {
   if (!slug || slug === "root") return null
-  const cached = getCachedOpenCodeWorkspaceIdForWorktree(instanceId, slug)
-  if (cached) return cached
+  if (workspaceIdByWorktreeSlug.has(instanceId)) return getCachedOpenCodeWorkspaceIdForWorktree(instanceId, slug)
   await syncOpenCodeWorkspaces(instanceId)
   return getCachedOpenCodeWorkspaceIdForWorktree(instanceId, slug)
 }
@@ -115,6 +160,7 @@ async function getOpenCodeWorkspaceIdForSession(instanceId: string, sessionId: s
 }
 
 function clearOpenCodeWorkspaceCache(instanceId: string): void {
+  for (const controller of workspaceSyncs.get(instanceId)?.controllers ?? []) controller.abort()
   workspaceSyncs.delete(instanceId)
   workspaceIdByWorktreeSlug.delete(instanceId)
 }

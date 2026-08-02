@@ -2,7 +2,8 @@ import { For, Show, createMemo } from "solid-js"
 import { Copy } from "lucide-solid"
 import type { ToolRenderer } from "../types"
 import { getRelativePath, getToolName, isToolStateCompleted, limitToolOutputForRender, readToolStatePayload, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT } from "../utils"
-import { buildDiagnosticEntries, type DiagnosticEntry, type DiagnosticsMap } from "../diagnostics"
+import { buildDiagnosticView, hasDiagnosticMessages, type DiagnosticEntry, type DiagnosticsMap } from "../diagnostics"
+import { DiagnosticsPayloadAccess } from "../diagnostics-section"
 import { getApplyPatchToolSearchText } from "../search-text"
 import { copyToClipboard } from "../../../lib/clipboard"
 
@@ -114,6 +115,18 @@ export const applyPatchRenderer: ToolRenderer = {
       const value = (payload.metadata as any).diagnostics
       return value && typeof value === "object" ? (value as DiagnosticsMap) : {}
     })
+    const diagnosticViews = createMemo(() => files().map((file) =>
+      buildDiagnosticView(diagnosticsMap(), [file.filePath, file.relativePath]),
+    ))
+    const hasDiagnostics = createMemo(() => hasDiagnosticMessages(diagnosticsMap()))
+    const diagnosticsTruncated = createMemo(() => {
+      const views = diagnosticViews()
+      const renderedKeys = new Set(views.map((view) => view.key).filter(Boolean))
+      return views.some((view) => view.truncated)
+        || Object.entries(diagnosticsMap()).some(([key, list]) =>
+          !renderedKeys.has(key) && Array.isArray(list) && list.some((entry) => typeof entry?.message === "string"),
+        )
+    })
 
     if (files().length === 0) {
       const fallback = isToolStateCompleted(state) && typeof state.output === "string" ? state.output : null
@@ -128,7 +141,7 @@ export const applyPatchRenderer: ToolRenderer = {
             const labelBase = file.relativePath || file.filePath || t("toolCall.applyPatch.fileFallback", { number: index() + 1 })
             const diffText = typeof file.diff === "string" ? file.diff : typeof file.patch === "string" ? file.patch : ""
             const filePath = typeof file.filePath === "string" ? file.filePath : file.relativePath
-            const entries = createMemo(() => buildDiagnosticEntries(diagnosticsMap(), [file.filePath, file.relativePath]))
+            const entries = createMemo(() => diagnosticViews()[index()]?.entries ?? [])
 
             return (
               <div class="tool-call-apply-patch-file">
@@ -148,6 +161,13 @@ export const applyPatchRenderer: ToolRenderer = {
         </For>
         <Show when={allFiles().length > APPLY_PATCH_FILE_RENDER_LIMIT}>
           <div class="tool-call-diagnostic-message">{t("toolCall.output.truncated")}</div>
+        </Show>
+        <Show when={hasDiagnostics()}>
+          <div class="tool-call-diagnostics-wrapper">
+            <div class="tool-call-diagnostics">
+              <DiagnosticsPayloadAccess diagnostics={diagnosticsMap()} truncated={diagnosticsTruncated()} t={t} />
+            </div>
+          </div>
         </Show>
       </div>
     )

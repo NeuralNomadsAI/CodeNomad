@@ -200,6 +200,8 @@ export const messagingMessages = {
   "promptInput.send.ariaLabel": "Enviar mensaje",
   "promptInput.send.errorFallback": "No se pudo enviar el mensaje",
   "promptInput.send.errorTitle": "Error al enviar",
+  "promptInput.send.ambiguousTitle": "No se pudo confirmar la entrega",
+  "promptInput.send.ambiguousMessage": "Es posible que el servidor haya recibido este mensaje. Se restauro como borrador y no se volvera a enviar a menos que elijas Enviar.",
   "promptInput.conversationMode.enable.title": "Activar modo conversacion",
   "promptInput.conversationMode.disable.title": "Desactivar modo conversacion",
   "promptInput.conversationMode.error.title": "Fallo la reproduccion de la conversacion",

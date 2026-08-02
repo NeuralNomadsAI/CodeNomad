@@ -51,8 +51,14 @@ describe("session generation recovery", () => {
     }],
     ["active authority clears a captured admission token", {
       captured: session({ runtimeStatusKnown: false, generationRecovery: "pending", generationAdmissionToken: 1 }),
-      fetched: session({ status: "working", runtimeStatusKnown: true, generationRecovery: null }),
+      fetched: session({ status: "working", runtimeStatusKnown: true, generationRecovery: null, generationAdmissionToken: 1 }),
       latest: session({ runtimeStatusKnown: false, generationRecovery: "pending", generationAdmissionToken: undefined }),
+      expected: { title: "Session", status: "working", runtimeStatusKnown: true, generationRecovery: null, token: undefined, source: undefined, updated: 1 },
+    }],
+    ["active fetch overrides an unresolved admission token", {
+      captured: session({ runtimeStatusKnown: false, generationRecovery: "pending", generationAdmissionToken: 1 }),
+      fetched: session({ status: "working", runtimeStatusKnown: true, generationRecovery: null, generationAdmissionToken: 1 }),
+      latest: null,
       expected: { title: "Session", status: "working", runtimeStatusKnown: true, generationRecovery: null, token: undefined, source: undefined, updated: 1 },
     }],
     ["newer local state preserves optional field deletion", {
@@ -73,5 +79,15 @@ describe("session generation recovery", () => {
     const fetched = session()
     assert.equal(mergeFetchedSessionRuntimeState(fetched, session(), undefined), null)
     assert.equal(mergeFetchedSessionRuntimeState(fetched, undefined, undefined, true), null)
+  })
+  it("keeps fetched revert authority while preserving an admission token", () => {
+    const captured = session({ generationAdmissionToken: 1, revert: { messageID: "stale" } })
+    const merged = mergeFetchedSessionRuntimeState(
+      session({ revert: { messageID: "authoritative" } }),
+      captured,
+      captured,
+    )
+    assert.equal(merged?.generationAdmissionToken, 1)
+    assert.equal(merged?.revert?.messageID, "authoritative")
   })
 })

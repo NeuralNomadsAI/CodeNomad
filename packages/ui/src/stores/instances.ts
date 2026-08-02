@@ -91,6 +91,21 @@ import { WorkspaceListReconciliationFence } from "./workspace-list-reconciliatio
 const log = getLogger("api")
 const RECONNECT_LIST_TIMEOUT_MS = 5_000
 
+async function waitForReconnectPrerequisite(prerequisite: Promise<void> | undefined, signal?: AbortSignal): Promise<void> {
+  if (!signal) return waitForSettledPrerequisite(prerequisite)
+  let onAbort: (() => void) | undefined
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(signal.reason)
+    if (signal.aborted) onAbort()
+    else signal.addEventListener("abort", onAbort, { once: true })
+  })
+  try {
+    await Promise.race([waitForSettledPrerequisite(prerequisite), aborted])
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort)
+  }
+}
+
 setPermissionAutoAcceptFamilyRootResolver((instanceId, sessionId) => {
   const instanceSessions = sessions().get(instanceId)
   if (!instanceSessions) return sessionId
@@ -276,9 +291,22 @@ const MAX_LOG_ENTRIES = 1000
 
 const pendingDisposeRequests = new Map<string, Promise<boolean>>()
 const pendingRehydrations = new Map<string, Promise<void>>()
-const initialHydrations = new Map<string, Promise<void>>()
+type InitialHydration = { promise: Promise<void>; controller: AbortController; authority: number }
+const initialHydrations = new Map<string, InitialHydration>()
 const initialSessionHydrations = new Map<string, Promise<void>>()
 const initialWorkspaceMetadataHydrations = new Map<string, Promise<void>>()
+const hydrationAuthorities = new Map<string, number>()
+let hydrationAuthoritySequence = 0
+
+function claimHydrationAuthority(instanceId: string): number {
+  const authority = ++hydrationAuthoritySequence
+  hydrationAuthorities.set(instanceId, authority)
+  return authority
+}
+
+function hasHydrationAuthority(instanceId: string, authority: number): boolean {
+  return hydrationAuthorities.get(instanceId) === authority
+}
 type RestoreWorkspaceDescriptor = WorkspaceDescriptor & { reused?: boolean }
 const workspaceListReconciliationFence = new WorkspaceListReconciliationFence()
 
@@ -305,8 +333,23 @@ const connectionResyncs = new TrailingResyncCoordinator(
   async (instanceId) => {
     const instance = instances().get(instanceId)
     if (!instance?.client || instance.status !== "ready") return
-    await waitForSettledPrerequisite(initialHydrations.get(instanceId))
-    if (!isInstanceRuntimeCurrent(instanceId, instance)) return
+    const reconnectAuthority = claimHydrationAuthority(instanceId)
+    const hasCommitAuthority = () => hasHydrationAuthority(instanceId, reconnectAuthority) &&
+      isInstanceRuntimeCurrent(instanceId, instance)
+    const initialHydration = initialHydrations.get(instanceId)
+    await retryWithBackoff(
+      (signal) => waitForReconnectPrerequisite(initialHydration?.promise, signal),
+      { maxAttempts: 1, timeoutMs: RECONNECT_LIST_TIMEOUT_MS },
+    ).catch((error) => {
+      if (initialHydration && initialHydrations.get(instanceId) === initialHydration) {
+        initialHydration.controller.abort(error)
+        initialHydrations.delete(instanceId)
+        initialSessionHydrations.delete(instanceId)
+        initialWorkspaceMetadataHydrations.delete(instanceId)
+      }
+      log.warn("Initial hydration did not settle before reconnect resync", { instanceId, error })
+    })
+    if (!hasCommitAuthority()) return
     const worktreeTopologyComplete = await retryWithBackoff((signal) => reloadWorktrees(instanceId, signal), {
       maxAttempts: 1,
       timeoutMs: RECONNECT_LIST_TIMEOUT_MS,
@@ -314,18 +357,20 @@ const connectionResyncs = new TrailingResyncCoordinator(
       log.warn("Failed to refresh worktrees after instance connection", { instanceId, error })
       return false
     })
-    if (!isInstanceRuntimeCurrent(instanceId, instance)) return
+    if (!hasCommitAuthority()) return
     await reloadOpenCodeWorkspaces(instanceId)
-    if (!isInstanceRuntimeCurrent(instanceId, instance)) return
+    if (!hasCommitAuthority()) return
     const sessionScopeComplete = worktreeTopologyComplete && (await getV2RequestLocations(instanceId, true)).complete
-    await retryWithBackoff((signal) => fetchSessions(instanceId, {
+    const refreshedSessionIds = await retryWithBackoff((signal) => fetchSessions(instanceId, {
       reset: false,
       authoritativeDeletes: sessionScopeComplete,
       signal,
+      hasCommitAuthority,
     }), { maxAttempts: 1, timeoutMs: RECONNECT_LIST_TIMEOUT_MS }).catch((error) => {
       log.warn("Failed to refresh sessions after instance connection", { instanceId, error })
+      return new Set<string>()
     })
-    if (!isInstanceRuntimeCurrent(instanceId, instance)) return
+    if (!hasCommitAuthority()) return
     const interruptionSyncs = await Promise.allSettled([
       retryWithBackoff((signal) => syncPendingPermissions(instanceId, instance, signal, worktreeTopologyComplete), {
         maxAttempts: 3,
@@ -343,7 +388,7 @@ const connectionResyncs = new TrailingResyncCoordinator(
     for (const result of interruptionSyncs) {
       if (result.status === "rejected") log.warn("Failed to resync pending requests after instance connection", { instanceId, error: result.reason })
     }
-    if (!isInstanceRuntimeCurrent(instanceId, instance)) return
+    if (!hasCommitAuthority()) return
     const residentSessionIds = messageStoreBus.getInstance(instanceId)?.getResidentSessionIds() ?? []
     const activeId = activeSessionId().get(instanceId)
     const visibleSessionIds = getVisibleSessionMemoryIds(instanceId)
@@ -355,7 +400,11 @@ const connectionResyncs = new TrailingResyncCoordinator(
     }
     await Promise.all(Array.from(reloadSessionIds)
       .filter((sessionId) => knownSessions?.has(sessionId))
-      .map((sessionId) => loadMessages(instanceId, sessionId, { force: true, timeoutMs: RECONNECT_LIST_TIMEOUT_MS })))
+      .map((sessionId) => loadMessages(instanceId, sessionId, {
+        force: true,
+        timeoutMs: RECONNECT_LIST_TIMEOUT_MS,
+        applySessionRevert: refreshedSessionIds.has(sessionId),
+      })))
   },
   (instanceId, error) => {
     log.warn("Failed to resync sessions after instance connection", { instanceId, error })
@@ -486,6 +535,7 @@ function attachClient(descriptor: WorkspaceDescriptor) {
   }
 
   if (instance.client) {
+    initialHydrations.get(descriptor.id)?.controller.abort(new Error("Instance runtime replaced"))
     clearOpenCodeWorkspaceCache(descriptor.id)
     clearPendingDeltasForInstance(descriptor.id)
     if (runtimeChanged) clearReloadableInstanceState(descriptor.id)
@@ -501,15 +551,20 @@ function attachClient(descriptor: WorkspaceDescriptor) {
     status: "ready",
   })
   sseManager.seedStatusIfMissing(descriptor.id, "connecting")
-  const sessionHydration = startInstanceSessionHydration(descriptor.id)
+  const controller = new AbortController()
+  const authority = claimHydrationAuthority(descriptor.id)
+  const hasCommitAuthority = () => hasHydrationAuthority(descriptor.id, authority)
+  const sessionHydration = startInstanceSessionHydration(descriptor.id, false, controller.signal, hasCommitAuthority)
   initialSessionHydrations.set(descriptor.id, sessionHydration.sessions)
   initialWorkspaceMetadataHydrations.set(descriptor.id, sessionHydration.workspaceMetadata)
   const hydration = hydrateInstanceData(descriptor.id, {
     propagateErrors: true,
     sessionHydration: sessionHydration.sessions,
     workspaceMetadataHydration: sessionHydration.workspaceMetadata,
+    signal: controller.signal,
+    hasCommitAuthority,
   })
-  initialHydrations.set(descriptor.id, hydration)
+  initialHydrations.set(descriptor.id, { promise: hydration, controller, authority })
   if (sseManager.getStatuses().get(descriptor.id) === "connected") {
     resyncConnectedInstance(descriptor.id)
   }
@@ -547,7 +602,7 @@ function waitForInstanceReady(instanceId: string): Promise<void> {
 
 async function waitForInstanceInitialHydration(instanceId: string): Promise<void> {
   await waitForInstanceReady(instanceId)
-  await initialHydrations.get(instanceId)
+  await initialHydrations.get(instanceId)?.promise
 }
 
 async function waitForInstanceInitialSessionHydration(instanceId: string): Promise<void> {
@@ -721,7 +776,12 @@ async function syncPendingQuestions(instanceId: string, expectedInstance?: Insta
   }
 }
 
-function startInstanceSessionHydration(instanceId: string, force = false): {
+function startInstanceSessionHydration(
+  instanceId: string,
+  force = false,
+  signal?: AbortSignal,
+  hasCommitAuthority: () => boolean = () => true,
+): {
   sessions: Promise<void>
   workspaceMetadata: Promise<void>
 } {
@@ -729,15 +789,20 @@ function startInstanceSessionHydration(instanceId: string, force = false): {
     ? reloadWorktreeMap(instanceId)
     : ensureWorktreeMapLoaded(instanceId)
   const worktreeHydration = force
-    ? reloadWorktrees(instanceId)
-    : ensureWorktreesLoaded(instanceId)
+    ? reloadWorktrees(instanceId, signal)
+    : ensureWorktreesLoaded(instanceId, signal)
   const sessions = Promise.all([worktreeHydration, worktreeMapHydration]).then(async () => {
+    signal?.throwIfAborted()
+    if (!hasCommitAuthority()) return
     resetSessionPagination(instanceId)
-    await fetchSessions(instanceId).catch((error) => {
+    await fetchSessions(instanceId, { signal, hasCommitAuthority }).catch((error) => {
       log.error("Failed to hydrate sessions", { instanceId, error })
     })
+    signal?.throwIfAborted()
   })
   const workspaceMetadata = worktreeHydration.then(async () => {
+    signal?.throwIfAborted()
+    if (!hasCommitAuthority()) return
     await Promise.all([worktreeMapHydration, syncOpenCodeWorkspaces(instanceId)])
   })
   return { sessions, workspaceMetadata }
@@ -748,23 +813,40 @@ async function hydrateInstanceData(instanceId: string, options?: {
   propagateErrors?: boolean
   sessionHydration?: Promise<void>
   workspaceMetadataHydration?: Promise<void>
+  signal?: AbortSignal
+  hasCommitAuthority?: () => boolean
 }) {
+  const hasCommitAuthority = () => !options?.signal?.aborted && (options?.hasCommitAuthority?.() ?? true)
   try {
     const hydration = options?.sessionHydration
       ? {
           sessions: options.sessionHydration,
           workspaceMetadata: options.workspaceMetadataHydration ?? Promise.resolve(),
         }
-      : startInstanceSessionHydration(instanceId, options?.force)
+      : startInstanceSessionHydration(instanceId, options?.force, options?.signal, hasCommitAuthority)
     await hydration.sessions
+    if (!hasCommitAuthority()) return
     await hydration.workspaceMetadata
-    await fetchAgents(instanceId)
-    await fetchProviders(instanceId)
+    if (!hasCommitAuthority()) return
+    await fetchAgents(instanceId, options?.signal, hasCommitAuthority)
+    if (!hasCommitAuthority()) return
+    await fetchProviders(instanceId, options?.signal, hasCommitAuthority)
+    if (!hasCommitAuthority()) return
     await ensureInstanceConfigLoaded(instanceId)
+    if (!hasCommitAuthority()) return
     const instance = instances().get(instanceId)
     if (!instance?.client) return
-    await fetchCommands(instanceId, instance.client, () => isInstanceRuntimeCurrent(instanceId, instance))
-    await Promise.all([syncPendingPermissions(instanceId), syncPendingQuestions(instanceId)])
+    await fetchCommands(
+      instanceId,
+      instance.client,
+      () => hasCommitAuthority() && isInstanceRuntimeCurrent(instanceId, instance),
+      options?.signal,
+    )
+    if (!hasCommitAuthority()) return
+    await Promise.all([
+      syncPendingPermissions(instanceId, instance, options?.signal),
+      syncPendingQuestions(instanceId, instance, options?.signal),
+    ])
   } catch (error) {
     log.error("Failed to fetch initial data", error)
     if (options?.propagateErrors) throw error
@@ -1145,11 +1227,13 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   clearInstanceMetadata(id)
   clearPermissionAutoAcceptForInstance(id)
   clearSyncedYoloSessionsForInstance(id)
+  initialHydrations.get(id)?.controller.abort(new Error(`Workspace ${id} was removed`))
   initialHydrations.delete(id)
   initialSessionHydrations.delete(id)
   initialWorkspaceMetadataHydrations.delete(id)
   pendingDisposeRequests.delete(id)
   pendingRehydrations.delete(id)
+  hydrationAuthorities.delete(id)
   settleInstanceReadyWaiters(id, new Error(`Workspace ${id} was removed before it became ready`))
 
   if (activeInstanceId() === id) {

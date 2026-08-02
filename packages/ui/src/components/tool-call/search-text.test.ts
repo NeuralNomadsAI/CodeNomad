@@ -6,7 +6,8 @@ import {
   findLastSessionSearchPage,
   retainSessionSearchPage,
 } from "../../lib/session-search.ts"
-import { getDefaultToolSearchText, getReadToolSearchText, getTaskToolSearchText } from "./search-text.ts"
+import { getApplyPatchToolSearchText, getDefaultToolSearchText, getDiffToolSearchText, getReadToolSearchText, getTaskToolSearchText, getWriteToolSearchText } from "./search-text.ts"
+import { getLegacyTaskSummary, stringifyLegacyTaskSummary, TASK_STEP_RENDER_LIMIT } from "./renderers/task-summary.ts"
 
 function textRecord(id: string, text: string) {
   const partId = `${id}-part`
@@ -55,6 +56,62 @@ test("tool search retains output beyond the render preview limit", async () => {
   assert.equal(values.join("\n").includes("TAIL_NEEDLE"), true)
 })
 
+test("apply_patch search includes the exact rendered patch input", async () => {
+  const input = { patchText: "*** Begin Patch\n*** Add File: exact-needle.txt\n+needle\n*** End Patch" }
+  const values = await collect(getApplyPatchToolSearchText({
+    toolCall: { type: "tool", id: "tool", tool: "apply_patch", state: {} } as any,
+    toolName: "apply_patch",
+    toolState: { status: "completed", input, output: "" } as any,
+  }))
+
+  assert.equal(values.includes(JSON.stringify(input, null, 2)), true)
+})
+
+test("task search includes the exact rendered model metadata", async () => {
+  const values = await collect(getTaskToolSearchText({
+    toolCall: { type: "tool", id: "tool", tool: "task", state: {} } as any,
+    toolName: "task",
+    toolState: {
+      status: "completed",
+      input: {},
+      metadata: { model: { providerID: "exact-provider", modelID: "exact-model" } },
+      output: "",
+    } as any,
+  }))
+
+  assert.equal(values.includes("exact-provider/exact-model"), true)
+})
+
+test("edit and patch search include complete diagnostics", async () => {
+  for (const toolName of ["edit", "patch"]) {
+    const values = await collect(getDiffToolSearchText({
+      toolCall: { type: "tool", id: "tool", tool: toolName, state: {} } as any,
+      toolName,
+      toolState: {
+        status: "completed",
+        input: { filePath: "src/file.ts" },
+        metadata: { diagnostics: { "src/file.ts": [{ message: `${"x".repeat(2_000)}DIAGNOSTIC_TAIL` }] } },
+        output: "",
+      } as any,
+    }))
+    assert.equal(values.join("\n").includes("DIAGNOSTIC_TAIL"), true)
+  }
+})
+
+test("write search includes complete diagnostics", async () => {
+  const values = await collect(getWriteToolSearchText({
+    toolCall: { type: "tool", id: "tool", tool: "write", state: {} } as any,
+    toolName: "write",
+    toolState: {
+      status: "completed",
+      input: { filePath: "src/file.ts", content: "content" },
+      metadata: { diagnostics: { "src/file.ts": [{ message: `${"x".repeat(2_000)}DIAGNOSTIC_TAIL` }] } },
+      output: "",
+    } as any,
+  }))
+  assert.equal(values.join("\n").includes("DIAGNOSTIC_TAIL"), true)
+})
+
 test("task output tail matches remain exposed through a bounded visible preview", async () => {
   const record = textRecord("tool-tail", "")
   const partId = record.partIds[0]
@@ -73,6 +130,24 @@ test("task output tail matches remain exposed through a bounded visible preview"
 
   assert.equal(result.matches[0]?.preview.includes("TAIL_NEEDLE"), true)
   assert.ok((result.matches[0]?.preview.length ?? 0) <= 120)
+})
+
+test("legacy task summary search matches remain available from the bounded view's copy source", async () => {
+  const summary = [
+    { title: "OMITTED_SEARCH_MATCH" },
+    ...Array.from({ length: TASK_STEP_RENDER_LIMIT }, (_, index) => ({ title: `step-${index}` })),
+  ]
+  const view = getLegacyTaskSummary(summary)
+  const searchValues = await collect(getTaskToolSearchText({
+    toolCall: { type: "tool", id: "tool", tool: "task", state: {} } as any,
+    toolName: "task",
+    toolState: { status: "completed", input: {}, metadata: { summary } } as any,
+  }))
+
+  assert.equal(view.renderedEntries.length, TASK_STEP_RENDER_LIMIT)
+  assert.equal(view.renderedEntries.some((entry) => entry.title === "OMITTED_SEARCH_MATCH"), false)
+  assert.equal(searchValues.join("\n").includes("OMITTED_SEARCH_MATCH"), true)
+  assert.equal(stringifyLegacyTaskSummary(view.entries).includes("OMITTED_SEARCH_MATCH"), true)
 })
 
 test("case-fold expansion preserves original string offsets", async () => {

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { createTextAttachment } from "../../types/attachment"
+import { createFileAttachment, createTextAttachment } from "../../types/attachment"
 import { OpencodeApiError, requestData } from "../../lib/opencode-api"
-import { prepareFailedPromptRecovery, preparePromptSubmission, shouldSuppressFailedPromptRecovery } from "./submitPrompt"
+import { isPromptDeliveryAmbiguous, prepareFailedPromptRecovery, preparePromptSubmission } from "./submitPrompt"
 
 describe("preparePromptSubmission", () => {
   it("keeps placeholder-backed pasted text intact for message submission while resolving history text", () => {
@@ -48,27 +48,40 @@ describe("prepareFailedPromptRecovery", () => {
     })
     assert.equal(recovered.text, "[pasted #3] [pasted #4]\n[pasted #1] [pasted #2]")
   })
+
+  it("preserves exact prompt text and file attachments for explicit ambiguous-delivery recovery", () => {
+    const attachment = { ...createFileAttachment("/work/spec.txt", "spec.txt"), id: "spec" }
+    const recovered = prepareFailedPromptRecovery({
+      submittedText: "  inspect this  ",
+      submittedAttachments: [attachment],
+      currentText: "",
+      currentAttachments: [],
+    })
+
+    assert.equal(recovered.text, "  inspect this  ")
+    assert.deepEqual(recovered.attachments, [attachment])
+  })
 })
 
-describe("shouldSuppressFailedPromptRecovery", () => {
+describe("isPromptDeliveryAmbiguous", () => {
   it("recovers definite local and HTTP failures", async () => {
-    assert.equal(shouldSuppressFailedPromptRecovery(new Error("Instance not ready")), false)
+    assert.equal(isPromptDeliveryAmbiguous(new Error("Instance not ready")), false)
     const failure = await requestData(
       Promise.resolve({ error: { message: "Bad command" }, response: { status: 400 } }) as any,
       "session.command",
     ).catch((error) => error)
-    assert.equal(shouldSuppressFailedPromptRecovery(failure), false)
+    assert.equal(isPromptDeliveryAmbiguous(failure), false)
   })
 
-  it("suppresses recovery only when the delivery-aware action marks the error", async () => {
+  it("reports ambiguity only when the delivery-aware action marks the error", async () => {
     const ambiguous = new OpencodeApiError("shell failed", { cause: new TypeError("Failed to fetch") })
-    assert.equal(shouldSuppressFailedPromptRecovery(ambiguous), false)
+    assert.equal(isPromptDeliveryAmbiguous(ambiguous), false)
     ;(ambiguous as any).suppressPromptRecovery = true
-    assert.equal(shouldSuppressFailedPromptRecovery(ambiguous), true)
+    assert.equal(isPromptDeliveryAmbiguous(ambiguous), true)
     const failure = await requestData(
       Promise.resolve({ error: { message: "Gateway failed" }, response: { status: 502 } }) as any,
       "session.command",
     ).catch((error) => error)
-    assert.equal(shouldSuppressFailedPromptRecovery(failure), false)
+    assert.equal(isPromptDeliveryAmbiguous(failure), false)
   })
 })

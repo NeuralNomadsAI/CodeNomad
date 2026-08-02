@@ -3,7 +3,7 @@ import { ArrowBigUp, ArrowBigDown, Loader2, Mic, Paperclip, Volume2, X } from "l
 import ExpandButton from "./expand-button"
 import { addAttachment, clearAttachments, getAttachments, removeAttachment } from "../stores/attachments"
 import { createPastedPlaceholderRegex, pastedDisplayCounterRegex } from "./prompt-input/attachmentPlaceholders"
-import { prepareFailedPromptRecovery, preparePromptSubmission, shouldSuppressFailedPromptRecovery } from "./prompt-input/submitPrompt"
+import { isPromptDeliveryAmbiguous, prepareFailedPromptRecovery, preparePromptSubmission } from "./prompt-input/submitPrompt"
 import { focusConversationStream } from "./focus-conversation"
 import Kbd from "./kbd"
 import { getActiveInstance } from "../stores/instances"
@@ -457,7 +457,8 @@ export default function PromptInput(props: PromptInputProps) {
   })
 
   async function handleSend() {
-    const text = prompt().trim()
+    const draftText = prompt()
+    const text = draftText.trim()
     const currentAttachments = attachments()
     if (props.disabled || (!text && currentAttachments.length === 0)) return
 
@@ -540,7 +541,7 @@ export default function PromptInput(props: PromptInputProps) {
       }
     } catch (error) {
       log.error("Failed to send message:", error)
-      const suppressRecovery = shouldSuppressFailedPromptRecovery(error)
+      const deliveryAmbiguous = isPromptDeliveryAmbiguous(error)
       const recoverySessionId = typeof (error as any)?.promptRecoverySessionId === "string"
         ? (error as any).promptRecoverySessionId
         : props.sessionId
@@ -550,28 +551,27 @@ export default function PromptInput(props: PromptInputProps) {
       const currentRecoveryAttachments = recoverySessionId === props.sessionId
         ? attachments()
         : getAttachments(props.instanceId, recoverySessionId)
-      if (!suppressRecovery) {
-        const recovery = prepareFailedPromptRecovery({
-          submittedText: text,
-          submittedAttachments: currentAttachments,
-          currentText: currentPrompt,
-          currentAttachments: currentRecoveryAttachments,
-        })
-        if (recoverySessionId === props.sessionId) setPrompt(recovery.text)
-        else {
-          setSessionDraftPrompt(props.instanceId, recoverySessionId, recovery.text)
-          hydrateSessionDraftPrompt(props.instanceId, recoverySessionId, recovery.text)
-        }
-        clearAttachments(props.instanceId, recoverySessionId)
-        for (const attachment of recovery.attachments) addAttachment(props.instanceId, recoverySessionId, attachment)
-        if (recoverySessionId === props.sessionId) syncAttachmentCounters(recovery.text)
-      } else if (!isKnownSlashCommand) {
+      const recovery = prepareFailedPromptRecovery({
+        submittedText: draftText,
+        submittedAttachments: currentAttachments,
+        currentText: currentPrompt,
+        currentAttachments: currentRecoveryAttachments,
+      })
+      if (recoverySessionId === props.sessionId) setPrompt(recovery.text)
+      else {
+        setSessionDraftPrompt(props.instanceId, recoverySessionId, recovery.text)
+        hydrateSessionDraftPrompt(props.instanceId, recoverySessionId, recovery.text)
+      }
+      clearAttachments(props.instanceId, recoverySessionId)
+      for (const attachment of recovery.attachments) addAttachment(props.instanceId, recoverySessionId, attachment)
+      if (recoverySessionId === props.sessionId) syncAttachmentCounters(recovery.text)
+      if (deliveryAmbiguous && !isKnownSlashCommand) {
         void refreshHistory()
       }
-      showAlertDialog(t("promptInput.send.errorFallback"), {
-        title: t("promptInput.send.errorTitle"),
+      showAlertDialog(t(deliveryAmbiguous ? "promptInput.send.ambiguousMessage" : "promptInput.send.errorFallback"), {
+        title: t(deliveryAmbiguous ? "promptInput.send.ambiguousTitle" : "promptInput.send.errorTitle"),
         detail: error instanceof Error ? error.message : String(error),
-        variant: "error",
+        variant: deliveryAmbiguous ? "warning" : "error",
       })
       if (!isTouchOnlyPointer()) {
         textareaRef?.focus()

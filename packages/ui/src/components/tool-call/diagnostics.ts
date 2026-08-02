@@ -27,10 +27,26 @@ export interface DiagnosticEntry {
   label: string
   icon: string
   message: string
+  messageTruncated: boolean
   filePath: string
   displayPath: string
   line: number
   column: number
+}
+
+export interface DiagnosticsView {
+  diagnostics: DiagnosticsMap
+  entries: DiagnosticEntry[]
+  key?: string
+  truncated: boolean
+}
+
+function diagnosticListHasMessages(list: unknown): boolean {
+  return Array.isArray(list) && list.some((entry) => typeof entry?.message === "string")
+}
+
+export function hasDiagnosticMessages(diagnostics: DiagnosticsMap): boolean {
+  return Object.values(diagnostics).some(diagnosticListHasMessages)
 }
 
 export function normalizeDiagnosticPath(path: string) {
@@ -49,19 +65,28 @@ function getSeverityMeta(tone: DiagnosticEntry["tone"]) {
   return { label: tGlobal("toolCall.diagnostics.severity.info.short"), icon: "i", rank: 2 }
 }
 
-export function extractDiagnostics(state: ToolState | undefined): DiagnosticEntry[] {
-  if (!state) return []
+export function extractDiagnosticsView(state: ToolState | undefined): DiagnosticsView {
+  if (!state) return buildDiagnosticView({}, [])
   const supportsMetadata = isToolStateRunning(state) || isToolStateCompleted(state) || isToolStateError(state)
-  if (!supportsMetadata) return []
+  if (!supportsMetadata) return buildDiagnosticView({}, [])
 
   const metadata = (state.metadata || {}) as Record<string, unknown>
   const input = (state.input || {}) as Record<string, unknown>
   const diagnosticsMap = metadata?.diagnostics as DiagnosticsMap | undefined
-  if (!diagnosticsMap) return []
+  if (!diagnosticsMap) return buildDiagnosticView({}, [])
 
-  return buildDiagnosticEntries(diagnosticsMap, [input.filePath, metadata.filePath, metadata.filepath, input.path].map((value) =>
+  const view = buildDiagnosticView(diagnosticsMap, [input.filePath, metadata.filePath, metadata.filepath, input.path].map((value) =>
     typeof value === "string" ? value : undefined,
   ))
+  if ((!view.key && hasDiagnosticMessages(diagnosticsMap))
+    || (view.key && Object.entries(diagnosticsMap).some(([key, list]) => key !== view.key && diagnosticListHasMessages(list)))) {
+    return { ...view, truncated: true }
+  }
+  return view
+}
+
+export function extractDiagnostics(state: ToolState | undefined): DiagnosticEntry[] {
+  return extractDiagnosticsView(state).entries
 }
 
 export function resolveDiagnosticsKey(diagnostics: DiagnosticsMap, preferredPaths: Array<string | undefined>): string | undefined {
@@ -102,12 +127,12 @@ export function resolveDiagnosticsKey(diagnostics: DiagnosticsMap, preferredPath
   return undefined
 }
 
-export function buildDiagnosticEntries(diagnostics: DiagnosticsMap, preferredPaths: Array<string | undefined>): DiagnosticEntry[] {
+export function buildDiagnosticView(diagnostics: DiagnosticsMap, preferredPaths: Array<string | undefined>): DiagnosticsView {
   const key = resolveDiagnosticsKey(diagnostics, preferredPaths)
-  if (!key) return []
+  if (!key) return { diagnostics, entries: [], truncated: false }
 
   const list = diagnostics[key]
-  if (!Array.isArray(list) || list.length === 0) return []
+  if (!Array.isArray(list) || list.length === 0) return { diagnostics, entries: [], key, truncated: false }
 
   const limit = 100
   const normalizedPath = normalizeDiagnosticPath(key)
@@ -126,6 +151,7 @@ export function buildDiagnosticEntries(diagnostics: DiagnosticsMap, preferredPat
     const severityMeta = getSeverityMeta(tone)
     const line = typeof diagnostic.range?.start?.line === "number" ? diagnostic.range.start.line + 1 : 0
     const column = typeof diagnostic.range?.start?.character === "number" ? diagnostic.range.start.character + 1 : 0
+    const messageTruncated = diagnostic.message.length > 2_000
     entries.push({
       id: String(index),
       severity: severityMeta.rank,
@@ -133,6 +159,7 @@ export function buildDiagnosticEntries(diagnostics: DiagnosticsMap, preferredPat
       label: severityMeta.label,
       icon: severityMeta.icon,
       message: diagnostic.message.slice(0, 2_000),
+      messageTruncated,
       filePath: normalizedPath,
       displayPath: getRelativePath(normalizedPath),
       line,
@@ -140,7 +167,16 @@ export function buildDiagnosticEntries(diagnostics: DiagnosticsMap, preferredPat
     })
   }
 
-  return entries
+  return {
+    diagnostics,
+    entries,
+    key,
+    truncated: list.length > entries.length || entries.some((entry) => entry.messageTruncated),
+  }
+}
+
+export function buildDiagnosticEntries(diagnostics: DiagnosticsMap, preferredPaths: Array<string | undefined>): DiagnosticEntry[] {
+  return buildDiagnosticView(diagnostics, preferredPaths).entries
 }
 
 export function diagnosticFileName(entries: DiagnosticEntry[]) {

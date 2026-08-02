@@ -4,6 +4,7 @@ import { describe, it } from "node:test"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import { sseManager } from "../lib/sse-manager.ts"
 import { serverApi } from "../lib/api-client.ts"
+import { serverEvents } from "../lib/server-events.ts"
 import {
   addInstance,
   addPermissionToQueue,
@@ -22,7 +23,7 @@ import {
   handleQuestionAsked,
 } from "./session-events.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
-import { getSessionDraftPrompt, sessions, setActiveSession, setMessagesLoaded, setSessionDraftPrompt, setSessions } from "./session-state.ts"
+import { agents, getSessionDraftPrompt, sessions, setActiveSession, setMessagesLoaded, setSessionDraftPrompt, setSessions } from "./session-state.ts"
 import { reloadOpenCodeWorkspaces } from "./opencode-workspaces.ts"
 import { fetchSessions } from "./session-api.ts"
 import { setVisibleSessionMemory } from "./session-memory.ts"
@@ -338,6 +339,106 @@ describe("reconnect interruption resync", () => {
       await waitFor(() => getPermissionQueue(instanceId).length === 1)
       assert.equal(getPermissionQueue(instanceId)[0]?.id, permission.id)
     } finally {
+      harness.cleanup()
+    }
+  })
+
+  it("does not apply a stale revert when reconnect metadata refresh fails", async () => {
+    const instanceId = "reconnect-stale-revert", sessionId = "session"
+    const originalFetchWorktrees = serverApi.fetchWorktrees
+    serverApi.fetchWorktrees = async () => ({
+      isGitRepo: true,
+      worktrees: [{ slug: "root", directory: "/work", kind: "root" }],
+    })
+    const staleRevert = { messageID: "stale-anchor" }
+    const messageIds = ["before", "stale-anchor", "current-anchor", "after"]
+    const harness = setup(instanceId, {
+      sessions: async () => { throw new Error("session list unavailable") },
+      messages: async () => ({
+        data: messageIds.map((id) => ({
+          info: {
+            id, sessionID: sessionId, role: "assistant", agent: "build",
+            providerID: "provider", modelID: "model", time: { created: 1, completed: 2 },
+          },
+          parts: [{ id: `${id}-part`, type: "text", text: id }],
+        })),
+      }),
+    })
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, {
+      id: sessionId,
+      instanceId,
+      parentId: null,
+      title: sessionId,
+      status: "idle",
+      model: { providerId: "", modelId: "" },
+      revert: staleRevert,
+    } as any]])))
+    messageStoreBus.getOrCreate(instanceId).setSessionRevert(sessionId, staleRevert)
+    setActiveSession(instanceId, sessionId)
+
+    try {
+      sseManager.onConnectionRestored?.(instanceId)
+      await waitFor(() => harness.messageLists() === 1, 5_000)
+      await waitFor(() => messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId).length === messageIds.length, 5_000)
+
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), messageIds)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionRevert(sessionId), staleRevert)
+    } finally {
+      serverApi.fetchWorktrees = originalFetchWorktrees
+      harness.cleanup()
+    }
+  })
+
+  it("does not apply a stale revert when a capped reconnect list omits the active session", async () => {
+    const instanceId = "reconnect-capped-stale-revert", sessionId = "session"
+    const originalFetchWorktrees = serverApi.fetchWorktrees
+    serverApi.fetchWorktrees = async () => ({
+      isGitRepo: true,
+      worktrees: [{ slug: "root", directory: "/work", kind: "root" }],
+    })
+    const staleRevert = { messageID: "stale-anchor" }
+    const messageIds = ["before", "stale-anchor", "current-anchor", "after"]
+    const harness = setup(instanceId, {
+      sessions: Promise.resolve({
+        data: Array.from({ length: 10_000 }, (_, index) => ({
+          id: `other-${index}`,
+          title: `Other ${index}`,
+          directory: "/work",
+          metadata: { owner: "test" },
+          time: { created: 1 },
+        })),
+      }),
+      messages: async () => ({
+        data: messageIds.map((id) => ({
+          info: {
+            id, sessionID: sessionId, role: "assistant", agent: "build",
+            providerID: "provider", modelID: "model", time: { created: 1, completed: 2 },
+          },
+          parts: [{ id: `${id}-part`, type: "text", text: id }],
+        })),
+      }),
+    })
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, {
+      id: sessionId,
+      instanceId,
+      parentId: null,
+      title: sessionId,
+      status: "idle",
+      model: { providerId: "", modelId: "" },
+      revert: staleRevert,
+    } as any]])))
+    messageStoreBus.getOrCreate(instanceId).setSessionRevert(sessionId, staleRevert)
+    setActiveSession(instanceId, sessionId)
+
+    try {
+      sseManager.onConnectionRestored?.(instanceId)
+      await waitFor(() => harness.messageLists() === 1, 5_000)
+      await waitFor(() => messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId).length === messageIds.length, 5_000)
+
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), messageIds)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionRevert(sessionId), staleRevert)
+    } finally {
+      serverApi.fetchWorktrees = originalFetchWorktrees
       harness.cleanup()
     }
   })
@@ -706,6 +807,82 @@ describe("reconnect interruption resync", () => {
       assert.equal(harness.questionLists(), 0)
     } finally {
       harness.cleanup()
+    }
+  })
+
+  it("times out stalled initial hydration and runs the queued trailing reconnect", async () => {
+    const instanceId = "reconnect-stalled-initial-hydration"
+    const originalFetchWorktrees = serverApi.fetchWorktrees
+    const originalReadWorktreeMap = serverApi.readWorktreeMap
+    let sessionLists = 0
+    let permissionLists = 0
+    const agentResponse = deferred<any>()
+    let agentSignal: AbortSignal | undefined
+    const client = {
+      session: {
+        list: async () => {
+          sessionLists += 1
+          return { data: [] }
+        },
+        status: async () => ({ data: {} }),
+      },
+      app: { agents: (_parameters: unknown, options?: { signal?: AbortSignal }) => {
+        agentSignal = options?.signal
+        return agentResponse.promise
+      } },
+      experimental: { workspace: {
+        syncList: async () => ({ data: [] }),
+        list: async () => ({ data: [] }),
+      } },
+      permission: { list: async () => ({ data: [] }) },
+      question: { list: async () => ({ data: [] }) },
+      v2: {
+        permission: { request: { list: async () => {
+          permissionLists += 1
+          return { data: { data: [] } }
+        } } },
+        question: { request: { list: async () => ({ data: { data: [] } }) } },
+      },
+    } as any
+    serverApi.fetchWorktrees = async () => ({
+      isGitRepo: true,
+      worktrees: [{ slug: "root", directory: "/work", kind: "root" }],
+    })
+    serverApi.readWorktreeMap = async () => null as any
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+
+    try {
+      ;(serverEvents as any).dispatch({
+        type: "workspace.started",
+        workspace: {
+          id: instanceId,
+          path: "/work",
+          status: "ready",
+          pid: 1,
+          port: 1,
+          proxyPath: `/workspaces/${instanceId}/instance`,
+          binaryId: "test",
+          binaryLabel: "Test",
+          createdAt: new Date(0).toISOString(),
+          updatedAt: new Date(0).toISOString(),
+        },
+      })
+      await waitFor(() => sessionLists === 1 && agentSignal !== undefined)
+
+      sseManager.onConnectionRestored?.(instanceId)
+      sseManager.onConnectionRestored?.(instanceId)
+
+      await waitFor(() => permissionLists === 2, 12_000)
+      assert.equal(agentSignal?.aborted, true)
+      assert.ok(sessionLists >= 3)
+      agentResponse.resolve({ data: [{ name: "stale-agent", mode: "primary" }] })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      assert.equal(agents().get(instanceId)?.some((agent) => agent.name === "stale-agent") ?? false, false)
+    } finally {
+      serverApi.fetchWorktrees = originalFetchWorktrees
+      serverApi.readWorktreeMap = originalReadWorktreeMap
+      removeInstance(instanceId, { authoritative: false })
+      sdkManager.destroyClientsForInstance(instanceId)
     }
   })
 })

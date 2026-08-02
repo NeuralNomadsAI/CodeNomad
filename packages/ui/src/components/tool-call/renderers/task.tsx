@@ -10,6 +10,8 @@ import { setVisibleSessionMemory } from "../../../stores/session-memory"
 import { getTaskToolSearchText } from "../search-text"
 import { Copy } from "lucide-solid"
 import { copyToClipboard } from "../../../lib/clipboard"
+import { getLegacyTaskSummary, stringifyLegacyTaskSummary, TASK_STEP_RENDER_LIMIT } from "./task-summary"
+import { useTaskTranscriptLoad } from "./task-transcript-load"
 
 interface TaskSummaryItem {
   id: string
@@ -20,8 +22,6 @@ interface TaskSummaryItem {
   status?: ToolState["status"]
   title?: string
 }
-
-const TASK_STEP_RENDER_LIMIT = 200
 
 function extractSessionIdFromTaskState(state?: ToolState): string {
   if (!state) return ""
@@ -227,14 +227,12 @@ export const taskRenderer: ToolRenderer = {
       return loadingSet?.has(id) ?? false
     })
 
-    createEffect(() => {
-      const id = childSessionId()
-      if (!id) return
-      if (activeInstanceId() !== instanceId) return
-      if (activeSessionId().get(instanceId) !== visibilitySessionId) return
-      if (childSessionLoaded()) return
-      if (childSessionLoading()) return
-      void loadMessages(instanceId, id).catch(() => undefined)
+    useTaskTranscriptLoad({
+      sessionId: childSessionId,
+      enabled: () => activeInstanceId() === instanceId && activeSessionId().get(instanceId) === visibilitySessionId,
+      loaded: childSessionLoaded,
+      loading: childSessionLoading,
+      load: (id, signal) => loadMessages(instanceId, id, { signal }),
     })
 
     createEffect(() => {
@@ -422,16 +420,16 @@ export const taskRenderer: ToolRenderer = {
       partVersion?.()
 
       const state = toolState()
-      if (!state) return []
+      if (!state) return getLegacyTaskSummary(undefined)
       const { metadata } = readToolStatePayload(state)
-      return Array.isArray((metadata as any).summary) ? ((metadata as any).summary as any[]) : []
+      return getLegacyTaskSummary((metadata as any).summary)
     })
 
     const legacyItems = createMemo(() => {
       // Prefer deriving steps from the child session when loaded.
       if (childSessionLoaded()) return []
 
-      return legacySummary().slice(-TASK_STEP_RENDER_LIMIT).map((entry, index) => {
+      return legacySummary().renderedEntries.map((entry, index) => {
         const tool = typeof entry?.tool === "string" ? (entry.tool as string) : "unknown"
         const stateValue = typeof entry?.state === "object" ? (entry.state as ToolState) : undefined
         const metadataFromEntry = typeof entry?.metadata === "object" && entry.metadata ? entry.metadata : {}
@@ -478,12 +476,25 @@ export const taskRenderer: ToolRenderer = {
           <section class="tool-call-task-section">
             <header class="tool-call-task-section-header">
               <span class="tool-call-task-section-title">{t("toolCall.task.sections.steps")}</span>
-              <span class="tool-call-task-section-meta">
-                {t("toolCall.task.steps.count", { count: childToolsTruncated() || legacySummary().length > TASK_STEP_RENDER_LIMIT ? `${TASK_STEP_RENDER_LIMIT}+` : childToolKeys().length > 0 ? childToolKeys().length : legacyItems().length })}
+              <span class="tool-call-io-actions">
+                <span class="tool-call-task-section-meta">
+                  {t("toolCall.task.steps.count", { count: childToolsTruncated() || legacySummary().truncated ? `${TASK_STEP_RENDER_LIMIT}+` : childToolKeys().length > 0 ? childToolKeys().length : legacyItems().length })}
+                </span>
+                <Show when={childToolKeys().length === 0 && legacySummary().truncated}>
+                  <button
+                    type="button"
+                    class="tool-call-header-icon-button tool-call-header-copy"
+                    onClick={() => void copyToClipboard(stringifyLegacyTaskSummary(legacySummary().entries))}
+                    aria-label={t("toolCall.io.copyOutputAriaLabel")}
+                    title={t("toolCall.io.copyOutputTitle")}
+                  >
+                    <Copy class="w-3.5 h-3.5" aria-hidden="true" />
+                  </button>
+                </Show>
               </span>
             </header>
             <div class="tool-call-task-section-body">
-              <Show when={childToolsTruncated() || legacySummary().length > TASK_STEP_RENDER_LIMIT}>
+              <Show when={childToolsTruncated() || legacySummary().truncated}>
                 <div class="tool-call-diagnostic-message">{t("toolCall.output.truncated")}</div>
               </Show>
               <Show

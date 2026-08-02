@@ -5,8 +5,16 @@ import { requestData } from "../lib/opencode-api"
 
 const [commandMap, setCommandMap] = createSignal<Map<string, SDKCommand[]>>(new Map())
 
-export async function fetchCommands(instanceId: string, client: OpencodeClient, isCurrent: () => boolean = () => true): Promise<void> {
-  const commands = await requestData<SDKCommand[]>(client.command.list(), "command.list").catch(() => [])
+export async function fetchCommands(
+  instanceId: string,
+  client: OpencodeClient,
+  isCurrent: () => boolean = () => true,
+  signal?: AbortSignal,
+): Promise<void> {
+  const commands = await requestData<SDKCommand[]>(
+    (client.command.list as any)(undefined, signal ? { signal } : undefined),
+    "command.list",
+  ).catch(() => [])
   if (!isCurrent()) return
   setCommandMap((prev) => {
     const next = new Map(prev)

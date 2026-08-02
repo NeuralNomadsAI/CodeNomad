@@ -12,6 +12,7 @@ import { removeMessagePartV2, removeMessageV2 } from "./message-v2/bridge"
 import { getLogger } from "../lib/logger"
 import { isDeliveryAmbiguousError, requestData } from "../lib/opencode-api"
 import { clearConversationPlaybackForSession } from "./conversation-speech"
+import { normalizeMessagePart } from "./message-v2/normalizers"
 
 const log = getLogger("actions")
 
@@ -250,7 +251,23 @@ async function sendMessage(
             client.session.messages({ sessionID: sessionId, ...workspacePayload }),
             "session.messages",
           )
-          if (messages.some((message) => message?.info?.id === messageId)) {
+          if (!isInstanceRuntimeCurrent(instanceId, instance)) return
+          const verified = messages.find((message) => (message?.info ?? message)?.id === messageId)
+          if (verified) {
+            const info = verified.info ?? verified
+            const createdAt = info.time?.created ?? Date.now()
+            const completedAt = info.time?.end ?? info.time?.completed ?? createdAt
+            store.upsertMessage({
+              id: messageId,
+              sessionId,
+              role: info.role === "assistant" ? "assistant" : "user",
+              status: info.error ? "error" : "complete",
+              parts: (verified.parts ?? []).map(normalizeMessagePart),
+              createdAt,
+              updatedAt: completedAt,
+              isEphemeral: false,
+            })
+            store.setMessageInfo(messageId, info)
             if (isInstanceRuntimeCurrent(instanceId, instance)) admission.complete()
             return
           }

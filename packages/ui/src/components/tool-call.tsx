@@ -19,7 +19,7 @@ import { PermissionToolBlock } from "./tool-call/permission-block"
 import { createAnsiContentRenderer } from "./tool-call/ansi-render"
 import { createDiffContentRenderer } from "./tool-call/diff-render"
 import { createMarkdownContentRenderer } from "./tool-call/markdown-render"
-import { extractDiagnostics, diagnosticFileName } from "./tool-call/diagnostics"
+import { extractDiagnosticsView, diagnosticFileName, hasDiagnosticMessages } from "./tool-call/diagnostics"
 import { renderDiagnosticsSection } from "./tool-call/diagnostics-section"
 import type {
   DiffPayload,
@@ -869,10 +869,9 @@ export default function ToolCall(props: ToolCallProps) {
     if (override !== undefined) return override
     return diagnosticsDefaultExpanded()
   }
-  const diagnosticsEntries = createMemo(() => {
+  const diagnosticsView = createMemo(() => {
     const state = toolState()
-    if (!state) return []
-    return extractDiagnostics(state)
+    return extractDiagnosticsView(state)
   })
 
   const toggleInputSection = () => {
@@ -1222,17 +1221,17 @@ export default function ToolCall(props: ToolCallProps) {
         />
       </Show>
  
-      <Show when={diagnosticsEntries().length && diagnosticsVisibility() !== "hidden"}>
+      <Show when={hasDiagnosticMessages(diagnosticsView().diagnostics) && diagnosticsVisibility() !== "hidden"}>
 
         {renderDiagnosticsSection(
           t,
-          diagnosticsEntries(),
+          diagnosticsView(),
           diagnosticsExpanded(),
           () => setDiagnosticsOverride((prev) => {
             const current = prev === undefined ? diagnosticsDefaultExpanded() : prev
             return !current
           }),
-          diagnosticFileName(diagnosticsEntries()),
+          diagnosticFileName(diagnosticsView().entries),
         )}
       </Show>
     </div>

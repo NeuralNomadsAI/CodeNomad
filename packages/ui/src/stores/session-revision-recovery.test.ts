@@ -8,7 +8,8 @@ import { addInstance, removeInstance, updateInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { loadMessages } from "./session-api.ts"
 import { handleMessageUpdate, handleSessionDeleted, handleSessionIdle } from "./session-events.ts"
-import { clearInstanceDeletedSessionAuthority, messagesLoaded, sessions, setActiveSession, setMessagesLoaded, setSessions } from "./session-state.ts"
+import { clearInstanceDeletedSessionAuthority, loading, messagesLoaded, sessions, setActiveSession, setMessagesLoaded, setSessions } from "./session-state.ts"
+import { evictResidentSessionMessages } from "./session-memory.ts"
 
 function session(instanceId: string, id: string, status: Session["status"] = "idle"): Session {
   return {
@@ -235,6 +236,35 @@ describe("revision conflict recovery", () => {
     }
   })
 
+  it("settles an idle reconciliation timeout when the client ignores abort", async () => {
+    const instanceId = "idle-reconciliation-timeout", sessionId = "session"
+    const { client, cleanup } = setup(instanceId, sessionId)
+    const originalSetTimeout = globalThis.setTimeout
+    let signal: AbortSignal | undefined
+    ;(client.session as any).messages = (_input: unknown, options?: { signal?: AbortSignal }) => {
+      signal = options?.signal
+      return new Promise(() => undefined)
+    }
+    const store = messageStoreBus.getOrCreate(instanceId)
+    store.upsertMessage({
+      id: "streaming", sessionId, role: "assistant", status: "streaming",
+      parts: [{ id: "part", type: "text", text: "partial" }] as any,
+    })
+
+    try {
+      globalThis.setTimeout = ((callback: TimerHandler, delay?: number, ...args: any[]) =>
+        originalSetTimeout(callback, delay === 10_000 ? 0 : delay, ...args)) as typeof setTimeout
+      handleSessionIdle(instanceId, { type: "session.idle", properties: { sessionID: sessionId } } as any)
+      await waitFor(() => signal?.aborted === true && !(loading().loadingMessages.get(instanceId)?.has(sessionId) ?? false))
+      assert.equal(store.getMessage("streaming")?.status, "error")
+      assert.equal(store.hasSessionActiveWork(sessionId), false)
+      assert.equal(evictResidentSessionMessages(instanceId, sessionId), true)
+    } finally {
+      globalThis.setTimeout = originalSetTimeout
+      cleanup()
+    }
+  })
+
   it("falls through to idle reconciliation after recovery attempts are exhausted", async () => {
     const instanceId = "exhausted-idle-recovery", sessionId = "session"
     const { client, cleanup } = setup(instanceId, sessionId)
@@ -344,6 +374,68 @@ describe("revision conflict recovery", () => {
     }
   })
 
+  it("retains an orphan delta across a predating snapshot until authority includes it", async () => {
+    const instanceId = "orphan-delta-recovery", sessionId = "session", messageId = "message"
+    const { client, cleanup } = setup(instanceId, sessionId)
+    let calls = 0
+    ;(client.session as any).messages = async () => {
+      calls += 1
+      return { data: [apiMessage(messageId, sessionId, "model", calls === 1 ? "base" : "base tail")] }
+    }
+
+    try {
+      enqueueDelta(instanceId, messageId, `${messageId}-part`, "text", " tail", sessionId)
+      await waitFor(() => calls === 2)
+      await new Promise((resolve) => setTimeout(resolve, 250))
+
+      const part = messageStoreBus.getOrCreate(instanceId).getMessage(messageId)?.parts[`${messageId}-part`]?.data as any
+      assert.equal(part?.text, "base tail")
+      assert.equal(calls, 2)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("does not lose a repeated orphan append already present at the end of its base", async () => {
+    const instanceId = "orphan-delta-repeated-append", sessionId = "session", messageId = "message"
+    const { client, cleanup } = setup(instanceId, sessionId)
+    let calls = 0
+    ;(client.session as any).messages = async () => {
+      calls += 1
+      return { data: [apiMessage(messageId, sessionId, "model", calls === 1 ? "tail" : "tailtail")] }
+    }
+
+    try {
+      enqueueDelta(instanceId, messageId, `${messageId}-part`, "text", "tail", sessionId)
+      await waitFor(() => calls === 2)
+      await new Promise((resolve) => setTimeout(resolve, 250))
+
+      const part = messageStoreBus.getOrCreate(instanceId).getMessage(messageId)?.parts[`${messageId}-part`]?.data as any
+      assert.equal(part?.text, "tailtail")
+      assert.equal(calls, 2)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("bounds orphan-delta recovery when authority keeps omitting the message", async () => {
+    const instanceId = "orphan-delta-omission", sessionId = "session", messageId = "message"
+    const { client, cleanup } = setup(instanceId, sessionId)
+    let calls = 0
+    ;(client.session as any).messages = async () => { calls += 1; return { data: [] } }
+
+    try {
+      enqueueDelta(instanceId, messageId, `${messageId}-part`, "text", "orphan", sessionId)
+      await waitFor(() => calls === 3)
+      await new Promise((resolve) => setTimeout(resolve, 250))
+
+      assert.equal(calls, 3)
+      assert.equal(messageStoreBus.getOrCreate(instanceId).getMessage(messageId), undefined)
+    } finally {
+      cleanup()
+    }
+  })
+
   it("accepts a newer history snapshot that supersedes a buffered append", async () => {
     const instanceId = "buffered-delta-newer-snapshot", sessionId = "session", messageId = "message"
     const { client, cleanup } = setup(instanceId, sessionId)
@@ -422,7 +514,7 @@ describe("revision conflict recovery", () => {
     }
   })
 
-  it("preserves a resident message and buffered delta across omitted recovery snapshots", async () => {
+  it("preserves a buffered delta transiently then accepts repeated authoritative omission", async () => {
     const instanceId = "buffered-delta-empty-recovery", sessionId = "session", messageId = "message"
     const { client, cleanup } = setup(instanceId, sessionId)
     const first = deferred<any>()
@@ -449,10 +541,46 @@ describe("revision conflict recovery", () => {
       first.resolve({ data: [] })
       await load
       assert.deepEqual(store.getSessionMessageIds(sessionId), [messageId])
-      await waitFor(() => calls === 4)
+      await waitFor(() => calls === 3)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), [])
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      assert.equal(calls, 3)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("preserves a buffered delta transiently then accepts repeated authoritative replacement", async () => {
+    const instanceId = "buffered-delta-repeated-replacement", sessionId = "session", messageId = "message"
+    const { client, cleanup } = setup(instanceId, sessionId)
+    const first = deferred<any>()
+    let calls = 0
+    ;(client.session as any).messages = async () => {
+      calls += 1
+      if (calls === 1) return first.promise
+      return { data: [apiMessage(messageId, sessionId, "model", "replacement")] }
+    }
+    const store = messageStoreBus.getOrCreate(instanceId)
+    store.upsertMessage({
+      id: messageId,
+      sessionId,
+      role: "assistant",
+      status: "streaming",
+      parts: [{ id: `${messageId}-part`, type: "text", text: "base" }] as any,
+    })
+
+    try {
+      const load = loadMessages(instanceId, sessionId)
+      await waitFor(() => calls === 1)
+      enqueueDelta(instanceId, messageId, `${messageId}-part`, "text", " tail", sessionId)
+      first.resolve({ data: [apiMessage(messageId, sessionId, "model", "base")] })
+      await load
+      await waitFor(() => calls === 3)
+
       const part = store.getMessage(messageId)?.parts[`${messageId}-part`]?.data as any
-      assert.equal(part?.text, "base tail")
-      assert.deepEqual(store.getSessionMessageIds(sessionId), [messageId])
+      assert.equal(part?.text, "replacement")
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      assert.equal(calls, 3)
     } finally {
       cleanup()
     }

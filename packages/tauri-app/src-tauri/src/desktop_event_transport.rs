@@ -54,6 +54,13 @@ pub struct DesktopEventStreamConfig {
 #[serde(default, rename_all = "camelCase")]
 pub struct DesktopEventsStartRequest {
     pub reconnect: Option<DesktopEventReconnectPolicy>,
+    pub logical_start_epoch: u64,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopEventsStartReservation {
+    pub logical_start_epoch: u64,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -70,6 +77,7 @@ pub struct DesktopEventReconnectPolicy {
 pub struct DesktopEventsStartResult {
     pub started: bool,
     pub generation: Option<u64>,
+    pub lease: Option<u64>,
     pub reason: Option<String>,
 }
 
@@ -169,11 +177,14 @@ struct DesktopEventTransportStats {
 struct DesktopEventTransportState {
     stop: Option<Arc<AtomicBool>>,
     config: Option<DesktopEventTransportConfig>,
+    lease: Option<u64>,
+    latest_reserved_start_epoch: u64,
 }
 
 pub struct DesktopEventTransportManager {
     state: Arc<Mutex<DesktopEventTransportState>>,
     generation: Arc<AtomicU64>,
+    lease: AtomicU64,
 }
 
 enum ReaderMessage {
@@ -188,6 +199,8 @@ enum PendingEntry {
         key: String,
         scope: String,
         event: Value,
+        serialized_bytes: usize,
+        delta_bytes: usize,
         started_at: Instant,
     },
     Status {
@@ -234,29 +247,52 @@ impl DesktopEventTransportManager {
             state: Arc::new(Mutex::new(DesktopEventTransportState {
                 stop: None,
                 config: None,
+                lease: None,
+                latest_reserved_start_epoch: 0,
             })),
             generation: Arc::new(AtomicU64::new(0)),
+            lease: AtomicU64::new(0),
         }
+    }
+
+    pub fn reserve_start(&self) -> Result<DesktopEventsStartReservation, String> {
+        let mut state = self.state.lock();
+        let logical_start_epoch = state
+            .latest_reserved_start_epoch
+            .checked_add(1)
+            .ok_or_else(|| "desktop event start epoch exhausted".to_string())?;
+        state.latest_reserved_start_epoch = logical_start_epoch;
+        Ok(DesktopEventsStartReservation {
+            logical_start_epoch,
+        })
     }
 
     pub fn start(
         &self,
         app: AppHandle,
         stream_config: Option<DesktopEventStreamConfig>,
-        request: Option<DesktopEventsStartRequest>,
+        request: DesktopEventsStartRequest,
     ) -> DesktopEventsStartResult {
         let Some(stream_config) = stream_config else {
             return DesktopEventsStartResult {
                 started: false,
                 generation: None,
+                lease: None,
                 reason: Some("desktop event stream unavailable".to_string()),
             };
         };
 
-        let request = request.unwrap_or_default();
         let transport_config = DesktopEventTransportConfig::new(stream_config, &request);
 
         let mut state = self.state.lock();
+        let Some(lease) = self.claim_start_lease(&mut state, request.logical_start_epoch) else {
+            return DesktopEventsStartResult {
+                started: false,
+                generation: None,
+                lease: None,
+                reason: Some("stale logical desktop event start".to_string()),
+            };
+        };
         if state
             .config
             .as_ref()
@@ -267,6 +303,7 @@ impl DesktopEventTransportManager {
                     return DesktopEventsStartResult {
                         started: true,
                         generation: Some(self.generation.load(Ordering::SeqCst)),
+                        lease: Some(lease),
                         reason: None,
                     };
                 }
@@ -291,17 +328,45 @@ impl DesktopEventTransportManager {
         DesktopEventsStartResult {
             started: true,
             generation: Some(generation),
+            lease: Some(lease),
             reason: None,
         }
     }
 
+    fn claim_start_lease(
+        &self,
+        state: &mut DesktopEventTransportState,
+        logical_start_epoch: u64,
+    ) -> Option<u64> {
+        if logical_start_epoch != state.latest_reserved_start_epoch {
+            return None;
+        }
+
+        let lease = self.lease.fetch_add(1, Ordering::SeqCst) + 1;
+        state.lease = Some(lease);
+        Some(lease)
+    }
+
     pub fn stop(&self) {
+        self.stop_current(None);
+    }
+
+    pub fn stop_lease(&self, lease: u64) -> bool {
+        self.stop_current(Some(lease))
+    }
+
+    fn stop_current(&self, expected_lease: Option<u64>) -> bool {
         let mut state = self.state.lock();
+        if expected_lease.is_some_and(|lease| state.lease != Some(lease)) {
+            return false;
+        }
         if let Some(stop) = state.stop.take() {
             stop.store(true, Ordering::SeqCst);
         }
         state.config = None;
+        state.lease = None;
         self.generation.fetch_add(1, Ordering::SeqCst);
+        true
     }
 }
 
@@ -380,7 +445,7 @@ fn snapshot_key(event: &Value) -> Option<String> {
                 instance_id, session_id, message_id
             ))
         }
-        "session.updated" | "session.status" => {
+        "session.updated" => {
             let session_id = props
                 .get("info")
                 .and_then(|info| info.get("id"))
@@ -458,36 +523,36 @@ fn snapshot_superseded_delta_scope(event: &Value) -> Option<String> {
     ))
 }
 
-fn append_delta(target: &mut Value, event: &Value) -> bool {
-    let next_delta = coalesced_payload_event(event)
+fn delta_payload(event: &Value) -> &str {
+    coalesced_payload_event(event)
         .get("properties")
         .and_then(|value| value.get("delta"))
         .and_then(Value::as_str)
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
 
-    if let Some(existing_delta) = coalesced_payload_event_mut(target)
+fn append_delta(target: &mut Value, next_delta: &str, delta_bytes: &mut usize) -> bool {
+    let Some(combined_len) = delta_bytes.checked_add(next_delta.len()) else {
+        return false;
+    };
+    if combined_len > MAX_COALESCED_DELTA_BYTES {
+        return false;
+    }
+
+    let Some(Value::String(existing_delta)) = coalesced_payload_event_mut(target)
         .and_then(|event| event.get_mut("properties"))
         .and_then(Value::as_object_mut)
         .and_then(|props| props.get_mut("delta"))
-    {
-        let existing = existing_delta.as_str().unwrap_or_default();
-        let Some(combined_len) = existing.len().checked_add(next_delta.len()) else {
-            return false;
-        };
-        if combined_len > MAX_COALESCED_DELTA_BYTES {
-            return false;
-        }
+    else {
+        return false;
+    };
 
-        let mut combined = String::with_capacity(combined_len);
-        combined.push_str(existing);
-        combined.push_str(next_delta);
-        *existing_delta = Value::String(combined);
-    }
-
+    existing_delta.push_str(next_delta);
+    *delta_bytes = combined_len;
     true
 }
 
-fn serialized_value_bytes(value: &Value) -> usize {
+fn serialized_json_bytes<T: Serialize + ?Sized>(value: &T) -> usize {
     struct Counter(usize);
 
     impl std::io::Write for Counter {
@@ -503,6 +568,14 @@ fn serialized_value_bytes(value: &Value) -> usize {
 
     let mut counter = Counter(0);
     serde_json::to_writer(&mut counter, value).map_or(usize::MAX, |_| counter.0)
+}
+
+fn serialized_value_bytes(value: &Value) -> usize {
+    serialized_json_bytes(value)
+}
+
+fn serialized_string_content_bytes(value: &str) -> usize {
+    serialized_json_bytes(value).saturating_sub(2)
 }
 
 fn coalesced_payload_event_mut(event: &mut Value) -> Option<&mut serde_json::Map<String, Value>> {
@@ -523,7 +596,6 @@ fn status_key(event: &Value) -> Option<String> {
                 .and_then(Value::as_str)
                 .unwrap_or_default()
         )),
-        "session.status" => snapshot_key(event),
         _ => None,
     }
 }

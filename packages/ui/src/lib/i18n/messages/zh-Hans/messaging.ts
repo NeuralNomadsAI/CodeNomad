@@ -199,6 +199,8 @@ export const messagingMessages = {
   "promptInput.send.ariaLabel": "发送消息",
   "promptInput.send.errorFallback": "发送消息失败",
   "promptInput.send.errorTitle": "发送失败",
+  "promptInput.send.ambiguousTitle": "无法确认消息是否送达",
+  "promptInput.send.ambiguousMessage": "服务器可能已收到此消息。消息已恢复为草稿，除非您选择发送，否则不会再次发送。",
   "promptInput.conversationMode.enable.title": "开启对话模式",
   "promptInput.conversationMode.disable.title": "关闭对话模式",
   "promptInput.conversationMode.error.title": "对话播报失败",

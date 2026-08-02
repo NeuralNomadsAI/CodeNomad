@@ -72,13 +72,13 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { activeSessionId, ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, prependSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
+import { activeSessionId, ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, markSessionMetadataMutation, prependSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { tGlobal } from "../lib/i18n"
 
-import { clearBufferedDeltaSnapshotFence, loadMessages, removeSessionRuntimeState } from "./session-api"
+import { clearBufferedDeltaSnapshotFence, loadMessages, removeSessionRuntimeState, SessionMessageLoadTimeoutError } from "./session-api"
 import { getRootClient } from "./opencode-client"
 import { getWorktreeSlugForDirectory, getWorktreeSlugForSession } from "./worktrees"
 import { getOpenCodeWorkspaceIdForWorktree } from "./opencode-workspaces"
@@ -113,6 +113,7 @@ type DeltaRecovery = {
   dirty: boolean
   running: boolean
   attempts: number
+  deltas: Map<string, { messageId: string; partId: string; field: string; delta: string; expectedValue?: string }>
   requireActive: boolean
   idleReconcileRequested: boolean
   instance: Instance
@@ -494,12 +495,12 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
 setFlushCallback((batch) => {
   for (const { instanceId, sessionId, messageId, partId, field, delta } of batch) {
     if (!applyPartDeltaV2(instanceId, { messageId, partId, field, delta })) {
-      requestDeltaRecovery({ instanceId, ...(sessionId ? { sessionId } : {}), messageId, partId, field })
+      requestDeltaRecovery({ instanceId, ...(sessionId ? { sessionId } : {}), messageId, partId, field, delta })
     }
   }
 })
 
-setRecoveryCallback(({ instanceId, sessionId, messageId, partId }) => {
+setRecoveryCallback(({ instanceId, sessionId, messageId, partId, field, delta }) => {
   if (!sessionId) {
     log.warn("Dropped orphan delta without a session", { instanceId, messageId, partId })
     return
@@ -509,6 +510,17 @@ setRecoveryCallback(({ instanceId, sessionId, messageId, partId }) => {
   const key = `${instanceId}:${sessionId}`
   const existing = pendingDeltaRecoveries.get(key)
   if (existing && isInstanceRuntimeCurrent(instanceId, existing.instance)) {
+    if (delta !== undefined) {
+      const deltaKey = `${messageId}:${partId}:${field}`
+      const pending = existing.deltas.get(deltaKey)
+      existing.deltas.set(deltaKey, {
+        messageId,
+        partId,
+        field,
+        delta: `${pending?.delta ?? ""}${delta}`,
+        expectedValue: pending?.expectedValue === undefined ? undefined : `${pending.expectedValue}${delta}`,
+      })
+    }
     existing.dirty = true
     runDeltaRecovery(instanceId, sessionId, existing)
     return
@@ -518,6 +530,7 @@ setRecoveryCallback(({ instanceId, sessionId, messageId, partId }) => {
     dirty: true,
     running: false,
     attempts: 0,
+    deltas: new Map(delta === undefined ? [] : [[`${messageId}:${partId}:${field}`, { messageId, partId, field, delta }]]),
     requireActive: activeSessionId().get(instanceId) === sessionId,
     idleReconcileRequested: false,
     instance,
@@ -561,6 +574,21 @@ function runDeltaRecovery(instanceId: string, sessionId: string, recovery: Delta
         try {
           await loadMessages(instanceId, sessionId, { force: true, timeoutMs: DELTA_RECOVERY_LOAD_TIMEOUT_MS })
           if (!isInstanceRuntimeCurrent(instanceId, recovery.instance)) return
+          for (const [deltaKey, pending] of recovery.deltas) {
+            const part = messageStoreBus.getInstance(instanceId)?.getMessage(pending.messageId)?.parts[pending.partId]?.data as any
+            const value = part?.[pending.field]
+            if (pending.expectedValue !== undefined && typeof value === "string" && value.startsWith(pending.expectedValue)) {
+              recovery.deltas.delete(deltaKey)
+            } else if (recovery.attempts < MAX_DELTA_RECOVERY_ATTEMPTS) {
+              if (pending.expectedValue === undefined && typeof value === "string") {
+                pending.expectedValue = `${value}${pending.delta}`
+              }
+              applyPartDeltaV2(instanceId, pending)
+              recovery.dirty = true
+            } else {
+              recovery.deltas.delete(deltaKey)
+            }
+          }
         } catch (error) {
           recovery.dirty = true
           if (recovery.attempts >= MAX_DELTA_RECOVERY_ATTEMPTS) throw error
@@ -603,6 +631,7 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
 
   if (!info) return
   if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(info.id)) return
+  markSessionMetadataMutation(instanceId, info.id)
   const instanceSessions = sessions().get(instanceId) ?? new Map<string, Session>()
   const existingSession = instanceSessions.get(info.id)
   const incomingRevert = info.revert ?? null
@@ -787,9 +816,14 @@ function reconcileIdleSessionMessages(instanceId: string, sessionId: string, for
   pendingIdleMessageReconciliations.set(key, instance)
   void loadMessages(instanceId, sessionId, {
     force: true,
-    ...(expectedInstance ? { timeoutMs: DELTA_RECOVERY_LOAD_TIMEOUT_MS } : {}),
+    timeoutMs: DELTA_RECOVERY_LOAD_TIMEOUT_MS,
   })
-    .catch((error) => log.warn("Failed to reconcile idle session messages", { instanceId, sessionId, error }))
+    .catch((error) => {
+      if (error instanceof SessionMessageLoadTimeoutError) {
+        messageStoreBus.getInstance(instanceId)?.interruptSessionActiveMessages(sessionId)
+      }
+      log.warn("Failed to reconcile idle session messages", { instanceId, sessionId, error })
+    })
     .finally(() => {
       if (pendingIdleMessageReconciliations.get(key) === instance) pendingIdleMessageReconciliations.delete(key)
     })
