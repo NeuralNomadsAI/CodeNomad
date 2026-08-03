@@ -106,8 +106,10 @@ jobs:
           node --import tsx --test
           packages/ui/src/components/prompt-input/submitPrompt.test.ts
           packages/ui/src/components/session-list-visibility.test.ts
+          packages/ui/src/components/unified-picker-path.test.ts
           packages/ui/src/lib/hooks/use-app-session-capture.test.ts
           packages/ui/src/lib/global-cache.test.ts
+          packages/ui/src/lib/launch-errors.test.ts
           packages/ui/src/lib/message-selection-position.test.ts
           packages/ui/src/lib/native/desktop-events-reconnect.test.ts
           packages/ui/src/lib/native/desktop-events.test.ts

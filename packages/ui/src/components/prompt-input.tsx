@@ -511,10 +511,8 @@ export default function PromptInput(props: PromptInputProps) {
 
     clearHistoryDraft()
 
-    if (isKnownSlashCommand) {
-      // Record attempted slash commands even if execution fails.
-      void refreshHistory()
-    }
+    // Keep attempted prompts recoverable even when execution fails.
+    void refreshHistory()
 
     if (!isTouchOnlyPointer()) {
       focusConversationStream(wrapperRef?.closest(".session-view"))
@@ -535,9 +533,6 @@ export default function PromptInput(props: PromptInputProps) {
         }
       } else {
         await props.onSend(submitPrompt, currentAttachments)
-      }
-      if (!isKnownSlashCommand) {
-        void refreshHistory()
       }
     } catch (error) {
       log.error("Failed to send message:", error)

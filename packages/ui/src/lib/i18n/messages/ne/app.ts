@@ -1,12 +1,13 @@
 export const appMessages = {
   "app.launchError.title": "OpenCode सुरु गर्न असमर्थ",
-  "app.launchError.description": "हामीले चयन गरिएको OpenCode बाइनरी सुरु गर्न सकेनौं। तलको त्रुटि आउटपुट समीक्षा गर्नुहोस् वा OpenCode सेटिङहरूबाट फरक बाइनरी छनौट गर्नुहोस्।",
+  "app.launchError.description": "OpenCode ले यो कार्यस्थान सुरु गर्न सकेन। तलको त्रुटि आउटपुट वा OpenCode सेटिङहरू जाँच गर्नुहोस्।",
   "app.launchError.binaryPathLabel": "बाइनरी मार्ग (Binary path)",
   "app.launchError.errorOutputLabel": "त्रुटि आउटपुट (Error output)",
   "app.launchError.openAdvancedSettings": "OpenCode सेटिङहरू खोल्नुहोस्",
   "app.launchError.close": "बन्द गर्नुहोस्",
   "app.launchError.closeTitle": "बन्द गर्नुहोस् (Esc)",
   "app.launchError.fallbackMessage": "कार्यस्थान सुरु गर्न असफल",
+  "app.launchError.invalidConfig": "OpenCode कन्फिगरेसन अमान्य छ",
 
   "app.stopInstance.confirmMessage": "OpenCode उदाहरण रोक्ने? यसले सर्भर बन्द गर्नेछ।",
   "app.stopInstance.title": "उदाहरण रोक्नुहोस्",

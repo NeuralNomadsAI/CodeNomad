@@ -1,12 +1,13 @@
 export const appMessages = {
   "app.launchError.title": "OpenCode konnte nicht gestartet werden",
-  "app.launchError.description": "Die ausgewählte OpenCode-Binärdatei konnte nicht gestartet werden. Überprüfen Sie die Fehlerausgabe unten oder wählen Sie eine andere Binärdatei in den OpenCode-Einstellungen.",
+  "app.launchError.description": "OpenCode konnte diesen Arbeitsbereich nicht starten. Überprüfen Sie die Fehlerausgabe unten oder Ihre OpenCode-Einstellungen.",
   "app.launchError.binaryPathLabel": "Binärpfad",
   "app.launchError.errorOutputLabel": "Fehlerausgabe",
   "app.launchError.openAdvancedSettings": "OpenCode-Einstellungen öffnen",
   "app.launchError.close": "Schließen",
   "app.launchError.closeTitle": "Schließen (Esc)",
   "app.launchError.fallbackMessage": "Arbeitsbereich konnte nicht gestartet werden",
+  "app.launchError.invalidConfig": "Die OpenCode-Konfiguration ist ungültig",
 
   "app.stopInstance.confirmMessage": "OpenCode-Instanz stoppen? Dies wird den Server beenden.",
   "app.stopInstance.title": "Instanz stoppen",

@@ -19,6 +19,9 @@ export interface RightPanelSectionModule extends RightPanelItem {
 
 export interface RightPanelModule {
   id: string
+  displayNameKey: string
+  descriptionKey?: string
+  origin: "first-party"
   tabs?: readonly RightPanelTabModule[]
   statusSections?: readonly RightPanelSectionModule[]
 }
