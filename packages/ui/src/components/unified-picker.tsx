@@ -5,6 +5,7 @@ import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
 import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
+import { splitDisplayPath } from "./unified-picker-path"
 const log = getLogger("actions")
 
 
@@ -114,6 +115,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     setTimeout(() => {
       if (scrollContainerRef) {
         scrollContainerRef.scrollTop = 0
+        scrollContainerRef.scrollLeft = 0
       }
     }, 0)
   }
@@ -585,6 +587,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                   (item) => item.type === "file" && item.file.relativePath === file.relativePath,
                 )
                 const isFolder = file.isDirectory
+                const displayPath = splitDisplayPath(file.path)
                 return (
                   <div
                     class={`dropdown-item py-1.5 ${
@@ -616,7 +619,20 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                           />
                         </svg>
                       </Show>
-                      <span class="whitespace-nowrap">{file.path}</span>
+                      <span class="min-w-0 flex-1" title={file.path}>
+                        <span class="sr-only">{file.path}</span>
+                        <span aria-hidden="true">
+                          <span class="block whitespace-nowrap">
+                            {displayPath.name}
+                          </span>
+                          <Show when={displayPath.parent}>
+                            <span class="block whitespace-nowrap text-[11px]" style="color: var(--text-muted)">{displayPath.parent}/</span>
+                          </Show>
+                          <Show when={displayPath.directory && displayPath.directory !== displayPath.parent}>
+                            <span class="block whitespace-nowrap text-[10px]" style="color: var(--text-muted)">{displayPath.directory}</span>
+                          </Show>
+                        </span>
+                      </span>
                     </div>
                   </div>
                 )
