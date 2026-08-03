@@ -810,7 +810,66 @@ describe("reconnect interruption resync", () => {
     }
   })
 
-  it("times out stalled initial hydration and runs the queued trailing reconnect", async () => {
+  it("lets healthy initial session hydration commit before reconnect refresh", async () => {
+    const instanceId = "reconnect-during-initial-hydration", sessionId = "restored-idle"
+    const originalFetchWorktrees = serverApi.fetchWorktrees
+    const originalReadWorktreeMap = serverApi.readWorktreeMap
+    const initialSessions = deferred<any>()
+    const reconnectSessions = deferred<any>()
+    let sessionLists = 0
+    const apiSession = { id: sessionId, title: "Restored", directory: "/work", time: { created: 1, updated: 1 } }
+    const client = {
+      session: {
+        list: () => ++sessionLists === 1 ? initialSessions.promise : reconnectSessions.promise,
+        status: async () => ({ data: {} }),
+      },
+      app: { agents: async () => ({ data: [] }) },
+      config: { providers: async () => ({ data: { providers: [], default: {} } }) },
+      command: { list: async () => ({ data: [] }) },
+      experimental: { workspace: {
+        syncList: async () => ({ data: [] }),
+        list: async () => ({ data: [] }),
+      } },
+      permission: { list: async () => ({ data: [] }) },
+      question: { list: async () => ({ data: [] }) },
+      v2: {
+        permission: { request: { list: async () => ({ data: { data: [] } }) } },
+        question: { request: { list: async () => ({ data: { data: [] } }) } },
+      },
+    } as any
+    serverApi.fetchWorktrees = async () => ({
+      isGitRepo: true,
+      worktrees: [{ slug: "root", directory: "/work", kind: "root" }],
+    })
+    serverApi.readWorktreeMap = async () => null as any
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+
+    try {
+      ;(serverEvents as any).dispatch({
+        type: "workspace.started",
+        workspace: {
+          id: instanceId, path: "/work", status: "ready", pid: 1, port: 1,
+          proxyPath: `/workspaces/${instanceId}/instance`, binaryId: "test", binaryLabel: "Test",
+          createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(),
+        },
+      })
+      await waitFor(() => sessionLists === 1)
+      sseManager.onConnectionRestored?.(instanceId)
+      initialSessions.resolve({ data: [apiSession] })
+      await waitFor(() => sessionLists === 2)
+
+      assert.equal(sessions().get(instanceId)?.has(sessionId), true)
+      reconnectSessions.resolve({ data: [apiSession] })
+    } finally {
+      reconnectSessions.resolve({ data: [apiSession] })
+      serverApi.fetchWorktrees = originalFetchWorktrees
+      serverApi.readWorktreeMap = originalReadWorktreeMap
+      removeInstance(instanceId, { authoritative: false })
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("times out stalled initial hydration and runs the queued trailing reconnect", { timeout: 15_000 }, async () => {
     const instanceId = "reconnect-stalled-initial-hydration"
     const originalFetchWorktrees = serverApi.fetchWorktrees
     const originalReadWorktreeMap = serverApi.readWorktreeMap

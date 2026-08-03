@@ -333,9 +333,6 @@ const connectionResyncs = new TrailingResyncCoordinator(
   async (instanceId) => {
     const instance = instances().get(instanceId)
     if (!instance?.client || instance.status !== "ready") return
-    const reconnectAuthority = claimHydrationAuthority(instanceId)
-    const hasCommitAuthority = () => hasHydrationAuthority(instanceId, reconnectAuthority) &&
-      isInstanceRuntimeCurrent(instanceId, instance)
     const initialHydration = initialHydrations.get(instanceId)
     await retryWithBackoff(
       (signal) => waitForReconnectPrerequisite(initialHydration?.promise, signal),
@@ -349,6 +346,10 @@ const connectionResyncs = new TrailingResyncCoordinator(
       }
       log.warn("Initial hydration did not settle before reconnect resync", { instanceId, error })
     })
+    if (!isInstanceRuntimeCurrent(instanceId, instance)) return
+    const reconnectAuthority = claimHydrationAuthority(instanceId)
+    const hasCommitAuthority = () => hasHydrationAuthority(instanceId, reconnectAuthority) &&
+      isInstanceRuntimeCurrent(instanceId, instance)
     if (!hasCommitAuthority()) return
     const worktreeTopologyComplete = await retryWithBackoff((signal) => reloadWorktrees(instanceId, signal), {
       maxAttempts: 1,
