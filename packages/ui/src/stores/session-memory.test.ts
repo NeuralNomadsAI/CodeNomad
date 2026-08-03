@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { createRoot, createSignal } from "solid-js"
 import {
   getPromptDisplayOverride,
   resetPromptDisplayOverrideStateForTests,
@@ -7,8 +8,9 @@ import {
 } from "./message-prompt-display.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { MAX_HOT_SESSION_MESSAGE_BYTES } from "../lib/session-memory-budget.ts"
-import { evictResidentSessionMessages, runSessionMemorySweep, setVisibleSessionMemory } from "./session-memory.ts"
+import { evictResidentSessionMessages, getVisibleSessionMemoryIds, runSessionMemorySweep, setVisibleSessionMemory } from "./session-memory.ts"
 import { setSessions } from "./session-state.ts"
+import { useSessionCache } from "../components/instance/shell/useSessionCache.ts"
 
 function addMessage(instanceId: string, sessionId: string, status: "complete" | "streaming" = "complete", text = sessionId.repeat(100)) {
   messageStoreBus.getOrCreate(instanceId).upsertMessage({
@@ -21,6 +23,42 @@ function addMessage(instanceId: string, sessionId: string, status: "complete" | 
 }
 
 const settleMeasurements = () => new Promise((resolve) => setTimeout(resolve, 75))
+
+test("mounted cached views stay protected until they unmount", async () => {
+  const instanceId = "memory-six-session-cache"
+  const sessionIds = Array.from({ length: 6 }, (_, index) => `session-${index + 1}`)
+  const [activeSessionId, setActiveSessionId] = createSignal<string | null>(sessionIds[0]!)
+  const [visible, setVisible] = createSignal(true)
+  let dispose!: () => void
+  try {
+    sessionIds.forEach((sessionId) => addMessage(instanceId, sessionId))
+    const cache = createRoot((rootDispose) => {
+      dispose = rootDispose
+      return useSessionCache({
+        instanceId: () => instanceId,
+        instanceSessions: () => new Map(sessionIds.map((sessionId) => [sessionId, {}])),
+        activeSessionId,
+        visible,
+      })
+    })
+    for (const sessionId of sessionIds.slice(1)) setActiveSessionId(sessionId)
+    await Promise.resolve()
+
+    assert.deepEqual(cache.cachedSessionIds(), sessionIds.slice(1).reverse())
+    assert.deepEqual(getVisibleSessionMemoryIds(instanceId), sessionIds.slice(1).reverse())
+    assert.equal(evictResidentSessionMessages(instanceId, sessionIds[1]!), false)
+    assert.equal(evictResidentSessionMessages(instanceId, sessionIds[0]!), true)
+
+    setVisible(false)
+    await Promise.resolve()
+    assert.deepEqual(cache.cachedSessionIds(), [])
+    assert.deepEqual(getVisibleSessionMemoryIds(instanceId), [])
+    assert.equal(evictResidentSessionMessages(instanceId, sessionIds[1]!), true)
+  } finally {
+    dispose?.()
+    messageStoreBus.unregisterInstance(instanceId)
+  }
+})
 
 test("resident eviction purges prompt-display overrides from memory and persistence", () => {
   const instanceId = "memory-prompt-display", sessionId = "session", messageId = `${sessionId}-message`
