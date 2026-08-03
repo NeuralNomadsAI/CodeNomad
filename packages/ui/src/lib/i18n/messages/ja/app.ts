@@ -1,12 +1,13 @@
 export const appMessages = {
   "app.launchError.title": "OpenCode を起動できません",
-  "app.launchError.description": "選択された OpenCode バイナリを起動できませんでした。下のエラー出力を確認するか、OpenCode 設定から別のバイナリを選択してください。",
+  "app.launchError.description": "OpenCode はこのワークスペースを起動できませんでした。下のエラー出力または OpenCode 設定を確認してください。",
   "app.launchError.binaryPathLabel": "バイナリのパス",
   "app.launchError.errorOutputLabel": "エラー出力",
   "app.launchError.openAdvancedSettings": "OpenCode 設定を開く",
   "app.launchError.close": "閉じる",
   "app.launchError.closeTitle": "閉じる (Esc)",
   "app.launchError.fallbackMessage": "ワークスペースの起動に失敗しました",
+  "app.launchError.invalidConfig": "OpenCode の設定が無効です",
 
   "app.stopInstance.confirmMessage": "OpenCode インスタンスを停止しますか？サーバーが停止します。",
   "app.stopInstance.title": "インスタンスを停止",

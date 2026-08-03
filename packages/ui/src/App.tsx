@@ -303,7 +303,11 @@ const App: Component = () => {
         port: instances().get(result.instanceId)?.port,
       })
     } catch (error) {
-      const message = formatLaunchErrorMessage(error, t("app.launchError.fallbackMessage"))
+      const message = formatLaunchErrorMessage(
+        error,
+        t("app.launchError.fallbackMessage"),
+        t("app.launchError.invalidConfig"),
+      )
       const missingBinary = isMissingBinaryMessage(message)
       showLaunchError({ source: "create", message, binaryPath: selectedBinary, missingBinary })
       log.error("Failed to create instance", error)

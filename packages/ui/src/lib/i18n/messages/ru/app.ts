@@ -1,12 +1,13 @@
 export const appMessages = {
   "app.launchError.title": "Не удалось запустить OpenCode",
-  "app.launchError.description": "Не удалось запустить выбранный бинарник OpenCode. Просмотрите вывод ошибки ниже или выберите другой бинарник в настройках OpenCode.",
+  "app.launchError.description": "OpenCode не удалось запустить это рабочее пространство. Проверьте вывод ошибки ниже или настройки OpenCode.",
   "app.launchError.binaryPathLabel": "Путь к бинарнику",
   "app.launchError.errorOutputLabel": "Вывод ошибки",
   "app.launchError.openAdvancedSettings": "Открыть настройки OpenCode",
   "app.launchError.close": "Закрыть",
   "app.launchError.closeTitle": "Закрыть (Esc)",
   "app.launchError.fallbackMessage": "Не удалось запустить рабочее пространство",
+  "app.launchError.invalidConfig": "Конфигурация OpenCode недействительна",
 
   "app.stopInstance.confirmMessage": "Остановить экземпляр OpenCode? Это остановит сервер.",
   "app.stopInstance.title": "Остановить экземпляр",

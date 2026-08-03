@@ -59,11 +59,13 @@ class ControlledRuntime {
 }
 
 function createHarness(options: {
+  stubReadiness?: boolean
   shutdownTimeoutMs?: number
   launchTimeoutMs?: number
   setTimeout?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>
   clearTimeout?: (timer: ReturnType<typeof setTimeout>) => void
 } = {}) {
+  const { stubReadiness = true, ...managerOptions } = options
   const eventBus = new EventBus()
   const runtime = new ControlledRuntime()
   const readiness = deferred<string | undefined>()
@@ -79,16 +81,18 @@ function createHarness(options: {
     logger: pino({ level: "silent" }),
     getServerBaseUrl: () => "http://127.0.0.1:4000",
     runtime,
-    ...options,
+    ...managerOptions,
   })
-  ;(manager as any).waitForWorkspaceReadiness = ({ signal }: { signal?: AbortSignal }) => Promise.race([
-    readiness.promise,
-    new Promise<never>((_resolve, reject) => {
-      const cancel = () => reject(signal?.reason)
-      signal?.addEventListener("abort", cancel, { once: true })
-      if (signal?.aborted) cancel()
-    }),
-  ])
+  if (stubReadiness) {
+    ;(manager as any).waitForWorkspaceReadiness = ({ signal }: { signal?: AbortSignal }) => Promise.race([
+      readiness.promise,
+      new Promise<never>((_resolve, reject) => {
+        const cancel = () => reject(signal?.reason)
+        signal?.addEventListener("abort", cancel, { once: true })
+        if (signal?.aborted) cancel()
+      }),
+    ])
+  }
   return { manager, runtime, readiness, started, stopped }
 }
 
@@ -102,6 +106,49 @@ async function createReady(harness: ReturnType<typeof createHarness>) {
 }
 
 describe("workspace manager lifecycle", () => {
+  it("rejects a healthy workspace whose OpenCode configuration is invalid", async () => {
+    const originalFetch = globalThis.fetch
+    const requests: string[] = []
+    const configError = JSON.stringify({
+      name: "ConfigInvalidError",
+      data: {
+        path: "C:\\Users\\dev\\.config\\opencode\\agents\\invalid.md",
+        issues: [{ path: ["tools", "bash"], message: 'Expected boolean, got "ask"' }],
+      },
+    })
+    globalThis.fetch = (async (input: URL | RequestInfo) => {
+      const url = String(input)
+      requests.push(url)
+      if (url.includes("/global/health")) {
+        return new Response(JSON.stringify({ healthy: true, version: "1.18.5" }), {
+          headers: { "Content-Type": "application/json" },
+        })
+      }
+      return new Response(configError, { status: 400, headers: { "Content-Type": "application/json" } })
+    }) as typeof fetch
+
+    try {
+      const harness = createHarness({ stubReadiness: false })
+      ;(harness.manager as any).waitForPortAvailability = async () => undefined
+      const creation = harness.manager.create(process.cwd())
+      const workspaceId = await harness.runtime.launchCalled.promise
+      harness.runtime.resolveLaunch()
+
+      await assert.rejects(creation, (error: unknown) => {
+        assert.ok(error instanceof Error)
+        assert.equal(error.message, configError)
+        return true
+      })
+      assert.deepEqual(requests.map((url) => new URL(url).pathname), ["/global/health", "/config"])
+      assert.equal(new URL(requests[1]).search, "")
+      assert.equal(harness.runtime.active.has(workspaceId), false)
+      assert.deepEqual(harness.started, [])
+      assert.deepEqual(harness.manager.list(), [])
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   for (const boundary of ["launch", "readiness", "shutdown"] as const) {
     it(`cancels and cleans a workspace during ${boundary}`, async () => {
       const harness = createHarness()

@@ -107,6 +107,7 @@ jobs:
           packages/ui/src/components/session-list-visibility.test.ts
           packages/ui/src/components/unified-picker-path.test.ts
           packages/ui/src/lib/hooks/use-app-session-capture.test.ts
+          packages/ui/src/lib/launch-errors.test.ts
           packages/ui/src/lib/message-selection-position.test.ts
           packages/ui/src/lib/trailing-resync.test.ts
           packages/ui/src/stores/abort-created-workspace-cleanup.test.ts
