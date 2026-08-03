@@ -19,6 +19,9 @@ export interface RightPanelSectionModule extends RightPanelItem {
 
 export interface RightPanelModule {
   id: string
+  displayNameKey: string
+  descriptionKey?: string
+  origin: "first-party"
   tabs?: readonly RightPanelTabModule[]
   statusSections?: readonly RightPanelSectionModule[]
 }
@@ -88,6 +91,15 @@ export function setRightPanelItemHidden(hiddenIds: readonly string[], id: string
   if (hidden) next.add(id)
   else next.delete(id)
   return [...next]
+}
+
+export function getRightPanelTabNavigationTarget<T extends RightPanelItem>(items: readonly T[], currentId: string, key: string): T | undefined {
+  const index = items.findIndex((item) => item.id === currentId)
+  if (index === -1) return
+  if (key === "Home") return items[0]
+  if (key === "End") return items[items.length - 1]
+  if (key === "ArrowLeft" || key === "ArrowUp") return items[(index - 1 + items.length) % items.length]
+  if (key === "ArrowRight" || key === "ArrowDown") return items[(index + 1) % items.length]
 }
 
 function sortRightPanelItems<T extends RightPanelItem>(items: readonly T[], orderedIds: readonly string[]): T[] {

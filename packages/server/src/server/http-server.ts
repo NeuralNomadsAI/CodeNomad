@@ -85,6 +85,12 @@ interface HttpServerStartResult {
   displayHost: string
 }
 
+export function shouldRetryPreferredPort(error: unknown, autoPortRequested: boolean, platform = process.platform): boolean {
+  if (!autoPortRequested) return false
+  const code = (error as NodeJS.ErrnoException | undefined)?.code
+  return code === "EADDRINUSE" || (platform === "win32" && code === "EACCES")
+}
+
 export function createHttpServer(deps: HttpServerDeps) {
   deps.workspaceManager.setDeletionGuard?.((workspace, operation) =>
     deps.workflowManager.withWorkspaceOwnershipLease({
@@ -370,18 +376,12 @@ export function createHttpServer(deps: HttpServerDeps) {
       const autoPortRequested = deps.bindPort === 0
       const primaryPort = autoPortRequested ? deps.defaultPort : deps.bindPort
 
-      const shouldRetryWithEphemeral = (error: unknown) => {
-        if (!autoPortRequested) return false
-        const err = error as NodeJS.ErrnoException | undefined
-        return Boolean(err && err.code === "EADDRINUSE")
-      }
-
       let listenResult
 
       try {
         listenResult = await attemptListen(primaryPort)
       } catch (error) {
-        if (!shouldRetryWithEphemeral(error)) {
+        if (!shouldRetryPreferredPort(error, autoPortRequested)) {
           throw error
         }
         deps.logger.warn({ err: error, port: primaryPort }, "Preferred port unavailable, retrying on ephemeral port")

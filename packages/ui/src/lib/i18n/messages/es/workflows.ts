@@ -1,4 +1,6 @@
 export const workflowMessages = {
+  "instanceShell.rightPanel.modules.workflows": "Flujos de trabajo",
+  "instanceShell.rightPanel.modules.workflows.description": "Crea, ejecuta y supervisa flujos de trabajo con agentes.",
   "instanceShell.workflows.mode.label": "Modo del generador de flujos de trabajo",
   "instanceShell.workflows.mode.simple": "Sencillo",
   "instanceShell.workflows.mode.declarative": "Declarativo",

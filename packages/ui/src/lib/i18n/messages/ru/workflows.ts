@@ -1,4 +1,6 @@
 export const workflowMessages = {
+  "instanceShell.rightPanel.modules.workflows": "Рабочие процессы",
+  "instanceShell.rightPanel.modules.workflows.description": "Создавайте, запускайте и отслеживайте рабочие процессы агентов.",
   "instanceShell.workflows.mode.label": "Режим конструктора рабочих процессов",
   "instanceShell.workflows.mode.simple": "Простой",
   "instanceShell.workflows.mode.declarative": "Декларативный",

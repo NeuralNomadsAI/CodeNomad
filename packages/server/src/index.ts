@@ -279,8 +279,8 @@ function resolveHost(input: string | undefined): string {
   return trimmed
 }
 
-function programHasArg(argv: string[], flag: string): boolean {
-  return argv.includes(flag)
+export function programHasArg(argv: string[], flag: string): boolean {
+  return argv.some((argument) => argument === flag || argument.startsWith(`${flag}=`))
 }
 
 async function main() {

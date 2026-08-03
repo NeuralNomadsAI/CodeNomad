@@ -1,4 +1,6 @@
 export const workflowMessages = {
+  "instanceShell.rightPanel.modules.workflows": "תהליכי עבודה",
+  "instanceShell.rightPanel.modules.workflows.description": "יצירה, הפעלה וניטור של תהליכי עבודה עם סוכנים.",
   "instanceShell.workflows.mode.label": "מצב בניית תהליך עבודה",
   "instanceShell.workflows.mode.simple": "פשוט",
   "instanceShell.workflows.mode.declarative": "הצהרתי",

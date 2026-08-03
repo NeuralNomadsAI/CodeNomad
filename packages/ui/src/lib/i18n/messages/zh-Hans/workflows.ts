@@ -1,4 +1,6 @@
 export const workflowMessages = {
+  "instanceShell.rightPanel.modules.workflows": "工作流",
+  "instanceShell.rightPanel.modules.workflows.description": "创建、运行和监控代理工作流。",
   "instanceShell.workflows.mode.label": "工作流构建器模式",
   "instanceShell.workflows.mode.simple": "简单",
   "instanceShell.workflows.mode.declarative": "声明式",

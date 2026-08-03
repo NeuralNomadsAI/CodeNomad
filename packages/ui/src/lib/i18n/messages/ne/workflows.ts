@@ -1,4 +1,6 @@
 export const workflowMessages = {
+  "instanceShell.rightPanel.modules.workflows": "कार्यप्रवाहहरू",
+  "instanceShell.rightPanel.modules.workflows.description": "एजेन्ट कार्यप्रवाहहरू सिर्जना, सञ्चालन र अनुगमन गर्नुहोस्।",
   "instanceShell.workflows.mode.label": "कार्यप्रवाह निर्माण मोड",
   "instanceShell.workflows.mode.simple": "सरल",
   "instanceShell.workflows.mode.declarative": "घोषणात्मक",

@@ -25,6 +25,7 @@ import InstanceServiceStatus from "../../../../instance-service-status"
 import { togglePermissionAutoAcceptForSession } from "../../../../../stores/instances"
 import { isPermissionAutoAcceptEnabled } from "../../../../../stores/permission-auto-accept"
 import { applyRightPanelItemCustomization, type RightPanelCustomization, type RightPanelSectionModule } from "../registry"
+import { createCoreStatusSectionManifest } from "../core-plugin"
 
 interface StatusTabProps {
   t: (key: string, vars?: Record<string, any>) => string
@@ -227,66 +228,28 @@ const StatusTab: Component<StatusTabProps> = (props) => {
     )
   }
 
-  const statusSections = createMemo<RightPanelSectionModule[]>(() => {
-    const sections: RightPanelSectionModule[] = [
-      {
-        id: "yolo-mode",
-        labelKey: "instanceShell.rightPanel.sections.yoloMode",
-        tooltipKey: "instanceShell.rightPanel.sections.yoloMode.tooltip",
-        order: 10,
-        render: renderYoloModeSection,
-      },
-      {
-        id: "provider-usage",
-        labelKey: "providerUsage.title",
-        tooltipKey: "providerUsage.tooltip",
-        order: 20,
-        render: renderProviderUsage,
-      },
-      {
-        id: "plan",
-        labelKey: "instanceShell.rightPanel.sections.plan",
-        tooltipKey: "instanceShell.rightPanel.sections.plan.tooltip",
-        order: 30,
-        render: renderPlanSectionContent,
-      },
-      {
-        id: "background-processes",
-        labelKey: "instanceShell.rightPanel.sections.backgroundProcesses",
-        tooltipKey: "instanceShell.rightPanel.sections.backgroundProcesses.tooltip",
-        order: 40,
-        render: renderBackgroundProcesses,
-      },
-      {
-        id: "mcp",
-        labelKey: "instanceShell.rightPanel.sections.mcp",
-        tooltipKey: "instanceShell.rightPanel.sections.mcp.tooltip",
-        order: 50,
-        render: () => <InstanceServiceStatus initialInstance={props.instance} sections={["mcp"]} showSectionHeadings={false} class="space-y-2" />,
-      },
-      {
-        id: "lsp",
-        labelKey: "instanceShell.rightPanel.sections.lsp",
-        tooltipKey: "instanceShell.rightPanel.sections.lsp.tooltip",
-        order: 60,
-        render: () => <InstanceServiceStatus initialInstance={props.instance} sections={["lsp"]} showSectionHeadings={false} class="space-y-2" />,
-      },
-      {
-        id: "plugins",
-        labelKey: "instanceShell.rightPanel.sections.plugins",
-        tooltipKey: "instanceShell.rightPanel.sections.plugins.tooltip",
-        order: 70,
-        render: () => (
-          <InstanceServiceStatus initialInstance={props.instance} sections={["plugins"]} showSectionHeadings={false} class="space-y-2" />
-        ),
-      },
-    ]
-    return applyRightPanelItemCustomization(
-      [...sections, ...(props.extraSections ?? [])],
+  const allStatusSections = createMemo<RightPanelSectionModule[]>(() => {
+    const sections = createCoreStatusSectionManifest({
+      renderYoloModeSection,
+      renderProviderUsage,
+      renderPlanSectionContent,
+      renderBackgroundProcesses,
+      renderMcpStatus: () => <InstanceServiceStatus initialInstance={props.instance} sections={["mcp"]} showSectionHeadings={false} class="space-y-2" />,
+      renderLspStatus: () => <InstanceServiceStatus initialInstance={props.instance} sections={["lsp"]} showSectionHeadings={false} class="space-y-2" />,
+      renderPluginStatus: () => (
+        <InstanceServiceStatus initialInstance={props.instance} sections={["plugins"]} showSectionHeadings={false} class="space-y-2" />
+      ),
+    }).statusSections ?? []
+
+    return [...sections, ...(props.extraSections ?? [])]
+  })
+  const statusSections = createMemo<RightPanelSectionModule[]>(() =>
+    applyRightPanelItemCustomization(
+      allStatusSections(),
       props.customization().statusSectionOrder,
       props.customization().hiddenStatusSectionIds,
-    )
-  })
+    ),
+  )
 
   const moveSection = (sourceId: string, targetId: string) => {
     if (!sourceId || sourceId === targetId) return

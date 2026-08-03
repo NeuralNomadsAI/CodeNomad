@@ -1,4 +1,6 @@
 export const workflowMessages = {
+  "instanceShell.rightPanel.modules.workflows": "Workflows",
+  "instanceShell.rightPanel.modules.workflows.description": "Agenten-Workflows erstellen, ausführen und überwachen.",
   "instanceShell.workflows.mode.label": "Workflow-Builder-Modus",
   "instanceShell.workflows.mode.simple": "Einfach",
   "instanceShell.workflows.mode.declarative": "Deklarativ",

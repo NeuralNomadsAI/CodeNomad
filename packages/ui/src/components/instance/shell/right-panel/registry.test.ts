@@ -4,22 +4,25 @@ import { describe, it } from "node:test"
 import {
   applyRightPanelItemCustomization,
   collectRightPanelItems,
+  getRightPanelTabNavigationTarget,
   moveRightPanelItem,
   parseRightPanelCustomization,
   setRightPanelItemHidden,
   type RightPanelItem,
+  type RightPanelModule,
   type RightPanelTabModule,
 } from "./registry"
 
 const item = (id: string, order: number, alwaysVisible = false): RightPanelItem => ({ id, labelKey: id, order, alwaysVisible })
 const tab = (id: string, order: number): RightPanelTabModule => ({ ...item(id, order), render: () => undefined as any })
+const module = (id: string, tabs: RightPanelTabModule[]): RightPanelModule => ({ id, displayNameKey: id, origin: "first-party", tabs })
 
 describe("right panel registry", () => {
   it("collects and orders module items", () => {
     const items = collectRightPanelItems(
       [
-        { id: "core", tabs: [tab("status", 40), tab("changes", 10)] },
-        { id: "plugin", tabs: [tab("custom", 30)] },
+        module("core", [tab("status", 40), tab("changes", 10)]),
+        module("plugin", [tab("custom", 30)]),
       ],
       "tabs",
     )
@@ -28,7 +31,7 @@ describe("right panel registry", () => {
   })
 
   it("rejects duplicate item ids", () => {
-    assert.throws(() => collectRightPanelItems([{ id: "core", tabs: [tab("status", 10), tab("status", 20)] }], "tabs"))
+    assert.throws(() => collectRightPanelItems([module("core", [tab("status", 10), tab("status", 20)])], "tabs"))
   })
 
   it("applies visibility and user order", () => {
@@ -67,5 +70,18 @@ describe("right panel registry", () => {
   it("toggles hidden ids", () => {
     assert.deepEqual(setRightPanelItemHidden(["files"], "status", true), ["files", "status"])
     assert.deepEqual(setRightPanelItemHidden(["files"], "files", false), [])
+  })
+
+  it("supports roving tab keyboard navigation", () => {
+    const tabs = [item("workflows", 5), item("changes", 10), item("files", 20)]
+    const target = (key: string) => getRightPanelTabNavigationTarget(tabs, "workflows", key)?.id
+
+    assert.equal(target("ArrowLeft"), "files")
+    assert.equal(target("ArrowUp"), "files")
+    assert.equal(target("ArrowRight"), "changes")
+    assert.equal(target("ArrowDown"), "changes")
+    assert.equal(target("Home"), "workflows")
+    assert.equal(target("End"), "files")
+    assert.equal(target("Escape"), undefined)
   })
 })
