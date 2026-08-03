@@ -150,6 +150,7 @@ describe("createInstanceClient", () => {
 
   it("applies the loopback timeout and aborts a stuck instance", { timeout: 1_000 }, async () => {
     const original = globalThis.fetch
+    const keepEventLoopAlive = setTimeout(() => {}, 2_000)
     // Never resolves on its own; only settles when the passed signal aborts,
     // mirroring how a real fetch honours an AbortSignal. Without the factory
     // timeout this call would hang forever and time the test out.
@@ -169,6 +170,7 @@ describe("createInstanceClient", () => {
       const result = await client!.global.health()
       assert.ok(result.error, "expected the stuck-instance call to surface an error")
     } finally {
+      clearTimeout(keepEventLoopAlive)
       globalThis.fetch = original
     }
   })
