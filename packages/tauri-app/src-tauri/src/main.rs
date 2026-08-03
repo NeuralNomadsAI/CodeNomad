@@ -861,13 +861,9 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
             cfg!(target_os = "linux"),
         )),
     )?;
-    let get_updates_item = MenuItem::with_id(
-        app,
-        "get_updates",
-        "Get Updates...",
-        true,
-        None::<&str>,
-    )?;
+    let get_updates_item =
+        MenuItem::with_id(app, "get_updates", "Get Updates...", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "quit", "Quit CodeNomad", true, Some("CmdOrCtrl+Q"))?;
 
     // App menu (macOS only)
     if is_mac {
@@ -879,7 +875,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
             .text("hide_others", "Hide Others")
             .text("show_all", "Show All")
             .separator()
-            .text("quit", "Quit CodeNomad")
+            .item(&quit_item)
             .build()?;
         submenus.push(app_menu);
     }
