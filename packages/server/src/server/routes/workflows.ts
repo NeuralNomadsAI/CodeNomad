@@ -69,6 +69,7 @@ const CreateSchema = z.union([LegacyCreateSchema, DefinitionStartObjectSchema])
 const RunIdSchema = z.string().uuid()
 const ListSchema = z.object({ workspaceId: z.string().trim().min(1).max(200).optional() })
 const PluginDefinitionStartSchema = z.object({
+  initiatorSessionId: z.string().trim().min(1).max(200).optional(),
   objective: z.string().trim().min(1).max(50_000).optional(),
   inputs: z.record(z.unknown()).superRefine(validateBoundedJson).optional(),
 }).strict()
@@ -184,6 +185,21 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: RouteDeps) {
     return { definitions: await deps.workflowManager.listDefinitions() }
   })
 
+  app.post<{ Params: { id: string } }>("/workspaces/:id/plugin/workflow-definitions", async (request, reply) => {
+    const parsed = DefinitionSourceSchema.safeParse(request.body)
+    if (!parsed.success) {
+      reply.code(400)
+      return { error: "Invalid workflow definition request", issues: parsed.error.flatten() }
+    }
+    try {
+      const record = await deps.workflowManager.createDefinition(definitionSource(parsed.data))
+      reply.code(201)
+      return record
+    } catch (error) {
+      return handleWorkflowError(error, reply)
+    }
+  })
+
   app.get<{ Params: { id: string; definitionId: string } }>(
     "/workspaces/:id/plugin/workflow-definitions/:definitionId",
     async (request, reply) => {
@@ -198,6 +214,23 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: RouteDeps) {
         return { error: "Workflow definition not found" }
       }
       return definition
+    },
+  )
+
+  app.put<{ Params: { id: string; definitionId: string } }>(
+    "/workspaces/:id/plugin/workflow-definitions/:definitionId",
+    async (request, reply) => {
+      const id = DefinitionIdSchema.safeParse(request.params.definitionId)
+      const body = DefinitionUpdateSchema.safeParse(request.body)
+      if (!id.success || !body.success) {
+        reply.code(400)
+        return { error: "Invalid workflow definition request" }
+      }
+      try {
+        return await deps.workflowManager.updateDefinition(id.data, body.data.expectedRevision, definitionSource(body.data))
+      } catch (error) {
+        return handleWorkflowError(error, reply)
+      }
     },
   )
 

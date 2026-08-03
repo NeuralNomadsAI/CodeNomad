@@ -158,7 +158,7 @@ describe("declarative workflow runtime", () => {
     ), /contains a cycle/)
   })
 
-  it("disables omitted agent tools and rejects execution-capable tool requests", async () => {
+  it("inherits omitted agent tools and applies any explicit installed-tool allowlist", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-tools-"))
     const prompts: Array<Record<string, unknown>> = []
     let sessions = 0
@@ -177,18 +177,55 @@ describe("declarative workflow runtime", () => {
       } })
       const started = await manager.start({ workspaceId: "workspace", definitionId: "tools-off" })
       await waitFor(manager, started.id, ["completed"])
-      assert.deepEqual(prompts[0]?.tools, {
-        "*": false, read: false, glob: false, grep: false, lsp: false, bash: false,
-        shell: false, write: false, edit: false, apply_patch: false, task: false,
-      })
+      assert.equal(Object.prototype.hasOwnProperty.call(prompts[0], "tools"), false)
 
       await manager.createDefinition({ version: 1, id: "tools-dangerous", name: "Dangerous", root: {
-        type: "agent", id: "work", instructions: "Run", tools: ["bash"],
+        type: "agent", id: "work", instructions: "Run", tools: ["bash", "task"],
       } })
       const dangerous = await manager.start({ workspaceId: "workspace", definitionId: "tools-dangerous" })
-      const failed = await waitFor(manager, dangerous.id, ["failed"])
-      assert.match(failed.error ?? "", /tool bash is not allowed/)
-      assert.equal(prompts.length, 1)
+      await waitFor(manager, dangerous.id, ["completed"])
+      assert.equal((prompts[1]?.tools as Record<string, boolean>).bash, true)
+      assert.equal((prompts[1]?.tools as Record<string, boolean>).task, true)
+      assert.equal((prompts[1]?.tools as Record<string, boolean>).edit, false)
+
+      await manager.createDefinition({ version: 1, id: "tools-missing", name: "Missing", root: {
+        type: "agent", id: "work", instructions: "Run", tools: ["not-installed"],
+      } })
+      const missing = await manager.start({ workspaceId: "workspace", definitionId: "tools-missing" })
+      const failed = await waitFor(manager, missing.id, ["failed"])
+      assert.match(failed.error ?? "", /tool not-installed is unavailable/)
+      assert.equal(prompts.length, 2)
+    } finally {
+      await manager.shutdown()
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("fails only when a repeat configured to fail exhausts its iterations", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-repeat-exhausted-"))
+    let sessions = 0
+    const client = { tool: workflowTools, session: {
+      create: async () => ({ data: { id: `repeat-${++sessions}` } }),
+      prompt: async () => ({ data: { info: usage(), parts: [{ type: "text", text: "retry" }] } }),
+      abort: async () => ({ data: true }),
+    } } as unknown as OpencodeClient
+    const manager = new WorkflowManager({ workspaceManager, eventBus, logger, storageDir: directory, createClient: () => client })
+    try {
+      await manager.createDefinition({ version: 1, id: "repeat-fail", name: "Repeat fail", root: {
+        type: "repeat", id: "retry", maxIterations: 1, onExhausted: "fail",
+        body: { type: "agent", id: "work", instructions: "Retry" },
+      } })
+      const exhausted = await manager.start({ workspaceId: "workspace", definitionId: "repeat-fail" })
+      const failed = await waitFor(manager, exhausted.id, ["failed"])
+      assert.match(failed.error ?? "", /exhausted 1 iterations/)
+
+      await manager.createDefinition({ version: 1, id: "repeat-stop", name: "Repeat stop", root: {
+        type: "repeat", id: "retry", maxIterations: 1, while: false, onExhausted: "fail",
+        body: { type: "agent", id: "work", instructions: "Do not run" },
+      } })
+      const stopped = await manager.start({ workspaceId: "workspace", definitionId: "repeat-stop" })
+      await waitFor(manager, stopped.id, ["completed"])
+      assert.equal(sessions, 3)
     } finally {
       await manager.shutdown()
       await fs.rm(directory, { recursive: true, force: true })

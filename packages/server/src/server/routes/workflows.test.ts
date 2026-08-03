@@ -44,7 +44,7 @@ describe("workflow routes", () => {
     await app.close()
   })
 
-  it("exposes definition CRUD to host routes and only list/get/start to a workspace plugin", async () => {
+  it("exposes definition CRUD to host routes and create/update/start to a workspace plugin", async () => {
     const calls: Array<[string, ...unknown[]]> = []
     const record = { id: "deploy", revision: 2, definition: { id: "deploy", name: "Deploy" } }
     const workflowManager = {
@@ -64,13 +64,23 @@ describe("workflow routes", () => {
     registerWorkflowRoutes(app, { workflowManager })
 
     assert.equal((await app.inject({ method: "GET", url: "/workspaces/workspace-a/plugin/workflow-definitions" })).statusCode, 200)
+    assert.equal((await app.inject({
+      method: "POST", url: "/workspaces/workspace-a/plugin/workflow-definitions",
+      payload: { source: "version: 1" },
+    })).statusCode, 201)
+    assert.deepEqual(calls.at(-1), ["create", "version: 1"])
+    assert.equal((await app.inject({
+      method: "PUT", url: "/workspaces/workspace-a/plugin/workflow-definitions/deploy",
+      payload: { expectedRevision: 2, definition: { version: 1 } },
+    })).statusCode, 200)
+    assert.deepEqual(calls.at(-1), ["update", "deploy", 2, { version: 1 }])
     const started = await app.inject({
       method: "POST", url: "/workspaces/workspace-a/plugin/workflow-definitions/deploy/start",
-      payload: { objective: "Release", inputs: { environment: "test" } },
+      payload: { initiatorSessionId: "parent-session", objective: "Release", inputs: { environment: "test" } },
     })
     assert.equal(started.statusCode, 202)
     assert.deepEqual(calls.at(-1), ["start", {
-      workspaceId: "workspace-a", definitionId: "deploy", objective: "Release",
+      workspaceId: "workspace-a", definitionId: "deploy", initiatorSessionId: "parent-session", objective: "Release",
       inputs: { environment: "test" },
     }])
     assert.equal((await app.inject({
@@ -87,10 +97,6 @@ describe("workflow routes", () => {
       payload: { worktree: { mode: "existing", slug: "review" } },
     })).statusCode, 400)
     assert.equal((await app.inject({
-      method: "POST", url: "/workspaces/workspace-a/plugin/workflow-definitions/deploy/start",
-      payload: { initiatorSessionId: "parent-session" },
-    })).statusCode, 400)
-    assert.equal((await app.inject({
       method: "POST", url: "/api/workflow-definitions/deploy/start",
       payload: { workspaceId: "workspace-a", worktree: { mode: "current", slug: "not-allowed" } },
     })).statusCode, 400)
@@ -103,8 +109,7 @@ describe("workflow routes", () => {
       payload: { definitionId: "deploy" },
     })).statusCode, 404)
     assert.equal((await app.inject({
-      method: "PUT", url: "/workspaces/workspace-a/plugin/workflow-definitions/deploy",
-      payload: { expectedRevision: 2, definition: {} },
+      method: "DELETE", url: "/workspaces/workspace-a/plugin/workflow-definitions/deploy?expectedRevision=2",
     })).statusCode, 404)
     assert.equal((await app.inject({
       method: "POST", url: "/workspaces/workspace-a/plugin/workflow-runs/00000000-0000-4000-8000-000000000001/answer",

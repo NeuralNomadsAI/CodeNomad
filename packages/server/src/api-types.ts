@@ -378,6 +378,7 @@ export interface WorkflowRepeatNode extends WorkflowNodeBase {
   body: WorkflowNode
   maxIterations: number
   while?: WorkflowCondition
+  onExhausted?: "complete" | "fail"
 }
 
 export interface WorkflowAgentNode extends WorkflowNodeBase {
@@ -386,7 +387,7 @@ export interface WorkflowAgentNode extends WorkflowNodeBase {
   context?: WorkflowValue
   agent?: string
   model?: WorkflowModelSelection
-  /** Model tool access only. The installed SDK cannot invoke an arbitrary tool deterministically. */
+  /** Omitted tools inherit the agent's normal OpenCode tool access. */
   tools?: string[]
   outputSchema?: Record<string, unknown>
   retry?: WorkflowRetryPolicy

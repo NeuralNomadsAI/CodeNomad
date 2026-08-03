@@ -80,6 +80,23 @@ root:
     }).valid, false)
   })
 
+  it("accepts an explicit repeat exhaustion policy", () => {
+    assert.equal(validateWorkflowDefinition({
+      version: 1, id: "bounded-loop", name: "Bounded loop",
+      root: {
+        type: "repeat", id: "retry", maxIterations: 3, onExhausted: "fail",
+        body: { type: "agent", id: "work", instructions: "Try again" },
+      },
+    }).valid, true)
+    assert.equal(validateWorkflowDefinition({
+      version: 1, id: "invalid-loop", name: "Invalid loop",
+      root: {
+        type: "repeat", id: "retry", maxIterations: 3, onExhausted: "continue",
+        body: { type: "agent", id: "work", instructions: "Try again" },
+      },
+    }).valid, false)
+  })
+
   it("requires portable lowercase saved definition IDs", () => {
     assert.equal(validateWorkflowDefinition({
       version: 1, id: "CaseCollision", name: "Uppercase definition",

@@ -118,6 +118,7 @@ export const WorkflowNodeSchema: z.ZodType<WorkflowNode> = z.lazy(() => z.union(
     body: WorkflowNodeSchema,
     maxIterations: z.number().int().min(1).max(WORKFLOW_LIMITS.repeatIterations),
     while: WorkflowConditionSchema.optional(),
+    onExhausted: z.enum(["complete", "fail"]).optional(),
   }).strict(),
   z.object({
     ...NodeBase,

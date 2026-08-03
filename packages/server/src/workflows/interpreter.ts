@@ -18,8 +18,6 @@ const MAX_OUTPUT_CHARS = 16_000
 const MAX_RUN_OUTPUT_CHARS = 4_000_000
 const MAX_CONTEXT_BYTES = 256_000
 const MAX_CONTEXT_VALUES = 50_000
-const SAFE_AGENT_TOOL_IDS = new Set(["read", "glob", "grep", "lsp"])
-
 export class WorkflowSuspendedError extends Error {}
 export class WorkflowBudgetError extends Error {}
 class WorkflowAmbiguousSideEffectError extends Error {}
@@ -251,13 +249,20 @@ export class WorkflowInterpreter {
 
   private async executeRepeat(node: Extract<WorkflowNode, { type: "repeat" }>, parent: string, context: ExecutionContext): Promise<unknown[]> {
     const output: unknown[] = []
+    let exhausted = true
     for (let index = 0; index < node.maxIterations; index += 1) {
       const iterationContext = {
         vars: { ...context.vars, iteration: index }, inputs: context.inputs, budgets: context.budgets, limiters: context.limiters,
         definitionInvocationKey: context.definitionInvocationKey, instanceKey: context.instanceKey,
       }
-      if (node.while !== undefined && !this.evaluateCondition(node.while, iterationContext)) break
+      if (node.while !== undefined && !this.evaluateCondition(node.while, iterationContext)) {
+        exhausted = false
+        break
+      }
       output.push(await this.executeNode(node.body, `${parent}/${node.body.id}[${index}]`, iterationContext, parent))
+    }
+    if (exhausted && node.onExhausted === "fail") {
+      throw new Error(`Repeat node ${node.id} exhausted ${node.maxIterations} iterations`)
     }
     return output
   }
@@ -295,7 +300,7 @@ export class WorkflowInterpreter {
     ].join("\n")
     return this.withActionPermit(context.limiters, signal, async () => {
       this.enforceActionAdmission(context.budgets)
-      const tools = await this.toolOverrides(node.tools ?? [], signal)
+      const tools = node.tools === undefined ? undefined : await this.toolOverrides(node.tools, signal)
       return this.retry(node.retry?.maxAttempts ?? 1, node.retry?.delayMs ?? 0, execution, context.budgets, signal, async () => {
         const sessionId = await this.createChildSession(node, execution, signal)
       try {
@@ -303,7 +308,7 @@ export class WorkflowInterpreter {
           sessionID: sessionId,
           ...(node.agent ? { agent: node.agent } : {}),
           ...(node.model ? { model: node.model } : {}),
-          tools,
+          ...(tools ? { tools } : {}),
           ...(node.outputSchema ? { format: { type: "json_schema" as const, schema: node.outputSchema, retryCount: 2 } } : {}),
           parts: [{ type: "text", text: prompt }],
         }, { signal }), `run ${node.id} session`)
@@ -617,9 +622,6 @@ export class WorkflowInterpreter {
   }
 
   private async toolOverrides(allowed: string[], signal: AbortSignal): Promise<Record<string, boolean>> {
-    for (const id of allowed) {
-      if (!SAFE_AGENT_TOOL_IDS.has(id)) throw new Error(`Workflow agent tool ${id} is not allowed`)
-    }
     const ids = await this.requireData(
       this.options.client.tool.ids(undefined, { signal }),
       "list workflow tools",
