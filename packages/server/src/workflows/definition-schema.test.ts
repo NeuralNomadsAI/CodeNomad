@@ -97,6 +97,17 @@ root:
     }).valid, false)
   })
 
+  it("accepts only portable persistent session keys", () => {
+    assert.equal(validateWorkflowDefinition({
+      version: 1, id: "persistent-agent", name: "Persistent agent",
+      root: { type: "agent", id: "work", sessionKey: "luna-worker", instructions: "Continue" },
+    }).valid, true)
+    assert.equal(validateWorkflowDefinition({
+      version: 1, id: "invalid-session", name: "Invalid session",
+      root: { type: "agent", id: "work", sessionKey: "not portable", instructions: "Continue" },
+    }).valid, false)
+  })
+
   it("requires portable lowercase saved definition IDs", () => {
     assert.equal(validateWorkflowDefinition({
       version: 1, id: "CaseCollision", name: "Uppercase definition",

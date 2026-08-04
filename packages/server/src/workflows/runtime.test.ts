@@ -12,6 +12,7 @@ import type { Logger } from "../logger"
 import type { WorkspaceManager } from "../workspaces/manager"
 import { WorkflowInterpreter } from "./interpreter"
 import { WorkflowManager } from "./manager"
+import { validatePersistedWorkflowRun } from "./run-state"
 
 const workspaceManager = {
   get: (id: string) => ({ id, lineageId: "lineage", path: "C:/workspace", status: "ready" }),
@@ -199,6 +200,79 @@ describe("declarative workflow runtime", () => {
       await manager.shutdown()
       await fs.rm(directory, { recursive: true, force: true })
     }
+  })
+
+  it("persists, reuses, and serializes named agent sessions", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-persistent-session-"))
+    const promptSessions: string[] = []
+    let sessions = 0
+    let activePrompts = 0
+    let maxActivePrompts = 0
+    const client = { tool: workflowTools, session: {
+      create: async () => ({ data: { id: `persistent-${++sessions}` } }),
+      prompt: async (input: { sessionID: string }) => {
+        promptSessions.push(input.sessionID)
+        maxActivePrompts = Math.max(maxActivePrompts, ++activePrompts)
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        activePrompts--
+        return { data: { info: usage(), parts: [{ type: "text", text: "done" }] } }
+      },
+      abort: async () => ({ data: true }),
+    } } as unknown as OpencodeClient
+    const manager = new WorkflowManager({ workspaceManager, eventBus, logger, storageDir: directory, createClient: () => client })
+    try {
+      await manager.createDefinition({ version: 1, id: "persistent-session", name: "Persistent session", maxConcurrency: 2, root: {
+        type: "sequence", id: "root", steps: [
+          { type: "repeat", id: "refine", maxIterations: 2,
+            body: { type: "agent", id: "worker", sessionKey: "luna-worker", instructions: "Refine" } },
+          { type: "parallel", id: "review", maxConcurrency: 2, branches: [
+            { type: "agent", id: "left", sessionKey: "luna-worker", instructions: "Review left" },
+            { type: "agent", id: "right", sessionKey: "luna-worker", instructions: "Review right" },
+          ] },
+        ],
+      } })
+      const started = await manager.start({ workspaceId: "workspace", definitionId: "persistent-session" })
+      const run = await waitFor(manager, started.id, ["completed"])
+      assert.equal(sessions, 2)
+      assert.deepEqual(promptSessions, Array(4).fill("persistent-2"))
+      assert.equal(maxActivePrompts, 1)
+      assert.deepEqual(run.sessionBindings, { "luna-worker": "persistent-2" })
+      const persisted = JSON.parse(await fs.readFile(path.join(directory, `${run.id}.json`), "utf8")) as WorkflowRun
+      validatePersistedWorkflowRun(persisted, run.id)
+      assert.deepEqual(persisted.sessionBindings, run.sessionBindings)
+      assert.throws(() => validatePersistedWorkflowRun({ ...persisted, sessionBindings: { "bad key": "session" } }, run.id),
+        /Invalid session bindings/)
+    } finally {
+      await manager.shutdown()
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("restores a named agent session without creating another session", async () => {
+    const now = new Date().toISOString()
+    const prompts: string[] = []
+    const run = {
+      id: "restored-session", workspaceId: "workspace", workspaceLineageId: "lineage", workspacePath: "C:/workspace",
+      objective: "Continue", status: "running", rootSessionId: "root", steps: [], definitionId: "restored",
+      definitionRevision: 1, definitionSnapshot: { version: 1, id: "restored", name: "Restored", root: {
+        type: "agent", id: "continue", sessionKey: "worker", instructions: "Continue",
+      } }, sessionBindings: { worker: "existing-session" }, executionNodes: [], createdAt: now, updatedAt: now,
+    } as WorkflowRun
+    const client = { tool: workflowTools, session: {
+      create: async () => { throw new Error("unexpected session creation") },
+      prompt: async (input: { sessionID: string }) => {
+        prompts.push(input.sessionID)
+        return { data: { info: usage(), parts: [{ type: "text", text: "done" }] } }
+      },
+      abort: async () => ({ data: true }),
+    } } as unknown as OpencodeClient
+    const interpreter = new WorkflowInterpreter({
+      run, client, persist: async () => {}, signal: () => new AbortController().signal,
+      sessionStarted: () => true, sessionFinished: () => {}, abortSession: async () => true, isCancelled: () => false,
+    })
+
+    await interpreter.execute()
+    assert.deepEqual(prompts, ["existing-session"])
   })
 
   it("fails only when a repeat configured to fail exhausts its iterations", async () => {

@@ -125,6 +125,7 @@ export const WorkflowNodeSchema: z.ZodType<WorkflowNode> = z.lazy(() => z.union(
     type: z.literal("agent"),
     instructions: z.string().trim().min(1).max(50_000),
     context: WorkflowValueSchema.optional(),
+    sessionKey: IdSchema.optional(),
     agent: z.string().trim().min(1).max(200).optional(),
     model: ModelSchema.optional(),
     tools: z.array(z.string().trim().min(1).max(200)).max(128).refine((tools) => new Set(tools).size === tools.length, "Tool IDs must be unique").optional(),

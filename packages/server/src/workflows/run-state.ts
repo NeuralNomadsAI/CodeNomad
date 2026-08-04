@@ -56,6 +56,7 @@ const RUN_STATUSES = new Set([
 const EXECUTION_STATUSES = new Set(["pending", "running", "waiting", "completed", "skipped", "failed", "cancelled", "interrupted"])
 const EXECUTION_TYPES = new Set(["sequence", "parallel", "foreach", "repeat", "agent", "shell", "gate", "condition", "workflow"])
 const isNonEmptyString = (value: unknown): value is string => typeof value === "string" && value.length > 0
+const SESSION_KEY_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/
 const isTimestamp = (value: unknown): value is string => isNonEmptyString(value) && Number.isFinite(Date.parse(value))
 const validUsage = (usage: WorkflowUsage) => Object.values(usage).every((value) =>
   typeof value === "number" && Number.isFinite(value) && value >= 0)
@@ -75,6 +76,12 @@ export function validatePersistedWorkflowRun(value: unknown, runId: string): ass
     throw new Error(`Invalid stored workflow run ${runId}`)
   }
   if (run.usage && !validUsage(run.usage)) throw new Error(`Invalid workflow usage for workflow run ${runId}`)
+  if (run.sessionBindings !== undefined && (
+    !run.sessionBindings || typeof run.sessionBindings !== "object" || Array.isArray(run.sessionBindings)
+    || Object.entries(run.sessionBindings).length > WORKFLOW_LIMITS.expandedNodes
+    || Object.entries(run.sessionBindings).some(([key, sessionId]) =>
+      key.length > 100 || !SESSION_KEY_PATTERN.test(key) || !isNonEmptyString(sessionId) || sessionId.length > 200)
+  )) throw new Error(`Invalid session bindings for workflow run ${runId}`)
   if (!run.definitionSnapshot) return
   const { definition } = parseWorkflowDefinition(run.definitionSnapshot)
   if (run.definitionId !== definition.id || !Number.isInteger(run.definitionRevision) || run.definitionRevision! < 1) {
@@ -83,6 +90,9 @@ export function validatePersistedWorkflowRun(value: unknown, runId: string): ass
   const expandedLimit = definition.maxExpandedNodes ?? WORKFLOW_LIMITS.expandedNodes
   if (!Array.isArray(run.executionNodes) || run.executionNodes.length > expandedLimit) {
     throw new Error(`Invalid execution nodes for workflow run ${runId}`)
+  }
+  if (Object.keys(run.sessionBindings ?? {}).length > expandedLimit) {
+    throw new Error(`Too many session bindings for workflow run ${runId}`)
   }
   if (new Set(run.executionNodes.map((node) => node.id)).size !== run.executionNodes.length
     || new Set(run.executionNodes.map((node) => node.instanceKey)).size !== run.executionNodes.length) {

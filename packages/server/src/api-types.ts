@@ -385,6 +385,8 @@ export interface WorkflowAgentNode extends WorkflowNodeBase {
   type: "agent"
   instructions: string
   context?: WorkflowValue
+  /** Nodes sharing a key reuse one durable OpenCode session and serialize their prompts. */
+  sessionKey?: string
   agent?: string
   model?: WorkflowModelSelection
   /** Omitted tools inherit the agent's normal OpenCode tool access. */
@@ -560,6 +562,7 @@ export interface WorkflowRun {
   definitionRevision?: number
   definitionSnapshot?: WorkflowDefinitionV1
   savedDefinitionSnapshots?: WorkflowSavedDefinitionSnapshot[]
+  sessionBindings?: Record<string, string>
   worktreeSelection?: WorkflowRunWorktreeSelection
   inputs?: Record<string, unknown>
   executionNodes?: WorkflowExecutionNode[]

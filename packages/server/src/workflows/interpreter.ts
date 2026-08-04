@@ -78,6 +78,7 @@ export class WorkflowInterpreter {
   private readonly maxConcurrency: number
   private readonly rootLimiter: ActionLimiter
   private readonly budgetLimiters = new Map<string, ActionLimiter>()
+  private readonly sessionLimiters = new Map<string, ActionLimiter>()
   private readonly savedDefinitionKeys: Set<string>
 
   constructor(private readonly options: WorkflowInterpreterOptions) {
@@ -298,7 +299,8 @@ export class WorkflowInterpreter {
       `Instructions:\n${node.instructions}`,
       ...(contextValue === undefined ? [] : ["", `Context:\n${JSON.stringify(contextValue, null, 2)}`]),
     ].join("\n")
-    return this.withActionPermit(context.limiters, signal, async () => {
+    const limiters = node.sessionKey ? [this.sessionLimiter(node.sessionKey), ...context.limiters] : context.limiters
+    return this.withActionPermit(limiters, signal, async () => {
       this.enforceActionAdmission(context.budgets)
       const tools = node.tools === undefined ? undefined : await this.toolOverrides(node.tools, signal)
       return this.retry(node.retry?.maxAttempts ?? 1, node.retry?.delayMs ?? 0, execution, context.budgets, signal, async () => {
@@ -399,29 +401,42 @@ export class WorkflowInterpreter {
     signal: AbortSignal,
   ): Promise<string> {
     this.throwIfCancelled()
-    const session = await this.requireData(this.options.client.session.create({
-      parentID: this.run.rootSessionId,
-      title: `${node.title ?? node.id}: ${this.run.objective.slice(0, 60)}`,
-      ...(node.agent ? { agent: node.agent } : {}),
-      metadata: this.sessionMetadata(node.id),
-    }, { signal }), `create ${node.id} session`)
+    const sessionKey = node.type === "agent" ? node.sessionKey : undefined
+    const bindings = this.run.sessionBindings
+    let sessionId = sessionKey && bindings && Object.prototype.hasOwnProperty.call(bindings, sessionKey)
+      ? bindings[sessionKey]
+      : undefined
+    if (!sessionId) {
+      const bindingLimit = this.run.definitionSnapshot?.maxExpandedNodes ?? WORKFLOW_LIMITS.expandedNodes
+      if (sessionKey && Object.keys(this.run.sessionBindings ?? {}).length >= bindingLimit) {
+        throw new Error(`Workflow exceeded session binding limit ${bindingLimit}`)
+      }
+      const session = await this.requireData(this.options.client.session.create({
+        parentID: this.run.rootSessionId,
+        title: `${node.title ?? node.id}: ${this.run.objective.slice(0, 60)}`,
+        ...(node.agent ? { agent: node.agent } : {}),
+        metadata: this.sessionMetadata(node.id),
+      }, { signal }), `create ${node.id} session`)
+      sessionId = session.id
+      if (sessionKey) (this.run.sessionBindings ??= {})[sessionKey] = sessionId
+    }
     execution.sessionIds ??= []
-    execution.sessionIds.push(session.id)
-    const accepted = this.options.sessionStarted(session.id)
+    if (!execution.sessionIds.includes(sessionId)) execution.sessionIds.push(sessionId)
+    const accepted = this.options.sessionStarted(sessionId)
     try {
       if (!accepted) this.throwIfCancelled()
       signal.throwIfAborted()
       await this.options.persist()
       signal.throwIfAborted()
     } catch (error) {
-      if (await this.options.abortSession(session.id)) {
-        this.options.sessionFinished(session.id)
-        this.forgetSession(execution, session.id)
+      if (await this.options.abortSession(sessionId)) {
+        this.options.sessionFinished(sessionId)
+        this.forgetSession(execution, sessionId)
       }
       else throw new WorkflowAmbiguousSideEffectError(`Workflow session abort was not confirmed: ${this.errorMessage(error)}`)
       throw error
     }
-    return session.id
+    return sessionId
   }
 
   private async retry<T>(
@@ -705,6 +720,14 @@ export class WorkflowInterpreter {
     if (existing) return existing
     const limiter = this.actionLimiter(1)
     this.budgetLimiters.set(key, limiter)
+    return limiter
+  }
+
+  private sessionLimiter(key: string): ActionLimiter {
+    const existing = this.sessionLimiters.get(key)
+    if (existing) return existing
+    const limiter = this.actionLimiter(1)
+    this.sessionLimiters.set(key, limiter)
     return limiter
   }
 
