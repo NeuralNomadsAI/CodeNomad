@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { closeSync, fstatSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { open, rename, rm } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import {
@@ -115,23 +115,55 @@ function parseClientState(value: string): ParsedClientState {
   }
 }
 
-function legacyCandidate(path: string, host: "electron" | "tauri"): { host: string; state: PersistedClientState; savedAt: number; hasSnapshot: boolean } | undefined {
+interface LegacyStateSnapshot {
+  path: string
+  host: "electron" | "tauri"
+  contents: Buffer
+  identity: string
+}
+
+function snapshotLegacyState(path: string, host: LegacyStateSnapshot["host"]): LegacyStateSnapshot | undefined {
+  let descriptor: number | undefined
   try {
-    const candidate = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>
+    descriptor = openSync(path, "r")
+    const before = legacyFileIdentity(descriptor)
+    const contents = readFileSync(descriptor)
+    const after = legacyFileIdentity(descriptor)
+    return before === after ? { path, host, contents, identity: after } : undefined
+  } catch {
+    return undefined
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor)
+  }
+}
+
+function legacyFileIdentity(descriptor: number): string {
+  const value = fstatSync(descriptor, { bigint: true })
+  return `${value.dev}:${value.ino}:${value.size}:${value.mtimeNs}:${value.ctimeNs}:${value.birthtimeNs}`
+}
+
+function legacySnapshotMatches(snapshot: LegacyStateSnapshot): boolean {
+  const current = snapshotLegacyState(snapshot.path, snapshot.host)
+  return Boolean(current && current.identity === snapshot.identity && current.contents.equals(snapshot.contents))
+}
+
+function legacyCandidate(snapshot: LegacyStateSnapshot): { host: string; state: PersistedClientState; savedAt: number; hasSnapshot: boolean } | undefined {
+  try {
+    const candidate = JSON.parse(snapshot.contents.toString("utf8")) as Record<string, unknown>
     if (!candidate || candidate.version !== CLIENT_STATE_VERSION) return undefined
     const parsed = parseClientState(JSON.stringify(candidate)).state
     delete parsed.window
-    const snapshot = candidate.snapshot as Record<string, unknown> | undefined
-    const savedAt = typeof snapshot?.savedAt === "number" && Number.isFinite(snapshot.savedAt) ? snapshot.savedAt : -1
-    return { host, state: parsed, savedAt, hasSnapshot: snapshot !== undefined }
+    const candidateSnapshot = candidate.snapshot as Record<string, unknown> | undefined
+    const savedAt = typeof candidateSnapshot?.savedAt === "number" && Number.isFinite(candidateSnapshot.savedAt) ? candidateSnapshot.savedAt : -1
+    return { host: snapshot.host, state: parsed, savedAt, hasSnapshot: candidateSnapshot !== undefined }
   } catch {
     return undefined
   }
 }
 
-function isFutureLegacyCandidate(path: string): boolean {
+function isFutureLegacyCandidate(snapshot: LegacyStateSnapshot): boolean {
   try {
-    const candidate = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>
+    const candidate = JSON.parse(snapshot.contents.toString("utf8")) as Record<string, unknown>
     return typeof candidate?.version === "number" && candidate.version > CLIENT_STATE_VERSION
   } catch {
     return false
@@ -468,12 +500,15 @@ export class ClientStateManager {
     } catch (error) {
       if (!hasErrorCode(error, "ENOENT")) return
     }
-    if (this.legacyPaths.some(([, path]) => isFutureLegacyCandidate(path))) {
+    const legacySnapshots = this.legacyPaths
+      .map(([host, path]) => snapshotLegacyState(path, host))
+      .filter((snapshot): snapshot is LegacyStateSnapshot => Boolean(snapshot))
+    if (legacySnapshots.some(isFutureLegacyCandidate)) {
       this.unsupportedFutureEnvelope = true
       return
     }
-    const winner = this.legacyPaths
-      .map(([host, path]) => legacyCandidate(path, host))
+    const winner = legacySnapshots
+      .map(legacyCandidate)
       .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate))
       .sort((left, right) =>
         Number(left.state.restoreEnabled) - Number(right.state.restoreEnabled) ||
@@ -493,12 +528,14 @@ export class ClientStateManager {
       descriptor = undefined
       this.assertSharedOwnershipAllowed()
       renameSync(temporaryPath, this.statePath)
-      for (const [, path] of this.legacyPaths) {
+      for (const snapshot of legacySnapshots) {
         try {
           this.assertSharedOwnershipAllowed()
-          this.removeLegacyState(path)
+          if (!legacySnapshotMatches(snapshot)) continue
+          this.assertSharedOwnershipAllowed()
+          this.removeLegacyState(snapshot.path)
         } catch (error) {
-          console.warn(`[client-state] failed to remove migrated legacy state at ${path}`, error)
+          console.warn(`[client-state] failed to remove migrated legacy state at ${snapshot.path}`, error)
         }
       }
     } finally {

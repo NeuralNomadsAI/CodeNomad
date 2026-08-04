@@ -5,10 +5,10 @@ export interface BrowserEventStreamCallbacks {
   onError?: () => void
   onOpen?: () => void
   onPing?: (payload: { ts?: number }) => boolean | void
-  onReplayReset?: () => boolean | void
+  onReplayReset?: () => boolean | void | Promise<boolean | void>
   onParseError?: (error: unknown) => void
   getLastEventId?: () => string | undefined
-  onEventId?: (id: string) => void
+  onEventId?: (id?: string) => void
 }
 
 export interface BrowserEventStreamConnection {
@@ -63,8 +63,8 @@ export function createBrowserEventConnector(fetchImpl: typeof fetch = fetch) {
             if (isCurrent()) callbacks.onParseError?.(error)
           },
           onEventId: (id) => {
-            if (!isCurrent() || !id) return
-            lastEventId = id
+            if (!isCurrent()) return
+            lastEventId = id || undefined
             callbacks.onEventId?.(id)
           },
         })
@@ -88,7 +88,7 @@ export function createBrowserEventConnector(fetchImpl: typeof fetch = fetch) {
 }
 
 interface EventStreamReaderCallbacks extends BrowserEventStreamCallbacks {
-  onEventId: (id: string) => void
+  onEventId: (id?: string) => void
 }
 
 async function readEventStream(stream: ReadableStream<Uint8Array>, callbacks: EventStreamReaderCallbacks): Promise<void> {
@@ -99,26 +99,35 @@ async function readEventStream(stream: ReadableStream<Uint8Array>, callbacks: Ev
   let eventId: string | undefined
   let dataLines: string[] = []
 
-  const dispatch = () => {
+  const dispatch = async () => {
     if (dataLines.length === 0) return
+    let payload: WorkspaceEventPayload & { ts?: number }
     try {
-      const payload = JSON.parse(dataLines.join("\n")) as WorkspaceEventPayload & { ts?: number }
-      let accepted: boolean | void
-      if (eventName === "codenomad.client.ping") accepted = callbacks.onPing?.(payload)
-      else if (eventName === "codenomad.replay.cursor") accepted = true
-      else if (eventName === "codenomad.replay.reset") accepted = callbacks.onReplayReset?.()
-      else if (!eventName || eventName === "message") accepted = callbacks.onEvent(payload)
-      else return
-      if (accepted !== false && eventId !== undefined) callbacks.onEventId(eventId)
+      payload = JSON.parse(dataLines.join("\n")) as WorkspaceEventPayload & { ts?: number }
     } catch (error) {
       callbacks.onParseError?.(error)
+      return
+    }
+
+    let accepted: boolean | void
+    if (eventName === "codenomad.client.ping") accepted = callbacks.onPing?.(payload)
+    else if (eventName === "codenomad.replay.cursor") accepted = true
+    else if (eventName === "codenomad.replay.reset") accepted = await callbacks.onReplayReset?.()
+    else if (!eventName || eventName === "message") accepted = callbacks.onEvent(payload)
+    else return
+
+    if (eventName === "codenomad.replay.reset") {
+      if (accepted === false) throw new Error("Replay reset resynchronization failed")
+      callbacks.onEventId(eventId)
+    } else if (accepted !== false && eventId !== undefined) {
+      callbacks.onEventId(eventId)
     }
   }
 
-  const processLine = (line: string) => {
+  const processLine = async (line: string) => {
     if (line.endsWith("\r")) line = line.slice(0, -1)
     if (!line) {
-      dispatch()
+      await dispatch()
       eventName = ""
       eventId = undefined
       dataLines = []
@@ -139,7 +148,7 @@ async function readEventStream(stream: ReadableStream<Uint8Array>, callbacks: Ev
     buffered += decoder.decode(value, { stream: !done })
     let newline = buffered.indexOf("\n")
     while (newline >= 0) {
-      processLine(buffered.slice(0, newline))
+      await processLine(buffered.slice(0, newline))
       buffered = buffered.slice(newline + 1)
       newline = buffered.indexOf("\n")
     }

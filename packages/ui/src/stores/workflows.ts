@@ -349,13 +349,16 @@ const requestWorkflowRunRefresh = createWorkflowRefreshCoordinator(async (instan
       run = await serverApi.getWorkflowRun(instanceId, runId)
     }
     upsertWorkflowRun(instanceId, run)
+    if (revision !== undefined && (run.revision === undefined || run.revision < revision)) {
+      clearWorkflowRunHydrating(instanceId, runId, revision)
+    }
   } catch {
     clearWorkflowRunHydrating(instanceId, runId, revision)
   }
 })
 
-function refreshWorkflowRun(instanceId: string, runId: string, revision?: number): void {
-  void requestWorkflowRunRefresh(instanceId, runId, revision)
+function refreshWorkflowRun(instanceId: string, runId: string, revision?: number): Promise<void> {
+  return requestWorkflowRunRefresh(instanceId, runId, revision)
 }
 
 sseManager.onWorkflowRunUpdated = (instanceId, event) => {
@@ -385,7 +388,7 @@ sseManager.onWorkflowRunUpdated = (instanceId, event) => {
       updatedAt: updated.updatedAt,
     })
   }
-  if (shouldRefresh) refreshWorkflowRun(instanceId, runId, event.properties?.revision)
+  if (shouldRefresh) void refreshWorkflowRun(instanceId, runId, event.properties?.revision)
 }
 
 serverEvents.onOpen(() => {
@@ -405,6 +408,7 @@ export {
   workflowDefinitionsError,
   workflowDefinitionTombstones,
   isWorkflowRunHydrating,
+  refreshWorkflowRun,
   getWorkflowRuns,
   getWorkflowDraft,
   setWorkflowDraft,

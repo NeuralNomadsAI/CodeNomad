@@ -72,13 +72,17 @@ describe("workflow routes", () => {
     } })).statusCode, 404)
     const started = await app.inject({
       method: "POST", url: "/workspaces/workspace-a/plugin/workflow-definitions/deploy/start",
-      payload: { objective: "Release", inputs: { environment: "test" } },
+      payload: { runId: "00000000-0000-4000-8000-000000000001", objective: "Release", inputs: { environment: "test" } },
     })
     assert.equal(started.statusCode, 202)
     assert.deepEqual(calls.at(-1), ["start", {
-      workspaceId: "workspace-a", definitionId: "deploy", objective: "Release",
+      workspaceId: "workspace-a", definitionId: "deploy", runId: "00000000-0000-4000-8000-000000000001", objective: "Release",
       inputs: { environment: "test" },
     }])
+    assert.equal((await app.inject({
+      method: "POST", url: "/workspaces/workspace-a/plugin/workflow-definitions/deploy/start",
+      payload: { runId: "not-a-uuid" },
+    })).statusCode, 400)
     assert.equal((await app.inject({
       method: "POST",
       url: "/workspaces/workspace-a/plugin/workflow-runs",

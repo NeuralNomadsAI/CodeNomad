@@ -22,6 +22,7 @@ import {
   clearInstanceSessionExpansionState,
   clearInstanceSessionSelection,
   resetSessionPagination,
+  loadMessages,
 } from "./sessions"
 import {
   ensureWorktreesLoaded,
@@ -36,6 +37,10 @@ import { fetchCommands, clearCommands } from "./commands"
 import { serverSettings } from "./preferences"
 import {
   reconcileSessionPendingState,
+  activeSessionId,
+  activeParentSessionId,
+  clearInstanceSessionRuntimeCache,
+  messagesLoaded,
   sessions,
   setSessionPendingPermission,
   setSessionPendingQuestion,
@@ -481,7 +486,7 @@ function releaseInstanceResources(instanceId: string) {
   sseManager.seedStatus(instanceId, "disconnected")
 }
 
-async function syncPendingPermissions(instanceId: string): Promise<void> {
+async function syncPendingPermissions(instanceId: string, propagateErrors = false): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance?.client) return
 
@@ -535,10 +540,11 @@ async function syncPendingPermissions(instanceId: string): Promise<void> {
     reconcilePendingSessionIndicators(instanceId)
   } catch (error) {
     log.warn("Failed to sync pending permissions", { instanceId, error })
+    if (propagateErrors) throw error
   }
 }
 
-async function syncPendingQuestions(instanceId: string): Promise<void> {
+async function syncPendingQuestions(instanceId: string, propagateErrors = false): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance?.client) return
 
@@ -588,10 +594,11 @@ async function syncPendingQuestions(instanceId: string): Promise<void> {
     reconcilePendingSessionIndicators(instanceId)
   } catch (error) {
     log.warn("Failed to sync pending questions", { instanceId, error })
+    if (propagateErrors) throw error
   }
 }
 
-function startInstanceSessionHydration(instanceId: string, force = false): {
+function startInstanceSessionHydration(instanceId: string, force = false, propagateErrors = false): {
   sessions: Promise<void>
   workspaceMetadata: Promise<void>
 } {
@@ -603,9 +610,12 @@ function startInstanceSessionHydration(instanceId: string, force = false): {
     : ensureWorktreesLoaded(instanceId)
   const sessions = Promise.all([worktreeHydration, worktreeMapHydration]).then(async () => {
     resetSessionPagination(instanceId)
-    await fetchSessions(instanceId).catch((error) => {
+    try {
+      await fetchSessions(instanceId)
+    } catch (error) {
       log.error("Failed to hydrate sessions", { instanceId, error })
-    })
+      if (propagateErrors) throw error
+    }
   })
   const workspaceMetadata = worktreeHydration.then(async () => {
     await Promise.all([worktreeMapHydration, syncOpenCodeWorkspaces(instanceId)])
@@ -625,7 +635,7 @@ async function hydrateInstanceData(instanceId: string, options?: {
           sessions: options.sessionHydration,
           workspaceMetadata: options.workspaceMetadataHydration ?? Promise.resolve(),
         }
-      : startInstanceSessionHydration(instanceId, options?.force)
+      : startInstanceSessionHydration(instanceId, options?.force, options?.propagateErrors)
     await hydration.sessions
     await hydration.workspaceMetadata
     await fetchAgents(instanceId)
@@ -634,8 +644,8 @@ async function hydrateInstanceData(instanceId: string, options?: {
     const instance = instances().get(instanceId)
     if (!instance?.client) return
     await fetchCommands(instanceId, instance.client)
-    await syncPendingPermissions(instanceId)
-    await syncPendingQuestions(instanceId)
+    await syncPendingPermissions(instanceId, options?.propagateErrors)
+    await syncPendingQuestions(instanceId, options?.propagateErrors)
   } catch (error) {
     log.error("Failed to fetch initial data", error)
     if (options?.propagateErrors) throw error
@@ -689,7 +699,7 @@ function clearReloadableInstanceState(instanceId: string): void {
   clearQuestionQueue(instanceId)
 }
 
-async function rehydrateInstance(instanceId: string, options?: { reason?: string }): Promise<void> {
+async function rehydrateInstance(instanceId: string, options?: { reason?: string; replayReset?: boolean }): Promise<void> {
   if (pendingRehydrations.has(instanceId)) {
     return pendingRehydrations.get(instanceId)
   }
@@ -701,9 +711,26 @@ async function rehydrateInstance(instanceId: string, options?: { reason?: string
     }
 
     log.info("Rehydrating instance", { instanceId, reason: options?.reason })
+    const messageSessionIds = options?.replayReset
+      ? new Set([
+          ...(messagesLoaded().get(instanceId) ?? []),
+          activeParentSessionId().get(instanceId),
+          activeSessionId().get(instanceId),
+        ].filter((sessionId): sessionId is string => Boolean(sessionId) && sessionId !== "info"))
+      : new Set<string>()
     clearReloadableInstanceState(instanceId)
+    if (options?.replayReset) clearInstanceSessionRuntimeCache(instanceId)
 
-    await hydrateInstanceData(instanceId, { force: true })
+    await hydrateInstanceData(instanceId, {
+      force: true,
+      propagateErrors: options?.replayReset,
+    })
+    if (options?.replayReset) {
+      await Promise.all(Array.from(messageSessionIds, (sessionId) => {
+        if (!sessions().get(instanceId)?.has(sessionId)) return Promise.resolve()
+        return loadMessages(instanceId, sessionId, { force: true, skipChildren: true })
+      }))
+    }
   })().finally(() => {
     pendingRehydrations.delete(instanceId)
   })
@@ -781,6 +808,18 @@ serverEvents.onOpen(() => {
       return { error }
     },
   )
+})
+
+serverEvents.onReplayReset(async () => {
+  await refreshWorkspaceList()
+  const readyInstanceIds = Array.from(instances(), ([instanceId, instance]) =>
+    instance.status === "ready" && instance.client ? instanceId : null,
+  ).filter((instanceId): instanceId is string => Boolean(instanceId))
+  await Promise.all(readyInstanceIds.map(async (instanceId) => {
+    await waitForSettledPrerequisite(initialHydrations.get(instanceId))
+    await pendingRehydrations.get(instanceId)
+    await rehydrateInstance(instanceId, { reason: "event replay reset", replayReset: true })
+  }))
 })
 
 async function waitForInitialWorkspaceLoad(): Promise<void> {

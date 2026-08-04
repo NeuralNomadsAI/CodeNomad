@@ -83,6 +83,7 @@ export async function connectTauriWorkspaceEvents(
   const notifyTerminalError = createTerminalErrorNotifier(callbacks)
   const pending: PendingNativePayload[] = []
   let pendingOverflow = false
+  let replayResetPending = false
 
   const matchesGeneration = (generation: number) => expectedGeneration === generation
   const acknowledge = (generation: number, eventCursor: string | null | undefined) => {
@@ -93,7 +94,7 @@ export async function connectTauriWorkspaceEvents(
   }
 
   const handleBatchPayload = (payload: WorkspaceEventBatchPayload) => {
-    if (!payload || !matchesGeneration(payload.generation)) return
+    if (!payload || replayResetPending || !matchesGeneration(payload.generation)) return
 
     if (!opened) {
       opened = true
@@ -153,23 +154,43 @@ export async function connectTauriWorkspaceEvents(
     }
   }
 
-  const handleReplayResetPayload = (payload: WorkspaceEventReplayResetPayload) => {
+  const handleReplayResetPayload = async (payload: WorkspaceEventReplayResetPayload) => {
     if (!payload || !matchesGeneration(payload.generation)) return
-    const accepted = callbacks.onReplayReset?.() !== false
-    if (accepted) acknowledge(payload.generation, payload.lastEventId)
+    replayResetPending = true
+    let accepted = false
+    try {
+      accepted = await callbacks.onReplayReset?.() !== false
+    } catch (error) {
+      log.warn("Failed to resynchronize native desktop events after replay reset", error)
+    }
+    if (closed || !matchesGeneration(payload.generation)) return
+    if (!accepted) {
+      notifyTerminalError()
+      return
+    }
+    if (!cursor.commit(payload.lastEventId || undefined)) return
+    replayResetPending = false
+    if (payload.lastEventId) {
+      void bridge.emit("desktop:event-ack", {
+        generation: payload.generation,
+        lastEventId: payload.lastEventId,
+      }).catch((error) => {
+        log.warn("Failed to acknowledge native desktop replay reset", error)
+      })
+    }
   }
 
-  const flushPending = () => {
+  const flushPending = async () => {
     if (expectedGeneration === null) return
     if (pendingOverflow) {
       pending.length = 0
-      callbacks.onReplayReset?.()
+      await callbacks.onReplayReset?.()
       throw new Error("native event startup queue overflowed")
     }
     for (const entry of pending.splice(0, pending.length)) {
       if (entry.type === "batch") handleBatchPayload(entry.payload)
       else if (entry.type === "status") handleStatusPayload(entry.payload)
-      else handleReplayResetPayload(entry.payload)
+      else await handleReplayResetPayload(entry.payload)
     }
   }
 
@@ -201,7 +222,7 @@ export async function connectTauriWorkspaceEvents(
     unlistenReplayReset = await bridge.listen<WorkspaceEventReplayResetPayload>("desktop:event-replay-reset", (event) => {
       if (closed || !event.payload) return
       if (expectedGeneration === null) queuePending({ type: "reset", payload: event.payload })
-      else handleReplayResetPayload(event.payload)
+      else void handleReplayResetPayload(event.payload)
     })
     const result = await bridge.invoke<DesktopEventsStartResult>("desktop_events_start", {
       request: { ...options, lastEventId: cursor.read() },
@@ -212,7 +233,7 @@ export async function connectTauriWorkspaceEvents(
     expectedGeneration = result.generation
     leaseId = result.leaseId
     if (result.lastEventId) cursor.commit(result.lastEventId)
-    flushPending()
+    await flushPending()
   } catch (error) {
     unlistenBatch()
     unlistenStatus()

@@ -1,12 +1,17 @@
 import { createHash, randomUUID } from "node:crypto"
+import { spawnSync } from "node:child_process"
 import fs from "node:fs/promises"
+import os from "node:os"
 import path from "node:path"
+import { probePosixProcesses, probeWindowsProcesses } from "../workspaces/process-identity"
 
 interface LockOwner {
   token: string
   pid: number
+  hostname?: string
   runtimeToken?: string
-  identity?: string
+  processStart?: string
+  bootId?: string
 }
 
 interface ObservedOwner {
@@ -30,6 +35,7 @@ const WAIT_MS = 5_000
 const STALE_MS = 30_000
 const POLL_MS = 20
 const RUNTIME_TOKEN = randomUUID()
+const PROCESS_IDENTITY = processIdentity(process.pid)
 
 export async function withFilesystemLock<T>(
   lockPath: string,
@@ -42,18 +48,15 @@ export async function withFilesystemLock<T>(
   await fs.mkdir(path.dirname(lockPath), { recursive: true })
   let deadline = Date.now() + waitMs
   let staleRetryGranted = false
-  const owner: LockOwner = { token: randomUUID(), pid: process.pid, runtimeToken: RUNTIME_TOKEN, identity: await processIdentity(process.pid) }
+  const identity = PROCESS_IDENTITY
+  const owner: LockOwner = {
+    token: randomUUID(), pid: process.pid, hostname: os.hostname(), runtimeToken: RUNTIME_TOKEN,
+    ...(identity ? { processStart: identity.startTime, ...(identity.bootId ? { bootId: identity.bootId } : {}) } : {}),
+  }
 
   while (true) {
     try {
-      await fs.mkdir(lockPath)
-      try {
-        await fs.writeFile(path.join(lockPath, "owner.json"), JSON.stringify(owner), "utf8")
-        await fs.writeFile(path.join(lockPath, "heartbeat"), randomUUID(), "utf8")
-      } catch (error) {
-        await fs.rm(lockPath, { recursive: true, force: true })
-        throw error
-      }
+      if (!await publishLock(lockPath, owner)) throw Object.assign(new Error("Lock exists"), { code: "EEXIST" })
       break
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
@@ -88,6 +91,22 @@ export async function withFilesystemLock<T>(
   } finally {
     clearInterval(heartbeat)
     await releaseOwnedLock(lockPath, owner.token, waitMs, staleMs, pollMs)
+  }
+}
+
+async function publishLock(lockPath: string, owner: LockOwner): Promise<boolean> {
+  const prepared = `${lockPath}.prepared.${owner.token}`
+  try {
+    await fs.mkdir(prepared)
+    await fs.writeFile(path.join(prepared, "owner.json"), JSON.stringify(owner), { encoding: "utf8", flag: "wx" })
+    await fs.writeFile(path.join(prepared, "heartbeat"), randomUUID(), { encoding: "utf8", flag: "wx" })
+    await fs.rename(prepared, lockPath)
+    return true
+  } catch (error) {
+    if (["EEXIST", "ENOTEMPTY", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) return false
+    throw error
+  } finally {
+    await fs.rm(prepared, { recursive: true, force: true }).catch(() => undefined)
   }
 }
 
@@ -130,8 +149,8 @@ async function removeStaleLock(lockPath: string, staleMs: number, pollMs: number
     await fs.rm(quarantinePath, { recursive: true, force: true })
     return true
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-    return true
+    if (["ENOENT", "EPERM", "EACCES", "EEXIST", "ENOTEMPTY"].includes((error as NodeJS.ErrnoException).code ?? "")) return true
+    throw error
   } finally {
     if (!moved) await removeOwnedClaim(lockPath, claim.token)
   }
@@ -156,7 +175,7 @@ async function acquireClaim(lockPath: string, owner: ObservedOwner, staleMs: num
       const moved = await readClaimFile(abandoned)
       if (moved?.token !== existing.token) return undefined
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+      if (!["ENOENT", "EPERM", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error
     } finally {
       await fs.rm(abandoned, { force: true }).catch(() => undefined)
     }
@@ -188,8 +207,8 @@ async function releaseOwnedLock(lockPath: string, token: string, waitMs: number,
       await fs.rm(releasedPath, { recursive: true, force: true })
       return
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-      return
+      if (["ENOENT", "EPERM", "EACCES", "EEXIST", "ENOTEMPTY"].includes((error as NodeJS.ErrnoException).code ?? "")) return
+      throw error
     } finally {
       if (!moved) await removeOwnedClaim(lockPath, claim.token)
     }
@@ -249,6 +268,9 @@ function sameObservedOwner(left: ObservedOwner, right: ObservedOwner): boolean {
 
 async function ownerIsAlive(owner: LockOwner, lockPath: string, staleMs: number, pollMs: number): Promise<boolean> {
   if (owner.runtimeToken === RUNTIME_TOKEN) return true
+  if (owner.hostname && owner.hostname !== os.hostname()) return true
+  const liveness = processLiveness(owner)
+  if (liveness !== "unknown") return liveness === "alive"
   const first = await heartbeatState(lockPath)
   const deadline = Date.now() + staleMs
   while (Date.now() < deadline) {
@@ -276,14 +298,34 @@ async function heartbeatState(lockPath: string): Promise<string> {
   }
 }
 
-async function processIdentity(pid: number): Promise<string | undefined> {
-  if (process.platform !== "linux") return undefined
+function processIdentity(pid: number): { startTime: string; bootId?: string } | undefined {
+  const snapshot = process.platform === "win32"
+    ? probeWindowsProcesses(spawnSync, 1_000)
+    : probePosixProcesses(spawnSync, 1_000, process.platform, { pids: [pid] })
+  const identity = snapshot.ok ? snapshot.processes.get(pid) : undefined
+  return identity && { startTime: identity.startTime, ...(identity.bootId ? { bootId: identity.bootId } : {}) }
+}
+
+function processLiveness(owner: LockOwner): "alive" | "dead" | "unknown" {
   try {
-    const stat = await fs.readFile(`/proc/${pid}/stat`, "utf8")
-    return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]
-  } catch {
-    return undefined
+    process.kill(owner.pid, 0)
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ESRCH" ? "dead" : "unknown"
   }
+  if (!owner.processStart) return "alive"
+  if (owner.pid === process.pid && PROCESS_IDENTITY) {
+    return PROCESS_IDENTITY.startTime === owner.processStart && (!owner.bootId || PROCESS_IDENTITY.bootId === owner.bootId)
+      ? "alive" : "dead"
+  }
+  const snapshot = process.platform === "win32"
+    ? probeWindowsProcesses(spawnSync, 1_000)
+    : probePosixProcesses(spawnSync, 1_000, process.platform, { pids: [owner.pid] })
+  if (snapshot.ok) {
+    const current = snapshot.processes.get(owner.pid)
+    if (!current) return "dead"
+    return current.startTime === owner.processStart && (!owner.bootId || current.bootId === owner.bootId) ? "alive" : "dead"
+  }
+  return "unknown"
 }
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))

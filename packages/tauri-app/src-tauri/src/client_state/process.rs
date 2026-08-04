@@ -18,6 +18,7 @@ pub(super) const RUNNING_MARKER_SUFFIX: &str = ".lock";
 static NEXT_RUNNING_MARKER_ID: AtomicU64 = AtomicU64::new(0);
 
 pub(super) struct ProcessState {
+    app_data_dir: Option<PathBuf>,
     primary_lock: Mutex<Option<File>>,
     cross_host_registration: Mutex<Option<cross_host::Registration>>,
     running_marker: Mutex<Option<RunningMarker>>,
@@ -119,6 +120,9 @@ impl Registration {
                 None
             }
         };
+        if let Some(registration) = &cross_host_registration {
+            registration.retain_local_candidacy();
+        }
         if !cross_host_registration
             .as_ref()
             .is_some_and(cross_host::Registration::retains_local_candidacy)
@@ -160,6 +164,7 @@ impl Registration {
             }
         }
         ProcessState {
+            app_data_dir: Some(self.running_marker.path.parent().unwrap().to_path_buf()),
             primary_lock: Mutex::new(self.primary_lock),
             cross_host_registration: Mutex::new(self.cross_host_registration),
             running_marker: Mutex::new(Some(self.running_marker)),
@@ -200,6 +205,7 @@ fn create_registration_id() -> String {
 impl ProcessState {
     pub(super) fn disabled() -> Self {
         Self {
+            app_data_dir: None,
             primary_lock: Mutex::new(None),
             cross_host_registration: Mutex::new(None),
             running_marker: Mutex::new(None),
@@ -226,11 +232,10 @@ impl ProcessState {
     }
 
     pub(super) fn refresh_primary(&self) -> bool {
-        let has_local_lock = self
-            .primary_lock
-            .lock()
-            .map(|lock| lock.is_some())
-            .unwrap_or(false);
+        if !self.retains_local_candidacy() {
+            return false;
+        }
+        let has_local_lock = self.refresh_local_primary();
         has_local_lock
             && self
                 .cross_host_registration
@@ -256,10 +261,7 @@ impl ProcessState {
     }
 
     pub(super) fn retains_local_candidacy(&self) -> bool {
-        self.primary_lock
-            .lock()
-            .map(|lock| lock.is_some())
-            .unwrap_or(false)
+        self.registration_file.is_some()
             && self
                 .cross_host_registration
                 .lock()
@@ -269,6 +271,56 @@ impl ProcessState {
                         .is_some_and(cross_host::Registration::retains_local_candidacy)
                 })
                 .unwrap_or(false)
+    }
+
+    fn refresh_local_primary(&self) -> bool {
+        let Ok(mut primary_lock) = self.primary_lock.lock() else {
+            return false;
+        };
+        if primary_lock.is_some() {
+            return true;
+        }
+        let (Some(app_data_dir), Some(registration_file)) =
+            (&self.app_data_dir, &self.registration_file)
+        else {
+            return false;
+        };
+        if try_acquire_registration_lock(registration_file, Duration::ZERO).ok() != Some(true) {
+            return false;
+        }
+
+        let acquired = (|| {
+            let registration_id = create_registration_id();
+            record_registration_owner(
+                &app_data_dir.join(REGISTRATION_OWNER_FILENAME),
+                &registration_id,
+            )?;
+            let path = app_data_dir.join(PRIMARY_LOCK_FILENAME);
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .open(&path)
+                .map_err(|err| format!("failed to open primary lock {}: {err}", path.display()))?;
+            match FileExt::try_lock_exclusive(&file) {
+                Ok(()) => {
+                    *primary_lock = Some(file);
+                    Ok(true)
+                }
+                Err(err) if is_lock_contended(&err) => Ok(false),
+                Err(err) => Err(format!("failed to acquire primary lock: {err}")),
+            }
+        })();
+        if let Err(err) = FileExt::unlock(registration_file) {
+            eprintln!("[client-state] failed to release registration lock: {err}");
+        }
+        match acquired {
+            Ok(acquired) => acquired,
+            Err(err) => {
+                eprintln!("[client-state] failed to retry local ownership: {err}");
+                false
+            }
+        }
     }
 
     pub(super) fn release_locks(&self) {

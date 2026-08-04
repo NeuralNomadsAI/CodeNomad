@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { createServer } from "node:http"
 import test from "node:test"
 import {
   createWorkflowTools,
@@ -155,8 +156,11 @@ test("saved definition tools read and start the current revision without claimin
     "/workflow-definitions/deploy_flow/start",
   ])
   assert.equal(calls[2]?.init?.method, "POST")
-  assert.equal(calls[2]?.init?.signal, undefined)
-  assert.deepEqual(JSON.parse(String(calls[2]?.init?.body)), {
+  assert.equal(calls[2]?.init?.signal instanceof AbortSignal, true)
+  const body = JSON.parse(String(calls[2]?.init?.body))
+  assert.match(body.runId, /^[0-9a-f-]{36}$/)
+  assert.deepEqual(body, {
+    runId: body.runId,
     objective: "Ship it",
     inputs: { environment: "production" },
   })
@@ -166,11 +170,15 @@ test("saved definition tools read and start the current revision without claimin
 
 test("saved definition starts finish acceptance and cancel when aborted in flight", async () => {
   let accept!: (value: typeof run) => void
+  let runId = ""
   const calls: Array<{ path: string; init?: RequestInit }> = []
   const requester = {
     async requestJson<T>(path: string, init?: RequestInit): Promise<T> {
       calls.push({ path, init })
-      if (path.endsWith("/start")) return await new Promise<T>((resolve) => { accept = resolve as typeof accept })
+      if (path.endsWith("/start")) {
+        runId = JSON.parse(String(init?.body)).runId
+        return await new Promise<T>((resolve) => { accept = resolve as typeof accept })
+      }
       return { ...run, status: "cancelled" } as T
     },
   }
@@ -183,17 +191,19 @@ test("saved definition starts finish acceptance and cancel when aborted in fligh
   await assert.rejects(started, { name: "AbortError" })
   assert.deepEqual(calls.map(({ path }) => path), [
     "/workflow-definitions/deploy/start",
-    "/workflow-runs/run/cancel",
+    `/workflow-runs/${runId}/cancel`,
   ])
-  assert.equal(calls[0]?.init?.signal, undefined)
+  assert.equal(calls[0]?.init?.signal instanceof AbortSignal, true)
   assert.notEqual(calls[1]?.init?.signal, controller.signal)
   assert.equal(calls[1]?.init?.signal instanceof AbortSignal, true)
 })
 
 test("saved definition starts expose the run ID when compensating cancellation fails", async () => {
+  let runId = ""
   const requester = {
-    async requestJson<T>(path: string): Promise<T> {
+    async requestJson<T>(path: string, init?: RequestInit): Promise<T> {
       if (path.endsWith("/start")) {
+        runId = JSON.parse(String(init?.body)).runId
         await new Promise((resolve) => setImmediate(resolve))
         return run as T
       }
@@ -205,7 +215,51 @@ test("saved definition starts expose the run ID when compensating cancellation f
   const started = tools.start_codenomad_workflow_definition.execute({ definition_id: "deploy" }, { abort: controller.signal } as never)
   controller.abort()
 
-  await assert.rejects(started, /Workflow run started but cancellation failed: cancel unavailable/)
+  await assert.rejects(started, new RegExp(`Workflow ${runId} may have started but cancellation failed: cancel unavailable`))
+})
+
+test("saved definition starts cancel their known run after an accepted response resets", async () => {
+  let acceptedRunId = ""
+  let cancelledRunId = ""
+  const server = createServer((request, response) => {
+    let body = ""
+    request.setEncoding("utf8")
+    request.on("data", (chunk) => { body += chunk })
+    request.on("end", () => {
+      if (request.url?.endsWith("/start")) {
+        acceptedRunId = JSON.parse(body).runId
+        response.writeHead(200, { "Content-Type": "application/json" })
+        response.write('{"id":"truncated')
+        response.destroy()
+        return
+      }
+      cancelledRunId = request.url?.split("/").at(-2) ?? ""
+      response.writeHead(200, { "Content-Type": "application/json", Connection: "close" })
+      response.end(JSON.stringify({ ...run, id: cancelledRunId, status: "cancelled" }))
+    })
+  })
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+  try {
+    const address = server.address()
+    assert.ok(address && typeof address === "object")
+    const tools = createWorkflowTools({
+      instanceId: "workspace",
+      baseUrl: `http://127.0.0.1:${address.port}`,
+      callbackToken: "callback",
+    })
+
+    await assert.rejects(tools.start_codenomad_workflow_definition.execute(
+      { definition_id: "deploy" },
+      { abort: new AbortController().signal } as never,
+    ))
+    assert.match(acceptedRunId, /^[0-9a-f-]{36}$/)
+    assert.equal(cancelledRunId, acceptedRunId)
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve())
+      server.closeAllConnections()
+    })
+  }
 })
 
 test("pre-aborted saved definition starts do not reach the server", async () => {

@@ -364,6 +364,47 @@ fn migrates_dual_legacy_files_with_disabled_dominance_and_malformed_fallback() {
 }
 
 #[test]
+fn migration_cleanup_preserves_replaced_files_and_stops_after_authority_loss() {
+    for authority_lost in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let electron = root.path().join("electron");
+        let tauri = root.path().join("tauri");
+        let shared = root.path().join("shared/client-state.json");
+        fs::create_dir_all(&electron).unwrap();
+        fs::create_dir_all(&tauri).unwrap();
+        let bytes = serde_json::to_vec(&json!({
+            "version": 1,
+            "restoreEnabled": true,
+            "snapshot": { "savedAt": 10 }
+        }))
+        .unwrap();
+        let electron_legacy = electron.join(CLIENT_STATE_FILENAME);
+        let tauri_legacy = tauri.join(CLIENT_STATE_FILENAME);
+        fs::write(&electron_legacy, &bytes).unwrap();
+        fs::write(&tauri_legacy, &bytes).unwrap();
+        let snapshots = super::legacy_state_snapshots(&tauri, Some(&electron));
+        let checks = std::cell::Cell::new(0);
+
+        super::migrate_legacy_state(&shared, &snapshots, &|| {
+            let check = checks.get() + 1;
+            checks.set(check);
+            if check == 2 {
+                let replacement = electron.join("replacement.json");
+                fs::write(&replacement, &bytes).unwrap();
+                fs::remove_file(&electron_legacy).unwrap();
+                fs::rename(replacement, &electron_legacy).unwrap();
+            }
+            !authority_lost || check == 1
+        })
+        .unwrap();
+
+        assert_eq!(fs::read(&electron_legacy).unwrap(), bytes);
+        assert_eq!(tauri_legacy.exists(), authority_lost);
+        assert!(shared.exists());
+    }
+}
+
+#[test]
 fn electron_and_tauri_share_the_complete_envelope_across_handoffs() {
     let root = tempfile::tempdir().unwrap();
     let electron = root.path().join("electron");
@@ -487,6 +528,55 @@ fn ownership_poll_promotes_idle_secondary_from_authoritative_state() {
     assert!(state.is_primary());
     assert_eq!(state.state.lock().unwrap().snapshot, Some(snapshot));
     assert!(state.renderer_reconciliation_pending.load(Ordering::SeqCst));
+}
+
+#[test]
+fn ownership_poll_promotes_a_retained_host_local_secondary() {
+    let root = tempfile::tempdir().unwrap();
+    let tauri = root.path().join("tauri");
+    let election = root.path().join("shared/election");
+    let shared = root.path().join("shared/client-state.json");
+    fs::create_dir_all(&tauri).unwrap();
+    let primary = ClientState::initialize_at_with_writer_and_election(
+        &tauri,
+        &election,
+        &shared,
+        None,
+        Arc::new(super::write_atomically),
+    )
+    .unwrap();
+    let secondary = ClientState::initialize_at_with_writer_and_election(
+        &tauri,
+        &election,
+        &shared,
+        None,
+        Arc::new(super::write_atomically),
+    )
+    .unwrap();
+    assert!(primary.is_primary());
+    assert!(!secondary.is_primary());
+    assert!(secondary.process.retains_local_candidacy());
+    let snapshot = json!({ "revision": 9, "kept": true });
+    fs::create_dir_all(shared.parent().unwrap()).unwrap();
+    fs::write(
+        &shared,
+        serde_json::to_vec(&json!({
+            "version": 1,
+            "restoreEnabled": true,
+            "snapshot": snapshot,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    primary.release_locks();
+    assert!(secondary.refresh_primary_for_watcher().unwrap());
+    assert!(secondary.is_primary());
+    assert_eq!(secondary.state.lock().unwrap().snapshot, Some(snapshot));
+    assert!(secondary.take_renderer_reload());
+    assert!(secondary
+        .renderer_reconciliation_pending
+        .load(Ordering::SeqCst));
 }
 
 #[test]

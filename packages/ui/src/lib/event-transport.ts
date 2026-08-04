@@ -1,5 +1,5 @@
 import type { WorkspaceEventPayload } from "../../../server/src/api-types"
-import { serverApi } from "./api-client"
+import { CODENOMAD_API_BASE, serverApi } from "./api-client"
 import {
   resolveDesktopEventTransportStartOptions,
   type DesktopEventTransportStartOptions,
@@ -21,7 +21,7 @@ export interface WorkspaceEventTransportCallbacks {
   onOpen?: () => void
   onStatus?: (status: WorkspaceEventTransportStatus) => void
   onPing?: (payload: { ts?: number }) => void
-  onReplayReset?: () => boolean | void
+  onReplayReset?: () => boolean | void | Promise<boolean | void>
 }
 
 export type WorkspaceEventTransportStatus = "connecting" | "connected" | "disconnected"
@@ -62,7 +62,10 @@ export async function connectWorkspaceEvents(
   callbacks: WorkspaceEventTransportCallbacks,
   options?: DesktopEventTransportStartOptions,
 ): Promise<WorkspaceEventConnection> {
-  const cursor = acquireEventTransportCursorAuthority()
+  const cursorScope = CODENOMAD_API_BASE
+    ?? (typeof window !== "undefined" ? window.location?.origin : undefined)
+    ?? "relative"
+  const cursor = acquireEventTransportCursorAuthority(cursorScope)
   const nativeDesktopTransportEnabled = readUseTauriNativeEventTransportPreference()
 
   if (

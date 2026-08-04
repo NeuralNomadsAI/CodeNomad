@@ -365,6 +365,31 @@ function invalidateSessionMessageLoad(instanceId: string, sessionId: string): vo
   clearMessageLoadingFlag(instanceId, sessionId)
 }
 
+function clearInstanceSessionRuntimeCache(instanceId: string): void {
+  const sessionIds = new Set([
+    ...(sessions().get(instanceId)?.keys() ?? []),
+    ...(messagesLoaded().get(instanceId) ?? []),
+    ...(loading().loadingMessages.get(instanceId) ?? []),
+  ])
+  for (const sessionId of sessionIds) {
+    cancelSessionGenerationAdmissions(instanceId, sessionId)
+    invalidateSessionMessageLoad(instanceId, sessionId)
+  }
+  messageStoreBus.getInstance(instanceId)?.clearInstance()
+  const withoutInstance = <T,>(prev: Map<string, T>): Map<string, T> => {
+    if (!prev.has(instanceId)) return prev
+    const next = new Map(prev)
+    next.delete(instanceId)
+    return next
+  }
+  setSessions(withoutInstance)
+  setMessagesLoaded(withoutInstance)
+  setMessageLoadErrors(withoutInstance)
+  setSessionInfoByInstance(withoutInstance)
+  setThreadTotalsByInstance(withoutInstance)
+  recomputeIndicatorCounts(instanceId, undefined)
+}
+
 messageStoreBus.onSessionCleared(invalidateSessionMessageLoad)
 
 function getDraftKey(instanceId: string, sessionId: string): string {
@@ -1225,6 +1250,7 @@ export {
   advanceMessageLoadEpoch,
   isCurrentMessageLoad,
   invalidateSessionMessageLoad,
+  clearInstanceSessionRuntimeCache,
   setSessionMessagesLoadError,
   sessionInfoByInstance,
   setSessionInfoByInstance,

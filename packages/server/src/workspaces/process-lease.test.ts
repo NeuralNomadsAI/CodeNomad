@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { writeFileSync } from "node:fs"
 import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -67,6 +68,20 @@ test("a live detached process identity keeps a same-host lease valid", async (t)
   await replacement.release()
 })
 
+test("a same-host live server blocks takeover without relying on heartbeat age", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-process-live-server-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const workspacePath = path.join(directory, "workspace")
+  const owner = new WorkspaceProcessLeaseRegistry({ directory, managerToken: "owner", pid: 101, hostname: "same-host" })
+  const contender = new WorkspaceProcessLeaseRegistry({
+    directory, managerToken: "contender", pid: 202, hostname: "same-host", isPidAlive: (pid) => pid === 101,
+  })
+  const lease = await owner.acquire(workspacePath)
+  assert.ok(lease)
+  assert.equal(await contender.acquire(workspacePath), undefined)
+  await lease.release()
+})
+
 test("owner replacement reports lease loss", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-process-lease-loss-"))
   t.after(() => rm(directory, { recursive: true, force: true }))
@@ -85,8 +100,70 @@ test("owner replacement reports lease loss", async (t) => {
   const successor = await replacement.acquire(workspacePath)
   assert.ok(successor)
   await lost
-  await lease.release()
+  await lease.release().catch(() => undefined)
   await successor.release()
+})
+
+test("a pre-spawn cleanup token closes the process identity publication gap", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-process-launch-anchor-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const workspacePath = path.join(directory, "workspace")
+  let launchAlive = true
+  const owner = new WorkspaceProcessLeaseRegistry({
+    directory, managerToken: "owner", pid: 101, hostname: "same-host", isPidAlive: () => false,
+  })
+  const contender = new WorkspaceProcessLeaseRegistry({
+    directory, managerToken: "contender", pid: 202, hostname: "same-host", isPidAlive: () => false,
+    isLaunchTokenAlive: () => launchAlive,
+  })
+  const lease = await owner.acquire(workspacePath)
+  assert.ok(lease)
+  const token = await lease.prepareLaunch()
+  assert.ok(token)
+  assert.equal(await contender.acquire(workspacePath), undefined)
+
+  launchAlive = false
+  const replacement = await contender.acquire(workspacePath)
+  assert.ok(replacement)
+  await lease.release()
+  await replacement.release()
+})
+
+test("foreign-host owners fail closed regardless of heartbeat age", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-process-foreign-owner-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const workspacePath = path.join(directory, "workspace")
+  const owner = new WorkspaceProcessLeaseRegistry({ directory, hostname: "foreign-host", pid: 101, isPidAlive: () => false })
+  const contender = new WorkspaceProcessLeaseRegistry({ directory, hostname: "local-host", pid: 202, isPidAlive: () => false })
+  const lease = await owner.acquire(workspacePath)
+  assert.ok(lease)
+  assert.equal(await contender.acquire(workspacePath), undefined)
+  await lease.release()
+})
+
+test("retirement CAS includes the observed heartbeat generation", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-process-heartbeat-cas-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const workspacePath = path.join(directory, "workspace")
+  const owner = new WorkspaceProcessLeaseRegistry({
+    directory, managerToken: "owner", pid: 101, hostname: "same-host", isPidAlive: () => false,
+  })
+  const lease = await owner.acquire(workspacePath)
+  assert.ok(lease)
+  await lease.setProcessIdentity({ pid: 303, parentPid: 1, groupId: 303, startTime: "immutable-start" })
+  const [key] = await readdir(directory)
+  const ownerDirectory = path.join(directory, key!, "owner")
+  const contender = new WorkspaceProcessLeaseRegistry({
+    directory, managerToken: "contender", pid: 202, hostname: "same-host", isPidAlive: () => false,
+    isProcessIdentityAlive: () => {
+      writeFileSync(path.join(ownerDirectory, "heartbeat"), "new-generation")
+      return false
+    },
+  })
+
+  assert.equal(await contender.acquire(workspacePath), undefined)
+  assert.equal(JSON.parse(await readFile(path.join(ownerDirectory, "owner.json"), "utf8")).managerToken, "owner")
+  await lease.release()
 })
 
 test("failed final retirement can be retried", async (t) => {

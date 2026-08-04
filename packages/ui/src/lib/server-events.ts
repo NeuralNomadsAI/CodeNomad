@@ -25,7 +25,7 @@ function logSse(message: string, context?: Record<string, unknown>) {
 class ServerEvents {
   private handlers = new Map<WorkspaceEventType | "*", Set<(event: WorkspaceEventPayload) => void>>()
   private openHandlers = new Set<() => void>()
-  private replayResetHandlers = new Set<() => void>()
+  private replayResetHandlers = new Set<() => boolean | void | Promise<boolean | void>>()
   private statusHandlers = new Set<(status: WorkspaceEventTransportStatus) => void>()
   private connection: WorkspaceEventConnection | null = null
   private connectGeneration = 0
@@ -70,12 +70,21 @@ class ServerEvents {
           this.retryDelay = RETRY_BASE_DELAY
           this.openHandlers.forEach((handler) => handler())
         },
-        onReplayReset: () => {
+        onReplayReset: async () => {
           if (generation !== this.connectGeneration) return false
           log.warn("Events replay window missed; requesting authoritative resync")
-          this.replayResetHandlers.forEach((handler) => handler())
-          // Existing onOpen consumers collectively perform the broadest authoritative hydration.
-          this.openHandlers.forEach((handler) => handler())
+          if (this.replayResetHandlers.size === 0) return false
+          const results = await Promise.allSettled(
+            Array.from(this.replayResetHandlers, (handler) => Promise.resolve().then(handler)),
+          )
+          if (generation !== this.connectGeneration) return false
+          for (const result of results) {
+            if (result.status === "rejected") {
+              log.warn("Failed to resynchronize after replay reset", result.reason)
+              return false
+            }
+            if (result.value === false) return false
+          }
           return true
         },
         onPing: (payload) => {
@@ -182,7 +191,7 @@ class ServerEvents {
     return () => this.openHandlers.delete(handler)
   }
 
-  onReplayReset(handler: () => void): () => void {
+  onReplayReset(handler: () => boolean | void | Promise<boolean | void>): () => void {
     this.replayResetHandlers.add(handler)
     return () => this.replayResetHandlers.delete(handler)
   }

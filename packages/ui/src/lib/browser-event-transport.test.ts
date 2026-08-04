@@ -63,6 +63,36 @@ test("browser stream advances its cursor and requests resync on replay overflow"
   assert.equal(resets, 1)
 })
 
+test("browser reset cursor waits for successful authoritative resync", async () => {
+  const requests: Headers[] = []
+  const responses = [
+    response('event: codenomad.replay.cursor\nid: epoch-a:1\ndata: {}\n\n'),
+    response('event: codenomad.replay.reset\nid: epoch-b:5\ndata: {}\n\nid: epoch-b:6\ndata: {"type":"workspace.log","entry":{"sequence":6}}\n\n'),
+    response('event: codenomad.replay.reset\nid: epoch-b:5\ndata: {}\n\n'),
+    response('id: epoch-b:6\ndata: {"type":"workspace.log","entry":{"sequence":6}}\n\n'),
+  ]
+  const connect = createBrowserEventConnector(async (_url, init) => {
+    requests.push(new Headers(init?.headers))
+    return responses.shift()!
+  })
+  const sequences: number[] = []
+  let resetAttempts = 0
+  const callbacks = {
+    onEvent: (event: any) => {
+      sequences.push(event.entry.sequence)
+    },
+    onReplayReset: async () => ++resetAttempts > 1,
+  }
+
+  for (let index = 0; index < 4; index += 1) {
+    await connect("http://localhost/api/events", callbacks).finished
+  }
+
+  assert.deepEqual(requests.map((headers) => headers.get("Last-Event-ID")), [null, "epoch-a:1", "epoch-a:1", "epoch-b:5"])
+  assert.equal(resetAttempts, 2)
+  assert.deepEqual(sequences, [6])
+})
+
 test("a replaced browser stream cannot dispatch or advance from stale frames", async () => {
   const requests: Headers[] = []
   let firstController: ReadableStreamDefaultController<Uint8Array> | undefined

@@ -390,7 +390,7 @@ describe("declarative workflow runtime", () => {
       prompt: async (_input: unknown, options?: { signal?: AbortSignal }) => {
         prompts++
         await new Promise<void>((resolve, reject) => {
-          const timer = setTimeout(resolve, 45)
+          const timer = setTimeout(resolve, 250)
           options?.signal?.addEventListener("abort", () => {
             clearTimeout(timer)
             reject(options.signal!.reason)
@@ -404,8 +404,8 @@ describe("declarative workflow runtime", () => {
     try {
       await manager.createDefinition({ version: 1, id: "session-timeout", name: "Session timeout", maxConcurrency: 2,
         root: { type: "parallel", id: "root", maxConcurrency: 2, branches: [
-          { type: "agent", id: "left", sessionKey: "worker", instructions: "Left", timeoutMs: 70 },
-          { type: "agent", id: "right", sessionKey: "worker", instructions: "Right", timeoutMs: 70 },
+          { type: "agent", id: "left", sessionKey: "worker", instructions: "Left", timeoutMs: 400 },
+          { type: "agent", id: "right", sessionKey: "worker", instructions: "Right", timeoutMs: 400 },
         ] } })
       const started = await manager.start({ workspaceId: "workspace", definitionId: "session-timeout" })
       await waitFor(manager, started.id, ["failed"])

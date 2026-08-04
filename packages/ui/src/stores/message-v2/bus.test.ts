@@ -2,7 +2,17 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { messageStoreBus } from "./bus.ts"
-import { invalidateSessionMessageLoad, messagesLoaded, setMessagesLoaded } from "../session-state.ts"
+import {
+  activeSessionId,
+  clearInstanceSessionRuntimeCache,
+  clearInstanceSessionSelection,
+  invalidateSessionMessageLoad,
+  messagesLoaded,
+  sessions,
+  setActiveSession,
+  setMessagesLoaded,
+  setSessions,
+} from "../session-state.ts"
 
 describe("message store scroll snapshots", () => {
   it("seeds an unregistered instance without claiming runtime authority", () => {
@@ -72,6 +82,33 @@ describe("message store scroll snapshots", () => {
       assert.deepEqual(store.getScrollSnapshot("session-1", "message-stream"), snapshot)
       assert.equal(messagesLoaded().get(instanceId)?.has("session-1") ?? false, false)
     } finally {
+      messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+
+  it("clears replay-sensitive session and message caches without losing selection", () => {
+    const instanceId = "replay-reset-cache"
+    const sessionId = "session-1"
+    const store = messageStoreBus.getOrCreate(instanceId)
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, {
+      id: sessionId,
+      instanceId,
+      parentId: null,
+      title: "Session",
+      status: "idle",
+    } as any]])))
+    setMessagesLoaded((prev) => new Map(prev).set(instanceId, new Set([sessionId])))
+    setActiveSession(instanceId, sessionId)
+    store.restoreScrollSnapshot(sessionId, "message-stream", { scrollTop: 100, atBottom: false, updatedAt: 1 })
+
+    try {
+      clearInstanceSessionRuntimeCache(instanceId)
+      assert.equal(sessions().has(instanceId), false)
+      assert.equal(messagesLoaded().has(instanceId), false)
+      assert.equal(store.getScrollSnapshot(sessionId, "message-stream"), undefined)
+      assert.equal(activeSessionId().get(instanceId), sessionId)
+    } finally {
+      clearInstanceSessionSelection(instanceId)
       messageStoreBus.unregisterInstance(instanceId)
     }
   })

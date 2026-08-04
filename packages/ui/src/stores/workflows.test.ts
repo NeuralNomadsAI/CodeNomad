@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs"
 import test from "node:test"
 import type { WorkflowRun } from "../../../server/src/api-types.ts"
 import { ApiRequestError, serverApi } from "../lib/api-client.ts"
+import { serverEvents } from "../lib/server-events.ts"
+import { sseManager } from "../lib/sse-manager.ts"
 import type { Instance } from "../types/instance.ts"
 import {
   WORKFLOW_CLIENT_HISTORY_LIMIT,
@@ -12,6 +14,12 @@ import {
   reconcileWorkflowRuns,
 } from "./workflow-reconciliation.ts"
 import { createWorkflowRefreshCoordinator } from "./workflow-refresh.ts"
+import {
+  getWorkflowRuns,
+  isWorkflowRunHydrating,
+  refreshWorkflowRun,
+  upsertWorkflowRun,
+} from "./workflows.ts"
 import {
   WORKFLOW_INPUT_BYTES_LIMIT,
   WORKFLOW_INPUT_DEPTH_LIMIT,
@@ -319,6 +327,46 @@ test("compact workflow revisions disable stale gate and recovery confirmations u
   assert.equal(list.match(/disabled=\{busy\(\) \|\| detailsHydrating\(\)\}/g)?.length, 4)
   assert.match(list, /!confirmed \|\| detailsHydrating\(\) \|\| props\.run\.revision !== expectedRevision/)
   assert.match(list, /confirmed && !detailsHydrating\(\) && props\.run\.revision === expectedRevision/)
+})
+
+test("compact workflow hydration clears after both bounded responses are stale", async () => {
+  const instanceId = "stale-hydration-workspace"
+  const compact = { ...run("stale-hydration-run", "2026-07-20T12:00:00.000Z", "running"), revision: 1 }
+  const originalGetWorkflowRun = serverApi.getWorkflowRun
+  let calls = 0
+  serverApi.getWorkflowRun = async () => {
+    calls += 1
+    return compact
+  }
+  try {
+    upsertWorkflowRun(instanceId, compact)
+    sseManager.onWorkflowRunUpdated?.(instanceId, {
+      type: "workflow.run.updated",
+      properties: {
+        runId: compact.id,
+        revision: 2,
+        status: "waiting_for_review",
+        updatedAt: "2026-07-20T12:01:00.000Z",
+      },
+    })
+    assert.equal(isWorkflowRunHydrating(instanceId, compact.id), true)
+
+    await refreshWorkflowRun(instanceId, compact.id, 2)
+
+    assert.equal(calls, 2)
+    assert.equal(isWorkflowRunHydrating(instanceId, compact.id), false)
+    assert.equal(getWorkflowRuns(instanceId).find(({ id }) => id === compact.id)?.revision, 2)
+  } finally {
+    serverApi.getWorkflowRun = originalGetWorkflowRun
+    const events = serverEvents as unknown as {
+      connectGeneration: number
+      retryTimer: ReturnType<typeof setTimeout> | null
+      connection: { disconnect(): void } | null
+    }
+    events.connectGeneration += 1
+    if (events.retryTimer) clearTimeout(events.retryTimer)
+    events.connection?.disconnect()
+  }
 })
 
 test("opening workflow sessions selects their app tab and run cards survive object replacement", () => {

@@ -247,6 +247,54 @@ test("legacy cleanup failure cannot abort startup after shared state replacement
   await manager.drainAndReleasePrimary()
 })
 
+test("legacy cleanup preserves a same-content file replaced after the migration snapshot", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "codenomad-migration-race-"))
+  const electron = join(root, "electron"), tauri = join(root, "tauri"), election = join(root, "shared", "election")
+  mkdirSync(electron, { recursive: true }); mkdirSync(tauri, { recursive: true })
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const contents = JSON.stringify({ version: 1, restoreEnabled: true, snapshot: { savedAt: 10 } })
+  const electronLegacy = join(electron, "client-state.json"), tauriLegacy = join(tauri, "client-state.json")
+  writeFileSync(electronLegacy, contents); writeFileSync(tauriLegacy, contents)
+
+  const manager = new ClientStateManager(electron, undefined, {
+    crossHostElectionDirectory: election,
+    legacyTauriDataPath: tauri,
+    removeLegacyState: (path) => {
+      rmSync(path, { force: true })
+      if (path === electronLegacy) {
+        rmSync(tauriLegacy)
+        writeFileSync(tauriLegacy, contents)
+      }
+    },
+  })
+  assert.equal(existsSync(electronLegacy), false)
+  assert.equal(readFileSync(tauriLegacy, "utf8"), contents)
+  await manager.drainAndReleasePrimary()
+})
+
+test("legacy cleanup stops when a legacy Tauri host appears after replacement", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "codenomad-migration-live-host-"))
+  const electron = join(root, "electron"), tauri = join(root, "tauri"), election = join(root, "shared", "election")
+  mkdirSync(electron, { recursive: true }); mkdirSync(tauri, { recursive: true })
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const electronLegacy = join(electron, "client-state.json"), tauriLegacy = join(tauri, "client-state.json")
+  writeFileSync(electronLegacy, JSON.stringify({ version: 1, restoreEnabled: true }))
+  writeFileSync(tauriLegacy, JSON.stringify({ version: 1, restoreEnabled: true, snapshot: { savedAt: 10 } }))
+
+  const manager = new ClientStateManager(electron, undefined, {
+    crossHostElectionDirectory: election,
+    legacyTauriDataPath: tauri,
+    crossHostDependencies: { pidAlive: (pid) => pid === 9912, processStartIdentity: () => undefined },
+    removeLegacyState: (path) => {
+      rmSync(path, { force: true })
+      if (path === electronLegacy) writeFileSync(join(tauri, "client-state.running.9912.late.lock"), "")
+    },
+  })
+  assert.equal(existsSync(electronLegacy), false)
+  assert.equal(existsSync(tauriLegacy), true)
+  await manager.drainAndReleasePrimary()
+})
+
 test("legacy migration rechecks a Tauri host that starts after ownership acquisition", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "codenomad-migration-race-"))
   const electron = join(root, "electron"), tauri = join(root, "tauri"), shared = join(root, "shared"), election = join(shared, "election")

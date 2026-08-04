@@ -69,6 +69,7 @@ const CreateSchema = z.union([LegacyCreateSchema, DefinitionStartObjectSchema])
 const RunIdSchema = z.string().uuid()
 const ListSchema = z.object({ workspaceId: z.string().trim().min(1).max(200).optional() })
 const PluginDefinitionStartSchema = z.object({
+  runId: z.string().uuid().optional(),
   objective: z.string().trim().min(1).max(50_000).optional(),
   inputs: z.record(z.unknown()).superRefine(validateBoundedJson).optional(),
 }).strict()

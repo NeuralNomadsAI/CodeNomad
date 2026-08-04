@@ -5,11 +5,16 @@ import path from "node:path"
 import { spawnSync } from "node:child_process"
 
 import { normalizeWorkspaceIdentityPath } from "./workspace-identity"
-import { probePosixProcesses, probeWindowsProcesses, sameProcess, type ProcessIdentity } from "./process-identity"
+import {
+  probeLaunchCleanupToken,
+  probePosixProcesses,
+  probeWindowsProcesses,
+  sameProcess,
+  type ProcessIdentity,
+} from "./process-identity"
 
 const OWNER_FILE = "owner.json"
 const DEFAULT_HEARTBEAT_MS = 5_000
-const DEFAULT_STALE_MS = 30_000
 
 interface LeaseOwner {
   version: 1
@@ -23,6 +28,7 @@ interface LeaseOwner {
 
 export interface WorkspaceProcessLease {
   release(): Promise<void>
+  prepareLaunch(): Promise<string>
   setProcessIdentity(identity: ProcessIdentity): Promise<void>
   onLost(callback: () => void): void
 }
@@ -37,6 +43,13 @@ export interface WorkspaceProcessLeaseRegistryOptions {
   processStart?: string
   isPidAlive?: (pid: number) => boolean
   isProcessIdentityAlive?: (identity: ProcessIdentity) => boolean
+  isLaunchTokenAlive?: (token: string) => boolean | undefined
+}
+
+interface ObservedOwner {
+  owner: LeaseOwner
+  serialized: string
+  heartbeat: string
 }
 
 interface HeldLease {
@@ -46,6 +59,7 @@ interface HeldLease {
   heartbeat: NodeJS.Timeout
   lost: boolean
   releaseFailed: boolean
+  launchToken?: string
   onLost: Set<() => void>
 }
 
@@ -54,7 +68,6 @@ export class WorkspaceProcessLeaseRegistry {
   private readonly pid: number
   private readonly hostname: string
   private readonly heartbeatMs: number
-  private readonly staleMs: number
   private readonly held = new Map<string, HeldLease>()
   private processStart: string | undefined
 
@@ -64,7 +77,6 @@ export class WorkspaceProcessLeaseRegistry {
     this.hostname = options.hostname ?? os.hostname()
     this.processStart = options.processStart
     this.heartbeatMs = Math.max(10, options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS)
-    this.staleMs = Math.max(this.heartbeatMs * 2, options.staleMs ?? DEFAULT_STALE_MS)
   }
 
   async acquire(workspacePath: string): Promise<WorkspaceProcessLease | undefined> {
@@ -100,7 +112,7 @@ export class WorkspaceProcessLeaseRegistry {
 
       const observed = await readOwner(directory)
       if (!observed || !await this.ownerIsStale(directory, observed.owner)) return undefined
-      if (!await retireOwner(directory, observed.serialized, observed.owner.leaseToken)) return undefined
+      if (!await retireOwner(directory, observed)) return undefined
     }
     return undefined
   }
@@ -122,7 +134,7 @@ export class WorkspaceProcessLeaseRegistry {
         try {
           const observed = await readOwner(held.directory)
           if (observed?.owner.leaseToken === leaseToken
-            && !await retireOwner(held.directory, observed.serialized, leaseToken)) {
+            && !await retireOwner(held.directory, observed)) {
             throw new Error(`Workspace process lease ${leaseToken} could not be retired; release can be retried`)
           }
         } catch (error) {
@@ -133,6 +145,19 @@ export class WorkspaceProcessLeaseRegistry {
         this.held.delete(key)
         clearInterval(held.heartbeat)
         if (lostCallback) held.onLost.delete(lostCallback)
+      },
+      prepareLaunch: async () => {
+        const held = this.held.get(key)
+        if (!held || held.owner.leaseToken !== leaseToken || held.lost) throw new Error("Workspace process lease was lost")
+        if (held.launchToken) return held.launchToken
+        const token = randomUUID()
+        await writeLaunchToken(held.directory, leaseToken, token)
+        if ((await readOwner(held.directory))?.owner.leaseToken !== leaseToken) {
+          this.lose(key, held)
+          throw new Error("Workspace process lease was lost")
+        }
+        held.launchToken = token
+        return token
       },
       setProcessIdentity: async (identity) => {
         const held = this.held.get(key)
@@ -182,13 +207,14 @@ export class WorkspaceProcessLeaseRegistry {
       }
       const workspaceProcesses = await readProcessIdentities(directory, owner.leaseToken)
       const workspaceAlive = workspaceProcesses.some(this.options.isProcessIdentityAlive ?? processIdentityIsAlive)
-      return !serverAlive && !workspaceAlive
+      if (serverAlive || workspaceAlive) return false
+      if (workspaceProcesses.length > 0) return true
+      const launchTokens = await readLaunchTokens(directory, owner.leaseToken)
+      const tokenAlive = this.options.isLaunchTokenAlive ?? launchTokenIsAlive
+      for (const token of launchTokens) if (tokenAlive(token) !== false) return false
+      return true
     }
-    try {
-      return Date.now() - (await fs.stat(path.join(directory, "owner"))).mtimeMs >= this.staleMs
-    } catch (error) {
-      return hasCode(error, "ENOENT")
-    }
+    return false
   }
 }
 
@@ -204,6 +230,7 @@ async function publishOwner(directory: string, owner: LeaseOwner): Promise<boole
     } finally {
       await file.close()
     }
+    await fs.writeFile(path.join(temporary, "heartbeat"), randomUUID(), { encoding: "utf8", flag: "wx", mode: 0o600 })
     await fs.rename(temporary, destination)
     return true
   } catch (error) {
@@ -214,14 +241,17 @@ async function publishOwner(directory: string, owner: LeaseOwner): Promise<boole
   }
 }
 
-async function readOwner(directory: string): Promise<{ owner: LeaseOwner; serialized: string } | undefined> {
+async function readOwner(directory: string, ownerDirectory = "owner"): Promise<ObservedOwner | undefined> {
   try {
-    const serialized = await fs.readFile(path.join(directory, "owner", OWNER_FILE), "utf8")
+    const [serialized, heartbeat] = await Promise.all([
+      fs.readFile(path.join(directory, ownerDirectory, OWNER_FILE), "utf8"),
+      fs.readFile(path.join(directory, ownerDirectory, "heartbeat"), "utf8"),
+    ])
     const owner = JSON.parse(serialized) as Partial<LeaseOwner>
     if (owner.version !== 1 || !safeToken(owner.managerToken) || !safeToken(owner.leaseToken) ||
       !Number.isInteger(owner.pid) || Number(owner.pid) <= 0 || typeof owner.hostname !== "string" ||
       typeof owner.workspacePath !== "string") return undefined
-    return { owner: owner as LeaseOwner, serialized }
+    return { owner: owner as LeaseOwner, serialized, heartbeat }
   } catch (error) {
     if (hasCode(error, "ENOENT") || error instanceof SyntaxError) return undefined
     throw error
@@ -231,22 +261,40 @@ async function readOwner(directory: string): Promise<{ owner: LeaseOwner; serial
 async function heartbeatOwner(directory: string, owner: LeaseOwner): Promise<boolean> {
   const current = await readOwner(directory)
   if (current?.owner.leaseToken !== owner.leaseToken) return false
-  const now = new Date()
-  await fs.utimes(path.join(directory, "owner"), now, now)
+  const temporary = path.join(directory, `.heartbeat.${owner.leaseToken}.${randomUUID()}.tmp`)
+  await fs.writeFile(temporary, randomUUID(), { encoding: "utf8", flag: "wx", mode: 0o600 })
+  try {
+    if ((await readOwner(directory))?.owner.leaseToken !== owner.leaseToken) return false
+    await fs.rename(temporary, path.join(directory, "owner", "heartbeat"))
+  } finally {
+    await fs.rm(temporary, { force: true }).catch(() => undefined)
+  }
   return (await readOwner(directory))?.owner.leaseToken === owner.leaseToken
 }
 
-async function retireOwner(directory: string, serialized: string, leaseToken: string): Promise<boolean> {
+async function retireOwner(directory: string, observed: ObservedOwner): Promise<boolean> {
   const current = await readOwner(directory)
-  if (current?.serialized !== serialized || current.owner.leaseToken !== leaseToken) return false
+  if (!sameObservedOwner(current, observed)) return false
+  const retired = `retired.${observed.owner.leaseToken}`
   try {
     // ponytail: generation tombstones are tiny and prevent a stale reclaimer from ever targeting a successor.
-    await fs.rename(path.join(directory, "owner"), path.join(directory, `retired.${leaseToken}`))
+    await fs.rename(path.join(directory, "owner"), path.join(directory, retired))
+    const moved = await readOwner(directory, retired)
+    if (!sameObservedOwner(moved, observed)) {
+      await fs.rename(path.join(directory, retired), path.join(directory, "owner")).catch(() => undefined)
+      return false
+    }
     return true
   } catch (error) {
     if (["ENOENT", "EEXIST", "ENOTEMPTY", "EPERM"].some((code) => hasCode(error, code))) return false
     throw error
   }
+}
+
+function sameObservedOwner(left: ObservedOwner | undefined, right: ObservedOwner): boolean {
+  return left?.serialized === right.serialized
+    && left.owner.leaseToken === right.owner.leaseToken
+    && left.heartbeat === right.heartbeat
 }
 
 function safeToken(value: unknown): value is string {
@@ -279,6 +327,26 @@ async function writeProcessIdentity(directory: string, leaseToken: string, ident
   }).catch((error) => { if (!hasCode(error, "EEXIST")) throw error })
 }
 
+async function writeLaunchToken(directory: string, leaseToken: string, token: string): Promise<void> {
+  const handle = await fs.open(path.join(directory, `launch.${leaseToken}.json`), "wx", 0o600)
+  try {
+    await handle.writeFile(JSON.stringify({ token }), "utf8")
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+}
+
+async function readLaunchTokens(directory: string, leaseToken: string): Promise<string[]> {
+  try {
+    const value = JSON.parse(await fs.readFile(path.join(directory, `launch.${leaseToken}.json`), "utf8")) as { token?: unknown }
+    return typeof value.token === "string" && value.token.length > 0 ? [value.token] : []
+  } catch (error) {
+    if (hasCode(error, "ENOENT")) return []
+    return [""]
+  }
+}
+
 async function readProcessIdentities(directory: string, leaseToken: string): Promise<ProcessIdentity[]> {
   try {
     const entries = await fs.readdir(directory)
@@ -296,6 +364,12 @@ function processIdentityIsAlive(identity: ProcessIdentity): boolean {
     ? probeWindowsProcesses(spawnSync, 1_000)
     : probePosixProcesses(spawnSync, 1_000, process.platform, { pids: [identity.pid] })
   return snapshot.ok && sameProcess(identity, snapshot.processes.get(identity.pid))
+}
+
+function launchTokenIsAlive(token: string): boolean | undefined {
+  if (!token) return undefined
+  const snapshot = probeLaunchCleanupToken(spawnSync, token, 1_000, undefined, process.platform)
+  return snapshot.ok ? snapshot.processes.size > 0 : undefined
 }
 
 function hasCode(error: unknown, code: string): boolean {

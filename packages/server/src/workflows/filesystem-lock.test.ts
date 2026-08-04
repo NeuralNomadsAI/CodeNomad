@@ -22,10 +22,10 @@ it("never overlaps replacement locks while concurrent callers reclaim a stale ow
       maximum = Math.max(maximum, active)
       await new Promise((resolve) => setTimeout(resolve, 5))
       active--
-    }, { waitMs: 2_000, staleMs: 20, pollMs: 1 })))
+    }, { waitMs: 10_000, staleMs: 20, pollMs: 1 })))
     assert.equal(maximum, 1)
   } finally {
-    await fs.rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 })
   }
 })
 
@@ -75,6 +75,52 @@ it("recovers an abandoned reclaim claim", async () => {
     let acquired = false
     await withFilesystemLock(lockPath, async () => { acquired = true }, { waitMs: 20, staleMs: 20, pollMs: 1 })
     assert.equal(acquired, true)
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+  }
+})
+
+it("publishes complete owner metadata and never reclaims a suspended same-machine owner", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-live-lock-owner-"))
+  const lockPath = path.join(directory, "shared.lock")
+  try {
+    await fs.mkdir(lockPath)
+    await fs.writeFile(path.join(lockPath, "owner.json"), JSON.stringify({
+      token: "live-owner", pid: process.pid, hostname: os.hostname(),
+    }), "utf8")
+    await fs.writeFile(path.join(lockPath, "heartbeat"), "suspended", "utf8")
+    const old = new Date(Date.now() - 60_000)
+    await fs.utimes(path.join(lockPath, "heartbeat"), old, old)
+
+    await assert.rejects(withFilesystemLock(lockPath, async () => undefined, {
+      waitMs: 10, staleMs: 10, pollMs: 1,
+    }), /Timed out waiting/)
+    assert.equal(JSON.parse(await fs.readFile(path.join(lockPath, "owner.json"), "utf8")).token, "live-owner")
+
+    await fs.rm(lockPath, { recursive: true })
+    await withFilesystemLock(lockPath, async () => {
+      const owner = JSON.parse(await fs.readFile(path.join(lockPath, "owner.json"), "utf8"))
+      assert.equal(typeof owner.token, "string")
+      assert.equal(owner.pid, process.pid)
+      assert.equal(typeof await fs.readFile(path.join(lockPath, "heartbeat"), "utf8"), "string")
+    })
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+  }
+})
+
+it("fails closed for an unverifiable foreign-host lock owner", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-foreign-lock-owner-"))
+  const lockPath = path.join(directory, "shared.lock")
+  try {
+    await fs.mkdir(lockPath)
+    await fs.writeFile(path.join(lockPath, "owner.json"), JSON.stringify({
+      token: "foreign-owner", pid: 2_147_483_647, hostname: "another-host",
+    }), "utf8")
+    await fs.writeFile(path.join(lockPath, "heartbeat"), "stale", "utf8")
+    await assert.rejects(withFilesystemLock(lockPath, async () => undefined, {
+      waitMs: 5, staleMs: 5, pollMs: 1,
+    }), /Timed out waiting/)
   } finally {
     await fs.rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
   }

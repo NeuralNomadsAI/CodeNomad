@@ -80,6 +80,7 @@ describe("connectTauriWorkspaceEvents", () => {
     const batches: unknown[] = []
     let opens = 0
     let resets = 0
+    let errors = 0
 
     const connection = await connectTauriWorkspaceEvents(
       {
@@ -92,6 +93,9 @@ describe("connectTauriWorkspaceEvents", () => {
         onStatus: (status) => statuses.push(status),
         onReplayReset: () => {
           resets += 1
+        },
+        onError: () => {
+          errors += 1
         },
       },
       { reconnect: {} },
@@ -117,8 +121,13 @@ describe("connectTauriWorkspaceEvents", () => {
       payload: { generation: 1, lastEventId: "9" },
     }])
 
-    resetHandler!({ payload: { generation: 1, details: {} } })
+    resetHandler!({ payload: { generation: 1, details: {}, lastEventId: "10" } })
+    await Promise.resolve()
     assert.equal(resets, 1)
+    assert.deepEqual(acknowledgements[1], {
+      eventName: "desktop:event-ack",
+      payload: { generation: 1, lastEventId: "10" },
+    })
 
     statusHandler!({ payload: { generation: 1, state: "disconnected" } })
     statusHandler!({ payload: { generation: 1, state: "connected" } })
@@ -130,21 +139,30 @@ describe("connectTauriWorkspaceEvents", () => {
     await Promise.resolve()
     assert.equal(stopLeaseId, 7)
 
-    const replacement = await connectTauriWorkspaceEvents({ onBatch: () => false }, { reconnect: {} }, bridge)
-    assert.deepEqual(startLastEventIds, [undefined, "9"])
+    const replacement = await connectTauriWorkspaceEvents({
+      onBatch() {},
+      onReplayReset: () => false,
+      onError: () => {
+        errors += 1
+      },
+    }, { reconnect: {} }, bridge)
+    assert.deepEqual(startLastEventIds, [undefined, "10"])
+    resetHandler!({ payload: { generation: 1, details: {}, lastEventId: "11" } })
+    await Promise.resolve()
     batchHandler!({
       payload: {
         generation: 1,
         sequence: 2,
         emittedAt: Date.now(),
-        lastEventId: "10",
+        lastEventId: "12",
         events: [{ type: "server.heartbeat" }],
       },
     })
+    assert.equal(errors, 1)
     replacement.disconnect()
     const afterRejectedBatch = await connectTauriWorkspaceEvents({ onBatch() {} }, { reconnect: {} }, bridge)
-    assert.deepEqual(startLastEventIds, [undefined, "9", "9"])
-    assert.equal(acknowledgements.length, 1)
+    assert.deepEqual(startLastEventIds, [undefined, "10", "10"])
+    assert.equal(acknowledgements.length, 2)
     afterRejectedBatch.disconnect()
   })
 })

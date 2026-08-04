@@ -259,8 +259,7 @@ impl Registration {
                 };
             let retry_candidate = primary_candidate
                 && !primary
-                && (matches!(legacy_status, LegacyElectronStatus::PublishingParticipant)
-                    || !known_upgraded.is_empty());
+                && (legacy_electron_data.is_some() || !known_upgraded.is_empty());
             Ok(Some(Self {
                 election_directory: election_directory.to_path_buf(),
                 participant_path: participant_path.clone(),
@@ -298,6 +297,12 @@ impl Registration {
 
     pub(super) fn retains_local_candidacy(&self) -> bool {
         !self.released && (self.primary.get() || self.retry_candidate.get())
+    }
+
+    pub(super) fn retain_local_candidacy(&self) {
+        if !self.released {
+            self.retry_candidate.set(true);
+        }
     }
 
     pub(super) fn defer_primary(&self) {

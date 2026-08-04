@@ -95,6 +95,13 @@ export function validatePersistedWorkflowRun(value: unknown, runId: string): ass
     || Date.parse(run.executorLease.heartbeatAt) > Date.now() + MAX_CLOCK_SKEW_MS
     || Date.parse(run.executorLease.expiresAt) <= Date.parse(run.executorLease.heartbeatAt)
     || Date.parse(run.executorLease.expiresAt) - Date.parse(run.executorLease.heartbeatAt) > MAX_EXECUTOR_LEASE_MS
+    || ((run.executorLease.hostname !== undefined || run.executorLease.pid !== undefined
+      || run.executorLease.processStart !== undefined || run.executorLease.bootId !== undefined) && (
+      !isNonEmptyString(run.executorLease.hostname)
+      || !Number.isInteger(run.executorLease.pid) || run.executorLease.pid! < 1
+      || (run.executorLease.processStart !== undefined && !isNonEmptyString(run.executorLease.processStart))
+      || (run.executorLease.bootId !== undefined && !isNonEmptyString(run.executorLease.bootId))
+    ))
   )) throw new Error(`Invalid executor lease for workflow run ${runId}`)
   if (run.sessionBindings !== undefined && (
     !run.sessionBindings || typeof run.sessionBindings !== "object" || Array.isArray(run.sessionBindings)

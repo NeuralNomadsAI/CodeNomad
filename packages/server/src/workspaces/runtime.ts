@@ -48,6 +48,7 @@ interface LaunchOptions {
   logLevel?: string
   onExit?: (info: ProcessExitInfo) => void
   signal?: AbortSignal
+  cleanupToken?: string
 }
 
 export interface ProcessExitInfo {
@@ -176,7 +177,7 @@ export class WorkspaceRuntime {
 
     const logLevel = typeof options.logLevel === "string" ? options.logLevel.toUpperCase() : "DEBUG"
     const args = ["serve", "--port", "0", "--print-logs", "--log-level", logLevel]
-    const cleanupToken = randomBytes(32).toString("hex")
+    const cleanupToken = options.cleanupToken ?? randomBytes(32).toString("hex")
     const env = { ...process.env, ...(options.environment ?? {}), [LAUNCH_CLEANUP_TOKEN_ENV]: cleanupToken }
 
     let exitResolve: ((info: ProcessExitInfo) => void) | null = null

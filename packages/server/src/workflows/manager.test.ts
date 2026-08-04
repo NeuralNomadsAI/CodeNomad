@@ -52,7 +52,7 @@ describe("WorkflowManager", () => {
     }
   })
 
-  it("rejects cross-host control while the executor lease is live", async () => {
+  it("never reclaims a same-process executor merely for missed heartbeats", async () => {
     const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-workflow-remote-cancel-"))
     let releasePrompt!: () => void
     let promptStarted!: () => void
@@ -89,13 +89,15 @@ describe("WorkflowManager", () => {
       expired.executorLease.heartbeatAt = new Date(Date.now() - 80_000).toISOString()
       expired.executorLease.expiresAt = new Date(Date.now() - 70_000).toISOString()
       await fs.writeFile(journalPath, `${JSON.stringify(expired, null, 2)}\n`, "utf8")
-      await assert.rejects(remote.pause(started.id), /not running/)
-      assert.equal(JSON.parse(await fs.readFile(journalPath, "utf8")).status, "recovery_required")
-      assert.equal((await remote.cancel(started.id))?.status, "cancelled")
-      assert.equal(aborts, 1)
+      await assert.rejects(remote.pause(started.id), (error: WorkflowRunError) => error.statusCode === 409)
+      await assert.rejects(remote.cancel(started.id), (error: WorkflowRunError) => error.statusCode === 409)
+      assert.equal(JSON.parse(await fs.readFile(journalPath, "utf8")).status, "running")
+      assert.equal(aborts, 0)
       releasePrompt()
-      await new Promise((resolve) => setTimeout(resolve, 25))
-      assert.equal(JSON.parse(await fs.readFile(journalPath, "utf8")).status, "cancelled")
+      for (let attempt = 0; attempt < 100 && JSON.parse(await fs.readFile(journalPath, "utf8")).status === "running"; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      assert.equal(JSON.parse(await fs.readFile(journalPath, "utf8")).status, "completed")
     } finally {
       releasePrompt()
       await owner.shutdown()
@@ -196,6 +198,83 @@ describe("WorkflowManager", () => {
       releasePrompt()
       await owner.shutdown()
       await observer.shutdown()
+      await fs.rm(storageDir, { recursive: true, force: true })
+    }
+  })
+
+  it("coalesces read refreshes and recovers an executor after its process dies", async () => {
+    const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-workflow-read-recovery-"))
+    const manager = new WorkflowManager({
+      workspaceManager: { get: () => undefined, list: () => [] } as unknown as WorkspaceManager,
+      eventBus: { publish: () => true } as unknown as EventBus,
+      logger: { warn() {}, error() {} } as unknown as Logger,
+      storageDir,
+    })
+    const id = "00000000-0000-4000-8000-000000000011"
+    try {
+      await manager.list()
+      const now = new Date().toISOString()
+      await fs.writeFile(path.join(storageDir, `${id}.json`), JSON.stringify({
+        id, workspaceId: "dead-workspace", workspaceLineageId: "dead-lineage", workspacePath: "C:/dead-workspace",
+        objective: "Recover dead executor", status: "running", revision: 1,
+        steps: [{ id: "pending", title: "Pending", instructions: "Wait", status: "pending" }],
+        executorFence: 1,
+        executorLease: {
+          ownerToken: "dead-owner", fence: 1, hostname: os.hostname(), pid: 2_147_483_647, processStart: "dead",
+          heartbeatAt: new Date(Date.now() - 20_000).toISOString(),
+          expiresAt: new Date(Date.now() - 10_000).toISOString(),
+        },
+        createdAt: now, updatedAt: now,
+      }), "utf8")
+      let recoveries = 0
+      const recover = (manager as any).recoverInterruptedRuns.bind(manager)
+      ;(manager as any).recoverInterruptedRuns = async () => { recoveries++; return recover() }
+      ;(manager as any).lastReadRefreshAt = 0
+
+      const [got, listed, gotAgain] = await Promise.all([manager.get(id), manager.list(), manager.get(id)])
+      assert.equal(recoveries, 1)
+      assert.equal(got?.status, "interrupted")
+      assert.equal(gotAgain?.status, "interrupted")
+      assert.equal(listed[0]?.status, "interrupted")
+      assert.equal(got?.executorLease, undefined)
+    } finally {
+      await manager.shutdown()
+      await fs.rm(storageDir, { recursive: true, force: true })
+    }
+  })
+
+  it("uses a caller-known run ID idempotently without overwriting another start", async () => {
+    const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-workflow-run-id-"))
+    let releasePrompt!: () => void
+    const blocked = new Promise<void>((resolve) => { releasePrompt = resolve })
+    let sessions = 0
+    const client = { tool: { ids: async () => ({ data: [] }) }, session: {
+      create: async () => ({ data: { id: `idempotent-${++sessions}` } }),
+      prompt: async () => { await blocked; return { data: { info: {}, parts: [] } } },
+      abort: async () => ({ data: true }),
+    } } as unknown as OpencodeClient
+    const manager = new WorkflowManager({
+      workspaceManager: { get: () => ({ id: "workspace", lineageId: "lineage", path: "C:/workspace", status: "ready" }) } as unknown as WorkspaceManager,
+      eventBus: { publish: () => true } as unknown as EventBus,
+      logger: { warn() {}, error() {} } as unknown as Logger,
+      storageDir, createClient: () => client,
+    })
+    const runId = "00000000-0000-4000-8000-000000000012"
+    const request = { runId, workspaceId: "workspace", definitionId: "known-id", objective: "Ship", inputs: { target: "test" } }
+    try {
+      await manager.createDefinition({ version: 1, id: "known-id", name: "Known ID", root: {
+        type: "agent", id: "work", instructions: "Wait",
+      } })
+      const [first, retry] = await Promise.all([manager.start(request), manager.start(request)])
+      assert.equal(first.id, runId)
+      assert.equal(retry.id, runId)
+      assert.equal(first.createdAt, retry.createdAt)
+      await assert.rejects(manager.start({ ...request, objective: "Different" }), (error: WorkflowRunError) =>
+        error.statusCode === 409 && /another start request/.test(error.message))
+      assert.equal((await manager.get(runId))?.objective, "Ship")
+    } finally {
+      releasePrompt()
+      await manager.shutdown()
       await fs.rm(storageDir, { recursive: true, force: true })
     }
   })

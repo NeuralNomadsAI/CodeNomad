@@ -550,6 +550,10 @@ export interface WorkflowExecutorLease {
   fence: number
   heartbeatAt: string
   expiresAt: string
+  hostname?: string
+  pid?: number
+  processStart?: string
+  bootId?: string
 }
 
 export interface WorkflowRun {
@@ -591,6 +595,7 @@ export interface WorkflowRunCreateRequest {
 }
 
 export interface WorkflowDefinitionRunCreateRequest {
+  runId?: string
   workspaceId: string
   initiatorSessionId?: string
   objective?: string

@@ -593,12 +593,14 @@ export class WorkspaceManager {
       }
 
       const logLevel = (serverConfig as any)?.logLevel
+      const cleanupToken = await state.processLease?.prepareLaunch()
       const { pid, port, exitPromise, getLastOutput, processIdentity } = await this.runtime.launch({
         workspaceId: id,
         folder: workspacePath,
         binaryPath: resolvedBinaryPath,
         environment,
         logLevel,
+        cleanupToken,
         signal: state.abortController.signal,
         onExit: (info) => this.handleProcessExit(info.workspaceId, info),
       })

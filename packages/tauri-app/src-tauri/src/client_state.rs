@@ -27,11 +27,11 @@ pub use window::{
 use serde::Serialize;
 use serde_json::Value;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tauri::{AppHandle, Emitter, Manager};
 use url::Url;
 use window::NativeWindowState;
@@ -687,7 +687,8 @@ fn load_primary_state(
         }
     };
     if missing {
-        if has_future_legacy_state(tauri_data_dir, electron_data_dir) {
+        let legacy_snapshots = legacy_state_snapshots(tauri_data_dir, electron_data_dir);
+        if has_future_legacy_state(&legacy_snapshots) {
             return Ok(PersistedClientState {
                 restore_enabled: false,
                 unsupported_future_envelope: true,
@@ -695,12 +696,7 @@ fn load_primary_state(
                 ..PersistedClientState::default()
             });
         }
-        migrate_legacy_state(
-            state_path,
-            tauri_data_dir,
-            electron_data_dir,
-            ownership_valid,
-        )?;
+        migrate_legacy_state(state_path, &legacy_snapshots, ownership_valid)?;
     }
     read_client_state(state_path)
 }
@@ -741,12 +737,118 @@ fn parse_client_state(bytes: &[u8]) -> PersistedClientState {
     }
 }
 
-fn legacy_candidate(
-    path: &Path,
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LegacyFileIdentity {
+    len: u64,
+    modified: Option<SystemTime>,
+    created: Option<SystemTime>,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+    #[cfg(windows)]
+    file_id: Option<(u32, u64)>,
+}
+
+#[derive(Clone)]
+struct LegacyStateSnapshot {
+    path: PathBuf,
     host: &'static str,
+    bytes: Vec<u8>,
+    identity: LegacyFileIdentity,
+}
+
+fn legacy_file_identity(file: &fs::File) -> Result<LegacyFileIdentity, std::io::Error> {
+    #[cfg(unix)]
+    use std::os::unix::fs::MetadataExt;
+    let metadata = file.metadata()?;
+    Ok(LegacyFileIdentity {
+        len: metadata.len(),
+        modified: metadata.modified().ok(),
+        created: metadata.created().ok(),
+        #[cfg(unix)]
+        device: metadata.dev(),
+        #[cfg(unix)]
+        inode: metadata.ino(),
+        #[cfg(windows)]
+        file_id: windows_file_id(file),
+    })
+}
+
+#[cfg(windows)]
+fn windows_file_id(file: &fs::File) -> Option<(u32, u64)> {
+    use std::ffi::c_void;
+    use std::os::windows::io::AsRawHandle;
+
+    #[repr(C)]
+    struct FileTime {
+        low: u32,
+        high: u32,
+    }
+    #[repr(C)]
+    struct ByHandleFileInformation {
+        attributes: u32,
+        creation_time: FileTime,
+        last_access_time: FileTime,
+        last_write_time: FileTime,
+        volume_serial_number: u32,
+        file_size_high: u32,
+        file_size_low: u32,
+        number_of_links: u32,
+        file_index_high: u32,
+        file_index_low: u32,
+    }
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetFileInformationByHandle(
+            file: *mut c_void,
+            information: *mut ByHandleFileInformation,
+        ) -> i32;
+    }
+
+    let mut information = std::mem::MaybeUninit::<ByHandleFileInformation>::uninit();
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), information.as_mut_ptr()) } == 0 {
+        return None;
+    }
+    let information = unsafe { information.assume_init() };
+    Some((
+        information.volume_serial_number,
+        (u64::from(information.file_index_high) << 32) | u64::from(information.file_index_low),
+    ))
+}
+
+fn snapshot_legacy_state(path: PathBuf, host: &'static str) -> Option<LegacyStateSnapshot> {
+    let mut file = fs::File::open(&path).ok()?;
+    let before = legacy_file_identity(&file).ok()?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).ok()?;
+    let identity = legacy_file_identity(&file).ok()?;
+    (before == identity).then_some(LegacyStateSnapshot {
+        path,
+        host,
+        bytes,
+        identity,
+    })
+}
+
+fn legacy_state_snapshots(
+    tauri_data_dir: &Path,
+    electron_data_dir: Option<&Path>,
+) -> Vec<LegacyStateSnapshot> {
+    [
+        electron_data_dir.map(|path| (path.join(CLIENT_STATE_FILENAME), "electron")),
+        Some((tauri_data_dir.join(CLIENT_STATE_FILENAME), "tauri")),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(|(path, host)| snapshot_legacy_state(path, host))
+    .collect()
+}
+
+fn legacy_candidate(
+    snapshot: &LegacyStateSnapshot,
 ) -> Option<(PersistedClientState, bool, i64, &'static str)> {
-    let bytes = fs::read(path).ok()?;
-    let Value::Object(value) = serde_json::from_slice::<Value>(&bytes).ok()? else {
+    let Value::Object(value) = serde_json::from_slice::<Value>(&snapshot.bytes).ok()? else {
         return None;
     };
     if value.get("version").and_then(Value::as_u64) != Some(CLIENT_STATE_VERSION) {
@@ -758,22 +860,20 @@ fn legacy_candidate(
         .and_then(|snapshot| snapshot.get("savedAt"))
         .and_then(Value::as_i64)
         .unwrap_or(-1);
-    let mut parsed = parse_client_state(&bytes);
+    let mut parsed = parse_client_state(&snapshot.bytes);
     parsed.window = None;
-    Some((parsed, value.contains_key("snapshot"), saved_at, host))
+    Some((
+        parsed,
+        value.contains_key("snapshot"),
+        saved_at,
+        snapshot.host,
+    ))
 }
 
-fn has_future_legacy_state(tauri_data_dir: &Path, electron_data_dir: Option<&Path>) -> bool {
-    [
-        electron_data_dir.map(|path| path.join(CLIENT_STATE_FILENAME)),
-        Some(tauri_data_dir.join(CLIENT_STATE_FILENAME)),
-    ]
-    .into_iter()
-    .flatten()
-    .any(|path| {
-        fs::read(path)
+fn has_future_legacy_state(snapshots: &[LegacyStateSnapshot]) -> bool {
+    snapshots.iter().any(|snapshot| {
+        serde_json::from_slice::<Value>(&snapshot.bytes)
             .ok()
-            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
             .and_then(|value| value.get("version").and_then(Value::as_u64))
             .is_some_and(|version| version > CLIENT_STATE_VERSION)
     })
@@ -781,18 +881,13 @@ fn has_future_legacy_state(tauri_data_dir: &Path, electron_data_dir: Option<&Pat
 
 fn migrate_legacy_state(
     state_path: &Path,
-    tauri_data_dir: &Path,
-    electron_data_dir: Option<&Path>,
+    snapshots: &[LegacyStateSnapshot],
     ownership_valid: &dyn Fn() -> bool,
 ) -> Result<(), String> {
-    let mut candidates = [
-        electron_data_dir
-            .and_then(|path| legacy_candidate(&path.join(CLIENT_STATE_FILENAME), "electron")),
-        legacy_candidate(&tauri_data_dir.join(CLIENT_STATE_FILENAME), "tauri"),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>();
+    let mut candidates = snapshots
+        .iter()
+        .filter_map(legacy_candidate)
+        .collect::<Vec<_>>();
     candidates.sort_by(|left, right| {
         left.0
             .restore_enabled
@@ -810,14 +905,20 @@ fn migrate_legacy_state(
             .map_err(|err| format!("failed to create shared client-state directory: {err}"))?;
     }
     write_atomically(state_path, &bytes, ownership_valid)?;
-    for path in [
-        electron_data_dir.map(|path| path.join(CLIENT_STATE_FILENAME)),
-        Some(tauri_data_dir.join(CLIENT_STATE_FILENAME)),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        match fs::remove_file(path) {
+    for snapshot in snapshots {
+        if !ownership_valid() {
+            continue;
+        }
+        let Some(current) = snapshot_legacy_state(snapshot.path.clone(), snapshot.host) else {
+            continue;
+        };
+        if current.identity != snapshot.identity || current.bytes != snapshot.bytes {
+            continue;
+        }
+        if !ownership_valid() {
+            continue;
+        }
+        match fs::remove_file(&snapshot.path) {
             Ok(()) => {}
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => {

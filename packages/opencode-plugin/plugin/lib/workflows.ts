@@ -1,4 +1,5 @@
 import { tool } from "@opencode-ai/plugin/tool"
+import { randomUUID } from "node:crypto"
 import { createCodeNomadRequester, type CodeNomadConfig } from "./request.js"
 
 type WorkflowStatus =
@@ -69,6 +70,7 @@ type WorkflowDefinitionRecord = {
 const JSON_VALUE_BYTES_LIMIT = 256_000
 const JSON_VALUE_DEPTH_LIMIT = 20
 const JSON_VALUE_COUNT_LIMIT = 50_000
+const START_REQUEST_TIMEOUT_MS = 30_000
 const START_CANCEL_TIMEOUT_MS = 5_000
 
 function summarize(run: WorkflowRun) {
@@ -240,35 +242,46 @@ export function createWorkflowTools(config: CodeNomadConfig, requester: Workflow
       async execute(args, context) {
         const inputs = parseWorkflowInputs(args.inputs_json)
         context.abort.throwIfAborted()
-        let aborted = false
-        const onAbort = () => { aborted = true }
-        context.abort.addEventListener("abort", onAbort, { once: true })
-        let run: WorkflowRun
+        const runId = randomUUID()
+        let run: WorkflowRun | undefined
+        let failure: unknown
+        let failed = false
         try {
           run = await requestDefinition<WorkflowRun>(`/${encodeURIComponent(args.definition_id)}/start`, {
             method: "POST",
+            signal: AbortSignal.any([context.abort, AbortSignal.timeout(START_REQUEST_TIMEOUT_MS)]),
             body: JSON.stringify({
+              runId,
               ...(args.objective ? { objective: args.objective } : {}),
               ...(inputs ? { inputs } : {}),
             }),
           })
-        } finally {
-          context.abort.removeEventListener("abort", onAbort)
+        } catch (error) {
+          failed = true
+          failure = error
         }
-        if (aborted) {
+        if (!run && !failed) {
+          failed = true
+          failure = new Error(`Workflow ${runId} start returned no run`)
+        }
+        if (failed || context.abort.aborted) {
           try {
-            await request<WorkflowRun>(`/${encodeURIComponent(run.id)}/cancel`, {
+            await request<WorkflowRun>(`/${encodeURIComponent(runId)}/cancel`, {
               method: "POST",
               signal: AbortSignal.timeout(START_CANCEL_TIMEOUT_MS),
             })
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error)
-            throw new Error(`Workflow ${run.id} started but cancellation failed: ${message}`)
+            throw new Error(`Workflow ${runId} may have started but cancellation failed: ${message}`)
           }
-          const error = new Error("Workflow start aborted")
-          error.name = "AbortError"
-          throw error
+          if (context.abort.aborted) {
+            const error = new Error("Workflow start aborted")
+            error.name = "AbortError"
+            throw error
+          }
+          throw failure
         }
+        if (!run) throw failure
         return `${summarize(run)}\nStarted the current saved definition revision. Only a human can manage approval, input, pause/resume, and recovery actions in the CodeNomad UI.`
       },
     }),

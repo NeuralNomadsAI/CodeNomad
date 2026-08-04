@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto"
+import { spawnSync } from "node:child_process"
 import fs from "node:fs/promises"
+import os from "node:os"
 import path from "node:path"
+import { isDeepStrictEqual } from "node:util"
 import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
 import type {
   WorkflowDefinitionV1,
@@ -20,6 +23,7 @@ import type { Logger } from "../logger"
 import { createInstanceClient } from "../workspaces/instance-client"
 import { createManagedWorktree, isManagedWorktree, isValidWorktreeSlug, listWorktrees, resolveRepoRoot } from "../workspaces/git-worktrees"
 import type { WorkspaceManager } from "../workspaces/manager"
+import { probePosixProcesses, probeWindowsProcesses } from "../workspaces/process-identity"
 import { ensureCodenomadGitExclude } from "../workspaces/worktree-map"
 import { WorkflowDefinitionStore } from "./definition-store"
 import { validateWorkflowDefinition, WORKFLOW_LIMITS } from "./definition-schema"
@@ -36,6 +40,8 @@ const WORKFLOW_HISTORY_LIMIT = 100
 const CREATION_CLEANUP_ATTEMPTS = 3
 const EXECUTOR_LEASE_MS = 10_000
 const EXECUTOR_HEARTBEAT_MS = 2_500
+const READ_REFRESH_MS = 250
+const PROCESS_OWNER = currentProcessOwner()
 
 export class WorkflowRunError extends Error {
   constructor(message: string, readonly statusCode: number) {
@@ -123,7 +129,10 @@ export class WorkflowManager {
   private readonly createClient: (workspaceId: string) => OpencodeClient | null
   private readonly promptTimeoutMs: number
   private readonly managerToken = randomUUID()
+  private readonly processOwner = PROCESS_OWNER
   private initialized?: Promise<void>
+  private readRefresh?: Promise<void>
+  private lastReadRefreshAt = 0
   private readonly definitionStore: WorkflowDefinitionStore
   private admissionQueue = Promise.resolve()
   private creationCleanupQueue = Promise.resolve()
@@ -171,6 +180,10 @@ export class WorkflowManager {
     this.throwIfShuttingDown()
     this.throwIfAdmissionBlocked()
     const legacy = "stages" in input
+    if (!legacy && input.runId) {
+      const existing = this.activeRuns.get(input.runId)?.run ?? await this.read(input.runId)
+      if (existing) return this.idempotentStart(existing, input)
+    }
     const definition = legacy ? undefined : await this.definitionStore.get(input.definitionId, input.definitionRevision)
     if (!legacy && !definition) throw new WorkflowRunError("Workflow definition not found", 404)
     const graph = definition ? await this.snapshotDefinitionGraph(definition) : undefined
@@ -188,7 +201,7 @@ export class WorkflowManager {
       const client = this.requireReadyClient(workspace.id)
       const now = new Date().toISOString()
       const run: WorkflowRun = {
-        id: randomUUID(),
+        id: !legacy && input.runId ? input.runId : randomUUID(),
         workspaceId: workspace.id,
         workspaceLineageId: workspace.lineageId ?? workspace.id,
         workspacePath: workspace.path,
@@ -252,6 +265,19 @@ export class WorkflowManager {
     if (!workspace) throw new WorkflowRunError("Workspace not found", 404)
     if (workspace.status !== "ready") throw new WorkflowRunError("Workspace instance is not ready", 409)
     return { workspace }
+  }
+
+  private idempotentStart(existing: WorkflowRun, input: WorkflowDefinitionRunCreateRequest): WorkflowRun {
+    const sourceWorkspaceId = existing.worktreeSelection?.sourceWorkspaceId ?? existing.workspaceId
+    const requestedPolicy = input.worktree ?? { mode: "current" }
+    if (sourceWorkspaceId !== input.workspaceId || existing.definitionId !== input.definitionId
+      || (input.definitionRevision !== undefined && existing.definitionRevision !== input.definitionRevision)
+      || (input.objective !== undefined && existing.objective !== input.objective)
+      || !isDeepStrictEqual(existing.inputs ?? {}, input.inputs ?? {})
+      || !isDeepStrictEqual(existing.worktreeSelection?.policy ?? { mode: "current" }, requestedPolicy)) {
+      throw new WorkflowRunError("Workflow run ID already belongs to another start request", 409)
+    }
+    return existing
   }
 
   private async selectWorktree(
@@ -457,7 +483,11 @@ export class WorkflowManager {
 
   async get(runId: string, workspaceId?: string): Promise<WorkflowRun | undefined> {
     await this.ensureInitialized()
-    const active = this.activeRuns.get(runId)
+    let active = this.activeRuns.get(runId)
+    if (!active) {
+      await this.refreshForRead()
+      active = this.activeRuns.get(runId)
+    }
     if (!active) {
       const run = await this.read(runId)
       return workspaceId && run ? this.bindWorkspace(run.id, workspaceId) : run
@@ -473,6 +503,7 @@ export class WorkflowManager {
 
   async list(workspaceId?: string): Promise<WorkflowRun[]> {
     await this.ensureInitialized()
+    await this.refreshForRead()
     const requested = workspaceId ? this.options.workspaceManager.get(workspaceId) : undefined
     const candidates = Array.from(this.runIndex.values())
       .filter((entry) => !workspaceId || this.indexMatchesWorkspace(entry, workspaceId, requested))
@@ -1015,6 +1046,16 @@ export class WorkflowManager {
     return admitted
   }
 
+  private refreshForRead(): Promise<void> {
+    if (this.readRefresh) return this.readRefresh
+    if (Date.now() - this.lastReadRefreshAt < READ_REFRESH_MS) return Promise.resolve()
+    const refresh = this.withAdmission(async () => undefined)
+      .then(() => { this.lastReadRefreshAt = Date.now() })
+      .finally(() => { if (this.readRefresh === refresh) this.readRefresh = undefined })
+    this.readRefresh = refresh
+    return refresh
+  }
+
   private admissionLockPath(): string {
     return path.join(this.options.storageDir, ".admission.lock")
   }
@@ -1036,7 +1077,12 @@ export class WorkflowManager {
     const fence = (run.executorFence ?? 0) + 1
     const heartbeatAt = new Date().toISOString()
     run.executorFence = fence
-    run.executorLease = { ownerToken: this.managerToken, fence, heartbeatAt, expiresAt: this.executorLeaseExpiry(heartbeatAt) }
+    run.executorLease = {
+      ownerToken: this.managerToken, fence, heartbeatAt, expiresAt: this.executorLeaseExpiry(heartbeatAt),
+      hostname: this.processOwner.hostname, pid: this.processOwner.pid,
+      ...(this.processOwner.processStart ? { processStart: this.processOwner.processStart } : {}),
+      ...(this.processOwner.bootId ? { bootId: this.processOwner.bootId } : {}),
+    }
   }
 
   private releaseExecutorLease(run: WorkflowRun): void {
@@ -1061,7 +1107,16 @@ export class WorkflowManager {
   }
 
   private isLeaseLive(run: WorkflowRun): boolean {
-    return Boolean(run.executorLease && Date.parse(run.executorLease.expiresAt) > Date.now())
+    const lease = run.executorLease
+    if (!lease) return false
+    if (!lease.hostname || !lease.pid) return Date.parse(lease.expiresAt) > Date.now()
+    if (lease.hostname !== this.processOwner.hostname) return true
+    if (lease.pid === this.processOwner.pid) {
+      return !lease.processStart || !this.processOwner.processStart
+        || (lease.processStart === this.processOwner.processStart && (!lease.bootId || lease.bootId === this.processOwner.bootId))
+    }
+    const liveness = executorProcessLiveness(lease.pid, lease.processStart, lease.bootId)
+    return liveness === "alive" || liveness === "unknown"
   }
 
   private executorLeaseExpiry(heartbeatAt = new Date().toISOString()): string {
@@ -2147,6 +2202,35 @@ export class WorkflowManager {
   }
 }
 
+function currentProcessOwner(): { hostname: string; pid: number; processStart?: string; bootId?: string } {
+  const snapshot = process.platform === "win32"
+    ? probeWindowsProcesses(spawnSync, 1_000)
+    : probePosixProcesses(spawnSync, 1_000, process.platform, { pids: [process.pid] })
+  const identity = snapshot.ok ? snapshot.processes.get(process.pid) : undefined
+  return {
+    hostname: os.hostname(), pid: process.pid,
+    ...(identity ? { processStart: identity.startTime, ...(identity.bootId ? { bootId: identity.bootId } : {}) } : {}),
+  }
+}
+
+function executorProcessLiveness(pid: number, processStart?: string, bootId?: string): "alive" | "dead" | "unknown" {
+  try {
+    process.kill(pid, 0)
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ESRCH" ? "dead" : "unknown"
+  }
+  if (!processStart) return "alive"
+  const snapshot = process.platform === "win32"
+    ? probeWindowsProcesses(spawnSync, 1_000)
+    : probePosixProcesses(spawnSync, 1_000, process.platform, { pids: [pid] })
+  if (snapshot.ok) {
+    const current = snapshot.processes.get(pid)
+    if (!current) return "dead"
+    return current.startTime === processStart && (!bootId || current.bootId === bootId) ? "alive" : "dead"
+  }
+  return "unknown"
+}
+
 async function durableAtomicWrite(destination: string, contents: string, assertOwned?: () => Promise<void>): Promise<void> {
   const temporary = `${destination}.${randomUUID()}.tmp`
   try {
@@ -2159,6 +2243,7 @@ async function durableAtomicWrite(destination: string, contents: string, assertO
     }
     await assertOwned?.()
     await fs.rename(temporary, destination)
+    await assertOwned?.()
     await syncDirectory(path.dirname(destination))
   } catch (error) {
     await fs.rm(temporary, { force: true }).catch(() => undefined)
