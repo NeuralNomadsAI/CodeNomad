@@ -3,6 +3,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import type { WorkflowDefinitionRecord } from "../api-types"
 import { parseWorkflowDefinition, WORKFLOW_DEFINITION_REVISION_LIMIT } from "./definition-schema"
+import { withFilesystemLock } from "./filesystem-lock"
 
 export { WORKFLOW_DEFINITION_REVISION_LIMIT } from "./definition-schema"
 
@@ -178,7 +179,8 @@ export class WorkflowDefinitionStore {
   }
 
   private async write<T>(operation: () => Promise<T>): Promise<T> {
-    const pending = this.queue.catch(() => undefined).then(operation)
+    const pending = this.queue.catch(() => undefined)
+      .then(() => withFilesystemLock(path.join(this.directory, ".write.lock"), operation))
     this.queue = pending.then(() => undefined, () => undefined)
     return pending
   }

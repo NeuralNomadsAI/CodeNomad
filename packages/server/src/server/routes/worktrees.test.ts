@@ -178,3 +178,69 @@ test("managed worktree POST and DELETE exclude each other on the target path", a
     rmSync(temp, { recursive: true, force: true })
   }
 })
+
+test("stale managed worktree DELETE does not remove a replacement", async (context) => {
+  const temp = mkdtempSync(path.join(tmpdir(), "codenomad-stale-worktree-delete-"))
+  const git = (...args: string[]) => spawnSync("git", args, { cwd: temp, encoding: "utf8" })
+  if (git("--version").error) {
+    context.skip("Git is unavailable")
+    rmSync(temp, { recursive: true, force: true })
+    return
+  }
+  try {
+    assert.equal(git("init").status, 0)
+    assert.equal(git("config", "user.email", "test@example.com").status, 0)
+    assert.equal(git("config", "user.name", "CodeNomad Test").status, 0)
+    writeFileSync(path.join(temp, "file.txt"), "initial")
+    assert.equal(git("add", "file.txt").status, 0)
+    assert.equal(git("commit", "-m", "initial").status, 0)
+    const original = await createManagedWorktree({ repoRoot: temp, workspaceFolder: temp, slug: "review" })
+
+    let releaseStale!: () => void
+    let staleEntered!: () => void
+    const staleBlocked = new Promise<void>((resolve) => { releaseStale = resolve })
+    const staleEntry = new Promise<void>((resolve) => { staleEntered = resolve })
+    let ownershipCalls = 0
+    const app = Fastify({ logger: false })
+    registerWorktreeRoutes(app, {
+      workspaceManager: {
+        get: () => ({ id: "workspace", path: temp }),
+        withWorkspacePathLease: async (_path: string, operation: (active: boolean) => Promise<unknown>) => operation(false),
+      } as never,
+      sessionMetadataPersistence: {} as never,
+      workflowManager: {
+        withWorktreeOwnershipLease: async (_source: unknown, _worktree: unknown, operation: (owned: boolean) => Promise<unknown>) => {
+          ownershipCalls += 1
+          if (ownershipCalls === 1) {
+            staleEntered()
+            await staleBlocked
+          }
+          return operation(false)
+        },
+      } as never,
+    })
+
+    const staleDeletion = app.inject({ method: "DELETE", url: "/api/workspaces/workspace/worktrees/review" })
+    await staleEntry
+    const currentDeletion = await app.inject({ method: "DELETE", url: "/api/workspaces/workspace/worktrees/review" })
+    assert.equal(currentDeletion.statusCode, 204)
+    assert.equal(existsSync(original.directory), false)
+
+    const replacement = await app.inject({
+      method: "POST",
+      url: "/api/workspaces/workspace/worktrees",
+      payload: { slug: "review" },
+    })
+    assert.equal(replacement.statusCode, 201)
+    assert.equal(existsSync(original.directory), true)
+
+    releaseStale()
+    const staleResponse = await staleDeletion
+    assert.equal(staleResponse.statusCode, 409)
+    assert.match(staleResponse.body, /changed while deletion was pending/)
+    assert.equal(existsSync(original.directory), true)
+    await app.close()
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+})

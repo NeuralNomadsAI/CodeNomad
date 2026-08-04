@@ -12,6 +12,7 @@ import type {
 } from "../api-types"
 import { WORKFLOW_LIMITS } from "./definition-schema"
 import { validateJsonSchemaValue } from "./json-schema"
+import { isConfirmedRetryCheckpoint } from "./run-state"
 
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1_000
 const MAX_OUTPUT_CHARS = 16_000
@@ -143,10 +144,12 @@ export class WorkflowInterpreter {
       return undefined
     }
 
-    execution.status = "running"
-    execution.startedAt ??= new Date().toISOString()
-    delete execution.error
-    await this.options.persist()
+    if (!isConfirmedRetryCheckpoint(execution)) {
+      execution.status = "running"
+      execution.startedAt ??= new Date().toISOString()
+      delete execution.error
+      await this.options.persist()
+    }
 
     let actionSignal: AbortSignal | undefined
     if (node.type === "agent" || node.type === "shell") {
@@ -213,6 +216,7 @@ export class WorkflowInterpreter {
         if (await this.options.abortSession(actionSessionId)) {
           this.options.sessionFinished(actionSessionId)
           this.forgetSession(execution, actionSessionId)
+          await this.persistSessionCleanup(execution, error)
         }
         else error = new WorkflowAmbiguousSideEffectError(`Workflow session abort was not confirmed: ${this.errorMessage(error)}`)
       }
@@ -356,8 +360,7 @@ export class WorkflowInterpreter {
         if (await this.options.abortSession(sessionId)) {
           this.options.sessionFinished(sessionId)
           this.forgetSession(execution, sessionId)
-          execution.attempt = 0
-          await this.persistSessionCleanup(error)
+          await this.persistSessionCleanup(execution, error)
         }
         else throw new WorkflowAmbiguousSideEffectError(`Workflow session abort was not confirmed: ${this.errorMessage(error)}`)
         throw error
@@ -398,8 +401,7 @@ export class WorkflowInterpreter {
         if (await this.options.abortSession(sessionId)) {
           this.options.sessionFinished(sessionId)
           this.forgetSession(execution, sessionId)
-          execution.attempt = 0
-          await this.persistSessionCleanup(error)
+          await this.persistSessionCleanup(execution, error)
         }
         else throw new WorkflowAmbiguousSideEffectError(`Workflow session abort was not confirmed: ${this.errorMessage(error)}`)
         throw error
@@ -458,6 +460,7 @@ export class WorkflowInterpreter {
     }
     execution.sessionIds ??= []
     if (!execution.sessionIds.includes(sessionId)) execution.sessionIds.push(sessionId)
+    execution.status = "running"
     const accepted = this.options.sessionStarted(sessionId)
     try {
       if (!accepted) this.throwIfCancelled()
@@ -468,8 +471,7 @@ export class WorkflowInterpreter {
       if (await this.options.abortSession(sessionId)) {
         this.options.sessionFinished(sessionId)
         this.forgetSession(execution, sessionId)
-        execution.attempt = 0
-        await this.persistSessionCleanup(error)
+        await this.persistSessionCleanup(execution, error)
       }
       else throw new WorkflowAmbiguousSideEffectError(`Workflow session abort was not confirmed: ${this.errorMessage(error)}`)
       throw error
@@ -590,7 +592,8 @@ export class WorkflowInterpreter {
     else if (root === "vars" && Object.prototype.hasOwnProperty.call(context.vars, name)) value = context.vars[name!]
     else if (root === "nodes") {
       const candidates = this.nodes.filter((node) => node.definitionNodeId === name && node.status === "completed"
-        && this.executionDefinitionInvocationKey(node) === context.definitionInvocationKey).reverse()
+        && this.executionDefinitionInvocationKey(node) === context.definitionInvocationKey
+        && this.referenceScopeMatches(node.instanceKey, context.instanceKey)).reverse()
       value = candidates.sort((left, right) => this.commonPrefix(right.instanceKey, context.instanceKey ?? "")
         - this.commonPrefix(left.instanceKey, context.instanceKey ?? "")).at(0)
     }
@@ -618,6 +621,13 @@ export class WorkflowInterpreter {
     let index = 0
     while (index < left.length && left[index] === right[index]) index += 1
     return index
+  }
+
+  private referenceScopeMatches(candidateKey: string, currentKey?: string): boolean {
+    if (!currentKey) return true
+    const candidate = candidateKey.split("/")
+    return currentKey.split("/").every((segment, index) =>
+      !/\[\d+\]$/.test(segment) || candidate[index] === undefined || candidate[index] === segment)
   }
 
   private observeUsage(info: unknown, execution: WorkflowExecutionNode, budgets: WorkflowBudget[]) {
@@ -787,7 +797,10 @@ export class WorkflowInterpreter {
     if (Object.keys(this.run.sessionBindings).length === 0) delete this.run.sessionBindings
   }
 
-  private async persistSessionCleanup(cause: unknown): Promise<void> {
+  private async persistSessionCleanup(execution: WorkflowExecutionNode, cause: unknown): Promise<void> {
+    execution.status = "waiting"
+    delete execution.error
+    delete execution.completedAt
     try {
       await this.options.persist()
     } catch (error) {

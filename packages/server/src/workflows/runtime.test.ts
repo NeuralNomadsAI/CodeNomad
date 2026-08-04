@@ -136,6 +136,42 @@ describe("declarative workflow runtime", () => {
     }
   })
 
+  it("does not resolve a skipped foreach producer from a completed sibling", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-skipped-sibling-"))
+    let sessions = 0
+    const consumerPrompts: string[] = []
+    const client = { tool: workflowTools, session: {
+      create: async () => ({ data: { id: `skipped-sibling-${++sessions}` } }),
+      prompt: async (input: Record<string, unknown>) => {
+        const prompt = JSON.stringify(input.parts)
+        if (prompt.includes("Consume")) consumerPrompts.push(prompt)
+        return { data: { info: usage(), parts: [{ type: "text", text: "produced" }] } }
+      },
+      abort: async () => ({ data: true }),
+    } } as unknown as OpencodeClient
+    const manager = new WorkflowManager({ workspaceManager, eventBus, logger, storageDir: directory, createClient: () => client })
+    try {
+      await manager.createDefinition({ version: 1, id: "skipped-sibling", name: "Skipped sibling", root: {
+        type: "foreach", id: "each", items: [0, 1], item: "item", maxItems: 2, maxConcurrency: 1, body: {
+          type: "sequence", id: "iteration", steps: [
+            { type: "agent", id: "producer", instructions: "Produce",
+              if: { value: { $ref: "vars.item" }, equals: 0 } },
+            { type: "agent", id: "consumer", title: "Consume", instructions: "Consume",
+              context: { $ref: "nodes.producer.output" } },
+          ],
+        },
+      } })
+      const started = await manager.start({ workspaceId: "workspace", definitionId: "skipped-sibling" })
+      await waitFor(manager, started.id, ["completed"])
+      assert.equal(consumerPrompts.length, 2)
+      assert.match(consumerPrompts[0]!, /Context/)
+      assert.doesNotMatch(consumerPrompts[1]!, /Context/)
+    } finally {
+      await manager.shutdown()
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it("allows shared context references but rejects ancestor cycles", () => {
     const shared = { value: 1 }
     const run = {
@@ -705,6 +741,63 @@ describe("declarative workflow runtime", () => {
     }
   })
 
+  it("resumes a confirmed-abort checkpoint captured during retry delay", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-retry-checkpoint-"))
+    const now = new Date().toISOString()
+    const definition: WorkflowDefinitionV1 = { version: 1, id: "retry-checkpoint", name: "Retry checkpoint", root: {
+      type: "agent", id: "work", instructions: "Retry", retry: { maxAttempts: 2, delayMs: 60_000, idempotent: true },
+    } }
+    const run = {
+      id: "00000000-0000-4000-8000-000000000090", workspaceId: "workspace", workspaceLineageId: "lineage",
+      workspacePath: "C:/workspace", objective: "Retry safely", status: "running", rootSessionId: "root", steps: [], revision: 1,
+      definitionId: definition.id, definitionRevision: 1, definitionSnapshot: definition, inputs: {}, executionNodes: [],
+      createdAt: now, updatedAt: now,
+    } as WorkflowRun
+    let prompts = 0
+    let sessions = 0
+    let checkpoint: WorkflowRun | undefined
+    const crash = new AbortController()
+    const client = { tool: workflowTools, session: {
+      create: async () => ({ data: { id: `retry-checkpoint-${++sessions}` } }),
+      prompt: async () => {
+        if (++prompts === 1) throw new Error("retryable failure")
+        return { data: { info: usage(), parts: [{ type: "text", text: "done" }] } }
+      },
+      abort: async () => ({ data: true }),
+    } } as unknown as OpencodeClient
+    const interpreter = new WorkflowInterpreter({
+      run, client,
+      persist: async () => {
+        const action = run.executionNodes?.find((node) => node.definitionNodeId === "work")
+        if (!checkpoint && action?.status === "waiting" && action.attempt === 1 && !action.sessionIds?.length) {
+          checkpoint = JSON.parse(JSON.stringify(run)) as WorkflowRun
+          crash.abort(new Error("simulated crash"))
+        }
+      },
+      signal: () => crash.signal, sessionStarted: () => true, sessionFinished: () => {},
+      abortSession: async () => true, isCancelled: () => false,
+    })
+    let manager: WorkflowManager | undefined
+    try {
+      await assert.rejects(interpreter.execute(), /simulated crash/)
+      assert.equal(checkpoint?.executionNodes?.[0]?.attempt, 1)
+      assert.equal(checkpoint?.executionNodes?.[0]?.status, "waiting")
+      assert.equal(checkpoint?.executionNodes?.[0]?.sessionIds, undefined)
+      await fs.writeFile(path.join(directory, `${run.id}.json`), JSON.stringify(checkpoint), "utf8")
+      manager = new WorkflowManager({ workspaceManager, eventBus, logger, storageDir: directory, createClient: () => client })
+      const recovered = (await manager.get(run.id))!
+      assert.equal(recovered.status, "interrupted")
+      assert.equal(recovered.executionNodes?.[0]?.attempt, 1)
+      await manager.resume(run.id)
+      const completed = await waitFor(manager, run.id, ["completed"])
+      assert.equal(completed.executionNodes?.[0]?.attempt, 2)
+      assert.equal(prompts, 2)
+    } finally {
+      await manager?.shutdown()
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it("serializes budgeted actions and enforces usage before admitting another action", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-budget-admission-"))
     let prompts = 0
@@ -766,7 +859,7 @@ describe("declarative workflow runtime", () => {
       assert.equal(prompts, 1)
       assert.equal(sessions, 2)
       assert.ok(signals.every((signal) => signal === signals[0]))
-      assert.equal(failed.executionNodes?.find((node) => node.definitionNodeId === "work")?.attempt, 0)
+      assert.equal(failed.executionNodes?.find((node) => node.definitionNodeId === "work")?.attempt, 1)
       assert.equal(failed.executionNodes?.find((node) => node.definitionNodeId === "work")?.sessionIds, undefined)
     } finally {
       await manager.shutdown()

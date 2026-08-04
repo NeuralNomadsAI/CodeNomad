@@ -4,12 +4,21 @@ import { Logger } from "../logger"
 
 export class EventBus extends EventEmitter {
   private readonly instanceStatuses = new Map<string, Extract<WorkspaceEventPayload, { type: "instance.eventStatus" }>>()
+  private readonly replay: Array<{ id: number; event: WorkspaceEventPayload }> = []
+  private nextEventId = 0
 
-  constructor(private readonly logger?: Logger) {
+  constructor(private readonly logger?: Logger, private readonly replayLimit = 1_000) {
     super()
   }
 
+  get latestEventId(): number {
+    return this.nextEventId
+  }
+
   publish(event: WorkspaceEventPayload): boolean {
+    const sequenced = { id: ++this.nextEventId, event }
+    this.replay.push(sequenced)
+    if (this.replay.length > this.replayLimit) this.replay.shift()
     if (event.type === "instance.eventStatus") {
       const terminal = event.status === "disconnected"
         && (event.reason === "workspace stopped" || event.reason === "workspace error")
@@ -25,11 +34,11 @@ export class EventBus extends EventEmitter {
         this.logger.trace({ event }, "Workspace event payload")
       }
     }
-    return super.emit(event.type, event)
+    return super.emit(event.type, event, sequenced.id)
   }
 
-  onEvent(listener: (event: WorkspaceEventPayload) => void) {
-    const handler = (event: WorkspaceEventPayload) => listener(event)
+  onEvent(listener: (event: WorkspaceEventPayload, id?: number) => void, afterId?: number) {
+    const handler = (event: WorkspaceEventPayload, id: number) => listener(event, id)
     this.on("workspace.created", handler)
     this.on("workspace.started", handler)
     this.on("workspace.error", handler)
@@ -44,7 +53,13 @@ export class EventBus extends EventEmitter {
     this.on("instance.eventStatus", handler)
     this.on("yolo.stateChanged", handler)
     this.on("yolo.autoAccepted", handler)
-    for (const status of this.instanceStatuses.values()) listener(status)
+    if (afterId === undefined) {
+      for (const status of this.instanceStatuses.values()) listener(status)
+    } else {
+      for (const entry of this.replay) {
+        if (entry.id > afterId) listener(entry.event, entry.id)
+      }
+    }
     return () => {
       this.off("workspace.created", handler)
       this.off("workspace.started", handler)

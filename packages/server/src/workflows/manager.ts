@@ -23,6 +23,7 @@ import type { WorkspaceManager } from "../workspaces/manager"
 import { ensureCodenomadGitExclude } from "../workspaces/worktree-map"
 import { WorkflowDefinitionStore } from "./definition-store"
 import { validateWorkflowDefinition, WORKFLOW_LIMITS } from "./definition-schema"
+import { withFilesystemLock } from "./filesystem-lock"
 import { WorkflowCheckpointError, WorkflowInterpreter, WorkflowSuspendedError } from "./interpreter"
 import { validateJsonSchemaValue } from "./json-schema"
 import { definitionRunFields, holdsWorkflowReservation, markWorkflowRecoveryRequired, validatePersistedWorkflowRun } from "./run-state"
@@ -129,7 +130,7 @@ export class WorkflowManager {
     this.definitionStore = new WorkflowDefinitionStore(
       options.definitionsDir ?? path.join(options.storageDir, "definitions"),
     )
-    this.initialized = this.recoverInterruptedRuns()
+    this.initialized = withFilesystemLock(this.admissionLockPath(), () => this.recoverInterruptedRuns())
   }
 
   async start(input: WorkflowRunStartRequest): Promise<WorkflowRun> {
@@ -176,6 +177,7 @@ export class WorkflowManager {
     let persisted = false
     let retained = !creationRequest
     try {
+      await this.assertNoPersistedReservation(workspace)
       const client = this.requireReadyClient(workspace.id)
       const now = new Date().toISOString()
       const run: WorkflowRun = {
@@ -537,6 +539,8 @@ export class WorkflowManager {
       if (restoredWorkspace && restoredWorkspace.id !== run.workspaceId) {
         await this.bindWorkspaceCurrent(run, restoredWorkspace.id)
       }
+      const workspace = this.options.workspaceManager.get(run.workspaceId)
+      if (workspace) await this.assertNoPersistedReservation(workspace, run.id)
       const client = this.requireReadyClient(run.workspaceId, run.id)
       const prior = this.cloneRun(run)
       run.status = "running"
@@ -847,6 +851,8 @@ export class WorkflowManager {
       await this.bindWorkspaceCurrent(run, lineageWorkspace.id)
     }
     this.throwIfShuttingDown()
+    const workspace = this.options.workspaceManager.get(run.workspaceId)
+    if (workspace) await this.assertNoPersistedReservation(workspace, run.id)
     return this.requireReadyClient(run.workspaceId, run.id)
   }
 
@@ -886,6 +892,35 @@ export class WorkflowManager {
     const client = this.createClient(workspaceId)
     if (!client) throw new WorkflowRunError("Workspace instance is not ready", 409)
     return client
+  }
+
+  private async assertNoPersistedReservation(workspace: WorkspaceDescriptor, runId?: string): Promise<void> {
+    let entries: string[]
+    try {
+      entries = await fs.readdir(this.options.storageDir)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return
+      throw error
+    }
+    for (const entry of entries) {
+      if (!entry.endsWith(".json") || entry === `${runId}.json`) continue
+      const persistedId = entry.slice(0, -5)
+      let run: WorkflowRun
+      try {
+        run = JSON.parse(await fs.readFile(path.join(this.options.storageDir, entry), "utf8")) as WorkflowRun
+        validatePersistedWorkflowRun(run, persistedId)
+      } catch (error) {
+        this.options.logger.warn({ err: error, file: entry }, "Skipping corrupt workflow run during admission")
+        continue
+      }
+      if (!holdsWorkflowReservation(run)) continue
+      if (run.workspaceLineageId === (workspace.lineageId ?? workspace.id)) {
+        throw new WorkflowRunError("A workflow is already running for this workspace lineage", 409)
+      }
+      if (this.samePath(run.workspacePath, workspace.path)) {
+        throw new WorkflowRunError("A workflow is already running for this workspace path", 409)
+      }
+    }
   }
 
   private throwIfShuttingDown(): void {
@@ -942,9 +977,14 @@ export class WorkflowManager {
   }
 
   private withAdmission<T>(operation: () => Promise<T>): Promise<T> {
-    const admitted = this.admissionQueue.catch(() => undefined).then(operation)
+    const admitted = this.admissionQueue.catch(() => undefined)
+      .then(() => withFilesystemLock(this.admissionLockPath(), operation))
     this.admissionQueue = admitted.then(() => undefined, () => undefined)
     return admitted
+  }
+
+  private admissionLockPath(): string {
+    return path.join(this.options.storageDir, ".admission.lock")
   }
 
   private deferCreationCleanup(requestId: string): void {

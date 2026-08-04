@@ -28,6 +28,7 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get("/api/events", (request, reply) => {
     const clientId = ++nextClientId
     const connection = ConnectionQuerySchema.parse(request.query ?? {})
+    const lastEventId = parseLastEventId(request.headers["last-event-id"])
     deps.logger.debug({ clientId }, "SSE client connected")
 
     reply.header("Content-Type", "text/event-stream")
@@ -69,15 +70,18 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
       backpressureTimeout = setTimeout(() => close(true), BACKPRESSURE_TIMEOUT_MS)
     }
 
-    const send = (event: WorkspaceEventPayload) => {
+    const send = (event: WorkspaceEventPayload, id?: number) => {
       deps.logger.debug({ clientId, type: event.type }, "SSE event dispatched")
       if (deps.logger.isLevelEnabled("trace")) {
         deps.logger.trace({ clientId, event }, "SSE event payload")
       }
-      write(`data: ${JSON.stringify(event)}\n\n`)
+      write(`${id === undefined ? "" : `id: ${id}\n`}data: ${JSON.stringify(event)}\n\n`)
     }
 
-    unsubscribe = deps.eventBus.onEvent(send)
+    if (lastEventId === undefined) {
+      write(`event: codenomad.replay.cursor\nid: ${deps.eventBus.latestEventId}\ndata: {}\n\n`)
+    }
+    unsubscribe = deps.eventBus.onEvent(send, lastEventId)
     if (closed) {
       unsubscribe()
       return
@@ -117,4 +121,11 @@ function copyReplyHeadersToRaw(reply: FastifyReply): void {
   for (const [name, value] of Object.entries(reply.getHeaders())) {
     if (value !== undefined) reply.raw.setHeader(name, value)
   }
+}
+
+function parseLastEventId(value: string | string[] | undefined): number | undefined {
+  const raw = Array.isArray(value) ? value[0] : value
+  if (!raw || !/^\d+$/.test(raw)) return undefined
+  const id = Number(raw)
+  return Number.isSafeInteger(id) ? id : undefined
 }

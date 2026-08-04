@@ -262,4 +262,28 @@ describe("secondary hosts", () => {
     await state.flushClientState()
     assert.equal(saves, 1)
   })
+  it("reloads on native promotion before capture and resumes from the authoritative revision", async () => {
+    let primary = false, ownershipChanged!: () => void, reloads = 0
+    const saved: any[] = []
+    const authoritative = { ...snapshot("authoritative", { [layoutKey]: "480" }), revision: 7 }
+    const api = {
+      onClientStateOwnershipChange: (callback: () => void) => { ownershipChanged = callback; return () => {} },
+      loadClientState: async () => loadResult(authoritative, primary),
+      saveClientState: async (_token: string, value: unknown) => { saved.push(value); return true },
+    }
+    const secondary = await boot(api)
+    Object.defineProperty(window, "location", { configurable: true, value: { reload: () => { reloads += 1 } } })
+    primary = true
+    ownershipChanged()
+    assert.equal(reloads, 1)
+    assert.equal(secondary.clientStateIsPrimary(), false)
+    assert.equal(saved.length, 0)
+
+    const promoted = await boot(api)
+    assert.deepEqual(promoted.loadedRestorableSession()?.tabs[0], { kind: "sidecar", sidecarId: "authoritative" })
+    promoted.updateRestorableSession(session("after-promotion"))
+    await promoted.flushClientState()
+    assert.equal(saved[0].revision, 8)
+    assert.equal(saved[0].layout[layoutKey], "480")
+  })
 })

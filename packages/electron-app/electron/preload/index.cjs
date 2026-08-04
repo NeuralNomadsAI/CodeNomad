@@ -43,6 +43,11 @@ const localElectronAPI = {
   setClientStateRestoreEnabled: (token, enabled) =>
     ipcRenderer.invoke("client-state:setRestoreEnabled", token, Boolean(enabled)),
   clearClientState: (token) => ipcRenderer.invoke("client-state:clear", token),
+  onClientStateOwnershipChange: (callback) => {
+    const listener = () => callback()
+    ipcRenderer.on("client-state:ownership-changed", listener)
+    return () => ipcRenderer.removeListener("client-state:ownership-changed", listener)
+  },
 }
 
 const remoteElectronAPI = {

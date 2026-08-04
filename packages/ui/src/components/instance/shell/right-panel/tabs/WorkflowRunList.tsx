@@ -6,6 +6,7 @@ import {
   answerWorkflowGate,
   approveWorkflowRun,
   cancelWorkflowRun,
+  isWorkflowRunHydrating,
   pauseWorkflowRun,
   resumeWorkflowRun,
 } from "../../../../../stores/workflows"
@@ -39,6 +40,7 @@ const WorkflowRunCard: Component<WorkflowRunListProps & { run: WorkflowRun; expa
   const [busy, setBusy] = createSignal(false)
   const [gateInput, setGateInput] = createSignal("{}")
   const t = props.t
+  const detailsHydrating = () => isWorkflowRunHydrating(props.instanceId, props.run.id)
   const action = async (operation: () => Promise<WorkflowRun>) => {
     setBusy(true)
     props.onError("")
@@ -47,6 +49,8 @@ const WorkflowRunCard: Component<WorkflowRunListProps & { run: WorkflowRun; expa
     } finally { setBusy(false) }
   }
   const approve = async () => {
+    if (detailsHydrating()) return
+    const expectedRevision = props.run.revision
     const gate = props.run.pendingGate
     const reviewStepId = props.run.pendingReviewStepId
     if (!gate && !reviewStepId) return
@@ -54,7 +58,7 @@ const WorkflowRunCard: Component<WorkflowRunListProps & { run: WorkflowRun; expa
       confirmLabel: t("instanceShell.workflows.actions.approve"),
       cancelLabel: t("instanceShell.workflows.actions.keepWaiting"), dismissible: false,
     })
-    if (!confirmed) return
+    if (!confirmed || detailsHydrating() || props.run.revision !== expectedRevision) return
     await action(() => gate
       ? answerWorkflowGate(props.instanceId, props.run.id, gate.executionNodeId, true)
       : approveWorkflowRun(props.instanceId, props.run.id, reviewStepId!))
@@ -67,15 +71,19 @@ const WorkflowRunCard: Component<WorkflowRunListProps & { run: WorkflowRun; expa
     if (confirmed) await action(() => cancelWorkflowRun(props.instanceId, props.run.id))
   }
   const recover = async () => {
+    if (detailsHydrating()) return
     const expectedRevision = props.run.revision
     const confirmed = await showConfirmDialog(t("instanceShell.workflows.confirm.recovery.message"), {
       variant: "warning", confirmLabel: t("instanceShell.workflows.actions.confirmRecovery"),
       cancelLabel: t("instanceShell.workflows.actions.keepWaiting"), dismissible: false,
     })
-    if (confirmed) await action(() => resumeWorkflowRun(props.instanceId, props.run.id, true, expectedRevision))
+    if (confirmed && !detailsHydrating() && props.run.revision === expectedRevision) {
+      await action(() => resumeWorkflowRun(props.instanceId, props.run.id, true, expectedRevision))
+    }
   }
   const answerInput = async (event: SubmitEvent) => {
     event.preventDefault()
+    if (detailsHydrating()) return
     const gate = props.run.pendingGate
     if (!gate) return
     let answer: unknown
@@ -134,11 +142,11 @@ const WorkflowRunCard: Component<WorkflowRunListProps & { run: WorkflowRun; expa
             <Show when={gate().gate === "approval"} fallback={
               <form onSubmit={answerInput} class="workflow-form">
                 <label class="workflow-field"><span>{t("instanceShell.workflows.gate.answer")}</span><textarea required spellcheck={false} rows={5} value={gateInput()} onInput={(event) => setGateInput(event.currentTarget.value)} /></label>
-                <button type="submit" class="workflow-button workflow-button-primary" disabled={busy()}>{t("instanceShell.workflows.gate.submit")}</button>
+                <button type="submit" class="workflow-button workflow-button-primary" disabled={busy() || detailsHydrating()}>{t("instanceShell.workflows.gate.submit")}</button>
               </form>
             }>
               <form onSubmit={(event) => { event.preventDefault(); void approve() }}>
-                <button type="submit" class="workflow-button workflow-button-primary" disabled={busy()}>{t("instanceShell.workflows.actions.approve")}</button>
+                <button type="submit" class="workflow-button workflow-button-primary" disabled={busy() || detailsHydrating()}>{t("instanceShell.workflows.actions.approve")}</button>
               </form>
             </Show>
           </section>
@@ -146,10 +154,10 @@ const WorkflowRunCard: Component<WorkflowRunListProps & { run: WorkflowRun; expa
       </Show>
       <Show when={props.run.error}><div class="workflow-error" role="alert">{props.run.error}</div></Show>
       <div class="workflow-run-actions">
-        <Show when={props.run.pendingReviewStepId && !props.run.pendingGate}><button type="button" class="workflow-button workflow-button-primary" disabled={busy()} onClick={() => void approve()}>{t("instanceShell.workflows.actions.approve")}</button></Show>
+        <Show when={props.run.pendingReviewStepId && !props.run.pendingGate}><button type="button" class="workflow-button workflow-button-primary" disabled={busy() || detailsHydrating()} onClick={() => void approve()}>{t("instanceShell.workflows.actions.approve")}</button></Show>
         <Show when={props.run.status === "running" && props.run.definitionSnapshot}><button type="button" class="workflow-button" disabled={busy()} onClick={() => void action(() => pauseWorkflowRun(props.instanceId, props.run.id))}>{t("instanceShell.workflows.actions.pause")}</button></Show>
         <Show when={props.run.status === "paused" || props.run.status === "interrupted"}><button type="button" class="workflow-button workflow-button-primary" disabled={busy()} onClick={() => void action(() => resumeWorkflowRun(props.instanceId, props.run.id))}>{t("instanceShell.workflows.actions.resume")}</button></Show>
-        <Show when={props.run.status === "recovery_required"}><button type="button" class="workflow-button workflow-button-primary" disabled={busy()} onClick={() => void recover()}>{t("instanceShell.workflows.actions.confirmRecovery")}</button></Show>
+        <Show when={props.run.status === "recovery_required"}><button type="button" class="workflow-button workflow-button-primary" disabled={busy() || detailsHydrating()} onClick={() => void recover()}>{t("instanceShell.workflows.actions.confirmRecovery")}</button></Show>
         <Show when={cancellable()}><button type="button" class="workflow-button workflow-button-danger" disabled={busy()} onClick={() => void cancel()}>{t("instanceShell.workflows.actions.cancel")}</button></Show>
       </div>
       </Show>

@@ -326,13 +326,8 @@ export async function listWorktrees(params: {
 }
 
 export function isValidWorktreeSlug(slug: string): boolean {
-  if (!slug) return false
-  const trimmed = slug.trim()
-  if (!trimmed) return false
-  if (trimmed.length > 200) return false
-  // Disallow control characters; allow branch-like slugs including '/'.
-  if (/[\x00-\x1F\x7F]/.test(trimmed)) return false
-  return true
+  if (!slug || slug.length > 200) return false
+  return /^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(slug)
 }
 
 export function getManagedWorktreePath(repoRoot: string, slug: string): string {

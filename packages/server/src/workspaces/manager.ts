@@ -167,12 +167,12 @@ export class WorkspaceManager {
   }
   list(): WorkspaceDescriptor[] {
     return Array.from(this.workspaces.values())
-      .filter((record) => record[WORKSPACE_STATE].published)
+      .filter((record) => record[WORKSPACE_STATE].published || record[WORKSPACE_STATE].cleanupBlocked)
   }
 
   get(id: string): WorkspaceDescriptor | undefined {
     const record = this.workspaces.get(id)
-    return record?.[WORKSPACE_STATE].published ? record : undefined
+    return record && (record[WORKSPACE_STATE].published || record[WORKSPACE_STATE].cleanupBlocked) ? record : undefined
   }
 
   getInstancePort(id: string): number | undefined {
@@ -201,7 +201,8 @@ export class WorkspaceManager {
     return this.withWorkspacePathKeyLease(pathKey, () => {
       const active = Array.from(this.workspaces.values()).some((record) =>
         normalizeWorkspaceIdentityPath(record.path) === pathKey
-        && (record.status === "starting" || record.status === "ready" || record.status === "error"))
+        && (record[WORKSPACE_STATE].cleanupBlocked
+          || record.status === "starting" || record.status === "ready" || record.status === "error"))
       return operation(active)
     })
   }
@@ -336,8 +337,12 @@ export class WorkspaceManager {
         if (this.shuttingDown) {
           throw new Error("Workspace manager is shutting down")
         }
-        if (Array.from(this.workspaces.values()).some((record) =>
-          record[WORKSPACE_STATE].cleanupBlocked && normalizeWorkspaceIdentityPath(record.path) === pathKey)) {
+        const pathRecords = Array.from(this.workspaces.values()).filter((record) =>
+          normalizeWorkspaceIdentityPath(record.path) === pathKey)
+        if (pathRecords.some((record) => record[WORKSPACE_STATE].deletePromise)) {
+          throw new Error("Workspace deletion is pending; wait for it to finish before relaunch")
+        }
+        if (pathRecords.some((record) => record[WORKSPACE_STATE].cleanupBlocked)) {
           throw new Error("Workspace cleanup is incomplete and must be retried before relaunch")
         }
         if (options.lineageId) {
@@ -586,14 +591,14 @@ export class WorkspaceManager {
         throw launchFailure
       }
       state.cleanupBlocked = true
-      if (!state.published) {
-        throw stopFailure
-      }
       record.status = "error"
       record.error = stopFailure instanceof Error
         ? `Workspace startup failed and its process could not be stopped: ${stopFailure.message}`
         : launchFailure instanceof Error ? launchFailure.message : String(launchFailure)
       record.updatedAt = new Date().toISOString()
+      if (!state.published) {
+        throw stopFailure
+      }
       if (this.workspaces.get(id) === record && state.published) {
         this.options.eventBus.publish({ type: "workspace.error", workspace: record })
       }
@@ -607,7 +612,9 @@ export class WorkspaceManager {
     if (!record) return Promise.resolve(undefined)
     const state = record[WORKSPACE_STATE]
     if (!state.deletePromise) {
+      let cleanupStarted = false
       const cleanup = () => {
+        cleanupStarted = true
         if (!state.abortController.signal.aborted) {
           state.abortController.abort(new WorkspaceLaunchCancelledError(id))
         }
@@ -621,7 +628,7 @@ export class WorkspaceManager {
           ? cleanup()
           : this.deletionGuard(record, cleanup))
         .catch((error) => {
-          state.cleanupBlocked = true
+          if (cleanupStarted && this.workspaces.get(id) === record) state.cleanupBlocked = true
           if (state.deletePromise === deletePromise) state.deletePromise = undefined
           throw error
         })

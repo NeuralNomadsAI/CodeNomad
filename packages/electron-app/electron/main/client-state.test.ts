@@ -85,6 +85,49 @@ test("cross-host ownership is required in addition to each host-local election",
   await successor.drainAndReleasePrimary()
 })
 
+test("a retained secondary promotes after the other host exits and reloads before writes", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "codenomad-late-host-"))
+  const firstDirectory = join(root, "first"), electronDirectory = join(root, "electron"), election = join(root, "election")
+  mkdirSync(firstDirectory); mkdirSync(electronDirectory)
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const identities = new Map([[8201, "tauri-start"], [8202, "electron-start"]])
+  const crossHostDependencies = { pidAlive: (pid: number) => identities.has(pid), processStartIdentity: (pid: number) => identities.get(pid) }
+  const first = new ClientStateManager(firstDirectory, undefined, {
+    crossHostElectionDirectory: election,
+    crossHostDependencies,
+    processOwner: { pid: 8201, runToken: "tauri", processStartIdentity: "tauri-start" },
+  })
+  const secondary = new ClientStateManager(electronDirectory, undefined, {
+    crossHostElectionDirectory: election,
+    crossHostDependencies,
+    processOwner: { pid: 8202, runToken: "electron", processStartIdentity: "electron-start" },
+  })
+  let notifications = 0
+  secondary.onOwnershipChanged(() => { notifications += 1 })
+  assert.equal(secondary.refreshPrimary(), false)
+  assert.deepEqual(secondary.loadClientState(), { isPrimary: false, restoreEnabled: false, snapshot: null })
+  const authoritative = {
+    version: 1,
+    restoreEnabled: true,
+    snapshot: { revision: 7, kept: true },
+    window: { bounds: { x: 10, y: 20, width: 1200, height: 800 }, maximized: false, fullscreen: false, zoomFactor: 1.25 },
+  }
+  writeFileSync(join(root, "client-state.json"), JSON.stringify(authoritative))
+
+  await first.drainAndReleasePrimary()
+  identities.delete(8201)
+  assert.equal(secondary.refreshPrimary(), true)
+  assert.equal(notifications, 1)
+  assert.equal(await secondary.saveClientState({ revision: 1, default: true }), false)
+  assert.deepEqual(secondary.loadClientState().snapshot, authoritative.snapshot)
+  assert.equal(await secondary.saveClientState({ revision: 8, kept: true }), true)
+  assert.deepEqual(JSON.parse(readFileSync(join(root, "client-state.json"), "utf8")), {
+    ...authoritative,
+    snapshot: { revision: 8, kept: true },
+  })
+  await secondary.drainAndReleasePrimary()
+})
+
 test("first shared primary deterministically migrates legacy host envelopes", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "codenomad-migration-"))
   const electron = join(root, "electron"), tauri = join(root, "tauri"), election = join(root, "shared", "election")

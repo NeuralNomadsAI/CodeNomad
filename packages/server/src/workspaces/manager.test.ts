@@ -208,13 +208,16 @@ describe("workspace manager lifecycle", () => {
 
     const deletion = harness.manager.delete(workspaceId)
     await guardEntered.promise
-    const replacement = await harness.manager.create(process.cwd())
-
-    assert.equal(replacement.created, true)
-    assert.notEqual(replacement.workspace.id, workspaceId)
+    await assert.rejects(harness.manager.create(process.cwd()), /deletion is pending/)
+    assert.equal((harness.manager as any).workspaces.size, 1)
+    assert.equal(harness.runtime.active.size, 1)
     finishGuard.resolve()
     await assert.rejects(deletion, WorkspaceDeletionBlockedError)
     assert.equal(harness.manager.get(workspaceId)?.status, "ready")
+
+    const reused = await harness.manager.create(process.cwd())
+    assert.equal(reused.created, false)
+    assert.equal(reused.workspace.id, workspaceId)
   })
 
   it("does not reuse a pending workspace while its guarded deletion is pending", async () => {
@@ -231,19 +234,12 @@ describe("workspace manager lifecycle", () => {
 
     const deletion = harness.manager.delete(workspaceId)
     await guardEntered.promise
-    const replacement = harness.manager.create(process.cwd())
-    while ((harness.manager as any).workspaces.size < 2) {
-      await new Promise<void>((resolve) => setImmediate(resolve))
-    }
-
-    assert.equal((harness.manager as any).workspaces.size, 2)
-    const pending = [...(harness.manager as any).pendingWorkspaceCreations.values()] as Array<{ id: string }>
-    assert.equal(pending.length, 1)
-    assert.notEqual(pending[0]?.id, workspaceId)
+    await assert.rejects(harness.manager.create(process.cwd()), /deletion is pending/)
+    assert.equal((harness.manager as any).workspaces.size, 1)
+    assert.equal(harness.runtime.active.size, 1)
     finishGuard.resolve()
     await assert.rejects(firstCreation, WorkspaceLaunchCancelledError)
     await deletion
-    await assert.rejects(replacement, WorkspaceLaunchCancelledError)
   })
 
   for (const status of ["stopped", "error"] as const) {
@@ -362,6 +358,44 @@ describe("workspace manager lifecycle", () => {
     await harness.manager.delete(workspaceId)
     assert.equal(harness.runtime.active.has(workspaceId), false)
     assert.equal(harness.manager.get(workspaceId), undefined)
+  })
+
+  it("blocks deletion and relaunch while stopped workspace cleanup is incomplete", async () => {
+    const harness = createHarness()
+    const workspaceId = await createReady(harness)
+    harness.runtime.active.delete(workspaceId)
+    harness.runtime.onExit?.({ workspaceId, code: 0, signal: null, requested: false })
+    harness.runtime.failStops = 2
+
+    await assert.rejects(harness.manager.delete(workspaceId), /controlled stop failure/)
+    assert.equal(harness.manager.get(workspaceId)?.status, "stopped")
+    await harness.manager.withWorkspacePathLease(process.cwd(), async (active) => {
+      assert.equal(active, true)
+    })
+    await assert.rejects(harness.manager.create(process.cwd()), /cleanup is incomplete/)
+
+    await harness.manager.delete(workspaceId)
+    assert.equal(harness.manager.get(workspaceId), undefined)
+  })
+
+  it("exposes unpublished failed cleanup for safe deletion retry", async () => {
+    const harness = createHarness()
+    harness.runtime.failStops = 1
+    const creation = harness.manager.create(process.cwd())
+    const workspaceId = await harness.runtime.launchCalled.promise
+    harness.runtime.launchResult.reject(new Error("controlled launch failure"))
+
+    await assert.rejects(creation, /controlled stop failure/)
+    assert.equal(harness.manager.list()[0]?.id, workspaceId)
+    assert.equal(harness.manager.get(workspaceId)?.status, "error")
+    await harness.manager.withWorkspacePathLease(process.cwd(), async (active) => {
+      assert.equal(active, true)
+    })
+    await assert.rejects(harness.manager.create(process.cwd()), /cleanup is incomplete/)
+
+    await harness.manager.delete(workspaceId)
+    assert.equal(harness.manager.get(workspaceId), undefined)
+    assert.equal(harness.runtime.active.has(workspaceId), false)
   })
 
   it("retries cancellation deletion for an already-cancelled request", async () => {

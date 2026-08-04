@@ -138,7 +138,14 @@ fn capture_main_window_in_memory(app: &AppHandle) {
         return;
     }
     if client_state.take_renderer_reload() {
+        reconcile_main_window(app);
         let _ = app.emit(CLIENT_STATE_OWNERSHIP_CHANGED_EVENT, ());
+    }
+    if client_state
+        .renderer_reconciliation_pending
+        .load(Ordering::SeqCst)
+    {
+        return;
     }
     if client_state.normal_writes_suppressed().unwrap_or(true) {
         return;
@@ -207,6 +214,77 @@ fn schedule_flush(app: &AppHandle) {
             }
         }
     });
+}
+
+fn apply_saved_window(
+    window: &tauri::WebviewWindow,
+    client_state: &ClientState,
+    mut saved_window: NativeWindowState,
+) {
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let displays = window
+        .available_monitors()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|monitor| {
+            let work_area = monitor.work_area();
+            let position = work_area.position.to_logical::<i32>(scale);
+            let size = work_area.size.to_logical::<u32>(scale);
+            DisplayArea {
+                x: position.x,
+                y: position.y,
+                width: size.width,
+                height: size.height,
+            }
+        })
+        .collect::<Vec<_>>();
+    if let Some(bounds) = clamp_window_bounds(&saved_window.bounds, &displays) {
+        let _ = window.set_size(LogicalSize::new(bounds.width as u32, bounds.height as u32));
+        let _ = window.set_position(LogicalPosition::new(bounds.x, bounds.y));
+        saved_window.bounds = bounds;
+    } else if let Ok(position) = window.outer_position() {
+        if let Ok(size) = window.inner_size() {
+            let position = position.to_logical::<i32>(scale);
+            let size = size.to_logical::<u32>(scale);
+            saved_window.bounds = WindowBounds {
+                x: position.x,
+                y: position.y,
+                width: size.width.min(i32::MAX as u32) as i32,
+                height: size.height.min(i32::MAX as u32) as i32,
+            };
+        }
+    }
+    if let Ok(mut state) = client_state.state.lock() {
+        state.window = Some(saved_window.clone());
+    }
+    let _ = window.set_zoom(saved_window.zoom_factor);
+    if saved_window.maximized {
+        let _ = window.maximize();
+    }
+    if saved_window.fullscreen {
+        let _ = window.set_fullscreen(true);
+        if cfg!(not(target_os = "macos")) {
+            let _ = window.hide_menu();
+        }
+    }
+}
+
+pub(super) fn reconcile_main_window(app: &AppHandle) {
+    let Some(client_state) = app.try_state::<ClientState>() else {
+        return;
+    };
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let saved_window = client_state.state.lock().ok().and_then(|state| {
+        state
+            .restore_enabled
+            .then(|| state.window.clone())
+            .flatten()
+    });
+    if let Some(saved_window) = saved_window {
+        apply_saved_window(&window, &client_state, saved_window);
+    }
 }
 
 #[cfg(windows)]
@@ -284,66 +362,8 @@ pub fn setup_main_window(app: &AppHandle) -> Result<(), String> {
         (is_primary, initial_zoom, saved_window)
     };
     let _ = window.set_zoom(initial_zoom);
-    if client_state.take_renderer_reload() {
-        let _ = window.emit(CLIENT_STATE_OWNERSHIP_CHANGED_EVENT, ());
-    }
     #[cfg(windows)]
     register_native_zoom_handler(&window, app);
-    if !is_primary {
-        let _ = window.show();
-        return Ok(());
-    }
-    if let Some(mut saved_window) = saved_window {
-        let startup_scale = window.scale_factor().unwrap_or(1.0);
-        let displays = window
-            .available_monitors()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|monitor| {
-                let work_area = monitor.work_area();
-                let position = work_area.position.to_logical::<i32>(startup_scale);
-                let size = work_area.size.to_logical::<u32>(startup_scale);
-                DisplayArea {
-                    x: position.x,
-                    y: position.y,
-                    width: size.width,
-                    height: size.height,
-                }
-            })
-            .collect::<Vec<_>>();
-        if let Some(bounds) = clamp_window_bounds(&saved_window.bounds, &displays) {
-            let _ = window.set_size(LogicalSize::new(bounds.width as u32, bounds.height as u32));
-            let _ = window.set_position(LogicalPosition::new(bounds.x, bounds.y));
-            saved_window.bounds = bounds;
-        } else if let Ok(position) = window.outer_position() {
-            if let Ok(size) = window.inner_size() {
-                let scale_factor = window.scale_factor().unwrap_or(1.0);
-                let position = position.to_logical::<i32>(scale_factor);
-                let size = size.to_logical::<u32>(scale_factor);
-                saved_window.bounds = WindowBounds {
-                    x: position.x,
-                    y: position.y,
-                    width: size.width.min(i32::MAX as u32) as i32,
-                    height: size.height.min(i32::MAX as u32) as i32,
-                };
-            }
-        }
-        if let Ok(mut state) = client_state.state.lock() {
-            state.window = Some(saved_window.clone());
-        }
-        let _ = window.set_zoom(saved_window.zoom_factor);
-        if saved_window.maximized {
-            let _ = window.maximize();
-        }
-        if saved_window.fullscreen {
-            let _ = window.set_fullscreen(true);
-            if cfg!(not(target_os = "macos")) {
-                let _ = window.hide_menu();
-            }
-        }
-    }
-
-    capture_main_window_in_memory(app);
     let app_handle = app.clone();
     window.on_window_event(move |event| match event {
         WindowEvent::Resized(_)
@@ -354,6 +374,18 @@ pub fn setup_main_window(app: &AppHandle) -> Result<(), String> {
         }
         _ => {}
     });
+    if !is_primary {
+        let _ = window.show();
+        return Ok(());
+    }
+    if let Some(saved_window) = saved_window {
+        apply_saved_window(&window, &client_state, saved_window);
+    }
+    if client_state.take_renderer_reload() {
+        let _ = window.emit(CLIENT_STATE_OWNERSHIP_CHANGED_EVENT, ());
+    }
+
+    capture_main_window_in_memory(app);
     let _ = window.show();
     Ok(())
 }

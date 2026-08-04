@@ -10,7 +10,7 @@ const MAX_LAYOUT_KEY_LENGTH = 256
 const MAX_LAYOUT_VALUE_LENGTH = 4096
 const LEGACY_LAYOUT_KEY_PREFIX = "opencode-session-"
 const UNSAFE_LAYOUT_KEYS = new Set(["__proto__", "constructor", "prototype"])
-const [clientStateIsPrimary, setClientStateIsPrimary] = createSignal(true)
+const [clientStateIsPrimary, setClientStateIsPrimary] = createSignal(false)
 const [restorePreviousStateEnabled, setRestorePreviousStateEnabledSignal] = createSignal(false)
 const [loadedClientSnapshotExists, setLoadedClientSnapshotExists] = createSignal(false)
 const [loadedRestorableSession, setLoadedRestorableSession] = createSignal<RestorableSessionState | null>(null)
@@ -258,11 +258,19 @@ export async function setRestorePreviousStateEnabled(enabled: boolean): Promise<
 
 export async function refreshClientStateOwnership(): Promise<void> {
   const loaded = await loadNativeClientState()
-  setClientStateIsPrimary(loaded.isPrimary)
+  const promoted = loaded.isPrimary && !clientStateIsPrimary()
+  if (promoted && writeBlock !== "transaction") {
+    cancelSaveTimer()
+    dirty = false
+    lastSaveError = undefined
+    writeBlock = isFutureClientSnapshot(loaded.snapshot) ? "snapshot" : false
+    resetLoadedState(decodeClientSnapshot(loaded.snapshot), true)
+  }
   setRestorePreviousStateEnabledSignal(loaded.restoreEnabled)
-  if (loaded.isPrimary && writeBlock !== "transaction") {
+  if (loaded.isPrimary && !promoted && writeBlock !== "transaction") {
     writeBlock = isFutureClientSnapshot(loaded.snapshot) ? "snapshot" : false
   }
+  setClientStateIsPrimary(loaded.isPrimary)
 }
 
 export function initializeClientState(): Promise<void> {
@@ -270,9 +278,7 @@ export function initializeClientState(): Promise<void> {
   initialization = (async () => {
     try {
       await listenForNativeClientStateOwnershipChange(() => {
-        void refreshClientStateOwnership().catch((error) => {
-          console.warn("[client-state] failed to refresh native ownership", error)
-        })
+        if (initialized && !clientStateIsPrimary()) window.location.reload()
       })
       const loaded = await loadNativeClientState()
       setClientStateIsPrimary(loaded.isPrimary)

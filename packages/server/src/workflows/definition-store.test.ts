@@ -53,6 +53,28 @@ describe("WorkflowDefinitionStore", () => {
     }
   })
 
+  it("acknowledges an expected revision once across store instances", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-definition-store-concurrency-"))
+    try {
+      const first = new WorkflowDefinitionStore(directory)
+      const second = new WorkflowDefinitionStore(directory)
+      await fs.mkdir(path.join(directory, ".write.lock"))
+      await fs.writeFile(path.join(directory, ".write.lock", "owner.json"), JSON.stringify({
+        token: "stale", pid: 2_147_483_647,
+      }))
+      await first.create(definition("First"))
+      const updates = await Promise.allSettled([
+        first.update("stored", 1, definition("First update")),
+        second.update("stored", 1, definition("Second update")),
+      ])
+      assert.equal(updates.filter((result) => result.status === "fulfilled").length, 1)
+      assert.match((updates.find((result) => result.status === "rejected") as PromiseRejectedResult).reason.message, /revision is 2/)
+      assert.equal((await second.update("stored", 2, definition("After conflict"))).revision, 3)
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it("bounds revision count without pruning immutable or tombstoned history", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-definition-store-count-"))
     try {

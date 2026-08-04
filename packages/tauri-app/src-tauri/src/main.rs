@@ -622,6 +622,7 @@ fn main() {
             build_menu(&app.handle())?;
             client_state::setup_main_window(&app.handle())
                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+            client_state::start_primary_watcher(&app.handle());
             if let Some(window) = app.get_webview_window("main") {
                 #[cfg(windows)]
                 shutdown::install_windows_session_end_handler(&window)

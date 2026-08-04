@@ -43,3 +43,25 @@ describe("event bus instance status replay", () => {
     assert.deepEqual(replayed, [])
   })
 })
+
+describe("event bus sequence replay", () => {
+  it("bounds replay and preserves replay-to-live publish order", () => {
+    const bus = new EventBus(undefined, 2)
+    for (const sequence of [1, 2, 3]) {
+      bus.publish({ type: "workspace.log", workspaceId: "workspace-1", entry: { sequence } } as never)
+    }
+
+    const received: Array<{ id?: number; sequence: number }> = []
+    bus.onEvent((event, id) => received.push({
+      id,
+      sequence: (event as never as { entry: { sequence: number } }).entry.sequence,
+    }), 0)
+    bus.publish({ type: "workspace.log", workspaceId: "workspace-1", entry: { sequence: 4 } } as never)
+
+    assert.deepEqual(received, [
+      { id: 2, sequence: 2 },
+      { id: 3, sequence: 3 },
+      { id: 4, sequence: 4 },
+    ])
+  })
+})

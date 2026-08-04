@@ -104,6 +104,13 @@ let pendingBootstrapToken: string | null = null
 let showingLoadingScreen = false
 let preloadingView: BrowserView | null = null
 let mainNavigationController: ClientStateNavigationController | null = null
+clientStateManager.onOwnershipChanged(() => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("client-state:ownership-changed")
+  }
+})
+const clientStateOwnershipPoll = setInterval(() => clientStateManager.refreshPrimary(), 250)
+clientStateOwnershipPoll.unref()
 const remoteWindowOrigins = new Map<number, Set<string>>()
 const insecureWindowOrigins = new Map<number, Set<string>>()
 const clientStateLifecycle = new ClientStateLifecycle({
@@ -413,10 +420,9 @@ function createWindow() {
   )
   mainNavigationController = navigationController
 
-  let windowStateTracker: WindowStateTracker | null = null
+  const windowStateTracker = new WindowStateTracker(window, clientStateManager, savedWindowState)
   if (clientStateManager.isPrimary) {
     restoreWindowState(window, savedWindowState, restoredBounds)
-    windowStateTracker = new WindowStateTracker(window, clientStateManager, savedWindowState)
   }
   installWindowZoomInput(window, (level) => {
     if (windowStateTracker) windowStateTracker.setZoomLevel(level)

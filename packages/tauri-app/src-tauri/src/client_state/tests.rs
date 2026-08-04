@@ -461,6 +461,56 @@ fn late_promotion_reloads_authoritative_state_before_flush_or_mutation() {
 }
 
 #[test]
+fn ownership_poll_promotes_idle_secondary_from_authoritative_state() {
+    let root = tempfile::tempdir().unwrap();
+    let shared = root.path().join("shared/client-state.json");
+    fs::create_dir_all(shared.parent().unwrap()).unwrap();
+    let snapshot = json!({ "revision": 7, "kept": true });
+    fs::write(
+        &shared,
+        serde_json::to_vec(&json!({
+            "version": 1,
+            "restoreEnabled": true,
+            "snapshot": snapshot,
+            "window": window(),
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let (state, election, producer) = initialize_late_secondary(root.path(), &shared);
+    assert!(!state.is_primary());
+
+    publish_late_participant(&election, &producer);
+    assert!(state.refresh_primary_for_watcher().unwrap());
+    assert!(state.is_primary());
+    assert_eq!(state.state.lock().unwrap().snapshot, Some(snapshot));
+    assert!(state.renderer_reconciliation_pending.load(Ordering::SeqCst));
+}
+
+#[test]
+fn mutation_that_discovers_promotion_cannot_replace_authoritative_snapshot() {
+    let root = tempfile::tempdir().unwrap();
+    let shared = root.path().join("shared/client-state.json");
+    fs::create_dir_all(shared.parent().unwrap()).unwrap();
+    let authoritative = serde_json::to_vec(&json!({
+        "version": 1,
+        "restoreEnabled": true,
+        "snapshot": { "revision": 7, "kept": true },
+        "window": window(),
+    }))
+    .unwrap();
+    fs::write(&shared, &authoritative).unwrap();
+    let (state, election, producer) = initialize_late_secondary(root.path(), &shared);
+
+    publish_late_participant(&election, &producer);
+    assert!(!state
+        .save_snapshot(json!({ "revision": 1, "default": true }))
+        .unwrap());
+    assert_eq!(fs::read(&shared).unwrap(), authoritative);
+    assert!(state.renderer_reconciliation_pending.load(Ordering::SeqCst));
+}
+
+#[test]
 fn late_promotion_rejects_unreadable_authoritative_state() {
     let root = tempfile::tempdir().unwrap();
     let shared = root.path().join("shared/client-state.json");

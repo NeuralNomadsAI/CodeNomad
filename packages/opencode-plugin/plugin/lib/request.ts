@@ -49,10 +49,7 @@ export function createCodeNomadRequester(config: CodeNomadConfig) {
     const hasBody = init?.body !== undefined
     const headers = buildHeaders(init?.headers, hasBody)
 
-    // The CodeNomad plugin only talks to the local CodeNomad server.
-    // Use a single request implementation that tolerates custom/self-signed certs
-    // without disabling TLS verification for the whole Node process.
-    return nodeFetch(url, { ...init, headers }, { rejectUnauthorized: false })
+    return nodeFetch(url, { ...init, headers })
   }
 
   const requestJson = async <T>(path: string, init?: RequestInit): Promise<T> => {
@@ -97,7 +94,6 @@ export function createCodeNomadRequester(config: CodeNomadConfig) {
 async function nodeFetch(
   url: string,
   init: RequestInit & { headers?: Record<string, string> },
-  tls: { rejectUnauthorized: boolean },
 ): Promise<Response> {
   const parsed = new URL(url)
   const isHttps = parsed.protocol === "https:"
@@ -116,7 +112,6 @@ async function nodeFetch(
         path: `${parsed.pathname}${parsed.search}`,
         method,
         headers,
-        ...(isHttps ? { rejectUnauthorized: tls.rejectUnauthorized } : {}),
       },
       (res) => {
         const status = res.statusCode ?? 0

@@ -1,7 +1,7 @@
 use super::{ClientState, ClientStateLoadResult, CLIENT_STATE_OWNERSHIP_CHANGED_EVENT};
 use crate::AppState;
 use serde_json::Value;
-use tauri::{AppHandle, Emitter, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 use url::Url;
 
 fn same_origin(url: &Url, expected: &str) -> bool {
@@ -71,6 +71,7 @@ fn validate_access(
 
 fn notify_renderer_of_promotion(window: &WebviewWindow, state: &ClientState) {
     if state.take_renderer_reload() {
+        super::window::reconcile_main_window(&window.app_handle());
         let _ = window.emit(CLIENT_STATE_OWNERSHIP_CHANGED_EVENT, ());
     }
 }

@@ -10,6 +10,52 @@ import type { WorkspaceManager } from "../workspaces/manager"
 import { WorkflowManager } from "./manager"
 
 describe("WorkflowManager", () => {
+  it("admits one run per path or lineage across manager instances", async () => {
+    for (const collision of ["lineage", "path"] as const) {
+      const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), `codenomad-workflow-shared-${collision}-`))
+      let sessions = 0
+      const client = { session: {
+        create: async () => ({ data: { id: `shared-${++sessions}` } }),
+        prompt: async () => ({ data: { info: {}, parts: [{ type: "text", text: "Review" }] } }),
+        abort: async () => ({ data: true }),
+      } } as unknown as OpencodeClient
+      const workspaceManager = {
+        get: (id: string) => ({
+          id,
+          lineageId: collision === "lineage" ? "shared-lineage" : `lineage-${id}`,
+          path: collision === "path" ? "C:/shared-workspace" : `C:/${id}`,
+          status: "ready",
+        }),
+        list: () => [],
+      } as unknown as WorkspaceManager
+      const options = {
+        workspaceManager,
+        eventBus: { publish: () => true } as unknown as EventBus,
+        logger: { warn() {}, error() {} } as unknown as Logger,
+        storageDir,
+        createClient: () => client,
+      }
+      const first = new WorkflowManager(options)
+      const second = new WorkflowManager(options)
+      try {
+        await Promise.all([first.list(), second.list()])
+        const starts = await Promise.allSettled([
+          first.start({ workspaceId: "first", objective: "First", stages: [
+            { id: "work", title: "Work", instructions: "Work", requiresApproval: true },
+          ] }),
+          second.start({ workspaceId: "second", objective: "Second", stages: [
+            { id: "work", title: "Work", instructions: "Work", requiresApproval: true },
+          ] }),
+        ])
+        assert.equal(starts.filter((result) => result.status === "fulfilled").length, 1)
+        assert.match((starts.find((result) => result.status === "rejected") as PromiseRejectedResult).reason.message, /already running/)
+      } finally {
+        await Promise.allSettled([first.shutdown(), second.shutdown()])
+        await fs.rm(storageDir, { recursive: true, force: true })
+      }
+    }
+  })
+
   it("rejects a stale saved definition inside the admission queue", async () => {
     const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-workflow-latest-"))
     const manager = new WorkflowManager({

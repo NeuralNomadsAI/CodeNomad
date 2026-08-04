@@ -41,6 +41,7 @@ const CLIENT_STATE_FILENAME: &str = "client-state.json";
 const CLIENT_STATE_OWNERSHIP_CHANGED_EVENT: &str = "client-state:ownership-changed";
 const MAX_CLIENT_SNAPSHOT_BYTES: usize = 1024 * 1024;
 const RENDERER_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
+const OWNERSHIP_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -100,6 +101,7 @@ pub struct ClientState {
     write_lock: Mutex<()>,
     primary_loaded: std::sync::atomic::AtomicBool,
     renderer_reload_pending: std::sync::atomic::AtomicBool,
+    renderer_reconciliation_pending: std::sync::atomic::AtomicBool,
     save_generation: AtomicU64,
     renderer_access: access::RendererAccess,
     renderer_flush: RendererFlush,
@@ -201,6 +203,7 @@ impl ClientState {
             write_lock: Mutex::new(()),
             primary_loaded: std::sync::atomic::AtomicBool::new(primary_loaded),
             renderer_reload_pending: std::sync::atomic::AtomicBool::new(false),
+            renderer_reconciliation_pending: std::sync::atomic::AtomicBool::new(false),
             save_generation: AtomicU64::new(0),
             renderer_access: access::RendererAccess::default(),
             renderer_flush: RendererFlush::default(),
@@ -311,8 +314,16 @@ impl ClientState {
             *self.zoom_level.lock().map_err(|err| err.to_string())? = zoom_level;
             self.primary_loaded.store(true, Ordering::SeqCst);
             self.renderer_reload_pending.store(true, Ordering::SeqCst);
+            self.renderer_reconciliation_pending
+                .store(true, Ordering::SeqCst);
         }
         Ok(true)
+    }
+
+    fn refresh_primary_for_watcher(&self) -> Result<bool, String> {
+        let write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        let was_loaded = self.primary_loaded.load(Ordering::SeqCst);
+        Ok(self.refresh_primary_locked(&write)? && !was_loaded)
     }
 
     fn take_renderer_reload(&self) -> bool {
@@ -328,7 +339,7 @@ impl ClientState {
         let write = self.write_lock.lock().map_err(|err| err.to_string())?;
         let is_primary = self.refresh_primary_locked(&write)?;
         let state = self.state.lock().map_err(|err| err.to_string())?;
-        Ok(ClientStateLoadResult {
+        let result = ClientStateLoadResult {
             is_primary,
             restore_enabled: if is_primary || !self.process.is_registered() {
                 state.restore_enabled
@@ -340,7 +351,12 @@ impl ClientState {
             } else {
                 Value::Null
             },
-        })
+        };
+        if is_primary {
+            self.renderer_reconciliation_pending
+                .store(false, Ordering::SeqCst);
+        }
+        Ok(result)
     }
 
     #[cfg(test)]
@@ -357,7 +373,11 @@ impl ClientState {
         if !access_valid() {
             return Err("Client state renderer authority changed before mutation".to_string());
         }
+        let was_loaded = self.primary_loaded.load(Ordering::SeqCst);
         if !self.refresh_primary_locked(&write)? {
+            return Ok(false);
+        }
+        if !was_loaded {
             return Ok(false);
         }
         if self.normal_writes_suppressed()? {
@@ -384,7 +404,11 @@ impl ClientState {
         if !access_valid() {
             return Err("Client state renderer authority changed before mutation".to_string());
         }
+        let was_loaded = self.primary_loaded.load(Ordering::SeqCst);
         if !self.refresh_primary_locked(&write)? {
+            return Ok(false);
+        }
+        if !was_loaded {
             return Ok(false);
         }
         if self
@@ -418,7 +442,11 @@ impl ClientState {
         if !access_valid() {
             return Err("Client state renderer authority changed before mutation".to_string());
         }
+        let was_loaded = self.primary_loaded.load(Ordering::SeqCst);
         if !self.refresh_primary_locked(&write)? {
+            return Ok(false);
+        }
+        if !was_loaded {
             return Ok(false);
         }
         self.mutate_and_write(
@@ -542,6 +570,39 @@ impl ClientState {
                 .store(generation, Ordering::SeqCst);
         }
     }
+}
+
+pub fn start_primary_watcher(app: &AppHandle) {
+    let Some(client_state) = app.try_state::<ClientState>() else {
+        return;
+    };
+    if client_state.primary_loaded.load(Ordering::SeqCst)
+        || !client_state.process.retains_local_candidacy()
+    {
+        return;
+    }
+
+    let app = app.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(OWNERSHIP_POLL_INTERVAL);
+        let Some(client_state) = app.try_state::<ClientState>() else {
+            return;
+        };
+        if !client_state.process.retains_local_candidacy() {
+            return;
+        }
+        match client_state.refresh_primary_for_watcher() {
+            Ok(true) => {
+                window::reconcile_main_window(&app);
+                if client_state.take_renderer_reload() {
+                    let _ = app.emit(CLIENT_STATE_OWNERSHIP_CHANGED_EVENT, ());
+                }
+                return;
+            }
+            Ok(false) => {}
+            Err(err) => eprintln!("[client-state] ownership poll failed: {err}"),
+        }
+    });
 }
 
 impl Drop for ClientState {

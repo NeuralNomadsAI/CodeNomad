@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync 
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { describe, it } from "node:test"
-import { createManagedWorktree, listWorktrees, resolveRepoRoot } from "../git-worktrees"
+import { createManagedWorktree, isValidWorktreeSlug, listWorktrees, resolveRepoRoot } from "../git-worktrees"
 
 async function waitForFile(file: string): Promise<void> {
   const deadline = Date.now() + 2_000
@@ -59,7 +59,7 @@ describe("listWorktrees", () => {
       ].join("\n")
 
       if (process.platform === "win32") {
-        writeFileSync(gitPath, `@echo off\r\nif "%1"=="worktree" if "%2"=="list" if "%3"=="--porcelain" (\r\necho ${porcelain.replace(/\n/g, "\r\necho ")}\r\nexit /b 0\r\n)\r\nexit /b 1\r\n`)
+        writeFileSync(gitPath, `@echo off\r\nif "%~1"=="worktree" if "%~2"=="list" if "%~3"=="--porcelain" (\r\necho ${porcelain.replace(/\n/g, "\r\necho ")}\r\nexit /b 0\r\n)\r\nexit /b 1\r\n`)
       } else {
         writeFileSync(gitPath, `#!/bin/sh\nif [ "$1" = "worktree" ] && [ "$2" = "list" ] && [ "$3" = "--porcelain" ]; then\nprintf '%s\n' '${porcelain.replace(/'/g, "'\\''")}'\nexit 0\nfi\nexit 1\n`, { mode: 0o755 })
       }
@@ -109,6 +109,25 @@ describe("resolveRepoRoot cancellation", () => {
 })
 
 describe("createManagedWorktree", () => {
+  it("rejects slugs that can alter a Windows shell command", () => {
+    assert.equal(isValidWorktreeSlug("feature/review-1.2"), true)
+    for (const slug of [
+      "-config",
+      "review branch",
+      "review&calc",
+      "review|calc",
+      "review>file",
+      "review<input",
+      "review^calc",
+      "review%PATH%",
+      "review!PATH!",
+      "review(calc)",
+      'review"calc',
+    ]) {
+      assert.equal(isValidWorktreeSlug(slug), false, slug)
+    }
+  })
+
   it("rejects a managed worktree root that escapes through a symlink or junction", async () => {
     const temp = mkdtempSync(path.join(tmpdir(), "codenomad-managed-worktree-"))
     const repoRoot = path.join(temp, "repo")

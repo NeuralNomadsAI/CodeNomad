@@ -11,6 +11,7 @@ import {
   reconcileWorkflowRunList,
   reconcileWorkflowRuns,
 } from "./workflow-reconciliation.ts"
+import { createWorkflowRefreshCoordinator } from "./workflow-refresh.ts"
 import {
   WORKFLOW_INPUT_BYTES_LIMIT,
   WORKFLOW_INPUT_DEPTH_LIMIT,
@@ -247,5 +248,36 @@ test("workflow checkpoint events stay compact and refresh full boundary state", 
   const store = readFileSync(new URL("./workflows.ts", import.meta.url), "utf8")
   const update = store.slice(store.indexOf("sseManager.onWorkflowRunUpdated"), store.indexOf("serverEvents.onOpen"))
   assert.match(update, /status !== "running" && status !== "pausing"/)
-  assert.match(update, /refreshWorkflowRun\(instanceId, runId\)/)
+  assert.match(update, /refreshWorkflowRun\(instanceId, runId, event\.properties\?\.revision\)/)
+})
+
+test("workflow refreshes coalesce duplicate boundaries and fetch once more for a newer in-flight revision", async () => {
+  let resolve!: () => void
+  let calls = 0
+  const refresh = createWorkflowRefreshCoordinator(async () => {
+    calls += 1
+    await new Promise<void>((done) => { resolve = done })
+  })
+
+  const settled = refresh("workspace", "run", 4)
+  refresh("workspace", "run", 4)
+  refresh("workspace", "run", 5)
+  assert.equal(calls, 1)
+  resolve()
+  await new Promise((done) => setImmediate(done))
+  assert.equal(calls, 2)
+  resolve()
+  await settled
+})
+
+test("compact workflow revisions disable stale gate and recovery confirmations until hydration", () => {
+  const store = readFileSync(new URL("./workflows.ts", import.meta.url), "utf8")
+  const update = store.slice(store.indexOf("sseManager.onWorkflowRunUpdated"), store.indexOf("serverEvents.onOpen"))
+  assert.match(update, /markWorkflowRunHydrating\(instanceId, runId, event\.properties\.revision\)/)
+  assert.match(update, /upsertWorkflowRun\(instanceId, updated, Boolean\(run\)\)/)
+
+  const list = readFileSync(new URL("../components/instance/shell/right-panel/tabs/WorkflowRunList.tsx", import.meta.url), "utf8")
+  assert.equal(list.match(/disabled=\{busy\(\) \|\| detailsHydrating\(\)\}/g)?.length, 4)
+  assert.match(list, /!confirmed \|\| detailsHydrating\(\) \|\| props\.run\.revision !== expectedRevision/)
+  assert.match(list, /confirmed && !detailsHydrating\(\) && props\.run\.revision === expectedRevision/)
 })

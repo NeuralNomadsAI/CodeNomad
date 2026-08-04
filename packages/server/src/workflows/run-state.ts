@@ -2,6 +2,7 @@ import type {
   WorkflowDefinitionV1,
   WorkflowDefinitionRecord,
   WorkflowDefinitionRunCreateRequest,
+  WorkflowExecutionNode,
   WorkflowNode,
   WorkflowRun,
   WorkflowUsage,
@@ -34,6 +35,10 @@ export const definitionRunFields = (
 
 export const holdsWorkflowReservation = (run: WorkflowRun) =>
   ["running", "pausing", "paused", "waiting_for_review", "waiting_for_input", "interrupted", "recovery_required"].includes(run.status)
+
+export const isConfirmedRetryCheckpoint = (node: WorkflowExecutionNode) =>
+  (node.type === "agent" || node.type === "shell") && node.status === "waiting"
+  && node.attempt > 0 && !node.sessionIds?.length
 
 export function markWorkflowRecoveryRequired(run: WorkflowRun, message: string) {
   run.status = "recovery_required"

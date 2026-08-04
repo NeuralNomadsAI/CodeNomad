@@ -1,8 +1,31 @@
 import assert from "node:assert/strict"
 import { createServer } from "node:http"
+import https from "node:https"
 import { test } from "node:test"
 
 import { createCodeNomadRequester } from "./request"
+
+test("plugin HTTPS requests retain native certificate verification", async () => {
+  const originalRequest = https.request
+  let requestOptions: https.RequestOptions | undefined
+  https.request = ((options: https.RequestOptions) => {
+    requestOptions = options
+    throw new Error("request intercepted")
+  }) as typeof https.request
+
+  try {
+    const requester = createCodeNomadRequester({
+      instanceId: "workspace",
+      baseUrl: "https://127.0.0.1:443",
+      callbackToken: "workspace-callback",
+    })
+    await assert.rejects(requester.requestVoid("/event"), /request intercepted/)
+    assert.equal(requestOptions?.rejectUnauthorized, undefined)
+    assert.equal(requestOptions?.agent, undefined)
+  } finally {
+    https.request = originalRequest
+  }
+})
 
 test("plugin requests use the distinct callback capability", async () => {
   let authorization: string | undefined

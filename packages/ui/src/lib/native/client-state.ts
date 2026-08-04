@@ -40,8 +40,9 @@ export async function loadNativeClientState(): Promise<NativeClientStateLoadResu
   return SECONDARY_CLIENT_STATE
 }
 export async function listenForNativeClientStateOwnershipChange(callback: () => void): Promise<() => void> {
-  if (!isTauriHost()) return () => {}
-  return listen("client-state:ownership-changed", callback)
+  if (isElectronHost()) return electronApi()?.onClientStateOwnershipChange?.(callback) ?? (() => {})
+  if (isTauriHost()) return listen("client-state:ownership-changed", callback)
+  return () => {}
 }
 async function mutateNativeClientState(electronOperation: (api: ElectronAPI) => Promise<boolean> | undefined, command: string, args: Record<string, unknown> = {}): Promise<boolean> {
   if (!nativeAccessClaimed) return false

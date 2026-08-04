@@ -280,7 +280,7 @@ export class CrossHostRegistration {
     private readonly directory: string,
     readonly owner: ProcessOwner,
     private readonly participant: string,
-    private readonly recoveryClaim: string | undefined,
+    private recoveryClaim: string | undefined,
     private primary: boolean,
     private readonly dependencies: CrossHostLeaseDependencies,
   ) {}
@@ -330,6 +330,34 @@ export class CrossHostRegistration {
     if (this.released || !this.primary) return false
     const current = parseOwner(readIfExists(ownerPath(this.directory)) ?? "")
     return Boolean(current && sameOwner(current, this.owner))
+  }
+
+  tryAcquire(primaryCandidate: boolean | (() => boolean)): boolean {
+    if (this.released || this.isPrimary) return this.isPrimary
+    if (!(typeof primaryCandidate === "function" ? primaryCandidate() : primaryCandidate)) return false
+    publishParticipant(this.participant, this.owner)
+    for (let attempt = 0; attempt < ACQUIRE_ATTEMPTS; attempt += 1) {
+      if (publishOwner(this.directory, this.owner, this.dependencies)) { this.primary = true; break }
+      const observed = readIfExists(ownerPath(this.directory))
+      if (observed === undefined) continue
+      const existing = parseOwner(observed)
+      if (!existing) break
+      if (sameOwner(existing, this.owner)) { this.primary = true; break }
+      if (ownerIsStale(existing, this.dependencies) === true) {
+        this.recoveryClaim ??= recoveryPath(this.directory, this.owner)
+        try { publishFile(this.recoveryClaim, observed) } catch (error) {
+          if (!hasErrorCode(error, "EEXIST") || readIfExists(this.recoveryClaim) !== observed) throw error
+        }
+      }
+      if (!retireOwner(this.directory, observed, existing, this.owner, this.dependencies)) break
+    }
+    return this.isPrimary
+  }
+
+  deferPrimary(): void {
+    if (this.released) return
+    retireOwnerIfOwned(this.directory, this.owner, this.dependencies)
+    this.primary = false
   }
 
   release(): boolean {

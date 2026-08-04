@@ -255,6 +255,22 @@ impl ProcessState {
         self.registration_file.is_some()
     }
 
+    pub(super) fn retains_local_candidacy(&self) -> bool {
+        self.primary_lock
+            .lock()
+            .map(|lock| lock.is_some())
+            .unwrap_or(false)
+            && self
+                .cross_host_registration
+                .lock()
+                .map(|registration| {
+                    registration
+                        .as_ref()
+                        .is_some_and(cross_host::Registration::retains_local_candidacy)
+                })
+                .unwrap_or(false)
+    }
+
     pub(super) fn release_locks(&self) {
         let Some(registration_file) = &self.registration_file else {
             return;

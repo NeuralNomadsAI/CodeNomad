@@ -1,4 +1,6 @@
 import type { FastifyInstance, FastifyReply } from "fastify"
+import { lstat, realpath } from "node:fs/promises"
+import path from "node:path"
 import { z } from "zod"
 import { WorkspaceManager } from "../../workspaces/manager"
 import {
@@ -159,6 +161,7 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
         reply.code(404)
         return { error: "Managed worktree not found" }
       }
+      const matchIdentity = await getManagedWorktreeIdentity(match.directory)
       return await deps.workflowManager.withWorktreeOwnershipLease(
         { id: workspace.id, lineageId: workspace.lineageId, path: workspace.path },
         { slug, path: match.directory },
@@ -173,7 +176,18 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
               return { error: "Worktree is in use by an active workspace" }
             }
 
-            await removeWorktree({ workspaceFolder: workspace.path, directory: match.directory, force, logger: request.log })
+            const currentWorktrees = await listWorktrees({ repoRoot, workspaceFolder: workspace.path, logger: request.log })
+            const currentMatch = currentWorktrees.find((worktree) => worktree.slug === slug)
+            if (!currentMatch || currentMatch.kind === "root" || !await isManagedWorktree({ repoRoot, worktree: currentMatch })) {
+              reply.code(404)
+              return { error: "Managed worktree not found" }
+            }
+            if (await getManagedWorktreeIdentity(currentMatch.directory) !== matchIdentity) {
+              reply.code(409)
+              return { error: "Worktree changed while deletion was pending" }
+            }
+
+            await removeWorktree({ workspaceFolder: workspace.path, directory: currentMatch.directory, force, logger: request.log })
 
             // Best-effort: prune any mappings that point at the deleted worktree.
             const current = await readWorktreeMap(workspace.path, request.log)
@@ -245,6 +259,15 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
       return handleError(error, reply)
     }
   })
+}
+
+async function getManagedWorktreeIdentity(directory: string): Promise<string> {
+  const [canonicalDirectory, metadata] = await Promise.all([
+    realpath(directory),
+    lstat(path.join(directory, ".git"), { bigint: true }),
+  ])
+  const normalizedDirectory = process.platform === "win32" ? canonicalDirectory.toLowerCase() : canonicalDirectory
+  return `${normalizedDirectory}\0${metadata.dev}\0${metadata.ino}\0${metadata.birthtimeNs}`
 }
 
 function handleError(error: unknown, reply: FastifyReply) {
