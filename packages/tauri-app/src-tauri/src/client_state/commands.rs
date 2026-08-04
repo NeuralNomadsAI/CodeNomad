@@ -1,7 +1,7 @@
-use super::{ClientState, ClientStateLoadResult};
+use super::{ClientState, ClientStateLoadResult, CLIENT_STATE_OWNERSHIP_CHANGED_EVENT};
 use crate::AppState;
 use serde_json::Value;
-use tauri::{AppHandle, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, State, WebviewWindow};
 use url::Url;
 
 fn same_origin(url: &Url, expected: &str) -> bool {
@@ -69,6 +69,12 @@ fn validate_access(
     state.renderer_access.validate(access_token, &current_url)
 }
 
+fn notify_renderer_of_promotion(window: &WebviewWindow, state: &ClientState) {
+    if state.take_renderer_reload() {
+        let _ = window.emit(CLIENT_STATE_OWNERSHIP_CHANGED_EVENT, ());
+    }
+}
+
 #[tauri::command]
 pub fn client_state_claim_access(
     window: WebviewWindow,
@@ -88,7 +94,9 @@ pub fn client_state_load(
     access_token: String,
 ) -> Result<ClientStateLoadResult, String> {
     validate_access(&window, &state, &access_token)?;
-    state.load()
+    let result = state.load();
+    notify_renderer_of_promotion(&window, &state);
+    result
 }
 
 #[tauri::command]
@@ -99,9 +107,11 @@ pub fn client_state_save(
     snapshot: Value,
 ) -> Result<bool, String> {
     let generation = validate_access(&window, &state, &access_token)?;
-    state.save_snapshot_guarded(snapshot, || {
+    let result = state.save_snapshot_guarded(snapshot, || {
         state.renderer_access.is_generation_current(generation)
-    })
+    });
+    notify_renderer_of_promotion(&window, &state);
+    result
 }
 
 #[tauri::command]
@@ -112,9 +122,11 @@ pub fn client_state_set_restore_enabled(
     enabled: bool,
 ) -> Result<bool, String> {
     let generation = validate_access(&window, &state, &access_token)?;
-    state.set_restore_enabled_guarded(enabled, || {
+    let result = state.set_restore_enabled_guarded(enabled, || {
         state.renderer_access.is_generation_current(generation)
-    })
+    });
+    notify_renderer_of_promotion(&window, &state);
+    result
 }
 
 #[tauri::command]
@@ -124,7 +136,9 @@ pub fn client_state_clear(
     access_token: String,
 ) -> Result<bool, String> {
     let generation = validate_access(&window, &state, &access_token)?;
-    state.clear_guarded(|| state.renderer_access.is_generation_current(generation))
+    let result = state.clear_guarded(|| state.renderer_access.is_generation_current(generation));
+    notify_renderer_of_promotion(&window, &state);
+    result
 }
 
 #[tauri::command]

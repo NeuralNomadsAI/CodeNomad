@@ -214,3 +214,38 @@ test("legacy approval sends the pending review step as its expectation", async (
     globalThis.fetch = originalFetch
   }
 })
+
+test("workflow confirmations retain the displayed gate and recovery revision", async () => {
+  const source = readFileSync(new URL("../components/instance/shell/right-panel/tabs/WorkflowRunList.tsx", import.meta.url), "utf8")
+  const approve = source.slice(source.indexOf("const approve = async"), source.indexOf("const cancel = async"))
+  assert.ok(approve.indexOf("const gate = props.run.pendingGate") < approve.indexOf("showConfirmDialog"))
+  assert.match(approve, /answerWorkflowGate\(props\.instanceId, props\.run\.id, gate\.executionNodeId, true\)/)
+  const recover = source.slice(source.indexOf("const recover = async"), source.indexOf("const answerInput = async"))
+  assert.ok(recover.indexOf("const expectedRevision = props.run.revision") < recover.indexOf("showConfirmDialog"))
+  assert.match(recover, /resumeWorkflowRun\(props\.instanceId, props\.run\.id, true, expectedRevision\)/)
+
+  const originalFetch = globalThis.fetch
+  let body: unknown
+  globalThis.fetch = async (_input, init) => {
+    body = JSON.parse(String(init?.body))
+    return new Response(JSON.stringify({ id: "run" }), { status: 200, headers: { "Content-Type": "application/json" } })
+  }
+  try {
+    await serverApi.resumeWorkflowRun("run", { confirmRecovery: true, expectedRevision: 7 })
+    assert.deepEqual(body, { confirmRecovery: true, expectedRevision: 7 })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test("workflow checkpoint events stay compact and refresh full boundary state", () => {
+  const manager = readFileSync(new URL("../../../server/src/workflows/manager.ts", import.meta.url), "utf8")
+  const publish = manager.slice(manager.indexOf('type: "workflow.run.updated"'), manager.indexOf("if ([\"completed\"", manager.indexOf('type: "workflow.run.updated"')))
+  assert.match(publish, /runId: snapshot\.id/)
+  assert.doesNotMatch(publish, /run: snapshot/)
+
+  const store = readFileSync(new URL("./workflows.ts", import.meta.url), "utf8")
+  const update = store.slice(store.indexOf("sseManager.onWorkflowRunUpdated"), store.indexOf("serverEvents.onOpen"))
+  assert.match(update, /status !== "running" && status !== "pausing"/)
+  assert.match(update, /refreshWorkflowRun\(instanceId, runId\)/)
+})

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::cell::{Cell, RefCell};
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -15,8 +16,9 @@ const PARTICIPANT_SUFFIX: &str = ".json";
 const RECOVERY_PREFIX: &str = "recovery.";
 const RECOVERY_SUFFIX: &str = ".claim";
 const RETIRED_PREFIX: &str = "retired.";
+const RETIRED_PARTICIPANT_PREFIX: &str = "retired.participant.";
+const RETIRED_PARTICIPANT_SUFFIX: &str = ".json";
 const ACQUIRE_ATTEMPTS: usize = 10;
-const LEGACY_PARTICIPANT_GRACE: std::time::Duration = std::time::Duration::from_millis(50);
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -34,13 +36,21 @@ struct LegacyOwner {
     process_start_identity: Option<String>,
 }
 
+#[derive(Clone, Copy)]
+enum LegacyElectronStatus {
+    Clear,
+    Blocked,
+    PublishingParticipant,
+}
+
 pub(super) struct Registration {
     election_directory: PathBuf,
     participant_path: PathBuf,
-    recovery_claim: Option<PathBuf>,
     owner: Owner,
     legacy_electron_data: Option<PathBuf>,
-    primary: bool,
+    known_upgraded: RefCell<Vec<Owner>>,
+    retry_candidate: Cell<bool>,
+    primary: Cell<bool>,
     released: bool,
 }
 
@@ -224,100 +234,162 @@ impl Registration {
             .map_err(|err| format!("failed to create cross-host election directory: {err}"))?;
         let participant_path = participant_path(election_directory, &owner);
         publish_participant(&participant_path, &owner)?;
-        let mut recovery_claim = None;
+        let mut known_upgraded = Vec::new();
 
         let result = (|| {
-            let legacy_blocked = legacy_electron_data
+            let legacy_status = legacy_electron_data
                 .filter(|_| primary_candidate)
                 .map(|path| {
-                    has_live_legacy_electron_with_grace(
+                    legacy_electron_status_with(
                         path,
                         election_directory,
+                        &mut known_upgraded,
                         pid_alive,
                         identity,
                         expected_electron,
                     )
                 })
                 .transpose()?
-                .unwrap_or(false);
-            let mut primary = false;
-            if primary_candidate && !legacy_blocked {
-                for _ in 0..ACQUIRE_ATTEMPTS {
-                    if publish_owner(election_directory, &owner)? {
-                        primary = true;
-                        break;
-                    }
-                    let Some(observed) = read_if_exists(&owner_path(election_directory))? else {
-                        continue;
-                    };
-                    let Some(existing) = parse_owner(&observed) else {
-                        break;
-                    };
-                    if existing == owner {
-                        primary = true;
-                        break;
-                    }
-                    if owner_is_stale(&existing, pid_alive, identity) == Some(true) {
-                        let claim = recovery_path(election_directory, &owner);
-                        publish_file(&claim, &observed, "recovery claim")?;
-                        recovery_claim = Some(claim);
-                    }
-                    if !retire_owner(
-                        election_directory,
-                        &observed,
-                        &existing,
-                        &owner,
-                        pid_alive,
-                        identity,
-                    )? {
-                        break;
-                    }
-                }
-            }
+                .unwrap_or(LegacyElectronStatus::Clear);
+            let primary =
+                if primary_candidate && matches!(legacy_status, LegacyElectronStatus::Clear) {
+                    acquire_owner(election_directory, &owner, pid_alive, identity)?
+                } else {
+                    false
+                };
+            let retry_candidate = primary_candidate
+                && !primary
+                && (matches!(legacy_status, LegacyElectronStatus::PublishingParticipant)
+                    || !known_upgraded.is_empty());
             Ok(Some(Self {
                 election_directory: election_directory.to_path_buf(),
                 participant_path: participant_path.clone(),
-                recovery_claim: recovery_claim.clone(),
                 owner: owner.clone(),
                 legacy_electron_data: legacy_electron_data.map(Path::to_path_buf),
-                primary,
+                known_upgraded: RefCell::new(known_upgraded),
+                retry_candidate: Cell::new(retry_candidate),
+                primary: Cell::new(primary),
                 released: false,
             }))
         })();
         if result.is_err() {
             let _ = remove_participant_if_owned(&participant_path, &owner);
-            if let Some(claim) = recovery_claim {
-                let _ = fs::remove_file(claim);
-            }
+            let _ = fs::remove_file(recovery_path(election_directory, &owner));
         }
         result
     }
 
     pub(super) fn is_primary(&self) -> bool {
-        if self.released || !self.primary {
+        self.is_primary_with(
+            pid_is_alive,
+            process_start_identity,
+            expected_electron_process,
+        )
+    }
+
+    pub(super) fn ownership_valid(&self) -> bool {
+        self.primary_with(
+            false,
+            pid_is_alive,
+            process_start_identity,
+            expected_electron_process,
+        )
+    }
+
+    pub(super) fn retains_local_candidacy(&self) -> bool {
+        !self.released && (self.primary.get() || self.retry_candidate.get())
+    }
+
+    pub(super) fn defer_primary(&self) {
+        self.primary.set(false);
+        self.retry_candidate.set(true);
+        let _ = retire_owner_if_owned(&self.election_directory, &self.owner);
+    }
+
+    fn is_primary_with(
+        &self,
+        pid_alive: impl Fn(u32) -> bool + Copy,
+        identity: impl Fn(u32) -> Option<String> + Copy,
+        expected_electron: impl Fn(u32) -> Option<bool> + Copy,
+    ) -> bool {
+        self.primary_with(true, pid_alive, identity, expected_electron)
+    }
+
+    fn primary_with(
+        &self,
+        retry: bool,
+        pid_alive: impl Fn(u32) -> bool + Copy,
+        identity: impl Fn(u32) -> Option<String> + Copy,
+        expected_electron: impl Fn(u32) -> Option<bool> + Copy,
+    ) -> bool {
+        if self.released {
             return false;
         }
-        let shared = read_if_exists(&owner_path(&self.election_directory))
-            .ok()
-            .flatten()
-            .and_then(|value| parse_owner(&value))
-            .is_some_and(|owner| owner == self.owner);
-        let legacy_clear = self
+        if self.primary.get() {
+            let shared = read_if_exists(&owner_path(&self.election_directory))
+                .ok()
+                .flatten()
+                .and_then(|value| parse_owner(&value))
+                .is_some_and(|owner| owner == self.owner);
+            let legacy_clear = self
+                .legacy_electron_data
+                .as_deref()
+                .map(|path| {
+                    legacy_electron_status_with(
+                        path,
+                        &self.election_directory,
+                        &mut self.known_upgraded.borrow_mut(),
+                        pid_alive,
+                        identity,
+                        expected_electron,
+                    )
+                })
+                .transpose()
+                .map(|status| {
+                    matches!(
+                        status.unwrap_or(LegacyElectronStatus::Clear),
+                        LegacyElectronStatus::Clear
+                    )
+                })
+                .unwrap_or(false);
+            if shared && legacy_clear {
+                return true;
+            }
+            self.primary.set(false);
+            self.retry_candidate.set(true);
+            return false;
+        }
+        if !retry || !self.retry_candidate.get() {
+            return false;
+        }
+        if publish_participant(&self.participant_path, &self.owner).is_err() {
+            return false;
+        }
+        let _ = remove_retired_participant_if_owned(&self.election_directory, &self.owner);
+        let legacy_status = self
             .legacy_electron_data
             .as_deref()
             .map(|path| {
-                has_live_legacy_electron_with_grace(
+                legacy_electron_status_with(
                     path,
                     &self.election_directory,
-                    pid_is_alive,
-                    process_start_identity,
-                    expected_electron_process,
+                    &mut self.known_upgraded.borrow_mut(),
+                    pid_alive,
+                    identity,
+                    expected_electron,
                 )
             })
             .transpose()
-            .map(|blocked| !blocked.unwrap_or(false))
+            .unwrap_or(Some(LegacyElectronStatus::Blocked))
+            .unwrap_or(LegacyElectronStatus::Clear);
+        if !matches!(legacy_status, LegacyElectronStatus::Clear) {
+            return false;
+        }
+        let primary = acquire_owner(&self.election_directory, &self.owner, pid_alive, identity)
             .unwrap_or(false);
-        shared && legacy_clear
+        self.retry_candidate.set(!primary);
+        self.primary.set(primary);
+        primary
     }
 
     pub(super) fn release(&mut self) -> Result<bool, String> {
@@ -326,14 +398,13 @@ impl Registration {
         }
         retire_owner_if_owned(&self.election_directory, &self.owner)?;
         remove_participant_if_owned(&self.participant_path, &self.owner)?;
-        if let Some(claim) = &self.recovery_claim {
-            match fs::remove_file(claim) {
-                Ok(()) => {}
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(err) => return Err(format!("failed to remove recovery claim: {err}")),
-            }
+        remove_retired_participant_if_owned(&self.election_directory, &self.owner)?;
+        match fs::remove_file(recovery_path(&self.election_directory, &self.owner)) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(format!("failed to remove recovery claim: {err}")),
         }
-        self.primary = false;
+        self.primary.set(false);
         self.released = true;
         Ok(true)
     }
@@ -378,6 +449,13 @@ fn participant_path(directory: &Path, owner: &Owner) -> PathBuf {
 fn recovery_path(directory: &Path, owner: &Owner) -> PathBuf {
     directory.join(format!(
         "{RECOVERY_PREFIX}{}.{}{RECOVERY_SUFFIX}",
+        owner.pid, owner.run_token
+    ))
+}
+
+fn retired_participant_path(directory: &Path, owner: &Owner) -> PathBuf {
+    directory.join(format!(
+        "{RETIRED_PARTICIPANT_PREFIX}{}.{}{RETIRED_PARTICIPANT_SUFFIX}",
         owner.pid, owner.run_token
     ))
 }
@@ -460,6 +538,43 @@ fn publish_owner(directory: &Path, owner: &Owner) -> Result<bool, String> {
         }
         Err(err) => Err(format!("failed to publish cross-host owner: {err}")),
     }
+}
+
+fn acquire_owner(
+    directory: &Path,
+    owner: &Owner,
+    pid_alive: impl Fn(u32) -> bool + Copy,
+    identity: impl Fn(u32) -> Option<String> + Copy,
+) -> Result<bool, String> {
+    for _ in 0..ACQUIRE_ATTEMPTS {
+        if publish_owner(directory, owner)? {
+            return Ok(true);
+        }
+        let Some(observed) = read_if_exists(&owner_path(directory))? else {
+            continue;
+        };
+        let Some(existing) = parse_owner(&observed) else {
+            break;
+        };
+        if existing == *owner {
+            return Ok(true);
+        }
+        if owner_is_stale(&existing, pid_alive, identity) == Some(true) {
+            let claim = recovery_path(directory, owner);
+            if read_if_exists(&claim)?.as_deref() != Some(&observed) {
+                match fs::remove_file(&claim) {
+                    Ok(()) => {}
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(err) => return Err(format!("failed to replace recovery claim: {err}")),
+                }
+                publish_file(&claim, &observed, "recovery claim")?;
+            }
+        }
+        if !retire_owner(directory, &observed, &existing, owner, pid_alive, identity)? {
+            break;
+        }
+    }
+    Ok(false)
 }
 
 fn owner_is_stale(
@@ -584,6 +699,10 @@ fn remove_participant_if_owned(path: &Path, owner: &Owner) -> Result<(), String>
     }
 }
 
+fn remove_retired_participant_if_owned(directory: &Path, owner: &Owner) -> Result<(), String> {
+    remove_participant_if_owned(&retired_participant_path(directory, owner), owner)
+}
+
 fn retire_owner_if_owned(directory: &Path, owner: &Owner) -> Result<(), String> {
     retire_owner_if_owned_with(directory, owner, || {}, || {})
 }
@@ -632,6 +751,11 @@ fn retire_owner_if_owned_with(
                 continue;
             };
             if let Some(participant) = parse_owner(&observed_participant) {
+                publish_file(
+                    &retired_participant_path(directory, &participant),
+                    &observed_participant,
+                    "retired participant",
+                )?;
                 remove_participant_if_owned(&path, &participant)?;
                 let _ = fs::remove_file(recovery_path(directory, &participant));
             } else if read_if_exists(&path)?.as_deref() == Some(&observed_participant) {
@@ -652,22 +776,31 @@ fn retire_owner_if_owned_with(
     result
 }
 
-fn has_live_legacy_electron_with(
+fn legacy_electron_status_with(
     directory: &Path,
     election_directory: &Path,
+    known_upgraded: &mut Vec<Owner>,
     pid_alive: impl Fn(u32) -> bool,
     identity: impl Fn(u32) -> Option<String>,
     expected_electron: impl Fn(u32) -> Option<bool>,
-) -> Result<bool, String> {
+) -> Result<LegacyElectronStatus, String> {
     let entries = match fs::read_dir(directory) {
         Ok(entries) => entries,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(LegacyElectronStatus::Clear)
+        }
         Err(err) => return Err(format!("failed to inspect legacy Electron markers: {err}")),
     };
     let upgraded: Vec<Owner> = participants(election_directory)?
         .into_iter()
         .map(|(_, owner)| owner)
         .collect();
+    for owner in &upgraded {
+        if !known_upgraded.contains(owner) {
+            known_upgraded.push(owner.clone());
+        }
+    }
+    let mut publishing_participant = false;
     for entry in entries {
         let entry =
             entry.map_err(|err| format!("failed to inspect legacy Electron marker: {err}"))?;
@@ -680,75 +813,65 @@ fn has_live_legacy_electron_with(
             continue;
         };
         let Some((pid, run_token)) = value.split_once('.') else {
-            return Ok(true);
+            return Ok(LegacyElectronStatus::Blocked);
         };
         let Ok(pid) = pid.parse::<u32>() else {
-            return Ok(true);
+            return Ok(LegacyElectronStatus::Blocked);
         };
         if !pid_alive(pid) {
             continue;
         }
-        let marker = read_if_exists(&entry.path())?;
-        let Some(marker) = marker
-            .as_deref()
-            .and_then(|value| serde_json::from_str::<LegacyOwner>(value).ok())
-        else {
-            return Ok(true);
+        let Some(marker) = read_if_exists(&entry.path())? else {
+            continue;
+        };
+        let Ok(marker) = serde_json::from_str::<LegacyOwner>(&marker) else {
+            return Ok(LegacyElectronStatus::Blocked);
         };
         if marker.pid != pid || marker.run_token != run_token {
-            return Ok(true);
+            return Ok(LegacyElectronStatus::Blocked);
         }
         let live_identity = identity(pid);
         if let Some(marker_identity) = marker.process_start_identity.as_deref() {
             let Some(live_identity) = live_identity.as_deref() else {
-                return Ok(true);
+                return Ok(LegacyElectronStatus::Blocked);
             };
             if live_identity != marker_identity {
                 continue;
             }
-            if upgraded.iter().any(|owner| {
+            if known_upgraded.iter().any(|owner| {
+                owner.pid == pid
+                    && owner.run_token == run_token
+                    && owner.process_start_identity == live_identity
+            }) || read_if_exists(&retired_participant_path(
+                election_directory,
+                &Owner {
+                    pid,
+                    run_token: run_token.to_string(),
+                    process_start_identity: live_identity.to_string(),
+                },
+            ))?
+            .as_deref()
+            .and_then(parse_owner)
+            .is_some_and(|owner| {
                 owner.pid == pid
                     && owner.run_token == run_token
                     && owner.process_start_identity == live_identity
             }) {
                 continue;
             }
-            return Ok(true);
+            publishing_participant = true;
+            continue;
         }
         match expected_electron(pid) {
             Some(false) => continue,
-            Some(true) | None => return Ok(true),
+            Some(true) | None => return Ok(LegacyElectronStatus::Blocked),
         }
     }
-    Ok(false)
-}
-
-fn has_live_legacy_electron_with_grace(
-    directory: &Path,
-    election_directory: &Path,
-    pid_alive: impl Fn(u32) -> bool + Copy,
-    identity: impl Fn(u32) -> Option<String> + Copy,
-    expected_electron: impl Fn(u32) -> Option<bool> + Copy,
-) -> Result<bool, String> {
-    let blocked = has_live_legacy_electron_with(
-        directory,
-        election_directory,
-        pid_alive,
-        identity,
-        expected_electron,
-    )?;
-    if !blocked {
-        return Ok(false);
-    }
-    // ponytail: one bounded retry closes the modern participant-publication race.
-    std::thread::sleep(LEGACY_PARTICIPANT_GRACE);
-    has_live_legacy_electron_with(
-        directory,
-        election_directory,
-        pid_alive,
-        identity,
-        expected_electron,
-    )
+    Ok(if publishing_participant {
+        LegacyElectronStatus::PublishingParticipant
+    } else {
+        LegacyElectronStatus::Clear
+    })
 }
 
 fn expected_electron_process(pid: u32) -> Option<bool> {
@@ -1413,61 +1536,201 @@ mod tests {
         let election = tempfile::tempdir().unwrap();
         let legacy = tempfile::tempdir().unwrap();
         let upgraded = owner(701, "electron", "electron-start");
+        let mut known_upgraded = Vec::new();
         publish_participant(&participant_path(election.path(), &upgraded), &upgraded).unwrap();
         fs::write(
             legacy.path().join("client-state.running.701.electron.json"),
             serialize_owner(&upgraded).unwrap(),
         )
         .unwrap();
-        assert!(!has_live_legacy_electron_with(
-            legacy.path(),
-            election.path(),
-            |_| true,
-            |_| Some("electron-start".to_string()),
-            |_| Some(true),
-        )
-        .unwrap());
+        assert!(matches!(
+            legacy_electron_status_with(
+                legacy.path(),
+                election.path(),
+                &mut known_upgraded,
+                |_| true,
+                |_| Some("electron-start".to_string()),
+                |_| Some(true),
+            )
+            .unwrap(),
+            LegacyElectronStatus::Clear
+        ));
         fs::write(
             legacy.path().join("client-state.running.702.legacy.json"),
             r#"{"pid":702,"runToken":"legacy"}"#,
         )
         .unwrap();
-        assert!(has_live_legacy_electron_with(
-            legacy.path(),
-            election.path(),
-            |_| true,
-            |_| None,
-            |_| None,
-        )
-        .unwrap());
+        assert!(matches!(
+            legacy_electron_status_with(
+                legacy.path(),
+                election.path(),
+                &mut known_upgraded,
+                |_| true,
+                |_| None,
+                |_| None,
+            )
+            .unwrap(),
+            LegacyElectronStatus::Blocked
+        ));
     }
 
     #[test]
-    fn legacy_check_retries_after_a_modern_participant_is_published() {
+    fn modern_participant_published_well_after_fifty_ms_allows_retry() {
         let election = tempfile::tempdir().unwrap();
         let legacy = tempfile::tempdir().unwrap();
         let upgraded = owner(703, "electron", "electron-start");
         let participant = participant_path(election.path(), &upgraded);
-        let published = std::cell::Cell::new(false);
         fs::write(
             legacy.path().join("client-state.running.703.electron.json"),
             serialize_owner(&upgraded).unwrap(),
         )
         .unwrap();
 
-        assert!(!has_live_legacy_electron_with_grace(
-            legacy.path(),
+        let registration = Registration::register_with_legacy(
             election.path(),
+            owner(704, "tauri", "tauri-start"),
+            true,
+            Some(legacy.path()),
+            |_| true,
+            |_| Some("electron-start".to_string()),
+            |_| Some(true),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(!registration.is_primary_with(
+            |_| true,
+            |_| Some("electron-start".to_string()),
+            |_| Some(true),
+        ));
+
+        thread::sleep(std::time::Duration::from_millis(100));
+        publish_participant(&participant, &upgraded).unwrap();
+        assert!(registration.is_primary_with(
+            |_| true,
+            |_| Some("electron-start".to_string()),
+            |_| Some(true),
+        ));
+    }
+
+    #[test]
+    fn producer_crash_before_participant_publication_allows_retry() {
+        let election = tempfile::tempdir().unwrap();
+        let legacy = tempfile::tempdir().unwrap();
+        let producer = owner(705, "electron", "electron-start");
+        let alive = std::cell::Cell::new(true);
+        fs::write(
+            legacy.path().join("client-state.running.705.electron.json"),
+            serialize_owner(&producer).unwrap(),
+        )
+        .unwrap();
+
+        let registration = Registration::register_with_legacy(
+            election.path(),
+            owner(706, "tauri", "tauri-start"),
+            true,
+            Some(legacy.path()),
+            |_| alive.get(),
+            |_| Some("electron-start".to_string()),
+            |_| Some(true),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(!registration.is_primary_with(
+            |_| alive.get(),
+            |_| Some("electron-start".to_string()),
+            |_| Some(true),
+        ));
+
+        alive.set(false);
+        assert!(registration.is_primary_with(
+            |_| alive.get(),
+            |_| Some("electron-start".to_string()),
+            |_| Some(true),
+        ));
+    }
+
+    #[test]
+    fn live_modern_marker_without_a_participant_returns_bounded() {
+        let election = tempfile::tempdir().unwrap();
+        let legacy = tempfile::tempdir().unwrap();
+        let producer = owner(707, "electron", "electron-start");
+        let probes = std::cell::Cell::new(0);
+        fs::write(
+            legacy.path().join("client-state.running.707.electron.json"),
+            serialize_owner(&producer).unwrap(),
+        )
+        .unwrap();
+
+        let registration = Registration::register_with_legacy(
+            election.path(),
+            owner(708, "tauri", "tauri-start"),
+            true,
+            Some(legacy.path()),
             |_| {
-                if !published.replace(true) {
-                    publish_participant(&participant, &upgraded).unwrap();
-                }
+                probes.set(probes.get() + 1);
                 true
             },
             |_| Some("electron-start".to_string()),
             |_| Some(true),
         )
-        .unwrap());
+        .unwrap()
+        .unwrap();
+        assert_eq!(probes.get(), 1);
+        assert!(registration.retains_local_candidacy());
+
+        assert!(!registration.is_primary_with(
+            |_| {
+                probes.set(probes.get() + 1);
+                true
+            },
+            |_| Some("electron-start".to_string()),
+            |_| Some(true),
+        ));
+        assert_eq!(probes.get(), 2);
+    }
+
+    #[test]
+    fn retired_modern_participant_remains_recognizable_to_new_candidate() {
+        let election = tempfile::tempdir().unwrap();
+        let legacy = tempfile::tempdir().unwrap();
+        let current = owner(709, "current", "current-start");
+        let producer = owner(710, "electron", "electron-start");
+        let candidate = owner(711, "tauri", "tauri-start");
+        let producer_participant = participant_path(election.path(), &producer);
+        publish_owner(election.path(), &current).unwrap();
+        publish_participant(&producer_participant, &producer).unwrap();
+        fs::write(
+            legacy.path().join("client-state.running.710.electron.json"),
+            serialize_owner(&producer).unwrap(),
+        )
+        .unwrap();
+        let identity = |pid| {
+            Some(
+                match pid {
+                    709 => "current-start",
+                    710 => "electron-start",
+                    _ => "tauri-start",
+                }
+                .to_string(),
+            )
+        };
+
+        retire_owner_if_owned(election.path(), &current).unwrap();
+        assert!(!producer_participant.exists());
+        assert!(retired_participant_path(election.path(), &producer).exists());
+
+        let registration = Registration::register_with_legacy(
+            election.path(),
+            candidate.clone(),
+            true,
+            Some(legacy.path()),
+            |_| true,
+            identity,
+            |_| Some(true),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(registration.is_primary_with(|_| true, identity, |_| Some(true)));
     }
 
     #[test]

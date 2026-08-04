@@ -23,6 +23,7 @@ export class WorkflowDefinitionStoreError extends Error {
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 export const WORKFLOW_DEFINITION_HISTORY_BYTES_LIMIT = 4 * 1024 * 1024
 export const WORKFLOW_DEFINITION_RECORD_LIMIT = 1_000
+export const WORKFLOW_DEFINITION_CATALOG_BYTES_LIMIT = 16 * 1024 * 1024
 
 const revisionBytes = (record: WorkflowDefinitionRecord) => Buffer.byteLength(JSON.stringify(record), "utf8")
 
@@ -38,6 +39,7 @@ function assertHistoryCapacity(revisions: WorkflowDefinitionRecord[], next: Work
 
 export class WorkflowDefinitionStore {
   private queue = Promise.resolve()
+  private listing?: Promise<WorkflowDefinitionRecord[]>
 
   constructor(private readonly directory: string) {}
 
@@ -123,6 +125,12 @@ export class WorkflowDefinitionStore {
   }
 
   async list(): Promise<WorkflowDefinitionRecord[]> {
+    if (this.listing) return this.listing
+    this.listing = this.readList().finally(() => { this.listing = undefined })
+    return this.listing
+  }
+
+  private async readList(): Promise<WorkflowDefinitionRecord[]> {
     await this.queue.catch(() => undefined)
     let entries: string[]
     try {
@@ -131,14 +139,23 @@ export class WorkflowDefinitionStore {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
       throw error
     }
-    const records = await Promise.all(entries.filter((entry) => entry.endsWith(".json")).map(async (entry) => {
+    const records: WorkflowDefinitionRecord[] = []
+    let catalogBytes = 0
+    for (const entry of entries) {
+      if (!entry.endsWith(".json")) continue
       const stored = await this.readFile(entry.slice(0, -5))
-      if (!stored || stored.deletedAt) return undefined
-      return stored.revisions.find((record) => record.revision === stored.currentRevision)
-    }))
-    return records.filter((record): record is WorkflowDefinitionRecord => Boolean(record))
+      if (stored?.deletedAt) continue
+      const record = stored?.revisions.find((candidate) => candidate.revision === stored.currentRevision)
+      if (record) {
+        catalogBytes += revisionBytes(record)
+        if (catalogBytes > WORKFLOW_DEFINITION_CATALOG_BYTES_LIMIT) {
+          throw new WorkflowDefinitionStoreError("Workflow definition catalog size limit reached", 413)
+        }
+        records.push(record)
+      }
+    }
+    return records
       .sort((left, right) => left.definition.name.localeCompare(right.definition.name))
-      .map(clone)
   }
 
   private async requireCurrent(id: string): Promise<StoredDefinition> {
@@ -203,15 +220,48 @@ export class WorkflowDefinitionStore {
   }
 
   private async persist(stored: StoredDefinition): Promise<void> {
-    await fs.mkdir(this.directory, { recursive: true })
+    await ensureDurableDirectory(this.directory)
     const destination = this.definitionPath(stored.id)
     const temporary = `${destination}.${randomUUID()}.tmp`
     try {
-      await fs.writeFile(temporary, `${JSON.stringify(stored, null, 2)}\n`, { encoding: "utf8", flag: "wx" })
+      const handle = await fs.open(temporary, "wx")
+      try {
+        await handle.writeFile(`${JSON.stringify(stored, null, 2)}\n`, "utf8")
+        await handle.sync()
+      } finally {
+        await handle.close()
+      }
       await fs.rename(temporary, destination)
+      await syncDirectory(this.directory)
     } catch (error) {
       await fs.rm(temporary, { force: true }).catch(() => undefined)
       throw error
     }
+  }
+}
+
+async function syncDirectory(directory: string): Promise<void> {
+  let handle: fs.FileHandle | undefined
+  try {
+    handle = await fs.open(directory, "r")
+    await handle.sync()
+  } catch (error) {
+    if (!["EINVAL", "ENOTSUP", "EISDIR", "EPERM", "EBADF", "ENOSYS"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error
+  } finally {
+    await handle?.close()
+  }
+}
+
+async function ensureDurableDirectory(directory: string): Promise<void> {
+  const created = await fs.mkdir(directory, { recursive: true })
+  if (!created) return
+  const firstCreated = path.resolve(created)
+  let current = path.resolve(directory)
+  while (true) {
+    await syncDirectory(path.dirname(current))
+    if (current === firstCreated) return
+    const parent = path.dirname(current)
+    if (parent === current) return
+    current = parent
   }
 }

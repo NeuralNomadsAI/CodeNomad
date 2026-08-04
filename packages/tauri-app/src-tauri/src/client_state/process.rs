@@ -121,7 +121,7 @@ impl Registration {
         };
         if !cross_host_registration
             .as_ref()
-            .is_some_and(cross_host::Registration::is_primary)
+            .is_some_and(cross_host::Registration::retains_local_candidacy)
         {
             if let Some(file) = primary_lock.take() {
                 release_primary_file(&file);
@@ -143,6 +143,14 @@ impl Registration {
                 .cross_host_registration
                 .as_ref()
                 .is_some_and(cross_host::Registration::is_primary)
+    }
+
+    pub(super) fn ownership_valid(&self) -> bool {
+        self.primary_lock.is_some()
+            && self
+                .cross_host_registration
+                .as_ref()
+                .is_some_and(cross_host::Registration::ownership_valid)
     }
 
     pub(super) fn finish(self) -> ProcessState {
@@ -212,9 +220,35 @@ impl ProcessState {
                 .map(|registration| {
                     registration
                         .as_ref()
+                        .is_some_and(cross_host::Registration::ownership_valid)
+                })
+                .unwrap_or(false)
+    }
+
+    pub(super) fn refresh_primary(&self) -> bool {
+        let has_local_lock = self
+            .primary_lock
+            .lock()
+            .map(|lock| lock.is_some())
+            .unwrap_or(false);
+        has_local_lock
+            && self
+                .cross_host_registration
+                .lock()
+                .map(|registration| {
+                    registration
+                        .as_ref()
                         .is_some_and(cross_host::Registration::is_primary)
                 })
                 .unwrap_or(false)
+    }
+
+    pub(super) fn defer_primary(&self) {
+        if let Ok(registration) = self.cross_host_registration.lock() {
+            if let Some(registration) = registration.as_ref() {
+                registration.defer_primary();
+            }
+        }
     }
 
     pub(super) fn is_registered(&self) -> bool {

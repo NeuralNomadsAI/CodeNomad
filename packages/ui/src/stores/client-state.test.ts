@@ -247,4 +247,19 @@ describe("secondary hosts", () => {
       }
     })
   }
+  it("re-queries native state after a late ownership transition", async () => {
+    let primary = false, saves = 0
+    const state = await boot({
+      loadClientState: async () => loadResult(null, primary),
+      saveClientState: async () => { saves += 1; return true },
+    })
+    assert.equal(state.clientStateIsPrimary(), false)
+
+    primary = true
+    await state.refreshClientStateOwnership()
+    assert.equal(state.clientStateIsPrimary(), true)
+    state.updateRestorableSession(session("promoted"))
+    await state.flushClientState()
+    assert.equal(saves, 1)
+  })
 })

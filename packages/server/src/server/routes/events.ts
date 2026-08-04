@@ -13,6 +13,7 @@ interface RouteDeps {
 }
 
 let nextClientId = 0
+const BACKPRESSURE_TIMEOUT_MS = 5_000
 
 const ConnectionQuerySchema = z.object({
   clientId: z.string().trim().min(1),
@@ -36,29 +37,55 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
     reply.raw.flushHeaders?.()
     reply.hijack()
 
+    let closed = false
+    let blocked = false
+    let heartbeat: ReturnType<typeof setInterval> | undefined
+    let backpressureTimeout: ReturnType<typeof setTimeout> | undefined
+    let drainListener: (() => void) | undefined
+    let unsubscribe: () => void = () => undefined
+
+    const close = (discardBufferedData = false) => {
+      if (closed) return
+      closed = true
+      if (heartbeat) clearInterval(heartbeat)
+      if (backpressureTimeout) clearTimeout(backpressureTimeout)
+      if (drainListener) reply.raw.off("drain", drainListener)
+      unsubscribe()
+      if (discardBufferedData || blocked) reply.raw.destroy()
+      else reply.raw.end?.()
+      deps.logger.debug({ clientId }, "SSE client disconnected")
+    }
+
+    const write = (payload: string) => {
+      if (closed || blocked) return
+      if (reply.raw.write(payload)) return
+      blocked = true
+      drainListener = () => {
+        drainListener = undefined
+        blocked = false
+        close()
+      }
+      reply.raw.once("drain", drainListener)
+      backpressureTimeout = setTimeout(() => close(true), BACKPRESSURE_TIMEOUT_MS)
+    }
+
     const send = (event: WorkspaceEventPayload) => {
       deps.logger.debug({ clientId, type: event.type }, "SSE event dispatched")
       if (deps.logger.isLevelEnabled("trace")) {
         deps.logger.trace({ clientId, event }, "SSE event payload")
       }
-      reply.raw.write(`data: ${JSON.stringify(event)}\n\n`)
+      write(`data: ${JSON.stringify(event)}\n\n`)
     }
 
-    const unsubscribe = deps.eventBus.onEvent(send)
-    const heartbeat = setInterval(() => {
-      const ping = { ts: Date.now() }
-      reply.raw.write(`event: codenomad.client.ping\ndata: ${JSON.stringify(ping)}\n\n`)
-    }, 15000)
-
-    let closed = false
-    const close = () => {
-      if (closed) return
-      closed = true
-      clearInterval(heartbeat)
+    unsubscribe = deps.eventBus.onEvent(send)
+    if (closed) {
       unsubscribe()
-      reply.raw.end?.()
-      deps.logger.debug({ clientId }, "SSE client disconnected")
+      return
     }
+    heartbeat = setInterval(() => {
+      const ping = { ts: Date.now() }
+      write(`event: codenomad.client.ping\ndata: ${JSON.stringify(ping)}\n\n`)
+    }, 15000)
 
     const unregister = deps.registerClient(close)
     const unregisterConnection = deps.connectionManager.register({

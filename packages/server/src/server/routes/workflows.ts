@@ -69,7 +69,6 @@ const CreateSchema = z.union([LegacyCreateSchema, DefinitionStartObjectSchema])
 const RunIdSchema = z.string().uuid()
 const ListSchema = z.object({ workspaceId: z.string().trim().min(1).max(200).optional() })
 const PluginDefinitionStartSchema = z.object({
-  initiatorSessionId: z.string().trim().min(1).max(200).optional(),
   objective: z.string().trim().min(1).max(50_000).optional(),
   inputs: z.record(z.unknown()).superRefine(validateBoundedJson).optional(),
 }).strict()
@@ -95,7 +94,16 @@ const DefinitionUpdateSchema = z.object({
 const DeleteDefinitionQuerySchema = z.object({
   expectedRevision: z.coerce.number().int().min(1).max(WORKFLOW_DEFINITION_REVISION_LIMIT),
 })
-const ResumeSchema = z.object({ confirmRecovery: z.boolean().optional() }).strict()
+const ResumeSchema = z.object({
+  confirmRecovery: z.boolean().optional(),
+  expectedRevision: z.number().int().min(0).optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.confirmRecovery === true && value.expectedRevision === undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "expectedRevision is required for recovery" })
+  } else if (value.confirmRecovery !== true && value.expectedRevision !== undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "expectedRevision requires recovery confirmation" })
+  }
+})
 const ApprovalSchema = z.object({ expectedStepId: z.string().trim().min(1).max(100) }).strict()
 const AnswerSchema = z.object({ executionNodeId: z.string().uuid(), answer: z.unknown() }).strict().superRefine((value, ctx) => {
   if (!Object.prototype.hasOwnProperty.call(value, "answer")) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "answer is required" })
@@ -185,21 +193,6 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: RouteDeps) {
     return { definitions: await deps.workflowManager.listDefinitions() }
   })
 
-  app.post<{ Params: { id: string } }>("/workspaces/:id/plugin/workflow-definitions", async (request, reply) => {
-    const parsed = DefinitionSourceSchema.safeParse(request.body)
-    if (!parsed.success) {
-      reply.code(400)
-      return { error: "Invalid workflow definition request", issues: parsed.error.flatten() }
-    }
-    try {
-      const record = await deps.workflowManager.createDefinition(definitionSource(parsed.data))
-      reply.code(201)
-      return record
-    } catch (error) {
-      return handleWorkflowError(error, reply)
-    }
-  })
-
   app.get<{ Params: { id: string; definitionId: string } }>(
     "/workspaces/:id/plugin/workflow-definitions/:definitionId",
     async (request, reply) => {
@@ -214,23 +207,6 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: RouteDeps) {
         return { error: "Workflow definition not found" }
       }
       return definition
-    },
-  )
-
-  app.put<{ Params: { id: string; definitionId: string } }>(
-    "/workspaces/:id/plugin/workflow-definitions/:definitionId",
-    async (request, reply) => {
-      const id = DefinitionIdSchema.safeParse(request.params.definitionId)
-      const body = DefinitionUpdateSchema.safeParse(request.body)
-      if (!id.success || !body.success) {
-        reply.code(400)
-        return { error: "Invalid workflow definition request" }
-      }
-      try {
-        return await deps.workflowManager.updateDefinition(id.data, body.data.expectedRevision, definitionSource(body.data))
-      } catch (error) {
-        return handleWorkflowError(error, reply)
-      }
     },
   )
 
@@ -499,7 +475,7 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: RouteDeps) {
       return { error: "Invalid workflow resume request" }
     }
     try {
-      const run = await deps.workflowManager.resume(id.data, body.data.confirmRecovery)
+      const run = await deps.workflowManager.resume(id.data, body.data.confirmRecovery, body.data.expectedRevision)
       if (!run) { reply.code(404); return { error: "Workflow run not found" } }
       return run
     } catch (error) {

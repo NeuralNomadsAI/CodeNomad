@@ -335,6 +335,17 @@ export function isValidWorktreeSlug(slug: string): boolean {
   return true
 }
 
+export function getManagedWorktreePath(repoRoot: string, slug: string): string {
+  const directoryName = slug
+    .trim()
+    .replace(/[\\/]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/[^a-zA-Z0-9_.-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+|-+$/g, "") || "worktree"
+  return path.join(repoRoot, ".codenomad", "worktrees", directoryName)
+}
+
 export async function isManagedWorktree(params: {
   repoRoot: string
   worktree: WorktreeDescriptor
@@ -372,17 +383,6 @@ export async function createManagedWorktree(params: {
     throw new Error("Invalid worktree slug")
   }
 
-  const sanitizeDirName = (input: string): string => {
-    const normalized = input
-      .trim()
-      .replace(/[\\/]+/g, "-")
-      .replace(/\s+/g, "-")
-      .replace(/[^a-zA-Z0-9_.-]+/g, "-")
-      .replace(/-{2,}/g, "-")
-      .replace(/^-+|-+$/g, "")
-    return normalized || "worktree"
-  }
-
   const canonicalRepoRoot = await fsp.realpath(repoRoot)
   const codenomadDir = path.join(repoRoot, ".codenomad")
   const worktreesDir = path.join(codenomadDir, "worktrees")
@@ -400,7 +400,7 @@ export async function createManagedWorktree(params: {
   if (!pathsEqual(canonicalWorktreesDir, path.join(canonicalCodenomadDir, "worktrees"))) {
     throw new Error("Managed worktree directory escapes repository")
   }
-  const targetDir = path.join(canonicalWorktreesDir, sanitizeDirName(branch))
+  const targetDir = getManagedWorktreePath(canonicalRepoRoot, branch)
   const relativeTarget = path.relative(canonicalWorktreesDir, targetDir)
   if (!relativeTarget || relativeTarget.startsWith(`..${path.sep}`) || path.isAbsolute(relativeTarget)) {
     throw new Error("Managed worktree target escapes managed directory")

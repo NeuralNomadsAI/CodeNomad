@@ -20,7 +20,9 @@ const MAX_CONTEXT_BYTES = 256_000
 const MAX_CONTEXT_VALUES = 50_000
 export class WorkflowSuspendedError extends Error {}
 export class WorkflowBudgetError extends Error {}
+export class WorkflowCheckpointError extends Error {}
 class WorkflowAmbiguousSideEffectError extends Error {}
+class WorkflowRetryCleanupError extends Error {}
 
 export interface WorkflowInterpreterOptions {
   run: WorkflowRun
@@ -146,7 +148,17 @@ export class WorkflowInterpreter {
     delete execution.error
     await this.options.persist()
 
+    let actionSignal: AbortSignal | undefined
+    if (node.type === "agent" || node.type === "shell") {
+      actionSignal = this.operationSignal(node.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+    }
+    let sessionPermit: ActionLimiter | undefined
+    if (node.type === "agent" && node.sessionKey) {
+      sessionPermit = this.sessionLimiter(node.sessionKey)
+      await this.acquirePermit(sessionPermit, actionSignal!)
+    }
     let actionSessionId: string | undefined
+    let nodeCompleted = false
     try {
       let output: unknown
       switch (node.type) {
@@ -170,10 +182,10 @@ export class WorkflowInterpreter {
         case "gate":
           return await this.executeGate(node, execution)
         case "agent":
-          ({ output, sessionId: actionSessionId } = await this.executeAgent(node, execution, scopedContext))
+          ({ output, sessionId: actionSessionId } = await this.executeAgent(node, execution, scopedContext, actionSignal!))
           break
         case "shell":
-          ({ output, sessionId: actionSessionId } = await this.executeShell(node, execution, scopedContext))
+          ({ output, sessionId: actionSessionId } = await this.executeShell(node, execution, scopedContext, actionSignal!))
           break
         case "workflow":
           output = await this.executeSavedWorkflow(node, instanceKey, scopedContext)
@@ -188,12 +200,16 @@ export class WorkflowInterpreter {
       execution.output = bounded.output
       execution.status = "completed"
       execution.completedAt = new Date().toISOString()
+      nodeCompleted = true
       await this.options.persist()
       if (actionSessionId) this.options.sessionFinished(actionSessionId)
       return output
     } catch (caught) {
       let error = caught
-      if (actionSessionId) {
+      if (nodeCompleted) {
+        if (actionSessionId) this.options.sessionFinished(actionSessionId)
+        throw new WorkflowCheckpointError(`Workflow node completed, but its checkpoint could not be persisted: ${this.errorMessage(error)}`)
+      } else if (actionSessionId) {
         if (await this.options.abortSession(actionSessionId)) {
           this.options.sessionFinished(actionSessionId)
           this.forgetSession(execution, actionSessionId)
@@ -215,6 +231,8 @@ export class WorkflowInterpreter {
         await this.options.persist()
       }
       throw error
+    } finally {
+      if (sessionPermit) this.releasePermit(sessionPermit)
     }
   }
 
@@ -252,15 +270,24 @@ export class WorkflowInterpreter {
     const output: unknown[] = []
     let exhausted = true
     for (let index = 0; index < node.maxIterations; index += 1) {
+      const instanceKey = `${parent}/${node.body.id}[${index}]`
       const iterationContext = {
         vars: { ...context.vars, iteration: index }, inputs: context.inputs, budgets: context.budgets, limiters: context.limiters,
         definitionInvocationKey: context.definitionInvocationKey, instanceKey: context.instanceKey,
       }
-      if (node.while !== undefined && !this.evaluateCondition(node.while, iterationContext)) {
+      const existing = this.nodes.find((candidate) => candidate.instanceKey === instanceKey)
+      if (!existing && node.while !== undefined && !this.evaluateCondition(node.while, iterationContext)) {
         exhausted = false
         break
       }
-      output.push(await this.executeNode(node.body, `${parent}/${node.body.id}[${index}]`, iterationContext, parent))
+      output.push(await this.executeNode(node.body, instanceKey, iterationContext, parent))
+    }
+    if (exhausted && node.while !== undefined) {
+      const finalContext = {
+        vars: { ...context.vars, iteration: node.maxIterations }, inputs: context.inputs, budgets: context.budgets,
+        limiters: context.limiters, definitionInvocationKey: context.definitionInvocationKey, instanceKey: context.instanceKey,
+      }
+      exhausted = this.evaluateCondition(node.while, finalContext)
     }
     if (exhausted && node.onExhausted === "fail") {
       throw new Error(`Repeat node ${node.id} exhausted ${node.maxIterations} iterations`)
@@ -288,8 +315,8 @@ export class WorkflowInterpreter {
     node: Extract<WorkflowNode, { type: "agent" }>,
     execution: WorkflowExecutionNode,
     context: ExecutionContext,
+    signal: AbortSignal,
   ): Promise<ActionResult> {
-    const signal = this.operationSignal(node.timeoutMs ?? DEFAULT_TIMEOUT_MS)
     const contextValue = node.context === undefined ? undefined : this.resolveContext(node.context, context, signal)
     const prompt = [
       `Workflow node: ${node.title ?? node.id}`,
@@ -299,12 +326,14 @@ export class WorkflowInterpreter {
       `Instructions:\n${node.instructions}`,
       ...(contextValue === undefined ? [] : ["", `Context:\n${JSON.stringify(contextValue, null, 2)}`]),
     ].join("\n")
-    const limiters = node.sessionKey ? [this.sessionLimiter(node.sessionKey), ...context.limiters] : context.limiters
-    return this.withActionPermit(limiters, signal, async () => {
+    return this.withActionPermit(context.limiters, signal, async () => {
       this.enforceActionAdmission(context.budgets)
       const tools = node.tools === undefined ? undefined : await this.toolOverrides(node.tools, signal)
-      return this.retry(node.retry?.maxAttempts ?? 1, node.retry?.delayMs ?? 0, execution, context.budgets, signal, async () => {
+      return this.retry(node.retry?.maxAttempts ?? 1, node.retry?.delayMs ?? 0, execution, context.budgets, signal, async (attempt) => {
         const sessionId = await this.createChildSession(node, execution, signal)
+        execution.attempt = attempt
+        await this.options.persist()
+        signal.throwIfAborted()
       try {
         const response = await this.requireData(this.options.client.session.prompt({
           sessionID: sessionId,
@@ -327,6 +356,8 @@ export class WorkflowInterpreter {
         if (await this.options.abortSession(sessionId)) {
           this.options.sessionFinished(sessionId)
           this.forgetSession(execution, sessionId)
+          execution.attempt = 0
+          await this.persistSessionCleanup(error)
         }
         else throw new WorkflowAmbiguousSideEffectError(`Workflow session abort was not confirmed: ${this.errorMessage(error)}`)
         throw error
@@ -339,12 +370,15 @@ export class WorkflowInterpreter {
     node: Extract<WorkflowNode, { type: "shell" }>,
     execution: WorkflowExecutionNode,
     context: ExecutionContext,
+    signal: AbortSignal,
   ): Promise<ActionResult> {
-    const signal = this.operationSignal(node.timeoutMs ?? DEFAULT_TIMEOUT_MS)
     return this.withActionPermit(context.limiters, signal, () => this.retry(
-      node.retry?.maxAttempts ?? 1, node.retry?.delayMs ?? 0, execution, context.budgets, signal, async () => {
+      node.retry?.maxAttempts ?? 1, node.retry?.delayMs ?? 0, execution, context.budgets, signal, async (attempt) => {
       this.enforceActionAdmission(context.budgets)
       const sessionId = await this.createChildSession(node, execution, signal)
+      execution.attempt = attempt
+      await this.options.persist()
+      signal.throwIfAborted()
       try {
         const response = await this.requireData(this.options.client.session.shell({
           sessionID: sessionId,
@@ -364,6 +398,8 @@ export class WorkflowInterpreter {
         if (await this.options.abortSession(sessionId)) {
           this.options.sessionFinished(sessionId)
           this.forgetSession(execution, sessionId)
+          execution.attempt = 0
+          await this.persistSessionCleanup(error)
         }
         else throw new WorkflowAmbiguousSideEffectError(`Workflow session abort was not confirmed: ${this.errorMessage(error)}`)
         throw error
@@ -432,6 +468,8 @@ export class WorkflowInterpreter {
       if (await this.options.abortSession(sessionId)) {
         this.options.sessionFinished(sessionId)
         this.forgetSession(execution, sessionId)
+        execution.attempt = 0
+        await this.persistSessionCleanup(error)
       }
       else throw new WorkflowAmbiguousSideEffectError(`Workflow session abort was not confirmed: ${this.errorMessage(error)}`)
       throw error
@@ -445,20 +483,18 @@ export class WorkflowInterpreter {
     execution: WorkflowExecutionNode,
     budgets: WorkflowBudget[],
     signal: AbortSignal,
-    operation: () => Promise<T>,
+    operation: (attempt: number) => Promise<T>,
   ): Promise<T> {
     let lastError: unknown = new Error("Workflow retry limit was already exhausted")
     for (let attempt = execution.attempt + 1; attempt <= attempts; attempt += 1) {
       signal.throwIfAborted()
       this.enforceActionAdmission(budgets)
-      execution.attempt = attempt
-      await this.options.persist()
-      signal.throwIfAborted()
       try {
-        return await operation()
+        return await operation(attempt)
       } catch (error) {
         lastError = error
-        if (error instanceof WorkflowAmbiguousSideEffectError || error instanceof WorkflowBudgetError) throw error
+        if (error instanceof WorkflowAmbiguousSideEffectError || error instanceof WorkflowBudgetError
+          || error instanceof WorkflowRetryCleanupError) throw error
         this.throwIfCancelled()
         signal.throwIfAborted()
         this.enforceActionAdmission(budgets)
@@ -740,9 +776,23 @@ export class WorkflowInterpreter {
   }
 
   private forgetSession(execution: WorkflowExecutionNode, sessionId: string): void {
-    if (!execution.sessionIds) return
-    execution.sessionIds = execution.sessionIds.filter((candidate) => candidate !== sessionId)
-    if (execution.sessionIds.length === 0) delete execution.sessionIds
+    if (execution.sessionIds) {
+      execution.sessionIds = execution.sessionIds.filter((candidate) => candidate !== sessionId)
+      if (execution.sessionIds.length === 0) delete execution.sessionIds
+    }
+    if (!this.run.sessionBindings) return
+    for (const [key, binding] of Object.entries(this.run.sessionBindings)) {
+      if (binding === sessionId) delete this.run.sessionBindings[key]
+    }
+    if (Object.keys(this.run.sessionBindings).length === 0) delete this.run.sessionBindings
+  }
+
+  private async persistSessionCleanup(cause: unknown): Promise<void> {
+    try {
+      await this.options.persist()
+    } catch (error) {
+      throw new WorkflowRetryCleanupError(`Workflow session cleanup could not be persisted: ${this.errorMessage(cause)}; ${this.errorMessage(error)}`)
+    }
   }
 
   private enforceActionAdmission(budgets: WorkflowBudget[]) {

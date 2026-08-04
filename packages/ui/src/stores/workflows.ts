@@ -264,8 +264,10 @@ async function pauseWorkflowRun(instanceId: string, runId: string): Promise<Work
   return run
 }
 
-async function resumeWorkflowRun(instanceId: string, runId: string, confirmRecovery = false): Promise<WorkflowRun> {
-  const run = await serverApi.resumeWorkflowRun(runId, { confirmRecovery })
+async function resumeWorkflowRun(instanceId: string, runId: string, confirmRecovery = false, expectedRevision?: number): Promise<WorkflowRun> {
+  const run = await serverApi.resumeWorkflowRun(runId, confirmRecovery
+    ? { confirmRecovery: true, expectedRevision: expectedRevision! }
+    : {})
   upsertWorkflowRun(instanceId, run)
   return run
 }
@@ -296,17 +298,43 @@ function setWorkflowDeclarativeDraft(instanceId: string, draft: WorkflowDeclarat
   setMapValue(setWorkflowDeclarativeDrafts, instanceId, { ...draft })
 }
 
+const workflowRefreshes = new Map<string, Promise<void>>()
+
+function refreshWorkflowRun(instanceId: string, runId: string): void {
+  const key = `${instanceId}:${runId}`
+  if (workflowRefreshes.has(key)) return
+  const refresh = serverApi.getWorkflowRun(instanceId, runId)
+    .catch(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      return serverApi.getWorkflowRun(instanceId, runId)
+    })
+    .then((run) => upsertWorkflowRun(instanceId, run))
+    .catch(() => undefined)
+    .then(() => undefined)
+    .finally(() => workflowRefreshes.delete(key))
+  workflowRefreshes.set(key, refresh)
+}
+
 sseManager.onWorkflowRunUpdated = (instanceId, event) => {
   const run = event.properties?.run
-  if (!run) return
-  const previousStatus = getWorkflowRuns(instanceId).find((entry) => entry.id === run.id)?.status
-  if (upsertWorkflowRun(instanceId, run) && previousStatus !== run.status) {
+  const runId = run?.id ?? event.properties?.runId
+  if (!runId) return
+  const existing = getWorkflowRuns(instanceId).find((entry) => entry.id === runId)
+  const status = run?.status ?? event.properties?.status
+  const updated = run ?? (existing && status ? {
+    ...existing,
+    status,
+    ...(event.properties?.revision === undefined ? {} : { revision: event.properties.revision }),
+    ...(event.properties?.updatedAt ? { updatedAt: event.properties.updatedAt } : {}),
+  } : undefined)
+  if (updated && upsertWorkflowRun(instanceId, updated) && existing?.status !== updated.status) {
     setMapValue(setWorkflowStatusTransitions, instanceId, {
-      runId: run.id,
-      status: run.status,
-      updatedAt: run.updatedAt,
+      runId,
+      status: updated.status,
+      updatedAt: updated.updatedAt,
     })
   }
+  if (!run && (!existing || (status !== "running" && status !== "pausing"))) refreshWorkflowRun(instanceId, runId)
 }
 
 serverEvents.onOpen(() => {

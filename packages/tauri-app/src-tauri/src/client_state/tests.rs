@@ -164,6 +164,76 @@ fn run_node_state_host(
     );
     serde_json::from_str(&line).unwrap()
 }
+
+fn initialize_late_secondary(
+    root: &std::path::Path,
+    shared: &std::path::Path,
+) -> (ClientState, std::path::PathBuf, Value) {
+    let identity_election = tempfile::tempdir().unwrap();
+    let identity_registration =
+        super::cross_host::Registration::register(identity_election.path(), false, None)
+            .unwrap()
+            .unwrap();
+    let process_identity = fs::read_dir(identity_election.path())
+        .unwrap()
+        .find_map(|entry| {
+            let entry = entry.unwrap();
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("participant.")
+                .then(|| fs::read(entry.path()).unwrap())
+        })
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .and_then(|owner| {
+            owner
+                .get("processStartIdentity")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap();
+    drop(identity_registration);
+
+    let tauri = root.join("tauri");
+    let electron = root.join("electron");
+    let election = root.join("shared/election");
+    fs::create_dir_all(&tauri).unwrap();
+    fs::create_dir_all(&electron).unwrap();
+    let producer = json!({
+        "pid": std::process::id(),
+        "runToken": "late-electron",
+        "processStartIdentity": process_identity,
+    });
+    fs::write(
+        electron.join(format!(
+            "client-state.running.{}.late-electron.json",
+            std::process::id()
+        )),
+        serde_json::to_vec(&producer).unwrap(),
+    )
+    .unwrap();
+    let state = ClientState::initialize_at_with_writer_and_election(
+        &tauri,
+        &election,
+        shared,
+        Some(&electron),
+        Arc::new(super::write_atomically),
+    )
+    .unwrap();
+    (state, election, producer)
+}
+
+fn publish_late_participant(election: &std::path::Path, producer: &Value) {
+    fs::write(
+        election.join(format!(
+            "participant.{}.late-electron.json",
+            std::process::id()
+        )),
+        serde_json::to_vec(producer).unwrap(),
+    )
+    .unwrap();
+}
+
 #[test]
 fn restore_defaults_on_unless_explicitly_disabled() {
     let directory = tempfile::tempdir().unwrap();
@@ -330,6 +400,117 @@ fn electron_and_tauri_share_the_complete_envelope_across_handoffs() {
     assert_eq!(node["acquired"], true);
     assert_eq!(node["state"]["snapshot"], tauri_snapshot);
 }
+
+#[test]
+fn late_promotion_reloads_authoritative_state_before_flush_or_mutation() {
+    let root = tempfile::tempdir().unwrap();
+    let shared = root.path().join("shared/client-state.json");
+    fs::create_dir_all(shared.parent().unwrap()).unwrap();
+    let snapshot = json!({ "kept": true });
+    let authoritative = json!({
+        "version": 1,
+        "restoreEnabled": false,
+        "snapshot": snapshot,
+        "window": window(),
+    });
+    let authoritative_bytes = serde_json::to_vec(&authoritative).unwrap();
+    fs::write(&shared, &authoritative_bytes).unwrap();
+    let (state, election, producer) = initialize_late_secondary(root.path(), &shared);
+    assert!(!state.load().unwrap().is_primary);
+    assert!(state.state.lock().unwrap().snapshot.is_none());
+
+    thread::sleep(Duration::from_millis(100));
+    publish_late_participant(&election, &producer);
+    state.flush().unwrap();
+    assert!(state.take_renderer_reload());
+
+    assert_eq!(fs::read(&shared).unwrap(), authoritative_bytes);
+    {
+        let reloaded = state.state.lock().unwrap();
+        assert!(!reloaded.restore_enabled);
+        assert_eq!(reloaded.snapshot, Some(snapshot.clone()));
+        assert_eq!(reloaded.window, Some(window()));
+    }
+    assert!(state.set_restore_enabled(true).unwrap());
+    let saved = parse_client_state(&fs::read(&shared).unwrap());
+    assert!(saved.restore_enabled);
+    assert_eq!(saved.snapshot, Some(snapshot));
+    assert_eq!(saved.window, Some(window()));
+
+    fs::remove_dir_all(election.join("primary.owner.json")).unwrap();
+    assert!(!state.load().unwrap().is_primary);
+    let reacquired_window = NativeWindowState {
+        zoom_factor: 1.5,
+        ..window()
+    };
+    let reacquired_snapshot = json!({ "reacquired": true });
+    let reacquired = serde_json::to_vec(&json!({
+        "version": 1,
+        "restoreEnabled": false,
+        "snapshot": reacquired_snapshot,
+        "window": reacquired_window,
+    }))
+    .unwrap();
+    fs::write(&shared, &reacquired).unwrap();
+    state.flush().unwrap();
+    assert_eq!(fs::read(&shared).unwrap(), reacquired);
+    let reloaded = state.state.lock().unwrap();
+    assert!(!reloaded.restore_enabled);
+    assert_eq!(reloaded.snapshot, Some(reacquired_snapshot));
+    assert_eq!(reloaded.window, Some(reacquired_window));
+}
+
+#[test]
+fn late_promotion_rejects_unreadable_authoritative_state() {
+    let root = tempfile::tempdir().unwrap();
+    let shared = root.path().join("shared/client-state.json");
+    fs::create_dir_all(&shared).unwrap();
+    let (state, election, producer) = initialize_late_secondary(root.path(), &shared);
+    assert!(!state.load().unwrap().is_primary);
+
+    publish_late_participant(&election, &producer);
+    let error = state.flush().unwrap_err();
+    assert!(error.contains("failed to read authoritative client state"));
+    assert!(!state.primary_loaded.load(Ordering::SeqCst));
+    assert!(!state.take_renderer_reload());
+    assert!(!state.is_primary());
+    assert!(state
+        .save_snapshot(json!({ "mustNotWrite": true }))
+        .is_err());
+    assert!(shared.is_dir());
+}
+
+#[test]
+fn late_promotion_migrates_legacy_state_when_shared_state_is_absent() {
+    let root = tempfile::tempdir().unwrap();
+    let tauri = root.path().join("tauri");
+    let shared = root.path().join("shared/client-state.json");
+    fs::create_dir_all(&tauri).unwrap();
+    let snapshot = json!({ "savedAt": 42, "legacy": true });
+    let legacy = tauri.join(CLIENT_STATE_FILENAME);
+    fs::write(
+        &legacy,
+        serde_json::to_vec(&json!({
+            "version": 1,
+            "restoreEnabled": false,
+            "snapshot": snapshot,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let (state, election, producer) = initialize_late_secondary(root.path(), &shared);
+    assert!(!shared.exists());
+
+    publish_late_participant(&election, &producer);
+    state.flush().unwrap();
+    assert!(state.take_renderer_reload());
+    assert!(!legacy.exists());
+    let migrated = parse_client_state(&fs::read(&shared).unwrap());
+    assert!(!migrated.restore_enabled);
+    assert_eq!(migrated.snapshot, Some(snapshot));
+    assert!(!state.state.lock().unwrap().restore_enabled);
+}
+
 #[test]
 fn normalizes_window_bounds_against_displays() {
     let cases = [

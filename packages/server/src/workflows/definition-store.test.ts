@@ -2,9 +2,10 @@ import assert from "node:assert/strict"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { describe, it } from "node:test"
+import { describe, it, type TestContext } from "node:test"
 import {
   WORKFLOW_DEFINITION_HISTORY_BYTES_LIMIT,
+  WORKFLOW_DEFINITION_CATALOG_BYTES_LIMIT,
   WORKFLOW_DEFINITION_RECORD_LIMIT,
   WORKFLOW_DEFINITION_REVISION_LIMIT,
   WorkflowDefinitionStore,
@@ -118,6 +119,57 @@ describe("WorkflowDefinitionStore", () => {
         fs.writeFile(path.join(directory, `old-${index}.json`), "{}")))
       const store = new WorkflowDefinitionStore(directory)
       await assert.rejects(store.create(definition("Over limit")), /record limit reached/)
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("reads catalog histories with bounded concurrency", async (context: TestContext) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-definition-store-list-"))
+    try {
+      const store = new WorkflowDefinitionStore(directory)
+      for (let index = 0; index < 4; index++) {
+        await store.create({ ...definition(`Definition ${index}`), id: `stored-${index}` })
+      }
+
+      const readFile = fs.readFile.bind(fs)
+      let activeReads = 0
+      let maxActiveReads = 0
+      let reads = 0
+      context.mock.method(fs, "readFile", async (...args: Parameters<typeof fs.readFile>) => {
+        reads++
+        activeReads++
+        maxActiveReads = Math.max(maxActiveReads, activeReads)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        try {
+          return await readFile(...args)
+        } finally {
+          activeReads--
+        }
+      })
+
+      const [first, second] = await Promise.all([store.list(), store.list()])
+      assert.equal(first.length, 4)
+      assert.equal(second.length, 4)
+      assert.equal(maxActiveReads, 1)
+      assert.equal(reads, 4)
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("rejects a catalog response before aggregate records exhaust memory", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-definition-store-catalog-bytes-"))
+    try {
+      const store = new WorkflowDefinitionStore(directory)
+      const instructions = "x".repeat(49_000)
+      const count = Math.ceil(WORKFLOW_DEFINITION_CATALOG_BYTES_LIMIT / 95_000) + 5
+      for (let index = 0; index < count; index++) {
+        await store.create({ ...definition(`Large ${index}`), id: `large-${index}`, root: {
+          type: "agent", id: "work", instructions,
+        } })
+      }
+      await assert.rejects(store.list(), /catalog size limit reached/)
     } finally {
       await fs.rm(directory, { recursive: true, force: true })
     }

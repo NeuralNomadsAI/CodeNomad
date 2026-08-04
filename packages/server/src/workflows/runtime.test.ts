@@ -248,6 +248,89 @@ describe("declarative workflow runtime", () => {
     }
   })
 
+  it("holds a named session until the prior node terminal checkpoint is persisted", async () => {
+    const now = new Date().toISOString()
+    const definition: WorkflowDefinitionV1 = { version: 1, id: "session-handoff", name: "Session handoff", maxConcurrency: 2,
+      root: { type: "parallel", id: "root", maxConcurrency: 2, branches: [
+        { type: "agent", id: "left", sessionKey: "worker", instructions: "Left" },
+        { type: "agent", id: "right", sessionKey: "worker", instructions: "Right" },
+      ] } }
+    const run = {
+      id: "session-handoff", workspaceId: "workspace", workspaceLineageId: "lineage", workspacePath: "C:/workspace",
+      objective: "Handoff", status: "running", steps: [], definitionId: definition.id, definitionRevision: 1,
+      definitionSnapshot: definition, inputs: {}, executionNodes: [], createdAt: now, updatedAt: now,
+    } as WorkflowRun
+    let prompts = 0
+    let blockCheckpoint = true
+    let checkpointEntered!: () => void
+    let releaseCheckpoint!: () => void
+    const entered = new Promise<void>((resolve) => { checkpointEntered = resolve })
+    const release = new Promise<void>((resolve) => { releaseCheckpoint = resolve })
+    const client = { tool: workflowTools, session: {
+      create: async () => ({ data: { id: "shared-session" } }),
+      prompt: async () => {
+        prompts++
+        return { data: { info: usage(), parts: [{ type: "text", text: "done" }] } }
+      },
+      abort: async () => ({ data: true }),
+    } } as unknown as OpencodeClient
+    const interpreter = new WorkflowInterpreter({
+      run, client,
+      persist: async () => {
+        const completed = run.executionNodes?.filter((node) => node.type === "agent" && node.status === "completed").length ?? 0
+        if (blockCheckpoint && completed === 1) {
+          blockCheckpoint = false
+          checkpointEntered()
+          await release
+        }
+      },
+      signal: () => new AbortController().signal, sessionStarted: () => true, sessionFinished: () => {},
+      abortSession: async () => true, isCancelled: () => false,
+    })
+
+    const execution = interpreter.execute()
+    await entered
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(prompts, 1)
+    releaseCheckpoint()
+    await execution
+    assert.equal(prompts, 2)
+  })
+
+  it("includes named-session permit waiting in the node timeout", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-session-timeout-"))
+    let prompts = 0
+    const client = { tool: workflowTools, session: {
+      create: async () => ({ data: { id: "timed-session" } }),
+      prompt: async (_input: unknown, options?: { signal?: AbortSignal }) => {
+        prompts++
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, 45)
+          options?.signal?.addEventListener("abort", () => {
+            clearTimeout(timer)
+            reject(options.signal!.reason)
+          }, { once: true })
+        })
+        return { data: { info: usage(), parts: [{ type: "text", text: "done" }] } }
+      },
+      abort: async () => ({ data: true }),
+    } } as unknown as OpencodeClient
+    const manager = new WorkflowManager({ workspaceManager, eventBus, logger, storageDir: directory, createClient: () => client })
+    try {
+      await manager.createDefinition({ version: 1, id: "session-timeout", name: "Session timeout", maxConcurrency: 2,
+        root: { type: "parallel", id: "root", maxConcurrency: 2, branches: [
+          { type: "agent", id: "left", sessionKey: "worker", instructions: "Left", timeoutMs: 70 },
+          { type: "agent", id: "right", sessionKey: "worker", instructions: "Right", timeoutMs: 70 },
+        ] } })
+      const started = await manager.start({ workspaceId: "workspace", definitionId: "session-timeout" })
+      await waitFor(manager, started.id, ["failed"])
+      assert.ok(prompts >= 1)
+    } finally {
+      await manager.shutdown()
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it("restores a named agent session without creating another session", async () => {
     const now = new Date().toISOString()
     const prompts: string[] = []
@@ -266,13 +349,15 @@ describe("declarative workflow runtime", () => {
       },
       abort: async () => ({ data: true }),
     } } as unknown as OpencodeClient
+    const checkpoints: WorkflowRun["executionNodes"][] = []
     const interpreter = new WorkflowInterpreter({
-      run, client, persist: async () => {}, signal: () => new AbortController().signal,
+      run, client, persist: async () => { checkpoints.push(JSON.parse(JSON.stringify(run.executionNodes))) }, signal: () => new AbortController().signal,
       sessionStarted: () => true, sessionFinished: () => {}, abortSession: async () => true, isCancelled: () => false,
     })
 
     await interpreter.execute()
     assert.deepEqual(prompts, ["existing-session"])
+    assert.equal(checkpoints.some((nodes) => nodes?.some((node) => node.attempt > 0 && !node.sessionIds?.length)), false)
   })
 
   it("fails only when a repeat configured to fail exhausts its iterations", async () => {
@@ -299,7 +384,15 @@ describe("declarative workflow runtime", () => {
       } })
       const stopped = await manager.start({ workspaceId: "workspace", definitionId: "repeat-stop" })
       await waitFor(manager, stopped.id, ["completed"])
-      assert.equal(sessions, 3)
+
+      await manager.createDefinition({ version: 1, id: "repeat-satisfied", name: "Repeat satisfied", root: {
+        type: "repeat", id: "retry", maxIterations: 1,
+        while: { value: { $ref: "nodes.work.output" }, notEquals: "retry" }, onExhausted: "fail",
+        body: { type: "agent", id: "work", instructions: "Retry" },
+      } })
+      const satisfied = await manager.start({ workspaceId: "workspace", definitionId: "repeat-satisfied" })
+      await waitFor(manager, satisfied.id, ["completed"])
+      assert.equal(sessions, 5)
     } finally {
       await manager.shutdown()
       await fs.rm(directory, { recursive: true, force: true })
@@ -669,10 +762,12 @@ describe("declarative workflow runtime", () => {
         type: "agent", id: "work", instructions: "Wait", timeoutMs: 20, retry: { maxAttempts: 2, idempotent: true },
       } })
       const started = await manager.start({ workspaceId: "workspace", definitionId: "deadline" })
-      await waitFor(manager, started.id, ["failed"])
+      const failed = await waitFor(manager, started.id, ["failed"])
       assert.equal(prompts, 1)
       assert.equal(sessions, 2)
       assert.ok(signals.every((signal) => signal === signals[0]))
+      assert.equal(failed.executionNodes?.find((node) => node.definitionNodeId === "work")?.attempt, 0)
+      assert.equal(failed.executionNodes?.find((node) => node.definitionNodeId === "work")?.sessionIds, undefined)
     } finally {
       await manager.shutdown()
       await fs.rm(directory, { recursive: true, force: true })
@@ -685,7 +780,7 @@ describe("declarative workflow runtime", () => {
     const now = new Date().toISOString()
     const definition: WorkflowDefinitionV1 = {
       version: 1, id: "recover", name: "Recover",
-      root: { type: "agent", id: "work", instructions: "Potential side effect" },
+      root: { type: "agent", id: "work", sessionKey: "worker", instructions: "Potential side effect" },
     }
     await fs.writeFile(path.join(directory, `${id}.json`), JSON.stringify({
       id, workspaceId: "workspace", workspaceLineageId: "lineage", workspacePath: "C:/workspace",
@@ -696,6 +791,7 @@ describe("declarative workflow runtime", () => {
         id: "execution", instanceKey: "work", definitionNodeId: "work", type: "agent", status: "running",
         attempt: 1, sessionIds: ["ambiguous"], startedAt: now,
       }],
+      sessionBindings: { worker: "ambiguous" },
       createdAt: now, updatedAt: now,
     }), "utf8")
     let sessions = 0
@@ -711,7 +807,9 @@ describe("declarative workflow runtime", () => {
       assert.equal(recovered.status, "recovery_required")
       assert.equal(recovered.executionNodes?.[0]?.status, "interrupted")
       await assert.rejects(manager.resume(id), /Recovery confirmation is required/)
-      await manager.resume(id, true)
+      const recoveryRevision = recovered.revision!
+      await assert.rejects(manager.resume(id, true, recoveryRevision - 1), /confirmation is stale/)
+      await manager.resume(id, true, recoveryRevision)
       const completed = await waitFor(manager, id, ["completed"])
       assert.equal(completed.executionNodes?.[0]?.output, "confirmed")
       assert.deepEqual(calls.slice(0, 3), ["abort:ambiguous", "create:recovery-1", "prompt"])
@@ -746,7 +844,8 @@ describe("declarative workflow runtime", () => {
     const manager = new WorkflowManager({ workspaceManager, eventBus, logger, storageDir: directory, createClient: () => client })
     try {
       await manager.createDefinition(definition)
-      await assert.rejects(manager.resume(id, true), /could not confirm/)
+      const recovered = (await manager.get(id))!
+      await assert.rejects(manager.resume(id, true, recovered.revision), /could not confirm/)
       const run = (await manager.get(id))!
       assert.equal(run.status, "recovery_required")
       assert.equal(run.executionNodes?.[0]?.status, "interrupted")
@@ -1232,6 +1331,77 @@ describe("declarative workflow runtime", () => {
     }
   })
 
+  it("resumes an action that crashed before admission without recovery confirmation", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-pre-admission-recovery-"))
+    const id = "00000000-0000-4000-8000-000000000093"
+    const now = new Date().toISOString()
+    const definition: WorkflowDefinitionV1 = { version: 1, id: "pre-admission", name: "Pre-admission", root: {
+      type: "agent", id: "work", instructions: "Run once admitted",
+    } }
+    await fs.writeFile(path.join(directory, `${id}.json`), JSON.stringify({
+      id, workspaceId: "workspace", workspaceLineageId: "lineage", workspacePath: "C:/workspace",
+      objective: "Resume safely", status: "running", rootSessionId: "root", steps: [], revision: 1,
+      definitionId: definition.id, definitionRevision: 1, definitionSnapshot: definition, inputs: {},
+      usage: { cost: 0, tokens: 0, inputTokens: 0, outputTokens: 0, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      executionNodes: [{ id: "execution", instanceKey: "work", definitionNodeId: "work", type: "agent",
+        status: "running", attempt: 0, startedAt: now }], createdAt: now, updatedAt: now,
+    }), "utf8")
+    let prompts = 0
+    const client = { tool: workflowTools, session: {
+      create: async () => ({ data: { id: "admitted" } }),
+      prompt: async () => { prompts++; return { data: { info: usage(), parts: [{ type: "text", text: "done" }] } } },
+      abort: async () => ({ data: true }),
+    } } as unknown as OpencodeClient
+    const manager = new WorkflowManager({ workspaceManager, eventBus, logger, storageDir: directory, createClient: () => client })
+    try {
+      const recovered = (await manager.get(id))!
+      assert.equal(recovered.status, "interrupted")
+      assert.equal(recovered.executionNodes?.[0]?.status, "waiting")
+      await manager.resume(id)
+      await waitFor(manager, id, ["completed"])
+      assert.equal(prompts, 1)
+    } finally {
+      await manager.shutdown()
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("restores completed repeat output when its parent checkpoint was interrupted", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-repeat-recovery-"))
+    const id = "00000000-0000-4000-8000-000000000092"
+    const now = new Date().toISOString()
+    const definition: WorkflowDefinitionV1 = { version: 1, id: "repeat-recovery", name: "Repeat recovery", root: {
+      type: "repeat", id: "retry", maxIterations: 1,
+      while: { value: { $ref: "nodes.work.output" }, notEquals: "done" }, onExhausted: "fail",
+      body: { type: "agent", id: "work", instructions: "Work" },
+    } }
+    await fs.writeFile(path.join(directory, `${id}.json`), JSON.stringify({
+      id, workspaceId: "workspace", workspaceLineageId: "lineage", workspacePath: "C:/workspace",
+      objective: "Recover repeat", status: "running", rootSessionId: "root", steps: [], revision: 1,
+      definitionId: definition.id, definitionRevision: 1, definitionSnapshot: definition, inputs: {},
+      usage: { cost: 0, tokens: 0, inputTokens: 0, outputTokens: 0, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      executionNodes: [
+        { id: "repeat", instanceKey: "retry", definitionNodeId: "retry", type: "repeat", status: "running", attempt: 0, startedAt: now },
+        { id: "work", instanceKey: "retry/work[0]", parentInstanceKey: "retry", definitionNodeId: "work", type: "agent",
+          status: "completed", attempt: 1, output: "done", startedAt: now, completedAt: now },
+      ], createdAt: now, updatedAt: now,
+    }), "utf8")
+    const client = { tool: workflowTools, session: {
+      create: async () => { throw new Error("completed repeat body must not run again") },
+      abort: async () => ({ data: true }),
+    } } as unknown as OpencodeClient
+    const manager = new WorkflowManager({ workspaceManager, eventBus, logger, storageDir: directory, createClient: () => client })
+    try {
+      assert.equal((await manager.get(id))?.status, "interrupted")
+      await manager.resume(id)
+      const completed = await waitFor(manager, id, ["completed"])
+      assert.deepEqual(completed.executionNodes?.find((node) => node.id === "repeat")?.output, ["done"])
+    } finally {
+      await manager.shutdown()
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it("never repeats crash-interrupted actions without persisted termination evidence", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-no-recovery-evidence-"))
     const id = "00000000-0000-4000-8000-000000000096"
@@ -1256,7 +1426,8 @@ describe("declarative workflow runtime", () => {
     const manager = new WorkflowManager({ workspaceManager, eventBus, logger, storageDir: directory, createClient: () => client })
     try {
       assert.equal((await manager.get(id))?.status, "recovery_required")
-      await assert.rejects(manager.resume(id, true), /no persisted session IDs.*will not be repeated/)
+      const recovered = (await manager.get(id))!
+      await assert.rejects(manager.resume(id, true, recovered.revision), /no persisted session IDs.*will not be repeated/)
       assert.equal((await manager.get(id))?.status, "recovery_required")
       assert.equal(prompts, 0)
       await assert.rejects(manager.start({ workspaceId: "workspace", objective: "blocked", stages: [] }), /already running/)
@@ -1643,6 +1814,42 @@ describe("declarative workflow runtime", () => {
     }
   })
 
+  it("retains recovery ownership when a completed action checkpoint fails", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-action-checkpoint-"))
+    let sessions = 0
+    let prompts = 0
+    const client = { tool: workflowTools, session: {
+      create: async () => ({ data: { id: `action-checkpoint-${++sessions}` } }),
+      prompt: async () => { prompts++; return { data: { info: usage(), parts: [{ type: "text", text: "done" }] } } },
+      abort: async () => ({ data: true }),
+    } } as unknown as OpencodeClient
+    const manager = new WorkflowManager({ workspaceManager, eventBus, logger, storageDir: directory, createClient: () => client })
+    try {
+      await manager.createDefinition({ version: 1, id: "action-checkpoint", name: "Action checkpoint", root: {
+        type: "agent", id: "work", instructions: "Work",
+      } })
+      const persist = (manager as any).persist.bind(manager)
+      let failCheckpoint = true
+      ;(manager as any).persist = async (run: WorkflowRun, touch?: boolean) => {
+        const action = run.executionNodes?.find((node) => node.definitionNodeId === "work")
+        if (failCheckpoint && run.status === "running" && action?.status === "completed") {
+          failCheckpoint = false
+          throw new Error("action checkpoint failed")
+        }
+        return persist(run, touch)
+      }
+      const started = await manager.start({ workspaceId: "workspace", definitionId: "action-checkpoint" })
+      const recovery = await waitFor(manager, started.id, ["recovery_required"])
+      assert.equal(recovery.executionNodes?.find((node) => node.definitionNodeId === "work")?.status, "completed")
+      await assert.rejects(manager.start({ workspaceId: "workspace", definitionId: "action-checkpoint" }), /already running/)
+      assert.equal((await manager.cancel(started.id))?.status, "cancelled")
+      assert.equal(prompts, 1)
+    } finally {
+      await manager.shutdown()
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it("retains the reservation when terminal and fallback persistence both fail", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-terminal-persist-"))
     let sessions = 0
@@ -1659,7 +1866,7 @@ describe("declarative workflow runtime", () => {
       } })
       const persist = (manager as any).persist.bind(manager)
       ;(manager as any).persist = async (run: WorkflowRun, touch?: boolean) => {
-        if (run.status === "completed" || run.status === "failed") throw new Error("terminal write failed")
+        if (run.status === "completed" || run.status === "failed" || run.status === "recovery_required") throw new Error("terminal write failed")
         return persist(run, touch)
       }
       const started = await manager.start({ workspaceId: "workspace", definitionId: "terminal-persist" })
@@ -1676,6 +1883,9 @@ describe("declarative workflow runtime", () => {
       reloaded = new WorkflowManager({ workspaceManager, eventBus, logger, storageDir: directory, createClient: () => client })
       assert.equal((await reloaded.get(started.id))?.status, "recovery_required")
       await assert.rejects(reloaded.start({ workspaceId: "workspace", definitionId: "terminal-persist" }), /already running/)
+      assert.equal((await reloaded.cancel(started.id))?.status, "cancelled")
+      const replacement = await reloaded.start({ workspaceId: "workspace", definitionId: "terminal-persist" })
+      await waitFor(reloaded, replacement.id, ["completed"])
     } finally {
       await manager.shutdown()
       await reloaded?.shutdown()
@@ -1708,6 +1918,33 @@ describe("declarative workflow runtime", () => {
       assert.equal(run?.pendingGate, undefined)
       await assert.rejects(manager.approve(id, "execution"), /not waiting for approval/)
       await assert.rejects(manager.start({ workspaceId: "workspace", objective: "blocked", stages: [] }), /already running/)
+    } finally {
+      await manager.shutdown()
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("ignores a recovery marker superseded by a newer durable run revision", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-stale-recovery-marker-"))
+    const id = "00000000-0000-4000-8000-000000000091"
+    const now = new Date().toISOString()
+    const definition: WorkflowDefinitionV1 = { version: 1, id: "resolved-marker", name: "Resolved marker", root: {
+      type: "agent", id: "work", instructions: "Done",
+    } }
+    await fs.writeFile(path.join(directory, `${id}.json`), JSON.stringify({
+      id, workspaceId: "workspace", workspaceLineageId: "lineage", workspacePath: "C:/workspace",
+      objective: "Resolved", status: "completed", steps: [], revision: 5,
+      definitionId: definition.id, definitionRevision: 1, definitionSnapshot: definition, inputs: {},
+      usage: { cost: 0, tokens: 0, inputTokens: 0, outputTokens: 0, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      executionNodes: [{ id: "execution", instanceKey: "work", definitionNodeId: "work", type: "agent",
+        status: "completed", attempt: 1, output: "done", startedAt: now, completedAt: now }],
+      createdAt: now, updatedAt: now,
+    }), "utf8")
+    await fs.writeFile(path.join(directory, `${id}.recovery`), JSON.stringify({ runId: id, revision: 4 }), "utf8")
+    const manager = new WorkflowManager({ workspaceManager, eventBus, logger, storageDir: directory })
+    try {
+      assert.equal((await manager.get(id))?.status, "completed")
+      await assert.rejects(fs.access(path.join(directory, `${id}.recovery`)), /ENOENT/)
     } finally {
       await manager.shutdown()
       await fs.rm(directory, { recursive: true, force: true })

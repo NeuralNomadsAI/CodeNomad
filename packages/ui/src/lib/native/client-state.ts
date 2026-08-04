@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core"
+import { listen } from "@tauri-apps/api/event"
 import { isElectronHost, isLocalWindow, isTauriHost } from "../runtime-env"
 const LEGACY_WEB_KEYS = ["codenomad-client-snapshot-v1", "codenomad-client-restore-enabled-v1"]
 export type NativeClientStateLoadResult = {
@@ -37,6 +38,10 @@ export async function loadNativeClientState(): Promise<NativeClientStateLoadResu
     for (const key of LEGACY_WEB_KEYS) window.localStorage.removeItem(key)
   } catch {}
   return SECONDARY_CLIENT_STATE
+}
+export async function listenForNativeClientStateOwnershipChange(callback: () => void): Promise<() => void> {
+  if (!isTauriHost()) return () => {}
+  return listen("client-state:ownership-changed", callback)
 }
 async function mutateNativeClientState(electronOperation: (api: ElectronAPI) => Promise<boolean> | undefined, command: string, args: Record<string, unknown> = {}): Promise<boolean> {
   if (!nativeAccessClaimed) return false

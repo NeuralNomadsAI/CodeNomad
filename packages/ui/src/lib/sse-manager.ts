@@ -29,6 +29,7 @@ import type {
   BackgroundProcess,
   InstanceStreamEvent,
   WorkflowRun,
+  WorkflowRunStatus,
   WorkspaceEventPayload,
 } from "../../../server/src/api-types"
 import { getLogger } from "./logger"
@@ -70,7 +71,11 @@ interface BackgroundProcessRemovedEvent {
 export interface WorkflowRunUpdatedEvent {
   type: "workflow.run.updated"
   properties: {
-    run: WorkflowRun
+    run?: WorkflowRun
+    runId?: string
+    revision?: number
+    status?: WorkflowRunStatus
+    updatedAt?: string
   }
 }
 

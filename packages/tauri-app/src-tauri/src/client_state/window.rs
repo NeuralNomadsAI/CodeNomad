@@ -1,9 +1,9 @@
-use super::ClientState;
+use super::{ClientState, CLIENT_STATE_OWNERSHIP_CHANGED_EVENT};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
-use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, WindowEvent};
+use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WindowEvent};
 
 const MIN_WINDOW_WIDTH: i32 = 800;
 const MIN_WINDOW_HEIGHT: i32 = 600;
@@ -131,11 +131,14 @@ fn capture_main_window_in_memory(app: &AppHandle) {
     let Some(client_state) = app.try_state::<ClientState>() else {
         return;
     };
-    let Ok(_write) = client_state.write_lock.lock() else {
+    let Ok(write) = client_state.write_lock.lock() else {
         return;
     };
-    if !client_state.is_primary() {
+    if client_state.refresh_primary_locked(&write).ok() != Some(true) {
         return;
+    }
+    if client_state.take_renderer_reload() {
+        let _ = app.emit(CLIENT_STATE_OWNERSHIP_CHANGED_EVENT, ());
     }
     if client_state.normal_writes_suppressed().unwrap_or(true) {
         return;
@@ -258,26 +261,38 @@ pub fn setup_main_window(app: &AppHandle) -> Result<(), String> {
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "main window was not created".to_string())?;
-    let initial_zoom = client_state
-        .zoom_level
-        .lock()
-        .map(|zoom| *zoom)
-        .unwrap_or(DEFAULT_ZOOM_LEVEL);
+    let (is_primary, initial_zoom, saved_window) = {
+        let write = client_state
+            .write_lock
+            .lock()
+            .map_err(|err| err.to_string())?;
+        let is_primary = client_state.refresh_primary_locked(&write)?;
+        let initial_zoom = client_state
+            .zoom_level
+            .lock()
+            .map(|zoom| *zoom)
+            .unwrap_or(DEFAULT_ZOOM_LEVEL);
+        let saved_window = if is_primary {
+            let state = client_state.state.lock().map_err(|err| err.to_string())?;
+            state
+                .restore_enabled
+                .then(|| state.window.clone())
+                .flatten()
+        } else {
+            None
+        };
+        (is_primary, initial_zoom, saved_window)
+    };
     let _ = window.set_zoom(initial_zoom);
+    if client_state.take_renderer_reload() {
+        let _ = window.emit(CLIENT_STATE_OWNERSHIP_CHANGED_EVENT, ());
+    }
     #[cfg(windows)]
     register_native_zoom_handler(&window, app);
-    if !client_state.is_primary() {
+    if !is_primary {
         let _ = window.show();
         return Ok(());
     }
-
-    let saved_window = {
-        let state = client_state.state.lock().map_err(|err| err.to_string())?;
-        state
-            .restore_enabled
-            .then(|| state.window.clone())
-            .flatten()
-    };
     if let Some(mut saved_window) = saved_window {
         let startup_scale = window.scale_factor().unwrap_or(1.0);
         let displays = window

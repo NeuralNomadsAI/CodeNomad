@@ -111,7 +111,7 @@ test("saved workflow inputs require a JSON object", () => {
   assert.throws(() => parseWorkflowInputs(JSON.stringify({ value: "é".repeat(128_001) })), /too large/)
 })
 
-test("saved definition tools create, update, and start the current revision from the calling session", async () => {
+test("saved definition tools read and start the current revision without claiming session ancestry", async () => {
   const calls: Array<{ path: string; init?: RequestInit }> = []
   const definition = {
     id: "deploy_flow",
@@ -142,12 +142,6 @@ test("saved definition tools create, update, and start the current revision from
 
   await tools.list_codenomad_workflow_definitions.execute({}, {} as never)
   await tools.get_codenomad_workflow_definition.execute({ definition_id: "deploy_flow" }, {} as never)
-  await tools.create_codenomad_workflow_definition.execute({ source: "version: 1" }, {} as never)
-  await tools.update_codenomad_workflow_definition.execute({
-    definition_id: "deploy_flow",
-    expected_revision: 3,
-    source: "version: 1\nid: deploy_flow",
-  }, {} as never)
   const started = await tools.start_codenomad_workflow_definition.execute({
     definition_id: "deploy_flow",
     objective: "Ship it",
@@ -157,23 +151,13 @@ test("saved definition tools create, update, and start the current revision from
   assert.deepEqual(calls.map((call) => call.path), [
     "/workflow-definitions",
     "/workflow-definitions/deploy_flow",
-    "/workflow-definitions",
-    "/workflow-definitions/deploy_flow",
     "/workflow-definitions/deploy_flow/start",
   ])
   assert.equal(calls[2]?.init?.method, "POST")
-  assert.deepEqual(JSON.parse(String(calls[2]?.init?.body)), { source: "version: 1" })
-  assert.equal(calls[3]?.init?.method, "PUT")
-  assert.deepEqual(JSON.parse(String(calls[3]?.init?.body)), {
-    expectedRevision: 3,
-    source: "version: 1\nid: deploy_flow",
-  })
-  assert.equal(calls[4]?.init?.method, "POST")
-  assert.deepEqual(JSON.parse(String(calls[4]?.init?.body)), {
-    initiatorSessionId: "session-1",
+  assert.deepEqual(JSON.parse(String(calls[2]?.init?.body)), {
     objective: "Ship it",
     inputs: { environment: "production" },
   })
   assert.match(started, /current saved definition revision/)
-  assert.doesNotMatch(String(calls[4]?.init?.body), /definitionRevision/)
+  assert.doesNotMatch(String(calls[2]?.init?.body), /definitionRevision|initiatorSessionId/)
 })

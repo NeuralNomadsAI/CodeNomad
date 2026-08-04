@@ -41,6 +41,7 @@ describe("mapDesktopEventTransportStatus", () => {
 describe("connectTauriWorkspaceEvents", () => {
   it("marks the transport connected when a batch opens the native stream", async () => {
     let batchHandler: ((event: { payload: any }) => void) | undefined
+    let statusHandler: ((event: { payload: any }) => void) | undefined
     const unlistened: string[] = []
     const bridge = {
       invoke: async (command: string) => {
@@ -55,6 +56,8 @@ describe("connectTauriWorkspaceEvents", () => {
       listen: async (eventName: string, handler: (event: { payload: any }) => void) => {
         if (eventName === "desktop:event-batch") {
           batchHandler = handler
+        } else if (eventName === "desktop:event-stream-status") {
+          statusHandler = handler
         }
         return () => {
           unlistened.push(eventName)
@@ -91,6 +94,11 @@ describe("connectTauriWorkspaceEvents", () => {
     assert.deepEqual(statuses, ["connected"])
     assert.equal(opens, 1)
     assert.equal(batches.length, 1)
+
+    statusHandler!({ payload: { generation: 1, state: "disconnected" } })
+    statusHandler!({ payload: { generation: 1, state: "connected" } })
+    assert.deepEqual(statuses, ["connected", "disconnected", "connected"])
+    assert.equal(opens, 2)
 
     connection.disconnect()
     assert.deepEqual(unlistened, ["desktop:event-batch", "desktop:event-stream-status"])

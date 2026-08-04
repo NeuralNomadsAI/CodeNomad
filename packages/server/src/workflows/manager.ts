@@ -23,7 +23,7 @@ import type { WorkspaceManager } from "../workspaces/manager"
 import { ensureCodenomadGitExclude } from "../workspaces/worktree-map"
 import { WorkflowDefinitionStore } from "./definition-store"
 import { validateWorkflowDefinition, WORKFLOW_LIMITS } from "./definition-schema"
-import { WorkflowInterpreter, WorkflowSuspendedError } from "./interpreter"
+import { WorkflowCheckpointError, WorkflowInterpreter, WorkflowSuspendedError } from "./interpreter"
 import { validateJsonSchemaValue } from "./json-schema"
 import { definitionRunFields, holdsWorkflowReservation, markWorkflowRecoveryRequired, validatePersistedWorkflowRun } from "./run-state"
 
@@ -216,10 +216,10 @@ export class WorkflowManager {
     } catch (error) {
       if (active && !retained) {
         try {
-          if (persisted) await Promise.all([
-            fs.rm(this.runPath(active.run.id), { force: true }),
-            fs.rm(this.runMetadataPath(active.run.id), { force: true }),
-          ])
+          if (persisted) {
+            await durableRemove(this.runPath(active.run.id))
+            await durableRemove(this.runMetadataPath(active.run.id))
+          }
           this.runIndex.delete(active.run.id)
           this.release(active, true)
         } catch (rollbackError) {
@@ -636,7 +636,7 @@ export class WorkflowManager {
     })
   }
 
-  async resume(runId: string, confirmRecovery = false): Promise<WorkflowRun | undefined> {
+  async resume(runId: string, confirmRecovery = false, expectedRevision?: number): Promise<WorkflowRun | undefined> {
     await this.initialized
     this.throwIfShuttingDown()
     return this.withAdmission(() => this.withRunTransition(runId, async () => {
@@ -652,6 +652,9 @@ export class WorkflowManager {
       if (run.status === "recovery_required" && !confirmRecovery) {
         throw new WorkflowRunError("Recovery confirmation is required before repeating an ambiguous side effect", 409)
       }
+      if (confirmRecovery && (run.status !== "recovery_required" || expectedRevision !== run.revision)) {
+        throw new WorkflowRunError("Workflow recovery confirmation is stale", 409)
+      }
       if (!["paused", "interrupted", "recovery_required"].includes(run.status)) {
         throw new WorkflowRunError("Workflow run cannot be resumed", 409)
       }
@@ -660,7 +663,7 @@ export class WorkflowManager {
       const prior = this.cloneRun(run)
       if (run.status === "recovery_required") {
         const sessionIds = this.persistedAmbiguousSessionIds(run)
-        if (sessionIds.size === 0) {
+        if (sessionIds.size === 0 && this.hasUnconfirmedAdmittedAction(run)) {
           const message = "Workflow recovery has no persisted session IDs and cannot positively confirm termination; the interrupted action will not be repeated"
           await this.persistMutation(run, () => markWorkflowRecoveryRequired(run, message))
           throw new WorkflowRunError(message, 409)
@@ -753,7 +756,7 @@ export class WorkflowManager {
       terminationConfirmed = terminationConfirmed && (await Promise.all(Array.from(sessionIds).map((sessionId) =>
         this.abortSessionRequest(client, run.id, sessionId)))).every(Boolean)
     } else if (run.status === "recovery_required" && !active) {
-      terminationConfirmed = false
+      terminationConfirmed = !this.hasUnconfirmedAdmittedAction(run)
     }
     const message = sessionIds.size === 0
       ? "Workflow cancellation has no persisted session IDs and cannot positively confirm termination"
@@ -767,8 +770,8 @@ export class WorkflowManager {
           markWorkflowRecoveryRequired(run, message)
         }
       })
-      if (terminationConfirmed) await fs.rm(this.recoveryMarkerPath(run.id), { force: true }).catch((error) => {
-        this.options.logger.warn({ err: error, runId: run.id }, "Failed to clear cancelled workflow recovery marker")
+      if (terminationConfirmed) await durableRemove(this.recoveryMarkerPath(run.id)).catch((error) => {
+        this.options.logger.warn({ err: error, runId: run.id }, "Failed to clear resolved workflow recovery marker")
       })
     } catch (error) {
       if (active) active.releaseBlocked = true
@@ -821,7 +824,7 @@ export class WorkflowManager {
     this.reserve(active)
     try {
       await this.persist(run)
-      await fs.rm(this.recoveryMarkerPath(run.id), { force: true }).catch((error) => {
+      await durableRemove(this.recoveryMarkerPath(run.id)).catch((error) => {
         this.options.logger.warn({ err: error, runId: run.id }, "Failed to clear resolved workflow recovery marker")
       })
     } catch (error) {
@@ -1117,7 +1120,11 @@ export class WorkflowManager {
     active.run.status = "completed"
     active.run.pauseRequested = false
     delete active.run.pendingGate
-    await this.persist(active.run)
+    try {
+      await this.persist(active.run)
+    } catch (error) {
+      throw new WorkflowCheckpointError(`Workflow completed, but its terminal checkpoint could not be persisted: ${this.errorMessage(error)}`)
+    }
   }
 
   private buildStagePrompt(run: WorkflowRun, step: WorkflowRunStep, previous: unknown): string {
@@ -1236,6 +1243,11 @@ export class WorkflowManager {
 
   private async handleExecutionError(active: ActiveRun, error: unknown): Promise<void> {
     const { run } = active
+    if (error instanceof WorkflowCheckpointError) {
+      markWorkflowRecoveryRequired(run, this.errorMessage(error))
+      await this.persist(run)
+      return
+    }
     if (active.activeSessionId) {
       const sessionId = active.activeSessionId
       if (!await this.abortActiveSession(active, sessionId)) active.releaseBlocked = true
@@ -1326,20 +1338,22 @@ export class WorkflowManager {
   }
 
   private async writeRecoveryMarker(run: WorkflowRun, message: string): Promise<void> {
-    await fs.mkdir(this.options.storageDir, { recursive: true })
-    const destination = this.recoveryMarkerPath(run.id)
-    const temporary = `${destination}.${randomUUID()}.tmp`
-    await fs.writeFile(temporary, JSON.stringify({ runId: run.id, message, createdAt: new Date().toISOString() }), "utf8")
-    await fs.rename(temporary, destination)
+    await ensureDurableDirectory(this.options.storageDir)
+    await durableAtomicWrite(
+      this.recoveryMarkerPath(run.id),
+      JSON.stringify({ runId: run.id, revision: run.revision ?? 0, message, createdAt: new Date().toISOString() }),
+    )
   }
 
-  private async hasRecoveryMarker(runId: string): Promise<boolean> {
+  private async readRecoveryMarker(runId: string): Promise<{ revision?: number } | undefined> {
     try {
-      await fs.access(this.recoveryMarkerPath(runId))
-      return true
+      const parsed = JSON.parse(await fs.readFile(this.recoveryMarkerPath(runId), "utf8")) as { revision?: unknown }
+      return Number.isInteger(parsed.revision) && (parsed.revision as number) >= 0
+        ? { revision: parsed.revision as number }
+        : {}
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
-      throw error
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
+      return {}
     }
   }
 
@@ -1476,6 +1490,14 @@ export class WorkflowManager {
       .map((step) => step.sessionId!))
   }
 
+  private hasUnconfirmedAdmittedAction(run: WorkflowRun): boolean {
+    if (!run.definitionSnapshot) return run.steps.some((step) => step.status === "running")
+    return Boolean(run.executionNodes?.some((node) =>
+      (node.type === "agent" || node.type === "shell")
+      && node.attempt > 0
+      && !["completed", "skipped", "failed", "cancelled"].includes(node.status)))
+  }
+
   private clearPersistedSessions(run: WorkflowRun, sessionIds: Set<string>): void {
     for (const node of run.executionNodes ?? []) {
       if (!node.sessionIds) continue
@@ -1483,6 +1505,12 @@ export class WorkflowManager {
       if (node.sessionIds.length === 0) delete node.sessionIds
     }
     for (const step of run.steps) if (step.sessionId && sessionIds.has(step.sessionId)) delete step.sessionId
+    if (run.sessionBindings) {
+      for (const [key, sessionId] of Object.entries(run.sessionBindings)) {
+        if (sessionIds.has(sessionId)) delete run.sessionBindings[key]
+      }
+      if (Object.keys(run.sessionBindings).length === 0) delete run.sessionBindings
+    }
   }
 
   private async confirmPersistedSessionAborts(run: WorkflowRun, client: OpencodeClient, action: string): Promise<void> {
@@ -1598,14 +1626,19 @@ export class WorkflowManager {
     for (const entry of entries.filter((candidate) => candidate.endsWith(".json"))) {
       try {
         const runId = entry.slice(0, -5)
-        const recoveryMarked = await this.hasRecoveryMarker(runId)
+        const recoveryMarker = await this.readRecoveryMarker(runId)
         const metadata = await this.readRunMetadata(entry)
-        if (metadata && !recoveryMarked && !this.indexHoldsReservation(metadata) && !metadata.ambiguousSessions) {
+        if (metadata && !recoveryMarker && !this.indexHoldsReservation(metadata) && !metadata.ambiguousSessions) {
           this.runIndex.set(metadata.id, metadata)
           continue
         }
         const run = await this.read(runId)
         if (!run) continue
+        const recoveryMarked = Boolean(recoveryMarker
+          && (recoveryMarker.revision === undefined || (run.revision ?? 0) <= recoveryMarker.revision))
+        if (recoveryMarker && !recoveryMarked) await durableRemove(this.recoveryMarkerPath(run.id)).catch((error) => {
+          this.options.logger.warn({ err: error, runId: run.id }, "Failed to clear stale workflow recovery marker")
+        })
         await this.writeRunMetadata(run).catch((error) => {
           this.options.logger.warn({ err: error, runId: run.id }, "Failed to update workflow run metadata")
         })
@@ -1626,7 +1659,7 @@ export class WorkflowManager {
         if (!holdsWorkflowReservation(run)) continue
         const sessionBearing = this.persistedAmbiguousSessionIds(run).size > 0
         const interruptedAction = Boolean(run.definitionSnapshot && run.executionNodes?.some((node) =>
-          node.status === "running" && (node.type === "agent" || node.type === "shell")))
+          node.status === "running" && node.attempt > 0 && (node.type === "agent" || node.type === "shell")))
         const legacyAction = !run.definitionSnapshot && run.steps.some((step) => step.status === "running")
         const wasExecuting = run.status === "running" || run.status === "pausing"
         const ambiguous = sessionBearing || interruptedAction || legacyAction
@@ -1645,7 +1678,7 @@ export class WorkflowManager {
         }
         for (const node of run.executionNodes ?? []) {
           if ((node.sessionIds?.length && !["completed", "skipped", "failed", "cancelled"].includes(node.status))
-            || (node.status === "running" && (node.type === "agent" || node.type === "shell"))) {
+            || (node.status === "running" && node.attempt > 0 && (node.type === "agent" || node.type === "shell"))) {
             node.status = "interrupted"
             node.error = run.error
             node.completedAt = new Date().toISOString()
@@ -1712,11 +1745,9 @@ export class WorkflowManager {
     const snapshot = JSON.parse(JSON.stringify(run)) as WorkflowRun
     const previous = this.persistQueues.get(run.id) ?? Promise.resolve()
     const queued = previous.catch(() => undefined).then(async () => {
-      await fs.mkdir(this.options.storageDir, { recursive: true })
+      await ensureDurableDirectory(this.options.storageDir)
       const destination = this.runPath(run.id)
-      const temporary = `${destination}.${randomUUID()}.tmp`
-      await fs.writeFile(temporary, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8")
-      await fs.rename(temporary, destination)
+      await durableAtomicWrite(destination, `${JSON.stringify(snapshot, null, 2)}\n`)
       this.indexRun(snapshot)
       await this.writeRunMetadata(snapshot).catch((error) => {
         this.options.logger.warn({ err: error, runId: snapshot.id }, "Failed to update workflow run metadata")
@@ -1725,7 +1756,10 @@ export class WorkflowManager {
       for (const instanceId of workspaceIds) this.options.eventBus.publish({
           type: "instance.event",
           instanceId,
-          event: { type: "workflow.run.updated", properties: { run: snapshot } },
+          // ponytail: checkpoint events stay compact; clients fetch full state at user-visible boundaries.
+          event: { type: "workflow.run.updated", properties: {
+            runId: snapshot.id, revision: snapshot.revision, status: snapshot.status, updatedAt: snapshot.updatedAt,
+          } },
         })
       if (["completed", "failed", "cancelled"].includes(snapshot.status)) {
         await this.pruneHistory(snapshot.worktreeSelection?.sourceWorkspaceLineageId ?? snapshot.workspaceLineageId).catch((error) => {
@@ -1760,5 +1794,54 @@ export class WorkflowManager {
       await Promise.all([fs.rm(this.runPath(runId), { force: true }), fs.rm(this.runMetadataPath(runId), { force: true })])
       this.runIndex.delete(runId)
     }))
+  }
+}
+
+async function durableAtomicWrite(destination: string, contents: string): Promise<void> {
+  const temporary = `${destination}.${randomUUID()}.tmp`
+  try {
+    const handle = await fs.open(temporary, "wx")
+    try {
+      await handle.writeFile(contents, "utf8")
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+    await fs.rename(temporary, destination)
+    await syncDirectory(path.dirname(destination))
+  } catch (error) {
+    await fs.rm(temporary, { force: true }).catch(() => undefined)
+    throw error
+  }
+}
+
+async function durableRemove(destination: string): Promise<void> {
+  await fs.rm(destination, { force: true })
+  await syncDirectory(path.dirname(destination))
+}
+
+async function syncDirectory(directoryPath: string): Promise<void> {
+  let directory: fs.FileHandle | undefined
+  try {
+    directory = await fs.open(directoryPath, "r")
+    await directory.sync()
+  } catch (error) {
+    if (!["EINVAL", "ENOTSUP", "EISDIR", "EPERM", "EBADF", "ENOSYS"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error
+  } finally {
+    await directory?.close()
+  }
+}
+
+async function ensureDurableDirectory(directoryPath: string): Promise<void> {
+  const created = await fs.mkdir(directoryPath, { recursive: true })
+  if (!created) return
+  const firstCreated = path.resolve(created)
+  let current = path.resolve(directoryPath)
+  while (true) {
+    await syncDirectory(path.dirname(current))
+    if (current === firstCreated) return
+    const parent = path.dirname(current)
+    if (parent === current) return
+    current = parent
   }
 }

@@ -38,6 +38,7 @@ use window::NativeWindowState;
 
 const CLIENT_STATE_VERSION: u64 = 1;
 const CLIENT_STATE_FILENAME: &str = "client-state.json";
+const CLIENT_STATE_OWNERSHIP_CHANGED_EVENT: &str = "client-state:ownership-changed";
 const MAX_CLIENT_SNAPSHOT_BYTES: usize = 1024 * 1024;
 const RENDERER_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -92,10 +93,13 @@ pub struct ClientStateLoadResult {
 
 pub struct ClientState {
     state_path: PathBuf,
+    migration_paths: Option<(PathBuf, Option<PathBuf>)>,
     process: process::ProcessState,
     state: Mutex<PersistedClientState>,
     zoom_level: Mutex<f64>,
     write_lock: Mutex<()>,
+    primary_loaded: std::sync::atomic::AtomicBool,
+    renderer_reload_pending: std::sync::atomic::AtomicBool,
     save_generation: AtomicU64,
     renderer_access: access::RendererAccess,
     renderer_flush: RendererFlush,
@@ -167,16 +171,20 @@ impl ClientState {
         };
         Self::new(
             state_path,
+            None,
             process::ProcessState::disabled(),
             state,
+            false,
             std::sync::Arc::new(write_atomically),
         )
     }
 
     fn new(
         state_path: PathBuf,
+        migration_paths: Option<(PathBuf, Option<PathBuf>)>,
         process: process::ProcessState,
         state: PersistedClientState,
+        primary_loaded: bool,
         write_state: StateWriter,
     ) -> Self {
         let zoom_level = state
@@ -186,10 +194,13 @@ impl ClientState {
             .unwrap_or(DEFAULT_ZOOM_LEVEL);
         Self {
             state_path,
+            migration_paths,
             process,
             state: Mutex::new(state),
             zoom_level: Mutex::new(zoom_level),
             write_lock: Mutex::new(()),
+            primary_loaded: std::sync::atomic::AtomicBool::new(primary_loaded),
+            renderer_reload_pending: std::sync::atomic::AtomicBool::new(false),
             save_generation: AtomicU64::new(0),
             renderer_access: access::RendererAccess::default(),
             renderer_flush: RendererFlush::default(),
@@ -235,38 +246,77 @@ impl ClientState {
             election_dir,
             legacy_electron_data_dir,
         )?;
-        let future_legacy =
-            !state_path.exists() && has_future_legacy_state(app_data_dir, legacy_electron_data_dir);
-        if registration.is_primary() && !state_path.exists() && !future_legacy {
-            migrate_legacy_state(state_path, app_data_dir, legacy_electron_data_dir, &|| {
-                registration.is_primary()
-            })?;
-        }
-        let state = if registration.is_primary() {
-            if future_legacy {
-                PersistedClientState {
-                    restore_enabled: false,
-                    unsupported_future_envelope: true,
-                    writes_enabled: false,
-                    ..PersistedClientState::default()
-                }
-            } else {
-                read_client_state(state_path)
-            }
+        let primary = registration.is_primary();
+        let state = if primary {
+            load_primary_state(state_path, app_data_dir, legacy_electron_data_dir, &|| {
+                registration.ownership_valid()
+            })?
         } else {
             PersistedClientState::default()
         };
         let process = registration.finish();
         Ok(Self::new(
             state_path.to_path_buf(),
+            Some((
+                app_data_dir.to_path_buf(),
+                legacy_electron_data_dir.map(Path::to_path_buf),
+            )),
             process,
             state,
+            primary,
             write_state,
         ))
     }
 
     fn is_primary(&self) -> bool {
-        self.process.is_primary()
+        let primary = self.process.is_primary();
+        if !primary {
+            self.primary_loaded.store(false, Ordering::SeqCst);
+        }
+        primary
+    }
+
+    fn refresh_primary_locked(
+        &self,
+        _write: &std::sync::MutexGuard<'_, ()>,
+    ) -> Result<bool, String> {
+        if !self.process.refresh_primary() {
+            self.primary_loaded.store(false, Ordering::SeqCst);
+            return Ok(false);
+        }
+        if !self.primary_loaded.load(Ordering::SeqCst) {
+            let state = if let Some((tauri_data_dir, electron_data_dir)) = &self.migration_paths {
+                load_primary_state(
+                    &self.state_path,
+                    tauri_data_dir,
+                    electron_data_dir.as_deref(),
+                    &|| self.process.is_primary(),
+                )
+            } else {
+                read_client_state(&self.state_path)
+            };
+            let state = match state {
+                Ok(state) => state,
+                Err(err) => {
+                    self.process.defer_primary();
+                    return Err(err);
+                }
+            };
+            let zoom_level = state
+                .restore_enabled
+                .then(|| state.window.as_ref().map(|window| window.zoom_factor))
+                .flatten()
+                .unwrap_or(DEFAULT_ZOOM_LEVEL);
+            *self.state.lock().map_err(|err| err.to_string())? = state;
+            *self.zoom_level.lock().map_err(|err| err.to_string())? = zoom_level;
+            self.primary_loaded.store(true, Ordering::SeqCst);
+            self.renderer_reload_pending.store(true, Ordering::SeqCst);
+        }
+        Ok(true)
+    }
+
+    fn take_renderer_reload(&self) -> bool {
+        self.renderer_reload_pending.swap(false, Ordering::SeqCst)
     }
 
     fn claim_renderer_access(&self, access_token: &str, renderer_url: &Url) -> Result<(), String> {
@@ -275,8 +325,9 @@ impl ClientState {
     }
 
     fn load(&self) -> Result<ClientStateLoadResult, String> {
+        let write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        let is_primary = self.refresh_primary_locked(&write)?;
         let state = self.state.lock().map_err(|err| err.to_string())?;
-        let is_primary = self.is_primary();
         Ok(ClientStateLoadResult {
             is_primary,
             restore_enabled: if is_primary || !self.process.is_registered() {
@@ -302,11 +353,11 @@ impl ClientState {
         snapshot: Value,
         access_valid: impl Fn() -> bool,
     ) -> Result<bool, String> {
-        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        let write = self.write_lock.lock().map_err(|err| err.to_string())?;
         if !access_valid() {
             return Err("Client state renderer authority changed before mutation".to_string());
         }
-        if !self.is_primary() {
+        if !self.refresh_primary_locked(&write)? {
             return Ok(false);
         }
         if self.normal_writes_suppressed()? {
@@ -329,11 +380,11 @@ impl ClientState {
         enabled: bool,
         access_valid: impl Fn() -> bool,
     ) -> Result<bool, String> {
-        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        let write = self.write_lock.lock().map_err(|err| err.to_string())?;
         if !access_valid() {
             return Err("Client state renderer authority changed before mutation".to_string());
         }
-        if !self.is_primary() {
+        if !self.refresh_primary_locked(&write)? {
             return Ok(false);
         }
         if self
@@ -363,11 +414,11 @@ impl ClientState {
     }
 
     fn clear_guarded(&self, access_valid: impl Fn() -> bool) -> Result<bool, String> {
-        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        let write = self.write_lock.lock().map_err(|err| err.to_string())?;
         if !access_valid() {
             return Err("Client state renderer authority changed before mutation".to_string());
         }
-        if !self.is_primary() {
+        if !self.refresh_primary_locked(&write)? {
             return Ok(false);
         }
         self.mutate_and_write(
@@ -385,8 +436,8 @@ impl ClientState {
     }
 
     fn flush(&self) -> Result<(), String> {
-        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
-        if self.is_primary() && !self.normal_writes_suppressed()? {
+        let write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        if self.refresh_primary_locked(&write)? && !self.normal_writes_suppressed()? {
             self.write_current_state()?;
         }
         Ok(())
@@ -412,7 +463,7 @@ impl ClientState {
             serde_json::to_vec(&*state).map_err(|err| err.to_string())?
         };
         (self.write_state)(&self.state_path, &bytes, &|| {
-            self.is_primary() && replacement_valid()
+            self.process.is_primary() && replacement_valid()
         })?;
         Ok(())
     }
@@ -499,15 +550,52 @@ impl Drop for ClientState {
     }
 }
 
-fn read_client_state(path: &Path) -> PersistedClientState {
+fn read_client_state(path: &Path) -> Result<PersistedClientState, String> {
     match fs::read(path) {
-        Ok(bytes) => parse_client_state(&bytes),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => PersistedClientState::default(),
-        Err(err) => {
-            eprintln!("[client-state] failed to read state: {err}");
-            PersistedClientState::default()
+        Ok(bytes) => Ok(parse_client_state(&bytes)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            Ok(PersistedClientState::default())
         }
+        Err(err) => Err(format!(
+            "failed to read authoritative client state {}: {err}",
+            path.display()
+        )),
     }
+}
+
+fn load_primary_state(
+    state_path: &Path,
+    tauri_data_dir: &Path,
+    electron_data_dir: Option<&Path>,
+    ownership_valid: &dyn Fn() -> bool,
+) -> Result<PersistedClientState, String> {
+    let missing = match fs::metadata(state_path) {
+        Ok(_) => false,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => true,
+        Err(err) => {
+            return Err(format!(
+                "failed to inspect authoritative client state {}: {err}",
+                state_path.display()
+            ))
+        }
+    };
+    if missing {
+        if has_future_legacy_state(tauri_data_dir, electron_data_dir) {
+            return Ok(PersistedClientState {
+                restore_enabled: false,
+                unsupported_future_envelope: true,
+                writes_enabled: false,
+                ..PersistedClientState::default()
+            });
+        }
+        migrate_legacy_state(
+            state_path,
+            tauri_data_dir,
+            electron_data_dir,
+            ownership_valid,
+        )?;
+    }
+    read_client_state(state_path)
 }
 
 fn parse_client_state(bytes: &[u8]) -> PersistedClientState {

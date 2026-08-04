@@ -28,7 +28,10 @@ test("managed worktree deletion rejects workflow ownership and live workspaces",
 
     const app = Fastify({ logger: false })
     registerWorktreeRoutes(app, {
-      workspaceManager: { get: () => ({ id: "workspace", path: temp }), list: () => [] } as never,
+      workspaceManager: {
+        get: () => ({ id: "workspace", path: temp }),
+        withWorkspacePathLease: async (_path: string, operation: (active: boolean) => Promise<unknown>) => operation(false),
+      } as never,
       sessionMetadataPersistence: {} as never,
       workflowManager: {
         list: async () => { throw new Error("capped list must not be used") },
@@ -48,7 +51,7 @@ test("managed worktree deletion rejects workflow ownership and live workspaces",
         get: (id: string) => id === "workspace"
           ? { id, path: temp }
           : id === "execution" ? { id, path: worktree.directory, status: "ready" } : undefined,
-        list: () => [{ id: "execution", path: path.join(worktree.directory, ".") }],
+        withWorkspacePathLease: async (_path: string, operation: (active: boolean) => Promise<unknown>) => operation(true),
       } as never,
       sessionMetadataPersistence: {} as never,
       workflowManager: {
@@ -72,10 +75,7 @@ test("managed worktree deletion rejects workflow ownership and live workspaces",
           ? { id, path: temp }
           : id === "stopped" ? { id, path: worktree.directory, status: "stopped" }
             : id === "error" ? { id, path: worktree.directory, status: "error" } : undefined,
-        list: () => [
-          { id: "stopped", path: worktree.directory, status: "stopped" },
-          { id: "error", path: worktree.directory, status: "error" },
-        ],
+        withWorkspacePathLease: async (_path: string, operation: (active: boolean) => Promise<unknown>) => operation(false),
       } as never,
       sessionMetadataPersistence: {} as never,
       workflowManager: {
@@ -90,6 +90,90 @@ test("managed worktree deletion rejects workflow ownership and live workspaces",
     assert.equal(terminalWorkspaces.statusCode, 204)
     assert.equal(existsSync(worktree.directory), false)
     await terminalWorkspaceApp.close()
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+test("managed worktree POST and DELETE exclude each other on the target path", async (context) => {
+  const temp = mkdtempSync(path.join(tmpdir(), "codenomad-worktree-mutation-route-"))
+  const git = (...args: string[]) => spawnSync("git", args, { cwd: temp, encoding: "utf8" })
+  if (git("--version").error) {
+    context.skip("Git is unavailable")
+    rmSync(temp, { recursive: true, force: true })
+    return
+  }
+  try {
+    assert.equal(git("init").status, 0)
+    assert.equal(git("config", "user.email", "test@example.com").status, 0)
+    assert.equal(git("config", "user.name", "CodeNomad Test").status, 0)
+    writeFileSync(path.join(temp, "file.txt"), "initial")
+    assert.equal(git("add", "file.txt").status, 0)
+    assert.equal(git("commit", "-m", "initial").status, 0)
+    const worktree = await createManagedWorktree({ repoRoot: temp, workspaceFolder: temp, slug: "review" })
+
+    let releaseFirst!: () => void
+    const firstBlocked = new Promise<void>((resolve) => { releaseFirst = resolve })
+    let firstEntered!: () => void
+    const firstEntry = new Promise<void>((resolve) => { firstEntered = resolve })
+    const tails = new Map<string, Promise<void>>()
+    const leasePaths: string[] = []
+    let activeOperations = 0
+    let maxActiveOperations = 0
+    let blockFirst = true
+    const workspaceManager = {
+      get: () => ({ id: "workspace", path: temp }),
+      withWorkspacePathLease: async (target: string, operation: (active: boolean) => Promise<unknown>) => {
+        const key = process.platform === "win32" ? path.resolve(target).toLowerCase() : path.resolve(target)
+        leasePaths.push(key)
+        const previous = tails.get(key) ?? Promise.resolve()
+        let release!: () => void
+        const current = new Promise<void>((resolve) => { release = resolve })
+        tails.set(key, current)
+        await previous
+        activeOperations += 1
+        maxActiveOperations = Math.max(maxActiveOperations, activeOperations)
+        try {
+          if (blockFirst) {
+            blockFirst = false
+            firstEntered()
+            await firstBlocked
+          }
+          return await operation(false)
+        } finally {
+          activeOperations -= 1
+          release()
+          if (tails.get(key) === current) tails.delete(key)
+        }
+      },
+    }
+    const app = Fastify({ logger: false })
+    registerWorktreeRoutes(app, {
+      workspaceManager: workspaceManager as never,
+      sessionMetadataPersistence: {} as never,
+      workflowManager: {
+        withWorktreeOwnershipLease: async (_source: unknown, _worktree: unknown, operation: (owned: boolean) => Promise<unknown>) => operation(false),
+      } as never,
+    })
+
+    const deletion = app.inject({ method: "DELETE", url: "/api/workspaces/workspace/worktrees/review" })
+    await firstEntry
+    const creation = app.inject({
+      method: "POST",
+      url: "/api/workspaces/workspace/worktrees",
+      payload: { slug: "review" },
+    })
+    while (leasePaths.length < 2) await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(maxActiveOperations, 1)
+    assert.equal(leasePaths[0], leasePaths[1])
+
+    releaseFirst()
+    const [deleted, created] = await Promise.all([deletion, creation])
+    assert.equal(deleted.statusCode, 204)
+    assert.equal(created.statusCode, 201)
+    assert.equal(maxActiveOperations, 1)
+    assert.equal(existsSync(worktree.directory), true)
+    await app.close()
   } finally {
     rmSync(temp, { recursive: true, force: true })
   }

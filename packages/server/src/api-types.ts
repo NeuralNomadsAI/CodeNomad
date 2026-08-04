@@ -604,9 +604,9 @@ export interface WorkflowGateAnswerRequest {
   answer: unknown
 }
 
-export interface WorkflowResumeRequest {
-  confirmRecovery?: boolean
-}
+export type WorkflowResumeRequest =
+  | { confirmRecovery: true; expectedRevision: number }
+  | { confirmRecovery?: false; expectedRevision?: never }
 
 export type SideCarKind = "port"
 

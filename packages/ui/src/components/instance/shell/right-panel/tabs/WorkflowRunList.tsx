@@ -47,14 +47,17 @@ const WorkflowRunCard: Component<WorkflowRunListProps & { run: WorkflowRun; expa
     } finally { setBusy(false) }
   }
   const approve = async () => {
+    const gate = props.run.pendingGate
+    const reviewStepId = props.run.pendingReviewStepId
+    if (!gate && !reviewStepId) return
     const confirmed = await showConfirmDialog(t("instanceShell.workflows.confirm.approve.message"), {
       confirmLabel: t("instanceShell.workflows.actions.approve"),
       cancelLabel: t("instanceShell.workflows.actions.keepWaiting"), dismissible: false,
     })
     if (!confirmed) return
-    await action(() => props.run.pendingGate
-      ? answerWorkflowGate(props.instanceId, props.run.id, props.run.pendingGate.executionNodeId, true)
-      : approveWorkflowRun(props.instanceId, props.run.id, props.run.pendingReviewStepId!))
+    await action(() => gate
+      ? answerWorkflowGate(props.instanceId, props.run.id, gate.executionNodeId, true)
+      : approveWorkflowRun(props.instanceId, props.run.id, reviewStepId!))
   }
   const cancel = async () => {
     const confirmed = await showConfirmDialog(t("instanceShell.workflows.confirm.cancel.message"), {
@@ -64,11 +67,12 @@ const WorkflowRunCard: Component<WorkflowRunListProps & { run: WorkflowRun; expa
     if (confirmed) await action(() => cancelWorkflowRun(props.instanceId, props.run.id))
   }
   const recover = async () => {
+    const expectedRevision = props.run.revision
     const confirmed = await showConfirmDialog(t("instanceShell.workflows.confirm.recovery.message"), {
       variant: "warning", confirmLabel: t("instanceShell.workflows.actions.confirmRecovery"),
       cancelLabel: t("instanceShell.workflows.actions.keepWaiting"), dismissible: false,
     })
-    if (confirmed) await action(() => resumeWorkflowRun(props.instanceId, props.run.id, true))
+    if (confirmed) await action(() => resumeWorkflowRun(props.instanceId, props.run.id, true, expectedRevision))
   }
   const answerInput = async (event: SubmitEvent) => {
     event.preventDefault()

@@ -109,6 +109,69 @@ async function createReady(harness: ReturnType<typeof createHarness>) {
 }
 
 describe("workspace manager lifecycle", () => {
+  it("blocks deletion after startup reserves an unpublished or retained error workspace", async () => {
+    const harness = createHarness()
+    const creation = harness.manager.create(process.cwd())
+    const workspaceId = await harness.runtime.launchCalled.promise
+
+    assert.equal(harness.manager.list().length, 0)
+    await harness.manager.withWorkspacePathLease(process.cwd(), async (active) => {
+      assert.equal(active, true)
+    })
+    const record = (harness.manager as any).workspaces.get(workspaceId)
+    record.status = "error"
+    await harness.manager.withWorkspacePathLease(process.cwd(), async (active) => {
+      assert.equal(active, true)
+    })
+    record.status = "starting"
+    await harness.manager.delete(workspaceId)
+    await assert.rejects(creation, WorkspaceLaunchCancelledError)
+  })
+
+  it("waits for a delete-first path lease before reserving startup", async () => {
+    const harness = createHarness()
+    const leaseEntered = deferred<void>()
+    const releaseLease = deferred<void>()
+    const deletion = harness.manager.withWorkspacePathLease(process.cwd(), async (active) => {
+      assert.equal(active, false)
+      leaseEntered.resolve()
+      await releaseLease.promise
+    })
+    await leaseEntered.promise
+
+    const creation = harness.manager.create(process.cwd())
+    let launchStarted = false
+    void harness.runtime.launchCalled.promise.then(() => { launchStarted = true })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(launchStarted, false)
+
+    releaseLease.resolve()
+    await deletion
+    const workspaceId = await harness.runtime.launchCalled.promise
+    assert.equal(launchStarted, true)
+    await harness.manager.delete(workspaceId)
+    await assert.rejects(creation, WorkspaceLaunchCancelledError)
+  })
+
+  it("does not run startup after its queued path lease wait times out", async () => {
+    const harness = createHarness({ launchTimeoutMs: 25 })
+    const leaseEntered = deferred<void>()
+    const releaseLease = deferred<void>()
+    const deletion = harness.manager.withWorkspacePathLease(process.cwd(), async () => {
+      leaseEntered.resolve()
+      await releaseLease.promise
+    })
+    await leaseEntered.promise
+
+    await assert.rejects(harness.manager.create(process.cwd()), WorkspaceLaunchTimeoutError)
+    releaseLease.resolve()
+    await deletion
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    assert.equal((harness.manager as any).workspaces.size, 0)
+    assert.equal(harness.runtime.active.size, 0)
+  })
+
   it("guards restore cancellation before aborting or deleting its workspace", async () => {
     const harness = createHarness()
     const creation = harness.manager.create(process.cwd(), undefined, { requestId: "restore-request" })
@@ -294,6 +357,7 @@ describe("workspace manager lifecycle", () => {
     const failures = await Promise.allSettled([first, concurrent])
     assert.deepEqual(failures.map((result) => result.status), ["rejected", "rejected"])
     assert.equal(harness.runtime.active.has(workspaceId), true)
+    await assert.rejects(harness.manager.create(process.cwd()), /cleanup is incomplete/)
 
     await harness.manager.delete(workspaceId)
     assert.equal(harness.runtime.active.has(workspaceId), false)

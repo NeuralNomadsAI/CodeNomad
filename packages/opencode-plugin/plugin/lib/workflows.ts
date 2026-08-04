@@ -229,32 +229,6 @@ export function createWorkflowTools(config: CodeNomadConfig, requester: Workflow
         return describeWorkflowDefinition(record)
       },
     }),
-    create_codenomad_workflow_definition: tool({
-      description: "Create a reusable CodeNomad workflow definition from validated YAML or JSON source.",
-      args: { source: tool.schema.string().describe("Complete workflow definition as YAML or JSON") },
-      async execute(args) {
-        const record = await requestDefinition<WorkflowDefinitionRecord>("", {
-          method: "POST",
-          body: JSON.stringify({ source: args.source }),
-        })
-        return describeWorkflowDefinition(record)
-      },
-    }),
-    update_codenomad_workflow_definition: tool({
-      description: "Update a reusable CodeNomad workflow definition using its current revision.",
-      args: {
-        definition_id: tool.schema.string().describe("Saved workflow definition ID"),
-        expected_revision: tool.schema.number().int().min(1).describe("Current revision to replace"),
-        source: tool.schema.string().describe("Complete replacement workflow definition as YAML or JSON"),
-      },
-      async execute(args) {
-        const record = await requestDefinition<WorkflowDefinitionRecord>(`/${encodeURIComponent(args.definition_id)}`, {
-          method: "PUT",
-          body: JSON.stringify({ expectedRevision: args.expected_revision, source: args.source }),
-        })
-        return describeWorkflowDefinition(record)
-      },
-    }),
     start_codenomad_workflow_definition: tool({
       description: "Start the current revision of a saved workflow definition. Approval and input gates require a human in the CodeNomad UI.",
       args: {
@@ -262,12 +236,11 @@ export function createWorkflowTools(config: CodeNomadConfig, requester: Workflow
         objective: tool.schema.string().optional().describe("Optional objective; defaults to the definition name"),
         inputs_json: tool.schema.string().optional().describe("Optional workflow inputs as a JSON object"),
       },
-      async execute(args, context) {
+      async execute(args) {
         const inputs = parseWorkflowInputs(args.inputs_json)
         const run = await requestDefinition<WorkflowRun>(`/${encodeURIComponent(args.definition_id)}/start`, {
           method: "POST",
           body: JSON.stringify({
-            initiatorSessionId: context.sessionID,
             ...(args.objective ? { objective: args.objective } : {}),
             ...(inputs ? { inputs } : {}),
           }),

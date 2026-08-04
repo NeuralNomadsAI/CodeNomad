@@ -86,6 +86,10 @@ export async function connectTauriWorkspaceEvents(
 
     callbacks.onStatus?.(mapDesktopEventTransportStatus(payload.state))
 
+    if (payload.state === "disconnected" || payload.state === "error" || payload.state === "unauthorized") {
+      opened = false
+    }
+
     if (payload.state === "connected" && !opened) {
       opened = true
       callbacks.onOpen?.()

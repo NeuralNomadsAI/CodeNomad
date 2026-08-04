@@ -44,7 +44,7 @@ describe("workflow routes", () => {
     await app.close()
   })
 
-  it("exposes definition CRUD to host routes and create/update/start to a workspace plugin", async () => {
+  it("exposes definition CRUD to host routes and only read/start to a workspace plugin", async () => {
     const calls: Array<[string, ...unknown[]]> = []
     const record = { id: "deploy", revision: 2, definition: { id: "deploy", name: "Deploy" } }
     const workflowManager = {
@@ -64,23 +64,19 @@ describe("workflow routes", () => {
     registerWorkflowRoutes(app, { workflowManager })
 
     assert.equal((await app.inject({ method: "GET", url: "/workspaces/workspace-a/plugin/workflow-definitions" })).statusCode, 200)
-    assert.equal((await app.inject({
-      method: "POST", url: "/workspaces/workspace-a/plugin/workflow-definitions",
-      payload: { source: "version: 1" },
-    })).statusCode, 201)
-    assert.deepEqual(calls.at(-1), ["create", "version: 1"])
-    assert.equal((await app.inject({
-      method: "PUT", url: "/workspaces/workspace-a/plugin/workflow-definitions/deploy",
-      payload: { expectedRevision: 2, definition: { version: 1 } },
-    })).statusCode, 200)
-    assert.deepEqual(calls.at(-1), ["update", "deploy", 2, { version: 1 }])
+    assert.equal((await app.inject({ method: "POST", url: "/workspaces/workspace-a/plugin/workflow-definitions", payload: {
+      source: "version: 1",
+    } })).statusCode, 404)
+    assert.equal((await app.inject({ method: "PUT", url: "/workspaces/workspace-a/plugin/workflow-definitions/deploy", payload: {
+      expectedRevision: 2, definition: { version: 1 },
+    } })).statusCode, 404)
     const started = await app.inject({
       method: "POST", url: "/workspaces/workspace-a/plugin/workflow-definitions/deploy/start",
-      payload: { initiatorSessionId: "parent-session", objective: "Release", inputs: { environment: "test" } },
+      payload: { objective: "Release", inputs: { environment: "test" } },
     })
     assert.equal(started.statusCode, 202)
     assert.deepEqual(calls.at(-1), ["start", {
-      workspaceId: "workspace-a", definitionId: "deploy", initiatorSessionId: "parent-session", objective: "Release",
+      workspaceId: "workspace-a", definitionId: "deploy", objective: "Release",
       inputs: { environment: "test" },
     }])
     assert.equal((await app.inject({
@@ -95,6 +91,10 @@ describe("workflow routes", () => {
     assert.equal((await app.inject({
       method: "POST", url: "/workspaces/workspace-a/plugin/workflow-definitions/deploy/start",
       payload: { worktree: { mode: "existing", slug: "review" } },
+    })).statusCode, 400)
+    assert.equal((await app.inject({
+      method: "POST", url: "/workspaces/workspace-a/plugin/workflow-definitions/deploy/start",
+      payload: { initiatorSessionId: "victim-session" },
     })).statusCode, 400)
     assert.equal((await app.inject({
       method: "POST", url: "/api/workflow-definitions/deploy/start",
@@ -260,6 +260,24 @@ describe("workflow routes", () => {
     assert.equal(calls.length, 0)
     assert.equal((await app.inject({ method: "POST", url, payload: { expectedStepId: "review-stage" } })).statusCode, 200)
     assert.deepEqual(calls, ["00000000-0000-4000-8000-000000000001"])
+    await app.close()
+  })
+
+  it("requires a revision-bound recovery confirmation", async () => {
+    const calls: unknown[][] = []
+    const workflowManager = {
+      resume: async (...args: unknown[]) => { calls.push(args); return { id: args[0] } },
+    } as unknown as WorkflowManager
+    const app = Fastify({ logger: false })
+    registerWorkflowRoutes(app, { workflowManager })
+    const url = "/api/workflow-runs/00000000-0000-4000-8000-000000000001/resume"
+
+    assert.equal((await app.inject({ method: "POST", url, payload: { confirmRecovery: true } })).statusCode, 400)
+    assert.equal((await app.inject({ method: "POST", url, payload: { expectedRevision: 4 } })).statusCode, 400)
+    assert.equal((await app.inject({ method: "POST", url, payload: {
+      confirmRecovery: true, expectedRevision: 4,
+    } })).statusCode, 200)
+    assert.deepEqual(calls, [["00000000-0000-4000-8000-000000000001", true, 4]])
     await app.close()
   })
 

@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js"
-import { clearNativeClientState, loadNativeClientState, saveNativeClientState, setNativeRestoreEnabled } from "../lib/native/client-state"
+import { clearNativeClientState, listenForNativeClientStateOwnershipChange, loadNativeClientState, saveNativeClientState, setNativeRestoreEnabled } from "../lib/native/client-state"
 import { decodeClientSnapshot, isFutureClientSnapshot, normalizeRestorableSession } from "./client-state-codec"
 import type { ClientSnapshotV1, RestorableSessionState, RestorableSidecarTabState, RestorableTabState, RestorableWorkspaceTabState } from "./client-state-codec"
 export type { ClientSnapshotV1, RestorableSessionState, RestorableSidecarTabState, RestorableTabState, RestorableWorkspaceTabState }
@@ -256,10 +256,24 @@ export async function setRestorePreviousStateEnabled(enabled: boolean): Promise<
   })
 }
 
+export async function refreshClientStateOwnership(): Promise<void> {
+  const loaded = await loadNativeClientState()
+  setClientStateIsPrimary(loaded.isPrimary)
+  setRestorePreviousStateEnabledSignal(loaded.restoreEnabled)
+  if (loaded.isPrimary && writeBlock !== "transaction") {
+    writeBlock = isFutureClientSnapshot(loaded.snapshot) ? "snapshot" : false
+  }
+}
+
 export function initializeClientState(): Promise<void> {
   if (initialization) return initialization
   initialization = (async () => {
     try {
+      await listenForNativeClientStateOwnershipChange(() => {
+        void refreshClientStateOwnership().catch((error) => {
+          console.warn("[client-state] failed to refresh native ownership", error)
+        })
+      })
       const loaded = await loadNativeClientState()
       setClientStateIsPrimary(loaded.isPrimary)
       setRestorePreviousStateEnabledSignal(loaded.restoreEnabled)
