@@ -4,7 +4,7 @@ interface ActiveWorkflowRefresh {
   promise: Promise<void>
 }
 
-export function createWorkflowRefreshCoordinator(refresh: (instanceId: string, runId: string) => Promise<void>) {
+export function createWorkflowRefreshCoordinator(refresh: (instanceId: string, runId: string, revision?: number) => Promise<void>) {
   const active = new Map<string, ActiveWorkflowRefresh>()
 
   return (instanceId: string, runId: string, revision?: number): Promise<void> => {
@@ -20,10 +20,18 @@ export function createWorkflowRefreshCoordinator(refresh: (instanceId: string, r
 
     const state: ActiveWorkflowRefresh = { revision, trailing: false, promise: Promise.resolve() }
     state.promise = (async () => {
+      let failure: unknown
       do {
         state.trailing = false
-        await refresh(instanceId, runId)
+        const revision = state.revision
+        try {
+          await refresh(instanceId, runId, revision)
+          failure = undefined
+        } catch (error) {
+          failure = error
+        }
       } while (state.trailing)
+      if (failure !== undefined) throw failure
     })().finally(() => {
       if (active.get(key) === state) active.delete(key)
     })

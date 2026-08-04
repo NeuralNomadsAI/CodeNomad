@@ -70,6 +70,15 @@ test("workflow reconciliation prefers run revisions over timestamps when both ar
   assert.equal(reconcileWorkflowRuns([current], [newerRevision])[0].status, "paused")
 })
 
+test("authoritative lists replace equal-revision compact run details", () => {
+  const compact = { ...run("same", "2026-07-20T12:00:00.000Z", "running"), revision: 4, pendingGate: undefined }
+  const full = { ...compact, executionNodes: [{
+    id: "00000000-0000-4000-8000-000000000000", instanceKey: "work", definitionNodeId: "work",
+    type: "agent" as const, status: "completed" as const, attempt: 1, output: "complete",
+  }] }
+  assert.equal(reconcileWorkflowRunList([compact], [full], new Set([compact.id]))[0], full)
+})
+
 test("declarative workflow helpers preserve execution order and require object inputs", () => {
   const node = (instanceKey: string, parentInstanceKey?: string) => ({
     id: `${instanceKey}00000000-0000-4000-8000-000000000000`.slice(-36),
@@ -254,20 +263,38 @@ test("workflow checkpoint events stay compact and refresh full boundary state", 
 test("workflow refreshes coalesce duplicate boundaries and fetch once more for a newer in-flight revision", async () => {
   let resolve!: () => void
   let calls = 0
-  const refresh = createWorkflowRefreshCoordinator(async () => {
+  const revisions: Array<number | undefined> = []
+  const refresh = createWorkflowRefreshCoordinator(async (_instanceId, _runId, revision) => {
     calls += 1
+    revisions.push(revision)
     await new Promise<void>((done) => { resolve = done })
   })
 
   const settled = refresh("workspace", "run", 4)
   refresh("workspace", "run", 4)
   refresh("workspace", "run", 5)
+  refresh("workspace", "run", 6)
   assert.equal(calls, 1)
   resolve()
   await new Promise((done) => setImmediate(done))
   assert.equal(calls, 2)
+  assert.deepEqual(revisions, [4, 6])
   resolve()
   await settled
+})
+
+test("workflow refresh runs the newest queued revision after an earlier refresh fails", async () => {
+  let reject!: (error: unknown) => void
+  const revisions: Array<number | undefined> = []
+  const refresh = createWorkflowRefreshCoordinator(async (_instanceId, _runId, revision) => {
+    revisions.push(revision)
+    if (revisions.length === 1) await new Promise<void>((_resolve, fail) => { reject = fail })
+  })
+  const settled = refresh("workspace", "run", 7)
+  refresh("workspace", "run", 8)
+  reject(new Error("stale request failed"))
+  await settled
+  assert.deepEqual(revisions, [7, 8])
 })
 
 test("compact workflow revisions disable stale gate and recovery confirmations until hydration", () => {
@@ -275,9 +302,22 @@ test("compact workflow revisions disable stale gate and recovery confirmations u
   const update = store.slice(store.indexOf("sseManager.onWorkflowRunUpdated"), store.indexOf("serverEvents.onOpen"))
   assert.match(update, /markWorkflowRunHydrating\(instanceId, runId, event\.properties\.revision\)/)
   assert.match(update, /upsertWorkflowRun\(instanceId, updated, Boolean\(run\)\)/)
+  assert.match(update, /pendingGate: undefined/)
+
+  const load = store.slice(store.indexOf("async function loadWorkflowRuns"), store.indexOf("async function createWorkflowRun"))
+  assert.match(load, /markWorkflowRunHydrated\(instanceId, run\)/)
 
   const list = readFileSync(new URL("../components/instance/shell/right-panel/tabs/WorkflowRunList.tsx", import.meta.url), "utf8")
   assert.equal(list.match(/disabled=\{busy\(\) \|\| detailsHydrating\(\)\}/g)?.length, 4)
   assert.match(list, /!confirmed \|\| detailsHydrating\(\) \|\| props\.run\.revision !== expectedRevision/)
   assert.match(list, /confirmed && !detailsHydrating\(\) && props\.run\.revision === expectedRevision/)
+})
+
+test("opening workflow sessions selects their app tab and run cards survive object replacement", () => {
+  const tab = readFileSync(new URL("../components/instance/shell/right-panel/tabs/WorkflowsTab.tsx", import.meta.url), "utf8")
+  assert.match(tab, /selectInstanceTab\(workspaceId\)/)
+  assert.doesNotMatch(tab, /setActiveInstanceId\(workspaceId\)/)
+  const list = readFileSync(new URL("../components/instance/shell/right-panel/tabs/WorkflowRunList.tsx", import.meta.url), "utf8")
+  assert.match(list, /visibleRuns\(\)\.map\(\(\{ id \}\) => id\)/)
+  assert.match(list, /props\.runs\.find\(\(\{ id \}\) => id === runId\)/)
 })

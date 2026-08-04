@@ -40,6 +40,7 @@ export async function loadNativeClientState(): Promise<NativeClientStateLoadResu
   return SECONDARY_CLIENT_STATE
 }
 export async function listenForNativeClientStateOwnershipChange(callback: () => void): Promise<() => void> {
+  if (!isLocalWindow()) return () => {}
   if (isElectronHost()) return electronApi()?.onClientStateOwnershipChange?.(callback) ?? (() => {})
   if (isTauriHost()) return listen("client-state:ownership-changed", callback)
   return () => {}

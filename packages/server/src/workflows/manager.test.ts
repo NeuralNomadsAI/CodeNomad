@@ -7,9 +7,173 @@ import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
 import type { EventBus } from "../events/bus"
 import type { Logger } from "../logger"
 import type { WorkspaceManager } from "../workspaces/manager"
-import { WorkflowManager } from "./manager"
+import { withFilesystemLock } from "./filesystem-lock"
+import { WorkflowManager, WorkflowRunError } from "./manager"
 
 describe("WorkflowManager", () => {
+  it("keeps a live executor leased when a second manager starts", async () => {
+    const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-workflow-live-owner-"))
+    let releasePrompt!: () => void
+    let promptStarted!: () => void
+    const startedPrompt = new Promise<void>((resolve) => { promptStarted = resolve })
+    const blockedPrompt = new Promise<void>((resolve) => { releasePrompt = resolve })
+    const client = { tool: { ids: async () => ({ data: [] }) }, session: {
+      create: async () => ({ data: { id: "live-session" } }),
+      prompt: async () => { promptStarted(); await blockedPrompt; return { data: { info: {}, parts: [] } } },
+      abort: async () => ({ data: true }),
+    } } as unknown as OpencodeClient
+    const workspaceManager = {
+      get: () => ({ id: "workspace", lineageId: "live-lineage", path: "C:/live-workspace", status: "ready" }),
+      list: () => [{ id: "workspace", lineageId: "live-lineage", path: "C:/live-workspace", status: "ready" }],
+    } as unknown as WorkspaceManager
+    const options = { workspaceManager, eventBus: { publish: () => true } as unknown as EventBus,
+      logger: { warn() {}, error() {} } as unknown as Logger, storageDir, createClient: () => client }
+    const owner = new WorkflowManager(options)
+    let observer: WorkflowManager | undefined
+    try {
+      await owner.createDefinition({ version: 1, id: "live", name: "Live", root: {
+        type: "agent", id: "work", instructions: "Wait",
+      } })
+      const started = await owner.start({ workspaceId: "workspace", definitionId: "live" })
+      await startedPrompt
+      const before = JSON.parse(await fs.readFile(path.join(storageDir, `${started.id}.json`), "utf8"))
+      assert.ok(Date.parse(before.executorLease.expiresAt) > Date.now())
+
+      observer = new WorkflowManager(options)
+      assert.equal((await observer.get(started.id))?.status, "running")
+      const after = JSON.parse(await fs.readFile(path.join(storageDir, `${started.id}.json`), "utf8"))
+      assert.equal(after.executorLease.ownerToken, before.executorLease.ownerToken)
+      assert.equal(after.executorLease.fence, before.executorLease.fence)
+    } finally {
+      releasePrompt()
+      await owner.shutdown()
+      await observer?.shutdown()
+      await fs.rm(storageDir, { recursive: true, force: true })
+    }
+  })
+
+  it("rejects cross-host control while the executor lease is live", async () => {
+    const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-workflow-remote-cancel-"))
+    let releasePrompt!: () => void
+    let promptStarted!: () => void
+    const startedPrompt = new Promise<void>((resolve) => { promptStarted = resolve })
+    const blockedPrompt = new Promise<void>((resolve) => { releasePrompt = resolve })
+    let aborts = 0
+    const client = { tool: { ids: async () => ({ data: [] }) }, session: {
+      create: async () => ({ data: { id: "remote-session" } }),
+      prompt: async () => { promptStarted(); await blockedPrompt; return { data: { info: {}, parts: [] } } },
+      abort: async () => { aborts++; return { data: true } },
+    } } as unknown as OpencodeClient
+    const workspaceManager = {
+      get: () => ({ id: "workspace", lineageId: "remote-lineage", path: "C:/remote-workspace", status: "ready" }),
+      list: () => [{ id: "workspace", lineageId: "remote-lineage", path: "C:/remote-workspace", status: "ready" }],
+    } as unknown as WorkspaceManager
+    const options = { workspaceManager, eventBus: { publish: () => true } as unknown as EventBus,
+      logger: { warn() {}, error() {} } as unknown as Logger, storageDir, createClient: () => client }
+    const owner = new WorkflowManager(options)
+    const remote = new WorkflowManager(options)
+    try {
+      await owner.createDefinition({ version: 1, id: "remote", name: "Remote", root: {
+        type: "agent", id: "work", instructions: "Wait",
+      } })
+      const started = await owner.start({ workspaceId: "workspace", definitionId: "remote" })
+      await startedPrompt
+      await assert.rejects(remote.pause(started.id), (error: WorkflowRunError) => error.statusCode === 409)
+      await assert.rejects(remote.cancel(started.id), (error: WorkflowRunError) => error.statusCode === 409)
+      await assert.rejects(remote.resume(started.id), (error: WorkflowRunError) => error.statusCode === 409)
+      assert.equal(aborts, 0)
+      assert.equal((await remote.get(started.id))?.status, "running")
+
+      const journalPath = path.join(storageDir, `${started.id}.json`)
+      const expired = JSON.parse(await fs.readFile(journalPath, "utf8"))
+      expired.executorLease.heartbeatAt = new Date(Date.now() - 80_000).toISOString()
+      expired.executorLease.expiresAt = new Date(Date.now() - 70_000).toISOString()
+      await fs.writeFile(journalPath, `${JSON.stringify(expired, null, 2)}\n`, "utf8")
+      assert.equal((await remote.cancel(started.id))?.status, "cancelled")
+      assert.equal(aborts, 1)
+      releasePrompt()
+      await new Promise((resolve) => setTimeout(resolve, 25))
+      assert.equal(JSON.parse(await fs.readFile(journalPath, "utf8")).status, "cancelled")
+    } finally {
+      releasePrompt()
+      await owner.shutdown()
+      await remote.shutdown()
+      await fs.rm(storageDir, { recursive: true, force: true })
+    }
+  })
+
+  it("refreshes ownership created and released by another manager under admission", async () => {
+    const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-workflow-refresh-owner-"))
+    let releasePrompt!: () => void
+    let promptStarted!: () => void
+    const startedPrompt = new Promise<void>((resolve) => { promptStarted = resolve })
+    const blockedPrompt = new Promise<void>((resolve) => { releasePrompt = resolve })
+    const client = { session: {
+      create: async () => ({ data: { id: "ownership-session" } }),
+      prompt: async () => { promptStarted(); await blockedPrompt; return { data: { info: {}, parts: [] } } },
+      abort: async () => ({ data: true }),
+    } } as unknown as OpencodeClient
+    const workspaceManager = {
+      get: () => ({ id: "workspace", lineageId: "ownership-lineage", path: "C:/ownership-workspace", status: "ready" }),
+      list: () => [{ id: "workspace", lineageId: "ownership-lineage", path: "C:/ownership-workspace", status: "ready" }],
+    } as unknown as WorkspaceManager
+    const options = { workspaceManager, eventBus: { publish: () => true } as unknown as EventBus,
+      logger: { warn() {}, error() {} } as unknown as Logger, storageDir, createClient: () => client }
+    const observer = new WorkflowManager(options)
+    const owner = new WorkflowManager(options)
+    try {
+      await observer.list()
+      const started = await owner.start({ workspaceId: "workspace", objective: "Own", stages: [
+        { id: "work", title: "Work", instructions: "Wait" },
+      ] })
+      await startedPrompt
+      assert.equal(await observer.withWorkspaceOwnershipLease(
+        { lineageId: "ownership-lineage" }, async (owned) => owned,
+      ), true)
+      releasePrompt()
+      for (let attempt = 0; attempt < 100 && (await owner.get(started.id))?.status === "running"; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      assert.equal(await observer.withWorkspaceOwnershipLease(
+        { lineageId: "ownership-lineage" }, async (owned) => owned,
+      ), false)
+    } finally {
+      releasePrompt()
+      await owner.shutdown()
+      await observer.shutdown()
+      await fs.rm(storageDir, { recursive: true, force: true })
+    }
+  })
+
+  it("retries initialization after timing out behind a long admission", async () => {
+    const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-workflow-init-retry-"))
+    let releaseAdmission!: () => void
+    let admissionEntered!: () => void
+    const entered = new Promise<void>((resolve) => { admissionEntered = resolve })
+    const held = new Promise<void>((resolve) => { releaseAdmission = resolve })
+    const admission = withFilesystemLock(path.join(storageDir, ".admission.lock"), async () => {
+      admissionEntered()
+      await held
+    })
+    await entered
+    const manager = new WorkflowManager({
+      workspaceManager: { list: () => [] } as unknown as WorkspaceManager,
+      eventBus: { publish: () => true } as unknown as EventBus,
+      logger: { warn() {}, error() {} } as unknown as Logger,
+      storageDir,
+    })
+    try {
+      await assert.rejects(manager.list(), /Timed out waiting for filesystem lock/)
+      releaseAdmission()
+      await admission
+      await assert.doesNotReject(manager.list())
+    } finally {
+      releaseAdmission()
+      await admission
+      await manager.shutdown()
+      await fs.rm(storageDir, { recursive: true, force: true })
+    }
+  })
   it("admits one run per path or lineage across manager instances", async () => {
     for (const collision of ["lineage", "path"] as const) {
       const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), `codenomad-workflow-shared-${collision}-`))
@@ -119,14 +283,14 @@ describe("WorkflowManager", () => {
     }
   })
 
-  it("retries transient creation cleanup on later admission", async () => {
+  it("retains creation cleanup after three transient failures and retries it on later admission", async () => {
     const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-workflow-cleanup-"))
     let attempts = 0
     const manager = new WorkflowManager({
       workspaceManager: {
         list: () => [],
         cancelCreationRequest: async () => {
-          if (++attempts === 1) throw new Error("transient cleanup failure")
+          if (++attempts <= 3) throw new Error("transient cleanup failure")
         },
       } as unknown as WorkspaceManager,
       eventBus: { publish: () => true } as unknown as EventBus,
@@ -135,12 +299,113 @@ describe("WorkflowManager", () => {
     })
     try {
       ;(manager as any).deferCreationCleanup("request")
-      await (manager as any).drainCreationCleanups()
-      assert.equal(attempts, 1)
+      for (let attempt = 0; attempt < 3; attempt += 1) await (manager as any).drainCreationCleanups()
+      assert.equal(attempts, 3)
       assert.equal((manager as any).deferredCreationCleanups.has("request"), true)
       await assert.rejects(manager.startLatest({ workspaceId: "workspace", definitionId: "missing" }), /not found/)
-      assert.equal(attempts, 2)
+      assert.equal(attempts, 4)
       assert.equal((manager as any).deferredCreationCleanups.size, 0)
+    } finally {
+      await manager.shutdown()
+      await fs.rm(storageDir, { recursive: true, force: true })
+    }
+  })
+
+  it("keeps shutdown retryable while deferred creation cleanup remains", async () => {
+    const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-workflow-cleanup-shutdown-"))
+    let attempts = 0
+    const manager = new WorkflowManager({
+      workspaceManager: {
+        list: () => [],
+        cancelCreationRequest: async () => {
+          if (++attempts <= 3) throw new Error("transient cleanup failure")
+        },
+      } as unknown as WorkspaceManager,
+      eventBus: { publish: () => true } as unknown as EventBus,
+      logger: { warn() {}, error() {} } as unknown as Logger,
+      storageDir,
+    })
+    try {
+      ;(manager as any).deferCreationCleanup("request")
+      await assert.rejects(manager.shutdown(), /creation cleanup remains pending/)
+      assert.equal((manager as any).deferredCreationCleanups.has("request"), true)
+      await manager.shutdown()
+      assert.equal(attempts, 4)
+      assert.equal((manager as any).deferredCreationCleanups.size, 0)
+    } finally {
+      await manager.shutdown().catch(() => undefined)
+      await fs.rm(storageDir, { recursive: true, force: true })
+    }
+  })
+
+  it("cancels a legacy approval that persists while shutdown starts", async () => {
+    const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-workflow-approval-shutdown-"))
+    const client = { session: {
+      create: async () => ({ data: { id: "legacy-session" } }),
+      prompt: async () => ({ data: { info: {}, parts: [{ type: "text", text: "Review" }] } }),
+      abort: async () => ({ data: true }),
+    } } as unknown as OpencodeClient
+    const workspaceManager = {
+      get: () => ({ id: "workspace", lineageId: "lineage", path: "C:/workspace", status: "ready" }),
+      list: () => [{ id: "workspace", lineageId: "lineage", path: "C:/workspace", status: "ready" }],
+    } as unknown as WorkspaceManager
+    let manager: WorkflowManager
+    let armShutdown = false
+    let shutdown: Promise<void> | undefined
+    const eventBus = { publish: (event: any) => {
+      if (armShutdown && event.event?.properties?.status === "running") {
+        armShutdown = false
+        shutdown = manager.shutdown()
+      }
+      return true
+    } } as unknown as EventBus
+    manager = new WorkflowManager({ workspaceManager, eventBus, logger: { warn() {}, error() {} } as unknown as Logger,
+      storageDir, createClient: () => client })
+    try {
+      const started = await manager.start({ workspaceId: "workspace", objective: "Legacy", stages: [
+        { id: "review", title: "Review", instructions: "Review", requiresApproval: true },
+      ] })
+      let waiting = await manager.get(started.id)
+      for (let attempt = 0; attempt < 50 && waiting?.status === "running"; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        waiting = await manager.get(started.id)
+      }
+      assert.equal(waiting?.status, "waiting_for_review")
+
+      armShutdown = true
+      const approved = await manager.approve(started.id, "review")
+      await shutdown
+      assert.equal(approved?.status, "cancelled")
+      assert.equal(JSON.parse(await fs.readFile(path.join(storageDir, `${started.id}.json`), "utf8")).status, "cancelled")
+    } finally {
+      await manager.shutdown()
+      await fs.rm(storageDir, { recursive: true, force: true })
+    }
+  })
+
+  it("quarantines managed-worktree ownership from a malformed active journal", async () => {
+    const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-workflow-worktree-quarantine-"))
+    await fs.writeFile(path.join(storageDir, "malformed.json"), JSON.stringify({
+      id: "malformed", status: "running", workspaceId: "execution", workspaceLineageId: "execution-lineage",
+      workspacePath: "C:/repo/.codenomad/worktrees/review",
+      worktreeSelection: {
+        sourceWorkspaceId: "source", sourceWorkspaceLineageId: "source-lineage", sourceWorkspacePath: "C:/repo",
+        directory: "C:/repo/.codenomad/worktrees/review", slug: "review",
+      },
+    }), "utf8")
+    const manager = new WorkflowManager({
+      workspaceManager: { list: () => [] } as unknown as WorkspaceManager,
+      eventBus: { publish: () => true } as unknown as EventBus,
+      logger: { warn() {}, error() {} } as unknown as Logger,
+      storageDir,
+    })
+    try {
+      assert.equal(await manager.isWorktreeWorkflowOwned(
+        { lineageId: "source-lineage" }, { slug: "review" },
+      ), true)
+      assert.equal(await manager.isWorktreeWorkflowOwned(
+        { lineageId: "unrelated" }, { path: "C:/repo/.codenomad/worktrees/review" },
+      ), true)
     } finally {
       await manager.shutdown()
       await fs.rm(storageDir, { recursive: true, force: true })

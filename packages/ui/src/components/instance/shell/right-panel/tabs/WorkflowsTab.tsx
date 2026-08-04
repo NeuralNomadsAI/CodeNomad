@@ -1,7 +1,8 @@
 import { Show, createEffect, createMemo, createSignal, onMount, type Component } from "solid-js"
 import { RefreshCw } from "lucide-solid"
 import { useI18n } from "../../../../../lib/i18n"
-import { instances, setActiveInstanceId } from "../../../../../stores/instances"
+import { selectInstanceTab } from "../../../../../stores/app-tabs"
+import { instances } from "../../../../../stores/instances"
 import { hydrateRestoredSessionChain, setActiveSessionFromList } from "../../../../../stores/sessions"
 import {
   getWorkflowRuns,
@@ -63,7 +64,7 @@ const WorkflowsTab: Component<WorkflowTabProps> = (props) => {
       }
       await hydrateRestoredSessionChain(workspaceId, [sessionId])
       setActiveSessionFromList(workspaceId, sessionId)
-      setActiveInstanceId(workspaceId)
+      selectInstanceTab(workspaceId)
     } catch {
       setActionError(props.t("instanceShell.workflows.errors.openSession"))
     }

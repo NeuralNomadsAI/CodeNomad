@@ -93,16 +93,16 @@ async function terminateGitProcessTree(child: ChildProcess, cleanupToken: string
           }, remainingCommandTime(), process.platform)
         : signalOwnedPosixProcessGroup(spawnSync, pid, signal, remainingCommandTime())
       if (!result.ok) failures.push(`POSIX ${signal}: ${result.error}`)
-      if (process.platform === "linux") {
-        const tokenResult = signalLaunchCleanupToken(spawnSync, cleanupToken, signal, remainingCommandTime())
+      if (process.platform === "linux" || process.platform === "darwin") {
+        const tokenResult = signalLaunchCleanupToken(spawnSync, cleanupToken, signal, remainingCommandTime(), undefined, process.platform)
         if (!tokenResult.ok) failures.push(`launch-token ${signal}: ${tokenResult.error}`)
       }
     }
     const treeGone = () => {
       const snapshot = probePosixProcesses(spawnSync, remainingCommandTime(), process.platform, { groupId: pid })
       if (!snapshot.ok || [...snapshot.processes.values()].some((identity) => identity.groupId === pid)) return false
-      if (process.platform !== "linux") return true
-      const tokenSnapshot = probeLaunchCleanupToken(spawnSync, cleanupToken, remainingCommandTime())
+      if (process.platform !== "linux" && process.platform !== "darwin") return true
+      const tokenSnapshot = probeLaunchCleanupToken(spawnSync, cleanupToken, remainingCommandTime(), undefined, process.platform)
       return tokenSnapshot.ok && tokenSnapshot.processes.size === 0
     }
 

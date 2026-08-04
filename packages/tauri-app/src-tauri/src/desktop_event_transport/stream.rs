@@ -24,16 +24,20 @@ pub(super) fn open_stream(
     app: &AppHandle,
     client: &Client,
     config: &DesktopEventStreamConfig,
+    last_event_id: Option<&str>,
 ) -> Result<Response, OpenStreamError> {
     let url = format!(
         "{}?clientId={}&connectionId={}",
         config.events_url, config.client_id, config.connection_id
     );
 
-    let request = attach_session_cookie(
-        client.get(&url).header("Accept", "text/event-stream"),
-        app,
-        config,
+    let request = attach_last_event_id(
+        attach_session_cookie(
+            client.get(&url).header("Accept", "text/event-stream"),
+            app,
+            config,
+        ),
+        last_event_id,
     );
 
     let response = request.send().map_err(|error| OpenStreamError {
@@ -58,6 +62,16 @@ pub(super) fn open_stream(
         message: format!("desktop event stream unavailable ({status})"),
         status_code: Some(status.as_u16()),
     })
+}
+
+pub(super) fn attach_last_event_id(
+    request: RequestBuilder,
+    last_event_id: Option<&str>,
+) -> RequestBuilder {
+    match last_event_id {
+        Some(value) => request.header("Last-Event-ID", value),
+        None => request,
+    }
 }
 
 fn resolve_session_cookie(app: &AppHandle, config: &DesktopEventStreamConfig) -> Option<String> {
@@ -161,6 +175,7 @@ pub(super) fn read_sse(
     let mut reader = BufReader::new(response);
     let mut line = String::new();
     let mut event_name: Option<String> = None;
+    let mut event_id: Option<String> = None;
     let mut data_lines: Vec<String> = Vec::new();
 
     loop {
@@ -172,7 +187,7 @@ pub(super) fn read_sse(
         line.clear();
         match reader.read_line(&mut line) {
             Ok(0) => {
-                let _ = flush_sse_frame(&tx, &event_name, &data_lines);
+                let _ = flush_sse_frame(&tx, &event_name, &event_id, &data_lines);
                 let _ = tx.send(ReaderMessage::End(Some("stream closed".to_string())));
                 return;
             }
@@ -181,17 +196,18 @@ pub(super) fn read_sse(
                     return; // consumer dropped — stop reading
                 }
                 let trimmed = line.trim_end_matches(['\r', '\n']);
-                if handle_sse_line(trimmed, &mut event_name, &mut data_lines) {
-                    if flush_sse_frame(&tx, &event_name, &data_lines).is_err() {
+                if handle_sse_line(trimmed, &mut event_name, &mut event_id, &mut data_lines) {
+                    if flush_sse_frame(&tx, &event_name, &event_id, &data_lines).is_err() {
                         return;
                     }
                     event_name = None;
+                    event_id = None;
                     data_lines.clear();
                     continue;
                 }
             }
             Err(error) => {
-                let _ = flush_sse_frame(&tx, &event_name, &data_lines);
+                let _ = flush_sse_frame(&tx, &event_name, &event_id, &data_lines);
                 let _ = tx.send(ReaderMessage::End(Some(error.to_string())));
                 return;
             }
@@ -202,6 +218,7 @@ pub(super) fn read_sse(
 fn handle_sse_line(
     trimmed: &str,
     event_name: &mut Option<String>,
+    event_id: &mut Option<String>,
     data_lines: &mut Vec<String>,
 ) -> bool {
     if trimmed.is_empty() {
@@ -217,6 +234,14 @@ fn handle_sse_line(
         return false;
     }
 
+    if let Some(id) = trimmed.strip_prefix("id:") {
+        let id = id.strip_prefix(' ').unwrap_or(id);
+        if !id.contains('\0') {
+            *event_id = Some(id.to_string());
+        }
+        return false;
+    }
+
     if let Some(data) = trimmed.strip_prefix("data:") {
         data_lines.push(data.strip_prefix(' ').unwrap_or(data).to_string());
     }
@@ -227,16 +252,45 @@ fn handle_sse_line(
 fn flush_sse_frame(
     tx: &SyncSender<ReaderMessage>,
     event_name: &Option<String>,
+    event_id: &Option<String>,
     lines: &[String],
 ) -> Result<(), ()> {
     let Some(payload) = parse_sse_payload(lines) else {
+        if let Some(id) = event_id {
+            tx.send(ReaderMessage::Cursor(id.clone())).map_err(|_| ())?;
+        }
         return Ok(());
     };
 
     if event_name.as_deref() == Some("codenomad.client.ping") {
-        tx.send(ReaderMessage::Ping(payload)).map_err(|_| ())
+        tx.send(ReaderMessage::Ping(payload)).map_err(|_| ())?;
+        if let Some(id) = event_id {
+            tx.send(ReaderMessage::Cursor(id.clone())).map_err(|_| ())?;
+        }
+        Ok(())
+    } else if event_name.as_deref() == Some("codenomad.replay.cursor") {
+        if let Some(id) = event_id {
+            tx.send(ReaderMessage::Cursor(id.clone())).map_err(|_| ())
+        } else {
+            Ok(())
+        }
+    } else if event_name.as_deref() == Some("codenomad.replay.reset") {
+        tx.send(ReaderMessage::ReplayReset {
+            details: payload,
+            id: event_id.clone(),
+        })
+        .map_err(|_| ())
+    } else if event_name.is_none() || event_name.as_deref() == Some("message") {
+        tx.send(ReaderMessage::Event {
+            event: payload,
+            id: event_id.clone(),
+        })
+        .map_err(|_| ())
     } else {
-        tx.send(ReaderMessage::Event(payload)).map_err(|_| ())
+        if let Some(id) = event_id {
+            tx.send(ReaderMessage::Cursor(id.clone())).map_err(|_| ())?;
+        }
+        Ok(())
     }
 }
 
@@ -261,21 +315,29 @@ mod tests {
     fn named_ping_event_is_routed_to_ping_channel() {
         let (tx, rx) = mpsc::sync_channel(1);
         let mut event_name = None;
+        let mut event_id = None;
         let mut data_lines = Vec::new();
 
         assert!(!handle_sse_line(
             "event: codenomad.client.ping",
             &mut event_name,
+            &mut event_id,
             &mut data_lines
         ));
         assert!(!handle_sse_line(
             r#"data: {"ts":123}"#,
             &mut event_name,
+            &mut event_id,
             &mut data_lines
         ));
-        assert!(handle_sse_line("", &mut event_name, &mut data_lines));
+        assert!(handle_sse_line(
+            "",
+            &mut event_name,
+            &mut event_id,
+            &mut data_lines
+        ));
 
-        flush_sse_frame(&tx, &event_name, &data_lines).expect("ping frame should flush");
+        flush_sse_frame(&tx, &event_name, &event_id, &data_lines).expect("ping frame should flush");
 
         match rx.recv().expect("ping frame should be emitted") {
             ReaderMessage::Ping(payload) => {

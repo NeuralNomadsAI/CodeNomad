@@ -236,7 +236,7 @@ export function createWorkflowTools(config: CodeNomadConfig, requester: Workflow
         objective: tool.schema.string().optional().describe("Optional objective; defaults to the definition name"),
         inputs_json: tool.schema.string().optional().describe("Optional workflow inputs as a JSON object"),
       },
-      async execute(args) {
+      async execute(args, context) {
         const inputs = parseWorkflowInputs(args.inputs_json)
         const run = await requestDefinition<WorkflowRun>(`/${encodeURIComponent(args.definition_id)}/start`, {
           method: "POST",
@@ -244,6 +244,7 @@ export function createWorkflowTools(config: CodeNomadConfig, requester: Workflow
             ...(args.objective ? { objective: args.objective } : {}),
             ...(inputs ? { inputs } : {}),
           }),
+          signal: context.abort,
         })
         return `${summarize(run)}\nStarted the current saved definition revision. Only a human can manage approval, input, pause/resume, and recovery actions in the CodeNomad UI.`
       },
@@ -278,8 +279,8 @@ export function createWorkflowTools(config: CodeNomadConfig, requester: Workflow
     cancel_codenomad_workflow: tool({
       description: "Cancel a running or review-pending CodeNomad workflow.",
       args: { run_id: tool.schema.string().describe("Workflow run ID") },
-      async execute(args) {
-        const run = await request<WorkflowRun>(`/${encodeURIComponent(args.run_id)}/cancel`, { method: "POST" })
+      async execute(args, context) {
+        const run = await request<WorkflowRun>(`/${encodeURIComponent(args.run_id)}/cancel`, { method: "POST", signal: context.abort })
         return summarize(run)
       },
     }),

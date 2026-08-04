@@ -5,6 +5,7 @@ import path from "node:path"
 import { describe, it, type TestContext } from "node:test"
 import {
   WORKFLOW_DEFINITION_HISTORY_BYTES_LIMIT,
+  WORKFLOW_DEFINITION_FILE_BYTES_LIMIT,
   WORKFLOW_DEFINITION_CATALOG_BYTES_LIMIT,
   WORKFLOW_DEFINITION_RECORD_LIMIT,
   WORKFLOW_DEFINITION_REVISION_LIMIT,
@@ -175,6 +176,61 @@ describe("WorkflowDefinitionStore", () => {
       assert.equal(second.length, 4)
       assert.equal(maxActiveReads, 1)
       assert.equal(reads, 4)
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("does not reuse an in-flight pre-write catalog after the write completes", async (context: TestContext) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-definition-store-list-write-"))
+    try {
+      const store = new WorkflowDefinitionStore(directory)
+      await store.create(definition("Before"))
+      const readFile = fs.readFile.bind(fs)
+      let release!: () => void
+      let started!: () => void
+      const blocked = new Promise<void>((resolve) => { release = resolve })
+      const reading = new Promise<void>((resolve) => { started = resolve })
+      let delayFirstRead = true
+      context.mock.method(fs, "readFile", async (...args: Parameters<typeof fs.readFile>) => {
+        const contents = await readFile(...args)
+        if (delayFirstRead && String(args[0]).endsWith("stored.json")) {
+          delayFirstRead = false
+          started()
+          await blocked
+        }
+        return contents
+      })
+
+      const stale = store.list()
+      await reading
+      await store.update("stored", 1, definition("After"))
+      const fresh = store.list()
+      release()
+      assert.equal((await stale)[0]?.definition.name, "Before")
+      assert.equal((await fresh)[0]?.definition.name, "After")
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("bounds stored-file I/O and historical bytes before catalog validation", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-definition-store-list-bounds-"))
+    try {
+      const oversizedPath = path.join(directory, "oversized.json")
+      await fs.writeFile(oversizedPath, "")
+      await fs.truncate(oversizedPath, WORKFLOW_DEFINITION_FILE_BYTES_LIMIT + 1)
+      const oversized = new WorkflowDefinitionStore(directory)
+      await assert.rejects(oversized.list(), /stored file size limit reached/)
+      await fs.rm(oversizedPath)
+
+      const store = new WorkflowDefinitionStore(directory)
+      await store.create(definition("Stored"))
+      const storedPath = path.join(directory, "stored.json")
+      const stored = JSON.parse(await fs.readFile(storedPath, "utf8"))
+      stored.revisions[0].padding = "x".repeat(WORKFLOW_DEFINITION_HISTORY_BYTES_LIMIT)
+      await fs.writeFile(storedPath, JSON.stringify(stored))
+      await assert.rejects(store.list(), /history size limit reached/)
     } finally {
       await fs.rm(directory, { recursive: true, force: true })
     }

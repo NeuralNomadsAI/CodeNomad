@@ -142,11 +142,12 @@ test("saved definition tools read and start the current revision without claimin
 
   await tools.list_codenomad_workflow_definitions.execute({}, {} as never)
   await tools.get_codenomad_workflow_definition.execute({ definition_id: "deploy_flow" }, {} as never)
+  const abort = new AbortController().signal
   const started = await tools.start_codenomad_workflow_definition.execute({
     definition_id: "deploy_flow",
     objective: "Ship it",
     inputs_json: '{"environment":"production"}',
-  }, { sessionID: "session-1" } as never)
+  }, { sessionID: "session-1", abort } as never)
 
   assert.deepEqual(calls.map((call) => call.path), [
     "/workflow-definitions",
@@ -154,10 +155,23 @@ test("saved definition tools read and start the current revision without claimin
     "/workflow-definitions/deploy_flow/start",
   ])
   assert.equal(calls[2]?.init?.method, "POST")
+  assert.equal(calls[2]?.init?.signal, abort)
   assert.deepEqual(JSON.parse(String(calls[2]?.init?.body)), {
     objective: "Ship it",
     inputs: { environment: "production" },
   })
   assert.match(started, /current saved definition revision/)
   assert.doesNotMatch(String(calls[2]?.init?.body), /definitionRevision|initiatorSessionId/)
+})
+
+test("workflow cancellation forwards the tool abort signal", async () => {
+  let init: RequestInit | undefined
+  const requester = { async requestJson<T>(_path: string, requestInit?: RequestInit): Promise<T> {
+    init = requestInit
+    return run as T
+  } }
+  const tools = createWorkflowTools({ instanceId: "workspace", baseUrl: "http://localhost", callbackToken: "callback" }, requester)
+  const abort = new AbortController().signal
+  await tools.cancel_codenomad_workflow.execute({ run_id: "run" }, { abort } as never)
+  assert.equal(init?.signal, abort)
 })

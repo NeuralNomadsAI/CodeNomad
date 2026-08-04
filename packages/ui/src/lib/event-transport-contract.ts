@@ -41,6 +41,7 @@ export interface DesktopEventTransportStatusPayload {
 export interface DesktopEventsStartResult {
   started: boolean
   generation?: number
+  leaseId?: number
   reason?: string
 }
 

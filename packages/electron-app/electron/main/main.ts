@@ -98,6 +98,7 @@ cleanupPackagedChromiumStorage()
 const clientStateManager = new ClientStateManager(app.getPath("userData"))
 const cliManager = new CliProcessManager()
 let mainWindow: BrowserWindow | null = null
+let mainWindowStateTracker: WindowStateTracker | null = null
 let currentCliUrl: string | null = null
 let pendingCliUrl: string | null = null
 let pendingBootstrapToken: string | null = null
@@ -106,11 +107,27 @@ let preloadingView: BrowserView | null = null
 let mainNavigationController: ClientStateNavigationController | null = null
 clientStateManager.onOwnershipChanged(() => {
   if (mainWindow && !mainWindow.isDestroyed()) {
+    const windowState = clientStateManager.getWindowState()
+    const bounds = windowState
+      ? clampWindowBounds(windowState.bounds, screen.getAllDisplays().map((display) => display.workArea))
+      : undefined
+    mainWindowStateTracker?.applyAuthoritativeState(windowState, bounds)
     mainWindow.webContents.send("client-state:ownership-changed")
   }
 })
-const clientStateOwnershipPoll = setInterval(() => clientStateManager.refreshPrimary(), 250)
-clientStateOwnershipPoll.unref()
+const pollClientStateOwnership = () => {
+  const timer = setTimeout(async () => {
+    try {
+      await clientStateManager.refreshPrimary()
+    } catch (error) {
+      console.warn("[client-state] ownership poll failed", error)
+    } finally {
+      pollClientStateOwnership()
+    }
+  }, 250)
+  timer.unref()
+}
+pollClientStateOwnership()
 const remoteWindowOrigins = new Map<number, Set<string>>()
 const insecureWindowOrigins = new Map<number, Set<string>>()
 const clientStateLifecycle = new ClientStateLifecycle({
@@ -421,6 +438,7 @@ function createWindow() {
   mainNavigationController = navigationController
 
   const windowStateTracker = new WindowStateTracker(window, clientStateManager, savedWindowState)
+  mainWindowStateTracker = windowStateTracker
   if (clientStateManager.isPrimary) {
     restoreWindowState(window, savedWindowState, restoredBounds)
   }
@@ -461,6 +479,7 @@ function createWindow() {
     clearWindowAllowedOrigin(window)
     clearWindowInsecureOrigin(window)
     mainWindow = null
+    if (mainWindowStateTracker === windowStateTracker) mainWindowStateTracker = null
     if (mainNavigationController === navigationController) mainNavigationController = null
     currentCliUrl = null
     pendingCliUrl = null

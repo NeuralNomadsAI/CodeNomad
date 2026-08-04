@@ -15,13 +15,28 @@ import type {
 import { getLogger } from "../logger"
 
 const log = getLogger("sse")
+let nativeLastEventId: string | undefined
 
 interface WorkspaceEventBatchPayload {
   generation: number
   sequence: number
   emittedAt: number
   events: WorkspaceEventPayload[]
+  lastEventId?: string | null
 }
+
+interface WorkspaceEventReplayResetPayload {
+  generation: number
+  details: unknown
+  lastEventId?: string | null
+}
+
+type PendingNativePayload =
+  | { type: "batch"; payload: WorkspaceEventBatchPayload }
+  | { type: "status"; payload: DesktopEventTransportStatusPayload }
+  | { type: "reset"; payload: WorkspaceEventReplayResetPayload }
+
+const MAX_PENDING_NATIVE_PAYLOADS = 4096
 
 interface DesktopEventTransportBridge {
   invoke: typeof invoke
@@ -58,9 +73,10 @@ export async function connectTauriWorkspaceEvents(
   let closed = false
   let opened = false
   let expectedGeneration: number | null = null
+  let leaseId: number | undefined
   const notifyTerminalError = createTerminalErrorNotifier(callbacks)
-  const pendingBatches: WorkspaceEventBatchPayload[] = []
-  const pendingStatuses: DesktopEventTransportStatusPayload[] = []
+  const pending: PendingNativePayload[] = []
+  let pendingOverflow = false
 
   const matchesGeneration = (generation: number) => expectedGeneration === generation
 
@@ -74,11 +90,8 @@ export async function connectTauriWorkspaceEvents(
     }
 
     const events = payload.events ?? []
-    if (events.length === 0) {
-      return
-    }
-
-    callbacks.onBatch(events)
+    const accepted = callbacks.onBatch(events) !== false
+    if (accepted && payload.lastEventId !== undefined) nativeLastEventId = payload.lastEventId || undefined
   }
 
   const handleStatusPayload = (payload: DesktopEventTransportStatusPayload) => {
@@ -128,48 +141,76 @@ export async function connectTauriWorkspaceEvents(
     }
   }
 
+  const handleReplayResetPayload = (payload: WorkspaceEventReplayResetPayload) => {
+    if (!payload || !matchesGeneration(payload.generation)) return
+    const accepted = callbacks.onReplayReset?.() !== false
+    if (accepted && payload.lastEventId !== undefined) nativeLastEventId = payload.lastEventId || undefined
+  }
+
   const flushPending = () => {
     if (expectedGeneration === null) return
-    for (const payload of pendingStatuses.splice(0, pendingStatuses.length)) {
-      handleStatusPayload(payload)
+    if (pendingOverflow) {
+      pending.length = 0
+      callbacks.onReplayReset?.()
+      return
     }
-    for (const payload of pendingBatches.splice(0, pendingBatches.length)) {
-      handleBatchPayload(payload)
+    for (const entry of pending.splice(0, pending.length)) {
+      if (entry.type === "batch") handleBatchPayload(entry.payload)
+      else if (entry.type === "status") handleStatusPayload(entry.payload)
+      else handleReplayResetPayload(entry.payload)
     }
   }
 
-  const unlistenBatch = await bridge.listen<WorkspaceEventBatchPayload>("desktop:event-batch", (event) => {
-    if (closed) return
-    const payload = event.payload
-    if (!payload) return
-    if (expectedGeneration === null) {
-      pendingBatches.push(payload)
+  const queuePending = (entry: PendingNativePayload) => {
+    if (pendingOverflow) return
+    if (pending.length >= MAX_PENDING_NATIVE_PAYLOADS) {
+      pending.length = 0
+      pendingOverflow = true
       return
     }
-    handleBatchPayload(payload)
-  })
+    pending.push(entry)
+  }
 
-  const unlistenStatus = await bridge.listen<DesktopEventTransportStatusPayload>("desktop:event-stream-status", (event) => {
-    if (closed) return
-    const payload = event.payload
-    if (!payload) return
-    if (expectedGeneration === null) {
-      pendingStatuses.push(payload)
-      return
-    }
-    handleStatusPayload(payload)
-  })
+  let unlistenBatch: () => void = () => undefined
+  let unlistenStatus: () => void = () => undefined
+  let unlistenReplayReset: () => void = () => undefined
 
   try {
-    const result = await bridge.invoke<DesktopEventsStartResult>("desktop_events_start", { request: options })
-    if (!result?.started) {
+    unlistenBatch = await bridge.listen<WorkspaceEventBatchPayload>("desktop:event-batch", (event) => {
+      if (closed || !event.payload) return
+      if (expectedGeneration === null) queuePending({ type: "batch", payload: event.payload })
+      else handleBatchPayload(event.payload)
+    })
+    unlistenStatus = await bridge.listen<DesktopEventTransportStatusPayload>("desktop:event-stream-status", (event) => {
+      if (closed || !event.payload) return
+      if (expectedGeneration === null) queuePending({ type: "status", payload: event.payload })
+      else handleStatusPayload(event.payload)
+    })
+    unlistenReplayReset = await bridge.listen<WorkspaceEventReplayResetPayload>("desktop:event-replay-reset", (event) => {
+      if (closed || !event.payload) return
+      if (expectedGeneration === null) queuePending({ type: "reset", payload: event.payload })
+      else handleReplayResetPayload(event.payload)
+    })
+    const result = await bridge.invoke<DesktopEventsStartResult>("desktop_events_start", {
+      request: { ...options, lastEventId: nativeLastEventId },
+    })
+    if (!result?.started || result.generation === undefined || result.leaseId === undefined) {
       throw new Error(result?.reason ?? "desktop event transport unavailable")
     }
-    expectedGeneration = result.generation ?? null
+    expectedGeneration = result.generation
+    leaseId = result.leaseId
     flushPending()
   } catch (error) {
     unlistenBatch()
     unlistenStatus()
+    unlistenReplayReset()
+    if (leaseId !== undefined) {
+      try {
+        await bridge.invoke("desktop_events_stop", { leaseId })
+      } catch (stopError) {
+        log.warn("Failed to stop native desktop event transport after startup failure", stopError)
+      }
+    }
     throw error
   }
 
@@ -182,7 +223,8 @@ export async function connectTauriWorkspaceEvents(
       closed = true
       unlistenBatch()
       unlistenStatus()
-      void bridge.invoke("desktop_events_stop").catch((error) => {
+      unlistenReplayReset()
+      void bridge.invoke("desktop_events_stop", { leaseId }).catch((error) => {
         log.warn("Failed to stop native desktop event transport", error)
       })
     },

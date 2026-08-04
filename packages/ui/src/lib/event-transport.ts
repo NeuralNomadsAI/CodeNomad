@@ -12,11 +12,12 @@ import { connectTauriWorkspaceEvents } from "./native/desktop-events"
 const log = getLogger("sse")
 
 export interface WorkspaceEventTransportCallbacks {
-  onBatch: (events: WorkspaceEventPayload[]) => void
+  onBatch: (events: WorkspaceEventPayload[]) => boolean | void
   onError?: () => void
   onOpen?: () => void
   onStatus?: (status: WorkspaceEventTransportStatus) => void
   onPing?: (payload: { ts?: number }) => void
+  onReplayReset?: () => boolean | void
 }
 
 export type WorkspaceEventTransportStatus = "connecting" | "connected" | "disconnected"
@@ -32,13 +33,17 @@ async function connectBrowserWorkspaceEvents(
     callbacks.onStatus?.("disconnected")
     callbacks.onError?.()
   }
-  const source = serverApi.connectEvents((event) => {
-    callbacks.onBatch([event])
-  }, notifyDisconnected, callbacks.onPing)
-  source.onopen = () => {
-    callbacks.onStatus?.("connected")
-    callbacks.onOpen?.()
-  }
+  const source = serverApi.connectEvents({
+    onEvent: (event) => callbacks.onBatch([event]),
+    onError: notifyDisconnected,
+    onOpen: () => {
+      callbacks.onStatus?.("connected")
+      callbacks.onOpen?.()
+    },
+    onPing: callbacks.onPing,
+    onReplayReset: callbacks.onReplayReset,
+  })
+  callbacks.onStatus?.("connecting")
   return {
     disconnect() {
       source.close()

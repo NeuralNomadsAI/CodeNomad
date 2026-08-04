@@ -626,8 +626,12 @@ export class WorkflowInterpreter {
   private referenceScopeMatches(candidateKey: string, currentKey?: string): boolean {
     if (!currentKey) return true
     const candidate = candidateKey.split("/")
-    return currentKey.split("/").every((segment, index) =>
-      !/\[\d+\]$/.test(segment) || candidate[index] === undefined || candidate[index] === segment)
+    const current = currentKey.split("/")
+    return current.every((segment, index) => {
+      if (!/\[\d+\]$/.test(segment)) return true
+      const candidateSegment = candidate[index]
+      return !candidateSegment || !/\[\d+\]$/.test(candidateSegment) || candidateSegment === segment
+    })
   }
 
   private observeUsage(info: unknown, execution: WorkflowExecutionNode, budgets: WorkflowBudget[]) {

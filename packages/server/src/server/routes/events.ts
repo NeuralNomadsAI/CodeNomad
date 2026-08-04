@@ -1,6 +1,6 @@
 import { FastifyInstance, type FastifyReply } from "fastify"
 import { z } from "zod"
-import { EventBus } from "../../events/bus"
+import { EventBus, type EventReplayGap } from "../../events/bus"
 import { WorkspaceEventPayload } from "../../api-types"
 import type { ClientConnectionManager } from "../../clients/connection-manager"
 import { Logger } from "../../logger"
@@ -78,10 +78,15 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
       write(`${id === undefined ? "" : `id: ${id}\n`}data: ${JSON.stringify(event)}\n\n`)
     }
 
+    const sendReplayGap = (gap: EventReplayGap) => {
+      deps.logger.debug({ clientId, ...gap }, "SSE replay window missed")
+      write(`event: codenomad.replay.reset\nid: ${gap.latestEventId}\ndata: ${JSON.stringify(gap)}\n\n`)
+    }
+
+    unsubscribe = deps.eventBus.onEvent(send, lastEventId, sendReplayGap)
     if (lastEventId === undefined) {
       write(`event: codenomad.replay.cursor\nid: ${deps.eventBus.latestEventId}\ndata: {}\n\n`)
     }
-    unsubscribe = deps.eventBus.onEvent(send, lastEventId)
     if (closed) {
       unsubscribe()
       return

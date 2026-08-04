@@ -38,17 +38,17 @@ class ServerEvents {
   private async connect() {
     const generation = ++this.connectGeneration
     this.clearReconnectTimer()
-
-    if (this.connection) {
-      this.connection.disconnect()
-      this.connection = null
-    }
+    const previousConnection = this.connection
 
     logSse("Connecting to backend events stream")
 
     try {
       const connection = await connectWorkspaceEvents({
-        onBatch: (events) => this.dispatchBatch(events),
+        onBatch: (events) => {
+          if (generation !== this.connectGeneration) return false
+          this.dispatchBatch(events)
+          return true
+        },
         onError: () => {
           if (generation !== this.connectGeneration) {
             return
@@ -68,6 +68,12 @@ class ServerEvents {
           logSse("Events stream connected")
           this.retryDelay = RETRY_BASE_DELAY
           this.openHandlers.forEach((handler) => handler())
+        },
+        onReplayReset: () => {
+          if (generation !== this.connectGeneration) return false
+          log.warn("Events replay window missed; requesting authoritative resync")
+          this.openHandlers.forEach((handler) => handler())
+          return true
         },
         onPing: (payload) => {
           const identity = getClientIdentity()
@@ -94,7 +100,9 @@ class ServerEvents {
       }
 
       this.connection = connection
+      previousConnection?.disconnect()
     } catch (error) {
+      previousConnection?.disconnect()
       if (generation !== this.connectGeneration) {
         return
       }
@@ -179,11 +187,6 @@ class ServerEvents {
   restart(reason = "manual restart"): void {
     this.retryDelay = RETRY_BASE_DELAY
     this.clearReconnectTimer()
-
-    if (this.connection) {
-      this.connection.disconnect()
-      this.connection = null
-    }
 
     logSse("Restarting backend events stream", { reason })
     void this.connect()

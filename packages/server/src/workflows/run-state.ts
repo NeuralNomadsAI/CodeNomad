@@ -63,6 +63,8 @@ const EXECUTION_TYPES = new Set(["sequence", "parallel", "foreach", "repeat", "a
 const isNonEmptyString = (value: unknown): value is string => typeof value === "string" && value.length > 0
 const SESSION_KEY_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/
 const isTimestamp = (value: unknown): value is string => isNonEmptyString(value) && Number.isFinite(Date.parse(value))
+const MAX_EXECUTOR_LEASE_MS = 30_000
+const MAX_CLOCK_SKEW_MS = 60_000
 const validUsage = (usage: WorkflowUsage) => Object.values(usage).every((value) =>
   typeof value === "number" && Number.isFinite(value) && value >= 0)
 
@@ -81,6 +83,19 @@ export function validatePersistedWorkflowRun(value: unknown, runId: string): ass
     throw new Error(`Invalid stored workflow run ${runId}`)
   }
   if (run.usage && !validUsage(run.usage)) throw new Error(`Invalid workflow usage for workflow run ${runId}`)
+  if (run.executorFence !== undefined && (!Number.isInteger(run.executorFence) || run.executorFence < 1)) {
+    throw new Error(`Invalid executor fence for workflow run ${runId}`)
+  }
+  if (run.executorLease && (
+    !isNonEmptyString(run.executorLease.ownerToken)
+    || !Number.isInteger(run.executorLease.fence) || run.executorLease.fence < 1
+    || run.executorLease.fence !== run.executorFence
+    || !isTimestamp(run.executorLease.heartbeatAt)
+    || !isTimestamp(run.executorLease.expiresAt)
+    || Date.parse(run.executorLease.heartbeatAt) > Date.now() + MAX_CLOCK_SKEW_MS
+    || Date.parse(run.executorLease.expiresAt) <= Date.parse(run.executorLease.heartbeatAt)
+    || Date.parse(run.executorLease.expiresAt) - Date.parse(run.executorLease.heartbeatAt) > MAX_EXECUTOR_LEASE_MS
+  )) throw new Error(`Invalid executor lease for workflow run ${runId}`)
   if (run.sessionBindings !== undefined && (
     !run.sessionBindings || typeof run.sessionBindings !== "object" || Array.isArray(run.sessionBindings)
     || Object.entries(run.sessionBindings).length > WORKFLOW_LIMITS.expandedNodes

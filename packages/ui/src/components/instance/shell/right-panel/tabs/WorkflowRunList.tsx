@@ -177,12 +177,12 @@ const WorkflowRunList: Component<WorkflowRunListProps> = (props) => {
   })
   return (
     <div class="workflow-run-list">
-      <For each={visibleRuns()}>{(run) => (
+      <For each={visibleRuns().map(({ id }) => id)}>{(runId) => (
         <WorkflowRunCard
           {...props}
-          run={run}
-          expanded={expandedId() === run.id}
-          onToggle={() => setExpandedId((current) => current === run.id ? "" : run.id)}
+          run={props.runs.find(({ id }) => id === runId)!}
+          expanded={expandedId() === runId}
+          onToggle={() => setExpandedId((current) => current === runId ? "" : runId)}
         />
       )}</For>
       <Show when={props.runs.length > visibleRuns().length}>

@@ -128,6 +128,7 @@ async function loadWorkflowRuns(instanceId: string): Promise<void> {
       next.set(instanceId, reconcileWorkflowRunList(next.get(instanceId) ?? [], response.runs, concurrentRunIds))
       return next
     })
+    for (const run of response.runs) markWorkflowRunHydrated(instanceId, run)
   } catch (error) {
     if (workflowRunLoadGenerations.get(instanceId) === generation) {
       setMapValue(setWorkflowErrors, instanceId, error)
@@ -326,12 +327,16 @@ function setWorkflowDeclarativeDraft(instanceId: string, draft: WorkflowDeclarat
   setMapValue(setWorkflowDeclarativeDrafts, instanceId, { ...draft })
 }
 
-const requestWorkflowRunRefresh = createWorkflowRefreshCoordinator(async (instanceId, runId) => {
+const requestWorkflowRunRefresh = createWorkflowRefreshCoordinator(async (instanceId, runId, revision) => {
   try {
-    const run = await serverApi.getWorkflowRun(instanceId, runId).catch(async () => {
+    let run = await serverApi.getWorkflowRun(instanceId, runId).catch(async () => {
       await new Promise((resolve) => setTimeout(resolve, 250))
       return serverApi.getWorkflowRun(instanceId, runId)
     })
+    if (revision !== undefined && (run.revision === undefined || run.revision < revision)) {
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      run = await serverApi.getWorkflowRun(instanceId, runId)
+    }
     upsertWorkflowRun(instanceId, run)
   } catch {}
 })
@@ -354,6 +359,7 @@ sseManager.onWorkflowRunUpdated = (instanceId, event) => {
   const updated = run ?? (existing && status ? {
     ...existing,
     status,
+    ...(["running", "pausing"].includes(status) ? { pendingGate: undefined } : {}),
     ...(event.properties?.revision === undefined ? {} : { revision: event.properties.revision }),
     ...(event.properties?.updatedAt ? { updatedAt: event.properties.updatedAt } : {}),
   } : undefined)

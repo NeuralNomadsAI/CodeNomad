@@ -54,7 +54,7 @@ export function reconcileWorkflowRunList(
     || (!incomingIds.has(run.id) && !["completed", "failed", "cancelled"].includes(run.status)))
   const listRuns = incoming.filter((run) => {
     const existing = currentById.get(run.id)
-    return !concurrentRunIds.has(run.id) || !existing || compareWorkflowRuns(run, existing) > 0
+    return !concurrentRunIds.has(run.id) || !existing || compareWorkflowRuns(run, existing) >= 0
   })
   return reconcileWorkflowRuns(concurrent, listRuns)
 }

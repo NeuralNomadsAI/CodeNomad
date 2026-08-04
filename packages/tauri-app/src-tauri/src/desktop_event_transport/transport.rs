@@ -28,13 +28,14 @@ pub(super) fn run_transport_loop(
     generation: u64,
     stop: Arc<AtomicBool>,
     config: DesktopEventTransportConfig,
+    last_event_id: Arc<Mutex<Option<String>>>,
 ) {
     let mut reconnect_attempt = 0_u32;
     let mut stats = DesktopEventTransportStats::default();
-
     let client = match build_stream_client() {
         Ok(client) => client,
         Err(error) => {
+            stop.store(true, Ordering::SeqCst);
             emit_status(
                 &app,
                 generation,
@@ -67,7 +68,8 @@ pub(super) fn run_transport_loop(
             &stats,
         );
 
-        match open_stream(&app, &client, &config.stream) {
+        let replay_cursor = last_event_id.lock().clone();
+        match open_stream(&app, &client, &config.stream, replay_cursor.as_deref()) {
             Ok(response) => {
                 reconnect_attempt = 0;
                 emit_status(
@@ -90,6 +92,7 @@ pub(super) fn run_transport_loop(
                     &generation_atomic,
                     generation,
                     stop.clone(),
+                    &last_event_id,
                     &mut stats,
                 );
                 if stop.load(Ordering::SeqCst)
@@ -137,6 +140,7 @@ pub(super) fn run_transport_loop(
         }
     }
 
+    stop.store(true, Ordering::SeqCst);
     emit_status(
         &app,
         generation,
@@ -222,6 +226,7 @@ fn consume_stream(
     generation_atomic: &Arc<AtomicU64>,
     generation: u64,
     stop: Arc<AtomicBool>,
+    last_event_id: &Arc<Mutex<Option<String>>>,
     stats: &mut DesktopEventTransportStats,
 ) -> Option<String> {
     let (tx, rx) = mpsc::sync_channel::<ReaderMessage>(4096);
@@ -250,24 +255,76 @@ fn consume_stream(
             Ok(ReaderMessage::Activity) => {
                 last_reader_activity = Instant::now();
             }
+            Ok(ReaderMessage::Cursor(id)) => {
+                if !generation_matches(generation_atomic, generation) {
+                    return Some("stopped".to_string());
+                }
+                last_reader_activity = Instant::now();
+                pending.set_last_event_id(id);
+                sequence += 1;
+                emit_batch(
+                    app,
+                    generation,
+                    &mut pending,
+                    sequence,
+                    generation_atomic,
+                    last_event_id,
+                    stats,
+                );
+            }
             Ok(ReaderMessage::Ping(payload)) => {
                 last_reader_activity = Instant::now();
                 send_connection_pong(app, client, stream_config, &payload);
             }
-            Ok(ReaderMessage::Event(event)) => {
+            Ok(ReaderMessage::Event { event, id }) => {
                 last_reader_activity = Instant::now();
                 stats.raw_events = stats.raw_events.saturating_add(1);
 
-                pending.push(event, stats);
-                if pending.pending_len() >= MAX_BATCH_EVENTS {
+                pending.push_sequenced(event, id, stats);
+                if pending.pending_len() >= MAX_BATCH_EVENTS
+                    || pending.single_delta_window_elapsed(Instant::now())
+                {
                     emit_pending_batch(
                         app,
                         generation,
                         &mut pending,
                         &mut sequence,
                         generation_atomic,
+                        last_event_id,
                         stats,
                     );
+                }
+            }
+            Ok(ReaderMessage::ReplayReset { details, id }) => {
+                last_reader_activity = Instant::now();
+                if !pending.is_empty() {
+                    emit_pending_batch(
+                        app,
+                        generation,
+                        &mut pending,
+                        &mut sequence,
+                        generation_atomic,
+                        last_event_id,
+                        stats,
+                    );
+                }
+                if generation_matches(generation_atomic, generation) {
+                    if app
+                        .emit(
+                            EVENT_REPLAY_RESET_NAME,
+                            WorkspaceEventReplayResetPayload {
+                                generation,
+                                details,
+                                last_event_id: id.clone(),
+                            },
+                        )
+                        .is_ok()
+                        && generation_matches(generation_atomic, generation)
+                    {
+                        if let Some(id) = id {
+                            *last_event_id.lock() = (!id.is_empty()).then_some(id);
+                        }
+                    }
                 }
             }
             Ok(ReaderMessage::End(reason)) => {
@@ -278,6 +335,7 @@ fn consume_stream(
                         &mut pending,
                         &mut sequence,
                         generation_atomic,
+                        last_event_id,
                         stats,
                     );
                 }
@@ -294,6 +352,7 @@ fn consume_stream(
                             &mut pending,
                             sequence,
                             generation_atomic,
+                            last_event_id,
                             stats,
                         );
                     }
@@ -310,6 +369,7 @@ fn consume_stream(
                         &mut pending,
                         &mut sequence,
                         generation_atomic,
+                        last_event_id,
                         stats,
                     );
                 }
@@ -322,6 +382,7 @@ fn consume_stream(
                         &mut pending,
                         &mut sequence,
                         generation_atomic,
+                        last_event_id,
                         stats,
                     );
                 }
@@ -337,6 +398,7 @@ fn emit_pending_batch(
     pending: &mut PendingBatch,
     sequence: &mut u64,
     generation_atomic: &Arc<AtomicU64>,
+    last_event_id: &Arc<Mutex<Option<String>>>,
     stats: &mut DesktopEventTransportStats,
 ) {
     if pending.is_empty() {
@@ -350,6 +412,7 @@ fn emit_pending_batch(
         pending,
         *sequence,
         generation_atomic,
+        last_event_id,
         stats,
     );
 }
@@ -360,6 +423,7 @@ fn emit_batch(
     pending: &mut PendingBatch,
     sequence: u64,
     generation_atomic: &Arc<AtomicU64>,
+    last_event_id: &Arc<Mutex<Option<String>>>,
     stats: &mut DesktopEventTransportStats,
 ) {
     if !generation_matches(generation_atomic, generation) {
@@ -367,25 +431,35 @@ fn emit_batch(
     }
 
     let events = pending.take_events();
-    if events.is_empty() {
+    let event_id = pending.take_last_event_id();
+    if events.is_empty() && event_id.is_none() {
         return;
     }
 
     stats.emitted_batches = stats.emitted_batches.saturating_add(1);
     stats.emitted_events = stats.emitted_events.saturating_add(events.len() as u64);
 
-    let _ = app.emit(
-        EVENT_BATCH_NAME,
-        WorkspaceEventBatchPayload {
-            generation,
-            sequence,
-            emitted_at: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis(),
-            events,
-        },
-    );
+    if app
+        .emit(
+            EVENT_BATCH_NAME,
+            WorkspaceEventBatchPayload {
+                generation,
+                sequence,
+                emitted_at: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis(),
+                events,
+                last_event_id: event_id.clone(),
+            },
+        )
+        .is_ok()
+        && generation_matches(generation_atomic, generation)
+    {
+        if let Some(id) = event_id {
+            *last_event_id.lock() = (!id.is_empty()).then_some(id);
+        }
+    }
 }
 
 fn emit_status(

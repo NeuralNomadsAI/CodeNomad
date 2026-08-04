@@ -158,8 +158,12 @@ fn desktop_events_start(
 }
 
 #[tauri::command]
-fn desktop_events_stop(state: tauri::State<AppState>) {
-    state.desktop_events.stop();
+fn desktop_events_stop(state: tauri::State<AppState>, lease_id: Option<u64>) {
+    if let Some(lease_id) = lease_id {
+        state.desktop_events.stop_lease(lease_id);
+    } else {
+        state.desktop_events.stop();
+    }
 }
 
 #[tauri::command]
@@ -607,6 +611,13 @@ fn main() {
             remote_titles: Mutex::new(HashMap::new()),
         })
         .on_page_load(|webview, payload| {
+            if matches!(payload.event(), PageLoadEvent::Started) {
+                client_state::begin_main_window_document(
+                    &webview.app_handle(),
+                    webview.label(),
+                    payload.url(),
+                );
+            }
             if matches!(
                 payload.event(),
                 PageLoadEvent::Started | PageLoadEvent::Finished

@@ -104,7 +104,7 @@ test("a retained secondary promotes after the other host exits and reloads befor
   })
   let notifications = 0
   secondary.onOwnershipChanged(() => { notifications += 1 })
-  assert.equal(secondary.refreshPrimary(), false)
+  assert.equal(await secondary.refreshPrimary(), false)
   assert.deepEqual(secondary.loadClientState(), { isPrimary: false, restoreEnabled: false, snapshot: null })
   const authoritative = {
     version: 1,
@@ -116,7 +116,7 @@ test("a retained secondary promotes after the other host exits and reloads befor
 
   await first.drainAndReleasePrimary()
   identities.delete(8201)
-  assert.equal(secondary.refreshPrimary(), true)
+  assert.equal(await secondary.refreshPrimary(), true)
   assert.equal(notifications, 1)
   assert.equal(await secondary.saveClientState({ revision: 1, default: true }), false)
   assert.deepEqual(secondary.loadClientState().snapshot, authoritative.snapshot)
@@ -125,6 +125,38 @@ test("a retained secondary promotes after the other host exits and reloads befor
     ...authoritative,
     snapshot: { revision: 8, kept: true },
   })
+  await secondary.drainAndReleasePrimary()
+})
+
+test("late promotion migrates legacy state when shared state is absent", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "codenomad-late-migration-"))
+  const firstDirectory = join(root, "first"), electronDirectory = join(root, "electron"), election = join(root, "shared", "election")
+  mkdirSync(firstDirectory, { recursive: true }); mkdirSync(electronDirectory, { recursive: true })
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const identities = new Map([[8251, "first-start"], [8252, "electron-start"]])
+  const crossHostDependencies = { pidAlive: (pid: number) => identities.has(pid), processStartIdentity: (pid: number) => identities.get(pid) }
+  const first = new ClientStateManager(firstDirectory, undefined, {
+    crossHostElectionDirectory: election,
+    crossHostDependencies,
+    processOwner: { pid: 8251, runToken: "first", processStartIdentity: "first-start" },
+  })
+  writeFileSync(join(electronDirectory, "client-state.json"), JSON.stringify({
+    version: 1,
+    restoreEnabled: true,
+    snapshot: { revision: 5, savedAt: 42, legacy: true },
+  }))
+  const secondary = new ClientStateManager(electronDirectory, undefined, {
+    crossHostElectionDirectory: election,
+    crossHostDependencies,
+    processOwner: { pid: 8252, runToken: "electron", processStartIdentity: "electron-start" },
+  })
+
+  await first.drainAndReleasePrimary()
+  identities.delete(8251)
+  assert.equal(await secondary.refreshPrimary(), true)
+  assert.deepEqual(secondary.loadClientState().snapshot, { revision: 5, savedAt: 42, legacy: true })
+  assert.equal(existsSync(join(electronDirectory, "client-state.json")), false)
+  assert.equal(existsSync(join(root, "shared", "client-state.json")), true)
   await secondary.drainAndReleasePrimary()
 })
 

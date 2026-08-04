@@ -23,6 +23,7 @@ export class WorkflowDefinitionStoreError extends Error {
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 export const WORKFLOW_DEFINITION_HISTORY_BYTES_LIMIT = 4 * 1024 * 1024
+export const WORKFLOW_DEFINITION_FILE_BYTES_LIMIT = WORKFLOW_DEFINITION_HISTORY_BYTES_LIMIT * 2
 export const WORKFLOW_DEFINITION_RECORD_LIMIT = 1_000
 export const WORKFLOW_DEFINITION_CATALOG_BYTES_LIMIT = 16 * 1024 * 1024
 
@@ -126,13 +127,18 @@ export class WorkflowDefinitionStore {
   }
 
   async list(): Promise<WorkflowDefinitionRecord[]> {
+    await this.queue.catch(() => undefined)
     if (this.listing) return this.listing
-    this.listing = this.readList().finally(() => { this.listing = undefined })
-    return this.listing
+    const listing = this.readList()
+    this.listing = listing
+    try {
+      return await listing
+    } finally {
+      if (this.listing === listing) this.listing = undefined
+    }
   }
 
   private async readList(): Promise<WorkflowDefinitionRecord[]> {
-    await this.queue.catch(() => undefined)
     let entries: string[]
     try {
       entries = await fs.readdir(this.directory)
@@ -140,10 +146,13 @@ export class WorkflowDefinitionStore {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
       throw error
     }
+    entries = entries.filter((entry) => entry.endsWith(".json"))
+    if (entries.length > WORKFLOW_DEFINITION_RECORD_LIMIT) {
+      throw new WorkflowDefinitionStoreError("Workflow definition record limit reached", 413)
+    }
     const records: WorkflowDefinitionRecord[] = []
     let catalogBytes = 0
     for (const entry of entries) {
-      if (!entry.endsWith(".json")) continue
       const stored = await this.readFile(entry.slice(0, -5))
       if (stored?.deletedAt) continue
       const record = stored?.revisions.find((candidate) => candidate.revision === stored.currentRevision)
@@ -181,6 +190,10 @@ export class WorkflowDefinitionStore {
   private async write<T>(operation: () => Promise<T>): Promise<T> {
     const pending = this.queue.catch(() => undefined)
       .then(() => withFilesystemLock(path.join(this.directory, ".write.lock"), operation))
+      .then((result) => {
+        this.listing = undefined
+        return result
+      })
     this.queue = pending.then(() => undefined, () => undefined)
     return pending
   }
@@ -200,7 +213,16 @@ export class WorkflowDefinitionStore {
 
   private async readFile(id: string): Promise<StoredDefinition | undefined> {
     try {
-      const stored = JSON.parse(await fs.readFile(this.definitionPath(id), "utf8")) as StoredDefinition
+      const definitionPath = this.definitionPath(id)
+      const stat = await fs.stat(definitionPath)
+      if (stat.size > WORKFLOW_DEFINITION_FILE_BYTES_LIMIT) {
+        throw new WorkflowDefinitionStoreError("Workflow definition stored file size limit reached", 413)
+      }
+      const source = await fs.readFile(definitionPath, "utf8")
+      if (Buffer.byteLength(source, "utf8") > WORKFLOW_DEFINITION_FILE_BYTES_LIMIT) {
+        throw new WorkflowDefinitionStoreError("Workflow definition stored file size limit reached", 413)
+      }
+      const stored = JSON.parse(source) as StoredDefinition
       if (stored.version !== 1 || stored.id !== id || !Number.isInteger(stored.currentRevision)
         || stored.currentRevision < 1 || stored.currentRevision > WORKFLOW_DEFINITION_REVISION_LIMIT
         || !Array.isArray(stored.revisions)) {
@@ -208,6 +230,13 @@ export class WorkflowDefinitionStore {
       }
       if (stored.currentRevision !== stored.revisions.length || stored.revisions.length === 0) {
         throw new Error(`Invalid stored workflow definition ${id}`)
+      }
+      let historyBytes = 0
+      for (const record of stored.revisions) {
+        historyBytes += revisionBytes(record)
+        if (historyBytes > WORKFLOW_DEFINITION_HISTORY_BYTES_LIMIT) {
+          throw new WorkflowDefinitionStoreError("Workflow definition history size limit reached", 413)
+        }
       }
       for (const [index, record] of stored.revisions.entries()) {
         if (record.id !== id || record.definition.id !== id || record.revision !== index + 1) throw new Error(`Invalid stored workflow definition ${id}`)

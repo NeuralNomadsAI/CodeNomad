@@ -3,7 +3,7 @@ import { describe, it } from "node:test"
 import Fastify from "fastify"
 
 import type { WorkspaceDescriptor } from "../../api-types"
-import { WorkspaceDeletionBlockedError, type WorkspaceManager } from "../../workspaces/manager"
+import { WorkspaceDeletionBlockedError, WorkspacePathOwnedError, type WorkspaceManager } from "../../workspaces/manager"
 import { registerWorkspaceRoutes } from "./workspaces"
 
 describe("workspace routes", () => {
@@ -149,6 +149,20 @@ describe("workspace routes", () => {
     assert.equal(response.statusCode, 409)
     assert.equal(cancellation.statusCode, 409)
     assert.equal(deleted, true)
+    await app.close()
+  })
+
+  it("reports a workspace path owned by another server as a conflict", async () => {
+    const app = Fastify({ logger: false })
+    registerWorkspaceRoutes(app, {
+      workspaceManager: {
+        create: async () => { throw new WorkspacePathOwnedError("C:/worktree") },
+      } as unknown as WorkspaceManager,
+    })
+
+    const response = await app.inject({ method: "POST", url: "/api/workspaces", payload: { path: "C:/worktree" } })
+    assert.equal(response.statusCode, 409)
+    assert.match(response.body, /another CodeNomad server/)
     await app.close()
   })
 })

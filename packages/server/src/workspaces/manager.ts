@@ -30,6 +30,10 @@ import {
 import { normalizeWorkspaceIdentityPath, resolveWorkspaceIdentity } from "./workspace-identity"
 import { parseWslUncPath } from "./spawn"
 import { LOOPBACK_HOST } from "./loopback"
+import {
+  WorkspaceProcessLeaseRegistry,
+  type WorkspaceProcessLease,
+} from "./process-lease"
 
 const STARTUP_STABILITY_DELAY_MS = 1500
 const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
@@ -71,6 +75,7 @@ interface WorkspaceManagerOptions {
   launchTimeoutMs?: number
   setTimeout?: (callback: () => void, delayMs: number) => ManagerTimeout
   clearTimeout?: (timer: ManagerTimeout) => void
+  workspaceLeaseDir?: string
 }
 
 export type WorkspaceDeletionGuard = (
@@ -92,6 +97,7 @@ interface WorkspaceState {
   published: boolean
   stoppedPublished: boolean
   cleanupBlocked?: boolean
+  processLease?: WorkspaceProcessLease
 }
 export class WorkspaceLaunchCancelledError extends Error {
   constructor(workspaceId: string) {
@@ -120,6 +126,13 @@ export class WorkspaceDeletionBlockedError extends Error {
   constructor(workspaceId: string) {
     super(`Workspace ${workspaceId} is owned by an active workflow`)
     this.name = "WorkspaceDeletionBlockedError"
+  }
+}
+export class WorkspacePathOwnedError extends Error {
+  readonly code = "WORKSPACE_OWNED_BY_OTHER_SERVER"
+  constructor(workspacePath: string) {
+    super(`Workspace path is in use by another CodeNomad server: ${workspacePath}`)
+    this.name = "WorkspacePathOwnedError"
   }
 }
 export class WorkspaceShutdownError extends AggregateError {
@@ -159,11 +172,15 @@ export class WorkspaceManager {
   private readonly opencodeAuth = new Map<string, { username: string; password: string; authorization: string }>()
   private readonly pluginCallbackAuth = new Map<string, string>()
   private readonly workspacePathLeases = new Map<string, Promise<void>>()
+  private readonly processLeases?: WorkspaceProcessLeaseRegistry
   private deletionGuard?: WorkspaceDeletionGuard
 
   constructor(private readonly options: WorkspaceManagerOptions) {
     this.runtime = options.runtime ?? new WorkspaceRuntime(this.options.eventBus, this.options.logger)
     this.codeNomadPluginUrl = getCodeNomadPluginUrl()
+    this.processLeases = options.workspaceLeaseDir
+      ? new WorkspaceProcessLeaseRegistry({ directory: options.workspaceLeaseDir })
+      : undefined
   }
   list(): WorkspaceDescriptor[] {
     return Array.from(this.workspaces.values())
@@ -198,12 +215,19 @@ export class WorkspaceManager {
   ): Promise<T> {
     const { workspacePath } = await resolveWorkspaceIdentity(folder, this.options.rootDir)
     const pathKey = normalizeWorkspaceIdentityPath(workspacePath)
-    return this.withWorkspacePathKeyLease(pathKey, () => {
+    return this.withWorkspacePathKeyLease(pathKey, async () => {
       const active = Array.from(this.workspaces.values()).some((record) =>
         normalizeWorkspaceIdentityPath(record.path) === pathKey
         && (record[WORKSPACE_STATE].cleanupBlocked
           || record.status === "starting" || record.status === "ready" || record.status === "error"))
-      return operation(active)
+      if (active || !this.processLeases) return operation(active)
+      const processLease = await this.processLeases.acquire(workspacePath)
+      if (!processLease) return operation(true)
+      try {
+        return await operation(false)
+      } finally {
+        await processLease.release()
+      }
     })
   }
 
@@ -240,17 +264,13 @@ export class WorkspaceManager {
     })?.id
   }
 
-  private findReadyWorkspaceByIdentity(
-    identityKey: string,
-    includeRestoreOwned: boolean,
-  ): WorkspaceDescriptor | undefined {
+  private findReadyWorkspaceByIdentity(identityKey: string): WorkspaceDescriptor | undefined {
     for (const record of this.workspaces.values()) {
       const state = record[WORKSPACE_STATE]
       if (
         state.published
         && !state.abortController.signal.aborted
         && !state.deletePromise
-        && (includeRestoreOwned || !record.requestId)
         && record.status === "ready"
         && record.identityKey === identityKey
       ) {
@@ -368,14 +388,18 @@ export class WorkspaceManager {
         }
         if (options.forceNew || options.lineageId) {
           const ownership = this.createOwnership(options.requestId)
-          const record = this.reserveWorkspace(workspacePath, identityKey, name, options, ownership, launchDeadlineAt)
+          const record = await this.reserveLeasedWorkspace(workspacePath, identityKey, name, options, ownership, launchDeadlineAt)
           const creation = this.startCreation(record, options, launchDeadlineAt, launchTimeoutMs)
           return async () => this.finishCreation(await creation, options.requestId, ownership)
         }
-        const existing = this.findReadyWorkspaceByIdentity(identityKey, Boolean(options.requestId))
+        const existing = this.findReadyWorkspaceByIdentity(identityKey)
         if (existing) {
           this.options.logger.info({ workspaceId: existing.id, folder: workspacePath }, "Reusing existing workspace")
           const record = this.workspaces.get(existing.id)
+          if (!options.requestId && record && !record.ownership.has(ORDINARY_CREATION_OWNER)) {
+            record.ownership.set(ORDINARY_CREATION_OWNER, "active")
+            this.syncOwnership(record)
+          }
           if (options.requestId && record) {
             if (!record.ownership.has(options.requestId)) record.ownership.set(options.requestId, "active")
             this.syncOwnership(record)
@@ -400,7 +424,7 @@ export class WorkspaceManager {
           }
         }
         const ownership = this.createOwnership(options.requestId)
-        const record = this.reserveWorkspace(workspacePath, identityKey, name, options, ownership, launchDeadlineAt)
+        const record = await this.reserveLeasedWorkspace(workspacePath, identityKey, name, options, ownership, launchDeadlineAt)
         const creation = this.startCreation(record, options, launchDeadlineAt, launchTimeoutMs)
         this.pendingWorkspaceCreations.set(identityKey, record)
         return async () => {
@@ -418,6 +442,23 @@ export class WorkspaceManager {
       if (options.requestId) this.cancelledCreationRequests.delete(options.requestId)
     }
   }
+  private async reserveLeasedWorkspace(
+    workspacePath: string,
+    identityKey: string,
+    name: string | undefined,
+    options: WorkspaceCreateOptions,
+    ownership: WorkspaceCreationOwnership,
+    launchDeadlineAt: number,
+  ): Promise<WorkspaceRecord> {
+    const processLease = await this.processLeases?.acquire(workspacePath)
+    if (this.processLeases && !processLease) throw new WorkspacePathOwnedError(workspacePath)
+    try {
+      return this.reserveWorkspace(workspacePath, identityKey, name, options, ownership, launchDeadlineAt, processLease)
+    } catch (error) {
+      await processLease?.release()
+      throw error
+    }
+  }
   private reserveWorkspace(
     workspacePath: string,
     identityKey: string,
@@ -425,6 +466,7 @@ export class WorkspaceManager {
     options: WorkspaceCreateOptions,
     ownership: WorkspaceCreationOwnership,
     launchDeadlineAt: number,
+    processLease?: WorkspaceProcessLease,
   ): WorkspaceRecord {
     const id = randomUUID()
     const binary = this.options.binaryResolver.resolve(options.binaryPath)
@@ -453,7 +495,7 @@ export class WorkspaceManager {
     Object.defineProperties(record, {
       identityKey: { value: identityKey },
       ownership: { value: ownership },
-      [WORKSPACE_STATE]: { value: { abortController: new AbortController(), published: false, stoppedPublished: false } },
+      [WORKSPACE_STATE]: { value: { abortController: new AbortController(), published: false, stoppedPublished: false, processLease } },
     })
 
     this.workspaces.set(id, record)
@@ -587,7 +629,7 @@ export class WorkspaceManager {
         stopFailure = stopError
       })
       if (!stopFailure) {
-        this.removeRecord(id, record, state.published)
+        await this.removeRecord(id, record, state.published)
         throw launchFailure
       }
       state.cleanupBlocked = true
@@ -761,17 +803,20 @@ export class WorkspaceManager {
     await immediateStop
     await this.runtime.stop(id)
 
-    this.removeRecord(id, record, true)
+    await this.removeRecord(id, record, true)
     return record
   }
 
-  private removeRecord(id: string, record: WorkspaceRecord, publishStopped: boolean): void {
+  private async removeRecord(id: string, record: WorkspaceRecord, publishStopped: boolean): Promise<void> {
     if (this.workspaces.get(id) !== record) return
     this.workspaces.delete(id)
     this.opencodeAuth.delete(id)
     this.pluginCallbackAuth.delete(id)
     clearWorkspaceSearchCache(record.path)
     if (publishStopped) this.publishStopped(record, "deleted")
+    const processLease = record[WORKSPACE_STATE].processLease
+    record[WORKSPACE_STATE].processLease = undefined
+    await processLease?.release()
   }
 
   private publishStopped(record: WorkspaceRecord, reason: "deleted" | "stopped" = "stopped"): void {

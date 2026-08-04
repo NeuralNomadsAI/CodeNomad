@@ -58,7 +58,7 @@ import type {
 } from "../../../server/src/api-types"
 import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
-import { attachEventSourceHandlers } from "./event-source-handlers"
+import { createBrowserEventConnector, type BrowserEventStreamCallbacks } from "./browser-event-transport"
 
 const RUNTIME_BASE = typeof window !== "undefined" ? window.location?.origin : undefined
 const DEFAULT_BASE = typeof window !== "undefined" ? window.__CODENOMAD_API_BASE__ ?? RUNTIME_BASE : undefined
@@ -98,6 +98,7 @@ function buildAbsoluteUrl(path: string): string {
 
 const httpLogger = getLogger("api")
 const sseLogger = getLogger("sse")
+const connectBrowserEvents = createBrowserEventConnector()
 
 function normalizeHeaders(headers: HeadersInit | undefined): Record<string, string> {
   const output: Record<string, string> = {}
@@ -702,17 +703,14 @@ export const serverApi = {
       `/workspaces/${encodeURIComponent(instanceId)}/plugin/background-processes/${encodeURIComponent(processId)}/output${suffix}`,
     )
   },
-  connectEvents(
-    onEvent: (event: WorkspaceEventPayload) => void,
-    onError?: () => void,
-    onPing?: (payload: { ts?: number }) => void,
-  ) {
+  connectEvents(callbacks: BrowserEventStreamCallbacks) {
     const identity = getClientIdentity()
     const url = buildClientEventsUrl(identity)
     sseLogger.info(`Connecting to ${url}`)
-    const source = new EventSource(url, { withCredentials: true } as any)
-    attachEventSourceHandlers(source, { onEvent, onError, onPing, logger: sseLogger })
-    return source
+    return connectBrowserEvents(url, {
+      ...callbacks,
+      onParseError: (error) => sseLogger.error("Event stream failed", error),
+    })
   },
 }
 

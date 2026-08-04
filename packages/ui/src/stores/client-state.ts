@@ -276,11 +276,22 @@ export async function refreshClientStateOwnership(): Promise<void> {
 export function initializeClientState(): Promise<void> {
   if (initialization) return initialization
   initialization = (async () => {
+    let ownershipGeneration = 0
     try {
-      await listenForNativeClientStateOwnershipChange(() => {
-        if (initialized && !clientStateIsPrimary()) window.location.reload()
-      })
-      const loaded = await loadNativeClientState()
+      try {
+        await listenForNativeClientStateOwnershipChange(() => {
+          ownershipGeneration += 1
+          if (initialized) window.location.reload()
+        })
+      } catch (error) {
+        console.warn("[client-state] failed to listen for ownership changes", error)
+      }
+      let loaded
+      let observedGeneration
+      do {
+        observedGeneration = ownershipGeneration
+        loaded = await loadNativeClientState()
+      } while (observedGeneration !== ownershipGeneration)
       setClientStateIsPrimary(loaded.isPrimary)
       setRestorePreviousStateEnabledSignal(loaded.restoreEnabled)
       resetLoadedState(null, true)

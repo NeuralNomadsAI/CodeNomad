@@ -286,4 +286,27 @@ describe("secondary hosts", () => {
     assert.equal(saved[0].revision, 8)
     assert.equal(saved[0].layout[layoutKey], "480")
   })
+  it("retries a load overlapped by promotion during initialization", async () => {
+    const firstLoad = deferred<ReturnType<typeof loadResult>>()
+    let ownershipChanged!: () => void, loads = 0
+    const authoritative = { ...snapshot("authoritative"), revision: 9 }
+    installWindow({
+      claimClientStateAccess: async () => true,
+      onClientStateOwnershipChange: (callback: () => void) => { ownershipChanged = callback; return () => {} },
+      loadClientState: async () => {
+        loads += 1
+        return loads === 1 ? firstLoad.promise : loadResult(authoritative, true)
+      },
+    })
+    const state = await import(`./client-state.ts?test=${moduleId++}`) as ClientState
+    const initializing = state.initializeClientState()
+    await Promise.resolve()
+    ownershipChanged()
+    firstLoad.resolve(loadResult(null, false))
+    await initializing
+
+    assert.equal(loads, 2)
+    assert.equal(state.clientStateIsPrimary(), true)
+    assert.deepEqual(state.loadedRestorableSession()?.tabs[0], { kind: "sidecar", sidecarId: "authoritative" })
+  })
 })

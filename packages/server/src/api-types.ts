@@ -545,6 +545,13 @@ export interface WorkflowRunStep extends WorkflowStageConfig {
   completedAt?: string
 }
 
+export interface WorkflowExecutorLease {
+  ownerToken: string
+  fence: number
+  heartbeatAt: string
+  expiresAt: string
+}
+
 export interface WorkflowRun {
   id: string
   workspaceId: string
@@ -558,6 +565,8 @@ export interface WorkflowRun {
   pendingReviewStepId?: string
   steps: WorkflowRunStep[]
   revision?: number
+  executorFence?: number
+  executorLease?: WorkflowExecutorLease
   definitionId?: string
   definitionRevision?: number
   definitionSnapshot?: WorkflowDefinitionV1

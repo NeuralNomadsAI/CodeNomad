@@ -29,6 +29,29 @@ test("SSE does not reflect request origins", async () => {
   await app.close()
 })
 
+test("SSE acknowledges its initial cursor after bootstrap statuses", async () => {
+  const app = Fastify({ logger: false })
+  const eventBus = new EventBus()
+  eventBus.publish({ type: "instance.eventStatus", instanceId: "workspace", status: "connected" })
+  registerEventRoutes(app, {
+    eventBus,
+    registerClient: (close) => {
+      setImmediate(close)
+      return () => undefined
+    },
+    logger: { debug: () => undefined, isLevelEnabled: () => false } as never,
+    connectionManager: { register: () => () => undefined } as never,
+  })
+
+  const response = await app.inject({
+    method: "GET",
+    url: "/api/events?clientId=client&connectionId=connection",
+  })
+
+  assert.ok(response.payload.indexOf("instance.eventStatus") < response.payload.indexOf("codenomad.replay.cursor"))
+  await app.close()
+})
+
 test("SSE drains an accepted backpressured frame before disconnecting", async () => {
   const app = Fastify({ logger: false })
   const eventBus = new EventBus()
@@ -126,6 +149,45 @@ test("SSE replays ordered events published behind a backpressured frame", async 
     [[2, 2], [3, 3]],
   )
   assert.equal(eventBus.listenerCount("instance.event"), 0)
+  await app.close()
+})
+
+test("SSE signals an overflow gap before handing off to live events", async () => {
+  const app = Fastify({ logger: false })
+  const eventBus = new EventBus(undefined, 2)
+  for (const sequence of [1, 2, 3]) {
+    eventBus.publish({
+      type: "workspace.log",
+      workspaceId: "workspace",
+      entry: { sequence },
+    } as never)
+  }
+  registerEventRoutes(app, {
+    eventBus,
+    registerClient: (close) => {
+      setImmediate(() => {
+        eventBus.publish({
+          type: "workspace.log",
+          workspaceId: "workspace",
+          entry: { sequence: 4 },
+        } as never)
+        close()
+      })
+      return () => undefined
+    },
+    logger: { debug: () => undefined, isLevelEnabled: () => false } as never,
+    connectionManager: { register: () => () => undefined } as never,
+  })
+
+  const response = await app.inject({
+    method: "GET",
+    url: "/api/events?clientId=client&connectionId=connection",
+    headers: { "last-event-id": "0" },
+  })
+
+  assert.match(response.payload, /event: codenomad\.replay\.reset\nid: 3\ndata: \{"requestedId":0,"earliestAvailableId":2,"latestEventId":3\}/)
+  assert.doesNotMatch(response.payload, /"sequence":[23]/)
+  assert.ok(response.payload.indexOf("codenomad.replay.reset") < response.payload.indexOf('"sequence":4'))
   await app.close()
 })
 

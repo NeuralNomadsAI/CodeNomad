@@ -172,6 +172,55 @@ describe("declarative workflow runtime", () => {
     }
   })
 
+  it("resolves outer nodes inside foreach without crossing iteration siblings", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-outer-scope-"))
+    let sessions = 0
+    const consumerPrompts: string[] = []
+    const client = { tool: workflowTools, session: {
+      create: async () => ({ data: { id: `outer-scope-${++sessions}` } }),
+      prompt: async (input: Record<string, unknown>) => {
+        const prompt = JSON.stringify(input.parts)
+        if (prompt.includes("Outer producer")) {
+          return { data: { info: { ...usage(), structured: "outer" }, parts: [] } }
+        }
+        if (prompt.includes("Iteration producer")) {
+          const item = prompt.includes("Context:\\n1") ? "one" : "zero"
+          return { data: { info: { ...usage(), structured: item }, parts: [] } }
+        }
+        consumerPrompts.push(prompt)
+        return { data: { info: usage(), parts: [{ type: "text", text: "done" }] } }
+      },
+      abort: async () => ({ data: true }),
+    } } as unknown as OpencodeClient
+    const manager = new WorkflowManager({ workspaceManager, eventBus, logger, storageDir: directory, createClient: () => client })
+    try {
+      await manager.createDefinition({ version: 1, id: "outer-scope", name: "Outer scope", root: {
+        type: "sequence", id: "root", steps: [
+          { type: "sequence", id: "setup", steps: [
+            { type: "agent", id: "outer", title: "Outer producer", instructions: "Outer producer", outputSchema: { type: "string" } },
+          ] },
+          { type: "foreach", id: "each", items: [0, 1], item: "item", maxItems: 2, maxConcurrency: 1, body: {
+            type: "sequence", id: "iteration", steps: [
+              { type: "agent", id: "local", title: "Iteration producer", instructions: "Iteration producer",
+                context: { $ref: "vars.item" }, outputSchema: { type: "string" } },
+              { type: "agent", id: "consumer", title: "Consume", instructions: "Consume", context: {
+                outer: { $ref: "nodes.outer.output" }, local: { $ref: "nodes.local.output" },
+              } },
+            ],
+          } },
+        ],
+      } })
+      const started = await manager.start({ workspaceId: "workspace", definitionId: "outer-scope" })
+      await waitFor(manager, started.id, ["completed"])
+      assert.equal(consumerPrompts.length, 2)
+      assert.match(consumerPrompts[0]!, /outer.*zero/)
+      assert.match(consumerPrompts[1]!, /outer.*one/)
+    } finally {
+      await manager.shutdown()
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it("allows shared context references but rejects ancestor cycles", () => {
     const shared = { value: 1 }
     const run = {
@@ -852,7 +901,7 @@ describe("declarative workflow runtime", () => {
     const manager = new WorkflowManager({ workspaceManager, eventBus, logger, storageDir: directory, createClient: () => client })
     try {
       await manager.createDefinition({ version: 1, id: "deadline", name: "Deadline", root: {
-        type: "agent", id: "work", instructions: "Wait", timeoutMs: 20, retry: { maxAttempts: 2, idempotent: true },
+        type: "agent", id: "work", instructions: "Wait", timeoutMs: 500, retry: { maxAttempts: 2, idempotent: true },
       } })
       const started = await manager.start({ workspaceId: "workspace", definitionId: "deadline" })
       const failed = await waitFor(manager, started.id, ["failed"])

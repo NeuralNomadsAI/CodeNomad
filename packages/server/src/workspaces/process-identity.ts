@@ -192,6 +192,27 @@ fi
 printf 'CODENOMAD_RESULT|%s||%s\n' "$matched" "$signal_sent"
 `
 
+const POSIX_TOKEN_SCRIPT = String.raw`${POSIX_IDENTITY_FUNCTIONS}
+cleanup_token=$1; requested_signal=$2; signal_sent=0; passes=1; test -n "$requested_signal" && passes=3
+emit_token_identity() {
+  printf '%s|%s|%s|%s|' "$1" "$current_pid" "$current_ppid" "$current_group"
+  encode "$current_start"; printf '|'; encode "$current_command"; printf '\n'
+}
+pass=0
+while test "$pass" -lt "$passes"; do
+  pass=$((pass + 1))
+  for current_pid in $(ps -axo pid= 2>/dev/null); do
+    if has_cleanup_token "$current_pid" && read_identity "$current_pid"; then
+      test -n "$requested_signal" && prefix=CODENOMAD_TARGET_B64 || prefix=CODENOMAD_PROCESS_B64
+      emit_token_identity "$prefix"
+      if test -n "$requested_signal" && has_cleanup_token "$current_pid" && read_identity "$current_pid" && kill "-$requested_signal" "$current_pid" 2>/dev/null; then signal_sent=1; fi
+    fi
+  done
+done
+if test -n "$requested_signal"; then printf 'CODENOMAD_RESULT|%s\n' "$signal_sent"; fi
+exit 0
+`
+
 const commandError = (result: SpawnSyncReturns<string>): string =>
   result.error?.message || String(result.stderr ?? result.stdout ?? "").trim() || `exit code ${result.status}`
 
@@ -345,6 +366,13 @@ function runLinuxScript(spawnCommand: SpawnCommand, script: string, args: string
   return distro
     ? spawnCommand("wsl.exe", ["--distribution", distro, "--exec", "sh", "-c", script, label, ...args], { encoding: "utf8", timeout: timeoutMs })
     : spawnCommand("sh", ["-c", script, label, ...args], { encoding: "utf8", timeout: timeoutMs })
+}
+
+function runPortablePosixTokenScript(spawnCommand: SpawnCommand, token: string, requestedSignal: string,
+  timeoutMs: number): SpawnSyncReturns<string> {
+  return spawnCommand("sh", ["-c", POSIX_TOKEN_SCRIPT, "codenomad-token-cleanup", token, requestedSignal], {
+    encoding: "utf8", timeout: timeoutMs,
+  })
 }
 
 const redactToken = (value: string, token: string): string => value.split(token).join("[REDACTED]")
@@ -511,17 +539,22 @@ export function signalWindowsProcesses(spawnCommand: SpawnCommand, request: Guar
 }
 
 export function probeLaunchCleanupToken(spawnCommand: SpawnCommand, token: string,
-  timeoutMs: number, distro?: string): ProcessSnapshot {
+  timeoutMs: number, distro?: string, platform: NodeJS.Platform = "linux"): ProcessSnapshot {
+  const portablePosix = !distro && platform !== "linux"
   return querySnapshot(
-    () => runLinuxScript(
-      spawnCommand,
-      LINUX_TOKEN_SCRIPT,
-      [LAUNCH_CLEANUP_TOKEN_ENV, token, ""],
-      timeoutMs,
-      "codenomad-token-cleanup",
-      distro,
-    ),
-    (output) => parsePrefixedSnapshot(output, "CODENOMAD_PROCESS|"),
+    () => portablePosix
+      ? runPortablePosixTokenScript(spawnCommand, token, "", timeoutMs)
+      : runLinuxScript(
+          spawnCommand,
+          LINUX_TOKEN_SCRIPT,
+          [LAUNCH_CLEANUP_TOKEN_ENV, token, ""],
+          timeoutMs,
+          "codenomad-token-cleanup",
+          distro,
+        ),
+    (output) => portablePosix
+      ? parseBase64Snapshot(output, "CODENOMAD_PROCESS_B64|")
+      : parsePrefixedSnapshot(output, "CODENOMAD_PROCESS|"),
     {
       allowEmpty: true,
       malformedError: "launch cleanup probe returned malformed or unexpected output",
@@ -531,27 +564,30 @@ export function probeLaunchCleanupToken(spawnCommand: SpawnCommand, token: strin
 }
 
 export function signalLaunchCleanupToken(spawnCommand: SpawnCommand, token: string,
-  signal: NodeJS.Signals, timeoutMs: number, distro?: string): TokenSignalResult {
+  signal: NodeJS.Signals, timeoutMs: number, distro?: string, platform: NodeJS.Platform = "linux"): TokenSignalResult {
   const failed = (error: string): TokenSignalResult => ({ ok: false, signalSent: false, targets: [], error })
   try {
-    const result = runLinuxScript(
-      spawnCommand,
-      LINUX_TOKEN_SCRIPT,
-      [LAUNCH_CLEANUP_TOKEN_ENV, token, signalName(signal)],
-      timeoutMs,
-      "codenomad-token-cleanup",
-      distro,
-    )
+    const portablePosix = !distro && platform !== "linux"
+    const result = portablePosix
+      ? runPortablePosixTokenScript(spawnCommand, token, signalName(signal), timeoutMs)
+      : runLinuxScript(
+          spawnCommand,
+          LINUX_TOKEN_SCRIPT,
+          [LAUNCH_CLEANUP_TOKEN_ENV, token, signalName(signal)],
+          timeoutMs,
+          "codenomad-token-cleanup",
+          distro,
+        )
     if (result.status !== 0) return failed(redactToken(commandError(result), token))
     const lines = String(result.stdout ?? "").split(/\r?\n/).filter(Boolean)
     const resultLines = lines.filter((line) => line.startsWith("CODENOMAD_RESULT|"))
     if (resultLines.length !== 1 || !/^CODENOMAD_RESULT\|[01]$/.test(resultLines[0] ?? "")) {
       return failed("launch cleanup signal returned no valid structured result")
     }
-    const targets = parsePrefixedSnapshot(
-      lines.filter((line) => !line.startsWith("CODENOMAD_RESULT|")).join("\n"),
-      "CODENOMAD_TARGET|",
-    )
+    const targetOutput = lines.filter((line) => !line.startsWith("CODENOMAD_RESULT|")).join("\n")
+    const targets = portablePosix
+      ? parseBase64Snapshot(targetOutput, "CODENOMAD_TARGET_B64|")
+      : parsePrefixedSnapshot(targetOutput, "CODENOMAD_TARGET|")
     return targets
       ? { ok: true, signalSent: resultLines[0]!.endsWith("1"), targets: Array.from(targets.values()) }
       : failed("launch cleanup signal returned malformed or unexpected output")

@@ -375,6 +375,7 @@ async function main() {
     logger: workspaceLogger,
     getServerBaseUrl: () => serverMeta.localUrl,
     nodeExtraCaCertsPath,
+    workspaceLeaseDir: path.join(configDir, "workspace-leases"),
   })
   const workflowManager = new WorkflowManager({
     workspaceManager,

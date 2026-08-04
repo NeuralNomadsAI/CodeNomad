@@ -331,8 +331,13 @@ impl ClientState {
     }
 
     fn claim_renderer_access(&self, access_token: &str, renderer_url: &Url) -> Result<(), String> {
-        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
         self.renderer_access.claim(access_token, renderer_url)
+    }
+
+    fn begin_renderer_document(&self, renderer_url: &Url) -> Result<(), String> {
+        self.renderer_access
+            .begin_navigation(Some(renderer_url))
+            .map(drop)
     }
 
     fn load(&self) -> Result<ClientStateLoadResult, String> {
@@ -380,6 +385,9 @@ impl ClientState {
         if !was_loaded {
             return Ok(false);
         }
+        if self.renderer_reconciliation_pending.load(Ordering::SeqCst) {
+            return Ok(false);
+        }
         if self.normal_writes_suppressed()? {
             return Ok(true);
         }
@@ -409,6 +417,9 @@ impl ClientState {
             return Ok(false);
         }
         if !was_loaded {
+            return Ok(false);
+        }
+        if self.renderer_reconciliation_pending.load(Ordering::SeqCst) {
             return Ok(false);
         }
         if self
@@ -447,6 +458,9 @@ impl ClientState {
             return Ok(false);
         }
         if !was_loaded {
+            return Ok(false);
+        }
+        if self.renderer_reconciliation_pending.load(Ordering::SeqCst) {
             return Ok(false);
         }
         self.mutate_and_write(
@@ -576,9 +590,7 @@ pub fn start_primary_watcher(app: &AppHandle) {
     let Some(client_state) = app.try_state::<ClientState>() else {
         return;
     };
-    if client_state.primary_loaded.load(Ordering::SeqCst)
-        || !client_state.process.retains_local_candidacy()
-    {
+    if !client_state.process.retains_local_candidacy() {
         return;
     }
 
@@ -595,14 +607,26 @@ pub fn start_primary_watcher(app: &AppHandle) {
             Ok(true) => {
                 window::reconcile_main_window(&app);
                 if client_state.take_renderer_reload() {
-                    let _ = app.emit(CLIENT_STATE_OWNERSHIP_CHANGED_EVENT, ());
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.emit(CLIENT_STATE_OWNERSHIP_CHANGED_EVENT, ());
+                    }
                 }
-                return;
             }
             Ok(false) => {}
             Err(err) => eprintln!("[client-state] ownership poll failed: {err}"),
         }
     });
+}
+
+pub fn begin_main_window_document(app: &AppHandle, label: &str, url: &Url) {
+    if label != "main" {
+        return;
+    }
+    if let Some(state) = app.try_state::<ClientState>() {
+        if let Err(err) = state.begin_renderer_document(url) {
+            eprintln!("[client-state] failed to rotate renderer access for page load: {err}");
+        }
+    }
 }
 
 impl Drop for ClientState {

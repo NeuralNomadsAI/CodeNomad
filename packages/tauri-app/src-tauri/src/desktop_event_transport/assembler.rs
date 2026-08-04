@@ -1,6 +1,18 @@
 use super::*;
 
 impl PendingBatch {
+    pub(super) fn push_sequenced(
+        &mut self,
+        event: Value,
+        id: Option<String>,
+        stats: &mut DesktopEventTransportStats,
+    ) {
+        self.push(event, stats);
+        if id.is_some() {
+            self.last_event_id = id;
+        }
+    }
+
     pub(super) fn push(&mut self, event: Value, stats: &mut DesktopEventTransportStats) {
         match classify_event(&event) {
             EventDeliveryPolicy::CoalesceDelta(key) => {
@@ -91,6 +103,23 @@ impl PendingBatch {
                 PendingEntry::Event(event) => event,
             })
             .collect()
+    }
+
+    pub(super) fn take_last_event_id(&mut self) -> Option<String> {
+        self.last_event_id.take()
+    }
+
+    pub(super) fn set_last_event_id(&mut self, id: String) {
+        self.last_event_id = Some(id);
+    }
+
+    pub(super) fn single_delta_window_elapsed(&self, now: Instant) -> bool {
+        matches!(
+            self.events.as_slice(),
+            [PendingEntry::Delta { started_at, .. }]
+                if now.duration_since(*started_at)
+                    >= Duration::from_millis(DELTA_STREAM_WINDOW_MS)
+        )
     }
 
     pub(super) fn is_empty(&self) -> bool {

@@ -20,6 +20,7 @@ use transport::*;
 
 const EVENT_BATCH_NAME: &str = "desktop:event-batch";
 const EVENT_STATUS_NAME: &str = "desktop:event-stream-status";
+const EVENT_REPLAY_RESET_NAME: &str = "desktop:event-replay-reset";
 const FLUSH_INTERVAL_MS: u64 = 16;
 const DELTA_STREAM_WINDOW_MS: u64 = 48;
 const MAX_BATCH_EVENTS: usize = 256;
@@ -44,6 +45,7 @@ pub struct DesktopEventStreamConfig {
 #[serde(default, rename_all = "camelCase")]
 pub struct DesktopEventsStartRequest {
     pub reconnect: Option<DesktopEventReconnectPolicy>,
+    pub last_event_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -60,6 +62,7 @@ pub struct DesktopEventReconnectPolicy {
 pub struct DesktopEventsStartResult {
     pub started: bool,
     pub generation: Option<u64>,
+    pub lease_id: Option<u64>,
     pub reason: Option<String>,
 }
 
@@ -111,15 +114,6 @@ impl DesktopEventTransportConfig {
             reconnect: ResolvedDesktopEventReconnectPolicy::resolve(request.reconnect.as_ref()),
         }
     }
-
-    fn is_equivalent_start(&self, other: &Self) -> bool {
-        self.reconnect == other.reconnect
-            && self.stream.base_url == other.stream.base_url
-            && self.stream.events_url == other.stream.events_url
-            && self.stream.client_id == other.stream.client_id
-            && self.stream.cookie_name == other.stream.cookie_name
-            && self.stream.session_cookie == other.stream.session_cookie
-    }
 }
 
 #[derive(Clone, Serialize)]
@@ -129,6 +123,15 @@ struct WorkspaceEventBatchPayload {
     sequence: u64,
     emitted_at: u128,
     events: Vec<Value>,
+    last_event_id: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceEventReplayResetPayload {
+    generation: u64,
+    details: Value,
+    last_event_id: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -164,12 +167,16 @@ struct DesktopEventTransportState {
 pub struct DesktopEventTransportManager {
     state: Arc<Mutex<DesktopEventTransportState>>,
     generation: Arc<AtomicU64>,
+    lease: AtomicU64,
+    last_event_id: Arc<Mutex<Option<String>>>,
 }
 
 enum ReaderMessage {
     Activity,
-    Event(Value),
+    Cursor(String),
+    Event { event: Value, id: Option<String> },
     Ping(Value),
+    ReplayReset { details: Value, id: Option<String> },
     End(Option<String>),
 }
 
@@ -213,6 +220,7 @@ struct OpenStreamError {
 #[derive(Default)]
 struct PendingBatch {
     events: Vec<PendingEntry>,
+    last_event_id: Option<String>,
 }
 
 impl DesktopEventTransportManager {
@@ -223,6 +231,8 @@ impl DesktopEventTransportManager {
                 config: None,
             })),
             generation: Arc::new(AtomicU64::new(0)),
+            lease: AtomicU64::new(0),
+            last_event_id: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -236,32 +246,25 @@ impl DesktopEventTransportManager {
             return DesktopEventsStartResult {
                 started: false,
                 generation: None,
+                lease_id: None,
                 reason: Some("desktop event stream unavailable".to_string()),
             };
         };
 
         let request = request.unwrap_or_default();
+        *self.last_event_id.lock() = request.last_event_id.clone();
         let transport_config = DesktopEventTransportConfig::new(stream_config, &request);
 
         let mut state = self.state.lock();
-        if state
-            .config
-            .as_ref()
-            .is_some_and(|config| config.is_equivalent_start(&transport_config))
-        {
-            if let Some(stop) = &state.stop {
-                if !stop.load(Ordering::SeqCst) {
-                    return DesktopEventsStartResult {
-                        started: true,
-                        generation: Some(self.generation.load(Ordering::SeqCst)),
-                        reason: None,
-                    };
-                }
-            }
-        }
-
+        let lease_id = self.lease.fetch_add(1, Ordering::SeqCst) + 1;
         if let Some(stop) = state.stop.take() {
             stop.store(true, Ordering::SeqCst);
+        }
+        if state.config.as_ref().is_some_and(|current| {
+            current.stream.events_url != transport_config.stream.events_url
+                || current.stream.client_id != transport_config.stream.client_id
+        }) {
+            *self.last_event_id.lock() = None;
         }
 
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
@@ -269,21 +272,43 @@ impl DesktopEventTransportManager {
         state.stop = Some(stop.clone());
         state.config = Some(transport_config.clone());
         let shared_generation = self.generation.clone();
+        let last_event_id = self.last_event_id.clone();
         drop(state);
 
         thread::spawn(move || {
-            run_transport_loop(app, shared_generation, generation, stop, transport_config)
+            run_transport_loop(
+                app,
+                shared_generation,
+                generation,
+                stop,
+                transport_config,
+                last_event_id,
+            )
         });
 
         DesktopEventsStartResult {
             started: true,
             generation: Some(generation),
+            lease_id: Some(lease_id),
             reason: None,
         }
     }
 
     pub fn stop(&self) {
         let mut state = self.state.lock();
+        self.lease.fetch_add(1, Ordering::SeqCst);
+        self.stop_locked(&mut state);
+    }
+
+    pub fn stop_lease(&self, lease_id: u64) {
+        let mut state = self.state.lock();
+        if self.lease.load(Ordering::SeqCst) != lease_id {
+            return;
+        }
+        self.stop_locked(&mut state);
+    }
+
+    fn stop_locked(&self, state: &mut DesktopEventTransportState) {
         if let Some(stop) = state.stop.take() {
             stop.store(true, Ordering::SeqCst);
         }

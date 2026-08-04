@@ -2,6 +2,12 @@ import { EventEmitter } from "events"
 import { WorkspaceEventPayload } from "../api-types"
 import { Logger } from "../logger"
 
+export interface EventReplayGap {
+  requestedId: number
+  earliestAvailableId: number
+  latestEventId: number
+}
+
 export class EventBus extends EventEmitter {
   private readonly instanceStatuses = new Map<string, Extract<WorkspaceEventPayload, { type: "instance.eventStatus" }>>()
   private readonly replay: Array<{ id: number; event: WorkspaceEventPayload }> = []
@@ -37,8 +43,22 @@ export class EventBus extends EventEmitter {
     return super.emit(event.type, event, sequenced.id)
   }
 
-  onEvent(listener: (event: WorkspaceEventPayload, id?: number) => void, afterId?: number) {
-    const handler = (event: WorkspaceEventPayload, id: number) => listener(event, id)
+  onEvent(
+    listener: (event: WorkspaceEventPayload, id?: number) => void,
+    afterId?: number,
+    onReplayGap?: (gap: EventReplayGap) => void,
+  ) {
+    const replayBoundary = this.nextEventId
+    const replaySnapshot = this.replay.filter((entry) => entry.id <= replayBoundary)
+    const earliestAvailableId = replaySnapshot[0]?.id ?? replayBoundary + 1
+    const replayGap = afterId !== undefined
+      && (afterId < earliestAvailableId - 1 || afterId > replayBoundary)
+    const pendingLive: Array<{ id: number; event: WorkspaceEventPayload }> = []
+    let replaying = true
+    const handler = (event: WorkspaceEventPayload, id: number) => {
+      if (replaying) pendingLive.push({ event, id })
+      else listener(event, id)
+    }
     this.on("workspace.created", handler)
     this.on("workspace.started", handler)
     this.on("workspace.error", handler)
@@ -55,11 +75,18 @@ export class EventBus extends EventEmitter {
     this.on("yolo.autoAccepted", handler)
     if (afterId === undefined) {
       for (const status of this.instanceStatuses.values()) listener(status)
+    } else if (replayGap) {
+      onReplayGap?.({ requestedId: afterId, earliestAvailableId, latestEventId: replayBoundary })
     } else {
-      for (const entry of this.replay) {
+      for (const entry of replaySnapshot) {
         if (entry.id > afterId) listener(entry.event, entry.id)
       }
     }
+    for (let index = 0; index < pendingLive.length; index += 1) {
+      const entry = pendingLive[index]!
+      listener(entry.event, entry.id)
+    }
+    replaying = false
     return () => {
       this.off("workspace.created", handler)
       this.off("workspace.started", handler)

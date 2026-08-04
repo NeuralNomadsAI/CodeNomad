@@ -1,9 +1,13 @@
 import { closeSync, fsyncSync, openSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs"
 import { basename, join } from "node:path"
 import {
+  type AsyncExpectedProcessLookup,
+  type AsyncProcessStartIdentityLookup,
   type ExpectedProcessLookup,
   getProcessStartIdentity,
+  getProcessStartIdentityAsync,
   isExpectedTauriProcess,
+  isExpectedTauriProcessAsync,
   type ProcessStartIdentityLookup,
 } from "./client-state-process-identity"
 
@@ -116,6 +120,33 @@ export function hasLiveTauriClient(
     if (liveIdentity && upgradedParticipants.some((owner) => owner.pid === pid && owner.processStartIdentity === liveIdentity)) return false
     return expectedProcess(pid) !== false
   })
+}
+
+export async function hasLiveTauriClientAsync(
+  tauriDataPath: string,
+  pidAlive: (pid: number) => boolean = isPidAlive,
+  processStartIdentity: AsyncProcessStartIdentityLookup = getProcessStartIdentityAsync,
+  expectedProcess: AsyncExpectedProcessLookup = isExpectedTauriProcessAsync,
+  upgradedParticipants: readonly ProcessOwner[] = [],
+  timeoutMs = 1_000,
+): Promise<boolean> {
+  let entries: string[]
+  try {
+    entries = readdirSync(tauriDataPath)
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) return false
+    throw error
+  }
+  for (const name of entries) {
+    const match = /^client-state\.running\.(\d+)\..+\.lock$/.exec(name)
+    if (!match) continue
+    const pid = Number(match[1])
+    if (!Number.isInteger(pid) || pid <= 0 || !pidAlive(pid)) continue
+    const liveIdentity = await processStartIdentity(pid, timeoutMs)
+    if (liveIdentity && upgradedParticipants.some((owner) => owner.pid === pid && owner.processStartIdentity === liveIdentity)) continue
+    if (await expectedProcess(pid, timeoutMs) !== false) return true
+  }
+  return false
 }
 
 export function classifyRunningMarker(

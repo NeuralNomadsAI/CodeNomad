@@ -6,6 +6,7 @@ import {
   electClientStateProcess,
   getRunningMarkerPath,
   hasLiveTauriClient,
+  hasLiveTauriClientAsync,
   hasErrorCode,
   isProcessOwnerLockOwned,
   removeProcessOwnerLockIfOwned,
@@ -142,6 +143,8 @@ export class ClientStateManager {
   private readonly statePath: string
   private readonly lockPath: string
   private readonly legacyTauriDataPath: string | null
+  private readonly legacyPaths: ReadonlyArray<readonly ["electron" | "tauri", string]>
+  private readonly removeLegacyState: (path: string) => void
   private readonly owner: ProcessOwner
   private state: PersistedClientState = { version: CLIENT_STATE_VERSION, restoreEnabled: true }
   private writeQueue: Promise<void> = Promise.resolve()
@@ -187,6 +190,11 @@ export class ClientStateManager {
       ? (options?.crossHostElectionDirectory ? null : resolveLegacyTauriDataDirectory())
       : options.legacyTauriDataPath
     this.legacyTauriDataPath = legacyTauriDataPath
+    this.legacyPaths = [
+      ["electron", join(userDataPath, CLIENT_STATE_FILENAME)],
+      ...(legacyTauriDataPath ? [["tauri", join(legacyTauriDataPath, CLIENT_STATE_FILENAME)] as const] : []),
+    ]
+    this.removeLegacyState = options?.removeLegacyState ?? ((path) => rmSync(path, { force: true }))
     this.primary = election
     try {
       this.crossHostRegistration = CrossHostRegistration.register(
@@ -217,18 +225,7 @@ export class ClientStateManager {
       this.primary = false
     }
     if (this.isPrimary) {
-      const legacyPaths = [
-        ["electron", join(userDataPath, CLIENT_STATE_FILENAME)],
-        ...(legacyTauriDataPath ? [["tauri", join(legacyTauriDataPath, CLIENT_STATE_FILENAME)] as const] : []),
-      ] as ReadonlyArray<readonly ["electron" | "tauri", string]>
-      this.migrateLegacyStateIfNeeded(legacyPaths, options?.removeLegacyState)
-      const futureLegacyBlocked = this.unsupportedFutureEnvelope
-      const persisted = this.readState()
-      this.state = futureLegacyBlocked
-        ? { version: CLIENT_STATE_VERSION, restoreEnabled: false }
-        : persisted.state
-      this.persistenceSuppressed = !this.state.restoreEnabled
-      this.unsupportedFutureEnvelope = futureLegacyBlocked || persisted.unsupportedFutureEnvelope
+      this.reloadAuthoritativeState()
     }
   }
 
@@ -267,14 +264,24 @@ export class ClientStateManager {
     return () => this.ownershipListeners.delete(listener)
   }
 
-  refreshPrimary(): boolean {
-    if (this.frozen || this.isPrimary || !this.primary || !isProcessOwnerLockOwned(this.lockPath, this.owner)) return false
+  async refreshPrimary(): Promise<boolean> {
+    if (this.frozen || !this.primary || !isProcessOwnerLockOwned(this.lockPath, this.owner)) return false
     try {
-      if (!this.canOwnCrossHostState()) {
+      if (this.crossHostRegistration?.isPrimary) {
+        if (await this.canOwnCrossHostStateAsync()) return false
         this.crossHostRegistration?.deferPrimary()
         return false
       }
-      if (!this.crossHostRegistration?.tryAcquire(true) || !this.isPrimary) return false
+      if (!await this.canOwnCrossHostStateAsync()) {
+        this.crossHostRegistration?.deferPrimary()
+        return false
+      }
+      const registration = this.crossHostRegistration
+      if (!registration || !await registration.tryAcquireAsync(true)) return false
+      if (!await this.canOwnCrossHostStateAsync()) {
+        registration.deferPrimary()
+        return false
+      }
       this.reloadAuthoritativeState()
       this.rendererReconciliationPending = true
       for (const listener of this.ownershipListeners) listener()
@@ -414,21 +421,18 @@ export class ClientStateManager {
     }
   }
 
-  private migrateLegacyStateIfNeeded(
-    paths: ReadonlyArray<readonly ["electron" | "tauri", string]>,
-    removeLegacyState = (path: string) => rmSync(path, { force: true }),
-  ): void {
+  private migrateLegacyStateIfNeeded(): void {
     try {
       readFileSync(this.statePath)
       return
     } catch (error) {
       if (!hasErrorCode(error, "ENOENT")) return
     }
-    if (paths.some(([, path]) => isFutureLegacyCandidate(path))) {
+    if (this.legacyPaths.some(([, path]) => isFutureLegacyCandidate(path))) {
       this.unsupportedFutureEnvelope = true
       return
     }
-    const winner = paths
+    const winner = this.legacyPaths
       .map(([host, path]) => legacyCandidate(path, host))
       .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate))
       .sort((left, right) =>
@@ -447,11 +451,11 @@ export class ClientStateManager {
       fsyncSync(descriptor)
       closeSync(descriptor)
       descriptor = undefined
-      this.assertReplacementAllowed()
+      this.assertSharedOwnershipAllowed()
       renameSync(temporaryPath, this.statePath)
-      for (const [, path] of paths) {
+      for (const [, path] of this.legacyPaths) {
         try {
-          removeLegacyState(path)
+          this.removeLegacyState(path)
         } catch (error) {
           console.warn(`[client-state] failed to remove migrated legacy state at ${path}`, error)
         }
@@ -541,11 +545,34 @@ export class ClientStateManager {
     )
   }
 
+  private async canOwnCrossHostStateAsync(): Promise<boolean> {
+    if (!this.primary || !isProcessOwnerLockOwned(this.lockPath, this.owner)) return false
+    if (!this.legacyTauriDataPath) return true
+    return !await hasLiveTauriClientAsync(
+      this.legacyTauriDataPath,
+      this.crossHostDependencies?.pidAlive,
+      this.crossHostDependencies?.processStartIdentityAsync ?? this.crossHostDependencies?.processStartIdentity,
+      undefined,
+      crossHostParticipants(this.crossHostRegistration?.path ?? ""),
+    )
+  }
+
   private reloadAuthoritativeState(): void {
+    this.unsupportedFutureEnvelope = false
+    this.migrateLegacyStateIfNeeded()
+    const futureLegacyBlocked = this.unsupportedFutureEnvelope
     const persisted = this.readState(true)
-    this.state = persisted.state
+    this.state = futureLegacyBlocked
+      ? { version: CLIENT_STATE_VERSION, restoreEnabled: false }
+      : persisted.state
     this.persistenceSuppressed = !this.state.restoreEnabled
-    this.unsupportedFutureEnvelope = persisted.unsupportedFutureEnvelope
+    this.unsupportedFutureEnvelope = futureLegacyBlocked || persisted.unsupportedFutureEnvelope
+  }
+
+  private assertSharedOwnershipAllowed(): void {
+    if (!this.crossHostRegistration?.isPrimary || !isProcessOwnerLockOwned(this.lockPath, this.owner)) {
+      throw new Error("Client state ownership changed before atomic replacement")
+    }
   }
 
   private releaseOwnedProcessFiles(): void {

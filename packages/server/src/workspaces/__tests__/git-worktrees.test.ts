@@ -24,7 +24,7 @@ function installHangingGit(temp: string): { binDir: string; started: string; sur
     'const { writeFileSync } = require("node:fs")',
     `writeFileSync(${JSON.stringify(started)}, "started")`,
     "process.on(\"SIGTERM\", () => {})",
-    `spawn(process.execPath, ["-e", ${JSON.stringify(`process.on("SIGTERM", () => {}); setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(survived)}, "survived"), 700); setInterval(() => {}, 10_000)`) }], { stdio: "ignore" })`,
+    `spawn(process.execPath, ["-e", ${JSON.stringify(`process.on("SIGTERM", () => {}); setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(survived)}, "survived"), 700); setInterval(() => {}, 10_000)`) }], { stdio: "ignore", detached: process.platform === "darwin" })`,
     "setInterval(() => {}, 10_000)",
   ].join("\n"))
 

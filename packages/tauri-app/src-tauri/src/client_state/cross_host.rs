@@ -1650,6 +1650,35 @@ mod tests {
     }
 
     #[test]
+    fn identity_less_legacy_exit_allows_late_promotion() {
+        let election = tempfile::tempdir().unwrap();
+        let legacy = tempfile::tempdir().unwrap();
+        let alive = std::cell::Cell::new(true);
+        fs::write(
+            legacy.path().join("client-state.running.706.legacy.json"),
+            r#"{"pid":706,"runToken":"legacy"}"#,
+        )
+        .unwrap();
+
+        let registration = Registration::register_with_legacy(
+            election.path(),
+            owner(707, "tauri", "tauri-start"),
+            true,
+            Some(legacy.path()),
+            |_| alive.get(),
+            |_| None,
+            |_| Some(true),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(!registration.is_primary_with(|_| alive.get(), |_| None, |_| Some(true)));
+        assert!(registration.retains_local_candidacy());
+
+        alive.set(false);
+        assert!(registration.is_primary_with(|_| alive.get(), |_| None, |_| Some(true)));
+    }
+
+    #[test]
     fn live_modern_marker_without_a_participant_returns_bounded() {
         let election = tempfile::tempdir().unwrap();
         let legacy = tempfile::tempdir().unwrap();

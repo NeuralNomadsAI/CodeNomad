@@ -9,6 +9,7 @@ import test from "node:test"
 import {
   CrossHostRegistration,
   CROSS_HOST_OWNER_DIRECTORY,
+  crossHostParticipants,
   resolveCrossHostElectionDirectory,
   resolveCrossHostStatePath,
   type CrossHostLeaseDependencies,
@@ -141,6 +142,28 @@ test("simultaneous claimants deterministically recover a stale owner", (t) => {
   assert.equal(loser.isPrimary, false)
 })
 
+test("async recovery replaces a prior claim for a consecutive crashed owner", async (t) => {
+  const directory = temp(t), candidate = owner(620, "candidate")
+  const registration = CrossHostRegistration.register(directory, candidate, false, {
+    pidAlive: () => true,
+    processStartIdentity: () => { throw new Error("sync identity lookup must not run") },
+    processStartIdentityAsync: async () => "reused-start",
+  })!
+  const publishStaleOwner = (stale: ProcessOwner) => {
+    mkdirSync(join(directory, CROSS_HOST_OWNER_DIRECTORY))
+    writeFileSync(ownerFile(directory), JSON.stringify(stale))
+  }
+  const first = owner(621, "first", "first-start")
+  publishStaleOwner(first)
+  assert.equal(await registration.tryAcquireAsync(true), true)
+  rmSync(join(directory, CROSS_HOST_OWNER_DIRECTORY), { recursive: true, force: true })
+
+  const second = owner(622, "second", "second-start")
+  publishStaleOwner(second)
+  assert.equal(await registration.tryAcquireAsync(true), true)
+  assert.equal(readFileSync(join(directory, "recovery.620.candidate.claim"), "utf8"), JSON.stringify(second))
+})
+
 test("graceful primary release allows a successor while a secondary remains", (t) => {
   const directory = temp(t)
   const primary = CrossHostRegistration.register(directory, owner(401, "primary"), true, dependencies(true, "primary-start"))!
@@ -171,11 +194,15 @@ test("graceful handoff retires the old cohort so a crashed successor can recover
   CrossHostRegistration.register(directory, secondaryOwner, true, dependencies(true, "primary-start"))!
 
   primary.release()
-  assert.equal(readdirSync(directory).some((name) => name.startsWith("retired.")), false)
+  assert.equal(readdirSync(directory).some((name) => name.startsWith("retired.participant.")), true)
   assert.equal(JSON.parse(readFileSync(ownerFile(directory), "utf8")).runToken, "successor")
   assert.equal(existsSync(join(directory, "participant.423.successor.json")), false)
   assert.equal(existsSync(join(directory, "participant.425.late.json")), false)
   assert.equal(existsSync(malformed), false)
+  assert.deepEqual(
+    crossHostParticipants(directory).map(({ runToken }) => runToken).sort(),
+    ["late", "secondary", "successor"],
+  )
 
   const claimantOwner = owner(424, "claimant"), identities = new Map([
     [secondaryOwner.pid, secondaryOwner.processStartIdentity],

@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyReply } from "fastify"
 import { z } from "zod"
-import { WorkspaceDeletionBlockedError, WorkspaceManager } from "../../workspaces/manager"
+import { WorkspaceDeletionBlockedError, WorkspaceManager, WorkspacePathOwnedError } from "../../workspaces/manager"
 import { getWorktreeGitDiff, getWorktreeGitStatus } from "../../workspaces/git-status"
 import { commitWorktreeChanges, isGitMutationError, stageWorktreePaths, unstageWorktreePaths } from "../../workspaces/git-mutations"
 import { cloneGitRepository, isGitCloneError } from "../../workspaces/git-clone"
@@ -87,7 +87,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
     } catch (error) {
       request.log.error({ err: error }, "Failed to create workspace")
       const message = error instanceof Error ? error.message : "Failed to create workspace"
-      reply.code(400).type("text/plain").send(message)
+      reply.code(error instanceof WorkspacePathOwnedError ? 409 : 400).type("text/plain").send(message)
     }
   })
 
@@ -341,7 +341,7 @@ async function resolveGitWorktreeDirectory(
 
 
 function handleWorkspaceError(error: unknown, reply: FastifyReply) {
-  if (error instanceof WorkspaceDeletionBlockedError) {
+  if (error instanceof WorkspaceDeletionBlockedError || error instanceof WorkspacePathOwnedError) {
     reply.code(409)
     return { error: error.message }
   }

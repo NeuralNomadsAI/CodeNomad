@@ -1,4 +1,7 @@
 import assert from "node:assert/strict"
+import { mkdtemp, rm } from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
 import { describe, it } from "node:test"
 import pino from "pino"
 
@@ -14,6 +17,7 @@ import {
   WorkspaceLaunchCancelledError,
   WorkspaceLaunchTimeoutError,
   WorkspaceManager,
+  WorkspacePathOwnedError,
   WorkspaceShutdownError,
 } from "./manager"
 
@@ -67,6 +71,7 @@ function createHarness(options: {
   launchTimeoutMs?: number
   setTimeout?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>
   clearTimeout?: (timer: ReturnType<typeof setTimeout>) => void
+  workspaceLeaseDir?: string
 } = {}) {
   const { stubReadiness = true, ...managerOptions } = options
   const eventBus = new EventBus()
@@ -498,6 +503,55 @@ describe("workspace manager lifecycle", () => {
       /was cancelled/,
     )
     assert.equal(harness.manager.releaseCreationRequest(workspaceId, "restore-reused"), false)
+  })
+
+  it("retains a request-owned workspace when ordinary reuse adopts it", async () => {
+    const harness = createHarness()
+    const scoped = harness.manager.create(process.cwd(), undefined, { requestId: "old-restore" })
+    const workspaceId = await harness.runtime.launchCalled.promise
+    harness.runtime.resolveLaunch()
+    harness.readiness.resolve(undefined)
+    await scoped
+
+    const adopted = await harness.manager.create(process.cwd())
+    assert.equal(adopted.workspace.id, workspaceId)
+    await harness.manager.cancelCreationRequest("old-restore")
+    assert.equal(harness.manager.get(workspaceId)?.id, workspaceId)
+    assert.equal(harness.runtime.active.has(workspaceId), true)
+  })
+
+  it("fences canonical paths across managers while preserving local forceNew", async () => {
+    const leaseDir = await mkdtemp(path.join(os.tmpdir(), "codenomad-workspace-leases-"))
+    try {
+      const first = createHarness({ workspaceLeaseDir: leaseDir })
+      const second = createHarness({ workspaceLeaseDir: leaseDir })
+      const creation = first.manager.create(process.cwd())
+      const workspaceId = await first.runtime.launchCalled.promise
+
+      await assert.rejects(second.manager.create(process.cwd()), WorkspacePathOwnedError)
+      assert.equal(second.runtime.active.size, 0)
+      await second.manager.withWorkspacePathLease(process.cwd(), async (active) => assert.equal(active, true))
+      first.runtime.resolveLaunch()
+      first.readiness.resolve(undefined)
+      await creation
+
+      const forced = await first.manager.create(process.cwd(), undefined, { forceNew: true })
+      const forcedId = forced.workspace.id
+      assert.notEqual(forcedId, workspaceId)
+
+      await first.manager.delete(forcedId)
+      first.runtime.failStops = 2
+      await assert.rejects(first.manager.delete(workspaceId), /controlled stop failure/)
+      await assert.rejects(second.manager.create(process.cwd()), WorkspacePathOwnedError)
+      await first.manager.delete(workspaceId)
+      const replacement = second.manager.create(process.cwd())
+      second.runtime.resolveLaunch()
+      second.readiness.resolve(undefined)
+      await replacement
+      await second.manager.shutdown()
+    } finally {
+      await rm(leaseDir, { recursive: true, force: true })
+    }
   })
 
   for (const boundary of ["runtime launch", "health readiness"] as const) {

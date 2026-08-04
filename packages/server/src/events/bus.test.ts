@@ -52,16 +52,37 @@ describe("event bus sequence replay", () => {
     }
 
     const received: Array<{ id?: number; sequence: number }> = []
-    bus.onEvent((event, id) => received.push({
-      id,
-      sequence: (event as never as { entry: { sequence: number } }).entry.sequence,
-    }), 0)
-    bus.publish({ type: "workspace.log", workspaceId: "workspace-1", entry: { sequence: 4 } } as never)
+    bus.onEvent((event, id) => {
+      const sequence = (event as never as { entry: { sequence: number } }).entry.sequence
+      received.push({ id, sequence })
+      if (sequence === 2) {
+        bus.publish({ type: "workspace.log", workspaceId: "workspace-1", entry: { sequence: 4 } } as never)
+      }
+    }, 1)
 
     assert.deepEqual(received, [
       { id: 2, sequence: 2 },
       { id: 3, sequence: 3 },
       { id: 4, sequence: 4 },
     ])
+  })
+
+  it("signals overflow before live delivery instead of replaying a partial window", () => {
+    const bus = new EventBus(undefined, 2)
+    for (const sequence of [1, 2, 3]) {
+      bus.publish({ type: "workspace.log", workspaceId: "workspace-1", entry: { sequence } } as never)
+    }
+
+    const received: string[] = []
+    bus.onEvent(
+      (event, id) => received.push(`${id}:${(event as never as { entry: { sequence: number } }).entry.sequence}`),
+      0,
+      (gap) => {
+        received.push(`reset:${gap.requestedId}:${gap.earliestAvailableId}:${gap.latestEventId}`)
+        bus.publish({ type: "workspace.log", workspaceId: "workspace-1", entry: { sequence: 4 } } as never)
+      },
+    )
+
+    assert.deepEqual(received, ["reset:0:2:3", "4:4"])
   })
 })
