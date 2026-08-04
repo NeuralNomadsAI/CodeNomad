@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import fs from "node:fs/promises"
 import path from "node:path"
 
@@ -14,14 +14,33 @@ interface ObservedOwner {
   serialized?: string
 }
 
+interface ReclaimClaim {
+  token: string
+  owner: ObservedOwner
+  createdAt: number
+}
+
+export interface FilesystemLockOptions {
+  waitMs?: number
+  staleMs?: number
+  pollMs?: number
+}
+
 const WAIT_MS = 5_000
 const STALE_MS = 30_000
 const POLL_MS = 20
 const RUNTIME_TOKEN = randomUUID()
 
-export async function withFilesystemLock<T>(lockPath: string, operation: () => Promise<T>): Promise<T> {
+export async function withFilesystemLock<T>(
+  lockPath: string,
+  operation: (assertOwned: () => Promise<void>) => Promise<T>,
+  options: FilesystemLockOptions = {},
+): Promise<T> {
+  const waitMs = options.waitMs ?? WAIT_MS
+  const staleMs = options.staleMs ?? STALE_MS
+  const pollMs = options.pollMs ?? POLL_MS
   await fs.mkdir(path.dirname(lockPath), { recursive: true })
-  let deadline = Date.now() + WAIT_MS
+  let deadline = Date.now() + waitMs
   let staleRetryGranted = false
   const owner: LockOwner = { token: randomUUID(), pid: process.pid, runtimeToken: RUNTIME_TOKEN, identity: await processIdentity(process.pid) }
 
@@ -38,79 +57,73 @@ export async function withFilesystemLock<T>(lockPath: string, operation: () => P
       break
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
-      if (staleRetryGranted) {
-        if (Date.now() >= deadline) throw new Error(`Timed out waiting for filesystem lock ${lockPath}`)
-        await new Promise((resolve) => setTimeout(resolve, POLL_MS))
-        continue
-      }
       if (Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, POLL_MS))
+        await delay(pollMs)
         continue
       }
-      if (await removeStaleLock(lockPath)) {
-        if (!staleRetryGranted) {
-          staleRetryGranted = true
-          deadline = Date.now() + WAIT_MS
-        }
-        await new Promise((resolve) => setTimeout(resolve, POLL_MS))
+      if (!staleRetryGranted && await removeStaleLock(lockPath, staleMs, pollMs)) {
+        staleRetryGranted = true
+        deadline = Date.now() + waitMs
+        await delay(pollMs)
+        continue
+      }
+      if (staleRetryGranted && Date.now() < deadline) {
+        await delay(pollMs)
         continue
       }
       throw new Error(`Timed out waiting for filesystem lock ${lockPath}`)
     }
   }
 
-  const heartbeat = setInterval(() => {
-    void fs.writeFile(path.join(lockPath, "heartbeat"), randomUUID(), "utf8").catch(() => undefined)
-  }, STALE_MS / 3)
+  const assertOwned = async () => {
+    const current = await readObservedOwner(lockPath)
+    if (current.token !== owner.token || await readClaim(lockPath)) {
+      throw new Error(`Filesystem lock ownership was lost for ${lockPath}`)
+    }
+  }
+  const heartbeat = setInterval(() => void heartbeatOwned(lockPath, owner.token).catch(() => undefined), staleMs / 3)
   heartbeat.unref()
   try {
-    return await operation()
+    return await operation(assertOwned)
   } finally {
     clearInterval(heartbeat)
-    await releaseOwnedLock(lockPath, owner.token)
+    await releaseOwnedLock(lockPath, owner.token, waitMs, staleMs, pollMs)
   }
 }
 
-async function removeStaleLock(lockPath: string): Promise<boolean> {
+async function removeStaleLock(lockPath: string, staleMs: number, pollMs: number): Promise<boolean> {
   let stale = false
   let observed: ObservedOwner = {}
   try {
     const serialized = await fs.readFile(path.join(lockPath, "owner.json"), "utf8")
     const owner = JSON.parse(serialized) as LockOwner
     observed = { token: owner.token, serialized }
-    stale = !await ownerIsAlive(owner, lockPath)
+    stale = !await ownerIsAlive(owner, lockPath, staleMs, pollMs)
   } catch {
     const first = await heartbeatState(lockPath)
-    await new Promise((resolve) => setTimeout(resolve, STALE_MS))
+    await delay(staleMs)
     stale = await heartbeatState(lockPath) === first
   }
   if (!stale) {
-    try {
-      await fs.access(path.join(lockPath, ".reclaim"))
-      return true
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-    }
+    const claim = await readClaim(lockPath)
+    if (claim && Date.now() - claim.createdAt < staleMs) return true
+    if (claim) await removeOwnedClaim(lockPath, claim.token)
     return !sameObservedOwner(await readObservedOwner(lockPath), observed)
   }
 
-  const claimPath = path.join(lockPath, ".reclaim")
-  try {
-    await fs.writeFile(claimPath, JSON.stringify(observed), { encoding: "utf8", flag: "wx" })
-  } catch (error) {
-    if (["EEXIST", "ENOENT"].includes((error as NodeJS.ErrnoException).code ?? "")) return true
-    throw error
-  }
-
-  const quarantinePath = `${lockPath}.stale.${randomUUID()}`
+  const claim = await acquireClaim(lockPath, observed, staleMs)
+  if (!claim) return true
+  const quarantinePath = `${lockPath}.stale.${claim.token}`
   let moved = false
   try {
     const current = await readObservedOwner(lockPath)
-    if (!sameObservedOwner(current, observed)) return true
+    const currentClaim = await readClaim(lockPath)
+    if (!sameObservedOwner(current, observed) || currentClaim?.token !== claim.token) return true
     await fs.rename(lockPath, quarantinePath)
     moved = true
     const movedOwner = await readObservedOwner(quarantinePath)
-    if (!sameObservedOwner(movedOwner, observed)) {
+    const movedClaim = await readClaim(quarantinePath)
+    if (!sameObservedOwner(movedOwner, observed) || movedClaim?.token !== claim.token) {
       await fs.rename(quarantinePath, lockPath).then(() => { moved = false }).catch(() => undefined)
       return true
     }
@@ -120,28 +133,98 @@ async function removeStaleLock(lockPath: string): Promise<boolean> {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
     return true
   } finally {
-    if (!moved) await fs.rm(claimPath, { force: true }).catch(() => undefined)
+    if (!moved) await removeOwnedClaim(lockPath, claim.token)
   }
 }
 
-async function releaseOwnedLock(lockPath: string, token: string): Promise<void> {
-  try {
-    const deadline = Date.now() + WAIT_MS
-    while (true) {
-      try {
-        await fs.access(path.join(lockPath, ".reclaim"))
-        if (Date.now() >= deadline) return
-        await new Promise((resolve) => setTimeout(resolve, POLL_MS))
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-        break
-      }
+async function acquireClaim(lockPath: string, owner: ObservedOwner, staleMs: number): Promise<ReclaimClaim | undefined> {
+  const claimPath = path.join(lockPath, ".reclaim")
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const claim: ReclaimClaim = { token: randomUUID(), owner, createdAt: Date.now() }
+    try {
+      await fs.writeFile(claimPath, JSON.stringify(claim), { encoding: "utf8", flag: "wx" })
+      return claim
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
     }
-    const owner = JSON.parse(await fs.readFile(path.join(lockPath, "owner.json"), "utf8")) as LockOwner
-    if (owner.token === token) await fs.rm(lockPath, { recursive: true, force: true })
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+    const existing = await readClaim(lockPath)
+    if (!existing || Date.now() - existing.createdAt < staleMs) return undefined
+    const abandoned = `${claimPath}.abandoned.${randomUUID()}`
+    try {
+      await fs.rename(claimPath, abandoned)
+      const moved = await readClaimFile(abandoned)
+      if (moved?.token !== existing.token) return undefined
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+    } finally {
+      await fs.rm(abandoned, { force: true }).catch(() => undefined)
+    }
   }
+  return undefined
+}
+
+async function releaseOwnedLock(lockPath: string, token: string, waitMs: number, staleMs: number, pollMs: number): Promise<void> {
+  const deadline = Date.now() + waitMs
+  while (true) {
+    const observed = await readObservedOwner(lockPath)
+    if (observed.token !== token) return
+    const claim = await acquireClaim(lockPath, observed, staleMs)
+    if (!claim) {
+      if (Date.now() >= deadline) return
+      await delay(pollMs)
+      continue
+    }
+    const releasedPath = `${lockPath}.released.${claim.token}`
+    let moved = false
+    try {
+      if ((await readObservedOwner(lockPath)).token !== token || (await readClaim(lockPath))?.token !== claim.token) return
+      await fs.rename(lockPath, releasedPath)
+      moved = true
+      if ((await readObservedOwner(releasedPath)).token !== token) {
+        await fs.rename(releasedPath, lockPath).then(() => { moved = false }).catch(() => undefined)
+        return
+      }
+      await fs.rm(releasedPath, { recursive: true, force: true })
+      return
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+      return
+    } finally {
+      if (!moved) await removeOwnedClaim(lockPath, claim.token)
+    }
+  }
+}
+
+async function heartbeatOwned(lockPath: string, token: string): Promise<void> {
+  if ((await readObservedOwner(lockPath)).token !== token || await readClaim(lockPath)) return
+  await fs.writeFile(path.join(lockPath, "heartbeat"), randomUUID(), "utf8")
+}
+
+async function readClaim(lockPath: string): Promise<ReclaimClaim | undefined> {
+  return readClaimFile(path.join(lockPath, ".reclaim"))
+}
+
+async function readClaimFile(claimPath: string): Promise<ReclaimClaim | undefined> {
+  try {
+    const serialized = await fs.readFile(claimPath, "utf8")
+    try {
+      const claim = JSON.parse(serialized) as ReclaimClaim
+      if (typeof claim.token === "string" && Number.isFinite(claim.createdAt)) return claim
+    } catch {
+      // Malformed claims are treated as an expiring generation, never removed blindly.
+    }
+    const stat = await fs.stat(claimPath)
+    return { token: `malformed-${createHash("sha256").update(serialized).digest("hex")}`, owner: { serialized }, createdAt: stat.mtimeMs }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
+    throw error
+  }
+}
+
+async function removeOwnedClaim(lockPath: string, token: string): Promise<void> {
+  const claim = await readClaim(lockPath)
+  if (claim?.token === token) await fs.rm(path.join(lockPath, ".reclaim"), { force: true }).catch(() => undefined)
 }
 
 async function readObservedOwner(lockPath: string): Promise<ObservedOwner> {
@@ -164,12 +247,12 @@ function sameObservedOwner(left: ObservedOwner, right: ObservedOwner): boolean {
     : left.serialized === right.serialized
 }
 
-async function ownerIsAlive(owner: LockOwner, lockPath: string): Promise<boolean> {
+async function ownerIsAlive(owner: LockOwner, lockPath: string, staleMs: number, pollMs: number): Promise<boolean> {
   if (owner.runtimeToken === RUNTIME_TOKEN) return true
   const first = await heartbeatState(lockPath)
-  const deadline = Date.now() + STALE_MS
+  const deadline = Date.now() + staleMs
   while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, Math.min(100, deadline - Date.now())))
+    await delay(Math.min(Math.max(pollMs, 1), deadline - Date.now()))
     try {
       const current = JSON.parse(await fs.readFile(path.join(lockPath, "owner.json"), "utf8")) as LockOwner
       if (current.token !== owner.token) return true
@@ -202,3 +285,5 @@ async function processIdentity(pid: number): Promise<string | undefined> {
     return undefined
   }
 }
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))

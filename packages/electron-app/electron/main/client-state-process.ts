@@ -202,6 +202,25 @@ export function createRunningMarker(
   return markerPath
 }
 
+function ensureRunningMarker(
+  userDataPath: string,
+  owner: ProcessOwner,
+  primaryOwner?: ProcessOwner,
+): string {
+  try {
+    return createRunningMarker(userDataPath, owner, primaryOwner)
+  } catch (error) {
+    if (!hasErrorCode(error, "EEXIST")) throw error
+    const markerPath = getRunningMarkerPath(userDataPath, owner)
+    const existing = readFileIfExists(markerPath)
+    const existingOwner = existing === undefined ? undefined : parseProcessOwner(existing)
+    if (existingOwner && isSameProcessOwner(existingOwner, owner)) {
+      return markerPath
+    }
+    throw error
+  }
+}
+
 function publishProcessFile(path: string, contents: string): void {
   let descriptor: number | undefined
   try {
@@ -467,6 +486,7 @@ export function electClientStateProcess(
   registrationLockWaitMs = REGISTRATION_LOCK_WAIT_MS,
   onPrimaryLockAcquired: () => void = () => {},
   processStartIdentity: ProcessStartIdentityLookup = getProcessStartIdentity,
+  retainedCandidate = false,
 ): boolean {
   let registrationAcquired = false
   let registeringOwner: ProcessOwner | undefined
@@ -488,7 +508,8 @@ export function electClientStateProcess(
 
   if (!registrationAcquired) {
     try {
-      createRunningMarker(userDataPath, owner, registeringOwner)
+      if (retainedCandidate) ensureRunningMarker(userDataPath, owner, registeringOwner)
+      else createRunningMarker(userDataPath, owner, registeringOwner)
     } catch (error) {
       onWarning("failed to create running marker", error)
     }
@@ -516,7 +537,7 @@ export function electClientStateProcess(
     if (isPrimary) {
       try {
         onPrimaryLockAcquired()
-        if (cleanStaleRunningMarkers(userDataPath, owner, pidAlive, processStartIdentity)) {
+        if (cleanStaleRunningMarkers(userDataPath, owner, pidAlive, processStartIdentity) && !retainedCandidate) {
           removeProcessOwnerLockIfOwned(paths.primaryLockPath, owner)
           isPrimary = false
         }
@@ -528,7 +549,8 @@ export function electClientStateProcess(
     }
 
     try {
-      createRunningMarker(userDataPath, owner, acknowledgedPrimary)
+      if (retainedCandidate) ensureRunningMarker(userDataPath, owner, acknowledgedPrimary)
+      else createRunningMarker(userDataPath, owner, acknowledgedPrimary)
     } catch (error) {
       onWarning("failed to create running marker", error)
       if (isPrimary) releaseProcessOwnerLock(paths.primaryLockPath, owner, onWarning, "failed to release primary lock")

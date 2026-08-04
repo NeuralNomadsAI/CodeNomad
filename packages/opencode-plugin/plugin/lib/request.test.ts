@@ -54,6 +54,35 @@ test("plugin requests use the distinct callback capability", async () => {
   }
 })
 
+test("pre-aborted plugin requests reject without an unhandled request error", async () => {
+  let requests = 0
+  const server = createServer((_request, response) => {
+    requests += 1
+    response.writeHead(200, { Connection: "close" }).end()
+  })
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+  try {
+    const address = server.address()
+    assert.ok(address && typeof address === "object")
+    const requester = createCodeNomadRequester({
+      instanceId: "workspace",
+      baseUrl: `http://127.0.0.1:${address.port}`,
+      callbackToken: "workspace-callback",
+    })
+    const controller = new AbortController()
+    controller.abort()
+
+    await assert.rejects(requester.requestVoid("/event", { signal: controller.signal }), { name: "AbortError" })
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(requests, 0)
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve())
+      server.closeAllConnections()
+    })
+  }
+})
+
 test("plugin responses use null bodies when HTTP forbids response content", async () => {
   const server = createServer((request, response) => {
     const status = Number(new URL(request.url ?? "/", "http://localhost").pathname.slice(1)) || 200

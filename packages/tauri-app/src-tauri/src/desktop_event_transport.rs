@@ -9,7 +9,7 @@ use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, Manager, Url};
+use tauri::{AppHandle, Emitter, Listener, Manager, Url};
 
 mod assembler;
 mod stream;
@@ -21,6 +21,7 @@ use transport::*;
 const EVENT_BATCH_NAME: &str = "desktop:event-batch";
 const EVENT_STATUS_NAME: &str = "desktop:event-stream-status";
 const EVENT_REPLAY_RESET_NAME: &str = "desktop:event-replay-reset";
+const EVENT_ACK_NAME: &str = "desktop:event-ack";
 const FLUSH_INTERVAL_MS: u64 = 16;
 const DELTA_STREAM_WINDOW_MS: u64 = 48;
 const MAX_BATCH_EVENTS: usize = 256;
@@ -63,7 +64,15 @@ pub struct DesktopEventsStartResult {
     pub started: bool,
     pub generation: Option<u64>,
     pub lease_id: Option<u64>,
+    pub last_event_id: Option<String>,
     pub reason: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopEventAckPayload {
+    generation: u64,
+    last_event_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -247,12 +256,12 @@ impl DesktopEventTransportManager {
                 started: false,
                 generation: None,
                 lease_id: None,
+                last_event_id: None,
                 reason: Some("desktop event stream unavailable".to_string()),
             };
         };
 
         let request = request.unwrap_or_default();
-        *self.last_event_id.lock() = request.last_event_id.clone();
         let transport_config = DesktopEventTransportConfig::new(stream_config, &request);
 
         let mut state = self.state.lock();
@@ -260,12 +269,16 @@ impl DesktopEventTransportManager {
         if let Some(stop) = state.stop.take() {
             stop.store(true, Ordering::SeqCst);
         }
-        if state.config.as_ref().is_some_and(|current| {
+        let endpoint_changed = state.config.as_ref().is_some_and(|current| {
             current.stream.events_url != transport_config.stream.events_url
                 || current.stream.client_id != transport_config.stream.client_id
-        }) {
+        });
+        if endpoint_changed {
             *self.last_event_id.lock() = None;
+        } else if request.last_event_id.is_some() {
+            *self.last_event_id.lock() = request.last_event_id.clone();
         }
+        let accepted_event_id = self.last_event_id.lock().clone();
 
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let stop = Arc::new(AtomicBool::new(false));
@@ -275,7 +288,22 @@ impl DesktopEventTransportManager {
         let last_event_id = self.last_event_id.clone();
         drop(state);
 
+        let ack_generation = shared_generation.clone();
+        let acknowledged_event_id = last_event_id.clone();
+        let ack_listener = app.listen(EVENT_ACK_NAME, move |event| {
+            if !generation_matches(&ack_generation, generation) {
+                return;
+            }
+            let Ok(ack) = serde_json::from_str::<DesktopEventAckPayload>(event.payload()) else {
+                return;
+            };
+            if ack.generation == generation && !ack.last_event_id.is_empty() {
+                *acknowledged_event_id.lock() = Some(ack.last_event_id);
+            }
+        });
+
         thread::spawn(move || {
+            let listener_app = app.clone();
             run_transport_loop(
                 app,
                 shared_generation,
@@ -283,13 +311,15 @@ impl DesktopEventTransportManager {
                 stop,
                 transport_config,
                 last_event_id,
-            )
+            );
+            listener_app.unlisten(ack_listener);
         });
 
         DesktopEventsStartResult {
             started: true,
             generation: Some(generation),
             lease_id: Some(lease_id),
+            last_event_id: accepted_event_id,
             reason: None,
         }
     }

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core"
-import { listen } from "@tauri-apps/api/event"
+import { emit, listen } from "@tauri-apps/api/event"
 import type { WorkspaceEventPayload } from "../../../../server/src/api-types"
 import type {
   DesktopEventsStartResult,
@@ -12,10 +12,13 @@ import type {
   WorkspaceEventTransportCallbacks,
   WorkspaceEventTransportStatus,
 } from "../event-transport"
+import {
+  acquireEventTransportCursorAuthority,
+  type EventTransportCursorAuthority,
+} from "../event-transport-cursor"
 import { getLogger } from "../logger"
 
 const log = getLogger("sse")
-let nativeLastEventId: string | undefined
 
 interface WorkspaceEventBatchPayload {
   generation: number
@@ -41,11 +44,13 @@ const MAX_PENDING_NATIVE_PAYLOADS = 4096
 interface DesktopEventTransportBridge {
   invoke: typeof invoke
   listen: typeof listen
+  emit: typeof emit
 }
 
 const defaultDesktopEventTransportBridge: DesktopEventTransportBridge = {
   invoke,
   listen,
+  emit,
 }
 
 export function createTerminalErrorNotifier(callbacks: Pick<WorkspaceEventTransportCallbacks, "onError">) {
@@ -69,6 +74,7 @@ export async function connectTauriWorkspaceEvents(
   callbacks: WorkspaceEventTransportCallbacks,
   options: DesktopEventTransportStartOptions,
   bridge: DesktopEventTransportBridge = defaultDesktopEventTransportBridge,
+  cursor: EventTransportCursorAuthority = acquireEventTransportCursorAuthority(),
 ): Promise<WorkspaceEventConnection> {
   let closed = false
   let opened = false
@@ -79,6 +85,12 @@ export async function connectTauriWorkspaceEvents(
   let pendingOverflow = false
 
   const matchesGeneration = (generation: number) => expectedGeneration === generation
+  const acknowledge = (generation: number, eventCursor: string | null | undefined) => {
+    if (!eventCursor || !cursor.commit(eventCursor)) return
+    void bridge.emit("desktop:event-ack", { generation, lastEventId: eventCursor }).catch((error) => {
+      log.warn("Failed to acknowledge native desktop events", error)
+    })
+  }
 
   const handleBatchPayload = (payload: WorkspaceEventBatchPayload) => {
     if (!payload || !matchesGeneration(payload.generation)) return
@@ -91,7 +103,7 @@ export async function connectTauriWorkspaceEvents(
 
     const events = payload.events ?? []
     const accepted = callbacks.onBatch(events) !== false
-    if (accepted && payload.lastEventId !== undefined) nativeLastEventId = payload.lastEventId || undefined
+    if (accepted) acknowledge(payload.generation, payload.lastEventId)
   }
 
   const handleStatusPayload = (payload: DesktopEventTransportStatusPayload) => {
@@ -144,7 +156,7 @@ export async function connectTauriWorkspaceEvents(
   const handleReplayResetPayload = (payload: WorkspaceEventReplayResetPayload) => {
     if (!payload || !matchesGeneration(payload.generation)) return
     const accepted = callbacks.onReplayReset?.() !== false
-    if (accepted && payload.lastEventId !== undefined) nativeLastEventId = payload.lastEventId || undefined
+    if (accepted) acknowledge(payload.generation, payload.lastEventId)
   }
 
   const flushPending = () => {
@@ -152,7 +164,7 @@ export async function connectTauriWorkspaceEvents(
     if (pendingOverflow) {
       pending.length = 0
       callbacks.onReplayReset?.()
-      return
+      throw new Error("native event startup queue overflowed")
     }
     for (const entry of pending.splice(0, pending.length)) {
       if (entry.type === "batch") handleBatchPayload(entry.payload)
@@ -192,13 +204,14 @@ export async function connectTauriWorkspaceEvents(
       else handleReplayResetPayload(event.payload)
     })
     const result = await bridge.invoke<DesktopEventsStartResult>("desktop_events_start", {
-      request: { ...options, lastEventId: nativeLastEventId },
+      request: { ...options, lastEventId: cursor.read() },
     })
     if (!result?.started || result.generation === undefined || result.leaseId === undefined) {
       throw new Error(result?.reason ?? "desktop event transport unavailable")
     }
     expectedGeneration = result.generation
     leaseId = result.leaseId
+    if (result.lastEventId) cursor.commit(result.lastEventId)
     flushPending()
   } catch (error) {
     unlistenBatch()

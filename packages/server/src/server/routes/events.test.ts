@@ -31,8 +31,18 @@ test("SSE does not reflect request origins", async () => {
 
 test("SSE acknowledges its initial cursor after bootstrap statuses", async () => {
   const app = Fastify({ logger: false })
-  const eventBus = new EventBus()
+  const eventBus = new EventBus(undefined, 1_000, Infinity, "test")
   eventBus.publish({ type: "instance.eventStatus", instanceId: "workspace", status: "connected" })
+  app.addHook("onRequest", (_request, reply, done) => {
+    const write = reply.raw.write.bind(reply.raw)
+    reply.raw.write = ((chunk: unknown, ...args: unknown[]) => {
+      const accepted = write(chunk, ...args as [])
+      if (!String(chunk).includes("instance.eventStatus")) return accepted
+      setImmediate(() => reply.raw.emit("drain"))
+      return false
+    }) as typeof reply.raw.write
+    done()
+  })
   registerEventRoutes(app, {
     eventBus,
     registerClient: (close) => {
@@ -49,6 +59,7 @@ test("SSE acknowledges its initial cursor after bootstrap statuses", async () =>
   })
 
   assert.ok(response.payload.indexOf("instance.eventStatus") < response.payload.indexOf("codenomad.replay.cursor"))
+  assert.match(response.payload, /event: codenomad\.replay\.cursor\nid: test:1\ndata: \{\}\n\n/)
   await app.close()
 })
 
@@ -93,7 +104,7 @@ test("SSE drains an accepted backpressured frame before disconnecting", async ()
 
 test("SSE replays ordered events published behind a backpressured frame", async () => {
   const app = Fastify({ logger: false })
-  const eventBus = new EventBus()
+  const eventBus = new EventBus(undefined, 1_000, Infinity, "test")
   let requestCount = 0
   app.addHook("onRequest", (_request, reply, done) => {
     requestCount += 1
@@ -141,12 +152,12 @@ test("SSE replays ordered events published behind a backpressured frame", async 
   const replay = await app.inject({
     method: "GET",
     url: "/api/events?clientId=client&connectionId=connection",
-    headers: { "last-event-id": "1" },
+    headers: { "last-event-id": "test:1" },
   })
 
   assert.deepEqual(
-    [...replay.payload.matchAll(/id: (\d+)\ndata: .*?"sequence":(\d+)/g)].map((match) => [Number(match[1]), Number(match[2])]),
-    [[2, 2], [3, 3]],
+    [...replay.payload.matchAll(/id: (test:\d+)\ndata: .*?"sequence":(\d+)/g)].map((match) => [match[1], Number(match[2])]),
+    [["test:2", 2], ["test:3", 3]],
   )
   assert.equal(eventBus.listenerCount("instance.event"), 0)
   await app.close()
@@ -154,7 +165,7 @@ test("SSE replays ordered events published behind a backpressured frame", async 
 
 test("SSE signals an overflow gap before handing off to live events", async () => {
   const app = Fastify({ logger: false })
-  const eventBus = new EventBus(undefined, 2)
+  const eventBus = new EventBus(undefined, 2, Infinity, "test")
   for (const sequence of [1, 2, 3]) {
     eventBus.publish({
       type: "workspace.log",
@@ -182,10 +193,10 @@ test("SSE signals an overflow gap before handing off to live events", async () =
   const response = await app.inject({
     method: "GET",
     url: "/api/events?clientId=client&connectionId=connection",
-    headers: { "last-event-id": "0" },
+    headers: { "last-event-id": "test:0" },
   })
 
-  assert.match(response.payload, /event: codenomad\.replay\.reset\nid: 3\ndata: \{"requestedId":0,"earliestAvailableId":2,"latestEventId":3\}/)
+  assert.match(response.payload, /event: codenomad\.replay\.reset\nid: test:3\ndata: \{"requestedCursor":"test:0","earliestAvailableCursor":"test:2","latestCursor":"test:3"\}/)
   assert.doesNotMatch(response.payload, /"sequence":[23]/)
   assert.ok(response.payload.indexOf("codenomad.replay.reset") < response.payload.indexOf('"sequence":4'))
   await app.close()

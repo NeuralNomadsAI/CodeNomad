@@ -34,6 +34,7 @@ export interface WorkflowInterpreterOptions {
   sessionFinished: (sessionId: string) => void
   abortSession: (sessionId: string) => Promise<boolean>
   isCancelled: () => boolean
+  revalidateFence?: () => Promise<void>
   isPauseCommitted?: () => boolean
 }
 
@@ -338,6 +339,8 @@ export class WorkflowInterpreter {
         execution.attempt = attempt
         await this.options.persist()
         signal.throwIfAborted()
+        await this.options.revalidateFence?.()
+        signal.throwIfAborted()
       try {
         const response = await this.requireData(this.options.client.session.prompt({
           sessionID: sessionId,
@@ -381,6 +384,8 @@ export class WorkflowInterpreter {
       const sessionId = await this.createChildSession(node, execution, signal)
       execution.attempt = attempt
       await this.options.persist()
+      signal.throwIfAborted()
+      await this.options.revalidateFence?.()
       signal.throwIfAborted()
       try {
         const response = await this.requireData(this.options.client.session.shell({

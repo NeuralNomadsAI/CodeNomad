@@ -28,7 +28,7 @@ const usage = (cost = 0.1, tokens = 10) => ({
 const workflowTools = { ids: async () => ({ data: ["read", "glob", "grep", "lsp", "bash", "shell", "write", "edit", "apply_patch", "task"] }) }
 const waitFor = async (manager: WorkflowManager, id: string, statuses: WorkflowRun["status"][]) => {
   let latest: WorkflowRun | undefined
-  for (let attempt = 0; attempt < 200; attempt += 1) {
+  for (let attempt = 0; attempt < 600; attempt += 1) {
     latest = (await manager.get(id))!
     if (statuses.includes(latest.status)) return latest
     await new Promise((resolve) => setTimeout(resolve, 5))

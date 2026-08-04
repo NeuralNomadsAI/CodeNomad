@@ -45,6 +45,7 @@ describe("connectTauriWorkspaceEvents", () => {
     let resetHandler: ((event: { payload: any }) => void) | undefined
     const unlistened: string[] = []
     const startLastEventIds: Array<string | undefined> = []
+    const acknowledgements: any[] = []
     let stopLeaseId: number | undefined
     const bridge = {
       invoke: async (command: string, args?: any) => {
@@ -69,6 +70,9 @@ describe("connectTauriWorkspaceEvents", () => {
         return () => {
           unlistened.push(eventName)
         }
+      },
+      emit: async (eventName: string, payload: any) => {
+        acknowledgements.push({ eventName, payload })
       },
     } as any
 
@@ -108,6 +112,10 @@ describe("connectTauriWorkspaceEvents", () => {
     assert.deepEqual(statuses, ["connected"])
     assert.equal(opens, 1)
     assert.equal(batches.length, 1)
+    assert.deepEqual(acknowledgements, [{
+      eventName: "desktop:event-ack",
+      payload: { generation: 1, lastEventId: "9" },
+    }])
 
     resetHandler!({ payload: { generation: 1, details: {} } })
     assert.equal(resets, 1)
@@ -136,6 +144,7 @@ describe("connectTauriWorkspaceEvents", () => {
     replacement.disconnect()
     const afterRejectedBatch = await connectTauriWorkspaceEvents({ onBatch() {} }, { reconnect: {} }, bridge)
     assert.deepEqual(startLastEventIds, [undefined, "9", "9"])
+    assert.equal(acknowledgements.length, 1)
     afterRejectedBatch.disconnect()
   })
 })

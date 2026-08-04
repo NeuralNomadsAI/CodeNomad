@@ -36,7 +36,6 @@ const WORKFLOW_HISTORY_LIMIT = 100
 const CREATION_CLEANUP_ATTEMPTS = 3
 const EXECUTOR_LEASE_MS = 10_000
 const EXECUTOR_HEARTBEAT_MS = 2_500
-const EXECUTOR_CLOCK_SKEW_MS = 60_000
 
 export class WorkflowRunError extends Error {
   constructor(message: string, readonly statusCode: number) {
@@ -1009,6 +1008,7 @@ export class WorkflowManager {
     const admitted = this.admissionQueue.catch(() => undefined)
       .then(() => withFilesystemLock(this.admissionLockPath(), async () => {
         await this.refreshRunIndex()
+        await this.recoverInterruptedRuns()
         return operation()
       }))
     this.admissionQueue = admitted.then(() => undefined, () => undefined)
@@ -1061,7 +1061,7 @@ export class WorkflowManager {
   }
 
   private isLeaseLive(run: WorkflowRun): boolean {
-    return Boolean(run.executorLease && Date.parse(run.executorLease.expiresAt) > Date.now() - EXECUTOR_CLOCK_SKEW_MS)
+    return Boolean(run.executorLease && Date.parse(run.executorLease.expiresAt) > Date.now())
   }
 
   private executorLeaseExpiry(heartbeatAt = new Date().toISOString()): string {
@@ -1242,6 +1242,7 @@ export class WorkflowManager {
         return confirmed
       },
       isCancelled: () => active.cancelRequested,
+      revalidateFence: () => this.revalidateExecutorFence(active),
       isPauseCommitted: () => active.pauseCommitted,
     })
     try {
@@ -1312,6 +1313,8 @@ export class WorkflowManager {
     active.activeSessionId = session.id
     this.throwIfCancelled(active)
     await this.persist(run)
+    this.throwIfCancelled(active)
+    await this.revalidateExecutorFence(active)
     this.throwIfCancelled(active)
 
     const response = await this.requireData(client.session.prompt({
@@ -1842,6 +1845,10 @@ export class WorkflowManager {
         const run = await this.read(runId)
         if (!run) continue
         validRun = true
+        if (this.activeRuns.has(run.id)) {
+          this.reserveRun(run)
+          continue
+        }
         if (this.isLeaseLive(run)) {
           this.reserveRun(run)
           continue
@@ -1877,6 +1884,11 @@ export class WorkflowManager {
         const legacyAction = !run.definitionSnapshot && run.steps.some((step) => step.status === "running")
         const wasExecuting = run.status === "running" || run.status === "pausing"
         const ambiguous = sessionBearing || interruptedAction || legacyAction
+        if (!wasExecuting && ["interrupted", "recovery_required"].includes(run.status)) {
+          this.reserveRun(run)
+          if (hadStaleLease) await this.persist(run)
+          continue
+        }
         if (!wasExecuting && !ambiguous) {
           this.reserveRun(run)
           if (hadStaleLease) await this.persist(run)
@@ -1989,7 +2001,7 @@ export class WorkflowManager {
     const queued = previous.catch(() => undefined).then(async () => {
       await ensureDurableDirectory(this.options.storageDir)
       const destination = this.runPath(run.id)
-      await withFilesystemLock(this.runLockPath(run.id), async () => {
+      await withFilesystemLock(this.runLockPath(run.id), async (assertOwned) => {
         const current = await this.readStoredRun(run.id)
         if (current) {
           if (expectedLease) {
@@ -2023,7 +2035,7 @@ export class WorkflowManager {
             run.executorLease.expiresAt = snapshot.executorLease.expiresAt
           }
         }
-        await durableAtomicWrite(destination, `${JSON.stringify(snapshot, null, 2)}\n`)
+        await durableAtomicWrite(destination, `${JSON.stringify(snapshot, null, 2)}\n`, assertOwned)
         if (active?.run === run && !snapshot.executorLease) active.leaseDurablyReleased = true
         await this.writeRunMetadata(snapshot).catch((error) => {
           this.options.logger.warn({ err: error, runId: snapshot.id }, "Failed to update workflow run metadata")
@@ -2057,7 +2069,7 @@ export class WorkflowManager {
     await (this.persistQueues.get(active.run.id) ?? Promise.resolve()).catch(() => undefined)
     if (active.run.executorLease?.ownerToken !== this.managerToken
       || active.run.executorLease.fence !== active.leaseFence) return
-    await withFilesystemLock(this.runLockPath(active.run.id), async () => {
+    await withFilesystemLock(this.runLockPath(active.run.id), async (assertOwned) => {
       const current = await this.readStoredRun(active.run.id)
       if (active.run.executorLease?.ownerToken !== this.managerToken
         || active.run.executorLease.fence !== active.leaseFence) return
@@ -2068,7 +2080,7 @@ export class WorkflowManager {
       }
       current.executorLease.heartbeatAt = new Date().toISOString()
       current.executorLease.expiresAt = this.executorLeaseExpiry(current.executorLease.heartbeatAt)
-      await durableAtomicWrite(this.runPath(current.id), `${JSON.stringify(current, null, 2)}\n`)
+      await durableAtomicWrite(this.runPath(current.id), `${JSON.stringify(current, null, 2)}\n`, assertOwned)
       if (active.run.executorLease?.fence === active.leaseFence) {
         active.run.executorLease.heartbeatAt = current.executorLease.heartbeatAt
         active.run.executorLease.expiresAt = current.executorLease.expiresAt
@@ -2076,8 +2088,31 @@ export class WorkflowManager {
     })
   }
 
+  private async revalidateExecutorFence(active: ActiveRun): Promise<void> {
+    await (this.persistQueues.get(active.run.id) ?? Promise.resolve())
+    this.throwIfCancelled(active)
+    try {
+      await withFilesystemLock(this.runLockPath(active.run.id), async (assertOwned) => {
+        const current = await this.readStoredRun(active.run.id)
+        await assertOwned()
+        if (!current || !["running", "pausing", "waiting_for_review", "waiting_for_input"].includes(current.status)
+          || !this.isLeaseLive(current)
+          || current.executorLease?.ownerToken !== this.managerToken
+          || current.executorLease.fence !== active.leaseFence) {
+          throw new WorkflowRunError("Workflow executor ownership was lost", 409)
+        }
+      })
+    } catch (error) {
+      active.leaseLost = true
+      active.releaseBlocked = true
+      active.cancelRequested = true
+      active.abortController.abort(new WorkflowCancelledError("Workflow executor lease was lost"))
+      throw error
+    }
+  }
+
   private async abandonExecutorLease(active: ActiveRun): Promise<void> {
-    await withFilesystemLock(this.runLockPath(active.run.id), async () => {
+    await withFilesystemLock(this.runLockPath(active.run.id), async (assertOwned) => {
       const current = await this.readStoredRun(active.run.id)
       if (!current) return
       if (current.executorLease?.ownerToken !== this.managerToken
@@ -2085,7 +2120,7 @@ export class WorkflowManager {
         throw new WorkflowRunError("Workflow executor ownership was lost", 409)
       }
       delete current.executorLease
-      await durableAtomicWrite(this.runPath(current.id), `${JSON.stringify(current, null, 2)}\n`)
+      await durableAtomicWrite(this.runPath(current.id), `${JSON.stringify(current, null, 2)}\n`, assertOwned)
       active.leaseDurablyReleased = true
     })
   }
@@ -2112,7 +2147,7 @@ export class WorkflowManager {
   }
 }
 
-async function durableAtomicWrite(destination: string, contents: string): Promise<void> {
+async function durableAtomicWrite(destination: string, contents: string, assertOwned?: () => Promise<void>): Promise<void> {
   const temporary = `${destination}.${randomUUID()}.tmp`
   try {
     const handle = await fs.open(temporary, "wx")
@@ -2122,6 +2157,7 @@ async function durableAtomicWrite(destination: string, contents: string): Promis
     } finally {
       await handle.close()
     }
+    await assertOwned?.()
     await fs.rename(temporary, destination)
     await syncDirectory(path.dirname(destination))
   } catch (error) {

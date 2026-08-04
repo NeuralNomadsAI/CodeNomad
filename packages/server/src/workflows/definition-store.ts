@@ -46,7 +46,7 @@ export class WorkflowDefinitionStore {
   constructor(private readonly directory: string) {}
 
   async create(source: string | unknown): Promise<WorkflowDefinitionRecord> {
-    return this.write(async () => {
+    return this.write(async (assertOwned) => {
       const parsed = this.parse(source)
       if (await this.readFile(parsed.definition.id)) {
         throw new WorkflowDefinitionStoreError("Workflow definition already exists", 409)
@@ -62,13 +62,13 @@ export class WorkflowDefinitionStore {
         updatedAt: now,
       }
       assertHistoryCapacity([], record)
-      await this.persist({ version: 1, id: record.id, currentRevision: 1, revisions: [record] })
+      await this.persist({ version: 1, id: record.id, currentRevision: 1, revisions: [record] }, assertOwned)
       return clone(record)
     })
   }
 
   async update(id: string, expectedRevision: number, source: string | unknown): Promise<WorkflowDefinitionRecord> {
-    return this.write(async () => {
+    return this.write(async (assertOwned) => {
       const stored = await this.requireCurrent(id)
       if (stored.currentRevision !== expectedRevision) {
         throw new WorkflowDefinitionStoreError(`Workflow definition revision is ${stored.currentRevision}`, 409)
@@ -87,20 +87,20 @@ export class WorkflowDefinitionStore {
       assertHistoryCapacity(stored.revisions, record)
       stored.currentRevision = record.revision
       stored.revisions.push(record)
-      await this.persist(stored)
+      await this.persist(stored, assertOwned)
       return clone(record)
     })
   }
 
   async delete(id: string, expectedRevision: number): Promise<boolean> {
-    return this.write(async () => {
+    return this.write(async (assertOwned) => {
       const stored = await this.readFile(id)
       if (!stored || stored.deletedAt) return false
       if (stored.currentRevision !== expectedRevision) {
         throw new WorkflowDefinitionStoreError(`Workflow definition revision is ${stored.currentRevision}`, 409)
       }
       stored.deletedAt = new Date().toISOString()
-      await this.persist(stored)
+      await this.persist(stored, assertOwned)
       return true
     })
   }
@@ -187,7 +187,7 @@ export class WorkflowDefinitionStore {
     }
   }
 
-  private async write<T>(operation: () => Promise<T>): Promise<T> {
+  private async write<T>(operation: (assertOwned: () => Promise<void>) => Promise<T>): Promise<T> {
     const pending = this.queue.catch(() => undefined)
       .then(() => withFilesystemLock(path.join(this.directory, ".write.lock"), operation))
       .then((result) => {
@@ -250,7 +250,7 @@ export class WorkflowDefinitionStore {
     }
   }
 
-  private async persist(stored: StoredDefinition): Promise<void> {
+  private async persist(stored: StoredDefinition, assertOwned: () => Promise<void>): Promise<void> {
     await ensureDurableDirectory(this.directory)
     const destination = this.definitionPath(stored.id)
     const temporary = `${destination}.${randomUUID()}.tmp`
@@ -262,6 +262,7 @@ export class WorkflowDefinitionStore {
       } finally {
         await handle.close()
       }
+      await assertOwned()
       await fs.rename(temporary, destination)
       await syncDirectory(this.directory)
     } catch (error) {

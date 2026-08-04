@@ -165,6 +165,29 @@ test("a surviving older secondary keeps later processes secondary", async (t) =>
   assert.equal(third.role.isPrimary, false)
 })
 
+test("a retained secondary retries after the local primary exits", (t) => {
+  const directory = temp(t)
+  const primaryLockPath = join(directory, "client-state.primary.lock")
+  const registrationLockPath = join(directory, "client-state.registration.lock")
+  const paths = { primaryLockPath, registrationLockPath }
+  const identities = new Map([[31, "first-start"], [32, "second-start"], [33, "third-start"]])
+  const alive = (pid: number) => identities.has(pid)
+  const identity = (pid: number) => identities.get(pid)
+  const first = { pid: 31, runToken: "first", processStartIdentity: "first-start" }
+  const second = { pid: 32, runToken: "second", processStartIdentity: "second-start" }
+  const third = { pid: 33, runToken: "third", processStartIdentity: "third-start" }
+
+  assert.equal(electClientStateProcess(directory, first, paths, () => {}, alive, 0, () => {}, identity), true)
+  assert.equal(electClientStateProcess(directory, second, paths, () => {}, alive, 0, () => {}, identity), false)
+  assert.equal(electClientStateProcess(directory, third, paths, () => {}, alive, 0, () => {}, identity), false)
+  removeProcessOwnerLockIfOwned(primaryLockPath, first)
+  removeRunningMarkerIfOwned(getRunningMarkerPath(directory, first), first)
+  identities.delete(first.pid)
+
+  assert.equal(electClientStateProcess(directory, second, paths, () => {}, alive, 0, () => {}, identity, true), true)
+  assert.equal(electClientStateProcess(directory, third, paths, () => {}, alive, 0, () => {}, identity, true), false)
+})
+
 test("lock recovery handles PID reuse, malformed files, and verified live owners", async (t) => {
   const cases = [
     { name: "same PID old token", owner: { pid: process.pid, runToken: "new" }, file: { pid: process.pid, runToken: "old" }, lock: "primary", alive: () => true, expected: true },

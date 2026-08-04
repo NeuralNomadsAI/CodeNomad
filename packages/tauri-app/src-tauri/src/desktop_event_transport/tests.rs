@@ -64,8 +64,8 @@ fn fresh_stats() -> DesktopEventTransportStats {
 #[test]
 fn reconnect_requests_and_parses_a_missed_event() {
     let (url, requests, server) = spawn_sse_server(vec![
-        "id: 1\ndata: {\"type\":\"workspace.log\",\"entry\":{\"sequence\":1}}\n\n",
-        "id: 2\ndata: {\"type\":\"workspace.log\",\"entry\":{\"sequence\":2}}\n\n",
+        "id: epoch-a:1\ndata: {\"type\":\"workspace.log\",\"entry\":{\"sequence\":1}}\n\n",
+        "id: epoch-a:2\ndata: {\"type\":\"workspace.log\",\"entry\":{\"sequence\":2}}\n\n",
     ]);
     let client = Client::new();
 
@@ -86,7 +86,7 @@ fn reconnect_requests_and_parses_a_missed_event() {
         .contains("last-event-id:"));
     assert!(second_request
         .to_ascii_lowercase()
-        .contains("last-event-id: 1"));
+        .contains("last-event-id: epoch-a:1"));
     assert!(second_messages.iter().any(|message| matches!(
         message,
         ReaderMessage::Event { event, .. }
@@ -98,8 +98,8 @@ fn reconnect_requests_and_parses_a_missed_event() {
 #[test]
 fn reconnect_parses_overflow_reset_and_advances_cursor() {
     let (url, requests, server) = spawn_sse_server(vec![
-        "event: codenomad.replay.cursor\nid: 1\ndata: {}\n\n",
-        "event: codenomad.replay.reset\nid: 5\ndata: {\"requestedId\":1,\"earliestAvailableId\":4,\"latestEventId\":5}\n\n",
+        "event: codenomad.replay.cursor\nid: epoch-a:1\ndata: {}\n\n",
+        "event: codenomad.replay.reset\nid: epoch-a:5\ndata: {}\n\n",
     ]);
     let client = Client::new();
 
@@ -116,13 +116,27 @@ fn reconnect_parses_overflow_reset_and_advances_cursor() {
     let second_request = requests.recv().expect("second request should be captured");
     assert!(second_request
         .to_ascii_lowercase()
-        .contains("last-event-id: 1"));
-    assert_eq!(cursor(&second_messages).as_deref(), Some("5"));
-    assert!(second_messages.iter().any(|message| matches!(
-        message,
-        ReaderMessage::ReplayReset { details, .. }
-            if details["earliestAvailableId"].as_u64() == Some(4)
-    )));
+        .contains("last-event-id: epoch-a:1"));
+    assert_eq!(cursor(&second_messages).as_deref(), Some("epoch-a:5"));
+    assert!(second_messages
+        .iter()
+        .any(|message| matches!(message, ReaderMessage::ReplayReset { .. })));
+    server.join().expect("test server should stop");
+}
+
+#[test]
+fn truncated_and_invalid_frames_do_not_advance_the_cursor() {
+    let (url, _requests, server) = spawn_sse_server(vec![
+        "id: epoch-a:1\ndata: {\"type\":\"workspace.log\"}",
+        "id: epoch-a:2\ndata: not-json\n\n",
+    ]);
+    let client = Client::new();
+
+    for _ in 0..2 {
+        let response = client.get(&url).send().expect("stream should open");
+        assert_eq!(cursor(&read_test_stream(response)), None);
+    }
+
     server.join().expect("test server should stop");
 }
 

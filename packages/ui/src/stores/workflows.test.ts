@@ -299,10 +299,18 @@ test("workflow refresh runs the newest queued revision after an earlier refresh 
 
 test("compact workflow revisions disable stale gate and recovery confirmations until hydration", () => {
   const store = readFileSync(new URL("./workflows.ts", import.meta.url), "utf8")
+  const clear = store.slice(store.indexOf("function clearWorkflowRunHydrating"), store.indexOf("function isWorkflowRunHydrating"))
+  assert.match(clear, /revision === undefined/)
+  assert.match(clear, /current\.get\(key\) !== revision/)
+
+  const refresh = store.slice(store.indexOf("const requestWorkflowRunRefresh"), store.indexOf("function refreshWorkflowRun"))
+  assert.match(refresh, /clearWorkflowRunHydrating\(instanceId, runId, revision\)/)
+
   const update = store.slice(store.indexOf("sseManager.onWorkflowRunUpdated"), store.indexOf("serverEvents.onOpen"))
   assert.match(update, /markWorkflowRunHydrating\(instanceId, runId, event\.properties\.revision\)/)
   assert.match(update, /upsertWorkflowRun\(instanceId, updated, Boolean\(run\)\)/)
   assert.match(update, /pendingGate: undefined/)
+  assert.match(update, /pendingReviewStepId: undefined/)
 
   const load = store.slice(store.indexOf("async function loadWorkflowRuns"), store.indexOf("async function createWorkflowRun"))
   assert.match(load, /markWorkflowRunHydrated\(instanceId, run\)/)

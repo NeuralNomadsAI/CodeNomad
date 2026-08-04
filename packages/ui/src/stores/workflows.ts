@@ -82,6 +82,17 @@ function markWorkflowRunHydrated(instanceId: string, run: WorkflowRun): void {
   })
 }
 
+function clearWorkflowRunHydrating(instanceId: string, runId: string, revision?: number): void {
+  if (revision === undefined) return
+  const key = workflowRunKey(instanceId, runId)
+  setWorkflowRunHydrationRevisions((current) => {
+    if (current.get(key) !== revision) return current
+    const next = new Map(current)
+    next.delete(key)
+    return next
+  })
+}
+
 function isWorkflowRunHydrating(instanceId: string, runId: string): boolean {
   return workflowRunHydrationRevisions().has(workflowRunKey(instanceId, runId))
 }
@@ -338,7 +349,9 @@ const requestWorkflowRunRefresh = createWorkflowRefreshCoordinator(async (instan
       run = await serverApi.getWorkflowRun(instanceId, runId)
     }
     upsertWorkflowRun(instanceId, run)
-  } catch {}
+  } catch {
+    clearWorkflowRunHydrating(instanceId, runId, revision)
+  }
 })
 
 function refreshWorkflowRun(instanceId: string, runId: string, revision?: number): void {
@@ -359,7 +372,9 @@ sseManager.onWorkflowRunUpdated = (instanceId, event) => {
   const updated = run ?? (existing && status ? {
     ...existing,
     status,
-    ...(["running", "pausing"].includes(status) ? { pendingGate: undefined } : {}),
+    ...(shouldRefresh || ["running", "pausing"].includes(status)
+      ? { pendingGate: undefined, pendingReviewStepId: undefined }
+      : {}),
     ...(event.properties?.revision === undefined ? {} : { revision: event.properties.revision }),
     ...(event.properties?.updatedAt ? { updatedAt: event.properties.updatedAt } : {}),
   } : undefined)

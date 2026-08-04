@@ -5,6 +5,10 @@ import {
   type DesktopEventTransportStartOptions,
 } from "./event-transport-contract"
 import { readUseTauriNativeEventTransportPreference } from "./desktop-event-transport-preference"
+import {
+  acquireEventTransportCursorAuthority,
+  type EventTransportCursorAuthority,
+} from "./event-transport-cursor"
 import { getLogger } from "./logger"
 import { runtimeEnv } from "./runtime-env"
 import { connectTauriWorkspaceEvents } from "./native/desktop-events"
@@ -28,6 +32,7 @@ export interface WorkspaceEventConnection {
 
 async function connectBrowserWorkspaceEvents(
   callbacks: WorkspaceEventTransportCallbacks,
+  cursor: EventTransportCursorAuthority,
 ): Promise<WorkspaceEventConnection> {
   const notifyDisconnected = () => {
     callbacks.onStatus?.("disconnected")
@@ -42,6 +47,8 @@ async function connectBrowserWorkspaceEvents(
     },
     onPing: callbacks.onPing,
     onReplayReset: callbacks.onReplayReset,
+    getLastEventId: cursor.read,
+    onEventId: cursor.commit,
   })
   callbacks.onStatus?.("connecting")
   return {
@@ -55,6 +62,7 @@ export async function connectWorkspaceEvents(
   callbacks: WorkspaceEventTransportCallbacks,
   options?: DesktopEventTransportStartOptions,
 ): Promise<WorkspaceEventConnection> {
+  const cursor = acquireEventTransportCursorAuthority()
   const nativeDesktopTransportEnabled = readUseTauriNativeEventTransportPreference()
 
   if (
@@ -66,6 +74,8 @@ export async function connectWorkspaceEvents(
       const conn = await connectTauriWorkspaceEvents(
         callbacks,
         resolveDesktopEventTransportStartOptions(options),
+        undefined,
+        cursor,
       )
       log.info("Event transport: rust-native (desktop_event_transport)")
       return conn
@@ -79,7 +89,7 @@ export async function connectWorkspaceEvents(
   }
 
   log.info(`Event transport: browser-eventsource (host=${runtimeEnv.host})`)
-  return connectBrowserWorkspaceEvents(callbacks)
+  return connectBrowserWorkspaceEvents(callbacks, cursor)
 }
 
 export type {

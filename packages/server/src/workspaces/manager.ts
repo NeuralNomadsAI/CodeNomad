@@ -97,6 +97,7 @@ interface WorkspaceState {
   published: boolean
   stoppedPublished: boolean
   cleanupBlocked?: boolean
+  leaseLost?: boolean
   processLease?: WorkspaceProcessLease
 }
 export class WorkspaceLaunchCancelledError extends Error {
@@ -194,15 +195,17 @@ export class WorkspaceManager {
 
   getInstancePort(id: string): number | undefined {
     const record = this.workspaces.get(id)
-    return record?.[WORKSPACE_STATE].published ? record.port : undefined
+    return record?.[WORKSPACE_STATE].published && !record[WORKSPACE_STATE].leaseLost ? record.port : undefined
   }
 
   getInstanceAuthorizationHeader(id: string): string | undefined {
-    return this.workspaces.get(id)?.[WORKSPACE_STATE].published ? this.opencodeAuth.get(id)?.authorization : undefined
+    const record = this.workspaces.get(id)
+    return record?.[WORKSPACE_STATE].published && !record[WORKSPACE_STATE].leaseLost ? this.opencodeAuth.get(id)?.authorization : undefined
   }
 
   getPluginCallbackAuthorizationHeader(id: string): string | undefined {
-    return this.workspaces.get(id)?.[WORKSPACE_STATE].published ? this.pluginCallbackAuth.get(id) : undefined
+    const record = this.workspaces.get(id)
+    return record?.[WORKSPACE_STATE].published && !record[WORKSPACE_STATE].leaseLost ? this.pluginCallbackAuth.get(id) : undefined
   }
 
   setDeletionGuard(guard: WorkspaceDeletionGuard): void {
@@ -499,6 +502,7 @@ export class WorkspaceManager {
     })
 
     this.workspaces.set(id, record)
+    processLease?.onLost(() => this.handleProcessLeaseLost(id, record))
     if (options.requestId && this.cancelledCreationRequests.has(options.requestId)) {
       record[WORKSPACE_STATE].abortController.abort(new WorkspaceLaunchCancelledError(id))
     }
@@ -589,7 +593,7 @@ export class WorkspaceManager {
       }
 
       const logLevel = (serverConfig as any)?.logLevel
-      const { pid, port, exitPromise, getLastOutput } = await this.runtime.launch({
+      const { pid, port, exitPromise, getLastOutput, processIdentity } = await this.runtime.launch({
         workspaceId: id,
         folder: workspacePath,
         binaryPath: resolvedBinaryPath,
@@ -600,6 +604,7 @@ export class WorkspaceManager {
       })
       record.pid = pid
       record.port = port
+      if (processIdentity) await state.processLease?.setProcessIdentity(processIdentity)
 
       this.throwIfCancelled(record)
       state.published = true
@@ -809,14 +814,30 @@ export class WorkspaceManager {
 
   private async removeRecord(id: string, record: WorkspaceRecord, publishStopped: boolean): Promise<void> {
     if (this.workspaces.get(id) !== record) return
+    const processLease = record[WORKSPACE_STATE].processLease
+    await processLease?.release()
+    record[WORKSPACE_STATE].processLease = undefined
     this.workspaces.delete(id)
     this.opencodeAuth.delete(id)
     this.pluginCallbackAuth.delete(id)
     clearWorkspaceSearchCache(record.path)
     if (publishStopped) this.publishStopped(record, "deleted")
-    const processLease = record[WORKSPACE_STATE].processLease
-    record[WORKSPACE_STATE].processLease = undefined
-    await processLease?.release()
+  }
+
+  private handleProcessLeaseLost(id: string, record: WorkspaceRecord): void {
+    if (this.workspaces.get(id) !== record) return
+    const state = record[WORKSPACE_STATE]
+    if (state.leaseLost) return
+    state.leaseLost = true
+    state.cleanupBlocked = true
+    record.status = "error"
+    record.error = "Workspace process lease was lost; the workspace is being stopped"
+    record.updatedAt = new Date().toISOString()
+    state.abortController.abort(new WorkspacePathOwnedError(record.path))
+    if (state.published) this.options.eventBus.publish({ type: "workspace.error", workspace: record })
+    void this.runtime.stop(id)
+      .then(() => this.removeRecord(id, record, state.published))
+      .catch((error) => this.options.logger.error({ workspaceId: id, err: error }, "Workspace lease-loss cleanup remains retryable"))
   }
 
   private publishStopped(record: WorkspaceRecord, reason: "deleted" | "stopped" = "stopped"): void {

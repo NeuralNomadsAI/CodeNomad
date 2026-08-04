@@ -101,6 +101,7 @@ pub struct ClientState {
     write_lock: Mutex<()>,
     primary_loaded: std::sync::atomic::AtomicBool,
     renderer_reload_pending: std::sync::atomic::AtomicBool,
+    renderer_ownership_loss_pending: std::sync::atomic::AtomicBool,
     renderer_reconciliation_pending: std::sync::atomic::AtomicBool,
     save_generation: AtomicU64,
     renderer_access: access::RendererAccess,
@@ -203,6 +204,7 @@ impl ClientState {
             write_lock: Mutex::new(()),
             primary_loaded: std::sync::atomic::AtomicBool::new(primary_loaded),
             renderer_reload_pending: std::sync::atomic::AtomicBool::new(false),
+            renderer_ownership_loss_pending: std::sync::atomic::AtomicBool::new(false),
             renderer_reconciliation_pending: std::sync::atomic::AtomicBool::new(false),
             save_generation: AtomicU64::new(0),
             renderer_access: access::RendererAccess::default(),
@@ -274,7 +276,7 @@ impl ClientState {
     fn is_primary(&self) -> bool {
         let primary = self.process.is_primary();
         if !primary {
-            self.primary_loaded.store(false, Ordering::SeqCst);
+            self.record_ownership_loss();
         }
         primary
     }
@@ -284,7 +286,7 @@ impl ClientState {
         _write: &std::sync::MutexGuard<'_, ()>,
     ) -> Result<bool, String> {
         if !self.process.refresh_primary() {
-            self.primary_loaded.store(false, Ordering::SeqCst);
+            self.record_ownership_loss();
             return Ok(false);
         }
         if !self.primary_loaded.load(Ordering::SeqCst) {
@@ -330,14 +332,24 @@ impl ClientState {
         self.renderer_reload_pending.swap(false, Ordering::SeqCst)
     }
 
+    fn take_renderer_ownership_loss(&self) -> bool {
+        self.renderer_ownership_loss_pending
+            .swap(false, Ordering::SeqCst)
+    }
+
+    fn record_ownership_loss(&self) {
+        if self.primary_loaded.swap(false, Ordering::SeqCst) {
+            self.renderer_ownership_loss_pending
+                .store(true, Ordering::SeqCst);
+        }
+    }
+
     fn claim_renderer_access(&self, access_token: &str, renderer_url: &Url) -> Result<(), String> {
         self.renderer_access.claim(access_token, renderer_url)
     }
 
-    fn begin_renderer_document(&self, renderer_url: &Url) -> Result<(), String> {
-        self.renderer_access
-            .begin_navigation(Some(renderer_url))
-            .map(drop)
+    fn begin_renderer_document(&self, trusted_url: Option<&Url>) -> Result<(), String> {
+        self.renderer_access.begin_document(trusted_url)
     }
 
     fn load(&self) -> Result<ClientStateLoadResult, String> {
@@ -604,15 +616,18 @@ pub fn start_primary_watcher(app: &AppHandle) {
             return;
         }
         match client_state.refresh_primary_for_watcher() {
-            Ok(true) => {
-                window::reconcile_main_window(&app);
-                if client_state.take_renderer_reload() {
+            Ok(_) => {
+                let lost = client_state.take_renderer_ownership_loss();
+                let reload = client_state.take_renderer_reload();
+                if reload {
+                    window::reconcile_main_window(&app);
+                }
+                if lost || reload {
                     if let Some(window) = app.get_webview_window("main") {
                         let _ = window.emit(CLIENT_STATE_OWNERSHIP_CHANGED_EVENT, ());
                     }
                 }
             }
-            Ok(false) => {}
             Err(err) => eprintln!("[client-state] ownership poll failed: {err}"),
         }
     });
@@ -623,7 +638,14 @@ pub fn begin_main_window_document(app: &AppHandle, label: &str, url: &Url) {
         return;
     }
     if let Some(state) = app.try_state::<ClientState>() {
-        if let Err(err) = state.begin_renderer_document(url) {
+        let trusted = app
+            .try_state::<crate::AppState>()
+            .map(|app_state| {
+                let status = app_state.manager.status();
+                commands::is_allowed_client_state_origin(url, status.url.as_deref())
+            })
+            .unwrap_or(false);
+        if let Err(err) = state.begin_renderer_document(trusted.then_some(url)) {
             eprintln!("[client-state] failed to rotate renderer access for page load: {err}");
         }
     }

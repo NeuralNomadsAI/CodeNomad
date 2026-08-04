@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { describe, it } from "node:test"
@@ -549,6 +549,36 @@ describe("workspace manager lifecycle", () => {
       second.readiness.resolve(undefined)
       await replacement
       await second.manager.shutdown()
+    } finally {
+      await rm(leaseDir, { recursive: true, force: true })
+    }
+  })
+
+  it("fences and stops a workspace when its process lease is replaced", async () => {
+    const leaseDir = await mkdtemp(path.join(os.tmpdir(), "codenomad-workspace-lease-loss-"))
+    try {
+      const harness = createHarness({ workspaceLeaseDir: leaseDir })
+      const creation = harness.manager.create(process.cwd())
+      const workspaceId = await harness.runtime.launchCalled.promise
+      harness.runtime.resolveLaunch()
+      harness.readiness.resolve(undefined)
+      await creation
+      const registry = (harness.manager as any).processLeases
+      const [key, held] = [...registry.held.entries()][0]
+      await rename(path.join(held.directory, "owner"), path.join(held.directory, "retired.test-owner"))
+      await mkdir(path.join(held.directory, "owner"))
+      await writeFile(path.join(held.directory, "owner", "owner.json"), JSON.stringify({
+        version: 1, managerToken: "successor", leaseToken: "successor-lease", pid: 999,
+        hostname: os.hostname(), workspacePath: process.cwd(),
+      }), "utf8")
+
+      await registry.heartbeat(key, held.owner)
+      for (let attempt = 0; attempt < 50 && harness.manager.get(workspaceId); attempt += 1) {
+        await new Promise<void>((resolve) => setImmediate(resolve))
+      }
+      assert.equal(harness.manager.getInstancePort(workspaceId), undefined)
+      assert.equal(harness.runtime.active.has(workspaceId), false)
+      assert.equal(harness.manager.get(workspaceId), undefined)
     } finally {
       await rm(leaseDir, { recursive: true, force: true })
     }

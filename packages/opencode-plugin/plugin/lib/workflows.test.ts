@@ -155,13 +155,71 @@ test("saved definition tools read and start the current revision without claimin
     "/workflow-definitions/deploy_flow/start",
   ])
   assert.equal(calls[2]?.init?.method, "POST")
-  assert.equal(calls[2]?.init?.signal, abort)
+  assert.equal(calls[2]?.init?.signal, undefined)
   assert.deepEqual(JSON.parse(String(calls[2]?.init?.body)), {
     objective: "Ship it",
     inputs: { environment: "production" },
   })
   assert.match(started, /current saved definition revision/)
   assert.doesNotMatch(String(calls[2]?.init?.body), /definitionRevision|initiatorSessionId/)
+})
+
+test("saved definition starts finish acceptance and cancel when aborted in flight", async () => {
+  let accept!: (value: typeof run) => void
+  const calls: Array<{ path: string; init?: RequestInit }> = []
+  const requester = {
+    async requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+      calls.push({ path, init })
+      if (path.endsWith("/start")) return await new Promise<T>((resolve) => { accept = resolve as typeof accept })
+      return { ...run, status: "cancelled" } as T
+    },
+  }
+  const tools = createWorkflowTools({ instanceId: "workspace", baseUrl: "http://localhost", callbackToken: "callback" }, requester)
+  const controller = new AbortController()
+  const started = tools.start_codenomad_workflow_definition.execute({ definition_id: "deploy" }, { abort: controller.signal } as never)
+  controller.abort()
+  accept(run)
+
+  await assert.rejects(started, { name: "AbortError" })
+  assert.deepEqual(calls.map(({ path }) => path), [
+    "/workflow-definitions/deploy/start",
+    "/workflow-runs/run/cancel",
+  ])
+  assert.equal(calls[0]?.init?.signal, undefined)
+  assert.notEqual(calls[1]?.init?.signal, controller.signal)
+  assert.equal(calls[1]?.init?.signal instanceof AbortSignal, true)
+})
+
+test("saved definition starts expose the run ID when compensating cancellation fails", async () => {
+  const requester = {
+    async requestJson<T>(path: string): Promise<T> {
+      if (path.endsWith("/start")) {
+        await new Promise((resolve) => setImmediate(resolve))
+        return run as T
+      }
+      throw new Error("cancel unavailable")
+    },
+  }
+  const tools = createWorkflowTools({ instanceId: "workspace", baseUrl: "http://localhost", callbackToken: "callback" }, requester)
+  const controller = new AbortController()
+  const started = tools.start_codenomad_workflow_definition.execute({ definition_id: "deploy" }, { abort: controller.signal } as never)
+  controller.abort()
+
+  await assert.rejects(started, /Workflow run started but cancellation failed: cancel unavailable/)
+})
+
+test("pre-aborted saved definition starts do not reach the server", async () => {
+  let calls = 0
+  const requester = { async requestJson<T>(): Promise<T> { calls += 1; return run as T } }
+  const tools = createWorkflowTools({ instanceId: "workspace", baseUrl: "http://localhost", callbackToken: "callback" }, requester)
+  const controller = new AbortController()
+  controller.abort()
+
+  await assert.rejects(
+    tools.start_codenomad_workflow_definition.execute({ definition_id: "deploy" }, { abort: controller.signal } as never),
+    { name: "AbortError" },
+  )
+  assert.equal(calls, 0)
 })
 
 test("workflow cancellation forwards the tool abort signal", async () => {

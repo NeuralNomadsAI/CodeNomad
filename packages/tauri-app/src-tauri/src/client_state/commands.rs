@@ -45,15 +45,11 @@ fn main_window_url(window: &WebviewWindow) -> Result<Url, String> {
         .map_err(|err| format!("failed to inspect current renderer URL: {err}"))
 }
 
-fn validate_claim_origin(
+pub(super) fn validate_claim_origin(
     current_url: &Url,
-    app_state: &AppState,
-    state: &ClientState,
+    managed_cli_url: Option<&str>,
 ) -> Result<(), String> {
-    let status = app_state.manager.status();
-    if state.renderer_access.allows_claim_origin(current_url)
-        || is_allowed_client_state_origin(current_url, status.url.as_deref())
-    {
+    if is_allowed_client_state_origin(current_url, managed_cli_url) {
         Ok(())
     } else {
         Err("Client state commands are not available to the current renderer origin".to_string())
@@ -69,9 +65,13 @@ fn validate_access(
     state.renderer_access.validate(access_token, &current_url)
 }
 
-fn notify_renderer_of_promotion(window: &WebviewWindow, state: &ClientState) {
-    if state.take_renderer_reload() {
+fn notify_renderer_of_ownership_change(window: &WebviewWindow, state: &ClientState) {
+    let promoted = state.take_renderer_reload();
+    let lost = state.take_renderer_ownership_loss();
+    if promoted {
         super::window::reconcile_main_window(&window.app_handle());
+    }
+    if promoted || lost {
         let _ = window.emit(CLIENT_STATE_OWNERSHIP_CHANGED_EVENT, ());
     }
 }
@@ -84,7 +84,8 @@ pub fn client_state_claim_access(
     access_token: String,
 ) -> Result<(), String> {
     let current_url = main_window_url(&window)?;
-    validate_claim_origin(&current_url, &app_state, &state)?;
+    let status = app_state.manager.status();
+    validate_claim_origin(&current_url, status.url.as_deref())?;
     state.claim_renderer_access(&access_token, &current_url)
 }
 
@@ -96,7 +97,7 @@ pub fn client_state_load(
 ) -> Result<ClientStateLoadResult, String> {
     validate_access(&window, &state, &access_token)?;
     let result = state.load();
-    notify_renderer_of_promotion(&window, &state);
+    notify_renderer_of_ownership_change(&window, &state);
     result
 }
 
@@ -111,7 +112,7 @@ pub fn client_state_save(
     let result = state.save_snapshot_guarded(snapshot, || {
         state.renderer_access.is_generation_current(generation)
     });
-    notify_renderer_of_promotion(&window, &state);
+    notify_renderer_of_ownership_change(&window, &state);
     result
 }
 
@@ -126,7 +127,7 @@ pub fn client_state_set_restore_enabled(
     let result = state.set_restore_enabled_guarded(enabled, || {
         state.renderer_access.is_generation_current(generation)
     });
-    notify_renderer_of_promotion(&window, &state);
+    notify_renderer_of_ownership_change(&window, &state);
     result
 }
 
@@ -138,7 +139,7 @@ pub fn client_state_clear(
 ) -> Result<bool, String> {
     let generation = validate_access(&window, &state, &access_token)?;
     let result = state.clear_guarded(|| state.renderer_access.is_generation_current(generation));
-    notify_renderer_of_promotion(&window, &state);
+    notify_renderer_of_ownership_change(&window, &state);
     result
 }
 

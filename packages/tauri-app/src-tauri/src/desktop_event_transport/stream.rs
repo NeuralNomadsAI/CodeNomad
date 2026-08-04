@@ -187,7 +187,6 @@ pub(super) fn read_sse(
         line.clear();
         match reader.read_line(&mut line) {
             Ok(0) => {
-                let _ = flush_sse_frame(&tx, &event_name, &event_id, &data_lines);
                 let _ = tx.send(ReaderMessage::End(Some("stream closed".to_string())));
                 return;
             }
@@ -207,7 +206,6 @@ pub(super) fn read_sse(
                 }
             }
             Err(error) => {
-                let _ = flush_sse_frame(&tx, &event_name, &event_id, &data_lines);
                 let _ = tx.send(ReaderMessage::End(Some(error.to_string())));
                 return;
             }
@@ -256,9 +254,6 @@ fn flush_sse_frame(
     lines: &[String],
 ) -> Result<(), ()> {
     let Some(payload) = parse_sse_payload(lines) else {
-        if let Some(id) = event_id {
-            tx.send(ReaderMessage::Cursor(id.clone())).map_err(|_| ())?;
-        }
         return Ok(());
     };
 
@@ -287,9 +282,6 @@ fn flush_sse_frame(
         })
         .map_err(|_| ())
     } else {
-        if let Some(id) = event_id {
-            tx.send(ReaderMessage::Cursor(id.clone())).map_err(|_| ())?;
-        }
         Ok(())
     }
 }

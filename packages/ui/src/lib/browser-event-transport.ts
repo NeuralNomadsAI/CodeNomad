@@ -1,12 +1,14 @@
 import type { WorkspaceEventPayload } from "../../../server/src/api-types"
 
 export interface BrowserEventStreamCallbacks {
-  onEvent: (event: WorkspaceEventPayload) => void
+  onEvent: (event: WorkspaceEventPayload) => boolean | void
   onError?: () => void
   onOpen?: () => void
-  onPing?: (payload: { ts?: number }) => void
-  onReplayReset?: () => void
+  onPing?: (payload: { ts?: number }) => boolean | void
+  onReplayReset?: () => boolean | void
   onParseError?: (error: unknown) => void
+  getLastEventId?: () => string | undefined
+  onEventId?: (id: string) => void
 }
 
 export interface BrowserEventStreamConnection {
@@ -32,7 +34,8 @@ export function createBrowserEventConnector(fetchImpl: typeof fetch = fetch) {
     }
 
     const headers = new Headers({ Accept: "text/event-stream" })
-    if (lastEventId !== undefined) headers.set("Last-Event-ID", lastEventId)
+    const requestCursor = callbacks.getLastEventId?.() ?? lastEventId
+    if (requestCursor !== undefined) headers.set("Last-Event-ID", requestCursor)
 
     const finished = (async () => {
       try {
@@ -47,20 +50,22 @@ export function createBrowserEventConnector(fetchImpl: typeof fetch = fetch) {
         callbacks.onOpen?.()
         await readEventStream(response.body, {
           onEvent: (event) => {
-            if (isCurrent()) callbacks.onEvent(event)
+            return isCurrent() ? callbacks.onEvent(event) : false
           },
           onError: callbacks.onError,
           onPing: (payload) => {
-            if (isCurrent()) callbacks.onPing?.(payload)
+            return isCurrent() ? callbacks.onPing?.(payload) : false
           },
           onReplayReset: () => {
-            if (isCurrent()) callbacks.onReplayReset?.()
+            return isCurrent() ? callbacks.onReplayReset?.() : false
           },
           onParseError: (error) => {
             if (isCurrent()) callbacks.onParseError?.(error)
           },
           onEventId: (id) => {
-            if (isCurrent()) lastEventId = id || undefined
+            if (!isCurrent() || !id) return
+            lastEventId = id
+            callbacks.onEventId?.(id)
           },
         })
         raiseError()
@@ -95,13 +100,16 @@ async function readEventStream(stream: ReadableStream<Uint8Array>, callbacks: Ev
   let dataLines: string[] = []
 
   const dispatch = () => {
-    if (eventId !== undefined) callbacks.onEventId(eventId)
     if (dataLines.length === 0) return
     try {
       const payload = JSON.parse(dataLines.join("\n")) as WorkspaceEventPayload & { ts?: number }
-      if (eventName === "codenomad.client.ping") callbacks.onPing?.(payload)
-      else if (eventName === "codenomad.replay.reset") callbacks.onReplayReset?.()
-      else if (!eventName || eventName === "message") callbacks.onEvent(payload)
+      let accepted: boolean | void
+      if (eventName === "codenomad.client.ping") accepted = callbacks.onPing?.(payload)
+      else if (eventName === "codenomad.replay.cursor") accepted = true
+      else if (eventName === "codenomad.replay.reset") accepted = callbacks.onReplayReset?.()
+      else if (!eventName || eventName === "message") accepted = callbacks.onEvent(payload)
+      else return
+      if (accepted !== false && eventId !== undefined) callbacks.onEventId(eventId)
     } catch (error) {
       callbacks.onParseError?.(error)
     }
@@ -137,6 +145,4 @@ async function readEventStream(stream: ReadableStream<Uint8Array>, callbacks: Ev
     }
     if (done) break
   }
-  if (buffered) processLine(buffered)
-  processLine("")
 }

@@ -28,7 +28,7 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get("/api/events", (request, reply) => {
     const clientId = ++nextClientId
     const connection = ConnectionQuerySchema.parse(request.query ?? {})
-    const lastEventId = parseLastEventId(request.headers["last-event-id"])
+    const lastEventCursor = readLastEventCursor(request.headers["last-event-id"])
     deps.logger.debug({ clientId }, "SSE client connected")
 
     reply.header("Content-Type", "text/event-stream")
@@ -44,6 +44,7 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
     let backpressureTimeout: ReturnType<typeof setTimeout> | undefined
     let drainListener: (() => void) | undefined
     let unsubscribe: () => void = () => undefined
+    let bootstrapFrames: string[] | undefined = lastEventCursor === undefined ? [] : undefined
 
     const close = (discardBufferedData = false) => {
       if (closed) return
@@ -70,22 +71,27 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
       backpressureTimeout = setTimeout(() => close(true), BACKPRESSURE_TIMEOUT_MS)
     }
 
-    const send = (event: WorkspaceEventPayload, id?: number) => {
+    const send = (event: WorkspaceEventPayload, cursor?: string) => {
       deps.logger.debug({ clientId, type: event.type }, "SSE event dispatched")
       if (deps.logger.isLevelEnabled("trace")) {
         deps.logger.trace({ clientId, event }, "SSE event payload")
       }
-      write(`${id === undefined ? "" : `id: ${id}\n`}data: ${JSON.stringify(event)}\n\n`)
+      const frame = `${cursor === undefined ? "" : `id: ${cursor}\n`}data: ${JSON.stringify(event)}\n\n`
+      if (bootstrapFrames) bootstrapFrames.push(frame)
+      else write(frame)
     }
 
     const sendReplayGap = (gap: EventReplayGap) => {
       deps.logger.debug({ clientId, ...gap }, "SSE replay window missed")
-      write(`event: codenomad.replay.reset\nid: ${gap.latestEventId}\ndata: ${JSON.stringify(gap)}\n\n`)
+      write(`event: codenomad.replay.reset\nid: ${gap.latestCursor}\ndata: ${JSON.stringify(gap)}\n\n`)
     }
 
-    unsubscribe = deps.eventBus.onEvent(send, lastEventId, sendReplayGap)
-    if (lastEventId === undefined) {
-      write(`event: codenomad.replay.cursor\nid: ${deps.eventBus.latestEventId}\ndata: {}\n\n`)
+    unsubscribe = deps.eventBus.onEvent(send, lastEventCursor, sendReplayGap)
+    if (bootstrapFrames) {
+      bootstrapFrames.push(`event: codenomad.replay.cursor\nid: ${deps.eventBus.latestCursor}\ndata: {}\n\n`)
+      const bootstrap = bootstrapFrames.join("")
+      bootstrapFrames = undefined
+      write(bootstrap)
     }
     if (closed) {
       unsubscribe()
@@ -128,9 +134,7 @@ function copyReplyHeadersToRaw(reply: FastifyReply): void {
   }
 }
 
-function parseLastEventId(value: string | string[] | undefined): number | undefined {
+function readLastEventCursor(value: string | string[] | undefined): string | undefined {
   const raw = Array.isArray(value) ? value[0] : value
-  if (!raw || !/^\d+$/.test(raw)) return undefined
-  const id = Number(raw)
-  return Number.isSafeInteger(id) ? id : undefined
+  return raw && raw.length <= 512 ? raw : undefined
 }

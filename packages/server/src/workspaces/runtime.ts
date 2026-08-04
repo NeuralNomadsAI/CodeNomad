@@ -169,6 +169,7 @@ export class WorkspaceRuntime {
     port: number
     exitPromise: Promise<ProcessExitInfo>
     getLastOutput: () => string
+    processIdentity?: ProcessIdentity
   }> {
     options.signal?.throwIfAborted()
     this.validateFolder(options.folder)
@@ -413,7 +414,7 @@ export class WorkspaceRuntime {
         managed.cancelLaunch = undefined
         child.removeListener("error", handleError)
         this.logger.info({ workspaceId: options.workspaceId, port: pendingPort }, "Workspace runtime allocated port")
-        resolve({ pid: child.pid!, port: pendingPort, exitPromise, getLastOutput })
+        resolve({ pid: child.pid!, port: pendingPort, exitPromise, getLastOutput, processIdentity: managed.targets?.leader })
       }
 
       const failWslIdentityCapture = (detail: string) => {

@@ -128,6 +128,32 @@ test("a retained secondary promotes after the other host exits and reloads befor
   await secondary.drainAndReleasePrimary()
 })
 
+test("a retained host-local secondary retries election after its primary exits", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "codenomad-local-promotion-"))
+  const userData = join(root, "electron"), election = join(root, "election")
+  mkdirSync(userData)
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const identities = new Map([[8231, "primary-start"], [8232, "secondary-start"]])
+  const crossHostDependencies = { pidAlive: (pid: number) => identities.has(pid), processStartIdentity: (pid: number) => identities.get(pid) }
+  const primary = new ClientStateManager(userData, undefined, {
+    crossHostElectionDirectory: election,
+    crossHostDependencies,
+    processOwner: { pid: 8231, runToken: "primary", processStartIdentity: "primary-start" },
+  })
+  const secondary = new ClientStateManager(userData, undefined, {
+    crossHostElectionDirectory: election,
+    crossHostDependencies,
+    processOwner: { pid: 8232, runToken: "secondary", processStartIdentity: "secondary-start" },
+  })
+  assert.equal(secondary.isPrimary, false)
+
+  await primary.drainAndReleasePrimary()
+  identities.delete(8231)
+  assert.equal(await secondary.refreshPrimary(), true)
+  assert.equal(secondary.isPrimary, true)
+  await secondary.drainAndReleasePrimary()
+})
+
 test("late promotion migrates legacy state when shared state is absent", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "codenomad-late-migration-"))
   const firstDirectory = join(root, "first"), electronDirectory = join(root, "electron"), election = join(root, "shared", "election")
@@ -221,6 +247,32 @@ test("legacy cleanup failure cannot abort startup after shared state replacement
   await manager.drainAndReleasePrimary()
 })
 
+test("legacy migration rechecks a Tauri host that starts after ownership acquisition", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "codenomad-migration-race-"))
+  const electron = join(root, "electron"), tauri = join(root, "tauri"), shared = join(root, "shared"), election = join(shared, "election")
+  mkdirSync(electron, { recursive: true }); mkdirSync(tauri, { recursive: true }); mkdirSync(shared, { recursive: true })
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const sharedState = join(shared, "client-state.json")
+  writeFileSync(sharedState, JSON.stringify({ version: 1, restoreEnabled: true }))
+  const manager = new ClientStateManager(electron, undefined, {
+    crossHostElectionDirectory: election,
+    legacyTauriDataPath: tauri,
+    crossHostDependencies: { pidAlive: (pid) => pid === 9911, processStartIdentity: () => undefined },
+  })
+  rmSync(sharedState)
+  const legacy = join(tauri, "client-state.json")
+  writeFileSync(legacy, JSON.stringify({ version: 1, restoreEnabled: true, snapshot: { legacy: true } }))
+  writeFileSync(join(tauri, "client-state.running.9911.late.lock"), "")
+
+  assert.throws(
+    () => (manager as unknown as { migrateLegacyStateIfNeeded(): void }).migrateLegacyStateIfNeeded(),
+    /ownership changed before atomic replacement/,
+  )
+  assert.equal(existsSync(sharedState), false)
+  assert.equal(existsSync(legacy), true)
+  await manager.drainAndReleasePrimary()
+})
+
 test("ownership loss immediately disables restore reads and mutations", async (t) => {
   const h = harness(t, {
     version: 1,
@@ -229,8 +281,11 @@ test("ownership loss immediately disables restore reads and mutations", async (t
     window: { width: 900, height: 700 },
   })
   const manager = h.create()
+  let notifications = 0
+  manager.onOwnershipChanged(() => { notifications += 1 })
   writeFileSync(join(h.directory, "election", "primary.owner.json", "owner.json"), "malformed")
   assert.equal(manager.isPrimary, false)
+  assert.equal(notifications, 1)
   assert.deepEqual(manager.loadClientState(), { isPrimary: false, restoreEnabled: false, snapshot: null })
   assert.equal(manager.getWindowState(), undefined)
   assert.equal(await manager.saveClientState({ ignored: true }), false)
@@ -325,6 +380,37 @@ test("an old writer cannot replace a successor after PID reuse", async (t) => {
   await assert.rejects(staleWrite, /ownership changed before atomic replacement/)
   await assert.rejects(oldDrain, /ownership changed before atomic replacement/)
   assert.deepEqual(JSON.parse(readFileSync(h.statePath, "utf8")).snapshot, { successor: true })
+})
+
+test("a write admitted before ownership loss cannot replace state after reacquisition", async (t) => {
+  const h = harness(t, { version: 1, restoreEnabled: true, snapshot: { initial: true } })
+  let started!: () => void
+  let release!: () => void
+  const began = new Promise<void>((resolve) => { started = resolve })
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const manager = h.create(async (path, value) => { await writeFile(path, value); started(); await gate })
+  let notifications = 0
+  manager.onOwnershipChanged(() => { notifications += 1 })
+  const staleWrite = manager.saveClientState({ stale: true })
+  await began
+
+  try {
+    rmSync(join(h.directory, "election", "primary.owner.json"), { recursive: true })
+    assert.equal(manager.isPrimary, false)
+    assert.equal(notifications, 1)
+    assert.equal(await manager.refreshPrimary(), true)
+    assert.equal(notifications, 2)
+    assert.equal(await manager.saveClientState({ unreconciled: true }), false)
+    const successor = { version: 1, restoreEnabled: true, snapshot: { successor: true } }
+    writeFileSync(h.statePath, JSON.stringify(successor))
+  } finally {
+    release()
+  }
+
+  await assert.rejects(staleWrite, /ownership changed before atomic replacement/)
+  const successor = { version: 1, restoreEnabled: true, snapshot: { successor: true } }
+  assert.deepEqual(JSON.parse(readFileSync(h.statePath, "utf8")), successor)
+  assert.deepEqual(manager.loadClientState().snapshot, successor.snapshot)
 })
 
 test("future envelopes are preserved until a successful explicit clear", async (t) => {

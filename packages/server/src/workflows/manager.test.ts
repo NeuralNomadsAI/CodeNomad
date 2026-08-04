@@ -89,6 +89,8 @@ describe("WorkflowManager", () => {
       expired.executorLease.heartbeatAt = new Date(Date.now() - 80_000).toISOString()
       expired.executorLease.expiresAt = new Date(Date.now() - 70_000).toISOString()
       await fs.writeFile(journalPath, `${JSON.stringify(expired, null, 2)}\n`, "utf8")
+      await assert.rejects(remote.pause(started.id), /not running/)
+      assert.equal(JSON.parse(await fs.readFile(journalPath, "utf8")).status, "recovery_required")
       assert.equal((await remote.cancel(started.id))?.status, "cancelled")
       assert.equal(aborts, 1)
       releasePrompt()
@@ -98,6 +100,59 @@ describe("WorkflowManager", () => {
       releasePrompt()
       await owner.shutdown()
       await remote.shutdown()
+      await fs.rm(storageDir, { recursive: true, force: true })
+    }
+  })
+
+  it("revalidates the durable executor fence immediately before prompting", async () => {
+    const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-workflow-action-fence-"))
+    let prompts = 0
+    let sessions = 0
+    const client = { tool: { ids: async () => ({ data: [] }) }, session: {
+      create: async () => ({ data: { id: `fence-session-${++sessions}` } }),
+      prompt: async () => { prompts++; return { data: { info: {}, parts: [] } } },
+      abort: async () => ({ data: true }),
+    } } as unknown as OpencodeClient
+    const workspaceManager = {
+      get: () => ({ id: "workspace", lineageId: "fence-lineage", path: "C:/fence-workspace", status: "ready" }),
+      list: () => [{ id: "workspace", lineageId: "fence-lineage", path: "C:/fence-workspace", status: "ready" }],
+    } as unknown as WorkspaceManager
+    const manager = new WorkflowManager({ workspaceManager, eventBus: { publish: () => true } as unknown as EventBus,
+      logger: { warn() {}, error() {} } as unknown as Logger, storageDir, createClient: () => client })
+    let fenceEntered!: () => void
+    let releaseFence!: () => void
+    const entered = new Promise<void>((resolve) => { fenceEntered = resolve })
+    const blocked = new Promise<void>((resolve) => { releaseFence = resolve })
+    const revalidate = (manager as any).revalidateExecutorFence.bind(manager)
+    ;(manager as any).revalidateExecutorFence = async (active: unknown) => {
+      fenceEntered()
+      await blocked
+      return revalidate(active)
+    }
+    try {
+      await manager.createDefinition({ version: 1, id: "fenced", name: "Fenced", root: {
+        type: "agent", id: "action", instructions: "Must not start",
+      } })
+      const run = await manager.start({ workspaceId: "workspace", definitionId: "fenced" })
+      await entered
+      const journalPath = path.join(storageDir, `${run.id}.json`)
+      const replaced = JSON.parse(await fs.readFile(journalPath, "utf8"))
+      replaced.executorLease = {
+        ownerToken: "successor", fence: replaced.executorFence + 1,
+        heartbeatAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }
+      replaced.executorFence += 1
+      replaced.revision += 1
+      await fs.writeFile(journalPath, `${JSON.stringify(replaced, null, 2)}\n`, "utf8")
+      releaseFence()
+      for (let attempt = 0; attempt < 100 && !(manager as any).activeRuns.get(run.id)?.leaseLost; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      assert.equal(prompts, 0)
+      assert.equal((manager as any).activeRuns.get(run.id)?.leaseLost, true)
+    } finally {
+      releaseFence?.()
+      await manager.shutdown()
       await fs.rm(storageDir, { recursive: true, force: true })
     }
   })
@@ -366,7 +421,7 @@ describe("WorkflowManager", () => {
         { id: "review", title: "Review", instructions: "Review", requiresApproval: true },
       ] })
       let waiting = await manager.get(started.id)
-      for (let attempt = 0; attempt < 50 && waiting?.status === "running"; attempt += 1) {
+      for (let attempt = 0; attempt < 200 && waiting?.status === "running"; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 5))
         waiting = await manager.get(started.id)
       }

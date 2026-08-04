@@ -25,6 +25,7 @@ function logSse(message: string, context?: Record<string, unknown>) {
 class ServerEvents {
   private handlers = new Map<WorkspaceEventType | "*", Set<(event: WorkspaceEventPayload) => void>>()
   private openHandlers = new Set<() => void>()
+  private replayResetHandlers = new Set<() => void>()
   private statusHandlers = new Set<(status: WorkspaceEventTransportStatus) => void>()
   private connection: WorkspaceEventConnection | null = null
   private connectGeneration = 0
@@ -72,6 +73,8 @@ class ServerEvents {
         onReplayReset: () => {
           if (generation !== this.connectGeneration) return false
           log.warn("Events replay window missed; requesting authoritative resync")
+          this.replayResetHandlers.forEach((handler) => handler())
+          // Existing onOpen consumers collectively perform the broadest authoritative hydration.
           this.openHandlers.forEach((handler) => handler())
           return true
         },
@@ -177,6 +180,11 @@ class ServerEvents {
   onOpen(handler: () => void): () => void {
     this.openHandlers.add(handler)
     return () => this.openHandlers.delete(handler)
+  }
+
+  onReplayReset(handler: () => void): () => void {
+    this.replayResetHandlers.add(handler)
+    return () => this.replayResetHandlers.delete(handler)
   }
 
   onTransportStatus(handler: (status: WorkspaceEventTransportStatus) => void): () => void {

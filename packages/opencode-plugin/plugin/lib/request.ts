@@ -140,6 +140,8 @@ async function nodeFetch(
       reject(err)
     }
 
+    req.once("error", reject)
+
     if (signal) {
       if (signal.aborted) {
         abort()
@@ -148,8 +150,6 @@ async function nodeFetch(
       signal.addEventListener("abort", abort, { once: true })
       req.once("close", () => signal.removeEventListener("abort", abort))
     }
-
-    req.once("error", reject)
 
     if (body === undefined || body === null) {
       req.end()

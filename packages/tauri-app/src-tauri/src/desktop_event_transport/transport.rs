@@ -309,22 +309,14 @@ fn consume_stream(
                     );
                 }
                 if generation_matches(generation_atomic, generation) {
-                    if app
-                        .emit(
-                            EVENT_REPLAY_RESET_NAME,
-                            WorkspaceEventReplayResetPayload {
-                                generation,
-                                details,
-                                last_event_id: id.clone(),
-                            },
-                        )
-                        .is_ok()
-                        && generation_matches(generation_atomic, generation)
-                    {
-                        if let Some(id) = id {
-                            *last_event_id.lock() = (!id.is_empty()).then_some(id);
-                        }
-                    }
+                    let _ = app.emit(
+                        EVENT_REPLAY_RESET_NAME,
+                        WorkspaceEventReplayResetPayload {
+                            generation,
+                            details,
+                            last_event_id: id,
+                        },
+                    );
                 }
             }
             Ok(ReaderMessage::End(reason)) => {
@@ -423,7 +415,7 @@ fn emit_batch(
     pending: &mut PendingBatch,
     sequence: u64,
     generation_atomic: &Arc<AtomicU64>,
-    last_event_id: &Arc<Mutex<Option<String>>>,
+    _last_event_id: &Arc<Mutex<Option<String>>>,
     stats: &mut DesktopEventTransportStats,
 ) {
     if !generation_matches(generation_atomic, generation) {
@@ -439,27 +431,19 @@ fn emit_batch(
     stats.emitted_batches = stats.emitted_batches.saturating_add(1);
     stats.emitted_events = stats.emitted_events.saturating_add(events.len() as u64);
 
-    if app
-        .emit(
-            EVENT_BATCH_NAME,
-            WorkspaceEventBatchPayload {
-                generation,
-                sequence,
-                emitted_at: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis(),
-                events,
-                last_event_id: event_id.clone(),
-            },
-        )
-        .is_ok()
-        && generation_matches(generation_atomic, generation)
-    {
-        if let Some(id) = event_id {
-            *last_event_id.lock() = (!id.is_empty()).then_some(id);
-        }
-    }
+    let _ = app.emit(
+        EVENT_BATCH_NAME,
+        WorkspaceEventBatchPayload {
+            generation,
+            sequence,
+            emitted_at: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis(),
+            events,
+            last_event_id: event_id,
+        },
+    );
 }
 
 fn emit_status(

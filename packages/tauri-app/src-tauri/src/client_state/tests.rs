@@ -1,4 +1,4 @@
-use super::commands::is_allowed_client_state_origin;
+use super::commands::{is_allowed_client_state_origin, validate_claim_origin};
 use super::process::{PRIMARY_LOCK_FILENAME, RUNNING_MARKER_PREFIX, RUNNING_MARKER_SUFFIX};
 use super::window::{
     clamp_window_bounds, normalize_native_zoom_level, DisplayArea, NativeWindowState, WindowBounds,
@@ -440,6 +440,7 @@ fn late_promotion_reloads_authoritative_state_before_flush_or_mutation() {
 
     fs::remove_dir_all(election.join("primary.owner.json")).unwrap();
     assert!(!state.load().unwrap().is_primary);
+    assert!(state.take_renderer_ownership_loss());
     let reacquired_window = NativeWindowState {
         zoom_factor: 1.5,
         ..window()
@@ -770,6 +771,10 @@ fn renderer_tokens_and_origins_are_isolated_across_navigation() {
     let state = ClientState::initialize_at(directory.path()).unwrap();
     let outgoing = Url::parse("http://127.0.0.1:43123/workspace").unwrap();
     let incoming = Url::parse("http://127.0.0.1:43124/workspace").unwrap();
+    state
+        .renderer_access
+        .begin_document(Some(&outgoing))
+        .unwrap();
     assert!(state.renderer_access.claim("", &outgoing).is_err());
     assert_access_rejected(&state, "missing", &outgoing);
     state.renderer_access.claim("outgoing", &outgoing).unwrap();
@@ -782,6 +787,10 @@ fn renderer_tokens_and_origins_are_isolated_across_navigation() {
     state
         .renderer_access
         .validate("outgoing", &outgoing)
+        .unwrap();
+    state
+        .renderer_access
+        .begin_document(Some(&incoming))
         .unwrap();
     state.renderer_access.claim("incoming", &incoming).unwrap();
     assert_access_rejected(&state, "outgoing", &outgoing);
@@ -818,8 +827,15 @@ fn same_origin_document_reload_rotates_renderer_authority() {
     let directory = tempfile::tempdir().unwrap();
     let state = ClientState::initialize_at(directory.path()).unwrap();
     let url = Url::parse("http://127.0.0.1:43123/workspace").unwrap();
+    state.begin_renderer_document(Some(&url)).unwrap();
     state.claim_renderer_access("old-document", &url).unwrap();
-    state.begin_renderer_document(&url).unwrap();
+    let generation = state
+        .renderer_access
+        .validate("old-document", &url)
+        .unwrap();
+    state.begin_renderer_document(Some(&url)).unwrap();
+    assert_access_rejected(&state, "old-document", &url);
+    assert!(!state.renderer_access.is_generation_current(generation));
     state.claim_renderer_access("new-document", &url).unwrap();
 
     assert_access_rejected(&state, "old-document", &url);
@@ -830,11 +846,30 @@ fn same_origin_document_reload_rotates_renderer_authority() {
 }
 
 #[test]
+fn untrusted_localhost_document_cannot_claim_renderer_authority() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = ClientState::initialize_at(directory.path()).unwrap();
+    let trusted = Url::parse("http://127.0.0.1:43123/workspace").unwrap();
+    let attacker = Url::parse("http://127.0.0.1:43124/attacker").unwrap();
+    state.begin_renderer_document(Some(&trusted)).unwrap();
+    state.claim_renderer_access("trusted", &trusted).unwrap();
+
+    state.begin_renderer_document(None).unwrap();
+    assert!(validate_claim_origin(&attacker, Some(trusted.as_str())).is_err());
+    assert!(state.claim_renderer_access("attacker", &attacker).is_err());
+    assert_access_rejected(&state, "trusted", &trusted);
+}
+
+#[test]
 fn reload_preserves_pending_cross_origin_authority_until_incoming_claim() {
     let directory = tempfile::tempdir().unwrap();
     let state = ClientState::initialize_at(directory.path()).unwrap();
     let outgoing = Url::parse("http://127.0.0.1:43123/workspace").unwrap();
     let incoming = Url::parse("http://127.0.0.1:43124/workspace").unwrap();
+    state
+        .renderer_access
+        .begin_document(Some(&outgoing))
+        .unwrap();
     state.renderer_access.claim("outgoing", &outgoing).unwrap();
 
     state
@@ -843,6 +878,10 @@ fn reload_preserves_pending_cross_origin_authority_until_incoming_claim() {
         .unwrap();
     state.renderer_access.begin_navigation(None).unwrap();
 
+    state
+        .renderer_access
+        .begin_document(Some(&incoming))
+        .unwrap();
     state.renderer_access.claim("incoming", &incoming).unwrap();
     state
         .renderer_access
@@ -857,6 +896,10 @@ fn failed_follow_up_navigation_restores_previous_pending_authority() {
     let outgoing = Url::parse("http://127.0.0.1:43123/workspace").unwrap();
     let incoming = Url::parse("http://127.0.0.1:43124/workspace").unwrap();
     let failed = Url::parse("http://127.0.0.1:43125/workspace").unwrap();
+    state
+        .renderer_access
+        .begin_document(Some(&outgoing))
+        .unwrap();
     state.renderer_access.claim("outgoing", &outgoing).unwrap();
     state
         .renderer_access
@@ -869,6 +912,10 @@ fn failed_follow_up_navigation_restores_previous_pending_authority() {
         .unwrap();
     state.renderer_access.cancel_navigation(failed_navigation);
 
+    state
+        .renderer_access
+        .begin_document(Some(&incoming))
+        .unwrap();
     state.renderer_access.claim("incoming", &incoming).unwrap();
     state
         .renderer_access
@@ -981,6 +1028,7 @@ fn renderer_rotation_blocks_an_in_flight_old_renderer_replacement() {
     enable_restore_in_memory(&state);
     let outgoing = Url::parse("http://127.0.0.1:43123/workspace").unwrap();
     let incoming = Url::parse("http://127.0.0.1:43124/workspace").unwrap();
+    state.begin_renderer_document(Some(&outgoing)).unwrap();
     state.claim_renderer_access("old", &outgoing).unwrap();
     let generation = state.renderer_access.validate("old", &outgoing).unwrap();
     let writing = Arc::clone(&state);
@@ -995,6 +1043,7 @@ fn renderer_rotation_blocks_an_in_flight_old_renderer_replacement() {
         .renderer_access
         .begin_navigation(Some(&incoming))
         .unwrap();
+    state.begin_renderer_document(Some(&incoming)).unwrap();
     state.claim_renderer_access("new", &incoming).unwrap();
     allow_tx.send(()).unwrap();
     assert!(writer.join().unwrap().is_err());
