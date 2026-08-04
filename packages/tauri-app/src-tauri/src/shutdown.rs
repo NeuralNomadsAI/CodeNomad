@@ -244,7 +244,10 @@ fn cleanup(app: &AppHandle, capture_window: bool) -> Result<(), String> {
     if let Some(state) = app.try_state::<AppState>() {
         state.desktop_events.stop();
         retry_bounded(SHUTDOWN_STOP_ATTEMPTS, || {
-            state.manager.stop().map_err(|err| err.to_string())
+            state
+                .manager
+                .stop(|| client_state::revoke_renderer_access(app))
+                .map_err(|err| err.to_string())
         })?;
     }
     if capture_window {

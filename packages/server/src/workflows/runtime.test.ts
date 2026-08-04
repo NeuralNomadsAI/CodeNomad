@@ -765,6 +765,45 @@ describe("declarative workflow runtime", () => {
     }
   })
 
+  it("retains recovery ownership while cancelled session creation is unresolved", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-create-ambiguous-cancel-"))
+    let sessions = 0
+    let releaseCreate!: () => void
+    const childCreate = new Promise<void>((resolve) => { releaseCreate = resolve })
+    const aborted: string[] = []
+    const client = { tool: workflowTools, session: {
+      create: async () => {
+        const id = `unresolved-${++sessions}`
+        if (sessions === 2) await childCreate
+        return { data: { id } }
+      },
+      prompt: async () => ({ data: { info: usage(), parts: [] } }),
+      abort: async ({ sessionID }: { sessionID: string }) => { aborted.push(sessionID); return { data: false } },
+    } } as unknown as OpencodeClient
+    const manager = new WorkflowManager({
+      workspaceManager, eventBus, logger, storageDir: directory, createClient: () => client, promptTimeoutMs: 25,
+    })
+    try {
+      await manager.createDefinition({ version: 1, id: "create-ambiguous", name: "Create ambiguous", root: {
+        type: "agent", id: "work", instructions: "Wait",
+      } })
+      const started = await manager.start({ workspaceId: "workspace", definitionId: "create-ambiguous" })
+      while (sessions < 2) await new Promise((resolve) => setTimeout(resolve, 1))
+      const cancelled = await manager.cancel(started.id)
+      assert.equal(cancelled?.status, "recovery_required")
+      await assert.rejects(manager.start({ workspaceId: "workspace", definitionId: "create-ambiguous" }), /already running/)
+
+      releaseCreate()
+      const recovered = await waitFor(manager, started.id, ["recovery_required"])
+      assert.equal(recovered.status, "recovery_required")
+      assert.ok(aborted.length > 0 && aborted.every((sessionId) => sessionId === "unresolved-2"))
+    } finally {
+      releaseCreate()
+      await manager.shutdown()
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it("does not retry an unconfirmed side effect and retains recovery reservation", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-ambiguous-"))
     let prompts = 0
@@ -843,6 +882,30 @@ describe("declarative workflow runtime", () => {
       assert.equal(prompts, 2)
     } finally {
       await manager?.shutdown()
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("cancels a confirmed retry checkpoint without requiring recovery", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-retry-cancel-"))
+    const now = new Date().toISOString()
+    const id = "00000000-0000-4000-8000-000000000091"
+    const definition: WorkflowDefinitionV1 = { version: 1, id: "retry-cancel", name: "Retry cancel", root: {
+      type: "agent", id: "work", instructions: "Retry", retry: { maxAttempts: 2, idempotent: true },
+    } }
+    await fs.writeFile(path.join(directory, `${id}.json`), JSON.stringify({
+      id, workspaceId: "workspace", workspaceLineageId: "lineage", workspacePath: "C:/workspace",
+      objective: "Cancel safe retry", status: "interrupted", rootSessionId: "root", steps: [], revision: 1,
+      definitionId: definition.id, definitionRevision: 1, definitionSnapshot: definition, inputs: {},
+      executionNodes: [{ id: "execution", instanceKey: "work", definitionNodeId: "work", type: "agent",
+        status: "waiting", attempt: 1, startedAt: now }], createdAt: now, updatedAt: now,
+    }), "utf8")
+    const manager = new WorkflowManager({ workspaceManager, eventBus, logger, storageDir: directory, createClient: () => null })
+    try {
+      assert.equal((await manager.cancel(id))?.status, "cancelled")
+      assert.equal((await manager.get(id))?.status, "cancelled")
+    } finally {
+      await manager.shutdown()
       await fs.rm(directory, { recursive: true, force: true })
     }
   })

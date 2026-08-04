@@ -327,7 +327,10 @@ export class ClientStateManager {
         this.crossHostDependencies?.processStartIdentity,
         true,
       )
-      if (!this.primary) return false
+      if (!this.primary) {
+        await this.crossHostRegistration?.participateInRecoveryAsync()
+        return false
+      }
     }
     try {
       if (this.crossHostRegistration?.isPrimary) {

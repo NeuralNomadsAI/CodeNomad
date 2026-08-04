@@ -86,7 +86,11 @@ export async function connectTauriWorkspaceEvents(
   let replayResetPending = false
   const replayBatches: WorkspaceEventBatchPayload[] = []
   let replayBatchOverflow = false
-  let queuedReplayReset: WorkspaceEventReplayResetPayload | null = null
+  let replayResetVersion = 0
+  let queuedReplayReset: {
+    payload: WorkspaceEventReplayResetPayload
+    version: number
+  } | null = null
   let replayResetTask: Promise<void> | null = null
 
   const matchesGeneration = (generation: number) => expectedGeneration === generation
@@ -176,7 +180,8 @@ export async function connectTauriWorkspaceEvents(
     if (replayResetTask) return replayResetTask
     replayResetTask = (async () => {
       while (queuedReplayReset) {
-        const payload = queuedReplayReset
+        const reset = queuedReplayReset
+        const payload = reset.payload
         queuedReplayReset = null
         let accepted = false
         try {
@@ -185,8 +190,9 @@ export async function connectTauriWorkspaceEvents(
           log.warn("Failed to resynchronize native desktop events after replay reset", error)
         }
         if (closed || !matchesGeneration(payload.generation)) return
+        if (reset.version !== replayResetVersion) continue
         if (!accepted) {
-          queuedReplayReset ??= payload
+          queuedReplayReset ??= reset
           notifyTerminalError()
           return
         }
@@ -199,7 +205,7 @@ export async function connectTauriWorkspaceEvents(
         const buffered = replayBatches.slice()
         for (const batch of buffered) {
           if (!dispatchBatchPayload(batch, false)) {
-            queuedReplayReset = payload
+            queuedReplayReset = reset
             notifyTerminalError()
             return
           }
@@ -209,7 +215,7 @@ export async function connectTauriWorkspaceEvents(
           payload.lastEventId,
         )
         if (!cursor.commit(eventCursor || undefined)) {
-          queuedReplayReset = payload
+          queuedReplayReset = reset
           return
         }
         replayBatches.splice(0, buffered.length)
@@ -231,8 +237,11 @@ export async function connectTauriWorkspaceEvents(
 
   const handleReplayResetPayload = (payload: WorkspaceEventReplayResetPayload): Promise<void> => {
     if (!payload || !matchesGeneration(payload.generation)) return Promise.resolve()
+    const version = ++replayResetVersion
     replayResetPending = true
-    queuedReplayReset = payload
+    replayBatches.length = 0
+    replayBatchOverflow = false
+    queuedReplayReset = { payload, version }
     return runReplayReset()
   }
 

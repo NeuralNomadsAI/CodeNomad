@@ -243,7 +243,7 @@ impl ProcessState {
                     if has_local_lock {
                         registration.is_primary()
                     } else {
-                        registration.participate_in_recovery();
+                        registration.defer_to_local_holder();
                         false
                     }
                 })

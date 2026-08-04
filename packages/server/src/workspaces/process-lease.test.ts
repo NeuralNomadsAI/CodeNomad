@@ -169,6 +169,31 @@ test("an unknown launch token is checked before process identity discovery", asy
   await lease.release()
 })
 
+test("an inconclusive Windows token probe falls through to immutable identities", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-process-win32-token-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const workspacePath = path.join(directory, "workspace")
+  let processAlive = true
+  const owner = new WorkspaceProcessLeaseRegistry({
+    directory, managerToken: "owner", pid: 101, hostname: "same-host", isPidAlive: () => false,
+  })
+  const contender = new WorkspaceProcessLeaseRegistry({
+    directory, managerToken: "contender", pid: 202, hostname: "same-host", platform: "win32",
+    isPidAlive: () => false, isLaunchTokenAlive: () => undefined, isProcessIdentityAlive: () => processAlive,
+  })
+  const lease = await owner.acquire(workspacePath)
+  assert.ok(lease)
+  await lease.prepareLaunch()
+  await lease.setProcessIdentity({ pid: 303, parentPid: 1, groupId: 303, startTime: "windows-creation-ticks" })
+
+  assert.equal(await contender.acquire(workspacePath), undefined)
+  processAlive = false
+  const replacement = await contender.acquire(workspacePath)
+  assert.ok(replacement)
+  await lease.release()
+  await replacement.release()
+})
+
 test("a stale torn launch token does not permanently wedge a dead owner", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-process-torn-launch-"))
   t.after(() => rm(directory, { recursive: true, force: true }))

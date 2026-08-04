@@ -5,6 +5,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { ClientStateManager, type ClientStateWriter } from "./client-state"
+import { createRunningMarker } from "./client-state-process"
+import { getProcessStartIdentity } from "./client-state-process-identity"
 
 function harness(t: test.TestContext, initial?: object) {
   const directory = mkdtempSync(join(tmpdir(), "codenomad-state-"))
@@ -152,6 +154,36 @@ test("a retained host-local secondary retries election after its primary exits",
   assert.equal(await secondary.refreshPrimary(), true)
   assert.equal(secondary.isPrimary, true)
   await secondary.drainAndReleasePrimary()
+})
+
+test("a local-lock non-holder publishes recovery without gaining authority", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "codenomad-local-stale-promotion-"))
+  const userData = join(root, "electron"), election = join(root, "election")
+  mkdirSync(userData); mkdirSync(join(election, "primary.owner.json"), { recursive: true })
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const staleOwner = { pid: 8241, runToken: "a", processStartIdentity: "a-start" }
+  const localOwner = { pid: process.pid, runToken: "b", processStartIdentity: getProcessStartIdentity(process.pid) }
+  const helperOwner = { pid: 8243, runToken: "c", processStartIdentity: "c-start" }
+  writeFileSync(join(election, "primary.owner.json", "owner.json"), JSON.stringify(staleOwner))
+  writeFileSync(join(userData, "client-state.primary.lock"), JSON.stringify(localOwner))
+  createRunningMarker(userData, localOwner)
+  const crossHostDependencies = {
+    pidAlive: (pid: number) => pid === localOwner.pid || pid === helperOwner.pid,
+    processStartIdentity: (pid: number) => pid === localOwner.pid ? localOwner.processStartIdentity : pid === helperOwner.pid ? helperOwner.processStartIdentity : undefined,
+    processStartIdentityAsync: async (pid: number) => pid === localOwner.pid ? localOwner.processStartIdentity : pid === helperOwner.pid ? helperOwner.processStartIdentity : undefined,
+  }
+  const helper = new ClientStateManager(userData, undefined, {
+    crossHostElectionDirectory: election,
+    crossHostDependencies,
+    processOwner: helperOwner,
+  })
+  assert.equal(helper.isPrimary, false)
+  assert.equal(await helper.refreshPrimary(), false)
+  assert.equal(existsSync(join(election, "recovery.8243.c.claim")), true)
+  assert.equal(readFileSync(join(election, "recovery.8243.c.claim"), "utf8"), JSON.stringify(staleOwner))
+  assert.equal(readFileSync(join(election, "primary.owner.json", "owner.json"), "utf8"), JSON.stringify(staleOwner))
+  assert.deepEqual(helper.loadClientState(), { isPrimary: false, restoreEnabled: false, snapshot: null })
+  await helper.drainAndReleasePrimary()
 })
 
 test("late promotion migrates legacy state when shared state is absent", async (t) => {

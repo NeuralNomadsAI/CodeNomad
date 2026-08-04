@@ -311,27 +311,12 @@ impl Registration {
         let _ = retire_owner_if_owned(&self.election_directory, &self.owner);
     }
 
-    pub(super) fn participate_in_recovery(&self) {
-        self.participate_in_recovery_with(pid_is_alive, process_start_identity);
-    }
-
-    fn participate_in_recovery_with(
-        &self,
-        pid_alive: impl Fn(u32) -> bool,
-        identity: impl Fn(u32) -> Option<String>,
-    ) {
-        if self.released || publish_participant(&self.participant_path, &self.owner).is_err() {
+    pub(super) fn defer_to_local_holder(&self) {
+        if self.released {
             return;
         }
-        let Ok(Some(observed)) = read_if_exists(&owner_path(&self.election_directory)) else {
-            return;
-        };
-        let Some(owner) = parse_owner(&observed) else {
-            return;
-        };
-        if owner_is_stale(&owner, pid_alive, identity) == Some(true) {
-            let _ = publish_recovery_claim(&self.election_directory, &self.owner, &observed);
-        }
+        let _ = remove_participant_if_owned(&self.participant_path, &self.owner);
+        let _ = fs::remove_file(recovery_path(&self.election_directory, &self.owner));
     }
 
     fn is_primary_with(
@@ -1419,39 +1404,50 @@ mod tests {
     }
 
     #[test]
-    fn local_a_b_c_cohort_recovers_when_c_cannot_hold_the_local_primary_lock() {
-        let directory = tempfile::tempdir().unwrap();
-        let a = owner(801, "a", "a-start");
-        let b_owner = owner(802, "b", "b-start");
-        let c_owner = owner(803, "c", "c-start");
-        publish_owner(directory.path(), &a).unwrap();
-        let identities = HashMap::from([(802, "b-start"), (803, "c-start")]);
-        let alive = |pid| pid != a.pid;
-        let identity = |pid| identities.get(&pid).map(|value| value.to_string());
+    fn local_a_b_c_cohort_recovers_for_both_b_c_lexical_orders() {
+        for (b_pid, c_pid) in [(802, 803), (803, 802)] {
+            let directory = tempfile::tempdir().unwrap();
+            let a = owner(801, "a", "a-start");
+            let b_owner = owner(b_pid, "b", "b-start");
+            let c_owner = owner(c_pid, "c", "c-start");
+            publish_owner(directory.path(), &a).unwrap();
+            let identities = HashMap::from([(b_pid, "b-start"), (c_pid, "c-start")]);
+            let alive = |pid| pid != a.pid;
+            let identity = |pid| identities.get(&pid).map(|value| value.to_string());
 
-        let c =
-            Registration::register_with(directory.path(), c_owner.clone(), false, alive, identity)
-                .unwrap()
-                .unwrap();
-        c.retain_local_candidacy();
-        let b =
-            Registration::register_with(directory.path(), b_owner.clone(), true, alive, identity)
-                .unwrap()
-                .unwrap();
-        b.retain_local_candidacy();
-        assert!(!b.is_primary_with(alive, identity, |_| Some(false)));
+            let c = Registration::register_with(
+                directory.path(),
+                c_owner.clone(),
+                false,
+                alive,
+                identity,
+            )
+            .unwrap()
+            .unwrap();
+            c.retain_local_candidacy();
+            let b = Registration::register_with(
+                directory.path(),
+                b_owner.clone(),
+                true,
+                alive,
+                identity,
+            )
+            .unwrap()
+            .unwrap();
+            b.retain_local_candidacy();
+            assert!(!b.is_primary_with(alive, identity, |_| Some(false)));
 
-        c.participate_in_recovery_with(alive, identity);
-        assert!(!c.primary.get());
-        assert_ne!(
-            parse_owner(&fs::read_to_string(owner_path(directory.path())).unwrap()),
-            Some(c_owner)
-        );
-        assert!(b.is_primary_with(alive, identity, |_| Some(false)));
-        assert_eq!(
-            parse_owner(&fs::read_to_string(owner_path(directory.path())).unwrap()),
-            Some(b_owner)
-        );
+            c.defer_to_local_holder();
+            assert!(!c.primary.get());
+            assert!(c.retry_candidate.get());
+            assert!(!participant_path(directory.path(), &c_owner).exists());
+            assert!(!recovery_path(directory.path(), &c_owner).exists());
+            assert!(b.is_primary_with(alive, identity, |_| Some(false)));
+            assert_eq!(
+                parse_owner(&fs::read_to_string(owner_path(directory.path())).unwrap()),
+                Some(b_owner)
+            );
+        }
     }
 
     #[test]

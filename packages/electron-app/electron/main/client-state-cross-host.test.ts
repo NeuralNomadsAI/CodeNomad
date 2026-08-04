@@ -142,6 +142,34 @@ test("simultaneous claimants deterministically recover a stale owner", (t) => {
   assert.equal(loser.isPrimary, false)
 })
 
+test("a same-cohort non-candidate can claim recovery without gaining authority", async (t) => {
+  const directory = temp(t), stale = owner(611, "stale", "stale-start")
+  const candidateOwner = owner(612, "candidate"), helperOwner = owner(613, "helper")
+  mkdirSync(join(directory, CROSS_HOST_OWNER_DIRECTORY))
+  const observed = JSON.stringify(stale)
+  writeFileSync(ownerFile(directory), observed)
+  const identities = new Map([
+    [candidateOwner.pid, candidateOwner.processStartIdentity],
+    [helperOwner.pid, helperOwner.processStartIdentity],
+  ])
+  const deps = {
+    pidAlive: (pid: number) => identities.has(pid),
+    processStartIdentity: (pid: number) => identities.get(pid),
+    processStartIdentityAsync: async (pid: number) => identities.get(pid),
+  }
+  const helper = CrossHostRegistration.register(directory, helperOwner, false, deps)!
+  const candidate = CrossHostRegistration.register(directory, candidateOwner, true, deps)!
+  assert.equal(candidate.isPrimary, false)
+
+  await helper.participateInRecoveryAsync()
+  assert.equal(helper.isPrimary, false)
+  assert.equal(readFileSync(ownerFile(directory), "utf8"), observed)
+  assert.equal(readFileSync(join(directory, "recovery.613.helper.claim"), "utf8"), observed)
+  assert.equal(await candidate.tryAcquireAsync(true), true)
+  assert.equal(helper.isPrimary, false)
+  assert.equal(JSON.parse(readFileSync(ownerFile(directory), "utf8")).runToken, "candidate")
+})
+
 test("async recovery replaces a prior claim for a consecutive crashed owner", async (t) => {
   const directory = temp(t), candidate = owner(620, "candidate")
   const registration = CrossHostRegistration.register(directory, candidate, false, {

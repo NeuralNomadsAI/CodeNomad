@@ -32,6 +32,8 @@ export interface WorkflowInterpreterOptions {
   signal: (timeoutMs: number) => AbortSignal
   sessionStarted: (sessionId: string) => boolean
   sessionFinished: (sessionId: string) => void
+  sessionCreationStarted?: () => void
+  sessionCreationFinished?: () => void
   abortSession: (sessionId: string) => Promise<boolean>
   isCancelled: () => boolean
   revalidateFence?: () => Promise<void>
@@ -100,12 +102,18 @@ export class WorkflowInterpreter {
     const definition = this.run.definitionSnapshot
     if (!definition) throw new Error("Workflow definition snapshot is missing")
     if (!this.run.rootSessionId) {
-      const root = await this.requireData(this.options.client.session.create({
-        ...(this.run.initiatorSessionId ? { parentID: this.run.initiatorSessionId } : {}),
-        title: `Workflow: ${this.run.objective.slice(0, 80)}`,
-        metadata: this.sessionMetadata("workflow"),
-      }, { signal: this.operationSignal(DEFAULT_TIMEOUT_MS) }), "create workflow session")
-      this.options.sessionStarted(root.id)
+      this.options.sessionCreationStarted?.()
+      let root: { id: string }
+      try {
+        root = await this.requireData(this.options.client.session.create({
+          ...(this.run.initiatorSessionId ? { parentID: this.run.initiatorSessionId } : {}),
+          title: `Workflow: ${this.run.objective.slice(0, 80)}`,
+          metadata: this.sessionMetadata("workflow"),
+        }, { signal: this.operationSignal(DEFAULT_TIMEOUT_MS) }), "create workflow session")
+        this.options.sessionStarted(root.id)
+      } finally {
+        this.options.sessionCreationFinished?.()
+      }
       try {
         this.throwIfCancelled()
         this.run.rootSessionId = root.id
@@ -449,24 +457,31 @@ export class WorkflowInterpreter {
     let sessionId = sessionKey && bindings && Object.prototype.hasOwnProperty.call(bindings, sessionKey)
       ? bindings[sessionKey]
       : undefined
+    let accepted: boolean | undefined
     if (!sessionId) {
       const bindingLimit = this.run.definitionSnapshot?.maxExpandedNodes ?? WORKFLOW_LIMITS.expandedNodes
       if (sessionKey && Object.keys(this.run.sessionBindings ?? {}).length >= bindingLimit) {
         throw new Error(`Workflow exceeded session binding limit ${bindingLimit}`)
       }
-      const session = await this.requireData(this.options.client.session.create({
-        parentID: this.run.rootSessionId,
-        title: `${node.title ?? node.id}: ${this.run.objective.slice(0, 60)}`,
-        ...(node.agent ? { agent: node.agent } : {}),
-        metadata: this.sessionMetadata(node.id),
-      }, { signal }), `create ${node.id} session`)
-      sessionId = session.id
+      this.options.sessionCreationStarted?.()
+      try {
+        const session = await this.requireData(this.options.client.session.create({
+          parentID: this.run.rootSessionId,
+          title: `${node.title ?? node.id}: ${this.run.objective.slice(0, 60)}`,
+          ...(node.agent ? { agent: node.agent } : {}),
+          metadata: this.sessionMetadata(node.id),
+        }, { signal }), `create ${node.id} session`)
+        sessionId = session.id
+        accepted = this.options.sessionStarted(sessionId)
+      } finally {
+        this.options.sessionCreationFinished?.()
+      }
       if (sessionKey) (this.run.sessionBindings ??= {})[sessionKey] = sessionId
     }
     execution.sessionIds ??= []
     if (!execution.sessionIds.includes(sessionId)) execution.sessionIds.push(sessionId)
     execution.status = "running"
-    const accepted = this.options.sessionStarted(sessionId)
+    accepted ??= this.options.sessionStarted(sessionId)
     try {
       if (!accepted) this.throwIfCancelled()
       signal.throwIfAborted()

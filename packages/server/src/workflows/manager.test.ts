@@ -359,6 +359,69 @@ describe("WorkflowManager", () => {
       await fs.rm(storageDir, { recursive: true, force: true })
     }
   })
+
+  it("does not deadlock a control transition against cancellation", async () => {
+    const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-workflow-control-cancel-"))
+    let sessions = 0
+    const client = { tool: { ids: async () => ({ data: [] }) }, session: {
+      create: async () => ({ data: { id: `control-cancel-${++sessions}` } }),
+      abort: async () => ({ data: true }),
+    } } as unknown as OpencodeClient
+    const workspaceManager = {
+      get: (id: string) => ({ id, lineageId: `lineage-${id}`, path: `C:/${id}`, status: "ready" }),
+      list: () => [],
+    } as unknown as WorkspaceManager
+    const manager = new WorkflowManager({
+      workspaceManager, eventBus: { publish: () => true } as unknown as EventBus,
+      logger: { warn() {}, error() {} } as unknown as Logger, storageDir, createClient: () => client,
+    })
+    let releaseAdmission!: () => void
+    let admissionEntered!: () => void
+    const entered = new Promise<void>((resolve) => { admissionEntered = resolve })
+    const blocked = new Promise<void>((resolve) => { releaseAdmission = resolve })
+    const originalRefresh = (manager as any).refreshRunIndex.bind(manager)
+    try {
+      await manager.createDefinition({ version: 1, id: "control-cancel", name: "Control cancel", root: {
+        type: "gate", id: "gate", gate: "approval", prompt: "Wait",
+      } })
+      const started = await manager.start({ workspaceId: "controlled", definitionId: "control-cancel" })
+      let waiting = await manager.get(started.id)
+      while (!waiting?.pendingGate) {
+        await new Promise((resolve) => setTimeout(resolve, 1))
+        waiting = await manager.get(started.id)
+      }
+      const gateId = waiting.pendingGate.executionNodeId
+
+      let blockNextRefresh = true
+      ;(manager as any).refreshRunIndex = async () => {
+        await originalRefresh()
+        if (!blockNextRefresh) return
+        blockNextRefresh = false
+        admissionEntered()
+        await blocked
+      }
+      const answer = manager.answer(started.id, gateId, true)
+      await entered
+      const cancellation = manager.cancel(started.id)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      releaseAdmission()
+
+      await Promise.race([
+        Promise.allSettled([answer, cancellation]),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("control and cancellation deadlocked")), 1_000)),
+      ])
+      const other = await Promise.race([
+        manager.start({ workspaceId: "unrelated", definitionId: "control-cancel" }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("unrelated start was not admitted")), 1_000)),
+      ])
+      assert.equal((await manager.cancel(other.id))?.status, "cancelled")
+    } finally {
+      releaseAdmission?.()
+      await manager.shutdown()
+      await fs.rm(storageDir, { recursive: true, force: true })
+    }
+  })
+
   it("admits one run per path or lineage across manager instances", async () => {
     for (const collision of ["lineage", "path"] as const) {
       const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), `codenomad-workflow-shared-${collision}-`))

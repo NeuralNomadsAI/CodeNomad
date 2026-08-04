@@ -45,6 +45,7 @@ export interface WorkspaceProcessLeaseRegistryOptions {
   isPidAlive?: (pid: number) => boolean
   isProcessIdentityAlive?: (identity: ProcessIdentity) => boolean | undefined
   isLaunchTokenAlive?: (token: string) => boolean | undefined
+  platform?: NodeJS.Platform
 }
 
 interface ObservedOwner {
@@ -213,30 +214,47 @@ export class WorkspaceProcessLeaseRegistry {
       if (launchToken.kind === "unknown") return false
       if (launchToken.kind === "malformed" && Date.now() - launchToken.modifiedAt < this.staleMs) return false
       if (launchToken.kind === "valid") {
+        let tokenProbeInconclusive = false
         try {
-          if ((this.options.isLaunchTokenAlive ?? launchTokenIsAlive)(launchToken.token) !== false) return false
+          const alive = this.options.isLaunchTokenAlive
+            ? this.options.isLaunchTokenAlive(launchToken.token)
+            : launchTokenIsAlive(launchToken.token, this.options.platform ?? process.platform)
+          if (alive === true) return false
+          tokenProbeInconclusive = alive === undefined
         } catch {
-          return false
+          tokenProbeInconclusive = true
         }
+        const workspaceProcesses = await this.readPersistedProcessIdentities(directory, owner.leaseToken)
+        if (!workspaceProcesses || (tokenProbeInconclusive && workspaceProcesses.length === 0)) return false
+        if (!this.persistedProcessesAreGone(workspaceProcesses)) return false
+        return true
       }
-      let workspaceProcesses: ProcessIdentity[] | undefined
+      const workspaceProcesses = await this.readPersistedProcessIdentities(directory, owner.leaseToken)
+      if (!workspaceProcesses) return false
+      return this.persistedProcessesAreGone(workspaceProcesses)
+    }
+    return false
+  }
+
+  private async readPersistedProcessIdentities(directory: string, leaseToken: string): Promise<ProcessIdentity[] | undefined> {
+    try {
+      return await readProcessIdentities(directory, leaseToken)
+    } catch {
+      return undefined
+    }
+  }
+
+  private persistedProcessesAreGone(identities: ProcessIdentity[]): boolean {
+    const processAlive = this.options.isProcessIdentityAlive
+      ?? ((identity: ProcessIdentity) => processIdentityIsAlive(identity, this.options.platform ?? process.platform))
+    for (const identity of identities) {
       try {
-        workspaceProcesses = await readProcessIdentities(directory, owner.leaseToken)
+        if (processAlive(identity) !== false) return false
       } catch {
         return false
       }
-      if (!workspaceProcesses) return false
-      const processAlive = this.options.isProcessIdentityAlive ?? processIdentityIsAlive
-      for (const identity of workspaceProcesses) {
-        try {
-          if (processAlive(identity) !== false) return false
-        } catch {
-          return false
-        }
-      }
-      return true
     }
-    return false
+    return true
   }
 }
 
@@ -398,16 +416,16 @@ async function readProcessIdentities(directory: string, leaseToken: string): Pro
   }
 }
 
-function processIdentityIsAlive(identity: ProcessIdentity): boolean | undefined {
-  const snapshot = process.platform === "win32"
+function processIdentityIsAlive(identity: ProcessIdentity, platform: NodeJS.Platform): boolean | undefined {
+  const snapshot = platform === "win32"
     ? probeWindowsProcesses(spawnSync, 1_000)
-    : probePosixProcesses(spawnSync, 1_000, process.platform, { pids: [identity.pid] })
+    : probePosixProcesses(spawnSync, 1_000, platform, { pids: [identity.pid] })
   return snapshot.ok ? sameProcess(identity, snapshot.processes.get(identity.pid)) : undefined
 }
 
-function launchTokenIsAlive(token: string): boolean | undefined {
+function launchTokenIsAlive(token: string, platform: NodeJS.Platform): boolean | undefined {
   if (!token) return undefined
-  const snapshot = probeLaunchCleanupToken(spawnSync, token, 1_000, undefined, process.platform)
+  const snapshot = probeLaunchCleanupToken(spawnSync, token, 1_000, undefined, platform)
   return snapshot.ok ? snapshot.processes.size > 0 : undefined
 }
 

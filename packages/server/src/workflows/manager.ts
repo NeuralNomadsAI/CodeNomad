@@ -30,7 +30,7 @@ import { validateWorkflowDefinition, WORKFLOW_LIMITS } from "./definition-schema
 import { withFilesystemLock } from "./filesystem-lock"
 import { WorkflowCheckpointError, WorkflowInterpreter, WorkflowSuspendedError } from "./interpreter"
 import { validateJsonSchemaValue } from "./json-schema"
-import { definitionRunFields, holdsWorkflowReservation, markWorkflowRecoveryRequired, validatePersistedWorkflowRun } from "./run-state"
+import { definitionRunFields, holdsWorkflowReservation, isConfirmedRetryCheckpoint, markWorkflowRecoveryRequired, validatePersistedWorkflowRun } from "./run-state"
 
 const PROMPT_TIMEOUT_MS = 30 * 60 * 1000
 const ABORT_TIMEOUT_MS = 5_000
@@ -65,6 +65,7 @@ interface ActiveRun {
   activeSessionId?: string
   activeSessionIds: Set<string>
   abortingSessions: Map<string, Promise<boolean>>
+  sessionCreationsInFlight: number
   cancelRequested: boolean
   completion?: Promise<void>
   abortController: AbortController
@@ -229,7 +230,7 @@ export class WorkflowManager {
       }
       this.claimExecutor(run)
       active = {
-        run, client, activeSessionIds: new Set(), abortingSessions: new Map(), cancelRequested: false,
+        run, client, activeSessionIds: new Set(), abortingSessions: new Map(), sessionCreationsInFlight: 0, cancelRequested: false,
         abortController: new AbortController(), releaseBlocked: false, pauseCommitted: false,
         leaseFence: run.executorFence!, leaseLost: false, leaseDurablyReleased: false,
       }
@@ -596,7 +597,7 @@ export class WorkflowManager {
       delete run.error
       this.claimExecutor(run)
       const active: ActiveRun = {
-        run, client, activeSessionIds: new Set(), abortingSessions: new Map(), cancelRequested: false,
+        run, client, activeSessionIds: new Set(), abortingSessions: new Map(), sessionCreationsInFlight: 0, cancelRequested: false,
         abortController: new AbortController(), releaseBlocked: false, pauseCommitted: false,
         leaseFence: run.executorFence!, leaseLost: false, leaseDurablyReleased: false,
       }
@@ -757,8 +758,7 @@ export class WorkflowManager {
   async cancelOwned(runId: string, workspaceId: string): Promise<WorkflowRun | undefined> {
     await this.ensureInitialized()
     if (this.shuttingDown) throw new WorkflowRunError("CodeNomad is shutting down", 503)
-    return this.withRunTransition(runId, async () => {
-      const pending = await this.withAdmission(async () => {
+    const pending = await this.withAdmission(() => this.withRunTransition(runId, async () => {
         const run = this.activeRuns.get(runId)?.run ?? await this.read(runId)
         if (!run) return undefined
         const workspace = this.options.workspaceManager.get(workspaceId)
@@ -772,9 +772,8 @@ export class WorkflowManager {
           if (!await this.bindWorkspaceCurrent(run, workspaceId)) return undefined
         }
         return this.fenceCancellation(runId, run)
-      })
-      return pending && this.finalizeCancellation(pending)
-    })
+      }))
+    return pending && this.finalizeCancellation(pending)
   }
 
   async shutdown(): Promise<void> {
@@ -793,13 +792,11 @@ export class WorkflowManager {
   }
 
   private async cancelRun(runId: string): Promise<WorkflowRun | undefined> {
-    return this.withRunTransition(runId, async () => {
-      const pending = await this.withAdmission(async () => {
+    const pending = await this.withAdmission(() => this.withRunTransition(runId, async () => {
         const run = this.activeRuns.get(runId)?.run ?? await this.read(runId)
         return run ? this.fenceCancellation(runId, run) : undefined
-      })
-      return pending && this.finalizeCancellation(pending)
-    })
+      }))
+    return pending && this.finalizeCancellation(pending)
   }
 
   private async cancelRunCurrent(runId: string, run: WorkflowRun): Promise<WorkflowRun> {
@@ -857,7 +854,8 @@ export class WorkflowManager {
         "Workflow cancellation settlement timed out",
       ).catch(() => false)
       terminationConfirmed = terminationConfirmed && await this.drainSessions(active)
-      if (!completionSettled && this.persistedAmbiguousSessionIds(run).size === 0 && this.hasUnconfirmedAdmittedAction(run)) {
+      if (!completionSettled && (active.sessionCreationsInFlight > 0
+        || (this.persistedAmbiguousSessionIds(run).size === 0 && this.hasUnconfirmedAdmittedAction(run)))) {
         terminationConfirmed = false
       }
       if (terminationConfirmed && completionSettled) {
@@ -942,6 +940,7 @@ export class WorkflowManager {
       client,
       activeSessionIds: new Set(),
       abortingSessions: new Map(),
+      sessionCreationsInFlight: 0,
       cancelRequested: false,
       abortController: new AbortController(),
       releaseBlocked: false,
@@ -1280,7 +1279,7 @@ export class WorkflowManager {
   private async executePendingStages(active: ActiveRun): Promise<void> {
     const { run, client } = active
     if (!run.rootSessionId) {
-      const root = await this.requireData(client.session.create({
+      const root = await this.createTrackedSession(active, client.session.create({
         ...(run.initiatorSessionId ? { parentID: run.initiatorSessionId } : {}),
         title: `Workflow: ${run.objective.slice(0, 80)}`,
         metadata: this.sessionMetadata(run.id, "workflow"),
@@ -1288,6 +1287,7 @@ export class WorkflowManager {
       this.throwIfCancelled(active)
       run.rootSessionId = root.id
       await this.persist(run)
+      active.activeSessionIds.delete(root.id)
     }
 
     while (true) {
@@ -1358,6 +1358,8 @@ export class WorkflowManager {
         return !active.cancelRequested
       },
       sessionFinished: (sessionId) => active.activeSessionIds.delete(sessionId),
+      sessionCreationStarted: () => { active.sessionCreationsInFlight += 1 },
+      sessionCreationFinished: () => { active.sessionCreationsInFlight -= 1 },
       abortSession: async (sessionId) => {
         const confirmed = await this.abortActiveSession(active, sessionId)
         if (!confirmed) active.releaseBlocked = true
@@ -1425,7 +1427,7 @@ export class WorkflowManager {
     await this.persist(run)
     this.throwIfCancelled(active)
 
-    const session = await this.requireData(client.session.create({
+    const session = await this.createTrackedSession(active, client.session.create({
       parentID: run.rootSessionId,
       title: `${step.title}: ${run.objective.slice(0, 60)}`,
       ...(step.agent ? { agent: step.agent } : {}),
@@ -1433,6 +1435,7 @@ export class WorkflowManager {
     }, { signal: this.operationSignal(active) }), `create ${step.title} session`)
     step.sessionId = session.id
     active.activeSessionId = session.id
+    active.activeSessionIds.delete(session.id)
     this.throwIfCancelled(active)
     await this.persist(run)
     this.throwIfCancelled(active)
@@ -1499,6 +1502,21 @@ export class WorkflowManager {
     } catch (error) {
       this.options.logger.warn({ err: error, runId }, "Failed to abort workflow session")
       return false
+    }
+  }
+
+  private async createTrackedSession<T extends { id: string }>(
+    active: ActiveRun,
+    request: Promise<{ data?: T; error?: unknown }>,
+    action: string,
+  ): Promise<T> {
+    active.sessionCreationsInFlight += 1
+    try {
+      const session = await this.requireData(request, action)
+      active.activeSessionIds.add(session.id)
+      return session
+    } finally {
+      active.sessionCreationsInFlight -= 1
     }
   }
 
@@ -1788,6 +1806,7 @@ export class WorkflowManager {
     return Boolean(run.executionNodes?.some((node) =>
       (node.type === "agent" || node.type === "shell")
       && node.attempt > 0
+      && !isConfirmedRetryCheckpoint(node)
       && !["completed", "skipped", "failed", "cancelled"].includes(node.status)))
   }
 

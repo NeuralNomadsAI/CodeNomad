@@ -55,4 +55,25 @@ describe("launch cleanup token adapter", () => {
     )
     assert.deepEqual([cleanup.ok, cleanup.signalSent, cleanup.targets[0]?.pid], [true, true, 5000])
   })
+
+  it("uses a bounded PowerShell probe instead of POSIX sh on Windows", () => {
+    const calls: any[] = []
+    const run = ((command: string, args: string[], options: object) => {
+      calls.push(command, args, options)
+      return result("CODENOMAD_INCONCLUSIVE\n")
+    }) as unknown as Spawn
+    const token = "e".repeat(64)
+    const probe = probeLaunchCleanupToken(run, token, 25, undefined, "win32")
+    assert.equal(probe.ok, false)
+    assert.equal(calls[0], "powershell.exe")
+    assert.equal(calls[1].includes("sh"), false)
+    assert.match(calls[1].at(-1), /Get-CimInstance Win32_Process/)
+    assert.deepEqual([calls[2].timeout, calls[2].input], [25, token])
+
+    const matched = probeLaunchCleanupToken(
+      ((() => result("CODENOMAD_PROCESS|4242|1|0|638899200000000000||638899200000000000\n")) as unknown) as Spawn,
+      token, 25, undefined, "win32",
+    )
+    assert.equal(matched.ok && matched.processes.get(4242)?.startTime, "638899200000000000")
+  })
 })
