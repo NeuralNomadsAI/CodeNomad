@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { writeFileSync } from "node:fs"
-import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
@@ -68,6 +68,25 @@ test("a live detached process identity keeps a same-host lease valid", async (t)
   await replacement.release()
 })
 
+test("an inconclusive detached process probe fails closed", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-process-identity-unknown-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const workspacePath = path.join(directory, "workspace")
+  const owner = new WorkspaceProcessLeaseRegistry({
+    directory, managerToken: "owner", pid: 101, hostname: "same-host", isPidAlive: () => false,
+  })
+  const contender = new WorkspaceProcessLeaseRegistry({
+    directory, managerToken: "contender", pid: 202, hostname: "same-host", isPidAlive: () => false,
+    isProcessIdentityAlive: () => undefined,
+  })
+  const lease = await owner.acquire(workspacePath)
+  assert.ok(lease)
+  await lease.setProcessIdentity({ pid: 303, parentPid: 1, groupId: 303, startTime: "immutable-start" })
+
+  assert.equal(await contender.acquire(workspacePath), undefined)
+  await lease.release()
+})
+
 test("a same-host live server blocks takeover without relying on heartbeat age", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-process-live-server-"))
   t.after(() => rm(directory, { recursive: true, force: true }))
@@ -91,7 +110,7 @@ test("owner replacement reports lease loss", async (t) => {
     isPidAlive: () => false,
   })
   const replacement = new WorkspaceProcessLeaseRegistry({
-    directory, managerToken: "replacement", pid: 202, hostname: "same-host", heartbeatMs: 10, staleMs: 20,
+    directory, managerToken: "replacement", pid: 202, hostname: "same-host", heartbeatMs: 60_000, staleMs: 20,
     isPidAlive: (pid) => pid === 202,
   })
   const lease = await owner.acquire(workspacePath)
@@ -123,6 +142,58 @@ test("a pre-spawn cleanup token closes the process identity publication gap", as
   assert.equal(await contender.acquire(workspacePath), undefined)
 
   launchAlive = false
+  const replacement = await contender.acquire(workspacePath)
+  assert.ok(replacement)
+  await lease.release()
+  await replacement.release()
+})
+
+test("an unknown launch token is checked before process identity discovery", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-process-launch-first-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const workspacePath = path.join(directory, "workspace")
+  const owner = new WorkspaceProcessLeaseRegistry({
+    directory, managerToken: "owner", pid: 101, hostname: "same-host", isPidAlive: () => false,
+  })
+  const contender = new WorkspaceProcessLeaseRegistry({
+    directory, managerToken: "contender", pid: 202, hostname: "same-host", isPidAlive: () => false,
+    isLaunchTokenAlive: () => undefined,
+    isProcessIdentityAlive: () => { throw new Error("process discovery failed") },
+  })
+  const lease = await owner.acquire(workspacePath)
+  assert.ok(lease)
+  await lease.prepareLaunch()
+  await lease.setProcessIdentity({ pid: 303, parentPid: 1, groupId: 303, startTime: "immutable-start" })
+
+  assert.equal(await contender.acquire(workspacePath), undefined)
+  await lease.release()
+})
+
+test("a stale torn launch token does not permanently wedge a dead owner", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-process-torn-launch-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const workspacePath = path.join(directory, "workspace")
+  const owner = new WorkspaceProcessLeaseRegistry({
+    directory, managerToken: "owner", pid: 101, hostname: "same-host", heartbeatMs: 60_000, isPidAlive: () => false,
+  })
+  const contender = new WorkspaceProcessLeaseRegistry({
+    directory, managerToken: "contender", pid: 202, hostname: "same-host", staleMs: 20, isPidAlive: () => false,
+  })
+  const lease = await owner.acquire(workspacePath)
+  assert.ok(lease)
+  await lease.prepareLaunch()
+  const [key] = await readdir(directory)
+  const leaseDirectory = path.join(directory, key!)
+  const ownerRecord = JSON.parse(await readFile(path.join(leaseDirectory, "owner", "owner.json"), "utf8"))
+  const launchPath = path.join(leaseDirectory, `launch.${ownerRecord.leaseToken}.json`)
+  await writeFile(launchPath, "{", "utf8")
+
+  assert.equal(await contender.acquire(workspacePath), undefined)
+  const old = new Date(Date.now() - 1_000)
+  await Promise.all([
+    utimes(launchPath, old, old),
+    utimes(path.join(leaseDirectory, "owner", "heartbeat"), old, old),
+  ])
   const replacement = await contender.acquire(workspacePath)
   assert.ok(replacement)
   await lease.release()

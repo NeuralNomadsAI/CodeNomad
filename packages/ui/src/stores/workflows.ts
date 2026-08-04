@@ -58,13 +58,24 @@ const workflowRunLoadGenerations = new Map<string, number>()
 const workflowDefinitionListFence = createWorkflowResponseFence()
 const workflowDefinitionMutationGenerations = new Map<string, number>()
 const pendingWorkflowDefinitionMutations = new Set<string>()
+const mountedWorkflowInstances = new Map<string, number>()
+const workflowRunRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const workflowRunRetryAttempts = new Map<string, number>()
 let workflowRevision = 0
 let workflowDefinitionMutationGeneration = 0
 
 const workflowRunKey = (instanceId: string, runId: string) => JSON.stringify([instanceId, runId])
 
+function clearWorkflowRunRetry(key: string): void {
+  const timer = workflowRunRetryTimers.get(key)
+  if (timer) clearTimeout(timer)
+  workflowRunRetryTimers.delete(key)
+  workflowRunRetryAttempts.delete(key)
+}
+
 function markWorkflowRunHydrating(instanceId: string, runId: string, revision: number): void {
   const key = workflowRunKey(instanceId, runId)
+  if (workflowRunHydrationRevisions().get(key) !== revision) clearWorkflowRunRetry(key)
   setWorkflowRunHydrationRevisions((current) => {
     if ((current.get(key) ?? -1) >= revision) return current
     return new Map(current).set(key, revision)
@@ -73,24 +84,15 @@ function markWorkflowRunHydrating(instanceId: string, runId: string, revision: n
 
 function markWorkflowRunHydrated(instanceId: string, run: WorkflowRun): void {
   const key = workflowRunKey(instanceId, run.id)
+  const pendingRevision = workflowRunHydrationRevisions().get(key)
+  if (pendingRevision === undefined || run.revision === undefined || run.revision < pendingRevision) return
   setWorkflowRunHydrationRevisions((current) => {
-    const pendingRevision = current.get(key)
-    if (pendingRevision === undefined || (run.revision !== undefined && run.revision < pendingRevision)) return current
+    if (current.get(key) !== pendingRevision) return current
     const next = new Map(current)
     next.delete(key)
     return next
   })
-}
-
-function clearWorkflowRunHydrating(instanceId: string, runId: string, revision?: number): void {
-  if (revision === undefined) return
-  const key = workflowRunKey(instanceId, runId)
-  setWorkflowRunHydrationRevisions((current) => {
-    if (current.get(key) !== revision) return current
-    const next = new Map(current)
-    next.delete(key)
-    return next
-  })
+  clearWorkflowRunRetry(key)
 }
 
 function isWorkflowRunHydrating(instanceId: string, runId: string): boolean {
@@ -121,7 +123,7 @@ function upsertWorkflowRun(instanceId: string, run: WorkflowRun, hydrated = true
   return true
 }
 
-async function loadWorkflowRuns(instanceId: string): Promise<void> {
+async function loadWorkflowRuns(instanceId: string, options?: { propagateErrors?: boolean }): Promise<void> {
   trackedInstances.add(instanceId)
   setMapValue(setWorkflowLoading, instanceId, true)
   setMapValue(setWorkflowErrors, instanceId, undefined)
@@ -130,7 +132,10 @@ async function loadWorkflowRuns(instanceId: string): Promise<void> {
   workflowRunLoadGenerations.set(instanceId, generation)
   try {
     const response = await serverApi.listWorkflowRuns(instanceId)
-    if (workflowRunLoadGenerations.get(instanceId) !== generation) return
+    if (workflowRunLoadGenerations.get(instanceId) !== generation) {
+      if (options?.propagateErrors) throw new Error("workflow_run_refresh_stale")
+      return
+    }
     setWorkflowRuns((previous) => {
       const next = new Map(previous)
       const concurrentRunIds = new Set([...(workflowRunRevisions.get(instanceId) ?? [])]
@@ -144,6 +149,7 @@ async function loadWorkflowRuns(instanceId: string): Promise<void> {
     if (workflowRunLoadGenerations.get(instanceId) === generation) {
       setMapValue(setWorkflowErrors, instanceId, error)
     }
+    if (options?.propagateErrors) throw error
   } finally {
     if (workflowRunLoadGenerations.get(instanceId) === generation) setMapValue(setWorkflowLoading, instanceId, false)
   }
@@ -155,19 +161,22 @@ async function createWorkflowRun(instanceId: string, draft: WorkflowDraft): Prom
   return run
 }
 
-async function loadWorkflowDefinitions(): Promise<void> {
+async function loadWorkflowDefinitions(options?: { propagateErrors?: boolean }): Promise<void> {
   const generation = workflowDefinitionListFence.next()
   setWorkflowDefinitionsLoading(true)
   setWorkflowDefinitionsError(undefined)
   try {
     const incoming = (await serverApi.listWorkflowDefinitions()).definitions
-    if (workflowDefinitionListFence.isCurrent(generation)) {
-      setWorkflowDefinitions((current) => reconcileWorkflowDefinitions(
-        current, incoming, pendingWorkflowDefinitionMutations, workflowDefinitionTombstones(),
-      ))
+    if (!workflowDefinitionListFence.isCurrent(generation)) {
+      if (options?.propagateErrors) throw new Error("workflow_definition_refresh_stale")
+      return
     }
+    setWorkflowDefinitions((current) => reconcileWorkflowDefinitions(
+      current, incoming, pendingWorkflowDefinitionMutations, workflowDefinitionTombstones(),
+    ))
   } catch (error) {
     if (workflowDefinitionListFence.isCurrent(generation)) setWorkflowDefinitionsError(error)
+    if (options?.propagateErrors) throw error
   } finally {
     if (workflowDefinitionListFence.isCurrent(generation)) setWorkflowDefinitionsLoading(false)
   }
@@ -338,22 +347,54 @@ function setWorkflowDeclarativeDraft(instanceId: string, draft: WorkflowDeclarat
   setMapValue(setWorkflowDeclarativeDrafts, instanceId, { ...draft })
 }
 
+function scheduleWorkflowRunRefresh(instanceId: string, runId: string, revision: number): void {
+  const key = workflowRunKey(instanceId, runId)
+  if (!mountedWorkflowInstances.has(instanceId)
+    || !getWorkflowRuns(instanceId).some(({ id }) => id === runId)
+    || workflowRunHydrationRevisions().get(key) !== revision
+    || workflowRunRetryTimers.has(key)) return
+  const attempt = (workflowRunRetryAttempts.get(key) ?? 0) + 1
+  workflowRunRetryAttempts.set(key, attempt)
+  const timer = setTimeout(() => {
+    workflowRunRetryTimers.delete(key)
+    if (mountedWorkflowInstances.has(instanceId)
+      && getWorkflowRuns(instanceId).some(({ id }) => id === runId)
+      && workflowRunHydrationRevisions().get(key) === revision) {
+      void refreshWorkflowRun(instanceId, runId, revision)
+    }
+  }, Math.min(250 * (2 ** (attempt - 1)), 5_000))
+  workflowRunRetryTimers.set(key, timer)
+}
+
+function mountWorkflowInstance(instanceId: string): () => void {
+  mountedWorkflowInstances.set(instanceId, (mountedWorkflowInstances.get(instanceId) ?? 0) + 1)
+  for (const [key, revision] of workflowRunHydrationRevisions()) {
+    const [pendingInstanceId, runId] = JSON.parse(key) as [string, string]
+    if (pendingInstanceId === instanceId) void refreshWorkflowRun(instanceId, runId, revision)
+  }
+  return () => {
+    const remaining = (mountedWorkflowInstances.get(instanceId) ?? 1) - 1
+    if (remaining > 0) {
+      mountedWorkflowInstances.set(instanceId, remaining)
+      return
+    }
+    mountedWorkflowInstances.delete(instanceId)
+    for (const key of workflowRunRetryTimers.keys()) {
+      const [pendingInstanceId] = JSON.parse(key) as [string, string]
+      if (pendingInstanceId === instanceId) clearWorkflowRunRetry(key)
+    }
+  }
+}
+
 const requestWorkflowRunRefresh = createWorkflowRefreshCoordinator(async (instanceId, runId, revision) => {
   try {
-    let run = await serverApi.getWorkflowRun(instanceId, runId).catch(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 250))
-      return serverApi.getWorkflowRun(instanceId, runId)
-    })
-    if (revision !== undefined && (run.revision === undefined || run.revision < revision)) {
-      await new Promise((resolve) => setTimeout(resolve, 250))
-      run = await serverApi.getWorkflowRun(instanceId, runId)
-    }
+    const run = await serverApi.getWorkflowRun(instanceId, runId)
     upsertWorkflowRun(instanceId, run)
     if (revision !== undefined && (run.revision === undefined || run.revision < revision)) {
-      clearWorkflowRunHydrating(instanceId, runId, revision)
+      scheduleWorkflowRunRefresh(instanceId, runId, revision)
     }
   } catch {
-    clearWorkflowRunHydrating(instanceId, runId, revision)
+    if (revision !== undefined) scheduleWorkflowRunRefresh(instanceId, runId, revision)
   }
 })
 
@@ -396,6 +437,13 @@ serverEvents.onOpen(() => {
   void loadWorkflowDefinitions()
 })
 
+serverEvents.onReplayReset(async () => {
+  await Promise.all([
+    loadWorkflowDefinitions({ propagateErrors: true }),
+    ...Array.from(trackedInstances, (instanceId) => loadWorkflowRuns(instanceId, { propagateErrors: true })),
+  ])
+})
+
 export {
   workflowRuns,
   workflowLoading,
@@ -409,6 +457,7 @@ export {
   workflowDefinitionTombstones,
   isWorkflowRunHydrating,
   refreshWorkflowRun,
+  mountWorkflowInstance,
   getWorkflowRuns,
   getWorkflowDraft,
   setWorkflowDraft,

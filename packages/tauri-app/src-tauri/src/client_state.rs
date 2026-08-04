@@ -352,6 +352,12 @@ impl ClientState {
         self.renderer_access.begin_document(trusted_url)
     }
 
+    fn revoke_renderer_access(&self) {
+        if let Err(err) = self.renderer_access.begin_document(None) {
+            eprintln!("[client-state] failed to revoke renderer access: {err}");
+        }
+    }
+
     fn load(&self) -> Result<ClientStateLoadResult, String> {
         let write = self.write_lock.lock().map_err(|err| err.to_string())?;
         let is_primary = self.refresh_primary_locked(&write)?;
@@ -862,6 +868,9 @@ fn legacy_candidate(
         .unwrap_or(-1);
     let mut parsed = parse_client_state(&snapshot.bytes);
     parsed.window = None;
+    if !parsed.restore_enabled {
+        parsed.snapshot = None;
+    }
     Some((
         parsed,
         value.contains_key("snapshot"),
@@ -909,16 +918,36 @@ fn migrate_legacy_state(
         if !ownership_valid() {
             continue;
         }
-        let Some(current) = snapshot_legacy_state(snapshot.path.clone(), snapshot.host) else {
+        let file_name = snapshot
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(CLIENT_STATE_FILENAME);
+        let quarantine = snapshot.path.with_file_name(format!(
+            ".{file_name}.migrated.{}.quarantine",
+            uuid::Uuid::new_v4()
+        ));
+        match fs::rename(&snapshot.path, &quarantine) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => {
+                return Err(format!(
+                    "failed to quarantine migrated legacy client state: {err}"
+                ))
+            }
+        }
+        let Some(current) = snapshot_legacy_state(quarantine.clone(), snapshot.host) else {
+            restore_quarantined_legacy(&snapshot.path, &quarantine);
             continue;
         };
-        if current.identity != snapshot.identity || current.bytes != snapshot.bytes {
+        if current.identity != snapshot.identity
+            || current.bytes != snapshot.bytes
+            || !ownership_valid()
+        {
+            restore_quarantined_legacy(&snapshot.path, &quarantine);
             continue;
         }
-        if !ownership_valid() {
-            continue;
-        }
-        match fs::remove_file(&snapshot.path) {
+        match fs::remove_file(&quarantine) {
             Ok(()) => {}
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => {
@@ -929,6 +958,19 @@ fn migrate_legacy_state(
         }
     }
     Ok(())
+}
+
+fn restore_quarantined_legacy(path: &Path, quarantine: &Path) {
+    match fs::hard_link(quarantine, path) {
+        Ok(()) => {
+            let _ = fs::remove_file(quarantine);
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(err) => eprintln!(
+            "[client-state] preserved quarantined legacy replacement {} after restore failed: {err}",
+            quarantine.display()
+        ),
+    }
 }
 
 fn serialized_value_size(value: &Value) -> Result<usize, String> {
@@ -963,6 +1005,12 @@ fn write_atomically(
 pub fn release(app: &AppHandle) {
     if let Some(state) = app.try_state::<ClientState>() {
         state.release_locks();
+    }
+}
+
+pub(crate) fn revoke_renderer_access(app: &AppHandle) {
+    if let Some(state) = app.try_state::<ClientState>() {
+        state.revoke_renderer_access();
     }
 }
 

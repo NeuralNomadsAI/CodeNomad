@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { closeSync, fstatSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { closeSync, fstatSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { open, rename, rm } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import {
@@ -139,11 +139,11 @@ function snapshotLegacyState(path: string, host: LegacyStateSnapshot["host"]): L
 
 function legacyFileIdentity(descriptor: number): string {
   const value = fstatSync(descriptor, { bigint: true })
-  return `${value.dev}:${value.ino}:${value.size}:${value.mtimeNs}:${value.ctimeNs}:${value.birthtimeNs}`
+  return `${value.dev}:${value.ino}:${value.size}:${value.mtimeNs}:${value.birthtimeNs}`
 }
 
-function legacySnapshotMatches(snapshot: LegacyStateSnapshot): boolean {
-  const current = snapshotLegacyState(snapshot.path, snapshot.host)
+function legacySnapshotMatches(snapshot: LegacyStateSnapshot, path = snapshot.path): boolean {
+  const current = snapshotLegacyState(path, snapshot.host)
   return Boolean(current && current.identity === snapshot.identity && current.contents.equals(snapshot.contents))
 }
 
@@ -153,6 +153,7 @@ function legacyCandidate(snapshot: LegacyStateSnapshot): { host: string; state: 
     if (!candidate || candidate.version !== CLIENT_STATE_VERSION) return undefined
     const parsed = parseClientState(JSON.stringify(candidate)).state
     delete parsed.window
+    if (!parsed.restoreEnabled) delete parsed.snapshot
     const candidateSnapshot = candidate.snapshot as Record<string, unknown> | undefined
     const savedAt = typeof candidateSnapshot?.savedAt === "number" && Number.isFinite(candidateSnapshot.savedAt) ? candidateSnapshot.savedAt : -1
     return { host: snapshot.host, state: parsed, savedAt, hasSnapshot: candidateSnapshot !== undefined }
@@ -529,11 +530,23 @@ export class ClientStateManager {
       this.assertSharedOwnershipAllowed()
       renameSync(temporaryPath, this.statePath)
       for (const snapshot of legacySnapshots) {
+        const quarantinePath = join(
+          dirname(snapshot.path),
+          `.${CLIENT_STATE_FILENAME}.${this.owner.pid}.${this.owner.runToken}.${snapshot.host}.migration-quarantine`,
+        )
         try {
           this.assertSharedOwnershipAllowed()
-          if (!legacySnapshotMatches(snapshot)) continue
-          this.assertSharedOwnershipAllowed()
-          this.removeLegacyState(snapshot.path)
+          renameSync(snapshot.path, quarantinePath)
+          try {
+            if (!legacySnapshotMatches(snapshot, quarantinePath)) {
+              throw new Error("legacy state changed before quarantine")
+            }
+            this.assertSharedOwnershipAllowed()
+            this.removeLegacyState(quarantinePath)
+          } catch (error) {
+            this.restoreQuarantinedLegacyState(snapshot.path, quarantinePath)
+            throw error
+          }
         } catch (error) {
           console.warn(`[client-state] failed to remove migrated legacy state at ${snapshot.path}`, error)
         }
@@ -613,6 +626,17 @@ export class ClientStateManager {
     if (rendererToken !== undefined) this.assertRendererAccessToken(rendererToken)
     if (!this.isPrimary || this.ownershipEpoch !== ownershipEpoch || !isProcessOwnerLockOwned(this.lockPath, this.owner)) {
       throw new Error("Client state ownership changed before atomic replacement")
+    }
+  }
+
+  private restoreQuarantinedLegacyState(path: string, quarantinePath: string): void {
+    try {
+      linkSync(quarantinePath, path)
+      rmSync(quarantinePath, { force: true })
+    } catch (error) {
+      if (!hasErrorCode(error, "EEXIST") && !hasErrorCode(error, "ENOENT")) {
+        console.warn(`[client-state] failed to restore quarantined legacy state at ${path}`, error)
+      }
     }
   }
 

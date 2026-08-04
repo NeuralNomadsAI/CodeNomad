@@ -236,16 +236,19 @@ impl ProcessState {
             return false;
         }
         let has_local_lock = self.refresh_local_primary();
-        has_local_lock
-            && self
-                .cross_host_registration
-                .lock()
-                .map(|registration| {
-                    registration
-                        .as_ref()
-                        .is_some_and(cross_host::Registration::is_primary)
+        self.cross_host_registration
+            .lock()
+            .map(|registration| {
+                registration.as_ref().is_some_and(|registration| {
+                    if has_local_lock {
+                        registration.is_primary()
+                    } else {
+                        registration.participate_in_recovery();
+                        false
+                    }
                 })
-                .unwrap_or(false)
+            })
+            .unwrap_or(false)
     }
 
     pub(super) fn defer_primary(&self) {

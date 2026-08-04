@@ -100,6 +100,8 @@ serverEvents.on("yolo.stateChanged", (event) => {
   const { instanceId, sessionId, enabled } = event
   if (typeof instanceId !== "string" || typeof sessionId !== "string" || typeof enabled !== "boolean") return
   log.info(`[SSE] Yolo state changed: ${instanceId}:${sessionId} -> ${enabled}`)
+  const key = `${instanceId}:${sessionId}`
+  yoloSyncGenerations.set(key, (yoloSyncGenerations.get(key) ?? 0) + 1)
   setPermissionAutoAcceptEnabled(instanceId, sessionId, enabled)
 })
 
@@ -498,6 +500,7 @@ async function syncPendingPermissions(instanceId: string, propagateErrors = fals
       "permission.list",
     ).catch((error) => {
       log.warn("Failed to list legacy pending permissions", { instanceId, error })
+      if (propagateErrors) throw error
       return []
     })
     for (const permission of legacyRemote) {
@@ -555,6 +558,7 @@ async function syncPendingQuestions(instanceId: string, propagateErrors = false)
       "question.list",
     ).catch((error) => {
       log.warn("Failed to list legacy pending questions", { instanceId, error })
+      if (propagateErrors) throw error
       return []
     })
     for (const request of legacyRemote) {
@@ -611,7 +615,7 @@ function startInstanceSessionHydration(instanceId: string, force = false, propag
   const sessions = Promise.all([worktreeHydration, worktreeMapHydration]).then(async () => {
     resetSessionPagination(instanceId)
     try {
-      await fetchSessions(instanceId)
+      await fetchSessions(instanceId, { propagateErrors })
     } catch (error) {
       log.error("Failed to hydrate sessions", { instanceId, error })
       if (propagateErrors) throw error
@@ -718,6 +722,10 @@ async function rehydrateInstance(instanceId: string, options?: { reason?: string
           activeSessionId().get(instanceId),
         ].filter((sessionId): sessionId is string => Boolean(sessionId) && sessionId !== "info"))
       : new Set<string>()
+    const activeYoloSessionIds = options?.replayReset
+      ? new Set([activeParentSessionId().get(instanceId), activeSessionId().get(instanceId)]
+          .filter((sessionId): sessionId is string => Boolean(sessionId) && sessionId !== "info"))
+      : new Set<string>()
     clearReloadableInstanceState(instanceId)
     if (options?.replayReset) clearInstanceSessionRuntimeCache(instanceId)
 
@@ -726,10 +734,16 @@ async function rehydrateInstance(instanceId: string, options?: { reason?: string
       propagateErrors: options?.replayReset,
     })
     if (options?.replayReset) {
-      await Promise.all(Array.from(messageSessionIds, (sessionId) => {
-        if (!sessions().get(instanceId)?.has(sessionId)) return Promise.resolve()
-        return loadMessages(instanceId, sessionId, { force: true, skipChildren: true })
-      }))
+      await Promise.all([
+        ...Array.from(messageSessionIds, (sessionId) => {
+          if (!sessions().get(instanceId)?.has(sessionId)) return Promise.resolve()
+          return loadMessages(instanceId, sessionId, { force: true, skipChildren: true })
+        }),
+        ...Array.from(activeYoloSessionIds, (sessionId) => {
+          if (!sessions().get(instanceId)?.has(sessionId)) return Promise.resolve()
+          return refreshYoloState(instanceId, sessionId)
+        }),
+      ])
     }
   })().finally(() => {
     pendingRehydrations.delete(instanceId)
@@ -1571,17 +1585,24 @@ function togglePermissionAutoAcceptForSession(instanceId: string, sessionId: str
  * reconnect so state re-syncs after a server restart.
  */
 const syncedYoloSessions = new Set<string>()
+const yoloSyncGenerations = new Map<string, number>()
+
+async function refreshYoloState(instanceId: string, sessionId: string): Promise<void> {
+  const key = `${instanceId}:${sessionId}`
+  const generation = (yoloSyncGenerations.get(key) ?? 0) + 1
+  yoloSyncGenerations.set(key, generation)
+  const state = await serverApi.getYoloState(instanceId, sessionId)
+  if (yoloSyncGenerations.get(key) !== generation) return
+  setPermissionAutoAcceptEnabled(instanceId, sessionId, state.enabled)
+  syncedYoloSessions.add(key)
+}
 
 export function ensureYoloStateSynced(instanceId: string, sessionId: string): void {
   if (!instanceId || !sessionId || sessionId === "info") return
   const key = `${instanceId}:${sessionId}`
   if (syncedYoloSessions.has(key)) return
   syncedYoloSessions.add(key)
-  void serverApi
-    .getYoloState(instanceId, sessionId)
-    .then((state) => {
-      setPermissionAutoAcceptEnabled(instanceId, sessionId, state.enabled)
-    })
+  void refreshYoloState(instanceId, sessionId)
     .catch((error) => {
       // allow retry on next activation (e.g. instance not ready yet)
       syncedYoloSessions.delete(key)
@@ -1599,6 +1620,9 @@ function clearSyncedYoloSessionsForInstance(instanceId: string): void {
     if (key.startsWith(prefix)) {
       syncedYoloSessions.delete(key)
     }
+  }
+  for (const key of yoloSyncGenerations.keys()) {
+    if (key.startsWith(prefix)) yoloSyncGenerations.delete(key)
   }
 }
 

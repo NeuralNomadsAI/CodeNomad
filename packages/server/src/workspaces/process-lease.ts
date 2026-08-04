@@ -15,6 +15,7 @@ import {
 
 const OWNER_FILE = "owner.json"
 const DEFAULT_HEARTBEAT_MS = 5_000
+const DEFAULT_STALE_MS = 15_000
 
 interface LeaseOwner {
   version: 1
@@ -42,7 +43,7 @@ export interface WorkspaceProcessLeaseRegistryOptions {
   hostname?: string
   processStart?: string
   isPidAlive?: (pid: number) => boolean
-  isProcessIdentityAlive?: (identity: ProcessIdentity) => boolean
+  isProcessIdentityAlive?: (identity: ProcessIdentity) => boolean | undefined
   isLaunchTokenAlive?: (token: string) => boolean | undefined
 }
 
@@ -68,6 +69,7 @@ export class WorkspaceProcessLeaseRegistry {
   private readonly pid: number
   private readonly hostname: string
   private readonly heartbeatMs: number
+  private readonly staleMs: number
   private readonly held = new Map<string, HeldLease>()
   private processStart: string | undefined
 
@@ -77,6 +79,7 @@ export class WorkspaceProcessLeaseRegistry {
     this.hostname = options.hostname ?? os.hostname()
     this.processStart = options.processStart
     this.heartbeatMs = Math.max(10, options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS)
+    this.staleMs = Math.max(10, options.staleMs ?? DEFAULT_STALE_MS)
   }
 
   async acquire(workspacePath: string): Promise<WorkspaceProcessLease | undefined> {
@@ -205,13 +208,32 @@ export class WorkspaceProcessLeaseRegistry {
         const currentStart = await readProcessStart(owner.pid)
         if (currentStart) serverAlive = currentStart === owner.processStart
       }
-      const workspaceProcesses = await readProcessIdentities(directory, owner.leaseToken)
-      const workspaceAlive = workspaceProcesses.some(this.options.isProcessIdentityAlive ?? processIdentityIsAlive)
-      if (serverAlive || workspaceAlive) return false
-      if (workspaceProcesses.length > 0) return true
-      const launchTokens = await readLaunchTokens(directory, owner.leaseToken)
-      const tokenAlive = this.options.isLaunchTokenAlive ?? launchTokenIsAlive
-      for (const token of launchTokens) if (tokenAlive(token) !== false) return false
+      if (serverAlive) return false
+      const launchToken = await readLaunchToken(directory, owner.leaseToken)
+      if (launchToken.kind === "unknown") return false
+      if (launchToken.kind === "malformed" && Date.now() - launchToken.modifiedAt < this.staleMs) return false
+      if (launchToken.kind === "valid") {
+        try {
+          if ((this.options.isLaunchTokenAlive ?? launchTokenIsAlive)(launchToken.token) !== false) return false
+        } catch {
+          return false
+        }
+      }
+      let workspaceProcesses: ProcessIdentity[] | undefined
+      try {
+        workspaceProcesses = await readProcessIdentities(directory, owner.leaseToken)
+      } catch {
+        return false
+      }
+      if (!workspaceProcesses) return false
+      const processAlive = this.options.isProcessIdentityAlive ?? processIdentityIsAlive
+      for (const identity of workspaceProcesses) {
+        try {
+          if (processAlive(identity) !== false) return false
+        } catch {
+          return false
+        }
+      }
       return true
     }
     return false
@@ -337,33 +359,50 @@ async function writeLaunchToken(directory: string, leaseToken: string, token: st
   }
 }
 
-async function readLaunchTokens(directory: string, leaseToken: string): Promise<string[]> {
+type LaunchTokenObservation =
+  | { kind: "absent" }
+  | { kind: "valid"; token: string }
+  | { kind: "malformed"; modifiedAt: number }
+  | { kind: "unknown" }
+
+async function readLaunchToken(directory: string, leaseToken: string): Promise<LaunchTokenObservation> {
+  const launchPath = path.join(directory, `launch.${leaseToken}.json`)
   try {
-    const value = JSON.parse(await fs.readFile(path.join(directory, `launch.${leaseToken}.json`), "utf8")) as { token?: unknown }
-    return typeof value.token === "string" && value.token.length > 0 ? [value.token] : []
+    const value = JSON.parse(await fs.readFile(launchPath, "utf8")) as { token?: unknown }
+    if (typeof value.token === "string" && value.token.length > 0) return { kind: "valid", token: value.token }
   } catch (error) {
-    if (hasCode(error, "ENOENT")) return []
-    return [""]
+    if (hasCode(error, "ENOENT")) return { kind: "absent" }
+    if (!(error instanceof SyntaxError)) return { kind: "unknown" }
+  }
+  try {
+    const [launch, heartbeat] = await Promise.all([
+      fs.stat(launchPath),
+      fs.stat(path.join(directory, "owner", "heartbeat")),
+    ])
+    return { kind: "malformed", modifiedAt: Math.max(launch.mtimeMs, heartbeat.mtimeMs) }
+  } catch (error) {
+    return hasCode(error, "ENOENT") ? { kind: "absent" } : { kind: "unknown" }
   }
 }
 
-async function readProcessIdentities(directory: string, leaseToken: string): Promise<ProcessIdentity[]> {
+async function readProcessIdentities(directory: string, leaseToken: string): Promise<ProcessIdentity[] | undefined> {
   try {
     const entries = await fs.readdir(directory)
     const identities = await Promise.all(entries.filter((entry) => entry.startsWith(`process.${leaseToken}.`) && entry.endsWith(".json"))
       .map(async (entry) => JSON.parse(await fs.readFile(path.join(directory, entry), "utf8")) as ProcessIdentity))
     return identities.filter((identity) => Number.isInteger(identity.pid) && identity.pid > 0 && typeof identity.startTime === "string")
   } catch (error) {
-    if (hasCode(error, "ENOENT") || error instanceof SyntaxError) return []
+    if (hasCode(error, "ENOENT")) return []
+    if (error instanceof SyntaxError) return undefined
     throw error
   }
 }
 
-function processIdentityIsAlive(identity: ProcessIdentity): boolean {
+function processIdentityIsAlive(identity: ProcessIdentity): boolean | undefined {
   const snapshot = process.platform === "win32"
     ? probeWindowsProcesses(spawnSync, 1_000)
     : probePosixProcesses(spawnSync, 1_000, process.platform, { pids: [identity.pid] })
-  return snapshot.ok && sameProcess(identity, snapshot.processes.get(identity.pid))
+  return snapshot.ok ? sameProcess(identity, snapshot.processes.get(identity.pid)) : undefined
 }
 
 function launchTokenIsAlive(token: string): boolean | undefined {

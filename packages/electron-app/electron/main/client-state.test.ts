@@ -206,16 +206,22 @@ test("first shared primary deterministically migrates legacy host envelopes", as
   await manager.drainAndReleasePrimary()
 })
 
-test("legacy migration prefers disabled and ignores malformed candidates", async (t) => {
+test("legacy migration prefers disabled, strips stale payloads, and ignores malformed candidates", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "codenomad-migration-"))
   const electron = join(root, "electron"), tauri = join(root, "tauri"), election = join(root, "shared", "election")
   mkdirSync(electron, { recursive: true }); mkdirSync(tauri, { recursive: true })
   t.after(() => rmSync(root, { recursive: true, force: true }))
   writeFileSync(join(electron, "client-state.json"), "malformed")
-  writeFileSync(join(tauri, "client-state.json"), JSON.stringify({ version: 1, restoreEnabled: false, snapshot: { savedAt: 1 } }))
+  writeFileSync(join(tauri, "client-state.json"), JSON.stringify({
+    version: 1,
+    restoreEnabled: false,
+    snapshot: { savedAt: 1 },
+    window: { bounds: { x: 1, y: 2, width: 800, height: 600 }, maximized: false, fullscreen: false, zoomFactor: 1 },
+  }))
   const manager = new ClientStateManager(electron, undefined, { crossHostElectionDirectory: election, legacyTauriDataPath: tauri })
   assert.deepEqual(manager.loadClientState(), { isPrimary: true, restoreEnabled: false, snapshot: null })
-  assert.equal(JSON.parse(readFileSync(join(root, "shared", "client-state.json"), "utf8")).restoreEnabled, false)
+  assert.deepEqual(JSON.parse(readFileSync(join(root, "shared", "client-state.json"), "utf8")), { version: 1, restoreEnabled: false })
+  assert.equal(existsSync(join(tauri, "client-state.json")), false)
   await manager.drainAndReleasePrimary()
 })
 
@@ -244,6 +250,7 @@ test("legacy cleanup failure cannot abort startup after shared state replacement
   })
   assert.deepEqual(manager.loadClientState().snapshot, { savedAt: 10 })
   assert.equal(existsSync(join(shared, "client-state.json")), true)
+  assert.equal(existsSync(join(electron, "client-state.json")), true)
   await manager.drainAndReleasePrimary()
 })
 
@@ -261,7 +268,7 @@ test("legacy cleanup preserves a same-content file replaced after the migration 
     legacyTauriDataPath: tauri,
     removeLegacyState: (path) => {
       rmSync(path, { force: true })
-      if (path === electronLegacy) {
+      if (path.includes(".electron.migration-quarantine")) {
         rmSync(tauriLegacy)
         writeFileSync(tauriLegacy, contents)
       }
@@ -269,6 +276,26 @@ test("legacy cleanup preserves a same-content file replaced after the migration 
   })
   assert.equal(existsSync(electronLegacy), false)
   assert.equal(readFileSync(tauriLegacy, "utf8"), contents)
+  await manager.drainAndReleasePrimary()
+})
+
+test("legacy cleanup does not delete a replacement created after quarantine", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "codenomad-migration-quarantine-race-"))
+  const electron = join(root, "electron"), election = join(root, "shared", "election")
+  mkdirSync(electron, { recursive: true })
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const legacy = join(electron, "client-state.json")
+  const replacement = JSON.stringify({ version: 1, restoreEnabled: true, snapshot: { replacement: true } })
+  writeFileSync(legacy, JSON.stringify({ version: 1, restoreEnabled: true, snapshot: { savedAt: 10 } }))
+
+  const manager = new ClientStateManager(electron, undefined, {
+    crossHostElectionDirectory: election,
+    removeLegacyState: (quarantinePath) => {
+      writeFileSync(legacy, replacement)
+      rmSync(quarantinePath, { force: true })
+    },
+  })
+  assert.equal(readFileSync(legacy, "utf8"), replacement)
   await manager.drainAndReleasePrimary()
 })
 
@@ -287,7 +314,7 @@ test("legacy cleanup stops when a legacy Tauri host appears after replacement", 
     crossHostDependencies: { pidAlive: (pid) => pid === 9912, processStartIdentity: () => undefined },
     removeLegacyState: (path) => {
       rmSync(path, { force: true })
-      if (path === electronLegacy) writeFileSync(join(tauri, "client-state.running.9912.late.lock"), "")
+      if (path.includes(".electron.migration-quarantine")) writeFileSync(join(tauri, "client-state.running.9912.late.lock"), "")
     },
   })
   assert.equal(existsSync(electronLegacy), false)

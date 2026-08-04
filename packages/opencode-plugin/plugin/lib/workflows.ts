@@ -72,6 +72,52 @@ const JSON_VALUE_DEPTH_LIMIT = 20
 const JSON_VALUE_COUNT_LIMIT = 50_000
 const START_REQUEST_TIMEOUT_MS = 30_000
 const START_CANCEL_TIMEOUT_MS = 5_000
+const WORKFLOW_STATUSES = new Set<WorkflowStatus>([
+  "running", "pausing", "paused", "waiting_for_review", "waiting_for_input", "completed", "failed", "cancelled",
+  "interrupted", "recovery_required",
+])
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value)
+}
+
+function hasOptionalType(candidate: Record<string, unknown>, key: string, type: "string" | "number" | "boolean"): boolean {
+  return candidate[key] === undefined || typeof candidate[key] === type
+}
+
+function isWorkflowUsage(value: unknown): boolean {
+  if (!isRecord(value)) return false
+  return ["cost", "tokens", "inputTokens", "outputTokens", "reasoningTokens", "cacheReadTokens", "cacheWriteTokens"]
+    .every((key) => typeof value[key] === "number" && Number.isFinite(value[key]))
+}
+
+function validateStartedWorkflowRun(value: unknown, runId: string): WorkflowRun {
+  if (!isRecord(value)) throw new Error(`Workflow ${runId} start returned a malformed run`)
+  const candidate = value
+  if (
+    candidate.id !== runId ||
+    typeof candidate.objective !== "string" || !WORKFLOW_STATUSES.has(candidate.status as WorkflowStatus) ||
+    !hasOptionalType(candidate, "error", "string") || !hasOptionalType(candidate, "pendingReviewStepId", "string") ||
+    !hasOptionalType(candidate, "definitionId", "string") || !hasOptionalType(candidate, "definitionRevision", "number") ||
+    (candidate.usage !== undefined && !isWorkflowUsage(candidate.usage)) ||
+    !Array.isArray(candidate.steps) || candidate.steps.some((step) => !isRecord(step) ||
+      typeof step.id !== "string" || typeof step.title !== "string" || typeof step.status !== "string" ||
+      !hasOptionalType(step, "sessionId", "string") || !hasOptionalType(step, "outputTruncated", "boolean")) ||
+    (candidate.executionNodes !== undefined && (!Array.isArray(candidate.executionNodes) || candidate.executionNodes.some((node) =>
+      !isRecord(node) || typeof node.instanceKey !== "string" || typeof node.status !== "string" ||
+      !hasOptionalType(node, "error", "string") || !hasOptionalType(node, "outputTruncated", "boolean") ||
+      (node.sessionIds !== undefined && (!Array.isArray(node.sessionIds) || node.sessionIds.some((id) => typeof id !== "string"))) ||
+      (node.usage !== undefined && !isWorkflowUsage(node.usage))))) ||
+    (candidate.pendingGate !== undefined && (!isRecord(candidate.pendingGate) ||
+      typeof candidate.pendingGate.executionNodeId !== "string" ||
+      (candidate.pendingGate.gate !== "approval" && candidate.pendingGate.gate !== "input") ||
+      typeof candidate.pendingGate.prompt !== "string" ||
+      (candidate.pendingGate.inputSchema !== undefined && !isRecord(candidate.pendingGate.inputSchema))))
+  ) {
+    throw new Error(`Workflow ${runId} start returned a malformed run`)
+  }
+  return candidate as unknown as WorkflowRun
+}
 
 function summarize(run: WorkflowRun) {
   const dynamic = Boolean(run.definitionId || run.executionNodes)
@@ -247,7 +293,7 @@ export function createWorkflowTools(config: CodeNomadConfig, requester: Workflow
         let failure: unknown
         let failed = false
         try {
-          run = await requestDefinition<WorkflowRun>(`/${encodeURIComponent(args.definition_id)}/start`, {
+          const response = await requestDefinition<unknown>(`/${encodeURIComponent(args.definition_id)}/start`, {
             method: "POST",
             signal: AbortSignal.any([context.abort, AbortSignal.timeout(START_REQUEST_TIMEOUT_MS)]),
             body: JSON.stringify({
@@ -256,6 +302,7 @@ export function createWorkflowTools(config: CodeNomadConfig, requester: Workflow
               ...(inputs ? { inputs } : {}),
             }),
           })
+          run = validateStartedWorkflowRun(response, runId)
         } catch (error) {
           failed = true
           failure = error

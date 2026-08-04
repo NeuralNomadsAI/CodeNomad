@@ -76,6 +76,14 @@ interface ActiveRun {
   heartbeat?: NodeJS.Timeout
 }
 
+interface PendingCancellation {
+  run: WorkflowRun
+  active?: ActiveRun
+  initialDrain?: Promise<boolean>
+  finalized?: boolean
+  unchanged?: boolean
+}
+
 interface DefinitionGraphSnapshot {
   root: WorkflowDefinitionV1
   saved: WorkflowSavedDefinitionSnapshot[]
@@ -735,30 +743,38 @@ export class WorkflowManager {
   }
 
   async cancel(runId: string): Promise<WorkflowRun | undefined> {
-    await this.ensureInitialized()
     if (this.shuttingDown) throw new WorkflowRunError("CodeNomad is shutting down", 503)
-    return this.withAdmission(() => this.cancelRun(runId))
+    const active = this.activeRuns.get(runId)
+    if (active) {
+      active.cancelRequested = true
+      active.releaseBlocked = true
+    }
+    await this.ensureInitialized()
+    return this.cancelRun(runId)
   }
 
   /** Atomically verifies plugin workspace ownership and cancels without joining/rebinding the run via get(). */
   async cancelOwned(runId: string, workspaceId: string): Promise<WorkflowRun | undefined> {
     await this.ensureInitialized()
     if (this.shuttingDown) throw new WorkflowRunError("CodeNomad is shutting down", 503)
-    return this.withAdmission(() => this.withRunTransition(runId, async () => {
-      const run = this.activeRuns.get(runId)?.run ?? await this.read(runId)
-      if (!run) return undefined
-      const workspace = this.options.workspaceManager.get(workspaceId)
-      const executionMatch = run.workspaceId === workspaceId || Boolean(workspace?.status === "ready"
-        && this.matchesCanonicalWorkspace(workspace, run.workspaceLineageId, run.workspacePath))
-      const selection = run.worktreeSelection
-      const sourceMatch = selection?.sourceWorkspaceId === workspaceId || Boolean(selection && workspace?.status === "ready"
-        && this.matchesCanonicalWorkspace(workspace, selection.sourceWorkspaceLineageId, selection.sourceWorkspacePath))
-      if (!executionMatch && !sourceMatch) return undefined
-      if (executionMatch && run.workspaceId !== workspaceId) {
-        if (!await this.bindWorkspaceCurrent(run, workspaceId)) return undefined
-      }
-      return this.cancelRunCurrent(runId, run)
-    }))
+    return this.withRunTransition(runId, async () => {
+      const pending = await this.withAdmission(async () => {
+        const run = this.activeRuns.get(runId)?.run ?? await this.read(runId)
+        if (!run) return undefined
+        const workspace = this.options.workspaceManager.get(workspaceId)
+        const executionMatch = run.workspaceId === workspaceId || Boolean(workspace?.status === "ready"
+          && this.matchesCanonicalWorkspace(workspace, run.workspaceLineageId, run.workspacePath))
+        const selection = run.worktreeSelection
+        const sourceMatch = selection?.sourceWorkspaceId === workspaceId || Boolean(selection && workspace?.status === "ready"
+          && this.matchesCanonicalWorkspace(workspace, selection.sourceWorkspaceLineageId, selection.sourceWorkspacePath))
+        if (!executionMatch && !sourceMatch) return undefined
+        if (executionMatch && run.workspaceId !== workspaceId) {
+          if (!await this.bindWorkspaceCurrent(run, workspaceId)) return undefined
+        }
+        return this.fenceCancellation(runId, run)
+      })
+      return pending && this.finalizeCancellation(pending)
+    })
   }
 
   async shutdown(): Promise<void> {
@@ -778,24 +794,75 @@ export class WorkflowManager {
 
   private async cancelRun(runId: string): Promise<WorkflowRun | undefined> {
     return this.withRunTransition(runId, async () => {
-      const run = this.activeRuns.get(runId)?.run ?? await this.read(runId)
-      if (!run) return undefined
-      return this.cancelRunCurrent(runId, run)
+      const pending = await this.withAdmission(async () => {
+        const run = this.activeRuns.get(runId)?.run ?? await this.read(runId)
+        return run ? this.fenceCancellation(runId, run) : undefined
+      })
+      return pending && this.finalizeCancellation(pending)
     })
   }
 
   private async cancelRunCurrent(runId: string, run: WorkflowRun): Promise<WorkflowRun> {
+    return this.finalizeCancellation(await this.fenceCancellation(runId, run))
+  }
+
+  private async fenceCancellation(runId: string, run: WorkflowRun): Promise<PendingCancellation> {
     const active = this.activeRuns.get(runId)
     this.assertNoLiveForeignLease(run)
-    if (!["running", "pausing", "paused", "waiting_for_review", "waiting_for_input", "interrupted", "recovery_required"].includes(run.status)) return run
+    if (!["running", "pausing", "paused", "waiting_for_review", "waiting_for_input", "interrupted", "recovery_required"].includes(run.status)) {
+      return { run, unchanged: true }
+    }
 
-    let terminationConfirmed = true
+    if (!active && this.persistedAmbiguousSessionIds(run).size === 0 && !this.hasUnconfirmedAdmittedAction(run)) {
+      await this.persistMutation(run, () => {
+        this.markCancelled(run)
+        this.clearExpiredExecutorLease(run)
+        this.releaseExecutorLease(run)
+      })
+      return { run, finalized: true }
+    }
+
+    const priorCancelRequested = active?.cancelRequested
+    const priorReleaseBlocked = active?.releaseBlocked
     if (active) {
-      this.requestCancellation(active)
-      await this.drainSessions(active)
-      await active.completion
-      terminationConfirmed = await this.drainSessions(active)
-      if (terminationConfirmed) this.clearPersistedSessions(run, this.persistedAmbiguousSessionIds(run))
+      active.cancelRequested = true
+      active.releaseBlocked = true
+    }
+    try {
+      await this.persistMutation(run, () => {
+        run.status = "recovery_required"
+      })
+    } catch (error) {
+      if (active) {
+        active.cancelRequested = priorCancelRequested!
+        active.releaseBlocked = priorReleaseBlocked!
+      }
+      throw error
+    }
+    if (!active) return { run }
+    this.requestCancellation(active)
+    return { run, active, initialDrain: this.drainSessions(active) }
+  }
+
+  private async finalizeCancellation(pending: PendingCancellation): Promise<WorkflowRun> {
+    const { run, active } = pending
+    if (pending.unchanged) return run
+    let terminationConfirmed = true
+    let completionSettled = true
+    if (active) {
+      terminationConfirmed = await pending.initialDrain!
+      completionSettled = !active.completion || await this.withTimeout(
+        active.completion.then(() => true),
+        Math.max(1, Math.min(ABORT_TIMEOUT_MS, this.promptTimeoutMs)),
+        "Workflow cancellation settlement timed out",
+      ).catch(() => false)
+      terminationConfirmed = terminationConfirmed && await this.drainSessions(active)
+      if (!completionSettled && this.persistedAmbiguousSessionIds(run).size === 0 && this.hasUnconfirmedAdmittedAction(run)) {
+        terminationConfirmed = false
+      }
+      if (terminationConfirmed && completionSettled) {
+        this.clearPersistedSessions(run, this.persistedAmbiguousSessionIds(run))
+      }
     }
     const sessionIds = this.persistedAmbiguousSessionIds(run)
     if (sessionIds.size > 0) {
@@ -809,7 +876,7 @@ export class WorkflowManager {
       ? "Workflow cancellation has no persisted session IDs and cannot positively confirm termination"
       : "Workflow cancellation could not confirm every session abort"
     try {
-      await this.persistMutation(run, () => {
+      if (!pending.finalized) await this.persistMutation(run, () => {
         if (terminationConfirmed) {
           this.clearPersistedSessions(run, sessionIds)
           this.markCancelled(run)

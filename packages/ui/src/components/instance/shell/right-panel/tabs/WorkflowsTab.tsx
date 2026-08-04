@@ -1,4 +1,4 @@
-import { Show, createEffect, createMemo, createSignal, onMount, type Component } from "solid-js"
+import { Show, createEffect, createMemo, createSignal, onCleanup, onMount, type Component } from "solid-js"
 import { RefreshCw } from "lucide-solid"
 import { useI18n } from "../../../../../lib/i18n"
 import { selectInstanceTab } from "../../../../../stores/app-tabs"
@@ -8,6 +8,7 @@ import {
   getWorkflowRuns,
   loadWorkflowDefinitions,
   loadWorkflowRuns,
+  mountWorkflowInstance,
   workflowErrors,
   workflowLoading,
   workflowStatusTransitions,
@@ -50,6 +51,8 @@ const WorkflowsTab: Component<WorkflowTabProps> = (props) => {
   })
 
   onMount(() => {
+    const unmount = mountWorkflowInstance(props.instanceId)
+    onCleanup(unmount)
     void loadWorkflowRuns(props.instanceId)
     void loadWorkflowDefinitions()
   })

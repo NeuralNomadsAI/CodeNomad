@@ -39,6 +39,80 @@ describe("mapDesktopEventTransportStatus", () => {
 })
 
 describe("connectTauriWorkspaceEvents", () => {
+  it("buffers post-reset batches until hydration succeeds and then commits their latest cursor", async () => {
+    let batchHandler: ((event: { payload: any }) => void) | undefined
+    let resetHandler: ((event: { payload: any }) => void) | undefined
+    const acknowledgements: any[] = []
+    const bridge = {
+      invoke: async (command: string) => command === "desktop_events_start"
+        ? { started: true, generation: 4, leaseId: 9 }
+        : undefined,
+      listen: async (eventName: string, handler: (event: { payload: any }) => void) => {
+        if (eventName === "desktop:event-batch") batchHandler = handler
+        if (eventName === "desktop:event-replay-reset") resetHandler = handler
+        return () => undefined
+      },
+      emit: async (eventName: string, payload: any) => {
+        acknowledgements.push({ eventName, payload })
+      },
+    } as any
+    let currentCursor = "before-reset"
+    const committed: Array<string | undefined> = []
+    const cursor = {
+      read: () => currentCursor,
+      commit: (next?: string) => {
+        currentCursor = next ?? ""
+        committed.push(next)
+        return true
+      },
+    }
+    let finishFirstHydration!: (accepted: boolean) => void
+    let attempts = 0
+    const batches: string[][] = []
+    const connection = await connectTauriWorkspaceEvents({
+      onBatch: (events) => {
+        batches.push(events.map((event: any) => event.type))
+      },
+      onReplayReset: () => {
+        attempts += 1
+        return attempts === 1
+          ? new Promise<boolean>((resolve) => { finishFirstHydration = resolve })
+          : true
+      },
+    }, { reconnect: {} }, bridge, cursor)
+
+    resetHandler!({ payload: { generation: 4, details: {}, lastEventId: "reset:10" } })
+    batchHandler!({ payload: {
+      generation: 4, sequence: 11, emittedAt: Date.now(), lastEventId: "reset:11",
+      events: [{ type: "workspace.log" }],
+    } })
+    batchHandler!({ payload: {
+      generation: 3, sequence: 12, emittedAt: Date.now(), lastEventId: "stale:12",
+      events: [{ type: "workspace.stopped" }],
+    } })
+    batchHandler!({ payload: {
+      generation: 4, sequence: 12, emittedAt: Date.now(), lastEventId: "reset:12",
+      events: [{ type: "workspace.created" }],
+    } })
+    assert.deepEqual(batches, [])
+    assert.deepEqual(committed, [])
+
+    finishFirstHydration(false)
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(currentCursor, "before-reset")
+    assert.deepEqual(acknowledgements, [])
+
+    resetHandler!({ payload: { generation: 4, details: {}, lastEventId: "reset:10" } })
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.deepEqual(batches, [["workspace.log"], ["workspace.created"]])
+    assert.deepEqual(committed, ["reset:12"])
+    assert.deepEqual(acknowledgements, [{
+      eventName: "desktop:event-ack",
+      payload: { generation: 4, lastEventId: "reset:12" },
+    }])
+    connection.disconnect()
+  })
+
   it("marks the transport connected when a batch opens the native stream", async () => {
     let batchHandler: ((event: { payload: any }) => void) | undefined
     let statusHandler: ((event: { payload: any }) => void) | undefined

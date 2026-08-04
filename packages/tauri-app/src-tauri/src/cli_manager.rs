@@ -855,7 +855,21 @@ impl CliProcessManager {
         status.port = None;
         status.url = None;
         status.error = None;
+        *self.bootstrap_token.lock() = None;
         *self.session_cookie.lock() = None;
+        *self.auth_cookie_name.lock() = None;
+    }
+
+    fn revoke_endpoint_authority(&self, revoke_renderer: impl FnOnce()) {
+        let mut status = self.status.lock();
+        revoke_renderer();
+        status.pid = None;
+        status.port = None;
+        status.url = None;
+        drop(status);
+        *self.bootstrap_token.lock() = None;
+        *self.session_cookie.lock() = None;
+        *self.auth_cookie_name.lock() = None;
     }
 
     fn publish_error(&self, app: &AppHandle, generation: u64, message: String) {
@@ -1110,79 +1124,88 @@ impl CliProcessManager {
             });
         }
 
-        thread::spawn(move || loop {
-            enum Poll {
-                Running,
-                Exited(std::process::ExitStatus),
-                Failed(String),
-            }
-            let poll = {
-                let _lifecycle = manager.lifecycle.lock();
-                if !manager.is_current_generation(generation) {
-                    return;
+        thread::spawn(move || {
+            let mut authority_revoked = false;
+            loop {
+                enum Poll {
+                    Running,
+                    Exited(std::process::ExitStatus),
+                    Failed(String),
                 }
-                let mut child = manager.child.lock();
-                let Some(tracked) = child.as_mut() else {
-                    return;
-                };
-                match tracked.try_wait() {
-                    Ok(Some(status)) => {
-                        #[cfg(unix)]
-                        let group_is_gone = process_group_is_gone(pid).map_err(|err| {
-                            format!("failed to inspect exited CLI pid={pid}: {err}")
-                        });
-                        #[cfg(windows)]
-                        let group_is_gone = match manager.job.lock().as_ref() {
-                            Some(job) => job.active_processes().map(|active| active == 0),
-                            None => Ok(false),
-                        };
-                        #[cfg(not(any(unix, windows)))]
-                        let group_is_gone: anyhow::Result<bool> = Ok(true);
-                        match group_is_gone {
-                            Ok(gone) if containment_is_complete(true, gone) => {
-                                *child = None;
-                                #[cfg(windows)]
-                                {
-                                    manager.job.lock().take();
-                                }
-                                Poll::Exited(status)
-                            }
-                            // The root may be only a launcher/wrapper. Keep ownership and
-                            // monitoring until the process group/job is actually empty.
-                            Ok(_) => Poll::Running,
-                            Err(err) => Poll::Failed(format!(
-                                "failed to inspect exited CLI pid={pid}: {err}"
-                            )),
-                        }
+                let poll = {
+                    let _lifecycle = manager.lifecycle.lock();
+                    if !manager.is_current_generation(generation) {
+                        return;
                     }
-                    Ok(None) => Poll::Running,
-                    Err(err) => Poll::Failed(format!("failed to inspect CLI pid={pid}: {err}")),
-                }
-            };
-            match poll {
-                Poll::Running => thread::sleep(Duration::from_millis(100)),
-                Poll::Failed(message) => {
-                    manager.publish_error(&app, generation, message);
-                    return;
-                }
-                Poll::Exited(code) => {
-                    manager.with_current_generation(generation, || {
-                        let mut status = manager.status.lock();
-                        if status.state != CliState::Ready {
-                            status.state = CliState::Error;
-                            if status.error.is_none() {
-                                status.error = Some(format!("CLI exited early: {code}"));
+                    let mut child = manager.child.lock();
+                    let Some(tracked) = child.as_mut() else {
+                        return;
+                    };
+                    match tracked.try_wait() {
+                        Ok(Some(status)) => {
+                            if !authority_revoked {
+                                manager.revoke_endpoint_authority(|| {
+                                    crate::client_state::revoke_renderer_access(&app)
+                                });
+                                authority_revoked = true;
                             }
-                            let _ = app.emit(
-                                "cli:error",
-                                json!({"message": status.error.clone().unwrap_or_default()}),
-                            );
-                        } else {
-                            status.state = CliState::Stopped;
+                            #[cfg(unix)]
+                            let group_is_gone = process_group_is_gone(pid).map_err(|err| {
+                                format!("failed to inspect exited CLI pid={pid}: {err}")
+                            });
+                            #[cfg(windows)]
+                            let group_is_gone = match manager.job.lock().as_ref() {
+                                Some(job) => job.active_processes().map(|active| active == 0),
+                                None => Ok(false),
+                            };
+                            #[cfg(not(any(unix, windows)))]
+                            let group_is_gone: anyhow::Result<bool> = Ok(true);
+                            match group_is_gone {
+                                Ok(gone) if containment_is_complete(true, gone) => {
+                                    *child = None;
+                                    #[cfg(windows)]
+                                    {
+                                        manager.job.lock().take();
+                                    }
+                                    Poll::Exited(status)
+                                }
+                                // The root may be only a launcher/wrapper. Keep ownership and
+                                // monitoring until the process group/job is actually empty.
+                                Ok(_) => Poll::Running,
+                                Err(err) => Poll::Failed(format!(
+                                    "failed to inspect exited CLI pid={pid}: {err}"
+                                )),
+                            }
                         }
-                        Self::emit_status(&app, &status);
-                    });
-                    return;
+                        Ok(None) => Poll::Running,
+                        Err(err) => Poll::Failed(format!("failed to inspect CLI pid={pid}: {err}")),
+                    }
+                };
+                match poll {
+                    Poll::Running => thread::sleep(Duration::from_millis(100)),
+                    Poll::Failed(message) => {
+                        manager.publish_error(&app, generation, message);
+                        return;
+                    }
+                    Poll::Exited(code) => {
+                        manager.with_current_generation(generation, || {
+                            let mut status = manager.status.lock();
+                            if status.state != CliState::Ready {
+                                status.state = CliState::Error;
+                                if status.error.is_none() {
+                                    status.error = Some(format!("CLI exited early: {code}"));
+                                }
+                                let _ = app.emit(
+                                    "cli:error",
+                                    json!({"message": status.error.clone().unwrap_or_default()}),
+                                );
+                            } else {
+                                status.state = CliState::Stopped;
+                            }
+                            Self::emit_status(&app, &status);
+                        });
+                        return;
+                    }
                 }
             }
         });
@@ -1760,6 +1783,37 @@ mod tests {
             })
             .is_some());
         assert_eq!(manager.status().state, CliState::Ready);
+    }
+
+    #[test]
+    fn endpoint_revocation_clears_all_reusable_cli_authority() {
+        let manager = CliProcessManager::new();
+        {
+            let mut status = manager.status.lock();
+            status.state = CliState::Ready;
+            status.pid = Some(123);
+            status.port = Some(43123);
+            status.url = Some("http://127.0.0.1:43123".to_string());
+        }
+        *manager.bootstrap_token.lock() = Some("bootstrap".to_string());
+        *manager.session_cookie.lock() = Some("session".to_string());
+        *manager.auth_cookie_name.lock() = Some("cookie".to_string());
+        let renderer_revoked = AtomicBool::new(false);
+
+        manager.revoke_endpoint_authority(|| {
+            assert!(manager.status.try_lock().is_none());
+            renderer_revoked.store(true, Ordering::SeqCst);
+        });
+
+        assert!(renderer_revoked.load(Ordering::SeqCst));
+        let status = manager.status();
+        assert_eq!(status.state, CliState::Ready);
+        assert_eq!(status.pid, None);
+        assert_eq!(status.port, None);
+        assert_eq!(status.url, None);
+        assert!(manager.bootstrap_token.lock().is_none());
+        assert!(manager.session_cookie.lock().is_none());
+        assert!(manager.auth_cookie_name.lock().is_none());
     }
 
     #[test]

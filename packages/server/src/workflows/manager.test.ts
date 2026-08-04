@@ -308,6 +308,57 @@ describe("WorkflowManager", () => {
       await fs.rm(storageDir, { recursive: true, force: true })
     }
   })
+
+  it("releases admission while cancelling a prompt that ignores abort", async () => {
+    const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-workflow-cancel-admission-"))
+    let promptStarted!: () => void
+    const started = new Promise<void>((resolve) => { promptStarted = resolve })
+    const client = { tool: { ids: async () => ({ data: [] }) }, session: {
+      create: async () => ({ data: { id: "ignored-abort-session" } }),
+      prompt: async () => { promptStarted(); return new Promise(() => undefined) },
+      abort: async () => ({ data: true }),
+    } } as unknown as OpencodeClient
+    const workspaceManager = {
+      get: (id: string) => ({ id, lineageId: `lineage-${id}`, path: `C:/${id}`, status: "ready" }),
+      list: () => [],
+    } as unknown as WorkspaceManager
+    const manager = new WorkflowManager({
+      workspaceManager, eventBus: { publish: () => true } as unknown as EventBus,
+      logger: { warn() {}, error() {} } as unknown as Logger, storageDir, createClient: () => client,
+      promptTimeoutMs: 500,
+    })
+    try {
+      await manager.createDefinition({ version: 1, id: "blocked", name: "Blocked", root: {
+        type: "agent", id: "work", instructions: "Ignore abort",
+      } })
+      const run = await manager.start({ workspaceId: "blocked", definitionId: "blocked" })
+      await started
+      const cancellation = manager.cancel(run.id)
+      let cancellationSettled = false
+      void cancellation.then(() => { cancellationSettled = true })
+      let cancellationFenced = false
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const persisted = JSON.parse(await fs.readFile(path.join(storageDir, `${run.id}.json`), "utf8"))
+        if (persisted.status === "recovery_required") {
+          cancellationFenced = true
+          break
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1))
+      }
+      assert.equal(cancellationFenced, true)
+      assert.equal(cancellationSettled, false)
+
+      const definition = await manager.createDefinition({ version: 1, id: "admitted", name: "Admitted", root: {
+        type: "gate", id: "gate", gate: "approval", prompt: "Wait",
+      } })
+      const other = await manager.start({ workspaceId: "other", definitionId: definition.id })
+      assert.equal((await manager.cancel(other.id))?.status, "cancelled")
+      assert.equal((await cancellation)?.status, "cancelled")
+    } finally {
+      await manager.shutdown()
+      await fs.rm(storageDir, { recursive: true, force: true })
+    }
+  })
   it("admits one run per path or lineage across manager instances", async () => {
     for (const collision of ["lineage", "path"] as const) {
       const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), `codenomad-workflow-shared-${collision}-`))

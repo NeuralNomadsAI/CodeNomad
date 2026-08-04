@@ -17,6 +17,7 @@ import { createWorkflowRefreshCoordinator } from "./workflow-refresh.ts"
 import {
   getWorkflowRuns,
   isWorkflowRunHydrating,
+  mountWorkflowInstance,
   refreshWorkflowRun,
   upsertWorkflowRun,
 } from "./workflows.ts"
@@ -307,12 +308,9 @@ test("workflow refresh runs the newest queued revision after an earlier refresh 
 
 test("compact workflow revisions disable stale gate and recovery confirmations until hydration", () => {
   const store = readFileSync(new URL("./workflows.ts", import.meta.url), "utf8")
-  const clear = store.slice(store.indexOf("function clearWorkflowRunHydrating"), store.indexOf("function isWorkflowRunHydrating"))
-  assert.match(clear, /revision === undefined/)
-  assert.match(clear, /current\.get\(key\) !== revision/)
-
   const refresh = store.slice(store.indexOf("const requestWorkflowRunRefresh"), store.indexOf("function refreshWorkflowRun"))
-  assert.match(refresh, /clearWorkflowRunHydrating\(instanceId, runId, revision\)/)
+  assert.doesNotMatch(refresh, /clearWorkflowRunHydrating/)
+  assert.match(refresh, /scheduleWorkflowRunRefresh\(instanceId, runId, revision\)/)
 
   const update = store.slice(store.indexOf("sseManager.onWorkflowRunUpdated"), store.indexOf("serverEvents.onOpen"))
   assert.match(update, /markWorkflowRunHydrating\(instanceId, runId, event\.properties\.revision\)/)
@@ -329,15 +327,27 @@ test("compact workflow revisions disable stale gate and recovery confirmations u
   assert.match(list, /confirmed && !detailsHydrating\(\) && props\.run\.revision === expectedRevision/)
 })
 
-test("compact workflow hydration clears after both bounded responses are stale", async () => {
+test("compact workflow hydration stays closed across stale responses and retries while mounted", async () => {
   const instanceId = "stale-hydration-workspace"
-  const compact = { ...run("stale-hydration-run", "2026-07-20T12:00:00.000Z", "running"), revision: 1 }
+  const compact = {
+    ...run("stale-hydration-run", "2026-07-20T12:00:00.000Z", "running"),
+    revision: 1,
+    pendingReviewStepId: "old-review",
+  }
+  const hydrated = {
+    ...compact,
+    status: "waiting_for_review" as const,
+    revision: 2,
+    updatedAt: "2026-07-20T12:01:00.000Z",
+    pendingReviewStepId: "new-review",
+  }
   const originalGetWorkflowRun = serverApi.getWorkflowRun
   let calls = 0
   serverApi.getWorkflowRun = async () => {
     calls += 1
-    return compact
+    return calls === 1 ? compact : hydrated
   }
+  const unmount = mountWorkflowInstance(instanceId)
   try {
     upsertWorkflowRun(instanceId, compact)
     sseManager.onWorkflowRunUpdated?.(instanceId, {
@@ -351,12 +361,18 @@ test("compact workflow hydration clears after both bounded responses are stale",
     })
     assert.equal(isWorkflowRunHydrating(instanceId, compact.id), true)
 
-    await refreshWorkflowRun(instanceId, compact.id, 2)
+    await new Promise((done) => setImmediate(done))
+    assert.equal(calls, 1)
+    assert.equal(isWorkflowRunHydrating(instanceId, compact.id), true)
+    assert.equal(getWorkflowRuns(instanceId).find(({ id }) => id === compact.id)?.pendingReviewStepId, undefined)
 
+    await new Promise((done) => setTimeout(done, 350))
     assert.equal(calls, 2)
     assert.equal(isWorkflowRunHydrating(instanceId, compact.id), false)
     assert.equal(getWorkflowRuns(instanceId).find(({ id }) => id === compact.id)?.revision, 2)
+    assert.equal(getWorkflowRuns(instanceId).find(({ id }) => id === compact.id)?.pendingReviewStepId, "new-review")
   } finally {
+    unmount()
     serverApi.getWorkflowRun = originalGetWorkflowRun
     const events = serverEvents as unknown as {
       connectGeneration: number
@@ -367,6 +383,27 @@ test("compact workflow hydration clears after both bounded responses are stale",
     if (events.retryTimer) clearTimeout(events.retryTimer)
     events.connection?.disconnect()
   }
+})
+
+test("replay reset participants propagate authoritative status, interruption, Yolo, and workflow failures", () => {
+  const sessions = readFileSync(new URL("./session-api.ts", import.meta.url), "utf8")
+  const fetch = sessions.slice(sessions.indexOf("async function fetchSessions"), sessions.indexOf("async function loadMoreSessions"))
+  assert.match(fetch, /requestData<Record<string, any>>\(rootClient\.session\.status\(\), "session\.status"\)/)
+  assert.match(fetch, /if \(options\?\.propagateErrors\) throw error/)
+
+  const instances = readFileSync(new URL("./instances.ts", import.meta.url), "utf8")
+  const permissions = instances.slice(instances.indexOf("async function syncPendingPermissions"), instances.indexOf("async function syncPendingQuestions"))
+  const questions = instances.slice(instances.indexOf("async function syncPendingQuestions"), instances.indexOf("function startInstanceSessionHydration"))
+  assert.match(permissions, /if \(propagateErrors\) throw error/)
+  assert.match(questions, /if \(propagateErrors\) throw error/)
+  const replay = instances.slice(instances.indexOf("async function rehydrateInstance"), instances.indexOf("async function disposeInstance"))
+  assert.match(replay, /refreshYoloState\(instanceId, sessionId\)/)
+  assert.match(replay, /propagateErrors: options\?\.replayReset/)
+
+  const workflows = readFileSync(new URL("./workflows.ts", import.meta.url), "utf8")
+  const reset = workflows.slice(workflows.indexOf("serverEvents.onReplayReset"), workflows.indexOf("export {"))
+  assert.match(reset, /loadWorkflowDefinitions\(\{ propagateErrors: true \}\)/)
+  assert.match(reset, /loadWorkflowRuns\(instanceId, \{ propagateErrors: true \}\)/)
 })
 
 test("opening workflow sessions selects their app tab and run cards survive object replacement", () => {

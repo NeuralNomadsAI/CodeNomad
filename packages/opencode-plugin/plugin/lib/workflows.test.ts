@@ -124,8 +124,9 @@ test("saved definition tools read and start the current revision without claimin
     async requestJson<T>(path: string, init?: RequestInit): Promise<T> {
       calls.push({ path, init })
       if (path.endsWith("/start")) {
+        const runId = JSON.parse(String(init?.body)).runId
         return {
-          id: "run-id",
+          id: runId,
           objective: "Ship it",
           status: "running",
           definitionId: "deploy_flow",
@@ -216,6 +217,34 @@ test("saved definition starts expose the run ID when compensating cancellation f
   controller.abort()
 
   await assert.rejects(started, new RegExp(`Workflow ${runId} may have started but cancellation failed: cancel unavailable`))
+})
+
+test("saved definition starts cancel malformed successful responses using the requested run ID", async () => {
+  for (const response of [
+    () => ({}),
+    (runId: string) => ({ id: runId, objective: "Ship it", status: "running", steps: {} }),
+  ]) {
+    let runId = ""
+    const calls: string[] = []
+    const requester = {
+      async requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+        calls.push(path)
+        if (path.endsWith("/start")) {
+          runId = JSON.parse(String(init?.body)).runId
+          return response(runId) as T
+        }
+        return { ...run, id: runId, status: "cancelled" } as T
+      },
+    }
+    const tools = createWorkflowTools({ instanceId: "workspace", baseUrl: "http://localhost", callbackToken: "callback" }, requester)
+
+    await assert.rejects(
+      tools.start_codenomad_workflow_definition.execute({ definition_id: "deploy" }, { abort: new AbortController().signal } as never),
+      new RegExp(`Workflow ${runId || "[0-9a-f-]{36}"} start returned a malformed run`),
+    )
+    assert.match(runId, /^[0-9a-f-]{36}$/)
+    assert.deepEqual(calls, ["/workflow-definitions/deploy/start", `/workflow-runs/${runId}/cancel`])
+  }
 })
 
 test("saved definition starts cancel their known run after an accepted response resets", async () => {

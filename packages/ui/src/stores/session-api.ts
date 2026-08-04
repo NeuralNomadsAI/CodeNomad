@@ -384,7 +384,7 @@ async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: SDKSe
   })
 }
 
-async function fetchSessions(instanceId: string, options?: { reset?: boolean }): Promise<void> {
+async function fetchSessions(instanceId: string, options?: { reset?: boolean; propagateErrors?: boolean }): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -412,13 +412,14 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
     let statusById: Record<string, any> = {}
     let statusResponseKnown = false
     try {
-      const statusResponse = await rootClient.session.status()
-      if (statusResponse.data && typeof statusResponse.data === "object") {
+      const statusResponse = await requestData<Record<string, any>>(rootClient.session.status(), "session.status")
+      if (statusResponse && typeof statusResponse === "object") {
         statusResponseKnown = true
-        statusById = statusResponse.data as Record<string, any>
+        statusById = statusResponse
       }
     } catch (error) {
       log.error("Failed to fetch session status:", error)
+      if (options?.propagateErrors) throw error
     }
     if (!isLatestSessionListRequest(instanceId, requestId)) return
 

@@ -325,7 +325,14 @@ fn migrates_dual_legacy_files_with_disabled_dominance_and_malformed_fallback() {
         )
         .unwrap();
         assert_eq!(state.load().unwrap(), load(true, false, Value::Null));
-        assert!(!parse_client_state(&fs::read(&shared).unwrap()).restore_enabled);
+        let migrated_bytes = fs::read(&shared).unwrap();
+        let migrated = parse_client_state(&migrated_bytes);
+        assert!(!migrated.restore_enabled);
+        assert_eq!(migrated.snapshot, None);
+        assert_eq!(migrated.window, None);
+        let migrated_json: Value = serde_json::from_slice(&migrated_bytes).unwrap();
+        assert!(migrated_json.get("snapshot").is_none());
+        assert!(migrated_json.get("window").is_none());
         assert!(!electron.join(CLIENT_STATE_FILENAME).exists());
         assert!(!tauri.join(CLIENT_STATE_FILENAME).exists());
     }
@@ -402,6 +409,34 @@ fn migration_cleanup_preserves_replaced_files_and_stops_after_authority_loss() {
         assert_eq!(tauri_legacy.exists(), authority_lost);
         assert!(shared.exists());
     }
+}
+
+#[test]
+fn migration_cleanup_does_not_unlink_a_replacement_created_after_quarantine_validation() {
+    let root = tempfile::tempdir().unwrap();
+    let tauri = root.path().join("tauri");
+    let shared = root.path().join("shared/client-state.json");
+    fs::create_dir_all(&tauri).unwrap();
+    let legacy = tauri.join(CLIENT_STATE_FILENAME);
+    let migrated = br#"{"version":1,"restoreEnabled":true}"#;
+    let replacement = br#"{"version":1,"restoreEnabled":false,"replacement":true}"#;
+    fs::write(&legacy, migrated).unwrap();
+    let snapshots = super::legacy_state_snapshots(&tauri, None);
+    let checks = std::cell::Cell::new(0);
+
+    super::migrate_legacy_state(&shared, &snapshots, &|| {
+        let check = checks.get() + 1;
+        checks.set(check);
+        if check == 3 {
+            fs::write(&legacy, replacement).unwrap();
+        }
+        true
+    })
+    .unwrap();
+
+    assert_eq!(checks.get(), 3);
+    assert_eq!(fs::read(&legacy).unwrap(), replacement);
+    assert_eq!(fs::read(&shared).unwrap(), migrated);
 }
 
 #[test]
@@ -673,7 +708,7 @@ fn late_promotion_migrates_legacy_state_when_shared_state_is_absent() {
     assert!(!legacy.exists());
     let migrated = parse_client_state(&fs::read(&shared).unwrap());
     assert!(!migrated.restore_enabled);
-    assert_eq!(migrated.snapshot, Some(snapshot));
+    assert_eq!(migrated.snapshot, None);
     assert!(!state.state.lock().unwrap().restore_enabled);
 }
 
@@ -948,6 +983,22 @@ fn untrusted_localhost_document_cannot_claim_renderer_authority() {
     assert!(validate_claim_origin(&attacker, Some(trusted.as_str())).is_err());
     assert!(state.claim_renderer_access("attacker", &attacker).is_err());
     assert_access_rejected(&state, "trusted", &trusted);
+}
+
+#[test]
+fn cli_exit_revocation_clears_the_trusted_document_and_renderer_token() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = ClientState::initialize_at(directory.path()).unwrap();
+    let url = Url::parse("http://127.0.0.1:43123/workspace").unwrap();
+    state.begin_renderer_document(Some(&url)).unwrap();
+    state.claim_renderer_access("exited-cli", &url).unwrap();
+    let generation = state.renderer_access.validate("exited-cli", &url).unwrap();
+
+    state.revoke_renderer_access();
+
+    assert_access_rejected(&state, "exited-cli", &url);
+    assert!(!state.renderer_access.is_generation_current(generation));
+    assert!(state.claim_renderer_access("reused-port", &url).is_err());
 }
 
 #[test]
