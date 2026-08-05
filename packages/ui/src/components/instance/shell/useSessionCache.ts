@@ -46,7 +46,9 @@ export function useSessionCache(options: SessionCacheOptions): SessionCacheState
   createEffect(() => {
     const instanceId = options.instanceId()
     const mountedSessionIds = cachedSessionIds()
-    mountedSessionIds.forEach((sessionId) => setVisibleSessionMemory(instanceId, sessionId, true))
+    for (let index = mountedSessionIds.length - 1; index >= 0; index -= 1) {
+      setVisibleSessionMemory(instanceId, mountedSessionIds[index]!, true)
+    }
     onCleanup(() => mountedSessionIds.forEach((sessionId) => setVisibleSessionMemory(instanceId, sessionId, false)))
   })
 

@@ -45,7 +45,7 @@ test("mounted cached views stay protected until they unmount", async () => {
     await Promise.resolve()
 
     assert.deepEqual(cache.cachedSessionIds(), sessionIds.slice(1).reverse())
-    assert.deepEqual(getVisibleSessionMemoryIds(instanceId), sessionIds.slice(1).reverse())
+    assert.deepEqual(getVisibleSessionMemoryIds(instanceId), sessionIds.slice(1))
     assert.equal(evictResidentSessionMessages(instanceId, sessionIds[1]!), false)
     assert.equal(evictResidentSessionMessages(instanceId, sessionIds[0]!), true)
 
@@ -53,7 +53,11 @@ test("mounted cached views stay protected until they unmount", async () => {
     await Promise.resolve()
     assert.deepEqual(cache.cachedSessionIds(), [])
     assert.deepEqual(getVisibleSessionMemoryIds(instanceId), [])
-    assert.equal(evictResidentSessionMessages(instanceId, sessionIds[1]!), true)
+    await settleMeasurements()
+    assert.deepEqual(
+      runSessionMemorySweep(0).map((key) => key.split("\u0000")[1]),
+      sessionIds.slice(1),
+    )
   } finally {
     dispose?.()
     messageStoreBus.unregisterInstance(instanceId)
