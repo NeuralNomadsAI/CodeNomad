@@ -5,8 +5,9 @@ import { ChevronDown, PlugZap, Star } from "lucide-solid"
 import type { Model } from "../types/session"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
-import { uiState, toggleFavoriteModelPreference } from "../stores/preferences"
+import { getProviderModelVisibilityPreference, uiState, toggleFavoriteModelPreference } from "../stores/preferences"
 import { ProviderManagerModal } from "./provider-auth/provider-manager-modal"
+import { isModelVisible } from "../lib/model-visibility"
 const log = getLogger("session")
 
 interface ModelSelectorProps {
@@ -20,6 +21,7 @@ interface FlatModel extends Model {
   providerName: string
   key: string
   searchText: string
+  unavailable?: boolean
 }
 
 interface ModelGroup {
@@ -67,7 +69,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
     }
   })
 
-  const allModels = createMemo<FlatModel[]>(() =>
+  const catalogModels = createMemo<FlatModel[]>(() =>
     instanceProviders().flatMap((p) =>
       p.models.map((m) => ({
         ...m,
@@ -77,6 +79,14 @@ export default function ModelSelector(props: ModelSelectorProps) {
       })),
     ),
   )
+
+  const allModels = createMemo(() => catalogModels().filter((model) =>
+    isModelVisible(
+      getProviderModelVisibilityPreference(model.providerId),
+      model.id,
+      model.providerId === props.currentModel.providerId ? props.currentModel.modelId : undefined,
+    ),
+  ))
 
   const sortedModels = createMemo<FlatModel[]>(() =>
     [...allModels()].sort((left, right) => {
@@ -106,9 +116,22 @@ export default function ModelSelector(props: ModelSelectorProps) {
 
   const hasFavorites = createMemo(() => favoriteModels().length > 0)
 
-  const currentModelValue = createMemo(() =>
-    allModels().find((m) => m.providerId === props.currentModel.providerId && m.id === props.currentModel.modelId),
-  )
+  const currentModelValue = createMemo<FlatModel | undefined>(() => {
+    const current = props.currentModel
+    const found = catalogModels().find((model) => model.providerId === current.providerId && model.id === current.modelId)
+    if (found) return found
+    if (!current.providerId || !current.modelId) return undefined
+    const providerName = instanceProviders().find((provider) => provider.id === current.providerId)?.name ?? current.providerId
+    return {
+      id: current.modelId,
+      name: t("modelSelector.unavailableModel", { model: current.modelId }),
+      providerId: current.providerId,
+      providerName,
+      key: `${current.providerId}/${current.modelId}`,
+      searchText: `${current.modelId} ${providerName} ${current.providerId}`,
+      unavailable: true,
+    }
+  })
 
   const currentModelIsFavorite = createMemo(() => {
     const current = props.currentModel
@@ -134,10 +157,9 @@ export default function ModelSelector(props: ModelSelectorProps) {
   })
 
   const visibleOptions = createMemo<FlatModel[]>(() => {
-    if (!favoritesOnlyEnabled()) {
-      return sortedModels()
-    }
-    return favoriteModels()
+    const visible = favoritesOnlyEnabled() ? favoriteModels() : sortedModels()
+    const current = currentModelValue()
+    return current?.unavailable ? [current, ...visible] : visible
   })
 
   const groupedVisibleOptions = createMemo<ModelGroup[]>(() => {
@@ -170,7 +192,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
   )
 
   const handleChange = async (value: PickerOption | null) => {
-    if (!value || isProviderHeaderOption(value)) return
+    if (!value || isProviderHeaderOption(value) || value.unavailable) return
     await props.onModelChange({ providerId: value.providerId, modelId: value.id })
   }
 
@@ -278,7 +300,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
         optionValue="key"
         optionTextValue="searchText"
         optionLabel={(option) => (isProviderHeaderOption(option) ? option.providerName : option.name)}
-        optionDisabled={isProviderHeaderOption}
+        optionDisabled={(option) => isProviderHeaderOption(option) || Boolean(option.unavailable)}
         placeholder={t("modelSelector.placeholder.search")}
         defaultFilter={customFilter}
         allowsEmptyCollection
@@ -314,42 +336,44 @@ export default function ModelSelector(props: ModelSelectorProps) {
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                   </svg>
                 </Combobox.ItemIndicator>
-                <button
-                  type="button"
-                  class="selector-option-star"
-                  data-active={isFavorite()}
-                  aria-label={
-                    isFavorite()
-                      ? t("modelSelector.favorite.remove")
-                      : t("modelSelector.favorite.add")
-                  }
-                  onPointerDown={preventListboxPress}
-                  onPointerUp={preventListboxPress}
-                  onMouseDown={preventListboxPress}
-                  onMouseUp={preventListboxPress}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter" && event.key !== " ") return
-                    event.preventDefault()
-                    event.stopPropagation()
-                    suppressNextClose = true
-                    setTimeout(() => {
-                      suppressNextClose = false
-                    }, 0)
-                  }}
-                  onClick={(event) => {
-                    event.preventDefault()
-                    event.stopPropagation()
-                    toggleFavoriteModelPreference({
-                      providerId: model.providerId,
-                      modelId: model.id,
-                    })
-                  }}
-                >
-                  <Star
-                    class="w-4 h-4"
-                    fill={isFavorite() ? "currentColor" : "none"}
-                  />
-                </button>
+                {!model.unavailable && (
+                  <button
+                    type="button"
+                    class="selector-option-star"
+                    data-active={isFavorite()}
+                    aria-label={
+                      isFavorite()
+                        ? t("modelSelector.favorite.remove")
+                        : t("modelSelector.favorite.add")
+                    }
+                    onPointerDown={preventListboxPress}
+                    onPointerUp={preventListboxPress}
+                    onMouseDown={preventListboxPress}
+                    onMouseUp={preventListboxPress}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return
+                      event.preventDefault()
+                      event.stopPropagation()
+                      suppressNextClose = true
+                      setTimeout(() => {
+                        suppressNextClose = false
+                      }, 0)
+                    }}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      toggleFavoriteModelPreference({
+                        providerId: model.providerId,
+                        modelId: model.id,
+                      })
+                    }}
+                  >
+                    <Star
+                      class="w-4 h-4"
+                      fill={isFavorite() ? "currentColor" : "none"}
+                    />
+                  </button>
+                )}
               </>
             </Combobox.Item>
           )

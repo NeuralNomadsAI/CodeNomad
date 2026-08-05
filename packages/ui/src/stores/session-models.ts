@@ -1,5 +1,6 @@
 import { agents, providers } from "./session-state"
-import { uiState, getAgentModelPreference } from "./preferences"
+import { getProviderModelVisibilityPreference, uiState, getAgentModelPreference } from "./preferences"
+import { isModelVisible } from "../lib/model-visibility"
 
 const DEFAULT_MODEL_OUTPUT_LIMIT = 32_000
 
@@ -14,12 +15,22 @@ function isModelValid(
   return provider.models.some((item) => item.id === model.modelId)
 }
 
+function isModelSelectable(
+  instanceId: string,
+  model?: { providerId: string; modelId: string } | null,
+): model is { providerId: string; modelId: string } {
+  return isModelValid(instanceId, model) && isModelVisible(
+    getProviderModelVisibilityPreference(model.providerId),
+    model.modelId,
+  )
+}
+
 function getRecentModelPreferenceForInstance(
   instanceId: string,
 ): { providerId: string; modelId: string } | undefined {
   const recents = uiState().models.recents ?? []
   for (const item of recents) {
-    if (isModelValid(instanceId, item)) {
+    if (isModelSelectable(instanceId, item)) {
       return item
     }
   }
@@ -34,7 +45,7 @@ async function getDefaultModel(
 
   if (agentName) {
     const agent = instanceAgents.find((a) => a.name === agentName)
-    if (agent && agent.model && isModelValid(instanceId, agent.model)) {
+    if (agent && agent.model && isModelSelectable(instanceId, agent.model)) {
       return {
         providerId: agent.model.providerId,
         modelId: agent.model.modelId,
@@ -42,7 +53,7 @@ async function getDefaultModel(
     }
 
     const stored = await getAgentModelPreference(instanceId, agentName)
-    if (isModelValid(instanceId, stored)) {
+    if (isModelSelectable(instanceId, stored)) {
       return stored
     }
   }
@@ -54,7 +65,9 @@ async function getDefaultModel(
 
   for (const provider of instanceProviders) {
     if (provider.defaultModelId) {
-      const model = provider.models.find((m) => m.id === provider.defaultModelId)
+      const model = provider.models.find((m) =>
+        m.id === provider.defaultModelId && isModelVisible(getProviderModelVisibilityPreference(provider.id), m.id),
+      )
       if (model) {
         return {
           providerId: provider.id,
@@ -64,9 +77,10 @@ async function getDefaultModel(
     }
   }
 
-  if (instanceProviders.length > 0) {
-    const firstProvider = instanceProviders[0]
-    const firstModel = firstProvider.models[0]
+  for (const firstProvider of instanceProviders) {
+    const firstModel = firstProvider.models.find((model) =>
+      isModelVisible(getProviderModelVisibilityPreference(firstProvider.id), model.id),
+    )
     if (firstModel) {
       return {
         providerId: firstProvider.id,
