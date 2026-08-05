@@ -5,6 +5,9 @@ fn send_connection_pong(
     client: &Client,
     config: &DesktopEventStreamConfig,
     payload: &Value,
+    generation_atomic: &Arc<AtomicU64>,
+    generation: u64,
+    operation_fence: &Arc<Mutex<()>>,
 ) {
     let body = serde_json::json!({
         "clientId": config.client_id,
@@ -19,7 +22,11 @@ fn send_connection_pong(
         ))
         .json(&body);
 
-    let _ = attach_session_cookie(request, app, config).send();
+    let _ = with_current_transport(operation_fence, generation_atomic, generation, || {
+        attach_session_cookie(request, app, config)
+            .timeout(Duration::from_millis(STREAM_CONNECT_TIMEOUT_MS))
+            .send()
+    });
 }
 
 pub(super) fn run_transport_loop(
@@ -27,6 +34,7 @@ pub(super) fn run_transport_loop(
     generation_atomic: Arc<AtomicU64>,
     generation: u64,
     stop: Arc<AtomicBool>,
+    operation_fence: Arc<Mutex<()>>,
     config: DesktopEventTransportConfig,
     last_event_id: Arc<Mutex<Option<String>>>,
 ) {
@@ -38,7 +46,9 @@ pub(super) fn run_transport_loop(
             stop.store(true, Ordering::SeqCst);
             emit_status(
                 &app,
+                &generation_atomic,
                 generation,
+                &operation_fence,
                 "error",
                 0,
                 true,
@@ -58,7 +68,9 @@ pub(super) fn run_transport_loop(
 
         emit_status(
             &app,
+            &generation_atomic,
             generation,
+            &operation_fence,
             "connecting",
             reconnect_attempt,
             false,
@@ -69,12 +81,21 @@ pub(super) fn run_transport_loop(
         );
 
         let replay_cursor = last_event_id.lock().clone();
-        match open_stream(&app, &client, &config.stream, replay_cursor.as_deref()) {
+        let Some(opened) =
+            with_current_transport(&operation_fence, &generation_atomic, generation, || {
+                open_stream(&app, &client, &config.stream, replay_cursor.as_deref())
+            })
+        else {
+            break;
+        };
+        match opened {
             Ok(response) => {
                 reconnect_attempt = 0;
                 emit_status(
                     &app,
+                    &generation_atomic,
                     generation,
+                    &operation_fence,
                     "connected",
                     reconnect_attempt,
                     false,
@@ -92,6 +113,7 @@ pub(super) fn run_transport_loop(
                     &generation_atomic,
                     generation,
                     stop.clone(),
+                    &operation_fence,
                     &last_event_id,
                     &mut stats,
                 );
@@ -106,6 +128,7 @@ pub(super) fn run_transport_loop(
                     &generation_atomic,
                     generation,
                     stop.clone(),
+                    &operation_fence,
                     &config.reconnect,
                     &mut reconnect_attempt,
                     "disconnected",
@@ -127,6 +150,7 @@ pub(super) fn run_transport_loop(
                     &generation_atomic,
                     generation,
                     stop.clone(),
+                    &operation_fence,
                     &config.reconnect,
                     &mut reconnect_attempt,
                     state_name,
@@ -143,7 +167,9 @@ pub(super) fn run_transport_loop(
     stop.store(true, Ordering::SeqCst);
     emit_status(
         &app,
+        &generation_atomic,
         generation,
+        &operation_fence,
         "stopped",
         reconnect_attempt,
         true,
@@ -159,6 +185,7 @@ fn schedule_retry(
     generation_atomic: &Arc<AtomicU64>,
     generation: u64,
     stop: Arc<AtomicBool>,
+    operation_fence: &Arc<Mutex<()>>,
     policy: &ResolvedDesktopEventReconnectPolicy,
     reconnect_attempt: &mut u32,
     state_name: &'static str,
@@ -179,7 +206,9 @@ fn schedule_retry(
 
     emit_status(
         app,
+        generation_atomic,
         generation,
+        operation_fence,
         state_name,
         *reconnect_attempt,
         terminal,
@@ -226,6 +255,7 @@ fn consume_stream(
     generation_atomic: &Arc<AtomicU64>,
     generation: u64,
     stop: Arc<AtomicBool>,
+    operation_fence: &Arc<Mutex<()>>,
     last_event_id: &Arc<Mutex<Option<String>>>,
     stats: &mut DesktopEventTransportStats,
 ) -> Option<String> {
@@ -268,13 +298,22 @@ fn consume_stream(
                     &mut pending,
                     sequence,
                     generation_atomic,
+                    operation_fence,
                     last_event_id,
                     stats,
                 );
             }
             Ok(ReaderMessage::Ping(payload)) => {
                 last_reader_activity = Instant::now();
-                send_connection_pong(app, client, stream_config, &payload);
+                send_connection_pong(
+                    app,
+                    client,
+                    stream_config,
+                    &payload,
+                    generation_atomic,
+                    generation,
+                    operation_fence,
+                );
             }
             Ok(ReaderMessage::Event { event, id }) => {
                 last_reader_activity = Instant::now();
@@ -290,6 +329,7 @@ fn consume_stream(
                         &mut pending,
                         &mut sequence,
                         generation_atomic,
+                        operation_fence,
                         last_event_id,
                         stats,
                     );
@@ -304,20 +344,22 @@ fn consume_stream(
                         &mut pending,
                         &mut sequence,
                         generation_atomic,
+                        operation_fence,
                         last_event_id,
                         stats,
                     );
                 }
-                if generation_matches(generation_atomic, generation) {
-                    let _ = app.emit(
-                        EVENT_REPLAY_RESET_NAME,
-                        WorkspaceEventReplayResetPayload {
-                            generation,
-                            details,
-                            last_event_id: id,
-                        },
-                    );
-                }
+                let _ =
+                    with_current_transport(operation_fence, generation_atomic, generation, || {
+                        app.emit(
+                            EVENT_REPLAY_RESET_NAME,
+                            WorkspaceEventReplayResetPayload {
+                                generation,
+                                details,
+                                last_event_id: id,
+                            },
+                        )
+                    });
             }
             Ok(ReaderMessage::End(reason)) => {
                 if !pending.is_empty() {
@@ -327,6 +369,7 @@ fn consume_stream(
                         &mut pending,
                         &mut sequence,
                         generation_atomic,
+                        operation_fence,
                         last_event_id,
                         stats,
                     );
@@ -344,6 +387,7 @@ fn consume_stream(
                             &mut pending,
                             sequence,
                             generation_atomic,
+                            operation_fence,
                             last_event_id,
                             stats,
                         );
@@ -361,6 +405,7 @@ fn consume_stream(
                         &mut pending,
                         &mut sequence,
                         generation_atomic,
+                        operation_fence,
                         last_event_id,
                         stats,
                     );
@@ -374,6 +419,7 @@ fn consume_stream(
                         &mut pending,
                         &mut sequence,
                         generation_atomic,
+                        operation_fence,
                         last_event_id,
                         stats,
                     );
@@ -390,6 +436,7 @@ fn emit_pending_batch(
     pending: &mut PendingBatch,
     sequence: &mut u64,
     generation_atomic: &Arc<AtomicU64>,
+    operation_fence: &Arc<Mutex<()>>,
     last_event_id: &Arc<Mutex<Option<String>>>,
     stats: &mut DesktopEventTransportStats,
 ) {
@@ -404,6 +451,7 @@ fn emit_pending_batch(
         pending,
         *sequence,
         generation_atomic,
+        operation_fence,
         last_event_id,
         stats,
     );
@@ -415,40 +463,41 @@ fn emit_batch(
     pending: &mut PendingBatch,
     sequence: u64,
     generation_atomic: &Arc<AtomicU64>,
+    operation_fence: &Arc<Mutex<()>>,
     _last_event_id: &Arc<Mutex<Option<String>>>,
     stats: &mut DesktopEventTransportStats,
 ) {
-    if !generation_matches(generation_atomic, generation) {
-        return;
-    }
+    let _ = with_current_transport(operation_fence, generation_atomic, generation, || {
+        let events = pending.take_events();
+        let event_id = pending.take_last_event_id();
+        if events.is_empty() && event_id.is_none() {
+            return;
+        }
 
-    let events = pending.take_events();
-    let event_id = pending.take_last_event_id();
-    if events.is_empty() && event_id.is_none() {
-        return;
-    }
+        stats.emitted_batches = stats.emitted_batches.saturating_add(1);
+        stats.emitted_events = stats.emitted_events.saturating_add(events.len() as u64);
 
-    stats.emitted_batches = stats.emitted_batches.saturating_add(1);
-    stats.emitted_events = stats.emitted_events.saturating_add(events.len() as u64);
-
-    let _ = app.emit(
-        EVENT_BATCH_NAME,
-        WorkspaceEventBatchPayload {
-            generation,
-            sequence,
-            emitted_at: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis(),
-            events,
-            last_event_id: event_id,
-        },
-    );
+        let _ = app.emit(
+            EVENT_BATCH_NAME,
+            WorkspaceEventBatchPayload {
+                generation,
+                sequence,
+                emitted_at: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis(),
+                events,
+                last_event_id: event_id,
+            },
+        );
+    });
 }
 
 fn emit_status(
     app: &AppHandle,
+    generation_atomic: &Arc<AtomicU64>,
     generation: u64,
+    operation_fence: &Arc<Mutex<()>>,
     state_name: &'static str,
     reconnect_attempt: u32,
     terminal: bool,
@@ -457,19 +506,31 @@ fn emit_status(
     status_code: Option<u16>,
     stats: &DesktopEventTransportStats,
 ) {
-    let _ = app.emit(
-        EVENT_STATUS_NAME,
-        DesktopEventStreamStatusPayload {
-            generation,
-            state: state_name,
-            reconnect_attempt,
-            terminal,
-            reason,
-            next_delay_ms,
-            status_code,
-            stats: stats.clone(),
-        },
-    );
+    let _ = with_current_transport(operation_fence, generation_atomic, generation, || {
+        app.emit(
+            EVENT_STATUS_NAME,
+            DesktopEventStreamStatusPayload {
+                generation,
+                state: state_name,
+                reconnect_attempt,
+                terminal,
+                reason,
+                next_delay_ms,
+                status_code,
+                stats: stats.clone(),
+            },
+        )
+    });
+}
+
+pub(super) fn with_current_transport<T>(
+    operation_fence: &Arc<Mutex<()>>,
+    generation_atomic: &Arc<AtomicU64>,
+    generation: u64,
+    operation: impl FnOnce() -> T,
+) -> Option<T> {
+    let _operation = operation_fence.lock();
+    generation_matches(generation_atomic, generation).then(operation)
 }
 
 pub(super) fn generation_matches(generation_atomic: &Arc<AtomicU64>, generation: u64) -> bool {

@@ -555,14 +555,14 @@ fn set_session_cookie(
     Ok(())
 }
 
-fn generate_auth_cookie_name() -> String {
+fn generate_auth_cookie_name(generation: u64) -> String {
     let pid = std::process::id();
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or(0);
 
-    format!("{SESSION_COOKIE_NAME_PREFIX}_{pid}_{timestamp}")
+    format!("{SESSION_COOKIE_NAME_PREFIX}_{pid}_{timestamp}_{generation}")
 }
 
 fn generate_transport_connection_id() -> String {
@@ -756,7 +756,7 @@ impl CliProcessManager {
         let _lifecycle = self.lifecycle.lock();
         log_line(&format!("start requested (dev={dev})"));
         let generation = self.prepare_start_transition(
-            || crate::client_state::revoke_renderer_access(&app),
+            || crate::revoke_cli_endpoint_authority(&app),
             || self.stop_tracked_child(),
         )?;
         Self::emit_status(&app, &self.status.lock());
@@ -903,8 +903,9 @@ impl CliProcessManager {
             return (Some(generation), containment_probe());
         }
         let containment = containment_probe();
-        let revoked_generation = matches!(containment, Ok(true))
-            .then(|| self.revoke_endpoint_generation_locked(revoke_renderer));
+        let revoked_generation = (containment.as_ref().is_ok_and(|gone| *gone)
+            || containment.is_err())
+        .then(|| self.revoke_endpoint_generation_locked(revoke_renderer));
         (revoked_generation, containment)
     }
 
@@ -939,6 +940,7 @@ impl CliProcessManager {
     }
 
     pub fn desktop_event_stream_config(&self) -> Option<DesktopEventStreamConfig> {
+        let _lifecycle = self.lifecycle.lock();
         let status = self.status.lock();
         let base_url = status.url.clone()?;
         let events_url = format!("{}/api/events", base_url.trim_end_matches('/'));
@@ -956,6 +958,8 @@ impl CliProcessManager {
             connection_id: generate_transport_connection_id(),
             cookie_name,
             session_cookie: self.session_cookie.lock().clone(),
+            authority_generation: self.generation.load(Ordering::SeqCst),
+            authority: self.generation.clone(),
         })
     }
 
@@ -975,7 +979,7 @@ impl CliProcessManager {
             "resolved CLI entry runner={:?} entry={} host={}",
             resolution.runner, resolution.entry, host
         ));
-        let auth_cookie_name = Arc::new(generate_auth_cookie_name());
+        let auth_cookie_name = Arc::new(generate_auth_cookie_name(generation));
         let args = resolution.build_args(dev, &host, auth_cookie_name.as_str());
         log_line(&format!("CLI args: {:?}", args));
         if dev {
@@ -1159,7 +1163,7 @@ impl CliProcessManager {
                     return;
                 }
                 manager.revoke_endpoint_generation_locked(|| {
-                    crate::client_state::revoke_renderer_access(&app)
+                    crate::revoke_cli_endpoint_authority(&app)
                 });
                 log_line("timeout waiting for CLI readiness");
                 let stop_error = manager.stop_tracked_child().err();
@@ -1220,7 +1224,7 @@ impl CliProcessManager {
                                         #[cfg(not(any(unix, windows)))]
                                         Ok(true)
                                     },
-                                    || crate::client_state::revoke_renderer_access(&app),
+                                    || crate::revoke_cli_endpoint_authority(&app),
                                 );
                             if let Some(generation) = revoked_generation {
                                 monitor_generation = generation;
@@ -1250,7 +1254,7 @@ impl CliProcessManager {
                         Ok(None) => Poll::Running,
                         Err(err) => {
                             monitor_generation = manager.revoke_endpoint_generation_locked(|| {
-                                crate::client_state::revoke_renderer_access(&app)
+                                crate::revoke_cli_endpoint_authority(&app)
                             });
                             Poll::Failed(format!("failed to inspect CLI pid={pid}: {err}"))
                         }
@@ -1885,6 +1889,39 @@ mod tests {
     }
 
     #[test]
+    fn reused_port_only_authorizes_fresh_transport_cookie() {
+        let manager = CliProcessManager::new();
+        let first_generation = manager.advance_generation();
+        {
+            let mut status = manager.status.lock();
+            status.state = CliState::Ready;
+            status.url = Some("http://127.0.0.1:43123".to_string());
+        }
+        *manager.auth_cookie_name.lock() = Some(generate_auth_cookie_name(first_generation));
+        *manager.session_cookie.lock() = Some("session-old".to_string());
+        let stale = manager.desktop_event_stream_config().unwrap();
+
+        let second_generation = {
+            let _lifecycle = manager.lifecycle.lock();
+            manager.revoke_endpoint_generation_locked(|| {})
+        };
+        manager.with_current_generation(second_generation, || {
+            let mut status = manager.status.lock();
+            status.state = CliState::Ready;
+            status.url = Some("http://127.0.0.1:43123".to_string());
+            *manager.auth_cookie_name.lock() = Some(generate_auth_cookie_name(second_generation));
+            *manager.session_cookie.lock() = Some("session-new".to_string());
+        });
+        let fresh = manager.desktop_event_stream_config().unwrap();
+
+        assert_eq!(stale.events_url, fresh.events_url);
+        assert!(!stale.is_authorized());
+        assert!(fresh.is_authorized());
+        assert_ne!(stale.cookie_name, fresh.cookie_name);
+        assert_eq!(fresh.session_cookie.as_deref(), Some("session-new"));
+    }
+
+    #[test]
     fn buffered_output_cannot_republish_after_endpoint_revocation() {
         let manager = CliProcessManager::new();
         let generation = manager.advance_generation();
@@ -1979,13 +2016,19 @@ mod tests {
         let generation = manager.advance_generation();
         manager.status.lock().state = CliState::Starting;
 
+        let endpoint_revoked = AtomicBool::new(false);
         {
             let _lifecycle = manager.lifecycle.lock();
-            let (revoked, containment) =
-                manager.handle_root_exit_locked(generation, false, || Ok(false), || {});
+            let (revoked, containment) = manager.handle_root_exit_locked(
+                generation,
+                false,
+                || Ok(false),
+                || endpoint_revoked.store(true, Ordering::SeqCst),
+            );
             assert!(revoked.is_none());
             assert_eq!(containment.unwrap(), false);
         }
+        assert!(!endpoint_revoked.load(Ordering::SeqCst));
 
         let descendant = manager.clone();
         let ready = std::thread::spawn(move || {
@@ -2104,6 +2147,29 @@ mod tests {
         assert!(renderer_revoked.load(Ordering::SeqCst));
         assert!(manager.status().url.is_none());
         assert!(manager.session_cookie.lock().is_none());
+    }
+
+    #[test]
+    fn starting_cli_containment_probe_error_revokes_fail_closed() {
+        let manager = CliProcessManager::new();
+        let generation = manager.advance_generation();
+        manager.status.lock().state = CliState::Starting;
+        let endpoint_revoked = AtomicBool::new(false);
+
+        let (revoked, probe) = {
+            let _lifecycle = manager.lifecycle.lock();
+            manager.handle_root_exit_locked(
+                generation,
+                false,
+                || Err(anyhow::anyhow!("injected containment failure")),
+                || endpoint_revoked.store(true, Ordering::SeqCst),
+            )
+        };
+
+        assert!(revoked.is_some());
+        assert!(probe.is_err());
+        assert!(endpoint_revoked.load(Ordering::SeqCst));
+        assert!(!manager.is_current_generation(generation));
     }
 
     #[test]

@@ -63,6 +63,13 @@ pub struct AppState {
     pub remote_titles: Mutex<HashMap<String, String>>,
 }
 
+pub(crate) fn revoke_cli_endpoint_authority(app: &AppHandle) {
+    if let Some(state) = app.try_state::<AppState>() {
+        state.desktop_events.revoke_endpoint();
+    }
+    client_state::revoke_renderer_access(app);
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RemoteWindowPayload {
@@ -138,7 +145,6 @@ fn cli_get_status(state: tauri::State<AppState>) -> CliStatus {
 #[tauri::command]
 fn cli_restart(app: AppHandle, state: tauri::State<AppState>) -> Result<CliStatus, String> {
     let dev_mode = is_dev_mode();
-    state.desktop_events.stop();
     state
         .manager
         .start(app, dev_mode)

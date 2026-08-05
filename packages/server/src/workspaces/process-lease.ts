@@ -228,7 +228,6 @@ export class WorkspaceProcessLeaseRegistry {
       const launches = await readLaunchGenerations(directory, owner.leaseToken)
       if (launches.kind === "unknown") return false
       const platform = this.options.platform ?? process.platform
-      if (launches.kind === "malformed") return platform !== "win32" && Date.now() - launches.modifiedAt >= this.staleMs
       if (launches.kind === "absent") return true
       const identities: ProcessIdentity[] = []
       for (const launch of launches.launches) {
@@ -247,6 +246,8 @@ export class WorkspaceProcessLeaseRegistry {
         }
         identities.push(...launch.identities!)
       }
+      if (launches.malformed && (launches.malformed.failClosed || platform === "win32" ||
+        Date.now() - launches.malformed.modifiedAt < this.staleMs)) return false
       return identities.length === 0 || this.persistedProcessesAreGone(identities)
     }
     return false
@@ -402,39 +403,84 @@ async function removeLaunchGeneration(directory: string, leaseToken: string, gen
 
 type LaunchGenerationObservation =
   | { kind: "absent" }
-  | { kind: "valid"; launches: LaunchGeneration[] }
-  | { kind: "malformed"; modifiedAt: number }
+  | { kind: "observed"; launches: LaunchGeneration[]; malformed?: { modifiedAt: number; failClosed: boolean } }
   | { kind: "unknown" }
 
 async function readLaunchGenerations(directory: string, leaseToken: string): Promise<LaunchGenerationObservation> {
-  let launchPaths: string[]
+  let entries: string[]
   try {
-    const prefix = `launch.${leaseToken}.`
-    launchPaths = (await fs.readdir(directory))
-      .filter((entry) => entry.startsWith(prefix) && entry.endsWith(".json"))
-      .map((entry) => path.join(directory, entry))
+    entries = await fs.readdir(directory)
   } catch (error) {
     if (hasCode(error, "ENOENT")) return { kind: "absent" }
     return { kind: "unknown" }
   }
-  if (launchPaths.length === 0) return { kind: "absent" }
-  try {
-    const launches = await Promise.all(launchPaths.map(async (launchPath) => ({
-      launchPath,
-      launch: JSON.parse(await fs.readFile(launchPath, "utf8")) as LaunchGeneration,
-    })))
-    if (launches.every(({ launchPath, launch }) => validLaunchGeneration(launch) &&
-      launchGenerationPath(directory, leaseToken, launch.generation) === launchPath)) {
-      return { kind: "valid", launches: launches.map(({ launch }) => launch) }
+  const legacyLaunch = `launch.${leaseToken}.json`
+  const launchPrefix = `launch.${leaseToken}.`
+  const processPrefix = `process.${leaseToken}.`
+  const launchEntries = entries.filter((entry) => entry === legacyLaunch ||
+    (entry.startsWith(launchPrefix) && entry.endsWith(".json")))
+  const processEntries = entries.filter((entry) => entry.startsWith(processPrefix) && entry.endsWith(".json"))
+  if (launchEntries.length === 0 && processEntries.length === 0) return { kind: "absent" }
+
+  const launches: LaunchGeneration[] = []
+  const malformedGenerationPaths: string[] = []
+  let legacyMalformed = processEntries.length > 0 && !launchEntries.includes(legacyLaunch)
+  for (const entry of launchEntries) {
+    const launchPath = path.join(directory, entry)
+    let serialized: string
+    let value: unknown
+    try {
+      serialized = await fs.readFile(launchPath, "utf8")
+      value = JSON.parse(serialized)
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) return { kind: "unknown" }
+      if (entry === legacyLaunch) legacyMalformed = true
+      else malformedGenerationPaths.push(launchPath)
+      continue
     }
-  } catch (error) {
-    if (!(error instanceof SyntaxError) && !hasCode(error, "ENOENT")) return { kind: "unknown" }
+
+    if (entry === legacyLaunch) {
+      const token = value && typeof value === "object" ? (value as { token?: unknown }).token : undefined
+      const identities: ProcessIdentity[] = []
+      let complete = safeToken(token) && processEntries.length > 0
+      for (const processEntry of processEntries) {
+        try {
+          const processSerialized = await fs.readFile(path.join(directory, processEntry), "utf8")
+          const identity = JSON.parse(processSerialized) as unknown
+          const digest = createHash("sha256").update(processSerialized).digest("hex")
+          if (!validProcessIdentity(identity) || processEntry !== `process.${leaseToken}.${digest}.json`) complete = false
+          else identities.push(identity)
+        } catch {
+          complete = false
+        }
+      }
+      if (complete && safeToken(token)) launches.push({ version: 1, generation: "legacy", token, complete: true, identities })
+      else legacyMalformed = true
+      continue
+    }
+
+    const launch = value as LaunchGeneration
+    if (validLaunchGeneration(launch) && launchGenerationPath(directory, leaseToken, launch.generation) === launchPath) {
+      launches.push(launch)
+    } else {
+      malformedGenerationPaths.push(launchPath)
+    }
   }
+
+  if (legacyMalformed) {
+    return { kind: "observed", launches, malformed: { modifiedAt: Date.now(), failClosed: true } }
+  }
+  if (malformedGenerationPaths.length === 0) return { kind: "observed", launches }
   try {
-    const stats = await Promise.all([...launchPaths, path.join(directory, "owner", "heartbeat")].map((file) => fs.stat(file)))
-    return { kind: "malformed", modifiedAt: Math.max(...stats.map((stat) => stat.mtimeMs)) }
-  } catch (error) {
-    return hasCode(error, "ENOENT") ? { kind: "absent" } : { kind: "unknown" }
+    const stats = await Promise.all([...malformedGenerationPaths, path.join(directory, "owner", "heartbeat")]
+      .map((file) => fs.stat(file)))
+    return {
+      kind: "observed",
+      launches,
+      malformed: { modifiedAt: Math.max(...stats.map((stat) => stat.mtimeMs)), failClosed: false },
+    }
+  } catch {
+    return { kind: "unknown" }
   }
 }
 

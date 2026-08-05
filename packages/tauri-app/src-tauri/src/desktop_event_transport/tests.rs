@@ -156,6 +156,68 @@ fn stale_transport_lease_cannot_stop_its_replacement() {
     assert!(manager.state.lock().stop.is_none());
 }
 
+#[test]
+fn reused_port_fences_stale_sse_and_does_not_reuse_its_cookie() {
+    let manager = Arc::new(DesktopEventTransportManager::new());
+    let endpoint_authority = Arc::new(AtomicU64::new(1));
+    let stale_stream = DesktopEventStreamConfig {
+        base_url: "http://127.0.0.1:43123".to_string(),
+        events_url: "http://127.0.0.1:43123/api/events".to_string(),
+        client_id: "tauri-test".to_string(),
+        connection_id: "stale".to_string(),
+        cookie_name: "cookie-old".to_string(),
+        session_cookie: Some("session-old".to_string()),
+        authority_generation: 1,
+        authority: endpoint_authority.clone(),
+    };
+    let stale_stop = Arc::new(AtomicBool::new(false));
+    manager.generation.store(1, Ordering::SeqCst);
+    {
+        let mut state = manager.state.lock();
+        state.stop = Some(stale_stop.clone());
+        state.config = Some(DesktopEventTransportConfig::new(
+            stale_stream.clone(),
+            &DesktopEventsStartRequest::default(),
+        ));
+    }
+    *manager.last_event_id.lock() = Some("old-process:7".to_string());
+
+    let operation = manager.operation_fence.lock();
+    endpoint_authority.store(2, Ordering::SeqCst);
+    let revoking = manager.clone();
+    let revoked = thread::spawn(move || revoking.revoke_endpoint());
+    while !stale_stop.load(Ordering::SeqCst) {
+        thread::yield_now();
+    }
+    assert!(!generation_matches(&manager.generation, 1));
+    assert!(!revoked.is_finished());
+    drop(operation);
+    revoked.join().expect("revocation should finish");
+
+    assert!(manager.state.lock().config.is_none());
+    assert!(manager.last_event_id.lock().is_none());
+    assert!(!stale_stream.is_authorized());
+    let stale_operation_ran = AtomicBool::new(false);
+    assert!(
+        with_current_transport(&manager.operation_fence, &manager.generation, 1, || {
+            stale_operation_ran.store(true, Ordering::SeqCst)
+        },)
+        .is_none()
+    );
+    assert!(!stale_operation_ran.load(Ordering::SeqCst));
+
+    let fresh_stream = DesktopEventStreamConfig {
+        connection_id: "fresh".to_string(),
+        cookie_name: "cookie-new".to_string(),
+        session_cookie: Some("session-new".to_string()),
+        authority_generation: 2,
+        ..stale_stream
+    };
+    assert!(fresh_stream.is_authorized());
+    assert_eq!(fresh_stream.events_url, "http://127.0.0.1:43123/api/events");
+    assert_eq!(fresh_stream.session_cookie.as_deref(), Some("session-new"));
+}
+
 fn delta_event(delta: &str) -> Value {
     json!({
         "type": "instance.event",

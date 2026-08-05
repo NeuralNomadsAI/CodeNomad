@@ -735,7 +735,8 @@ export class WorkspaceRuntime {
         const name = managed.wsl ? "WSL Linux" : this.platform === "win32" ? "Windows" : "POSIX"
         return { state: "unknown", detail: `${name} target identity could not be confirmed` } as const
       }
-      if (managed.identityCaptureFailed && this.platform === "win32" && !managed.wsl) {
+      if (managed.identityCaptureFailed && this.platform === "win32" && !managed.wsl &&
+        (managed.processKind !== "windows-direct" || !managed.targets?.leader)) {
         return { state: "unknown", detail: "Windows cleanup cannot prove exact launch ownership without a Job Object" } as const
       }
       if (managed.identityCaptureFailed && managed.wsl && !managed.targets?.leader && !wrapperExited()) {

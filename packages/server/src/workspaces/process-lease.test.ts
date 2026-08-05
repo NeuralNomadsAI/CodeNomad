@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import { writeFileSync } from "node:fs"
 import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises"
 import os from "node:os"
@@ -195,6 +196,66 @@ test("an inconclusive Windows token probe falls through to immutable identities"
   await lease.release()
   await replacement.release()
 })
+
+for (const platform of ["linux", "win32"] as const) {
+  test(`a complete legacy ${platform} lease blocks while live and reclaims when dead`, async (t) => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-process-legacy-complete-"))
+    t.after(() => rm(directory, { recursive: true, force: true }))
+    const workspacePath = path.join(directory, "workspace")
+    const owner = new WorkspaceProcessLeaseRegistry({
+      directory, managerToken: "owner", pid: 101, hostname: "same-host", isPidAlive: () => false,
+    })
+    let processAlive = true
+    const contender = new WorkspaceProcessLeaseRegistry({
+      directory, managerToken: "contender", pid: 202, hostname: "same-host", platform,
+      isPidAlive: () => false, isLaunchTokenAlive: () => platform === "linux" ? false : undefined,
+      isProcessIdentityAlive: () => processAlive,
+    })
+    const lease = await owner.acquire(workspacePath)
+    assert.ok(lease)
+    const [key] = await readdir(directory)
+    const leaseDirectory = path.join(directory, key!)
+    const ownerRecord = JSON.parse(await readFile(path.join(leaseDirectory, "owner", "owner.json"), "utf8"))
+    const serialized = JSON.stringify({ pid: 303, parentPid: 1, groupId: 303, startTime: "legacy-start" })
+    const digest = createHash("sha256").update(serialized).digest("hex")
+    await writeFile(path.join(leaseDirectory, `launch.${ownerRecord.leaseToken}.json`), JSON.stringify({ token: "legacy-token" }))
+    await writeFile(path.join(leaseDirectory, `process.${ownerRecord.leaseToken}.${digest}.json`), serialized)
+
+    assert.equal(await contender.acquire(workspacePath), undefined)
+    processAlive = false
+    const replacement = await contender.acquire(workspacePath)
+    assert.ok(replacement)
+    await lease.release()
+    await replacement.release()
+  })
+
+  for (const legacyState of ["partial", "malformed"] as const) {
+    test(`a ${legacyState} legacy ${platform} lease fails closed`, async (t) => {
+      const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-process-legacy-incomplete-"))
+      t.after(() => rm(directory, { recursive: true, force: true }))
+      const workspacePath = path.join(directory, "workspace")
+      const owner = new WorkspaceProcessLeaseRegistry({
+        directory, managerToken: "owner", pid: 101, hostname: "same-host", isPidAlive: () => false,
+      })
+      const contender = new WorkspaceProcessLeaseRegistry({
+        directory, managerToken: "contender", pid: 202, hostname: "same-host", platform,
+        isPidAlive: () => false, isLaunchTokenAlive: () => false, isProcessIdentityAlive: () => false,
+      })
+      const lease = await owner.acquire(workspacePath)
+      assert.ok(lease)
+      const [key] = await readdir(directory)
+      const leaseDirectory = path.join(directory, key!)
+      const ownerRecord = JSON.parse(await readFile(path.join(leaseDirectory, "owner", "owner.json"), "utf8"))
+      await writeFile(path.join(leaseDirectory, `launch.${ownerRecord.leaseToken}.json`), JSON.stringify({ token: "legacy-token" }))
+      if (legacyState === "malformed") {
+        await writeFile(path.join(leaseDirectory, `process.${ownerRecord.leaseToken}.invalid.json`), "{")
+      }
+
+      assert.equal(await contender.acquire(workspacePath), undefined)
+      await lease.release()
+    })
+  }
+}
 
 test("a torn Windows identity generation remains an incomplete takeover fence", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-process-win32-torn-generation-"))

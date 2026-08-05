@@ -147,6 +147,46 @@ describe("workspace runtime lifecycle contracts", () => {
     assert.ok(calls.some(({ command, args }) => command === "taskkill.exe" && args.includes("/T")))
   })
 
+  it("retries direct Windows cleanup after a transient readiness-time CIM failure", async () => {
+    const child = new FakeChild()
+    const timers = new ManualTimers()
+    const calls: Call[] = []
+    let captures = 0
+    let cimAvailable = false
+    let alive = true
+    const runtime = new WorkspaceRuntime(new EventBus(), pino({ level: "silent" }), {
+      platform: "win32", gracefulStopTimeoutMs: 10, forcedStopTimeoutMs: 10,
+      setTimeout: timers.set, clearTimeout: timers.clear,
+      spawn: (() => child as unknown as ChildProcess) as typeof import("node:child_process").spawn,
+      spawnSync: ((command: string, args: readonly string[]) => {
+        calls.push({ command, args: [...args] })
+        if (command !== "powershell.exe") return result()
+        if (isGuarded(args)) {
+          if (!cimAvailable) return result("", 1, "CIM unavailable")
+          alive = false
+          return result("CODENOMAD_TARGET|4242|1|0|direct-start||100\nCODENOMAD_RESULT|1||1")
+        }
+        captures += 1
+        if (captures === 1) return result(windows([[4242, 1, "direct-start"]]))
+        if (!cimAvailable) return result("", 1, "CIM unavailable")
+        return result(windows(alive ? [[4242, 1, "direct-start"]] : [[1, 0, "system-start"]]))
+      }) as unknown as Command,
+    })
+    const folder = process.platform === "win32" ? process.cwd() : `/${process.cwd()}`
+    const launch = runtime.launch({ workspaceId: "w", folder, binaryPath: "opencode.exe" })
+    child.stdout.write("opencode server listening on http://127.0.0.1:4321\n")
+
+    await assert.rejects(launch, WorkspaceRuntimeIdentityCaptureError)
+    const firstCleanup = runtime.stop("w")
+    timers.run(); timers.run()
+    await assert.rejects(firstCleanup, WorkspaceStopTimeoutError)
+
+    cimAvailable = true
+    await runtime.stop("w")
+    assert.equal(calls.some(({ command }) => command === "taskkill.exe"), false)
+    assert.equal((runtime as unknown as { processes: Map<string, unknown> }).processes.size, 0)
+  })
+
   it("cancels before spawn and while waiting for a port without losing retryable cleanup", async () => {
     let spawned = false
     const runtime = new WorkspaceRuntime(new EventBus(), pino({ level: "silent" }), {

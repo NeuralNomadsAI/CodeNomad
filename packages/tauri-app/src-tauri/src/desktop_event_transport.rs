@@ -32,7 +32,7 @@ const STREAM_CONNECT_TIMEOUT_MS: u64 = 5_000;
 const STREAM_TCP_KEEPALIVE_MS: u64 = 30_000;
 const STREAM_STALL_TIMEOUT_MS: u64 = 30_000;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct DesktopEventStreamConfig {
     pub base_url: String,
     pub events_url: String,
@@ -40,6 +40,14 @@ pub struct DesktopEventStreamConfig {
     pub connection_id: String,
     pub cookie_name: String,
     pub session_cookie: Option<String>,
+    pub(crate) authority_generation: u64,
+    pub(crate) authority: Arc<AtomicU64>,
+}
+
+impl DesktopEventStreamConfig {
+    pub(crate) fn is_authorized(&self) -> bool {
+        self.authority.load(Ordering::SeqCst) == self.authority_generation
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -110,7 +118,7 @@ impl ResolvedDesktopEventReconnectPolicy {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 struct DesktopEventTransportConfig {
     stream: DesktopEventStreamConfig,
     reconnect: ResolvedDesktopEventReconnectPolicy,
@@ -176,6 +184,7 @@ struct DesktopEventTransportState {
 pub struct DesktopEventTransportManager {
     state: Arc<Mutex<DesktopEventTransportState>>,
     generation: Arc<AtomicU64>,
+    operation_fence: Arc<Mutex<()>>,
     lease: AtomicU64,
     last_event_id: Arc<Mutex<Option<String>>>,
 }
@@ -240,6 +249,7 @@ impl DesktopEventTransportManager {
                 config: None,
             })),
             generation: Arc::new(AtomicU64::new(0)),
+            operation_fence: Arc::new(Mutex::new(())),
             lease: AtomicU64::new(0),
             last_event_id: Arc::new(Mutex::new(None)),
         }
@@ -265,6 +275,16 @@ impl DesktopEventTransportManager {
         let transport_config = DesktopEventTransportConfig::new(stream_config, &request);
 
         let mut state = self.state.lock();
+        let operation_fence = self.operation_fence.lock();
+        if !transport_config.stream.is_authorized() {
+            return DesktopEventsStartResult {
+                started: false,
+                generation: None,
+                lease_id: None,
+                last_event_id: None,
+                reason: Some("desktop event stream endpoint revoked".to_string()),
+            };
+        }
         let lease_id = self.lease.fetch_add(1, Ordering::SeqCst) + 1;
         if let Some(stop) = state.stop.take() {
             stop.store(true, Ordering::SeqCst);
@@ -285,8 +305,8 @@ impl DesktopEventTransportManager {
         state.stop = Some(stop.clone());
         state.config = Some(transport_config.clone());
         let shared_generation = self.generation.clone();
+        let shared_operation_fence = self.operation_fence.clone();
         let last_event_id = self.last_event_id.clone();
-        drop(state);
 
         let ack_generation = shared_generation.clone();
         let acknowledged_event_id = last_event_id.clone();
@@ -309,11 +329,14 @@ impl DesktopEventTransportManager {
                 shared_generation,
                 generation,
                 stop,
+                shared_operation_fence,
                 transport_config,
                 last_event_id,
             );
             listener_app.unlisten(ack_listener);
         });
+        drop(operation_fence);
+        drop(state);
 
         DesktopEventsStartResult {
             started: true,
@@ -330,6 +353,13 @@ impl DesktopEventTransportManager {
         self.stop_locked(&mut state);
     }
 
+    pub fn revoke_endpoint(&self) {
+        let mut state = self.state.lock();
+        self.lease.fetch_add(1, Ordering::SeqCst);
+        self.stop_locked(&mut state);
+        *self.last_event_id.lock() = None;
+    }
+
     pub fn stop_lease(&self, lease_id: u64) {
         let mut state = self.state.lock();
         if self.lease.load(Ordering::SeqCst) != lease_id {
@@ -344,6 +374,7 @@ impl DesktopEventTransportManager {
         }
         state.config = None;
         self.generation.fetch_add(1, Ordering::SeqCst);
+        let _operation = self.operation_fence.lock();
     }
 }
 
