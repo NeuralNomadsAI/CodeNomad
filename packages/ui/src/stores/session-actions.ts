@@ -249,6 +249,10 @@ async function sendMessage(
       }
       admission.complete()
     } catch (error) {
+      if (!isInstanceRuntimeCurrent(instanceId, instance)) {
+        if (store.getMessage(messageId)?.isEphemeral) removeMessageV2(instanceId, messageId)
+        throw uncertainDeliveryError(error)
+      }
       for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
           const messages = await requestData<any[]>(

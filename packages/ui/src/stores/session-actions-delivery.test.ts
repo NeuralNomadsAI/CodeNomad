@@ -92,9 +92,14 @@ describe("dispatched command delivery classification", () => {
       const instanceId = `successful-${action}-replaced-runtime`, sessionId = "session"
       const { client, cleanup } = setup(instanceId, sessionId)
       let resolveDispatch!: (value: any) => void
+      let verificationCalls = 0
       ;(client.session as any)[action === "prompt" ? "promptAsync" : action] = () => new Promise((resolve) => {
         resolveDispatch = resolve
       })
+      ;(client.session as any).messages = async () => {
+        verificationCalls += 1
+        return { data: [] }
+      }
 
       try {
         const request = action === "prompt"
@@ -109,6 +114,7 @@ describe("dispatched command delivery classification", () => {
 
         assert.equal((error as any)?.suppressPromptRecovery, true)
         if (action === "prompt") {
+          assert.equal(verificationCalls, 0)
           assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), [])
         }
       } finally {

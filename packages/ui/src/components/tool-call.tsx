@@ -224,6 +224,7 @@ function ToolCallDetails(props: {
       setPermissionApprovalBlocked(false)
     } else {
       setPermissionError(null)
+      setPermissionApprovalBlocked(true)
     }
   })
 
