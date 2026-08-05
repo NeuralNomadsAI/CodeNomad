@@ -232,7 +232,7 @@ export const taskRenderer: ToolRenderer = {
       enabled: () => activeInstanceId() === instanceId && activeSessionId().get(instanceId) === visibilitySessionId,
       loaded: childSessionLoaded,
       loading: childSessionLoading,
-      load: (id, signal) => loadMessages(instanceId, id, { signal }),
+      load: (id, signal) => loadMessages(instanceId, id, { signal, force: true }),
     })
 
     createEffect(() => {

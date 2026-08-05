@@ -77,11 +77,11 @@ describe("dispatched command delivery classification", () => {
         info: { id: messageId, sessionID: sessionId, role: "user", time: { created: 1 } },
         parts: [{ id: "stale-part", type: "text", text: "stale snapshot" }],
       }] })
-      await request
+      const error = await request.catch((failure) => failure)
 
       const message = messageStoreBus.getOrCreate(instanceId).getMessage(messageId)
-      assert.equal(message?.isEphemeral, true)
-      assert.equal(message?.parts["stale-part"], undefined)
+      assert.equal((error as any)?.suppressPromptRecovery, true)
+      assert.equal(message, undefined)
     } finally {
       cleanup()
     }

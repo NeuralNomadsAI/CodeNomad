@@ -251,7 +251,10 @@ async function sendMessage(
             client.session.messages({ sessionID: sessionId, ...workspacePayload }),
             "session.messages",
           )
-          if (!isInstanceRuntimeCurrent(instanceId, instance)) return
+          if (!isInstanceRuntimeCurrent(instanceId, instance)) {
+            if (store.getMessage(messageId)?.isEphemeral) removeMessageV2(instanceId, messageId)
+            throw uncertainDeliveryError(error)
+          }
           const verified = messages.find((message) => (message?.info ?? message)?.id === messageId)
           if (verified) {
             const info = verified.info ?? verified
@@ -272,6 +275,10 @@ async function sendMessage(
             return
           }
         } catch {
+          if (!isInstanceRuntimeCurrent(instanceId, instance)) {
+            if (store.getMessage(messageId)?.isEphemeral) removeMessageV2(instanceId, messageId)
+            throw uncertainDeliveryError(error)
+          }
           // A failed verification leaves delivery ambiguous.
         }
         if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 100))
