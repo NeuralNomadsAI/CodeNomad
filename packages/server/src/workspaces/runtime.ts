@@ -655,6 +655,7 @@ export class WorkspaceRuntime {
       }
       if (this.platform === "win32" && !managed.wsl && leaderMatches && leader) {
         for (const descendant of descendantsOf(snapshot.processes, leader.pid)) target.members.set(descendant.pid, descendant)
+        if (managed.processKind === "windows-direct") managed.identityCaptureFailed = false
       }
       const aliveMembers = Array.from(target.members.values()).filter((identity) =>
         sameProcess(identity, snapshot.processes.get(identity.pid)),
@@ -685,6 +686,8 @@ export class WorkspaceRuntime {
     const sendStopSignal = (signal: NodeJS.Signals) => {
       if (!pid) failures.push(`${signal} was not sent because the process PID is unavailable`)
       if (pid && wrapperExited() && this.platform !== "linux" && this.platform !== "win32") refreshTargets()
+      if (pid && managed.identityCaptureFailed && this.platform === "win32" && !managed.wsl &&
+        managed.processKind === "windows-direct") refreshTargets()
       let signaledOwnedGroup = false
       if (pid && managed.identityCaptureFailed && this.platform !== "linux" && this.platform !== "win32" && !wrapperExited()) {
         const result = signalOwnedPosixProcessGroup(this.spawnCommand, pid, signal, this.stopCommandTimeoutMs)
@@ -735,8 +738,7 @@ export class WorkspaceRuntime {
         const name = managed.wsl ? "WSL Linux" : this.platform === "win32" ? "Windows" : "POSIX"
         return { state: "unknown", detail: `${name} target identity could not be confirmed` } as const
       }
-      if (managed.identityCaptureFailed && this.platform === "win32" && !managed.wsl &&
-        (managed.processKind !== "windows-direct" || !managed.targets?.leader)) {
+      if (managed.identityCaptureFailed && this.platform === "win32" && !managed.wsl) {
         return { state: "unknown", detail: "Windows cleanup cannot prove exact launch ownership without a Job Object" } as const
       }
       if (managed.identityCaptureFailed && managed.wsl && !managed.targets?.leader && !wrapperExited()) {

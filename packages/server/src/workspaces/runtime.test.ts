@@ -187,6 +187,41 @@ describe("workspace runtime lifecycle contracts", () => {
     assert.equal((runtime as unknown as { processes: Map<string, unknown> }).processes.size, 0)
   })
 
+  it("retains unknown Windows ownership when the leader exits before identity recapture", async () => {
+    const child = new FakeChild()
+    const timers = new ManualTimers()
+    let captures = 0
+    let cimAvailable = false
+    const runtime = new WorkspaceRuntime(new EventBus(), pino({ level: "silent" }), {
+      platform: "win32", gracefulStopTimeoutMs: 10, forcedStopTimeoutMs: 10,
+      setTimeout: timers.set, clearTimeout: timers.clear,
+      spawn: (() => child as unknown as ChildProcess) as typeof import("node:child_process").spawn,
+      spawnSync: ((_command: string, args: readonly string[]) => {
+        if (++captures === 1) return result(windows([[4242, 1, "direct-start"]]))
+        if (!cimAvailable) return result("", 1, "CIM unavailable")
+        return isGuarded(args)
+          ? result("CODENOMAD_RESULT|0||0")
+          : result(windows([[5000, 4242, "child-start"]]))
+      }) as unknown as Command,
+    })
+    const folder = process.platform === "win32" ? process.cwd() : `/${process.cwd()}`
+    const launch = runtime.launch({ workspaceId: "w", folder, binaryPath: "opencode.exe" })
+    child.stdout.write("opencode server listening on http://127.0.0.1:4321\n")
+
+    await assert.rejects(launch, WorkspaceRuntimeIdentityCaptureError)
+    const failedCleanup = runtime.stop("w")
+    timers.run(); timers.run()
+    await assert.rejects(failedCleanup, WorkspaceStopTimeoutError)
+
+    child.exit(1)
+    cimAvailable = true
+    const retry = runtime.stop("w")
+    timers.run(); timers.run()
+    await assert.rejects(retry, (error: unknown) =>
+      error instanceof WorkspaceStopTimeoutError && /cannot prove exact launch ownership/.test(error.message))
+    assert.equal((runtime as unknown as { processes: Map<string, unknown> }).processes.size, 1)
+  })
+
   it("cancels before spawn and while waiting for a port without losing retryable cleanup", async () => {
     let spawned = false
     const runtime = new WorkspaceRuntime(new EventBus(), pino({ level: "silent" }), {
