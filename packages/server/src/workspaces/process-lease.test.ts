@@ -429,6 +429,7 @@ test("failed final retirement can be retried", async (t) => {
   const owner = JSON.parse(await readFile(path.join(leaseDirectory, "owner", "owner.json"), "utf8"))
   const tombstone = path.join(leaseDirectory, `retired.${owner.leaseToken}`)
   await mkdir(tombstone)
+  await writeFile(path.join(tombstone, "blocker"), "occupied")
 
   await assert.rejects(lease.release(), /release can be retried/)
   await rm(tombstone, { recursive: true })
