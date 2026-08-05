@@ -567,31 +567,45 @@ async function fetchSessions(
 
     for (const apiSession of getV2SessionItems(response)) {
       const existingSession = existingSessions?.get(apiSession.id)
+      const latestSession = sessions().get(instanceId)?.get(apiSession.id)
       const metadataMutated = wasSessionMetadataMutatedAfter(instanceId, apiSession.id, metadataMutationFence)
-      if (metadataMutated && sessions().get(instanceId)?.has(apiSession.id)) {
-        refreshedSessionIds.add(apiSession.id)
-        continue
-      }
-      const incomingRevert = apiSession.revert ?? null
-      if (residentSessionIds.has(apiSession.id) && (
-        !sameSessionRevert(existingSession?.revert, incomingRevert) ||
-        !sameSessionRevert(store.getSessionRevert(apiSession.id), incomingRevert)
-      )) {
-        revertReloadIds.add(apiSession.id)
-      }
-      const existingStatus = existingSession?.status
-      const rawStatus = (apiSession as any)?.status ?? statusById[apiSession.id]
+      const statusBase = metadataMutated && latestSession ? latestSession : existingSession
+      const existingStatus = statusBase?.status
+      const rawStatus = statusResponseKnown ? statusById[apiSession.id] : (apiSession as any)?.status ?? statusById[apiSession.id]
       const hasType = rawStatus && typeof rawStatus === "object" && typeof rawStatus.type === "string"
-      const runtimeStatusKnown = Boolean(hasType || statusResponseKnown || existingSession?.runtimeStatusKnown)
+      const runtimeStatusKnown = Boolean(hasType || statusResponseKnown || statusBase?.runtimeStatusKnown)
 
       let status: SessionStatus
-      let retry = existingSession?.retry ?? null
+      let retry = statusBase?.retry ?? null
       if (existingStatus === "compacting" && !statusResponseKnown) {
         status = "compacting"
         retry = null
       } else {
         status = hasType ? mapSdkSessionStatus(rawStatus) : statusResponseKnown ? "idle" : existingStatus ?? "idle"
         retry = hasType ? mapSdkSessionRetry(rawStatus) : retry
+      }
+
+      if (metadataMutated && latestSession) {
+        refreshedSessionIds.add(apiSession.id)
+        if (hasType || statusResponseKnown) {
+          sessionMap.set(apiSession.id, {
+            ...latestSession,
+            status,
+            retry,
+            idleSince: getIdleSinceForStatusTransition(existingStatus, status, latestSession.idleSince),
+            runtimeStatusKnown,
+            generationRecovery: resolveAuthoritativeGenerationRecovery(latestSession.generationRecovery, status),
+          })
+        }
+        continue
+      }
+
+      const incomingRevert = apiSession.revert ?? null
+      if (residentSessionIds.has(apiSession.id) && (
+        !sameSessionRevert(existingSession?.revert, incomingRevert) ||
+        !sameSessionRevert(store.getSessionRevert(apiSession.id), incomingRevert)
+      )) {
+        revertReloadIds.add(apiSession.id)
       }
       sessionMap.set(apiSession.id, {
         ...toClientSessionV2(instanceId, apiSession, existingSession),

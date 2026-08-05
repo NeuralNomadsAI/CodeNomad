@@ -243,7 +243,11 @@ async function sendMessage(
         }),
         "session.promptAsync",
       )
-      if (isInstanceRuntimeCurrent(instanceId, instance)) admission.complete()
+      if (!isInstanceRuntimeCurrent(instanceId, instance)) {
+        if (store.getMessage(messageId)?.isEphemeral) removeMessageV2(instanceId, messageId)
+        throw uncertainDeliveryError(new Error("Instance changed after prompt delivery"))
+      }
+      admission.complete()
     } catch (error) {
       for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
@@ -350,7 +354,10 @@ async function executeCustomCommand(
       }),
       "session.command",
     )
-    if (isInstanceRuntimeCurrent(instanceId, instance)) admission.complete()
+    if (!isInstanceRuntimeCurrent(instanceId, instance)) {
+      throw uncertainDeliveryError(new Error("Instance changed after command delivery"))
+    }
+    admission.complete()
   } catch (error) {
     if (isInstanceRuntimeCurrent(instanceId, instance)) admission.rollback()
     throw classifyDeliveryError(error)
@@ -385,7 +392,10 @@ async function runShellCommand(instanceId: string, sessionId: string, command: s
       }),
       "session.shell",
     )
-    if (isInstanceRuntimeCurrent(instanceId, instance)) admission.complete()
+    if (!isInstanceRuntimeCurrent(instanceId, instance)) {
+      throw uncertainDeliveryError(new Error("Instance changed after shell delivery"))
+    }
+    admission.complete()
   } catch (error) {
     if (isInstanceRuntimeCurrent(instanceId, instance)) admission.rollback()
     throw classifyDeliveryError(error)

@@ -60,6 +60,10 @@ function cancelSessionGenerationAdmissions(instanceId: string, sessionId: string
 
 function resetInstanceSessionRequestState(instanceId: string): void {
   const prefix = `${instanceId}:`
+  const activeMessageSessionIds = [...messageLoadControllers.keys()]
+    .filter((key) => key.startsWith(prefix))
+    .map((key) => key.slice(prefix.length))
+  for (const sessionId of activeMessageSessionIds) advanceMessageLoadEpoch(instanceId, sessionId)
   for (const [key, admission] of generationAdmissions) {
     if (!key.startsWith(prefix)) continue
     const sessionId = key.slice(prefix.length)

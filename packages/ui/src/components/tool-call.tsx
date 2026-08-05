@@ -195,6 +195,7 @@ function ToolCallDetails(props: {
 
   const [permissionSubmitting, setPermissionSubmitting] = createSignal(false)
   const [permissionError, setPermissionError] = createSignal<string | null>(null)
+  const [permissionApprovalBlocked, setPermissionApprovalBlocked] = createSignal(false)
 
   const followScroll = createFollowScroll({
     getScrollTopSnapshot: props.scrollTopSnapshot,
@@ -220,6 +221,7 @@ function ToolCallDetails(props: {
     if (!permission) {
       setPermissionSubmitting(false)
       setPermissionError(null)
+      setPermissionApprovalBlocked(false)
     } else {
       setPermissionError(null)
     }
@@ -235,6 +237,7 @@ function ToolCallDetails(props: {
 
   async function handlePermissionResponse(permission: PermissionRequest, response: "once" | "always" | "reject", message?: string) {
     if (!permission) return
+    if (response !== "reject" && permissionApprovalBlocked()) return
     setPermissionSubmitting(true)
     setPermissionError(null)
     try {
@@ -513,6 +516,7 @@ function ToolCallDetails(props: {
       active={props.isPermissionActive}
       submitting={permissionSubmitting}
       error={permissionError}
+      onApprovalBlockedChange={setPermissionApprovalBlocked}
       renderDiff={renderDiffContent}
       fallbackSessionId={() => props.sessionId}
       onRespond={(permission, sessionId, response, message) => void handlePermissionResponse(permission, response, message)}

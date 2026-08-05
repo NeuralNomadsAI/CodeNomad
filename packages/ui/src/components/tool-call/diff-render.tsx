@@ -129,6 +129,9 @@ export function createDiffContentRenderer(params: {
         ? params.t("toolCall.diff.disableWordWrap")
         : params.t("toolCall.diff.enableWordWrap")
     const copyPatchTitle = () => params.t("toolCall.diff.copyPatch")
+    const copyFullDiff = async () => {
+      if (await copyToClipboard(payload.diffText)) options?.onFullDiffAccess?.()
+    }
 
     const handleDiffRendered = () => {
       params.handleScrollRendered()
@@ -148,7 +151,7 @@ export function createDiffContentRenderer(params: {
             <button
               type="button"
               class="file-viewer-toolbar-icon-button"
-              onClick={() => void copyToClipboard(payload.diffText)}
+              onClick={() => void copyFullDiff()}
               aria-label={copyPatchTitle()}
               title={copyPatchTitle()}
             >

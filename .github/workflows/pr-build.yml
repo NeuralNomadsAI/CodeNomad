@@ -148,6 +148,7 @@ jobs:
           packages/ui/src/stores/session-memory.test.ts
           packages/ui/src/components/tool-call/search-text.test.ts
           packages/ui/src/components/tool-call/diagnostics.test.ts
+          packages/ui/src/components/tool-call/permission-constants.test.ts
           packages/ui/src/components/tool-call/renderers/task-transcript-load.test.ts
           packages/ui/src/components/tool-call/utils.test.ts
           packages/ui/src/lib/sse-manager-generation.test.ts

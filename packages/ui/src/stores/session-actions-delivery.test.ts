@@ -87,6 +87,36 @@ describe("dispatched command delivery classification", () => {
     }
   })
 
+  for (const action of ["prompt", "command", "shell"] as const) {
+    it(`treats a successful ${action} response from a replaced runtime as ambiguous`, async () => {
+      const instanceId = `successful-${action}-replaced-runtime`, sessionId = "session"
+      const { client, cleanup } = setup(instanceId, sessionId)
+      let resolveDispatch!: (value: any) => void
+      ;(client.session as any)[action === "prompt" ? "promptAsync" : action] = () => new Promise((resolve) => {
+        resolveDispatch = resolve
+      })
+
+      try {
+        const request = action === "prompt"
+          ? sendMessage(instanceId, sessionId, "optimistic prompt")
+          : action === "command"
+            ? executeCustomCommand(instanceId, sessionId, "test", "")
+            : runShellCommand(instanceId, sessionId, "echo test")
+        while (!resolveDispatch) await new Promise<void>((resolve) => setImmediate(resolve))
+        updateInstance(instanceId, { client: { session: {} } as any })
+        resolveDispatch({ data: undefined })
+        const error = await request.catch((failure) => failure)
+
+        assert.equal((error as any)?.suppressPromptRecovery, true)
+        if (action === "prompt") {
+          assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), [])
+        }
+      } finally {
+        cleanup()
+      }
+    })
+  }
+
   it("keeps a pre-response transport failure ambiguous after empty verification", async () => {
     const instanceId = "prompt-delivery-empty", sessionId = "session"
     const { client, cleanup } = setup(instanceId, sessionId)

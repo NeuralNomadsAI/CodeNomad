@@ -3,7 +3,7 @@ import { describe, it } from "node:test"
 
 import { sdkManager } from "../lib/sdk-manager.ts"
 import type { Session } from "../types/session.ts"
-import { addInstance, instances, isInstanceRuntimeCurrent, removeInstance, setActiveInstanceId, updateInstance } from "./instances.ts"
+import { addInstance, clearReloadableInstanceState, instances, isInstanceRuntimeCurrent, removeInstance, setActiveInstanceId, updateInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { clearSessionSearch, fetchSessions, loadMessages, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
 import { handleSessionUpdate } from "./session-events.ts"
@@ -203,6 +203,31 @@ describe("session request authority", () => {
       assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(firstSessionId), [])
       assert.equal(messagesLoaded().get(instanceId)?.has(firstSessionId) ?? false, false)
       assert.equal(loading().loadingMessages.get(instanceId)?.has(firstSessionId) ?? false, false)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("invalidates an in-flight message load during same-runtime rehydration", async () => {
+    const instanceId = "same-runtime-rehydration", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const response = deferred<any>()
+    let loadSignal: AbortSignal | undefined
+    ;(client.session as any).messages = (_input: unknown, options?: { signal?: AbortSignal }) => {
+      loadSignal = options?.signal
+      return response.promise
+    }
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+
+    try {
+      const request = loadMessages(instanceId, sessionId)
+      while (!loadSignal) await new Promise<void>((resolve) => setImmediate(resolve))
+      clearReloadableInstanceState(instanceId)
+      assert.equal(loadSignal.aborted, true)
+      response.resolve({ data: [apiMessage("stale-message", sessionId)] })
+      await request
+
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), [])
     } finally {
       cleanup()
     }
@@ -467,6 +492,38 @@ describe("session request authority", () => {
       await request
 
       assert.equal(sessions().get(instanceId)?.get(sessionId)?.revert?.messageID, currentRevert.messageID)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("applies authoritative status while preserving newer SSE metadata", async () => {
+    const instanceId = "session-list-field-authority", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const status = deferred<any>()
+    let statusStarted = false
+    ;(client.session as any).list = async () => ({ data: [{ ...apiSession(sessionId), title: "Stale title" }] })
+    ;(client.session as any).status = () => {
+      statusStarted = true
+      return status.promise
+    }
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[
+      sessionId,
+      { ...session(instanceId, sessionId), title: "Original title", status: "working" },
+    ]])))
+
+    try {
+      const request = fetchSessions(instanceId)
+      while (!statusStarted) await new Promise<void>((resolve) => setImmediate(resolve))
+      handleSessionUpdate(instanceId, {
+        type: "session.updated",
+        properties: { info: { ...apiSession(sessionId), title: "Current SSE title" } },
+      } as any)
+      status.resolve({ data: {} })
+      await request
+
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.title, "Current SSE title")
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.status, "idle")
     } finally {
       cleanup()
     }
