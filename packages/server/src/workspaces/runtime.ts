@@ -421,11 +421,18 @@ export class WorkspaceRuntime {
         if (this.platform === "win32" && managed.targets?.leader) {
           const snapshot = probeWindowsProcesses(this.spawnCommand, this.stopCommandTimeoutMs)
           const currentLeader = snapshot.ok ? snapshot.processes.get(managed.targets.leader.pid) : undefined
-          if (snapshot.ok && (!currentLeader || sameProcess(managed.targets.leader, currentLeader))) {
-            for (const identity of descendantsOf(snapshot.processes, managed.targets.leader.pid)) {
-              managed.targets.members.set(identity.pid, identity)
-            }
+          if (!snapshot.ok || !currentLeader || !sameProcess(managed.targets.leader, currentLeader)) {
+            launchSettled = true
+            const detail = !snapshot.ok
+              ? `readiness-time Windows identity discovery failed: ${snapshot.error}`
+              : `spawned PID ${managed.targets.leader.pid} changed or disappeared before readiness-time identity capture`
+            this.beginFailedLaunchCleanup(options.workspaceId, managed)
+            reject(new WorkspaceRuntimeIdentityCaptureError(options.workspaceId, detail))
+            return
           }
+          managed.targets.members.clear()
+          managed.targets.members.set(currentLeader.pid, currentLeader)
+          for (const identity of descendantsOf(snapshot.processes, currentLeader.pid)) managed.targets.members.set(identity.pid, identity)
         }
         try {
           await options.persistProcessIdentities?.([...managed.targets!.members.values()])

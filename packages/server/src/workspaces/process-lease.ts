@@ -30,7 +30,7 @@ interface LeaseOwner {
 export interface WorkspaceProcessLease {
   release(): Promise<void>
   prepareLaunch(): Promise<string>
-  setProcessIdentity(identity: ProcessIdentity): Promise<void>
+  setProcessIdentities(identities: ProcessIdentity[]): Promise<void>
   onLost(callback: () => void): void
 }
 
@@ -61,8 +61,15 @@ interface HeldLease {
   heartbeat: NodeJS.Timeout
   lost: boolean
   releaseFailed: boolean
-  launchToken?: string
   onLost: Set<() => void>
+}
+
+interface LaunchGeneration {
+  version: 1
+  generation: string
+  token: string
+  complete: boolean
+  identities?: ProcessIdentity[]
 }
 
 export class WorkspaceProcessLeaseRegistry {
@@ -124,12 +131,15 @@ export class WorkspaceProcessLeaseRegistry {
   private handle(key: string, leaseToken: string): WorkspaceProcessLease {
     let released = false
     let lostCallback: (() => void) | undefined
+    let launchGeneration: string | undefined
+    let launchToken: string | undefined
     return {
       release: async () => {
         if (released) return
         const held = this.held.get(key)
         if (!held || held.owner.leaseToken !== leaseToken) return
         if (held.count > 1) {
+          if (launchGeneration) await removeLaunchGeneration(held.directory, leaseToken, launchGeneration)
           held.count -= 1
           released = true
           if (lostCallback) held.onLost.delete(lostCallback)
@@ -153,20 +163,25 @@ export class WorkspaceProcessLeaseRegistry {
       prepareLaunch: async () => {
         const held = this.held.get(key)
         if (!held || held.owner.leaseToken !== leaseToken || held.lost) throw new Error("Workspace process lease was lost")
-        if (held.launchToken) return held.launchToken
+        if (launchToken) return launchToken
+        const generation = randomUUID()
         const token = randomUUID()
-        await writeLaunchToken(held.directory, leaseToken, token)
+        await writeLaunchGeneration(held.directory, leaseToken, { version: 1, generation, token, complete: false })
         if ((await readOwner(held.directory))?.owner.leaseToken !== leaseToken) {
           this.lose(key, held)
           throw new Error("Workspace process lease was lost")
         }
-        held.launchToken = token
+        launchGeneration = generation
+        launchToken = token
         return token
       },
-      setProcessIdentity: async (identity) => {
+      setProcessIdentities: async (identities) => {
         const held = this.held.get(key)
         if (!held || held.owner.leaseToken !== leaseToken || held.lost) throw new Error("Workspace process lease was lost")
-        await writeProcessIdentity(held.directory, leaseToken, identity)
+        if (!launchGeneration || !launchToken) throw new Error("Workspace launch was not prepared")
+        await writeLaunchGeneration(held.directory, leaseToken, {
+          version: 1, generation: launchGeneration, token: launchToken, complete: true, identities,
+        }, true)
         if ((await readOwner(held.directory))?.owner.leaseToken !== leaseToken) {
           this.lose(key, held)
           throw new Error("Workspace process lease was lost")
@@ -210,38 +225,31 @@ export class WorkspaceProcessLeaseRegistry {
         if (currentStart) serverAlive = currentStart === owner.processStart
       }
       if (serverAlive) return false
-      const launchToken = await readLaunchToken(directory, owner.leaseToken)
-      if (launchToken.kind === "unknown") return false
-      if (launchToken.kind === "malformed" && Date.now() - launchToken.modifiedAt < this.staleMs) return false
-      if (launchToken.kind === "valid") {
-        let tokenProbeInconclusive = false
+      const launches = await readLaunchGenerations(directory, owner.leaseToken)
+      if (launches.kind === "unknown") return false
+      const platform = this.options.platform ?? process.platform
+      if (launches.kind === "malformed") return platform !== "win32" && Date.now() - launches.modifiedAt >= this.staleMs
+      if (launches.kind === "absent") return true
+      const identities: ProcessIdentity[] = []
+      for (const launch of launches.launches) {
+        let tokenAlive: boolean | undefined
         try {
-          const alive = this.options.isLaunchTokenAlive
-            ? this.options.isLaunchTokenAlive(launchToken.token)
-            : launchTokenIsAlive(launchToken.token, this.options.platform ?? process.platform)
-          if (alive === true) return false
-          tokenProbeInconclusive = alive === undefined
+          tokenAlive = this.options.isLaunchTokenAlive
+            ? this.options.isLaunchTokenAlive(launch.token)
+            : launchTokenIsAlive(launch.token, platform)
         } catch {
-          tokenProbeInconclusive = true
+          tokenAlive = undefined
         }
-        const workspaceProcesses = await this.readPersistedProcessIdentities(directory, owner.leaseToken)
-        if (!workspaceProcesses || (tokenProbeInconclusive && workspaceProcesses.length === 0)) return false
-        if (!this.persistedProcessesAreGone(workspaceProcesses)) return false
-        return true
+        if (tokenAlive === true) return false
+        if (!launch.complete) {
+          if (platform === "win32" || tokenAlive === undefined) return false
+          continue
+        }
+        identities.push(...launch.identities!)
       }
-      const workspaceProcesses = await this.readPersistedProcessIdentities(directory, owner.leaseToken)
-      if (!workspaceProcesses) return false
-      return this.persistedProcessesAreGone(workspaceProcesses)
+      return identities.length === 0 || this.persistedProcessesAreGone(identities)
     }
     return false
-  }
-
-  private async readPersistedProcessIdentities(directory: string, leaseToken: string): Promise<ProcessIdentity[] | undefined> {
-    try {
-      return await readProcessIdentities(directory, leaseToken)
-    } catch {
-      return undefined
-    }
   }
 
   private persistedProcessesAreGone(identities: ProcessIdentity[]): boolean {
@@ -366,60 +374,98 @@ async function readProcessStart(pid: number): Promise<string | undefined> {
   }
 }
 
-async function writeProcessIdentity(directory: string, leaseToken: string, identity: ProcessIdentity): Promise<void> {
-  const identityToken = createHash("sha256").update(JSON.stringify(identity)).digest("hex")
-  await fs.writeFile(path.join(directory, `process.${leaseToken}.${identityToken}.json`), JSON.stringify(identity), {
-    encoding: "utf8", flag: "wx", mode: 0o600,
-  }).catch((error) => { if (!hasCode(error, "EEXIST")) throw error })
-}
-
-async function writeLaunchToken(directory: string, leaseToken: string, token: string): Promise<void> {
-  const handle = await fs.open(path.join(directory, `launch.${leaseToken}.json`), "wx", 0o600)
+async function writeLaunchGeneration(directory: string, leaseToken: string, launch: LaunchGeneration,
+  replace = false): Promise<void> {
+  if (launch.complete && (!launch.identities?.length || launch.identities.some((identity) => !validProcessIdentity(identity)))) {
+    throw new Error("A complete process identity generation requires at least one valid identity")
+  }
+  const temporary = path.join(directory, `.launch.${leaseToken}.${launch.generation}.${randomUUID()}.tmp`)
+  const destination = launchGenerationPath(directory, leaseToken, launch.generation)
+  const handle = await fs.open(temporary, "wx", 0o600)
   try {
-    await handle.writeFile(JSON.stringify({ token }), "utf8")
+    await handle.writeFile(JSON.stringify(launch), "utf8")
     await handle.sync()
   } finally {
     await handle.close()
   }
+  try {
+    if (!replace && await fileExists(destination)) throw Object.assign(new Error("Launch generation already exists"), { code: "EEXIST" })
+    await fs.rename(temporary, destination)
+  } finally {
+    await fs.rm(temporary, { force: true }).catch(() => undefined)
+  }
 }
 
-type LaunchTokenObservation =
+async function removeLaunchGeneration(directory: string, leaseToken: string, generation: string): Promise<void> {
+  await fs.rm(launchGenerationPath(directory, leaseToken, generation))
+}
+
+type LaunchGenerationObservation =
   | { kind: "absent" }
-  | { kind: "valid"; token: string }
+  | { kind: "valid"; launches: LaunchGeneration[] }
   | { kind: "malformed"; modifiedAt: number }
   | { kind: "unknown" }
 
-async function readLaunchToken(directory: string, leaseToken: string): Promise<LaunchTokenObservation> {
-  const launchPath = path.join(directory, `launch.${leaseToken}.json`)
+async function readLaunchGenerations(directory: string, leaseToken: string): Promise<LaunchGenerationObservation> {
+  let launchPaths: string[]
   try {
-    const value = JSON.parse(await fs.readFile(launchPath, "utf8")) as { token?: unknown }
-    if (typeof value.token === "string" && value.token.length > 0) return { kind: "valid", token: value.token }
+    const prefix = `launch.${leaseToken}.`
+    launchPaths = (await fs.readdir(directory))
+      .filter((entry) => entry.startsWith(prefix) && entry.endsWith(".json"))
+      .map((entry) => path.join(directory, entry))
   } catch (error) {
     if (hasCode(error, "ENOENT")) return { kind: "absent" }
-    if (!(error instanceof SyntaxError)) return { kind: "unknown" }
+    return { kind: "unknown" }
+  }
+  if (launchPaths.length === 0) return { kind: "absent" }
+  try {
+    const launches = await Promise.all(launchPaths.map(async (launchPath) => ({
+      launchPath,
+      launch: JSON.parse(await fs.readFile(launchPath, "utf8")) as LaunchGeneration,
+    })))
+    if (launches.every(({ launchPath, launch }) => validLaunchGeneration(launch) &&
+      launchGenerationPath(directory, leaseToken, launch.generation) === launchPath)) {
+      return { kind: "valid", launches: launches.map(({ launch }) => launch) }
+    }
+  } catch (error) {
+    if (!(error instanceof SyntaxError) && !hasCode(error, "ENOENT")) return { kind: "unknown" }
   }
   try {
-    const [launch, heartbeat] = await Promise.all([
-      fs.stat(launchPath),
-      fs.stat(path.join(directory, "owner", "heartbeat")),
-    ])
-    return { kind: "malformed", modifiedAt: Math.max(launch.mtimeMs, heartbeat.mtimeMs) }
+    const stats = await Promise.all([...launchPaths, path.join(directory, "owner", "heartbeat")].map((file) => fs.stat(file)))
+    return { kind: "malformed", modifiedAt: Math.max(...stats.map((stat) => stat.mtimeMs)) }
   } catch (error) {
     return hasCode(error, "ENOENT") ? { kind: "absent" } : { kind: "unknown" }
   }
 }
 
-async function readProcessIdentities(directory: string, leaseToken: string): Promise<ProcessIdentity[] | undefined> {
+function validLaunchGeneration(value: LaunchGeneration): boolean {
+  return value?.version === 1 && safeToken(value.generation) && safeToken(value.token) && typeof value.complete === "boolean" &&
+    (!value.complete || Boolean(value.identities?.length && value.identities.every(validProcessIdentity)))
+}
+
+function launchGenerationPath(directory: string, leaseToken: string, generation: string): string {
+  return path.join(directory, `launch.${leaseToken}.${generation}.json`)
+}
+
+async function fileExists(file: string): Promise<boolean> {
   try {
-    const entries = await fs.readdir(directory)
-    const identities = await Promise.all(entries.filter((entry) => entry.startsWith(`process.${leaseToken}.`) && entry.endsWith(".json"))
-      .map(async (entry) => JSON.parse(await fs.readFile(path.join(directory, entry), "utf8")) as ProcessIdentity))
-    return identities.filter((identity) => Number.isInteger(identity.pid) && identity.pid > 0 && typeof identity.startTime === "string")
+    await fs.access(file)
+    return true
   } catch (error) {
-    if (hasCode(error, "ENOENT")) return []
-    if (error instanceof SyntaxError) return undefined
+    if (hasCode(error, "ENOENT")) return false
     throw error
   }
+}
+
+function validProcessIdentity(value: unknown): value is ProcessIdentity {
+  if (!value || typeof value !== "object") return false
+  const identity = value as Partial<ProcessIdentity>
+  return Number.isInteger(identity.pid) && Number(identity.pid) > 0 &&
+    Number.isInteger(identity.parentPid) && Number(identity.parentPid) >= 0 &&
+    Number.isInteger(identity.groupId) && Number(identity.groupId) > 0 &&
+    typeof identity.startTime === "string" && identity.startTime.length > 0 &&
+    (identity.bootId === undefined || typeof identity.bootId === "string") &&
+    (identity.startOrder === undefined || typeof identity.startOrder === "string")
 }
 
 function launchTokenIsAlive(token: string, platform: NodeJS.Platform): boolean | undefined {

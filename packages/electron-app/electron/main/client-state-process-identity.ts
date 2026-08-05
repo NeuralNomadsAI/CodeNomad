@@ -129,6 +129,46 @@ export function isExpectedTauriProcess(pid: number): boolean | undefined {
   }
 }
 
+const machineIdentityCache = new Map<NodeJS.Platform, string | null>()
+
+export function getMachineIdentity(platform: NodeJS.Platform = process.platform): string | undefined {
+  const cached = machineIdentityCache.get(platform)
+  if (cached !== undefined) return cached ?? undefined
+  const identity = readMachineIdentity(platform)
+  machineIdentityCache.set(platform, identity ?? null)
+  return identity
+}
+
+function readMachineIdentity(platform: NodeJS.Platform): string | undefined {
+  try {
+    if (platform === "linux") {
+      for (const path of ["/etc/machine-id", "/var/lib/dbus/machine-id"]) {
+        try {
+          const value = readFileSync(path, "utf8").trim().toLowerCase()
+          if (value) return `linux:${value}`
+        } catch {}
+      }
+    }
+    if (platform === "darwin") {
+      const value = readCommandIdentity("ioreg", ["-rd1", "-c", "IOPlatformExpertDevice"], "ioreg")
+      const uuid = /"IOPlatformUUID"\s*=\s*"([^"]+)"/.exec(value ?? "")?.[1]?.toLowerCase()
+      return uuid ? `darwin:${uuid}` : undefined
+    }
+    if (platform === "win32") {
+      const value = readCommandIdentity("powershell.exe", [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "(Get-ItemProperty -LiteralPath 'HKLM:\\SOFTWARE\\Microsoft\\Cryptography' -Name MachineGuid -ErrorAction Stop).MachineGuid.ToString().ToLowerInvariant()",
+      ], "machine")?.slice("machine:".length)
+      return value ? `win32:${value}` : undefined
+    }
+  } catch {
+    // Cross-host ownership is disabled when the local machine cannot be identified safely.
+  }
+  return undefined
+}
+
 export async function isExpectedTauriProcessAsync(
   pid: number,
   timeoutMs: number,

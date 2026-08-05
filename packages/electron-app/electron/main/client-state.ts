@@ -14,7 +14,7 @@ import {
   type ProcessOwner,
   removeRunningMarkerIfOwned,
 } from "./client-state-process"
-import { getProcessStartIdentity } from "./client-state-process-identity"
+import { getMachineIdentity, getProcessStartIdentity } from "./client-state-process-identity"
 import {
   CrossHostRegistration,
   crossHostParticipants,
@@ -205,6 +205,7 @@ export class ClientStateManager {
       pid: process.pid,
       runToken: randomUUID(),
       processStartIdentity: getProcessStartIdentity(process.pid),
+      machineIdentity: getMachineIdentity(),
     }
     this.crossHostDependencies = options?.crossHostDependencies
     mkdirSync(userDataPath, { recursive: true })

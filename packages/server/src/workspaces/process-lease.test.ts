@@ -58,7 +58,8 @@ test("a live detached process identity keeps a same-host lease valid", async (t)
   })
   const lease = await owner.acquire(workspacePath)
   assert.ok(lease)
-  await lease.setProcessIdentity({ pid: 303, parentPid: 1, groupId: 303, startTime: "immutable-start" })
+  await lease.prepareLaunch()
+  await lease.setProcessIdentities([{ pid: 303, parentPid: 1, groupId: 303, startTime: "immutable-start" }])
 
   assert.equal(await contender.acquire(workspacePath), undefined)
   processAlive = false
@@ -81,7 +82,8 @@ test("an inconclusive detached process probe fails closed", async (t) => {
   })
   const lease = await owner.acquire(workspacePath)
   assert.ok(lease)
-  await lease.setProcessIdentity({ pid: 303, parentPid: 1, groupId: 303, startTime: "immutable-start" })
+  await lease.prepareLaunch()
+  await lease.setProcessIdentities([{ pid: 303, parentPid: 1, groupId: 303, startTime: "immutable-start" }])
 
   assert.equal(await contender.acquire(workspacePath), undefined)
   await lease.release()
@@ -133,7 +135,7 @@ test("a pre-spawn cleanup token closes the process identity publication gap", as
   })
   const contender = new WorkspaceProcessLeaseRegistry({
     directory, managerToken: "contender", pid: 202, hostname: "same-host", isPidAlive: () => false,
-    isLaunchTokenAlive: () => launchAlive,
+    platform: "linux", isLaunchTokenAlive: () => launchAlive,
   })
   const lease = await owner.acquire(workspacePath)
   assert.ok(lease)
@@ -163,7 +165,7 @@ test("an unknown launch token is checked before process identity discovery", asy
   const lease = await owner.acquire(workspacePath)
   assert.ok(lease)
   await lease.prepareLaunch()
-  await lease.setProcessIdentity({ pid: 303, parentPid: 1, groupId: 303, startTime: "immutable-start" })
+  await lease.setProcessIdentities([{ pid: 303, parentPid: 1, groupId: 303, startTime: "immutable-start" }])
 
   assert.equal(await contender.acquire(workspacePath), undefined)
   await lease.release()
@@ -184,13 +186,70 @@ test("an inconclusive Windows token probe falls through to immutable identities"
   const lease = await owner.acquire(workspacePath)
   assert.ok(lease)
   await lease.prepareLaunch()
-  await lease.setProcessIdentity({ pid: 303, parentPid: 1, groupId: 303, startTime: "windows-creation-ticks" })
+  await lease.setProcessIdentities([{ pid: 303, parentPid: 1, groupId: 303, startTime: "windows-creation-ticks" }])
 
   assert.equal(await contender.acquire(workspacePath), undefined)
   processAlive = false
   const replacement = await contender.acquire(workspacePath)
   assert.ok(replacement)
   await lease.release()
+  await replacement.release()
+})
+
+test("a torn Windows identity generation remains an incomplete takeover fence", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-process-win32-torn-generation-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const workspacePath = path.join(directory, "workspace")
+  const owner = new WorkspaceProcessLeaseRegistry({
+    directory, managerToken: "owner", pid: 101, hostname: "same-host", isPidAlive: () => false,
+  })
+  const contender = new WorkspaceProcessLeaseRegistry({
+    directory, managerToken: "contender", pid: 202, hostname: "same-host", platform: "win32",
+    isPidAlive: () => false, isLaunchTokenAlive: () => false, isProcessIdentityAlive: () => false,
+  })
+  const lease = await owner.acquire(workspacePath)
+  assert.ok(lease)
+  await lease.prepareLaunch()
+  const [key] = await readdir(directory)
+  const leaseDirectory = path.join(directory, key!)
+  const ownerRecord = JSON.parse(await readFile(path.join(leaseDirectory, "owner", "owner.json"), "utf8"))
+  const launchFile = (await readdir(leaseDirectory)).find((entry) => entry.startsWith(`launch.${ownerRecord.leaseToken}.`))
+  assert.ok(launchFile)
+  await writeFile(path.join(leaseDirectory, launchFile), JSON.stringify({
+    version: 1,
+    generation: "partial-generation",
+    complete: false,
+    identities: [{ pid: 303, parentPid: 1, groupId: 303, startTime: "wrapper-only" }],
+  }))
+
+  assert.equal(await contender.acquire(workspacePath), undefined)
+  await lease.release()
+})
+
+test("one complete Windows launch cannot hide an incomplete sibling generation", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-process-win32-generations-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const workspacePath = path.join(directory, "workspace")
+  const owner = new WorkspaceProcessLeaseRegistry({
+    directory, managerToken: "owner", pid: 101, hostname: "same-host", isPidAlive: () => false,
+  })
+  const contender = new WorkspaceProcessLeaseRegistry({
+    directory, managerToken: "contender", pid: 202, hostname: "same-host", platform: "win32",
+    isPidAlive: () => false, isLaunchTokenAlive: () => false, isProcessIdentityAlive: () => false,
+  })
+  const first = await owner.acquire(workspacePath)
+  const second = await owner.acquire(workspacePath)
+  assert.ok(first && second)
+  await first.prepareLaunch()
+  await second.prepareLaunch()
+  await first.setProcessIdentities([{ pid: 303, parentPid: 1, groupId: 303, startTime: "first" }])
+
+  assert.equal(await contender.acquire(workspacePath), undefined)
+  await second.setProcessIdentities([{ pid: 304, parentPid: 1, groupId: 304, startTime: "second" }])
+  const replacement = await contender.acquire(workspacePath)
+  assert.ok(replacement)
+  await first.release()
+  await second.release()
   await replacement.release()
 })
 
@@ -216,9 +275,9 @@ for (const scenario of [
     const lease = await owner.acquire(workspacePath)
     assert.ok(lease)
     await lease.prepareLaunch()
-    for (const pid of scenario.persisted) {
-      await lease.setProcessIdentity({ pid, parentPid: pid === 303 ? 1 : 303, groupId: pid, startTime: `windows-${pid}` })
-    }
+    await lease.setProcessIdentities(scenario.persisted.map((pid) => ({
+      pid, parentPid: pid === 303 ? 1 : 303, groupId: pid, startTime: `windows-${pid}`,
+    })))
 
     const replacement = await contender.acquire(workspacePath)
     assert.equal(Boolean(replacement), scenario.reclaim)
@@ -235,7 +294,7 @@ test("a stale torn launch token does not permanently wedge a dead owner", async 
     directory, managerToken: "owner", pid: 101, hostname: "same-host", heartbeatMs: 60_000, isPidAlive: () => false,
   })
   const contender = new WorkspaceProcessLeaseRegistry({
-    directory, managerToken: "contender", pid: 202, hostname: "same-host", staleMs: 20, isPidAlive: () => false,
+    directory, managerToken: "contender", pid: 202, hostname: "same-host", platform: "linux", staleMs: 20, isPidAlive: () => false,
   })
   const lease = await owner.acquire(workspacePath)
   assert.ok(lease)
@@ -243,7 +302,9 @@ test("a stale torn launch token does not permanently wedge a dead owner", async 
   const [key] = await readdir(directory)
   const leaseDirectory = path.join(directory, key!)
   const ownerRecord = JSON.parse(await readFile(path.join(leaseDirectory, "owner", "owner.json"), "utf8"))
-  const launchPath = path.join(leaseDirectory, `launch.${ownerRecord.leaseToken}.json`)
+  const launchFile = (await readdir(leaseDirectory)).find((entry) => entry.startsWith(`launch.${ownerRecord.leaseToken}.`))
+  assert.ok(launchFile)
+  const launchPath = path.join(leaseDirectory, launchFile)
   await writeFile(launchPath, "{", "utf8")
 
   assert.equal(await contender.acquire(workspacePath), undefined)
@@ -279,7 +340,8 @@ test("retirement CAS includes the observed heartbeat generation", async (t) => {
   })
   const lease = await owner.acquire(workspacePath)
   assert.ok(lease)
-  await lease.setProcessIdentity({ pid: 303, parentPid: 1, groupId: 303, startTime: "immutable-start" })
+  await lease.prepareLaunch()
+  await lease.setProcessIdentities([{ pid: 303, parentPid: 1, groupId: 303, startTime: "immutable-start" }])
   const [key] = await readdir(directory)
   const ownerDirectory = path.join(directory, key!, "owner")
   const contender = new WorkspaceProcessLeaseRegistry({

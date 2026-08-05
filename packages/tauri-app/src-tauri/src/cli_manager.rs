@@ -888,18 +888,24 @@ impl CliProcessManager {
         generation
     }
 
-    fn revoke_if_tree_empty_locked(
+    fn handle_root_exit_locked(
         &self,
         generation: u64,
-        descendants_gone: bool,
+        endpoint_ready: bool,
+        containment_probe: impl FnOnce() -> anyhow::Result<bool>,
         revoke_renderer: impl FnOnce(),
-    ) -> Option<u64> {
-        if !self.is_current_generation(generation)
-            || !containment_is_complete(true, descendants_gone)
-        {
-            return None;
+    ) -> (Option<u64>, anyhow::Result<bool>) {
+        if !self.is_current_generation(generation) {
+            return (None, Ok(false));
         }
-        Some(self.revoke_endpoint_generation_locked(revoke_renderer))
+        if endpoint_ready {
+            let generation = self.revoke_endpoint_generation_locked(revoke_renderer);
+            return (Some(generation), containment_probe());
+        }
+        let containment = containment_probe();
+        let revoked_generation = matches!(containment, Ok(true))
+            .then(|| self.revoke_endpoint_generation_locked(revoke_renderer));
+        (revoked_generation, containment)
     }
 
     fn publish_error(&self, app: &AppHandle, generation: u64, message: String) {
@@ -1173,6 +1179,7 @@ impl CliProcessManager {
 
         thread::spawn(move || {
             let mut monitor_generation = generation;
+            let mut starting_handoff = false;
             loop {
                 enum Poll {
                     Running,
@@ -1190,26 +1197,37 @@ impl CliProcessManager {
                     };
                     match tracked.try_wait() {
                         Ok(Some(status)) => {
-                            #[cfg(unix)]
-                            let group_is_gone = process_group_is_gone(pid).map_err(|err| {
-                                format!("failed to inspect exited CLI pid={pid}: {err}")
-                            });
-                            #[cfg(windows)]
-                            let group_is_gone = match manager.job.lock().as_ref() {
-                                Some(job) => job.active_processes().map(|active| active == 0),
-                                None => Ok(false),
-                            };
-                            #[cfg(not(any(unix, windows)))]
-                            let group_is_gone: anyhow::Result<bool> = Ok(true);
+                            let endpoint_ready =
+                                !starting_handoff && manager.status.lock().state == CliState::Ready;
+                            let (revoked_generation, group_is_gone) = manager
+                                .handle_root_exit_locked(
+                                    generation,
+                                    endpoint_ready,
+                                    || {
+                                        #[cfg(unix)]
+                                        return process_group_is_gone(pid).map_err(|err| {
+                                            anyhow::anyhow!(
+                                                "failed to inspect exited CLI pid={pid}: {err}"
+                                            )
+                                        });
+                                        #[cfg(windows)]
+                                        return match manager.job.lock().as_ref() {
+                                            Some(job) => {
+                                                job.active_processes().map(|active| active == 0)
+                                            }
+                                            None => Ok(false),
+                                        };
+                                        #[cfg(not(any(unix, windows)))]
+                                        Ok(true)
+                                    },
+                                    || crate::client_state::revoke_renderer_access(&app),
+                                );
+                            if let Some(generation) = revoked_generation {
+                                monitor_generation = generation;
+                            }
                             match group_is_gone {
                                 Ok(gone) if containment_is_complete(true, gone) => {
-                                    monitor_generation = manager
-                                        .revoke_if_tree_empty_locked(generation, gone, || {
-                                            crate::client_state::revoke_renderer_access(&app)
-                                        })
-                                        .expect(
-                                            "current empty CLI tree must revoke its generation",
-                                        );
+                                    debug_assert!(revoked_generation.is_some());
                                     *child = None;
                                     #[cfg(windows)]
                                     {
@@ -1217,9 +1235,13 @@ impl CliProcessManager {
                                     }
                                     Poll::Exited(status)
                                 }
+                                Ok(_) if revoked_generation.is_some() => Poll::Exited(status),
                                 // The root may be only a launcher/wrapper. Keep ownership and
                                 // monitoring until the process group/job is actually empty.
-                                Ok(_) => Poll::Running,
+                                Ok(_) => {
+                                    starting_handoff = true;
+                                    Poll::Running
+                                }
                                 Err(err) => Poll::Failed(format!(
                                     "failed to inspect exited CLI pid={pid}: {err}"
                                 )),
@@ -1959,9 +1981,10 @@ mod tests {
 
         {
             let _lifecycle = manager.lifecycle.lock();
-            assert!(manager
-                .revoke_if_tree_empty_locked(generation, false, || {})
-                .is_none());
+            let (revoked, containment) =
+                manager.handle_root_exit_locked(generation, false, || Ok(false), || {});
+            assert!(revoked.is_none());
+            assert_eq!(containment.unwrap(), false);
         }
 
         let descendant = manager.clone();
@@ -1976,28 +1999,111 @@ mod tests {
         assert_eq!(status.port, Some(43123));
         assert_eq!(status.url.as_deref(), Some("http://127.0.0.1:43123"));
         assert!(manager.is_current_generation(generation));
+        {
+            let _lifecycle = manager.lifecycle.lock();
+            let (revoked, _) =
+                manager.handle_root_exit_locked(generation, false, || Ok(false), || {});
+            assert!(revoked.is_none());
+        }
     }
 
     #[test]
-    fn complete_tree_exit_revokes_endpoint_generation() {
+    fn ready_cli_exit_revokes_authority_while_workspace_descendant_remains() {
         let manager = CliProcessManager::new();
         let generation = manager.advance_generation();
-        manager.status.lock().url = Some("http://127.0.0.1:43123".to_string());
+        {
+            let mut status = manager.status.lock();
+            status.state = CliState::Ready;
+            status.pid = Some(123);
+            status.port = Some(43123);
+            status.url = Some("http://127.0.0.1:43123".to_string());
+        }
+        *manager.bootstrap_token.lock() = Some("bootstrap".to_string());
+        *manager.session_cookie.lock() = Some("session".to_string());
+        *manager.auth_cookie_name.lock() = Some("cookie".to_string());
         let renderer_revoked = AtomicBool::new(false);
 
-        let revoked_generation = {
+        let (revoked_generation, containment) = {
             let _lifecycle = manager.lifecycle.lock();
-            manager
-                .revoke_if_tree_empty_locked(generation, true, || {
-                    renderer_revoked.store(true, Ordering::SeqCst)
-                })
-                .unwrap()
+            manager.handle_root_exit_locked(
+                generation,
+                true,
+                || Ok(false),
+                || renderer_revoked.store(true, Ordering::SeqCst),
+            )
         };
 
+        let revoked_generation = revoked_generation.unwrap();
+        assert_eq!(containment.unwrap(), false);
         assert!(manager.is_current_generation(revoked_generation));
         assert!(!manager.is_current_generation(generation));
         assert!(renderer_revoked.load(Ordering::SeqCst));
+        let status = manager.status();
+        assert_eq!(status.pid, None);
+        assert_eq!(status.port, None);
+        assert_eq!(status.url, None);
+        assert!(manager.bootstrap_token.lock().is_none());
+        assert!(manager.session_cookie.lock().is_none());
+        assert!(manager.auth_cookie_name.lock().is_none());
+    }
+
+    #[test]
+    fn reused_port_cannot_publish_for_revoked_ready_generation() {
+        let manager = CliProcessManager::new();
+        let generation = manager.advance_generation();
+        {
+            let mut status = manager.status.lock();
+            status.state = CliState::Ready;
+            status.url = Some("http://127.0.0.1:43123".to_string());
+        }
+
+        {
+            let _lifecycle = manager.lifecycle.lock();
+            let (revoked, containment) =
+                manager.handle_root_exit_locked(generation, true, || Ok(false), || {});
+            assert!(revoked.is_some());
+            assert_eq!(containment.unwrap(), false);
+        }
+
+        assert!(manager
+            .record_ready_endpoint(generation, "http://127.0.0.1:43123")
+            .is_none());
         assert!(manager.status().url.is_none());
+    }
+
+    #[test]
+    fn ready_cli_containment_probe_error_revokes_fail_closed() {
+        let manager = CliProcessManager::new();
+        let generation = manager.advance_generation();
+        {
+            let mut status = manager.status.lock();
+            status.state = CliState::Ready;
+            status.url = Some("http://127.0.0.1:43123".to_string());
+        }
+        *manager.session_cookie.lock() = Some("session".to_string());
+        let renderer_revoked = AtomicBool::new(false);
+
+        let (revoked, probe) = {
+            let _lifecycle = manager.lifecycle.lock();
+            manager.handle_root_exit_locked(
+                generation,
+                true,
+                || {
+                    assert!(renderer_revoked.load(Ordering::SeqCst));
+                    Err(anyhow::anyhow!("injected containment failure"))
+                },
+                || renderer_revoked.store(true, Ordering::SeqCst),
+            )
+        };
+
+        assert!(revoked.is_some());
+        assert_eq!(
+            probe.unwrap_err().to_string(),
+            "injected containment failure"
+        );
+        assert!(renderer_revoked.load(Ordering::SeqCst));
+        assert!(manager.status().url.is_none());
+        assert!(manager.session_cookie.lock().is_none());
     }
 
     #[test]
@@ -2006,9 +2112,10 @@ mod tests {
         let launcher_generation = manager.advance_generation();
         {
             let _lifecycle = manager.lifecycle.lock();
-            assert!(manager
-                .revoke_if_tree_empty_locked(launcher_generation, false, || {})
-                .is_none());
+            let (revoked, containment) =
+                manager.handle_root_exit_locked(launcher_generation, false, || Ok(false), || {});
+            assert!(revoked.is_none());
+            assert_eq!(containment.unwrap(), false);
         }
 
         let replacement_generation = {
@@ -2021,9 +2128,9 @@ mod tests {
 
         let stale_revocation = {
             let _lifecycle = manager.lifecycle.lock();
-            manager.revoke_if_tree_empty_locked(launcher_generation, true, || {})
+            manager.handle_root_exit_locked(launcher_generation, false, || Ok(true), || {})
         };
-        assert!(stale_revocation.is_none());
+        assert!(stale_revocation.0.is_none());
         assert_eq!(
             manager.status().url.as_deref(),
             Some("http://127.0.0.1:43124")

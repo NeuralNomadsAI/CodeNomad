@@ -6,6 +6,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "macos", windows))]
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 #[cfg(any(target_os = "macos", windows))]
 use std::time::{Duration, Instant};
 
@@ -26,6 +27,8 @@ struct Owner {
     pid: u32,
     run_token: String,
     process_start_identity: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    machine_identity: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -184,12 +187,16 @@ impl Registration {
         let Some(current_identity) = process_start_identity(std::process::id()) else {
             return Ok(None);
         };
+        let Some(machine_identity) = machine_identity() else {
+            return Ok(None);
+        };
         Self::register_with_legacy(
             election_directory,
             Owner {
                 pid: std::process::id(),
                 run_token: uuid::Uuid::new_v4().to_string(),
                 process_start_identity: current_identity,
+                machine_identity: Some(machine_identity),
             },
             primary_candidate,
             legacy_electron_data,
@@ -227,7 +234,13 @@ impl Registration {
         identity: impl Fn(u32) -> Option<String> + Copy,
         expected_electron: impl Fn(u32) -> Option<bool> + Copy,
     ) -> Result<Option<Self>, String> {
-        if !valid_token(&owner.run_token) || owner.process_start_identity.is_empty() {
+        if !valid_token(&owner.run_token)
+            || owner.process_start_identity.is_empty()
+            || owner
+                .machine_identity
+                .as_deref()
+                .map_or(true, str::is_empty)
+        {
             return Ok(None);
         }
         fs::create_dir_all(election_directory)
@@ -572,7 +585,7 @@ fn acquire_owner(
         if existing == *owner {
             return Ok(true);
         }
-        if owner_is_stale(&existing, pid_alive, identity) == Some(true) {
+        if owner_is_stale(&existing, owner, pid_alive, identity) == Some(true) {
             publish_recovery_claim(directory, owner, &observed)?;
         }
         if !retire_owner(directory, &observed, &existing, owner, pid_alive, identity)? {
@@ -597,13 +610,35 @@ fn publish_recovery_claim(directory: &Path, owner: &Owner, observed: &str) -> Re
 
 fn owner_is_stale(
     owner: &Owner,
+    local: &Owner,
     pid_alive: impl Fn(u32) -> bool,
     identity: impl Fn(u32) -> Option<String>,
 ) -> Option<bool> {
+    let local_record = owner
+        .machine_identity
+        .as_ref()
+        .zip(local.machine_identity.as_ref())
+        .map(|(owner, local)| owner == local)
+        .unwrap_or_else(|| legacy_owner_is_local(owner, local));
+    if !local_record {
+        return None;
+    }
     if !pid_alive(owner.pid) {
         return Some(true);
     }
     identity(owner.pid).map(|live| live != owner.process_start_identity)
+}
+
+fn legacy_owner_is_local(owner: &Owner, local: &Owner) -> bool {
+    fn linux_boot(identity: &str) -> Option<&str> {
+        identity
+            .strip_prefix("linux:")?
+            .rsplit_once(':')
+            .map(|value| value.0)
+    }
+    owner.machine_identity.is_none()
+        && linux_boot(&owner.process_start_identity) == linux_boot(&local.process_start_identity)
+        && linux_boot(&owner.process_start_identity).is_some()
 }
 
 fn participants(directory: &Path) -> Result<Vec<(PathBuf, Owner)>, String> {
@@ -639,7 +674,7 @@ fn recovery_claimants(
         if participant == *current {
             continue;
         }
-        if owner_is_stale(&participant, pid_alive, identity) == Some(true) {
+        if owner_is_stale(&participant, current, pid_alive, identity) == Some(true) {
             remove_participant_if_owned(&path, &participant)?;
             match fs::remove_file(recovery_path(directory, &participant)) {
                 Ok(()) => {}
@@ -673,7 +708,7 @@ fn retire_owner(
     pid_alive: impl Fn(u32) -> bool + Copy,
     identity: impl Fn(u32) -> Option<String> + Copy,
 ) -> Result<bool, String> {
-    if owner_is_stale(owner, pid_alive, identity) != Some(true) {
+    if owner_is_stale(owner, claimant, pid_alive, identity) != Some(true) {
         return Ok(false);
     }
     let Some(mut claimants) =
@@ -866,6 +901,7 @@ fn legacy_electron_status_with(
                     pid,
                     run_token: run_token.to_string(),
                     process_start_identity: live_identity.to_string(),
+                    machine_identity: None,
                 },
             ))?
             .as_deref()
@@ -960,6 +996,47 @@ fn is_unsupported_sync_error(error: &std::io::Error) -> bool {
 fn pid_is_alive(pid: u32) -> bool {
     let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
     result == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+}
+
+#[cfg(target_os = "linux")]
+fn machine_identity_uncached() -> Option<String> {
+    ["/etc/machine-id", "/var/lib/dbus/machine-id"]
+        .iter()
+        .find_map(|path| {
+            fs::read_to_string(path)
+                .ok()
+                .map(|value| value.trim().to_ascii_lowercase())
+                .filter(|value| !value.is_empty())
+        })
+        .map(|value| format!("linux:{value}"))
+}
+
+#[cfg(target_os = "macos")]
+fn machine_identity_uncached() -> Option<String> {
+    let value = command_value("ioreg", &["-rd1", "-c", "IOPlatformExpertDevice"])?;
+    let marker = "\"IOPlatformUUID\"";
+    let value = value.lines().find(|line| line.contains(marker))?;
+    let uuid = value.split('=').nth(1)?.trim().trim_matches('"');
+    (!uuid.is_empty()).then(|| format!("darwin:{}", uuid.to_ascii_lowercase()))
+}
+
+#[cfg(windows)]
+fn machine_identity_uncached() -> Option<String> {
+    command_value(
+        "powershell.exe",
+        &[
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "(Get-ItemProperty -LiteralPath 'HKLM:\\SOFTWARE\\Microsoft\\Cryptography' -Name MachineGuid -ErrorAction Stop).MachineGuid.ToString().ToLowerInvariant()",
+        ],
+    )
+    .map(|value| format!("win32:{value}"))
+}
+
+fn machine_identity() -> Option<String> {
+    static IDENTITY: OnceLock<Option<String>> = OnceLock::new();
+    IDENTITY.get_or_init(machine_identity_uncached).clone()
 }
 
 #[cfg(windows)]
@@ -1066,6 +1143,7 @@ mod tests {
             pid,
             run_token: token.to_string(),
             process_start_identity: identity.to_string(),
+            machine_identity: machine_identity(),
         }
     }
 
@@ -1189,6 +1267,19 @@ mod tests {
         let node_primary = node_primary(&mut node);
         assert_ne!(node_primary, rust.is_primary());
         rust.release_locks();
+        stop_node(node);
+    }
+
+    #[test]
+    fn electron_and_tauri_publish_the_same_machine_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let start = directory.path().join("start");
+        let mut node = node_host(directory.path(), &start, "", None, None);
+        fs::write(&start, b"").unwrap();
+        assert!(node_primary(&mut node));
+        let electron = parse_owner(&fs::read_to_string(owner_path(directory.path())).unwrap())
+            .expect("Electron owner must use the Tauri-compatible schema");
+        assert_eq!(electron.machine_identity, machine_identity());
         stop_node(node);
     }
 
@@ -1363,6 +1454,78 @@ mod tests {
         .unwrap()
         .unwrap();
         assert!(!blocked.is_primary());
+    }
+
+    #[test]
+    fn separate_machine_with_the_same_hostname_is_never_probed_or_reclaimed() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut remote = owner(511, "remote", "remote-start");
+        remote.machine_identity = Some("machine-b".to_string());
+        let mut value = serde_json::to_value(&remote).unwrap();
+        value["hostname"] = serde_json::Value::String("shared-name".to_string());
+        fs::create_dir(directory.path().join(OWNER_DIRECTORY)).unwrap();
+        fs::write(
+            owner_path(directory.path()),
+            serde_json::to_string(&value).unwrap(),
+        )
+        .unwrap();
+        let probes = Cell::new(0);
+        let registration = Registration::register_with(
+            directory.path(),
+            owner(512, "local", "local-start"),
+            true,
+            |_| {
+                probes.set(probes.get() + 1);
+                false
+            },
+            |_| {
+                probes.set(probes.get() + 1);
+                Some("reused".to_string())
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert!(!registration.is_primary());
+        assert_eq!(probes.get(), 0);
+        assert_eq!(
+            parse_owner(&fs::read_to_string(owner_path(directory.path())).unwrap())
+                .unwrap()
+                .run_token,
+            "remote"
+        );
+    }
+
+    #[test]
+    fn legacy_records_fail_closed_unless_linux_boot_identity_proves_locality() {
+        let remote_directory = tempfile::tempdir().unwrap();
+        let mut legacy = owner(521, "legacy", "win32:old");
+        legacy.machine_identity = None;
+        publish_owner(remote_directory.path(), &legacy).unwrap();
+        let blocked = Registration::register_with(
+            remote_directory.path(),
+            owner(522, "local", "local-start"),
+            true,
+            |_| false,
+            |_| None,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(!blocked.is_primary());
+
+        let local_directory = tempfile::tempdir().unwrap();
+        legacy.pid = 523;
+        legacy.process_start_identity = "linux:boot-a:old".to_string();
+        publish_owner(local_directory.path(), &legacy).unwrap();
+        let recovered = Registration::register_with(
+            local_directory.path(),
+            owner(524, "local", "linux:boot-a:new"),
+            true,
+            |_| false,
+            |_| None,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(recovered.is_primary());
     }
 
     #[test]

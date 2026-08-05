@@ -21,6 +21,7 @@ export interface ProcessOwner {
   pid: number
   runToken: string
   processStartIdentity?: string
+  machineIdentity?: string
 }
 
 export type RunningMarkerStatus = "current" | "other-live" | "stale"
@@ -66,6 +67,9 @@ function normalizeProcessOwner(candidate: unknown): ProcessOwner | undefined {
       runToken: owner.runToken,
       ...(typeof owner.processStartIdentity === "string" && owner.processStartIdentity
         ? { processStartIdentity: owner.processStartIdentity }
+        : {}),
+      ...(typeof owner.machineIdentity === "string" && owner.machineIdentity
+        ? { machineIdentity: owner.machineIdentity }
         : {}),
     }
   }

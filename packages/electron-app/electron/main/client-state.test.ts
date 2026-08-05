@@ -6,7 +6,9 @@ import { join } from "node:path"
 import test from "node:test"
 import { ClientStateManager, type ClientStateWriter } from "./client-state"
 import { createRunningMarker } from "./client-state-process"
-import { getProcessStartIdentity } from "./client-state-process-identity"
+import { getMachineIdentity, getProcessStartIdentity } from "./client-state-process-identity"
+
+const MACHINE_IDENTITY = getMachineIdentity()!
 
 function harness(t: test.TestContext, initial?: object) {
   const directory = mkdtempSync(join(tmpdir(), "codenomad-state-"))
@@ -19,7 +21,7 @@ function harness(t: test.TestContext, initial?: object) {
     writes++
     if (failing) throw new Error("injected write failure")
     await writeFile(path, value, "utf8")
-  }, processOwner?: { pid: number; runToken: string; processStartIdentity: string }) => {
+  }, processOwner?: { pid: number; runToken: string; processStartIdentity: string; machineIdentity?: string }) => {
     const manager = new ClientStateManager(directory, writer, { crossHostElectionDirectory: join(directory, "election"), processOwner })
     managers.push(manager)
     return manager
@@ -60,7 +62,7 @@ test("cross-host ownership is required in addition to each host-local election",
   const primary = new ClientStateManager(tauriDirectory, undefined, {
     crossHostElectionDirectory: election,
     crossHostDependencies,
-    processOwner: { pid: 8101, runToken: "tauri", processStartIdentity: "tauri-start" },
+    processOwner: { pid: 8101, runToken: "tauri", processStartIdentity: "tauri-start", machineIdentity: MACHINE_IDENTITY },
   })
   mkdirSync(electronDirectory)
   writeFileSync(join(electronDirectory, "client-state.json"), JSON.stringify({
@@ -71,7 +73,7 @@ test("cross-host ownership is required in addition to each host-local election",
   const secondary = new ClientStateManager(electronDirectory, undefined, {
     crossHostElectionDirectory: election,
     crossHostDependencies,
-    processOwner: { pid: 8102, runToken: "electron", processStartIdentity: "electron-start" },
+    processOwner: { pid: 8102, runToken: "electron", processStartIdentity: "electron-start", machineIdentity: MACHINE_IDENTITY },
   })
   assert.deepEqual(secondary.loadClientState(), { isPrimary: false, restoreEnabled: false, snapshot: null })
   await secondary.drainAndReleasePrimary()
@@ -81,7 +83,7 @@ test("cross-host ownership is required in addition to each host-local election",
   const successor = new ClientStateManager(electronDirectory, undefined, {
     crossHostElectionDirectory: election,
     crossHostDependencies,
-    processOwner: { pid: 8103, runToken: "successor", processStartIdentity: "successor-start" },
+    processOwner: { pid: 8103, runToken: "successor", processStartIdentity: "successor-start", machineIdentity: MACHINE_IDENTITY },
   })
   assert.equal(successor.isPrimary, true)
   await successor.drainAndReleasePrimary()
@@ -97,12 +99,12 @@ test("a retained secondary promotes after the other host exits and reloads befor
   const first = new ClientStateManager(firstDirectory, undefined, {
     crossHostElectionDirectory: election,
     crossHostDependencies,
-    processOwner: { pid: 8201, runToken: "tauri", processStartIdentity: "tauri-start" },
+    processOwner: { pid: 8201, runToken: "tauri", processStartIdentity: "tauri-start", machineIdentity: MACHINE_IDENTITY },
   })
   const secondary = new ClientStateManager(electronDirectory, undefined, {
     crossHostElectionDirectory: election,
     crossHostDependencies,
-    processOwner: { pid: 8202, runToken: "electron", processStartIdentity: "electron-start" },
+    processOwner: { pid: 8202, runToken: "electron", processStartIdentity: "electron-start", machineIdentity: MACHINE_IDENTITY },
   })
   let notifications = 0
   secondary.onOwnershipChanged(() => { notifications += 1 })
@@ -140,12 +142,12 @@ test("a retained host-local secondary retries election after its primary exits",
   const primary = new ClientStateManager(userData, undefined, {
     crossHostElectionDirectory: election,
     crossHostDependencies,
-    processOwner: { pid: 8231, runToken: "primary", processStartIdentity: "primary-start" },
+    processOwner: { pid: 8231, runToken: "primary", processStartIdentity: "primary-start", machineIdentity: MACHINE_IDENTITY },
   })
   const secondary = new ClientStateManager(userData, undefined, {
     crossHostElectionDirectory: election,
     crossHostDependencies,
-    processOwner: { pid: 8232, runToken: "secondary", processStartIdentity: "secondary-start" },
+    processOwner: { pid: 8232, runToken: "secondary", processStartIdentity: "secondary-start", machineIdentity: MACHINE_IDENTITY },
   })
   assert.equal(secondary.isPrimary, false)
 
@@ -161,9 +163,9 @@ test("one eligible Electron recovers a stale Tauri owner while its local seconda
   const userData = join(root, "electron"), election = join(root, "election")
   mkdirSync(userData); mkdirSync(join(election, "primary.owner.json"), { recursive: true })
   t.after(() => rmSync(root, { recursive: true, force: true }))
-  const staleOwner = { pid: 8241, runToken: "tauri-stale", processStartIdentity: "tauri-start" }
-  const localOwner = { pid: process.pid, runToken: "local", processStartIdentity: getProcessStartIdentity(process.pid) }
-  const secondaryOwner = { pid: 8243, runToken: "secondary", processStartIdentity: "secondary-start" }
+  const staleOwner = { pid: 8241, runToken: "tauri-stale", processStartIdentity: "tauri-start", machineIdentity: MACHINE_IDENTITY }
+  const localOwner = { pid: process.pid, runToken: "local", processStartIdentity: getProcessStartIdentity(process.pid), machineIdentity: MACHINE_IDENTITY }
+  const secondaryOwner = { pid: 8243, runToken: "secondary", processStartIdentity: "secondary-start", machineIdentity: MACHINE_IDENTITY }
   writeFileSync(join(election, "primary.owner.json", "owner.json"), JSON.stringify(staleOwner))
   writeFileSync(join(userData, "client-state.primary.lock"), JSON.stringify(localOwner))
   const localMarker = createRunningMarker(userData, localOwner)
@@ -209,7 +211,7 @@ test("late promotion migrates legacy state when shared state is absent", async (
   const first = new ClientStateManager(firstDirectory, undefined, {
     crossHostElectionDirectory: election,
     crossHostDependencies,
-    processOwner: { pid: 8251, runToken: "first", processStartIdentity: "first-start" },
+    processOwner: { pid: 8251, runToken: "first", processStartIdentity: "first-start", machineIdentity: MACHINE_IDENTITY },
   })
   writeFileSync(join(electronDirectory, "client-state.json"), JSON.stringify({
     version: 1,
@@ -219,7 +221,7 @@ test("late promotion migrates legacy state when shared state is absent", async (
   const secondary = new ClientStateManager(electronDirectory, undefined, {
     crossHostElectionDirectory: election,
     crossHostDependencies,
-    processOwner: { pid: 8252, runToken: "electron", processStartIdentity: "electron-start" },
+    processOwner: { pid: 8252, runToken: "electron", processStartIdentity: "electron-start", machineIdentity: MACHINE_IDENTITY },
   })
 
   await first.drainAndReleasePrimary()
@@ -443,7 +445,7 @@ test("successful clear suppresses saves, including after failed re-enable", asyn
 
 test("disabling restore atomically removes snapshot/window and survives restart", async (t) => {
   const h = harness(t, { version: 1, restoreEnabled: true })
-  const manager = h.create(undefined, { pid: process.pid, runToken: "before-restart", processStartIdentity: "old-start" })
+  const manager = h.create(undefined, { pid: process.pid, runToken: "before-restart", processStartIdentity: "old-start", machineIdentity: MACHINE_IDENTITY })
   await manager.saveClientState({ kept: true })
   await manager.saveWindowState({ bounds: { x: 10, y: 20, width: 1200, height: 800 }, maximized: true, fullscreen: false, zoomFactor: 1.25 })
   const before = h.writes()
@@ -488,7 +490,7 @@ test("an old writer cannot replace a successor after PID reuse", async (t) => {
   const gate = new Promise<void>((resolve) => { release = resolve })
   const old = h.create(
     async (path, value) => { await writeFile(path, value); started(); await gate },
-    { pid: process.pid, runToken: "old-run", processStartIdentity: "old-start" },
+    { pid: process.pid, runToken: "old-run", processStartIdentity: "old-start", machineIdentity: MACHINE_IDENTITY },
   )
   const staleWrite = old.saveClientState({ stale: true })
   await began
@@ -536,7 +538,7 @@ test("a write admitted before ownership loss cannot replace state after reacquis
 test("future envelopes are preserved until a successful explicit clear", async (t) => {
   const future = { version: 7, restoreEnabled: false, snapshot: { future: true }, futurePreference: "keep" }
   const h = harness(t, future)
-  const manager = h.create(undefined, { pid: process.pid, runToken: "future-before-restart", processStartIdentity: "old-start" })
+  const manager = h.create(undefined, { pid: process.pid, runToken: "future-before-restart", processStartIdentity: "old-start", machineIdentity: MACHINE_IDENTITY })
   assert.deepEqual(manager.loadClientState(), { isPrimary: true, restoreEnabled: false, snapshot: null })
   assert.equal(await manager.saveClientState({ ignored: true }), true)
   assert.equal(await manager.setRestoreEnabled(false), false)

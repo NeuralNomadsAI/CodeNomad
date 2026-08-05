@@ -594,7 +594,7 @@ export class WorkspaceManager {
 
       const logLevel = (serverConfig as any)?.logLevel
       const cleanupToken = await state.processLease?.prepareLaunch()
-      const { pid, port, exitPromise, getLastOutput, processIdentity } = await this.runtime.launch({
+      const { pid, port, exitPromise, getLastOutput } = await this.runtime.launch({
         workspaceId: id,
         folder: workspacePath,
         binaryPath: resolvedBinaryPath,
@@ -602,14 +602,11 @@ export class WorkspaceManager {
         logLevel,
         cleanupToken,
         signal: state.abortController.signal,
-        persistProcessIdentities: async (identities) => {
-          for (const identity of identities) await state.processLease?.setProcessIdentity(identity)
-        },
+        persistProcessIdentities: (identities) => state.processLease?.setProcessIdentities(identities) ?? Promise.resolve(),
         onExit: (info) => this.handleProcessExit(info.workspaceId, info),
       })
       record.pid = pid
       record.port = port
-      if (processIdentity) await state.processLease?.setProcessIdentity(processIdentity)
 
       this.throwIfCancelled(record)
       state.published = true

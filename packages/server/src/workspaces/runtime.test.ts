@@ -102,15 +102,49 @@ describe("workspace runtime lifecycle contracts", () => {
 
   it("persists a Windows wrapper and its launch descendants before publishing the port", async () => {
     let persisted: number[] = []
+    let captures = 0
     await harness({
       platform: "win32",
       binary: "opencode.cmd",
       persistProcessIdentities: async (identities) => { persisted = identities.map(({ pid }) => pid) },
       spawnSync: ((command: string) => command === "powershell.exe"
-        ? result(windows([[4242, 1, "wrapper-start"], [5000, 4242, "child-start"]]))
+        ? result(windows(++captures === 1
+            ? [[4242, 1, "wrapper-start"]]
+            : [[4242, 1, "wrapper-start"], [5000, 4242, "child-start"]]))
         : result()) as unknown as Command,
     })
     assert.deepEqual(persisted, [4242, 5000])
+  })
+
+  it("fails closed and cleans the known Windows tree when readiness-time CIM capture fails", async () => {
+    const child = new FakeChild()
+    const calls: Call[] = []
+    let captures = 0
+    let persisted = false
+    const runtime = new WorkspaceRuntime(new EventBus(), pino({ level: "silent" }), {
+      platform: "win32",
+      spawn: (() => child as unknown as ChildProcess) as typeof import("node:child_process").spawn,
+      spawnSync: ((command: string, args: readonly string[]) => {
+        calls.push({ command, args: [...args] })
+        if (command === "powershell.exe") {
+          return ++captures === 1
+            ? result(windows([[4242, 1, "wrapper-start"]]))
+            : result("", 1, "second CIM capture failed")
+        }
+        return result()
+      }) as unknown as Command,
+    })
+    const folder = process.platform === "win32" ? process.cwd() : `/${process.cwd()}`
+    const launch = runtime.launch({
+      workspaceId: "w", folder, binaryPath: "opencode.cmd",
+      persistProcessIdentities: async () => { persisted = true },
+    })
+    child.stdout.write("opencode server listening on http://127.0.0.1:4321\n")
+
+    await assert.rejects(launch, (error: unknown) =>
+      error instanceof WorkspaceRuntimeIdentityCaptureError && /readiness-time Windows identity discovery failed/.test(error.message))
+    assert.equal(persisted, false)
+    assert.ok(calls.some(({ command, args }) => command === "taskkill.exe" && args.includes("/T")))
   })
 
   it("cancels before spawn and while waiting for a port without losing retryable cleanup", async () => {

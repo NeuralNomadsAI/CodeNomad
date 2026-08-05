@@ -14,6 +14,7 @@ import {
   resolveCrossHostStatePath,
   type CrossHostLeaseDependencies,
 } from "./client-state-cross-host"
+import { getMachineIdentity } from "./client-state-process-identity"
 import type { ProcessOwner } from "./client-state-process"
 
 function temp(t: test.TestContext): string {
@@ -22,8 +23,8 @@ function temp(t: test.TestContext): string {
   return path
 }
 
-function owner(pid: number, token: string, identity = `${token}-start`): ProcessOwner {
-  return { pid, runToken: token, processStartIdentity: identity }
+function owner(pid: number, token: string, identity = `${token}-start`, machineIdentity = getMachineIdentity()!): ProcessOwner {
+  return { pid, runToken: token, processStartIdentity: identity, machineIdentity }
 }
 
 function dependencies(alive: boolean, identity?: string): CrossHostLeaseDependencies {
@@ -140,6 +141,37 @@ test("simultaneous claimants deterministically recover a stale owner", (t) => {
   const loser = CrossHostRegistration.register(directory, second, true, deps)!
   assert.equal(winner.isPrimary, true)
   assert.equal(loser.isPrimary, false)
+})
+
+test("a separate machine with the same hostname is never probed or reclaimed", (t) => {
+  const directory = temp(t), remote = owner(201, "remote", "remote-start", "machine-b")
+  mkdirSync(join(directory, CROSS_HOST_OWNER_DIRECTORY))
+  writeFileSync(ownerFile(directory), JSON.stringify({ ...remote, hostname: "shared-name" }))
+  let probes = 0
+  const registration = CrossHostRegistration.register(directory, owner(202, "local"), true, {
+    pidAlive: () => { probes += 1; return false },
+    processStartIdentity: () => { probes += 1; return "reused" },
+  })!
+  assert.equal(registration.isPrimary, false)
+  assert.equal(probes, 0)
+  assert.equal(JSON.parse(readFileSync(ownerFile(directory), "utf8")).runToken, "remote")
+})
+
+test("legacy records fail closed unless their Linux boot marker proves locality", (t) => {
+  const remoteDirectory = temp(t)
+  mkdirSync(join(remoteDirectory, CROSS_HOST_OWNER_DIRECTORY))
+  writeFileSync(ownerFile(remoteDirectory), JSON.stringify({ pid: 211, runToken: "legacy", processStartIdentity: "win32:old" }))
+  assert.equal(CrossHostRegistration.register(remoteDirectory, owner(212, "local"), true, dependencies(false))!.isPrimary, false)
+
+  const localDirectory = temp(t)
+  mkdirSync(join(localDirectory, CROSS_HOST_OWNER_DIRECTORY))
+  writeFileSync(ownerFile(localDirectory), JSON.stringify({ pid: 213, runToken: "legacy", processStartIdentity: "linux:boot-a:old" }))
+  assert.equal(CrossHostRegistration.register(
+    localDirectory,
+    owner(214, "local", "linux:boot-a:new"),
+    true,
+    dependencies(false),
+  )!.isPrimary, true)
 })
 
 test("a same-cohort non-candidate claims for the eligible local owner in either lexical order", async (t) => {
