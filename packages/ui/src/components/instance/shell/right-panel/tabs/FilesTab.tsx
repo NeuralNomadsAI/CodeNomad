@@ -1,17 +1,41 @@
 import { For, Show, Suspense, createEffect, createMemo, createSignal, lazy, type Accessor, type Component, type JSX } from "solid-js"
 import type { FileNode } from "@opencode-ai/sdk/v2/client"
 
-import { Copy, RefreshCw, Save, Search, WrapText } from "lucide-solid"
+import { Code2, Copy, ExternalLink, FolderOpen, RefreshCw, Save, Search, TerminalSquare, WrapText } from "lucide-solid"
 
 import SplitFilePanel from "../components/SplitFilePanel"
 import { Markdown } from "../../../../markdown"
 import { copyToClipboard } from "../../../../../lib/clipboard"
 import { showToastNotification } from "../../../../../lib/notifications"
 import { useTheme } from "../../../../../lib/theme"
+import ActionOverflowMenu, { type ActionOverflowMenuItem } from "../../../../action-overflow-menu"
+import { canOpenWorkspacePaths, openWorkspacePath, type WorkspaceEditor } from "../../../../../lib/workspace-open"
 
 const LazyMonacoFileViewer = lazy(() =>
   import("../../../../file-viewer/monaco-file-viewer").then((module) => ({ default: module.MonacoFileViewer })),
 )
+
+const isWindowsDesktop = typeof navigator !== "undefined" && /windows/i.test(navigator.userAgent)
+const isMacDesktop = typeof navigator !== "undefined" && /macintosh|mac os x/i.test(navigator.userAgent)
+const safeWindowsOpenExtensions = new Set([
+  "7z", "avi", "bmp", "c", "cc", "cfg", "conf", "cpp", "cs", "css", "csv", "dart", "diff", "docx",
+  "env", "flac", "fs", "fsx", "gif", "go", "gz", "h", "hpp", "htm", "html", "ini", "java", "jpeg", "jpg",
+  "json", "jsonc", "jsx", "kt", "kts", "less", "lock", "log", "lua", "md", "markdown", "mkv", "mov", "mp3",
+  "mp4", "ogg", "patch", "pdf", "png", "pptx", "r", "rar", "rmd", "rs", "scss", "sql", "svg", "svelte",
+  "swift", "tar", "toml", "ts", "tsx", "txt", "vue", "wav", "webm", "webp", "xlsx", "xml", "yaml", "yml", "zip",
+])
+const windowsEditExtensions = new Set([
+  "bat", "cmd", "js", "jse", "pl", "ps1", "psd1", "psm1", "py", "pyw", "rb", "reg", "vbe", "vbs", "wsf", "wsh",
+])
+
+function windowsDefaultAction(path: string): "open" | "edit" | "choose" {
+  const name = path.split(/[\\/]/).pop() ?? ""
+  const dot = name.lastIndexOf(".")
+  const extension = dot > 0 ? name.slice(dot + 1).toLowerCase() : ""
+  if (!isWindowsDesktop || (extension && safeWindowsOpenExtensions.has(extension))) return "open"
+  if (extension && windowsEditExtensions.has(extension)) return "edit"
+  return "choose"
+}
 
 function isMarkdownPath(path: string | null | undefined): boolean {
   if (!path) return false
@@ -36,6 +60,8 @@ interface FilesTabProps {
 
   parentPath: Accessor<string | null>
   scopeKey: Accessor<string>
+  instanceId: string
+  worktreeSlug: Accessor<string>
 
   onLoadEntries: (path: string) => void
   onRequestOpenFile: (path: string) => void
@@ -114,6 +140,88 @@ const FilesTab: Component<FilesTabProps> = (props) => {
     })
   }
 
+  const handleNativeOpen = async (
+    target: "default" | "reveal" | "terminal" | "editor",
+    path: string,
+    editor?: WorkspaceEditor,
+  ) => {
+    try {
+      await openWorkspacePath({
+        target,
+        instanceId: props.instanceId,
+        worktreeSlug: props.worktreeSlug(),
+        path,
+        editor,
+      })
+    } catch (error) {
+      showToastNotification({
+        message: props.t("instanceShell.filesShell.toast.openError", {
+          message: error instanceof Error ? error.message : String(error),
+        }),
+        variant: "error",
+      })
+    }
+  }
+
+  const rowActions = (item: FileNode): ActionOverflowMenuItem[] => {
+    const items: ActionOverflowMenuItem[] = []
+    if (canOpenWorkspacePaths()) {
+      if (item.type === "directory") {
+        const isMacApp = isMacDesktop && item.path.toLowerCase().endsWith(".app")
+        items.push(
+          {
+            key: "open-folder",
+            label: props.t(isMacApp
+              ? "instanceShell.filesShell.actions.showInFolder"
+              : "instanceShell.filesShell.actions.openFolder"),
+            icon: <FolderOpen class="w-3.5 h-3.5" />,
+            onSelect: () => handleNativeOpen(isMacApp ? "reveal" : "default", item.path),
+          },
+          {
+            key: "open-terminal",
+            label: props.t("instanceShell.filesShell.actions.openTerminal"),
+            icon: <TerminalSquare class="w-3.5 h-3.5" />,
+            onSelect: () => handleNativeOpen("terminal", item.path),
+          },
+        )
+        for (const [editor, name] of [["vscode", "VS Code"], ["cursor", "Cursor"], ["zed", "Zed"], ["vscodium", "VSCodium"]] as const) {
+          items.push({
+            key: `open-editor-${editor}`,
+            label: props.t("instanceShell.filesShell.actions.openEditor", { editor: name }),
+            icon: <Code2 class="w-3.5 h-3.5" />,
+            onSelect: () => handleNativeOpen("editor", item.path, editor),
+          })
+        }
+      } else {
+        if (isWindowsDesktop) {
+          items.push({
+            key: "open-default",
+            label: props.t({
+              open: "instanceShell.filesShell.actions.openDefault",
+              edit: "instanceShell.filesShell.actions.editDefault",
+              choose: "instanceShell.filesShell.actions.chooseApplication",
+            }[windowsDefaultAction(item.path)]),
+            icon: <ExternalLink class="w-3.5 h-3.5" />,
+            onSelect: () => handleNativeOpen("default", item.path),
+          })
+        }
+        items.push({
+          key: "show-in-folder",
+          label: props.t("instanceShell.filesShell.actions.showInFolder"),
+          icon: <FolderOpen class="w-3.5 h-3.5" />,
+          onSelect: () => handleNativeOpen("reveal", item.path),
+        })
+      }
+    }
+    items.push({
+      key: "copy-path",
+      label: props.t("instanceShell.filesShell.actions.copyPath"),
+      icon: <Copy class="w-3.5 h-3.5" />,
+      onSelect: () => handleCopyPath(item.path),
+    })
+    return items
+  }
+
   createEffect(() => {
     if (!showingMarkdownPreview()) return
     requestAnimationFrame(() => markdownPreviewRef?.focus())
@@ -189,15 +297,28 @@ const FilesTab: Component<FilesTabProps> = (props) => {
                   <div class="file-list-item-stats">
                     <span class="text-[10px] text-secondary">{item.type}</span>
                   </div>
-                  <button
-                    type="button"
-                    class="git-change-row-action"
-                    title={props.t("instanceShell.filesShell.actions.copyPath")}
-                    aria-label={props.t("instanceShell.filesShell.actions.copyPath")}
-                    onClick={(event) => void handleCopyPath(item.path, event)}
+                  <Show
+                    when={canOpenWorkspacePaths()}
+                    fallback={
+                      <button
+                        type="button"
+                        class="git-change-row-action"
+                        title={props.t("instanceShell.filesShell.actions.copyPath")}
+                        aria-label={props.t("instanceShell.filesShell.actions.copyPath")}
+                        onClick={(event) => void handleCopyPath(item.path, event)}
+                      >
+                        <Copy class="w-3 h-3" />
+                      </button>
+                    }
                   >
-                    <Copy class="w-3 h-3" />
-                  </button>
+                    <div onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+                      <ActionOverflowMenu
+                        items={rowActions(item)}
+                        label={props.t("instanceShell.filesShell.actions.more", { name: item.name })}
+                        triggerClass="git-change-row-action file-row-action-menu"
+                      />
+                    </div>
+                  </Show>
                 </div>
               </div>
             </div>
