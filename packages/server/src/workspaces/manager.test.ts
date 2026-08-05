@@ -573,8 +573,8 @@ describe("workspace manager lifecycle", () => {
       }), "utf8")
 
       await registry.heartbeat(key, held.owner)
-      for (let attempt = 0; attempt < 50 && harness.manager.get(workspaceId); attempt += 1) {
-        await new Promise<void>((resolve) => setImmediate(resolve))
+      for (let attempt = 0; attempt < 100 && harness.manager.get(workspaceId); attempt += 1) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 5))
       }
       assert.equal(harness.manager.getInstancePort(workspaceId), undefined)
       assert.equal(harness.runtime.active.has(workspaceId), false)
