@@ -9,6 +9,7 @@ import {
   hasLiveTauriClientAsync,
   hasErrorCode,
   isProcessOwnerLockOwned,
+  readProcessOwnerLock,
   removeProcessOwnerLockIfOwned,
   type ProcessOwner,
   removeRunningMarkerIfOwned,
@@ -328,7 +329,8 @@ export class ClientStateManager {
         true,
       )
       if (!this.primary) {
-        await this.crossHostRegistration?.participateInRecoveryAsync()
+        const localOwner = readProcessOwnerLock(this.lockPath)
+        if (localOwner) await this.crossHostRegistration?.participateInRecoveryAsync(localOwner)
         return false
       }
     }

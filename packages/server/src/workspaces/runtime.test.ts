@@ -52,7 +52,12 @@ const token = (rows: Array<[number, number, number, string]>, signal: boolean, b
 const isToken = (args: readonly string[]) => args.includes("codenomad-token-cleanup")
 const isSignal = (args: readonly string[]) => isToken(args) && (args.includes("TERM") || args.includes("KILL"))
 const isGuarded = (args: readonly string[]) => !isToken(args) && args.some((arg) => arg.includes("guarded-signal") || arg.includes("CODENOMAD_RESULT"))
-async function harness(options: WorkspaceRuntimeOptions & { binary?: string; output?: string; report?: boolean } = {}) {
+async function harness(options: WorkspaceRuntimeOptions & {
+  binary?: string
+  output?: string
+  report?: boolean
+  persistProcessIdentities?: (identities: import("./process-identity").ProcessIdentity[]) => Promise<void>
+} = {}) {
   const child = new FakeChild()
   const timers = new ManualTimers()
   const calls: Call[] = []
@@ -75,7 +80,10 @@ async function harness(options: WorkspaceRuntimeOptions & { binary?: string; out
   })
   const abort = new AbortController()
   const folder = platform === "win32" && process.platform !== "win32" ? `/${process.cwd()}` : process.cwd()
-  const launch = runtime.launch({ workspaceId: "w", folder, binaryPath: options.binary ?? "opencode", signal: abort.signal })
+  const launch = runtime.launch({
+    workspaceId: "w", folder, binaryPath: options.binary ?? "opencode", signal: abort.signal,
+    persistProcessIdentities: options.persistProcessIdentities,
+  })
   if (options.report !== false) {
     queueMicrotask(() => child.stdout.write(options.output ?? "opencode server listening on http://127.0.0.1:4321\n"))
     await launch
@@ -90,6 +98,19 @@ describe("workspace runtime lifecycle contracts", () => {
       return result(posix([[4242, 1, 4242, "100"]]))
     }) as unknown as Command })
     assert.deepEqual(launchCall?.args.slice(-1), ["4242"])
+  })
+
+  it("persists a Windows wrapper and its launch descendants before publishing the port", async () => {
+    let persisted: number[] = []
+    await harness({
+      platform: "win32",
+      binary: "opencode.cmd",
+      persistProcessIdentities: async (identities) => { persisted = identities.map(({ pid }) => pid) },
+      spawnSync: ((command: string) => command === "powershell.exe"
+        ? result(windows([[4242, 1, "wrapper-start"], [5000, 4242, "child-start"]]))
+        : result()) as unknown as Command,
+    })
+    assert.deepEqual(persisted, [4242, 5000])
   })
 
   it("cancels before spawn and while waiting for a port without losing retryable cleanup", async () => {
@@ -241,15 +262,18 @@ describe("workspace runtime lifecycle contracts", () => {
     const calls: Call[] = []
     const h = await harness({ platform: "win32", binary: "opencode.cmd", spawnSync: ((command: string, args: readonly string[]) => {
       calls.push({ command, args: [...args] })
+      if (command === "powershell.exe") return result(windows([[4242, 1, "wrapper-start"]]))
       return available ? result() : result("", 1, "taskkill unavailable")
     }) as unknown as Command })
     const first = h.runtime.stop("w"); h.timers.run(); h.timers.run()
     await assert.rejects(first, (error: unknown) => error instanceof WorkspaceStopTimeoutError && /\/T \/F failed/.test(error.message))
-    assert.deepEqual(calls.map(({ args }) => args), [["/PID", "4242", "/T"], ["/PID", "4242", "/T", "/F"]])
+    assert.deepEqual(calls.filter(({ command }) => command === "taskkill.exe").map(({ args }) => args),
+      [["/PID", "4242", "/T"], ["/PID", "4242", "/T", "/F"]])
     available = true
     const retry = h.runtime.stop("w"); h.child.exit(); await retry
 
-    const exited = await harness({ platform: "win32", binary: "opencode.cmd", spawnSync: (() => result("", 1, "taskkill unavailable")) as unknown as Command })
+    const exited = await harness({ platform: "win32", binary: "opencode.cmd", spawnSync: ((command: string) =>
+      command === "powershell.exe" ? result(windows([[4242, 1, "wrapper-start"]])) : result("", 1, "taskkill unavailable")) as unknown as Command })
     const incomplete = exited.runtime.stop("w"); exited.child.exit(1)
     await assert.rejects(incomplete, WorkspaceWindowsTreeCleanupIncompleteError)
     await assert.rejects(exited.runtime.stop("w"), WorkspaceWindowsTreeCleanupIncompleteError)

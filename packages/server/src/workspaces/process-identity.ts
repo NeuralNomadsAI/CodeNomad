@@ -375,34 +375,6 @@ function runPortablePosixTokenScript(spawnCommand: SpawnCommand, token: string, 
   })
 }
 
-function probeWindowsLaunchCleanupToken(spawnCommand: SpawnCommand, token: string, timeoutMs: number): ProcessSnapshot {
-  const script = [
-    "$ErrorActionPreference = 'Stop'",
-    "$token = [Console]::In.ReadToEnd()",
-    "$matches = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($token) })",
-    "foreach ($process in $matches) { $start = ([datetime]$process.CreationDate).ToUniversalTime().Ticks.ToString(); 'CODENOMAD_PROCESS|{0}|{1}|0|{2}||{2}' -f [int]$process.ProcessId, [int]$process.ParentProcessId, $start }",
-    "if ($matches.Count -eq 0) { 'CODENOMAD_INCONCLUSIVE' }",
-  ].join("; ")
-  try {
-    const result = spawnCommand("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
-      encoding: "utf8", timeout: timeoutMs, input: token,
-    })
-    if (result.status !== 0) return { ok: false, error: commandError(result) }
-    const output = String(result.stdout ?? "").trim()
-    if (output === "CODENOMAD_INCONCLUSIVE") {
-      return { ok: false, error: "Windows cleanup-token probe was inconclusive" }
-    }
-    const prefix = "CODENOMAD_PROCESS|"
-    const rows = output.split(/\r?\n/).map((line) => line.startsWith(prefix) ? line.slice(prefix.length) : line).join("\n")
-    const processes = parseDelimitedSnapshot(rows)
-    return processes && processes.size > 0
-      ? { ok: true, processes }
-      : { ok: false, error: "Windows cleanup-token probe returned malformed output" }
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) }
-  }
-}
-
 const redactToken = (value: string, token: string): string => value.split(token).join("[REDACTED]")
 
 function shellGuardArgs(request: GuardedSignalRequest, linux: boolean): string[] {
@@ -568,7 +540,9 @@ export function signalWindowsProcesses(spawnCommand: SpawnCommand, request: Guar
 
 export function probeLaunchCleanupToken(spawnCommand: SpawnCommand, token: string,
   timeoutMs: number, distro?: string, platform: NodeJS.Platform = "linux"): ProcessSnapshot {
-  if (!distro && platform === "win32") return probeWindowsLaunchCleanupToken(spawnCommand, token, timeoutMs)
+  if (!distro && platform === "win32") {
+    return { ok: false, error: "Windows cannot inspect another process environment; use persisted launch-tree identities" }
+  }
   const portablePosix = !distro && platform !== "linux"
   return querySnapshot(
     () => portablePosix

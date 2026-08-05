@@ -16,15 +16,33 @@ it("never overlaps replacement locks while concurrent callers reclaim a stale ow
 
   let active = 0
   let maximum = 0
+  let releaseFirst!: () => void
+  let firstEntered!: () => void
+  const firstReady = new Promise<void>((resolve) => { firstEntered = resolve })
+  const firstBlocked = new Promise<void>((resolve) => { releaseFirst = resolve })
+  const operation = async () => {
+    active++
+    maximum = Math.max(maximum, active)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    active--
+  }
   try {
-    await Promise.all(Array.from({ length: 24 }, () => withFilesystemLock(lockPath, async () => {
+    const first = withFilesystemLock(lockPath, async () => {
       active++
       maximum = Math.max(maximum, active)
-      await new Promise((resolve) => setTimeout(resolve, 5))
+      firstEntered()
+      await firstBlocked
       active--
-    }, { waitMs: 10_000, staleMs: 20, pollMs: 1 })))
+    }, { waitMs: 10, staleMs: 20, pollMs: 1 })
+    await firstReady
+    const contenders = Array.from({ length: 7 }, () => withFilesystemLock(lockPath, operation, {
+      waitMs: 5_000, staleMs: 20, pollMs: 1,
+    }))
+    releaseFirst()
+    await Promise.all([first, ...contenders])
     assert.equal(maximum, 1)
   } finally {
+    releaseFirst?.()
     await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 })
   }
 })

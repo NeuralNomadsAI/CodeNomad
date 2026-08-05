@@ -245,16 +245,22 @@ export class WorkspaceProcessLeaseRegistry {
   }
 
   private persistedProcessesAreGone(identities: ProcessIdentity[]): boolean {
-    const processAlive = this.options.isProcessIdentityAlive
-      ?? ((identity: ProcessIdentity) => processIdentityIsAlive(identity, this.options.platform ?? process.platform))
-    for (const identity of identities) {
-      try {
-        if (processAlive(identity) !== false) return false
-      } catch {
-        return false
+    if (identities.length === 0) return true
+    if (this.options.isProcessIdentityAlive) {
+      for (const identity of identities) {
+        try {
+          if (this.options.isProcessIdentityAlive(identity) !== false) return false
+        } catch {
+          return false
+        }
       }
+      return true
     }
-    return true
+    const platform = this.options.platform ?? process.platform
+    const snapshot = platform === "win32"
+      ? probeWindowsProcesses(spawnSync, 1_000)
+      : probePosixProcesses(spawnSync, 1_000, platform, { pids: identities.map(({ pid }) => pid) })
+    return snapshot.ok && identities.every((identity) => !sameProcess(identity, snapshot.processes.get(identity.pid)))
   }
 }
 
@@ -416,15 +422,9 @@ async function readProcessIdentities(directory: string, leaseToken: string): Pro
   }
 }
 
-function processIdentityIsAlive(identity: ProcessIdentity, platform: NodeJS.Platform): boolean | undefined {
-  const snapshot = platform === "win32"
-    ? probeWindowsProcesses(spawnSync, 1_000)
-    : probePosixProcesses(spawnSync, 1_000, platform, { pids: [identity.pid] })
-  return snapshot.ok ? sameProcess(identity, snapshot.processes.get(identity.pid)) : undefined
-}
-
 function launchTokenIsAlive(token: string, platform: NodeJS.Platform): boolean | undefined {
   if (!token) return undefined
+  if (platform === "win32") return undefined
   const snapshot = probeLaunchCleanupToken(spawnSync, token, 1_000, undefined, platform)
   return snapshot.ok ? snapshot.processes.size > 0 : undefined
 }

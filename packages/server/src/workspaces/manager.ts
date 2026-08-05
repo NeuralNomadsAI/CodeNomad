@@ -602,6 +602,9 @@ export class WorkspaceManager {
         logLevel,
         cleanupToken,
         signal: state.abortController.signal,
+        persistProcessIdentities: async (identities) => {
+          for (const identity of identities) await state.processLease?.setProcessIdentity(identity)
+        },
         onExit: (info) => this.handleProcessExit(info.workspaceId, info),
       })
       record.pid = pid

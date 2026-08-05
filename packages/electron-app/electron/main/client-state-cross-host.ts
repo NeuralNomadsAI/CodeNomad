@@ -456,7 +456,7 @@ export class CrossHostRegistration {
     return this.isPrimary
   }
 
-  async participateInRecoveryAsync(): Promise<void> {
+  async participateInRecoveryAsync(candidate: ProcessOwner): Promise<void> {
     if (this.released) return
     publishParticipant(this.participant, this.owner)
     removeRetiredParticipantIfOwned(this.directory, this.owner)
@@ -464,8 +464,16 @@ export class CrossHostRegistration {
     if (observed === undefined) return
     const existing = parseOwner(observed)
     if (!existing || await ownerIsStaleAsync(existing, this.dependencies) !== true) return
-    this.recoveryClaim ??= recoveryPath(this.directory, this.owner)
-    publishRecoveryClaim(this.recoveryClaim, observed)
+    if (await ownerIsStaleAsync(candidate, this.dependencies) !== false) return
+    if (sameOwner(candidate, this.owner)) {
+      this.recoveryClaim ??= recoveryPath(this.directory, this.owner)
+      publishRecoveryClaim(this.recoveryClaim, observed)
+      return
+    }
+    removeParticipantIfOwned(this.participant, this.owner)
+    if (this.recoveryClaim) try { unlinkSync(this.recoveryClaim) } catch {}
+    this.recoveryClaim = undefined
+    publishRecoveryClaim(recoveryPath(this.directory, candidate), observed)
   }
 
   deferPrimary(): void {

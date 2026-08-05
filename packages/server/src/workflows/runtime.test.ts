@@ -507,8 +507,9 @@ describe("declarative workflow runtime", () => {
       while (started.status !== "paused") await new Promise((resolve) => setTimeout(resolve, 1))
       const resumed = manager.resume(started.id)
       const racedStart = manager.start({ workspaceId: "workspace", definitionId: "pause" })
+      const rejectedStart = assert.rejects(racedStart, /already running/)
       await resumed
-      await assert.rejects(racedStart, /already running/)
+      await rejectedStart
       const run = await waitFor(manager, started.id, ["completed"])
       assert.equal(prompts, 2)
       assert.equal(run.executionNodes?.filter((node) => node.definitionNodeId === "one").length, 1)

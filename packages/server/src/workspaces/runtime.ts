@@ -49,6 +49,7 @@ interface LaunchOptions {
   onExit?: (info: ProcessExitInfo) => void
   signal?: AbortSignal
   cleanupToken?: string
+  persistProcessIdentities?: (identities: ProcessIdentity[]) => Promise<void>
 }
 
 export interface ProcessExitInfo {
@@ -270,7 +271,7 @@ export class WorkspaceRuntime {
           : {}),
       }
       this.processes.set(options.workspaceId, managed)
-      if (spec.processKind === "posix" || spec.processKind === "wsl" || spec.processKind === "windows-direct") {
+      if (spec.processKind === "posix" || spec.processKind === "wsl" || spec.processKind === "windows-direct" || spec.processKind === "windows-wrapper") {
         const launchSnapshot = child.pid
           ? this.platform === "win32"
             ? probeWindowsProcesses(this.spawnCommand, this.stopCommandTimeoutMs)
@@ -297,6 +298,11 @@ export class WorkspaceRuntime {
         for (const identity of launchSnapshot.ok ? launchSnapshot.processes.values() : [launchLeader]) {
           if (identity.groupId === launchLeader.groupId) managed.targets!.members.set(identity.pid, identity)
         }
+        if (this.platform === "win32" && launchSnapshot.ok) {
+          for (const identity of descendantsOf(launchSnapshot.processes, launchLeader.pid)) {
+            managed.targets!.members.set(identity.pid, identity)
+          }
+        }
       }
 
       let stdoutBuffer = ""
@@ -304,6 +310,7 @@ export class WorkspaceRuntime {
       let portFound = false
       let pendingPort: number | null = null
       let launchSettled = false
+      let launchPersistenceStarted = false
       const cancelLaunch = () => {
         if (launchSettled) return
         launchSettled = true
@@ -403,14 +410,36 @@ export class WorkspaceRuntime {
       child.on("error", handleError)
       child.on("exit", handleExit)
 
-      const resolveLaunchIfIdentified = () => {
-        if (launchSettled || pendingPort === null) return
+      const resolveLaunchIfIdentified = async () => {
+        if (launchSettled || launchPersistenceStarted || pendingPort === null) return
         if (managed.wsl && (!managed.wsl.linuxPid || !managed.wsl.linuxPgid || !managed.wsl.leaderStartTime || !managed.wsl.bootId)) {
           return
         }
+        launchPersistenceStarted = true
         portFound = true
-        launchSettled = true
         stopWarningTimer()
+        if (this.platform === "win32" && managed.targets?.leader) {
+          const snapshot = probeWindowsProcesses(this.spawnCommand, this.stopCommandTimeoutMs)
+          const currentLeader = snapshot.ok ? snapshot.processes.get(managed.targets.leader.pid) : undefined
+          if (snapshot.ok && (!currentLeader || sameProcess(managed.targets.leader, currentLeader))) {
+            for (const identity of descendantsOf(snapshot.processes, managed.targets.leader.pid)) {
+              managed.targets.members.set(identity.pid, identity)
+            }
+          }
+        }
+        try {
+          await options.persistProcessIdentities?.([...managed.targets!.members.values()])
+        } catch (error) {
+          launchSettled = true
+          this.beginFailedLaunchCleanup(options.workspaceId, managed)
+          reject(new WorkspaceRuntimeIdentityCaptureError(
+            options.workspaceId,
+            `launch-tree identity persistence failed: ${error instanceof Error ? error.message : String(error)}`,
+          ))
+          return
+        }
+        if (launchSettled) return
+        launchSettled = true
         options.signal?.removeEventListener("abort", cancelLaunch)
         managed.cancelLaunch = undefined
         child.removeListener("error", handleError)
@@ -463,7 +492,7 @@ export class WorkspaceRuntime {
                 },
                 "Captured WSL OpenCode process identity",
               )
-              resolveLaunchIfIdentified()
+              void resolveLaunchIfIdentified()
             } else {
               failWslIdentityCapture("WSL launcher returned an incomplete Linux PID identity")
             }
@@ -484,7 +513,7 @@ export class WorkspaceRuntime {
               if (managed.wsl && (!managed.wsl.leaderStartTime || !managed.wsl.bootId)) {
                 failWslIdentityCapture("WSL process reported a port before its Linux identity")
               } else {
-                resolveLaunchIfIdentified()
+                void resolveLaunchIfIdentified()
               }
             }
           }

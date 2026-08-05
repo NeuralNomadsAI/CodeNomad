@@ -363,6 +363,11 @@ export function isProcessOwnerLockOwned(path: string, owner: ProcessOwner): bool
   return Boolean(current && isSameProcessOwner(current, owner))
 }
 
+export function readProcessOwnerLock(path: string): ProcessOwner | undefined {
+  const value = readFileIfExists(path)
+  return value === undefined ? undefined : parseProcessOwner(value)
+}
+
 export function removeRunningMarkerIfOwned(markerPath: string, owner: ProcessOwner): boolean {
   const filenameOwner = parseRunningMarkerFilename(basename(markerPath))
   if (!filenameOwner || !isSameProcessOwner(filenameOwner, owner)) {

@@ -568,15 +568,20 @@ export class WorkflowManager {
       if (candidate.pendingGate.executionNodeId !== expectedStepId) throw new WorkflowRunError("Workflow approval is stale", 409)
       return this.answer(runId, candidate.pendingGate.executionNodeId, true)
     }
+    const settlement = await this.waitForControlSettlement(runId, (active) =>
+      active.cancelRequested || active.run.status === "waiting_for_review")
     return this.withAdmission(() => this.withRunTransition(runId, async () => {
       this.throwIfShuttingDown()
       const current = this.activeRuns.get(runId)
-      if (current?.run.status === "waiting_for_review") await current.completion
-      else if (current) {
-        throw new WorkflowRunError("Workflow stage is not ready for review", 409)
-      }
       const run = await this.read(runId)
       if (!run) return undefined
+      if (settlement?.active.cancelRequested && ["cancelled", "recovery_required"].includes(run.status)) return run
+      if (current && current.run.status !== "waiting_for_review") {
+        throw new WorkflowRunError("Workflow stage is not ready for review", 409)
+      }
+      if (settlement && !settlement.settled && current === settlement.active) {
+        throw new WorkflowRunError("Workflow stage is still settling", 409)
+      }
       if (run.pendingReviewStepId !== expectedStepId) throw new WorkflowRunError("Workflow approval is stale", 409)
       const reviewed = run.steps.find((step) => step.id === run.pendingReviewStepId)
       if (run.status !== "waiting_for_review" || reviewed?.status !== "completed") {
@@ -621,18 +626,24 @@ export class WorkflowManager {
   async answer(runId: string, executionNodeId: string, answer: unknown): Promise<WorkflowRun | undefined> {
     await this.ensureInitialized()
     this.throwIfShuttingDown()
+    const settlement = await this.waitForControlSettlement(runId, (active) =>
+      active.cancelRequested || Boolean(active.run.pendingGate
+        && ["waiting_for_review", "waiting_for_input"].includes(active.run.status)))
     return this.withAdmission(() => this.withRunTransition(runId, async () => {
       this.throwIfShuttingDown()
       const current = this.activeRuns.get(runId)
+      const run = await this.read(runId)
+      if (!run) return undefined
+      if (settlement?.active.cancelRequested && ["cancelled", "recovery_required"].includes(run.status)) return run
       if (current && (!current.run.pendingGate || !["waiting_for_review", "waiting_for_input"].includes(current.run.status))) {
         if (current.run.executionNodes?.some((node) => node.id === executionNodeId && node.status === "completed")) {
           throw new WorkflowRunError("Workflow gate answer is stale", 409)
         }
         throw new WorkflowRunError("Workflow run is not waiting for a gate answer", 409)
       }
-      if (current?.completion) await current.completion
-      const run = await this.read(runId)
-      if (!run) return undefined
+      if (settlement && !settlement.settled && current === settlement.active) {
+        throw new WorkflowRunError("Workflow gate is still settling", 409)
+      }
       const gate = run.pendingGate
       if (!run.definitionSnapshot || !gate || !["waiting_for_review", "waiting_for_input"].includes(run.status)) {
         throw new WorkflowRunError("Workflow run is not waiting for a gate answer", 409)
@@ -694,15 +705,20 @@ export class WorkflowManager {
   async resume(runId: string, confirmRecovery = false, expectedRevision?: number): Promise<WorkflowRun | undefined> {
     await this.ensureInitialized()
     this.throwIfShuttingDown()
+    const settlement = await this.waitForControlSettlement(runId, (active) =>
+      active.cancelRequested || ["paused", "interrupted", "recovery_required"].includes(active.run.status))
     return this.withAdmission(() => this.withRunTransition(runId, async () => {
       this.throwIfAdmissionBlocked()
       const active = this.activeRuns.get(runId)
+      const run = await this.read(runId)
+      if (!run) return undefined
+      if (settlement?.active.cancelRequested && ["cancelled", "recovery_required"].includes(run.status)) return run
       if (active && !["paused", "interrupted", "recovery_required"].includes(active.run.status)) {
         throw new WorkflowRunError("Workflow run cannot be resumed", 409)
       }
-      if (active?.completion) await active.completion
-      const run = await this.read(runId)
-      if (!run) return undefined
+      if (settlement && !settlement.settled && active === settlement.active) {
+        throw new WorkflowRunError("Workflow run is still settling", 409)
+      }
       if (!run.definitionSnapshot) throw new WorkflowRunError("Legacy workflows cannot be resumed", 409)
       if (run.status === "recovery_required" && !confirmRecovery) {
         throw new WorkflowRunError("Recovery confirmation is required before repeating an ambiguous side effect", 409)
@@ -1016,6 +1032,21 @@ export class WorkflowManager {
     const client = this.createClient(workspaceId)
     if (!client) throw new WorkflowRunError("Workspace instance is not ready", 409)
     return client
+  }
+
+  private async waitForControlSettlement(
+    runId: string,
+    shouldWait: (active: ActiveRun) => boolean,
+  ): Promise<{ active: ActiveRun; settled: boolean } | undefined> {
+    const active = this.activeRuns.get(runId)
+    if (!active) return undefined
+    if (!active.completion || !shouldWait(active)) return { active, settled: true }
+    const settled = await this.withTimeout(
+      active.completion.then(() => true),
+      Math.max(1, Math.min(ABORT_TIMEOUT_MS, this.promptTimeoutMs)),
+      "Workflow control settlement timed out",
+    ).catch(() => false)
+    return { active, settled }
   }
 
   private async assertNoPersistedReservation(workspace: WorkspaceDescriptor, runId?: string): Promise<void> {

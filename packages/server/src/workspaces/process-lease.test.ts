@@ -194,6 +194,39 @@ test("an inconclusive Windows token probe falls through to immutable identities"
   await replacement.release()
 })
 
+for (const scenario of [
+  { name: "a live direct Windows launch", persisted: [303], alive: [303], reclaim: false },
+  { name: "a live Windows wrapper", persisted: [303, 304], alive: [303, 304], reclaim: false },
+  { name: "a surviving Windows wrapper child", persisted: [303, 304], alive: [304], reclaim: false },
+  { name: "a dead Windows wrapper tree", persisted: [303, 304], alive: [], reclaim: true },
+] as const) {
+  test(`${scenario.name} controls same-host lease recovery`, async (t) => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-process-win32-tree-"))
+    t.after(() => rm(directory, { recursive: true, force: true }))
+    const workspacePath = path.join(directory, "workspace")
+    const owner = new WorkspaceProcessLeaseRegistry({
+      directory, managerToken: "owner", pid: 101, hostname: "same-host", isPidAlive: () => false,
+    })
+    const alive = new Set<number>(scenario.alive)
+    const contender = new WorkspaceProcessLeaseRegistry({
+      directory, managerToken: "contender", pid: 202, hostname: "same-host", platform: "win32",
+      isPidAlive: () => false, isLaunchTokenAlive: () => undefined,
+      isProcessIdentityAlive: (identity) => alive.has(identity.pid),
+    })
+    const lease = await owner.acquire(workspacePath)
+    assert.ok(lease)
+    await lease.prepareLaunch()
+    for (const pid of scenario.persisted) {
+      await lease.setProcessIdentity({ pid, parentPid: pid === 303 ? 1 : 303, groupId: pid, startTime: `windows-${pid}` })
+    }
+
+    const replacement = await contender.acquire(workspacePath)
+    assert.equal(Boolean(replacement), scenario.reclaim)
+    await lease.release()
+    await replacement?.release()
+  })
+}
+
 test("a stale torn launch token does not permanently wedge a dead owner", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-process-torn-launch-"))
   t.after(() => rm(directory, { recursive: true, force: true }))

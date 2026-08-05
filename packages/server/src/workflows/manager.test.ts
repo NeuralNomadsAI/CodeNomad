@@ -312,10 +312,12 @@ describe("WorkflowManager", () => {
   it("releases admission while cancelling a prompt that ignores abort", async () => {
     const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-workflow-cancel-admission-"))
     let promptStarted!: () => void
+    let releasePrompt!: () => void
     const started = new Promise<void>((resolve) => { promptStarted = resolve })
+    const blockedPrompt = new Promise<void>((resolve) => { releasePrompt = resolve })
     const client = { tool: { ids: async () => ({ data: [] }) }, session: {
       create: async () => ({ data: { id: "ignored-abort-session" } }),
-      prompt: async () => { promptStarted(); return new Promise(() => undefined) },
+      prompt: async () => { promptStarted(); await blockedPrompt; return { data: { info: {}, parts: [] } } },
       abort: async () => ({ data: true }),
     } } as unknown as OpencodeClient
     const workspaceManager = {
@@ -354,7 +356,62 @@ describe("WorkflowManager", () => {
       const other = await manager.start({ workspaceId: "other", definitionId: definition.id })
       assert.equal((await manager.cancel(other.id))?.status, "cancelled")
       assert.equal((await cancellation)?.status, "cancelled")
+      releasePrompt()
     } finally {
+      releasePrompt?.()
+      await manager.shutdown()
+      await fs.rm(storageDir, { recursive: true, force: true })
+    }
+  })
+
+  it("keeps confirmed resume settlement outside admission while cancellation is fenced", async () => {
+    const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-workflow-resume-cancel-admission-"))
+    let promptStarted!: () => void
+    let releasePrompt!: () => void
+    const started = new Promise<void>((resolve) => { promptStarted = resolve })
+    const blockedPrompt = new Promise<void>((resolve) => { releasePrompt = resolve })
+    const client = { tool: { ids: async () => ({ data: [] }) }, session: {
+      create: async () => ({ data: { id: "resume-cancel-session" } }),
+      prompt: async () => { promptStarted(); await blockedPrompt; return { data: { info: {}, parts: [] } } },
+      abort: async () => ({ data: true }),
+    } } as unknown as OpencodeClient
+    const workspaceManager = {
+      get: (id: string) => ({ id, lineageId: `lineage-${id}`, path: `C:/${id}`, status: "ready" }),
+      list: () => [],
+    } as unknown as WorkspaceManager
+    const manager = new WorkflowManager({
+      workspaceManager, eventBus: { publish: () => true } as unknown as EventBus,
+      logger: { warn() {}, error() {} } as unknown as Logger, storageDir, createClient: () => client,
+      promptTimeoutMs: 1_000,
+    })
+    try {
+      await manager.createDefinition({ version: 1, id: "resume-cancel", name: "Resume cancel", root: {
+        type: "agent", id: "work", instructions: "Ignore abort",
+      } })
+      const run = await manager.start({ workspaceId: "blocked", definitionId: "resume-cancel" })
+      await started
+      const cancellation = manager.cancel(run.id)
+      let recovery: any
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        recovery = JSON.parse(await fs.readFile(path.join(storageDir, `${run.id}.json`), "utf8"))
+        if (recovery.status === "recovery_required") break
+        await new Promise((resolve) => setTimeout(resolve, 1))
+      }
+      assert.equal(recovery.status, "recovery_required")
+
+      const resume = manager.resume(run.id, true, recovery.revision)
+      const admitted = await Promise.race([
+        manager.createDefinition({ version: 1, id: "unrelated-admission", name: "Unrelated", root: {
+          type: "gate", id: "gate", gate: "approval", prompt: "Wait",
+        } }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("unrelated admission was blocked by resume")), 500)),
+      ])
+      assert.equal(admitted.id, "unrelated-admission")
+      assert.equal((await cancellation)?.status, "cancelled")
+      assert.ok(["cancelled", "recovery_required"].includes((await resume)?.status ?? ""))
+      releasePrompt()
+    } finally {
+      releasePrompt?.()
       await manager.shutdown()
       await fs.rm(storageDir, { recursive: true, force: true })
     }

@@ -156,34 +156,47 @@ test("a retained host-local secondary retries election after its primary exits",
   await secondary.drainAndReleasePrimary()
 })
 
-test("a local-lock non-holder publishes recovery without gaining authority", async (t) => {
+test("one eligible Electron recovers a stale Tauri owner while its local secondary stays fenced", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "codenomad-local-stale-promotion-"))
   const userData = join(root, "electron"), election = join(root, "election")
   mkdirSync(userData); mkdirSync(join(election, "primary.owner.json"), { recursive: true })
   t.after(() => rmSync(root, { recursive: true, force: true }))
-  const staleOwner = { pid: 8241, runToken: "a", processStartIdentity: "a-start" }
-  const localOwner = { pid: process.pid, runToken: "b", processStartIdentity: getProcessStartIdentity(process.pid) }
-  const helperOwner = { pid: 8243, runToken: "c", processStartIdentity: "c-start" }
+  const staleOwner = { pid: 8241, runToken: "tauri-stale", processStartIdentity: "tauri-start" }
+  const localOwner = { pid: process.pid, runToken: "local", processStartIdentity: getProcessStartIdentity(process.pid) }
+  const secondaryOwner = { pid: 8243, runToken: "secondary", processStartIdentity: "secondary-start" }
   writeFileSync(join(election, "primary.owner.json", "owner.json"), JSON.stringify(staleOwner))
   writeFileSync(join(userData, "client-state.primary.lock"), JSON.stringify(localOwner))
-  createRunningMarker(userData, localOwner)
+  const localMarker = createRunningMarker(userData, localOwner)
+  const identities = new Map([
+    [localOwner.pid, localOwner.processStartIdentity],
+    [secondaryOwner.pid, secondaryOwner.processStartIdentity],
+  ])
   const crossHostDependencies = {
-    pidAlive: (pid: number) => pid === localOwner.pid || pid === helperOwner.pid,
-    processStartIdentity: (pid: number) => pid === localOwner.pid ? localOwner.processStartIdentity : pid === helperOwner.pid ? helperOwner.processStartIdentity : undefined,
-    processStartIdentityAsync: async (pid: number) => pid === localOwner.pid ? localOwner.processStartIdentity : pid === helperOwner.pid ? helperOwner.processStartIdentity : undefined,
+    pidAlive: (pid: number) => identities.has(pid),
+    processStartIdentity: (pid: number) => identities.get(pid),
+    processStartIdentityAsync: async (pid: number) => identities.get(pid),
   }
-  const helper = new ClientStateManager(userData, undefined, {
+  const secondary = new ClientStateManager(userData, undefined, {
     crossHostElectionDirectory: election,
     crossHostDependencies,
-    processOwner: helperOwner,
+    processOwner: secondaryOwner,
   })
-  assert.equal(helper.isPrimary, false)
-  assert.equal(await helper.refreshPrimary(), false)
-  assert.equal(existsSync(join(election, "recovery.8243.c.claim")), true)
-  assert.equal(readFileSync(join(election, "recovery.8243.c.claim"), "utf8"), JSON.stringify(staleOwner))
-  assert.equal(readFileSync(join(election, "primary.owner.json", "owner.json"), "utf8"), JSON.stringify(staleOwner))
-  assert.deepEqual(helper.loadClientState(), { isPrimary: false, restoreEnabled: false, snapshot: null })
-  await helper.drainAndReleasePrimary()
+  assert.equal(await secondary.refreshPrimary(), false)
+  assert.equal(existsSync(join(election, "recovery.8243.secondary.claim")), false)
+  assert.equal(readFileSync(join(election, `recovery.${localOwner.pid}.local.claim`), "utf8"), JSON.stringify(staleOwner))
+
+  rmSync(join(userData, "client-state.primary.lock")); rmSync(localMarker)
+  const local = new ClientStateManager(userData, undefined, {
+    crossHostElectionDirectory: election,
+    crossHostDependencies,
+    processOwner: localOwner,
+  })
+  assert.deepEqual([local.isPrimary, secondary.isPrimary], [true, false])
+  assert.equal(await secondary.refreshPrimary(), false)
+  assert.equal(await secondary.saveClientState({ forbidden: true }), false)
+  assert.equal(await local.saveClientState({ recovered: true }), true)
+  assert.deepEqual(JSON.parse(readFileSync(join(root, "client-state.json"), "utf8")).snapshot, { recovered: true })
+  await Promise.all([local.drainAndReleasePrimary(), secondary.drainAndReleasePrimary()])
 })
 
 test("late promotion migrates legacy state when shared state is absent", async (t) => {
