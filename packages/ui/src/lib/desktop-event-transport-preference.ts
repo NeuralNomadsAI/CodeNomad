@@ -2,13 +2,13 @@ export const TAURI_NATIVE_EVENT_TRANSPORT_STORAGE_KEY = "codenomad-use-tauri-nat
 
 export function readUseTauriNativeEventTransportPreference(): boolean {
   if (typeof window === "undefined") {
-    return true
+    return false
   }
 
   try {
-    return window.localStorage?.getItem(TAURI_NATIVE_EVENT_TRANSPORT_STORAGE_KEY) !== "0"
+    return window.localStorage?.getItem(TAURI_NATIVE_EVENT_TRANSPORT_STORAGE_KEY) === "1"
   } catch {
-    return true
+    return false
   }
 }
 
