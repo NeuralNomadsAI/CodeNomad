@@ -70,6 +70,9 @@ class ServerEvents {
           this.openHandlers.forEach((handler) => handler())
         },
         onPing: (payload) => {
+          if (generation !== this.connectGeneration) {
+            return
+          }
           const identity = getClientIdentity()
           const pongPayload = { ...identity, pingTs: payload.ts }
 

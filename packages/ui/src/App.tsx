@@ -50,11 +50,13 @@ import {
   clearActiveParentSession,
   createSession,
   fetchSessions,
+  loadMessages,
   updateSessionAgent,
   updateSessionModel,
 } from "./stores/sessions"
+import { useForegroundRefresh } from "./lib/hooks/use-foreground-refresh"
 
-import { hasWakeLockEligibleWork } from "./stores/session-status"
+import { hasWakeLockEligibleWork, getSessionStatus } from "./stores/session-status"
 import { openSettings } from "./stores/settings-screen"
 import {
   closeSidecarTab,
@@ -255,6 +257,24 @@ const App: Component = () => {
     const instance = activeInstance()
     if (!instance) return null
     return activeSessionId().get(instance.id) || null
+  })
+
+  useForegroundRefresh({
+    onRefresh: async () => {
+      const instance = activeInstance()
+      const sessionId = activeSessionIdForInstance()
+      if (!instance || !sessionId || sessionId === "info") return
+      const statusBefore = getSessionStatus(instance.id, sessionId)
+      log.info("Foreground refresh: fetching session state after SSE reconnect", {
+        instanceId: instance.id,
+        sessionId,
+        statusBefore,
+      })
+      await fetchSessions(instance.id)
+      await loadMessages(instance.id, sessionId, { force: true })
+      const statusAfter = getSessionStatus(instance.id, sessionId)
+      log.info("Foreground refresh: done", { statusBefore, statusAfter })
+    },
   })
 
   const launchErrorPath = () => {
