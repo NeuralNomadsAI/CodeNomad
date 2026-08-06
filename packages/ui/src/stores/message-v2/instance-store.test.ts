@@ -226,6 +226,100 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
     assert.equal(store.getMessage("msg-temp-img"), undefined)
   })
 
+  it("matches confirmations one-to-one: two identical sends + one confirmation keeps the second pending", () => {
+    // Regression for the shared-Set matching bug: with two simultaneous
+    // optimistic "ok" sends and only ONE server confirmation, both temps were
+    // dropped and the still-unsent second message was lost. Each confirmation
+    // must be consumed exactly once.
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+
+    store.upsertMessage({
+      id: "msg-temp-1", sessionId: "session-1", role: "user", status: "sending",
+      parts: [{ type: "text", text: "ok" } as any], isEphemeral: true,
+    })
+    store.upsertMessage({
+      id: "msg-temp-2", sessionId: "session-1", role: "user", status: "sending",
+      parts: [{ type: "text", text: "ok" } as any], isEphemeral: true,
+    })
+
+    // Snapshot confirms only ONE of the two sends.
+    store.hydrateMessages("session-1", [
+      { id: "msg-real-1", sessionId: "session-1", role: "user", status: "complete", parts: [{ type: "text", text: "ok" } as any] },
+    ])
+
+    const ids = store.getSessionMessageIds("session-1")
+    assert.deepEqual(ids, ["msg-real-1", "msg-temp-2"], "exactly one temp superseded; the other stays pending")
+    assert.equal(store.getMessage("msg-temp-1"), undefined)
+    assert.equal(store.getMessage("msg-temp-2")?.status, "sending")
+
+    // When the second confirmation arrives, the remaining temp is dropped.
+    store.hydrateMessages("session-1", [
+      { id: "msg-real-1", sessionId: "session-1", role: "user", status: "complete", parts: [{ type: "text", text: "ok" } as any] },
+      { id: "msg-real-2", sessionId: "session-1", role: "user", status: "complete", parts: [{ type: "text", text: "ok" } as any] },
+    ])
+    assert.deepEqual(store.getSessionMessageIds("session-1"), ["msg-real-1", "msg-real-2"])
+  })
+
+  it("does not collide multi-part content with a single part containing the delimiter", () => {
+    // Collision-safety: a server message with parts ["A", "B"] must not match
+    // an optimistic send whose single text part is "A\nT:B" (the old
+    // newline-joined signature), and trailing whitespace must not be trimmed
+    // into a false match.
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+
+    store.upsertMessage({
+      id: "msg-temp-collision", sessionId: "session-1", role: "user", status: "sending",
+      parts: [{ type: "text", text: "A\nT:B" } as any], isEphemeral: true,
+    })
+    store.upsertMessage({
+      id: "msg-temp-trailing", sessionId: "session-1", role: "user", status: "sending",
+      parts: [{ type: "text", text: "A " } as any], isEphemeral: true,
+    })
+
+    store.hydrateMessages("session-1", [
+      // Two-part message ["A", "B"] — old signature equaled "A\nT:B".
+      {
+        id: "msg-real-parts", sessionId: "session-1", role: "user", status: "complete",
+        parts: [{ type: "text", text: "A" } as any, { type: "text", text: "B" } as any],
+      },
+      // "A" must not match the pending "A " (trailing space).
+      { id: "msg-real-trim", sessionId: "session-1", role: "user", status: "complete", parts: [{ type: "text", text: "A" } as any] },
+    ])
+
+    const ids = store.getSessionMessageIds("session-1")
+    assert.ok(ids.includes("msg-temp-collision"), "delimiter-collision temp must survive")
+    assert.ok(ids.includes("msg-temp-trailing"), "trailing-whitespace temp must survive")
+    assert.equal(store.getMessage("msg-temp-collision")?.status, "sending")
+    assert.equal(store.getMessage("msg-temp-trailing")?.status, "sending")
+  })
+
+  it("transfers clientPromptDisplayMetadata to the confirming server record on different-id reconcile", () => {
+    // The server never sees clientPromptDisplayMetadata; when a snapshot
+    // confirms an optimistic send under a new id, the real record must
+    // inherit the temp's metadata (same as the SSE replaceMessageId path).
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+
+    const displayMetadata = { segments: [{ kind: "pasted" as const, length: 1200 }] }
+    store.upsertMessage({
+      id: "msg-temp-pasted", sessionId: "session-1", role: "user", status: "sending",
+      parts: [{ type: "text", text: "big pasted text" } as any],
+      isEphemeral: true,
+      clientPromptDisplayMetadata: displayMetadata as any,
+    })
+
+    store.hydrateMessages("session-1", [
+      { id: "msg-real-pasted", sessionId: "session-1", role: "user", status: "complete", parts: [{ type: "text", text: "big pasted text" } as any] },
+    ])
+
+    const real = store.getMessage("msg-real-pasted")
+    assert.ok(real, "real record exists")
+    assert.deepEqual(real?.clientPromptDisplayMetadata, displayMetadata, "metadata transferred from the superseded temp")
+    assert.equal(store.getMessage("msg-temp-pasted"), undefined, "temp dropped")
+  })
+
   it("does not bump messageInfoVersion when the hydrated info is unchanged", () => {
     // Issue 4: an identical snapshot (common on a reconnect force-reload) must
     // not invalidate message-block render caches via messageInfoVersion.

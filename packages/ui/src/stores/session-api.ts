@@ -56,6 +56,7 @@ import {
 import { deleteSessionAttachments } from "./attachments"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getDefaultModel, isModelValid } from "./session-models"
 import { normalizeMessagePart } from "./message-v2/normalizers"
+import { deriveMessageStatus } from "./message-v2/message-status"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { seedSessionMessagesV2, reconcilePendingPermissionsV2, reconcilePendingQuestionsV2 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
@@ -1129,15 +1130,13 @@ async function loadMessages(
         const parts: any[] = (apiMessage.parts || []).map((part: any) => normalizeMessagePart(part))
 
         // Derive the real status instead of forcing "complete": a forced
-        // refresh (e.g. after an SSE reconnect) can load an assistant message
-        // that is still generating (no end time). Marking it "complete" would
+        // refresh (e.g. after an SSE reconnect) can load a message whose end
+        // time the server has not recorded yet. Marking it "complete" would
         // demote an in-flight message and disable streaming-specific UI until
-        // the next qualifying SSE update arrives. User messages are always
-        // complete; only assistant messages without an end time stream.
-        const hasError = Boolean(info.error)
-        const hasEnded = typeof info.time?.end === "number" && info.time.end > 0
-        const status: Message["status"] =
-          role === "user" ? "complete" : hasError ? "error" : hasEnded ? "complete" : "streaming"
+        // the next qualifying SSE update arrives. The derivation is shared
+        // with the live SSE path (deriveMessageStatus) for BOTH roles, so a
+        // user message without time.end is treated identically either way.
+        const status: Message["status"] = deriveMessageStatus(info)
 
         const message: Message = {
           id: messageId,

@@ -14,6 +14,7 @@ import type {
   EventSessionStatus,
 } from "@opencode-ai/sdk"
 import type { MessageStatus } from "./message-v2/types"
+import { deriveMessageStatus } from "./message-v2/message-status"
 
 import { getLogger } from "../lib/logger"
 import type { EventSessionDeleted } from "../lib/sse-manager"
@@ -391,9 +392,7 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     const store = messageStoreBus.getOrCreate(instanceId)
 
     const role: MessageRole = info.role === "user" ? "user" : "assistant"
-    const hasError = Boolean((info as any).error)
-    const hasEnded = typeof timeInfo.end === "number" && timeInfo.end > 0
-    const status: MessageStatus = hasError ? "error" : hasEnded ? "complete" : "streaming"
+    const status: MessageStatus = deriveMessageStatus({ error: (info as any).error, time: timeInfo })
 
     let record = store.getMessage(messageId)
     if (!record) {

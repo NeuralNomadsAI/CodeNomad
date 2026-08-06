@@ -463,30 +463,38 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   // counterpart during hydration: the client temp id and the real server id
   // differ, so content is the only stable link. Covers text-only, attachment-
   // only, and mixed sends. Non-content parts (tool/reasoning/etc.) are ignored.
-  function partContentToken(part: ClientPart | undefined): string | null {
+  //
+  // The signature is a JSON-serialized array of typed tokens: escaping makes
+  // delimiter/whitespace collisions impossible (under the previous newline-
+  // joined string form, parts ["A","B"] collided with one part "A\nT:B", and
+  // .trim() collapsed trailing whitespace). Returns null when the message has
+  // no content parts at all — there is nothing to match on.
+  type MessageContentToken =
+    | readonly [type: "text", text: string]
+    | readonly [type: "file", filename: string, url: string, mime: string]
+
+  function partContentToken(part: ClientPart | undefined): MessageContentToken | null {
     if (!part) return null
-    if (part.type === "text") return `T:${(part as { text?: string }).text ?? ""}`
+    if (part.type === "text") return ["text", (part as { text?: string }).text ?? ""]
     if (part.type === "file") {
       const p = part as { filename?: string; url?: string; mime?: string }
-      return `F:${p.filename ?? ""}:${p.url ?? ""}:${p.mime ?? ""}`
+      return ["file", p.filename ?? "", p.url ?? "", p.mime ?? ""]
     }
     return null
   }
 
-  function recordContentSignature(partIds: string[], parts: MessageRecord["parts"]): string {
-    return partIds
-      .map((partId) => partContentToken(parts[partId]?.data))
-      .filter((token): token is string => token !== null)
-      .join("\n")
-      .trim()
+  function signatureFromTokens(tokens: Array<MessageContentToken | null>): string | null {
+    const content = tokens.filter((token): token is MessageContentToken => token !== null)
+    if (content.length === 0) return null
+    return JSON.stringify(content)
   }
 
-  function inputContentSignature(parts: ClientPart[] | undefined): string {
-    return (parts ?? [])
-      .map((part) => partContentToken(part))
-      .filter((token): token is string => token !== null)
-      .join("\n")
-      .trim()
+  function recordContentSignature(partIds: string[], parts: MessageRecord["parts"]): string | null {
+    return signatureFromTokens(partIds.map((partId) => partContentToken(parts[partId]?.data)))
+  }
+
+  function inputContentSignature(parts: ClientPart[] | undefined): string | null {
+    return signatureFromTokens((parts ?? []).map((part) => partContentToken(part)))
   }
 
   function hydrateMessages(sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>) {
@@ -520,31 +528,55 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     //      replaceMessageId. These are preserved.
     const previousMessageIds = state.sessions[sessionId]?.messageIds ?? []
     const previousMessageIdSet = new Set(previousMessageIds)
-    // Content signatures of user messages the server returned this snapshot
-    // under a NEW id (not already in messageIds). Restricting to new ids is
-    // what makes a confirmation distinguishable from a pre-existing older
-    // message with identical content: a send's confirmation always arrives as
-    // a new server id, so an in-flight duplicate-text send ("ok" sent twice)
-    // is not falsely matched against the earlier, already-loaded "ok".
-    const serverUserContentSignatures = new Set(
-      inputs
-        .filter((input) => input.role === "user" && !previousMessageIdSet.has(input.id))
-        .map((input) => inputContentSignature(input.parts))
-        .filter((signature) => signature.length > 0),
-    )
+    // Candidate confirmations: user messages the server returned under a NEW
+    // id (not already in messageIds), indexed by content signature as FIFO
+    // queues. Restricting to new ids is what makes a confirmation
+    // distinguishable from a pre-existing older message with identical
+    // content: a send's confirmation always arrives as a new server id, so an
+    // in-flight duplicate-text send ("ok" sent twice) is not falsely matched
+    // against the earlier, already-loaded "ok".
+    //
+    // Each candidate is CONSUMED on match (one-to-one, in send/snapshot
+    // order): with two simultaneous "ok" sends and only one confirmation
+    // back, the first temp is superseded and the second stays pending —
+    // shared set membership would wrongly drop both.
+    const candidatesBySignature = new Map<string, string[]>()
+    inputs.forEach((input) => {
+      if (input.role !== "user" || previousMessageIdSet.has(input.id)) return
+      const signature = inputContentSignature(input.parts)
+      if (signature === null) return
+      const queue = candidatesBySignature.get(signature)
+      if (queue) {
+        queue.push(input.id)
+      } else {
+        candidatesBySignature.set(signature, [input.id])
+      }
+    })
     const pendingOptimisticIds: string[] = []
     const supersededOptimisticIds: string[] = []
+    // temp id -> confirming server id, so the superseded bubble's client-only
+    // prompt-display metadata can be transferred to the real record below
+    // (the SSE replaceMessageId path does the same via movePromptDisplayOverride).
+    const supersededByServerId = new Map<string, string>()
     for (const id of previousMessageIds) {
       if (serverIdSet.has(id)) continue
       const record = state.messages[id]
       if (!record || !record.isEphemeral || record.status !== "sending") continue
       const signature = recordContentSignature(record.partIds, record.parts)
-      if (signature.length > 0 && serverUserContentSignatures.has(signature)) {
+      const queue = signature !== null ? candidatesBySignature.get(signature) : undefined
+      if (queue && queue.length > 0) {
+        const serverId = queue.shift() as string
         supersededOptimisticIds.push(id) // case (A)
+        supersededByServerId.set(id, serverId)
       } else {
         pendingOptimisticIds.push(id) // case (B)
       }
     }
+    // Reverse lookup for the normalize loop: server id -> superseded temp id.
+    const tempIdByServerId = new Map<string, string>()
+    supersededByServerId.forEach((serverId, tempId) => {
+      tempIdByServerId.set(serverId, tempId)
+    })
 
     const incomingIds = pendingOptimisticIds.length > 0 ? [...serverIds, ...pendingOptimisticIds] : serverIds
 
@@ -559,7 +591,14 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         : false
       const statusChanged = previous ? previous.status !== input.status : true
       const shouldBump = Boolean(input.bumpRevision || partsChanged || statusChanged)
-      const clientPromptDisplayMetadata = resolveClientPromptDisplayText(instanceId, input, previous)
+      // When this server record confirms an optimistic send under a new id,
+      // the optimistic record carries the client-only prompt-display metadata
+      // (the server never sees it). Use it as the metadata fallback so the
+      // replacement keeps the pasted-text/path presentation the SSE
+      // replaceMessageId path would have preserved.
+      const supersededTempId = tempIdByServerId.get(input.id)
+      const metadataFallback = previous ?? (supersededTempId ? state.messages[supersededTempId] : undefined)
+      const clientPromptDisplayMetadata = resolveClientPromptDisplayText(instanceId, input, metadataFallback)
       normalizedRecords[input.id] = {
         id: input.id,
         sessionId: input.sessionId,
@@ -598,7 +637,14 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     if (supersededOptimisticIds.length > 0) {
       supersededOptimisticIds.forEach((id) => {
         messageInfoCache.delete(id)
-        clearPromptDisplayOverride(instanceId, sessionId, id)
+        // Transfer (not just clear) the persisted prompt-display override to
+        // the confirming server id, mirroring replaceMessageId.
+        const serverId = supersededByServerId.get(id)
+        if (serverId) {
+          movePromptDisplayOverride(instanceId, sessionId, id, serverId)
+        } else {
+          clearPromptDisplayOverride(instanceId, sessionId, id)
+        }
       })
       clearRecordDisplayCacheForMessages(instanceId, supersededOptimisticIds)
     }
