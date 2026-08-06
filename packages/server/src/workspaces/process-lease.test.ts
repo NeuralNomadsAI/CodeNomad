@@ -119,8 +119,10 @@ test("owner replacement reports lease loss", async (t) => {
   const lease = await owner.acquire(workspacePath)
   assert.ok(lease)
   const lost = new Promise<void>((resolve) => lease.onLost(resolve))
+  const [key, held] = [...(owner as any).held.entries()][0]
   const successor = await replacement.acquire(workspacePath)
   assert.ok(successor)
+  await (owner as any).heartbeat(key, held.owner)
   await lost
   await lease.release().catch(() => undefined)
   await successor.release()
