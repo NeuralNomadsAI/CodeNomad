@@ -14,6 +14,7 @@ interface RouteDeps {
 
 let nextClientId = 0
 const BACKPRESSURE_TIMEOUT_MS = 5_000
+const BACKPRESSURE_BUFFER_LIMIT_BYTES = 8 * 1024 * 1024
 
 const ConnectionQuerySchema = z.object({
   clientId: z.string().trim().min(1),
@@ -45,6 +46,8 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
     let drainListener: (() => void) | undefined
     let unsubscribe: () => void = () => undefined
     let bootstrapFrames: string[] | undefined = lastEventCursor === undefined ? [] : undefined
+    const pendingWrites: string[] = []
+    let pendingWriteBytes = 0
 
     const close = (discardBufferedData = false) => {
       if (closed) return
@@ -52,23 +55,44 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
       if (heartbeat) clearInterval(heartbeat)
       if (backpressureTimeout) clearTimeout(backpressureTimeout)
       if (drainListener) reply.raw.off("drain", drainListener)
+      pendingWrites.length = 0
+      pendingWriteBytes = 0
       unsubscribe()
       if (discardBufferedData || blocked) reply.raw.destroy()
       else reply.raw.end?.()
       deps.logger.debug({ clientId }, "SSE client disconnected")
     }
 
-    const write = (payload: string) => {
-      if (closed || blocked) return
-      if (reply.raw.write(payload)) return
+    const armBackpressure = () => {
       blocked = true
       drainListener = () => {
         drainListener = undefined
         blocked = false
-        close()
+        if (backpressureTimeout) clearTimeout(backpressureTimeout)
+        backpressureTimeout = undefined
+        flushPendingWrites()
       }
       reply.raw.once("drain", drainListener)
       backpressureTimeout = setTimeout(() => close(true), BACKPRESSURE_TIMEOUT_MS)
+    }
+
+    const flushPendingWrites = () => {
+      while (!closed && !blocked && pendingWrites.length > 0) {
+        const payload = pendingWrites.shift()!
+        pendingWriteBytes -= Buffer.byteLength(payload)
+        if (!reply.raw.write(payload)) armBackpressure()
+      }
+    }
+
+    const write = (payload: string) => {
+      if (closed) return
+      if (blocked) {
+        pendingWrites.push(payload)
+        pendingWriteBytes += Buffer.byteLength(payload)
+        if (pendingWriteBytes > BACKPRESSURE_BUFFER_LIMIT_BYTES) close(true)
+        return
+      }
+      if (!reply.raw.write(payload)) armBackpressure()
     }
 
     const send = (event: WorkspaceEventPayload, cursor?: string) => {

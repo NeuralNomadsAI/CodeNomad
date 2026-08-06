@@ -63,15 +63,19 @@ test("SSE acknowledges its initial cursor after bootstrap statuses", async () =>
   await app.close()
 })
 
-test("SSE drains an accepted backpressured frame before disconnecting", async () => {
+test("SSE resumes queued events after a backpressured frame", async () => {
   const app = Fastify({ logger: false })
   const eventBus = new EventBus()
+  let closeClient: (() => void) | undefined
   app.addHook("onRequest", (_request, reply, done) => {
     const write = reply.raw.write.bind(reply.raw)
     reply.raw.write = ((chunk: unknown, ...args: unknown[]) => {
       const accepted = write(chunk, ...args as [])
       if (String(chunk).includes("workflow.run.updated")) {
-        setImmediate(() => reply.raw.emit("drain"))
+        setImmediate(() => {
+          reply.raw.emit("drain")
+          setImmediate(() => closeClient?.())
+        })
         return false
       }
       return accepted
@@ -80,12 +84,20 @@ test("SSE drains an accepted backpressured frame before disconnecting", async ()
   })
   registerEventRoutes(app, {
     eventBus,
-    registerClient: () => {
-      setImmediate(() => eventBus.publish({
-        type: "instance.event",
-        instanceId: "workspace",
-        event: { type: "workflow.run.updated", properties: { run: { snapshot: "large" } } },
-      } as never))
+    registerClient: (close) => {
+      closeClient = close
+      setImmediate(() => {
+        eventBus.publish({
+          type: "instance.event",
+          instanceId: "workspace",
+          event: { type: "workflow.run.updated", properties: { run: { snapshot: "large" } } },
+        } as never)
+        eventBus.publish({
+          type: "workspace.log",
+          workspaceId: "workspace",
+          entry: { sequence: 2 },
+        } as never)
+      })
       return () => undefined
     },
     logger: { debug: () => undefined, isLevelEnabled: () => false } as never,
@@ -98,6 +110,7 @@ test("SSE drains an accepted backpressured frame before disconnecting", async ()
   }).catch(() => undefined)
 
   assert.match(response?.payload ?? "", /workflow\.run\.updated/)
+  assert.match(response?.payload ?? "", /"sequence":2/)
   assert.equal(eventBus.listenerCount("instance.event"), 0)
   await app.close()
 })
@@ -106,6 +119,7 @@ test("SSE replays ordered events published behind a backpressured frame", async 
   const app = Fastify({ logger: false })
   const eventBus = new EventBus(undefined, 1_000, Infinity, "test")
   let requestCount = 0
+  let closeFirstClient: (() => void) | undefined
   app.addHook("onRequest", (_request, reply, done) => {
     requestCount += 1
     if (requestCount === 1) {
@@ -113,7 +127,10 @@ test("SSE replays ordered events published behind a backpressured frame", async 
       reply.raw.write = ((chunk: unknown, ...args: unknown[]) => {
         const accepted = write(chunk, ...args as [])
         if (String(chunk).includes('"sequence":1')) {
-          setImmediate(() => reply.raw.emit("drain"))
+          setImmediate(() => {
+            reply.raw.emit("drain")
+            setImmediate(() => closeFirstClient?.())
+          })
           return false
         }
         return accepted
@@ -125,6 +142,7 @@ test("SSE replays ordered events published behind a backpressured frame", async 
     eventBus,
     registerClient: (close) => {
       if (requestCount === 1) {
+        closeFirstClient = close
         setImmediate(() => {
           for (const sequence of [1, 2, 3]) {
             eventBus.publish({
