@@ -365,7 +365,7 @@ function invalidateSessionMessageLoad(instanceId: string, sessionId: string): vo
   clearMessageLoadingFlag(instanceId, sessionId)
 }
 
-function clearInstanceSessionRuntimeCache(instanceId: string): void {
+function invalidateInstanceSessionRuntimeLoads(instanceId: string): void {
   const sessionIds = new Set([
     ...(sessions().get(instanceId)?.keys() ?? []),
     ...(messagesLoaded().get(instanceId) ?? []),
@@ -375,6 +375,10 @@ function clearInstanceSessionRuntimeCache(instanceId: string): void {
     cancelSessionGenerationAdmissions(instanceId, sessionId)
     invalidateSessionMessageLoad(instanceId, sessionId)
   }
+}
+
+function clearInstanceSessionRuntimeCache(instanceId: string): void {
+  invalidateInstanceSessionRuntimeLoads(instanceId)
   messageStoreBus.getInstance(instanceId)?.clearInstance()
   const withoutInstance = <T,>(prev: Map<string, T>): Map<string, T> => {
     if (!prev.has(instanceId)) return prev
@@ -1250,6 +1254,7 @@ export {
   advanceMessageLoadEpoch,
   isCurrentMessageLoad,
   invalidateSessionMessageLoad,
+  invalidateInstanceSessionRuntimeLoads,
   clearInstanceSessionRuntimeCache,
   setSessionMessagesLoadError,
   sessionInfoByInstance,

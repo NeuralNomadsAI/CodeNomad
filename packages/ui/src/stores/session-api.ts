@@ -1107,7 +1107,10 @@ async function loadMessages(
     setSessionMessagesLoadError(instanceId, sessionId, null)
 
     if (apiMessages.length === 0) {
-      if (messageStoreBus.getOrCreate(instanceId).getSessionRevision(sessionId) !== messageRevision) {
+      const sessionForV2 = sessions().get(instanceId)?.get(sessionId) ?? {
+        id: sessionId, title: session?.title, parentId: session?.parentId ?? null, revert: session?.revert,
+      }
+      if (!seedSessionMessagesV2(instanceId, sessionForV2, [], undefined, messageRevision)) {
         retryAfterRevisionConflict = true
       } else {
         setMessagesLoaded((prev) => {

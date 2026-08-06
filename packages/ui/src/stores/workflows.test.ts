@@ -414,3 +414,21 @@ test("opening workflow sessions selects their app tab and run cards survive obje
   assert.match(list, /visibleRuns\(\)\.map\(\(\{ id \}\) => id\)/)
   assert.match(list, /props\.runs\.find\(\(\{ id \}\) => id === runId\)/)
 })
+
+test("workflow refreshes preserve mounted conversations and visible replay state", () => {
+  const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8")
+  assert.match(app, /<For each=\{appTabs\(\)\.map\(\(\{ id \}\) => id\)\}>/)
+  assert.match(app, /const tab = createMemo\(\(\) => appTabs\(\)\.find\(\(\{ id \}\) => id === tabId\)\)/)
+
+  const instances = readFileSync(new URL("./instances.ts", import.meta.url), "utf8")
+  const replay = instances.slice(instances.indexOf("async function rehydrateInstance"), instances.indexOf("async function disposeInstance"))
+  assert.match(replay, /invalidateInstanceSessionRuntimeLoads\(instanceId\)/)
+  assert.doesNotMatch(replay, /clearInstanceSessionRuntimeCache\(instanceId\)/)
+
+  const messages = readFileSync(new URL("../components/message-section.tsx", import.meta.url), "utf8")
+  assert.match(messages, /if \(loading && ids\.length === 0\)/)
+  assert.match(messages, /if \(loading\) return/)
+
+  const sessionApi = readFileSync(new URL("./session-api.ts", import.meta.url), "utf8")
+  assert.match(sessionApi, /seedSessionMessagesV2\(instanceId, sessionForV2, \[\], undefined, messageRevision\)/)
+})

@@ -39,7 +39,7 @@ import {
   reconcileSessionPendingState,
   activeSessionId,
   activeParentSessionId,
-  clearInstanceSessionRuntimeCache,
+  invalidateInstanceSessionRuntimeLoads,
   messagesLoaded,
   sessions,
   setSessionPendingPermission,
@@ -727,7 +727,7 @@ async function rehydrateInstance(instanceId: string, options?: { reason?: string
           .filter((sessionId): sessionId is string => Boolean(sessionId) && sessionId !== "info"))
       : new Set<string>()
     clearReloadableInstanceState(instanceId)
-    if (options?.replayReset) clearInstanceSessionRuntimeCache(instanceId)
+    if (options?.replayReset) invalidateInstanceSessionRuntimeLoads(instanceId)
 
     await hydrateInstanceData(instanceId, {
       force: true,

@@ -587,46 +587,57 @@ const App: Component = () => {
                 />
               </Show>
 
-              <For each={appTabs()}>
-                {(tab) => {
-                  const isVisible = () => activeAppTabId() === tab.id && !showFolderSelection()
-                  return tab.kind === "instance" ? (
-                    <div
-                      class="flex-1 min-h-0 overflow-hidden"
-                      style={{ display: isVisible() ? "flex" : "none" }}
-                      data-instance-id={tab.instance.id}
-                      data-tab-id={tab.id}
-                      data-tab-kind={tab.kind}
-                      data-tab-visible={isVisible() ? "true" : "false"}
-                    >
-                      <InstanceMetadataProvider instance={tab.instance}>
-                        <InstanceShell
-                          instance={tab.instance}
-                          isActiveInstance={isVisible()}
-                          escapeInDebounce={escapeInDebounce()}
-                          paletteCommands={paletteCommands}
-                          onCloseSession={(sessionId) => handleCloseSession(tab.instance.id, sessionId)}
-                          onNewSession={() => handleNewSession(tab.instance.id)}
-                          handleSidebarAgentChange={(sessionId, agent) => handleSidebarAgentChange(tab.instance.id, sessionId, agent)}
-                          handleSidebarModelChange={(sessionId, model) => handleSidebarModelChange(tab.instance.id, sessionId, model)}
-                          onExecuteCommand={executeCommand}
-                          tabBarOffset={isPhoneLayout() && mobileFullscreenMode() ? 0 : instanceTabBarHeight()}
-                          mobileFullscreenMode={isPhoneLayout() && mobileFullscreenMode()}
-                          onEnterMobileFullscreen={() => void enterMobileFullscreen()}
-                          onExitMobileFullscreen={() => void exitMobileFullscreen()}
-                        />
-                      </InstanceMetadataProvider>
-                    </div>
-                  ) : (
-                    <div
-                      class="flex-1 min-h-0 overflow-hidden"
-                      style={{ display: isVisible() ? "flex" : "none" }}
-                      data-tab-id={tab.id}
-                      data-tab-kind={tab.kind}
-                      data-tab-visible={isVisible() ? "true" : "false"}
-                    >
-                      <SideCarView tab={tab.sidecarTab} />
-                    </div>
+              <For each={appTabs().map(({ id }) => id)}>
+                {(tabId) => {
+                  const tab = createMemo(() => appTabs().find(({ id }) => id === tabId))
+                  const instanceTab = createMemo(() => { const current = tab(); return current?.kind === "instance" ? current : undefined })
+                  const sidecarTab = createMemo(() => { const current = tab(); return current?.kind === "sidecar" ? current : undefined })
+                  const isVisible = () => activeAppTabId() === tabId && !showFolderSelection()
+                  return (
+                    <Show when={instanceTab()} fallback={
+                      <Show when={sidecarTab()}>
+                        {(currentTab) => (
+                          <div
+                            class="flex-1 min-h-0 overflow-hidden"
+                            style={{ display: isVisible() ? "flex" : "none" }}
+                            data-tab-id={tabId}
+                            data-tab-kind={currentTab().kind}
+                            data-tab-visible={isVisible() ? "true" : "false"}
+                          >
+                            <SideCarView tab={currentTab().sidecarTab} />
+                          </div>
+                        )}
+                      </Show>
+                    }>
+                      {(currentTab) => (
+                        <div
+                          class="flex-1 min-h-0 overflow-hidden"
+                          style={{ display: isVisible() ? "flex" : "none" }}
+                          data-instance-id={currentTab().instance.id}
+                          data-tab-id={tabId}
+                          data-tab-kind={currentTab().kind}
+                          data-tab-visible={isVisible() ? "true" : "false"}
+                        >
+                          <InstanceMetadataProvider instance={currentTab().instance}>
+                            <InstanceShell
+                              instance={currentTab().instance}
+                              isActiveInstance={isVisible()}
+                              escapeInDebounce={escapeInDebounce()}
+                              paletteCommands={paletteCommands}
+                              onCloseSession={(sessionId) => handleCloseSession(currentTab().instance.id, sessionId)}
+                              onNewSession={() => handleNewSession(currentTab().instance.id)}
+                              handleSidebarAgentChange={(sessionId, agent) => handleSidebarAgentChange(currentTab().instance.id, sessionId, agent)}
+                              handleSidebarModelChange={(sessionId, model) => handleSidebarModelChange(currentTab().instance.id, sessionId, model)}
+                              onExecuteCommand={executeCommand}
+                              tabBarOffset={isPhoneLayout() && mobileFullscreenMode() ? 0 : instanceTabBarHeight()}
+                              mobileFullscreenMode={isPhoneLayout() && mobileFullscreenMode()}
+                              onEnterMobileFullscreen={() => void enterMobileFullscreen()}
+                              onExitMobileFullscreen={() => void exitMobileFullscreen()}
+                            />
+                          </InstanceMetadataProvider>
+                        </div>
+                      )}
+                    </Show>
                   )
                 }}
               </For>
