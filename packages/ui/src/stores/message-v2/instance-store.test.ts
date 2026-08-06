@@ -135,13 +135,14 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
       status: "sending",
       parts: [{ type: "text", text: "hello world" } as any],
       isEphemeral: true,
+      createdAt: 1000,
     })
     assert.deepEqual(store.getSessionMessageIds("session-1"), ["msg-temp-1"])
 
     // Snapshot contains the SAME send under the real server id (different id,
     // same text) while the temp is still present and un-replaced.
     store.hydrateMessages("session-1", [
-      { id: "msg-real-1", sessionId: "session-1", role: "user", status: "complete", parts: [{ type: "text", text: "hello world" } as any] },
+      { id: "msg-real-1", sessionId: "session-1", role: "user", status: "complete", createdAt: 2000, parts: [{ type: "text", text: "hello world" } as any] },
     ])
 
     const ids = store.getSessionMessageIds("session-1")
@@ -214,10 +215,11 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
       id: "msg-temp-img", sessionId: "session-1", role: "user", status: "sending",
       parts: [{ type: "file", filename: "photo.png", url: "https://x/photo.png", mime: "image/png" } as any],
       isEphemeral: true,
+      createdAt: 1000,
     })
 
     store.hydrateMessages("session-1", [
-      { id: "msg-real-img", sessionId: "session-1", role: "user", status: "complete",
+      { id: "msg-real-img", sessionId: "session-1", role: "user", status: "complete", createdAt: 2000,
         parts: [{ type: "file", filename: "photo.png", url: "https://x/photo.png", mime: "image/png" } as any] },
     ])
 
@@ -236,16 +238,16 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
 
     store.upsertMessage({
       id: "msg-temp-1", sessionId: "session-1", role: "user", status: "sending",
-      parts: [{ type: "text", text: "ok" } as any], isEphemeral: true,
+      parts: [{ type: "text", text: "ok" } as any], isEphemeral: true, createdAt: 1000,
     })
     store.upsertMessage({
       id: "msg-temp-2", sessionId: "session-1", role: "user", status: "sending",
-      parts: [{ type: "text", text: "ok" } as any], isEphemeral: true,
+      parts: [{ type: "text", text: "ok" } as any], isEphemeral: true, createdAt: 1100,
     })
 
     // Snapshot confirms only ONE of the two sends.
     store.hydrateMessages("session-1", [
-      { id: "msg-real-1", sessionId: "session-1", role: "user", status: "complete", parts: [{ type: "text", text: "ok" } as any] },
+      { id: "msg-real-1", sessionId: "session-1", role: "user", status: "complete", createdAt: 2000, parts: [{ type: "text", text: "ok" } as any] },
     ])
 
     const ids = store.getSessionMessageIds("session-1")
@@ -255,8 +257,8 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
 
     // When the second confirmation arrives, the remaining temp is dropped.
     store.hydrateMessages("session-1", [
-      { id: "msg-real-1", sessionId: "session-1", role: "user", status: "complete", parts: [{ type: "text", text: "ok" } as any] },
-      { id: "msg-real-2", sessionId: "session-1", role: "user", status: "complete", parts: [{ type: "text", text: "ok" } as any] },
+      { id: "msg-real-1", sessionId: "session-1", role: "user", status: "complete", createdAt: 2000, parts: [{ type: "text", text: "ok" } as any] },
+      { id: "msg-real-2", sessionId: "session-1", role: "user", status: "complete", createdAt: 2100, parts: [{ type: "text", text: "ok" } as any] },
     ])
     assert.deepEqual(store.getSessionMessageIds("session-1"), ["msg-real-1", "msg-real-2"])
   })
@@ -307,17 +309,64 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
       id: "msg-temp-pasted", sessionId: "session-1", role: "user", status: "sending",
       parts: [{ type: "text", text: "big pasted text" } as any],
       isEphemeral: true,
+      createdAt: 1000,
       clientPromptDisplayMetadata: displayMetadata as any,
     })
 
     store.hydrateMessages("session-1", [
-      { id: "msg-real-pasted", sessionId: "session-1", role: "user", status: "complete", parts: [{ type: "text", text: "big pasted text" } as any] },
+      { id: "msg-real-pasted", sessionId: "session-1", role: "user", status: "complete", createdAt: 2000, parts: [{ type: "text", text: "big pasted text" } as any] },
     ])
 
     const real = store.getMessage("msg-real-pasted")
     assert.ok(real, "real record exists")
     assert.deepEqual(real?.clientPromptDisplayMetadata, displayMetadata, "metadata transferred from the superseded temp")
     assert.equal(store.getMessage("msg-temp-pasted"), undefined, "temp dropped")
+  })
+
+  it("does not supersede a pending send with an OLDER unrelated server message of identical content", () => {
+    // Gatekeeper reproduction: a local pending "deploy" created at t=5000 was
+    // deleted by an unrelated server "deploy" created at t=1000. A server
+    // message can only confirm a send that happened BEFORE it was created.
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+
+    store.upsertMessage({
+      id: "msg-temp-deploy", sessionId: "session-1", role: "user", status: "sending",
+      parts: [{ type: "text", text: "deploy" } as any], isEphemeral: true, createdAt: 5000,
+    })
+
+    store.hydrateMessages("session-1", [
+      { id: "msg-real-old", sessionId: "session-1", role: "user", status: "complete", createdAt: 1000, parts: [{ type: "text", text: "deploy" } as any] },
+    ])
+
+    const ids = store.getSessionMessageIds("session-1")
+    assert.deepEqual(ids, ["msg-real-old", "msg-temp-deploy"], "older identical server message must not consume the newer pending send")
+    assert.equal(store.getMessage("msg-temp-deploy")?.status, "sending")
+  })
+
+  it("dedupes repeated snapshot ids so one record cannot consume multiple pending sends", () => {
+    // Gatekeeper reproduction: with two pending "ok" sends and ONE server
+    // record duplicated in the snapshot, both temps were deleted and the
+    // session ids became [real, real]. Duplicated input ids are collapsed
+    // before candidate construction.
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+
+    store.upsertMessage({
+      id: "msg-temp-1", sessionId: "session-1", role: "user", status: "sending",
+      parts: [{ type: "text", text: "ok" } as any], isEphemeral: true, createdAt: 1000,
+    })
+    store.upsertMessage({
+      id: "msg-temp-2", sessionId: "session-1", role: "user", status: "sending",
+      parts: [{ type: "text", text: "ok" } as any], isEphemeral: true, createdAt: 1100,
+    })
+
+    const duplicated = { id: "msg-real-1", sessionId: "session-1", role: "user" as const, status: "complete" as const, createdAt: 2000, parts: [{ type: "text", text: "ok" } as any] }
+    store.hydrateMessages("session-1", [duplicated, duplicated])
+
+    const ids = store.getSessionMessageIds("session-1")
+    assert.deepEqual(ids, ["msg-real-1", "msg-temp-2"], "one real record consumes exactly one pending send; ids never repeat")
+    assert.equal(store.getMessage("msg-temp-2")?.status, "sending")
   })
 
   it("does not bump messageInfoVersion when the hydrated info is unchanged", () => {

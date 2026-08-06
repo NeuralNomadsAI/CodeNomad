@@ -190,6 +190,12 @@ async function sendMessage(
   })
 
   const requestBody = {
+    // Send the optimistic message id so the server confirms THIS send under
+    // the same id. Hydration then reconciles by identity (same id in the
+    // snapshot) instead of content matching, and the SSE echo updates the
+    // existing record in place — no duplicate bubble, no ambiguity between
+    // identical texts.
+    messageID: messageId,
     parts: requestParts,
     ...(session.agent && { agent: session.agent }),
     ...(session.model.providerId &&

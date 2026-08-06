@@ -502,7 +502,19 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     ensureSessionEntry(sessionId)
 
-    const serverIds = inputs.map((item) => item.id)
+    // Defensive dedupe by message id: a snapshot should not contain the same
+    // id twice, but if it does, every duplicate would be enqueued below as an
+    // additional confirmation candidate (consuming extra pending sends) and
+    // the id would repeat in session.messageIds. First occurrence wins,
+    // preserving snapshot order.
+    const seenInputIds = new Set<string>()
+    const dedupedInputs = inputs.filter((input) => {
+      if (seenInputIds.has(input.id)) return false
+      seenInputIds.add(input.id)
+      return true
+    })
+
+    const serverIds = dedupedInputs.map((item) => item.id)
     const serverIdSet = new Set(serverIds)
 
     // Reconcile locally-optimistic "sending" messages against this snapshot.
@@ -528,28 +540,37 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     //      replaceMessageId. These are preserved.
     const previousMessageIds = state.sessions[sessionId]?.messageIds ?? []
     const previousMessageIdSet = new Set(previousMessageIds)
-    // Candidate confirmations: user messages the server returned under a NEW
-    // id (not already in messageIds), indexed by content signature as FIFO
-    // queues. Restricting to new ids is what makes a confirmation
-    // distinguishable from a pre-existing older message with identical
-    // content: a send's confirmation always arrives as a new server id, so an
-    // in-flight duplicate-text send ("ok" sent twice) is not falsely matched
-    // against the earlier, already-loaded "ok".
+    // Content matching is only a FALLBACK for sends the server could not
+    // confirm by identity (the client now sends its optimistic id as
+    // messageID, so a confirming snapshot entry normally has the SAME id and
+    // is reconciled in place above). Two guards keep the fallback safe:
+    //
+    //  - New ids only: a confirmation always arrives as a new server id, so
+    //    an in-flight duplicate-text send ("ok" sent twice) is not falsely
+    //    matched against the earlier, already-loaded "ok".
+    //
+    //  - Temporal correlation: a server message can only confirm a send that
+    //    happened BEFORE the server created it. Without this, an unrelated
+    //    older server message with identical content would wrongly supersede
+    //    a newer pending send (e.g. a server "deploy" created at t=1000
+    //    deleting a local pending "deploy" created at t=5000).
     //
     // Each candidate is CONSUMED on match (one-to-one, in send/snapshot
     // order): with two simultaneous "ok" sends and only one confirmation
     // back, the first temp is superseded and the second stays pending —
     // shared set membership would wrongly drop both.
-    const candidatesBySignature = new Map<string, string[]>()
-    inputs.forEach((input) => {
+    type ConfirmationCandidate = { id: string; createdAt: number | undefined }
+    const candidatesBySignature = new Map<string, ConfirmationCandidate[]>()
+    dedupedInputs.forEach((input) => {
       if (input.role !== "user" || previousMessageIdSet.has(input.id)) return
       const signature = inputContentSignature(input.parts)
       if (signature === null) return
+      const candidate: ConfirmationCandidate = { id: input.id, createdAt: input.createdAt }
       const queue = candidatesBySignature.get(signature)
       if (queue) {
-        queue.push(input.id)
+        queue.push(candidate)
       } else {
-        candidatesBySignature.set(signature, [input.id])
+        candidatesBySignature.set(signature, [candidate])
       }
     })
     const pendingOptimisticIds: string[] = []
@@ -564,10 +585,15 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       if (!record || !record.isEphemeral || record.status !== "sending") continue
       const signature = recordContentSignature(record.partIds, record.parts)
       const queue = signature !== null ? candidatesBySignature.get(signature) : undefined
-      if (queue && queue.length > 0) {
-        const serverId = queue.shift() as string
+      const candidate = queue?.[0]
+      if (
+        candidate &&
+        typeof candidate.createdAt === "number" &&
+        candidate.createdAt >= record.createdAt
+      ) {
+        queue?.shift()
         supersededOptimisticIds.push(id) // case (A)
-        supersededByServerId.set(id, serverId)
+        supersededByServerId.set(id, candidate.id)
       } else {
         pendingOptimisticIds.push(id) // case (B)
       }
@@ -583,7 +609,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     const normalizedRecords: Record<string, MessageRecord> = {}
     const now = Date.now()
 
-    inputs.forEach((input) => {
+    dedupedInputs.forEach((input) => {
       const normalizedParts = normalizeParts(input.id, input.parts)
       const previous = state.messages[input.id]
       const partsChanged = normalizedParts

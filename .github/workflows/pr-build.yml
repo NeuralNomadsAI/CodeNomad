@@ -120,7 +120,9 @@ jobs:
           packages/ui/src/stores/client-state-codec.test.ts
           packages/ui/src/stores/client-state.test.ts
           packages/ui/src/stores/instances-restore-cancellation.test.ts
+          packages/ui/src/stores/message-v2/instance-store.test.ts
           packages/ui/src/stores/message-v2/message-hydration-authority.test.ts
+          packages/ui/src/stores/message-v2/message-status.test.ts
           packages/ui/src/stores/session-generation-recovery.test.ts
           packages/ui/src/stores/session-metadata.test.ts
           packages/ui/src/stores/session-pagination.test.ts
