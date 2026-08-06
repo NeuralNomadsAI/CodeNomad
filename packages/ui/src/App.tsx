@@ -55,6 +55,7 @@ import {
   updateSessionModel,
 } from "./stores/sessions"
 import { useForegroundRefresh } from "./lib/hooks/use-foreground-refresh"
+import { messagesLoaded, invalidateSessionMessageLoad } from "./stores/session-state"
 
 import { hasWakeLockEligibleWork, getSessionStatus } from "./stores/session-status"
 import { openSettings } from "./stores/settings-screen"
@@ -261,19 +262,48 @@ const App: Component = () => {
 
   useForegroundRefresh({
     onRefresh: async () => {
-      const instance = activeInstance()
-      const sessionId = activeSessionIdForInstance()
-      if (!instance || !sessionId || sessionId === "info") return
-      const statusBefore = getSessionStatus(instance.id, sessionId)
-      log.info("Foreground refresh: fetching session state after SSE reconnect", {
-        instanceId: instance.id,
-        sessionId,
-        statusBefore,
-      })
-      await fetchSessions(instance.id)
-      await loadMessages(instance.id, sessionId, { force: true })
-      const statusAfter = getSessionStatus(instance.id, sessionId)
-      log.info("Foreground refresh: done", { statusBefore, statusAfter })
+      // The SSE transport is global: a reconnect can mean missed events for
+      // EVERY loaded workspace/session, not just the one on screen. So we:
+      //  1. Re-fetch the session list for every instance (status/titles).
+      //  2. Force-reload whatever session is active AFTER the fetch settles
+      //     (so a session switch during the await still lands on the right
+      //     one), since it's the one the user is looking at.
+      //  3. Invalidate the loaded flag for every other loaded session so it
+      //     re-fetches lazily on next activation instead of returning stale
+      //     content (a non-forced load short-circuits once "loaded").
+      const instanceIds = Array.from(instances().keys())
+      await Promise.all(
+        instanceIds.map((id) =>
+          fetchSessions(id).catch((error) =>
+            log.error("Foreground refresh: fetchSessions failed", { instanceId: id, error }),
+          ),
+        ),
+      )
+
+      const activeInst = activeInstance()
+      const activeSession = activeSessionIdForInstance()
+      const hasActive = Boolean(activeInst && activeSession && activeSession !== "info")
+
+      // Invalidate every loaded session except the active one (force-reloaded
+      // below). Snapshot the map first; invalidate mutates it via setState.
+      for (const [instId, sessionSet] of messagesLoaded().entries()) {
+        for (const sId of sessionSet) {
+          if (hasActive && instId === activeInst!.id && sId === activeSession) continue
+          invalidateSessionMessageLoad(instId, sId)
+        }
+      }
+
+      if (hasActive) {
+        const statusBefore = getSessionStatus(activeInst!.id, activeSession!)
+        await loadMessages(activeInst!.id, activeSession!, { force: true })
+        const statusAfter = getSessionStatus(activeInst!.id, activeSession!)
+        log.info("Foreground refresh: active session reloaded", {
+          instanceId: activeInst!.id,
+          sessionId: activeSession,
+          statusBefore,
+          statusAfter,
+        })
+      }
     },
   })
 

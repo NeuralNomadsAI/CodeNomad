@@ -458,6 +458,37 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return false
   }
 
+  // Content signature (text + file parts, in order) of a message. Used only to
+  // match an optimistic "sending" bubble against its server-confirmed
+  // counterpart during hydration: the client temp id and the real server id
+  // differ, so content is the only stable link. Covers text-only, attachment-
+  // only, and mixed sends. Non-content parts (tool/reasoning/etc.) are ignored.
+  function partContentToken(part: ClientPart | undefined): string | null {
+    if (!part) return null
+    if (part.type === "text") return `T:${(part as { text?: string }).text ?? ""}`
+    if (part.type === "file") {
+      const p = part as { filename?: string; url?: string; mime?: string }
+      return `F:${p.filename ?? ""}:${p.url ?? ""}:${p.mime ?? ""}`
+    }
+    return null
+  }
+
+  function recordContentSignature(partIds: string[], parts: MessageRecord["parts"]): string {
+    return partIds
+      .map((partId) => partContentToken(parts[partId]?.data))
+      .filter((token): token is string => token !== null)
+      .join("\n")
+      .trim()
+  }
+
+  function inputContentSignature(parts: ClientPart[] | undefined): string {
+    return (parts ?? [])
+      .map((part) => partContentToken(part))
+      .filter((token): token is string => token !== null)
+      .join("\n")
+      .trim()
+  }
+
   function hydrateMessages(sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>) {
     if (!Array.isArray(inputs) || inputs.length === 0) return
 
@@ -466,25 +497,54 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     const serverIds = inputs.map((item) => item.id)
     const serverIdSet = new Set(serverIds)
 
-    // Preserve locally-optimistic "sending" messages that the server hasn't
-    // echoed back yet in this snapshot (e.g. a force reload -- triggered by
-    // an SSE reconnect -- raced a message the user just sent). Without this,
-    // a wholesale replace of messageIds drops the pending bubble from the
-    // session's visible list, but its record stays orphaned in state.messages
-    // (nothing deletes it). If the real "message.updated"/"message.part.updated"
-    // SSE event for it then arrives, findPendingSyntheticMessageId can no
-    // longer find the pending id in the (already-overwritten) messageIds list
-    // to swap it for the real one via replaceMessageId, so the handler falls
-    // through to creating a brand-new record instead -- and once the next
-    // hydrate DOES include the server-confirmed message, both the orphaned
-    // optimistic bubble and the new server-confirmed one can end up visible,
-    // i.e. the message appears duplicated.
+    // Reconcile locally-optimistic "sending" messages against this snapshot.
+    //
+    // When the user sends a message the client creates an optimistic record
+    // with a client-only id (isEphemeral + status "sending"). That id is NOT
+    // sent to the server, so the server confirms the send under a DIFFERENT,
+    // real id. A force reload (triggered by an SSE reconnect) replaces
+    // session.messageIds wholesale with the snapshot's ids, which drops the
+    // optimistic id from the visible list while leaving its record orphaned
+    // in state.messages. Two cases must be handled differently:
+    //
+    //  (A) The snapshot ALREADY contains the server-confirmed counterpart
+    //      (a user message with the same content). Preserving the temp id here
+    //      would leave BOTH visible: the SSE message.updated handler finds
+    //      the real record via getMessage() and never runs the temp-id
+    //      replacement, so the temp bubble is never removed -> visible
+    //      duplicate ("real, temp"). These must be dropped and cleaned up.
+    //
+    //  (B) The snapshot does NOT yet contain the send (server hasn't
+    //      registered it). The bubble must stay visible AND stay in
+    //      messageIds so the eventual SSE echo can swap it in place via
+    //      replaceMessageId. These are preserved.
     const previousMessageIds = state.sessions[sessionId]?.messageIds ?? []
-    const pendingOptimisticIds = previousMessageIds.filter((id) => {
-      if (serverIdSet.has(id)) return false
+    const previousMessageIdSet = new Set(previousMessageIds)
+    // Content signatures of user messages the server returned this snapshot
+    // under a NEW id (not already in messageIds). Restricting to new ids is
+    // what makes a confirmation distinguishable from a pre-existing older
+    // message with identical content: a send's confirmation always arrives as
+    // a new server id, so an in-flight duplicate-text send ("ok" sent twice)
+    // is not falsely matched against the earlier, already-loaded "ok".
+    const serverUserContentSignatures = new Set(
+      inputs
+        .filter((input) => input.role === "user" && !previousMessageIdSet.has(input.id))
+        .map((input) => inputContentSignature(input.parts))
+        .filter((signature) => signature.length > 0),
+    )
+    const pendingOptimisticIds: string[] = []
+    const supersededOptimisticIds: string[] = []
+    for (const id of previousMessageIds) {
+      if (serverIdSet.has(id)) continue
       const record = state.messages[id]
-      return Boolean(record && record.isEphemeral && record.status === "sending")
-    })
+      if (!record || !record.isEphemeral || record.status !== "sending") continue
+      const signature = recordContentSignature(record.partIds, record.parts)
+      if (signature.length > 0 && serverUserContentSignatures.has(signature)) {
+        supersededOptimisticIds.push(id) // case (A)
+      } else {
+        pendingOptimisticIds.push(id) // case (B)
+      }
+    }
 
     const incomingIds = pendingOptimisticIds.length > 0 ? [...serverIds, ...pendingOptimisticIds] : serverIds
 
@@ -530,12 +590,33 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       nextMessages[id] = record
     })
 
+    // Case (A) above: physically remove optimistic bubbles the server already
+    // confirmed under a real id, so no orphaned duplicate lingers in the store.
+    // Non-store side effects (caches/overrides) are cleared here; the actual
+    // store-key deletion happens in the batch below via produce, because
+    // setState("messages", () => obj) MERGES and would not drop absent keys.
+    if (supersededOptimisticIds.length > 0) {
+      supersededOptimisticIds.forEach((id) => {
+        messageInfoCache.delete(id)
+        clearPromptDisplayOverride(instanceId, sessionId, id)
+      })
+      clearRecordDisplayCacheForMessages(instanceId, supersededOptimisticIds)
+    }
+
     if (infoList) {
       for (const info of infoList) {
         const messageId = info.id as string
+        // Only bump the info version -- which participates in message-block's
+        // render-cache signature -- when the info content actually changed.
+        // An identical snapshot (the common case on a reconnect force-reload)
+        // must not invalidate those caches.
+        const previousInfo = messageInfoCache.get(messageId)
+        const infoChanged = !previousInfo || JSON.stringify(previousInfo) !== JSON.stringify(info)
         messageInfoCache.set(messageId, info)
-        const currentVersion = nextMessageInfoVersion[messageId] ?? 0
-        nextMessageInfoVersion[messageId] = currentVersion + 1
+        if (infoChanged) {
+          const currentVersion = nextMessageInfoVersion[messageId] ?? 0
+          nextMessageInfoVersion[messageId] = currentVersion + 1
+        }
       }
     }
 
@@ -544,6 +625,27 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       setState("messageInfoVersion", () => nextMessageInfoVersion)
       setState("pendingParts", () => nextPendingParts)
       setState("permissions", "byMessage", () => nextPermissionsByMessage)
+
+      // setState with an object merges, so keys removed above (superseded
+      // optimistic bubbles) must be deleted explicitly to actually drop them.
+      if (supersededOptimisticIds.length > 0) {
+        setState(
+          "messages",
+          produce((draft) => {
+            supersededOptimisticIds.forEach((id) => {
+              delete draft[id]
+            })
+          }),
+        )
+        setState(
+          "messageInfoVersion",
+          produce((draft) => {
+            supersededOptimisticIds.forEach((id) => {
+              delete draft[id]
+            })
+          }),
+        )
+      }
 
       if (usageState) {
         setState("usage", sessionId, usageState)

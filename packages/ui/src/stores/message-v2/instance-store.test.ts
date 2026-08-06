@@ -117,4 +117,143 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
     assert.deepEqual(ids, ["msg-1"])
     assert.equal(store.getMessage("msg-1")?.status, "complete")
   })
+
+  it("drops the optimistic bubble when the snapshot confirms the send under a DIFFERENT server id (no duplicate)", () => {
+    // Reviewer's blocking case: the optimistic id is client-only and is never
+    // sent to the server, so the normal confirmation arrives under a different
+    // real id. If the force-reload snapshot already contains that real id,
+    // preserving the temp id would leave BOTH visible ("real, temp") because
+    // the SSE message.updated handler finds the real record and skips the
+    // temp-id replacement. The temp must be matched by content and dropped.
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+
+    store.upsertMessage({
+      id: "msg-temp-1",
+      sessionId: "session-1",
+      role: "user",
+      status: "sending",
+      parts: [{ type: "text", text: "hello world" } as any],
+      isEphemeral: true,
+    })
+    assert.deepEqual(store.getSessionMessageIds("session-1"), ["msg-temp-1"])
+
+    // Snapshot contains the SAME send under the real server id (different id,
+    // same text) while the temp is still present and un-replaced.
+    store.hydrateMessages("session-1", [
+      { id: "msg-real-1", sessionId: "session-1", role: "user", status: "complete", parts: [{ type: "text", text: "hello world" } as any] },
+    ])
+
+    const ids = store.getSessionMessageIds("session-1")
+    assert.deepEqual(ids, ["msg-real-1"], "only the real server id should remain")
+    assert.ok(!ids.includes("msg-temp-1"), "the optimistic temp id must be dropped, not duplicated")
+    assert.equal(store.getMessage("msg-temp-1"), undefined, "orphaned optimistic record must be cleaned up")
+    assert.equal(new Set(ids).size, ids.length, "no duplicate ids")
+  })
+
+  it("does not preserve a different-text pending send as a false match", () => {
+    // Guard the content match: an unrelated optimistic send (different text)
+    // must still be preserved even if the snapshot brings other user messages.
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+
+    store.upsertMessage({
+      id: "msg-temp-1",
+      sessionId: "session-1",
+      role: "user",
+      status: "sending",
+      parts: [{ type: "text", text: "my in-flight message" } as any],
+      isEphemeral: true,
+    })
+
+    store.hydrateMessages("session-1", [
+      { id: "msg-real-1", sessionId: "session-1", role: "user", status: "complete", parts: [{ type: "text", text: "a completely different earlier message" } as any] },
+    ])
+
+    const ids = store.getSessionMessageIds("session-1")
+    assert.ok(ids.includes("msg-temp-1"), "unrelated in-flight send must stay visible")
+    assert.ok(ids.includes("msg-real-1"))
+    assert.equal(store.getMessage("msg-temp-1")?.status, "sending")
+  })
+
+  it("does not falsely drop a second identical-text send against an already-loaded earlier one", () => {
+    // Duplicate-text guard: only a NEW server id counts as the confirmation.
+    // An earlier "ok" already in messageIds must not supersede a second,
+    // still-in-flight "ok".
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+
+    // Earlier confirmed "ok" already loaded under its real id.
+    store.hydrateMessages("session-1", [
+      { id: "msg-ok-1", sessionId: "session-1", role: "user", status: "complete", parts: [{ type: "text", text: "ok" } as any] },
+    ])
+    // Second "ok" now in flight (optimistic).
+    store.upsertMessage({
+      id: "msg-temp-ok", sessionId: "session-1", role: "user", status: "sending",
+      parts: [{ type: "text", text: "ok" } as any], isEphemeral: true,
+    })
+
+    // A reconnect snapshot that still only has the FIRST "ok" (second not yet
+    // registered by the server). The temp must be preserved, not dropped.
+    store.hydrateMessages("session-1", [
+      { id: "msg-ok-1", sessionId: "session-1", role: "user", status: "complete", parts: [{ type: "text", text: "ok" } as any] },
+    ])
+
+    const ids = store.getSessionMessageIds("session-1")
+    assert.ok(ids.includes("msg-temp-ok"), "second in-flight identical-text send must survive")
+    assert.equal(store.getMessage("msg-temp-ok")?.status, "sending")
+  })
+
+  it("matches an attachment-only optimistic send by file signature (no text)", () => {
+    // The content signature covers file parts, so an image/attachment send
+    // with no caption is still de-duplicated on confirmation.
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+
+    store.upsertMessage({
+      id: "msg-temp-img", sessionId: "session-1", role: "user", status: "sending",
+      parts: [{ type: "file", filename: "photo.png", url: "https://x/photo.png", mime: "image/png" } as any],
+      isEphemeral: true,
+    })
+
+    store.hydrateMessages("session-1", [
+      { id: "msg-real-img", sessionId: "session-1", role: "user", status: "complete",
+        parts: [{ type: "file", filename: "photo.png", url: "https://x/photo.png", mime: "image/png" } as any] },
+    ])
+
+    const ids = store.getSessionMessageIds("session-1")
+    assert.deepEqual(ids, ["msg-real-img"], "attachment-only send must de-dupe on confirmation")
+    assert.equal(store.getMessage("msg-temp-img"), undefined)
+  })
+
+  it("does not bump messageInfoVersion when the hydrated info is unchanged", () => {
+    // Issue 4: an identical snapshot (common on a reconnect force-reload) must
+    // not invalidate message-block render caches via messageInfoVersion.
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+
+    const info = { id: "msg-1", sessionID: "session-1", role: "user", time: { created: 1000 } } as any
+    store.hydrateMessages(
+      "session-1",
+      [{ id: "msg-1", sessionId: "session-1", role: "user", status: "complete", parts: [{ type: "text", text: "hi" } as any] }],
+      [info],
+    )
+    const versionAfterFirst = store.state.messageInfoVersion["msg-1"]
+
+    // Re-hydrate with an identical info object.
+    store.hydrateMessages(
+      "session-1",
+      [{ id: "msg-1", sessionId: "session-1", role: "user", status: "complete", parts: [{ type: "text", text: "hi" } as any] }],
+      [{ id: "msg-1", sessionID: "session-1", role: "user", time: { created: 1000 } } as any],
+    )
+    assert.equal(store.state.messageInfoVersion["msg-1"], versionAfterFirst, "identical info must not bump the version")
+
+    // A changed info DOES bump the version.
+    store.hydrateMessages(
+      "session-1",
+      [{ id: "msg-1", sessionId: "session-1", role: "user", status: "complete", parts: [{ type: "text", text: "hi" } as any] }],
+      [{ id: "msg-1", sessionID: "session-1", role: "user", time: { created: 1000, end: 2000 } } as any],
+    )
+    assert.equal(store.state.messageInfoVersion["msg-1"], (versionAfterFirst ?? 0) + 1, "changed info must bump the version")
+  })
 })

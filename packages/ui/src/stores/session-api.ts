@@ -1128,13 +1128,24 @@ async function loadMessages(
 
         const parts: any[] = (apiMessage.parts || []).map((part: any) => normalizeMessagePart(part))
 
+        // Derive the real status instead of forcing "complete": a forced
+        // refresh (e.g. after an SSE reconnect) can load an assistant message
+        // that is still generating (no end time). Marking it "complete" would
+        // demote an in-flight message and disable streaming-specific UI until
+        // the next qualifying SSE update arrives. User messages are always
+        // complete; only assistant messages without an end time stream.
+        const hasError = Boolean(info.error)
+        const hasEnded = typeof info.time?.end === "number" && info.time.end > 0
+        const status: Message["status"] =
+          role === "user" ? "complete" : hasError ? "error" : hasEnded ? "complete" : "streaming"
+
         const message: Message = {
           id: messageId,
           sessionId,
           type: role === "user" ? "user" : "assistant",
           parts,
           timestamp: info.time?.created || Date.now(),
-          status: "complete" as const,
+          status,
           version: 0,
         }
 
