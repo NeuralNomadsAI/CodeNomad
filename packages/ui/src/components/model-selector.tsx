@@ -84,7 +84,6 @@ export default function ModelSelector(props: ModelSelectorProps) {
     isModelVisible(
       getProviderModelVisibilityPreference(model.providerId),
       model.id,
-      model.providerId === props.currentModel.providerId ? props.currentModel.modelId : undefined,
     ),
   ))
 

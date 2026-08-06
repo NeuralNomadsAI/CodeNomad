@@ -665,7 +665,7 @@ async function setProviderModelVisibility(providerId: string, preference: ModelV
     .then(() => patchConfigOwner("ui", {
       settings: {
         modelVisibility: {
-          [providerId]: normalized.mode === "all" ? { mode: "all", modelIds: null } : normalized,
+          [providerId]: normalized,
         },
       },
     }))

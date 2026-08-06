@@ -12,7 +12,6 @@ import { removeMessagePartV2, removeMessageV2 } from "./message-v2/bridge"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
 import { clearConversationPlaybackForSession } from "./conversation-speech"
-import { tGlobal } from "../lib/i18n"
 
 const log = getLogger("actions")
 
@@ -98,9 +97,6 @@ async function sendMessage(
   const session = instanceSessions?.get(sessionId)
   if (!session) {
     throw new Error("Session not found")
-  }
-  if (!session.model.providerId || !session.model.modelId) {
-    throw new Error(tGlobal("modelSelector.error.noVisibleModels"))
   }
 
   const messageId = createId("msg")
@@ -257,9 +253,6 @@ async function executeCustomCommand(
   const session = sessions().get(instanceId)?.get(sessionId)
   if (!session) {
     throw new Error("Session not found")
-  }
-  if (!session.model.providerId || !session.model.modelId) {
-    throw new Error(tGlobal("modelSelector.error.noVisibleModels"))
   }
 
   const body: {
