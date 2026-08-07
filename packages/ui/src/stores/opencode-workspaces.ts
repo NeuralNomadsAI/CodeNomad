@@ -33,6 +33,7 @@ type OpenCodeWorkspace = {
 }
 
 const workspaceIdByWorktreeSlug = new Map<string, Map<string, string>>()
+const workspaceIdBySession = new Map<string, Map<string, string>>()
 const workspaceSyncs = new Map<string, Promise<void>>()
 
 async function getInstance(instanceId: string) {
@@ -46,7 +47,20 @@ function getCachedOpenCodeWorkspaceIdForWorktree(instanceId: string, slug: strin
 }
 
 function getCachedOpenCodeWorkspaceIdForSession(instanceId: string, sessionId: string): string | null {
-  return getCachedOpenCodeWorkspaceIdForWorktree(instanceId, getWorktreeSlugForSession(instanceId, sessionId))
+  return workspaceIdBySession.get(instanceId)?.get(sessionId)
+    ?? getCachedOpenCodeWorkspaceIdForWorktree(instanceId, getWorktreeSlugForSession(instanceId, sessionId))
+}
+
+function rememberOpenCodeWorkspaceIdForSession(instanceId: string, sessionId: string, workspaceId: string): void {
+  const sessions = workspaceIdBySession.get(instanceId) ?? new Map<string, string>()
+  sessions.set(sessionId, workspaceId)
+  workspaceIdBySession.set(instanceId, sessions)
+}
+
+function forgetOpenCodeWorkspaceIdForSession(instanceId: string, sessionId: string): void {
+  const sessions = workspaceIdBySession.get(instanceId)
+  sessions?.delete(sessionId)
+  if (sessions?.size === 0) workspaceIdBySession.delete(instanceId)
 }
 
 async function syncOpenCodeWorkspaces(instanceId: string): Promise<void> {
@@ -103,6 +117,8 @@ async function getOpenCodeWorkspaceIdForWorktree(instanceId: string, slug: strin
 }
 
 async function getOpenCodeWorkspaceIdForSession(instanceId: string, sessionId: string): Promise<string | null> {
+  const cached = getCachedOpenCodeWorkspaceIdForSession(instanceId, sessionId)
+  if (cached) return cached
   const slug = getWorktreeSlugForSession(instanceId, sessionId)
   return getOpenCodeWorkspaceIdForWorktree(instanceId, slug)
 }
@@ -110,6 +126,7 @@ async function getOpenCodeWorkspaceIdForSession(instanceId: string, sessionId: s
 function clearOpenCodeWorkspaceCache(instanceId: string): void {
   workspaceSyncs.delete(instanceId)
   workspaceIdByWorktreeSlug.delete(instanceId)
+  workspaceIdBySession.delete(instanceId)
 }
 
 async function removeOpenCodeWorkspaceForWorktree(instanceId: string, slug: string): Promise<void> {
@@ -132,6 +149,8 @@ export {
   getCachedOpenCodeWorkspaceIdForWorktree,
   getOpenCodeWorkspaceIdForSession,
   getOpenCodeWorkspaceIdForWorktree,
+  forgetOpenCodeWorkspaceIdForSession,
+  rememberOpenCodeWorkspaceIdForSession,
   reloadOpenCodeWorkspaces,
   removeOpenCodeWorkspaceForWorktree,
   syncOpenCodeWorkspaces,

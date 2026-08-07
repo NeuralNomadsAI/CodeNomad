@@ -40,6 +40,7 @@ class ServerEvents {
     this.clearReconnectTimer()
 
     if (this.connection) {
+      this.emitTransportStatus("disconnected")
       this.connection.disconnect()
       this.connection = null
     }
@@ -48,7 +49,9 @@ class ServerEvents {
 
     try {
       const connection = await connectWorkspaceEvents({
-        onBatch: (events) => this.dispatchBatch(events),
+        onBatch: (events) => {
+          if (generation === this.connectGeneration) this.dispatchBatch(events)
+        },
         onError: () => {
           if (generation !== this.connectGeneration) {
             return
@@ -70,6 +73,9 @@ class ServerEvents {
           this.openHandlers.forEach((handler) => handler())
         },
         onPing: (payload) => {
+          if (generation !== this.connectGeneration) {
+            return
+          }
           const identity = getClientIdentity()
           const pongPayload = { ...identity, pingTs: payload.ts }
 
@@ -110,6 +116,8 @@ class ServerEvents {
     if (this.retryTimer) {
       return
     }
+
+    this.connectGeneration += 1
 
     if (this.connection) {
       this.connection.disconnect()
@@ -181,6 +189,7 @@ class ServerEvents {
     this.clearReconnectTimer()
 
     if (this.connection) {
+      this.emitTransportStatus("disconnected")
       this.connection.disconnect()
       this.connection = null
     }
