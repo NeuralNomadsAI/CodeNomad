@@ -40,4 +40,19 @@ describe("SettingsService config persistence", () => {
     assert.equal(writes, 1)
     assert.deepEqual(result, { logLevel: "INFO", sidecars: [{ id: "one" }] })
   })
+
+  it("does not report a persisted patch as failed when an event listener throws", () => {
+    let warnings = 0
+    const service = serviceWithStore({
+      getOwner: () => ({}),
+      mergePatchOwner: (_owner: string, patch: unknown) => patch,
+    })
+    Object.assign(service as any, {
+      eventBus: { publish: () => { throw new Error("listener failed") } },
+      logger: { warn: () => { warnings += 1 } },
+    })
+
+    assert.deepEqual(service.mergePatchOwner("config", "ui", { theme: "dark" }), { theme: "dark" })
+    assert.equal(warnings, 1)
+  })
 })

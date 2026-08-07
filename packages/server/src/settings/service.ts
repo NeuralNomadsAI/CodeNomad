@@ -141,6 +141,10 @@ export class SettingsService {
       owner,
       value: kind === "config" ? sanitizeConfigOwner(owner, nextValue) : nextValue,
     } as any
-    this.eventBus.publish(payload)
+    try {
+      this.eventBus.publish(payload)
+    } catch (error) {
+      this.logger.warn({ err: error, kind, owner }, "Failed to publish settings change")
+    }
   }
 }

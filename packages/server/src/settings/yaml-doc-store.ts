@@ -1,5 +1,6 @@
 import fs from "fs"
 import path from "path"
+import { randomUUID } from "node:crypto"
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml"
 import type { Logger } from "../logger"
 import { applyMergePatch, isPlainObject } from "./merge-patch"
@@ -108,13 +109,24 @@ export class YamlDocStore {
   }
 
   private persist() {
+    let tempPath: string | undefined
     try {
       fs.mkdirSync(path.dirname(this.filePath), { recursive: true })
       const yaml = stringifyYaml(this.cache as any)
-      fs.writeFileSync(this.filePath, ensureTrailingNewline(yaml), "utf-8")
+      tempPath = `${this.filePath}.${process.pid}.${randomUUID()}.tmp`
+      fs.writeFileSync(tempPath, ensureTrailingNewline(yaml), "utf-8")
+      fs.renameSync(tempPath, this.filePath)
     } catch (error) {
       this.logger.warn({ err: error, filePath: this.filePath }, "Failed to persist YAML doc")
       if (this.options.throwOnPersistError) throw error
+    } finally {
+      if (tempPath) {
+        try {
+          fs.rmSync(tempPath, { force: true })
+        } catch (error) {
+          this.logger.warn({ err: error, tempPath }, "Failed to remove temporary YAML doc")
+        }
+      }
     }
   }
 }
