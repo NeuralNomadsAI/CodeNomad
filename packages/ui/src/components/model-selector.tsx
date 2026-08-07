@@ -190,6 +190,17 @@ export default function ModelSelector(props: ModelSelectorProps) {
     ]),
   )
 
+  const comboboxValue = createMemo(() => {
+    const current = currentModelValue()
+    if (!current) return undefined
+    const option = pickerOptions().find((item) => item.key === current.key)
+    return option && !isProviderHeaderOption(option) ? option : undefined
+  })
+
+  const currentModelLabel = createMemo(() =>
+    t("modelSelector.trigger.primary", { model: currentModelValue()?.name ?? t("modelSelector.none") }),
+  )
+
   const handleChange = async (value: PickerOption | null) => {
     if (!value || isProviderHeaderOption(value) || value.unavailable) return
     await props.onModelChange({ providerId: value.providerId, modelId: value.id })
@@ -289,7 +300,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
     <div class="sidebar-selector">
       <Combobox<PickerOption>
         open={isOpen()}
-        value={currentModelValue()}
+        value={comboboxValue()}
         onChange={handleChange}
         onOpenChange={(next) => {
           if (!next && suppressNextClose) return
@@ -379,14 +390,15 @@ export default function ModelSelector(props: ModelSelectorProps) {
         }}
       >
         <Combobox.Control class="relative w-full" data-model-selector-control>
-          <Combobox.Input class="sr-only" data-model-selector />
+          <Combobox.Input class="sr-only" data-model-selector aria-label={currentModelLabel()} />
           <Combobox.Trigger
             ref={triggerRef}
             class="selector-trigger"
+            aria-label={currentModelLabel()}
           >
             <div class="selector-trigger-label selector-trigger-label--stacked flex-1 min-w-0">
               <span class="selector-trigger-primary selector-trigger-primary--align-left">
-                {t("modelSelector.trigger.primary", { model: currentModelValue()?.name ?? t("modelSelector.none") })}
+                {currentModelLabel()}
               </span>
           {currentModelValue() && (
                 <span class="selector-trigger-secondary" dir="ltr">

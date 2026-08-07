@@ -363,17 +363,6 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     await loadProviderData(authClient).catch(() => undefined)
   }
 
-  async function refreshProviderData() {
-    const authClient = client()
-    const instanceId = props.instanceId
-    if (!authClient) return
-    await (authClient as any).global.dispose().catch(() => undefined)
-    if (client() !== authClient || props.instanceId !== instanceId) return
-    await fetchProviders(instanceId).catch(() => undefined)
-    if (client() !== authClient || props.instanceId !== instanceId) return
-    await loadProviderData(authClient)
-  }
-
   function closeModelManager() {
     setManagedProviderId(null)
     queueMicrotask(() => {
@@ -615,7 +604,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                 <button type="button" class="selector-button selector-button-primary" disabled={!selectedProviderOption()} onClick={() => resetFlow(selectedProviderOption()?.id ?? null)}>
                   {t("settings.providers.actions.connect")}
                 </button>
-                <button type="button" class="settings-pill-button" disabled={loading()} onClick={() => void refreshProviderData()}>
+                <button type="button" class="settings-pill-button" disabled={loading()} onClick={() => client() && void loadProviderData(client()!)}>
                   <RefreshCw class={loading() ? "providers-spin-icon" : "providers-button-icon"} />
                   {t("settings.providers.refresh")}
                 </button>

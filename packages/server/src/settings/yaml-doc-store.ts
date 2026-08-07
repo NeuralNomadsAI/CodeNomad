@@ -58,9 +58,17 @@ export class YamlDocStore {
 
   replace(next: unknown): SettingsDoc {
     const normalized = normalizeDoc(next)
+    const previousCache = this.cache
+    const previousLoaded = this.loaded
     this.cache = normalized
     this.loaded = true
-    this.persist()
+    try {
+      this.persist()
+    } catch (error) {
+      this.cache = previousCache
+      this.loaded = previousLoaded
+      throw error
+    }
     return this.cache
   }
 
@@ -105,6 +113,7 @@ export class YamlDocStore {
       fs.writeFileSync(this.filePath, ensureTrailingNewline(yaml), "utf-8")
     } catch (error) {
       this.logger.warn({ err: error, filePath: this.filePath }, "Failed to persist YAML doc")
+      throw error
     }
   }
 }
