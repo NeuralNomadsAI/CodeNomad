@@ -7,7 +7,7 @@ import type {
 } from "../../stores/preferences"
 import type { Command } from "../commands"
 import { tGlobal } from "../i18n"
-import { isTauriHost, isWebHost } from "../runtime-env"
+import { isLocalWindow, isTauriHost, isWebHost } from "../runtime-env"
 
 export type BehaviorSettingKind = "toggle" | "enum"
 
@@ -302,7 +302,7 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
         }
       },
     },
-    ...(isTauriHost()
+    ...(isTauriHost() && isLocalWindow()
       ? [
           {
             kind: "toggle" as const,

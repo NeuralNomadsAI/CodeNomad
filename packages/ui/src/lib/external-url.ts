@@ -1,11 +1,11 @@
-import { isTauriHost } from "./runtime-env"
+import { isLocalWindow, isTauriHost } from "./runtime-env"
 
 export async function openExternalUrl(url: string, context = "ui"): Promise<boolean> {
   if (typeof window === "undefined") {
     return false
   }
 
-  if (isTauriHost()) {
+  if (isTauriHost() && isLocalWindow()) {
     try {
       const { openUrl } = await import("@tauri-apps/plugin-opener")
       await openUrl(url)
