@@ -47,7 +47,8 @@ use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 const ZOOM_STEP: f64 = 0.1;
 const RELEASES_URL: &str = "https://github.com/NeuralNomadsAI/CodeNomad/releases/latest";
 const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_WINDOW_CONTEXT__ = 'local';";
-const REMOTE_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_WINDOW_CONTEXT__ = 'remote';";
+const REMOTE_WINDOW_CONTEXT_SCRIPT: &str =
+    "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'remote';";
 
 #[cfg(windows)]
 const WINDOWS_APP_USER_MODEL_ID: &str = "ai.neuralnomads.codenomad.client";
@@ -1059,7 +1060,9 @@ fn build_about_metadata(version: &str, include_update_link: bool) -> AboutMetada
 
 #[cfg(test)]
 mod menu_tests {
-    use super::{build_about_metadata, run_update_with_fallback, RELEASES_URL};
+    use super::{
+        build_about_metadata, run_update_with_fallback, RELEASES_URL, REMOTE_WINDOW_CONTEXT_SCRIPT,
+    };
     use std::sync::atomic::{AtomicBool, Ordering};
 
     #[test]
@@ -1090,5 +1093,11 @@ mod menu_tests {
 
         assert_eq!(metadata.website, None);
         assert_eq!(metadata.website_label, None);
+    }
+
+    #[test]
+    fn remote_windows_identify_as_remote_tauri_windows() {
+        assert!(REMOTE_WINDOW_CONTEXT_SCRIPT.contains("__CODENOMAD_RUNTIME_HOST__ = 'tauri'"));
+        assert!(REMOTE_WINDOW_CONTEXT_SCRIPT.contains("__CODENOMAD_WINDOW_CONTEXT__ = 'remote'"));
     }
 }
