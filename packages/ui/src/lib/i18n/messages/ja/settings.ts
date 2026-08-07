@@ -28,6 +28,7 @@ export const settingsMessages = {
   "modelSelector.placeholder.search": "モデルを検索...",
   "modelSelector.none": "なし",
   "modelSelector.trigger.primary": "モデル: {model}",
+  "modelSelector.trigger.ariaLabel": "モデル: {model}、プロバイダー: {provider}、ID: {id}",
   "modelSelector.favoritesOnly.toggle.ariaLabel": "お気に入りのみ",
   "modelSelector.favoritesOnly.showAll": "すべてのモデルを表示",
   "modelSelector.favorite.add": "お気に入りに追加",

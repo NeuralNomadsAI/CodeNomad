@@ -28,6 +28,7 @@ export const settingsMessages = {
   "modelSelector.placeholder.search": "חפש מודלים...",
   "modelSelector.none": "ללא",
   "modelSelector.trigger.primary": "מודל: {model}",
+  "modelSelector.trigger.ariaLabel": "מודל: {model}, ספק: {provider}, מזהה: {id}",
   "modelSelector.favoritesOnly.toggle.ariaLabel": "הצג מועדפים בלבד",
   "modelSelector.favoritesOnly.showAll": "הצג את כל המודלים",
   "modelSelector.favorite.add": "הוסף למועדפים",

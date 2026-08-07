@@ -28,6 +28,7 @@ export const settingsMessages = {
   "modelSelector.placeholder.search": "搜索模型...",
   "modelSelector.none": "无",
   "modelSelector.trigger.primary": "模型：{model}",
+  "modelSelector.trigger.ariaLabel": "模型：{model}，提供商：{provider}，ID：{id}",
   "modelSelector.favoritesOnly.toggle.ariaLabel": "仅显示收藏",
   "modelSelector.favoritesOnly.showAll": "显示所有模型",
   "modelSelector.favorite.add": "添加到收藏",

@@ -111,11 +111,22 @@ export class YamlDocStore {
   private persist() {
     let tempPath: string | undefined
     try {
-      fs.mkdirSync(path.dirname(this.filePath), { recursive: true })
+      let destination = this.filePath
+      try {
+        if (fs.lstatSync(this.filePath).isSymbolicLink()) {
+          const target = fs.readlinkSync(this.filePath)
+          destination = path.resolve(path.dirname(this.filePath), target)
+        }
+      } catch (error: any) {
+        if (error?.code !== "ENOENT") throw error
+      }
+
+      fs.mkdirSync(path.dirname(destination), { recursive: true })
       const yaml = stringifyYaml(this.cache as any)
-      tempPath = `${this.filePath}.${process.pid}.${randomUUID()}.tmp`
-      fs.writeFileSync(tempPath, ensureTrailingNewline(yaml), "utf-8")
-      fs.renameSync(tempPath, this.filePath)
+      const mode = fs.existsSync(destination) ? fs.statSync(destination).mode & 0o777 : 0o600
+      tempPath = `${destination}.${process.pid}.${randomUUID()}.tmp`
+      fs.writeFileSync(tempPath, ensureTrailingNewline(yaml), { encoding: "utf-8", mode })
+      fs.renameSync(tempPath, destination)
     } catch (error) {
       this.logger.warn({ err: error, filePath: this.filePath }, "Failed to persist YAML doc")
       if (this.options.throwOnPersistError) throw error

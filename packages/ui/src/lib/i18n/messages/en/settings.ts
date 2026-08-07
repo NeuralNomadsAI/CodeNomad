@@ -28,6 +28,7 @@ export const settingsMessages = {
   "modelSelector.placeholder.search": "Search models...",
   "modelSelector.none": "None",
   "modelSelector.trigger.primary": "Model: {model}",
+  "modelSelector.trigger.ariaLabel": "Model: {model}, provider: {provider}, ID: {id}",
   "modelSelector.favoritesOnly.toggle.ariaLabel": "Toggle favorites only",
   "modelSelector.favoritesOnly.showAll": "Show all models",
   "modelSelector.favorite.add": "Add to favorites",

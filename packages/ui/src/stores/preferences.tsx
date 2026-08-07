@@ -638,6 +638,7 @@ function updatePreferences(updates: Partial<UiSettings>): void {
 }
 
 const modelVisibilityWriteQueues = new Map<string, Promise<void>>()
+let modelVisibilityWriteQueue = Promise.resolve()
 const [pendingModelVisibility, setPendingModelVisibility] = createSignal(new Map<string, ModelVisibilityPreference>())
 const [modelVisibilityWriteFailures, setModelVisibilityWriteFailures] = createSignal(new Set<string>())
 
@@ -659,7 +660,7 @@ async function setProviderModelVisibility(providerId: string, preference: ModelV
     next.delete(providerId)
     return next
   })
-  const previous = modelVisibilityWriteQueues.get(providerId) ?? Promise.resolve()
+  const previous = modelVisibilityWriteQueue
   const write = previous
     .catch(() => undefined)
     .then(() => patchConfigOwner("ui", {
@@ -670,6 +671,7 @@ async function setProviderModelVisibility(providerId: string, preference: ModelV
       },
     }))
 
+  modelVisibilityWriteQueue = write
   modelVisibilityWriteQueues.set(providerId, write)
   void write.then(
     () => {

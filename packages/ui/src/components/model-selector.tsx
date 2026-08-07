@@ -199,6 +199,16 @@ export default function ModelSelector(props: ModelSelectorProps) {
     t("modelSelector.trigger.primary", { model: currentModelValue()?.name ?? t("modelSelector.none") }),
   )
 
+  const currentModelAccessibleLabel = createMemo(() => {
+    const current = currentModelValue()
+    if (!current) return currentModelLabel()
+    return t("modelSelector.trigger.ariaLabel", {
+      model: current.name,
+      provider: current.providerName,
+      id: `${current.providerId}/${current.id}`,
+    })
+  })
+
   const handleChange = async (value: PickerOption | null) => {
     if (!value || isProviderHeaderOption(value) || value.unavailable) return
     await props.onModelChange({ providerId: value.providerId, modelId: value.id })
@@ -388,11 +398,11 @@ export default function ModelSelector(props: ModelSelectorProps) {
         }}
       >
         <Combobox.Control class="relative w-full" data-model-selector-control>
-          <Combobox.Input class="sr-only" data-model-selector aria-label={currentModelLabel()} />
+          <Combobox.Input class="sr-only" data-model-selector aria-label={currentModelAccessibleLabel()} />
           <Combobox.Trigger
             ref={triggerRef}
             class="selector-trigger"
-            aria-label={currentModelLabel()}
+            aria-label={currentModelAccessibleLabel()}
           >
             <div class="selector-trigger-label selector-trigger-label--stacked flex-1 min-w-0">
               <span class="selector-trigger-primary selector-trigger-primary--align-left">

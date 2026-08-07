@@ -46,4 +46,36 @@ describe("YamlDocStore", () => {
       fs.rmSync(root, { recursive: true, force: true })
     }
   })
+
+  it("preserves private file permissions", { skip: process.platform === "win32" }, () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-yaml-store-"))
+    const file = path.join(root, "config.yaml")
+    const store = new YamlDocStore(file, { warn() {} } as any, { throwOnPersistError: true })
+
+    try {
+      store.replace({ version: 1 })
+      fs.chmodSync(file, 0o600)
+      store.replace({ version: 2 })
+      assert.equal(fs.statSync(file).mode & 0o777, 0o600)
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it("updates a symlink target without replacing the link", { skip: process.platform === "win32" }, () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-yaml-store-"))
+    const target = path.join(root, "target.yaml")
+    const link = path.join(root, "config.yaml")
+    fs.writeFileSync(target, "version: 1\n")
+    fs.symlinkSync(target, link)
+    const store = new YamlDocStore(link, { warn() {} } as any, { throwOnPersistError: true })
+
+    try {
+      store.replace({ version: 2 })
+      assert.equal(fs.lstatSync(link).isSymbolicLink(), true)
+      assert.match(fs.readFileSync(target, "utf8"), /version: 2/)
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
 })

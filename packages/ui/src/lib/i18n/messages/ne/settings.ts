@@ -28,6 +28,7 @@ export const settingsMessages = {
   "modelSelector.placeholder.search": "मोडेलहरू खोज्नुहोस्...",
   "modelSelector.none": "कुनै छैन",
   "modelSelector.trigger.primary": "मोडेल: {model}",
+  "modelSelector.trigger.ariaLabel": "मोडेल: {model}, प्रदायक: {provider}, आईडी: {id}",
   "modelSelector.favoritesOnly.toggle.ariaLabel": "मनपर्ने मात्र टगल गर्नुहोस्",
   "modelSelector.favoritesOnly.showAll": "सबै मोडेलहरू देखाउनुहोस्",
   "modelSelector.favorite.add": "मनपर्नेमा थप्नुहोस्",
