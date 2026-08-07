@@ -129,9 +129,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   )
 
   const managedProvider = createMemo(() =>
-    props.embedded
-      ? configuredProviders().find((provider) => provider.id === managedProviderId()) ?? null
-      : null,
+    configuredProviders().find((provider) => provider.id === managedProviderId()) ?? null,
   )
 
   const getDisconnectMode = (provider: ListedProvider): DisconnectMode => {
@@ -744,17 +742,15 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                           <div class="providers-card-footer">
                             <span class="providers-model-count">{provider.modelCount === 1 ? t("settings.providers.models.one", { count: provider.modelCount }) : t("settings.providers.models.other", { count: provider.modelCount })}</span>
                             <div class="provider-model-card-actions">
-                              <Show when={props.embedded}>
-                                <button
-                                  ref={(element) => manageModelButtons.set(provider.id, element)}
-                                  type="button"
-                                  class="selector-button selector-button-secondary"
-                                  onClick={() => {
-                                    managedProviderTriggerId = provider.id
-                                    setManagedProviderId(provider.id)
-                                  }}
-                                >{t("settings.providers.actions.manageModels")}</button>
-                              </Show>
+                              <button
+                                ref={(element) => manageModelButtons.set(provider.id, element)}
+                                type="button"
+                                class="selector-button selector-button-secondary"
+                                onClick={() => {
+                                  managedProviderTriggerId = provider.id
+                                  setManagedProviderId(provider.id)
+                                }}
+                              >{t("settings.providers.actions.manageModels")}</button>
                               <Show when={getDisconnectMode(provider) !== "disable-in-config"}><button type="button" class="selector-button selector-button-secondary providers-disconnect-button" disabled={getDisconnectMode(provider) === "not-disconnectable" || stage() !== "idle"} onClick={() => void disconnectProvider(provider.id)} title={getDisconnectMode(provider) === "not-disconnectable" ? t("settings.providers.source.env") : t("settings.providers.actions.disconnect")}>{t("settings.providers.actions.disconnect")}</button></Show>
                             </div>
                           </div>
