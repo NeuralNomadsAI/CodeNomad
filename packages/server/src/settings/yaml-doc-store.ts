@@ -19,6 +19,25 @@ function normalizeDoc(input: unknown): SettingsDoc {
   return input
 }
 
+function resolveWriteDestination(filePath: string): string {
+  let current = path.resolve(filePath)
+  const seen = new Set<string>()
+
+  while (true) {
+    let stat: fs.Stats
+    try {
+      stat = fs.lstatSync(current)
+    } catch (error: any) {
+      if (error?.code === "ENOENT") return current
+      throw error
+    }
+    if (!stat.isSymbolicLink()) return current
+    if (seen.has(current)) throw new Error(`Circular settings symlink: ${filePath}`)
+    seen.add(current)
+    current = path.resolve(path.dirname(current), fs.readlinkSync(current))
+  }
+}
+
 export class YamlDocStore {
   private cache: SettingsDoc = {}
   private loaded = false
@@ -111,21 +130,13 @@ export class YamlDocStore {
   private persist() {
     let tempPath: string | undefined
     try {
-      let destination = this.filePath
-      try {
-        if (fs.lstatSync(this.filePath).isSymbolicLink()) {
-          const target = fs.readlinkSync(this.filePath)
-          destination = path.resolve(path.dirname(this.filePath), target)
-        }
-      } catch (error: any) {
-        if (error?.code !== "ENOENT") throw error
-      }
-
+      const destination = resolveWriteDestination(this.filePath)
       fs.mkdirSync(path.dirname(destination), { recursive: true })
       const yaml = stringifyYaml(this.cache as any)
       const mode = fs.existsSync(destination) ? fs.statSync(destination).mode & 0o777 : 0o600
       tempPath = `${destination}.${process.pid}.${randomUUID()}.tmp`
       fs.writeFileSync(tempPath, ensureTrailingNewline(yaml), { encoding: "utf-8", mode })
+      if (process.platform !== "win32") fs.chmodSync(tempPath, mode)
       fs.renameSync(tempPath, destination)
     } catch (error) {
       this.logger.warn({ err: error, filePath: this.filePath }, "Failed to persist YAML doc")

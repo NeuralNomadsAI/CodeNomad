@@ -54,25 +54,28 @@ describe("YamlDocStore", () => {
 
     try {
       store.replace({ version: 1 })
-      fs.chmodSync(file, 0o600)
+      fs.chmodSync(file, 0o664)
       store.replace({ version: 2 })
-      assert.equal(fs.statSync(file).mode & 0o777, 0o600)
+      assert.equal(fs.statSync(file).mode & 0o777, 0o664)
     } finally {
       fs.rmSync(root, { recursive: true, force: true })
     }
   })
 
-  it("updates a symlink target without replacing the link", { skip: process.platform === "win32" }, () => {
+  it("updates the final target without replacing a symlink chain", { skip: process.platform === "win32" }, () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-yaml-store-"))
     const target = path.join(root, "target.yaml")
+    const intermediate = path.join(root, "current.yaml")
     const link = path.join(root, "config.yaml")
     fs.writeFileSync(target, "version: 1\n")
-    fs.symlinkSync(target, link)
+    fs.symlinkSync(target, intermediate)
+    fs.symlinkSync(intermediate, link)
     const store = new YamlDocStore(link, { warn() {} } as any, { throwOnPersistError: true })
 
     try {
       store.replace({ version: 2 })
       assert.equal(fs.lstatSync(link).isSymbolicLink(), true)
+      assert.equal(fs.lstatSync(intermediate).isSymbolicLink(), true)
       assert.match(fs.readFileSync(target, "utf8"), /version: 2/)
     } finally {
       fs.rmSync(root, { recursive: true, force: true })
