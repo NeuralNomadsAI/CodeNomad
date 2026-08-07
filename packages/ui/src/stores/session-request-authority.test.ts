@@ -2,10 +2,12 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { sdkManager } from "../lib/sdk-manager.ts"
+import { serverApi } from "../lib/api-client.ts"
+import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces.ts"
 import type { Session } from "../types/session.ts"
 import { addInstance, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
-import { loadMessages, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
+import { fetchSessions, loadMessages, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
 import {
   clearInstanceDeletedSessionAuthority,
   getSessionSearchResultIds,
@@ -15,6 +17,7 @@ import {
   sessions,
   setSessions,
 } from "./session-state.ts"
+import { reloadWorktrees } from "./worktrees.ts"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -41,6 +44,19 @@ function apiMessage(id: string, sessionId: string) {
       time: { created: 1 },
     },
     parts: [],
+  }
+}
+
+async function loadTestWorktree(instanceId: string): Promise<void> {
+  const original = serverApi.fetchWorktrees
+  serverApi.fetchWorktrees = async () => ({
+    worktrees: [{ slug: "branch", directory: "/worktree" }],
+    isGitRepo: true,
+  } as any)
+  try {
+    await reloadWorktrees(instanceId)
+  } finally {
+    serverApi.fetchWorktrees = original
   }
 }
 
@@ -163,8 +179,12 @@ describe("session request authority", () => {
     setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
 
     try {
-      const oldRequest = loadMessages(instanceId, sessionId)
+      let invalidateOld = () => {}
+      const oldRequest = loadMessages(instanceId, sessionId, {
+        registerInvalidation: (invalidate) => { invalidateOld = invalidate },
+      })
       const newRequest = loadMessages(instanceId, sessionId, { force: true })
+      invalidateOld()
       newResponse.resolve({ data: [apiMessage("new-message", sessionId)] })
       await newRequest
       oldResponse.resolve({ data: [apiMessage("old-message", sessionId)] })
@@ -172,6 +192,96 @@ describe("session request authority", () => {
 
       assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["new-message"])
       assert.equal(loading().loadingMessages.get(instanceId)?.has(sessionId) ?? false, false)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("does not let an older timeout invalidate a newer session-list request", async () => {
+    const instanceId = "newer-session-list"
+    const { client, cleanup } = setup(instanceId)
+    const oldResponse = deferred<any>()
+    const newResponse = deferred<any>()
+    let calls = 0
+    ;(client.session as any).list = () => (++calls === 1 ? oldResponse.promise : newResponse.promise)
+    ;(client.session as any).status = async () => ({ data: {} })
+    ;(client.session as any).get = async ({ sessionID }: { sessionID: string }) => ({ data: apiSession(sessionID) })
+
+    try {
+      let invalidateOld = () => {}
+      const oldRequest = fetchSessions(instanceId, {
+        registerInvalidation: (invalidate) => { invalidateOld = invalidate },
+      })
+      const newRequest = fetchSessions(instanceId)
+      invalidateOld()
+      newResponse.resolve({ data: [apiSession("new-session")] })
+      await newRequest
+      oldResponse.resolve({ data: [apiSession("old-session")] })
+      await oldRequest
+
+      assert.equal(sessions().get(instanceId)?.has("new-session"), true)
+      assert.equal(sessions().get(instanceId)?.has("old-session"), false)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("treats sessions omitted from an authoritative status response as idle", async () => {
+    const instanceId = "authoritative-idle"
+    const { client, cleanup } = setup(instanceId)
+    const working = { ...session(instanceId, "working"), status: "working" as const }
+    const compacting = { ...session(instanceId, "compacting"), status: "compacting" as const }
+    await loadTestWorktree(instanceId)
+    setSessions((prev) => new Map(prev).set(instanceId, new Map<string, Session>([
+      [working.id, working],
+      [compacting.id, compacting],
+    ])))
+    const statusOptions: unknown[] = []
+    let messageOptions: unknown
+    ;(client.session as any).list = async () => ({ data: [
+      apiSession("working"),
+      { ...apiSession("compacting"), directory: "/worktree", workspaceID: "workspace-1" },
+    ] })
+    ;(client.session as any).status = async (options: unknown) => {
+      statusOptions.push(options)
+      return { data: {} }
+    }
+    ;(client.session as any).messages = async (options: unknown) => {
+      messageOptions = options
+      return { data: [] }
+    }
+    ;(client.session as any).get = async ({ sessionID }: { sessionID: string }) => ({ data: apiSession(sessionID) })
+
+    try {
+      await fetchSessions(instanceId)
+
+      assert.equal(sessions().get(instanceId)?.get("working")?.status, "idle")
+      assert.equal(sessions().get(instanceId)?.get("compacting")?.status, "idle")
+      assert.deepEqual(
+        statusOptions.map((value) => JSON.stringify(value)).sort(),
+        [JSON.stringify({ directory: "/work" }), JSON.stringify({ directory: "/work", workspace: "workspace-1" })].sort(),
+      )
+      await loadMessages(instanceId, "compacting", { force: true })
+      assert.deepEqual(messageOptions, { sessionID: "compacting", workspace: "workspace-1" })
+      assert.equal(await getOpenCodeWorkspaceIdForSession(instanceId, "compacting"), "workspace-1")
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("rejects strict status refresh when a worktree location is unresolved", async () => {
+    const instanceId = "unresolved-worktree-status"
+    const { client, cleanup } = setup(instanceId)
+    const existing = { ...session(instanceId, "worktree-session"), status: "working" as const }
+    await loadTestWorktree(instanceId)
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[existing.id, existing]])))
+    ;(client.session as any).list = async () => ({ data: [
+      { ...apiSession(existing.id), directory: "/worktree" },
+    ] })
+
+    try {
+      await assert.rejects(() => fetchSessions(instanceId, { strictStatus: true }), /resolve OpenCode workspace/)
+      assert.equal(sessions().get(instanceId)?.get(existing.id)?.status, "working")
     } finally {
       cleanup()
     }
