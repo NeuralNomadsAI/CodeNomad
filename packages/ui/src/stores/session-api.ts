@@ -1110,6 +1110,13 @@ async function loadMessages(
       if (messageStoreBus.getOrCreate(instanceId).getSessionRevision(sessionId) !== messageRevision) {
         retryAfterRevisionConflict = true
       } else {
+        // Authoritative empty snapshot: on a forced reconnect load the server
+        // returned zero messages, so clear any stale records left over from
+        // before the reconnect (hydrateMessages ignores empty input). Still
+        // in-flight optimistic sends are preserved by the store.
+        if (force) {
+          messageStoreBus.getOrCreate(instanceId).reconcileEmptyAuthoritativeSnapshot(sessionId)
+        }
         setMessagesLoaded((prev) => {
           const next = new Map(prev)
           const loadedSet = next.get(instanceId) || new Set()
@@ -1130,12 +1137,11 @@ async function loadMessages(
         const parts: any[] = (apiMessage.parts || []).map((part: any) => normalizeMessagePart(part))
 
         // Derive the real status instead of forcing "complete": a forced
-        // refresh (e.g. after an SSE reconnect) can load a message whose end
-        // time the server has not recorded yet. Marking it "complete" would
-        // demote an in-flight message and disable streaming-specific UI until
-        // the next qualifying SSE update arrives. The derivation is shared
-        // with the live SSE path (deriveMessageStatus) for BOTH roles, so a
-        // user message without time.end is treated identically either way.
+        // refresh (e.g. after an SSE reconnect) can load an assistant message
+        // still generating (no time.completed). The derivation is shared with
+        // the live SSE path (deriveMessageStatus) and follows the SDK
+        // contract — user messages are complete once persisted; assistant
+        // completion is time.completed.
         const status: Message["status"] = deriveMessageStatus(info)
 
         const message: Message = {

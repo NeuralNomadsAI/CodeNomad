@@ -2,15 +2,24 @@ import type { MessageStatus } from "./types"
 
 /**
  * Single source of truth for deriving a message's lifecycle status from its
- * server-side info (`error` + `time.end`). Used by BOTH the live SSE path
- * (session-events) and the REST snapshot path (session-api) so a force-reload
- * can never disagree with the streaming derivation — for either role. A user
- * message without `time.end` is just as in-flight as an assistant one: the
- * server may simply not have recorded the end yet when the snapshot was
- * taken, and forcing it to "complete" would disagree with the SSE echo.
+ * server-side info, shared by the live SSE path (session-events) and the REST
+ * snapshot path (session-api) so a force-reload can never disagree with the
+ * streaming derivation.
+ *
+ * Follows the OpenCode SDK contract (1.17.x):
+ *   - Only assistant messages carry `error` and a completion timestamp.
+ *   - Assistant completion is `time.completed` (NOT `time.end`, which is a
+ *     part-level field, not message completion).
+ *   - User messages expose only `time.created` and are complete once
+ *     persisted — they have no pending/streaming server state.
  */
-export function deriveMessageStatus(info: { error?: unknown; time?: { end?: number } | null }): MessageStatus {
-  const hasError = Boolean(info.error)
-  const hasEnded = typeof info.time?.end === "number" && info.time.end > 0
-  return hasError ? "error" : hasEnded ? "complete" : "streaming"
+export function deriveMessageStatus(info: {
+  role?: string
+  error?: unknown
+  time?: { completed?: number } | null
+}): MessageStatus {
+  if (info.error) return "error"
+  if (info.role === "user") return "complete"
+  const completed = info.time?.completed
+  return typeof completed === "number" && completed > 0 ? "complete" : "streaming"
 }

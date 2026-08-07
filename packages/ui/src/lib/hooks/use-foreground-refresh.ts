@@ -4,9 +4,10 @@ import { serverEvents } from "../server-events"
 
 const log = getLogger("foreground-refresh")
 
-// Module-level flag -- survives Solid reactive cycles, guaranteed not to reset
+// Module-level flags -- survive Solid reactive cycles, guaranteed not to reset
 // between renders the way a component-local signal could.
 let wasDisconnected = false
+let refreshInFlight = false
 
 interface ForegroundRefreshOptions {
   onRefresh: () => void | Promise<void>
@@ -40,14 +41,29 @@ export function useForegroundRefresh(options: ForegroundRefreshOptions): void {
           log.info("SSE connected but wasDisconnected=false — skipping refresh")
           return
         }
-        wasDisconnected = false
+        // Do NOT clear the dirty latch yet: it must survive a failed refresh so
+        // a subsequent reconnect retries. Guard against overlapping runs if
+        // connected fires again while a refresh is still in flight.
+        if (refreshInFlight) {
+          log.info("Reconnect refresh already in flight — skipping duplicate")
+          return
+        }
+        refreshInFlight = true
         log.info("SSE transport reconnected — refreshing session state")
         void Promise.resolve(options.onRefresh())
           .then(() => {
+            // Clear the latch ONLY after a fully successful recovery.
+            wasDisconnected = false
             log.info("Foreground refresh complete")
           })
           .catch((error) => {
-            log.error("Foreground refresh failed", error)
+            // Keep wasDisconnected=true so the next disconnected->connected
+            // transition performs a bounded retry instead of silently
+            // forgetting the missed events.
+            log.error("Foreground refresh failed — will retry on next reconnect", error)
+          })
+          .finally(() => {
+            refreshInFlight = false
           })
       }
     })

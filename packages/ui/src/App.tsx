@@ -272,13 +272,14 @@ const App: Component = () => {
       //     re-fetches lazily on next activation instead of returning stale
       //     content (a non-forced load short-circuits once "loaded").
       const instanceIds = Array.from(instances().keys())
-      await Promise.all(
-        instanceIds.map((id) =>
-          fetchSessions(id).catch((error) =>
-            log.error("Foreground refresh: fetchSessions failed", { instanceId: id, error }),
-          ),
-        ),
-      )
+      const sessionListResults = await Promise.allSettled(instanceIds.map((id) => fetchSessions(id)))
+      const failedInstanceIds: string[] = []
+      sessionListResults.forEach((result, i) => {
+        if (result.status === "rejected") {
+          failedInstanceIds.push(instanceIds[i])
+          log.error("Foreground refresh: fetchSessions failed", { instanceId: instanceIds[i], error: result.reason })
+        }
+      })
 
       const activeInst = activeInstance()
       const activeSession = activeSessionIdForInstance()
@@ -293,9 +294,19 @@ const App: Component = () => {
         }
       }
 
+      let activeReloadFailed = false
       if (hasActive) {
         const statusBefore = getSessionStatus(activeInst!.id, activeSession!)
-        await loadMessages(activeInst!.id, activeSession!, { force: true })
+        try {
+          await loadMessages(activeInst!.id, activeSession!, { force: true })
+        } catch (error) {
+          activeReloadFailed = true
+          log.error("Foreground refresh: active session reload failed", {
+            instanceId: activeInst!.id,
+            sessionId: activeSession,
+            error,
+          })
+        }
         const statusAfter = getSessionStatus(activeInst!.id, activeSession!)
         log.info("Foreground refresh: active session reloaded", {
           instanceId: activeInst!.id,
@@ -303,6 +314,15 @@ const App: Component = () => {
           statusBefore,
           statusAfter,
         })
+      }
+
+      // Report failure so the hook keeps its dirty latch and retries on the
+      // next reconnect instead of treating a partial recovery as success.
+      if (failedInstanceIds.length > 0 || activeReloadFailed) {
+        throw new Error(
+          `Foreground refresh incomplete: ${failedInstanceIds.length} session-list fetch(es) failed` +
+            (activeReloadFailed ? ", active session reload failed" : ""),
+        )
       }
     },
   })

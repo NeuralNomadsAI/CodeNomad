@@ -185,6 +185,11 @@ async function sendMessage(
     clientPromptDisplayMetadata: preparedPrompt.displayMetadata,
   })
 
+  // Register the optimistic send as in-flight so an authoritative snapshot
+  // (e.g. a reconnect force-reload) preserves it until the server confirms it
+  // under the same id or the request fails below.
+  store.markSendPending(messageId)
+
   withSession(instanceId, sessionId, () => {
     /* trigger reactivity for legacy session data */
   })
@@ -235,6 +240,9 @@ async function sendMessage(
       admission.complete()
     } catch (error) {
       admission.rollback()
+      // The send definitively failed: retire the in-flight marker so a later
+      // authoritative snapshot no longer preserves this optimistic bubble.
+      store.clearSendPending(messageId)
       throw error
     }
   } catch (error) {

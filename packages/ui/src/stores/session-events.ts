@@ -392,7 +392,11 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     const store = messageStoreBus.getOrCreate(instanceId)
 
     const role: MessageRole = info.role === "user" ? "user" : "assistant"
-    const status: MessageStatus = deriveMessageStatus({ error: (info as any).error, time: timeInfo })
+    const status: MessageStatus = deriveMessageStatus({
+      role: info.role,
+      error: (info as any).error,
+      time: info.time as { completed?: number } | undefined,
+    })
 
     let record = store.getMessage(messageId)
     if (!record) {
