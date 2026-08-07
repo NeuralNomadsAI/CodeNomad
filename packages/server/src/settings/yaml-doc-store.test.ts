@@ -10,7 +10,7 @@ describe("YamlDocStore", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-yaml-store-"))
     const parent = path.join(root, "settings")
     const file = path.join(parent, "config.yaml")
-    const store = new YamlDocStore(file, { warn() {} } as any)
+    const store = new YamlDocStore(file, { warn() {} } as any, { throwOnPersistError: true })
 
     try {
       store.replace({ version: 1 })

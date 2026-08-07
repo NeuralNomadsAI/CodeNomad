@@ -1,9 +1,11 @@
 import assert from "node:assert/strict"
+import fs from "node:fs"
 import test from "node:test"
 import {
   isModelVisible,
   normalizeModelVisibilityPreference,
   normalizeModelVisibilityPreferences,
+  resolvePickerValue,
 } from "./model-visibility"
 
 test("normalizes malformed preferences fail-open", () => {
@@ -36,4 +38,31 @@ test("new models and missing preferences are visible by default", () => {
 
 test("a current model receives no helper-level visibility override", () => {
   assert.equal(isModelVisible({ hiddenModelIds: ["current"] }, "current"), false)
+})
+
+test("uses the current model as the picker value only while it remains in the collection", () => {
+  const current = { key: "provider/current" }
+  assert.equal(resolvePickerValue(current, [current]), current)
+  assert.equal(resolvePickerValue(current, [{ key: "provider/visible" }]), undefined)
+})
+
+test("provider refresh updates shared and modal catalogs without disposing active instances", () => {
+  const source = fs.readFileSync(
+    new URL("../components/provider-auth/provider-manager-modal.tsx", import.meta.url),
+    "utf8",
+  )
+  const start = source.indexOf("async function refreshProviderData()")
+  const end = source.indexOf("function closeModelManager()", start)
+  const refresh = source.slice(start, end)
+
+  assert.ok(start >= 0 && end > start)
+  assert.match(refresh, /await fetchProviders\(instanceId\)/)
+  assert.match(refresh, /await loadProviderData\(authClient\)/)
+  assert.doesNotMatch(refresh, /global\.dispose/)
+})
+
+test("model picker wires collection-safe selection and an accessible current-model label", () => {
+  const source = fs.readFileSync(new URL("../components/model-selector.tsx", import.meta.url), "utf8")
+  assert.match(source, /value=\{comboboxValue\(\)\}/)
+  assert.equal(source.match(/aria-label=\{currentModelLabel\(\)\}/g)?.length, 2)
 })

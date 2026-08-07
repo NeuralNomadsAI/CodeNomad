@@ -67,8 +67,16 @@ export class SettingsService {
     private readonly logger: Logger,
   ) {
     migrateSettingsLayout(location, logger)
-    this.configStore = new YamlDocStore(location.configYamlPath, logger.child({ component: "settings-config" }))
-    this.stateStore = new YamlDocStore(location.stateYamlPath, logger.child({ component: "settings-state" }))
+    this.configStore = new YamlDocStore(
+      location.configYamlPath,
+      logger.child({ component: "settings-config" }),
+      { throwOnPersistError: true },
+    )
+    this.stateStore = new YamlDocStore(
+      location.stateYamlPath,
+      logger.child({ component: "settings-state" }),
+      { throwOnPersistError: true },
+    )
   }
 
   getDoc(kind: DocKind): SettingsDoc {

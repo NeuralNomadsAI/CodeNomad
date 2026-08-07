@@ -30,3 +30,10 @@ export function isModelVisible(
 ): boolean {
   return !normalizeModelVisibilityPreference(preference).hiddenModelIds.includes(modelId)
 }
+
+export function resolvePickerValue<T extends { key: string }>(
+  current: T | undefined,
+  options: readonly { key: string }[],
+): T | undefined {
+  return current && options.some((option) => option.key === current.key) ? current : undefined
+}

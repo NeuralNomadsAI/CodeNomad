@@ -7,7 +7,7 @@ import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 import { getProviderModelVisibilityPreference, uiState, toggleFavoriteModelPreference } from "../stores/preferences"
 import { ProviderManagerModal } from "./provider-auth/provider-manager-modal"
-import { isModelVisible } from "../lib/model-visibility"
+import { isModelVisible, resolvePickerValue } from "../lib/model-visibility"
 const log = getLogger("session")
 
 interface ModelSelectorProps {
@@ -191,10 +191,8 @@ export default function ModelSelector(props: ModelSelectorProps) {
   )
 
   const comboboxValue = createMemo(() => {
-    const current = currentModelValue()
-    if (!current) return undefined
-    const option = pickerOptions().find((item) => item.key === current.key)
-    return option && !isProviderHeaderOption(option) ? option : undefined
+    const options = pickerOptions().filter((option): option is FlatModel => !isProviderHeaderOption(option))
+    return resolvePickerValue(currentModelValue(), options)
   })
 
   const currentModelLabel = createMemo(() =>

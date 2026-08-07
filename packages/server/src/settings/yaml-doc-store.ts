@@ -25,6 +25,7 @@ export class YamlDocStore {
   constructor(
     private readonly filePath: string,
     private readonly logger: Logger,
+    private readonly options: { throwOnPersistError?: boolean } = {},
   ) {}
 
   load(): SettingsDoc {
@@ -113,7 +114,7 @@ export class YamlDocStore {
       fs.writeFileSync(this.filePath, ensureTrailingNewline(yaml), "utf-8")
     } catch (error) {
       this.logger.warn({ err: error, filePath: this.filePath }, "Failed to persist YAML doc")
-      throw error
+      if (this.options.throwOnPersistError) throw error
     }
   }
 }
