@@ -30,6 +30,7 @@ import {
   setAgents,
   setMessagesLoaded,
   advanceMessageLoadEpoch,
+  invalidateSessionMessageLoad,
   isCurrentMessageLoad,
   setSessionMessagesLoadError,
   setProviders,
@@ -74,7 +75,12 @@ import {
   removeLegacyParentSessionMapping,
   setWorktreeSlugForParentSession,
 } from "./worktrees"
-import { getOpenCodeWorkspaceIdForSession, getOpenCodeWorkspaceIdForWorktree } from "./opencode-workspaces"
+import {
+  forgetOpenCodeWorkspaceIdForSession,
+  getOpenCodeWorkspaceIdForSession,
+  getOpenCodeWorkspaceIdForWorktree,
+  rememberOpenCodeWorkspaceIdForSession,
+} from "./opencode-workspaces"
 import { hydrateSessionMetadataWithClient } from "./session-metadata"
 import { preferSessionMetadata, shouldReplaceSessionMetadata } from "./session-metadata-completeness"
 import {
@@ -85,6 +91,7 @@ import {
   isProjectSessionListComplete,
 } from "./session-list-options"
 import { mergeFetchedSessionRuntimeState, resolveAuthoritativeGenerationRecovery } from "./session-generation-recovery"
+import { normalizeWorkspacePath } from "./app-session-reconciliation"
 
 const log = getLogger("api")
 const sessionListRequestIds = new Map<string, number>()
@@ -152,11 +159,29 @@ function rememberSessionWorkspace(instanceId: string, sessionId: string, workspa
   sessionWorkspaceHints.set(instanceId, hints)
 }
 
-async function recordSessionWorkspaceHints(instanceId: string, apiSessions: SDKSession[]): Promise<void> {
+async function recordSessionWorkspaceHints(
+  instanceId: string,
+  apiSessions: SDKSession[],
+  isCurrent: () => boolean,
+): Promise<void> {
   const hints = new Map(sessionWorkspaceHints.get(instanceId) ?? new Map<string, string>())
+  apiSessions.forEach((session) => hints.delete(session.id))
   const workspaceBySlug = new Map<string, Promise<string | null>>()
+  const explicitWorkspaceBySession = new Map<string, string>()
   await Promise.all(apiSessions.map(async (session) => {
-    const directory = (session as SDKSession & { directory?: string }).directory
+    const located = session as SDKSession & {
+      directory?: string
+      workspace?: string
+      workspaceID?: string
+      workspaceId?: string
+    }
+    const explicitWorkspace = located.workspace ?? located.workspaceID ?? located.workspaceId
+    if (explicitWorkspace) {
+      hints.set(session.id, explicitWorkspace)
+      explicitWorkspaceBySession.set(session.id, explicitWorkspace)
+      return
+    }
+    const directory = located.directory
     const slug = getWorktreeSlugForDirectory(instanceId, directory)
     if (!slug || slug === "root") return
     let workspace = workspaceBySlug.get(slug)
@@ -167,7 +192,12 @@ async function recordSessionWorkspaceHints(instanceId: string, apiSessions: SDKS
     const workspaceId = await workspace
     if (workspaceId) hints.set(session.id, workspaceId)
   }))
+  if (!isCurrent()) return
   sessionWorkspaceHints.set(instanceId, hints)
+  for (const session of apiSessions) forgetOpenCodeWorkspaceIdForSession(instanceId, session.id)
+  for (const [sessionId, workspaceId] of explicitWorkspaceBySession) {
+    rememberOpenCodeWorkspaceIdForSession(instanceId, sessionId, workspaceId)
+  }
 }
 
 interface SessionForkResponse {
@@ -385,7 +415,11 @@ async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: SDKSe
   })
 }
 
-async function fetchSessions(instanceId: string, options?: { reset?: boolean }): Promise<void> {
+async function fetchSessions(instanceId: string, options?: {
+  reset?: boolean
+  strictStatus?: boolean
+  registerInvalidation?: (invalidate: () => void) => void
+}): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -393,6 +427,9 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
 
   const rootClient = getRootClient(instanceId)
   const requestId = beginSessionListRequest(instanceId)
+  options?.registerInvalidation?.(() => {
+    if (isLatestSessionListRequest(instanceId, requestId)) clearSessionListRequestState(instanceId)
+  })
 
   setLoading((prev) => {
     const next = { ...prev }
@@ -407,39 +444,85 @@ async function fetchSessions(instanceId: string, options?: { reset?: boolean }):
 
     log.info("session.list", { instanceId, limit: PROJECT_SESSION_LIST_LIMIT, directory: sessionListOptions.directory, scope: "project" })
     const response = await fetchV2Sessions(instanceId, sessionListOptions)
-    if (!isLatestSessionListRequest(instanceId, requestId)) return
-    await recordSessionWorkspaceHints(instanceId, getV2SessionItems(response))
-
-    let statusById: Record<string, any> = {}
-    let statusResponseKnown = false
-    try {
-      const statusResponse = await rootClient.session.status()
-      if (statusResponse.data && typeof statusResponse.data === "object") {
-        statusResponseKnown = true
-        statusById = statusResponse.data as Record<string, any>
-      }
-    } catch (error) {
-      log.error("Failed to fetch session status:", error)
+    if (!isLatestSessionListRequest(instanceId, requestId)) {
+      if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
+      return
     }
-    if (!isLatestSessionListRequest(instanceId, requestId)) return
+    const apiSessions = getV2SessionItems(response)
+    await recordSessionWorkspaceHints(instanceId, apiSessions, () => isLatestSessionListRequest(instanceId, requestId))
+    if (!isLatestSessionListRequest(instanceId, requestId)) {
+      if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
+      return
+    }
+
+    const statusLocationBySessionId = new Map<string, string>()
+    const statusLocations = new Map<string, { directory?: string; workspace?: string }>()
+    await Promise.all(apiSessions.map(async (apiSession) => {
+      const sessionLocation = apiSession as SDKSession & {
+        directory?: string
+        workspace?: string
+        workspaceID?: string
+        workspaceId?: string
+      }
+      const directory = sessionLocation.directory
+      const slug = getWorktreeSlugForDirectory(instanceId, directory)
+      const explicitWorkspace = sessionLocation.workspace ?? sessionLocation.workspaceID ?? sessionLocation.workspaceId
+      const workspacePayload = explicitWorkspace
+        ? { workspace: explicitWorkspace }
+        : await getSessionWorkspacePayload(instanceId, apiSession.id)
+      const requiresWorkspace = (slug && slug !== "root")
+        || Boolean(directory && normalizeWorkspacePath(directory) !== normalizeWorkspacePath(instance.folder))
+      if (requiresWorkspace && !workspacePayload.workspace) {
+        if (options?.strictStatus) {
+          throw new Error(`Unable to resolve OpenCode workspace for session ${apiSession.id}`)
+        }
+        return
+      }
+      const location = { ...sessionListOptions, ...workspacePayload }
+      const key = JSON.stringify(location)
+      statusLocations.set(key, location)
+      statusLocationBySessionId.set(apiSession.id, key)
+    }))
+    if (!isLatestSessionListRequest(instanceId, requestId)) {
+      if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
+      return
+    }
+
+    const statusSnapshots = new Map<string, Record<string, any>>()
+    await Promise.all(Array.from(statusLocations, async ([key, location]) => {
+      try {
+        const statusResponse = await requestData<Record<string, any>>(rootClient.session.status(location), "session.status")
+        if (statusResponse && typeof statusResponse === "object") statusSnapshots.set(key, statusResponse)
+      } catch (error) {
+        log.error("Failed to fetch session status:", error)
+        if (options?.strictStatus) throw error
+      }
+    }))
+    if (!isLatestSessionListRequest(instanceId, requestId)) {
+      if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
+      return
+    }
 
     const sessionMap = new Map<string, Session>()
 
     for (const apiSession of getV2SessionItems(response)) {
       const existingSession = existingSessions?.get(apiSession.id)
       const existingStatus = existingSession?.status
+      const statusSnapshot = statusSnapshots.get(statusLocationBySessionId.get(apiSession.id) ?? "")
+      const statusResponseKnown = Boolean(statusSnapshot)
+      const statusById = statusSnapshot ?? {}
       const rawStatus = (apiSession as any)?.status ?? statusById[apiSession.id]
       const hasType = rawStatus && typeof rawStatus === "object" && typeof rawStatus.type === "string"
       const runtimeStatusKnown = Boolean(hasType || statusResponseKnown || existingSession?.runtimeStatusKnown)
 
       let status: SessionStatus
       let retry = existingSession?.retry ?? null
-      if (existingStatus === "compacting") {
+      if (existingStatus === "compacting" && !hasType && !statusResponseKnown) {
         status = "compacting"
         retry = null
       } else {
-        status = hasType ? mapSdkSessionStatus(rawStatus) : existingStatus ?? "idle"
-        retry = hasType ? mapSdkSessionRetry(rawStatus) : retry
+        status = hasType ? mapSdkSessionStatus(rawStatus) : statusResponseKnown ? "idle" : existingStatus ?? "idle"
+        retry = hasType ? mapSdkSessionRetry(rawStatus) : statusResponseKnown ? null : retry
       }
       sessionMap.set(apiSession.id, {
         ...toClientSessionV2(instanceId, apiSession, existingSession),
@@ -1034,7 +1117,11 @@ async function fetchProviders(instanceId: string): Promise<void> {
 async function loadMessages(
   instanceId: string,
   sessionId: string,
-  options?: { force?: boolean; skipChildren?: boolean },
+  options?: {
+    force?: boolean
+    skipChildren?: boolean
+    registerInvalidation?: (invalidate: () => void) => void
+  },
 ): Promise<void> {
   const force = options?.force ?? false
   const skipChildren = options?.skipChildren ?? false
@@ -1079,6 +1166,9 @@ async function loadMessages(
   }
 
   const loadEpoch = advanceMessageLoadEpoch(instanceId, sessionId)
+  options?.registerInvalidation?.(() => {
+    if (isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) invalidateSessionMessageLoad(instanceId, sessionId)
+  })
   const messageRevision = messageStoreBus.getOrCreate(instanceId).getSessionRevision(sessionId)
   let retryAfterRevisionConflict = false
 
@@ -1104,6 +1194,11 @@ async function loadMessages(
       return
     }
 
+    const latestSession = sessions().get(instanceId)?.get(sessionId)
+    if (latestSession?.runtimeStatusKnown && latestSession.status === "idle") {
+      messageStoreBus.getOrCreate(instanceId).retirePendingSends(sessionId)
+    }
+
     setSessionMessagesLoadError(instanceId, sessionId, null)
 
     if (apiMessages.length === 0) {
@@ -1126,8 +1221,16 @@ async function loadMessages(
         })
       }
     } else {
+      const seenMessageIds = new Set<string>()
+      const authoritativeApiMessages = apiMessages.filter((apiMessage: any) => {
+        const id = apiMessage?.info?.id ?? apiMessage?.id
+        if (typeof id !== "string") return true
+        if (seenMessageIds.has(id)) return false
+        seenMessageIds.add(id)
+        return true
+      })
       const messagesInfo = new Map<string, any>()
-      const messages: Message[] = apiMessages.map((apiMessage: any) => {
+      const messages: Message[] = authoritativeApiMessages.map((apiMessage: any) => {
         const info = apiMessage.info || apiMessage
         const role = info.role || "assistant"
         const messageId = info.id || String(Date.now())
@@ -1161,8 +1264,8 @@ async function loadMessages(
       let providerID = ""
       let modelID = ""
 
-      for (let i = apiMessages.length - 1; i >= 0; i--) {
-        const apiMessage = apiMessages[i]
+      for (let i = authoritativeApiMessages.length - 1; i >= 0; i--) {
+        const apiMessage = authoritativeApiMessages[i]
         const info = apiMessage.info || apiMessage
 
         if (info.role === "assistant") {
@@ -1237,7 +1340,12 @@ async function loadMessages(
 
   if (retryAfterRevisionConflict && sessions().get(instanceId)?.has(sessionId)) {
     await new Promise((resolve) => setTimeout(resolve, 50))
-    return loadMessages(instanceId, sessionId, { force: true, skipChildren })
+    if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return
+    return loadMessages(instanceId, sessionId, {
+      force: true,
+      skipChildren,
+      registerInvalidation: options?.registerInvalidation,
+    })
   }
 
   if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return

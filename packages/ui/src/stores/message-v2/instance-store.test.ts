@@ -107,6 +107,27 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
     assert.deepEqual(record?.clientPromptDisplayMetadata, displayMetadata, "metadata survives the same-id confirmation")
   })
 
+  it("retains client part identity through a metadata-only same-id snapshot", () => {
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+    store.upsertMessage({
+      id: "msg-1", sessionId: "session-1", role: "user", status: "sending",
+      parts: [{ id: "client-part", type: "text", text: "hello", synthetic: true } as any], isEphemeral: true,
+    })
+    store.markSendPending("msg-1")
+    store.hydrateMessages("session-1", [
+      { id: "msg-1", sessionId: "session-1", role: "user", status: "complete", isEphemeral: false },
+    ])
+
+    store.confirmServerMessage("msg-1", { clearOptimisticParts: true })
+    store.applyPartUpdate({
+      messageId: "msg-1",
+      part: { id: "server-part", type: "text", text: "hello" } as any,
+    })
+
+    assert.deepEqual(store.getMessage("msg-1")?.partIds, ["server-part"])
+  })
+
   it("dedupes repeated snapshot ids so messageIds never repeat", () => {
     // Gatekeeper reproduction: a duplicated server record made the id appear
     // twice in session.messageIds ([real, real]).
@@ -120,7 +141,7 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
   })
 
   it("drops a definitively failed send on the next authoritative snapshot", () => {
-    // promptAsync rejection retires the in-flight marker (clearSendPending).
+    // promptAsync rejection retires the in-flight marker and marks the bubble.
     // The failed bubble stays visible until the next authoritative snapshot,
     // which must then drop it instead of preserving it forever as "sending".
     const store = createInstanceMessageStore("instance-1")
@@ -133,7 +154,8 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
     store.markSendPending("msg-failed")
 
     // The request fails terminally.
-    store.clearSendPending("msg-failed")
+    store.failSend("msg-failed")
+    assert.equal(store.getMessage("msg-failed")?.status, "error")
 
     // Immediately after the failure the bubble is still visible (unchanged
     // pre-existing UX); the next authoritative snapshot drops it.
@@ -144,13 +166,88 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
     assert.equal(store.getMessage("msg-failed"), undefined, "failed send must not survive authoritative hydration")
   })
 
+  it("settles an accepted send without waiting for an SSE echo", () => {
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+    store.upsertMessage({
+      id: "msg-accepted", sessionId: "session-1", role: "user", status: "sending",
+      parts: [{ type: "text", text: "hello", synthetic: true } as any], isEphemeral: true,
+    })
+    store.markSendPending("msg-accepted")
+
+    store.acceptSend("msg-accepted")
+
+    assert.equal(store.getMessage("msg-accepted")?.status, "sent")
+    assert.equal(store.getMessage("msg-accepted")?.isEphemeral, false)
+    store.reconcileEmptyAuthoritativeSnapshot("session-1")
+    assert.deepEqual(store.getSessionMessageIds("session-1"), ["msg-accepted"])
+    store.reconcileEmptyAuthoritativeSnapshot("session-1")
+    assert.deepEqual(store.getSessionMessageIds("session-1"), ["msg-accepted"])
+
+    store.confirmServerMessage("msg-accepted", { clearOptimisticParts: true })
+    store.applyPartUpdate({
+      messageId: "msg-accepted",
+      part: { id: "server-part", type: "text", text: "hello", synthetic: false } as any,
+    })
+    assert.deepEqual(store.getMessage("msg-accepted")?.partIds, ["server-part"])
+    assert.equal(store.getMessage("msg-accepted")?.isEphemeral, false)
+  })
+
+  it("clears only client-created parts when the server confirms a send", () => {
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+    store.upsertMessage({
+      id: "msg-1", sessionId: "session-1", role: "user", status: "sending",
+      parts: [{ id: "client-part", type: "text", text: "hello", synthetic: true } as any], isEphemeral: true,
+    })
+    store.markSendPending("msg-1")
+    store.applyPartUpdate({
+      messageId: "msg-1",
+      part: { id: "server-synthetic", type: "text", text: "server", synthetic: true } as any,
+    })
+
+    store.confirmServerMessage("msg-1", { clearOptimisticParts: true })
+
+    assert.deepEqual(store.getMessage("msg-1")?.partIds, ["server-synthetic"])
+  })
+
+  it("drops an unconfirmed accepted send once idle message authority settles", () => {
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+    store.upsertMessage({
+      id: "msg-unconfirmed", sessionId: "session-1", role: "user", status: "sending",
+      parts: [{ type: "text", text: "hello", synthetic: true } as any], isEphemeral: true,
+    })
+    store.markSendPending("msg-unconfirmed")
+    store.acceptSend("msg-unconfirmed")
+
+    store.retirePendingSends("session-1")
+    store.reconcileEmptyAuthoritativeSnapshot("session-1")
+
+    assert.equal(store.getMessage("msg-unconfirmed"), undefined)
+  })
+
   it("preserves only still-pending sends across an authoritative empty snapshot", () => {
     const store = createInstanceMessageStore("instance-1")
     store.addOrUpdateSession({ id: "session-1" })
 
     store.hydrateMessages("session-1", [
-      { id: "msg-stale", sessionId: "session-1", role: "user", status: "complete", parts: [{ type: "text", text: "old" } as any] },
-    ])
+      { id: "msg-stale", sessionId: "session-1", role: "assistant", status: "complete", parts: [{ id: "todo-1", type: "tool", tool: "todowrite", state: { status: "completed", input: { todos: [] } } } as any] },
+    ], [{
+      id: "msg-stale", sessionID: "session-1", role: "assistant", time: { created: 1 },
+      tokens: { input: 2, output: 3, reasoning: 0, cache: { read: 0, write: 0 } }, cost: 1,
+    } as any])
+    store.bufferPendingPart({ messageId: "msg-stale", part: { type: "text", text: "late" } as any, receivedAt: Date.now() })
+    store.upsertPermission({
+      permission: { id: "permission-stale", sessionID: "session-1", action: "edit", resources: [] },
+      messageId: "msg-stale",
+      enqueuedAt: 1,
+    })
+    store.upsertQuestion({
+      request: { id: "question-stale", sessionID: "session-1", questions: [] },
+      messageId: "msg-stale",
+      enqueuedAt: 1,
+    })
     store.upsertMessage({
       id: "msg-inflight", sessionId: "session-1", role: "user", status: "sending",
       parts: [{ type: "text", text: "new" } as any], isEphemeral: true,
@@ -158,10 +255,56 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
     store.markSendPending("msg-inflight")
 
     // Server authoritatively reports zero messages on a forced reconnect load.
+    store.retirePendingSends("session-1")
     store.reconcileEmptyAuthoritativeSnapshot("session-1")
 
     assert.deepEqual(store.getSessionMessageIds("session-1"), ["msg-inflight"], "stale records cleared, in-flight send preserved")
     assert.equal(store.getMessage("msg-stale"), undefined)
+    assert.equal(store.state.pendingParts["msg-stale"], undefined)
+    assert.equal(store.state.permissions.byMessage["msg-stale"], undefined)
+    assert.equal(store.state.permissions.queue.length, 0)
+    assert.equal(store.state.questions.byMessage["msg-stale"], undefined)
+    assert.equal(store.state.questions.queue.length, 0)
+    assert.equal(store.state.usage["session-1"].totalInputTokens, 0)
+    assert.equal(store.getLatestTodoSnapshot("session-1"), undefined)
+  })
+
+  it("removes omitted records and derived state from a non-empty authoritative snapshot", () => {
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+    store.hydrateMessages("session-1", [{
+      id: "msg-old", sessionId: "session-1", role: "assistant", status: "complete",
+      parts: [{ id: "todo-old", type: "tool", tool: "todowrite", state: { status: "completed", input: { todos: [] } } } as any],
+    }], [{
+      id: "msg-old", sessionID: "session-1", role: "assistant", time: { created: 1 },
+      tokens: { input: 2, output: 3, reasoning: 0, cache: { read: 0, write: 0 } }, cost: 1,
+    } as any])
+    store.bufferPendingPart({ messageId: "msg-old", part: { type: "text", text: "late" } as any, receivedAt: Date.now() })
+    store.upsertPermission({
+      permission: { id: "permission-old", sessionID: "session-1", action: "edit", resources: [] },
+      messageId: "msg-old",
+      enqueuedAt: 1,
+    })
+    store.upsertQuestion({
+      request: { id: "question-old", sessionID: "session-1", questions: [] },
+      messageId: "msg-old",
+      enqueuedAt: 1,
+    })
+
+    store.hydrateMessages("session-1", [{
+      id: "msg-new", sessionId: "session-1", role: "user", status: "complete",
+      parts: [{ type: "text", text: "new" } as any],
+    }], [{ id: "msg-new", sessionID: "session-1", role: "user", time: { created: 2 } } as any])
+
+    assert.deepEqual(store.getSessionMessageIds("session-1"), ["msg-new"])
+    assert.equal(store.getMessage("msg-old"), undefined)
+    assert.equal(store.state.pendingParts["msg-old"], undefined)
+    assert.equal(store.state.permissions.byMessage["msg-old"], undefined)
+    assert.equal(store.state.permissions.queue.length, 0)
+    assert.equal(store.state.questions.byMessage["msg-old"], undefined)
+    assert.equal(store.state.questions.queue.length, 0)
+    assert.equal(store.state.usage["session-1"].totalInputTokens, 0)
+    assert.equal(store.getLatestTodoSnapshot("session-1"), undefined)
   })
 
   it("does not bump messageInfoVersion when the hydrated info is unchanged", () => {

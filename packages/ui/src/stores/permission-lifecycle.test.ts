@@ -5,9 +5,15 @@ import { sdkManager } from "../lib/sdk-manager"
 import type { Instance } from "../types/instance"
 import {
   addInstance,
+  addPermissionToQueue,
+  addQuestionToQueue,
   clearPermissionQueue,
+  clearQuestionQueue,
   getPermissionQueue,
+  getQuestionQueue,
   sendPermissionResponse,
+  syncPendingRequests,
+  updateInstance,
 } from "./instances"
 import { messageStoreBus } from "./message-v2/bus"
 import { handlePermissionUpdated } from "./session-events"
@@ -31,6 +37,7 @@ function addTestInstance(id: string, client: OpencodeClient): void {
 afterEach(() => {
   for (const instanceId of instanceIds.splice(0)) {
     clearPermissionQueue(instanceId)
+    clearQuestionQueue(instanceId)
     messageStoreBus.unregisterInstance(instanceId)
     sdkManager.destroyClientsForInstance(instanceId)
   }
@@ -93,4 +100,61 @@ test("standalone permission.updated remains a legacy permission request", async 
 
   assert.equal(legacyReplies, 1)
   assert.equal(v2Replies, 0)
+})
+
+test("pending request sync cannot erase newer SSE mutations", async () => {
+  const newPermission = {
+    id: "new-permission", sessionID: "session", permission: "edit", patterns: ["*"], metadata: {},
+  }
+  const newQuestion = { id: "new-question", sessionID: "session", questions: [] }
+  let resolvePermissions!: (value: { data: never[] }) => void
+  let resolveQuestions!: (value: { data: never[] }) => void
+  let permissionCalls = 0
+  let questionCalls = 0
+  const client = {
+    permission: { list: () => ++permissionCalls === 1
+      ? new Promise((resolve) => { resolvePermissions = resolve })
+      : Promise.resolve({ data: [newPermission] }) },
+    question: { list: () => ++questionCalls === 1
+      ? new Promise((resolve) => { resolveQuestions = resolve })
+      : Promise.resolve({ data: [newQuestion] }) },
+    v2: {
+      permission: { request: { list: async () => ({ data: { data: [] } }) } },
+      question: { request: { list: async () => ({ data: { data: [] } }) } },
+    },
+  } as unknown as OpencodeClient
+  addTestInstance("pending-request-race", client)
+  addPermissionToQueue("pending-request-race", { id: "stale-permission", sessionID: "session" } as never)
+  addQuestionToQueue("pending-request-race", { id: "stale-question", sessionID: "session" } as never)
+
+  const sync = syncPendingRequests("pending-request-race")
+  assert.equal(syncPendingRequests("pending-request-race"), sync)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  updateInstance("pending-request-race", { pid: 2 })
+  addPermissionToQueue("pending-request-race", newPermission as never)
+  addQuestionToQueue("pending-request-race", newQuestion as never)
+  resolvePermissions({ data: [] })
+  resolveQuestions({ data: [] })
+
+  await sync
+  assert.deepEqual(getPermissionQueue("pending-request-race").map(({ id }) => id), ["new-permission"])
+  assert.deepEqual(getQuestionQueue("pending-request-race").map(({ id }) => id), ["new-question"])
+})
+
+test("pending request sync still loads V2 requests when legacy listing fails", async () => {
+  const client = {
+    permission: { list: async () => ({ error: { message: "legacy unavailable" } }) },
+    question: { list: async () => ({ data: [] }) },
+    v2: {
+      permission: { request: { list: async () => ({ data: { data: [{
+        id: "v2-permission", sessionID: "session", permission: "edit", patterns: ["*"], metadata: {},
+      }] } }) } },
+      question: { request: { list: async () => ({ data: { data: [] } }) } },
+    },
+  } as unknown as OpencodeClient
+  addTestInstance("partial-pending-api", client)
+
+  await syncPendingRequests("partial-pending-api")
+
+  assert.deepEqual(getPermissionQueue("partial-pending-api").map(({ id }) => id), ["v2-permission"])
 })

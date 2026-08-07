@@ -1,13 +1,9 @@
 import { onCleanup, onMount } from "solid-js"
 import { getLogger } from "../logger"
 import { serverEvents } from "../server-events"
+import { createForegroundRefreshController } from "./foreground-refresh-controller"
 
 const log = getLogger("foreground-refresh")
-
-// Module-level flags -- survive Solid reactive cycles, guaranteed not to reset
-// between renders the way a component-local signal could.
-let wasDisconnected = false
-let refreshInFlight = false
 
 interface ForegroundRefreshOptions {
   onRefresh: () => void | Promise<void>
@@ -29,45 +25,26 @@ interface ForegroundRefreshOptions {
 // disconnected.
 export function useForegroundRefresh(options: ForegroundRefreshOptions): void {
   onMount(() => {
+    const controller = createForegroundRefreshController(
+      async () => {
+        log.info("SSE transport reconnected — refreshing session state")
+        await options.onRefresh()
+        log.info("Foreground refresh complete")
+      },
+      {
+        onError: (error) => log.error("Foreground refresh failed — retrying while connected", error),
+      },
+    )
     const unsubscribe = serverEvents.onTransportStatus((status) => {
       if (status === "disconnected") {
-        wasDisconnected = true
         log.info("SSE transport disconnected — will refresh on reconnect")
-        return
       }
-
-      if (status === "connected") {
-        if (!wasDisconnected) {
-          log.info("SSE connected but wasDisconnected=false — skipping refresh")
-          return
-        }
-        // Do NOT clear the dirty latch yet: it must survive a failed refresh so
-        // a subsequent reconnect retries. Guard against overlapping runs if
-        // connected fires again while a refresh is still in flight.
-        if (refreshInFlight) {
-          log.info("Reconnect refresh already in flight — skipping duplicate")
-          return
-        }
-        refreshInFlight = true
-        log.info("SSE transport reconnected — refreshing session state")
-        void Promise.resolve(options.onRefresh())
-          .then(() => {
-            // Clear the latch ONLY after a fully successful recovery.
-            wasDisconnected = false
-            log.info("Foreground refresh complete")
-          })
-          .catch((error) => {
-            // Keep wasDisconnected=true so the next disconnected->connected
-            // transition performs a bounded retry instead of silently
-            // forgetting the missed events.
-            log.error("Foreground refresh failed — will retry on next reconnect", error)
-          })
-          .finally(() => {
-            refreshInFlight = false
-          })
-      }
+      controller.handle(status)
     })
 
-    onCleanup(() => unsubscribe())
+    onCleanup(() => {
+      controller.dispose()
+      unsubscribe()
+    })
   })
 }

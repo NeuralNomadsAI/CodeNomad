@@ -218,7 +218,11 @@ export interface InstanceMessageStore {
   hydrateMessages: (sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>) => void
   reconcileEmptyAuthoritativeSnapshot: (sessionId: string) => void
   markSendPending: (messageId: string) => void
-  clearSendPending: (messageId: string) => void
+  acceptSend: (messageId: string) => void
+  confirmServerMessage: (messageId: string, options?: { clearOptimisticParts?: boolean }) => void
+  failSend: (messageId: string) => void
+  failPendingSends: (sessionId: string) => void
+  retirePendingSends: (sessionId: string) => void
   upsertMessage: (input: MessageUpsertInput) => void
   applyPartUpdate: (input: PartUpdateInput) => void
   applyPartDelta: (input: {
@@ -269,16 +273,18 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
   const messageInfoCache = new Map<string, MessageInfo>()
 
-  // Ids of optimistic user sends that are still IN FLIGHT (request not yet
-  // resolved terminally). The client sends its optimistic id to the server as
-  // messageID, so a confirmed send reappears in snapshots under the SAME id
-  // and is reconciled in place. Between the optimistic insert and that
-  // confirmation, the record is absent from server snapshots; this set is how
-  // hydration knows to PRESERVE it (still pending) versus DROP it (a request
-  // that already failed, or a stale ephemeral record the server does not
-  // know about). Entries are removed on confirmation, on terminal status, and
-  // on explicit send failure (clearSendPending).
+  // Requests awaiting same-ID persistence confirmation.
   const pendingSendIds = new Set<string>()
+  const optimisticPartIdsByMessage = new Map<string, Set<string>>()
+
+  function forgetPendingSend(messageId: string): void {
+    pendingSendIds.delete(messageId)
+    optimisticPartIdsByMessage.delete(messageId)
+  }
+
+  function preservePendingSendOnOmission(messageId: string): boolean {
+    return pendingSendIds.has(messageId)
+  }
 
   function findLastAssistantMessageId(messageIds: readonly string[]): string | undefined {
     for (let index = messageIds.length - 1; index >= 0; index -= 1) {
@@ -500,28 +506,11 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     const serverIds = dedupedInputs.map((item) => item.id)
     const serverIdSet = new Set(serverIds)
+    const serverIdsWithParts = new Set(dedupedInputs.filter((item) => item.parts?.length).map((item) => item.id))
 
-    // Reconcile locally-optimistic "sending" messages against this snapshot.
-    //
-    // When the user sends a message the client creates an optimistic record
-    // with a client-only id (isEphemeral + status "sending"). That id is NOT
-    // sent to the server, so the server confirms the send under a DIFFERENT,
-    // real id. A force reload (triggered by an SSE reconnect) replaces
-    // session.messageIds wholesale with the snapshot's ids, which drops the
-    // optimistic id from the visible list while leaving its record orphaned
-    // in state.messages. Two cases must be handled differently:
-    //
-    //  (A) The snapshot ALREADY contains the server-confirmed counterpart
-    //      (a user message with the same content). Preserving the temp id here
-    //      would leave BOTH visible: the SSE message.updated handler finds
-    //      the real record via getMessage() and never runs the temp-id
-    //      replacement, so the temp bubble is never removed -> visible
-    //      duplicate ("real, temp"). These must be dropped and cleaned up.
-    //
-    //  (B) The snapshot does NOT yet contain the send (server hasn't
-    //      registered it). The bubble must stay visible AND stay in
-    //      messageIds so the eventual SSE echo can swap it in place via
-    //      replaceMessageId. These are preserved.
+    // Preserve only requests that have not received a promptAsync response
+    // yet. Accepted prompts are confirmed under the same messageID, while
+    // rejected requests are marked failed and can be removed by this snapshot.
     const previousMessageIds = state.sessions[sessionId]?.messageIds ?? []
     // For each previous ephemeral "sending" record absent from this snapshot,
     // preserve it ONLY while it is a still-in-flight pending send; otherwise
@@ -529,15 +518,14 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     // authoritative server does not know about — and is dropped so it cannot
     // linger as a permanent "sending" bubble.
     const pendingOptimisticIds: string[] = []
-    const droppedOptimisticIds: string[] = []
+    const omittedIds: string[] = []
     for (const id of previousMessageIds) {
       if (serverIdSet.has(id)) continue
       const record = state.messages[id]
-      if (!record || !record.isEphemeral || record.status !== "sending") continue
-      if (pendingSendIds.has(id)) {
-        pendingOptimisticIds.push(id) // case (B): still in flight — keep visible
+      if (record && preservePendingSendOnOmission(id)) {
+        pendingOptimisticIds.push(id)
       } else {
-        droppedOptimisticIds.push(id) // stale/failed — drop
+        omittedIds.push(id)
       }
     }
 
@@ -588,23 +576,27 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       nextMessages[id] = record
     })
 
-    // Physically remove stale ephemeral bubbles (a failed send, or an
-    // ephemeral record the authoritative snapshot does not include). Non-store
-    // side effects (caches/overrides) are cleared here; the actual store-key
-    // deletion happens in the batch below via produce, because
-    // setState("messages", () => obj) MERGES and would not drop absent keys.
-    if (droppedOptimisticIds.length > 0) {
-      droppedOptimisticIds.forEach((id) => {
+    // The snapshot is authoritative: remove every omitted record except a
+    // request that is still awaiting same-ID persistence confirmation.
+    if (omittedIds.length > 0) {
+      omittedIds.forEach((id) => {
         messageInfoCache.delete(id)
-        pendingSendIds.delete(id)
+        forgetPendingSend(id)
         clearPromptDisplayOverride(instanceId, sessionId, id)
+        delete nextMessages[id]
+        delete nextMessageInfoVersion[id]
+        delete nextPendingParts[id]
+        delete nextPermissionsByMessage[id]
       })
-      clearRecordDisplayCacheForMessages(instanceId, droppedOptimisticIds)
+      clearRecordDisplayCacheForMessages(instanceId, omittedIds)
     }
 
     // A send that reappears under its own id is confirmed — it is no longer in
     // flight, so retire its pending marker.
-    serverIds.forEach((id) => pendingSendIds.delete(id))
+    serverIds.forEach((id) => {
+      pendingSendIds.delete(id)
+      if (serverIdsWithParts.has(id)) optimisticPartIdsByMessage.delete(id)
+    })
 
     if (infoList) {
       for (const info of infoList) {
@@ -629,13 +621,12 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       setState("pendingParts", () => nextPendingParts)
       setState("permissions", "byMessage", () => nextPermissionsByMessage)
 
-      // setState with an object merges, so keys removed above (stale
-      // ephemeral bubbles) must be deleted explicitly to actually drop them.
-      if (droppedOptimisticIds.length > 0) {
+      // Solid store object updates merge, so omitted keys are deleted explicitly.
+      if (omittedIds.length > 0) {
         setState(
           "messages",
           produce((draft) => {
-            droppedOptimisticIds.forEach((id) => {
+            omittedIds.forEach((id) => {
               delete draft[id]
             })
           }),
@@ -643,9 +634,39 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         setState(
           "messageInfoVersion",
           produce((draft) => {
-            droppedOptimisticIds.forEach((id) => {
+            omittedIds.forEach((id) => {
               delete draft[id]
             })
+          }),
+        )
+        setState(
+          "pendingParts",
+          produce((draft) => {
+            omittedIds.forEach((id) => {
+              delete draft[id]
+            })
+          }),
+        )
+        setState(
+          "permissions",
+          produce((draft) => {
+            const omitted = new Set(omittedIds)
+            omittedIds.forEach((id) => {
+              delete draft.byMessage[id]
+            })
+            draft.queue = draft.queue.filter((entry) => !entry.messageId || !omitted.has(entry.messageId))
+            draft.active = draft.queue[0] ?? null
+          }),
+        )
+        setState(
+          "questions",
+          produce((draft) => {
+            const omitted = new Set(omittedIds)
+            omittedIds.forEach((id) => {
+              delete draft.byMessage[id]
+            })
+            draft.queue = draft.queue.filter((entry) => !entry.messageId || !omitted.has(entry.messageId))
+            draft.active = draft.queue[0] ?? null
           }),
         )
       }
@@ -661,6 +682,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       }))
       recomputeLastAssistantMessageId(sessionId, incomingIds)
 
+      clearLatestTodoSnapshot(sessionId)
       Object.values(normalizedRecords).forEach((record) => {
         maybeUpdateLatestTodoFromRecord(record)
       })
@@ -669,18 +691,87 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     })
   }
 
-  // Register an optimistic user send as in-flight. Called right after the
-  // optimistic record is inserted, so hydration preserves it until the server
-  // confirms it (same id) or the request fails (clearSendPending).
+  // Register an optimistic user send while promptAsync is unresolved.
   function markSendPending(messageId: string) {
-    if (messageId) pendingSendIds.add(messageId)
+    if (!messageId) return
+    pendingSendIds.add(messageId)
+    const record = state.messages[messageId]
+    optimisticPartIdsByMessage.set(messageId, new Set(record?.partIds ?? []))
   }
 
-  // Retire an optimistic send's in-flight marker. Called on a definitive
-  // send failure (promptAsync rejection) so a later authoritative snapshot
-  // no longer preserves the failed bubble.
-  function clearSendPending(messageId: string) {
+  function updateSendRecord(messageId: string, status: "sent" | "error") {
+    const record = state.messages[messageId]
+    if (!record || (record.status !== "sending" && !(status === "error" && record.status === "sent"))) return
+    setState(
+      "messages",
+      messageId,
+      produce((draft) => {
+        draft.status = status
+        draft.isEphemeral = status === "error"
+        draft.updatedAt = Date.now()
+        draft.revision += 1
+      }),
+    )
+    bumpSessionRevision(record.sessionId)
+  }
+
+  // A 204 response means processing was accepted, but the marker remains until
+  // REST or SSE confirms persistence under the same messageID.
+  function acceptSend(messageId: string) {
+    updateSendRecord(messageId, "sent")
+  }
+
+  function confirmServerMessage(messageId: string, options?: { clearOptimisticParts?: boolean }) {
+    const clientPartIds = optimisticPartIdsByMessage.get(messageId)
     pendingSendIds.delete(messageId)
+    if (options?.clearOptimisticParts) optimisticPartIdsByMessage.delete(messageId)
+    const record = state.messages[messageId]
+    if (!record) return
+    const optimisticPartIds = options?.clearOptimisticParts && record.role === "user"
+      ? record.partIds.filter((id) => clientPartIds?.has(id))
+      : []
+    const shouldSettleUser = record.role === "user" && (record.status === "sending" || record.status === "error")
+    const changed = Boolean(record.isEphemeral || optimisticPartIds.length > 0 || shouldSettleUser)
+    if (!changed) return
+    setState(
+      "messages",
+      messageId,
+      produce((draft) => {
+        draft.isEphemeral = false
+        if (shouldSettleUser) draft.status = "sent"
+        if (optimisticPartIds.length > 0) {
+          const optimisticIds = new Set(optimisticPartIds)
+          draft.partIds = draft.partIds.filter((id) => !optimisticIds.has(id))
+          optimisticPartIds.forEach((id) => {
+            delete draft.parts[id]
+          })
+        }
+        draft.updatedAt = Date.now()
+        draft.revision += 1
+      }),
+    )
+    bumpSessionRevision(record.sessionId)
+  }
+
+  // Request preparation or prompt submission failed. Keep an error bubble
+  // until the next authoritative snapshot rather than preserving "sending".
+  function failSend(messageId: string) {
+    if (!pendingSendIds.has(messageId)) return
+    pendingSendIds.delete(messageId)
+    updateSendRecord(messageId, "error")
+  }
+
+  function failPendingSends(sessionId: string) {
+    for (const messageId of Array.from(pendingSendIds)) {
+      if (state.messages[messageId]?.sessionId === sessionId) failSend(messageId)
+    }
+  }
+
+  function retirePendingSends(sessionId: string) {
+    for (const messageId of Array.from(pendingSendIds)) {
+      const record = state.messages[messageId]
+      if (record?.sessionId === sessionId && record.status === "sent") pendingSendIds.delete(messageId)
+    }
   }
 
   // Apply an AUTHORITATIVE empty snapshot (server returned zero messages for
@@ -695,7 +786,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     const droppedIds: string[] = []
     for (const id of previousMessageIds) {
       const record = state.messages[id]
-      if (record && record.isEphemeral && record.status === "sending" && pendingSendIds.has(id)) {
+      if (record && preservePendingSendOnOmission(id)) {
         keptPendingIds.push(id)
       } else {
         droppedIds.push(id)
@@ -705,7 +796,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     droppedIds.forEach((id) => {
       messageInfoCache.delete(id)
-      pendingSendIds.delete(id)
+      forgetPendingSend(id)
       clearPromptDisplayOverride(instanceId, sessionId, id)
     })
     clearRecordDisplayCacheForMessages(instanceId, droppedIds)
@@ -727,6 +818,38 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
           })
         }),
       )
+      setState(
+        "pendingParts",
+        produce((draft) => {
+          droppedIds.forEach((id) => {
+            delete draft[id]
+          })
+        }),
+      )
+      setState(
+        "permissions",
+        produce((draft) => {
+          const dropped = new Set(droppedIds)
+          droppedIds.forEach((id) => {
+            delete draft.byMessage[id]
+          })
+          draft.queue = draft.queue.filter((entry) => !entry.messageId || !dropped.has(entry.messageId))
+          draft.active = draft.queue[0] ?? null
+        }),
+      )
+      setState(
+        "questions",
+        produce((draft) => {
+          const dropped = new Set(droppedIds)
+          droppedIds.forEach((id) => {
+            delete draft.byMessage[id]
+          })
+          draft.queue = draft.queue.filter((entry) => !entry.messageId || !dropped.has(entry.messageId))
+          draft.active = draft.queue[0] ?? null
+        }),
+      )
+      setState("usage", sessionId, createEmptyUsageState())
+      setState("latestTodos", sessionId, undefined)
       setState("sessions", sessionId, (current) => ({
         ...current,
         messageIds: keptPendingIds,
@@ -970,7 +1093,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   function removeMessage(messageId: string, fallbackSessionId?: string) {
     if (!messageId) return
 
-    pendingSendIds.delete(messageId)
+    forgetPendingSend(messageId)
 
     const record = state.messages[messageId]
     const sessionIds = new Set<string>()
@@ -1097,8 +1220,11 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     // The optimistic send is now confirmed under its real id; retire the
     // pending marker (carry it to the new id only if still mid-flight).
-    if (pendingSendIds.delete(options.oldId) && existing.isEphemeral && existing.status === "sending") {
+    if (pendingSendIds.has(options.oldId) && existing.isEphemeral && existing.status === "sending") {
+      const optimisticParts = optimisticPartIdsByMessage.get(options.oldId)
+      forgetPendingSend(options.oldId)
       pendingSendIds.add(options.newId)
+      if (optimisticParts) optimisticPartIdsByMessage.set(options.newId, optimisticParts)
     }
 
     const cloned: MessageRecord = {
@@ -1479,7 +1605,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
  
     storeLog.info("Clearing session data", { instanceId, sessionId, messageCount: messageIds.length })
     clearRecordDisplayCacheForMessages(instanceId, messageIds)
-    messageIds.forEach((id) => pendingSendIds.delete(id))
+    messageIds.forEach((id) => forgetPendingSend(id))
  
     batch(() => {
       setState("messages", (prev) => {
@@ -1575,6 +1701,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
      clearPromptDisplayOverridesForInstance(instanceId, Object.keys(state.sessions))
      messageInfoCache.clear()
      pendingSendIds.clear()
+     optimisticPartIdsByMessage.clear()
       setState(reconcile(createInitialState(instanceId)))
     }
 
@@ -1591,7 +1718,11 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       hydrateMessages,
       reconcileEmptyAuthoritativeSnapshot,
       markSendPending,
-      clearSendPending,
+      acceptSend,
+      confirmServerMessage,
+      failSend,
+      failPendingSends,
+      retirePendingSends,
       upsertMessage,
       applyPartUpdate,
       applyPartDelta,

@@ -41,6 +41,7 @@ import {
   stopInstance,
   disconnectedInstance,
   acknowledgeDisconnectedInstance,
+  syncPendingRequests,
 } from "./stores/instances"
 import {
   getSessions,
@@ -78,6 +79,28 @@ import {
   selectSidecarTab,
 } from "./stores/app-tabs"
 const log = getLogger("actions")
+const FOREGROUND_REFRESH_TIMEOUT_MS = 10_000
+
+async function withForegroundRefreshTimeout<T>(
+  promise: Promise<T>,
+  label: string,
+  onTimeout?: () => void,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          onTimeout?.()
+          reject(new Error(`${label} timed out`))
+        }, FOREGROUND_REFRESH_TIMEOUT_MS)
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
 
 const App: Component = () => {
   useAppSessionRestore()
@@ -271,8 +294,29 @@ const App: Component = () => {
       //  3. Invalidate the loaded flag for every other loaded session so it
       //     re-fetches lazily on next activation instead of returning stale
       //     content (a non-forced load short-circuits once "loaded").
-      const instanceIds = Array.from(instances().keys())
-      const sessionListResults = await Promise.allSettled(instanceIds.map((id) => fetchSessions(id)))
+      const instanceIds = Array.from(instances().values())
+        .filter((instance) => instance.status === "ready" && Boolean(instance.client))
+        .map((instance) => instance.id)
+      const sessionListResults = await Promise.allSettled(
+        instanceIds.map((id) => {
+          let invalidateSessions = () => {}
+          let invalidatePendingRequests = () => {}
+          return withForegroundRefreshTimeout(
+            Promise.all([
+              fetchSessions(id, {
+                strictStatus: true,
+                registerInvalidation: (invalidate) => { invalidateSessions = invalidate },
+              }),
+              syncPendingRequests(id, (invalidate) => { invalidatePendingRequests = invalidate }),
+            ]),
+            `Foreground refresh for ${id}`,
+            () => {
+              invalidateSessions()
+              invalidatePendingRequests()
+            },
+          )
+        }),
+      )
       const failedInstanceIds: string[] = []
       sessionListResults.forEach((result, i) => {
         if (result.status === "rejected") {
@@ -283,22 +327,33 @@ const App: Component = () => {
 
       const activeInst = activeInstance()
       const activeSession = activeSessionIdForInstance()
-      const hasActive = Boolean(activeInst && activeSession && activeSession !== "info")
+      const hasActive = Boolean(
+        activeInst?.status === "ready" && activeInst.client && activeSession && activeSession !== "info",
+      )
+      const canReloadActive = hasActive && !failedInstanceIds.includes(activeInst!.id)
 
       // Invalidate every loaded session except the active one (force-reloaded
       // below). Snapshot the map first; invalidate mutates it via setState.
       for (const [instId, sessionSet] of messagesLoaded().entries()) {
         for (const sId of sessionSet) {
-          if (hasActive && instId === activeInst!.id && sId === activeSession) continue
+          if (canReloadActive && instId === activeInst!.id && sId === activeSession) continue
           invalidateSessionMessageLoad(instId, sId)
         }
       }
 
       let activeReloadFailed = false
-      if (hasActive) {
+      if (canReloadActive) {
         const statusBefore = getSessionStatus(activeInst!.id, activeSession!)
         try {
-          await loadMessages(activeInst!.id, activeSession!, { force: true })
+          let invalidateMessages = () => {}
+          await withForegroundRefreshTimeout(
+            loadMessages(activeInst!.id, activeSession!, {
+              force: true,
+              registerInvalidation: (invalidate) => { invalidateMessages = invalidate },
+            }),
+            `Active-session refresh for ${activeInst!.id}:${activeSession!}`,
+            () => invalidateMessages(),
+          )
         } catch (error) {
           activeReloadFailed = true
           log.error("Foreground refresh: active session reload failed", {

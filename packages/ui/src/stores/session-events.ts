@@ -77,7 +77,6 @@ import { getOpenCodeWorkspaceIdForWorktree } from "./opencode-workspaces"
 import {
   applyPartUpdateV2,
   applyPartDeltaV2,
-  replaceMessageIdV2,
   reconcilePendingPermissionsV2,
   reconcilePendingQuestionsV2,
   upsertMessageInfoV2,
@@ -90,7 +89,6 @@ import {
   setSessionRevertV2,
 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
-import type { InstanceMessageStore } from "./message-v2/instance-store"
 import { handleConversationAssistantPartUpdated } from "./conversation-speech"
 
 const log = getLogger("sse")
@@ -266,29 +264,8 @@ function ensureSessionStatus(
   void pending.finally(() => pendingSessionFetches.delete(key))
 }
 
-type MessageRole = "user" | "assistant"
-
-
-function resolveMessageRole(info?: MessageInfo | null): MessageRole {
+function resolveMessageRole(info?: MessageInfo | null): "user" | "assistant" {
   return info?.role === "user" ? "user" : "assistant"
-}
-
-function findPendingSyntheticMessageId(
-  store: InstanceMessageStore,
-  sessionId: string,
-  role: MessageRole,
-): string | undefined {
-  const messageIds = store.getSessionMessageIds(sessionId)
-  for (const messageId of messageIds) {
-    const record = store.getMessage(messageId)
-    if (!record) continue
-    if (record.sessionId !== sessionId) continue
-    if (record.role !== role) continue
-    if (record.status !== "sending") continue
-    if (!record.isEphemeral) continue
-    return record.id
-  }
-  return undefined
 }
 
 function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | MessagePartUpdatedEvent): void {
@@ -312,18 +289,11 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     }
 
     const store = messageStoreBus.getOrCreate(instanceId)
-    const role: MessageRole = resolveMessageRole(messageInfo)
+    const role = resolveMessageRole(messageInfo)
     const createdAt = typeof messageInfo?.time?.created === "number" ? messageInfo.time.created : Date.now()
 
-
-    let record = store.getMessage(messageId)
-    if (!record) {
-      const pendingId = findPendingSyntheticMessageId(store, sessionId, role)
-      if (pendingId && pendingId !== messageId) {
-        replaceMessageIdV2(instanceId, pendingId, messageId, { clearParts: role === "user" })
-        record = store.getMessage(messageId)
-      }
-    }
+    store.confirmServerMessage(messageId, { clearOptimisticParts: true })
+    const record = store.getMessage(messageId)
 
     if (!record) {
       store.upsertMessage({
@@ -391,21 +361,15 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
 
     const store = messageStoreBus.getOrCreate(instanceId)
 
-    const role: MessageRole = info.role === "user" ? "user" : "assistant"
+    const role = info.role === "user" ? "user" : "assistant"
     const status: MessageStatus = deriveMessageStatus({
       role: info.role,
       error: (info as any).error,
       time: info.time as { completed?: number } | undefined,
     })
 
-    let record = store.getMessage(messageId)
-    if (!record) {
-      const pendingId = findPendingSyntheticMessageId(store, sessionId, role)
-      if (pendingId && pendingId !== messageId) {
-        replaceMessageIdV2(instanceId, pendingId, messageId, { clearParts: role === "user" })
-        record = store.getMessage(messageId)
-      }
-    }
+    store.confirmServerMessage(messageId)
+    const record = store.getMessage(messageId)
 
     if (!record) {
       const createdAt = info.time?.created ?? Date.now()
@@ -621,8 +585,10 @@ function handleSessionCompacted(instanceId: string, event: EventSessionCompacted
   })
 }
 
-function handleSessionError(_instanceId: string, event: EventSessionError): void {
+function handleSessionError(instanceId: string, event: EventSessionError): void {
   const error = event.properties?.error
+  const sessionId = event.properties?.sessionID
+  if (sessionId) messageStoreBus.getOrCreate(instanceId).failPendingSends(sessionId)
   log.error(`[SSE] Session error:`, error)
 
   let message = tGlobal("sessionEvents.sessionError.unknown")

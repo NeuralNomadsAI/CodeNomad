@@ -185,9 +185,7 @@ async function sendMessage(
     clientPromptDisplayMetadata: preparedPrompt.displayMetadata,
   })
 
-  // Register the optimistic send as in-flight so an authoritative snapshot
-  // (e.g. a reconnect force-reload) preserves it until the server confirms it
-  // under the same id or the request fails below.
+  // Preserve the optimistic bubble only while promptAsync is unresolved.
   store.markSendPending(messageId)
 
   withSession(instanceId, sessionId, () => {
@@ -238,14 +236,13 @@ async function sendMessage(
         "session.promptAsync",
       )
       admission.complete()
+      store.acceptSend(messageId)
     } catch (error) {
       admission.rollback()
-      // The send definitively failed: retire the in-flight marker so a later
-      // authoritative snapshot no longer preserves this optimistic bubble.
-      store.clearSendPending(messageId)
       throw error
     }
   } catch (error) {
+    store.failSend(messageId)
     log.error("Failed to send prompt", error)
     throw error
   }
