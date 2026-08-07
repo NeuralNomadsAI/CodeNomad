@@ -1,7 +1,7 @@
 import { For, Show, Suspense, createEffect, createMemo, createSignal, lazy, type Accessor, type Component, type JSX } from "solid-js"
 import type { FileNode } from "@opencode-ai/sdk/v2/client"
 
-import { Code2, Copy, ExternalLink, FolderOpen, RefreshCw, Save, Search, TerminalSquare, WrapText } from "lucide-solid"
+import { Copy, ExternalLink, FolderOpen, RefreshCw, Save, Search, TerminalSquare, WrapText } from "lucide-solid"
 
 import SplitFilePanel from "../components/SplitFilePanel"
 import { Markdown } from "../../../../markdown"
@@ -9,7 +9,7 @@ import { copyToClipboard } from "../../../../../lib/clipboard"
 import { showToastNotification } from "../../../../../lib/notifications"
 import { useTheme } from "../../../../../lib/theme"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "../../../../action-overflow-menu"
-import { canOpenWorkspacePaths, openWorkspacePath, type WorkspaceEditor } from "../../../../../lib/workspace-open"
+import { canOpenWorkspacePaths, openWorkspacePath } from "../../../../../lib/workspace-open"
 
 const LazyMonacoFileViewer = lazy(() =>
   import("../../../../file-viewer/monaco-file-viewer").then((module) => ({ default: module.MonacoFileViewer })),
@@ -141,9 +141,8 @@ const FilesTab: Component<FilesTabProps> = (props) => {
   }
 
   const handleNativeOpen = async (
-    target: "default" | "reveal" | "terminal" | "editor",
+    target: "default" | "reveal" | "terminal",
     path: string,
-    editor?: WorkspaceEditor,
   ) => {
     try {
       await openWorkspacePath({
@@ -151,7 +150,6 @@ const FilesTab: Component<FilesTabProps> = (props) => {
         instanceId: props.instanceId,
         worktreeSlug: props.worktreeSlug(),
         path,
-        editor,
       })
     } catch (error) {
       showToastNotification({
@@ -184,14 +182,6 @@ const FilesTab: Component<FilesTabProps> = (props) => {
             onSelect: () => handleNativeOpen("terminal", item.path),
           },
         )
-        for (const [editor, name] of [["vscode", "VS Code"], ["cursor", "Cursor"], ["zed", "Zed"], ["vscodium", "VSCodium"]] as const) {
-          items.push({
-            key: `open-editor-${editor}`,
-            label: props.t("instanceShell.filesShell.actions.openEditor", { editor: name }),
-            icon: <Code2 class="w-3.5 h-3.5" />,
-            onSelect: () => handleNativeOpen("editor", item.path, editor),
-          })
-        }
       } else {
         if (isWindowsDesktop) {
           items.push({
