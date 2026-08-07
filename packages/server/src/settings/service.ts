@@ -6,6 +6,7 @@ import { YamlDocStore, type SettingsDoc } from "./yaml-doc-store"
 import { migrateSettingsLayout } from "./migrate"
 import type { WorkspaceEventPayload } from "../api-types"
 import { sanitizeConfigOwner } from "./public-config"
+import { applyMergePatch } from "./merge-patch"
 
 export type DocKind = "config" | "state"
 
@@ -93,9 +94,12 @@ export class SettingsService {
   }
 
   mergePatchDoc(kind: DocKind, patch: unknown): SettingsDoc {
+    if (!isPlainObject(patch)) {
+      throw new Error("Patch must be a JSON object")
+    }
     const updated =
       kind === "config"
-        ? this.configStore.replace(normalizeConfigDoc(this.configStore.mergePatch(patch)))
+        ? this.configStore.replace(normalizeConfigDoc(applyMergePatch(this.configStore.get(), patch) as SettingsDoc))
         : this.stateStore.mergePatch(patch)
     this.publish(kind, "*")
     return updated
@@ -112,10 +116,16 @@ export class SettingsService {
   }
 
   mergePatchOwner(kind: DocKind, owner: string, patch: unknown): SettingsDoc {
+    if (!isPlainObject(patch)) {
+      throw new Error("Patch must be a JSON object")
+    }
     const updated =
       kind === "config"
         ? owner === "server"
-          ? this.configStore.replaceOwner(owner, normalizeServerConfigOwner(this.configStore.mergePatchOwner(owner, patch)))
+          ? this.configStore.replaceOwner(
+              owner,
+              normalizeServerConfigOwner(applyMergePatch(this.configStore.getOwner(owner), patch) as SettingsDoc),
+            )
           : this.configStore.mergePatchOwner(owner, patch)
         : this.stateStore.mergePatchOwner(owner, patch)
     this.publish(kind, owner, updated)
