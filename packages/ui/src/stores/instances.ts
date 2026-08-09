@@ -210,6 +210,7 @@ async function getV2RequestLocations(instanceId: string): Promise<V2Location[]> 
 }
 
 async function requireInterruptionWorkspace(instanceId: string, sessionId: string) {
+  if (!sessions().get(instanceId)?.has(sessionId)) return {}
   const { requireSessionWorkspacePayload } = await import("./session-worktree-binding")
   return requireSessionWorkspacePayload(instanceId, sessionId)
 }
