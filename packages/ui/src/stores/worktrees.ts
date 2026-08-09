@@ -5,6 +5,7 @@ import { getSessionRoot, sessions } from "./session-state"
 import { getLogger } from "../lib/logger"
 import { getCodeNomadSessionMetadata, setSessionWorktreeSlug } from "./session-metadata"
 import type { WorktreeReadyEvent } from "../lib/sse-manager"
+import { findWorktreeSlugForDirectory } from "./opencode-workspace-matching"
 
 const log = getLogger("api")
 
@@ -311,13 +312,21 @@ function getParentSessionId(instanceId: string, sessionId: string): string {
 }
 
 function getWorktreeSlugForParentSession(instanceId: string, parentSessionId: string): string {
+  const session = sessions().get(instanceId)?.get(parentSessionId)
+  const nativeSlug = session?.workspaceId
+    ? findWorktreeSlugForDirectory(getWorktrees(instanceId), session.directory)
+    : null
+  if (nativeSlug) return nativeSlug
+
   const metadataSlug = getCodeNomadSessionMetadata(instanceId, parentSessionId).worktreeSlug
   if (metadataSlug) {
     return normalizeWorktreeSlug(instanceId, metadataSlug)
   }
 
   const map = getWorktreeMap(instanceId)
-  const candidate = map.parentSessionWorktreeSlug[parentSessionId] ?? "root"
+  const candidate = map.parentSessionWorktreeSlug[parentSessionId]
+    ?? findWorktreeSlugForDirectory(getWorktrees(instanceId), session?.directory)
+    ?? "root"
   return normalizeWorktreeSlug(instanceId, candidate)
 }
 
@@ -410,10 +419,7 @@ async function pruneStaleLegacyWorktreeMapEntries(instanceId: string): Promise<v
 }
 
 function getWorktreeSlugForDirectory(instanceId: string, directory: string | undefined): string | null {
-  if (!directory) return null
-  const list = getWorktrees(instanceId)
-  const match = list.find((wt) => wt.directory === directory)
-  return match?.slug ?? null
+  return findWorktreeSlugForDirectory(getWorktrees(instanceId), directory)
 }
 
 export {

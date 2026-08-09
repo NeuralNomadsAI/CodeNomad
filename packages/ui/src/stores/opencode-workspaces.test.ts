@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { mapOpenCodeWorkspacesToWorktreeSlugs } from "./opencode-workspace-matching.ts"
+import { findWorktreeSlugForDirectory, mapOpenCodeWorkspacesToWorktreeSlugs } from "./opencode-workspace-matching.ts"
 
 describe("mapOpenCodeWorkspacesToWorktreeSlugs", () => {
   it("matches POSIX worktree directories case-sensitively", () => {
@@ -56,5 +56,20 @@ describe("mapOpenCodeWorkspacesToWorktreeSlugs", () => {
     )
 
     assert.equal(result.size, 0)
+  })
+})
+
+describe("findWorktreeSlugForDirectory", () => {
+  const worktrees = [
+    { slug: "root", directory: String.raw`C:\Users\Dev\Repo` },
+    { slug: "feature", directory: String.raw`C:\Users\Dev\Repo\.codenomad\worktrees\feature` },
+  ]
+
+  it("matches a native session directory to its worktree", () => {
+    assert.equal(findWorktreeSlugForDirectory(worktrees, "c:/users/dev/repo/.codenomad/worktrees/feature/"), "feature")
+  })
+
+  it("returns null for an unknown native directory", () => {
+    assert.equal(findWorktreeSlugForDirectory(worktrees, "C:/other"), null)
   })
 })

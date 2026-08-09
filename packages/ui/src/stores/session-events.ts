@@ -409,6 +409,7 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
   const info = event.properties?.info
 
   if (!info) return
+  const workspaceId = (info as typeof info & { workspaceID?: string }).workspaceID
   if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(info.id)) return
 
   const instanceSessions = sessions().get(instanceId) ?? new Map<string, Session>()
@@ -419,6 +420,9 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
     const newSession = {
       id: info.id,
       instanceId,
+      projectId: info.projectID,
+      workspaceId,
+      directory: info.directory,
       title: info.title || tGlobal("sessionList.session.untitled"),
       parentId: info.parentID || null,
       agent: "",
@@ -472,6 +476,9 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
     }
     const updatedSession = {
       ...existingSession,
+      projectId: info.projectID ?? existingSession.projectId,
+      workspaceId,
+      directory: info.directory ?? existingSession.directory,
       title: info.title || existingSession.title,
       parentId: info.parentID ?? existingSession.parentId,
       status: existingSession.status ?? "idle",

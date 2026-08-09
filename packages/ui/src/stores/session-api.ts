@@ -202,6 +202,9 @@ async function recordSessionWorkspaceHints(
 
 interface SessionForkResponse {
   id: string
+  projectID?: string
+  workspaceID?: string
+  directory?: string
   title?: string
   parentID?: string | null
   agent?: string
@@ -707,6 +710,9 @@ function toClientSessionV2(instanceId: string, apiSession: SDKSession, existingS
   return {
     id: apiSession.id,
     instanceId,
+    projectId: apiSession.projectID,
+    workspaceId: apiSession.workspaceID,
+    directory: apiSession.directory,
     title: apiSession.title || existingSession?.title || "Untitled",
     parentId: apiSession.parentID || null,
     agent: apiSession.agent ?? existingSession?.agent ?? "",
@@ -772,6 +778,9 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
     const session: Session = {
       id: response.data.id,
       instanceId,
+      projectId: response.data.projectID,
+      workspaceId: response.data.workspaceID,
+      directory: response.data.directory,
       title: response.data.title || "New Session",
       parentId: null,
       agent: selectedAgent,
@@ -882,6 +891,9 @@ async function forkSession(
   const forkedSession = {
     id: info.id,
     instanceId,
+    projectId: info.projectID,
+    workspaceId: info.workspaceID,
+    directory: info.directory,
     title: info.title || "Forked Session",
     parentId: info.parentID || null,
     agent: info.agent || "",
