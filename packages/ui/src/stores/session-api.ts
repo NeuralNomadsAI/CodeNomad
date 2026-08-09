@@ -73,7 +73,6 @@ import {
   migrateLegacyWorktreeMapToSessionMetadata,
   pruneStaleLegacyWorktreeMapEntries,
   removeLegacyParentSessionMapping,
-  setWorktreeSlugForParentSession,
 } from "./worktrees"
 import {
   forgetOpenCodeWorkspaceIdForSession,
@@ -92,6 +91,7 @@ import {
 } from "./session-list-options"
 import { mergeFetchedSessionRuntimeState, resolveAuthoritativeGenerationRecovery } from "./session-generation-recovery"
 import { normalizeWorkspacePath } from "./app-session-reconciliation"
+import { requireSessionWorkspacePayload } from "./session-worktree-binding"
 
 const log = getLogger("api")
 const sessionListRequestIds = new Map<string, number>()
@@ -750,6 +750,14 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
   const activeId = activeSessionId().get(instanceId)
   const worktreeSlug = activeId && activeId !== "info" ? getWorktreeSlugForSession(instanceId, activeId) : "root"
   const client = getRootClient(instanceId)
+  const worktree = getWorktrees(instanceId).find((candidate) => candidate.slug === worktreeSlug)
+  if (!worktree) throw new Error(tGlobal("instanceShell.worktree.locationUnavailable", { slug: worktreeSlug }))
+  const workspaceId = worktreeSlug === "root"
+    ? null
+    : await getOpenCodeWorkspaceIdForWorktree(instanceId, worktreeSlug)
+  if (worktreeSlug !== "root" && !workspaceId) {
+    throw new Error(tGlobal("instanceShell.worktree.locationUnavailable", { slug: worktreeSlug }))
+  }
 
   const instanceAgents = agents().get(instanceId) || []
   const primaryAgents = instanceAgents.filter(isSelectablePrimaryAgent)
@@ -769,7 +777,9 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
 
   try {
     log.info(`[HTTP] POST /session.create for instance ${instanceId}`)
-    const response = await client.session.create()
+    const response = await client.session.create({
+      ...(workspaceId ? { workspace: workspaceId, workspaceID: workspaceId } : {}),
+    })
 
     if (!response.data) {
       throw new Error("Failed to create session: No data returned")
@@ -779,8 +789,8 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
       id: response.data.id,
       instanceId,
       projectId: response.data.projectID,
-      workspaceId: response.data.workspaceID,
-      directory: response.data.directory,
+      workspaceId: response.data.workspaceID ?? workspaceId ?? undefined,
+      directory: response.data.directory || worktree.directory,
       title: response.data.title || "New Session",
       parentId: null,
       agent: selectedAgent,
@@ -809,6 +819,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
       next.set(instanceId, instanceSessions)
       return next
     })
+    if (workspaceId) rememberOpenCodeWorkspaceIdForSession(instanceId, session.id, workspaceId)
 
     syncInstanceSessionIndicator(instanceId)
     prependSessionListId(instanceId, session.id)
@@ -847,11 +858,6 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
       await cleanupBlankSessions(instanceId, session.id)
     }
 
-    // Persist mapping for this *parent* session (best-effort).
-    await setWorktreeSlugForParentSession(instanceId, session.id, worktreeSlug, { currentSlug: worktreeSlug }).catch((error) => {
-      log.warn("Failed to persist session worktree mapping", { instanceId, sessionId: session.id, worktreeSlug, error })
-    })
-
     return session
   } catch (error) {
     log.error("Failed to create session:", error)
@@ -879,7 +885,7 @@ async function forkSession(
 
   const request: { sessionID: string; messageID?: string } = {
     sessionID: sourceSessionId,
-    ...(await getSessionWorkspacePayload(instanceId, sourceSessionId)),
+    ...(await requireSessionWorkspacePayload(instanceId, sourceSessionId)),
     messageID: options?.messageId,
   }
 
@@ -977,7 +983,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
 
   try {
     log.info(`[HTTP] DELETE /session.delete for instance ${instanceId}`, { sessionId })
-    await requestData(client.session.delete({ sessionID: sessionId, ...(await getSessionWorkspacePayload(instanceId, sessionId)) }), "session.delete")
+    await requestData(client.session.delete({ sessionID: sessionId, ...(await requireSessionWorkspacePayload(instanceId, sessionId)) }), "session.delete")
 
     removeSessionRuntimeState(instanceId, sessionId)
 
@@ -1196,7 +1202,7 @@ async function loadMessages(
   try {
     log.info(`[HTTP] GET /session.${"messages"} for instance ${instanceId}`, { sessionId })
     const apiMessages = await requestData<any[]>(
-      client.session.messages({ sessionID: sessionId, ...(await getSessionWorkspacePayload(instanceId, sessionId)) }),
+      client.session.messages({ sessionID: sessionId, ...(await requireSessionWorkspacePayload(instanceId, sessionId)) }),
       "session.messages",
     )
 

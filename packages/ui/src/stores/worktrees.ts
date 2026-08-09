@@ -156,9 +156,7 @@ async function deleteWorktree(instanceId: string, slug: string, options?: { forc
   if (!trimmed || trimmed === "root") {
     throw new Error("Invalid worktree")
   }
-  await moveSessionsFromDeletedWorktree(instanceId, trimmed).catch((error) => {
-    log.warn("Failed to move sessions from deleted worktree", { instanceId, slug: trimmed, error })
-  })
+  await moveSessionsFromDeletedWorktree(instanceId, trimmed)
   await import("./opencode-workspaces").then(({ removeOpenCodeWorkspaceForWorktree }) => removeOpenCodeWorkspaceForWorktree(instanceId, trimmed)).catch((error) => {
     log.warn("Failed to remove OpenCode workspace for deleted worktree", { instanceId, slug: trimmed, error })
   })
@@ -178,8 +176,8 @@ async function moveSessionsFromDeletedWorktree(instanceId: string, slug: string)
     .map((session) => session.id)
 
   for (const parentSessionId of parentSessionIds) {
-    await setSessionWorktreeSlug(instanceId, parentSessionId, "root")
-    await removeLegacyParentSessionMapping(instanceId, parentSessionId)
+    const { moveSessionToWorktree } = await import("./session-worktree-binding")
+    await moveSessionToWorktree(instanceId, parentSessionId, "root")
   }
 }
 

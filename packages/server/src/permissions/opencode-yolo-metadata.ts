@@ -10,7 +10,7 @@ type Metadata = Record<string, unknown>
 
 export interface OpencodeYoloPersistence extends AutoAcceptPersistence {
   hasProjectSession(instanceId: string, sessionId: string): Promise<boolean>
-  setWorktreeSlug(instanceId: string, sessionId: string, worktreeSlug: string): Promise<Metadata>
+  setWorktreeSlug(instanceId: string, sessionId: string, worktreeSlug: string | null): Promise<Metadata>
 }
 
 function record(value: unknown): Metadata {
@@ -38,12 +38,17 @@ export function mergePersistedYolo(metadata: unknown, rootSessionId: string, ena
   }
 }
 
-export function mergePersistedWorktreeSlug(metadata: unknown, worktreeSlug: string): Metadata {
+export function mergePersistedWorktreeSlug(metadata: unknown, worktreeSlug: string | null): Metadata {
   const current = record(metadata)
   const codenomad = record(current.codenomad)
+  if (worktreeSlug === null) delete codenomad.worktreeSlug
   return {
     ...current,
-    codenomad: { ...codenomad, version: CODENOMAD_METADATA_VERSION, worktreeSlug },
+    codenomad: {
+      ...codenomad,
+      version: CODENOMAD_METADATA_VERSION,
+      ...(worktreeSlug === null ? {} : { worktreeSlug }),
+    },
   }
 }
 
@@ -104,8 +109,14 @@ export function createOpencodeYoloPersistence(
       return (data ?? []).some((session) => session.id === sessionId)
     },
     setWorktreeSlug(instanceId, sessionId, worktreeSlug): Promise<Metadata> {
-      return updateMetadata(instanceId, sessionId, undefined,
-        (metadata) => mergePersistedWorktreeSlug(metadata, worktreeSlug))
+      return clientFor(instanceId).session.list(
+        { scope: "project", limit: SESSION_LIST_LIMIT },
+        { throwOnError: true },
+      ).then(({ data }) => {
+        const workspaceId = (data ?? []).find((session) => session.id === sessionId)?.workspaceID
+        return updateMetadata(instanceId, sessionId, workspaceId,
+          (metadata) => mergePersistedWorktreeSlug(metadata, worktreeSlug))
+      })
     },
   }
 }

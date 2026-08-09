@@ -4,7 +4,7 @@ import type { FileContent, FileNode } from "@opencode-ai/sdk/v2/client"
 import type { DiffWordWrapMode, RightPanelTab } from "../types"
 
 import { getRootClient } from "../../../../../stores/opencode-client"
-import { getOpenCodeWorkspaceIdForWorktree } from "../../../../../stores/opencode-workspaces"
+import { requireWorktreeWorkspacePayload } from "../../../../../stores/session-worktree-binding"
 import { requestData } from "../../../../../lib/opencode-api"
 import { serverApi } from "../../../../../lib/api-client"
 import { showConfirmDialog } from "../../../../../stores/alerts"
@@ -62,8 +62,7 @@ export function createFilesTabRuntime(options: FilesTabRuntimeOptions): () => JS
   )
 
   const fileWorkspacePayload = async () => {
-    const workspace = await getOpenCodeWorkspaceIdForWorktree(options.instanceId, options.worktreeSlug())
-    return workspace ? { workspace } : {}
+    return requireWorktreeWorkspacePayload(options.instanceId, options.worktreeSlug())
   }
 
   createEffect(() => {

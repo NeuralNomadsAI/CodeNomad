@@ -1,6 +1,11 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { createOpencodeYoloPersistence, hasPersistedYolo, mergePersistedYolo } from "./opencode-yolo-metadata"
+import {
+  createOpencodeYoloPersistence,
+  hasPersistedYolo,
+  mergePersistedWorktreeSlug,
+  mergePersistedYolo,
+} from "./opencode-yolo-metadata"
 
 describe("OpenCode Yolo metadata", () => {
   it("preserves unrelated metadata while replacing Yolo state", () => {
@@ -18,6 +23,13 @@ describe("OpenCode Yolo metadata", () => {
     assert.equal(hasPersistedYolo("root", metadata), true)
     assert.equal(hasPersistedYolo("fork", metadata), false)
     assert.equal(hasPersistedYolo("root", mergePersistedYolo({}, "root", false)), false)
+  })
+
+  it("clears only the legacy worktree marker", () => {
+    assert.deepEqual(
+      mergePersistedWorktreeSlug({ thirdParty: true, codenomad: { version: 1, worktreeSlug: "feature", keep: true } }, null),
+      { thirdParty: true, codenomad: { version: 1, keep: true } },
+    )
   })
 
   it("uses the session workspace for metadata updates", async () => {
@@ -41,6 +53,7 @@ describe("OpenCode Yolo metadata", () => {
     let metadata: Record<string, unknown> = { thirdParty: true }
     const client = {
       session: {
+        async list() { return { data: [{ id: "root" }] } },
         async get() { return { data: { metadata } } },
         async update(parameters: Record<string, unknown>) {
           metadata = parameters.metadata as Record<string, unknown>

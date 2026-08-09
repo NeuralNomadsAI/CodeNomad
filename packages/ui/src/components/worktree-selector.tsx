@@ -15,8 +15,8 @@ import {
   getWorktrees,
   reloadWorktreeMap,
   reloadWorktrees,
-  setWorktreeSlugForParentSession,
 } from "../stores/worktrees"
+import { moveSessionToWorktree } from "../stores/session-worktree-binding"
 import { sessions } from "../stores/sessions"
 import { useI18n } from "../lib/i18n"
 
@@ -297,7 +297,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
       setCreateOpen(true)
       return
     }
-    await setWorktreeSlugForParentSession(props.instanceId, parentId(), value.slug)
+    await moveSessionToWorktree(props.instanceId, parentId(), value.slug)
   }
 
   return (
@@ -468,7 +468,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                       setIsCreating(true)
                       await createWorktree(props.instanceId, slug)
                       await reloadWorktrees(props.instanceId)
-                      await setWorktreeSlugForParentSession(props.instanceId, parentId(), slug)
+                      await moveSessionToWorktree(props.instanceId, parentId(), slug)
                       setCreateOpen(false)
                       showToastNotification({ message: `Created worktree ${slug}`, variant: "success" })
                     })()
@@ -549,10 +549,6 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                       await deleteWorktree(props.instanceId, target.slug, { force: forceDelete() })
                       await reloadWorktrees(props.instanceId)
                       await reloadWorktreeMap(props.instanceId)
-
-                      if (currentSlug() === target.slug) {
-                        await setWorktreeSlugForParentSession(props.instanceId, parentId(), "root")
-                      }
 
                       closeDeleteDialog()
                       showToastNotification({ message: `Deleted worktree ${target.slug}`, variant: "success" })

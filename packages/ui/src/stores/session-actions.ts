@@ -1,7 +1,7 @@
 import { preparePromptDisplayText } from "../lib/prompt-display-metadata"
 import { instances } from "./instances"
 import { getRootClient } from "./opencode-client"
-import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
+import { requireSessionWorkspacePayload } from "./session-worktree-binding"
 
 import { addRecentModelPreference, getModelThinkingSelection, setAgentModelPreference } from "./preferences"
 import { beginSessionGenerationAdmission, providers, sessions, withSession } from "./session-state"
@@ -14,11 +14,6 @@ import { requestData } from "../lib/opencode-api"
 import { clearConversationPlaybackForSession } from "./conversation-speech"
 
 const log = getLogger("actions")
-
-async function getSessionWorkspacePayload(instanceId: string, sessionId: string): Promise<{ workspace?: string }> {
-  const workspace = await getOpenCodeWorkspaceIdForSession(instanceId, sessionId)
-  return workspace ? { workspace } : {}
-}
 
 function getVariantKeysForModel(instanceId: string, model: { providerId: string; modelId: string }): string[] {
   if (!model.providerId || !model.modelId) return []
@@ -224,7 +219,7 @@ async function sendMessage(
 
   try {
     log.info("session.promptAsync", { instanceId, sessionId, requestBody })
-    const workspacePayload = await getSessionWorkspacePayload(instanceId, sessionId)
+    const workspacePayload = await requireSessionWorkspacePayload(instanceId, sessionId)
     const admission = beginSessionGenerationAdmission(instanceId, sessionId)
     try {
       await requestData(
@@ -289,7 +284,7 @@ async function executeCustomCommand(
     if (variant) body.variant = variant
   }
 
-  const workspacePayload = await getSessionWorkspacePayload(instanceId, sessionId)
+  const workspacePayload = await requireSessionWorkspacePayload(instanceId, sessionId)
   const admission = beginSessionGenerationAdmission(instanceId, sessionId)
   try {
     await requestData(
@@ -322,7 +317,7 @@ async function runShellCommand(instanceId: string, sessionId: string, command: s
 
   const agent = session.agent || "build"
 
-  const workspacePayload = await getSessionWorkspacePayload(instanceId, sessionId)
+  const workspacePayload = await requireSessionWorkspacePayload(instanceId, sessionId)
   const admission = beginSessionGenerationAdmission(instanceId, sessionId)
   try {
     await requestData(
@@ -356,7 +351,7 @@ async function abortSession(instanceId: string, sessionId: string): Promise<void
     await requestData(
       client.session.abort({
         sessionID: sessionId,
-        ...(await getSessionWorkspacePayload(instanceId, sessionId)),
+        ...(await requireSessionWorkspacePayload(instanceId, sessionId)),
       }),
       "session.abort",
     )
@@ -442,7 +437,7 @@ async function renameSession(instanceId: string, sessionId: string, nextTitle: s
   await requestData(
     client.session.update({
       sessionID: sessionId,
-      ...(await getSessionWorkspacePayload(instanceId, sessionId)),
+      ...(await requireSessionWorkspacePayload(instanceId, sessionId)),
       title: trimmedTitle,
     }),
     "session.update",
@@ -468,7 +463,7 @@ async function deleteMessagePart(instanceId: string, sessionId: string, messageI
   await requestData(
     client.part.delete({
       sessionID: sessionId,
-      ...(await getSessionWorkspacePayload(instanceId, sessionId)),
+      ...(await requireSessionWorkspacePayload(instanceId, sessionId)),
       messageID: messageId,
       partID: partId,
     }),
@@ -494,7 +489,7 @@ async function deleteMessage(instanceId: string, sessionId: string, messageId: s
   await requestData(
     (client as any).client.delete({
       url: `/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(messageId)}`,
-      query: await getSessionWorkspacePayload(instanceId, sessionId),
+      query: await requireSessionWorkspacePayload(instanceId, sessionId),
     }),
     "session.message.delete",
   )

@@ -180,6 +180,10 @@ export const instanceMessages = {
   "instanceShell.diff.enableWordWrap": "折り返しを有効化",
   "instanceShell.diff.disableWordWrap": "折り返しを無効化",
   "instanceShell.worktree.create": "+ worktree を作成",
+  "instanceShell.worktree.locationUnavailable": "worktree {slug} は OpenCode で利用できません。",
+  "instanceShell.worktree.moveBusy": "別の worktree に移動する前に、セッションが完了するまで待ってください。",
+  "instanceShell.worktree.moveFailed": "選択した worktree にセッションを移動できませんでした。",
+  "instanceShell.worktree.sessionNotFound": "セッションが見つかりません。",
 
   "instanceShell.plan.noSessionSelected": "計画を表示するにはセッションを選択してください。",
   "instanceShell.plan.empty": "まだ計画はありません。",

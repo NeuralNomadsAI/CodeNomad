@@ -180,6 +180,10 @@ export const instanceMessages = {
   "instanceShell.diff.enableWordWrap": "启用自动换行",
   "instanceShell.diff.disableWordWrap": "禁用自动换行",
   "instanceShell.worktree.create": "+ 创建 worktree",
+  "instanceShell.worktree.locationUnavailable": "OpenCode 中没有可用的 worktree {slug}。",
+  "instanceShell.worktree.moveBusy": "请等待会话完成后再将其移动到其他 worktree。",
+  "instanceShell.worktree.moveFailed": "无法将会话移动到所选 worktree。",
+  "instanceShell.worktree.sessionNotFound": "找不到会话。",
 
   "instanceShell.plan.noSessionSelected": "选择会话以查看计划。",
   "instanceShell.plan.empty": "暂无计划。",

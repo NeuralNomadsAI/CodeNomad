@@ -60,7 +60,7 @@ export async function hydrateSessionMetadataWithClient(
 export async function setSessionWorktreeSlug(
   instanceId: string,
   sessionId: string,
-  worktreeSlug: string,
+  worktreeSlug: string | null,
 ): Promise<void> {
   const { metadata } = await serverApi.setSessionWorktreeSlug(instanceId, sessionId, worktreeSlug)
   withSession(instanceId, sessionId, (session) => {

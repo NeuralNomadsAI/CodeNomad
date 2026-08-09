@@ -180,6 +180,10 @@ export const instanceMessages = {
   "instanceShell.diff.enableWordWrap": "Activer le retour à la ligne",
   "instanceShell.diff.disableWordWrap": "Désactiver le retour à la ligne",
   "instanceShell.worktree.create": "+ Créer un worktree",
+  "instanceShell.worktree.locationUnavailable": "Le worktree {slug} n'est pas disponible dans OpenCode.",
+  "instanceShell.worktree.moveBusy": "Attendez la fin de la session avant de la déplacer vers un autre worktree.",
+  "instanceShell.worktree.moveFailed": "Impossible de déplacer la session vers le worktree sélectionné.",
+  "instanceShell.worktree.sessionNotFound": "Session introuvable.",
 
   "instanceShell.plan.noSessionSelected": "Sélectionnez une session pour voir le plan.",
   "instanceShell.plan.empty": "Aucun plan pour l'instant.",

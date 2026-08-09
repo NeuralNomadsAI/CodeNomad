@@ -563,7 +563,7 @@ export const serverApi = {
       { method: "POST" },
     )
   },
-  setSessionWorktreeSlug(instanceId: string, sessionId: string, worktreeSlug: string): Promise<SessionMetadataResponse> {
+  setSessionWorktreeSlug(instanceId: string, sessionId: string, worktreeSlug: string | null): Promise<SessionMetadataResponse> {
     return request<SessionMetadataResponse>(
       `/api/workspaces/${encodeURIComponent(instanceId)}/worktrees/sessions/${encodeURIComponent(sessionId)}`,
       { method: "PUT", body: JSON.stringify({ worktreeSlug }) },

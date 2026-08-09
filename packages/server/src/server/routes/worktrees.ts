@@ -28,7 +28,7 @@ const WorktreeCreateSchema = z.object({
   branch: z.string().trim().min(1).optional(),
 })
 
-const WorktreeSessionSchema = z.object({ worktreeSlug: z.string().trim().refine(isValidWorktreeSlug) })
+const WorktreeSessionSchema = z.object({ worktreeSlug: z.string().trim().refine(isValidWorktreeSlug).nullable() })
 
 export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.put<{ Params: { id: string; sessionId: string }; Body: unknown }>(
