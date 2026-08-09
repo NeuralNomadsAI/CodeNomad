@@ -184,4 +184,5 @@ jobs:
 
       - name: Test Tauri crate on Windows
         working-directory: packages/tauri-app/src-tauri
-        run: cargo test --locked
+        # ponytail: cross-host tests spawn real Node/PowerShell processes; avoid runner contention.
+        run: cargo test --locked -- --test-threads=1
