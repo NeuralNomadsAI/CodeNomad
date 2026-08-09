@@ -1,7 +1,7 @@
 import { Select } from "@kobalte/core/select"
 import { Dialog } from "@kobalte/core/dialog"
 import { For, Show, createMemo, createSignal } from "solid-js"
-import { ChevronDown, Copy, Trash2 } from "lucide-solid"
+import { ChevronDown, Copy, FolderOpen, Trash2 } from "lucide-solid"
 import type { WorktreeDescriptor } from "../../../server/src/api-types"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
@@ -19,6 +19,7 @@ import {
 import { moveSessionToWorktree } from "../stores/session-worktree-binding"
 import { sessions } from "../stores/sessions"
 import { useI18n } from "../lib/i18n"
+import { openLocalDirectory, supportsLocalDirectoryOpen } from "../lib/native/native-functions"
 
 const log = getLogger("session")
 
@@ -205,6 +206,11 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
     }
   }
 
+  const handleOpenDirectory = async (directory: string) => {
+    if (await openLocalDirectory(directory, repoRoot())) return
+    showToastNotification({ message: t("instanceShell.worktree.openDirectory.error"), variant: "error" })
+  }
+
   const sanitizeDeleteError = (input: string) => {
     let sanitized = (input ?? "").trim()
     if (!sanitized) {
@@ -361,6 +367,24 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                   >
                     {displayPathFor(opt.directory)}
                   </span>
+                  <Show when={supportsLocalDirectoryOpen()}>
+                    <button
+                      type="button"
+                      class="session-item-close opacity-80 hover:opacity-100 hover:bg-surface-hover"
+                      aria-label={t("instanceShell.worktree.openDirectory.action")}
+                      title={t("instanceShell.worktree.openDirectory.action")}
+                      onPointerDown={(event) => {
+                        preventSelectPress(event)
+                        void handleOpenDirectory(opt.directory).finally(() => setIsOpen(false))
+                      }}
+                      onPointerUp={preventSelectPress}
+                      onMouseDown={preventSelectPress}
+                      onMouseUp={preventSelectPress}
+                      onClick={preventSelectPress}
+                    >
+                      <FolderOpen class="w-3 h-3" />
+                    </button>
+                  </Show>
                   <button
                     type="button"
                     class="session-item-close opacity-80 hover:opacity-100 hover:bg-surface-hover"

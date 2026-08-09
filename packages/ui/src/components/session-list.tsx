@@ -14,7 +14,6 @@ import { showConfirmDialog } from "../stores/alerts"
 import {
   deleteSession,
   ensureSessionAncestorsExpanded,
-  getVisibleSessionIds,
   isSessionExpanded,
   loadMessages,
   loading,
@@ -33,7 +32,14 @@ import {
   isSessionSearchLoading,
 } from "../stores/sessions"
 import { getGitRepoStatus, getWorktreeSlugForParentSession } from "../stores/worktrees"
-import { collectSessionThreadIds, findSessionThread, flattenVisibleSessionThreads, sortSessionIdsDeepestFirst } from "../stores/session-tree"
+import {
+  collectSessionThreadIds,
+  findSessionThread,
+  flattenVisibleSessionThreads,
+  projectSessionThreads,
+  sortSessionIdsDeepestFirst,
+  type SessionThreadSortMode,
+} from "../stores/session-tree"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
 import { useConfig } from "../stores/preferences"
@@ -53,6 +59,8 @@ interface SessionListProps {
   headerContent?: JSX.Element
   footerContent?: JSX.Element
   enableFilterBar?: boolean
+  sortMode: SessionThreadSortMode
+  worktreeFilter: string | null
 }
 
 function formatSessionStatus(status: SessionStatus): string {
@@ -214,10 +222,17 @@ const SessionList: Component<SessionListProps> = (props) => {
     return result
   })
 
+  const projectedThreads = createMemo(() => projectSessionThreads(filteredThreads(), {
+    sort: props.sortMode,
+    worktree: props.worktreeFilter,
+    getLabel: (thread) => normalizeSessionLabel(thread.session.id),
+    getWorktree: (thread) => getWorktreeSlugForParentSession(props.instanceId, thread.session.id),
+  }))
+
   const visibleProjection = createMemo(() => {
     const expandAll = Boolean(normalizedQuery())
     const rows = flattenVisibleSessionThreads(
-      filteredThreads(),
+      projectedThreads(),
       (sessionId) => expandAll || isSessionExpanded(props.instanceId, sessionId),
     )
     const ids: string[] = []
@@ -245,8 +260,16 @@ const SessionList: Component<SessionListProps> = (props) => {
         collectIds(thread.children)
       }
     }
-    collectIds(filteredThreads())
+    collectIds(projectedThreads())
     return ids
+  })
+
+  createEffect(() => {
+    const matching = new Set(allMatchingSessionIds())
+    setSelectedSessionIds((selected) => {
+      if (Array.from(selected).every((sessionId) => matching.has(sessionId))) return selected
+      return new Set(Array.from(selected).filter((sessionId) => matching.has(sessionId)))
+    })
   })
 
   const selectedCount = createMemo(() => selectedSessionIds().size)
@@ -317,7 +340,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     let fallbackSessionId: string | undefined
 
     if (shouldSelectFallback) {
-      const visible = getVisibleSessionIds(props.instanceId)
+      const visible = visibleProjection().ids
       const currentIndex = visible.indexOf(sessionId)
       const remaining = visible.filter((id) => id !== sessionId)
 
@@ -423,8 +446,7 @@ const SessionList: Component<SessionListProps> = (props) => {
   }
 
   const getSelectableThreadIds = (sessionId: string): string[] => {
-    const source = normalizedQuery() ? filteredThreads() : props.threads
-    const thread = findSessionThread(source, sessionId)
+    const thread = findSessionThread(projectedThreads(), sessionId)
     return thread ? collectSessionThreadIds([thread]) : [sessionId]
   }
 

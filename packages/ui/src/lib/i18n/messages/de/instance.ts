@@ -180,6 +180,8 @@ export const instanceMessages = {
   "instanceShell.diff.enableWordWrap": "Zeilenumbruch aktivieren",
   "instanceShell.diff.disableWordWrap": "Zeilenumbruch deaktivieren",
   "instanceShell.worktree.create": "+ Worktree erstellen",
+  "instanceShell.worktree.openDirectory.action": "Im Dateimanager öffnen",
+  "instanceShell.worktree.openDirectory.error": "Der Worktree konnte nicht im Dateimanager geöffnet werden.",
   "instanceShell.worktree.locationUnavailable": "Worktree {slug} ist in OpenCode nicht verfügbar.",
   "instanceShell.worktree.moveBusy": "Warte, bis die Sitzung beendet ist, bevor du sie in einen anderen Worktree verschiebst.",
   "instanceShell.worktree.moveFailed": "Die Sitzung konnte nicht in den ausgewählten Worktree verschoben werden.",

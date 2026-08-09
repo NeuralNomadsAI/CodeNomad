@@ -68,6 +68,7 @@ import { getRootClient } from "./opencode-client"
 import { tGlobal } from "../lib/i18n"
 import {
   getWorktreeSlugForSession,
+  isWorktreeDeletionInProgress,
   getWorktreeSlugForDirectory,
   getWorktrees,
   migrateLegacyWorktreeMapToSessionMetadata,
@@ -749,6 +750,9 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
   // If no session is active (fresh instance), fall back to root.
   const activeId = activeSessionId().get(instanceId)
   const worktreeSlug = activeId && activeId !== "info" ? getWorktreeSlugForSession(instanceId, activeId) : "root"
+  if (isWorktreeDeletionInProgress(instanceId, worktreeSlug)) {
+    throw new Error(tGlobal("instanceShell.worktree.moveFailed"))
+  }
   const client = getRootClient(instanceId)
   const worktree = getWorktrees(instanceId).find((candidate) => candidate.slug === worktreeSlug)
   if (!worktree) throw new Error(tGlobal("instanceShell.worktree.locationUnavailable", { slug: worktreeSlug }))

@@ -180,6 +180,8 @@ export const instanceMessages = {
   "instanceShell.diff.enableWordWrap": "Word wrap सक्षम गर्नुहोस्",
   "instanceShell.diff.disableWordWrap": "Word wrap अक्षम गर्नुहोस्",
   "instanceShell.worktree.create": "+ Worktree सिर्जना गर्नुहोस्",
+  "instanceShell.worktree.openDirectory.action": "फाइल व्यवस्थापकमा खोल्नुहोस्",
+  "instanceShell.worktree.openDirectory.error": "फाइल व्यवस्थापकमा worktree खोल्न सकिएन।",
   "instanceShell.worktree.locationUnavailable": "Worktree {slug} OpenCode मा उपलब्ध छैन।",
   "instanceShell.worktree.moveBusy": "अर्को worktree मा सार्नुअघि सत्र समाप्त हुन दिनुहोस्।",
   "instanceShell.worktree.moveFailed": "सत्रलाई चयन गरिएको worktree मा सार्न सकिएन।",

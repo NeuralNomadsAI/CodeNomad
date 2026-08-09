@@ -11,6 +11,7 @@ import {
   getDescendantSessionsFromMap,
   getSessionAncestorIdsFromMap,
   getSessionRootFromMap,
+  projectSessionThreads,
   sortSessionIdsDeepestFirst,
 } from "./session-tree"
 
@@ -50,6 +51,31 @@ describe("session tree", () => {
     assert.deepEqual(root.children.map((child) => child.session.id), ["child"])
     assert.deepEqual(root.children[0].children.map((child) => child.session.id), ["grandchild"])
     assert.equal(buildSessionThreadsFromMap(sessions, ["root", "root"]).length, 1)
+  })
+
+  it("filters complete families and sorts worktrees by recent activity", () => {
+    const sessions = sessionMap([
+      ["feature-old", null, 100],
+      ["feature-child", "feature-old", 500],
+      ["feature-new", null, 400],
+      ["workspace", null, 600],
+    ])
+    const threads = buildSessionThreadsFromMap(sessions, ["feature-old", "feature-new", "workspace"])
+    const worktreeByRoot: Record<string, string> = {
+      "feature-old": "feature",
+      "feature-new": "feature",
+      workspace: "root",
+    }
+    const options = {
+      sort: "worktree" as const,
+      worktree: "feature",
+      getLabel: (thread: (typeof threads)[number]) => thread.session.id,
+      getWorktree: (thread: (typeof threads)[number]) => worktreeByRoot[thread.session.id] ?? "root",
+    }
+
+    const projected = projectSessionThreads(threads, options)
+    assert.deepEqual(projected.map((thread) => thread.session.id), ["feature-old", "feature-new"])
+    assert.deepEqual(projected[0]?.children.map((thread) => thread.session.id), ["feature-child"])
   })
 
   it("only exposes descendants whose full parent path is expanded", () => {

@@ -149,30 +149,28 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
 
       await removeWorktree({ workspaceFolder: workspace.path, directory: match.directory, force, logger: request.log })
 
-      // Best-effort: prune any mappings that point at the deleted worktree.
-      const current = await readWorktreeMap(workspace.path, request.log)
-      let changed = false
-      const nextMapping: Record<string, string> = { ...(current.parentSessionWorktreeSlug ?? {}) }
-      for (const [sessionId, mapped] of Object.entries(nextMapping)) {
-        if (mapped === slug) {
-          delete nextMapping[sessionId]
-          changed = true
+      // Best-effort: Git deletion has already succeeded, so cleanup must not report a false failure.
+      try {
+        const current = await readWorktreeMap(workspace.path, request.log)
+        let changed = false
+        const nextMapping: Record<string, string> = { ...(current.parentSessionWorktreeSlug ?? {}) }
+        for (const [sessionId, mapped] of Object.entries(nextMapping)) {
+          if (mapped === slug) {
+            delete nextMapping[sessionId]
+            changed = true
+          }
         }
-      }
-      const nextDefault = current.defaultWorktreeSlug === slug ? "root" : current.defaultWorktreeSlug
-      if (nextDefault !== current.defaultWorktreeSlug) {
-        changed = true
-      }
-      if (changed) {
-        await writeWorktreeMap(
-          workspace.path,
-          {
-            version: 1,
-            defaultWorktreeSlug: nextDefault,
-            parentSessionWorktreeSlug: nextMapping,
-          },
-          request.log,
-        )
+        const nextDefault = current.defaultWorktreeSlug === slug ? "root" : current.defaultWorktreeSlug
+        if (nextDefault !== current.defaultWorktreeSlug) changed = true
+        if (changed) {
+          await writeWorktreeMap(
+            workspace.path,
+            { version: 1, defaultWorktreeSlug: nextDefault, parentSessionWorktreeSlug: nextMapping },
+            request.log,
+          )
+        }
+      } catch (error) {
+        request.log.warn({ error, slug }, "Failed to prune deleted worktree mappings")
       }
 
       reply.code(204)

@@ -180,6 +180,8 @@ export const instanceMessages = {
   "instanceShell.diff.enableWordWrap": "折り返しを有効化",
   "instanceShell.diff.disableWordWrap": "折り返しを無効化",
   "instanceShell.worktree.create": "+ worktree を作成",
+  "instanceShell.worktree.openDirectory.action": "ファイルマネージャーで開く",
+  "instanceShell.worktree.openDirectory.error": "ファイルマネージャーで worktree を開けませんでした。",
   "instanceShell.worktree.locationUnavailable": "worktree {slug} は OpenCode で利用できません。",
   "instanceShell.worktree.moveBusy": "別の worktree に移動する前に、セッションが完了するまで待ってください。",
   "instanceShell.worktree.moveFailed": "選択した worktree にセッションを移動できませんでした。",

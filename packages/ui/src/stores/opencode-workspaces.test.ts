@@ -1,7 +1,11 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { findWorktreeSlugForDirectory, mapOpenCodeWorkspacesToWorktreeSlugs } from "./opencode-workspace-matching.ts"
+import {
+  findWorktreeSlugForDirectory,
+  mapOpenCodeWorkspacesToWorktreeSlugs,
+  workspaceDirectoriesEqual,
+} from "./opencode-workspace-matching.ts"
 
 describe("mapOpenCodeWorkspacesToWorktreeSlugs", () => {
   it("matches POSIX worktree directories case-sensitively", () => {
@@ -71,5 +75,12 @@ describe("findWorktreeSlugForDirectory", () => {
 
   it("returns null for an unknown native directory", () => {
     assert.equal(findWorktreeSlugForDirectory(worktrees, "C:/other"), null)
+  })
+})
+
+describe("workspaceDirectoriesEqual", () => {
+  it("normalizes Windows casing, slashes, and trailing separators", () => {
+    assert.equal(workspaceDirectoriesEqual(String.raw`C:\Repo\feature`, "c:/repo/feature/"), true)
+    assert.equal(workspaceDirectoriesEqual("/Repo/feature", "/repo/feature"), false)
   })
 })

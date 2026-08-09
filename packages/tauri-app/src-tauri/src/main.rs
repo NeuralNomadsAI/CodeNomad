@@ -195,6 +195,57 @@ fn wake_lock_stop(state: tauri::State<AppState>) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn open_local_directory(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    path: String,
+    repo_root: String,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("Directory opening is unavailable from this window".to_string());
+    }
+    let path = path.trim();
+    let repo_root = repo_root.trim();
+    if path.is_empty()
+        || repo_root.is_empty()
+        || path.starts_with(r"\\")
+        || path.starts_with("//")
+        || repo_root.starts_with(r"\\")
+        || repo_root.starts_with("//")
+    {
+        return Err("Directory not found".to_string());
+    }
+    let directory = std::fs::canonicalize(path).map_err(|_| "Directory not found")?;
+    let repo_root = std::fs::canonicalize(repo_root).map_err(|_| "Directory not found")?;
+    if !directory.is_dir() || !repo_root.is_dir() {
+        return Err("Directory not found".to_string());
+    }
+    let worktrees = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&repo_root)
+        .args(["worktree", "list", "--porcelain", "-z"])
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !worktrees.status.success() {
+        return Err("Directory not found".to_string());
+    }
+    let registered = worktrees.stdout.split(|byte| *byte == 0).any(|entry| {
+        let Some(path) = entry.strip_prefix(b"worktree ") else {
+            return false;
+        };
+        std::fs::canonicalize(String::from_utf8_lossy(path).as_ref()).is_ok_and(|candidate| {
+            candidate == directory || (directory == repo_root && directory.starts_with(candidate))
+        })
+    });
+    if !registered {
+        return Err("Directory not found".to_string());
+    }
+    app.opener()
+        .open_path(directory.to_string_lossy(), None::<&str>)
+        .map_err(|err| err.to_string())
+}
+
 fn is_dev_mode() -> bool {
     cfg!(debug_assertions) || std::env::var("TAURI_DEV").is_ok()
 }
@@ -664,6 +715,7 @@ fn main() {
             desktop_events_stop,
             wake_lock_start,
             wake_lock_stop,
+            open_local_directory,
             needs_local_certificate_install,
             open_remote_window,
             client_state::client_state_claim_access,

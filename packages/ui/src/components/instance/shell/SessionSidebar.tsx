@@ -1,10 +1,11 @@
-import { Show, type Accessor, type Component } from "solid-js"
+import { For, Show, createMemo, createSignal, type Accessor, type Component } from "solid-js"
+import { DropdownMenu } from "@kobalte/core/dropdown-menu"
 import type { SessionThread } from "../../../stores/session-state"
 import type { Session } from "../../../types/session"
 import { keyboardRegistry, type KeyboardShortcut } from "../../../lib/keyboard-registry"
 import type { DrawerViewState } from "./types"
 
-import { PlusSquare, Search } from "lucide-solid"
+import { Check, ListFilter, PlusSquare, Search } from "lucide-solid"
 import IconButton from "@suid/material/IconButton"
 import MenuOpenIcon from "@suid/icons-material/MenuOpen"
 import PushPinIcon from "@suid/icons-material/PushPin"
@@ -19,6 +20,8 @@ import ModelSelector from "../../model-selector"
 import ThinkingSelector from "../../thinking-selector"
 import { getLogger } from "../../../lib/logger"
 import { shouldMountSessionList } from "../../session-list-visibility"
+import { getWorktrees } from "../../../stores/worktrees"
+import type { SessionThreadSortMode } from "../../../stores/session-tree"
 
 const log = getLogger("session")
 
@@ -52,7 +55,22 @@ interface SessionSidebarProps {
   setContentEl: (el: HTMLElement | null) => void
 }
 
-const SessionSidebar: Component<SessionSidebarProps> = (props) => (
+const SessionSidebar: Component<SessionSidebarProps> = (props) => {
+  const [sortMode, setSortMode] = createSignal<SessionThreadSortMode>("activity")
+  const [selectedWorktree, setSelectedWorktree] = createSignal<string | null>(null)
+  const worktrees = createMemo(() => getWorktrees(props.instanceId))
+  const worktreeFilter = createMemo(() => {
+    const selected = selectedWorktree()
+    return selected && worktrees().some((worktree) => worktree.slug === selected) ? selected : null
+  })
+  const optionsActive = createMemo(() => sortMode() !== "activity" || worktreeFilter() !== null)
+  const sortOptions: Array<{ value: SessionThreadSortMode; labelKey: string }> = [
+    { value: "activity", labelKey: "sessionList.options.sort.activity" },
+    { value: "name", labelKey: "sessionList.options.sort.name" },
+    { value: "worktree", labelKey: "sessionList.options.sort.worktree" },
+  ]
+
+  return (
     <div class="flex flex-col h-full min-h-0" ref={props.setContentEl}>
       <div class="flex flex-col gap-2 px-4 py-3 border-b border-base">
         <div class="flex items-center justify-between gap-2">
@@ -91,6 +109,76 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
             >
               <Search class="w-5 h-5" />
             </IconButton>
+            <DropdownMenu placement="bottom-end" gutter={4}>
+              <DropdownMenu.Trigger
+                as={IconButton}
+                size="small"
+                color="inherit"
+                aria-label={props.t("sessionList.options.ariaLabel")}
+                title={props.t("sessionList.options.ariaLabel")}
+                sx={{
+                  color: optionsActive() ? "var(--text-primary)" : "inherit",
+                  backgroundColor: optionsActive() ? "var(--surface-hover)" : "transparent",
+                  "&:hover": { backgroundColor: "var(--surface-hover)" },
+                }}
+              >
+                <ListFilter class="w-5 h-5" />
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content class="action-overflow-content">
+                  <div class="px-2 py-1 text-xs font-semibold uppercase text-muted">
+                    {props.t("sessionList.options.sort.label")}
+                  </div>
+                  <For each={sortOptions}>
+                    {(option) => (
+                      <DropdownMenu.Item
+                        class="action-overflow-item"
+                        role="menuitemradio"
+                        aria-checked={sortMode() === option.value}
+                        onSelect={() => setSortMode(option.value)}
+                      >
+                        <span class="action-overflow-item-icon" aria-hidden="true">
+                          <Show when={sortMode() === option.value}><Check class="w-3.5 h-3.5" /></Show>
+                        </span>
+                        <span class="action-overflow-item-label">{props.t(option.labelKey)}</span>
+                      </DropdownMenu.Item>
+                    )}
+                  </For>
+                  <div class="my-1 border-t border-base" role="separator" />
+                  <div class="px-2 py-1 text-xs font-semibold uppercase text-muted">
+                    {props.t("sessionList.options.filter.label")}
+                  </div>
+                  <DropdownMenu.Item
+                    class="action-overflow-item"
+                    role="menuitemradio"
+                    aria-checked={worktreeFilter() === null}
+                    onSelect={() => setSelectedWorktree(null)}
+                  >
+                    <span class="action-overflow-item-icon" aria-hidden="true">
+                      <Show when={worktreeFilter() === null}><Check class="w-3.5 h-3.5" /></Show>
+                    </span>
+                    <span class="action-overflow-item-label">{props.t("sessionList.options.filter.all")}</span>
+                  </DropdownMenu.Item>
+                  <For each={worktrees()}>
+                    {(worktree) => (
+                      <DropdownMenu.Item
+                        class="action-overflow-item"
+                        role="menuitemradio"
+                        aria-checked={worktreeFilter() === worktree.slug}
+                        onSelect={() => setSelectedWorktree(worktree.slug)}
+                      >
+                        <span class="action-overflow-item-icon" aria-hidden="true">
+                          <Show when={worktreeFilter() === worktree.slug}><Check class="w-3.5 h-3.5" /></Show>
+                        </span>
+                        <span class="action-overflow-item-label">
+                          {worktree.slug === "root" ? props.t("sessionList.options.filter.workspace") : worktree.slug}
+                        </span>
+                      </DropdownMenu.Item>
+                    )}
+                  </For>
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu>
             <IconButton
               size="small"
               color="inherit"
@@ -144,6 +232,8 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
               }
             }}
             enableFilterBar={props.showSearch()}
+            sortMode={sortMode()}
+            worktreeFilter={worktreeFilter()}
             showHeader={false}
             showFooter={false}
           />
@@ -223,5 +313,6 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
       </div>
     </div>
   )
+}
 
 export default SessionSidebar

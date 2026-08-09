@@ -180,6 +180,8 @@ export const instanceMessages = {
   "instanceShell.diff.enableWordWrap": "Enable word wrap",
   "instanceShell.diff.disableWordWrap": "Disable word wrap",
   "instanceShell.worktree.create": "+ Create worktree",
+  "instanceShell.worktree.openDirectory.action": "Open in file manager",
+  "instanceShell.worktree.openDirectory.error": "Failed to open the worktree in the file manager.",
   "instanceShell.worktree.locationUnavailable": "Worktree {slug} is not available in OpenCode.",
   "instanceShell.worktree.moveBusy": "Wait for the session to finish before moving it to another worktree.",
   "instanceShell.worktree.moveFailed": "Failed to move the session to the selected worktree.",

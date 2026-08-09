@@ -180,6 +180,8 @@ export const instanceMessages = {
   "instanceShell.diff.enableWordWrap": "הפעל גלישת מילים",
   "instanceShell.diff.disableWordWrap": "כבה גלישת מילים",
   "instanceShell.worktree.create": "+ צור worktree",
+  "instanceShell.worktree.openDirectory.action": "פתח במנהל הקבצים",
+  "instanceShell.worktree.openDirectory.error": "פתיחת ה-worktree במנהל הקבצים נכשלה.",
   "instanceShell.worktree.locationUnavailable": "ה-worktree {slug} אינו זמין ב-OpenCode.",
   "instanceShell.worktree.moveBusy": "יש להמתין לסיום ההפעלה לפני העברתה ל-worktree אחר.",
   "instanceShell.worktree.moveFailed": "העברת ההפעלה ל-worktree שנבחר נכשלה.",

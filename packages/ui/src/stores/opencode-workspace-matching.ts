@@ -23,6 +23,15 @@ function normalizeWindowsWorkspaceDirectory(directory: string): string {
   return normalizeWorkspaceDirectory(directory).toLowerCase()
 }
 
+function workspaceDirectoriesEqual(left: string | null | undefined, right: string | null | undefined): boolean {
+  const normalizedLeft = normalizeWorkspaceDirectory(left)
+  const normalizedRight = normalizeWorkspaceDirectory(right)
+  if (normalizedLeft === normalizedRight) return true
+  return isWindowsWorkspaceDirectory(normalizedLeft)
+    && isWindowsWorkspaceDirectory(normalizedRight)
+    && normalizeWindowsWorkspaceDirectory(normalizedLeft) === normalizeWindowsWorkspaceDirectory(normalizedRight)
+}
+
 function findWorktreeSlugForDirectory(
   worktrees: Pick<WorktreeDescriptor, "slug" | "directory">[],
   target: string | null | undefined,
@@ -64,4 +73,4 @@ function mapOpenCodeWorkspacesToWorktreeSlugs(
   return next
 }
 
-export { findWorktreeSlugForDirectory, mapOpenCodeWorkspacesToWorktreeSlugs }
+export { findWorktreeSlugForDirectory, mapOpenCodeWorkspacesToWorktreeSlugs, workspaceDirectoriesEqual }

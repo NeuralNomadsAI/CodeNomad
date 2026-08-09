@@ -35,6 +35,7 @@ declare global {
     restartCli?: () => Promise<unknown>
     openDialog?: (options: ElectronDialogOptions) => Promise<ElectronDialogResult>
     getDirectoryPaths?: (paths: string[]) => Promise<string[]>
+    openDirectory?: (path: string, repoRoot: string) => Promise<{ ok: boolean }>
     getPathForFile?: (file: File) => string | null
     requestMicrophoneAccess?: () => Promise<{ granted: boolean }>
     setWakeLock?: (enabled: boolean) => Promise<{ enabled: boolean }>
