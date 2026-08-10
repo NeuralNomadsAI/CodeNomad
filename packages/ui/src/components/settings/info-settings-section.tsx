@@ -1,9 +1,11 @@
-import { createEffect, createMemo, createResource, createSignal, onCleanup, type Component } from "solid-js"
-import { Info } from "lucide-solid"
+import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show, type Component } from "solid-js"
+import { Info, Network } from "lucide-solid"
+import { copyToClipboard } from "../../lib/clipboard"
 import { useI18n } from "../../lib/i18n"
 import { getServerMeta } from "../../lib/server-meta"
-import { runtimeEnv } from "../../lib/runtime-env"
-import type { ServerMeta } from "../../../../server/src/api-types"
+import { canOpenRemoteWindows, runtimeEnv } from "../../lib/runtime-env"
+import { openSettings } from "../../stores/settings-screen"
+import { buildDiagnosticReport } from "./info-settings-diagnostics"
 
 interface UserAgentData {
   platform?: string
@@ -62,36 +64,6 @@ async function resolveArchitecture(): Promise<string | null> {
   }
 }
 
-function buildDiagnosticReport(
-  meta: ServerMeta | null,
-  osDisplay: string,
-): string {
-  const lines: string[] = []
-  lines.push("CodeNomad Diagnostic Report")
-  lines.push("============================")
-  lines.push(`Generated: ${new Date().toISOString()}`)
-  lines.push(`Server version: ${meta?.serverVersion ?? "unknown"}`)
-  lines.push(`UI version: ${meta?.ui?.version ?? "unknown"} (source: ${meta?.ui?.source ?? "unknown"})`)
-  lines.push(`Runtime: ${runtimeEnv.host}`)
-  lines.push(`Platform: ${runtimeEnv.platform}`)
-  lines.push(`Window context: ${runtimeEnv.windowContext}`)
-  lines.push(`OS: ${osDisplay}`)
-  lines.push(`Server URL: ${meta?.localUrl ?? "unknown"}`)
-  lines.push(`Workspace root: ${meta?.workspaceRoot ?? "unknown"}`)
-  lines.push(`UI source: ${meta?.ui?.source ?? "unknown"}`)
-  lines.push("")
-  return lines.join("\n")
-}
-
-async function copyToClipboard(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text)
-    return true
-  } catch {
-    return false
-  }
-}
-
 function downloadTextFile(filename: string, text: string) {
   const blob = new Blob([text], { type: "text/plain;charset=utf-8" })
   const url = URL.createObjectURL(blob)
@@ -122,7 +94,16 @@ function versionNewer(current: string, latest: string): boolean | null {
 
 export const InfoSettingsSection: Component = () => {
   const { t } = useI18n()
-  const [meta, { mutate }] = createResource(() => getServerMeta())
+  const [metaLoadFailed, setMetaLoadFailed] = createSignal(false)
+  const [meta, { mutate }] = createResource(async () => {
+    setMetaLoadFailed(false)
+    try {
+      return await getServerMeta()
+    } catch {
+      setMetaLoadFailed(true)
+      return null
+    }
+  })
   const [copyFeedback, setCopyFeedback] = createSignal<"success" | "error" | null>(null)
   const [osArch, setOsArch] = createSignal<string | null>(null)
 
@@ -171,8 +152,13 @@ export const InfoSettingsSection: Component = () => {
   onCleanup(() => clearTimeout(feedbackTimer))
 
   const handleRefresh = async () => {
-    const fresh = await getServerMeta(true)
-    mutate(fresh)
+    setMetaLoadFailed(false)
+    try {
+      const fresh = await getServerMeta(true)
+      mutate(fresh)
+    } catch {
+      setMetaLoadFailed(true)
+    }
   }
 
   const osDisplay = createMemo(() => {
@@ -182,14 +168,14 @@ export const InfoSettingsSection: Component = () => {
   })
 
   const handleCopy = async () => {
-    const report = buildDiagnosticReport(meta() ?? null, osDisplay())
+    const report = buildDiagnosticReport(meta() ?? null, osDisplay(), runtimeEnv)
     const ok = await copyToClipboard(report)
     if (ok) setCopyFeedback("success")
     else setCopyFeedback("error")
   }
 
   const handleDownload = () => {
-    const report = buildDiagnosticReport(meta() ?? null, osDisplay())
+    const report = buildDiagnosticReport(meta() ?? null, osDisplay(), runtimeEnv)
     const ts = new Date().toISOString().replace(/[:.]/g, "-")
     downloadTextFile(`codenomad-diagnostics-${ts}.txt`, report)
   }
@@ -208,10 +194,6 @@ export const InfoSettingsSection: Component = () => {
         </div>
 
         <div class="settings-info-grid">
-          <div class="settings-info-row">
-            <span class="settings-info-label">{t("settings.info.version.server")}</span>
-            <span class="settings-info-value">{meta()?.serverVersion ?? "—"}</span>
-          </div>
           <div class="settings-info-row">
             <span class="settings-info-label">{t("settings.info.version.ui")}</span>
             <span class="settings-info-value">{meta()?.ui?.version ?? "—"}</span>
@@ -234,19 +216,95 @@ export const InfoSettingsSection: Component = () => {
             <span class="settings-info-label">{t("settings.info.runtime.os")}</span>
             <span class="settings-info-value settings-info-value-muted">{osDisplay()}</span>
           </div>
-          <div class="settings-info-row">
-            <span class="settings-info-label">{t("settings.info.server.url")}</span>
-            <span class="settings-info-value settings-info-value-muted">
-              {meta()?.localUrl ?? "—"}
-            </span>
-          </div>
-          <div class="settings-info-row">
-            <span class="settings-info-label">{t("settings.info.server.root")}</span>
-            <span class="settings-info-value settings-info-value-muted">
-              {meta()?.workspaceRoot ?? "—"}
-            </span>
+        </div>
+      </div>
+
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <div class="settings-card-heading-with-icon">
+            <Network class="settings-card-heading-icon" />
+            <div>
+              <h3 class="settings-card-title">{t("settings.info.connectivity.title")}</h3>
+              <p class="settings-card-subtitle">{t("settings.info.connectivity.subtitle")}</p>
+            </div>
           </div>
         </div>
+
+        <Show when={meta.loading}>
+          <div class="settings-card-message" role="status" aria-live="polite">
+            {t("remoteAccess.addresses.loading")}
+          </div>
+        </Show>
+        <Show when={metaLoadFailed()}>
+          <div class="settings-error-message" role="alert">
+            {t("settings.info.connectivity.loadFailed")}
+          </div>
+        </Show>
+        <Show when={meta()}>
+          {(serverMeta) => (
+            <>
+              <dl class="settings-info-grid">
+                <div class="settings-info-row">
+                  <dt class="settings-info-label">{t("settings.info.version.server")}</dt>
+                  <dd class="settings-info-value" dir="ltr">{serverMeta().serverVersion ?? "—"}</dd>
+                </div>
+                <div class="settings-info-row">
+                  <dt class="settings-info-label">{t("remoteAccess.sections.listeningMode.label")}</dt>
+                  <dd class="settings-info-value">
+                    {t(serverMeta().listeningMode === "all" ? "settings.info.connectivity.mode.all" : "settings.info.connectivity.mode.local")}
+                  </dd>
+                </div>
+                <div class="settings-info-row">
+                  <dt class="settings-info-label">{t("settings.info.connectivity.host")}</dt>
+                  <dd class="settings-info-value settings-info-value-muted" dir="ltr">{serverMeta().host}</dd>
+                </div>
+                <div class="settings-info-row">
+                  <dt class="settings-info-label">{t("settings.info.connectivity.localListener")}</dt>
+                  <dd class="settings-info-value settings-info-value-muted" dir="ltr">{serverMeta().localUrl}</dd>
+                </div>
+                <Show when={serverMeta().remoteUrl}>
+                  {(remoteUrl) => (
+                    <div class="settings-info-row">
+                      <dt class="settings-info-label">{t("settings.info.connectivity.remoteListener")}</dt>
+                      <dd class="settings-info-value settings-info-value-muted" dir="ltr">{remoteUrl()}</dd>
+                    </div>
+                  )}
+                </Show>
+                <div class="settings-info-row">
+                  <dt class="settings-info-label">{t("settings.info.server.root")}</dt>
+                  <dd class="settings-info-value settings-info-value-muted" dir="ltr">{serverMeta().workspaceRoot}</dd>
+                </div>
+              </dl>
+
+              <h4 class="settings-card-title">{t("remoteAccess.sections.addresses.label")}</h4>
+              <Show when={serverMeta().addresses.length > 0} fallback={<div class="settings-card-message">{t("remoteAccess.addresses.none")}</div>}>
+                <dl class="settings-info-grid">
+                  <For each={serverMeta().addresses}>{(address) => (
+                    <div class="settings-info-row">
+                      <dt class="settings-info-label">
+                        {address.family.toUpperCase()} · {t(address.scope === "external"
+                          ? "remoteAccess.address.scope.network"
+                          : address.scope === "internal"
+                            ? "remoteAccess.address.scope.internal"
+                            : "remoteAccess.address.scope.loopback")}
+                      </dt>
+                      <dd class="settings-info-value settings-info-value-muted" dir="ltr">{address.remoteUrl}</dd>
+                    </div>
+                  )}</For>
+                </dl>
+              </Show>
+              <p class="settings-help-text">{t("settings.info.connectivity.disclaimer")}</p>
+
+              <Show when={canOpenRemoteWindows()}>
+                <div class="settings-info-actions">
+                  <button type="button" class="settings-pill-button" onClick={() => openSettings("remote")}>
+                    {t("settings.nav.remote")}
+                  </button>
+                </div>
+              </Show>
+            </>
+          )}
+        </Show>
       </div>
 
       <div class="settings-card">
@@ -299,6 +357,8 @@ export const InfoSettingsSection: Component = () => {
             <p class="settings-card-subtitle">{t("settings.info.diagnostics.subtitle")}</p>
           </div>
         </div>
+
+        <div class="settings-card-message">{t("settings.info.diagnostics.privacy")}</div>
 
         <div class="settings-info-actions">
           <button

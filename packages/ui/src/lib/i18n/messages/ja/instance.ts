@@ -18,7 +18,7 @@ export const instanceMessages = {
   "instanceInfo.labels.binaryPath": "バイナリのパス",
   "instanceInfo.labels.environmentVariables": "環境変数 ({count})",
   "instanceInfo.loading": "読み込み中...",
-  "instanceInfo.server.title": "サーバー",
+  "instanceInfo.server.title": "OpenCode プロセス",
   "instanceInfo.server.port": "ポート:",
   "instanceInfo.server.pid": "PID:",
   "instanceInfo.server.status": "状態:",

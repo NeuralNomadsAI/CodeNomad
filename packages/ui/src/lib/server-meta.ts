@@ -11,10 +11,14 @@ export async function getServerMeta(forceRefresh = false): Promise<ServerMeta> {
   if (pendingMeta) {
     return pendingMeta
   }
-  pendingMeta = serverApi.fetchServerMeta().then((meta) => {
+  const request = serverApi.fetchServerMeta().then((meta) => {
     cachedMeta = meta
-    pendingMeta = null
     return meta
   })
-  return pendingMeta
+  pendingMeta = request
+  try {
+    return await request
+  } finally {
+    if (pendingMeta === request) pendingMeta = null
+  }
 }

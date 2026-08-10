@@ -18,7 +18,7 @@ export const instanceMessages = {
   "instanceInfo.labels.binaryPath": "Chemin du binaire",
   "instanceInfo.labels.environmentVariables": "Variables d'environnement ({count})",
   "instanceInfo.loading": "Chargement...",
-  "instanceInfo.server.title": "Serveur",
+  "instanceInfo.server.title": "Processus OpenCode",
   "instanceInfo.server.port": "Port :",
   "instanceInfo.server.pid": "PID :",
   "instanceInfo.server.status": "Statut :",

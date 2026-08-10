@@ -18,7 +18,7 @@ export const instanceMessages = {
   "instanceInfo.labels.binaryPath": "可执行文件路径",
   "instanceInfo.labels.environmentVariables": "环境变量（{count}）",
   "instanceInfo.loading": "正在加载...",
-  "instanceInfo.server.title": "服务器",
+  "instanceInfo.server.title": "OpenCode 进程",
   "instanceInfo.server.port": "端口：",
   "instanceInfo.server.pid": "PID:",
   "instanceInfo.server.status": "状态：",
