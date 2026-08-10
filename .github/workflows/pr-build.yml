@@ -125,6 +125,7 @@ jobs:
           packages/ui/src/lib/hooks/use-foreground-refresh.test.ts
           packages/ui/src/lib/hooks/use-electron-folder-launch.test.ts
           packages/ui/src/lib/launch-errors.test.ts
+          packages/ui/src/lib/clipboard.test.ts
           packages/ui/src/lib/message-selection-position.test.ts
           packages/ui/src/lib/model-visibility.test.ts
           packages/ui/src/lib/runtime-env.test.ts

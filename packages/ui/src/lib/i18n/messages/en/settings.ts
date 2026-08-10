@@ -542,6 +542,7 @@ export const settingsMessages = {
   "settings.info.connectivity.subtitle": "Inspect the effective listener configuration and candidate network addresses.",
   "settings.info.connectivity.mode.local": "Local only",
   "settings.info.connectivity.mode.all": "All network interfaces",
+  "settings.info.connectivity.mode.specific": "Specific network interface",
   "settings.info.connectivity.host": "Bind host",
   "settings.info.connectivity.localListener": "Local listener",
   "settings.info.connectivity.remoteListener": "Remote listener",

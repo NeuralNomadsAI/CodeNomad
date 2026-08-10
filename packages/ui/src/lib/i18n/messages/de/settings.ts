@@ -540,6 +540,7 @@ export const settingsMessages = {
   "settings.info.connectivity.subtitle": "Prüfen Sie die tatsächlich verwendete Listener-Konfiguration und mögliche Netzwerkadressen.",
   "settings.info.connectivity.mode.local": "Nur lokal",
   "settings.info.connectivity.mode.all": "Alle Netzwerkschnittstellen",
+  "settings.info.connectivity.mode.specific": "Bestimmte Netzwerkschnittstelle",
   "settings.info.connectivity.host": "Bind-Adresse",
   "settings.info.connectivity.localListener": "Lokaler Listener",
   "settings.info.connectivity.remoteListener": "Remote-Listener",

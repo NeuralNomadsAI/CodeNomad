@@ -540,6 +540,7 @@ export const settingsMessages = {
   "settings.info.connectivity.subtitle": "वास्तवमा लागू भएको लिस्नर कन्फिगरेसन र सम्भावित नेटवर्क ठेगानाहरू हेर्नुहोस्।",
   "settings.info.connectivity.mode.local": "स्थानीय मात्र",
   "settings.info.connectivity.mode.all": "सबै नेटवर्क इन्टरफेसहरू",
+  "settings.info.connectivity.mode.specific": "विशिष्ट नेटवर्क इन्टरफेस",
   "settings.info.connectivity.host": "बाइन्ड होस्ट",
   "settings.info.connectivity.localListener": "स्थानीय लिस्नर",
   "settings.info.connectivity.remoteListener": "रिमोट लिस्नर",

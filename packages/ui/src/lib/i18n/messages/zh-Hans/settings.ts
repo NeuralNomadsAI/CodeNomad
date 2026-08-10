@@ -541,6 +541,7 @@ export const settingsMessages = {
   "settings.info.connectivity.subtitle": "查看实际生效的监听配置和候选网络地址。",
   "settings.info.connectivity.mode.local": "仅本机",
   "settings.info.connectivity.mode.all": "所有网络接口",
+  "settings.info.connectivity.mode.specific": "指定网络接口",
   "settings.info.connectivity.host": "绑定主机",
   "settings.info.connectivity.localListener": "本地监听地址",
   "settings.info.connectivity.remoteListener": "远程监听地址",

@@ -541,6 +541,7 @@ export const settingsMessages = {
   "settings.info.connectivity.subtitle": "Consulta la configuración de escucha en uso y las posibles direcciones de red.",
   "settings.info.connectivity.mode.local": "Solo local",
   "settings.info.connectivity.mode.all": "Todas las interfaces de red",
+  "settings.info.connectivity.mode.specific": "Interfaz de red específica",
   "settings.info.connectivity.host": "Host de escucha",
   "settings.info.connectivity.localListener": "Punto de escucha local",
   "settings.info.connectivity.remoteListener": "Punto de escucha remoto",

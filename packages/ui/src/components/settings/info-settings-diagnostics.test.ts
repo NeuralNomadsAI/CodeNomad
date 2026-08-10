@@ -52,4 +52,17 @@ describe("buildDiagnosticReport", () => {
     assert.match(report, /Remote URL: none/)
     assert.match(report, /Candidate addresses: 0/)
   })
+
+  it("identifies a specific interface and omits its unreachable loopback candidate", () => {
+    const report = buildDiagnosticReport(
+      { ...meta, host: "192.168.1.20", addresses: meta.addresses },
+      "Linux x86_64",
+      { host: "electron", platform: "desktop", windowContext: "local" },
+      new Date("2026-08-10T12:00:00.000Z"),
+    )
+
+    assert.match(report, /Listening mode: specific/)
+    assert.match(report, /Candidate addresses: 1/)
+    assert.doesNotMatch(report, /https:\/\/127\.0\.0\.1:9898/)
+  })
 })

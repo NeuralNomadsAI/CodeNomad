@@ -541,6 +541,7 @@ export const settingsMessages = {
   "settings.info.connectivity.subtitle": "בדיקת תצורת ההאזנה הפעילה וכתובות רשת אפשריות.",
   "settings.info.connectivity.mode.local": "מקומי בלבד",
   "settings.info.connectivity.mode.all": "כל ממשקי הרשת",
+  "settings.info.connectivity.mode.specific": "ממשק רשת מסוים",
   "settings.info.connectivity.host": "כתובת האזנה",
   "settings.info.connectivity.localListener": "מאזין מקומי",
   "settings.info.connectivity.remoteListener": "מאזין מרוחק",

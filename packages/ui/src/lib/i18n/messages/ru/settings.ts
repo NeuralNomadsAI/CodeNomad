@@ -541,6 +541,7 @@ export const settingsMessages = {
   "settings.info.connectivity.subtitle": "Просмотрите фактическую конфигурацию прослушивания и возможные сетевые адреса.",
   "settings.info.connectivity.mode.local": "Только локально",
   "settings.info.connectivity.mode.all": "Все сетевые интерфейсы",
+  "settings.info.connectivity.mode.specific": "Определённый сетевой интерфейс",
   "settings.info.connectivity.host": "Адрес привязки",
   "settings.info.connectivity.localListener": "Локальная точка подключения",
   "settings.info.connectivity.remoteListener": "Удалённая точка подключения",

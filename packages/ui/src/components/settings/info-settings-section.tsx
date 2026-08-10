@@ -5,7 +5,7 @@ import { useI18n } from "../../lib/i18n"
 import { getServerMeta } from "../../lib/server-meta"
 import { canOpenRemoteWindows, runtimeEnv } from "../../lib/runtime-env"
 import { openSettings } from "../../stores/settings-screen"
-import { buildDiagnosticReport } from "./info-settings-diagnostics"
+import { buildDiagnosticReport, getDiagnosticAddresses, getDiagnosticListeningMode } from "./info-settings-diagnostics"
 
 interface UserAgentData {
   platform?: string
@@ -251,7 +251,11 @@ export const InfoSettingsSection: Component = () => {
                 <div class="settings-info-row">
                   <dt class="settings-info-label">{t("remoteAccess.sections.listeningMode.label")}</dt>
                   <dd class="settings-info-value">
-                    {t(serverMeta().listeningMode === "all" ? "settings.info.connectivity.mode.all" : "settings.info.connectivity.mode.local")}
+                    {t(getDiagnosticListeningMode(serverMeta()) === "specific"
+                      ? "settings.info.connectivity.mode.specific"
+                      : getDiagnosticListeningMode(serverMeta()) === "all"
+                        ? "settings.info.connectivity.mode.all"
+                        : "settings.info.connectivity.mode.local")}
                   </dd>
                 </div>
                 <div class="settings-info-row">
@@ -277,9 +281,9 @@ export const InfoSettingsSection: Component = () => {
               </dl>
 
               <h4 class="settings-card-title">{t("remoteAccess.sections.addresses.label")}</h4>
-              <Show when={serverMeta().addresses.length > 0} fallback={<div class="settings-card-message">{t("remoteAccess.addresses.none")}</div>}>
+              <Show when={getDiagnosticAddresses(serverMeta()).length > 0} fallback={<div class="settings-card-message">{t("remoteAccess.addresses.none")}</div>}>
                 <dl class="settings-info-grid">
-                  <For each={serverMeta().addresses}>{(address) => (
+                  <For each={getDiagnosticAddresses(serverMeta())}>{(address) => (
                     <div class="settings-info-row">
                       <dt class="settings-info-label">
                         {address.family.toUpperCase()} · {t(address.scope === "external"

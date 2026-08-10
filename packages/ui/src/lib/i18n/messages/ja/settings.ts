@@ -541,6 +541,7 @@ export const settingsMessages = {
   "settings.info.connectivity.subtitle": "有効なリスナー設定と候補のネットワークアドレスを確認します。",
   "settings.info.connectivity.mode.local": "ローカルのみ",
   "settings.info.connectivity.mode.all": "すべてのネットワークインターフェース",
+  "settings.info.connectivity.mode.specific": "特定のネットワークインターフェース",
   "settings.info.connectivity.host": "バインドホスト",
   "settings.info.connectivity.localListener": "ローカルリスナー",
   "settings.info.connectivity.remoteListener": "リモートリスナー",

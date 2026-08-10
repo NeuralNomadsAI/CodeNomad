@@ -26,6 +26,8 @@ export async function copyToClipboard(text: string): Promise<boolean> {
   }
 
   // Fallback for non-secure contexts (HTTP) using document.execCommand
+  let textArea: HTMLTextAreaElement | undefined
+  const activeElement = typeof document !== "undefined" ? document.activeElement as HTMLElement | null : null
   try {
     if (typeof document === "undefined") {
       log.error("Document not available for clipboard fallback")
@@ -33,8 +35,9 @@ export async function copyToClipboard(text: string): Promise<boolean> {
     }
 
     // Create temporary textarea element
-    const textArea = document.createElement("textarea")
+    textArea = document.createElement("textarea")
     textArea.value = text
+    textArea.readOnly = true
     textArea.style.position = "fixed"
     textArea.style.left = "-9999px"
     textArea.style.top = "-9999px"
@@ -45,8 +48,6 @@ export async function copyToClipboard(text: string): Promise<boolean> {
     textArea.select()
 
     const success = document.execCommand("copy")
-    document.body.removeChild(textArea)
-
     if (success) {
       log.info("Copied text using execCommand fallback")
       return true
@@ -57,5 +58,16 @@ export async function copyToClipboard(text: string): Promise<boolean> {
   } catch (error) {
     log.error("Clipboard fallback failed:", error)
     return false
+  } finally {
+    try {
+      textArea?.remove()
+    } catch (error) {
+      log.warn("Failed to remove clipboard fallback element:", error)
+    }
+    try {
+      activeElement?.focus()
+    } catch (error) {
+      log.warn("Failed to restore focus after clipboard fallback:", error)
+    }
   }
 }
