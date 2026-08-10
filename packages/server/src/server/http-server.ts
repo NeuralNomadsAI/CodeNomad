@@ -3,7 +3,7 @@ import cors from "@fastify/cors"
 import fastifyStatic from "@fastify/static"
 import replyFrom from "@fastify/reply-from"
 import fs from "fs"
-import { connect as connectTcp, type Socket } from "net"
+import { connect as connectTcp, isIP, type Socket } from "net"
 import path from "path"
 import type { Readable } from "stream"
 import { connect as connectTls, type TLSSocket } from "tls"
@@ -48,7 +48,7 @@ import { WorktreeDeletionFence } from "../workspaces/worktree-session-evacuation
 import type { NativeParent } from "../native-parent"
 import { isAutomationPluginRequest, registerAutomationPluginRoute } from "./routes/automation-plugin"
 import { DeveloperCdp } from "../developer-cdp"
-import { formatHostForUrl, isLoopbackHost, isWildcardHost } from "./network-host"
+import { formatHostForUrl, isLoopbackHost, isWildcardHost, stripHostBrackets } from "./network-host"
 
 interface HttpServerDeps {
   bindHost: string
@@ -354,7 +354,8 @@ export function createHttpServer(deps: HttpServerDeps) {
     instance: app,
     start: async (): Promise<HttpServerStartResult> => {
       const attemptListen = async (requestedPort: number) => {
-        const addressInfo = await app.listen({ port: requestedPort, host: deps.bindHost })
+        const dualStackWildcard = isWildcardHost(deps.bindHost) && isIP(stripHostBrackets(deps.bindHost)) === 6
+        const addressInfo = await app.listen({ port: requestedPort, host: deps.bindHost, ...(dualStackWildcard ? { ipv6Only: false } : {}) })
         return { addressInfo, requestedPort }
       }
 

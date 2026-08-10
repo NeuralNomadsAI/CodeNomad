@@ -21,7 +21,7 @@ export function resolveNetworkAddresses(args: {
 
   const addAddress = (ip: string, scope: NetworkAddress["scope"]) => {
     const ipVersion = isIP(ip)
-    if (!ipVersion || isWildcardHost(ip)) return
+    if (!ipVersion || isWildcardHost(ip) || (ipVersion === 6 && isLinkLocalIPv6(ip))) return
     const family = ipVersion === 6 ? "ipv6" : "ipv4"
     const key = `${family}-${ip.toLowerCase()}`
     if (seen.has(key)) return
@@ -34,7 +34,8 @@ export function resolveNetworkAddresses(args: {
     for (const entries of Object.values(interfaces)) {
       if (!entries) continue
       for (const entry of entries) {
-        if (isIP(entry.address) !== wildcardVersion) continue
+        const entryVersion = isIP(entry.address)
+        if (entryVersion !== wildcardVersion && !(wildcardVersion === 6 && entryVersion === 4)) continue
         const scope: NetworkAddress["scope"] = entry.internal ? "loopback" : "external"
         addAddress(entry.address, scope)
       }
@@ -97,4 +98,9 @@ function isPrivateIPv4(ip: string): boolean {
 function parseIPv4(value: string): number[] | null {
   if (isIP(value) !== 4) return null
   return value.split(".").map((part) => Number(part))
+}
+
+function isLinkLocalIPv6(ip: string): boolean {
+  const firstSegment = Number.parseInt(ip.split(":", 1)[0], 16)
+  return Number.isInteger(firstSegment) && firstSegment >= 0xfe80 && firstSegment <= 0xfebf
 }

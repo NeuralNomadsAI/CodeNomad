@@ -121,6 +121,34 @@ export const InfoSettingsSection: Component = () => {
 
   const supportInfo = createMemo(() => meta()?.support ?? null)
 
+  const diagnosticLabels = createMemo(() => ({
+    reportTitle: t("settings.info.diagnostics.reportTitle"),
+    generated: t("settings.info.diagnostics.generated"),
+    serverVersion: t("settings.info.version.server"),
+    uiVersion: t("settings.info.version.ui"),
+    uiSource: t("settings.info.version.uiSource"),
+    runtime: t("settings.info.runtime.type"),
+    platform: t("settings.info.runtime.platform"),
+    windowContext: t("settings.info.runtime.windowContext"),
+    os: t("settings.info.runtime.os"),
+    listeningMode: t("remoteAccess.sections.listeningMode.label"),
+    bindHost: t("settings.info.connectivity.host"),
+    localListener: t("settings.info.connectivity.localListener"),
+    remoteListener: t("settings.info.connectivity.remoteListener"),
+    workspaceRoot: t("settings.info.server.root"),
+    candidateAddresses: t("remoteAccess.sections.addresses.label"),
+    modes: {
+      local: t("settings.info.connectivity.mode.local"),
+      all: t("settings.info.connectivity.mode.all"),
+      specific: t("settings.info.connectivity.mode.specific"),
+    },
+    scopes: {
+      external: t("remoteAccess.address.scope.network"),
+      internal: t("remoteAccess.address.scope.internal"),
+      loopback: t("remoteAccess.address.scope.loopback"),
+    },
+  }))
+
   const latestVersion = createMemo(() => {
     const update = updateInfo()
     if (update?.version) return update.version
@@ -168,14 +196,14 @@ export const InfoSettingsSection: Component = () => {
   })
 
   const handleCopy = async () => {
-    const report = buildDiagnosticReport(meta() ?? null, osDisplay(), runtimeEnv)
+    const report = buildDiagnosticReport(meta() ?? null, osDisplay(), runtimeEnv, diagnosticLabels())
     const ok = await copyToClipboard(report)
     if (ok) setCopyFeedback("success")
     else setCopyFeedback("error")
   }
 
   const handleDownload = () => {
-    const report = buildDiagnosticReport(meta() ?? null, osDisplay(), runtimeEnv)
+    const report = buildDiagnosticReport(meta() ?? null, osDisplay(), runtimeEnv, diagnosticLabels())
     const ts = new Date().toISOString().replace(/[:.]/g, "-")
     downloadTextFile(`codenomad-diagnostics-${ts}.txt`, report)
   }

@@ -22,7 +22,7 @@ export function isLoopbackHost(host: string): boolean {
 
   const segments = value.split(":")
   const last = segments.pop()
-  return last === "1" && segments.every((segment) => segment === "" || /^0+$/.test(segment))
+  return Boolean(last && /^0*1$/.test(last)) && segments.every((segment) => segment === "" || /^0+$/.test(segment))
 }
 
 export function formatHostForUrl(host: string): string {

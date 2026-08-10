@@ -4,6 +4,26 @@ import { describe, it } from "node:test"
 import type { ServerMeta } from "../../../../server/src/api-types"
 import { buildDiagnosticReport } from "./info-settings-diagnostics"
 
+const labels = {
+  reportTitle: "CodeNomad Diagnostic Report",
+  generated: "Generated",
+  serverVersion: "Server version",
+  uiVersion: "UI version",
+  uiSource: "UI source",
+  runtime: "Runtime",
+  platform: "Platform",
+  windowContext: "Window context",
+  os: "OS",
+  listeningMode: "Listening mode",
+  bindHost: "Bind host",
+  localListener: "Local listener",
+  remoteListener: "Remote listener",
+  workspaceRoot: "Workspace root",
+  candidateAddresses: "Candidate addresses",
+  modes: { local: "local", all: "all", specific: "specific" },
+  scopes: { external: "external", internal: "internal", loopback: "loopback" },
+}
+
 const meta: ServerMeta = {
   localUrl: "http://127.0.0.1:9899",
   remoteUrl: "https://192.168.1.20:9898",
@@ -28,14 +48,15 @@ describe("buildDiagnosticReport", () => {
       meta,
       "Linux x86_64",
       { host: "tauri", platform: "desktop", windowContext: "local" },
+      labels,
       new Date("2026-08-10T12:00:00.000Z"),
     )
 
     assert.match(report, /Generated: 2026-08-10T12:00:00\.000Z/)
     assert.match(report, /Listening mode: all/)
     assert.match(report, /Bind host: 0\.0\.0\.0/)
-    assert.match(report, /Local URL: http:\/\/127\.0\.0\.1:9899/)
-    assert.match(report, /Remote URL: https:\/\/192\.168\.1\.20:9898/)
+    assert.match(report, /Local listener: http:\/\/127\.0\.0\.1:9899/)
+    assert.match(report, /Remote listener: https:\/\/192\.168\.1\.20:9898/)
     assert.match(report, /Candidate addresses: 2/)
     assert.match(report, /ipv4\/external: https:\/\/192\.168\.1\.20:9898/)
   })
@@ -45,12 +66,35 @@ describe("buildDiagnosticReport", () => {
       null,
       "Unknown",
       { host: "web", platform: "web", windowContext: "remote" },
+      labels,
       new Date("2026-08-10T12:00:00.000Z"),
     )
 
-    assert.match(report, /Server version: unknown/)
-    assert.match(report, /Remote URL: none/)
+    assert.match(report, /Server version: —/)
+    assert.match(report, /Remote listener: —/)
     assert.match(report, /Candidate addresses: 0/)
+  })
+
+  it("uses caller-provided labels for exported reports", () => {
+    const report = buildDiagnosticReport(
+      meta,
+      "Linux x86_64",
+      { host: "tauri", platform: "desktop", windowContext: "local" },
+      {
+        ...labels,
+        reportTitle: "Rapport de diagnostic CodeNomad",
+        generated: "Généré",
+        listeningMode: "Mode d’écoute",
+        modes: { ...labels.modes, all: "Toutes les interfaces réseau" },
+        scopes: { ...labels.scopes, external: "Réseau" },
+      },
+      new Date("2026-08-10T12:00:00.000Z"),
+    )
+
+    assert.match(report, /Rapport de diagnostic CodeNomad/)
+    assert.match(report, /Généré: 2026-08-10T12:00:00\.000Z/)
+    assert.match(report, /Mode d’écoute: Toutes les interfaces réseau/)
+    assert.match(report, /ipv4\/Réseau:/)
   })
 
   it("identifies a specific interface and omits its unreachable loopback candidate", () => {
@@ -58,6 +102,7 @@ describe("buildDiagnosticReport", () => {
       { ...meta, host: "192.168.1.20", addresses: meta.addresses },
       "Linux x86_64",
       { host: "electron", platform: "desktop", windowContext: "local" },
+      labels,
       new Date("2026-08-10T12:00:00.000Z"),
     )
 
@@ -80,6 +125,7 @@ describe("buildDiagnosticReport", () => {
       },
       "Windows x64",
       { host: "electron", platform: "desktop", windowContext: "local" },
+      labels,
       new Date("2026-08-10T12:00:00.000Z"),
     )
 
@@ -94,6 +140,7 @@ describe("buildDiagnosticReport", () => {
       { ...meta, host: "0:0:0:0:0:0:0:0", addresses: [] },
       "Linux arm64",
       { host: "tauri", platform: "desktop", windowContext: "local" },
+      labels,
       new Date("2026-08-10T12:00:00.000Z"),
     )
     const loopback = buildDiagnosticReport(
@@ -109,6 +156,7 @@ describe("buildDiagnosticReport", () => {
       },
       "Linux arm64",
       { host: "tauri", platform: "desktop", windowContext: "local" },
+      labels,
       new Date("2026-08-10T12:00:00.000Z"),
     )
 

@@ -40,9 +40,10 @@ describe("resolveNetworkAddresses", () => {
     ])
   })
 
-  it("enumerates matching IPv6 interfaces for compact and expanded wildcards", () => {
+  it("enumerates dual-stack interfaces and excludes unusable IPv6 link-local addresses", () => {
     const addresses = [
       { address: "2001:db8::20", family: "IPv6", internal: false },
+      { address: "fe80::20", family: "IPv6", internal: false },
       { address: "::1", family: 6, internal: true },
       { address: "192.168.1.20", family: "IPv4", internal: false },
     ]
@@ -52,6 +53,7 @@ describe("resolveNetworkAddresses", () => {
         const result = resolveNetworkAddresses({ host, protocol: "https", port: 9898 })
         assert.deepEqual(result, [
           { ip: "2001:db8::20", family: "ipv6", scope: "external", remoteUrl: "https://[2001:db8::20]:9898" },
+          { ip: "192.168.1.20", family: "ipv4", scope: "external", remoteUrl: "https://192.168.1.20:9898" },
           { ip: "::1", family: "ipv6", scope: "loopback", remoteUrl: "https://[::1]:9898" },
         ])
       }

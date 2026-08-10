@@ -15,7 +15,9 @@ describe("network host helpers", () => {
     assert.equal(isLoopbackHost("localhost"), true)
     assert.equal(isLoopbackHost("127.0.0.2"), true)
     assert.equal(isLoopbackHost("::1"), true)
+    assert.equal(isLoopbackHost("::0001"), true)
     assert.equal(isLoopbackHost("0:0:0:0:0:0:0:1"), true)
+    assert.equal(isLoopbackHost("0:0:0:0:0:0:0:0001"), true)
     assert.equal(isLoopbackHost("2001:db8::1"), false)
   })
 

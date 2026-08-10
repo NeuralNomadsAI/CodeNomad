@@ -3,21 +3,48 @@ import crypto from "node:crypto"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { it } from "node:test"
+import { describe, it } from "node:test"
 
 import type { Logger } from "../../logger"
 import { resolveHttpsOptions } from "../tls"
 
-it("generates a certificate with a concrete IPv6 address SAN", () => {
-  const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-tls-ipv6-"))
-  const logger = { info() {}, warn() {}, error() {}, child() { return logger } } as unknown as Logger
+const logger = { info() {}, warn() {}, error() {}, child() { return logger } } as unknown as Logger
 
-  try {
+describe("generated IPv6 certificates", () => {
+  it("includes a concrete IPv6 address SAN", () => withTempConfig((configDir) => {
     const resolved = resolveHttpsOptions({ enabled: true, configDir, host: "2001:db8::20", logger })
     assert.ok(resolved)
     const certificate = new crypto.X509Certificate(resolved.httpsOptions.cert)
     assert.match(certificate.subjectAltName ?? "", /IP Address:2001:DB8:0:0:0:0:0:20/i)
+  }))
+
+  it("includes IPv6 loopback for a fresh wildcard certificate", () => withTempConfig((configDir) => {
+    const resolved = resolveHttpsOptions({ enabled: true, configDir, host: "::", logger })
+    assert.ok(resolved)
+    const certificate = new crypto.X509Certificate(resolved.httpsOptions.cert)
+    assert.equal(certificate.checkIP("::1"), "::1")
+  }))
+
+  it("rotates a reused certificate when required host and configured SANs change", () => withTempConfig((configDir) => {
+    const initial = resolveHttpsOptions({ enabled: true, configDir, host: "127.0.0.1", logger })
+    assert.ok(initial)
+    const initialCertificate = new crypto.X509Certificate(initial.httpsOptions.cert)
+
+    const rotated = resolveHttpsOptions({ enabled: true, configDir, host: "::", tlsSANs: "diagnostics.local", logger })
+    assert.ok(rotated)
+    const rotatedCertificate = new crypto.X509Certificate(rotated.httpsOptions.cert)
+
+    assert.notEqual(rotatedCertificate.fingerprint256, initialCertificate.fingerprint256)
+    assert.equal(rotatedCertificate.checkIP("::1"), "::1")
+    assert.equal(rotatedCertificate.checkHost("diagnostics.local"), "diagnostics.local")
+  }))
+})
+
+function withTempConfig(callback: (configDir: string) => void) {
+  const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-tls-ipv6-"))
+  try {
+    callback(configDir)
   } finally {
     fs.rmSync(configDir, { recursive: true, force: true })
   }
-})
+}
