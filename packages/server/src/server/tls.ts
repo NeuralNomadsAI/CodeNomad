@@ -4,7 +4,7 @@ import path from "path"
 import { createRequire } from "module"
 import { isIP } from "node:net"
 import type { Logger } from "../logger"
-import { isWildcardHost, stripHostBrackets } from "./network-host"
+import { isWildcardHost, normalizeNetworkHost, stripIPv6Zone } from "./network-host"
 
 const require = createRequire(import.meta.url)
 
@@ -221,13 +221,14 @@ function generateServerCertificate(args: {
 }
 
 function pickCommonName(host: string): string {
-  if (!host || isWildcardHost(host)) {
+  const normalizedHost = normalizeCertificateHost(host)
+  if (!normalizedHost || isWildcardHost(normalizedHost)) {
     return "localhost"
   }
-  if (host === "127.0.0.1") {
+  if (normalizedHost === "127.0.0.1") {
     return "localhost"
   }
-  return host
+  return normalizedHost
 }
 
 function buildSubjectAltNames(host: string, tlsSANs?: string): Array<{ type: number; value?: string; ip?: string }> {
@@ -252,7 +253,7 @@ function resolveRequiredSubjectAltNames(host: string, tlsSANs?: string): { dns: 
   dns.add("localhost")
   ips.add("127.0.0.1")
 
-  const normalizedHost = stripHostBrackets(host)
+  const normalizedHost = normalizeCertificateHost(host)
   if (isWildcardHost(normalizedHost) && isIP(normalizedHost) === 6) {
     ips.add("::1")
   } else if (normalizedHost) {
@@ -264,7 +265,7 @@ function resolveRequiredSubjectAltNames(host: string, tlsSANs?: string): { dns: 
   }
 
   for (const token of splitList(tlsSANs)) {
-    const normalizedToken = stripHostBrackets(token)
+    const normalizedToken = normalizeCertificateHost(token)
     if (isIP(normalizedToken)) {
       ips.add(normalizedToken)
     } else if (normalizedToken) {
@@ -273,6 +274,10 @@ function resolveRequiredSubjectAltNames(host: string, tlsSANs?: string): { dns: 
   }
 
   return { dns, ips }
+}
+
+function normalizeCertificateHost(host: string): string {
+  return normalizeNetworkHost(stripIPv6Zone(host))
 }
 
 function certificateCoversRequiredSans(certificate: crypto.X509Certificate, host: string, tlsSANs?: string): boolean {

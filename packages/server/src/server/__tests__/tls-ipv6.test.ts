@@ -38,6 +38,20 @@ describe("generated IPv6 certificates", () => {
     assert.equal(rotatedCertificate.checkIP("::1"), "::1")
     assert.equal(rotatedCertificate.checkHost("diagnostics.local"), "diagnostics.local")
   }))
+
+  it("reuses certificates for normalized IDN and scoped IPv6 SAN values", () => withTempConfig((configDir) => {
+    const first = resolveHttpsOptions({ enabled: true, configDir, host: "münchen.local", tlsSANs: "fe80::1%12", logger })
+    assert.ok(first)
+    const firstCertificate = new crypto.X509Certificate(first.httpsOptions.cert)
+
+    const reused = resolveHttpsOptions({ enabled: true, configDir, host: "münchen.local", tlsSANs: "fe80::1%12", logger })
+    assert.ok(reused)
+    const reusedCertificate = new crypto.X509Certificate(reused.httpsOptions.cert)
+
+    assert.equal(reusedCertificate.fingerprint256, firstCertificate.fingerprint256)
+    assert.equal(reusedCertificate.checkHost("xn--mnchen-3ya.local"), "xn--mnchen-3ya.local")
+    assert.equal(reusedCertificate.checkIP("fe80::1"), "fe80::1")
+  }))
 })
 
 function withTempConfig(callback: (configDir: string) => void) {

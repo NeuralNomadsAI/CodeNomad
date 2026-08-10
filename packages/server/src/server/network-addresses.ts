@@ -1,7 +1,7 @@
 import os from "os"
 import { isIP } from "node:net"
 import type { NetworkAddress } from "../api-types"
-import { formatHostForUrl, isLoopbackHost, isWildcardHost } from "./network-host"
+import { formatHostForUrl, isLoopbackHost, isWildcardHost, normalizeNetworkHost } from "./network-host"
 
 export interface ResolvedRemoteAddresses {
   all: NetworkAddress[]
@@ -14,19 +14,21 @@ export function resolveNetworkAddresses(args: {
   protocol: "http" | "https"
   port: number
 }): NetworkAddress[] {
-  const { host, protocol, port } = args
+  const { protocol, port } = args
+  const host = normalizeNetworkHost(args.host)
   const interfaces = os.networkInterfaces()
   const seen = new Set<string>()
   const results: NetworkAddress[] = []
 
   const addAddress = (ip: string, scope: NetworkAddress["scope"]) => {
-    const ipVersion = isIP(ip)
-    if (!ipVersion || isWildcardHost(ip) || (ipVersion === 6 && isLinkLocalIPv6(ip))) return
+    const normalizedIp = normalizeNetworkHost(ip)
+    const ipVersion = isIP(normalizedIp)
+    if (!ipVersion || isWildcardHost(normalizedIp) || (ipVersion === 6 && isLinkLocalIPv6(normalizedIp))) return
     const family = ipVersion === 6 ? "ipv6" : "ipv4"
-    const key = `${family}-${ip.toLowerCase()}`
+    const key = `${family}-${normalizedIp}`
     if (seen.has(key)) return
     seen.add(key)
-    results.push({ ip, family, scope, remoteUrl: `${protocol}://${formatHostForUrl(ip)}:${port}` })
+    results.push({ ip: normalizedIp, family, scope, remoteUrl: `${protocol}://${formatHostForUrl(normalizedIp)}:${port}` })
   }
 
   if (isWildcardHost(host)) {
@@ -34,7 +36,7 @@ export function resolveNetworkAddresses(args: {
     for (const entries of Object.values(interfaces)) {
       if (!entries) continue
       for (const entry of entries) {
-        const entryVersion = isIP(entry.address)
+        const entryVersion = isIP(normalizeNetworkHost(entry.address))
         if (entryVersion !== wildcardVersion && !(wildcardVersion === 6 && entryVersion === 4)) continue
         const scope: NetworkAddress["scope"] = entry.internal ? "loopback" : "external"
         addAddress(entry.address, scope)

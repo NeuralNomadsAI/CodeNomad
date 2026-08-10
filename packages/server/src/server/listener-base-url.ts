@@ -1,5 +1,5 @@
 import { isIP } from "node:net"
-import { formatHostForUrl, isLoopbackHost, isWildcardHost, stripHostBrackets } from "./network-host"
+import { formatHostForUrl, isLoopbackHost, isWildcardHost, normalizeNetworkHost } from "./network-host"
 
 export interface StartedListenerBaseUrlInput {
   protocol: "http" | "https"
@@ -16,7 +16,7 @@ export interface ResolvePluginBaseUrlInput {
 export function resolvePluginBaseUrl(input: ResolvePluginBaseUrlInput): string {
   const loopbackListener = [input.httpStart, input.httpsStart].find((listener) => listener && acceptsLoopback(listener.bindHost))
   if (loopbackListener) {
-    const bindHost = stripHostBrackets(loopbackListener.bindHost)
+    const bindHost = normalizeNetworkHost(loopbackListener.bindHost)
     const loopbackHost = isWildcardHost(bindHost)
       ? isIP(bindHost) === 6 ? "::1" : "127.0.0.1"
       : bindHost

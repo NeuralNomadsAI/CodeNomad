@@ -40,6 +40,17 @@ describe("resolveNetworkAddresses", () => {
     ])
   })
 
+  it("reports IPv4-mapped wildcard and loopback hosts as IPv4", () => {
+    usingMockedNetworkInterfaces([{ address: "192.168.1.20", family: "IPv4", internal: false }], () => {
+      assert.deepEqual(resolveNetworkAddresses({ host: "::ffff:0:0", protocol: "https", port: 9898 }), [
+        { ip: "192.168.1.20", family: "ipv4", scope: "external", remoteUrl: "https://192.168.1.20:9898" },
+      ])
+      assert.deepEqual(resolveNetworkAddresses({ host: "::ffff:7f00:1", protocol: "https", port: 9898 }), [
+        { ip: "127.0.0.1", family: "ipv4", scope: "loopback", remoteUrl: "https://127.0.0.1:9898" },
+      ])
+    })
+  })
+
   it("enumerates dual-stack interfaces and excludes unusable IPv6 link-local addresses", () => {
     const addresses = [
       { address: "2001:db8::20", family: "IPv6", internal: false },

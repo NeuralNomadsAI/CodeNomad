@@ -24,7 +24,7 @@ import { resolveHttpsOptions } from "./server/tls"
 import { RemoteProxySessionManager } from "./server/remote-proxy"
 import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
 import { resolveAutomationBridgeUrl, resolvePluginBaseUrl } from "./server/listener-base-url"
-import { formatHostForUrl, isLoopbackHost, isWildcardHost } from "./server/network-host"
+import { formatHostForUrl, hasIPv6Zone, isLoopbackHost, isWildcardHost, normalizeNetworkHost } from "./server/network-host"
 import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
 import { SpeechService } from "./speech/service"
 import { SideCarManager } from "./sidecars/manager"
@@ -270,19 +270,20 @@ function parsePort(input: string): number {
   return value
 }
 
-function resolveHost(input: string | undefined): string {
+export function resolveHost(input: string | undefined): string {
   const trimmed = input?.trim()
   if (!trimmed) return DEFAULT_HOST
 
-  if (trimmed === "0.0.0.0") {
-    return "0.0.0.0"
+  if (hasIPv6Zone(trimmed)) {
+    throw new InvalidArgumentError("IPv6 zone identifiers are not supported in --host")
   }
 
-  if (trimmed === "localhost") {
+  const normalized = normalizeNetworkHost(trimmed)
+  if (normalized === "localhost") {
     return DEFAULT_HOST
   }
 
-  return trimmed
+  return normalized
 }
 
 export function programHasArg(argv: string[], flag: string): boolean {
