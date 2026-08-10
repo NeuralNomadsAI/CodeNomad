@@ -2,7 +2,9 @@ import crypto from "crypto"
 import fs from "fs"
 import path from "path"
 import { createRequire } from "module"
+import { isIP } from "node:net"
 import type { Logger } from "../logger"
+import { isWildcardHost, stripHostBrackets } from "./network-host"
 
 const require = createRequire(import.meta.url)
 
@@ -219,7 +221,7 @@ function generateServerCertificate(args: {
 }
 
 function pickCommonName(host: string): string {
-  if (!host || host === "0.0.0.0") {
+  if (!host || isWildcardHost(host)) {
     return "localhost"
   }
   if (host === "127.0.0.1") {
@@ -235,19 +237,21 @@ function buildSubjectAltNames(host: string, tlsSANs?: string): Array<{ type: num
   dns.add("localhost")
   ips.add("127.0.0.1")
 
-  if (host && host !== "0.0.0.0") {
-    if (isIPv4(host)) {
-      ips.add(host)
+  const normalizedHost = stripHostBrackets(host)
+  if (normalizedHost && !isWildcardHost(normalizedHost)) {
+    if (isIP(normalizedHost)) {
+      ips.add(normalizedHost)
     } else {
-      dns.add(host)
+      dns.add(normalizedHost)
     }
   }
 
   for (const token of splitList(tlsSANs)) {
-    if (isIPv4(token)) {
-      ips.add(token)
-    } else if (token) {
-      dns.add(token)
+    const normalizedToken = stripHostBrackets(token)
+    if (isIP(normalizedToken)) {
+      ips.add(normalizedToken)
+    } else if (normalizedToken) {
+      dns.add(normalizedToken)
     }
   }
 
@@ -270,14 +274,4 @@ function splitList(input: string | undefined): string[] {
     .split(",")
     .map((part) => part.trim())
     .filter(Boolean)
-}
-
-function isIPv4(value: string): boolean {
-  const parts = value.split(".")
-  if (parts.length !== 4) return false
-  return parts.every((part) => {
-    if (!/^[0-9]+$/.test(part)) return false
-    const num = Number(part)
-    return Number.isInteger(num) && num >= 0 && num <= 255
-  })
 }

@@ -44,6 +44,35 @@ describe("resolvePluginBaseUrl", () => {
       "http://127.0.0.1:9899",
     )
   })
+
+  it("uses the exact concrete loopback bind host", () => {
+    assert.equal(
+      resolvePluginBaseUrl({
+        httpsStart: { protocol: "https", bindHost: "127.0.0.2", port: 9898 },
+        remoteUrl: "https://127.0.0.2:9898",
+      }),
+      "https://127.0.0.2:9898",
+    )
+  })
+
+  it("uses bracketed IPv6 loopback for IPv6 wildcard listeners", () => {
+    assert.equal(
+      resolvePluginBaseUrl({
+        httpsStart: { protocol: "https", bindHost: "0:0:0:0:0:0:0:0", port: 9898 },
+        remoteUrl: "https://[2001:db8::20]:9898",
+      }),
+      "https://[::1]:9898",
+    )
+  })
+
+  it("formats concrete IPv6 fallback listeners", () => {
+    assert.equal(
+      resolvePluginBaseUrl({
+        httpsStart: { protocol: "https", bindHost: "2001:db8::20", port: 9898 },
+      }),
+      "https://[2001:db8::20]:9898",
+    )
+  })
 })
 
 describe("resolveAutomationBridgeUrl", () => {

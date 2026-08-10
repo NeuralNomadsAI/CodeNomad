@@ -9,13 +9,26 @@ export interface DiagnosticRuntime {
 export type DiagnosticListeningMode = ServerMeta["listeningMode"] | "specific"
 
 export function getDiagnosticListeningMode(meta: ServerMeta): DiagnosticListeningMode {
-  if (meta.listeningMode === "all" && meta.host !== "0.0.0.0" && meta.host !== "::") return "specific"
+  if (isWildcardBindHost(meta.host)) return "all"
+  if (meta.listeningMode === "all") return "specific"
   return meta.listeningMode
 }
 
 export function getDiagnosticAddresses(meta: ServerMeta): NetworkAddress[] {
-  if (getDiagnosticListeningMode(meta) !== "specific") return meta.addresses
-  return meta.addresses.filter((address) => address.scope !== "loopback")
+  if (isWildcardBindHost(meta.host)) return meta.addresses
+  const host = normalizeBindHost(meta.host)
+  return meta.addresses.filter((address) => normalizeBindHost(address.ip) === host)
+}
+
+function isWildcardBindHost(host: string): boolean {
+  const value = normalizeBindHost(host)
+  if (value === "0.0.0.0") return true
+  return value.includes(":") && value.split(":").every((segment) => segment === "" || /^0+$/.test(segment))
+}
+
+function normalizeBindHost(host: string): string {
+  const value = host.trim().toLowerCase()
+  return value.startsWith("[") && value.endsWith("]") ? value.slice(1, -1) : value
 }
 
 export function buildDiagnosticReport(

@@ -1,3 +1,6 @@
+import { isIP } from "node:net"
+import { formatHostForUrl, isLoopbackHost, isWildcardHost, stripHostBrackets } from "./network-host"
+
 export interface StartedListenerBaseUrlInput {
   protocol: "http" | "https"
   bindHost: string
@@ -13,7 +16,11 @@ export interface ResolvePluginBaseUrlInput {
 export function resolvePluginBaseUrl(input: ResolvePluginBaseUrlInput): string {
   const loopbackListener = [input.httpStart, input.httpsStart].find((listener) => listener && acceptsLoopback(listener.bindHost))
   if (loopbackListener) {
-    return `${loopbackListener.protocol}://127.0.0.1:${loopbackListener.port}`
+    const bindHost = stripHostBrackets(loopbackListener.bindHost)
+    const loopbackHost = isWildcardHost(bindHost)
+      ? isIP(bindHost) === 6 ? "::1" : "127.0.0.1"
+      : bindHost
+    return `${loopbackListener.protocol}://${formatHostForUrl(loopbackHost)}:${loopbackListener.port}`
   }
 
   if (input.remoteUrl) {
@@ -25,7 +32,7 @@ export function resolvePluginBaseUrl(input: ResolvePluginBaseUrlInput): string {
     throw new Error("No listeners started")
   }
 
-  return `${fallbackListener.protocol}://${fallbackListener.bindHost}:${fallbackListener.port}`
+  return `${fallbackListener.protocol}://${formatHostForUrl(fallbackListener.bindHost)}:${fallbackListener.port}`
 }
 
 export function resolveAutomationBridgeUrl(listener: StartedListenerBaseUrlInput): string {
@@ -36,5 +43,5 @@ export function resolveAutomationBridgeUrl(listener: StartedListenerBaseUrlInput
 }
 
 function acceptsLoopback(bindHost: string): boolean {
-  return bindHost === "0.0.0.0" || bindHost === "::" || bindHost === "localhost" || bindHost === "::1" || bindHost.startsWith("127.")
+  return bindHost === "localhost" || isWildcardHost(bindHost) || isLoopbackHost(bindHost)
 }

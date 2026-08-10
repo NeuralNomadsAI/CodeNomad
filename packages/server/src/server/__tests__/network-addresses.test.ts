@@ -23,6 +23,40 @@ describe("resolveNetworkAddresses", () => {
       )
     })
   })
+
+  it("advertises only a concrete IPv4 bind host", () => {
+    const result = resolveNetworkAddresses({ host: "127.0.0.2", protocol: "https", port: 9898 })
+
+    assert.deepEqual(result, [
+      { ip: "127.0.0.2", family: "ipv4", scope: "loopback", remoteUrl: "https://127.0.0.2:9898" },
+    ])
+  })
+
+  it("formats concrete IPv6 bind hosts as valid URLs", () => {
+    const result = resolveNetworkAddresses({ host: "::1", protocol: "https", port: 9898 })
+
+    assert.deepEqual(result, [
+      { ip: "::1", family: "ipv6", scope: "loopback", remoteUrl: "https://[::1]:9898" },
+    ])
+  })
+
+  it("enumerates matching IPv6 interfaces for compact and expanded wildcards", () => {
+    const addresses = [
+      { address: "2001:db8::20", family: "IPv6", internal: false },
+      { address: "::1", family: 6, internal: true },
+      { address: "192.168.1.20", family: "IPv4", internal: false },
+    ]
+
+    usingMockedNetworkInterfaces(addresses, () => {
+      for (const host of ["::", "0:0:0:0:0:0:0:0"]) {
+        const result = resolveNetworkAddresses({ host, protocol: "https", port: 9898 })
+        assert.deepEqual(result, [
+          { ip: "2001:db8::20", family: "ipv6", scope: "external", remoteUrl: "https://[2001:db8::20]:9898" },
+          { ip: "::1", family: "ipv6", scope: "loopback", remoteUrl: "https://[::1]:9898" },
+        ])
+      }
+    })
+  })
 })
 
 describe("resolveRemoteAddresses", () => {

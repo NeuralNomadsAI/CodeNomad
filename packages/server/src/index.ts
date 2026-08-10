@@ -24,6 +24,7 @@ import { resolveHttpsOptions } from "./server/tls"
 import { RemoteProxySessionManager } from "./server/remote-proxy"
 import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
 import { resolveAutomationBridgeUrl, resolvePluginBaseUrl } from "./server/listener-base-url"
+import { formatHostForUrl, isLoopbackHost, isWildcardHost } from "./server/network-host"
 import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
 import { SpeechService } from "./speech/service"
 import { SideCarManager } from "./sidecars/manager"
@@ -316,8 +317,6 @@ async function main() {
 
   const eventBus = new EventBus(eventLogger)
 
-  const isLoopbackHost = (host: string) => host === "127.0.0.1" || host === "::1" || host.startsWith("127.")
-
   const configLocation = resolveConfigLocation(options.configPath)
   const configDir = configLocation.baseDir
 
@@ -458,8 +457,6 @@ async function main() {
       })
     : null
 
-  const remoteAccessEnabled = options.host === "0.0.0.0" || !isLoopbackHost(options.host)
-
   const clientConnectionManager = new ClientConnectionManager(logger.child({ component: "client-connections" }))
   const remoteProxySessionManager = new RemoteProxySessionManager({
     authManager,
@@ -473,10 +470,9 @@ async function main() {
   const httpBindPort = httpPortExplicit ? options.httpPort : 0
 
   // Listener binding rules:
-  // - Remote access enabled: HTTP listens on loopback, HTTPS on all IPs (host=0.0.0.0 / LAN IP).
-  // - Remote access disabled: both listen on loopback.
-  // - HTTP-only mode: respect --host (used for dev/testing).
-  const httpsBindHost = remoteAccessEnabled ? options.host : "127.0.0.1"
+  // - Native desktop HTTP and dual-listener HTTP stay on loopback.
+  // - HTTPS and non-native HTTP-only modes respect --host.
+  const httpsBindHost = options.host
   const httpBindHost = nativeParent.available ? "127.0.0.1" : options.http ? (options.https ? "127.0.0.1" : options.host) : "127.0.0.1"
 
   const servers: Array<ReturnType<typeof createHttpServer>> = []
@@ -556,19 +552,17 @@ async function main() {
   let remoteUrl: string | undefined
   let remoteAddresses = [] as ReturnType<typeof resolveNetworkAddresses>
   if (remoteStart) {
-    const wantsAll = options.host === "0.0.0.0" || !isLoopbackHost(options.host)
     let remoteHost = options.host
-    if (wantsAll) {
-      if (options.host === "0.0.0.0") {
-        const resolved = resolveRemoteAddresses({ host: options.host, protocol: remoteProtocol, port: remoteStart.port })
-        remoteAddresses = resolved.userVisible
-        remoteUrl = resolved.primaryRemoteUrl ?? `${remoteProtocol}://localhost:${remoteStart.port}`
-      }
-    } else {
+    if (isWildcardHost(options.host)) {
+      const resolved = resolveRemoteAddresses({ host: options.host, protocol: remoteProtocol, port: remoteStart.port })
+      remoteAddresses = resolved.userVisible
+      const loopbackHost = options.host === "0.0.0.0" ? "127.0.0.1" : "::1"
+      remoteUrl = resolved.primaryRemoteUrl ?? `${remoteProtocol}://${formatHostForUrl(loopbackHost)}:${remoteStart.port}`
+    } else if (options.host === "127.0.0.1") {
       remoteHost = "localhost"
     }
     if (!remoteUrl) {
-      remoteUrl = `${remoteProtocol}://${remoteHost}:${remoteStart.port}`
+      remoteUrl = `${remoteProtocol}://${formatHostForUrl(remoteHost)}:${remoteStart.port}`
     }
   }
 
@@ -586,7 +580,7 @@ async function main() {
   serverMeta.remoteUrl = remoteUrl
   serverMeta.remotePort = remoteStart?.port
   serverMeta.host = options.host
-  serverMeta.listeningMode = options.host === "0.0.0.0" || !isLoopbackHost(options.host) ? "all" : "local"
+  serverMeta.listeningMode = isWildcardHost(options.host) || !isLoopbackHost(options.host) ? "all" : "local"
 
   let removeAutomationBridge: (() => Promise<void>) | undefined
   if (nativeParent.available && process.env.CODENOMAD_DEVELOPER_MODE === "1") {
