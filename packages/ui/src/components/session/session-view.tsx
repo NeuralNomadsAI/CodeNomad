@@ -13,6 +13,7 @@ import { clearSessionIdleFade, IDLE_STATUS_VISIBILITY_MS, getSessionStatus, isSe
 import { deleteMessage } from "../../stores/session-actions"
 import { showAlertDialog } from "../../stores/alerts"
 import { getLogger } from "../../lib/logger"
+import { useActiveSessionMessageLoad } from "../../lib/hooks/use-active-session-message-load"
 import { requestData } from "../../lib/opencode-api"
 import { useI18n } from "../../lib/i18n"
 import type { PromptInputApi, PromptInsertMode } from "../prompt-input/types"
@@ -296,24 +297,16 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     ),
   )
 
-  // Only the ACTIVE session's id should drive the initial message load. Reading
-  // the whole session object here would subscribe this effect to every mutation
-  // of the reactive sessions map — and during a foreground/reconnect refresh the
-  // many concurrent loadMessages() completions each call setSessions, re-firing
-  // this effect dozens of times per reconnect. A value-diffed memo collapses
-  // that to a single run per real session change, which also prevents a
-  // redundant force:false fetch from racing the authoritative force:true reload
-  // for the same (often very large) session on bandwidth-constrained links.
-  const activeMessageLoadSessionId = createMemo(() => (props.isActive ? (session()?.id ?? null) : null))
-  createEffect(() => {
-    const sessionId = activeMessageLoadSessionId()
-    if (!sessionId) return
-    void waitForInstanceWorkspaceMetadataHydration(props.instanceId)
-      .then(() => {
-        if (!props.isActive || session()?.id !== sessionId) return
-        return loadMessages(props.instanceId, sessionId)
-      })
-      .catch((error) => log.error("Failed to load messages", error))
+  // Drive the active session's initial message load from a value-diffed id so
+  // the effect runs once per real session change instead of on every mutation
+  // of the reactive sessions map (see the hook for the full rationale).
+  useActiveSessionMessageLoad({
+    isActive: () => Boolean(props.isActive),
+    instanceId: () => props.instanceId,
+    session,
+    loadMessages,
+    waitForHydration: waitForInstanceWorkspaceMetadataHydration,
+    onError: (error) => log.error("Failed to load messages", error),
   })
 
   function handleReloadMessages() {
