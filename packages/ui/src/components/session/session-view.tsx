@@ -296,11 +296,18 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     ),
   )
 
+  // Only the ACTIVE session's id should drive the initial message load. Reading
+  // the whole session object here would subscribe this effect to every mutation
+  // of the reactive sessions map — and during a foreground/reconnect refresh the
+  // many concurrent loadMessages() completions each call setSessions, re-firing
+  // this effect dozens of times per reconnect. A value-diffed memo collapses
+  // that to a single run per real session change, which also prevents a
+  // redundant force:false fetch from racing the authoritative force:true reload
+  // for the same (often very large) session on bandwidth-constrained links.
+  const activeMessageLoadSessionId = createMemo(() => (props.isActive ? (session()?.id ?? null) : null))
   createEffect(() => {
-    if (!props.isActive) return
-    const currentSession = session()
-    if (!currentSession) return
-    const sessionId = currentSession.id
+    const sessionId = activeMessageLoadSessionId()
+    if (!sessionId) return
     void waitForInstanceWorkspaceMetadataHydration(props.instanceId)
       .then(() => {
         if (!props.isActive || session()?.id !== sessionId) return
