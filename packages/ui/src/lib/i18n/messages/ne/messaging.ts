@@ -36,6 +36,8 @@ export const messagingMessages = {
   "messageSection.search.count.searching": "खोज्दै...",
   "messageSection.search.count.none": "कुनै परिणाम भेटिएन",
   "messageSection.search.count.matches": "{current} / {total}",
+  "messageSection.search.count.partial": "{current} / {total}+",
+  "messageSection.search.partialNotice": "पहिलो {count} परिणामहरू देखाइँदैछन्। परिणामहरू आंशिक छन्।",
   "messageSection.search.previousAriaLabel": "अघिल्लो परिणाम",
   "messageSection.search.nextAriaLabel": "अर्को परिणाम",
   "messageSection.search.closeAriaLabel": "खोज बन्द गर्नुहोस्",

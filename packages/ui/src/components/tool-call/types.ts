@@ -37,6 +37,7 @@ export interface DiffRenderOptions {
   variant?: string
   disableScrollTracking?: boolean
   label?: string
+  onFullDiffAccess?: (diffText: string) => void
   /**
    * Optional cache key suffix to avoid collisions when rendering multiple diffs
    * within the same tool call (e.g. apply_patch).
@@ -103,6 +104,7 @@ export interface ToolOutputChrome {
   title?: string
   language?: string
   copyText?: string | null
+  getCopyText?: () => string | null
   actions?: JSXElement
   wrapToggle?: boolean
   suppressInnerHeader?: boolean

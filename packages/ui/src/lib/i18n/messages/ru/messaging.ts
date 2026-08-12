@@ -36,6 +36,8 @@ export const messagingMessages = {
   "messageSection.search.count.searching": "Поиск...",
   "messageSection.search.count.none": "Нет совпадений",
   "messageSection.search.count.matches": "{current} / {total}",
+  "messageSection.search.count.partial": "{current} / {total}+",
+  "messageSection.search.partialNotice": "Показаны первые {count} совпадений. Результаты неполные.",
   "messageSection.search.previousAriaLabel": "Предыдущее совпадение",
   "messageSection.search.nextAriaLabel": "Следующее совпадение",
   "messageSection.search.closeAriaLabel": "Закрыть поиск",

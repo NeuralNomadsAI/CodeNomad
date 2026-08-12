@@ -36,6 +36,8 @@ export const messagingMessages = {
   "messageSection.search.count.searching": "正在搜索...",
   "messageSection.search.count.none": "无匹配项",
   "messageSection.search.count.matches": "{current} / {total}",
+  "messageSection.search.count.partial": "{current} / {total}+",
+  "messageSection.search.partialNotice": "正在显示前 {count} 个匹配项。结果不完整。",
   "messageSection.search.previousAriaLabel": "上一个匹配项",
   "messageSection.search.nextAriaLabel": "下一个匹配项",
   "messageSection.search.closeAriaLabel": "关闭搜索",

@@ -2,7 +2,7 @@ import { For, Show } from "solid-js"
 import type { ToolState } from "../../../types/tool-state"
 import { CheckCircle, CircleEllipsis, MinusCircle, PauseCircle } from "lucide-solid"
 import type { ToolRenderer } from "../types"
-import { readToolStatePayload } from "../utils"
+import { limitToolOutputForRender, readToolStatePayload, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT } from "../utils"
 import { useI18n, tGlobal } from "../../../lib/i18n"
 import { getTodoToolSearchText } from "../search-text"
 
@@ -24,14 +24,18 @@ function extractTodosFromState(state?: ToolState): TodoViewItem[] {
   const { metadata } = readToolStatePayload(state)
   const todos = Array.isArray((metadata as any).todos) ? (metadata as any).todos : []
   const items: TodoViewItem[] = []
+  let characters = 0
 
-  for (let index = 0; index < todos.length; index++) {
+  for (let index = 0; index < todos.length && characters < TOOL_OUTPUT_RENDER_CHARACTER_LIMIT; index++) {
     const todo = todos[index]
-    const content = typeof todo?.content === "string" ? todo.content.trim() : ""
+    const remaining = TOOL_OUTPUT_RENDER_CHARACTER_LIMIT - characters
+    const content = typeof todo?.content === "string" ? todo.content.slice(0, remaining + 1).trim() : ""
     if (!content) continue
     const status = normalizeTodoStatus((todo as any).status)
-    const id = typeof todo?.id === "string" && todo.id.length > 0 ? todo.id : `${index}-${content}`
-    items.push({ id, content, status })
+    const id = typeof todo?.id === "string" && todo.id.length > 0 ? todo.id : String(index)
+    const renderedContent = limitToolOutputForRender(content)
+    characters += Math.min(content.length, remaining)
+    items.push({ id, content: renderedContent, status })
   }
 
   return items

@@ -56,6 +56,10 @@ export const toolCallMessages = {
   "toolCall.renderer.action.listingDirectory": "Verzeichnis wird aufgelistet...",
 
   "toolCall.renderer.bash.title.timeout": "Zeitüberschreitung: {timeout}",
+  "toolCall.output.truncated": "[Ausgabe für die Darstellung gekürzt; kopieren Sie sie für die vollständige Ausgabe]",
+  "toolCall.output.tooLarge": "Die strukturierte Ausgabe wird nicht dargestellt, da sie zu groß ist.",
+  "toolCall.permission.fullDiffRequired": "Kopieren Sie den vollständigen Diff, bevor Sie diese übergroße Änderung genehmigen.",
+  "toolCall.task.steps.truncated": "Die neuesten {count} Schritte werden angezeigt. Kopieren Sie die Zusammenfassung für alle älteren Schritte.",
   "toolCall.renderer.read.detail.offset": "Offset: {offset}",
   "toolCall.renderer.read.detail.limit": "Limit: {limit}",
 

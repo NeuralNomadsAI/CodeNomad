@@ -36,6 +36,8 @@ export const messagingMessages = {
   "messageSection.search.count.searching": "検索中...",
   "messageSection.search.count.none": "一致なし",
   "messageSection.search.count.matches": "{current} / {total}",
+  "messageSection.search.count.partial": "{current} / {total}+",
+  "messageSection.search.partialNotice": "最初の{count}件を表示しています。結果は一部のみです。",
   "messageSection.search.previousAriaLabel": "前の一致",
   "messageSection.search.nextAriaLabel": "次の一致",
   "messageSection.search.closeAriaLabel": "検索を閉じる",

@@ -120,6 +120,7 @@ export default function MessageSection(props: MessageSectionProps) {
   const [searchedQuery, setSearchedQuery] = createSignal("")
   const [isSearchPending, setIsSearchPending] = createSignal(false)
   const [searchMatches, setSearchMatches] = createSignal<SessionSearchMatch[]>([])
+  const [searchResultsPartial, setSearchResultsPartial] = createSignal(false)
   const [activeSearchIndex, setActiveSearchIndex] = createSignal(0)
   let searchInputRef: HTMLInputElement | undefined
 
@@ -815,6 +816,7 @@ export default function MessageSection(props: MessageSectionProps) {
       setSearchedQuery("")
       setIsSearchPending(false)
       setSearchMatches([])
+      setSearchResultsPartial(false)
       return
     }
     setIsSearchPending(true)
@@ -834,13 +836,14 @@ export default function MessageSection(props: MessageSectionProps) {
 
     setIsSearchPending(true)
     const frame = requestAnimationFrame(() => {
-      const matches = buildSessionSearchMatches({
+      const result = buildSessionSearchMatches({
         store: store(),
         sessionId: props.sessionId,
         query,
         includeThinking,
       })
-      setSearchMatches(matches)
+      setSearchMatches(result.matches)
+      setSearchResultsPartial(result.partial)
       setSearchedQuery(query)
       setActiveSearchIndex(0)
       setIsSearchPending(false)
@@ -1181,7 +1184,7 @@ export default function MessageSection(props: MessageSectionProps) {
                             ? t("messageSection.search.count.searching")
                           : searchMatches().length === 0
                             ? t("messageSection.search.count.none")
-                            : t("messageSection.search.count.matches", {
+                            : t(searchResultsPartial() ? "messageSection.search.count.partial" : "messageSection.search.count.matches", {
                                 current: String(activeSearchIndex() + 1),
                                 total: String(searchMatches().length),
                               })}
@@ -1217,6 +1220,9 @@ export default function MessageSection(props: MessageSectionProps) {
                       </button>
                     </div>
                   </div>
+                  <Show when={isSearchSettled() && searchResultsPartial()}>
+                    <div class="modal-empty-state message-search-empty" role="status">{t("messageSection.search.partialNotice", { count: String(searchMatches().length) })}</div>
+                  </Show>
                   <Show when={trimmedSearchQuery().length >= SEARCH_MIN_CHARS && isSearchPending()}>
                     <div class="modal-empty-state message-search-empty">{t("messageSection.search.searching")}</div>
                   </Show>

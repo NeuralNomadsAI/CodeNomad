@@ -1,5 +1,5 @@
 import type { ToolRenderer } from "../types"
-import { ensureMarkdownContent, formatUnknown, getToolName, readToolStatePayload } from "../utils"
+import { ensureMarkdownContent, formatUnknownForCopy, formatUnknownForRender, getToolName, readToolStatePayload } from "../utils"
 import { tGlobal } from "../../../lib/i18n"
 import { getWebfetchToolSearchText } from "../search-text"
 
@@ -21,16 +21,13 @@ export const webfetchRenderer: ToolRenderer = {
     if (!state || state.status === "pending") return undefined
 
     const { metadata } = readToolStatePayload(state)
-    const result = formatUnknown(
-      state.status === "completed"
-        ? state.output
-        : metadata.output,
-    )
-    if (!result) return undefined
+    const output = state.status === "completed" ? state.output : metadata.output
+    if (output === undefined || output === null) return undefined
+    const result = formatUnknownForRender(output)
 
     return {
-      language: result.language ?? "text",
-      copyText: result.text,
+      language: result?.language ?? "text",
+      getCopyText: () => formatUnknownForCopy(output)?.text ?? null,
       wrapToggle: true,
       suppressInnerHeader: true,
     }
@@ -40,7 +37,7 @@ export const webfetchRenderer: ToolRenderer = {
     if (!state || state.status === "pending") return null
 
     const { metadata } = readToolStatePayload(state)
-    const result = formatUnknown(
+    const result = formatUnknownForRender(
       state.status === "completed"
         ? state.output
         : metadata.output,

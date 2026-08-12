@@ -36,6 +36,8 @@ export const messagingMessages = {
   "messageSection.search.count.searching": "מחפש...",
   "messageSection.search.count.none": "אין התאמות",
   "messageSection.search.count.matches": "{current} / {total}",
+  "messageSection.search.count.partial": "{current} / {total}+",
+  "messageSection.search.partialNotice": "מוצגות {count} ההתאמות הראשונות. התוצאות חלקיות.",
   "messageSection.search.previousAriaLabel": "התאמה קודמת",
   "messageSection.search.nextAriaLabel": "התאמה הבאה",
   "messageSection.search.closeAriaLabel": "סגור חיפוש",

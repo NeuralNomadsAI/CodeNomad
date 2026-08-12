@@ -1,5 +1,5 @@
 import type { ToolRenderer } from "../types"
-import { ensureMarkdownContent, formatUnknown, getToolName } from "../utils"
+import { ensureMarkdownContent, formatUnknownForCopy, formatUnknownForRender, getToolName } from "../utils"
 import { getDefaultToolSearchText } from "../search-text"
 
 export const skillRenderer: ToolRenderer = {
@@ -12,15 +12,14 @@ export const skillRenderer: ToolRenderer = {
     const state = toolState()
     if (!state || state.status !== "completed") return undefined
 
-    const output = formatUnknown(state.output)?.text ?? null
-    if (!output) return undefined
-    return { copyText: output, suppressInnerHeader: true }
+    if (state.output === undefined || state.output === null) return undefined
+    return { getCopyText: () => formatUnknownForCopy(state.output)?.text ?? null, suppressInnerHeader: true }
   },
   renderBody({ toolState, renderMarkdown }) {
     const state = toolState()
     if (!state || state.status !== "completed") return null
 
-    const output = formatUnknown(state.output)?.text ?? null
+    const output = formatUnknownForRender(state.output)?.text ?? null
     const content = ensureMarkdownContent(output, undefined, false)
     if (!content) return null
     return <div class="tool-call-skill-body">{renderMarkdown({ content })}</div>

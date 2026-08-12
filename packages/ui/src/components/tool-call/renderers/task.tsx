@@ -1,11 +1,14 @@
 import { For, Index, Show, createEffect, createMemo, createSignal, untrack } from "solid-js"
+import { Copy } from "lucide-solid"
 import type { ToolState } from "../../../types/tool-state"
 import type { ToolRenderer } from "../types"
-import { ensureMarkdownContent, getDefaultToolAction, getToolIcon, getToolName, readToolStatePayload } from "../utils"
+import { ensureMarkdownContent, getDefaultToolAction, getToolIcon, getToolName, limitToolOutputForRender, limitToolTitleForRender, readToolStatePayload } from "../utils"
 import { messageStoreBus } from "../../../stores/message-v2/bus"
 import { loadMessages } from "../../../stores/session-api"
 import { loading, messagesLoaded } from "../../../stores/session-state"
 import { getTaskToolSearchText } from "../search-text"
+import { copyToClipboard } from "../../../lib/clipboard"
+import { getLegacyTaskSummary, stringifyLegacyTaskSummary, TASK_STEP_RENDER_LIMIT } from "./task-summary"
 
 interface TaskSummaryItem {
   id: string
@@ -203,6 +206,7 @@ export const taskRenderer: ToolRenderer = {
     })
 
     const [childToolKeys, setChildToolKeys] = createSignal<string[]>([])
+    const [childToolsTruncated, setChildToolsTruncated] = createSignal(false)
 
     let indexedSessionId = ""
     let indexedMessageCount = 0
@@ -215,20 +219,23 @@ export const taskRenderer: ToolRenderer = {
       indexedMessageTail = ""
       indexedPartCounts.clear()
       setChildToolKeys([])
+      setChildToolsTruncated(false)
     }
 
-    function scanMessageToolParts(messageId: string, startIndex: number) {
+    function scanMessageToolParts(messageId: string, startIndex: number, limit: number) {
       const record = store.getMessage(messageId)
       if (!record) return [] as string[]
 
       const partIds = record.partIds
       const keys: string[] = []
-      for (let idx = startIndex; idx < partIds.length; idx += 1) {
+      const oldestScannedIndex = Math.max(startIndex, partIds.length - 1_000)
+      if (oldestScannedIndex > startIndex) setChildToolsTruncated(true)
+      for (let idx = partIds.length - 1; idx >= oldestScannedIndex && keys.length < limit; idx -= 1) {
         const partId = partIds[idx]
         const entry = record.parts?.[partId]
         const data = entry?.data
         if (!data || (data as any).type !== "tool") continue
-        keys.push(`${messageId}::${partId}`)
+        keys.unshift(`${messageId}::${partId}`)
       }
       indexedPartCounts.set(messageId, partIds.length)
       return keys
@@ -241,10 +248,13 @@ export const taskRenderer: ToolRenderer = {
       indexedPartCounts.clear()
 
       const nextKeys: string[] = []
-      for (const messageId of messageIds) {
-        nextKeys.push(...scanMessageToolParts(messageId, 0))
+      const oldestScannedIndex = Math.max(0, messageIds.length - 1_000)
+      for (let index = messageIds.length - 1; index >= oldestScannedIndex && nextKeys.length < TASK_STEP_RENDER_LIMIT; index -= 1) {
+        const keys = scanMessageToolParts(messageIds[index], 0, TASK_STEP_RENDER_LIMIT - nextKeys.length)
+        for (let keyIndex = keys.length - 1; keyIndex >= 0; keyIndex -= 1) nextKeys.unshift(keys[keyIndex])
       }
-      setChildToolKeys(nextKeys)
+      setChildToolsTruncated(messageIds.length > 1_000 || nextKeys.length === TASK_STEP_RENDER_LIMIT)
+      setChildToolKeys(nextKeys.slice(-TASK_STEP_RENDER_LIMIT))
     }
 
     createEffect(() => {
@@ -286,9 +296,12 @@ export const taskRenderer: ToolRenderer = {
         const appendedKeys: string[] = []
 
         // Scan any new messages appended since last index.
-        for (let idx = indexedMessageCount; idx < messageIds.length; idx += 1) {
+        const appendedStart = Math.max(indexedMessageCount, messageIds.length - 1_000)
+        if (appendedStart > indexedMessageCount) setChildToolsTruncated(true)
+        for (let idx = appendedStart; idx < messageIds.length; idx += 1) {
           const messageId = messageIds[idx]
-          appendedKeys.push(...scanMessageToolParts(messageId, 0))
+          appendedKeys.push(...scanMessageToolParts(messageId, 0, TASK_STEP_RENDER_LIMIT))
+          if (appendedKeys.length > TASK_STEP_RENDER_LIMIT) appendedKeys.splice(0, appendedKeys.length - TASK_STEP_RENDER_LIMIT)
         }
 
         // Scan a small window of recent messages for newly appended parts.
@@ -302,15 +315,21 @@ export const taskRenderer: ToolRenderer = {
           const record = store.getMessage(messageId)
           const nextPartCount = record?.partIds.length ?? 0
           if (nextPartCount > previousPartCount) {
-            appendedKeys.push(...scanMessageToolParts(messageId, previousPartCount))
+            appendedKeys.push(...scanMessageToolParts(messageId, previousPartCount, TASK_STEP_RENDER_LIMIT))
+            if (appendedKeys.length > TASK_STEP_RENDER_LIMIT) appendedKeys.splice(0, appendedKeys.length - TASK_STEP_RENDER_LIMIT)
           }
         }
 
         indexedMessageCount = messageIds.length
         indexedMessageTail = messageIds[messageIds.length - 1] ?? ""
+        if (indexedPartCounts.size > 1_000) {
+          const retainedIds = new Set(messageIds.slice(-1_000))
+          for (const messageId of indexedPartCounts.keys()) if (!retainedIds.has(messageId)) indexedPartCounts.delete(messageId)
+        }
 
         if (appendedKeys.length > 0) {
-          setChildToolKeys((prev) => [...prev, ...appendedKeys])
+          if (childToolKeys().length + appendedKeys.length > TASK_STEP_RENDER_LIMIT) setChildToolsTruncated(true)
+          setChildToolKeys((prev) => [...prev, ...appendedKeys].slice(-TASK_STEP_RENDER_LIMIT))
         }
       })
     })
@@ -319,14 +338,14 @@ export const taskRenderer: ToolRenderer = {
       if (!state) return null
       const { input } = readToolStatePayload(state)
       const prompt = typeof input.prompt === "string" ? input.prompt : null
-      return ensureMarkdownContent(prompt, undefined, false)
+      return ensureMarkdownContent(prompt ? limitToolOutputForRender(prompt) : prompt, undefined, false)
     })
 
     const outputContent = createMemo(() => {
       const state = toolState()
       if (!state) return null
       const output = typeof (state as { output?: unknown }).output === "string" ? ((state as { output?: string }).output as string) : null
-      return ensureMarkdownContent(output, undefined, false)
+      return ensureMarkdownContent(output ? limitToolOutputForRender(output) : output, undefined, false)
     })
 
     const agentLabel = createMemo(() => {
@@ -358,21 +377,20 @@ export const taskRenderer: ToolRenderer = {
       return null
     })
 
-    const legacyItems = createMemo(() => {
+    const legacySummary = createMemo(() => {
       // Track the reactive change points so we only recompute when the part/message changes
       messageVersion?.()
       partVersion?.()
 
       const state = toolState()
-      if (!state) return []
-
-      // Prefer deriving steps from the child session when loaded.
-      if (childSessionLoaded()) return []
-
+      if (!state) return getLegacyTaskSummary(undefined)
       const { metadata } = readToolStatePayload(state)
-      const summary = Array.isArray((metadata as any).summary) ? ((metadata as any).summary as any[]) : []
+      return getLegacyTaskSummary((metadata as any).summary)
+    })
 
-      return summary.map((entry, index) => {
+    const legacyItems = createMemo(() => {
+      if (childToolKeys().length > 0) return []
+      return legacySummary().renderedEntries.map((entry, index) => {
         const tool = typeof entry?.tool === "string" ? (entry.tool as string) : "unknown"
         const stateValue = typeof entry?.state === "object" ? (entry.state as ToolState) : undefined
         const metadataFromEntry = typeof entry?.metadata === "object" && entry.metadata ? entry.metadata : {}
@@ -419,11 +437,21 @@ export const taskRenderer: ToolRenderer = {
           <section class="tool-call-task-section">
             <header class="tool-call-task-section-header">
               <span class="tool-call-task-section-title">{t("toolCall.task.sections.steps")}</span>
-              <span class="tool-call-task-section-meta">
-                {t("toolCall.task.steps.count", { count: childToolKeys().length > 0 ? childToolKeys().length : legacyItems().length })}
+              <span class="tool-call-io-actions">
+                <span class="tool-call-task-section-meta">
+                  {t("toolCall.task.steps.count", { count: childToolsTruncated() || legacySummary().truncated ? `${TASK_STEP_RENDER_LIMIT}+` : childToolKeys().length > 0 ? childToolKeys().length : legacyItems().length })}
+                </span>
+                <Show when={childToolKeys().length === 0 && legacySummary().truncated}>
+                  <button type="button" class="tool-call-header-icon-button tool-call-header-copy" onClick={() => void copyToClipboard(stringifyLegacyTaskSummary(legacySummary().entries))} aria-label={t("toolCall.io.copyOutputAriaLabel")} title={t("toolCall.io.copyOutputTitle")}>
+                    <Copy class="w-3.5 h-3.5" aria-hidden="true" />
+                  </button>
+                </Show>
               </span>
             </header>
             <div class="tool-call-task-section-body">
+              <Show when={childToolsTruncated() || legacySummary().truncated}>
+                <div class="tool-call-diagnostic-message" role="status">{t("toolCall.task.steps.truncated", { count: TASK_STEP_RENDER_LIMIT })}</div>
+              </Show>
               <Show
                 when={childToolKeys().length > 0}
                 fallback={
@@ -438,8 +466,8 @@ export const taskRenderer: ToolRenderer = {
                       <For each={legacyItems()}>
                         {(item) => {
                           const icon = getToolIcon(item.tool)
-                          const description = describeToolTitle(item)
-                          const toolLabel = getToolName(item.tool)
+                          const description = limitToolTitleForRender(describeToolTitle(item))
+                          const toolLabel = limitToolTitleForRender(getToolName(item.tool))
                           const status = normalizeStatus(item.status ?? item.state?.status)
                           const statusIcon = summarizeStatusIcon(status)
                           const statusKey = summarizeStatusLabel(status)
