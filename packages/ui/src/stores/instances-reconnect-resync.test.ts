@@ -131,7 +131,7 @@ describe("reconnect interruption resync", () => {
     try {
       const refresh = fetchSessions(instanceId, { authoritativeDeletes: true, signal: controller.signal })
       await waitFor(() => statusSignal !== undefined)
-      assert.equal(statusParameters, undefined)
+      assert.deepEqual(statusParameters, { directory: "/work" })
       assert.equal(statusSignal, controller.signal)
       controller.abort(new Error("refresh timed out"))
       status.resolve({ data: {} })

@@ -42,6 +42,7 @@ type OpenCodeWorkspace = {
 }
 
 const workspaceIdByWorktreeSlug = new Map<string, Map<string, string>>()
+const workspaceIdBySession = new Map<string, Map<string, string>>()
 type WorkspaceSync = {
   promise: Promise<void>
   controller: AbortController
@@ -60,7 +61,20 @@ function getCachedOpenCodeWorkspaceIdForWorktree(instanceId: string, slug: strin
 }
 
 function getCachedOpenCodeWorkspaceIdForSession(instanceId: string, sessionId: string): string | null {
-  return getCachedOpenCodeWorkspaceIdForWorktree(instanceId, getWorktreeSlugForSession(instanceId, sessionId))
+  return workspaceIdBySession.get(instanceId)?.get(sessionId)
+    ?? getCachedOpenCodeWorkspaceIdForWorktree(instanceId, getWorktreeSlugForSession(instanceId, sessionId))
+}
+
+function rememberOpenCodeWorkspaceIdForSession(instanceId: string, sessionId: string, workspaceId: string): void {
+  const sessions = workspaceIdBySession.get(instanceId) ?? new Map<string, string>()
+  sessions.set(sessionId, workspaceId)
+  workspaceIdBySession.set(instanceId, sessions)
+}
+
+function forgetOpenCodeWorkspaceIdForSession(instanceId: string, sessionId: string): void {
+  const sessions = workspaceIdBySession.get(instanceId)
+  sessions?.delete(sessionId)
+  if (sessions?.size === 0) workspaceIdBySession.delete(instanceId)
 }
 
 function startWorkspaceSync(instanceId: string, previous?: WorkspaceSync, reset = false): WorkspaceSync {
@@ -155,6 +169,8 @@ async function getOpenCodeWorkspaceIdForWorktree(instanceId: string, slug: strin
 }
 
 async function getOpenCodeWorkspaceIdForSession(instanceId: string, sessionId: string): Promise<string | null> {
+  const cached = getCachedOpenCodeWorkspaceIdForSession(instanceId, sessionId)
+  if (cached) return cached
   const slug = getWorktreeSlugForSession(instanceId, sessionId)
   return getOpenCodeWorkspaceIdForWorktree(instanceId, slug)
 }
@@ -163,6 +179,7 @@ function clearOpenCodeWorkspaceCache(instanceId: string): void {
   for (const controller of workspaceSyncs.get(instanceId)?.controllers ?? []) controller.abort()
   workspaceSyncs.delete(instanceId)
   workspaceIdByWorktreeSlug.delete(instanceId)
+  workspaceIdBySession.delete(instanceId)
 }
 
 async function removeOpenCodeWorkspaceForWorktree(instanceId: string, slug: string): Promise<void> {
@@ -177,6 +194,13 @@ async function removeOpenCodeWorkspaceForWorktree(instanceId: string, slug: stri
 
   await workspaceApi.remove({ directory: instance.folder, id: workspaceId })
   workspaceIdByWorktreeSlug.get(instanceId)?.delete(slug)
+  const sessions = workspaceIdBySession.get(instanceId)
+  if (sessions) {
+    for (const [sessionId, cachedWorkspaceId] of sessions) {
+      if (cachedWorkspaceId === workspaceId) sessions.delete(sessionId)
+    }
+    if (sessions.size === 0) workspaceIdBySession.delete(instanceId)
+  }
 }
 
 export {
@@ -185,6 +209,8 @@ export {
   getCachedOpenCodeWorkspaceIdForWorktree,
   getOpenCodeWorkspaceIdForSession,
   getOpenCodeWorkspaceIdForWorktree,
+  forgetOpenCodeWorkspaceIdForSession,
+  rememberOpenCodeWorkspaceIdForSession,
   reloadOpenCodeWorkspaces,
   removeOpenCodeWorkspaceForWorktree,
   syncOpenCodeWorkspaces,

@@ -40,6 +40,7 @@ class ServerEvents {
     this.clearReconnectTimer()
 
     if (this.connection) {
+      this.emitTransportStatus("disconnected")
       this.connection.disconnect()
       this.connection = null
     }
@@ -114,6 +115,8 @@ class ServerEvents {
     if (this.retryTimer) {
       return
     }
+
+    this.connectGeneration += 1
 
     if (this.connection) {
       this.connection.disconnect()

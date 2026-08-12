@@ -221,6 +221,13 @@ export interface InstanceMessageStore {
   setState: SetStoreFunction<InstanceMessageState>
   addOrUpdateSession: (input: SessionUpsertInput) => void
   hydrateMessages: (sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>) => void
+  reconcileEmptyAuthoritativeSnapshot: (sessionId: string) => void
+  markSendPending: (messageId: string) => void
+  acceptSend: (messageId: string) => void
+  confirmServerMessage: (messageId: string, options?: { clearOptimisticParts?: boolean }) => void
+  failSend: (messageId: string) => void
+  failPendingSends: (sessionId: string) => void
+  retirePendingSends: (sessionId: string) => void
   upsertMessage: (input: MessageUpsertInput) => void
   applyPartUpdate: (input: PartUpdateInput) => void
   applyPartDelta: (input: {
@@ -295,6 +302,19 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     for (const record of records) if (isActiveMessage(record)) count += 1
     if (count > 0) activeMessageCounts.set(sessionId, count)
     else activeMessageCounts.delete(sessionId)
+  }
+
+  // Requests awaiting same-ID persistence confirmation.
+  const pendingSendIds = new Set<string>()
+  const optimisticPartIdsByMessage = new Map<string, Set<string>>()
+
+  function forgetPendingSend(messageId: string): void {
+    pendingSendIds.delete(messageId)
+    optimisticPartIdsByMessage.delete(messageId)
+  }
+
+  function preservePendingSendOnOmission(messageId: string): boolean {
+    return pendingSendIds.has(messageId)
   }
 
   function findLastAssistantMessageId(messageIds: readonly string[]): string | undefined {
@@ -527,24 +547,106 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     }
   }
 
+  // Compares incoming parts against the previously stored parts for a message.
+  // Used by hydrateMessages (full reload / force refresh) to avoid bumping
+  // revision -- and therefore invalidating downstream render caches -- for
+  // messages whose content is byte-identical to what's already in the store.
+  // Cheap: parts are small (text chunks, tool state); JSON.stringify is fine
+  // here versus the cost of a full re-render of every message in the session.
+  function havePartsChanged(
+    previousPartIds: string[] | undefined,
+    previousParts: MessageRecord["parts"] | undefined,
+    nextIds: string[],
+    nextMap: MessageRecord["parts"],
+  ): boolean {
+    if (!previousPartIds || !previousParts) return true
+    if (previousPartIds.length !== nextIds.length) return true
+    for (let i = 0; i < nextIds.length; i++) {
+      if (previousPartIds[i] !== nextIds[i]) return true
+    }
+    for (const id of nextIds) {
+      const prevPart = previousParts[id]
+      const nextPart = nextMap[id]
+      if (prevPart === nextPart) continue
+      if (!prevPart || !nextPart) return true
+      if (JSON.stringify(prevPart.data) !== JSON.stringify(nextPart.data)) return true
+    }
+    return false
+  }
+
+  // NOTE: optimistic sends are reconciled purely by IDENTITY. The client
+  // serializes its optimistic id as `messageID` on the prompt request, so a
+  // confirmed send always reappears under the SAME id and is updated in place
+  // by the normal hydrate/upsert paths. There is intentionally no
+  // content-signature fallback: guessing ownership from identical text could
+  // delete an unrelated local send (or an identical prompt from another
+  // client) and cross-attach its metadata. Sends the server has not yet
+  // echoed are preserved via `pendingSendIds` instead (see hydrateMessages).
+
   function hydrateMessages(sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>) {
     if (!Array.isArray(inputs)) return
 
     ensureSessionEntry(sessionId)
 
-    const incomingIds = inputs.map((item) => item.id)
-    const incomingIdSet = new Set(incomingIds)
-    const staleIds = Object.values(state.messages)
-      .filter((record) => record.sessionId === sessionId && !incomingIdSet.has(record.id))
-      .map((record) => record.id)
+    // Defensive dedupe by message id: a snapshot should not contain the same
+    // id twice, but if it does, every duplicate would be enqueued below as an
+    // additional confirmation candidate (consuming extra pending sends) and
+    // the id would repeat in session.messageIds. First occurrence wins,
+    // preserving snapshot order.
+    const seenInputIds = new Set<string>()
+    const dedupedInputs = inputs.filter((input) => {
+      if (seenInputIds.has(input.id)) return false
+      seenInputIds.add(input.id)
+      return true
+    })
+
+    const serverIds = dedupedInputs.map((item) => item.id)
+    const serverIdSet = new Set(serverIds)
+    const serverIdsWithParts = new Set(dedupedInputs.filter((item) => item.parts?.length).map((item) => item.id))
+
+    // Preserve only requests that have not received a promptAsync response
+    // yet. Accepted prompts are confirmed under the same messageID, while
+    // rejected requests are marked failed and can be removed by this snapshot.
+    const previousMessageIds = state.sessions[sessionId]?.messageIds ?? []
+    // For each previous ephemeral "sending" record absent from this snapshot,
+    // preserve it ONLY while it is a still-in-flight pending send; otherwise
+    // it is stale — a send that already failed, or an ephemeral record the
+    // authoritative server does not know about — and is dropped so it cannot
+    // linger as a permanent "sending" bubble.
+    const pendingOptimisticIds: string[] = []
+    const omittedIds: string[] = []
+    for (const id of previousMessageIds) {
+      if (serverIdSet.has(id)) continue
+      const record = state.messages[id]
+      if (record && preservePendingSendOnOmission(id)) {
+        pendingOptimisticIds.push(id)
+      } else {
+        omittedIds.push(id)
+      }
+    }
+
+    const incomingIds = pendingOptimisticIds.length > 0 ? [...serverIds, ...pendingOptimisticIds] : serverIds
+    const retainedIds = new Set(incomingIds)
+    for (const record of Object.values(state.messages)) {
+      if (record.sessionId === sessionId && !retainedIds.has(record.id) && !omittedIds.includes(record.id)) {
+        omittedIds.push(record.id)
+      }
+    }
 
     const normalizedRecords: Record<string, MessageRecord> = {}
     const now = Date.now()
 
-    inputs.forEach((input) => {
+    dedupedInputs.forEach((input) => {
       const normalizedParts = normalizeParts(input.id, input.parts)
-      const shouldBump = Boolean(input.bumpRevision || normalizedParts)
       const previous = state.messages[input.id]
+      const partsChanged = normalizedParts
+        ? havePartsChanged(previous?.partIds, previous?.parts, normalizedParts.ids, normalizedParts.map)
+        : false
+      const statusChanged = previous ? previous.status !== input.status : true
+      const shouldBump = Boolean(input.bumpRevision || partsChanged || statusChanged)
+      // Identity reconciliation: a confirmed send reappears under its own id,
+      // so `previous` IS the optimistic record and its client-only
+      // prompt-display metadata carries over unchanged.
       const clientPromptDisplayMetadata = resolveClientPromptDisplayText(instanceId, input, previous)
       normalizedRecords[input.id] = {
         id: input.id,
@@ -574,31 +676,49 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     const nextQuestionsByMessage: Record<string, Record<string, QuestionEntry>> = {
       ...state.questions.byMessage,
     }
-    setActiveMessageCount(sessionId, Object.values(normalizedRecords))
+    Object.entries(normalizedRecords).forEach(([id, record]) => {
+      nextMessages[id] = record
+    })
 
-    if (staleIds.length > 0) {
-      clearRecordDisplayCacheForMessages(instanceId, staleIds)
-      for (const id of staleIds) {
+    setActiveMessageCount(sessionId, incomingIds.flatMap((id) => nextMessages[id] ? [nextMessages[id]] : []))
+
+    // The snapshot is authoritative: remove every omitted record except a
+    // request that is still awaiting same-ID persistence confirmation.
+    if (omittedIds.length > 0) {
+      omittedIds.forEach((id) => {
+        messageInfoCache.delete(id)
+        forgetPendingSend(id)
+        clearPromptDisplayOverride(instanceId, sessionId, id)
         delete nextMessages[id]
         delete nextMessageInfoVersion[id]
         delete nextPendingParts[id]
         delete nextPermissionsByMessage[id]
         delete nextQuestionsByMessage[id]
-        messageInfoCache.delete(id)
-        clearPromptDisplayOverride(instanceId, sessionId, id)
-      }
+      })
+      clearRecordDisplayCacheForMessages(instanceId, omittedIds)
     }
 
-    Object.entries(normalizedRecords).forEach(([id, record]) => {
-      nextMessages[id] = record
+    // A send that reappears under its own id is confirmed — it is no longer in
+    // flight, so retire its pending marker.
+    serverIds.forEach((id) => {
+      pendingSendIds.delete(id)
+      if (serverIdsWithParts.has(id)) optimisticPartIdsByMessage.delete(id)
     })
 
     if (infoList) {
       for (const info of infoList) {
         const messageId = info.id as string
+        // Only bump the info version -- which participates in message-block's
+        // render-cache signature -- when the info content actually changed.
+        // An identical snapshot (the common case on a reconnect force-reload)
+        // must not invalidate those caches.
+        const previousInfo = messageInfoCache.get(messageId)
+        const infoChanged = !previousInfo || JSON.stringify(previousInfo) !== JSON.stringify(info)
         messageInfoCache.set(messageId, info)
-        const currentVersion = nextMessageInfoVersion[messageId] ?? 0
-        nextMessageInfoVersion[messageId] = currentVersion + 1
+        if (infoChanged) {
+          const currentVersion = nextMessageInfoVersion[messageId] ?? 0
+          nextMessageInfoVersion[messageId] = currentVersion + 1
+        }
       }
     }
 
@@ -608,6 +728,56 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       setState("pendingParts", reconcile(nextPendingParts))
       setState("permissions", "byMessage", reconcile(nextPermissionsByMessage))
       setState("questions", "byMessage", reconcile(nextQuestionsByMessage))
+
+      // Solid store object updates merge, so omitted keys are deleted explicitly.
+      if (omittedIds.length > 0) {
+        setState(
+          "messages",
+          produce((draft) => {
+            omittedIds.forEach((id) => {
+              delete draft[id]
+            })
+          }),
+        )
+        setState(
+          "messageInfoVersion",
+          produce((draft) => {
+            omittedIds.forEach((id) => {
+              delete draft[id]
+            })
+          }),
+        )
+        setState(
+          "pendingParts",
+          produce((draft) => {
+            omittedIds.forEach((id) => {
+              delete draft[id]
+            })
+          }),
+        )
+        setState(
+          "permissions",
+          produce((draft) => {
+            const omitted = new Set(omittedIds)
+            omittedIds.forEach((id) => {
+              delete draft.byMessage[id]
+            })
+            draft.queue = draft.queue.filter((entry) => !entry.messageId || !omitted.has(entry.messageId))
+            draft.active = draft.queue[0] ?? null
+          }),
+        )
+        setState(
+          "questions",
+          produce((draft) => {
+            const omitted = new Set(omittedIds)
+            omittedIds.forEach((id) => {
+              delete draft.byMessage[id]
+            })
+            draft.queue = draft.queue.filter((entry) => !entry.messageId || !omitted.has(entry.messageId))
+            draft.active = draft.queue[0] ?? null
+          }),
+        )
+      }
 
       if (usageState) {
         setState("usage", sessionId, usageState)
@@ -625,6 +795,175 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         maybeUpdateLatestTodoFromRecord(record)
       })
 
+      bumpSessionRevision(sessionId)
+    })
+  }
+
+  // Register an optimistic user send while promptAsync is unresolved.
+  function markSendPending(messageId: string) {
+    if (!messageId) return
+    pendingSendIds.add(messageId)
+    const record = state.messages[messageId]
+    optimisticPartIdsByMessage.set(messageId, new Set(record?.partIds ?? []))
+  }
+
+  function updateSendRecord(messageId: string, status: "sent" | "error") {
+    const record = state.messages[messageId]
+    if (!record || (record.status !== "sending" && !(status === "error" && record.status === "sent"))) return
+    setState(
+      "messages",
+      messageId,
+      produce((draft) => {
+        draft.status = status
+        draft.isEphemeral = status === "error"
+        draft.updatedAt = Date.now()
+        draft.revision += 1
+      }),
+    )
+    bumpSessionRevision(record.sessionId)
+  }
+
+  // A 204 response means processing was accepted, but the marker remains until
+  // REST or SSE confirms persistence under the same messageID.
+  function acceptSend(messageId: string) {
+    updateSendRecord(messageId, "sent")
+  }
+
+  function confirmServerMessage(messageId: string, options?: { clearOptimisticParts?: boolean }) {
+    const clientPartIds = optimisticPartIdsByMessage.get(messageId)
+    pendingSendIds.delete(messageId)
+    if (options?.clearOptimisticParts) optimisticPartIdsByMessage.delete(messageId)
+    const record = state.messages[messageId]
+    if (!record) return
+    const optimisticPartIds = options?.clearOptimisticParts && record.role === "user"
+      ? record.partIds.filter((id) => clientPartIds?.has(id))
+      : []
+    const shouldSettleUser = record.role === "user" && (record.status === "sending" || record.status === "error")
+    const changed = Boolean(record.isEphemeral || optimisticPartIds.length > 0 || shouldSettleUser)
+    if (!changed) return
+    setState(
+      "messages",
+      messageId,
+      produce((draft) => {
+        draft.isEphemeral = false
+        if (shouldSettleUser) draft.status = "sent"
+        if (optimisticPartIds.length > 0) {
+          const optimisticIds = new Set(optimisticPartIds)
+          draft.partIds = draft.partIds.filter((id) => !optimisticIds.has(id))
+          optimisticPartIds.forEach((id) => {
+            delete draft.parts[id]
+          })
+        }
+        draft.updatedAt = Date.now()
+        draft.revision += 1
+      }),
+    )
+    bumpSessionRevision(record.sessionId)
+  }
+
+  // Request preparation or prompt submission failed. Keep an error bubble
+  // until the next authoritative snapshot rather than preserving "sending".
+  function failSend(messageId: string) {
+    if (!pendingSendIds.has(messageId)) return
+    pendingSendIds.delete(messageId)
+    updateSendRecord(messageId, "error")
+  }
+
+  function failPendingSends(sessionId: string) {
+    for (const messageId of Array.from(pendingSendIds)) {
+      if (state.messages[messageId]?.sessionId === sessionId) failSend(messageId)
+    }
+  }
+
+  function retirePendingSends(sessionId: string) {
+    for (const messageId of Array.from(pendingSendIds)) {
+      const record = state.messages[messageId]
+      if (record?.sessionId === sessionId && record.status === "sent") pendingSendIds.delete(messageId)
+    }
+  }
+
+  // Apply an AUTHORITATIVE empty snapshot (server returned zero messages for
+  // this session on a forced reconnect load). hydrateMessages ignores empty
+  // input, so this path exists to clear stale records the server no longer
+  // knows about while still preserving genuinely in-flight optimistic sends.
+  function reconcileEmptyAuthoritativeSnapshot(sessionId: string) {
+    const session = state.sessions[sessionId]
+    if (!session) return
+    const previousMessageIds = session.messageIds ?? []
+    const keptPendingIds: string[] = []
+    const droppedIds: string[] = []
+    for (const id of previousMessageIds) {
+      const record = state.messages[id]
+      if (record && preservePendingSendOnOmission(id)) {
+        keptPendingIds.push(id)
+      } else {
+        droppedIds.push(id)
+      }
+    }
+    if (droppedIds.length === 0) return
+
+    droppedIds.forEach((id) => {
+      messageInfoCache.delete(id)
+      forgetPendingSend(id)
+      clearPromptDisplayOverride(instanceId, sessionId, id)
+    })
+    clearRecordDisplayCacheForMessages(instanceId, droppedIds)
+
+    batch(() => {
+      setState(
+        "messages",
+        produce((draft) => {
+          droppedIds.forEach((id) => {
+            delete draft[id]
+          })
+        }),
+      )
+      setState(
+        "messageInfoVersion",
+        produce((draft) => {
+          droppedIds.forEach((id) => {
+            delete draft[id]
+          })
+        }),
+      )
+      setState(
+        "pendingParts",
+        produce((draft) => {
+          droppedIds.forEach((id) => {
+            delete draft[id]
+          })
+        }),
+      )
+      setState(
+        "permissions",
+        produce((draft) => {
+          const dropped = new Set(droppedIds)
+          droppedIds.forEach((id) => {
+            delete draft.byMessage[id]
+          })
+          draft.queue = draft.queue.filter((entry) => !entry.messageId || !dropped.has(entry.messageId))
+          draft.active = draft.queue[0] ?? null
+        }),
+      )
+      setState(
+        "questions",
+        produce((draft) => {
+          const dropped = new Set(droppedIds)
+          droppedIds.forEach((id) => {
+            delete draft.byMessage[id]
+          })
+          draft.queue = draft.queue.filter((entry) => !entry.messageId || !dropped.has(entry.messageId))
+          draft.active = draft.queue[0] ?? null
+        }),
+      )
+      setState("usage", sessionId, createEmptyUsageState())
+      setState("latestTodos", sessionId, undefined)
+      setState("sessions", sessionId, (current) => ({
+        ...current,
+        messageIds: keptPendingIds,
+        updatedAt: Date.now(),
+      }))
+      recomputeLastAssistantMessageId(sessionId, keptPendingIds)
       bumpSessionRevision(sessionId)
     })
   }
@@ -693,6 +1032,14 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     if (nextRecord) {
       updateActiveMessageCount(previousRecord, nextRecord)
       maybeUpdateLatestTodoFromRecord(nextRecord)
+    }
+
+    // A record that is no longer an in-flight optimistic "sending" bubble
+    // (confirmed by identity via SSE/REST, or otherwise terminal) must not
+    // keep a pending marker, or a later authoritative snapshot could preserve
+    // a stale entry.
+    if (nextRecord && !(nextRecord.isEphemeral && nextRecord.status === "sending")) {
+      pendingSendIds.delete(input.id)
     }
 
     insertMessageIntoSession(input.sessionId, input.id)
@@ -858,6 +1205,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   function removeMessage(messageId: string, fallbackSessionId?: string) {
     if (!messageId) return
 
+    forgetPendingSend(messageId)
+
     const record = state.messages[messageId]
     const sessionIds = new Set<string>()
 
@@ -970,6 +1319,15 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     if (!existing) return
 
     movePromptDisplayOverride(instanceId, existing.sessionId, options.oldId, options.newId)
+
+    // The optimistic send is now confirmed under its real id; retire the
+    // pending marker (carry it to the new id only if still mid-flight).
+    if (pendingSendIds.has(options.oldId) && existing.isEphemeral && existing.status === "sending") {
+      const optimisticParts = optimisticPartIdsByMessage.get(options.oldId)
+      forgetPendingSend(options.oldId)
+      pendingSendIds.add(options.newId)
+      if (optimisticParts) optimisticPartIdsByMessage.set(options.newId, optimisticParts)
+    }
 
     const cloned: MessageRecord = {
       ...existing,
@@ -1356,6 +1714,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
  
     storeLog.info("Clearing session data", { instanceId, sessionId, messageCount: messageIds.length })
     clearRecordDisplayCacheForMessages(instanceId, messageIds)
+    messageIds.forEach((id) => forgetPendingSend(id))
  
     batch(() => {
       const permissionQueue = state.permissions.queue.filter((entry) => getPermissionSessionId(entry.permission) !== sessionId)
@@ -1435,6 +1794,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       clearPromptDisplayOverridesForInstance(instanceId, Object.keys(state.sessions))
       messageInfoCache.clear()
       activeMessageCounts.clear()
+      pendingSendIds.clear()
+      optimisticPartIdsByMessage.clear()
       setState(reconcile(createInitialState(instanceId)))
     }
 
@@ -1449,6 +1810,13 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
      setState,
      addOrUpdateSession,
       hydrateMessages,
+      reconcileEmptyAuthoritativeSnapshot,
+      markSendPending,
+      acceptSend,
+      confirmServerMessage,
+      failSend,
+      failPendingSends,
+      retirePendingSends,
       upsertMessage,
       applyPartUpdate,
       applyPartDelta,

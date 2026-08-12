@@ -61,6 +61,7 @@ import {
 import { deleteSessionAttachments } from "./attachments"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getDefaultModel, isModelValid } from "./session-models"
 import { normalizeMessagePart } from "./message-v2/normalizers"
+import { deriveMessageStatus } from "./message-v2/message-status"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { seedSessionMessagesV2, reconcilePendingPermissionsV2, reconcilePendingQuestionsV2, setSessionRevertV2 } from "./message-v2/bridge"
 import { clearPendingDeltasForSession, getPendingDeltasForMessage, hasPendingDeltasForMessage, requestDeltaRecovery } from "./delta-buffer"
@@ -79,7 +80,12 @@ import {
   removeLegacyParentSessionMapping,
   setWorktreeSlugForParentSession,
 } from "./worktrees"
-import { getOpenCodeWorkspaceIdForSession, getOpenCodeWorkspaceIdForWorktree } from "./opencode-workspaces"
+import {
+  forgetOpenCodeWorkspaceIdForSession,
+  getOpenCodeWorkspaceIdForSession,
+  getOpenCodeWorkspaceIdForWorktree,
+  rememberOpenCodeWorkspaceIdForSession,
+} from "./opencode-workspaces"
 import { hydrateSessionMetadataWithClient } from "./session-metadata"
 import { preferSessionMetadata, shouldReplaceSessionMetadata } from "./session-metadata-completeness"
 import {
@@ -90,6 +96,7 @@ import {
   isProjectSessionListComplete,
 } from "./session-list-options"
 import { mergeFetchedSessionRuntimeState, resolveAuthoritativeGenerationRecovery } from "./session-generation-recovery"
+import { normalizeWorkspacePath } from "./app-session-reconciliation"
 
 const log = getLogger("api")
 const sessionListRequestIds = new Map<string, number>()
@@ -133,10 +140,9 @@ messageStoreBus.onSessionCleared((instanceId, sessionId) => bufferedDeltaSnapsho
 function adaptApiMessages(
   sessionId: string,
   apiMessages: any[],
-  sessionStatus: SessionStatus = "idle",
 ): { messages: Message[]; infos: Map<string, MessageInfo> } {
   const infos = new Map<string, MessageInfo>()
-  const messages = apiMessages.map((apiMessage: any, index: number) => {
+  const messages = apiMessages.map((apiMessage: any) => {
     const info = (apiMessage.info || apiMessage) as MessageInfo
     const messageId = info.id || String(Date.now())
     infos.set(messageId, info)
@@ -146,13 +152,11 @@ function adaptApiMessages(
       type: info.role === "user" ? "user" as const : "assistant" as const,
       parts: (apiMessage.parts || []).map((part: any) => normalizeMessagePart(part)),
       timestamp: info.time?.created || Date.now(),
-      status: (info as any).error
-        ? "error" as const
-        : info.role === "assistant" && index === apiMessages.length - 1 &&
-            !info.time?.completed && !(info.time as { end?: number } | undefined)?.end &&
-            (sessionStatus === "working" || sessionStatus === "compacting")
-          ? "streaming" as const
-          : "complete" as const,
+      status: deriveMessageStatus({
+        role: info.role,
+        error: (info as any).error,
+        time: info.time as { completed?: number } | undefined,
+      }),
       version: 0,
     }
   })
@@ -224,9 +228,23 @@ async function recordSessionWorkspaceHints(
   hasCommitAuthority: () => boolean,
 ): Promise<void> {
   const hints = new Map(sessionWorkspaceHints.get(instanceId) ?? new Map<string, string>())
+  apiSessions.forEach((session) => hints.delete(session.id))
   const workspaceBySlug = new Map<string, Promise<string | null>>()
+  const explicitWorkspaceBySession = new Map<string, string>()
   await Promise.all(apiSessions.map(async (session) => {
-    const directory = (session as SDKSession & { directory?: string }).directory
+    const located = session as SDKSession & {
+      directory?: string
+      workspace?: string
+      workspaceID?: string
+      workspaceId?: string
+    }
+    const explicitWorkspace = located.workspace ?? located.workspaceID ?? located.workspaceId
+    if (explicitWorkspace) {
+      hints.set(session.id, explicitWorkspace)
+      explicitWorkspaceBySession.set(session.id, explicitWorkspace)
+      return
+    }
+    const directory = located.directory
     const slug = getWorktreeSlugForDirectory(instanceId, directory)
     if (!slug || slug === "root") return
     let workspace = workspaceBySlug.get(slug)
@@ -239,6 +257,10 @@ async function recordSessionWorkspaceHints(
   }))
   if (!hasCommitAuthority()) return
   sessionWorkspaceHints.set(instanceId, hints)
+  for (const session of apiSessions) forgetOpenCodeWorkspaceIdForSession(instanceId, session.id)
+  for (const [sessionId, workspaceId] of explicitWorkspaceBySession) {
+    rememberOpenCodeWorkspaceIdForSession(instanceId, sessionId, workspaceId)
+  }
 }
 
 interface SessionForkResponse {
@@ -514,7 +536,14 @@ async function ensureV2ParentChainsLoaded(
 
 async function fetchSessions(
   instanceId: string,
-  options?: { reset?: boolean; authoritativeDeletes?: boolean; signal?: AbortSignal; hasCommitAuthority?: () => boolean },
+  options?: {
+    reset?: boolean
+    authoritativeDeletes?: boolean
+    signal?: AbortSignal
+    hasCommitAuthority?: () => boolean
+    strictStatus?: boolean
+    registerInvalidation?: (invalidate: () => void) => void
+  },
 ): Promise<Set<string>> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
@@ -528,6 +557,9 @@ async function fetchSessions(
     (options?.hasCommitAuthority?.() ?? true) &&
     isInstanceRuntimeCurrent(instanceId, instance) &&
     isLatestSessionListRequest(instanceId, requestId)
+  options?.registerInvalidation?.(() => {
+    if (isLatestSessionListRequest(instanceId, requestId)) clearSessionListRequestState(instanceId)
+  })
 
   setLoading((prev) => {
     const next = { ...prev }
@@ -546,21 +578,62 @@ async function fetchSessions(
     log.info("session.list", { instanceId, limit: PROJECT_SESSION_LIST_LIMIT, directory: sessionListOptions.directory, scope: "project" })
     const response = await fetchV2Sessions(instanceId, sessionListOptions, options?.signal)
     if (!hasCommitAuthority()) return new Set()
-    await recordSessionWorkspaceHints(instanceId, getV2SessionItems(response), hasCommitAuthority)
+    const apiSessions = getV2SessionItems(response)
+    await recordSessionWorkspaceHints(instanceId, apiSessions, hasCommitAuthority)
     if (!hasCommitAuthority()) return new Set()
 
-    let statusById: Record<string, any> = {}
-    let statusResponseKnown = false
-    try {
-      const statusResponse = await (rootClient.session.status as any)(undefined, options?.signal ? { signal: options.signal } : undefined)
-      if (statusResponse.data && typeof statusResponse.data === "object") {
-        statusResponseKnown = true
-        statusById = statusResponse.data as Record<string, any>
+    const statusLocationBySessionId = new Map<string, string>()
+    const statusLocations = new Map<string, { directory?: string; workspace?: string }>()
+    statusLocations.set(JSON.stringify(sessionListOptions), sessionListOptions)
+    await Promise.all(apiSessions.map(async (apiSession) => {
+      const sessionLocation = apiSession as SDKSession & {
+        directory?: string
+        workspace?: string
+        workspaceID?: string
+        workspaceId?: string
       }
-    } catch (error) {
-      log.error("Failed to fetch session status:", error)
+      const directory = sessionLocation.directory
+      const slug = getWorktreeSlugForDirectory(instanceId, directory)
+      const explicitWorkspace = sessionLocation.workspace ?? sessionLocation.workspaceID ?? sessionLocation.workspaceId
+      const workspacePayload = explicitWorkspace
+        ? { workspace: explicitWorkspace }
+        : await getSessionWorkspacePayload(instanceId, apiSession.id)
+      if (!hasCommitAuthority()) return
+      const requiresWorkspace = (slug && slug !== "root")
+        || Boolean(directory && normalizeWorkspacePath(directory) !== normalizeWorkspacePath(instance.folder))
+      if (requiresWorkspace && !workspacePayload.workspace) {
+        if (options?.strictStatus) {
+          throw new Error(`Unable to resolve OpenCode workspace for session ${apiSession.id}`)
+        }
+        return
+      }
+      const location = { ...sessionListOptions, ...workspacePayload }
+      const key = JSON.stringify(location)
+      statusLocations.set(key, location)
+      statusLocationBySessionId.set(apiSession.id, key)
+    }))
+    if (!hasCommitAuthority()) {
+      if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
+      return new Set()
     }
-    if (!hasCommitAuthority()) return new Set()
+
+    const statusSnapshots = new Map<string, Record<string, any>>()
+    await Promise.all(Array.from(statusLocations, async ([key, location]) => {
+      try {
+        const statusResponse = await requestData<Record<string, any>>(
+          (rootClient.session.status as any)(location, options?.signal ? { signal: options.signal } : undefined),
+          "session.status",
+        )
+        if (statusResponse && typeof statusResponse === "object") statusSnapshots.set(key, statusResponse)
+      } catch (error) {
+        log.error("Failed to fetch session status:", error)
+        if (options?.strictStatus) throw error
+      }
+    }))
+    if (!hasCommitAuthority()) {
+      if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
+      return new Set()
+    }
 
     const sessionMap = new Map<string, Session>()
     const refreshedSessionIds = new Set<string>()
@@ -571,18 +644,21 @@ async function fetchSessions(
       const metadataMutated = wasSessionMetadataMutatedAfter(instanceId, apiSession.id, metadataMutationFence)
       const statusBase = metadataMutated && latestSession ? latestSession : existingSession
       const existingStatus = statusBase?.status
-      const rawStatus = statusResponseKnown ? statusById[apiSession.id] : (apiSession as any)?.status ?? statusById[apiSession.id]
+      const statusSnapshot = statusSnapshots.get(statusLocationBySessionId.get(apiSession.id) ?? "")
+      const statusResponseKnown = Boolean(statusSnapshot)
+      const statusById = statusSnapshot ?? {}
+      const rawStatus = statusResponseKnown ? statusById[apiSession.id] : (apiSession as any)?.status
       const hasType = rawStatus && typeof rawStatus === "object" && typeof rawStatus.type === "string"
       const runtimeStatusKnown = Boolean(hasType || statusResponseKnown || statusBase?.runtimeStatusKnown)
 
       let status: SessionStatus
       let retry = statusBase?.retry ?? null
-      if (existingStatus === "compacting" && !statusResponseKnown) {
+      if (existingStatus === "compacting" && !hasType && !statusResponseKnown) {
         status = "compacting"
         retry = null
       } else {
         status = hasType ? mapSdkSessionStatus(rawStatus) : statusResponseKnown ? "idle" : existingStatus ?? "idle"
-        retry = hasType ? mapSdkSessionRetry(rawStatus) : retry
+        retry = hasType ? mapSdkSessionRetry(rawStatus) : statusResponseKnown ? null : retry
       }
 
       if (metadataMutated && latestSession) {
@@ -1276,7 +1352,13 @@ async function fetchProviders(instanceId: string, signal?: AbortSignal, hasCommi
 async function loadMessages(
   instanceId: string,
   sessionId: string,
-  options?: { force?: boolean; timeoutMs?: number; applySessionRevert?: boolean; signal?: AbortSignal },
+  options?: {
+    force?: boolean
+    timeoutMs?: number
+    applySessionRevert?: boolean
+    signal?: AbortSignal
+    registerInvalidation?: (invalidate: () => void) => void
+  },
 ): Promise<void> {
   options?.signal?.throwIfAborted()
   const force = options?.force ?? false
@@ -1338,6 +1420,9 @@ async function loadMessages(
   const awaitLoad = <T>(promise: Promise<T>): Promise<T> => loadTimeoutPromise ? Promise.race([promise, loadTimeoutPromise]) : promise
   const store = messageStoreBus.getOrCreate(instanceId)
   const expectedRevision = store.getSessionRevision(sessionId)
+  options?.registerInvalidation?.(() => {
+    if (isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) invalidateSessionMessageLoad(instanceId, sessionId)
+  })
   let retryAfterRevisionConflict = false
   const sessionForV2 = session
 
@@ -1370,18 +1455,30 @@ async function loadMessages(
       return
     }
 
+    const latestSession = sessions().get(instanceId)?.get(sessionId)
+    if (latestSession?.runtimeStatusKnown && latestSession.status === "idle") {
+      messageStoreBus.getOrCreate(instanceId).retirePendingSends(sessionId)
+    }
+
     setSessionMessagesLoadError(instanceId, sessionId, null)
 
-    const latestStatus = sessions().get(instanceId)?.get(sessionId)?.status ?? sessionForV2.status
-    const adapted = adaptApiMessages(sessionId, apiMessages, latestStatus)
+    const seenMessageIds = new Set<string>()
+    const authoritativeApiMessages = apiMessages.filter((apiMessage: any) => {
+      const id = apiMessage?.info?.id ?? apiMessage?.id
+      if (typeof id !== "string") return true
+      if (seenMessageIds.has(id)) return false
+      seenMessageIds.add(id)
+      return true
+    })
+    const adapted = adaptApiMessages(sessionId, authoritativeApiMessages)
 
     let agentName = ""
     let providerID = ""
     let modelID = ""
-    if (apiMessages.length > 0) {
+    if (authoritativeApiMessages.length > 0) {
 
-      for (let i = apiMessages.length - 1; i >= 0; i--) {
-        const apiMessage = apiMessages[i]
+      for (let i = authoritativeApiMessages.length - 1; i >= 0; i--) {
+        const apiMessage = authoritativeApiMessages[i]
         const info = apiMessage.info || apiMessage
 
         if (info.role === "assistant") {
@@ -1402,7 +1499,7 @@ async function loadMessages(
 
     }
 
-    const latestSession = sessions().get(instanceId)?.get(sessionId) ?? sessionForV2
+    const currentSession = sessions().get(instanceId)?.get(sessionId) ?? sessionForV2
     const applySessionRevert = options?.applySessionRevert !== false
     if (!isInstanceRuntimeCurrent(instanceId, instance) || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return
     const snapshotFenceKey = `${instanceId}:${sessionId}`
@@ -1455,7 +1552,7 @@ async function loadMessages(
       retryAfterRevisionConflict = true
     } else if (!seedSessionMessagesV2(
       instanceId,
-      applySessionRevert ? latestSession : { id: latestSession.id, title: latestSession.title, parentId: latestSession.parentId },
+      applySessionRevert ? currentSession : { id: currentSession.id, title: currentSession.title, parentId: currentSession.parentId },
       adapted.messages,
       adapted.infos,
       expectedRevision,
@@ -1463,6 +1560,7 @@ async function loadMessages(
       retryAfterRevisionConflict = true
     } else {
       bufferedDeltaSnapshotFences.delete(snapshotFenceKey)
+      if (force && authoritativeApiMessages.length === 0) store.reconcileEmptyAuthoritativeSnapshot(sessionId)
       if (apiMessages.length > 0) {
         setSessions((prev) => {
           if (!isInstanceRuntimeCurrent(instanceId, instance) || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return prev
@@ -1480,7 +1578,7 @@ async function loadMessages(
           return next
         })
       }
-      if (applySessionRevert) setSessionRevertV2(instanceId, sessionId, latestSession.revert ?? null)
+      if (applySessionRevert) setSessionRevertV2(instanceId, sessionId, currentSession.revert ?? null)
       setMessagesLoaded((prev) => {
         const next = new Map(prev)
         const loadedSet = next.get(instanceId) || new Set()

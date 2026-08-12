@@ -197,11 +197,20 @@ async function sendMessage(
     clientPromptDisplayMetadata: preparedPrompt.displayMetadata,
   })
 
+  // Preserve the optimistic bubble only while promptAsync is unresolved.
+  store.markSendPending(messageId)
+
   withSession(instanceId, sessionId, () => {
     /* trigger reactivity for legacy session data */
   })
 
   const requestBody = {
+    // Send the optimistic message id so the server confirms THIS send under
+    // the same id. Hydration then reconciles by identity (same id in the
+    // snapshot) instead of content matching, and the SSE echo updates the
+    // existing record in place — no duplicate bubble, no ambiguity between
+    // identical texts.
+    messageID: messageId,
     parts: requestParts,
     ...(session.agent && { agent: session.agent }),
     ...(session.model.providerId &&
@@ -248,6 +257,7 @@ async function sendMessage(
         throw uncertainDeliveryError(new Error("Instance changed after prompt delivery"))
       }
       admission.complete()
+      store.acceptSend(messageId)
     } catch (error) {
       if (!isInstanceRuntimeCurrent(instanceId, instance)) {
         if (store.getMessage(messageId)?.isEphemeral) removeMessageV2(instanceId, messageId)
@@ -293,13 +303,13 @@ async function sendMessage(
       }
       if (store.getMessageInfo(messageId)) {
         if (isInstanceRuntimeCurrent(instanceId, instance)) admission.complete()
-        return
+        throw classifyDeliveryError(error)
       }
-      if (store.getMessage(messageId)?.isEphemeral) removeMessageV2(instanceId, messageId)
       if (isInstanceRuntimeCurrent(instanceId, instance)) admission.rollback()
       throw classifyDeliveryError(error)
     }
   } catch (error) {
+    store.failSend(messageId)
     log.error("Failed to send prompt", error)
     throw error
   }

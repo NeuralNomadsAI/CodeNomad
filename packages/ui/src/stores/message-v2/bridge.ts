@@ -63,7 +63,13 @@ export function seedSessionMessagesV2(
     createdAt: message.timestamp,
     updatedAt: message.timestamp,
     parts: message.parts,
-    isEphemeral: message.status === "sending" || message.status === "streaming",
+    // Ephemeral marks records that stand in for something not yet confirmed
+    // by the server. A user message present in a REST snapshot IS confirmed,
+    // even when its end time is not recorded yet (status "streaming" via the
+    // shared derivation) — the live SSE path keeps such user records
+    // non-ephemeral, so the REST path must match. Assistant streaming records
+    // keep the pre-existing ephemeral treatment.
+    isEphemeral: message.status === "sending" || (message.type === "assistant" && message.status === "streaming"),
     bumpRevision: false,
   }))
 
