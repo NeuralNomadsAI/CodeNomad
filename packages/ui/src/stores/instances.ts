@@ -209,7 +209,7 @@ async function getV2RequestLocations(instanceId: string): Promise<V2Location[]> 
   for (const worktree of worktrees) {
     if (!worktree.slug || worktree.slug === "root") continue
     const workspace = await getOpenCodeWorkspaceIdForWorktree(instanceId, worktree.slug)
-    if (!workspace) continue
+    if (!workspace) throw new Error(`Unable to resolve OpenCode workspace for worktree ${worktree.slug}`)
     workspaceBySlug.set(worktree.slug, workspace)
   }
 
@@ -238,6 +238,27 @@ const pendingRehydrations = new Map<string, Promise<void>>()
 const initialHydrations = new Map<string, Promise<void>>()
 const initialSessionHydrations = new Map<string, Promise<void>>()
 const initialWorkspaceMetadataHydrations = new Map<string, Promise<void>>()
+const pendingRequestSyncEpochs = new Map<string, number>()
+const pendingPermissionMutationEpochs = new Map<string, number>()
+const pendingQuestionMutationEpochs = new Map<string, number>()
+const pendingRequestSyncGenerations = new Map<string, number>()
+const pendingRequestSyncs = new Map<string, {
+  generation: number
+  token: { cancelled: boolean }
+  promise: Promise<void>
+}>()
+const pendingRequestSyncSuperseded = new Error("Pending request sync was superseded")
+let nextPendingRequestSyncGeneration = 0
+
+function bumpEpoch(epochs: Map<string, number>, instanceId: string): void {
+  epochs.set(instanceId, (epochs.get(instanceId) ?? 0) + 1)
+}
+
+function invalidatePendingRequestSync(instanceId: string): void {
+  bumpEpoch(pendingRequestSyncEpochs, instanceId)
+  bumpEpoch(pendingPermissionMutationEpochs, instanceId)
+  bumpEpoch(pendingQuestionMutationEpochs, instanceId)
+}
 type RestoreWorkspaceDescriptor = WorkspaceDescriptor & { reused?: boolean }
 const workspaceListReconciliationFence = new WorkspaceListReconciliationFence()
 
@@ -265,7 +286,10 @@ const connectionResyncs = new TrailingResyncCoordinator(
     await waitForSettledPrerequisite(initialHydrations.get(instanceId))
     const instance = instances().get(instanceId)
     if (!instance?.client || instance.status !== "ready") return
-    await fetchSessions(instanceId, { reset: false })
+    await Promise.all([
+      fetchSessions(instanceId, { reset: false }),
+      syncPendingRequests(instanceId),
+    ])
   },
   (instanceId, error) => {
     log.warn("Failed to resync sessions after instance connection", { instanceId, error })
@@ -488,23 +512,28 @@ function releaseInstanceResources(instanceId: string) {
   sseManager.seedStatus(instanceId, "disconnected")
 }
 
-async function syncPendingPermissions(instanceId: string, propagateErrors = false): Promise<void> {
+async function syncPendingPermissions(
+  instanceId: string,
+  propagateErrors = false,
+  isCurrent: () => boolean = () => true,
+): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance?.client) return
+  const mutationEpoch = pendingPermissionMutationEpochs.get(instanceId) ?? 0
 
   try {
     const syncStartedAt = Date.now()
     const remote: Array<{ request: PermissionRequest; source: PermissionSource }> = []
+    let legacyKnown = true
     const legacyRemote = await requestData<PermissionRequest[]>(
       instance.client.permission.list(),
       "permission.list",
     ).catch((error) => {
       log.warn("Failed to list legacy pending permissions", { instanceId, error })
-      if (propagateErrors) throw error
+      legacyKnown = false
       return []
     })
     for (const permission of legacyRemote) {
-      permissionRegistry.setSource(instanceId, permission.id, "legacy")
       remote.push({ request: permission, source: "legacy" })
     }
 
@@ -515,13 +544,16 @@ async function syncPendingPermissions(instanceId: string, propagateErrors = fals
       )
       log.info("v2.permission.request.list", { instanceId, location, resolvedLocation: response.location })
       for (const permission of response.data) {
-        permissionRegistry.setSource(instanceId, permission.id, "v2")
         remote.push({ request: permission, source: "v2" })
       }
     }
 
     const remotePendingIds = new Set(remote.map((item) => item.request.id))
-    pruneRepliedPermissions(instanceId, remotePendingIds, syncStartedAt)
+    if (!isCurrent() || (pendingPermissionMutationEpochs.get(instanceId) ?? 0) !== mutationEpoch) {
+      if (propagateErrors) throw pendingRequestSyncSuperseded
+      return
+    }
+    if (legacyKnown) pruneRepliedPermissions(instanceId, remotePendingIds, syncStartedAt)
 
     const pendingRemote = remote.filter((item) => !hasRepliedPermission(instanceId, item.request.id))
     const remoteIds = new Set(pendingRemote.map((item) => item.request.id))
@@ -529,6 +561,7 @@ async function syncPendingPermissions(instanceId: string, propagateErrors = fals
 
     // Remove any stale local permissions missing from server.
     for (const entry of local) {
+      if (!legacyKnown && permissionRegistry.getSource(instanceId, entry.id) === "legacy") continue
       if (!remoteIds.has(entry.id)) {
         removePermissionFromQueue(instanceId, entry.id)
         removePermissionV2(instanceId, entry.id)
@@ -547,22 +580,27 @@ async function syncPendingPermissions(instanceId: string, propagateErrors = fals
   }
 }
 
-async function syncPendingQuestions(instanceId: string, propagateErrors = false): Promise<void> {
+async function syncPendingQuestions(
+  instanceId: string,
+  propagateErrors = false,
+  isCurrent: () => boolean = () => true,
+): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance?.client) return
+  const mutationEpoch = pendingQuestionMutationEpochs.get(instanceId) ?? 0
 
   try {
     const remote: Array<{ request: QuestionRequest; source: QuestionSource }> = []
+    let legacyKnown = true
     const legacyRemote = await requestData<QuestionRequest[]>(
       instance.client.question.list(),
       "question.list",
     ).catch((error) => {
       log.warn("Failed to list legacy pending questions", { instanceId, error })
-      if (propagateErrors) throw error
+      legacyKnown = false
       return []
     })
     for (const request of legacyRemote) {
-      questionRegistry.setSource(instanceId, request.id, "legacy")
       remote.push({ request, source: "legacy" })
     }
 
@@ -573,16 +611,20 @@ async function syncPendingQuestions(instanceId: string, propagateErrors = false)
       )
       log.info("v2.question.request.list", { instanceId, location, resolvedLocation: response.location })
       for (const request of response.data) {
-        questionRegistry.setSource(instanceId, request.id, "v2")
         remote.push({ request, source: "v2" })
       }
     }
 
     const remoteIds = new Set(remote.map((item) => item.request.id))
+    if (!isCurrent() || (pendingQuestionMutationEpochs.get(instanceId) ?? 0) !== mutationEpoch) {
+      if (propagateErrors) throw pendingRequestSyncSuperseded
+      return
+    }
     const local = getQuestionQueue(instanceId)
 
     // Remove any stale local requests missing from server.
     for (const entry of local) {
+      if (!legacyKnown && questionRegistry.getSource(instanceId, entry.id) === "legacy") continue
       if (!remoteIds.has(entry.id)) {
         removeQuestionFromQueue(instanceId, entry.id)
         removeQuestionV2(instanceId, entry.id)
@@ -600,6 +642,62 @@ async function syncPendingQuestions(instanceId: string, propagateErrors = false)
     log.warn("Failed to sync pending questions", { instanceId, error })
     if (propagateErrors) throw error
   }
+}
+
+async function runPendingRequestSync(
+  instanceId: string,
+  generation: number,
+  token: { cancelled: boolean },
+): Promise<void> {
+  for (let attempt = 0; attempt < 3 && !token.cancelled; attempt += 1) {
+    const epoch = (pendingRequestSyncEpochs.get(instanceId) ?? 0) + 1
+    pendingRequestSyncEpochs.set(instanceId, epoch)
+    const isCurrent = () => !token.cancelled
+      && pendingRequestSyncEpochs.get(instanceId) === epoch
+      && pendingRequestSyncGenerations.get(instanceId) === generation
+    try {
+      await Promise.all([
+        syncPendingPermissions(instanceId, true, isCurrent),
+        syncPendingQuestions(instanceId, true, isCurrent),
+      ])
+      return
+    } catch (error) {
+      if (error !== pendingRequestSyncSuperseded) throw error
+    }
+  }
+  if (!token.cancelled && pendingRequestSyncGenerations.get(instanceId) === generation) {
+    throw new Error("Pending request sync did not stabilize")
+  }
+}
+
+function syncPendingRequests(
+  instanceId: string,
+  registerInvalidation?: (invalidate: () => void) => void,
+): Promise<void> {
+  const generation = pendingRequestSyncGenerations.get(instanceId)
+  if (generation === undefined) return Promise.resolve()
+  const existing = pendingRequestSyncs.get(instanceId)
+  if (existing?.generation === generation) {
+    registerInvalidation?.(() => {
+      if (pendingRequestSyncs.get(instanceId)?.token !== existing.token) return
+      existing.token.cancelled = true
+      invalidatePendingRequestSync(instanceId)
+      pendingRequestSyncs.delete(instanceId)
+    })
+    return existing.promise
+  }
+  const token = { cancelled: false }
+  const promise = runPendingRequestSync(instanceId, generation, token).finally(() => {
+    if (pendingRequestSyncs.get(instanceId)?.promise === promise) pendingRequestSyncs.delete(instanceId)
+  })
+  pendingRequestSyncs.set(instanceId, { generation, token, promise })
+  registerInvalidation?.(() => {
+    if (pendingRequestSyncs.get(instanceId)?.token !== token) return
+    token.cancelled = true
+    invalidatePendingRequestSync(instanceId)
+    pendingRequestSyncs.delete(instanceId)
+  })
+  return promise
 }
 
 function startInstanceSessionHydration(instanceId: string, force = false, propagateErrors = false): {
@@ -648,8 +746,7 @@ async function hydrateInstanceData(instanceId: string, options?: {
     const instance = instances().get(instanceId)
     if (!instance?.client) return
     await fetchCommands(instanceId, instance.client)
-    await syncPendingPermissions(instanceId, options?.propagateErrors)
-    await syncPendingQuestions(instanceId, options?.propagateErrors)
+    await syncPendingRequests(instanceId)
   } catch (error) {
     log.error("Failed to fetch initial data", error)
     if (options?.propagateErrors) throw error
@@ -972,6 +1069,7 @@ function addInstance(instance: Instance) {
   const occurrence = Array.from(instances().values())
     .filter((existing) => normalizeInstanceFolderPath(existing.folder) === normalizeInstanceFolderPath(instance.folder))
     .length
+  pendingRequestSyncGenerations.set(instance.id, ++nextPendingRequestSyncGeneration)
   setInstances((prev) => {
     const next = new Map(prev)
     next.set(instance.id, instance)
@@ -1053,6 +1151,8 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   initialHydrations.delete(id)
   initialSessionHydrations.delete(id)
   initialWorkspaceMetadataHydrations.delete(id)
+  invalidatePendingRequestSync(id)
+  pendingRequestSyncGenerations.delete(id)
   settleInstanceReadyWaiters(id, new Error(`Workspace ${id} was removed before it became ready`))
 
   if (activeInstanceId() === id) {
@@ -1472,6 +1572,7 @@ function recomputeActiveInterruption(instanceId: string): void {
 }
 
 function addPermissionToQueue(instanceId: string, permission: PermissionRequest, source?: PermissionSource): PermissionRequest | undefined {
+  bumpEpoch(pendingPermissionMutationEpochs, instanceId)
   let inserted = false
   let updated = false
   let previousPermission: PermissionRequest | undefined
@@ -1525,6 +1626,7 @@ function addPermissionToQueue(instanceId: string, permission: PermissionRequest,
 }
 
 function removePermissionFromQueue(instanceId: string, permissionId: string): void {
+  bumpEpoch(pendingPermissionMutationEpochs, instanceId)
   let removedPermission: PermissionRequest | null = null
 
   setPermissionQueues((prev) => {
@@ -1627,6 +1729,7 @@ function clearSyncedYoloSessionsForInstance(instanceId: string): void {
 }
 
 function clearPermissionQueue(instanceId: string): void {
+  bumpEpoch(pendingPermissionMutationEpochs, instanceId)
   permissionRegistry.clear(instanceId, getPermissionQueue(instanceId), (sessionId) => {
     setSessionPendingPermission(instanceId, sessionId, false)
   })
@@ -1644,6 +1747,7 @@ function clearPermissionQueue(instanceId: string): void {
 }
 
 function addQuestionToQueue(instanceId: string, request: QuestionRequest, source: QuestionSource = "v2"): void {
+  bumpEpoch(pendingQuestionMutationEpochs, instanceId)
   let inserted = false
   questionRegistry.setSource(instanceId, request.id, source)
 
@@ -1679,6 +1783,7 @@ function addQuestionToQueue(instanceId: string, request: QuestionRequest, source
 }
 
 function removeQuestionFromQueue(instanceId: string, requestId: string): void {
+  bumpEpoch(pendingQuestionMutationEpochs, instanceId)
   const removedSessionId = getQuestionSessionId(getQuestionQueue(instanceId).find((q) => q.id === requestId))
 
   setQuestionQueues((prev) => {
@@ -1704,6 +1809,7 @@ function removeQuestionFromQueue(instanceId: string, requestId: string): void {
 }
 
 function clearQuestionQueue(instanceId: string): void {
+  bumpEpoch(pendingQuestionMutationEpochs, instanceId)
   questionRegistry.clear(instanceId, getQuestionQueue(instanceId), (sessionId) => {
     setSessionPendingQuestion(instanceId, sessionId, false)
   })
@@ -1980,5 +2086,7 @@ export {
   fetchLspStatus,
   disposeInstance,
   reconcilePendingSessionIndicators,
+  syncPendingRequests,
+  invalidatePendingRequestSync,
   clearReloadableInstanceState,
 }

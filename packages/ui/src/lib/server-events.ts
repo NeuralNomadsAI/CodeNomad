@@ -40,6 +40,9 @@ class ServerEvents {
     const generation = ++this.connectGeneration
     this.clearReconnectTimer()
     const previousConnection = this.connection
+    if (previousConnection) {
+      this.emitTransportStatus("disconnected")
+    }
 
     logSse("Connecting to backend events stream")
 
@@ -88,6 +91,9 @@ class ServerEvents {
           return true
         },
         onPing: (payload) => {
+          if (generation !== this.connectGeneration) {
+            return
+          }
           const identity = getClientIdentity()
           const pongPayload = { ...identity, pingTs: payload.ts }
 
@@ -130,6 +136,8 @@ class ServerEvents {
     if (this.retryTimer) {
       return
     }
+
+    this.connectGeneration += 1
 
     if (this.connection) {
       this.connection.disconnect()

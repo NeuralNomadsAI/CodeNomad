@@ -388,8 +388,8 @@ test("compact workflow hydration stays closed across stale responses and retries
 test("replay reset participants propagate authoritative status, interruption, Yolo, and workflow failures", () => {
   const sessions = readFileSync(new URL("./session-api.ts", import.meta.url), "utf8")
   const fetch = sessions.slice(sessions.indexOf("async function fetchSessions"), sessions.indexOf("async function loadMoreSessions"))
-  assert.match(fetch, /requestData<Record<string, any>>\(rootClient\.session\.status\(\), "session\.status"\)/)
-  assert.match(fetch, /if \(options\?\.propagateErrors\) throw error/)
+  assert.match(fetch, /requestData<Record<string, any>>\(rootClient\.session\.status\(location\), "session\.status"\)/)
+  assert.match(fetch, /if \(options\?\.strictStatus \|\| options\?\.propagateErrors\) throw error/)
 
   const instances = readFileSync(new URL("./instances.ts", import.meta.url), "utf8")
   const permissions = instances.slice(instances.indexOf("async function syncPendingPermissions"), instances.indexOf("async function syncPendingQuestions"))
