@@ -1,6 +1,6 @@
 import { createInstanceMessageStore } from "./instance-store"
 import type { InstanceMessageStore } from "./instance-store"
-import { clearCacheForInstance } from "../../lib/global-cache"
+import { clearCacheForInstance, clearCacheForSession } from "../../lib/global-cache"
 import { getLogger } from "../../lib/logger"
 import type { ScrollSnapshot } from "./types"
 
@@ -16,6 +16,7 @@ class MessageStoreBus {
   private stores = new Map<string, InstanceMessageStore>()
   private teardownHandlers = new Set<(instanceId: string) => void>()
   private sessionClearHandlers = new Set<(instanceId: string, sessionId: string) => void>()
+  private sessionChangeHandlers = new Set<(instanceId: string, sessionId: string) => void>()
   private scrollSnapshotHandlers = new Set<
     (instanceId: string, sessionId: string, scope: string, snapshot: ScrollSnapshot) => void
   >()
@@ -30,6 +31,7 @@ class MessageStoreBus {
       store ??
       createInstanceMessageStore(instanceId, {
         onSessionCleared: (id, sessionId) => this.notifySessionCleared(id, sessionId),
+        onSessionChanged: (id, sessionId) => this.notifySessionChanged(id, sessionId),
         onScrollSnapshotChanged: (id, sessionId, scope, snapshot) =>
           this.notifyScrollSnapshotChanged(id, sessionId, scope, snapshot),
       })
@@ -52,11 +54,27 @@ class MessageStoreBus {
   }
 
   private notifySessionCleared(instanceId: string, sessionId: string) {
+    clearCacheForSession(instanceId, sessionId)
     for (const handler of this.sessionClearHandlers) {
       try {
         handler(instanceId, sessionId)
       } catch (error) {
         log.error("Failed to run session clear handler", error)
+      }
+    }
+  }
+
+  onSessionChanged(handler: (instanceId: string, sessionId: string) => void): () => void {
+    this.sessionChangeHandlers.add(handler)
+    return () => this.sessionChangeHandlers.delete(handler)
+  }
+
+  private notifySessionChanged(instanceId: string, sessionId: string) {
+    for (const handler of this.sessionChangeHandlers) {
+      try {
+        handler(instanceId, sessionId)
+      } catch (error) {
+        log.error("Failed to run session change handler", error)
       }
     }
   }

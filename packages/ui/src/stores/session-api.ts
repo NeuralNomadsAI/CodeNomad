@@ -57,7 +57,6 @@ import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { seedSessionMessagesV2, reconcilePendingPermissionsV2, reconcilePendingQuestionsV2 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
-import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
 import { getRootClient } from "./opencode-client"
@@ -693,7 +692,6 @@ function removeSessionRuntimeState(instanceId: string, sessionId: string): void 
 
   // Drop normalized message state and caches for this session.
   messageStoreBus.getOrCreate(instanceId).clearSession(sessionId)
-  clearCacheForSession(instanceId, sessionId)
 
   setSessionInfoByInstance((prev) => {
     const next = new Map(prev)

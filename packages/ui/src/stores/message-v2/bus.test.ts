@@ -68,7 +68,7 @@ describe("message store scroll snapshots", () => {
     try {
       store.restoreScrollSnapshot("session-1", "message-stream", snapshot)
       invalidateSessionMessageLoad(instanceId, "session-1")
-      store.clearSession("session-1", { preserveScroll: true, notify: false })
+      store.clearSession("session-1", { preserveScroll: true })
       assert.deepEqual(store.getScrollSnapshot("session-1", "message-stream"), snapshot)
       assert.equal(messagesLoaded().get(instanceId)?.has("session-1") ?? false, false)
     } finally {

@@ -140,6 +140,33 @@ describe("session request authority", () => {
     }
   })
 
+  it("reloads complete native history after an evicted session is selected again", async () => {
+    const instanceId = "evicted-message-reload", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    let calls = 0
+    ;(client as any).message = { list: async () => ({ data: [
+      apiMessage(`message-${++calls}-a`, sessionId),
+      apiMessage(`message-${calls}-b`, sessionId),
+    ] }) }
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+
+    try {
+      await loadMessages(instanceId, sessionId, { skipChildren: true })
+      const store = messageStoreBus.getOrCreate(instanceId)
+      store.restoreScrollSnapshot(sessionId, "message-stream", { scrollTop: 240, atBottom: false, updatedAt: 1 })
+      store.clearSession(sessionId, { preserveScroll: true })
+
+      assert.equal(messagesLoaded().get(instanceId)?.has(sessionId) ?? false, false)
+      assert.deepEqual(store.getScrollSnapshot(sessionId, "message-stream"), { scrollTop: 240, atBottom: false, updatedAt: 1 })
+
+      await loadMessages(instanceId, sessionId, { skipChildren: true })
+      assert.equal(calls, 2)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["message-2-a", "message-2-b"])
+    } finally {
+      cleanup()
+    }
+  })
+
   it("does not reuse message load authority after an instance reopens", async () => {
     const instanceId = "reopened-message-load", sessionId = "session"
     const { client, cleanup } = setup(instanceId)

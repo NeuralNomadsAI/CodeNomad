@@ -13,6 +13,7 @@ import {
 import type { ClientPart, MessageInfo } from "../../types/message"
 import { mergePermissionRequest } from "../../types/permission"
 import { clearRecordDisplayCacheForMessages } from "./record-display-cache"
+import { estimateRetainedBytesIncrementally } from "../../lib/retained-size"
 import { mergePendingRequestEntry, shouldSkipPendingRequestUpsert } from "./pending-request-dedupe"
 import type {
   InstanceMessageState,
@@ -35,6 +36,7 @@ const storeLog = getLogger("session")
 
 interface MessageStoreHooks {
   onSessionCleared?: (instanceId: string, sessionId: string) => void
+  onSessionChanged?: (instanceId: string, sessionId: string) => void
   onScrollSnapshotChanged?: (instanceId: string, sessionId: string, scope: string, snapshot: ScrollSnapshot) => void
 }
 
@@ -261,7 +263,9 @@ export interface InstanceMessageStore {
   getLastCompactionMessageIndex: (sessionId: string) => number
   getMessage: (messageId: string) => MessageRecord | undefined
   getLatestTodoSnapshot: (sessionId: string) => LatestTodoSnapshot | undefined
-  clearSession: (sessionId: string, options?: { preserveScroll?: boolean; notify?: boolean }) => void
+  estimateSessionRetainedBytes: (sessionId: string, signal?: AbortSignal) => Promise<number>
+  hasLiveSessionMessages: (sessionId: string) => boolean
+  clearSession: (sessionId: string, options?: { preserveScroll?: boolean }) => void
   clearScrollSnapshots: () => void
   clearInstance: () => void
 }
@@ -367,6 +371,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   function bumpSessionRevision(sessionId: string) {
     if (!sessionId) return
     setState("sessionRevisions", sessionId, (value = 0) => value + 1)
+    hooks?.onSessionChanged?.(instanceId, sessionId)
   }
 
   function getSessionRevisionValue(sessionId: string) {
@@ -410,6 +415,34 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
   function getSessionUsage(sessionId: string) {
     return state.usage[sessionId]
+  }
+
+  function hasLiveSessionMessages(sessionId: string): boolean {
+    for (const messageId of state.sessions[sessionId]?.messageIds ?? []) {
+      const message = state.messages[messageId]
+      if (pendingSendIds.has(messageId) || message?.status === "sending" || message?.status === "streaming") return true
+    }
+    return false
+  }
+
+  function estimateSessionRetainedBytes(sessionId: string, signal?: AbortSignal): Promise<number> {
+    const session = state.sessions[sessionId]
+    if (!session) return Promise.resolve(0)
+    const messages = session.messageIds.map((id) => state.messages[id]).filter(Boolean)
+    const messageIds = new Set(session.messageIds)
+    return estimateRetainedBytesIncrementally({
+      session,
+      messages,
+      messageInfos: session.messageIds.map((id) => messageInfoCache.get(id)).filter(Boolean),
+      messageInfoVersions: session.messageIds.map((id) => state.messageInfoVersion[id]),
+      pendingParts: session.messageIds.map((id) => state.pendingParts[id]).filter(Boolean),
+      usage: state.usage[sessionId],
+      revision: state.sessionRevisions[sessionId],
+      lastAssistantMessageId: state.lastAssistantMessageIds[sessionId],
+      latestTodo: state.latestTodos[sessionId],
+      permissions: state.permissions.queue.filter((value) => value.messageId && messageIds.has(value.messageId)),
+      questions: state.questions.queue.filter((value) => value.messageId && messageIds.has(value.messageId)),
+    }, { signal })
   }
 
   function ensureSessionEntry(sessionId: string): SessionRecord {
@@ -726,6 +759,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     pendingSendIds.delete(messageId)
     if (options?.clearOptimisticParts) optimisticPartIdsByMessage.delete(messageId)
     const record = state.messages[messageId]
+    if (record) hooks?.onSessionChanged?.(instanceId, record.sessionId)
     if (!record) return
     const optimisticPartIds = options?.clearOptimisticParts && record.role === "user"
       ? record.partIds.filter((id) => clientPartIds?.has(id))
@@ -768,10 +802,15 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   }
 
   function retirePendingSends(sessionId: string) {
+    let changed = false
     for (const messageId of Array.from(pendingSendIds)) {
       const record = state.messages[messageId]
-      if (record?.sessionId === sessionId && record.status === "sent") pendingSendIds.delete(messageId)
+      if (record?.sessionId === sessionId && record.status === "sent") {
+        pendingSendIds.delete(messageId)
+        changed = true
+      }
     }
+    if (changed) hooks?.onSessionChanged?.(instanceId, sessionId)
   }
 
   // Apply an AUTHORITATIVE empty snapshot (server returned zero messages for
@@ -1594,7 +1633,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return state.scrollState[key]
   }
 
-  function clearSession(sessionId: string, options?: { preserveScroll?: boolean; notify?: boolean }) {
+  function clearSession(sessionId: string, options?: { preserveScroll?: boolean }) {
     if (!sessionId) return
 
     clearPromptDisplayOverridesForSession(instanceId, sessionId)
@@ -1693,7 +1732,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     clearLatestTodoSnapshot(sessionId)
  
-    if (options?.notify !== false) hooks?.onSessionCleared?.(instanceId, sessionId)
+    hooks?.onSessionCleared?.(instanceId, sessionId)
   }
 
  
@@ -1753,6 +1792,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       getLastCompactionMessageIndex,
       getMessage: (messageId: string) => state.messages[messageId],
       getLatestTodoSnapshot: (sessionId: string) => state.latestTodos[sessionId],
+      estimateSessionRetainedBytes,
+      hasLiveSessionMessages,
       clearSession,
       clearScrollSnapshots,
       clearInstance,
