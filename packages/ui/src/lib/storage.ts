@@ -39,6 +39,7 @@ export class ServerStorage {
   private instanceDataCache = new Map<string, InstanceData>()
   private instanceDataListeners = new Map<string, Set<(data: InstanceData) => void>>()
   private instanceLoadPromises = new Map<string, Promise<InstanceData>>()
+  private loadGeneration = 0
 
   constructor() {
     serverEvents.on("storage.configChanged", (event: WorkspaceEventPayload) => {
@@ -55,6 +56,8 @@ export class ServerStorage {
       if (event.type !== "instance.dataChanged") return
       this.setInstanceDataCache(event.instanceId, event.data)
     })
+
+    serverEvents.onReplayReset(() => this.resync())
   }
 
   async loadConfigOwner(owner: string): Promise<OwnerBucket> {
@@ -62,14 +65,15 @@ export class ServerStorage {
     if (cached) return cached
 
     if (!this.configOwnerLoadPromises.has(owner)) {
+      const generation = this.loadGeneration
       const promise = serverApi
         .fetchConfigOwner<OwnerBucket>(owner)
         .then((value) => {
-          this.setOwnerCache("config", owner, value)
+          if (generation === this.loadGeneration) this.setOwnerCache("config", owner, value)
           return value
         })
         .finally(() => {
-          this.configOwnerLoadPromises.delete(owner)
+          if (this.configOwnerLoadPromises.get(owner) === promise) this.configOwnerLoadPromises.delete(owner)
         })
       this.configOwnerLoadPromises.set(owner, promise)
     }
@@ -88,14 +92,15 @@ export class ServerStorage {
     if (cached) return cached
 
     if (!this.stateOwnerLoadPromises.has(owner)) {
+      const generation = this.loadGeneration
       const promise = serverApi
         .fetchStateOwner<OwnerBucket>(owner)
         .then((value) => {
-          this.setOwnerCache("state", owner, value)
+          if (generation === this.loadGeneration) this.setOwnerCache("state", owner, value)
           return value
         })
         .finally(() => {
-          this.stateOwnerLoadPromises.delete(owner)
+          if (this.stateOwnerLoadPromises.get(owner) === promise) this.stateOwnerLoadPromises.delete(owner)
         })
       this.stateOwnerLoadPromises.set(owner, promise)
     }
@@ -116,15 +121,16 @@ export class ServerStorage {
     }
 
     if (!this.instanceLoadPromises.has(instanceId)) {
+      const generation = this.loadGeneration
       const promise = serverApi
         .readInstanceData(instanceId)
         .then((data) => {
           const normalized = this.normalizeInstanceData(data)
-          this.setInstanceDataCache(instanceId, normalized)
+          if (generation === this.loadGeneration) this.setInstanceDataCache(instanceId, normalized)
           return normalized
         })
         .finally(() => {
-          this.instanceLoadPromises.delete(instanceId)
+          if (this.instanceLoadPromises.get(instanceId) === promise) this.instanceLoadPromises.delete(instanceId)
         })
 
       this.instanceLoadPromises.set(instanceId, promise)
@@ -196,6 +202,38 @@ export class ServerStorage {
         this.instanceDataListeners.delete(instanceId)
       }
     }
+  }
+
+  async resync(): Promise<void> {
+    const configOwners = new Set([
+      ...this.configOwnerCache.keys(),
+      ...this.configOwnerLoadPromises.keys(),
+      ...this.configOwnerListeners.keys(),
+    ])
+    const stateOwners = new Set([
+      ...this.stateOwnerCache.keys(),
+      ...this.stateOwnerLoadPromises.keys(),
+      ...this.stateOwnerListeners.keys(),
+    ])
+    const instanceIds = new Set([
+      ...this.instanceDataCache.keys(),
+      ...this.instanceLoadPromises.keys(),
+      ...this.instanceDataListeners.keys(),
+    ])
+
+    this.loadGeneration += 1
+    this.configOwnerCache.clear()
+    this.stateOwnerCache.clear()
+    this.instanceDataCache.clear()
+    this.configOwnerLoadPromises.clear()
+    this.stateOwnerLoadPromises.clear()
+    this.instanceLoadPromises.clear()
+
+    await Promise.all([
+      ...Array.from(configOwners, (owner) => this.loadConfigOwner(owner)),
+      ...Array.from(stateOwners, (owner) => this.loadStateOwner(owner)),
+      ...Array.from(instanceIds, (instanceId) => this.loadInstanceData(instanceId)),
+    ])
   }
 
   private setOwnerCache(kind: "config" | "state", owner: string, value: OwnerBucket) {

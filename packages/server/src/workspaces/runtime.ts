@@ -48,6 +48,8 @@ interface LaunchOptions {
   logLevel?: string
   onExit?: (info: ProcessExitInfo) => void
   signal?: AbortSignal
+  cleanupToken?: string
+  persistProcessIdentities?: (identities: ProcessIdentity[]) => Promise<void>
 }
 
 export interface ProcessExitInfo {
@@ -169,13 +171,14 @@ export class WorkspaceRuntime {
     port: number
     exitPromise: Promise<ProcessExitInfo>
     getLastOutput: () => string
+    processIdentity?: ProcessIdentity
   }> {
     options.signal?.throwIfAborted()
     this.validateFolder(options.folder)
 
     const logLevel = typeof options.logLevel === "string" ? options.logLevel.toUpperCase() : "DEBUG"
     const args = ["serve", "--port", "0", "--print-logs", "--log-level", logLevel]
-    const cleanupToken = randomBytes(32).toString("hex")
+    const cleanupToken = options.cleanupToken ?? randomBytes(32).toString("hex")
     const env = { ...process.env, ...(options.environment ?? {}), [LAUNCH_CLEANUP_TOKEN_ENV]: cleanupToken }
 
     let exitResolve: ((info: ProcessExitInfo) => void) | null = null
@@ -268,7 +271,7 @@ export class WorkspaceRuntime {
           : {}),
       }
       this.processes.set(options.workspaceId, managed)
-      if (spec.processKind === "posix" || spec.processKind === "wsl" || spec.processKind === "windows-direct") {
+      if (spec.processKind === "posix" || spec.processKind === "wsl" || spec.processKind === "windows-direct" || spec.processKind === "windows-wrapper") {
         const launchSnapshot = child.pid
           ? this.platform === "win32"
             ? probeWindowsProcesses(this.spawnCommand, this.stopCommandTimeoutMs)
@@ -295,6 +298,11 @@ export class WorkspaceRuntime {
         for (const identity of launchSnapshot.ok ? launchSnapshot.processes.values() : [launchLeader]) {
           if (identity.groupId === launchLeader.groupId) managed.targets!.members.set(identity.pid, identity)
         }
+        if (this.platform === "win32" && launchSnapshot.ok) {
+          for (const identity of descendantsOf(launchSnapshot.processes, launchLeader.pid)) {
+            managed.targets!.members.set(identity.pid, identity)
+          }
+        }
       }
 
       let stdoutBuffer = ""
@@ -302,6 +310,7 @@ export class WorkspaceRuntime {
       let portFound = false
       let pendingPort: number | null = null
       let launchSettled = false
+      let launchPersistenceStarted = false
       const cancelLaunch = () => {
         if (launchSettled) return
         launchSettled = true
@@ -401,19 +410,48 @@ export class WorkspaceRuntime {
       child.on("error", handleError)
       child.on("exit", handleExit)
 
-      const resolveLaunchIfIdentified = () => {
-        if (launchSettled || pendingPort === null) return
+      const resolveLaunchIfIdentified = async () => {
+        if (launchSettled || launchPersistenceStarted || pendingPort === null) return
         if (managed.wsl && (!managed.wsl.linuxPid || !managed.wsl.linuxPgid || !managed.wsl.leaderStartTime || !managed.wsl.bootId)) {
           return
         }
+        launchPersistenceStarted = true
         portFound = true
-        launchSettled = true
         stopWarningTimer()
+        if (this.platform === "win32" && managed.targets?.leader) {
+          const snapshot = probeWindowsProcesses(this.spawnCommand, this.stopCommandTimeoutMs)
+          const currentLeader = snapshot.ok ? snapshot.processes.get(managed.targets.leader.pid) : undefined
+          if (!snapshot.ok || !currentLeader || !sameProcess(managed.targets.leader, currentLeader)) {
+            launchSettled = true
+            const detail = !snapshot.ok
+              ? `readiness-time Windows identity discovery failed: ${snapshot.error}`
+              : `spawned PID ${managed.targets.leader.pid} changed or disappeared before readiness-time identity capture`
+            this.beginFailedLaunchCleanup(options.workspaceId, managed)
+            reject(new WorkspaceRuntimeIdentityCaptureError(options.workspaceId, detail))
+            return
+          }
+          managed.targets.members.clear()
+          managed.targets.members.set(currentLeader.pid, currentLeader)
+          for (const identity of descendantsOf(snapshot.processes, currentLeader.pid)) managed.targets.members.set(identity.pid, identity)
+        }
+        try {
+          await options.persistProcessIdentities?.([...managed.targets!.members.values()])
+        } catch (error) {
+          launchSettled = true
+          this.beginFailedLaunchCleanup(options.workspaceId, managed)
+          reject(new WorkspaceRuntimeIdentityCaptureError(
+            options.workspaceId,
+            `launch-tree identity persistence failed: ${error instanceof Error ? error.message : String(error)}`,
+          ))
+          return
+        }
+        if (launchSettled) return
+        launchSettled = true
         options.signal?.removeEventListener("abort", cancelLaunch)
         managed.cancelLaunch = undefined
         child.removeListener("error", handleError)
         this.logger.info({ workspaceId: options.workspaceId, port: pendingPort }, "Workspace runtime allocated port")
-        resolve({ pid: child.pid!, port: pendingPort, exitPromise, getLastOutput })
+        resolve({ pid: child.pid!, port: pendingPort, exitPromise, getLastOutput, processIdentity: managed.targets?.leader })
       }
 
       const failWslIdentityCapture = (detail: string) => {
@@ -461,7 +499,7 @@ export class WorkspaceRuntime {
                 },
                 "Captured WSL OpenCode process identity",
               )
-              resolveLaunchIfIdentified()
+              void resolveLaunchIfIdentified()
             } else {
               failWslIdentityCapture("WSL launcher returned an incomplete Linux PID identity")
             }
@@ -482,7 +520,7 @@ export class WorkspaceRuntime {
               if (managed.wsl && (!managed.wsl.leaderStartTime || !managed.wsl.bootId)) {
                 failWslIdentityCapture("WSL process reported a port before its Linux identity")
               } else {
-                resolveLaunchIfIdentified()
+                void resolveLaunchIfIdentified()
               }
             }
           }
@@ -617,6 +655,7 @@ export class WorkspaceRuntime {
       }
       if (this.platform === "win32" && !managed.wsl && leaderMatches && leader) {
         for (const descendant of descendantsOf(snapshot.processes, leader.pid)) target.members.set(descendant.pid, descendant)
+        if (managed.processKind === "windows-direct") managed.identityCaptureFailed = false
       }
       const aliveMembers = Array.from(target.members.values()).filter((identity) =>
         sameProcess(identity, snapshot.processes.get(identity.pid)),
@@ -647,6 +686,8 @@ export class WorkspaceRuntime {
     const sendStopSignal = (signal: NodeJS.Signals) => {
       if (!pid) failures.push(`${signal} was not sent because the process PID is unavailable`)
       if (pid && wrapperExited() && this.platform !== "linux" && this.platform !== "win32") refreshTargets()
+      if (pid && managed.identityCaptureFailed && this.platform === "win32" && !managed.wsl &&
+        managed.processKind === "windows-direct") refreshTargets()
       let signaledOwnedGroup = false
       if (pid && managed.identityCaptureFailed && this.platform !== "linux" && this.platform !== "win32" && !wrapperExited()) {
         const result = signalOwnedPosixProcessGroup(this.spawnCommand, pid, signal, this.stopCommandTimeoutMs)

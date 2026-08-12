@@ -1,6 +1,6 @@
-import { FastifyInstance } from "fastify"
+import { FastifyInstance, type FastifyReply } from "fastify"
 import { z } from "zod"
-import { EventBus } from "../../events/bus"
+import { EventBus, type EventReplayGap } from "../../events/bus"
 import { WorkspaceEventPayload } from "../../api-types"
 import type { ClientConnectionManager } from "../../clients/connection-manager"
 import { Logger } from "../../logger"
@@ -13,6 +13,8 @@ interface RouteDeps {
 }
 
 let nextClientId = 0
+const BACKPRESSURE_TIMEOUT_MS = 5_000
+const BACKPRESSURE_BUFFER_LIMIT_BYTES = 8 * 1024 * 1024
 
 const ConnectionQuerySchema = z.object({
   clientId: z.string().trim().min(1),
@@ -27,40 +29,102 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get("/api/events", (request, reply) => {
     const clientId = ++nextClientId
     const connection = ConnectionQuerySchema.parse(request.query ?? {})
+    const lastEventCursor = readLastEventCursor(request.headers["last-event-id"])
     deps.logger.debug({ clientId }, "SSE client connected")
 
-    const origin = request.headers.origin ?? "*"
-    reply.raw.setHeader("Access-Control-Allow-Origin", origin)
-    reply.raw.setHeader("Access-Control-Allow-Credentials", "true")
-    reply.raw.setHeader("Content-Type", "text/event-stream")
-    reply.raw.setHeader("Cache-Control", "no-cache")
-    reply.raw.setHeader("Connection", "keep-alive")
+    reply.header("Content-Type", "text/event-stream")
+    reply.header("Cache-Control", "no-cache")
+    reply.header("Connection", "keep-alive")
+    copyReplyHeadersToRaw(reply)
     reply.raw.flushHeaders?.()
     reply.hijack()
 
-    const send = (event: WorkspaceEventPayload) => {
+    let closed = false
+    let blocked = false
+    let heartbeat: ReturnType<typeof setInterval> | undefined
+    let backpressureTimeout: ReturnType<typeof setTimeout> | undefined
+    let drainListener: (() => void) | undefined
+    let unsubscribe: () => void = () => undefined
+    let bootstrapFrames: string[] | undefined = lastEventCursor === undefined ? [] : undefined
+    const pendingWrites: string[] = []
+    let pendingWriteBytes = 0
+
+    const close = (discardBufferedData = false) => {
+      if (closed) return
+      closed = true
+      if (heartbeat) clearInterval(heartbeat)
+      if (backpressureTimeout) clearTimeout(backpressureTimeout)
+      if (drainListener) reply.raw.off("drain", drainListener)
+      pendingWrites.length = 0
+      pendingWriteBytes = 0
+      unsubscribe()
+      if (discardBufferedData || blocked) reply.raw.destroy()
+      else reply.raw.end?.()
+      deps.logger.debug({ clientId }, "SSE client disconnected")
+    }
+
+    const armBackpressure = () => {
+      blocked = true
+      drainListener = () => {
+        drainListener = undefined
+        blocked = false
+        if (backpressureTimeout) clearTimeout(backpressureTimeout)
+        backpressureTimeout = undefined
+        flushPendingWrites()
+      }
+      reply.raw.once("drain", drainListener)
+      backpressureTimeout = setTimeout(() => close(true), BACKPRESSURE_TIMEOUT_MS)
+    }
+
+    const flushPendingWrites = () => {
+      while (!closed && !blocked && pendingWrites.length > 0) {
+        const payload = pendingWrites.shift()!
+        pendingWriteBytes -= Buffer.byteLength(payload)
+        if (!reply.raw.write(payload)) armBackpressure()
+      }
+    }
+
+    const write = (payload: string) => {
+      if (closed) return
+      if (blocked) {
+        pendingWrites.push(payload)
+        pendingWriteBytes += Buffer.byteLength(payload)
+        if (pendingWriteBytes > BACKPRESSURE_BUFFER_LIMIT_BYTES) close(true)
+        return
+      }
+      if (!reply.raw.write(payload)) armBackpressure()
+    }
+
+    const send = (event: WorkspaceEventPayload, cursor?: string) => {
       deps.logger.debug({ clientId, type: event.type }, "SSE event dispatched")
       if (deps.logger.isLevelEnabled("trace")) {
         deps.logger.trace({ clientId, event }, "SSE event payload")
       }
-      reply.raw.write(`data: ${JSON.stringify(event)}\n\n`)
+      const frame = `${cursor === undefined ? "" : `id: ${cursor}\n`}data: ${JSON.stringify(event)}\n\n`
+      if (bootstrapFrames) bootstrapFrames.push(frame)
+      else write(frame)
     }
 
-    const unsubscribe = deps.eventBus.onEvent(send)
-    const heartbeat = setInterval(() => {
-      const ping = { ts: Date.now() }
-      reply.raw.write(`event: codenomad.client.ping\ndata: ${JSON.stringify(ping)}\n\n`)
-    }, 15000)
+    const sendReplayGap = (gap: EventReplayGap) => {
+      deps.logger.debug({ clientId, ...gap }, "SSE replay window missed")
+      write(`event: codenomad.replay.reset\nid: ${gap.latestCursor}\ndata: ${JSON.stringify(gap)}\n\n`)
+    }
 
-    let closed = false
-    const close = () => {
-      if (closed) return
-      closed = true
-      clearInterval(heartbeat)
+    unsubscribe = deps.eventBus.onEvent(send, lastEventCursor, sendReplayGap)
+    if (bootstrapFrames) {
+      bootstrapFrames.push(`event: codenomad.replay.cursor\nid: ${deps.eventBus.latestCursor}\ndata: {}\n\n`)
+      const bootstrap = bootstrapFrames.join("")
+      bootstrapFrames = undefined
+      write(bootstrap)
+    }
+    if (closed) {
       unsubscribe()
-      reply.raw.end?.()
-      deps.logger.debug({ clientId }, "SSE client disconnected")
+      return
     }
+    heartbeat = setInterval(() => {
+      const ping = { ts: Date.now() }
+      write(`event: codenomad.client.ping\ndata: ${JSON.stringify(ping)}\n\n`)
+    }, 15000)
 
     const unregister = deps.registerClient(close)
     const unregisterConnection = deps.connectionManager.register({
@@ -86,4 +150,15 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
     }
     reply.code(204).send()
   })
+}
+
+function copyReplyHeadersToRaw(reply: FastifyReply): void {
+  for (const [name, value] of Object.entries(reply.getHeaders())) {
+    if (value !== undefined) reply.raw.setHeader(name, value)
+  }
+}
+
+function readLastEventCursor(value: string | string[] | undefined): string | undefined {
+  const raw = Array.isArray(value) ? value[0] : value
+  return raw && raw.length <= 512 ? raw : undefined
 }

@@ -26,6 +26,7 @@ import { RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY, RIGHT_PANEL_TAB_STORAGE_KEY, rea
 import {
   applyRightPanelItemCustomization,
   collectRightPanelItems,
+  getRightPanelTabNavigationTarget,
   parseRightPanelCustomization,
   setRightPanelItemHidden,
   type RightPanelCustomization,
@@ -161,14 +162,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   const handleTabKeyDown = (event: KeyboardEvent, currentTabId: string) => {
     const tabs = visibleRightPanelTabs()
-    const index = tabs.findIndex((tab) => tab.id === currentTabId)
-    if (index === -1) return
-
-    let target: RightPanelTabModule | undefined
-    if (event.key === "ArrowLeft") target = tabs[(index - 1 + tabs.length) % tabs.length]
-    if (event.key === "ArrowRight") target = tabs[(index + 1) % tabs.length]
-    if (event.key === "Home") target = tabs[0]
-    if (event.key === "End") target = tabs[tabs.length - 1]
+    const target = getRightPanelTabNavigationTarget(tabs, currentTabId, event.key)
     if (!target) return
 
     event.preventDefault()
@@ -289,12 +283,12 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                         {(tab) => (
                           <SortableRightPanelTab
                             tab={tab}
-                            active={rightPanelTab() === tab.id}
+                            active={activeRightPanelTab()?.id === tab.id}
                             tabId={tabId(tab.id)}
                             panelId={tabPanelId(tab.id)}
                             label={props.t(tab.labelKey)}
                             dragTitle={props.t("instanceShell.rightPanel.customize.dragToReorder")}
-                            tabIndex={rightPanelTab() === tab.id ? 0 : -1}
+                            tabIndex={activeRightPanelTab()?.id === tab.id ? 0 : -1}
                             onSelect={() => setRightPanelTab(tab.id)}
                             onKeyDown={(event) => handleTabKeyDown(event, tab.id)}
                           />

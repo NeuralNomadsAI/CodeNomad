@@ -117,6 +117,8 @@ export function restoreWindowState(window: BrowserWindow, state: NativeWindowSta
     return
   }
 
+  if (!state.fullscreen) window.setFullScreen(false)
+  if (!state.maximized) window.unmaximize()
   if (bounds) {
     window.setPosition(bounds.x, bounds.y)
     window.setContentSize(bounds.width, bounds.height)
@@ -204,6 +206,14 @@ export class WindowStateTracker {
     this.window.webContents.setZoomLevel(level)
     this.desiredZoomFactor = normalizeZoomFactor(this.window.webContents.getZoomFactor())
     this.scheduleSave()
+  }
+
+  applyAuthoritativeState(state: NativeWindowState | undefined, bounds: WindowBounds | undefined): void {
+    if (!state || this.window.isDestroyed()) return
+    this.clearTimer()
+    this.normalBounds = bounds ?? state.bounds
+    this.desiredZoomFactor = normalizeZoomFactor(state.zoomFactor)
+    restoreWindowState(this.window, state, bounds)
   }
 
   private scheduleSave() {

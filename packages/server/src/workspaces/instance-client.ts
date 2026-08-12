@@ -53,11 +53,14 @@ export function createInstanceClient(
   return createOpencodeClient({
     baseUrl: `http://${LOOPBACK_HOST}:${port}/`,
     headers,
-    fetch: (url, init) =>
-      fetch(url, {
-        ...(init as RequestInit),
-        signal: (init as RequestInit)?.signal ?? AbortSignal.timeout(timeoutMs),
-      }),
+    fetch: (url, init) => fetch(url, {
+      ...(init as RequestInit),
+      signal: AbortSignal.any([
+        ...(url instanceof Request ? [url.signal] : []),
+        ...((init as RequestInit | undefined)?.signal ? [(init as RequestInit).signal!] : []),
+        AbortSignal.timeout(timeoutMs),
+      ]),
+    }),
     ...(directory ? { directory } : {}),
   })
 }

@@ -27,19 +27,21 @@ pub use window::{
 use serde::Serialize;
 use serde_json::Value;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tauri::{AppHandle, Emitter, Manager};
 use url::Url;
 use window::NativeWindowState;
 
 const CLIENT_STATE_VERSION: u64 = 1;
 const CLIENT_STATE_FILENAME: &str = "client-state.json";
+const CLIENT_STATE_OWNERSHIP_CHANGED_EVENT: &str = "client-state:ownership-changed";
 const MAX_CLIENT_SNAPSHOT_BYTES: usize = 1024 * 1024;
 const RENDERER_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
+const OWNERSHIP_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -92,10 +94,15 @@ pub struct ClientStateLoadResult {
 
 pub struct ClientState {
     state_path: PathBuf,
+    migration_paths: Option<(PathBuf, Option<PathBuf>)>,
     process: process::ProcessState,
     state: Mutex<PersistedClientState>,
     zoom_level: Mutex<f64>,
     write_lock: Mutex<()>,
+    primary_loaded: std::sync::atomic::AtomicBool,
+    renderer_reload_pending: std::sync::atomic::AtomicBool,
+    renderer_ownership_loss_pending: std::sync::atomic::AtomicBool,
+    renderer_reconciliation_pending: std::sync::atomic::AtomicBool,
     save_generation: AtomicU64,
     renderer_access: access::RendererAccess,
     renderer_flush: RendererFlush,
@@ -167,16 +174,20 @@ impl ClientState {
         };
         Self::new(
             state_path,
+            None,
             process::ProcessState::disabled(),
             state,
+            false,
             std::sync::Arc::new(write_atomically),
         )
     }
 
     fn new(
         state_path: PathBuf,
+        migration_paths: Option<(PathBuf, Option<PathBuf>)>,
         process: process::ProcessState,
         state: PersistedClientState,
+        primary_loaded: bool,
         write_state: StateWriter,
     ) -> Self {
         let zoom_level = state
@@ -186,10 +197,15 @@ impl ClientState {
             .unwrap_or(DEFAULT_ZOOM_LEVEL);
         Self {
             state_path,
+            migration_paths,
             process,
             state: Mutex::new(state),
             zoom_level: Mutex::new(zoom_level),
             write_lock: Mutex::new(()),
+            primary_loaded: std::sync::atomic::AtomicBool::new(primary_loaded),
+            renderer_reload_pending: std::sync::atomic::AtomicBool::new(false),
+            renderer_ownership_loss_pending: std::sync::atomic::AtomicBool::new(false),
+            renderer_reconciliation_pending: std::sync::atomic::AtomicBool::new(false),
             save_generation: AtomicU64::new(0),
             renderer_access: access::RendererAccess::default(),
             renderer_flush: RendererFlush::default(),
@@ -235,49 +251,118 @@ impl ClientState {
             election_dir,
             legacy_electron_data_dir,
         )?;
-        let future_legacy =
-            !state_path.exists() && has_future_legacy_state(app_data_dir, legacy_electron_data_dir);
-        if registration.is_primary() && !state_path.exists() && !future_legacy {
-            migrate_legacy_state(state_path, app_data_dir, legacy_electron_data_dir, &|| {
-                registration.is_primary()
-            })?;
-        }
-        let state = if registration.is_primary() {
-            if future_legacy {
-                PersistedClientState {
-                    restore_enabled: false,
-                    unsupported_future_envelope: true,
-                    writes_enabled: false,
-                    ..PersistedClientState::default()
-                }
-            } else {
-                read_client_state(state_path)
-            }
+        let primary = registration.is_primary();
+        let state = if primary {
+            load_primary_state(state_path, app_data_dir, legacy_electron_data_dir, &|| {
+                registration.ownership_valid()
+            })?
         } else {
             PersistedClientState::default()
         };
         let process = registration.finish();
         Ok(Self::new(
             state_path.to_path_buf(),
+            Some((
+                app_data_dir.to_path_buf(),
+                legacy_electron_data_dir.map(Path::to_path_buf),
+            )),
             process,
             state,
+            primary,
             write_state,
         ))
     }
 
     fn is_primary(&self) -> bool {
-        self.process.is_primary()
+        let primary = self.process.is_primary();
+        if !primary {
+            self.record_ownership_loss();
+        }
+        primary
+    }
+
+    fn refresh_primary_locked(
+        &self,
+        _write: &std::sync::MutexGuard<'_, ()>,
+    ) -> Result<bool, String> {
+        if !self.process.refresh_primary() {
+            self.record_ownership_loss();
+            return Ok(false);
+        }
+        if !self.primary_loaded.load(Ordering::SeqCst) {
+            let state = if let Some((tauri_data_dir, electron_data_dir)) = &self.migration_paths {
+                load_primary_state(
+                    &self.state_path,
+                    tauri_data_dir,
+                    electron_data_dir.as_deref(),
+                    &|| self.process.is_primary(),
+                )
+            } else {
+                read_client_state(&self.state_path)
+            };
+            let state = match state {
+                Ok(state) => state,
+                Err(err) => {
+                    self.process.defer_primary();
+                    return Err(err);
+                }
+            };
+            let zoom_level = state
+                .restore_enabled
+                .then(|| state.window.as_ref().map(|window| window.zoom_factor))
+                .flatten()
+                .unwrap_or(DEFAULT_ZOOM_LEVEL);
+            *self.state.lock().map_err(|err| err.to_string())? = state;
+            *self.zoom_level.lock().map_err(|err| err.to_string())? = zoom_level;
+            self.primary_loaded.store(true, Ordering::SeqCst);
+            self.renderer_reload_pending.store(true, Ordering::SeqCst);
+            self.renderer_reconciliation_pending
+                .store(true, Ordering::SeqCst);
+        }
+        Ok(true)
+    }
+
+    fn refresh_primary_for_watcher(&self) -> Result<bool, String> {
+        let write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        let was_loaded = self.primary_loaded.load(Ordering::SeqCst);
+        Ok(self.refresh_primary_locked(&write)? && !was_loaded)
+    }
+
+    fn take_renderer_reload(&self) -> bool {
+        self.renderer_reload_pending.swap(false, Ordering::SeqCst)
+    }
+
+    fn take_renderer_ownership_loss(&self) -> bool {
+        self.renderer_ownership_loss_pending
+            .swap(false, Ordering::SeqCst)
+    }
+
+    fn record_ownership_loss(&self) {
+        if self.primary_loaded.swap(false, Ordering::SeqCst) {
+            self.renderer_ownership_loss_pending
+                .store(true, Ordering::SeqCst);
+        }
     }
 
     fn claim_renderer_access(&self, access_token: &str, renderer_url: &Url) -> Result<(), String> {
-        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
         self.renderer_access.claim(access_token, renderer_url)
     }
 
+    fn begin_renderer_document(&self, trusted_url: Option<&Url>) -> Result<(), String> {
+        self.renderer_access.begin_document(trusted_url)
+    }
+
+    fn revoke_renderer_access(&self) {
+        if let Err(err) = self.renderer_access.begin_document(None) {
+            eprintln!("[client-state] failed to revoke renderer access: {err}");
+        }
+    }
+
     fn load(&self) -> Result<ClientStateLoadResult, String> {
+        let write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        let is_primary = self.refresh_primary_locked(&write)?;
         let state = self.state.lock().map_err(|err| err.to_string())?;
-        let is_primary = self.is_primary();
-        Ok(ClientStateLoadResult {
+        let result = ClientStateLoadResult {
             is_primary,
             restore_enabled: if is_primary || !self.process.is_registered() {
                 state.restore_enabled
@@ -289,7 +374,12 @@ impl ClientState {
             } else {
                 Value::Null
             },
-        })
+        };
+        if is_primary {
+            self.renderer_reconciliation_pending
+                .store(false, Ordering::SeqCst);
+        }
+        Ok(result)
     }
 
     #[cfg(test)]
@@ -302,11 +392,18 @@ impl ClientState {
         snapshot: Value,
         access_valid: impl Fn() -> bool,
     ) -> Result<bool, String> {
-        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        let write = self.write_lock.lock().map_err(|err| err.to_string())?;
         if !access_valid() {
             return Err("Client state renderer authority changed before mutation".to_string());
         }
-        if !self.is_primary() {
+        let was_loaded = self.primary_loaded.load(Ordering::SeqCst);
+        if !self.refresh_primary_locked(&write)? {
+            return Ok(false);
+        }
+        if !was_loaded {
+            return Ok(false);
+        }
+        if self.renderer_reconciliation_pending.load(Ordering::SeqCst) {
             return Ok(false);
         }
         if self.normal_writes_suppressed()? {
@@ -329,11 +426,18 @@ impl ClientState {
         enabled: bool,
         access_valid: impl Fn() -> bool,
     ) -> Result<bool, String> {
-        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        let write = self.write_lock.lock().map_err(|err| err.to_string())?;
         if !access_valid() {
             return Err("Client state renderer authority changed before mutation".to_string());
         }
-        if !self.is_primary() {
+        let was_loaded = self.primary_loaded.load(Ordering::SeqCst);
+        if !self.refresh_primary_locked(&write)? {
+            return Ok(false);
+        }
+        if !was_loaded {
+            return Ok(false);
+        }
+        if self.renderer_reconciliation_pending.load(Ordering::SeqCst) {
             return Ok(false);
         }
         if self
@@ -363,11 +467,18 @@ impl ClientState {
     }
 
     fn clear_guarded(&self, access_valid: impl Fn() -> bool) -> Result<bool, String> {
-        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        let write = self.write_lock.lock().map_err(|err| err.to_string())?;
         if !access_valid() {
             return Err("Client state renderer authority changed before mutation".to_string());
         }
-        if !self.is_primary() {
+        let was_loaded = self.primary_loaded.load(Ordering::SeqCst);
+        if !self.refresh_primary_locked(&write)? {
+            return Ok(false);
+        }
+        if !was_loaded {
+            return Ok(false);
+        }
+        if self.renderer_reconciliation_pending.load(Ordering::SeqCst) {
             return Ok(false);
         }
         self.mutate_and_write(
@@ -385,8 +496,8 @@ impl ClientState {
     }
 
     fn flush(&self) -> Result<(), String> {
-        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
-        if self.is_primary() && !self.normal_writes_suppressed()? {
+        let write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        if self.refresh_primary_locked(&write)? && !self.normal_writes_suppressed()? {
             self.write_current_state()?;
         }
         Ok(())
@@ -412,7 +523,7 @@ impl ClientState {
             serde_json::to_vec(&*state).map_err(|err| err.to_string())?
         };
         (self.write_state)(&self.state_path, &bytes, &|| {
-            self.is_primary() && replacement_valid()
+            self.process.is_primary() && replacement_valid()
         })?;
         Ok(())
     }
@@ -493,21 +604,107 @@ impl ClientState {
     }
 }
 
+pub fn start_primary_watcher(app: &AppHandle) {
+    let Some(client_state) = app.try_state::<ClientState>() else {
+        return;
+    };
+    if !client_state.process.retains_local_candidacy() {
+        return;
+    }
+
+    let app = app.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(OWNERSHIP_POLL_INTERVAL);
+        let Some(client_state) = app.try_state::<ClientState>() else {
+            return;
+        };
+        if !client_state.process.retains_local_candidacy() {
+            return;
+        }
+        match client_state.refresh_primary_for_watcher() {
+            Ok(_) => {
+                let lost = client_state.take_renderer_ownership_loss();
+                let reload = client_state.take_renderer_reload();
+                if reload {
+                    window::reconcile_main_window(&app);
+                }
+                if lost || reload {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.emit(CLIENT_STATE_OWNERSHIP_CHANGED_EVENT, ());
+                    }
+                }
+            }
+            Err(err) => eprintln!("[client-state] ownership poll failed: {err}"),
+        }
+    });
+}
+
+pub fn begin_main_window_document(app: &AppHandle, label: &str, url: &Url) {
+    if label != "main" {
+        return;
+    }
+    if let Some(state) = app.try_state::<ClientState>() {
+        let trusted = app
+            .try_state::<crate::AppState>()
+            .map(|app_state| {
+                let status = app_state.manager.status();
+                commands::is_allowed_client_state_origin(url, status.url.as_deref())
+            })
+            .unwrap_or(false);
+        if let Err(err) = state.begin_renderer_document(trusted.then_some(url)) {
+            eprintln!("[client-state] failed to rotate renderer access for page load: {err}");
+        }
+    }
+}
+
 impl Drop for ClientState {
     fn drop(&mut self) {
         self.release_locks();
     }
 }
 
-fn read_client_state(path: &Path) -> PersistedClientState {
+fn read_client_state(path: &Path) -> Result<PersistedClientState, String> {
     match fs::read(path) {
-        Ok(bytes) => parse_client_state(&bytes),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => PersistedClientState::default(),
-        Err(err) => {
-            eprintln!("[client-state] failed to read state: {err}");
-            PersistedClientState::default()
+        Ok(bytes) => Ok(parse_client_state(&bytes)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            Ok(PersistedClientState::default())
         }
+        Err(err) => Err(format!(
+            "failed to read authoritative client state {}: {err}",
+            path.display()
+        )),
     }
+}
+
+fn load_primary_state(
+    state_path: &Path,
+    tauri_data_dir: &Path,
+    electron_data_dir: Option<&Path>,
+    ownership_valid: &dyn Fn() -> bool,
+) -> Result<PersistedClientState, String> {
+    let missing = match fs::metadata(state_path) {
+        Ok(_) => false,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => true,
+        Err(err) => {
+            return Err(format!(
+                "failed to inspect authoritative client state {}: {err}",
+                state_path.display()
+            ))
+        }
+    };
+    if missing {
+        let legacy_snapshots = legacy_state_snapshots(tauri_data_dir, electron_data_dir);
+        if has_future_legacy_state(&legacy_snapshots) {
+            return Ok(PersistedClientState {
+                restore_enabled: false,
+                unsupported_future_envelope: true,
+                writes_enabled: false,
+                ..PersistedClientState::default()
+            });
+        }
+        migrate_legacy_state(state_path, &legacy_snapshots, ownership_valid)?;
+    }
+    read_client_state(state_path)
 }
 
 fn parse_client_state(bytes: &[u8]) -> PersistedClientState {
@@ -546,12 +743,118 @@ fn parse_client_state(bytes: &[u8]) -> PersistedClientState {
     }
 }
 
-fn legacy_candidate(
-    path: &Path,
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LegacyFileIdentity {
+    len: u64,
+    modified: Option<SystemTime>,
+    created: Option<SystemTime>,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+    #[cfg(windows)]
+    file_id: Option<(u32, u64)>,
+}
+
+#[derive(Clone)]
+struct LegacyStateSnapshot {
+    path: PathBuf,
     host: &'static str,
+    bytes: Vec<u8>,
+    identity: LegacyFileIdentity,
+}
+
+fn legacy_file_identity(file: &fs::File) -> Result<LegacyFileIdentity, std::io::Error> {
+    #[cfg(unix)]
+    use std::os::unix::fs::MetadataExt;
+    let metadata = file.metadata()?;
+    Ok(LegacyFileIdentity {
+        len: metadata.len(),
+        modified: metadata.modified().ok(),
+        created: metadata.created().ok(),
+        #[cfg(unix)]
+        device: metadata.dev(),
+        #[cfg(unix)]
+        inode: metadata.ino(),
+        #[cfg(windows)]
+        file_id: windows_file_id(file),
+    })
+}
+
+#[cfg(windows)]
+fn windows_file_id(file: &fs::File) -> Option<(u32, u64)> {
+    use std::ffi::c_void;
+    use std::os::windows::io::AsRawHandle;
+
+    #[repr(C)]
+    struct FileTime {
+        low: u32,
+        high: u32,
+    }
+    #[repr(C)]
+    struct ByHandleFileInformation {
+        attributes: u32,
+        creation_time: FileTime,
+        last_access_time: FileTime,
+        last_write_time: FileTime,
+        volume_serial_number: u32,
+        file_size_high: u32,
+        file_size_low: u32,
+        number_of_links: u32,
+        file_index_high: u32,
+        file_index_low: u32,
+    }
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetFileInformationByHandle(
+            file: *mut c_void,
+            information: *mut ByHandleFileInformation,
+        ) -> i32;
+    }
+
+    let mut information = std::mem::MaybeUninit::<ByHandleFileInformation>::uninit();
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), information.as_mut_ptr()) } == 0 {
+        return None;
+    }
+    let information = unsafe { information.assume_init() };
+    Some((
+        information.volume_serial_number,
+        (u64::from(information.file_index_high) << 32) | u64::from(information.file_index_low),
+    ))
+}
+
+fn snapshot_legacy_state(path: PathBuf, host: &'static str) -> Option<LegacyStateSnapshot> {
+    let mut file = fs::File::open(&path).ok()?;
+    let before = legacy_file_identity(&file).ok()?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).ok()?;
+    let identity = legacy_file_identity(&file).ok()?;
+    (before == identity).then_some(LegacyStateSnapshot {
+        path,
+        host,
+        bytes,
+        identity,
+    })
+}
+
+fn legacy_state_snapshots(
+    tauri_data_dir: &Path,
+    electron_data_dir: Option<&Path>,
+) -> Vec<LegacyStateSnapshot> {
+    [
+        electron_data_dir.map(|path| (path.join(CLIENT_STATE_FILENAME), "electron")),
+        Some((tauri_data_dir.join(CLIENT_STATE_FILENAME), "tauri")),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(|(path, host)| snapshot_legacy_state(path, host))
+    .collect()
+}
+
+fn legacy_candidate(
+    snapshot: &LegacyStateSnapshot,
 ) -> Option<(PersistedClientState, bool, i64, &'static str)> {
-    let bytes = fs::read(path).ok()?;
-    let Value::Object(value) = serde_json::from_slice::<Value>(&bytes).ok()? else {
+    let Value::Object(value) = serde_json::from_slice::<Value>(&snapshot.bytes).ok()? else {
         return None;
     };
     if value.get("version").and_then(Value::as_u64) != Some(CLIENT_STATE_VERSION) {
@@ -563,22 +866,23 @@ fn legacy_candidate(
         .and_then(|snapshot| snapshot.get("savedAt"))
         .and_then(Value::as_i64)
         .unwrap_or(-1);
-    let mut parsed = parse_client_state(&bytes);
+    let mut parsed = parse_client_state(&snapshot.bytes);
     parsed.window = None;
-    Some((parsed, value.contains_key("snapshot"), saved_at, host))
+    if !parsed.restore_enabled {
+        parsed.snapshot = None;
+    }
+    Some((
+        parsed,
+        value.contains_key("snapshot"),
+        saved_at,
+        snapshot.host,
+    ))
 }
 
-fn has_future_legacy_state(tauri_data_dir: &Path, electron_data_dir: Option<&Path>) -> bool {
-    [
-        electron_data_dir.map(|path| path.join(CLIENT_STATE_FILENAME)),
-        Some(tauri_data_dir.join(CLIENT_STATE_FILENAME)),
-    ]
-    .into_iter()
-    .flatten()
-    .any(|path| {
-        fs::read(path)
+fn has_future_legacy_state(snapshots: &[LegacyStateSnapshot]) -> bool {
+    snapshots.iter().any(|snapshot| {
+        serde_json::from_slice::<Value>(&snapshot.bytes)
             .ok()
-            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
             .and_then(|value| value.get("version").and_then(Value::as_u64))
             .is_some_and(|version| version > CLIENT_STATE_VERSION)
     })
@@ -586,18 +890,13 @@ fn has_future_legacy_state(tauri_data_dir: &Path, electron_data_dir: Option<&Pat
 
 fn migrate_legacy_state(
     state_path: &Path,
-    tauri_data_dir: &Path,
-    electron_data_dir: Option<&Path>,
+    snapshots: &[LegacyStateSnapshot],
     ownership_valid: &dyn Fn() -> bool,
 ) -> Result<(), String> {
-    let mut candidates = [
-        electron_data_dir
-            .and_then(|path| legacy_candidate(&path.join(CLIENT_STATE_FILENAME), "electron")),
-        legacy_candidate(&tauri_data_dir.join(CLIENT_STATE_FILENAME), "tauri"),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>();
+    let mut candidates = snapshots
+        .iter()
+        .filter_map(legacy_candidate)
+        .collect::<Vec<_>>();
     candidates.sort_by(|left, right| {
         left.0
             .restore_enabled
@@ -615,14 +914,40 @@ fn migrate_legacy_state(
             .map_err(|err| format!("failed to create shared client-state directory: {err}"))?;
     }
     write_atomically(state_path, &bytes, ownership_valid)?;
-    for path in [
-        electron_data_dir.map(|path| path.join(CLIENT_STATE_FILENAME)),
-        Some(tauri_data_dir.join(CLIENT_STATE_FILENAME)),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        match fs::remove_file(path) {
+    for snapshot in snapshots {
+        if !ownership_valid() {
+            continue;
+        }
+        let file_name = snapshot
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(CLIENT_STATE_FILENAME);
+        let quarantine = snapshot.path.with_file_name(format!(
+            ".{file_name}.migrated.{}.quarantine",
+            uuid::Uuid::new_v4()
+        ));
+        match fs::rename(&snapshot.path, &quarantine) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => {
+                return Err(format!(
+                    "failed to quarantine migrated legacy client state: {err}"
+                ))
+            }
+        }
+        let Some(current) = snapshot_legacy_state(quarantine.clone(), snapshot.host) else {
+            restore_quarantined_legacy(&snapshot.path, &quarantine);
+            continue;
+        };
+        if current.identity != snapshot.identity
+            || current.bytes != snapshot.bytes
+            || !ownership_valid()
+        {
+            restore_quarantined_legacy(&snapshot.path, &quarantine);
+            continue;
+        }
+        match fs::remove_file(&quarantine) {
             Ok(()) => {}
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => {
@@ -633,6 +958,19 @@ fn migrate_legacy_state(
         }
     }
     Ok(())
+}
+
+fn restore_quarantined_legacy(path: &Path, quarantine: &Path) {
+    match fs::hard_link(quarantine, path) {
+        Ok(()) => {
+            let _ = fs::remove_file(quarantine);
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(err) => eprintln!(
+            "[client-state] preserved quarantined legacy replacement {} after restore failed: {err}",
+            quarantine.display()
+        ),
+    }
 }
 
 fn serialized_value_size(value: &Value) -> Result<usize, String> {
@@ -667,6 +1005,12 @@ fn write_atomically(
 pub fn release(app: &AppHandle) {
     if let Some(state) = app.try_state::<ClientState>() {
         state.release_locks();
+    }
+}
+
+pub(crate) fn revoke_renderer_access(app: &AppHandle) {
+    if let Some(state) = app.try_state::<ClientState>() {
+        state.revoke_renderer_access();
     }
 }
 

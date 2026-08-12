@@ -63,6 +63,13 @@ pub struct AppState {
     pub remote_titles: Mutex<HashMap<String, String>>,
 }
 
+pub(crate) fn revoke_cli_endpoint_authority(app: &AppHandle) {
+    if let Some(state) = app.try_state::<AppState>() {
+        state.desktop_events.revoke_endpoint();
+    }
+    client_state::revoke_renderer_access(app);
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RemoteWindowPayload {
@@ -138,8 +145,6 @@ fn cli_get_status(state: tauri::State<AppState>) -> CliStatus {
 #[tauri::command]
 fn cli_restart(app: AppHandle, state: tauri::State<AppState>) -> Result<CliStatus, String> {
     let dev_mode = is_dev_mode();
-    state.desktop_events.stop();
-    state.manager.stop().map_err(|e| e.to_string())?;
     state
         .manager
         .start(app, dev_mode)
@@ -158,8 +163,12 @@ fn desktop_events_start(
 }
 
 #[tauri::command]
-fn desktop_events_stop(state: tauri::State<AppState>) {
-    state.desktop_events.stop();
+fn desktop_events_stop(state: tauri::State<AppState>, lease_id: Option<u64>) {
+    if let Some(lease_id) = lease_id {
+        state.desktop_events.stop_lease(lease_id);
+    } else {
+        state.desktop_events.stop();
+    }
 }
 
 #[tauri::command]
@@ -607,6 +616,13 @@ fn main() {
             remote_titles: Mutex::new(HashMap::new()),
         })
         .on_page_load(|webview, payload| {
+            if matches!(payload.event(), PageLoadEvent::Started) {
+                client_state::begin_main_window_document(
+                    &webview.app_handle(),
+                    webview.label(),
+                    payload.url(),
+                );
+            }
             if matches!(
                 payload.event(),
                 PageLoadEvent::Started | PageLoadEvent::Finished
@@ -622,6 +638,7 @@ fn main() {
             build_menu(&app.handle())?;
             client_state::setup_main_window(&app.handle())
                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+            client_state::start_primary_watcher(&app.handle());
             if let Some(window) = app.get_webview_window("main") {
                 #[cfg(windows)]
                 shutdown::install_windows_session_end_handler(&window)

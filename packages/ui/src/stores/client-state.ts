@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js"
-import { clearNativeClientState, loadNativeClientState, saveNativeClientState, setNativeRestoreEnabled } from "../lib/native/client-state"
+import { clearNativeClientState, listenForNativeClientStateOwnershipChange, loadNativeClientState, saveNativeClientState, setNativeRestoreEnabled } from "../lib/native/client-state"
 import { decodeClientSnapshot, isFutureClientSnapshot, normalizeRestorableSession } from "./client-state-codec"
 import type { ClientSnapshotV1, RestorableSessionState, RestorableSidecarTabState, RestorableTabState, RestorableWorkspaceTabState } from "./client-state-codec"
 export type { ClientSnapshotV1, RestorableSessionState, RestorableSidecarTabState, RestorableTabState, RestorableWorkspaceTabState }
@@ -10,7 +10,7 @@ const MAX_LAYOUT_KEY_LENGTH = 256
 const MAX_LAYOUT_VALUE_LENGTH = 4096
 const LEGACY_LAYOUT_KEY_PREFIX = "opencode-session-"
 const UNSAFE_LAYOUT_KEYS = new Set(["__proto__", "constructor", "prototype"])
-const [clientStateIsPrimary, setClientStateIsPrimary] = createSignal(true)
+const [clientStateIsPrimary, setClientStateIsPrimary] = createSignal(false)
 const [restorePreviousStateEnabled, setRestorePreviousStateEnabledSignal] = createSignal(false)
 const [loadedClientSnapshotExists, setLoadedClientSnapshotExists] = createSignal(false)
 const [loadedRestorableSession, setLoadedRestorableSession] = createSignal<RestorableSessionState | null>(null)
@@ -256,11 +256,42 @@ export async function setRestorePreviousStateEnabled(enabled: boolean): Promise<
   })
 }
 
+export async function refreshClientStateOwnership(): Promise<void> {
+  const loaded = await loadNativeClientState()
+  const promoted = loaded.isPrimary && !clientStateIsPrimary()
+  if (promoted && writeBlock !== "transaction") {
+    cancelSaveTimer()
+    dirty = false
+    lastSaveError = undefined
+    writeBlock = isFutureClientSnapshot(loaded.snapshot) ? "snapshot" : false
+    resetLoadedState(decodeClientSnapshot(loaded.snapshot), true)
+  }
+  setRestorePreviousStateEnabledSignal(loaded.restoreEnabled)
+  if (loaded.isPrimary && !promoted && writeBlock !== "transaction") {
+    writeBlock = isFutureClientSnapshot(loaded.snapshot) ? "snapshot" : false
+  }
+  setClientStateIsPrimary(loaded.isPrimary)
+}
+
 export function initializeClientState(): Promise<void> {
   if (initialization) return initialization
   initialization = (async () => {
+    let ownershipGeneration = 0
     try {
-      const loaded = await loadNativeClientState()
+      try {
+        await listenForNativeClientStateOwnershipChange(() => {
+          ownershipGeneration += 1
+          if (initialized) window.location.reload()
+        })
+      } catch (error) {
+        console.warn("[client-state] failed to listen for ownership changes", error)
+      }
+      let loaded
+      let observedGeneration
+      do {
+        observedGeneration = ownershipGeneration
+        loaded = await loadNativeClientState()
+      } while (observedGeneration !== ownershipGeneration)
       setClientStateIsPrimary(loaded.isPrimary)
       setRestorePreviousStateEnabledSignal(loaded.restoreEnabled)
       resetLoadedState(null, true)

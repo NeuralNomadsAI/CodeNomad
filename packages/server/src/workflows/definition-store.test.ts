@@ -1,0 +1,255 @@
+import assert from "node:assert/strict"
+import fs from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
+import { describe, it, type TestContext } from "node:test"
+import {
+  WORKFLOW_DEFINITION_HISTORY_BYTES_LIMIT,
+  WORKFLOW_DEFINITION_FILE_BYTES_LIMIT,
+  WORKFLOW_DEFINITION_CATALOG_BYTES_LIMIT,
+  WORKFLOW_DEFINITION_RECORD_LIMIT,
+  WORKFLOW_DEFINITION_REVISION_LIMIT,
+  WorkflowDefinitionStore,
+} from "./definition-store"
+
+const definition = (name: string) => ({
+  version: 1 as const,
+  id: "stored",
+  name,
+  root: { type: "agent" as const, id: "work", instructions: "Work" },
+})
+
+describe("WorkflowDefinitionStore", () => {
+  it("rejects definition IDs that can collide by case", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-definition-store-case-"))
+    try {
+      const store = new WorkflowDefinitionStore(directory)
+      await assert.rejects(store.create({ ...definition("Uppercase"), id: "Stored" }), /lowercase/)
+      assert.equal((await store.create(definition("Lowercase"))).id, "stored")
+      await assert.rejects(store.get("Stored"), /Invalid workflow definition ID/)
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("keeps immutable revisions and atomically persists a tombstone", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-definition-store-"))
+    try {
+      const store = new WorkflowDefinitionStore(directory)
+      const first = await store.create(definition("First"))
+      const second = await store.update("stored", 1, definition("Second"))
+      assert.equal(first.revision, 1)
+      assert.equal(second.revision, 2)
+      assert.equal((await store.get("stored", 1))?.definition.name, "First")
+      assert.equal((await store.get("stored"))?.definition.name, "Second")
+      await assert.rejects(store.update("stored", 1, definition("Stale")), /revision is 2/)
+      assert.equal(await store.delete("stored", 2), true)
+      assert.equal(await store.get("stored"), undefined)
+      assert.equal(await store.get("stored", 1), undefined)
+      assert.equal((await store.inspectRevision("stored", 1))?.definition.name, "First")
+      assert.equal((await store.inspectRevision("stored", 2))?.definition.name, "Second")
+      assert.deepEqual((await fs.readdir(directory)).filter((entry) => entry.endsWith(".tmp")), [])
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("acknowledges an expected revision once across store instances", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-definition-store-concurrency-"))
+    try {
+      const first = new WorkflowDefinitionStore(directory)
+      const second = new WorkflowDefinitionStore(directory)
+      await fs.mkdir(path.join(directory, ".write.lock"))
+      await fs.writeFile(path.join(directory, ".write.lock", "owner.json"), JSON.stringify({
+        token: "stale", pid: 2_147_483_647,
+      }))
+      await first.create(definition("First"))
+      const updates = await Promise.allSettled([
+        first.update("stored", 1, definition("First update")),
+        second.update("stored", 1, definition("Second update")),
+      ])
+      assert.equal(updates.filter((result) => result.status === "fulfilled").length, 1)
+      assert.match((updates.find((result) => result.status === "rejected") as PromiseRejectedResult).reason.message, /revision is 2/)
+      assert.equal((await second.update("stored", 2, definition("After conflict"))).revision, 3)
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("bounds revision count without pruning immutable or tombstoned history", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-definition-store-count-"))
+    try {
+      const store = new WorkflowDefinitionStore(directory)
+      await store.create(definition("Revision 1"))
+      for (let revision = 2; revision <= WORKFLOW_DEFINITION_REVISION_LIMIT; revision++) {
+        await store.update("stored", revision - 1, definition(`Revision ${revision}`))
+      }
+      await assert.rejects(
+        store.update("stored", WORKFLOW_DEFINITION_REVISION_LIMIT, definition("Over limit")),
+        /revision limit reached/,
+      )
+      assert.equal((await store.get("stored"))?.revision, WORKFLOW_DEFINITION_REVISION_LIMIT)
+      assert.equal((await store.inspectRevision("stored", 1))?.definition.name, "Revision 1")
+      assert.equal(await store.delete("stored", WORKFLOW_DEFINITION_REVISION_LIMIT), true)
+      assert.equal(await store.get("stored"), undefined)
+      assert.equal((await store.inspectRevision("stored", WORKFLOW_DEFINITION_REVISION_LIMIT))?.definition.name, `Revision ${WORKFLOW_DEFINITION_REVISION_LIMIT}`)
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("bounds aggregate revision bytes without blocking tombstones", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-definition-store-bytes-"))
+    try {
+      const store = new WorkflowDefinitionStore(directory)
+      const largeDefinition = (name: string) => ({
+        version: 1 as const,
+        id: "stored",
+        name,
+        root: {
+          type: "sequence" as const,
+          id: "root",
+          steps: Array.from({ length: 5 }, (_, index) => ({
+            type: "agent" as const,
+            id: `work-${index}`,
+            instructions: `${index}${"x".repeat(49_000)}`,
+          })),
+        },
+      })
+      let revision = (await store.create(largeDefinition("Large 1"))).revision
+      await assert.rejects(async () => {
+        while (revision < WORKFLOW_DEFINITION_REVISION_LIMIT) {
+          revision = (await store.update("stored", revision, largeDefinition(`Large ${revision + 1}`))).revision
+        }
+      }, /history size limit reached/)
+      assert.ok(revision < WORKFLOW_DEFINITION_REVISION_LIMIT)
+      const storedPath = path.join(directory, "stored.json")
+      const persisted = JSON.parse(await fs.readFile(storedPath, "utf8")) as { revisions: unknown[] }
+      assert.ok(persisted.revisions.reduce<number>((total, record) => total + Buffer.byteLength(JSON.stringify(record), "utf8"), 0) <= WORKFLOW_DEFINITION_HISTORY_BYTES_LIMIT)
+      assert.equal((await store.get("stored"))?.revision, revision)
+      assert.equal((await store.inspectRevision("stored", 1))?.definition.name, "Large 1")
+      assert.equal(await store.delete("stored", revision), true)
+      assert.equal((await store.inspectRevision("stored", revision))?.revision, revision)
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("bounds active and tombstoned definition records", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-definition-store-records-"))
+    try {
+      await Promise.all(Array.from({ length: WORKFLOW_DEFINITION_RECORD_LIMIT }, (_, index) =>
+        fs.writeFile(path.join(directory, `old-${index}.json`), "{}")))
+      const store = new WorkflowDefinitionStore(directory)
+      await assert.rejects(store.create(definition("Over limit")), /record limit reached/)
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("reads catalog histories with bounded concurrency", async (context: TestContext) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-definition-store-list-"))
+    try {
+      const store = new WorkflowDefinitionStore(directory)
+      for (let index = 0; index < 4; index++) {
+        await store.create({ ...definition(`Definition ${index}`), id: `stored-${index}` })
+      }
+
+      const readFile = fs.readFile.bind(fs)
+      let activeReads = 0
+      let maxActiveReads = 0
+      let reads = 0
+      context.mock.method(fs, "readFile", async (...args: Parameters<typeof fs.readFile>) => {
+        reads++
+        activeReads++
+        maxActiveReads = Math.max(maxActiveReads, activeReads)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        try {
+          return await readFile(...args)
+        } finally {
+          activeReads--
+        }
+      })
+
+      const [first, second] = await Promise.all([store.list(), store.list()])
+      assert.equal(first.length, 4)
+      assert.equal(second.length, 4)
+      assert.equal(maxActiveReads, 1)
+      assert.equal(reads, 4)
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("does not reuse an in-flight pre-write catalog after the write completes", async (context: TestContext) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-definition-store-list-write-"))
+    try {
+      const store = new WorkflowDefinitionStore(directory)
+      await store.create(definition("Before"))
+      const readFile = fs.readFile.bind(fs)
+      let release!: () => void
+      let started!: () => void
+      const blocked = new Promise<void>((resolve) => { release = resolve })
+      const reading = new Promise<void>((resolve) => { started = resolve })
+      let delayFirstRead = true
+      context.mock.method(fs, "readFile", async (...args: Parameters<typeof fs.readFile>) => {
+        const contents = await readFile(...args)
+        if (delayFirstRead && String(args[0]).endsWith("stored.json")) {
+          delayFirstRead = false
+          started()
+          await blocked
+        }
+        return contents
+      })
+
+      const stale = store.list()
+      await reading
+      await store.update("stored", 1, definition("After"))
+      const fresh = store.list()
+      release()
+      assert.equal((await stale)[0]?.definition.name, "Before")
+      assert.equal((await fresh)[0]?.definition.name, "After")
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("bounds stored-file I/O and historical bytes before catalog validation", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-definition-store-list-bounds-"))
+    try {
+      const oversizedPath = path.join(directory, "oversized.json")
+      await fs.writeFile(oversizedPath, "")
+      await fs.truncate(oversizedPath, WORKFLOW_DEFINITION_FILE_BYTES_LIMIT + 1)
+      const oversized = new WorkflowDefinitionStore(directory)
+      await assert.rejects(oversized.list(), /stored file size limit reached/)
+      await fs.rm(oversizedPath)
+
+      const store = new WorkflowDefinitionStore(directory)
+      await store.create(definition("Stored"))
+      const storedPath = path.join(directory, "stored.json")
+      const stored = JSON.parse(await fs.readFile(storedPath, "utf8"))
+      stored.revisions[0].padding = "x".repeat(WORKFLOW_DEFINITION_HISTORY_BYTES_LIMIT)
+      await fs.writeFile(storedPath, JSON.stringify(stored))
+      await assert.rejects(store.list(), /history size limit reached/)
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("rejects a catalog response before aggregate records exhaust memory", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-definition-store-catalog-bytes-"))
+    try {
+      const store = new WorkflowDefinitionStore(directory)
+      const instructions = "x".repeat(49_000)
+      const count = Math.ceil(WORKFLOW_DEFINITION_CATALOG_BYTES_LIMIT / 95_000) + 5
+      for (let index = 0; index < count; index++) {
+        await store.create({ ...definition(`Large ${index}`), id: `large-${index}`, root: {
+          type: "agent", id: "work", instructions,
+        } })
+      }
+      await assert.rejects(store.list(), /catalog size limit reached/)
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
+})

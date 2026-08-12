@@ -1,9 +1,13 @@
 import { closeSync, fsyncSync, openSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs"
 import { basename, join } from "node:path"
 import {
+  type AsyncExpectedProcessLookup,
+  type AsyncProcessStartIdentityLookup,
   type ExpectedProcessLookup,
   getProcessStartIdentity,
+  getProcessStartIdentityAsync,
   isExpectedTauriProcess,
+  isExpectedTauriProcessAsync,
   type ProcessStartIdentityLookup,
 } from "./client-state-process-identity"
 
@@ -17,6 +21,7 @@ export interface ProcessOwner {
   pid: number
   runToken: string
   processStartIdentity?: string
+  machineIdentity?: string
 }
 
 export type RunningMarkerStatus = "current" | "other-live" | "stale"
@@ -62,6 +67,9 @@ function normalizeProcessOwner(candidate: unknown): ProcessOwner | undefined {
       runToken: owner.runToken,
       ...(typeof owner.processStartIdentity === "string" && owner.processStartIdentity
         ? { processStartIdentity: owner.processStartIdentity }
+        : {}),
+      ...(typeof owner.machineIdentity === "string" && owner.machineIdentity
+        ? { machineIdentity: owner.machineIdentity }
         : {}),
     }
   }
@@ -118,6 +126,33 @@ export function hasLiveTauriClient(
   })
 }
 
+export async function hasLiveTauriClientAsync(
+  tauriDataPath: string,
+  pidAlive: (pid: number) => boolean = isPidAlive,
+  processStartIdentity: AsyncProcessStartIdentityLookup = getProcessStartIdentityAsync,
+  expectedProcess: AsyncExpectedProcessLookup = isExpectedTauriProcessAsync,
+  upgradedParticipants: readonly ProcessOwner[] = [],
+  timeoutMs = 1_000,
+): Promise<boolean> {
+  let entries: string[]
+  try {
+    entries = readdirSync(tauriDataPath)
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) return false
+    throw error
+  }
+  for (const name of entries) {
+    const match = /^client-state\.running\.(\d+)\..+\.lock$/.exec(name)
+    if (!match) continue
+    const pid = Number(match[1])
+    if (!Number.isInteger(pid) || pid <= 0 || !pidAlive(pid)) continue
+    const liveIdentity = await processStartIdentity(pid, timeoutMs)
+    if (liveIdentity && upgradedParticipants.some((owner) => owner.pid === pid && owner.processStartIdentity === liveIdentity)) continue
+    if (await expectedProcess(pid, timeoutMs) !== false) return true
+  }
+  return false
+}
+
 export function classifyRunningMarker(
   markerOwner: ProcessOwner,
   currentOwner: ProcessOwner,
@@ -169,6 +204,25 @@ export function createRunningMarker(
   const markerPath = getRunningMarkerPath(userDataPath, owner)
   publishProcessFile(markerPath, JSON.stringify(primaryOwner ? { ...owner, primaryOwner } : owner))
   return markerPath
+}
+
+function ensureRunningMarker(
+  userDataPath: string,
+  owner: ProcessOwner,
+  primaryOwner?: ProcessOwner,
+): string {
+  try {
+    return createRunningMarker(userDataPath, owner, primaryOwner)
+  } catch (error) {
+    if (!hasErrorCode(error, "EEXIST")) throw error
+    const markerPath = getRunningMarkerPath(userDataPath, owner)
+    const existing = readFileIfExists(markerPath)
+    const existingOwner = existing === undefined ? undefined : parseProcessOwner(existing)
+    if (existingOwner && isSameProcessOwner(existingOwner, owner)) {
+      return markerPath
+    }
+    throw error
+  }
 }
 
 function publishProcessFile(path: string, contents: string): void {
@@ -313,6 +367,11 @@ export function isProcessOwnerLockOwned(path: string, owner: ProcessOwner): bool
   return Boolean(current && isSameProcessOwner(current, owner))
 }
 
+export function readProcessOwnerLock(path: string): ProcessOwner | undefined {
+  const value = readFileIfExists(path)
+  return value === undefined ? undefined : parseProcessOwner(value)
+}
+
 export function removeRunningMarkerIfOwned(markerPath: string, owner: ProcessOwner): boolean {
   const filenameOwner = parseRunningMarkerFilename(basename(markerPath))
   if (!filenameOwner || !isSameProcessOwner(filenameOwner, owner)) {
@@ -436,6 +495,7 @@ export function electClientStateProcess(
   registrationLockWaitMs = REGISTRATION_LOCK_WAIT_MS,
   onPrimaryLockAcquired: () => void = () => {},
   processStartIdentity: ProcessStartIdentityLookup = getProcessStartIdentity,
+  retainedCandidate = false,
 ): boolean {
   let registrationAcquired = false
   let registeringOwner: ProcessOwner | undefined
@@ -457,7 +517,8 @@ export function electClientStateProcess(
 
   if (!registrationAcquired) {
     try {
-      createRunningMarker(userDataPath, owner, registeringOwner)
+      if (retainedCandidate) ensureRunningMarker(userDataPath, owner, registeringOwner)
+      else createRunningMarker(userDataPath, owner, registeringOwner)
     } catch (error) {
       onWarning("failed to create running marker", error)
     }
@@ -485,7 +546,7 @@ export function electClientStateProcess(
     if (isPrimary) {
       try {
         onPrimaryLockAcquired()
-        if (cleanStaleRunningMarkers(userDataPath, owner, pidAlive, processStartIdentity)) {
+        if (cleanStaleRunningMarkers(userDataPath, owner, pidAlive, processStartIdentity) && !retainedCandidate) {
           removeProcessOwnerLockIfOwned(paths.primaryLockPath, owner)
           isPrimary = false
         }
@@ -497,7 +558,8 @@ export function electClientStateProcess(
     }
 
     try {
-      createRunningMarker(userDataPath, owner, acknowledgedPrimary)
+      if (retainedCandidate) ensureRunningMarker(userDataPath, owner, acknowledgedPrimary)
+      else createRunningMarker(userDataPath, owner, acknowledgedPrimary)
     } catch (error) {
       onWarning("failed to create running marker", error)
       if (isPrimary) releaseProcessOwnerLock(paths.primaryLockPath, owner, onWarning, "failed to release primary lock")

@@ -1,11 +1,12 @@
 import { execFile, spawnSync } from "node:child_process"
-import { readFile as readFileAsync } from "node:fs/promises"
+import { readFile as readFileAsync, readlink as readlinkAsync } from "node:fs/promises"
 import { readFileSync, readlinkSync } from "node:fs"
 import { basename, resolve } from "node:path"
 
 export type ProcessStartIdentityLookup = (pid: number) => string | undefined
 export type AsyncProcessStartIdentityLookup = (pid: number, timeoutMs: number) => Promise<string | undefined> | string | undefined
 export type ExpectedProcessLookup = (pid: number) => boolean | undefined
+export type AsyncExpectedProcessLookup = (pid: number, timeoutMs: number) => Promise<boolean | undefined> | boolean | undefined
 
 function readLinuxProcessStartIdentity(pid: number): string | undefined {
   const stat = readFileSync(`/proc/${pid}/stat`, "utf8")
@@ -119,6 +120,72 @@ export function isExpectedTauriProcess(pid: number): boolean | undefined {
             : ["-p", String(pid), "-o", "comm="],
           "path",
         )?.slice(5)
+    if (!executable) return undefined
+    if (resolve(executable).toLowerCase() === resolve(process.execPath).toLowerCase()) return false
+    return ["codenomad", "codenomad.exe", "codenomad-tauri", "codenomad-tauri.exe"]
+      .includes(basename(executable).toLowerCase())
+  } catch {
+    return undefined
+  }
+}
+
+const machineIdentityCache = new Map<NodeJS.Platform, string | null>()
+
+export function getMachineIdentity(platform: NodeJS.Platform = process.platform): string | undefined {
+  const cached = machineIdentityCache.get(platform)
+  if (cached !== undefined) return cached ?? undefined
+  const identity = readMachineIdentity(platform)
+  machineIdentityCache.set(platform, identity ?? null)
+  return identity
+}
+
+function readMachineIdentity(platform: NodeJS.Platform): string | undefined {
+  try {
+    if (platform === "linux") {
+      for (const path of ["/etc/machine-id", "/var/lib/dbus/machine-id"]) {
+        try {
+          const value = readFileSync(path, "utf8").trim().toLowerCase()
+          if (value) return `linux:${value}`
+        } catch {}
+      }
+    }
+    if (platform === "darwin") {
+      const value = readCommandIdentity("ioreg", ["-rd1", "-c", "IOPlatformExpertDevice"], "ioreg")
+      const uuid = /"IOPlatformUUID"\s*=\s*"([^"]+)"/.exec(value ?? "")?.[1]?.toLowerCase()
+      return uuid ? `darwin:${uuid}` : undefined
+    }
+    if (platform === "win32") {
+      const value = readCommandIdentity("powershell.exe", [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "(Get-ItemProperty -LiteralPath 'HKLM:\\SOFTWARE\\Microsoft\\Cryptography' -Name MachineGuid -ErrorAction Stop).MachineGuid.ToString().ToLowerInvariant()",
+      ], "machine")?.slice("machine:".length)
+      return value ? `win32:${value}` : undefined
+    }
+  } catch {
+    // Cross-host ownership is disabled when the local machine cannot be identified safely.
+  }
+  return undefined
+}
+
+export async function isExpectedTauriProcessAsync(
+  pid: number,
+  timeoutMs: number,
+  platform: NodeJS.Platform = process.platform,
+): Promise<boolean | undefined> {
+  if (!Number.isInteger(pid) || pid <= 0 || timeoutMs <= 0) return undefined
+  try {
+    const executable = platform === "linux"
+      ? await readlinkAsync(`/proc/${pid}/exe`)
+      : await readCommandIdentityAsync(
+          platform === "win32" ? "powershell.exe" : "ps",
+          platform === "win32"
+            ? ["-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${pid} -ErrorAction Stop).Path`]
+            : ["-p", String(pid), "-o", "comm="],
+          "path",
+          timeoutMs,
+        ).then((value) => value?.slice(5))
     if (!executable) return undefined
     if (resolve(executable).toLowerCase() === resolve(process.execPath).toLowerCase()) return false
     return ["codenomad", "codenomad.exe", "codenomad-tauri", "codenomad-tauri.exe"]

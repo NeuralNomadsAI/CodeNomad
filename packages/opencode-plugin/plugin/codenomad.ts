@@ -1,17 +1,19 @@
 import type { PluginInput } from "@opencode-ai/plugin"
 import { createCodeNomadClient, getCodeNomadConfig } from "./lib/client.js"
 import { createBackgroundProcessTools } from "./lib/background-process.js"
+import { createWorkflowTools } from "./lib/workflows.js"
 
 let voiceModeEnabled = false
 
 export async function CodeNomadPlugin(input: PluginInput): Promise<{
-  tool: ReturnType<typeof createBackgroundProcessTools>
+  tool: ReturnType<typeof createBackgroundProcessTools> & ReturnType<typeof createWorkflowTools>
   "chat.message": CodeNomadChatMessageHook
   event: CodeNomadEventHook
 }> {
   const config = getCodeNomadConfig()
   const client = createCodeNomadClient(config)
   const backgroundProcessTools = createBackgroundProcessTools(config, { baseDir: input.directory })
+  const workflowTools = createWorkflowTools(config)
 
   await client.startEvents((event) => {
     if (event.type === "codenomad.ping") {
@@ -33,6 +35,7 @@ export async function CodeNomadPlugin(input: PluginInput): Promise<{
   return {
     tool: {
       ...backgroundProcessTools,
+      ...workflowTools,
     },
     async "chat.message"(_input: { sessionID: string }, output: { message: { system?: string } }) {
       if (!voiceModeEnabled) {

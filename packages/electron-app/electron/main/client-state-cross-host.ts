@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, join, posix, win32 } from "node:path"
-import { getProcessStartIdentity, type ProcessStartIdentityLookup } from "./client-state-process-identity"
+import { getMachineIdentity, getProcessStartIdentity, getProcessStartIdentityAsync, type AsyncProcessStartIdentityLookup, type ProcessStartIdentityLookup } from "./client-state-process-identity"
 import { hasErrorCode, isPidAlive, type ProcessOwner } from "./client-state-process"
 
 export const CROSS_HOST_OWNER_DIRECTORY = "primary.owner.json"
@@ -12,11 +12,14 @@ const PARTICIPANT_SUFFIX = ".json"
 const RECOVERY_PREFIX = "recovery."
 const RECOVERY_SUFFIX = ".claim"
 const RETIRED_PREFIX = "retired."
+const RETIRED_PARTICIPANT_PREFIX = "retired.participant."
+const RETIRED_PARTICIPANT_SUFFIX = ".json"
 const ACQUIRE_ATTEMPTS = 10
 
 export interface CrossHostLeaseDependencies {
   pidAlive(pid: number): boolean
   processStartIdentity: ProcessStartIdentityLookup
+  processStartIdentityAsync?: AsyncProcessStartIdentityLookup
   onParticipantPublished?(): void
   onOwnerPrepared?(): void
   onOwnerRetired?(): void
@@ -26,6 +29,7 @@ export interface CrossHostLeaseDependencies {
 const defaultDependencies: CrossHostLeaseDependencies = {
   pidAlive: isPidAlive,
   processStartIdentity: getProcessStartIdentity,
+  processStartIdentityAsync: getProcessStartIdentityAsync,
 }
 
 function validHome(value: string | undefined, platform: NodeJS.Platform): string | undefined {
@@ -77,11 +81,14 @@ export function resolveLegacyTauriDataDirectory(
 
 export function createCrossHostOwner(): ProcessOwner | undefined {
   const processStartIdentity = getProcessStartIdentity(process.pid)
-  return processStartIdentity ? { pid: process.pid, runToken: randomUUID(), processStartIdentity } : undefined
+  const machineIdentity = getMachineIdentity()
+  return processStartIdentity && machineIdentity
+    ? { pid: process.pid, runToken: randomUUID(), processStartIdentity, machineIdentity }
+    : undefined
 }
 
 function serializeOwner(owner: ProcessOwner): string {
-  return JSON.stringify({ pid: owner.pid, runToken: owner.runToken, processStartIdentity: owner.processStartIdentity })
+  return JSON.stringify({ pid: owner.pid, runToken: owner.runToken, processStartIdentity: owner.processStartIdentity, machineIdentity: owner.machineIdentity })
 }
 
 function parseOwner(value: string): ProcessOwner | undefined {
@@ -90,14 +97,20 @@ function parseOwner(value: string): ProcessOwner | undefined {
     if (Number.isInteger(owner.pid) && Number(owner.pid) > 0 && Number(owner.pid) <= 0xffff_ffff &&
       typeof owner.runToken === "string" && /^[A-Za-z0-9_-]+$/.test(owner.runToken) &&
       typeof owner.processStartIdentity === "string" && owner.processStartIdentity) {
-      return { pid: Number(owner.pid), runToken: owner.runToken, processStartIdentity: owner.processStartIdentity }
+      return {
+        pid: Number(owner.pid),
+        runToken: owner.runToken,
+        processStartIdentity: owner.processStartIdentity,
+        ...(typeof owner.machineIdentity === "string" && owner.machineIdentity ? { machineIdentity: owner.machineIdentity } : {}),
+      }
     }
   } catch {}
   return undefined
 }
 
 function sameOwner(left: ProcessOwner, right: ProcessOwner): boolean {
-  return left.pid === right.pid && left.runToken === right.runToken && left.processStartIdentity === right.processStartIdentity
+  return left.pid === right.pid && left.runToken === right.runToken &&
+    left.processStartIdentity === right.processStartIdentity && left.machineIdentity === right.machineIdentity
 }
 
 function readIfExists(path: string): string | undefined {
@@ -137,6 +150,10 @@ function recoveryPath(directory: string, owner: ProcessOwner): string {
   return join(directory, `${RECOVERY_PREFIX}${owner.pid}.${owner.runToken}${RECOVERY_SUFFIX}`)
 }
 
+function retiredParticipantPath(directory: string, owner: ProcessOwner): string {
+  return join(directory, `${RETIRED_PARTICIPANT_PREFIX}${owner.pid}.${owner.runToken}${RETIRED_PARTICIPANT_SUFFIX}`)
+}
+
 function publishParticipant(path: string, owner: ProcessOwner): void {
   const value = serializeOwner(owner)
   try { publishFile(path, value) } catch (error) {
@@ -144,13 +161,40 @@ function publishParticipant(path: string, owner: ProcessOwner): void {
   }
 }
 
+function publishRecoveryClaim(path: string, observedOwner: string): void {
+  if (readIfExists(path) !== observedOwner) {
+    try { unlinkSync(path) } catch (error) {
+      if (!hasErrorCode(error, "ENOENT")) throw error
+    }
+  }
+  try { publishFile(path, observedOwner) } catch (error) {
+    if (!hasErrorCode(error, "EEXIST") || readIfExists(path) !== observedOwner) throw error
+  }
+}
+
 function ownerPath(directory: string): string {
   return join(directory, CROSS_HOST_OWNER_DIRECTORY, OWNER_FILENAME)
 }
 
-function ownerIsStale(owner: ProcessOwner, dependencies: CrossHostLeaseDependencies): boolean | undefined {
+function legacyOwnerIsLocal(owner: ProcessOwner, local: ProcessOwner): boolean {
+  const ownerBoot = /^(linux:[^:]+):/.exec(owner.processStartIdentity ?? "")?.[1]
+  const localBoot = /^(linux:[^:]+):/.exec(local.processStartIdentity ?? "")?.[1]
+  return Boolean(ownerBoot && ownerBoot === localBoot)
+}
+
+function ownerIsStale(owner: ProcessOwner, local: ProcessOwner, dependencies: CrossHostLeaseDependencies): boolean | undefined {
+  if (owner.machineIdentity ? owner.machineIdentity !== local.machineIdentity : !legacyOwnerIsLocal(owner, local)) return undefined
   if (!dependencies.pidAlive(owner.pid)) return true
   const identity = dependencies.processStartIdentity(owner.pid)
+  return identity ? identity !== owner.processStartIdentity : undefined
+}
+
+async function ownerIsStaleAsync(owner: ProcessOwner, local: ProcessOwner, dependencies: CrossHostLeaseDependencies): Promise<boolean | undefined> {
+  if (owner.machineIdentity ? owner.machineIdentity !== local.machineIdentity : !legacyOwnerIsLocal(owner, local)) return undefined
+  if (!dependencies.pidAlive(owner.pid)) return true
+  const identity = dependencies.processStartIdentityAsync
+    ? await dependencies.processStartIdentityAsync(owner.pid, 1_000)
+    : dependencies.processStartIdentity(owner.pid)
   return identity ? identity !== owner.processStartIdentity : undefined
 }
 
@@ -161,6 +205,10 @@ function removeParticipantIfOwned(path: string, owner: ProcessOwner): void {
   try { unlinkSync(path) } catch (error) {
     if (!hasErrorCode(error, "ENOENT")) throw error
   }
+}
+
+function removeRetiredParticipantIfOwned(directory: string, owner: ProcessOwner): void {
+  removeParticipantIfOwned(retiredParticipantPath(directory, owner), owner)
 }
 
 function retireOwnerIfOwned(directory: string, owner: ProcessOwner, dependencies: CrossHostLeaseDependencies): void {
@@ -182,6 +230,7 @@ function retireOwnerIfOwned(directory: string, owner: ProcessOwner, dependencies
       if (observedParticipant === undefined) continue
       const participant = parseOwner(observedParticipant)
       if (participant) {
+        publishParticipant(retiredParticipantPath(directory, participant), participant)
         removeParticipantIfOwned(path, participant)
         try { unlinkSync(recoveryPath(directory, participant)) } catch {}
       } else if (readIfExists(path) === observedParticipant) {
@@ -208,7 +257,7 @@ function recoveryClaimants(
     const participant = parseOwner(readIfExists(path) ?? "")
     if (!participant) return undefined
     if (sameOwner(participant, current)) continue
-    const stale = ownerIsStale(participant, dependencies)
+    const stale = ownerIsStale(participant, current, dependencies)
     if (stale === true) {
       removeParticipantIfOwned(path, participant)
       try { unlinkSync(recoveryPath(directory, participant)) } catch {}
@@ -226,9 +275,57 @@ function recoveryClaimants(
   return claimants
 }
 
+async function recoveryClaimantsAsync(
+  directory: string,
+  current: ProcessOwner,
+  observedOwner: string,
+  dependencies: CrossHostLeaseDependencies,
+): Promise<ProcessOwner[] | undefined> {
+  const claimants = [current]
+  for (const name of readdirSync(directory)) {
+    if (!name.startsWith(PARTICIPANT_PREFIX) || !name.endsWith(PARTICIPANT_SUFFIX)) continue
+    const path = join(directory, name)
+    const participant = parseOwner(readIfExists(path) ?? "")
+    if (!participant) return undefined
+    if (sameOwner(participant, current)) continue
+    if (await ownerIsStaleAsync(participant, current, dependencies) === true) {
+      removeParticipantIfOwned(path, participant)
+      try { unlinkSync(recoveryPath(directory, participant)) } catch {}
+      continue
+    }
+    const claimPath = recoveryPath(directory, participant)
+    let claim = readIfExists(claimPath)
+    for (let attempt = 0; claim !== observedOwner && attempt < 20; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      claim = readIfExists(claimPath)
+    }
+    if (claim !== observedOwner) return undefined
+    claimants.push(participant)
+  }
+  return claimants
+}
+
 function retireOwner(directory: string, observed: string, owner: ProcessOwner, claimant: ProcessOwner, dependencies: CrossHostLeaseDependencies): boolean {
-  if (ownerIsStale(owner, dependencies) !== true) return false
+  if (ownerIsStale(owner, claimant, dependencies) !== true) return false
   const claimants = recoveryClaimants(directory, claimant, observed, dependencies)
+  if (!claimants) return false
+  claimants.sort((left, right) => serializeOwner(left) < serializeOwner(right) ? -1 : 1)
+  if (!sameOwner(claimants[0]!, claimant)) return false
+  if (readIfExists(ownerPath(directory)) !== observed) return false
+  const retired = join(directory, `${RETIRED_PREFIX}${owner.pid}.${owner.runToken}`)
+  try {
+    renameSync(join(directory, CROSS_HOST_OWNER_DIRECTORY), retired)
+    dependencies.onOwnerRetired?.()
+    return true
+  } catch (error) {
+    if (["ENOENT", "EEXIST", "ENOTEMPTY"].some((code) => hasErrorCode(error, code)) || existsSync(retired)) return false
+    throw error
+  }
+}
+
+async function retireOwnerAsync(directory: string, observed: string, owner: ProcessOwner, claimant: ProcessOwner, dependencies: CrossHostLeaseDependencies): Promise<boolean> {
+  if (await ownerIsStaleAsync(owner, claimant, dependencies) !== true) return false
+  const claimants = await recoveryClaimantsAsync(directory, claimant, observed, dependencies)
   if (!claimants) return false
   claimants.sort((left, right) => serializeOwner(left) < serializeOwner(right) ? -1 : 1)
   if (!sameOwner(claimants[0]!, claimant)) return false
@@ -264,7 +361,10 @@ function publishOwner(directory: string, owner: ProcessOwner, dependencies: Cros
 export function crossHostParticipants(directory: string): ProcessOwner[] {
   try {
     return readdirSync(directory)
-      .filter((name) => name.startsWith(PARTICIPANT_PREFIX) && name.endsWith(PARTICIPANT_SUFFIX))
+      .filter((name) =>
+        (name.startsWith(PARTICIPANT_PREFIX) && name.endsWith(PARTICIPANT_SUFFIX)) ||
+        (name.startsWith(RETIRED_PARTICIPANT_PREFIX) && name.endsWith(RETIRED_PARTICIPANT_SUFFIX)),
+      )
       .map((name) => parseOwner(readIfExists(join(directory, name)) ?? ""))
       .filter((owner): owner is ProcessOwner => Boolean(owner))
   } catch (error) {
@@ -280,7 +380,7 @@ export class CrossHostRegistration {
     private readonly directory: string,
     readonly owner: ProcessOwner,
     private readonly participant: string,
-    private readonly recoveryClaim: string | undefined,
+    private recoveryClaim: string | undefined,
     private primary: boolean,
     private readonly dependencies: CrossHostLeaseDependencies,
   ) {}
@@ -293,10 +393,11 @@ export class CrossHostRegistration {
     primaryCandidate: boolean | (() => boolean),
     dependencies: CrossHostLeaseDependencies = defaultDependencies,
   ): CrossHostRegistration | undefined {
-    if (!owner.processStartIdentity || !/^[A-Za-z0-9_-]+$/.test(owner.runToken)) return undefined
+    if (!owner.processStartIdentity || !owner.machineIdentity || !/^[A-Za-z0-9_-]+$/.test(owner.runToken)) return undefined
     mkdirSync(directory, { recursive: true, mode: 0o700 })
     const participant = participantPath(directory, owner)
     publishParticipant(participant, owner)
+    removeRetiredParticipantIfOwned(directory, owner)
     dependencies.onParticipantPublished?.()
     let primary = false
     let recoveryClaim: string | undefined
@@ -309,11 +410,9 @@ export class CrossHostRegistration {
           const existing = parseOwner(observed)
           if (!existing) break
           if (sameOwner(existing, owner)) { primary = true; break }
-          if (ownerIsStale(existing, dependencies) === true) {
+          if (ownerIsStale(existing, owner, dependencies) === true) {
             recoveryClaim ??= recoveryPath(directory, owner)
-            try { publishFile(recoveryClaim, observed) } catch (error) {
-              if (!hasErrorCode(error, "EEXIST") || readIfExists(recoveryClaim) !== observed) throw error
-            }
+            publishRecoveryClaim(recoveryClaim, observed)
           }
           if (!retireOwner(directory, observed, existing, owner, dependencies)) break
         }
@@ -332,10 +431,79 @@ export class CrossHostRegistration {
     return Boolean(current && sameOwner(current, this.owner))
   }
 
+  tryAcquire(primaryCandidate: boolean | (() => boolean)): boolean {
+    if (this.released || this.isPrimary) return this.isPrimary
+    if (!(typeof primaryCandidate === "function" ? primaryCandidate() : primaryCandidate)) return false
+    publishParticipant(this.participant, this.owner)
+    removeRetiredParticipantIfOwned(this.directory, this.owner)
+    for (let attempt = 0; attempt < ACQUIRE_ATTEMPTS; attempt += 1) {
+      if (publishOwner(this.directory, this.owner, this.dependencies)) { this.primary = true; break }
+      const observed = readIfExists(ownerPath(this.directory))
+      if (observed === undefined) continue
+      const existing = parseOwner(observed)
+      if (!existing) break
+      if (sameOwner(existing, this.owner)) { this.primary = true; break }
+      if (ownerIsStale(existing, this.owner, this.dependencies) === true) {
+        this.recoveryClaim ??= recoveryPath(this.directory, this.owner)
+        publishRecoveryClaim(this.recoveryClaim, observed)
+      }
+      if (!retireOwner(this.directory, observed, existing, this.owner, this.dependencies)) break
+    }
+    return this.isPrimary
+  }
+
+  async tryAcquireAsync(primaryCandidate: boolean | (() => boolean)): Promise<boolean> {
+    if (this.released || this.isPrimary) return this.isPrimary
+    if (!(typeof primaryCandidate === "function" ? primaryCandidate() : primaryCandidate)) return false
+    publishParticipant(this.participant, this.owner)
+    removeRetiredParticipantIfOwned(this.directory, this.owner)
+    for (let attempt = 0; attempt < ACQUIRE_ATTEMPTS; attempt += 1) {
+      if (publishOwner(this.directory, this.owner, this.dependencies)) { this.primary = true; break }
+      const observed = readIfExists(ownerPath(this.directory))
+      if (observed === undefined) continue
+      const existing = parseOwner(observed)
+      if (!existing) break
+      if (sameOwner(existing, this.owner)) { this.primary = true; break }
+      if (await ownerIsStaleAsync(existing, this.owner, this.dependencies) === true) {
+        this.recoveryClaim ??= recoveryPath(this.directory, this.owner)
+        publishRecoveryClaim(this.recoveryClaim, observed)
+      }
+      if (!await retireOwnerAsync(this.directory, observed, existing, this.owner, this.dependencies)) break
+    }
+    return this.isPrimary
+  }
+
+  async participateInRecoveryAsync(candidate: ProcessOwner): Promise<void> {
+    if (this.released) return
+    publishParticipant(this.participant, this.owner)
+    removeRetiredParticipantIfOwned(this.directory, this.owner)
+    const observed = readIfExists(ownerPath(this.directory))
+    if (observed === undefined) return
+    const existing = parseOwner(observed)
+    if (!existing || await ownerIsStaleAsync(existing, this.owner, this.dependencies) !== true) return
+    if (await ownerIsStaleAsync(candidate, this.owner, this.dependencies) !== false) return
+    if (sameOwner(candidate, this.owner)) {
+      this.recoveryClaim ??= recoveryPath(this.directory, this.owner)
+      publishRecoveryClaim(this.recoveryClaim, observed)
+      return
+    }
+    removeParticipantIfOwned(this.participant, this.owner)
+    if (this.recoveryClaim) try { unlinkSync(this.recoveryClaim) } catch {}
+    this.recoveryClaim = undefined
+    publishRecoveryClaim(recoveryPath(this.directory, candidate), observed)
+  }
+
+  deferPrimary(): void {
+    if (this.released) return
+    retireOwnerIfOwned(this.directory, this.owner, this.dependencies)
+    this.primary = false
+  }
+
   release(): boolean {
     if (this.released) return false
     retireOwnerIfOwned(this.directory, this.owner, this.dependencies)
     removeParticipantIfOwned(this.participant, this.owner)
+    removeRetiredParticipantIfOwned(this.directory, this.owner)
     if (this.recoveryClaim) try { unlinkSync(this.recoveryClaim) } catch {}
     this.primary = false
     this.released = true

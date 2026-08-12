@@ -39,6 +39,13 @@ import type {
   WorkspaceDescriptor,
   WorkspaceFileResponse,
   WorkspaceFileSearchResponse,
+  WorkflowDefinitionRecord,
+  WorkflowDefinitionRunCreateRequest,
+  WorkflowDefinitionV1,
+  WorkflowGateAnswerRequest,
+  WorkflowResumeRequest,
+  WorkflowRun,
+  WorkflowRunCreateRequest,
 
   WorkspaceLogEntry,
   WorkspaceEventPayload,
@@ -51,7 +58,7 @@ import type {
 } from "../../../server/src/api-types"
 import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
-import { attachEventSourceHandlers } from "./event-source-handlers"
+import { createBrowserEventConnector, type BrowserEventStreamCallbacks } from "./browser-event-transport"
 
 const RUNTIME_BASE = typeof window !== "undefined" ? window.location?.origin : undefined
 const DEFAULT_BASE = typeof window !== "undefined" ? window.__CODENOMAD_API_BASE__ ?? RUNTIME_BASE : undefined
@@ -91,6 +98,7 @@ function buildAbsoluteUrl(path: string): string {
 
 const httpLogger = getLogger("api")
 const sseLogger = getLogger("sse")
+const connectBrowserEvents = createBrowserEventConnector()
 
 function normalizeHeaders(headers: HeadersInit | undefined): Record<string, string> {
   const output: Record<string, string> = {}
@@ -140,7 +148,14 @@ async function readErrorMessage(response: Response): Promise<string> {
   return text
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export class ApiRequestError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message)
+    this.name = "ApiRequestError"
+  }
+}
+
+async function request<T>(path: string, init?: RequestInit, acceptedErrorStatuses: readonly number[] = []): Promise<T> {
   const url = API_BASE ? new URL(path, API_BASE).toString() : path
   const headers = normalizeHeaders(init?.headers)
   if (init?.body !== undefined) {
@@ -153,10 +168,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   try {
     const response = await fetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
-    if (!response.ok) {
+    if (!response.ok && !acceptedErrorStatuses.includes(response.status)) {
       const message = await readErrorMessage(response)
       logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })
-      throw new Error(message || `Request failed with ${response.status}`)
+      throw new ApiRequestError(message || `Request failed with ${response.status}`, response.status)
     }
     const duration = Date.now() - startedAt
     logHttp(`${method} ${path} -> ${response.status}`, { durationMs: duration })
@@ -185,7 +200,7 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
   if (!response.ok) {
     const message = await readErrorMessage(response)
     logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })
-    throw new Error(message || `Request failed with ${response.status}`)
+    throw new ApiRequestError(message || `Request failed with ${response.status}`, response.status)
   }
 
   logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt })
@@ -533,6 +548,91 @@ export const serverApi = {
       `/workspaces/${encodeURIComponent(instanceId)}/plugin/background-processes`,
     )
   },
+  listWorkflowRuns(instanceId: string): Promise<{ runs: WorkflowRun[] }> {
+    return request<{ runs: WorkflowRun[] }>(`/workspaces/${encodeURIComponent(instanceId)}/plugin/workflow-runs`)
+  },
+  listWorkflowDefinitions(): Promise<{ definitions: WorkflowDefinitionRecord[] }> {
+    return request<{ definitions: WorkflowDefinitionRecord[] }>("/api/workflow-definitions")
+  },
+  getWorkflowDefinition(id: string): Promise<WorkflowDefinitionRecord> {
+    return request<WorkflowDefinitionRecord>(`/api/workflow-definitions/${encodeURIComponent(id)}`)
+  },
+  validateWorkflowDefinition(source: string): Promise<
+    | { valid: true; definition: WorkflowDefinitionV1; canonical: string }
+    | { valid: false; issues: Array<{ path?: Array<string | number>; message: string }> }
+  > {
+    return request("/api/workflow-definitions/validate", { method: "POST", body: JSON.stringify({ source }) }, [400])
+  },
+  createWorkflowDefinition(source: string): Promise<WorkflowDefinitionRecord> {
+    return request("/api/workflow-definitions", { method: "POST", body: JSON.stringify({ source }) })
+  },
+  updateWorkflowDefinition(id: string, expectedRevision: number, source: string): Promise<WorkflowDefinitionRecord> {
+    return request(`/api/workflow-definitions/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify({ expectedRevision, source }),
+    })
+  },
+  deleteWorkflowDefinition(id: string, expectedRevision: number): Promise<void> {
+    return request(`/api/workflow-definitions/${encodeURIComponent(id)}?${new URLSearchParams({ expectedRevision: String(expectedRevision) })}`, {
+      method: "DELETE",
+    })
+  },
+  startWorkflowDefinition(id: string, payload: Omit<WorkflowDefinitionRunCreateRequest, "definitionId">): Promise<WorkflowRun> {
+    return request(`/api/workflow-definitions/${encodeURIComponent(id)}/start`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  },
+  createWorkflowRun(
+    instanceId: string,
+    payload: Omit<WorkflowRunCreateRequest, "workspaceId" | "stages"> & {
+      stages: Array<Omit<WorkflowRunCreateRequest["stages"][number], "model"> & {
+        model?: { providerId: string; modelId: string }
+      }>
+    },
+  ): Promise<WorkflowRun> {
+    return request<WorkflowRun>("/api/workflow-runs", {
+      method: "POST",
+      body: JSON.stringify({
+        ...payload,
+        workspaceId: instanceId,
+        stages: payload.stages.map((stage) => ({
+          ...stage,
+          model: stage.model ? { providerID: stage.model.providerId, modelID: stage.model.modelId } : undefined,
+        })),
+      }),
+    })
+  },
+  getWorkflowRun(instanceId: string, runId: string): Promise<WorkflowRun> {
+    return request<WorkflowRun>(
+      `/workspaces/${encodeURIComponent(instanceId)}/plugin/workflow-runs/${encodeURIComponent(runId)}`,
+    )
+  },
+  approveWorkflowRun(_instanceId: string, runId: string, expectedStepId: string): Promise<WorkflowRun> {
+    return request<WorkflowRun>(`/api/workflow-runs/${encodeURIComponent(runId)}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ expectedStepId }),
+    })
+  },
+  pauseWorkflowRun(runId: string): Promise<WorkflowRun> {
+    return request(`/api/workflow-runs/${encodeURIComponent(runId)}/pause`, { method: "POST" })
+  },
+  resumeWorkflowRun(runId: string, payload: WorkflowResumeRequest = {}): Promise<WorkflowRun> {
+    return request(`/api/workflow-runs/${encodeURIComponent(runId)}/resume`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  },
+  answerWorkflowGate(runId: string, payload: WorkflowGateAnswerRequest): Promise<WorkflowRun> {
+    return request(`/api/workflow-runs/${encodeURIComponent(runId)}/answer`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  },
+  cancelWorkflowRun(instanceId: string, runId: string): Promise<WorkflowRun> {
+    void instanceId
+    return request<WorkflowRun>(`/api/workflow-runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" })
+  },
   stopBackgroundProcess(instanceId: string, processId: string): Promise<BackgroundProcess> {
     return request<BackgroundProcess>(
       `/workspaces/${encodeURIComponent(instanceId)}/plugin/background-processes/${encodeURIComponent(processId)}/stop`,
@@ -603,17 +703,14 @@ export const serverApi = {
       `/workspaces/${encodeURIComponent(instanceId)}/plugin/background-processes/${encodeURIComponent(processId)}/output${suffix}`,
     )
   },
-  connectEvents(
-    onEvent: (event: WorkspaceEventPayload) => void,
-    onError?: () => void,
-    onPing?: (payload: { ts?: number }) => void,
-  ) {
+  connectEvents(callbacks: BrowserEventStreamCallbacks) {
     const identity = getClientIdentity()
     const url = buildClientEventsUrl(identity)
     sseLogger.info(`Connecting to ${url}`)
-    const source = new EventSource(url, { withCredentials: true } as any)
-    attachEventSourceHandlers(source, { onEvent, onError, onPing, logger: sseLogger })
-    return source
+    return connectBrowserEvents(url, {
+      ...callbacks,
+      onParseError: (error) => sseLogger.error("Event stream failed", error),
+    })
   },
 }
 

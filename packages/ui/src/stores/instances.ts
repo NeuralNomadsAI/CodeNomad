@@ -10,7 +10,7 @@ import { buildInstanceBaseUrl, sdkManager } from "../lib/sdk-manager"
 import { sseManager } from "../lib/sse-manager"
 import { serverApi } from "../lib/api-client"
 import { serverEvents } from "../lib/server-events"
-import type { WorkspaceDescriptor, WorkspaceEventPayload, WorkspaceLogEntry } from "../../../server/src/api-types"
+import type { InstanceStreamStatus, WorkspaceDescriptor, WorkspaceEventPayload, WorkspaceLogEntry } from "../../../server/src/api-types"
 import { ensureInstanceConfigLoaded } from "./instance-config"
 import {
   fetchSessions,
@@ -22,6 +22,7 @@ import {
   clearInstanceSessionExpansionState,
   clearInstanceSessionSelection,
   resetSessionPagination,
+  loadMessages,
 } from "./sessions"
 import {
   ensureWorktreesLoaded,
@@ -36,6 +37,10 @@ import { fetchCommands, clearCommands } from "./commands"
 import { serverSettings } from "./preferences"
 import {
   reconcileSessionPendingState,
+  activeSessionId,
+  activeParentSessionId,
+  invalidateInstanceSessionRuntimeLoads,
+  messagesLoaded,
   sessions,
   setSessionPendingPermission,
   setSessionPendingQuestion,
@@ -95,6 +100,8 @@ serverEvents.on("yolo.stateChanged", (event) => {
   const { instanceId, sessionId, enabled } = event
   if (typeof instanceId !== "string" || typeof sessionId !== "string" || typeof enabled !== "boolean") return
   log.info(`[SSE] Yolo state changed: ${instanceId}:${sessionId} -> ${enabled}`)
+  const key = `${instanceId}:${sessionId}`
+  yoloSyncGenerations.set(key, (yoloSyncGenerations.get(key) ?? 0) + 1)
   setPermissionAutoAcceptEnabled(instanceId, sessionId, enabled)
 })
 
@@ -222,6 +229,7 @@ interface DisconnectedInstanceInfo {
   reason: string
 }
 const [disconnectedInstance, setDisconnectedInstance] = createSignal<DisconnectedInstanceInfo | null>(null)
+const openCodeConnectionStatuses = new Map<string, InstanceStreamStatus>()
 
 const MAX_LOG_ENTRIES = 1000
 
@@ -293,11 +301,22 @@ function resyncConnectedInstance(instanceId: string): void {
 }
 
 serverEvents.on("instance.eventStatus", (event) => {
-  if (event.type !== "instance.eventStatus" || event.status !== "connected") return
+  if (event.type !== "instance.eventStatus") return
+  openCodeConnectionStatuses.set(event.instanceId, event.status)
+  if (event.status !== "connected") return
   if (disconnectedInstance()?.id === event.instanceId) {
     setDisconnectedInstance(null)
   }
   resyncConnectedInstance(event.instanceId)
+})
+
+serverEvents.on("instance.event", (event) => {
+  if (event.type !== "instance.event") return
+  if (event.event.type === "workflow.run.updated") {
+    sseManager.seedStatus(event.instanceId, openCodeConnectionStatuses.get(event.instanceId) ?? "disconnected")
+    return
+  }
+  openCodeConnectionStatuses.set(event.instanceId, "connected")
 })
 
 function createRestoreCreationRequestId(): string {
@@ -340,6 +359,7 @@ function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectN
   const existing = instances().get(descriptor.id)
   return {
     id: descriptor.id,
+    lineageId: descriptor.lineageId ?? existing?.lineageId,
     folder: descriptor.path,
     projectName: projectName ?? existing?.projectName ?? descriptor.name,
     port: descriptor.port ?? existing?.port ?? 0,
@@ -419,6 +439,7 @@ function attachClient(descriptor: WorkspaceDescriptor) {
     proxyPath: nextProxyPath,
     status: "ready",
   })
+  if (!openCodeConnectionStatuses.has(descriptor.id)) openCodeConnectionStatuses.set(descriptor.id, "connecting")
   sseManager.seedStatusIfMissing(descriptor.id, "connecting")
   const sessionHydration = startInstanceSessionHydration(descriptor.id)
   initialSessionHydrations.set(descriptor.id, sessionHydration.sessions)
@@ -487,6 +508,7 @@ function releaseInstanceResources(instanceId: string) {
     sdkManager.destroyClientsForInstance(instanceId)
   }
   clearOpenCodeWorkspaceCache(instanceId)
+  openCodeConnectionStatuses.set(instanceId, "disconnected")
   sseManager.seedStatus(instanceId, "disconnected")
 }
 
@@ -678,7 +700,7 @@ function syncPendingRequests(
   return promise
 }
 
-function startInstanceSessionHydration(instanceId: string, force = false): {
+function startInstanceSessionHydration(instanceId: string, force = false, propagateErrors = false): {
   sessions: Promise<void>
   workspaceMetadata: Promise<void>
 } {
@@ -690,9 +712,12 @@ function startInstanceSessionHydration(instanceId: string, force = false): {
     : ensureWorktreesLoaded(instanceId)
   const sessions = Promise.all([worktreeHydration, worktreeMapHydration]).then(async () => {
     resetSessionPagination(instanceId)
-    await fetchSessions(instanceId).catch((error) => {
+    try {
+      await fetchSessions(instanceId, { propagateErrors })
+    } catch (error) {
       log.error("Failed to hydrate sessions", { instanceId, error })
-    })
+      if (propagateErrors) throw error
+    }
   })
   const workspaceMetadata = worktreeHydration.then(async () => {
     await Promise.all([worktreeMapHydration, syncOpenCodeWorkspaces(instanceId)])
@@ -712,7 +737,7 @@ async function hydrateInstanceData(instanceId: string, options?: {
           sessions: options.sessionHydration,
           workspaceMetadata: options.workspaceMetadataHydration ?? Promise.resolve(),
         }
-      : startInstanceSessionHydration(instanceId, options?.force)
+      : startInstanceSessionHydration(instanceId, options?.force, options?.propagateErrors)
     await hydration.sessions
     await hydration.workspaceMetadata
     await fetchAgents(instanceId)
@@ -775,7 +800,7 @@ function clearReloadableInstanceState(instanceId: string): void {
   clearQuestionQueue(instanceId)
 }
 
-async function rehydrateInstance(instanceId: string, options?: { reason?: string }): Promise<void> {
+async function rehydrateInstance(instanceId: string, options?: { reason?: string; replayReset?: boolean }): Promise<void> {
   if (pendingRehydrations.has(instanceId)) {
     return pendingRehydrations.get(instanceId)
   }
@@ -787,9 +812,36 @@ async function rehydrateInstance(instanceId: string, options?: { reason?: string
     }
 
     log.info("Rehydrating instance", { instanceId, reason: options?.reason })
+    const messageSessionIds = options?.replayReset
+      ? new Set([
+          ...(messagesLoaded().get(instanceId) ?? []),
+          activeParentSessionId().get(instanceId),
+          activeSessionId().get(instanceId),
+        ].filter((sessionId): sessionId is string => Boolean(sessionId) && sessionId !== "info"))
+      : new Set<string>()
+    const activeYoloSessionIds = options?.replayReset
+      ? new Set([activeParentSessionId().get(instanceId), activeSessionId().get(instanceId)]
+          .filter((sessionId): sessionId is string => Boolean(sessionId) && sessionId !== "info"))
+      : new Set<string>()
     clearReloadableInstanceState(instanceId)
+    if (options?.replayReset) invalidateInstanceSessionRuntimeLoads(instanceId)
 
-    await hydrateInstanceData(instanceId, { force: true })
+    await hydrateInstanceData(instanceId, {
+      force: true,
+      propagateErrors: options?.replayReset,
+    })
+    if (options?.replayReset) {
+      await Promise.all([
+        ...Array.from(messageSessionIds, (sessionId) => {
+          if (!sessions().get(instanceId)?.has(sessionId)) return Promise.resolve()
+          return loadMessages(instanceId, sessionId, { force: true, skipChildren: true })
+        }),
+        ...Array.from(activeYoloSessionIds, (sessionId) => {
+          if (!sessions().get(instanceId)?.has(sessionId)) return Promise.resolve()
+          return refreshYoloState(instanceId, sessionId)
+        }),
+      ])
+    }
   })().finally(() => {
     pendingRehydrations.delete(instanceId)
   })
@@ -867,6 +919,18 @@ serverEvents.onOpen(() => {
       return { error }
     },
   )
+})
+
+serverEvents.onReplayReset(async () => {
+  await refreshWorkspaceList()
+  const readyInstanceIds = Array.from(instances(), ([instanceId, instance]) =>
+    instance.status === "ready" && instance.client ? instanceId : null,
+  ).filter((instanceId): instanceId is string => Boolean(instanceId))
+  await Promise.all(readyInstanceIds.map(async (instanceId) => {
+    await waitForSettledPrerequisite(initialHydrations.get(instanceId))
+    await pendingRehydrations.get(instanceId)
+    await rehydrateInstance(instanceId, { reason: "event replay reset", replayReset: true })
+  }))
 })
 
 async function waitForInitialWorkspaceLoad(): Promise<void> {
@@ -1018,6 +1082,7 @@ function addInstance(instance: Instance) {
     instanceId: instance.id,
     folder: instance.folder,
     occurrence,
+    lineageId: instance.lineageId,
   })
   syncHasInstancesFlag()
 }
@@ -1047,6 +1112,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
       instanceId: id,
       folder: removedInstance.folder,
       occurrence: removedOccurrence,
+      lineageId: removedInstance.lineageId,
     })
   }
   let nextActiveId: string | null = null
@@ -1108,6 +1174,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
       instanceId: id,
       folder: removedInstance.folder,
       occurrence: removedOccurrence,
+      lineageId: removedInstance.lineageId,
     })
   }
   syncHasInstancesFlag()
@@ -1179,6 +1246,7 @@ async function createInstance(
     onCreateCommit?: (instanceId: string) => void
     waitForCreateCommit?: () => Promise<void>
     forceNew?: boolean
+    lineageId?: string
   },
 ): Promise<{ instanceId: string; reused: boolean; requestId?: string }> {
   const restoreRequestId = options?.signal ? createRestoreCreationRequestId() : undefined
@@ -1210,6 +1278,7 @@ async function createInstance(
       binaryPath,
       requestId: restoreRequestId,
       forceNew: options?.forceNew,
+      ...(options?.lineageId ? { lineageId: options.lineageId } : {}),
     }, { signal: options?.signal })
     requestResolved = true
     const reused = workspace.reused === true
@@ -1323,28 +1392,35 @@ function updateProjectNameForFolder(folder: string, projectName: string): void {
   }
 }
 
-function stopInstance(id: string) {
+const pendingStopRequests = new Map<string, Promise<void>>()
+
+function stopInstance(id: string): Promise<void> {
+  const pending = pendingStopRequests.get(id)
+  if (pending) return pending
   const instance = instances().get(id)
-  if (!instance) return
+  if (!instance) return Promise.resolve()
 
-  workspaceListReconciliationFence.markMutation(id)
-  releaseInstanceResources(id)
-  removeInstance(id)
-
-  if (restoreCreatedWorkspaceCleanup.owns(id)) {
-    void restoreCreatedWorkspaceCleanup.discardTracked(id, { retainTombstone: true })
-      .then(() => serverApi.deleteWorkspace(id))
-      .catch((error) => log.error("Failed to stop restore-tracked workspace", error))
-    return
-  }
-
-  void serverApi.deleteWorkspace(id).catch((error) => {
-    log.error("Failed to stop workspace", error)
-    showToastNotification({
-      message: tGlobal("app.stopInstance.toast.error"),
-      variant: "error",
-    })
-  })
+  const request = (async () => {
+    try {
+      if (restoreCreatedWorkspaceCleanup.owns(id)) {
+        await restoreCreatedWorkspaceCleanup.discardTracked(id, { retainTombstone: true })
+      }
+      await serverApi.deleteWorkspace(id)
+      workspaceListReconciliationFence.markMutation(id)
+      releaseInstanceResources(id)
+      removeInstance(id)
+    } catch (error) {
+      log.error("Failed to stop workspace", error)
+      showToastNotification({
+        message: tGlobal("app.stopInstance.toast.error"),
+        variant: "error",
+      })
+    } finally {
+      pendingStopRequests.delete(id)
+    }
+  })()
+  pendingStopRequests.set(id, request)
+  return request
 }
 
 async function fetchLspStatus(instanceId: string): Promise<LspStatus[] | undefined> {
@@ -1611,17 +1687,24 @@ function togglePermissionAutoAcceptForSession(instanceId: string, sessionId: str
  * reconnect so state re-syncs after a server restart.
  */
 const syncedYoloSessions = new Set<string>()
+const yoloSyncGenerations = new Map<string, number>()
+
+async function refreshYoloState(instanceId: string, sessionId: string): Promise<void> {
+  const key = `${instanceId}:${sessionId}`
+  const generation = (yoloSyncGenerations.get(key) ?? 0) + 1
+  yoloSyncGenerations.set(key, generation)
+  const state = await serverApi.getYoloState(instanceId, sessionId)
+  if (yoloSyncGenerations.get(key) !== generation) return
+  setPermissionAutoAcceptEnabled(instanceId, sessionId, state.enabled)
+  syncedYoloSessions.add(key)
+}
 
 export function ensureYoloStateSynced(instanceId: string, sessionId: string): void {
   if (!instanceId || !sessionId || sessionId === "info") return
   const key = `${instanceId}:${sessionId}`
   if (syncedYoloSessions.has(key)) return
   syncedYoloSessions.add(key)
-  void serverApi
-    .getYoloState(instanceId, sessionId)
-    .then((state) => {
-      setPermissionAutoAcceptEnabled(instanceId, sessionId, state.enabled)
-    })
+  void refreshYoloState(instanceId, sessionId)
     .catch((error) => {
       // allow retry on next activation (e.g. instance not ready yet)
       syncedYoloSessions.delete(key)
@@ -1639,6 +1722,9 @@ function clearSyncedYoloSessionsForInstance(instanceId: string): void {
     if (key.startsWith(prefix)) {
       syncedYoloSessions.delete(key)
     }
+  }
+  for (const key of yoloSyncGenerations.keys()) {
+    if (key.startsWith(prefix)) yoloSyncGenerations.delete(key)
   }
 }
 
@@ -1934,7 +2020,7 @@ async function acknowledgeDisconnectedInstance(): Promise<void> {
   }
 
   try {
-    stopInstance(pending.id)
+    await stopInstance(pending.id)
   } catch (error) {
     log.error("Failed to stop disconnected instance", error)
   } finally {

@@ -18,6 +18,7 @@ pub(super) const RUNNING_MARKER_SUFFIX: &str = ".lock";
 static NEXT_RUNNING_MARKER_ID: AtomicU64 = AtomicU64::new(0);
 
 pub(super) struct ProcessState {
+    app_data_dir: Option<PathBuf>,
     primary_lock: Mutex<Option<File>>,
     cross_host_registration: Mutex<Option<cross_host::Registration>>,
     running_marker: Mutex<Option<RunningMarker>>,
@@ -119,9 +120,12 @@ impl Registration {
                 None
             }
         };
+        if let Some(registration) = &cross_host_registration {
+            registration.retain_local_candidacy();
+        }
         if !cross_host_registration
             .as_ref()
-            .is_some_and(cross_host::Registration::is_primary)
+            .is_some_and(cross_host::Registration::retains_local_candidacy)
         {
             if let Some(file) = primary_lock.take() {
                 release_primary_file(&file);
@@ -145,6 +149,14 @@ impl Registration {
                 .is_some_and(cross_host::Registration::is_primary)
     }
 
+    pub(super) fn ownership_valid(&self) -> bool {
+        self.primary_lock.is_some()
+            && self
+                .cross_host_registration
+                .as_ref()
+                .is_some_and(cross_host::Registration::ownership_valid)
+    }
+
     pub(super) fn finish(self) -> ProcessState {
         if self.holds_registration_lock {
             if let Err(err) = FileExt::unlock(&self.registration_file) {
@@ -152,6 +164,7 @@ impl Registration {
             }
         }
         ProcessState {
+            app_data_dir: Some(self.running_marker.path.parent().unwrap().to_path_buf()),
             primary_lock: Mutex::new(self.primary_lock),
             cross_host_registration: Mutex::new(self.cross_host_registration),
             running_marker: Mutex::new(Some(self.running_marker)),
@@ -192,6 +205,7 @@ fn create_registration_id() -> String {
 impl ProcessState {
     pub(super) fn disabled() -> Self {
         Self {
+            app_data_dir: None,
             primary_lock: Mutex::new(None),
             cross_host_registration: Mutex::new(None),
             running_marker: Mutex::new(None),
@@ -212,13 +226,104 @@ impl ProcessState {
                 .map(|registration| {
                     registration
                         .as_ref()
-                        .is_some_and(cross_host::Registration::is_primary)
+                        .is_some_and(cross_host::Registration::ownership_valid)
                 })
                 .unwrap_or(false)
     }
 
+    pub(super) fn refresh_primary(&self) -> bool {
+        if !self.retains_local_candidacy() {
+            return false;
+        }
+        let has_local_lock = self.refresh_local_primary();
+        self.cross_host_registration
+            .lock()
+            .map(|registration| {
+                registration.as_ref().is_some_and(|registration| {
+                    if has_local_lock {
+                        registration.is_primary()
+                    } else {
+                        registration.defer_to_local_holder();
+                        false
+                    }
+                })
+            })
+            .unwrap_or(false)
+    }
+
+    pub(super) fn defer_primary(&self) {
+        if let Ok(registration) = self.cross_host_registration.lock() {
+            if let Some(registration) = registration.as_ref() {
+                registration.defer_primary();
+            }
+        }
+    }
+
     pub(super) fn is_registered(&self) -> bool {
         self.registration_file.is_some()
+    }
+
+    pub(super) fn retains_local_candidacy(&self) -> bool {
+        self.registration_file.is_some()
+            && self
+                .cross_host_registration
+                .lock()
+                .map(|registration| {
+                    registration
+                        .as_ref()
+                        .is_some_and(cross_host::Registration::retains_local_candidacy)
+                })
+                .unwrap_or(false)
+    }
+
+    fn refresh_local_primary(&self) -> bool {
+        let Ok(mut primary_lock) = self.primary_lock.lock() else {
+            return false;
+        };
+        if primary_lock.is_some() {
+            return true;
+        }
+        let (Some(app_data_dir), Some(registration_file)) =
+            (&self.app_data_dir, &self.registration_file)
+        else {
+            return false;
+        };
+        if try_acquire_registration_lock(registration_file, Duration::ZERO).ok() != Some(true) {
+            return false;
+        }
+
+        let acquired = (|| {
+            let registration_id = create_registration_id();
+            record_registration_owner(
+                &app_data_dir.join(REGISTRATION_OWNER_FILENAME),
+                &registration_id,
+            )?;
+            let path = app_data_dir.join(PRIMARY_LOCK_FILENAME);
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .open(&path)
+                .map_err(|err| format!("failed to open primary lock {}: {err}", path.display()))?;
+            match FileExt::try_lock_exclusive(&file) {
+                Ok(()) => {
+                    *primary_lock = Some(file);
+                    Ok(true)
+                }
+                Err(err) if is_lock_contended(&err) => Ok(false),
+                Err(err) => Err(format!("failed to acquire primary lock: {err}")),
+            }
+        })();
+        if let Err(err) = FileExt::unlock(registration_file) {
+            eprintln!("[client-state] failed to release registration lock: {err}");
+        }
+        match acquired {
+            Ok(acquired) => acquired,
+            Err(err) => {
+                eprintln!("[client-state] failed to retry local ownership: {err}");
+                false
+            }
+        }
     }
 
     pub(super) fn release_locks(&self) {

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
+import { spawnSync } from "node:child_process"
 import { describe, it } from "node:test"
 
 import { buildWindowsSpawnSpec, parseWslUncPath, resolveWslWorkingDirectory } from "../spawn"
@@ -78,7 +79,7 @@ describe("buildWindowsSpawnSpec", () => {
       assert.equal(spec.command, "test-cmd.exe")
       assert.equal(spec.processKind, "windows-wrapper")
       assert.equal(spec.options.windowsVerbatimArguments, true)
-      assert.match(spec.args[3] ?? "", new RegExp(escapeRegex(path.win32.resolve(shim)), "i"))
+      assert.match((spec.args[4] ?? "").replace(/\^/g, ""), new RegExp(escapeRegex(path.win32.resolve(shim)), "i"))
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
@@ -112,6 +113,37 @@ describe("buildWindowsSpawnSpec", () => {
     assert.deepEqual(spec.args, ["serve"])
     assert.equal(spec.processKind, "windows-wrapper")
     assert.equal(spec.options.windowsVerbatimArguments, undefined)
+  })
+
+  it("passes spaces and shell metacharacters to cmd wrappers as literal arguments", { skip: process.platform !== "win32" }, () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codenomad spawn "))
+    const capture = path.join(root, "capture.cjs")
+    const injected = path.join(root, "injected")
+    const unsafeArg = `review&echo injected>${injected}`
+    mkdirSync(path.join(root, "bin with spaces"), { recursive: true })
+    writeFileSync(capture, 'require("node:fs").writeFileSync(process.env.CAPTURE_OUTPUT, JSON.stringify(process.argv.slice(2)))\n')
+
+    try {
+      for (const extension of ["cmd", "bat"]) {
+        const wrapper = path.join(root, "bin with spaces", `git.${extension}`)
+        const output = path.join(root, `args-${extension}.json`)
+        writeFileSync(wrapper, `@echo off\r\n"${process.execPath}" "${capture}" %*\r\n`)
+        const spec = buildWindowsSpawnSpec(wrapper, ["worktree", "path with spaces", unsafeArg], {
+          env: { ...process.env, CAPTURE_OUTPUT: output },
+        })
+        const result = spawnSync(spec.command, spec.args, {
+          env: spec.env,
+          encoding: "utf8",
+          windowsVerbatimArguments: spec.options.windowsVerbatimArguments,
+        })
+
+        assert.equal(result.status, 0, result.stderr)
+        assert.equal(existsSync(injected), false)
+        assert.deepEqual(JSON.parse(readFileSync(output, "utf8")), ["worktree", "path with spaces", unsafeArg])
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it("wraps WSL binaries with wsl.exe and propagates required env vars", () => {

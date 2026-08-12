@@ -1,5 +1,5 @@
-export type ReconcileTabDescriptor = { kind: string; folderPath?: string; occurrence?: number }
-type LiveWorkspaceDescriptor = { id: string; folderPath: string; status?: string }
+export type ReconcileTabDescriptor = { kind: string; folderPath?: string; occurrence?: number; lineageId?: string }
+type LiveWorkspaceDescriptor = { id: string; folderPath: string; status?: string; lineageId?: string }
 export type SessionDescriptor = { id: string; parentId?: string | null }
 export interface RestoredSessionReferences {
   activeParentSessionId?: string
@@ -28,10 +28,12 @@ export function reconcileWorkspaceTabs(
   liveWorkspaces: readonly LiveWorkspaceDescriptor[],
 ) {
   const liveByPath = new Map<string, LiveWorkspaceDescriptor[]>()
+  const liveByLineage = new Map<string, LiveWorkspaceDescriptor>()
   for (const workspace of liveWorkspaces) {
     if (workspace.status === "stopped" || workspace.status === "error") continue
     const path = normalizeWorkspacePath(workspace.folderPath)
     liveByPath.set(path, [...(liveByPath.get(path) ?? []), workspace])
+    if (workspace.lineageId) liveByLineage.set(workspace.lineageId, workspace)
   }
   const nextOccurrences = new Map<string, number>()
   const claimed = new Set<string>()
@@ -41,12 +43,15 @@ export function reconcileWorkspaceTabs(
     const inferred = nextOccurrences.get(path) ?? 0
     const occurrence = Number.isInteger(tab.occurrence) && Number(tab.occurrence) >= 0 ? Number(tab.occurrence) : inferred
     nextOccurrences.set(path, Math.max(inferred, occurrence) + 1)
-    const workspace = liveByPath.get(path)?.[occurrence]
+    const workspace = tab.lineageId ? liveByLineage.get(tab.lineageId) : liveByPath.get(path)?.[occurrence]
     const existingWorkspaceId = workspace && !claimed.has(workspace.id) ? workspace.id : null
     if (existingWorkspaceId) claimed.add(existingWorkspaceId)
     return [{
       tabIndex,
-      descriptor: { kind: "workspace" as const, folderPath: tab.folderPath, occurrence },
+      descriptor: {
+        kind: "workspace" as const, folderPath: tab.folderPath, occurrence,
+        ...(tab.lineageId ? { lineageId: tab.lineageId } : {}),
+      },
       existingWorkspaceId,
     }]
   })

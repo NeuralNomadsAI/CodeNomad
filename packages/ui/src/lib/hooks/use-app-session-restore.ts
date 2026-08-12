@@ -84,9 +84,9 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
   }
   if (signal.aborted) return Promise.all(sidecars).then(() => undefined)
   const matches = reconcileWorkspaceTabs(snapshot.tabs.map((tab) => tab.kind === "workspace"
-    ? { kind: tab.kind, folderPath: tab.folder, occurrence: tab.occurrence }
+    ? { kind: tab.kind, folderPath: tab.folder, occurrence: tab.occurrence, lineageId: tab.lineageId }
      : { kind: tab.kind }), Array.from(instances().values())
-       .map(({ id, folder, status }) => ({ id, folderPath: folder, status })))
+       .map(({ id, folder, status, lineageId }) => ({ id, folderPath: folder, status, lineageId })))
   const existing = matches.filter(({ existingWorkspaceId }) => existingWorkspaceId)
   const missing = matches.filter(({ existingWorkspaceId }) => !existingWorkspaceId)
   existing.forEach(({ tabIndex, existingWorkspaceId }) =>
@@ -111,6 +111,7 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
         const existingId = match.existingWorkspaceId
         const create = (forceNew: boolean) => createInstance(tab.folder, tab.binaryPath, tab.projectName, {
           activate: false, signal: operationSignal, forceNew,
+          lineageId: tab.lineageId,
           waitForCreateCommit: waitForCreateCommit ? () => waitForCreateCommit : undefined,
           shouldCreateCommit: canCommitCreation,
           onCreateCommit: (id) => capture.recordRestoredTab(match.tabIndex, getInstanceAppTabId(id)),

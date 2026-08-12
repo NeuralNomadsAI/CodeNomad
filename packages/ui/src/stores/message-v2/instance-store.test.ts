@@ -41,6 +41,20 @@ describe("message-v2 permission state", () => {
     assert.equal(store.getPermissionState(undefined, "permission-2")?.active, true)
   })
 
+  it("replaces a populated session with an authoritative empty hydration", () => {
+    const store = createInstanceMessageStore("instance-1")
+    store.hydrateMessages("session-1", [{
+      id: "message-1",
+      sessionId: "session-1",
+      role: "assistant",
+      status: "complete",
+    }])
+
+    store.hydrateMessages("session-1", [])
+
+    assert.deepEqual(store.state.sessions["session-1"]?.messageIds, [])
+  })
+
 })
 
 describe("message-v2 hydrateMessages vs pending optimistic sends", () => {

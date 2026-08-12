@@ -555,14 +555,14 @@ fn set_session_cookie(
     Ok(())
 }
 
-fn generate_auth_cookie_name() -> String {
+fn generate_auth_cookie_name(generation: u64) -> String {
     let pid = std::process::id();
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or(0);
 
-    format!("{SESSION_COOKIE_NAME_PREFIX}_{pid}_{timestamp}")
+    format!("{SESSION_COOKIE_NAME_PREFIX}_{pid}_{timestamp}_{generation}")
 }
 
 fn generate_transport_connection_id() -> String {
@@ -754,20 +754,11 @@ impl CliProcessManager {
 
     pub fn start(&self, app: AppHandle, dev: bool) -> anyhow::Result<()> {
         let _lifecycle = self.lifecycle.lock();
-        let generation = self.advance_generation();
         log_line(&format!("start requested (dev={dev})"));
-        self.stop_tracked_child()?;
-        *self.bootstrap_token.lock() = None;
-        *self.session_cookie.lock() = None;
-        *self.auth_cookie_name.lock() = None;
-        {
-            let mut status = self.status.lock();
-            status.state = CliState::Starting;
-            status.port = None;
-            status.url = None;
-            status.error = None;
-            status.pid = None;
-        }
+        let generation = self.prepare_start_transition(
+            || crate::revoke_cli_endpoint_authority(&app),
+            || self.stop_tracked_child(),
+        )?;
         Self::emit_status(&app, &self.status.lock());
 
         let manager = self.clone();
@@ -781,12 +772,35 @@ impl CliProcessManager {
         Ok(())
     }
 
-    pub fn stop(&self) -> anyhow::Result<()> {
+    pub fn stop(&self, revoke_renderer: impl FnOnce()) -> anyhow::Result<()> {
         let _lifecycle = self.lifecycle.lock();
-        self.advance_generation();
-        self.stop_tracked_child()?;
+        self.revoke_endpoint_generation_locked(revoke_renderer);
+        if let Err(err) = self.stop_tracked_child() {
+            let mut status = self.status.lock();
+            status.state = CliState::Error;
+            status.error = Some(format!("failed to stop CLI: {err}"));
+            return Err(err);
+        }
         self.reset_stopped_status();
         Ok(())
+    }
+
+    fn prepare_start_transition(
+        &self,
+        revoke_renderer: impl FnOnce(),
+        stop: impl FnOnce() -> anyhow::Result<()>,
+    ) -> anyhow::Result<u64> {
+        let generation = self.revoke_endpoint_generation_locked(revoke_renderer);
+        if let Err(err) = stop() {
+            let mut status = self.status.lock();
+            status.state = CliState::Error;
+            status.error = Some(format!("failed to replace CLI: {err}"));
+            return Err(err);
+        }
+        let mut status = self.status.lock();
+        status.state = CliState::Starting;
+        status.error = None;
+        Ok(generation)
     }
 
     fn advance_generation(&self) -> u64 {
@@ -855,7 +869,44 @@ impl CliProcessManager {
         status.port = None;
         status.url = None;
         status.error = None;
+    }
+
+    fn revoke_endpoint_authority(&self, revoke_renderer: impl FnOnce()) {
+        let mut status = self.status.lock();
+        revoke_renderer();
+        status.pid = None;
+        status.port = None;
+        status.url = None;
+        *self.bootstrap_token.lock() = None;
         *self.session_cookie.lock() = None;
+        *self.auth_cookie_name.lock() = None;
+    }
+
+    fn revoke_endpoint_generation_locked(&self, revoke_renderer: impl FnOnce()) -> u64 {
+        let generation = self.advance_generation();
+        self.revoke_endpoint_authority(revoke_renderer);
+        generation
+    }
+
+    fn handle_root_exit_locked(
+        &self,
+        generation: u64,
+        endpoint_ready: bool,
+        containment_probe: impl FnOnce() -> anyhow::Result<bool>,
+        revoke_renderer: impl FnOnce(),
+    ) -> (Option<u64>, anyhow::Result<bool>) {
+        if !self.is_current_generation(generation) {
+            return (None, Ok(false));
+        }
+        if endpoint_ready {
+            let generation = self.revoke_endpoint_generation_locked(revoke_renderer);
+            return (Some(generation), containment_probe());
+        }
+        let containment = containment_probe();
+        let revoked_generation = (containment.as_ref().is_ok_and(|gone| *gone)
+            || containment.is_err())
+        .then(|| self.revoke_endpoint_generation_locked(revoke_renderer));
+        (revoked_generation, containment)
     }
 
     fn publish_error(&self, app: &AppHandle, generation: u64, message: String) {
@@ -870,12 +921,28 @@ impl CliProcessManager {
         });
     }
 
+    fn record_ready_endpoint(&self, generation: u64, base_url: &str) -> Option<Option<String>> {
+        let port = Url::parse(base_url)
+            .ok()
+            .and_then(|url| url.port_or_known_default());
+        self.with_current_generation(generation, || {
+            let mut status = self.status.lock();
+            status.port = port;
+            status.url = Some(base_url.to_string());
+            status.state = CliState::Ready;
+            status.error = None;
+            self.bootstrap_token.lock().take()
+        })
+    }
+
     pub fn status(&self) -> CliStatus {
         self.status.lock().clone()
     }
 
     pub fn desktop_event_stream_config(&self) -> Option<DesktopEventStreamConfig> {
-        let base_url = self.status.lock().url.clone()?;
+        let _lifecycle = self.lifecycle.lock();
+        let status = self.status.lock();
+        let base_url = status.url.clone()?;
         let events_url = format!("{}/api/events", base_url.trim_end_matches('/'));
         let client_id = format!("tauri-{}", std::process::id());
         let cookie_name = self
@@ -891,6 +958,8 @@ impl CliProcessManager {
             connection_id: generate_transport_connection_id(),
             cookie_name,
             session_cookie: self.session_cookie.lock().clone(),
+            authority_generation: self.generation.load(Ordering::SeqCst),
+            authority: self.generation.clone(),
         })
     }
 
@@ -910,7 +979,7 @@ impl CliProcessManager {
             "resolved CLI entry runner={:?} entry={} host={}",
             resolution.runner, resolution.entry, host
         ));
-        let auth_cookie_name = Arc::new(generate_auth_cookie_name());
+        let auth_cookie_name = Arc::new(generate_auth_cookie_name(generation));
         let args = resolution.build_args(dev, &host, auth_cookie_name.as_str());
         log_line(&format!("CLI args: {:?}", args));
         if dev {
@@ -1093,7 +1162,9 @@ impl CliProcessManager {
                 if !manager.is_current_generation(generation) || ready.load(Ordering::SeqCst) {
                     return;
                 }
-                manager.advance_generation();
+                manager.revoke_endpoint_generation_locked(|| {
+                    crate::revoke_cli_endpoint_authority(&app)
+                });
                 log_line("timeout waiting for CLI readiness");
                 let stop_error = manager.stop_tracked_child().err();
                 let message = stop_error.map_or_else(
@@ -1110,79 +1181,110 @@ impl CliProcessManager {
             });
         }
 
-        thread::spawn(move || loop {
-            enum Poll {
-                Running,
-                Exited(std::process::ExitStatus),
-                Failed(String),
-            }
-            let poll = {
-                let _lifecycle = manager.lifecycle.lock();
-                if !manager.is_current_generation(generation) {
-                    return;
+        thread::spawn(move || {
+            let mut monitor_generation = generation;
+            let mut starting_handoff = false;
+            loop {
+                enum Poll {
+                    Running,
+                    Exited(std::process::ExitStatus),
+                    Failed(String),
                 }
-                let mut child = manager.child.lock();
-                let Some(tracked) = child.as_mut() else {
-                    return;
-                };
-                match tracked.try_wait() {
-                    Ok(Some(status)) => {
-                        #[cfg(unix)]
-                        let group_is_gone = process_group_is_gone(pid).map_err(|err| {
-                            format!("failed to inspect exited CLI pid={pid}: {err}")
-                        });
-                        #[cfg(windows)]
-                        let group_is_gone = match manager.job.lock().as_ref() {
-                            Some(job) => job.active_processes().map(|active| active == 0),
-                            None => Ok(false),
-                        };
-                        #[cfg(not(any(unix, windows)))]
-                        let group_is_gone: anyhow::Result<bool> = Ok(true);
-                        match group_is_gone {
-                            Ok(gone) if containment_is_complete(true, gone) => {
-                                *child = None;
-                                #[cfg(windows)]
-                                {
-                                    manager.job.lock().take();
-                                }
-                                Poll::Exited(status)
+                let poll = {
+                    let _lifecycle = manager.lifecycle.lock();
+                    if !manager.is_current_generation(monitor_generation) {
+                        return;
+                    }
+                    let mut child = manager.child.lock();
+                    let Some(tracked) = child.as_mut() else {
+                        return;
+                    };
+                    match tracked.try_wait() {
+                        Ok(Some(status)) => {
+                            let endpoint_ready =
+                                !starting_handoff && manager.status.lock().state == CliState::Ready;
+                            let (revoked_generation, group_is_gone) = manager
+                                .handle_root_exit_locked(
+                                    generation,
+                                    endpoint_ready,
+                                    || {
+                                        #[cfg(unix)]
+                                        return process_group_is_gone(pid).map_err(|err| {
+                                            anyhow::anyhow!(
+                                                "failed to inspect exited CLI pid={pid}: {err}"
+                                            )
+                                        });
+                                        #[cfg(windows)]
+                                        return match manager.job.lock().as_ref() {
+                                            Some(job) => {
+                                                job.active_processes().map(|active| active == 0)
+                                            }
+                                            None => Ok(false),
+                                        };
+                                        #[cfg(not(any(unix, windows)))]
+                                        Ok(true)
+                                    },
+                                    || crate::revoke_cli_endpoint_authority(&app),
+                                );
+                            if let Some(generation) = revoked_generation {
+                                monitor_generation = generation;
                             }
-                            // The root may be only a launcher/wrapper. Keep ownership and
-                            // monitoring until the process group/job is actually empty.
-                            Ok(_) => Poll::Running,
-                            Err(err) => Poll::Failed(format!(
-                                "failed to inspect exited CLI pid={pid}: {err}"
-                            )),
+                            match group_is_gone {
+                                Ok(gone) if containment_is_complete(true, gone) => {
+                                    debug_assert!(revoked_generation.is_some());
+                                    *child = None;
+                                    #[cfg(windows)]
+                                    {
+                                        manager.job.lock().take();
+                                    }
+                                    Poll::Exited(status)
+                                }
+                                Ok(_) if revoked_generation.is_some() => Poll::Exited(status),
+                                // The root may be only a launcher/wrapper. Keep ownership and
+                                // monitoring until the process group/job is actually empty.
+                                Ok(_) => {
+                                    starting_handoff = true;
+                                    Poll::Running
+                                }
+                                Err(err) => Poll::Failed(format!(
+                                    "failed to inspect exited CLI pid={pid}: {err}"
+                                )),
+                            }
+                        }
+                        Ok(None) => Poll::Running,
+                        Err(err) => {
+                            monitor_generation = manager.revoke_endpoint_generation_locked(|| {
+                                crate::revoke_cli_endpoint_authority(&app)
+                            });
+                            Poll::Failed(format!("failed to inspect CLI pid={pid}: {err}"))
                         }
                     }
-                    Ok(None) => Poll::Running,
-                    Err(err) => Poll::Failed(format!("failed to inspect CLI pid={pid}: {err}")),
-                }
-            };
-            match poll {
-                Poll::Running => thread::sleep(Duration::from_millis(100)),
-                Poll::Failed(message) => {
-                    manager.publish_error(&app, generation, message);
-                    return;
-                }
-                Poll::Exited(code) => {
-                    manager.with_current_generation(generation, || {
-                        let mut status = manager.status.lock();
-                        if status.state != CliState::Ready {
-                            status.state = CliState::Error;
-                            if status.error.is_none() {
-                                status.error = Some(format!("CLI exited early: {code}"));
+                };
+                match poll {
+                    Poll::Running => thread::sleep(Duration::from_millis(100)),
+                    Poll::Failed(message) => {
+                        manager.publish_error(&app, monitor_generation, message);
+                        return;
+                    }
+                    Poll::Exited(code) => {
+                        manager.with_current_generation(monitor_generation, || {
+                            let mut status = manager.status.lock();
+                            if status.state != CliState::Ready {
+                                status.state = CliState::Error;
+                                if status.error.is_none() {
+                                    status.error = Some(format!("CLI exited early: {code}"));
+                                }
+                                let _ = app.emit(
+                                    "cli:error",
+                                    json!({"message": status.error.clone().unwrap_or_default()}),
+                                );
+                            } else {
+                                status.state = CliState::Stopped;
                             }
-                            let _ = app.emit(
-                                "cli:error",
-                                json!({"message": status.error.clone().unwrap_or_default()}),
-                            );
-                        } else {
-                            status.state = CliState::Stopped;
-                        }
-                        Self::emit_status(&app, &status);
-                    });
-                    return;
+                            Self::emit_status(&app, &status);
+                        });
+                        return;
+                    }
                 }
             }
         });
@@ -1279,20 +1381,9 @@ impl CliProcessManager {
         if ready.swap(true, Ordering::SeqCst) {
             return;
         }
-        let port = Url::parse(&base_url)
-            .ok()
-            .and_then(|u| u.port_or_known_default())
-            .map(|p| p as u16);
-        let token = manager
-            .with_current_generation(generation, || {
-                let mut locked = manager.status.lock();
-                locked.port = port;
-                locked.url = Some(base_url.clone());
-                locked.state = CliState::Ready;
-                locked.error = None;
-                manager.bootstrap_token.lock().take()
-            })
-            .flatten();
+        let Some(token) = manager.record_ready_endpoint(generation, &base_url) else {
+            return;
+        };
         if !manager.is_current_generation(generation) {
             return;
         }
@@ -1763,6 +1854,357 @@ mod tests {
     }
 
     #[test]
+    fn endpoint_revocation_clears_all_reusable_cli_authority() {
+        let manager = CliProcessManager::new();
+        let old_generation = manager.advance_generation();
+        {
+            let mut status = manager.status.lock();
+            status.state = CliState::Ready;
+            status.pid = Some(123);
+            status.port = Some(43123);
+            status.url = Some("http://127.0.0.1:43123".to_string());
+        }
+        *manager.bootstrap_token.lock() = Some("bootstrap".to_string());
+        *manager.session_cookie.lock() = Some("session".to_string());
+        *manager.auth_cookie_name.lock() = Some("cookie".to_string());
+        let renderer_revoked = AtomicBool::new(false);
+
+        let _lifecycle = manager.lifecycle.lock();
+        let new_generation = manager.revoke_endpoint_generation_locked(|| {
+            assert!(manager.status.try_lock().is_none());
+            assert!(!manager.is_current_generation(old_generation));
+            renderer_revoked.store(true, Ordering::SeqCst);
+        });
+
+        assert!(manager.is_current_generation(new_generation));
+        assert!(renderer_revoked.load(Ordering::SeqCst));
+        let status = manager.status();
+        assert_eq!(status.state, CliState::Ready);
+        assert_eq!(status.pid, None);
+        assert_eq!(status.port, None);
+        assert_eq!(status.url, None);
+        assert!(manager.bootstrap_token.lock().is_none());
+        assert!(manager.session_cookie.lock().is_none());
+        assert!(manager.auth_cookie_name.lock().is_none());
+    }
+
+    #[test]
+    fn reused_port_only_authorizes_fresh_transport_cookie() {
+        let manager = CliProcessManager::new();
+        let first_generation = manager.advance_generation();
+        {
+            let mut status = manager.status.lock();
+            status.state = CliState::Ready;
+            status.url = Some("http://127.0.0.1:43123".to_string());
+        }
+        *manager.auth_cookie_name.lock() = Some(generate_auth_cookie_name(first_generation));
+        *manager.session_cookie.lock() = Some("session-old".to_string());
+        let stale = manager.desktop_event_stream_config().unwrap();
+
+        let second_generation = {
+            let _lifecycle = manager.lifecycle.lock();
+            manager.revoke_endpoint_generation_locked(|| {})
+        };
+        manager.with_current_generation(second_generation, || {
+            let mut status = manager.status.lock();
+            status.state = CliState::Ready;
+            status.url = Some("http://127.0.0.1:43123".to_string());
+            *manager.auth_cookie_name.lock() = Some(generate_auth_cookie_name(second_generation));
+            *manager.session_cookie.lock() = Some("session-new".to_string());
+        });
+        let fresh = manager.desktop_event_stream_config().unwrap();
+
+        assert_eq!(stale.events_url, fresh.events_url);
+        assert!(!stale.is_authorized());
+        assert!(fresh.is_authorized());
+        assert_ne!(stale.cookie_name, fresh.cookie_name);
+        assert_eq!(fresh.session_cookie.as_deref(), Some("session-new"));
+    }
+
+    #[test]
+    fn buffered_output_cannot_republish_after_endpoint_revocation() {
+        let manager = CliProcessManager::new();
+        let generation = manager.advance_generation();
+        let lifecycle = manager.lifecycle.lock();
+        let worker_manager = manager.clone();
+        let (attempted_tx, attempted_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            attempted_tx.send(()).unwrap();
+            worker_manager.with_current_generation(generation, || {
+                worker_manager.status.lock().url = Some("http://127.0.0.1:43123".to_string());
+                *worker_manager.bootstrap_token.lock() = Some("buffered".to_string());
+            })
+        });
+        attempted_rx.recv().unwrap();
+
+        manager.revoke_endpoint_generation_locked(|| {});
+        drop(lifecycle);
+
+        assert!(worker.join().unwrap().is_none());
+        assert!(manager.status().url.is_none());
+        assert!(manager.bootstrap_token.lock().is_none());
+    }
+
+    #[test]
+    fn failed_restart_transition_leaves_no_trusted_origin() {
+        let manager = CliProcessManager::new();
+        let old_generation = manager.advance_generation();
+        {
+            let mut status = manager.status.lock();
+            status.state = CliState::Ready;
+            status.pid = Some(123);
+            status.port = Some(43123);
+            status.url = Some("http://127.0.0.1:43123".to_string());
+        }
+        *manager.bootstrap_token.lock() = Some("bootstrap".to_string());
+        *manager.session_cookie.lock() = Some("session".to_string());
+        *manager.auth_cookie_name.lock() = Some("cookie".to_string());
+        let renderer_revoked = AtomicBool::new(false);
+
+        let _lifecycle = manager.lifecycle.lock();
+        let result = manager.prepare_start_transition(
+            || {
+                assert!(!manager.is_current_generation(old_generation));
+                renderer_revoked.store(true, Ordering::SeqCst);
+            },
+            || Err(anyhow::anyhow!("injected cleanup failure")),
+        );
+
+        assert_eq!(result.unwrap_err().to_string(), "injected cleanup failure");
+        assert!(renderer_revoked.load(Ordering::SeqCst));
+        let status = manager.status();
+        assert_eq!(status.state, CliState::Error);
+        assert_eq!(status.pid, None);
+        assert_eq!(status.port, None);
+        assert_eq!(status.url, None);
+        assert!(manager.bootstrap_token.lock().is_none());
+        assert!(manager.session_cookie.lock().is_none());
+        assert!(manager.auth_cookie_name.lock().is_none());
+    }
+
+    #[test]
+    fn stale_monitor_cannot_revoke_a_replacement_endpoint() {
+        let manager = CliProcessManager::new();
+        let stale_generation = manager.advance_generation();
+        let replacement_generation = {
+            let _lifecycle = manager.lifecycle.lock();
+            manager.revoke_endpoint_generation_locked(|| {})
+        };
+        manager.with_current_generation(replacement_generation, || {
+            manager.status.lock().url = Some("http://127.0.0.1:43124".to_string());
+            *manager.bootstrap_token.lock() = Some("replacement".to_string());
+        });
+
+        assert!(manager
+            .with_current_generation(stale_generation, || {
+                manager.revoke_endpoint_authority(|| {});
+            })
+            .is_none());
+        assert_eq!(
+            manager.status().url.as_deref(),
+            Some("http://127.0.0.1:43124")
+        );
+        assert_eq!(
+            manager.bootstrap_token.lock().as_deref(),
+            Some("replacement")
+        );
+    }
+
+    #[test]
+    fn exited_launcher_keeps_generation_for_delayed_descendant_readiness() {
+        let manager = CliProcessManager::new();
+        let generation = manager.advance_generation();
+        manager.status.lock().state = CliState::Starting;
+
+        let endpoint_revoked = AtomicBool::new(false);
+        {
+            let _lifecycle = manager.lifecycle.lock();
+            let (revoked, containment) = manager.handle_root_exit_locked(
+                generation,
+                false,
+                || Ok(false),
+                || endpoint_revoked.store(true, Ordering::SeqCst),
+            );
+            assert!(revoked.is_none());
+            assert_eq!(containment.unwrap(), false);
+        }
+        assert!(!endpoint_revoked.load(Ordering::SeqCst));
+
+        let descendant = manager.clone();
+        let ready = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            descendant.record_ready_endpoint(generation, "http://127.0.0.1:43123")
+        });
+
+        assert!(ready.join().unwrap().is_some());
+        let status = manager.status();
+        assert_eq!(status.state, CliState::Ready);
+        assert_eq!(status.port, Some(43123));
+        assert_eq!(status.url.as_deref(), Some("http://127.0.0.1:43123"));
+        assert!(manager.is_current_generation(generation));
+        {
+            let _lifecycle = manager.lifecycle.lock();
+            let (revoked, _) =
+                manager.handle_root_exit_locked(generation, false, || Ok(false), || {});
+            assert!(revoked.is_none());
+        }
+    }
+
+    #[test]
+    fn ready_cli_exit_revokes_authority_while_workspace_descendant_remains() {
+        let manager = CliProcessManager::new();
+        let generation = manager.advance_generation();
+        {
+            let mut status = manager.status.lock();
+            status.state = CliState::Ready;
+            status.pid = Some(123);
+            status.port = Some(43123);
+            status.url = Some("http://127.0.0.1:43123".to_string());
+        }
+        *manager.bootstrap_token.lock() = Some("bootstrap".to_string());
+        *manager.session_cookie.lock() = Some("session".to_string());
+        *manager.auth_cookie_name.lock() = Some("cookie".to_string());
+        let renderer_revoked = AtomicBool::new(false);
+
+        let (revoked_generation, containment) = {
+            let _lifecycle = manager.lifecycle.lock();
+            manager.handle_root_exit_locked(
+                generation,
+                true,
+                || Ok(false),
+                || renderer_revoked.store(true, Ordering::SeqCst),
+            )
+        };
+
+        let revoked_generation = revoked_generation.unwrap();
+        assert_eq!(containment.unwrap(), false);
+        assert!(manager.is_current_generation(revoked_generation));
+        assert!(!manager.is_current_generation(generation));
+        assert!(renderer_revoked.load(Ordering::SeqCst));
+        let status = manager.status();
+        assert_eq!(status.pid, None);
+        assert_eq!(status.port, None);
+        assert_eq!(status.url, None);
+        assert!(manager.bootstrap_token.lock().is_none());
+        assert!(manager.session_cookie.lock().is_none());
+        assert!(manager.auth_cookie_name.lock().is_none());
+    }
+
+    #[test]
+    fn reused_port_cannot_publish_for_revoked_ready_generation() {
+        let manager = CliProcessManager::new();
+        let generation = manager.advance_generation();
+        {
+            let mut status = manager.status.lock();
+            status.state = CliState::Ready;
+            status.url = Some("http://127.0.0.1:43123".to_string());
+        }
+
+        {
+            let _lifecycle = manager.lifecycle.lock();
+            let (revoked, containment) =
+                manager.handle_root_exit_locked(generation, true, || Ok(false), || {});
+            assert!(revoked.is_some());
+            assert_eq!(containment.unwrap(), false);
+        }
+
+        assert!(manager
+            .record_ready_endpoint(generation, "http://127.0.0.1:43123")
+            .is_none());
+        assert!(manager.status().url.is_none());
+    }
+
+    #[test]
+    fn ready_cli_containment_probe_error_revokes_fail_closed() {
+        let manager = CliProcessManager::new();
+        let generation = manager.advance_generation();
+        {
+            let mut status = manager.status.lock();
+            status.state = CliState::Ready;
+            status.url = Some("http://127.0.0.1:43123".to_string());
+        }
+        *manager.session_cookie.lock() = Some("session".to_string());
+        let renderer_revoked = AtomicBool::new(false);
+
+        let (revoked, probe) = {
+            let _lifecycle = manager.lifecycle.lock();
+            manager.handle_root_exit_locked(
+                generation,
+                true,
+                || {
+                    assert!(renderer_revoked.load(Ordering::SeqCst));
+                    Err(anyhow::anyhow!("injected containment failure"))
+                },
+                || renderer_revoked.store(true, Ordering::SeqCst),
+            )
+        };
+
+        assert!(revoked.is_some());
+        assert_eq!(
+            probe.unwrap_err().to_string(),
+            "injected containment failure"
+        );
+        assert!(renderer_revoked.load(Ordering::SeqCst));
+        assert!(manager.status().url.is_none());
+        assert!(manager.session_cookie.lock().is_none());
+    }
+
+    #[test]
+    fn starting_cli_containment_probe_error_revokes_fail_closed() {
+        let manager = CliProcessManager::new();
+        let generation = manager.advance_generation();
+        manager.status.lock().state = CliState::Starting;
+        let endpoint_revoked = AtomicBool::new(false);
+
+        let (revoked, probe) = {
+            let _lifecycle = manager.lifecycle.lock();
+            manager.handle_root_exit_locked(
+                generation,
+                false,
+                || Err(anyhow::anyhow!("injected containment failure")),
+                || endpoint_revoked.store(true, Ordering::SeqCst),
+            )
+        };
+
+        assert!(revoked.is_some());
+        assert!(probe.is_err());
+        assert!(endpoint_revoked.load(Ordering::SeqCst));
+        assert!(!manager.is_current_generation(generation));
+    }
+
+    #[test]
+    fn restart_revokes_retained_launcher_generation_and_stale_monitor_is_harmless() {
+        let manager = CliProcessManager::new();
+        let launcher_generation = manager.advance_generation();
+        {
+            let _lifecycle = manager.lifecycle.lock();
+            let (revoked, containment) =
+                manager.handle_root_exit_locked(launcher_generation, false, || Ok(false), || {});
+            assert!(revoked.is_none());
+            assert_eq!(containment.unwrap(), false);
+        }
+
+        let replacement_generation = {
+            let _lifecycle = manager.lifecycle.lock();
+            manager.prepare_start_transition(|| {}, || Ok(())).unwrap()
+        };
+        manager.with_current_generation(replacement_generation, || {
+            manager.status.lock().url = Some("http://127.0.0.1:43124".to_string());
+        });
+
+        let stale_revocation = {
+            let _lifecycle = manager.lifecycle.lock();
+            manager.handle_root_exit_locked(launcher_generation, false, || Ok(true), || {})
+        };
+        assert!(stale_revocation.0.is_none());
+        assert_eq!(
+            manager.status().url.as_deref(),
+            Some("http://127.0.0.1:43124")
+        );
+        assert!(manager.is_current_generation(replacement_generation));
+    }
+
+    #[test]
     fn stop_waits_for_an_authorized_spawn_section() {
         let manager = CliProcessManager::new();
         let generation = manager.advance_generation();
@@ -1779,7 +2221,7 @@ mod tests {
         let stopping_manager = manager.clone();
         let (stopped_tx, stopped_rx) = std::sync::mpsc::channel();
         let stopping = std::thread::spawn(move || {
-            stopping_manager.stop().unwrap();
+            stopping_manager.stop(|| {}).unwrap();
             stopped_tx.send(()).unwrap();
         });
         assert!(stopped_rx.recv_timeout(Duration::from_millis(20)).is_err());

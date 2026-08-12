@@ -36,6 +36,7 @@ import { createServerShutdownHandler, orchestrateServerShutdown, type ServerShut
 import { AutoAcceptManager } from "./permissions/auto-accept-manager"
 import { createOpencodePermissionReplier } from "./permissions/opencode-replier"
 import { createOpencodeYoloPersistence } from "./permissions/opencode-yolo-metadata"
+import { WorkflowManager } from "./workflows/manager"
 
 const require = createRequire(import.meta.url)
 
@@ -374,6 +375,14 @@ async function main() {
     logger: workspaceLogger,
     getServerBaseUrl: () => serverMeta.localUrl,
     nodeExtraCaCertsPath,
+    workspaceLeaseDir: path.join(configDir, "workspace-leases"),
+  })
+  const workflowManager = new WorkflowManager({
+    workspaceManager,
+    eventBus,
+    storageDir: path.join(configDir, "workflow-runs"),
+    definitionsDir: path.join(configDir, "workflow-definitions"),
+    logger: logger.child({ component: "workflows" }),
   })
   const fileSystemBrowser = new FileSystemBrowser({
     rootDir: options.rootDir,
@@ -499,6 +508,7 @@ async function main() {
         remoteProxySessionManager,
         yoloManager,
         sessionMetadataPersistence,
+        workflowManager,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: uiResolution.uiDevServerUrl,
         logger,
@@ -528,6 +538,7 @@ async function main() {
         remoteProxySessionManager,
         yoloManager,
         sessionMetadataPersistence,
+        workflowManager,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: undefined,
         logger,
@@ -623,6 +634,7 @@ async function main() {
       orchestrateServerShutdown(
         {
           stopInstanceEventBridge: () => instanceEventBridge.shutdown(),
+          stopWorkflowRuns: () => workflowManager.shutdown(),
           stopSidecars: () => sidecarManager.shutdown(),
           stopClientConnections: () => clientConnectionManager.shutdown(),
           stopRemoteProxySessions: () => remoteProxySessionManager.shutdown(),

@@ -242,9 +242,11 @@ fn cleanup(app: &AppHandle, capture_window: bool) -> Result<(), String> {
         client_state::flush_and_release_without_window_capture(app);
     }
     if let Some(state) = app.try_state::<AppState>() {
-        state.desktop_events.stop();
         retry_bounded(SHUTDOWN_STOP_ATTEMPTS, || {
-            state.manager.stop().map_err(|err| err.to_string())
+            state
+                .manager
+                .stop(|| crate::revoke_cli_endpoint_authority(app))
+                .map_err(|err| err.to_string())
         })?;
     }
     if capture_window {

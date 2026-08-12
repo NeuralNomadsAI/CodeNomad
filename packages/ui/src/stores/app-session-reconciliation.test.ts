@@ -33,6 +33,21 @@ describe("app session reconciliation", () => {
       ["dreamx", "codenomad", null],
     )
   })
+  it("matches explicit lineages before same-path occurrences", () => {
+    const saved = [
+      { kind: "workspace", folderPath: "/same", occurrence: 0, lineageId: "lineage-b" },
+      { kind: "workspace", folderPath: "/same", occurrence: 1, lineageId: "missing" },
+    ]
+    const live = [
+      { id: "a", folderPath: "/same", lineageId: "lineage-a" },
+      { id: "b", folderPath: "/same", lineageId: "lineage-b" },
+    ]
+
+    assert.deepEqual(
+      reconcileWorkspaceTabs(saved, live).map(({ existingWorkspaceId }) => existingWorkspaceId),
+      ["b", null],
+    )
+  })
   it("reconciles only workspaces missing from a refresh and not owned by restore cleanup", () => {
     assert.deepEqual(
       getUnavailableWorkspaceIds(["present", "stopped", "cancelling"], new Set(["present"]), (id) => id === "cancelling"),

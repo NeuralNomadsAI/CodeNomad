@@ -1,18 +1,20 @@
 import { randomUUID } from "node:crypto"
-import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { closeSync, fstatSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { open, rename, rm } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import {
   electClientStateProcess,
   getRunningMarkerPath,
   hasLiveTauriClient,
+  hasLiveTauriClientAsync,
   hasErrorCode,
   isProcessOwnerLockOwned,
+  readProcessOwnerLock,
   removeProcessOwnerLockIfOwned,
   type ProcessOwner,
   removeRunningMarkerIfOwned,
 } from "./client-state-process"
-import { getProcessStartIdentity } from "./client-state-process-identity"
+import { getMachineIdentity, getProcessStartIdentity } from "./client-state-process-identity"
 import {
   CrossHostRegistration,
   crossHostParticipants,
@@ -114,23 +116,56 @@ function parseClientState(value: string): ParsedClientState {
   }
 }
 
-function legacyCandidate(path: string, host: "electron" | "tauri"): { host: string; state: PersistedClientState; savedAt: number; hasSnapshot: boolean } | undefined {
+interface LegacyStateSnapshot {
+  path: string
+  host: "electron" | "tauri"
+  contents: Buffer
+  identity: string
+}
+
+function snapshotLegacyState(path: string, host: LegacyStateSnapshot["host"]): LegacyStateSnapshot | undefined {
+  let descriptor: number | undefined
   try {
-    const candidate = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>
+    descriptor = openSync(path, "r")
+    const before = legacyFileIdentity(descriptor)
+    const contents = readFileSync(descriptor)
+    const after = legacyFileIdentity(descriptor)
+    return before === after ? { path, host, contents, identity: after } : undefined
+  } catch {
+    return undefined
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor)
+  }
+}
+
+function legacyFileIdentity(descriptor: number): string {
+  const value = fstatSync(descriptor, { bigint: true })
+  return `${value.dev}:${value.ino}:${value.size}:${value.mtimeNs}:${value.birthtimeNs}`
+}
+
+function legacySnapshotMatches(snapshot: LegacyStateSnapshot, path = snapshot.path): boolean {
+  const current = snapshotLegacyState(path, snapshot.host)
+  return Boolean(current && current.identity === snapshot.identity && current.contents.equals(snapshot.contents))
+}
+
+function legacyCandidate(snapshot: LegacyStateSnapshot): { host: string; state: PersistedClientState; savedAt: number; hasSnapshot: boolean } | undefined {
+  try {
+    const candidate = JSON.parse(snapshot.contents.toString("utf8")) as Record<string, unknown>
     if (!candidate || candidate.version !== CLIENT_STATE_VERSION) return undefined
     const parsed = parseClientState(JSON.stringify(candidate)).state
     delete parsed.window
-    const snapshot = candidate.snapshot as Record<string, unknown> | undefined
-    const savedAt = typeof snapshot?.savedAt === "number" && Number.isFinite(snapshot.savedAt) ? snapshot.savedAt : -1
-    return { host, state: parsed, savedAt, hasSnapshot: snapshot !== undefined }
+    if (!parsed.restoreEnabled) delete parsed.snapshot
+    const candidateSnapshot = candidate.snapshot as Record<string, unknown> | undefined
+    const savedAt = typeof candidateSnapshot?.savedAt === "number" && Number.isFinite(candidateSnapshot.savedAt) ? candidateSnapshot.savedAt : -1
+    return { host: snapshot.host, state: parsed, savedAt, hasSnapshot: candidateSnapshot !== undefined }
   } catch {
     return undefined
   }
 }
 
-function isFutureLegacyCandidate(path: string): boolean {
+function isFutureLegacyCandidate(snapshot: LegacyStateSnapshot): boolean {
   try {
-    const candidate = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>
+    const candidate = JSON.parse(snapshot.contents.toString("utf8")) as Record<string, unknown>
     return typeof candidate?.version === "number" && candidate.version > CLIENT_STATE_VERSION
   } catch {
     return false
@@ -141,7 +176,10 @@ export class ClientStateManager {
   private readonly userDataPath: string
   private readonly statePath: string
   private readonly lockPath: string
+  private readonly registrationLockPath: string
   private readonly legacyTauriDataPath: string | null
+  private readonly legacyPaths: ReadonlyArray<readonly ["electron" | "tauri", string]>
+  private readonly removeLegacyState: (path: string) => void
   private readonly owner: ProcessOwner
   private state: PersistedClientState = { version: CLIENT_STATE_VERSION, restoreEnabled: true }
   private writeQueue: Promise<void> = Promise.resolve()
@@ -152,6 +190,11 @@ export class ClientStateManager {
   private unsupportedFutureEnvelope = false
   private frozen = false
   private rendererAccessToken: string | undefined
+  private rendererReconciliationPending = false
+  private effectivePrimary = false
+  private ownershipEpoch = 0
+  private readonly ownershipListeners = new Set<() => void>()
+  private readonly crossHostDependencies: CrossHostLeaseDependencies | undefined
 
   constructor(
     userDataPath: string,
@@ -162,7 +205,9 @@ export class ClientStateManager {
       pid: process.pid,
       runToken: randomUUID(),
       processStartIdentity: getProcessStartIdentity(process.pid),
+      machineIdentity: getMachineIdentity(),
     }
+    this.crossHostDependencies = options?.crossHostDependencies
     mkdirSync(userDataPath, { recursive: true })
     this.userDataPath = userDataPath
     const crossHostElectionDirectory = options?.crossHostElectionDirectory ?? resolveCrossHostElectionDirectory()
@@ -171,18 +216,23 @@ export class ClientStateManager {
       : resolveCrossHostStatePath()
     mkdirSync(dirname(this.statePath), { recursive: true })
     this.lockPath = join(userDataPath, PRIMARY_LOCK_FILENAME)
-    const registrationLockPath = join(userDataPath, REGISTRATION_LOCK_FILENAME)
+    this.registrationLockPath = join(userDataPath, REGISTRATION_LOCK_FILENAME)
 
     const election = electClientStateProcess(
       userDataPath,
       this.owner,
-      { primaryLockPath: this.lockPath, registrationLockPath },
+      { primaryLockPath: this.lockPath, registrationLockPath: this.registrationLockPath },
       (message, error) => console.warn(`[client-state] ${message}`, error),
     )
     const legacyTauriDataPath = options?.legacyTauriDataPath === undefined
       ? (options?.crossHostElectionDirectory ? null : resolveLegacyTauriDataDirectory())
       : options.legacyTauriDataPath
     this.legacyTauriDataPath = legacyTauriDataPath
+    this.legacyPaths = [
+      ["electron", join(userDataPath, CLIENT_STATE_FILENAME)],
+      ...(legacyTauriDataPath ? [["tauri", join(legacyTauriDataPath, CLIENT_STATE_FILENAME)] as const] : []),
+    ]
+    this.removeLegacyState = options?.removeLegacyState ?? ((path) => rmSync(path, { force: true }))
     this.primary = election
     try {
       this.crossHostRegistration = CrossHostRegistration.register(
@@ -208,45 +258,117 @@ export class ClientStateManager {
     } catch (error) {
       console.warn("[client-state] failed to register cross-host ownership", error)
     }
-    if (!this.crossHostRegistration?.isPrimary) {
+    if (!this.crossHostRegistration) {
       if (election) removeProcessOwnerLockIfOwned(this.lockPath, this.owner)
       this.primary = false
     }
     if (this.isPrimary) {
-      const legacyPaths = [
-        ["electron", join(userDataPath, CLIENT_STATE_FILENAME)],
-        ...(legacyTauriDataPath ? [["tauri", join(legacyTauriDataPath, CLIENT_STATE_FILENAME)] as const] : []),
-      ] as ReadonlyArray<readonly ["electron" | "tauri", string]>
-      this.migrateLegacyStateIfNeeded(legacyPaths, options?.removeLegacyState)
-      const futureLegacyBlocked = this.unsupportedFutureEnvelope
-      const persisted = this.readState()
-      this.state = futureLegacyBlocked
-        ? { version: CLIENT_STATE_VERSION, restoreEnabled: false }
-        : persisted.state
-      this.persistenceSuppressed = !this.state.restoreEnabled
-      this.unsupportedFutureEnvelope = futureLegacyBlocked || persisted.unsupportedFutureEnvelope
+      this.reloadAuthoritativeState()
+      this.setEffectivePrimary(true, false)
     }
   }
 
   get isPrimary(): boolean {
-    if (!this.primary || !this.crossHostRegistration?.isPrimary) return false
-    if (!this.legacyTauriDataPath) return true
-    try {
-      return !hasLiveTauriClient(this.legacyTauriDataPath, undefined, undefined, undefined, crossHostParticipants(this.crossHostRegistration.path))
-    } catch (error) {
-      console.warn("[client-state] failed to recheck legacy Tauri process markers; ownership disabled", error)
+    let primary = this.primary && Boolean(this.crossHostRegistration?.isPrimary)
+    if (!primary) {
+      this.setEffectivePrimary(false)
       return false
     }
+    if (!this.legacyTauriDataPath) return true
+    try {
+      primary = !hasLiveTauriClient(
+        this.legacyTauriDataPath,
+        this.crossHostDependencies?.pidAlive,
+        this.crossHostDependencies?.processStartIdentity,
+        undefined,
+        crossHostParticipants(this.crossHostRegistration!.path),
+      )
+    } catch (error) {
+      console.warn("[client-state] failed to recheck legacy Tauri process markers; ownership disabled", error)
+      primary = false
+    }
+    if (!primary) this.setEffectivePrimary(false)
+    return primary
   }
 
   loadClientState(): ClientStateLoadResult {
     if (!this.isPrimary) {
       return { isPrimary: false, restoreEnabled: false, snapshot: null }
     }
-    return {
+    const result = {
       isPrimary: true,
       restoreEnabled: this.state.restoreEnabled,
       snapshot: this.state.restoreEnabled ? (this.state.snapshot ?? null) : null,
+    }
+    this.rendererReconciliationPending = false
+    return result
+  }
+
+  onOwnershipChanged(listener: () => void): () => void {
+    this.ownershipListeners.add(listener)
+    return () => this.ownershipListeners.delete(listener)
+  }
+
+  async refreshPrimary(): Promise<boolean> {
+    if (this.frozen) return false
+    if (this.primary && !isProcessOwnerLockOwned(this.lockPath, this.owner)) {
+      this.primary = false
+      this.crossHostRegistration?.deferPrimary()
+      this.setEffectivePrimary(false)
+      return false
+    }
+    if (!this.primary) {
+      this.primary = electClientStateProcess(
+        this.userDataPath,
+        this.owner,
+        { primaryLockPath: this.lockPath, registrationLockPath: this.registrationLockPath },
+        (message, error) => console.warn(`[client-state] ${message}`, error),
+        this.crossHostDependencies?.pidAlive,
+        0,
+        () => {},
+        this.crossHostDependencies?.processStartIdentity,
+        true,
+      )
+      if (!this.primary) {
+        const localOwner = readProcessOwnerLock(this.lockPath)
+        if (localOwner) await this.crossHostRegistration?.participateInRecoveryAsync(localOwner)
+        return false
+      }
+    }
+    try {
+      if (this.crossHostRegistration?.isPrimary) {
+        if (await this.canOwnCrossHostStateAsync()) {
+          if (this.effectivePrimary) return false
+          this.reloadAuthoritativeState()
+          this.rendererReconciliationPending = true
+          this.setEffectivePrimary(true)
+          return true
+        }
+        this.crossHostRegistration?.deferPrimary()
+        this.setEffectivePrimary(false)
+        return false
+      }
+      if (!await this.canOwnCrossHostStateAsync()) {
+        this.crossHostRegistration?.deferPrimary()
+        this.setEffectivePrimary(false)
+        return false
+      }
+      const registration = this.crossHostRegistration
+      if (!registration || !await registration.tryAcquireAsync(true)) return false
+      if (!await this.canOwnCrossHostStateAsync()) {
+        registration.deferPrimary()
+        this.setEffectivePrimary(false)
+        return false
+      }
+      this.reloadAuthoritativeState()
+      this.rendererReconciliationPending = true
+      this.setEffectivePrimary(true)
+      return true
+    } catch (error) {
+      this.crossHostRegistration?.deferPrimary()
+      this.setEffectivePrimary(false)
+      console.warn("[client-state] failed to promote from shared state", error)
+      return false
     }
   }
 
@@ -316,7 +438,7 @@ export class ClientStateManager {
   }
 
   clearClientState(rendererToken?: unknown): Promise<boolean> {
-    if (!this.isPrimary) {
+    if (!this.isPrimary || this.rendererReconciliationPending) {
       return Promise.resolve(false)
     }
     if (this.frozen) {
@@ -363,12 +485,13 @@ export class ClientStateManager {
     return this.drainAndReleasePromise
   }
 
-  private readState(): ParsedClientState {
+  private readState(authoritative = false): ParsedClientState {
     try {
       return parseClientState(readFileSync(this.statePath, "utf8"))
     } catch (error) {
       if (!hasErrorCode(error, "ENOENT")) {
         console.warn("[client-state] failed to read state", error)
+        if (authoritative) throw error
       }
       return {
         state: { version: CLIENT_STATE_VERSION, restoreEnabled: true },
@@ -377,22 +500,22 @@ export class ClientStateManager {
     }
   }
 
-  private migrateLegacyStateIfNeeded(
-    paths: ReadonlyArray<readonly ["electron" | "tauri", string]>,
-    removeLegacyState = (path: string) => rmSync(path, { force: true }),
-  ): void {
+  private migrateLegacyStateIfNeeded(): void {
     try {
       readFileSync(this.statePath)
       return
     } catch (error) {
       if (!hasErrorCode(error, "ENOENT")) return
     }
-    if (paths.some(([, path]) => isFutureLegacyCandidate(path))) {
+    const legacySnapshots = this.legacyPaths
+      .map(([host, path]) => snapshotLegacyState(path, host))
+      .filter((snapshot): snapshot is LegacyStateSnapshot => Boolean(snapshot))
+    if (legacySnapshots.some(isFutureLegacyCandidate)) {
       this.unsupportedFutureEnvelope = true
       return
     }
-    const winner = paths
-      .map(([host, path]) => legacyCandidate(path, host))
+    const winner = legacySnapshots
+      .map(legacyCandidate)
       .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate))
       .sort((left, right) =>
         Number(left.state.restoreEnabled) - Number(right.state.restoreEnabled) ||
@@ -410,13 +533,28 @@ export class ClientStateManager {
       fsyncSync(descriptor)
       closeSync(descriptor)
       descriptor = undefined
-      this.assertReplacementAllowed()
+      this.assertSharedOwnershipAllowed()
       renameSync(temporaryPath, this.statePath)
-      for (const [, path] of paths) {
+      for (const snapshot of legacySnapshots) {
+        const quarantinePath = join(
+          dirname(snapshot.path),
+          `.${CLIENT_STATE_FILENAME}.${this.owner.pid}.${this.owner.runToken}.${snapshot.host}.migration-quarantine`,
+        )
         try {
-          removeLegacyState(path)
+          this.assertSharedOwnershipAllowed()
+          renameSync(snapshot.path, quarantinePath)
+          try {
+            if (!legacySnapshotMatches(snapshot, quarantinePath)) {
+              throw new Error("legacy state changed before quarantine")
+            }
+            this.assertSharedOwnershipAllowed()
+            this.removeLegacyState(quarantinePath)
+          } catch (error) {
+            this.restoreQuarantinedLegacyState(snapshot.path, quarantinePath)
+            throw error
+          }
         } catch (error) {
-          console.warn(`[client-state] failed to remove migrated legacy state at ${path}`, error)
+          console.warn(`[client-state] failed to remove migrated legacy state at ${snapshot.path}`, error)
         }
       }
     } finally {
@@ -426,7 +564,7 @@ export class ClientStateManager {
   }
 
   private getMutationDisposition(futureEnvelopeResult = true): Promise<boolean> | undefined {
-    if (!this.isPrimary) {
+    if (!this.isPrimary || this.rendererReconciliationPending) {
       return Promise.resolve(false)
     }
     if (this.frozen) {
@@ -443,8 +581,13 @@ export class ClientStateManager {
     skipWhenSuppressed = false,
     rendererToken?: unknown,
   ): Promise<boolean> {
+    const ownershipEpoch = this.ownershipEpoch
     const operation = this.writeQueue.catch(() => {}).then(async () => {
       if (rendererToken !== undefined) this.assertRendererAccessToken(rendererToken)
+      this.assertReplacementAllowed(ownershipEpoch, rendererToken)
+      const runtimeSuppression = this.persistenceSuppressed
+      this.reloadAuthoritativeState()
+      this.persistenceSuppressed = runtimeSuppression
       if (skipWhenSuppressed && this.persistenceSuppressed) {
         return
       }
@@ -454,11 +597,15 @@ export class ClientStateManager {
       const previousUnsupportedFutureEnvelope = this.unsupportedFutureEnvelope
       try {
         mutate(this.state)
-        await this.writeAtomically(JSON.stringify(this.state), rendererToken)
+        await this.writeAtomically(JSON.stringify(this.state), ownershipEpoch, rendererToken)
       } catch (error) {
-        this.state = previousState
-        this.persistenceSuppressed = previousPersistenceSuppressed
-        this.unsupportedFutureEnvelope = previousUnsupportedFutureEnvelope
+        if (ownershipEpoch === this.ownershipEpoch) {
+          this.state = previousState
+          this.persistenceSuppressed = previousPersistenceSuppressed
+          this.unsupportedFutureEnvelope = previousUnsupportedFutureEnvelope
+        } else if (this.isPrimary) {
+          this.reloadAuthoritativeState()
+        }
         throw error
       }
     })
@@ -466,14 +613,14 @@ export class ClientStateManager {
     return operation.then(() => true)
   }
 
-  private async writeAtomically(serializedState: string, rendererToken?: unknown): Promise<void> {
+  private async writeAtomically(serializedState: string, ownershipEpoch: number, rendererToken?: unknown): Promise<void> {
     const temporaryPath = join(
       dirname(this.statePath),
       `.${CLIENT_STATE_FILENAME}.${this.owner.pid}.${this.owner.runToken}.tmp`,
     )
     try {
       await this.writeState(temporaryPath, serializedState)
-      this.assertReplacementAllowed(rendererToken)
+      this.assertReplacementAllowed(ownershipEpoch, rendererToken)
       await rename(temporaryPath, this.statePath)
     } catch (error) {
       await rm(temporaryPath, { force: true }).catch(() => {})
@@ -481,10 +628,73 @@ export class ClientStateManager {
     }
   }
 
-  private assertReplacementAllowed(rendererToken?: unknown): void {
+  private assertReplacementAllowed(ownershipEpoch: number, rendererToken?: unknown): void {
     if (rendererToken !== undefined) this.assertRendererAccessToken(rendererToken)
-    if (!this.isPrimary || !isProcessOwnerLockOwned(this.lockPath, this.owner)) {
+    if (!this.isPrimary || this.ownershipEpoch !== ownershipEpoch || !isProcessOwnerLockOwned(this.lockPath, this.owner)) {
       throw new Error("Client state ownership changed before atomic replacement")
+    }
+  }
+
+  private restoreQuarantinedLegacyState(path: string, quarantinePath: string): void {
+    try {
+      linkSync(quarantinePath, path)
+      rmSync(quarantinePath, { force: true })
+    } catch (error) {
+      if (!hasErrorCode(error, "EEXIST") && !hasErrorCode(error, "ENOENT")) {
+        console.warn(`[client-state] failed to restore quarantined legacy state at ${path}`, error)
+      }
+    }
+  }
+
+  private canOwnCrossHostState(): boolean {
+    if (!this.primary || !isProcessOwnerLockOwned(this.lockPath, this.owner)) return false
+    if (!this.legacyTauriDataPath) return true
+    return !hasLiveTauriClient(
+      this.legacyTauriDataPath,
+      this.crossHostDependencies?.pidAlive,
+      this.crossHostDependencies?.processStartIdentity,
+      undefined,
+      crossHostParticipants(this.crossHostRegistration?.path ?? ""),
+    )
+  }
+
+  private async canOwnCrossHostStateAsync(): Promise<boolean> {
+    if (!this.primary || !isProcessOwnerLockOwned(this.lockPath, this.owner)) return false
+    if (!this.legacyTauriDataPath) return true
+    return !await hasLiveTauriClientAsync(
+      this.legacyTauriDataPath,
+      this.crossHostDependencies?.pidAlive,
+      this.crossHostDependencies?.processStartIdentityAsync ?? this.crossHostDependencies?.processStartIdentity,
+      undefined,
+      crossHostParticipants(this.crossHostRegistration?.path ?? ""),
+    )
+  }
+
+  private reloadAuthoritativeState(): void {
+    this.unsupportedFutureEnvelope = false
+    this.migrateLegacyStateIfNeeded()
+    const futureLegacyBlocked = this.unsupportedFutureEnvelope
+    const persisted = this.readState(true)
+    this.state = futureLegacyBlocked
+      ? { version: CLIENT_STATE_VERSION, restoreEnabled: false }
+      : persisted.state
+    this.persistenceSuppressed = !this.state.restoreEnabled
+    this.unsupportedFutureEnvelope = futureLegacyBlocked || persisted.unsupportedFutureEnvelope
+  }
+
+  private assertSharedOwnershipAllowed(): void {
+    if (!this.crossHostRegistration?.isPrimary || !this.canOwnCrossHostState()) {
+      throw new Error("Client state ownership changed before atomic replacement")
+    }
+  }
+
+  private setEffectivePrimary(primary: boolean, notify = true): void {
+    if (this.effectivePrimary === primary) return
+    this.effectivePrimary = primary
+    this.ownershipEpoch += 1
+    if (notify) {
+      this.rendererReconciliationPending = true
+      for (const listener of this.ownershipListeners) listener()
     }
   }
 

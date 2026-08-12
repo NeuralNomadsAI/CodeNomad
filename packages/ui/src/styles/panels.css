@@ -4,6 +4,9 @@
 @import "./panels/panel-shell.css";
 @import "./panels/session-layout.css";
 @import "./panels/right-panel.css";
+@import "./panels/workflows.css";
+@import "./panels/workflow-declarative.css";
+@import "./panels/workflow-execution.css";
 
 
 .tab-bar-instance {

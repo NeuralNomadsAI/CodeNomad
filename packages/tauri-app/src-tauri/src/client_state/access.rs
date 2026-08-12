@@ -35,13 +35,10 @@ impl RendererAccess {
 
         let renderer_origin = origin_key(renderer_url)?;
         let mut state = self.state.lock().map_err(|err| err.to_string())?;
-        if state.token.is_none()
-            || state.pending_origin.as_deref() == Some(renderer_origin.as_str())
-        {
+        if state.pending_origin.as_deref() == Some(renderer_origin.as_str()) {
             state.token = Some(access_token.to_string());
             state.committed_origin = Some(renderer_origin);
             state.pending_origin = None;
-            state.generation = state.generation.wrapping_add(1);
             return Ok(());
         }
         if state.token.as_deref() != Some(access_token) {
@@ -82,19 +79,6 @@ impl RendererAccess {
             .unwrap_or(false)
     }
 
-    pub(super) fn allows_claim_origin(&self, renderer_url: &Url) -> bool {
-        let Ok(renderer_origin) = origin_key(renderer_url) else {
-            return false;
-        };
-        self.state
-            .lock()
-            .map(|state| {
-                state.committed_origin.as_deref() == Some(renderer_origin.as_str())
-                    || state.pending_origin.as_deref() == Some(renderer_origin.as_str())
-            })
-            .unwrap_or(false)
-    }
-
     pub(super) fn begin_navigation(
         &self,
         target_url: Option<&Url>,
@@ -119,6 +103,15 @@ impl RendererAccess {
         if state.pending_origin == navigation.staged_origin {
             state.pending_origin = navigation.previous_origin;
         }
+    }
+
+    pub(super) fn begin_document(&self, trusted_url: Option<&Url>) -> Result<(), String> {
+        let mut state = self.state.lock().map_err(|err| err.to_string())?;
+        state.token = None;
+        state.committed_origin = None;
+        state.pending_origin = trusted_url.map(origin_key).transpose()?;
+        state.generation = state.generation.wrapping_add(1);
+        Ok(())
     }
 
     pub(super) fn is_claimed(&self) -> bool {

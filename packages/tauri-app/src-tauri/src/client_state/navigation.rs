@@ -270,6 +270,10 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         state
             .renderer_access
+            .begin_document(Some(&renderer_url))
+            .unwrap();
+        state
+            .renderer_access
             .claim("current-renderer", &renderer_url)
             .unwrap();
 
@@ -295,6 +299,10 @@ mod tests {
         let incoming_url = url::Url::parse("http://127.0.0.1:43124/workspace").unwrap();
         state
             .renderer_access
+            .begin_document(Some(&outgoing_url))
+            .unwrap();
+        state
+            .renderer_access
             .claim("outgoing-renderer", &outgoing_url)
             .unwrap();
 
@@ -304,7 +312,10 @@ mod tests {
             .renderer_access
             .validate("outgoing-renderer", &outgoing_url)
             .unwrap();
-        assert!(state.renderer_access.allows_claim_origin(&outgoing_url));
+        state
+            .renderer_access
+            .begin_document(Some(&incoming_url))
+            .unwrap();
         state
             .renderer_access
             .claim("incoming-renderer", &incoming_url)

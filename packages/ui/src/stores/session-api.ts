@@ -418,6 +418,7 @@ async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: SDKSe
 async function fetchSessions(instanceId: string, options?: {
   reset?: boolean
   strictStatus?: boolean
+  propagateErrors?: boolean
   registerInvalidation?: (invalidate: () => void) => void
 }): Promise<void> {
   const instance = instances().get(instanceId)
@@ -445,13 +446,13 @@ async function fetchSessions(instanceId: string, options?: {
     log.info("session.list", { instanceId, limit: PROJECT_SESSION_LIST_LIMIT, directory: sessionListOptions.directory, scope: "project" })
     const response = await fetchV2Sessions(instanceId, sessionListOptions)
     if (!isLatestSessionListRequest(instanceId, requestId)) {
-      if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
+      if (options?.strictStatus || options?.propagateErrors) throw new Error("Session refresh was superseded")
       return
     }
     const apiSessions = getV2SessionItems(response)
     await recordSessionWorkspaceHints(instanceId, apiSessions, () => isLatestSessionListRequest(instanceId, requestId))
     if (!isLatestSessionListRequest(instanceId, requestId)) {
-      if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
+      if (options?.strictStatus || options?.propagateErrors) throw new Error("Session refresh was superseded")
       return
     }
 
@@ -473,7 +474,7 @@ async function fetchSessions(instanceId: string, options?: {
       const requiresWorkspace = (slug && slug !== "root")
         || Boolean(directory && normalizeWorkspacePath(directory) !== normalizeWorkspacePath(instance.folder))
       if (requiresWorkspace && !workspacePayload.workspace) {
-        if (options?.strictStatus) {
+        if (options?.strictStatus || options?.propagateErrors) {
           throw new Error(`Unable to resolve OpenCode workspace for session ${apiSession.id}`)
         }
         return
@@ -484,7 +485,7 @@ async function fetchSessions(instanceId: string, options?: {
       statusLocationBySessionId.set(apiSession.id, key)
     }))
     if (!isLatestSessionListRequest(instanceId, requestId)) {
-      if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
+      if (options?.strictStatus || options?.propagateErrors) throw new Error("Session refresh was superseded")
       return
     }
 
@@ -495,11 +496,11 @@ async function fetchSessions(instanceId: string, options?: {
         if (statusResponse && typeof statusResponse === "object") statusSnapshots.set(key, statusResponse)
       } catch (error) {
         log.error("Failed to fetch session status:", error)
-        if (options?.strictStatus) throw error
+        if (options?.strictStatus || options?.propagateErrors) throw error
       }
     }))
     if (!isLatestSessionListRequest(instanceId, requestId)) {
-      if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
+      if (options?.strictStatus || options?.propagateErrors) throw new Error("Session refresh was superseded")
       return
     }
 
@@ -1202,7 +1203,10 @@ async function loadMessages(
     setSessionMessagesLoadError(instanceId, sessionId, null)
 
     if (apiMessages.length === 0) {
-      if (messageStoreBus.getOrCreate(instanceId).getSessionRevision(sessionId) !== messageRevision) {
+      const sessionForV2 = sessions().get(instanceId)?.get(sessionId) ?? {
+        id: sessionId, title: session?.title, parentId: session?.parentId ?? null, revert: session?.revert,
+      }
+      if (!seedSessionMessagesV2(instanceId, sessionForV2, [], undefined, messageRevision)) {
         retryAfterRevisionConflict = true
       } else {
         // Authoritative empty snapshot: on a forced reconnect load the server

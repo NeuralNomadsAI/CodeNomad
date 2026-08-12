@@ -28,6 +28,8 @@ import type { WorkspaceEventTransportStatus } from "./event-transport"
 import type {
   BackgroundProcess,
   InstanceStreamEvent,
+  WorkflowRun,
+  WorkflowRunStatus,
   WorkspaceEventPayload,
 } from "../../../server/src/api-types"
 import { getLogger } from "./logger"
@@ -63,6 +65,17 @@ interface BackgroundProcessRemovedEvent {
   type: "background.process.removed"
   properties: {
     processId: string
+  }
+}
+
+export interface WorkflowRunUpdatedEvent {
+  type: "workflow.run.updated"
+  properties: {
+    run?: WorkflowRun
+    runId?: string
+    revision?: number
+    status?: WorkflowRunStatus
+    updatedAt?: string
   }
 }
 
@@ -118,6 +131,7 @@ type SSEEvent =
   | TuiToastEvent
   | BackgroundProcessUpdatedEvent
   | BackgroundProcessRemovedEvent
+  | WorkflowRunUpdatedEvent
   | ServerInstanceDisposedEvent
   | WorktreeReadyEvent
   | { type: string; properties?: Record<string, unknown> }
@@ -245,6 +259,9 @@ class SSEManager {
       case "background.process.removed":
         this.onBackgroundProcessRemoved?.(instanceId, event as BackgroundProcessRemovedEvent)
         break
+      case "workflow.run.updated":
+        this.onWorkflowRunUpdated?.(instanceId, event as WorkflowRunUpdatedEvent)
+        break
       case "server.instance.disposed":
         this.onInstanceDisposed?.(instanceId, event as ServerInstanceDisposedEvent)
         break
@@ -290,6 +307,7 @@ class SSEManager {
   onLspUpdated?: (instanceId: string, event: EventLspUpdated) => void
   onBackgroundProcessUpdated?: (instanceId: string, event: BackgroundProcessUpdatedEvent) => void
   onBackgroundProcessRemoved?: (instanceId: string, event: BackgroundProcessRemovedEvent) => void
+  onWorkflowRunUpdated?: (instanceId: string, event: WorkflowRunUpdatedEvent) => void
   onInstanceDisposed?: (instanceId: string, event: ServerInstanceDisposedEvent) => void
   onWorktreeReady?: (instanceId: string, event: WorktreeReadyEvent) => void | Promise<void>
   onConnectionLost?: (instanceId: string, reason: string) => void | Promise<void>

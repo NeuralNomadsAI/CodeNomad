@@ -488,7 +488,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   // echoed are preserved via `pendingSendIds` instead (see hydrateMessages).
 
   function hydrateMessages(sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>) {
-    if (!Array.isArray(inputs) || inputs.length === 0) return
+    if (!Array.isArray(inputs)) return
 
     ensureSessionEntry(sessionId)
 

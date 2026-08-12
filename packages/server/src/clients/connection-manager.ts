@@ -67,7 +67,9 @@ export class ClientConnectionManager {
     this.connections.set(key, connection)
     this.logger.debug({ clientId: input.clientId, connectionId: input.connectionId }, "Client connected")
     this.notify({ type: "connected", connection })
-    return () => this.disconnect(key, "closed")
+    return () => {
+      if (this.connections.get(key) === connection) this.disconnect(key, "closed")
+    }
   }
 
   pong(input: ClientConnectionRef): boolean {

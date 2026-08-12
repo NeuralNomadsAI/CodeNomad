@@ -90,20 +90,15 @@ const ALLOWED_RAW_HTML_TAGS = new Set([
 const DROP_RAW_HTML_TAGS = new Set(["script", "style", "iframe", "object", "embed", "meta", "link"])
 
 function sanitizeUrlAttribute(tagName: string, attrName: string, value: string): string | null {
-  const trimmed = value.trim()
-  if (!trimmed) return null
+  const trimmed = decodeHtmlEntities(value).trim()
+  if (!trimmed || /[\u0000-\u001f\u007f]/.test(trimmed)) return null
+  if ((attrName !== "src" || tagName !== "img") && (attrName !== "href" || tagName !== "a")) return null
+  if (/^[\\/]{2}/.test(trimmed)) return null
 
-  if (attrName === "src" && tagName === "img") {
-    if (/^(https?:|data:image\/|\/|\.\/|\.\.\/|#)/i.test(trimmed)) return trimmed
-    return null
-  }
-
-  if (attrName === "href" && tagName === "a") {
-    if (/^(https?:|mailto:|\/|\.\/|\.\.\/|#)/i.test(trimmed)) return trimmed
-    return null
-  }
-
-  return null
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(trimmed)?.[1].toLowerCase()
+  if (!scheme) return trimmed
+  if (scheme === "http" || scheme === "https") return trimmed
+  return tagName === "a" && scheme === "mailto" ? trimmed : null
 }
 
 function sanitizeRawHtmlFragment(html: string): string {
@@ -594,8 +589,17 @@ function setupRenderer(isDark: boolean) {
   }
 
   renderer.link = (href: string, title: string | null | undefined, text: string) => {
+    const sanitizedHref = sanitizeUrlAttribute("a", "href", href)
+    if (!sanitizedHref) return text
     const titleAttr = title ? ` title="${escapeHtml(title)}"` : ""
-    return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer"${titleAttr}>${text}</a>`
+    return `<a href="${escapeHtml(sanitizedHref)}" target="_blank" rel="noopener noreferrer"${titleAttr}>${text}</a>`
+  }
+
+  renderer.image = (href: string, title: string | null | undefined, text: string) => {
+    const sanitizedSrc = sanitizeUrlAttribute("img", "src", href)
+    if (!sanitizedSrc) return escapeHtml(text)
+    const titleAttr = title ? ` title="${escapeHtml(title)}"` : ""
+    return `<img src="${escapeHtml(sanitizedSrc)}" alt="${escapeHtml(text)}"${titleAttr}>`
   }
 
   renderer.codespan = (code: string) => {

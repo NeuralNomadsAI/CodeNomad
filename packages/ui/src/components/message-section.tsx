@@ -1064,7 +1064,7 @@ export default function MessageSection(props: MessageSectionProps) {
     // to prevent O(n) per-element reactive subscriptions.  The effect
     // only needs to re-run when `messageIds` (memo) changes.
     untrack(() => {
-      if (loading) {
+      if (loading && ids.length === 0) {
         handleClearTimelineSelection()
         previousTimelineIds = []
         setTimelineSegments([])
@@ -1078,6 +1078,7 @@ export default function MessageSection(props: MessageSectionProps) {
         }
         return
       }
+      if (loading) return
 
       if (previousTimelineIds.length === 0 && ids.length > 0) {
         seedTimeline()

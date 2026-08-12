@@ -16,6 +16,7 @@ const CODENOMAD_PLUGIN_FILE_SPEC_REGEX = new RegExp(
 const WSL_PATH_ENV_KEYS = new Set(["NODE_EXTRA_CA_CERTS", WSL_PLUGIN_PATH_ENV])
 const WINDOWS_DIRECT_EXTENSIONS = new Set([".com", ".exe"])
 const DEFAULT_WINDOWS_PATHEXT = ".COM;.EXE;.BAT;.CMD"
+const WINDOWS_CMD_META_CHARS = /([()\][%!^"`<>&|;, *?])/g
 const WINDOWS_SHELL_NAMES = new Set([
   "bash",
   "bash.exe",
@@ -104,13 +105,14 @@ export function buildWindowsSpawnSpec(binaryPath: string, args: string[], option
     const comspec = getWindowsEnvironmentValue(options.env, "COMSPEC") ??
       getWindowsEnvironmentValue(process.env, "COMSPEC") ??
       "cmd.exe"
-    // cmd.exe requires the full command as a single string.
-    // Using the ""<script> <args>"" pattern ensures paths with spaces are handled.
-    const commandLine = `""${resolvedBinaryPath}" ${args.join(" ")}"`
+    const commandLine = `"${[
+      escapeWindowsCmdCommand(resolvedBinaryPath),
+      ...args.map(escapeWindowsCmdArgument),
+    ].join(" ")}"`
 
     return {
       command: comspec,
-      args: ["/d", "/s", "/c", commandLine],
+      args: ["/d", "/v:off", "/s", "/c", commandLine],
       processKind: "windows-wrapper",
       options: { windowsVerbatimArguments: true },
       cwd: options.cwd,
@@ -153,6 +155,17 @@ export function buildSpawnSpec(binaryPath: string, args: string[], options: Buil
   }
 
   return buildWindowsSpawnSpec(binaryPath, args, options)
+}
+
+function escapeWindowsCmdCommand(value: string): string {
+  return value.replace(WINDOWS_CMD_META_CHARS, "^$1")
+}
+
+function escapeWindowsCmdArgument(value: string): string {
+  const quoted = value
+    .replace(/(?=(\\+?)?)\1"/g, "$1$1\\\"")
+    .replace(/(?=(\\+?)?)\1$/, "$1$1")
+  return `"${quoted}"`.replace(WINDOWS_CMD_META_CHARS, "^$1")
 }
 
 export function probeBinaryVersion(binaryPath: string): {

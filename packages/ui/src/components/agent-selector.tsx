@@ -13,6 +13,8 @@ interface AgentSelectorProps {
   sessionId: string
   currentAgent: string
   onAgentChange: (agent: string) => Promise<void>
+  allowChildAgents?: boolean
+  square?: boolean
 }
 
 export default function AgentSelector(props: AgentSelectorProps) {
@@ -25,7 +27,7 @@ export default function AgentSelector(props: AgentSelectorProps) {
   })
 
   const isChildSession = createMemo(() => {
-    return session()?.parentId !== null && session()?.parentId !== undefined
+    return props.allowChildAgents || (session()?.parentId !== null && session()?.parentId !== undefined)
   })
 
   const availableAgents = createMemo(() => {
@@ -105,7 +107,7 @@ export default function AgentSelector(props: AgentSelectorProps) {
         </Select.Trigger>
 
         <Select.Portal>
-          <Select.Content class="selector-popover max-h-80 overflow-auto p-1">
+          <Select.Content class={`selector-popover max-h-80 overflow-auto p-1${props.square ? " workflow-selector-popover" : ""}`}>
             <Select.Listbox class="selector-listbox" />
           </Select.Content>
         </Select.Portal>

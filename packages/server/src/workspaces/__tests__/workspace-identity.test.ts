@@ -183,4 +183,17 @@ describe("workspace identity", () => {
     assert.equal(reused.created, false)
     assert.equal(reused.workspace.id, normal.workspace.id)
   })
+
+  it("uses an explicit lineage before reusing a workspace by path", async () => {
+    const { root, target, link } = await createLinkedWorkspace()
+    const manager = createManager(root)
+    const normal = await manager.create(target)
+    const restored = await manager.create(link, undefined, { lineageId: "restored-lineage" })
+    const repeated = await manager.create(target, undefined, { lineageId: "restored-lineage" })
+
+    assert.notEqual(restored.workspace.id, normal.workspace.id)
+    assert.equal(restored.workspace.lineageId, "restored-lineage")
+    assert.equal(repeated.workspace.id, restored.workspace.id)
+    assert.equal(repeated.created, false)
+  })
 })

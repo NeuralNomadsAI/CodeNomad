@@ -18,15 +18,22 @@ import {
   resolveExistingOpencodeConfigContent,
 } from "../opencode-plugin.js"
 import {
+  CODENOMAD_CALLBACK_TOKEN_ENV,
   OPENCODE_SERVER_BASE_URL_ENV,
+  buildCodeNomadCallbackAuthorizationHeader,
   buildOpencodeBasicAuthHeader,
+  generateCodeNomadCallbackToken,
   OPENCODE_SERVER_PASSWORD_ENV,
   OPENCODE_SERVER_USERNAME_ENV,
   resolveOpencodeServerAuth,
 } from "./opencode-auth"
-import { resolveWorkspaceIdentity } from "./workspace-identity"
+import { normalizeWorkspaceIdentityPath, resolveWorkspaceIdentity } from "./workspace-identity"
 import { parseWslUncPath } from "./spawn"
 import { LOOPBACK_HOST } from "./loopback"
+import {
+  WorkspaceProcessLeaseRegistry,
+  type WorkspaceProcessLease,
+} from "./process-lease"
 
 const STARTUP_STABILITY_DELAY_MS = 1500
 const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
@@ -68,7 +75,13 @@ interface WorkspaceManagerOptions {
   launchTimeoutMs?: number
   setTimeout?: (callback: () => void, delayMs: number) => ManagerTimeout
   clearTimeout?: (timer: ManagerTimeout) => void
+  workspaceLeaseDir?: string
 }
+
+export type WorkspaceDeletionGuard = (
+  workspace: WorkspaceDescriptor,
+  operation: () => Promise<WorkspaceDescriptor | undefined>,
+) => Promise<WorkspaceDescriptor | undefined>
 
 interface WorkspaceRecord extends WorkspaceDescriptor {
   identityKey: string
@@ -83,6 +96,9 @@ interface WorkspaceState {
   deletePromise?: Promise<WorkspaceDescriptor | undefined>
   published: boolean
   stoppedPublished: boolean
+  cleanupBlocked?: boolean
+  leaseLost?: boolean
+  processLease?: WorkspaceProcessLease
 }
 export class WorkspaceLaunchCancelledError extends Error {
   constructor(workspaceId: string) {
@@ -106,6 +122,20 @@ export class WorkspaceCleanupTimeoutError extends Error {
     this.name = "WorkspaceCleanupTimeoutError"
   }
 }
+export class WorkspaceDeletionBlockedError extends Error {
+  readonly code = "WORKSPACE_OWNED_BY_WORKFLOW"
+  constructor(workspaceId: string) {
+    super(`Workspace ${workspaceId} is owned by an active workflow`)
+    this.name = "WorkspaceDeletionBlockedError"
+  }
+}
+export class WorkspacePathOwnedError extends Error {
+  readonly code = "WORKSPACE_OWNED_BY_OTHER_SERVER"
+  constructor(workspacePath: string) {
+    super(`Workspace path is in use by another CodeNomad server: ${workspacePath}`)
+    this.name = "WorkspacePathOwnedError"
+  }
+}
 export class WorkspaceShutdownError extends AggregateError {
   readonly code = "WORKSPACE_SHUTDOWN_FAILED"
   readonly retryable = true
@@ -122,6 +152,7 @@ export interface WorkspaceCreateOptions {
   binaryPath?: string
   requestId?: string
   forceNew?: boolean
+  lineageId?: string
 }
 type CreationRequestState = "active" | "cancelled" | "released"
 type WorkspaceCreationOwnership = Map<string, CreationRequestState>
@@ -140,28 +171,93 @@ export class WorkspaceManager {
   private readonly runtime: Pick<WorkspaceRuntime, "launch" | "stop">
   private readonly codeNomadPluginUrl: string
   private readonly opencodeAuth = new Map<string, { username: string; password: string; authorization: string }>()
+  private readonly pluginCallbackAuth = new Map<string, string>()
+  private readonly workspacePathLeases = new Map<string, Promise<void>>()
+  private readonly processLeases?: WorkspaceProcessLeaseRegistry
+  private deletionGuard?: WorkspaceDeletionGuard
 
   constructor(private readonly options: WorkspaceManagerOptions) {
     this.runtime = options.runtime ?? new WorkspaceRuntime(this.options.eventBus, this.options.logger)
     this.codeNomadPluginUrl = getCodeNomadPluginUrl()
+    this.processLeases = options.workspaceLeaseDir
+      ? new WorkspaceProcessLeaseRegistry({ directory: options.workspaceLeaseDir })
+      : undefined
   }
   list(): WorkspaceDescriptor[] {
     return Array.from(this.workspaces.values())
-      .filter((record) => record[WORKSPACE_STATE].published)
+      .filter((record) => record[WORKSPACE_STATE].published || record[WORKSPACE_STATE].cleanupBlocked)
   }
 
   get(id: string): WorkspaceDescriptor | undefined {
     const record = this.workspaces.get(id)
-    return record?.[WORKSPACE_STATE].published ? record : undefined
+    return record && (record[WORKSPACE_STATE].published || record[WORKSPACE_STATE].cleanupBlocked) ? record : undefined
   }
 
   getInstancePort(id: string): number | undefined {
     const record = this.workspaces.get(id)
-    return record?.[WORKSPACE_STATE].published ? record.port : undefined
+    return record?.[WORKSPACE_STATE].published && !record[WORKSPACE_STATE].leaseLost ? record.port : undefined
   }
 
   getInstanceAuthorizationHeader(id: string): string | undefined {
-    return this.workspaces.get(id)?.[WORKSPACE_STATE].published ? this.opencodeAuth.get(id)?.authorization : undefined
+    const record = this.workspaces.get(id)
+    return record?.[WORKSPACE_STATE].published && !record[WORKSPACE_STATE].leaseLost ? this.opencodeAuth.get(id)?.authorization : undefined
+  }
+
+  getPluginCallbackAuthorizationHeader(id: string): string | undefined {
+    const record = this.workspaces.get(id)
+    return record?.[WORKSPACE_STATE].published && !record[WORKSPACE_STATE].leaseLost ? this.pluginCallbackAuth.get(id) : undefined
+  }
+
+  setDeletionGuard(guard: WorkspaceDeletionGuard): void {
+    this.deletionGuard = guard
+  }
+
+  async withWorkspacePathLease<T>(
+    folder: string,
+    operation: (active: boolean) => Promise<T>,
+  ): Promise<T> {
+    const { workspacePath } = await resolveWorkspaceIdentity(folder, this.options.rootDir)
+    const pathKey = normalizeWorkspaceIdentityPath(workspacePath)
+    return this.withWorkspacePathKeyLease(pathKey, async () => {
+      const active = Array.from(this.workspaces.values()).some((record) =>
+        normalizeWorkspaceIdentityPath(record.path) === pathKey
+        && (record[WORKSPACE_STATE].cleanupBlocked
+          || record.status === "starting" || record.status === "ready" || record.status === "error"))
+      if (active || !this.processLeases) return operation(active)
+      const processLease = await this.processLeases.acquire(workspacePath)
+      if (!processLease) return operation(true)
+      try {
+        return await operation(false)
+      } finally {
+        await processLease.release()
+      }
+    })
+  }
+
+  private async withWorkspacePathKeyLease<T>(
+    pathKey: string,
+    operation: () => T | Promise<T>,
+    deadline?: { at: number; timeoutMs: number },
+  ): Promise<T> {
+    const previous = this.workspacePathLeases.get(pathKey) ?? Promise.resolve()
+    let release!: () => void
+    const hold = new Promise<void>((resolve) => { release = resolve })
+    const lease = previous.then(() => hold)
+    this.workspacePathLeases.set(pathKey, lease)
+    void lease.then(() => {
+      if (this.workspacePathLeases.get(pathKey) === lease) this.workspacePathLeases.delete(pathKey)
+    })
+    try {
+      if (deadline) {
+        await this.withLaunchDeadline(previous, undefined, deadline.at, deadline.timeoutMs)
+        if (Date.now() >= deadline.at) throw new WorkspaceLaunchTimeoutError(undefined, deadline.timeoutMs)
+      } else {
+        await previous
+      }
+      return await operation()
+    } finally {
+      release()
+    }
   }
 
   findReadyInstanceIdByBinary(binaryPath: string): string | undefined {
@@ -171,16 +267,13 @@ export class WorkspaceManager {
     })?.id
   }
 
-  private findReadyWorkspaceByIdentity(
-    identityKey: string,
-    includeRestoreOwned: boolean,
-  ): WorkspaceDescriptor | undefined {
+  private findReadyWorkspaceByIdentity(identityKey: string): WorkspaceDescriptor | undefined {
     for (const record of this.workspaces.values()) {
       const state = record[WORKSPACE_STATE]
       if (
         state.published
         && !state.abortController.signal.aborted
-        && (includeRestoreOwned || !record.requestId)
+        && !state.deletePromise
         && record.status === "ready"
         && record.identityKey === identityKey
       ) {
@@ -247,57 +340,126 @@ export class WorkspaceManager {
     const launchTimeoutMs = Math.max(1, this.options.launchTimeoutMs ?? DEFAULT_LAUNCH_TIMEOUT_MS)
     const launchDeadlineAt = Date.now() + launchTimeoutMs
     try {
-      const { workspacePath, identityKey } = await this.withLaunchDeadline(
+      let { workspacePath, identityKey } = await this.withLaunchDeadline(
         resolveWorkspaceIdentity(folder, this.options.rootDir),
         undefined,
         launchDeadlineAt,
         launchTimeoutMs,
       )
-      if (options.requestId && this.cancelledCreationRequests.has(options.requestId)) {
-        throw new Error(`Workspace creation request ${options.requestId} was cancelled`)
-      }
-      if (this.shuttingDown) {
-        throw new Error("Workspace manager is shutting down")
-      }
-      if (options.forceNew) {
+      const pathKey = normalizeWorkspaceIdentityPath(workspacePath)
+      const finish = await this.withWorkspacePathKeyLease(pathKey, async () => {
+        const refreshed = await resolveWorkspaceIdentity(workspacePath, this.options.rootDir)
+        if (normalizeWorkspaceIdentityPath(refreshed.workspacePath) !== pathKey) {
+          throw new Error("Workspace path changed while waiting for another operation")
+        }
+        workspacePath = refreshed.workspacePath
+        identityKey = refreshed.identityKey
+        if (options.requestId && this.cancelledCreationRequests.has(options.requestId)) {
+          throw new Error(`Workspace creation request ${options.requestId} was cancelled`)
+        }
+        if (this.shuttingDown) {
+          throw new Error("Workspace manager is shutting down")
+        }
+        const pathRecords = Array.from(this.workspaces.values()).filter((record) =>
+          normalizeWorkspaceIdentityPath(record.path) === pathKey)
+        if (pathRecords.some((record) => record[WORKSPACE_STATE].deletePromise)) {
+          throw new Error("Workspace deletion is pending; wait for it to finish before relaunch")
+        }
+        if (pathRecords.some((record) => record[WORKSPACE_STATE].cleanupBlocked)) {
+          throw new Error("Workspace cleanup is incomplete and must be retried before relaunch")
+        }
+        if (options.lineageId) {
+          const lineageRecord = Array.from(this.workspaces.values()).find((record) =>
+            record.lineageId === options.lineageId
+            && (record.status === "starting" || record.status === "ready")
+            && !record[WORKSPACE_STATE].deletePromise
+            && !record[WORKSPACE_STATE].abortController.signal.aborted)
+          if (lineageRecord) {
+            if (lineageRecord.identityKey !== identityKey) {
+              throw new Error("Workspace lineage belongs to a different workspace")
+            }
+            const owner = options.requestId ?? ORDINARY_CREATION_OWNER
+            if (!lineageRecord.ownership.has(owner)) lineageRecord.ownership.set(owner, "active")
+            this.syncOwnership(lineageRecord)
+            return async () => {
+              const workspace = lineageRecord[WORKSPACE_STATE].creation
+                ? (await lineageRecord[WORKSPACE_STATE].creation).workspace
+                : lineageRecord
+              return this.finishCreation({ workspace, created: false }, options.requestId, lineageRecord.ownership)
+            }
+          }
+        }
+        if (options.forceNew || options.lineageId) {
+          const ownership = this.createOwnership(options.requestId)
+          const record = await this.reserveLeasedWorkspace(workspacePath, identityKey, name, options, ownership, launchDeadlineAt)
+          const creation = this.startCreation(record, options, launchDeadlineAt, launchTimeoutMs)
+          return async () => this.finishCreation(await creation, options.requestId, ownership)
+        }
+        const existing = this.findReadyWorkspaceByIdentity(identityKey)
+        if (existing) {
+          this.options.logger.info({ workspaceId: existing.id, folder: workspacePath }, "Reusing existing workspace")
+          const record = this.workspaces.get(existing.id)
+          if (!options.requestId && record && !record.ownership.has(ORDINARY_CREATION_OWNER)) {
+            record.ownership.set(ORDINARY_CREATION_OWNER, "active")
+            this.syncOwnership(record)
+          }
+          if (options.requestId && record) {
+            if (!record.ownership.has(options.requestId)) record.ownership.set(options.requestId, "active")
+            this.syncOwnership(record)
+            return async () => this.finishCreation({ workspace: existing, created: false }, options.requestId, record.ownership)
+          }
+          return async () => ({ workspace: existing, created: false })
+        }
+        const pending = this.pendingWorkspaceCreations.get(identityKey)
+        if (
+          pending
+          && !pending[WORKSPACE_STATE].deletePromise
+          && !pending[WORKSPACE_STATE].abortController.signal.aborted
+          && (pending.status === "starting" || pending.status === "ready")
+        ) {
+          const state = pending[WORKSPACE_STATE]
+          const owner = options.requestId ?? ORDINARY_CREATION_OWNER
+          if (!pending.ownership.has(owner)) pending.ownership.set(owner, "active")
+          this.syncOwnership(pending)
+          return async () => {
+            const result = await state.creation!
+            return this.finishCreation({ workspace: result.workspace, created: false }, options.requestId, pending.ownership)
+          }
+        }
         const ownership = this.createOwnership(options.requestId)
-        const record = this.reserveWorkspace(workspacePath, identityKey, name, options, ownership, launchDeadlineAt)
-        const result = await this.startCreation(record, options, launchDeadlineAt, launchTimeoutMs)
-        return this.finishCreation(result, options.requestId, ownership)
-      }
-      const existing = this.findReadyWorkspaceByIdentity(identityKey, Boolean(options.requestId))
-      if (existing) {
-        this.options.logger.info({ workspaceId: existing.id, folder: workspacePath }, "Reusing existing workspace")
-        const record = this.workspaces.get(existing.id)
-        if (options.requestId && record) {
-          if (!record.ownership.has(options.requestId)) record.ownership.set(options.requestId, "active")
-          this.syncOwnership(record)
-          return this.finishCreation({ workspace: existing, created: false }, options.requestId, record.ownership)
+        const record = await this.reserveLeasedWorkspace(workspacePath, identityKey, name, options, ownership, launchDeadlineAt)
+        const creation = this.startCreation(record, options, launchDeadlineAt, launchTimeoutMs)
+        this.pendingWorkspaceCreations.set(identityKey, record)
+        return async () => {
+          try {
+            return this.finishCreation(await creation, options.requestId, ownership)
+          } finally {
+            if (this.pendingWorkspaceCreations.get(identityKey) === record) {
+              this.pendingWorkspaceCreations.delete(identityKey)
+            }
+          }
         }
-        return { workspace: existing, created: false }
-      }
-      const pending = this.pendingWorkspaceCreations.get(identityKey)
-      if (pending) {
-        const state = pending[WORKSPACE_STATE]
-        const owner = options.requestId ?? ORDINARY_CREATION_OWNER
-        if (!pending.ownership.has(owner)) pending.ownership.set(owner, "active")
-        this.syncOwnership(pending)
-        const result = await state.creation!
-        return this.finishCreation({ workspace: result.workspace, created: false }, options.requestId, pending.ownership)
-      }
-      const ownership = this.createOwnership(options.requestId)
-      const record = this.reserveWorkspace(workspacePath, identityKey, name, options, ownership, launchDeadlineAt)
-      const creation = this.startCreation(record, options, launchDeadlineAt, launchTimeoutMs)
-      this.pendingWorkspaceCreations.set(identityKey, record)
-      try {
-        return this.finishCreation(await creation, options.requestId, ownership)
-      } finally {
-        if (this.pendingWorkspaceCreations.get(identityKey) === record) {
-          this.pendingWorkspaceCreations.delete(identityKey)
-        }
-      }
+      }, { at: launchDeadlineAt, timeoutMs: launchTimeoutMs })
+      return await finish()
     } finally {
       if (options.requestId) this.cancelledCreationRequests.delete(options.requestId)
+    }
+  }
+  private async reserveLeasedWorkspace(
+    workspacePath: string,
+    identityKey: string,
+    name: string | undefined,
+    options: WorkspaceCreateOptions,
+    ownership: WorkspaceCreationOwnership,
+    launchDeadlineAt: number,
+  ): Promise<WorkspaceRecord> {
+    const processLease = await this.processLeases?.acquire(workspacePath)
+    if (this.processLeases && !processLease) throw new WorkspacePathOwnedError(workspacePath)
+    try {
+      return this.reserveWorkspace(workspacePath, identityKey, name, options, ownership, launchDeadlineAt, processLease)
+    } catch (error) {
+      await processLease?.release()
+      throw error
     }
   }
   private reserveWorkspace(
@@ -307,6 +469,7 @@ export class WorkspaceManager {
     options: WorkspaceCreateOptions,
     ownership: WorkspaceCreationOwnership,
     launchDeadlineAt: number,
+    processLease?: WorkspaceProcessLease,
   ): WorkspaceRecord {
     const id = randomUUID()
     const binary = this.options.binaryResolver.resolve(options.binaryPath)
@@ -320,6 +483,7 @@ export class WorkspaceManager {
 
     const record = {
       id,
+      lineageId: options.lineageId ?? randomUUID(),
       requestId: options.requestId,
       path: workspacePath,
       name,
@@ -334,10 +498,11 @@ export class WorkspaceManager {
     Object.defineProperties(record, {
       identityKey: { value: identityKey },
       ownership: { value: ownership },
-      [WORKSPACE_STATE]: { value: { abortController: new AbortController(), published: false, stoppedPublished: false } },
+      [WORKSPACE_STATE]: { value: { abortController: new AbortController(), published: false, stoppedPublished: false, processLease } },
     })
 
     this.workspaces.set(id, record)
+    processLease?.onLost(() => this.handleProcessLeaseLost(id, record))
     if (options.requestId && this.cancelledCreationRequests.has(options.requestId)) {
       record[WORKSPACE_STATE].abortController.abort(new WorkspaceLaunchCancelledError(id))
     }
@@ -411,6 +576,8 @@ export class WorkspaceManager {
         throw new Error("Failed to build OpenCode auth header")
       }
       this.opencodeAuth.set(id, { username: opencodeUsername, password: opencodePassword, authorization })
+      const callbackToken = generateCodeNomadCallbackToken()
+      this.pluginCallbackAuth.set(id, buildCodeNomadCallbackAuthorizationHeader(callbackToken))
 
       const environment = {
         ...userEnvironment,
@@ -418,6 +585,7 @@ export class WorkspaceManager {
         OPENCODE_EXPERIMENTAL_WORKSPACES: "true",
         CODENOMAD_INSTANCE_ID: id,
         CODENOMAD_BASE_URL: serverBaseUrl,
+        [CODENOMAD_CALLBACK_TOKEN_ENV]: callbackToken,
         ...(this.options.nodeExtraCaCertsPath ? { NODE_EXTRA_CA_CERTS: this.options.nodeExtraCaCertsPath } : {}),
         [OPENCODE_SERVER_BASE_URL_ENV]: `${normalizedServerBaseUrl}${proxyPath}`,
         [OPENCODE_SERVER_USERNAME_ENV]: opencodeUsername,
@@ -425,13 +593,16 @@ export class WorkspaceManager {
       }
 
       const logLevel = (serverConfig as any)?.logLevel
+      const cleanupToken = await state.processLease?.prepareLaunch()
       const { pid, port, exitPromise, getLastOutput } = await this.runtime.launch({
         workspaceId: id,
         folder: workspacePath,
         binaryPath: resolvedBinaryPath,
         environment,
         logLevel,
+        cleanupToken,
         signal: state.abortController.signal,
+        persistProcessIdentities: (identities) => state.processLease?.setProcessIdentities(identities) ?? Promise.resolve(),
         onExit: (info) => this.handleProcessExit(info.workspaceId, info),
       })
       record.pid = pid
@@ -465,17 +636,18 @@ export class WorkspaceManager {
         stopFailure = stopError
       })
       if (!stopFailure) {
-        this.removeRecord(id, record, state.published)
+        await this.removeRecord(id, record, state.published)
         throw launchFailure
       }
-      if (!state.published) {
-        throw stopFailure
-      }
+      state.cleanupBlocked = true
       record.status = "error"
       record.error = stopFailure instanceof Error
         ? `Workspace startup failed and its process could not be stopped: ${stopFailure.message}`
         : launchFailure instanceof Error ? launchFailure.message : String(launchFailure)
       record.updatedAt = new Date().toISOString()
+      if (!state.published) {
+        throw stopFailure
+      }
       if (this.workspaces.get(id) === record && state.published) {
         this.options.eventBus.publish({ type: "workspace.error", workspace: record })
       }
@@ -488,19 +660,27 @@ export class WorkspaceManager {
     const record = this.workspaces.get(id)
     if (!record) return Promise.resolve(undefined)
     const state = record[WORKSPACE_STATE]
-    if (!state.abortController.signal.aborted) {
-      state.abortController.abort(new WorkspaceLaunchCancelledError(id))
-    }
-    const pending = this.pendingWorkspaceCreations.get(record.identityKey)
-    if (pending === record) {
-      this.pendingWorkspaceCreations.delete(record.identityKey)
-    }
     if (!state.deletePromise) {
-      let deletePromise!: Promise<WorkspaceDescriptor | undefined>
-      deletePromise = this.cleanupDeletedWorkspace(id, record).catch((error) => {
-        if (state.deletePromise === deletePromise) state.deletePromise = undefined
-        throw error
-      })
+      let cleanupStarted = false
+      const cleanup = () => {
+        cleanupStarted = true
+        if (!state.abortController.signal.aborted) {
+          state.abortController.abort(new WorkspaceLaunchCancelledError(id))
+        }
+        if (this.pendingWorkspaceCreations.get(record.identityKey) === record) {
+          this.pendingWorkspaceCreations.delete(record.identityKey)
+        }
+        return this.cleanupDeletedWorkspace(id, record)
+      }
+      const deletePromise = Promise.resolve()
+        .then(() => this.shuttingDown || !this.deletionGuard
+          ? cleanup()
+          : this.deletionGuard(record, cleanup))
+        .catch((error) => {
+          if (cleanupStarted && this.workspaces.get(id) === record) state.cleanupBlocked = true
+          if (state.deletePromise === deletePromise) state.deletePromise = undefined
+          throw error
+        })
       state.deletePromise = deletePromise
     }
     return state.deletePromise
@@ -630,16 +810,36 @@ export class WorkspaceManager {
     await immediateStop
     await this.runtime.stop(id)
 
-    this.removeRecord(id, record, true)
+    await this.removeRecord(id, record, true)
     return record
   }
 
-  private removeRecord(id: string, record: WorkspaceRecord, publishStopped: boolean): void {
+  private async removeRecord(id: string, record: WorkspaceRecord, publishStopped: boolean): Promise<void> {
     if (this.workspaces.get(id) !== record) return
+    const processLease = record[WORKSPACE_STATE].processLease
+    await processLease?.release()
+    record[WORKSPACE_STATE].processLease = undefined
     this.workspaces.delete(id)
     this.opencodeAuth.delete(id)
+    this.pluginCallbackAuth.delete(id)
     clearWorkspaceSearchCache(record.path)
     if (publishStopped) this.publishStopped(record, "deleted")
+  }
+
+  private handleProcessLeaseLost(id: string, record: WorkspaceRecord): void {
+    if (this.workspaces.get(id) !== record) return
+    const state = record[WORKSPACE_STATE]
+    if (state.leaseLost) return
+    state.leaseLost = true
+    state.cleanupBlocked = true
+    record.status = "error"
+    record.error = "Workspace process lease was lost; the workspace is being stopped"
+    record.updatedAt = new Date().toISOString()
+    state.abortController.abort(new WorkspacePathOwnedError(record.path))
+    if (state.published) this.options.eventBus.publish({ type: "workspace.error", workspace: record })
+    void this.runtime.stop(id)
+      .then(() => this.removeRecord(id, record, state.published))
+      .catch((error) => this.options.logger.error({ workspaceId: id, err: error }, "Workspace lease-loss cleanup remains retryable"))
   }
 
   private publishStopped(record: WorkspaceRecord, reason: "deleted" | "stopped" = "stopped"): void {
@@ -876,6 +1076,7 @@ export class WorkspaceManager {
     const workspace = record
 
     this.opencodeAuth.delete(workspaceId)
+    this.pluginCallbackAuth.delete(workspaceId)
 
     this.options.logger.info({ workspaceId, ...info }, "Workspace process exited")
 

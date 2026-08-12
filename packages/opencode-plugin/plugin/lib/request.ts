@@ -10,12 +10,14 @@ export type PluginEvent = {
 export type CodeNomadConfig = {
   instanceId: string
   baseUrl: string
+  callbackToken: string
 }
 
 export function getCodeNomadConfig(): CodeNomadConfig {
   return {
     instanceId: requireEnv("CODENOMAD_INSTANCE_ID"),
     baseUrl: requireEnv("CODENOMAD_BASE_URL"),
+    callbackToken: requireEnv("CODENOMAD_CALLBACK_TOKEN"),
   }
 }
 
@@ -23,7 +25,7 @@ export function createCodeNomadRequester(config: CodeNomadConfig) {
   const rawBaseUrl = (config.baseUrl ?? "").trim()
   const baseUrl = rawBaseUrl.replace(/\/+$/, "")
   const pluginBase = `${baseUrl}/workspaces/${encodeURIComponent(config.instanceId)}/plugin`
-  const authorization = buildInstanceAuthorizationHeader()
+  const authorization = `Bearer ${config.callbackToken}`
 
   const buildUrl = (path: string) => {
     if (path.startsWith("http://") || path.startsWith("https://")) {
@@ -47,10 +49,7 @@ export function createCodeNomadRequester(config: CodeNomadConfig) {
     const hasBody = init?.body !== undefined
     const headers = buildHeaders(init?.headers, hasBody)
 
-    // The CodeNomad plugin only talks to the local CodeNomad server.
-    // Use a single request implementation that tolerates custom/self-signed certs
-    // without disabling TLS verification for the whole Node process.
-    return nodeFetch(url, { ...init, headers }, { rejectUnauthorized: false })
+    return nodeFetch(url, { ...init, headers })
   }
 
   const requestJson = async <T>(path: string, init?: RequestInit): Promise<T> => {
@@ -60,7 +59,7 @@ export function createCodeNomadRequester(config: CodeNomadConfig) {
       throw new Error(message || `Request failed with ${response.status}`)
     }
 
-    if (response.status === 204) {
+    if ((init?.method ?? "GET").toUpperCase() === "HEAD" || response.status === 204 || response.status === 205) {
       return undefined as T
     }
 
@@ -95,7 +94,6 @@ export function createCodeNomadRequester(config: CodeNomadConfig) {
 async function nodeFetch(
   url: string,
   init: RequestInit & { headers?: Record<string, string> },
-  tls: { rejectUnauthorized: boolean },
 ): Promise<Response> {
   const parsed = new URL(url)
   const isHttps = parsed.protocol === "https:"
@@ -114,9 +112,9 @@ async function nodeFetch(
         path: `${parsed.pathname}${parsed.search}`,
         method,
         headers,
-        ...(isHttps ? { rejectUnauthorized: tls.rejectUnauthorized } : {}),
       },
       (res) => {
+        const status = res.statusCode ?? 0
         const responseHeaders = new Headers()
         for (const [key, value] of Object.entries(res.headers)) {
           if (value === undefined) continue
@@ -127,9 +125,10 @@ async function nodeFetch(
           }
         }
 
-        // Convert Node stream -> Web ReadableStream for Response.
-        const webBody = Readable.toWeb(res) as unknown as ReadableStream<Uint8Array>
-        resolve(new Response(webBody, { status: res.statusCode ?? 0, headers: responseHeaders }))
+        const bodyForbidden = method === "HEAD" || status === 204 || status === 205 || status === 304
+        if (bodyForbidden) res.resume()
+        const webBody = bodyForbidden ? null : Readable.toWeb(res) as unknown as ReadableStream<Uint8Array>
+        resolve(new Response(webBody, { status, headers: responseHeaders }))
       },
     )
 
@@ -141,6 +140,8 @@ async function nodeFetch(
       reject(err)
     }
 
+    req.once("error", reject)
+
     if (signal) {
       if (signal.aborted) {
         abort()
@@ -149,8 +150,6 @@ async function nodeFetch(
       signal.addEventListener("abort", abort, { once: true })
       req.once("close", () => signal.removeEventListener("abort", abort))
     }
-
-    req.once("error", reject)
 
     if (body === undefined || body === null) {
       req.end()
@@ -183,13 +182,6 @@ function requireEnv(key: string): string {
     throw new Error(`[CodeNomadPlugin] Missing required env var ${key}`)
   }
   return value
-}
-
-function buildInstanceAuthorizationHeader(): string {
-  const username = requireEnv("OPENCODE_SERVER_USERNAME")
-  const password = requireEnv("OPENCODE_SERVER_PASSWORD")
-  const token = Buffer.from(`${username}:${password}`, "utf8").toString("base64")
-  return `Basic ${token}`
 }
 
 function normalizeHeaders(headers: HeadersInit | undefined): Record<string, string> {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { resolveOpencodeServerAuth } from "./opencode-auth"
+import { buildCodeNomadCallbackAuthorizationHeader, generateCodeNomadCallbackToken, resolveOpencodeServerAuth } from "./opencode-auth"
 
 describe("resolveOpencodeServerAuth", () => {
   it("uses configured OpenCode auth from workspace environment", () => {
@@ -38,4 +38,10 @@ describe("resolveOpencodeServerAuth", () => {
 
     assert.deepEqual(auth, { username: "codenomad", password: "generated" })
   })
+})
+
+it("builds a bearer callback capability", () => {
+  const token = generateCodeNomadCallbackToken()
+  assert.match(token, /^[A-Za-z0-9_-]{43}$/)
+  assert.equal(buildCodeNomadCallbackAuthorizationHeader(token), `Bearer ${token}`)
 })

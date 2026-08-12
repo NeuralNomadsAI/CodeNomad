@@ -4,6 +4,7 @@ import { describe, it } from "node:test"
 import {
   applyRightPanelItemCustomization,
   collectRightPanelItems,
+  getRightPanelTabNavigationTarget,
   moveRightPanelItem,
   parseRightPanelCustomization,
   setRightPanelItemHidden,
@@ -69,5 +70,18 @@ describe("right panel registry", () => {
   it("toggles hidden ids", () => {
     assert.deepEqual(setRightPanelItemHidden(["files"], "status", true), ["files", "status"])
     assert.deepEqual(setRightPanelItemHidden(["files"], "files", false), [])
+  })
+
+  it("supports roving tab keyboard navigation", () => {
+    const tabs = [item("workflows", 5), item("changes", 10), item("files", 20)]
+    const target = (key: string) => getRightPanelTabNavigationTarget(tabs, "workflows", key)?.id
+
+    assert.equal(target("ArrowLeft"), "files")
+    assert.equal(target("ArrowUp"), "files")
+    assert.equal(target("ArrowRight"), "changes")
+    assert.equal(target("ArrowDown"), "changes")
+    assert.equal(target("Home"), "workflows")
+    assert.equal(target("End"), "files")
+    assert.equal(target("Escape"), undefined)
   })
 })

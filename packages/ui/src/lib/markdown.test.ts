@@ -112,3 +112,66 @@ describe("renderMarkdown bracket math delimiters", () => {
     }
   })
 })
+
+describe("renderMarkdown URL sanitization", () => {
+  it("removes unsafe and protocol-relative link URLs", async () => {
+    const html = await renderMarkdown([
+      "[javascript](javascript:alert(1))",
+      "[file](file:///tmp/secret)",
+      "[data](data:text/html,unsafe)",
+      "[custom](vscode://workspace)",
+      "[encoded](javascript&#58;alert(1))",
+      "[protocol-relative](//example.com/path)",
+    ].join("\n"), { suppressHighlight: true, escapeRawHtml: true })
+
+    assert.doesNotMatch(html, /<a\b/i)
+    assert.doesNotMatch(html, /href=/i)
+  })
+
+  it("keeps HTTP, mail, and scheme-less relative links clickable", async () => {
+    const html = await renderMarkdown([
+      "[web](https://example.com)",
+      "[mail](mailto:user@example.com)",
+      "[readme](README.md)",
+      "[nested](docs/setup.md)",
+      "[current](./)",
+      "[parent](../)",
+      "[fragment](#install)",
+      "[query](?view=raw)",
+    ].join(" "), {
+      suppressHighlight: true,
+      escapeRawHtml: true,
+    })
+
+    assert.equal((html.match(/<a\b/g) ?? []).length, 8)
+  })
+
+  it("never emits unsafe Markdown image URLs", async () => {
+    const html = await renderMarkdown([
+      "![javascript](javascript:alert(1))",
+      "![file](file:///tmp/secret)",
+      "![data](data:image/svg+xml,unsafe)",
+      "![custom](vscode://workspace)",
+      "![encoded](javascript&#58;alert(1))",
+      "![protocol-relative](//example.com/image.png)",
+    ].join("\n"), { suppressHighlight: true, escapeRawHtml: true })
+
+    assert.doesNotMatch(html, /<img\b/i)
+    assert.doesNotMatch(html, /src=/i)
+    assert.doesNotMatch(html, /javascript:|file:|data:|vscode:|\/\/example\.com/i)
+  })
+
+  it("renders HTTP and scheme-less relative Markdown images", async () => {
+    const html = await renderMarkdown([
+      "![web](https://example.com/image.png)",
+      "![readme](README.md)",
+      "![nested](docs/setup.png)",
+      "![current](./)",
+      "![parent](../)",
+      "![fragment](#preview)",
+      "![query](?raw=1)",
+    ].join("\n"), { suppressHighlight: true, escapeRawHtml: true })
+
+    assert.equal((html.match(/<img\b/g) ?? []).length, 7)
+  })
+})

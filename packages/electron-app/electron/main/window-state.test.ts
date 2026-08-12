@@ -26,13 +26,51 @@ test("restores shared outer position and content size", () => {
   const window = {
     setPosition: (x: number, y: number) => calls.push(["position", x, y]),
     setContentSize: (width: number, height: number) => calls.push(["content", width, height]),
+    unmaximize: () => calls.push(["unmaximize"]),
     maximize: () => undefined,
-    setFullScreen: () => undefined,
+    setFullScreen: (enabled: boolean) => calls.push(["fullscreen", enabled]),
     webContents: { setZoomFactor: () => undefined },
   } as unknown as BrowserWindow
   const bounds = { x: 10, y: 20, width: 1200, height: 800 }
   restoreWindowState(window, { bounds, maximized: false, fullscreen: false, zoomFactor: 1 }, bounds)
-  assert.deepEqual(calls, [["position", 10, 20], ["content", 1200, 800]])
+  assert.deepEqual(calls, [["fullscreen", false], ["unmaximize"], ["position", 10, 20], ["content", 1200, 800]])
+})
+
+test("late promotion applies authoritative window state and tracker baseline", async () => {
+  const calls: unknown[] = []
+  let maximized = false
+  const window = {
+    isDestroyed: () => false,
+    on: () => undefined,
+    getPosition: () => [1, 2],
+    getContentSize: () => [900, 700],
+    isMaximized: () => maximized,
+    isFullScreen: () => false,
+    setPosition: (x: number, y: number) => calls.push(["position", x, y]),
+    setContentSize: (width: number, height: number) => calls.push(["content", width, height]),
+    unmaximize: () => calls.push(["unmaximize"]),
+    maximize: () => { maximized = true; calls.push(["maximize"]) },
+    setFullScreen: (enabled: boolean) => calls.push(["fullscreen", enabled]),
+    webContents: {
+      isDestroyed: () => false,
+      on: () => undefined,
+      setZoomFactor: (factor: number) => calls.push(["zoom", factor]),
+      getZoomFactor: () => 1.5,
+    },
+  } as unknown as BrowserWindow
+  const saved: any[] = []
+  const manager = {
+    saveWindowState: async (state: unknown) => { saved.push(state); return true },
+    flush: async () => undefined,
+  } as unknown as ClientStateManager
+  const tracker = new WindowStateTracker(window, manager)
+  const bounds = { x: 10, y: 20, width: 1200, height: 800 }
+  tracker.applyAuthoritativeState({ bounds, maximized: true, fullscreen: false, zoomFactor: 1.5 }, bounds)
+  await tracker.flush()
+
+  assert.deepEqual(calls.slice(0, 5), [["fullscreen", false], ["position", 10, 20], ["content", 1200, 800], ["zoom", 1.5], ["maximize"]])
+  assert.deepEqual(saved[0].bounds, bounds)
+  assert.equal(saved[0].zoomFactor, 1.5)
 })
 
 test("flush captures the current native zoom", async () => {

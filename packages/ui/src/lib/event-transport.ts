@@ -1,10 +1,14 @@
 import type { WorkspaceEventPayload } from "../../../server/src/api-types"
-import { serverApi } from "./api-client"
+import { CODENOMAD_API_BASE, serverApi } from "./api-client"
 import {
   resolveDesktopEventTransportStartOptions,
   type DesktopEventTransportStartOptions,
 } from "./event-transport-contract"
 import { readUseTauriNativeEventTransportPreference } from "./desktop-event-transport-preference"
+import {
+  acquireEventTransportCursorAuthority,
+  type EventTransportCursorAuthority,
+} from "./event-transport-cursor"
 import { getLogger } from "./logger"
 import { runtimeEnv } from "./runtime-env"
 import { connectTauriWorkspaceEvents } from "./native/desktop-events"
@@ -12,11 +16,12 @@ import { connectTauriWorkspaceEvents } from "./native/desktop-events"
 const log = getLogger("sse")
 
 export interface WorkspaceEventTransportCallbacks {
-  onBatch: (events: WorkspaceEventPayload[]) => void
+  onBatch: (events: WorkspaceEventPayload[]) => boolean | void
   onError?: () => void
   onOpen?: () => void
   onStatus?: (status: WorkspaceEventTransportStatus) => void
   onPing?: (payload: { ts?: number }) => void
+  onReplayReset?: () => boolean | void | Promise<boolean | void>
 }
 
 export type WorkspaceEventTransportStatus = "connecting" | "connected" | "disconnected"
@@ -27,18 +32,25 @@ export interface WorkspaceEventConnection {
 
 async function connectBrowserWorkspaceEvents(
   callbacks: WorkspaceEventTransportCallbacks,
+  cursor: EventTransportCursorAuthority,
 ): Promise<WorkspaceEventConnection> {
   const notifyDisconnected = () => {
     callbacks.onStatus?.("disconnected")
     callbacks.onError?.()
   }
-  const source = serverApi.connectEvents((event) => {
-    callbacks.onBatch([event])
-  }, notifyDisconnected, callbacks.onPing)
-  source.onopen = () => {
-    callbacks.onStatus?.("connected")
-    callbacks.onOpen?.()
-  }
+  const source = serverApi.connectEvents({
+    onEvent: (event) => callbacks.onBatch([event]),
+    onError: notifyDisconnected,
+    onOpen: () => {
+      callbacks.onStatus?.("connected")
+      callbacks.onOpen?.()
+    },
+    onPing: callbacks.onPing,
+    onReplayReset: callbacks.onReplayReset,
+    getLastEventId: cursor.read,
+    onEventId: cursor.commit,
+  })
+  callbacks.onStatus?.("connecting")
   return {
     disconnect() {
       source.close()
@@ -50,6 +62,10 @@ export async function connectWorkspaceEvents(
   callbacks: WorkspaceEventTransportCallbacks,
   options?: DesktopEventTransportStartOptions,
 ): Promise<WorkspaceEventConnection> {
+  const cursorScope = CODENOMAD_API_BASE
+    ?? (typeof window !== "undefined" ? window.location?.origin : undefined)
+    ?? "relative"
+  const cursor = acquireEventTransportCursorAuthority(cursorScope)
   const nativeDesktopTransportEnabled = readUseTauriNativeEventTransportPreference()
 
   if (
@@ -61,6 +77,8 @@ export async function connectWorkspaceEvents(
       const conn = await connectTauriWorkspaceEvents(
         callbacks,
         resolveDesktopEventTransportStartOptions(options),
+        undefined,
+        cursor,
       )
       log.info("Event transport: rust-native (desktop_event_transport)")
       return conn
@@ -74,7 +92,7 @@ export async function connectWorkspaceEvents(
   }
 
   log.info(`Event transport: browser-eventsource (host=${runtimeEnv.host})`)
-  return connectBrowserWorkspaceEvents(callbacks)
+  return connectBrowserWorkspaceEvents(callbacks, cursor)
 }
 
 export type {

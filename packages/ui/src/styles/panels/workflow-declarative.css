@@ -1,0 +1,52 @@
+.workflow-mode-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin-bottom: var(--space-md);
+}
+
+.workflow-mode-switch .workflow-button + .workflow-button { border-inline-start: 0; }
+.workflow-action-wrap { flex-wrap: wrap; justify-content: flex-start; }
+
+.workflow-field > select {
+  width: 100%;
+  border: 1px solid var(--border-base);
+  border-radius: 0;
+  padding: var(--space-sm);
+  background: var(--surface-base);
+  color: var(--text-primary);
+}
+
+.workflow-source {
+  min-height: 8rem;
+  tab-size: 2;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+}
+
+.workflow-start-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  border: 1px solid var(--border-base);
+  border-radius: 0;
+  padding: var(--space-md);
+}
+
+.workflow-start-fields legend {
+  padding-inline: var(--space-xs);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.workflow-conflict,
+.workflow-notice {
+  margin: 0;
+  border-inline-start: 2px solid var(--status-warning);
+  padding: var(--space-sm);
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

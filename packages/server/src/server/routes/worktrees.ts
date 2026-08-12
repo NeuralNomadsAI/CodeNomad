@@ -1,20 +1,26 @@
 import type { FastifyInstance, FastifyReply } from "fastify"
+import { lstat, realpath } from "node:fs/promises"
+import path from "node:path"
 import { z } from "zod"
 import { WorkspaceManager } from "../../workspaces/manager"
 import {
   resolveRepoRoot,
   listWorktrees,
   isValidWorktreeSlug,
+  isManagedWorktree,
+  getManagedWorktreePath,
   createManagedWorktree,
   removeWorktree,
 } from "../../workspaces/git-worktrees"
 import type { WorktreeListResponse, WorktreeMap } from "../../api-types"
 import type { OpencodeYoloPersistence } from "../../permissions/opencode-yolo-metadata"
 import { ensureCodenomadGitExclude, readWorktreeMap, writeWorktreeMap } from "../../workspaces/worktree-map"
+import type { WorkflowManager } from "../../workflows/manager"
 
 interface RouteDeps {
   workspaceManager: WorkspaceManager
   sessionMetadataPersistence: OpencodeYoloPersistence
+  workflowManager: WorkflowManager
 }
 
 const WorktreeMapSchema = z.object({
@@ -102,15 +108,20 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
 
       await ensureCodenomadGitExclude(workspace.path, request.log).catch(() => undefined)
 
-      const created = await createManagedWorktree({
-        repoRoot,
-        workspaceFolder: workspace.path,
-        slug,
-        logger: request.log,
+      return await deps.workspaceManager.withWorkspacePathLease(getManagedWorktreePath(repoRoot, slug), async (active) => {
+        if (active) {
+          reply.code(409)
+          return { error: "Worktree is in use by an active workspace" }
+        }
+        const created = await createManagedWorktree({
+          repoRoot,
+          workspaceFolder: workspace.path,
+          slug,
+          logger: request.log,
+        })
+        reply.code(201)
+        return created
       })
-
-      reply.code(201)
-      return created
     } catch (error) {
       return handleError(error, reply)
     }
@@ -146,36 +157,68 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
         reply.code(404)
         return { error: "Worktree not found" }
       }
+      if (!await isManagedWorktree({ repoRoot, worktree: match })) {
+        reply.code(404)
+        return { error: "Managed worktree not found" }
+      }
+      const matchIdentity = await getManagedWorktreeIdentity(match.directory)
+      return await deps.workflowManager.withWorktreeOwnershipLease(
+        { id: workspace.id, lineageId: workspace.lineageId, path: workspace.path },
+        { slug, path: match.directory },
+        async (owned) => {
+          if (owned) {
+            reply.code(409)
+            return { error: "Worktree is owned by an active workflow" }
+          }
+          return deps.workspaceManager.withWorkspacePathLease(match.directory, async (active) => {
+            if (active) {
+              reply.code(409)
+              return { error: "Worktree is in use by an active workspace" }
+            }
 
-      await removeWorktree({ workspaceFolder: workspace.path, directory: match.directory, force, logger: request.log })
+            const currentWorktrees = await listWorktrees({ repoRoot, workspaceFolder: workspace.path, logger: request.log })
+            const currentMatch = currentWorktrees.find((worktree) => worktree.slug === slug)
+            if (!currentMatch || currentMatch.kind === "root" || !await isManagedWorktree({ repoRoot, worktree: currentMatch })) {
+              reply.code(404)
+              return { error: "Managed worktree not found" }
+            }
+            if (await getManagedWorktreeIdentity(currentMatch.directory) !== matchIdentity) {
+              reply.code(409)
+              return { error: "Worktree changed while deletion was pending" }
+            }
 
-      // Best-effort: prune any mappings that point at the deleted worktree.
-      const current = await readWorktreeMap(workspace.path, request.log)
-      let changed = false
-      const nextMapping: Record<string, string> = { ...(current.parentSessionWorktreeSlug ?? {}) }
-      for (const [sessionId, mapped] of Object.entries(nextMapping)) {
-        if (mapped === slug) {
-          delete nextMapping[sessionId]
-          changed = true
+            await removeWorktree({ workspaceFolder: workspace.path, directory: currentMatch.directory, force, logger: request.log })
+
+            // Best-effort: prune any mappings that point at the deleted worktree.
+            const current = await readWorktreeMap(workspace.path, request.log)
+            let changed = false
+            const nextMapping: Record<string, string> = { ...(current.parentSessionWorktreeSlug ?? {}) }
+            for (const [sessionId, mapped] of Object.entries(nextMapping)) {
+              if (mapped === slug) {
+                delete nextMapping[sessionId]
+                changed = true
+              }
+            }
+            const nextDefault = current.defaultWorktreeSlug === slug ? "root" : current.defaultWorktreeSlug
+            if (nextDefault !== current.defaultWorktreeSlug) {
+              changed = true
+            }
+            if (changed) {
+              await writeWorktreeMap(
+                workspace.path,
+                {
+                  version: 1,
+                  defaultWorktreeSlug: nextDefault,
+                  parentSessionWorktreeSlug: nextMapping,
+                },
+                request.log,
+              )
+            }
+
+            reply.code(204)
+          })
         }
-      }
-      const nextDefault = current.defaultWorktreeSlug === slug ? "root" : current.defaultWorktreeSlug
-      if (nextDefault !== current.defaultWorktreeSlug) {
-        changed = true
-      }
-      if (changed) {
-        await writeWorktreeMap(
-          workspace.path,
-          {
-            version: 1,
-            defaultWorktreeSlug: nextDefault,
-            parentSessionWorktreeSlug: nextMapping,
-          },
-          request.log,
-        )
-      }
-
-      reply.code(204)
+      )
     } catch (error) {
       return handleError(error, reply)
     }
@@ -216,6 +259,15 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
       return handleError(error, reply)
     }
   })
+}
+
+async function getManagedWorktreeIdentity(directory: string): Promise<string> {
+  const [canonicalDirectory, metadata] = await Promise.all([
+    realpath(directory),
+    lstat(path.join(directory, ".git"), { bigint: true }),
+  ])
+  const normalizedDirectory = process.platform === "win32" ? canonicalDirectory.toLowerCase() : canonicalDirectory
+  return `${normalizedDirectory}\0${metadata.dev}\0${metadata.ino}\0${metadata.birthtimeNs}`
 }
 
 function handleError(error: unknown, reply: FastifyReply) {

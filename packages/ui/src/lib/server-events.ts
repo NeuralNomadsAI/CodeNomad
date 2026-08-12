@@ -25,6 +25,7 @@ function logSse(message: string, context?: Record<string, unknown>) {
 class ServerEvents {
   private handlers = new Map<WorkspaceEventType | "*", Set<(event: WorkspaceEventPayload) => void>>()
   private openHandlers = new Set<() => void>()
+  private replayResetHandlers = new Set<() => boolean | void | Promise<boolean | void>>()
   private statusHandlers = new Set<(status: WorkspaceEventTransportStatus) => void>()
   private connection: WorkspaceEventConnection | null = null
   private connectGeneration = 0
@@ -38,11 +39,9 @@ class ServerEvents {
   private async connect() {
     const generation = ++this.connectGeneration
     this.clearReconnectTimer()
-
-    if (this.connection) {
+    const previousConnection = this.connection
+    if (previousConnection) {
       this.emitTransportStatus("disconnected")
-      this.connection.disconnect()
-      this.connection = null
     }
 
     logSse("Connecting to backend events stream")
@@ -50,7 +49,9 @@ class ServerEvents {
     try {
       const connection = await connectWorkspaceEvents({
         onBatch: (events) => {
-          if (generation === this.connectGeneration) this.dispatchBatch(events)
+          if (generation !== this.connectGeneration) return false
+          this.dispatchBatch(events)
+          return true
         },
         onError: () => {
           if (generation !== this.connectGeneration) {
@@ -71,6 +72,23 @@ class ServerEvents {
           logSse("Events stream connected")
           this.retryDelay = RETRY_BASE_DELAY
           this.openHandlers.forEach((handler) => handler())
+        },
+        onReplayReset: async () => {
+          if (generation !== this.connectGeneration) return false
+          log.warn("Events replay window missed; requesting authoritative resync")
+          if (this.replayResetHandlers.size === 0) return false
+          const results = await Promise.allSettled(
+            Array.from(this.replayResetHandlers, (handler) => Promise.resolve().then(handler)),
+          )
+          if (generation !== this.connectGeneration) return false
+          for (const result of results) {
+            if (result.status === "rejected") {
+              log.warn("Failed to resynchronize after replay reset", result.reason)
+              return false
+            }
+            if (result.value === false) return false
+          }
+          return true
         },
         onPing: (payload) => {
           if (generation !== this.connectGeneration) {
@@ -100,7 +118,9 @@ class ServerEvents {
       }
 
       this.connection = connection
+      previousConnection?.disconnect()
     } catch (error) {
+      previousConnection?.disconnect()
       if (generation !== this.connectGeneration) {
         return
       }
@@ -179,6 +199,11 @@ class ServerEvents {
     return () => this.openHandlers.delete(handler)
   }
 
+  onReplayReset(handler: () => boolean | void | Promise<boolean | void>): () => void {
+    this.replayResetHandlers.add(handler)
+    return () => this.replayResetHandlers.delete(handler)
+  }
+
   onTransportStatus(handler: (status: WorkspaceEventTransportStatus) => void): () => void {
     this.statusHandlers.add(handler)
     return () => this.statusHandlers.delete(handler)
@@ -187,12 +212,6 @@ class ServerEvents {
   restart(reason = "manual restart"): void {
     this.retryDelay = RETRY_BASE_DELAY
     this.clearReconnectTimer()
-
-    if (this.connection) {
-      this.emitTransportStatus("disconnected")
-      this.connection.disconnect()
-      this.connection = null
-    }
 
     logSse("Restarting backend events stream", { reason })
     void this.connect()

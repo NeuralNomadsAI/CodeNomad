@@ -93,6 +93,15 @@ export function setRightPanelItemHidden(hiddenIds: readonly string[], id: string
   return [...next]
 }
 
+export function getRightPanelTabNavigationTarget<T extends RightPanelItem>(items: readonly T[], currentId: string, key: string): T | undefined {
+  const index = items.findIndex((item) => item.id === currentId)
+  if (index === -1) return
+  if (key === "Home") return items[0]
+  if (key === "End") return items[items.length - 1]
+  if (key === "ArrowLeft" || key === "ArrowUp") return items[(index - 1 + items.length) % items.length]
+  if (key === "ArrowRight" || key === "ArrowDown") return items[(index + 1) % items.length]
+}
+
 function sortRightPanelItems<T extends RightPanelItem>(items: readonly T[], orderedIds: readonly string[]): T[] {
   const rank = new Map(orderedIds.map((id, index) => [id, index]))
   return [...items].sort((left, right) => {

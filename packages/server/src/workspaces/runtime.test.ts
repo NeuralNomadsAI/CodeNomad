@@ -52,7 +52,12 @@ const token = (rows: Array<[number, number, number, string]>, signal: boolean, b
 const isToken = (args: readonly string[]) => args.includes("codenomad-token-cleanup")
 const isSignal = (args: readonly string[]) => isToken(args) && (args.includes("TERM") || args.includes("KILL"))
 const isGuarded = (args: readonly string[]) => !isToken(args) && args.some((arg) => arg.includes("guarded-signal") || arg.includes("CODENOMAD_RESULT"))
-async function harness(options: WorkspaceRuntimeOptions & { binary?: string; output?: string; report?: boolean } = {}) {
+async function harness(options: WorkspaceRuntimeOptions & {
+  binary?: string
+  output?: string
+  report?: boolean
+  persistProcessIdentities?: (identities: import("./process-identity").ProcessIdentity[]) => Promise<void>
+} = {}) {
   const child = new FakeChild()
   const timers = new ManualTimers()
   const calls: Call[] = []
@@ -75,7 +80,10 @@ async function harness(options: WorkspaceRuntimeOptions & { binary?: string; out
   })
   const abort = new AbortController()
   const folder = platform === "win32" && process.platform !== "win32" ? `/${process.cwd()}` : process.cwd()
-  const launch = runtime.launch({ workspaceId: "w", folder, binaryPath: options.binary ?? "opencode", signal: abort.signal })
+  const launch = runtime.launch({
+    workspaceId: "w", folder, binaryPath: options.binary ?? "opencode", signal: abort.signal,
+    persistProcessIdentities: options.persistProcessIdentities,
+  })
   if (options.report !== false) {
     queueMicrotask(() => child.stdout.write(options.output ?? "opencode server listening on http://127.0.0.1:4321\n"))
     await launch
@@ -90,6 +98,128 @@ describe("workspace runtime lifecycle contracts", () => {
       return result(posix([[4242, 1, 4242, "100"]]))
     }) as unknown as Command })
     assert.deepEqual(launchCall?.args.slice(-1), ["4242"])
+  })
+
+  it("persists a Windows wrapper and its launch descendants before publishing the port", async () => {
+    let persisted: number[] = []
+    let captures = 0
+    await harness({
+      platform: "win32",
+      binary: "opencode.cmd",
+      persistProcessIdentities: async (identities) => { persisted = identities.map(({ pid }) => pid) },
+      spawnSync: ((command: string) => command === "powershell.exe"
+        ? result(windows(++captures === 1
+            ? [[4242, 1, "wrapper-start"]]
+            : [[4242, 1, "wrapper-start"], [5000, 4242, "child-start"]]))
+        : result()) as unknown as Command,
+    })
+    assert.deepEqual(persisted, [4242, 5000])
+  })
+
+  it("fails closed and cleans the known Windows tree when readiness-time CIM capture fails", async () => {
+    const child = new FakeChild()
+    const calls: Call[] = []
+    let captures = 0
+    let persisted = false
+    const runtime = new WorkspaceRuntime(new EventBus(), pino({ level: "silent" }), {
+      platform: "win32",
+      spawn: (() => child as unknown as ChildProcess) as typeof import("node:child_process").spawn,
+      spawnSync: ((command: string, args: readonly string[]) => {
+        calls.push({ command, args: [...args] })
+        if (command === "powershell.exe") {
+          return ++captures === 1
+            ? result(windows([[4242, 1, "wrapper-start"]]))
+            : result("", 1, "second CIM capture failed")
+        }
+        return result()
+      }) as unknown as Command,
+    })
+    const folder = process.platform === "win32" ? process.cwd() : `/${process.cwd()}`
+    const launch = runtime.launch({
+      workspaceId: "w", folder, binaryPath: "opencode.cmd",
+      persistProcessIdentities: async () => { persisted = true },
+    })
+    child.stdout.write("opencode server listening on http://127.0.0.1:4321\n")
+
+    await assert.rejects(launch, (error: unknown) =>
+      error instanceof WorkspaceRuntimeIdentityCaptureError && /readiness-time Windows identity discovery failed/.test(error.message))
+    assert.equal(persisted, false)
+    assert.ok(calls.some(({ command, args }) => command === "taskkill.exe" && args.includes("/T")))
+  })
+
+  it("retries direct Windows cleanup after a transient readiness-time CIM failure", async () => {
+    const child = new FakeChild()
+    const timers = new ManualTimers()
+    const calls: Call[] = []
+    let captures = 0
+    let cimAvailable = false
+    let alive = true
+    const runtime = new WorkspaceRuntime(new EventBus(), pino({ level: "silent" }), {
+      platform: "win32", gracefulStopTimeoutMs: 10, forcedStopTimeoutMs: 10,
+      setTimeout: timers.set, clearTimeout: timers.clear,
+      spawn: (() => child as unknown as ChildProcess) as typeof import("node:child_process").spawn,
+      spawnSync: ((command: string, args: readonly string[]) => {
+        calls.push({ command, args: [...args] })
+        if (command !== "powershell.exe") return result()
+        if (isGuarded(args)) {
+          if (!cimAvailable) return result("", 1, "CIM unavailable")
+          alive = false
+          return result("CODENOMAD_TARGET|4242|1|0|direct-start||100\nCODENOMAD_RESULT|1||1")
+        }
+        captures += 1
+        if (captures === 1) return result(windows([[4242, 1, "direct-start"]]))
+        if (!cimAvailable) return result("", 1, "CIM unavailable")
+        return result(windows(alive ? [[4242, 1, "direct-start"]] : [[1, 0, "system-start"]]))
+      }) as unknown as Command,
+    })
+    const folder = process.platform === "win32" ? process.cwd() : `/${process.cwd()}`
+    const launch = runtime.launch({ workspaceId: "w", folder, binaryPath: "opencode.exe" })
+    child.stdout.write("opencode server listening on http://127.0.0.1:4321\n")
+
+    await assert.rejects(launch, WorkspaceRuntimeIdentityCaptureError)
+    const firstCleanup = runtime.stop("w")
+    timers.run(); timers.run()
+    await assert.rejects(firstCleanup, WorkspaceStopTimeoutError)
+
+    cimAvailable = true
+    await runtime.stop("w")
+    assert.equal(calls.some(({ command }) => command === "taskkill.exe"), false)
+    assert.equal((runtime as unknown as { processes: Map<string, unknown> }).processes.size, 0)
+  })
+
+  it("retains unknown Windows ownership when the leader exits before identity recapture", async () => {
+    const child = new FakeChild()
+    const timers = new ManualTimers()
+    let captures = 0
+    let cimAvailable = false
+    const runtime = new WorkspaceRuntime(new EventBus(), pino({ level: "silent" }), {
+      platform: "win32", gracefulStopTimeoutMs: 10, forcedStopTimeoutMs: 10,
+      setTimeout: timers.set, clearTimeout: timers.clear,
+      spawn: (() => child as unknown as ChildProcess) as typeof import("node:child_process").spawn,
+      spawnSync: ((_command: string, args: readonly string[]) => {
+        if (++captures === 1) return result(windows([[4242, 1, "direct-start"]]))
+        if (!cimAvailable) return result("", 1, "CIM unavailable")
+        return isGuarded(args)
+          ? result("CODENOMAD_RESULT|0||0")
+          : result(windows([[5000, 4242, "child-start"]]))
+      }) as unknown as Command,
+    })
+    const folder = process.platform === "win32" ? process.cwd() : `/${process.cwd()}`
+    const launch = runtime.launch({ workspaceId: "w", folder, binaryPath: "opencode.exe" })
+    child.stdout.write("opencode server listening on http://127.0.0.1:4321\n")
+
+    await assert.rejects(launch, WorkspaceRuntimeIdentityCaptureError)
+    const failedCleanup = runtime.stop("w")
+    timers.run(); timers.run()
+    await assert.rejects(failedCleanup, WorkspaceStopTimeoutError)
+
+    child.exit(1)
+    cimAvailable = true
+    const retry = runtime.stop("w")
+    timers.run(); timers.run()
+    await assert.rejects(retry, (error: unknown) =>
+      error instanceof WorkspaceStopTimeoutError && /cannot prove exact launch ownership/.test(error.message))
+    assert.equal((runtime as unknown as { processes: Map<string, unknown> }).processes.size, 1)
   })
 
   it("cancels before spawn and while waiting for a port without losing retryable cleanup", async () => {
@@ -241,15 +371,18 @@ describe("workspace runtime lifecycle contracts", () => {
     const calls: Call[] = []
     const h = await harness({ platform: "win32", binary: "opencode.cmd", spawnSync: ((command: string, args: readonly string[]) => {
       calls.push({ command, args: [...args] })
+      if (command === "powershell.exe") return result(windows([[4242, 1, "wrapper-start"]]))
       return available ? result() : result("", 1, "taskkill unavailable")
     }) as unknown as Command })
     const first = h.runtime.stop("w"); h.timers.run(); h.timers.run()
     await assert.rejects(first, (error: unknown) => error instanceof WorkspaceStopTimeoutError && /\/T \/F failed/.test(error.message))
-    assert.deepEqual(calls.map(({ args }) => args), [["/PID", "4242", "/T"], ["/PID", "4242", "/T", "/F"]])
+    assert.deepEqual(calls.filter(({ command }) => command === "taskkill.exe").map(({ args }) => args),
+      [["/PID", "4242", "/T"], ["/PID", "4242", "/T", "/F"]])
     available = true
     const retry = h.runtime.stop("w"); h.child.exit(); await retry
 
-    const exited = await harness({ platform: "win32", binary: "opencode.cmd", spawnSync: (() => result("", 1, "taskkill unavailable")) as unknown as Command })
+    const exited = await harness({ platform: "win32", binary: "opencode.cmd", spawnSync: ((command: string) =>
+      command === "powershell.exe" ? result(windows([[4242, 1, "wrapper-start"]])) : result("", 1, "taskkill unavailable")) as unknown as Command })
     const incomplete = exited.runtime.stop("w"); exited.child.exit(1)
     await assert.rejects(incomplete, WorkspaceWindowsTreeCleanupIncompleteError)
     await assert.rejects(exited.runtime.stop("w"), WorkspaceWindowsTreeCleanupIncompleteError)

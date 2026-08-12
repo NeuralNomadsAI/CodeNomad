@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { spawn, spawnSync } from "node:child_process"
+import { randomUUID } from "node:crypto"
 import { once } from "node:events"
 import { setTimeout as delay } from "node:timers/promises"
 import { it } from "node:test"
@@ -7,6 +8,8 @@ import { it } from "node:test"
 import {
   LAUNCH_CLEANUP_TOKEN_ENV,
   probePosixProcesses,
+  probeLaunchCleanupToken,
+  signalLaunchCleanupToken,
   signalOwnedPosixProcessGroup,
   signalPosixProcesses,
 } from "./process-identity"
@@ -60,6 +63,42 @@ it("uses real Darwin ps identities to stop an owned detached process group", dar
     } catch {
       // The successful path has already removed the process group.
     }
+  }
+})
+
+it("finds and stops cleanup-token descendants that escape the original Darwin process group", darwinOnly, async () => {
+  const cleanupToken = `darwin-escaped-${randomUUID()}`
+  const leader = spawn(process.execPath, ["-e", `
+    const { spawn } = require("node:child_process")
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore", env: process.env })
+    process.stdout.write(String(child.pid) + "\\n")
+    setInterval(() => {}, 1000)
+  `], {
+    detached: true,
+    stdio: ["ignore", "pipe", "ignore"],
+    env: { ...process.env, [LAUNCH_CLEANUP_TOKEN_ENV]: cleanupToken },
+  })
+  assert.ok(leader.pid)
+  const [chunk] = await once(leader.stdout!, "data")
+  const escapedPid = Number.parseInt(String(chunk), 10)
+  assert.ok(escapedPid > 0)
+
+  try {
+    process.kill(-leader.pid, "SIGTERM")
+    if (leader.exitCode === null) await once(leader, "exit")
+    const escaped = probeLaunchCleanupToken(spawnSync, cleanupToken, 1_000, undefined, "darwin")
+    assert.equal(escaped.ok && escaped.processes.has(escapedPid), true)
+    const signaled = signalLaunchCleanupToken(spawnSync, cleanupToken, "SIGTERM", 1_000, undefined, "darwin")
+    assert.equal(signaled.ok && signaled.targets.some(({ pid }) => pid === escapedPid), true)
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const remaining = probeLaunchCleanupToken(spawnSync, cleanupToken, 1_000, undefined, "darwin")
+      if (remaining.ok && remaining.processes.size === 0) return
+      await delay(50)
+    }
+    assert.fail("escaped Darwin cleanup-token descendant remained alive")
+  } finally {
+    try { process.kill(escapedPid, "SIGKILL") } catch {}
+    try { process.kill(-leader.pid, "SIGKILL") } catch {}
   }
 })
 

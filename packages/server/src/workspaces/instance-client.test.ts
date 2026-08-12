@@ -148,8 +148,9 @@ describe("createInstanceClient", () => {
     }
   })
 
-  it("applies the loopback timeout and aborts a stuck instance", async () => {
+  it("applies the loopback timeout and aborts a stuck instance", { timeout: 1_000 }, async () => {
     const original = globalThis.fetch
+    const keepEventLoopAlive = setTimeout(() => {}, 2_000)
     // Never resolves on its own; only settles when the passed signal aborts,
     // mirroring how a real fetch honours an AbortSignal. Without the factory
     // timeout this call would hang forever and time the test out.
@@ -169,7 +170,71 @@ describe("createInstanceClient", () => {
       const result = await client!.global.health()
       assert.ok(result.error, "expected the stuck-instance call to surface an error")
     } finally {
+      clearTimeout(keepEventLoopAlive)
       globalThis.fetch = original
+    }
+  })
+
+  it("preserves the SDK Request signal while retaining the fallback timeout", async () => {
+    const originalFetch = globalThis.fetch
+    let effectiveSignal: AbortSignal | null | undefined
+    globalThis.fetch = ((_input, init) => {
+      effectiveSignal = init?.signal
+      return new Promise<Response>((_resolve, reject) => effectiveSignal?.addEventListener("abort", () => reject(effectiveSignal?.reason), { once: true }))
+    }) as typeof fetch
+    try {
+      const manager = makeManager({ getInstancePort: () => 4321, get: () => ({ path: "/repo" }) })
+      const client = createInstanceClient(manager as unknown as WorkspaceManager, "ws-1", { timeoutMs: 1_000 })!
+      const controller = new AbortController()
+      const request = client.tool.ids(undefined, { signal: controller.signal })
+      while (!effectiveSignal) await new Promise((resolve) => setImmediate(resolve))
+      const reason = new Error("caller cancelled")
+      controller.abort(reason)
+      assert.equal(effectiveSignal.aborted, true)
+      assert.strictEqual(effectiveSignal.reason, reason)
+      await request.catch(() => undefined)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it("preserves a caller signal that is aborted before dispatch", { timeout: 1_000 }, async () => {
+    const originalFetch = globalThis.fetch
+    let effectiveSignal: AbortSignal | null | undefined
+    globalThis.fetch = ((_input, init) => {
+      effectiveSignal = init?.signal
+      if (effectiveSignal?.aborted) return Promise.reject(effectiveSignal.reason)
+      return new Promise<Response>((_resolve, reject) => effectiveSignal?.addEventListener("abort", () => reject(effectiveSignal?.reason), { once: true }))
+    }) as typeof fetch
+    try {
+      const manager = makeManager({ getInstancePort: () => 4321, get: () => ({ path: "/repo" }) })
+      const client = createInstanceClient(manager as unknown as WorkspaceManager, "ws-1", { timeoutMs: 1_000 })!
+      const controller = new AbortController()
+      const reason = new Error("cancelled before dispatch")
+      controller.abort(reason)
+      await client.tool.ids(undefined, { signal: controller.signal }).catch(() => undefined)
+      assert.equal(effectiveSignal?.aborted, true)
+      assert.strictEqual(effectiveSignal?.reason, reason)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it("times out requests even when the Request carries its default signal", { timeout: 1_000 }, async () => {
+    const originalFetch = globalThis.fetch
+    let effectiveSignal: AbortSignal | null | undefined
+    globalThis.fetch = ((_input, init) => {
+      effectiveSignal = init?.signal
+      return new Promise<Response>((_resolve, reject) => effectiveSignal?.addEventListener("abort", () => reject(effectiveSignal?.reason), { once: true }))
+    }) as typeof fetch
+    try {
+      const manager = makeManager({ getInstancePort: () => 4321, get: () => ({ path: "/repo" }) })
+      const request = createInstanceClient(manager as unknown as WorkspaceManager, "ws-1", { timeoutMs: 5 })!.tool.ids()
+      while (!effectiveSignal?.aborted) await new Promise((resolve) => setTimeout(resolve, 1))
+      assert.equal(effectiveSignal.reason?.name, "TimeoutError")
+      await request.catch(() => undefined)
+    } finally {
+      globalThis.fetch = originalFetch
     }
   })
 })

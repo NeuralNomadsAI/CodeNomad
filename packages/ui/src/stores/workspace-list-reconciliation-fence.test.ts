@@ -16,7 +16,15 @@ describe("workspace list reconciliation fence", () => {
     assert.ok(create.indexOf("workspaceListReconciliationFence.markMutation(workspace.id)")
       < create.indexOf("upsertWorkspace(committedWorkspace"))
     const stop = source.slice(source.indexOf("function stopInstance"), source.indexOf("async function fetchLspStatus"))
+    assert.ok(stop.indexOf("await serverApi.deleteWorkspace(id)") < stop.indexOf("releaseInstanceResources(id)"))
     assert.ok(stop.indexOf("workspaceListReconciliationFence.markMutation(id)") < stop.indexOf("removeInstance(id)"))
+  })
+
+  it("does not treat host workflow updates as OpenCode stream connectivity", () => {
+    const source = readFileSync(new URL("./instances.ts", import.meta.url), "utf8")
+    const events = source.slice(source.indexOf('serverEvents.on("instance.event",'), source.indexOf("function createRestoreCreationRequestId"))
+    assert.match(events, /event\.event\.type === "workflow\.run\.updated"/)
+    assert.match(events, /openCodeConnectionStatuses\.get\(event\.instanceId\) \?\? "disconnected"/)
   })
 
   it("rejects stale list entries and absences after lifecycle mutations", () => {
