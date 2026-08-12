@@ -1,5 +1,4 @@
-import type { Instance, RawMcpStatus } from "../../types/instance"
-import { fetchLspStatus } from "../../stores/instances"
+import type { Instance } from "../../types/instance"
 import { getLogger } from "../../lib/logger"
 import { getInstanceMetadata, mergeInstanceMetadata } from "../../stores/instance-metadata"
 import { extractConfiguredPlugins } from "./plugin-metadata"
@@ -31,18 +30,22 @@ export async function loadInstanceMetadata(instance: Instance, options?: { force
   pendingMetadataRequests.add(instance.id)
 
   try {
-    const [projectResult, mcpResult, lspResult, configResult] = await Promise.allSettled([
-      client.project.current(),
-      client.mcp.status(),
-      fetchLspStatus(instance.id),
-      client.config.get(),
+    const location = { directory: instance.folder }
+    const [projectResult, mcpResult, configResult] = await Promise.allSettled([
+      client.project.current({ location }),
+      client.mcp.list({ location }),
+      client.config.get({ location }),
     ])
 
-    const project = projectResult.status === "fulfilled" ? projectResult.value.data : undefined
-    const mcpStatus = mcpResult.status === "fulfilled" ? (mcpResult.value.data as RawMcpStatus) : undefined
-    const lspStatus = lspResult.status === "fulfilled" ? lspResult.value ?? [] : undefined
-    const config = configResult.status === "fulfilled" ? (configResult.value.data as { plugin?: unknown } | undefined) : undefined
-    const plugins = config ? extractConfiguredPlugins(config.plugin) : undefined
+    const project = projectResult.status === "fulfilled" ? projectResult.value : undefined
+    const config = configResult.status === "fulfilled" ? configResult.value : undefined
+    const plugins = config
+      ? extractConfiguredPlugins(config.flatMap((entry) =>
+          entry.type === "document"
+            ? (entry.info.plugins ?? []).map((plugin) => typeof plugin === "string" ? plugin : plugin.package)
+            : [],
+        ))
+      : undefined
 
     const updates: Instance["metadata"] = { ...(currentMetadata ?? {}) }
 
@@ -51,12 +54,10 @@ export async function loadInstanceMetadata(instance: Instance, options?: { force
     }
 
     if (mcpResult.status === "fulfilled") {
-      updates.mcpStatus = mcpStatus ?? {}
+      updates.mcpStatus = mcpResult.value
     }
 
-    if (lspResult.status === "fulfilled") {
-      updates.lspStatus = lspStatus ?? []
-    }
+    updates.lspStatus = []
 
     if (configResult.status === "fulfilled") {
       updates.plugins = plugins ?? []

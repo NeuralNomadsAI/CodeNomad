@@ -7,9 +7,7 @@ import { messageStoreBus } from "./message-v2/bus"
 import { instances, ensureYoloStateSynced } from "./instances"
 import { showConfirmDialog } from "./alerts"
 import { getLogger } from "../lib/logger"
-import { requestData } from "../lib/opencode-api"
 import { getRootClient } from "./opencode-client"
-import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 import { tGlobal } from "../lib/i18n"
 import { computeThreadTotals, type ThreadTotals } from "../lib/thread-totals"
 import { applySessionPage, getDefaultSessionPaginationState, type SessionPaginationState } from "./session-pagination-model"
@@ -1118,11 +1116,7 @@ async function isBlankSession(session: Session, instanceId: string, fetchIfNeede
   let messages: any[] = []
   try {
     const client = getRootClient(instanceId)
-    const workspace = await getOpenCodeWorkspaceIdForSession(instanceId, session.id)
-    messages = await requestData<any[]>(
-      client.session.messages({ sessionID: session.id, ...(workspace ? { workspace } : {}) }),
-      "session.messages",
-    )
+    messages = (await client.message.list({ sessionID: session.id })).data
   } catch (error) {
     log.error(`Failed to fetch messages for session ${session.id}`, error)
     return isFreshSession
@@ -1139,12 +1133,11 @@ async function isBlankSession(session: Session, instanceId: string, fetchIfNeede
     if (messages.length === 0) return true
 
     const hasStreaming = messages.some((msg) => {
-      const info = msg.info.status || msg.status
-      return info === "streaming" || info === "sending"
+      return msg.type === "assistant" && !msg.time?.completed
     })
 
     const lastMessage = messages[messages.length - 1]
-    const lastParts = lastMessage?.parts || []
+    const lastParts = lastMessage?.type === "assistant" ? lastMessage.content : []
     const hasToolPart = lastParts.some((part: any) =>
       part.type === "tool" || part.data?.type === "tool"
     )
@@ -1155,8 +1148,7 @@ async function isBlankSession(session: Session, instanceId: string, fetchIfNeede
     if (messages.length === 0) return true
 
     const lastMessage = messages[messages.length - 1]
-    const lastInfo = lastMessage?.info || lastMessage
-    return lastInfo?.id === session.revert?.messageID
+    return lastMessage?.id === session.revert?.messageID
   }
 }
 

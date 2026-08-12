@@ -454,7 +454,7 @@ function normalizeServerConfig(
     source.logLevel === "INFO" || source.logLevel === "WARN" || source.logLevel === "ERROR" || source.logLevel === "DEBUG"
       ? source.logLevel
       : "DEBUG"
-  const opencodeBinary = typeof source.opencodeBinary === "string" && source.opencodeBinary.trim() ? source.opencodeBinary : "opencode"
+  const opencodeBinary = typeof source.opencodeBinary === "string" && source.opencodeBinary.trim() ? source.opencodeBinary : "opencode2"
   const environmentVariables = normalizeRecord(source.environmentVariables)
   const secureEnvVars = normalizeSecureEnvVars(source.secureEnvVars)
   const speech = normalizeSpeechSettings(source.speech)
@@ -689,7 +689,7 @@ function toggleSecureEnvVar(key: string): void {
 }
 
 function updateLastUsedBinary(path: string): void {
-  const target = path && path.trim().length > 0 ? path : "opencode"
+  const target = path && path.trim().length > 0 ? path : "opencode2"
   void patchConfigOwner("server", { opencodeBinary: target }).catch((error) => log.error("Failed to set default binary", error))
 
   // also bump lastUsed in state ui.opencodeBinaries
@@ -722,7 +722,7 @@ function removeOpenCodeBinary(path: string): void {
   void patchStateOwner("ui", { opencodeBinaries: nextList }).catch((error) => log.error("Failed to remove binary", error))
 
   if (serverSettings().opencodeBinary === path) {
-    void patchConfigOwner("server", { opencodeBinary: "opencode" }).catch((error) =>
+    void patchConfigOwner("server", { opencodeBinary: "opencode2" }).catch((error) =>
       log.error("Failed to reset default binary", error),
     )
   }
@@ -773,16 +773,11 @@ function removeRemoteServerProfile(id: string): void {
   void patchStateOwner("ui", { remoteServers: next }).catch((error) => log.error("Failed to remove remote server", error))
 }
 
-function recordWorkspaceLaunch(folderPath: string, binaryPath?: string, aliasPath?: string): void {
-  const targetBinary = binaryPath && binaryPath.trim().length > 0 ? binaryPath : serverSettings().opencodeBinary
+function recordWorkspaceLaunch(folderPath: string, aliasPath?: string): void {
   const nextFolders = buildRecentFolderList(folderPath, recentFolders(), aliasPath)
-  const nextBinaries = buildBinaryList(targetBinary, undefined, opencodeBinaries())
 
-  void patchStateOwner("ui", { recentFolders: nextFolders, opencodeBinaries: nextBinaries }).catch((error) =>
+  void patchStateOwner("ui", { recentFolders: nextFolders }).catch((error) =>
     log.error("Failed to update ui state on launch", error),
-  )
-  void patchConfigOwner("server", { opencodeBinary: targetBinary }).catch((error) =>
-    log.error("Failed to persist selected binary", error),
   )
 }
 

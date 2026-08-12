@@ -1,111 +1,75 @@
-import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
+import type { OpenCodeClient } from "@opencode-ai/client"
+import type { SettingsService } from "../settings/service"
 import type { WorkspaceManager } from "../workspaces/manager"
 import { createInstanceClient } from "../workspaces/instance-client"
 import type { AutoAcceptPersistence, PersistedAutoAcceptSession } from "./auto-accept-manager"
 
-const CODENOMAD_METADATA_VERSION = 1
 const SESSION_LIST_LIMIT = 10_000
+const STATE_OWNER = "codenomad"
 
 type Metadata = Record<string, unknown>
 
-export interface OpencodeYoloPersistence extends AutoAcceptPersistence {
-  hasProjectSession(instanceId: string, sessionId: string): Promise<boolean>
-  setWorktreeSlug(instanceId: string, sessionId: string, worktreeSlug: string): Promise<Metadata>
+interface PersistedSessionState {
+  yoloEnabled?: boolean
 }
+
+export type OpencodeYoloPersistence = AutoAcceptPersistence
 
 function record(value: unknown): Metadata {
   return value && typeof value === "object" && !Array.isArray(value) ? { ...(value as Metadata) } : {}
 }
 
-export function hasPersistedYolo(sessionId: string, metadata: unknown): boolean {
-  const codenomad = record(record(metadata).codenomad)
-  const yolo = record(codenomad.yolo)
-  return codenomad.version === CODENOMAD_METADATA_VERSION
-    && yolo.enabled === true
-    && yolo.rootSessionId === sessionId
-}
-
-export function mergePersistedYolo(metadata: unknown, rootSessionId: string, enabled: boolean): Metadata {
-  const current = record(metadata)
-  const codenomad = record(current.codenomad)
-  return {
-    ...current,
-    codenomad: {
-      ...codenomad,
-      version: CODENOMAD_METADATA_VERSION,
-      yolo: { enabled, rootSessionId },
-    },
-  }
-}
-
-export function mergePersistedWorktreeSlug(metadata: unknown, worktreeSlug: string): Metadata {
-  const current = record(metadata)
-  const codenomad = record(current.codenomad)
-  return {
-    ...current,
-    codenomad: { ...codenomad, version: CODENOMAD_METADATA_VERSION, worktreeSlug },
-  }
+function sessionState(settings: SettingsService, sessionId: string): PersistedSessionState {
+  const sessions = record(settings.getOwner("state", STATE_OWNER).sessions)
+  return record(sessions[sessionId]) as PersistedSessionState
 }
 
 export function createOpencodeYoloPersistence(
   workspaceManager: WorkspaceManager,
-  createClient: (manager: WorkspaceManager, instanceId: string) => OpencodeClient | null = createInstanceClient,
+  settings: SettingsService,
+  createClient: (manager: WorkspaceManager, instanceId: string) => Promise<OpenCodeClient | null> = createInstanceClient,
 ): OpencodeYoloPersistence {
   const writes = new Map<string, Promise<unknown>>()
-  const clientFor = (instanceId: string) => {
-    const client = createClient(workspaceManager, instanceId)
-    if (!client) throw new Error(`Yolo: instance ${instanceId} has no open port`)
+  const clientFor = async (instanceId: string) => {
+    const client = await createClient(workspaceManager, instanceId)
+    if (!client) throw new Error(`Yolo: instance ${instanceId} is not ready`)
     return client
   }
-  const updateMetadata = (
-    instanceId: string,
+  const listSessions = async (instanceId: string) => {
+    const workspace = workspaceManager.get(instanceId)
+    if (!workspace) throw new Error(`Yolo: instance ${instanceId} is not ready`)
+    return (await (await clientFor(instanceId)).session.list({
+      directory: workspace.path,
+      limit: SESSION_LIST_LIMIT,
+    })).data
+  }
+  const updateYolo = (
     sessionId: string,
-    workspaceId: string | undefined,
-    update: (metadata: unknown) => Metadata,
-  ): Promise<Metadata> => {
-    const writeKey = sessionId
-    const write = (writes.get(writeKey) ?? Promise.resolve()).catch(() => undefined).then(async () => {
-      const client = clientFor(instanceId)
-      const scope = { sessionID: sessionId, ...(workspaceId ? { workspace: workspaceId } : {}) }
-      const { data: session } = await client.session.get(scope, { throwOnError: true })
-      const metadata = update(session.metadata)
-      const { data } = await client.session.update({ ...scope, metadata }, { throwOnError: true })
-      return record(data?.metadata ?? metadata)
+    enabled: boolean,
+  ): Promise<void> => {
+    const write = (writes.get(sessionId) ?? Promise.resolve()).catch(() => undefined).then(() => {
+      const next = { ...sessionState(settings, sessionId), yoloEnabled: enabled }
+      settings.mergePatchOwner("state", STATE_OWNER, { sessions: { [sessionId]: next } })
     })
     const settled = write.finally(() => {
-      if (writes.get(writeKey) === settled) writes.delete(writeKey)
+      if (writes.get(sessionId) === settled) writes.delete(sessionId)
     })
-    writes.set(writeKey, settled)
+    writes.set(sessionId, settled)
     return settled
   }
+
   return {
     async loadSessions(instanceId): Promise<PersistedAutoAcceptSession[]> {
-      const { data } = await clientFor(instanceId).session.list(
-        { scope: "project", limit: SESSION_LIST_LIMIT },
-        { throwOnError: true },
-      )
-      return (data ?? []).map((session) => ({
+      return (await listSessions(instanceId)).map((session) => ({
         id: session.id,
         parentId: session.parentID ?? null,
         revert: session.revert,
-        workspaceId: session.workspaceID,
-        yoloEnabled: hasPersistedYolo(session.id, session.metadata),
+        workspaceId: session.location.workspaceID,
+        yoloEnabled: sessionState(settings, session.id).yoloEnabled === true,
       }))
     },
-    persist(instanceId, rootSessionId, enabled, workspaceId): Promise<void> {
-      return updateMetadata(instanceId, rootSessionId, workspaceId,
-        (metadata) => mergePersistedYolo(metadata, rootSessionId, enabled)).then(() => undefined)
-    },
-    async hasProjectSession(instanceId, sessionId): Promise<boolean> {
-      const { data } = await clientFor(instanceId).session.list(
-        { scope: "project", limit: SESSION_LIST_LIMIT },
-        { throwOnError: true },
-      )
-      return (data ?? []).some((session) => session.id === sessionId)
-    },
-    setWorktreeSlug(instanceId, sessionId, worktreeSlug): Promise<Metadata> {
-      return updateMetadata(instanceId, sessionId, undefined,
-        (metadata) => mergePersistedWorktreeSlug(metadata, worktreeSlug))
+    persist(_instanceId, rootSessionId, enabled): Promise<void> {
+      return updateYolo(rootSessionId, enabled)
     },
   }
 }

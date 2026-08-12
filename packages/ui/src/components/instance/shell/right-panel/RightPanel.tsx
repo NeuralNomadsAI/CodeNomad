@@ -1,5 +1,5 @@
 import { For, Show, Suspense, createEffect, createMemo, createSignal, createUniqueId, type Accessor, type Component } from "solid-js"
-import type { ToolState } from "@opencode-ai/sdk/v2"
+import type { ToolState } from "../../../../types/tool-state"
 import {
   DragDropProvider,
   DragDropSensors,
@@ -15,7 +15,6 @@ import PushPinOutlinedIcon from "@suid/icons-material/PushPinOutlined"
 import { Settings2 } from "lucide-solid"
 
 import type { Instance } from "../../../../types/instance"
-import type { BackgroundProcess } from "../../../../../../server/src/api-types"
 import type { Session } from "../../../../types/session"
 import type { PromptInputApi } from "../../../prompt-input/types"
 import type { DrawerViewState } from "../types"
@@ -86,10 +85,6 @@ interface RightPanelProps {
   activeSession: Accessor<Session | null>
 
   latestTodoState: Accessor<ToolState | null>
-  backgroundProcessList: Accessor<BackgroundProcess[]>
-  onOpenBackgroundOutput: (process: BackgroundProcess) => void
-  onStopBackgroundProcess: (processId: string) => Promise<void> | void
-  onTerminateBackgroundProcess: (processId: string) => Promise<void> | void
 
   isPhoneLayout: Accessor<boolean>
   rightDrawerWidth: Accessor<number>
@@ -185,10 +180,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
         activeSessionId: props.activeSessionId,
         activeSession: props.activeSession,
         latestTodoState: props.latestTodoState,
-        backgroundProcessList: props.backgroundProcessList,
-        onOpenBackgroundOutput: props.onOpenBackgroundOutput,
-        onStopBackgroundProcess: props.onStopBackgroundProcess,
-        onTerminateBackgroundProcess: props.onTerminateBackgroundProcess,
         isPhoneLayout: props.isPhoneLayout,
         rightDrawerWidth: props.rightDrawerWidth,
         rightDrawerWidthInitialized: props.rightDrawerWidthInitialized,

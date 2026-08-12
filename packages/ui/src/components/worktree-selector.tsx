@@ -13,7 +13,6 @@ import {
   getGitRepoStatus,
   getWorktreeSlugForParentSession,
   getWorktrees,
-  reloadWorktreeMap,
   reloadWorktrees,
   setWorktreeSlugForParentSession,
 } from "../stores/worktrees"
@@ -546,9 +545,8 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                     void (async () => {
                       setIsDeleting(true)
                       setDeleteError(null)
-                      await deleteWorktree(props.instanceId, target.slug, { force: forceDelete() })
-                      await reloadWorktrees(props.instanceId)
-                      await reloadWorktreeMap(props.instanceId)
+                       await deleteWorktree(props.instanceId, target.slug, { force: forceDelete() })
+                       await reloadWorktrees(props.instanceId)
 
                       if (currentSlug() === target.slug) {
                         await setWorktreeSlugForParentSession(props.instanceId, parentId(), "root")

@@ -23,28 +23,28 @@ The minimum viable product includes:
 
 ## Phase 1: Foundation (Week 1)
 
-**Goal:** Running Electron app that can spawn OpenCode servers
+**Goal:** Running desktop app connected to one shared OpenCode service
 
 ### Tasks
 
 1. ✅ **001-project-setup** - Electron + SolidJS + Vite boilerplate
 2. ✅ **002-empty-state-ui** - Empty state UI with folder selection
-3. ✅ **003-process-manager** - Spawn and manage OpenCode server processes
-4. ✅ **004-sdk-integration** - Connect to server via SDK
+3. ✅ **003-process-manager** - Discover/start and manage the shared OpenCode service
+4. ✅ **004-sdk-integration** - Connect through the native OpenCode client
 5. ✅ **005-session-picker-modal** - Select/create session modal
 
 ### Deliverables
 
 - App launches successfully
 - Can select folder
-- Server spawns automatically
+- Shared service starts or reconnects automatically
 - Session picker appears
 - Can create/select session
 
 ### Success Criteria
 
 - User can launch app → select folder → see session picker
-- Server process runs in background
+- Workspace location is ready on the shared service
 - Sessions fetch from API successfully
 
 ---
@@ -116,7 +116,7 @@ The minimum viable product includes:
 17. **017-instance-state-persistence** - Remember instances across restarts
 18. **018-child-session-handling** - Auto-create tabs for child sessions
 19. **019-instance-lifecycle** - Stop, restart, reconnect instances
-20. **020-multiple-sdk-clients** - One SDK client per instance
+20. **020-multiple-sdk-clients** - Location-scoped clients over one shared service
 
 ### Deliverables
 
@@ -228,7 +228,7 @@ The minimum viable product includes:
 37. **037-message-search-advanced** - Full-text search across sessions
 38. **038-workspace-management** - Save/load workspace configurations
 39. **039-theme-customization** - Custom themes and UI tweaks
-40. **040-plugin-system** - Extension API for custom tools
+40. **040-native-capabilities** - Integrate additional native OpenCode capabilities
 
 ### Deliverables
 
@@ -236,7 +236,7 @@ The minimum viable product includes:
 - Cross-session search
 - Workspace persistence
 - Theme editor
-- Plugin loader
+- Native capability integration
 
 ### Success Criteria
 
@@ -352,7 +352,7 @@ Some tasks can be worked on independently:
 ### External
 
 - OpenCode CLI availability
-- OpenCode SDK stability
+- `@opencode-ai/client` contract stability
 - Electron framework updates
 
 ### Internal

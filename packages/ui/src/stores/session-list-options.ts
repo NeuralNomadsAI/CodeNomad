@@ -12,6 +12,7 @@ export type ProjectSessionListOptions = ProjectSessionListInput & {
 
 type SessionDirectorySource = {
   directory?: string | null
+  location?: { directory?: string | null }
 }
 
 function normalizeSessionDirectory(directory: string | null | undefined): string {
@@ -46,7 +47,7 @@ export function filterProjectScopedSessions<T extends SessionDirectorySource>(
   if (allowed.size === 0) return sessions
 
   return sessions.filter((session) => {
-    const directory = normalizeSessionDirectory(session.directory)
+    const directory = normalizeSessionDirectory(session.location?.directory ?? session.directory)
     return !directory || allowed.has(directory)
   })
 }

@@ -129,8 +129,6 @@ export const instanceMessages = {
   "instanceShell.rightPanel.sections.yoloMode.tooltip": "Automatically approves permission requests for the current session. Use it only when you trust the tools being run.",
   "instanceShell.rightPanel.sections.plan": "Plan",
   "instanceShell.rightPanel.sections.plan.tooltip": "The agent's roadmap for this session. Tracks tasks, subtasks, and their completion status.",
-  "instanceShell.rightPanel.sections.backgroundProcesses": "Background Shells",
-  "instanceShell.rightPanel.sections.backgroundProcesses.tooltip": "Long-running processes started by the agent. You can monitor their output, stop, or terminate them.",
   "instanceShell.rightPanel.sections.mcp": "MCP Servers",
   "instanceShell.rightPanel.sections.mcp.tooltip": "Model Context Protocol servers that extend the agent's capabilities with external tools and services.",
   "instanceShell.rightPanel.sections.lsp": "LSP Servers",
@@ -214,15 +212,6 @@ export const instanceMessages = {
   "instanceShell.yoloMode.badge": "Yolo",
   "instanceShell.yoloMode.badgeAriaLabel": "Yolo mode enabled",
 
-  "instanceShell.backgroundProcesses.empty": "No background processes.",
-  "instanceShell.backgroundProcesses.status": "Status: {status}",
-  "instanceShell.backgroundProcesses.output": "Output: {sizeKb}KB",
-  "instanceShell.backgroundProcesses.notify.enabled": "Completion notification enabled",
-  "instanceShell.backgroundProcesses.notify.disabled": "Completion notification disabled",
-  "instanceShell.backgroundProcesses.actions.output": "Output",
-  "instanceShell.backgroundProcesses.actions.stop": "Stop",
-  "instanceShell.backgroundProcesses.actions.terminate": "Terminate",
-
   "versionPill.appWithVersion": "App {version}",
   "versionPill.ui": "UI",
   "versionPill.uiWithVersion": "UI {version}",
@@ -230,7 +219,7 @@ export const instanceMessages = {
 
   "opencodeBinarySelector.title": "OpenCode Binary",
   "opencodeBinarySelector.subtitle": "Choose which executable OpenCode should run",
-  "opencodeBinarySelector.customPath.placeholder": "Enter path to opencode binary…",
+  "opencodeBinarySelector.customPath.placeholder": "Enter path to {name} binary…",
   "opencodeBinarySelector.actions.add": "Add",
   "opencodeBinarySelector.actions.browse": "Browse for Binary…",
   "opencodeBinarySelector.actions.removeTitle": "Remove binary",

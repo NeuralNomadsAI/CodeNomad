@@ -11,7 +11,6 @@ import { getPartCharCount } from "../lib/token-utils"
 import { getToolIcon } from "./tool-call/utils"
 import { User as UserIcon, Bot as BotIcon, FoldVertical, ShieldAlert } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
-import type { DeleteHoverState } from "../types/delete-hover"
 
 export type TimelineSegmentType = "user" | "assistant" | "tool" | "compaction"
 
@@ -45,11 +44,6 @@ interface MessageTimelineProps {
   instanceId: string
   sessionId: string
   showToolSegments?: boolean
-  deleteHover?: () => DeleteHoverState
-  onDeleteHoverChange?: (state: DeleteHoverState) => void
-  onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
-  selectedMessageIds?: () => Set<string>
-  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
   searchMatchedSegmentIds?: Accessor<Set<string>>
   activeSearchSegmentId?: Accessor<string | null>
 }
@@ -333,8 +327,6 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   let hoverTimer: number | null = null
   let closeTimer: number | null = null
   const showTools = () => props.showToolSegments ?? true
-  const deleteHover = () => props.deleteHover?.() ?? { kind: "none" as const }
-
   const isHistogramEligible = (segment: TimelineSegment): boolean => {
     const allowed = props.deletableMessageIds?.()
     if (!allowed) return true
@@ -714,15 +706,6 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     return set
   })
 
-  // Pre-computed index map for session message ordering.
-  // Used by isDeleteHovered() to replace O(n) indexOf with O(1) Map.get().
-  const messageIdToSessionIndex = createMemo(() => {
-    const ids = store().getSessionMessageIds(props.sessionId)
-    const map = new Map<string, number>()
-    for (let i = 0; i < ids.length; i++) map.set(ids[i], i)
-    return map
-  })
-
   const segmentIndexById = createMemo(() => {
     const map = new Map<string, number>()
     for (let i = 0; i < props.segments.length; i++) map.set(props.segments[i].id, i)
@@ -730,26 +713,12 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   })
 
   const segmentStates = createMemo(() => {
-    const hover = deleteHover()
-    const selectedMessages = props.selectedMessageIds?.()
     const expandedMessages = props.expandedMessageIds?.()
     const resolvedStore = store()
-    const indexMap = messageIdToSessionIndex()
     const selectionActive = isSelectionActive()
     const result = new Map<string, TimelineSegmentState>()
 
     for (const segment of props.segments) {
-      let deleteHovered = false
-      if (hover.kind === "message") {
-        deleteHovered = hover.messageId === segment.messageId
-      } else if (hover.kind === "deleteUpTo") {
-        const targetIndex = indexMap.get(hover.messageId)
-        const segmentIndex = indexMap.get(segment.messageId)
-        deleteHovered = targetIndex !== undefined && segmentIndex !== undefined && segmentIndex >= targetIndex
-      }
-
-      const deleteSelected = selectedMessages?.has(segment.messageId) ?? false
-
       let hasActivePermission = false
       if (segment.type === "tool") {
         const partIds = segment.toolPartIds ?? []
@@ -768,13 +737,11 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
         || selectionActive
         || props.activeSegmentId === segment.id
         || hasActivePermission
-        || deleteHovered
-        || deleteSelected
       )
 
       result.set(segment.id, {
-        deleteHovered,
-        deleteSelected,
+        deleteHovered: false,
+        deleteSelected: false,
         hasActivePermission,
         hidden,
       })
@@ -1060,10 +1027,6 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                     instanceId={props.instanceId}
                     sessionId={props.sessionId}
                     store={store}
-                    deleteHover={props.deleteHover}
-                    onDeleteHoverChange={props.onDeleteHoverChange}
-                    onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
-                    selectedMessageIds={props.selectedMessageIds}
                   />
                 </div>
               </Portal>

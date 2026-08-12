@@ -7,29 +7,25 @@ import {
   MessagePartDeltaEvent,
 } from "../types/message"
 import type {
-  EventLspUpdated,
-
-  EventSessionCompacted,
-  EventSessionError,
-  EventSessionIdle,
-  EventSessionUpdated,
-  EventSessionStatus,
-} from "@opencode-ai/sdk"
-import type {
-  EventPermissionV2Asked,
-  EventPermissionV2Replied,
-  EventQuestionV2Asked,
-  EventQuestionV2Rejected,
-  EventQuestionV2Replied,
-} from "@opencode-ai/sdk/v2"
-import type { LegacyPermissionAskedEvent, LegacyPermissionRepliedEvent } from "../types/permission"
+  PermissionAsked,
+  PermissionReplied,
+  QuestionAsked,
+  QuestionRejected,
+  QuestionReplied,
+  SessionCompactionEnded,
+  SessionCreated,
+  SessionDeleted,
+  SessionExecutionFailed,
+  SessionIdle,
+  SessionRevertCleared,
+  SessionRevertCommitted,
+  SessionRevertStaged,
+  SessionStatus2,
+  TuiToastShow,
+} from "@opencode-ai/client"
 import { serverEvents } from "./server-events"
 import type { WorkspaceEventTransportStatus } from "./event-transport"
-import type {
-  BackgroundProcess,
-  InstanceStreamEvent,
-  WorkspaceEventPayload,
-} from "../../../server/src/api-types"
+import type { InstanceStreamEvent, WorkspaceEventPayload } from "../../../server/src/api-types"
 import { getLogger } from "./logger"
 import {
   deriveDisplayConnectionStatus,
@@ -42,28 +38,13 @@ const log = getLogger("sse")
 type InstanceEventPayload = Extract<WorkspaceEventPayload, { type: "instance.event" }>
 type InstanceStatusPayload = Extract<WorkspaceEventPayload, { type: "instance.eventStatus" }>
 
-interface TuiToastEvent {
-  type: "tui.toast.show"
-  properties: {
-    title?: string
-    message: string
-    variant: "info" | "success" | "warning" | "error"
-    duration?: number
+export interface NativeSessionEvent {
+  type: string
+  data?: {
+    sessionID?: string
+    [key: string]: unknown
   }
-}
-
-interface BackgroundProcessUpdatedEvent {
-  type: "background.process.updated"
-  properties: {
-    process: BackgroundProcess
-  }
-}
-
-interface BackgroundProcessRemovedEvent {
-  type: "background.process.removed"
-  properties: {
-    processId: string
-  }
+  location?: { directory?: string }
 }
 
 interface ServerInstanceDisposedEvent {
@@ -82,14 +63,10 @@ export interface WorktreeReadyEvent {
   }
 }
 
-type EventSessionCreated = Omit<EventSessionUpdated, "type"> & { type: "session.created" }
 export interface EventSessionDeleted {
   type: "session.deleted"
-  properties?: {
-    info?: { id?: string }
-    id?: string
-    sessionID?: string
-  }
+  data?: { sessionID?: string }
+  properties?: { info?: { id?: string }; id?: string; sessionID?: string }
 }
 
 type SSEEvent =
@@ -98,26 +75,21 @@ type SSEEvent =
   | MessagePartUpdatedEvent
   | MessagePartRemovedEvent
   | MessagePartDeltaEvent
-  | EventSessionCreated
-  | EventSessionUpdated
-  | EventSessionDeleted
-  | EventSessionCompacted
-  | EventSessionError
-  | EventSessionIdle
-  | EventSessionStatus
-  | EventPermissionV2Asked
-  | EventPermissionV2Replied
-  | LegacyPermissionAskedEvent
-  | LegacyPermissionRepliedEvent
-  | { type: "question.asked"; properties?: any }
-  | { type: "question.replied" | "question.rejected"; properties?: any }
-  | EventQuestionV2Asked
-  | EventQuestionV2Replied
-  | EventQuestionV2Rejected
-  | EventLspUpdated
-  | TuiToastEvent
-  | BackgroundProcessUpdatedEvent
-  | BackgroundProcessRemovedEvent
+  | SessionCreated
+  | SessionDeleted
+  | SessionCompactionEnded
+  | SessionExecutionFailed
+  | SessionIdle
+  | SessionRevertStaged
+  | SessionRevertCleared
+  | SessionRevertCommitted
+  | SessionStatus2
+  | PermissionAsked
+  | PermissionReplied
+  | QuestionAsked
+  | QuestionReplied
+  | QuestionRejected
+  | TuiToastShow
   | ServerInstanceDisposedEvent
   | WorktreeReadyEvent
   | { type: string; properties?: Record<string, unknown> }
@@ -185,65 +157,44 @@ class SSEManager {
       case "message.part.removed":
         this.onMessagePartRemoved?.(instanceId, event as MessagePartRemovedEvent)
         break
-      case "session.updated":
-        this.onSessionUpdate?.(instanceId, event as EventSessionUpdated)
-        break
       case "session.created":
-        this.onSessionUpdate?.(instanceId, event as EventSessionUpdated)
+        this.onSessionUpdate?.(instanceId, event as SessionCreated)
+        break
+      case "session.revert.staged":
+      case "session.revert.cleared":
+      case "session.revert.committed":
+        this.onSessionUpdate?.(instanceId, event as SessionRevertStaged | SessionRevertCleared | SessionRevertCommitted)
         break
       case "session.deleted":
-        this.onSessionDeleted?.(instanceId, event as EventSessionDeleted)
+        this.onSessionDeleted?.(instanceId, event as SessionDeleted)
         break
-      case "session.compacted":
-        this.onSessionCompacted?.(instanceId, event as EventSessionCompacted)
+      case "session.compaction.ended":
+        this.onSessionCompacted?.(instanceId, event as SessionCompactionEnded)
         break
-      case "session.error":
-        this.onSessionError?.(instanceId, event as EventSessionError)
+      case "session.execution.failed":
+        this.onSessionError?.(instanceId, event as SessionExecutionFailed)
         break
       case "tui.toast.show":
-        this.onTuiToast?.(instanceId, event as TuiToastEvent)
+        this.onTuiToast?.(instanceId, event as TuiToastShow)
         break
       case "session.idle":
-        this.onSessionIdle?.(instanceId, event as EventSessionIdle)
+        this.onSessionIdle?.(instanceId, event as SessionIdle)
         break
       case "session.status":
-        this.onSessionStatus?.(instanceId, event as EventSessionStatus)
+        this.onSessionStatus?.(instanceId, event as SessionStatus2)
         break
       case "permission.asked":
-      case "permission.updated":
-        this.onPermissionUpdated?.(instanceId, event as any)
+        this.onPermissionUpdated?.(instanceId, event as PermissionAsked)
         break
       case "permission.replied":
-        this.onPermissionReplied?.(instanceId, event as any)
-        break
-      case "permission.v2.asked":
-        this.onPermissionUpdated?.(instanceId, event as EventPermissionV2Asked)
-        break
-      case "permission.v2.replied":
-        this.onPermissionReplied?.(instanceId, event as EventPermissionV2Replied)
+        this.onPermissionReplied?.(instanceId, event as PermissionReplied)
         break
       case "question.asked":
-        this.onQuestionAsked?.(instanceId, event as any)
+        this.onQuestionAsked?.(instanceId, event as QuestionAsked)
         break
       case "question.replied":
       case "question.rejected":
-        this.onQuestionAnswered?.(instanceId, event as any)
-        break
-      case "question.v2.asked":
-        this.onQuestionAsked?.(instanceId, event as EventQuestionV2Asked)
-        break
-      case "question.v2.replied":
-      case "question.v2.rejected":
-        this.onQuestionAnswered?.(instanceId, event as EventQuestionV2Replied | EventQuestionV2Rejected)
-        break
-      case "lsp.updated":
-        this.onLspUpdated?.(instanceId, event as EventLspUpdated)
-        break
-      case "background.process.updated":
-        this.onBackgroundProcessUpdated?.(instanceId, event as BackgroundProcessUpdatedEvent)
-        break
-      case "background.process.removed":
-        this.onBackgroundProcessRemoved?.(instanceId, event as BackgroundProcessRemovedEvent)
+        this.onQuestionAnswered?.(instanceId, event as QuestionReplied | QuestionRejected)
         break
       case "server.instance.disposed":
         this.onInstanceDisposed?.(instanceId, event as ServerInstanceDisposedEvent)
@@ -259,7 +210,11 @@ class SSEManager {
         }
         break
       default:
-        log.warn("Unknown SSE event type", { type: event.type })
+        if (event.type.startsWith("session.")) {
+          this.onNativeSessionEvent?.(instanceId, event as NativeSessionEvent)
+        } else {
+          log.warn("Unknown SSE event type", { type: event.type })
+        }
     }
   }
 
@@ -276,20 +231,19 @@ class SSEManager {
   onMessagePartUpdated?: (instanceId: string, event: MessagePartUpdatedEvent) => void
   onMessagePartDelta?: (instanceId: string, event: MessagePartDeltaEvent) => void
   onMessagePartRemoved?: (instanceId: string, event: MessagePartRemovedEvent) => void
-  onSessionUpdate?: (instanceId: string, event: EventSessionUpdated) => void
+  onSessionUpdate?: (instanceId: string, event: SessionCreated | SessionRevertStaged | SessionRevertCleared | SessionRevertCommitted) => void
   onSessionDeleted?: (instanceId: string, event: EventSessionDeleted) => void
-  onSessionCompacted?: (instanceId: string, event: EventSessionCompacted) => void
-  onSessionError?: (instanceId: string, event: EventSessionError) => void
-  onTuiToast?: (instanceId: string, event: TuiToastEvent) => void
-  onSessionIdle?: (instanceId: string, event: EventSessionIdle) => void
-  onSessionStatus?: (instanceId: string, event: EventSessionStatus) => void
-  onPermissionUpdated?: (instanceId: string, event: EventPermissionV2Asked | LegacyPermissionAskedEvent) => void
-  onPermissionReplied?: (instanceId: string, event: EventPermissionV2Replied | LegacyPermissionRepliedEvent) => void
-  onQuestionAsked?: (instanceId: string, event: EventQuestionV2Asked | { type: "question.asked"; properties?: any }) => void
-  onQuestionAnswered?: (instanceId: string, event: EventQuestionV2Replied | EventQuestionV2Rejected | { type: "question.replied" | "question.rejected"; properties?: any }) => void
-  onLspUpdated?: (instanceId: string, event: EventLspUpdated) => void
-  onBackgroundProcessUpdated?: (instanceId: string, event: BackgroundProcessUpdatedEvent) => void
-  onBackgroundProcessRemoved?: (instanceId: string, event: BackgroundProcessRemovedEvent) => void
+  onSessionCompacted?: (instanceId: string, event: SessionCompactionEnded) => void
+  onSessionError?: (instanceId: string, event: SessionExecutionFailed) => void
+  onTuiToast?: (instanceId: string, event: TuiToastShow) => void
+  onSessionIdle?: (instanceId: string, event: SessionIdle) => void
+  onSessionStatus?: (instanceId: string, event: SessionStatus2) => void
+  onPermissionUpdated?: (instanceId: string, event: PermissionAsked) => void
+  onPermissionReplied?: (instanceId: string, event: PermissionReplied) => void
+  onQuestionAsked?: (instanceId: string, event: QuestionAsked) => void
+  onQuestionAnswered?: (instanceId: string, event: QuestionReplied | QuestionRejected) => void
+  onNativeSessionEvent?: (instanceId: string, event: NativeSessionEvent) => void
+  onLspUpdated?: (instanceId: string, event: { type: string }) => void | Promise<void>
   onInstanceDisposed?: (instanceId: string, event: ServerInstanceDisposedEvent) => void
   onWorktreeReady?: (instanceId: string, event: WorktreeReadyEvent) => void | Promise<void>
   onConnectionLost?: (instanceId: string, reason: string) => void | Promise<void>

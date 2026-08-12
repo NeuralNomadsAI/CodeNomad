@@ -129,8 +129,6 @@ export const instanceMessages = {
   "instanceShell.rightPanel.sections.yoloMode.tooltip": "Genehmigt Berechtigungsanfragen für die aktuelle Sitzung automatisch. Nur verwenden, wenn Sie den ausgeführten Tools vertrauen.",
   "instanceShell.rightPanel.sections.plan": "Plan",
   "instanceShell.rightPanel.sections.plan.tooltip": "Die Roadmap des Agenten für diese Sitzung. Verfolgt Aufgaben, Unteraufgaben und deren Abschlussstatus.",
-  "instanceShell.rightPanel.sections.backgroundProcesses": "Hintergrund-Shells",
-  "instanceShell.rightPanel.sections.backgroundProcesses.tooltip": "Vom Agenten gestartete Langzeitprozesse. Sie können deren Ausgabe überwachen, sie stoppen oder beenden.",
   "instanceShell.rightPanel.sections.mcp": "MCP-Server",
   "instanceShell.rightPanel.sections.mcp.tooltip": "Model Context Protocol Server, die die Fähigkeiten des Agenten um externe Tools und Dienste erweitern.",
   "instanceShell.rightPanel.sections.lsp": "LSP-Server",
@@ -214,15 +212,6 @@ export const instanceMessages = {
   "instanceShell.yoloMode.badge": "Yolo",
   "instanceShell.yoloMode.badgeAriaLabel": "Yolo-Modus aktiviert",
 
-  "instanceShell.backgroundProcesses.empty": "Keine Hintergrundprozesse.",
-  "instanceShell.backgroundProcesses.status": "Status: {status}",
-  "instanceShell.backgroundProcesses.output": "Ausgabe: {sizeKb}KB",
-  "instanceShell.backgroundProcesses.notify.enabled": "Abschlussbenachrichtigung aktiviert",
-  "instanceShell.backgroundProcesses.notify.disabled": "Abschlussbenachrichtigung deaktiviert",
-  "instanceShell.backgroundProcesses.actions.output": "Ausgabe",
-  "instanceShell.backgroundProcesses.actions.stop": "Stoppen",
-  "instanceShell.backgroundProcesses.actions.terminate": "Beenden",
-
   "versionPill.appWithVersion": "App {version}",
   "versionPill.ui": "UI",
   "versionPill.uiWithVersion": "UI {version}",
@@ -230,7 +219,7 @@ export const instanceMessages = {
 
   "opencodeBinarySelector.title": "OpenCode-Binärdatei",
   "opencodeBinarySelector.subtitle": "Wählen Sie aus, welche OpenCode-Binärdatei ausgeführt werden soll",
-  "opencodeBinarySelector.customPath.placeholder": "Pfad zur OpenCode-Binärdatei eingeben...",
+  "opencodeBinarySelector.customPath.placeholder": "Pfad zur {name}-Binärdatei eingeben...",
   "opencodeBinarySelector.actions.add": "Hinzufügen",
   "opencodeBinarySelector.actions.browse": "Nach Binärdatei suchen...",
   "opencodeBinarySelector.actions.removeTitle": "Binärdatei entfernen",

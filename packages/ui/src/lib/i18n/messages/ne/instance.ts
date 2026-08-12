@@ -129,8 +129,6 @@ export const instanceMessages = {
   "instanceShell.rightPanel.sections.yoloMode.tooltip": "हालको सत्रको लागि अनुमति अनुरोधहरू स्वतः स्वीकृत गर्दछ। तपाईंले चलिरहेका उपकरणहरूलाई विश्वास गर्दा मात्र यसलाई प्रयोग गर्नुहोस्।",
   "instanceShell.rightPanel.sections.plan": "योजना",
   "instanceShell.rightPanel.sections.plan.tooltip": "यस सत्रको लागि एजेन्टको मार्गचित्र।",
-  "instanceShell.rightPanel.sections.backgroundProcesses": "पृष्ठभूमि शेलहरू",
-  "instanceShell.rightPanel.sections.backgroundProcesses.tooltip": "एजेन्टद्वारा सुरु गरिएका लामो समयसम्म चल्ने प्रक्रियाहरू।",
   "instanceShell.rightPanel.sections.mcp": "MCP सर्भरहरू",
   "instanceShell.rightPanel.sections.mcp.tooltip": "मोडेल सन्दर्भ प्रोटोकल (MCP) सर्भरहरू।",
   "instanceShell.rightPanel.sections.lsp": "LSP सर्भरहरू",
@@ -214,15 +212,6 @@ export const instanceMessages = {
   "instanceShell.yoloMode.badge": "Yolo",
   "instanceShell.yoloMode.badgeAriaLabel": "Yolo मोड सक्षम गरियो",
 
-  "instanceShell.backgroundProcesses.empty": "कुनै पृष्ठभूमि प्रक्रियाहरू छैनन्।",
-  "instanceShell.backgroundProcesses.status": "स्थिति: {status}",
-  "instanceShell.backgroundProcesses.output": "आउटपुट: {sizeKb}KB",
-  "instanceShell.backgroundProcesses.notify.enabled": "सम्पन्न सूचना सक्षम गरियो",
-  "instanceShell.backgroundProcesses.notify.disabled": "सम्पन्न सूचना अक्षम गरियो",
-  "instanceShell.backgroundProcesses.actions.output": "आउटपुट",
-  "instanceShell.backgroundProcesses.actions.stop": "रोक्नुहोस्",
-  "instanceShell.backgroundProcesses.actions.terminate": "अन्त्य गर्नुहोस्",
-
   "versionPill.appWithVersion": "एप {version}",
   "versionPill.ui": "UI",
   "versionPill.uiWithVersion": "UI {version}",
@@ -230,7 +219,7 @@ export const instanceMessages = {
 
   "opencodeBinarySelector.title": "OpenCode बाइनरी",
   "opencodeBinarySelector.subtitle": "OpenCode ले कुन कार्यान्वयन योग्य फाइल चलाउने छनौट गर्नुहोस्",
-  "opencodeBinarySelector.customPath.placeholder": "OpenCode बाइनरीको मार्ग प्रविष्ट गर्नुहोस्...",
+  "opencodeBinarySelector.customPath.placeholder": "{name} बाइनरीको मार्ग प्रविष्ट गर्नुहोस्...",
   "opencodeBinarySelector.actions.add": "थप्नुहोस्",
   "opencodeBinarySelector.actions.browse": "बाइनरीको लागि ब्राउज गर्नुहोस्...",
   "opencodeBinarySelector.actions.removeTitle": "बाइनरी हटाउनुहोस्",

@@ -49,7 +49,7 @@ import SpeechActionButton from "./speech-action-button"
 
 const log = getLogger("session")
 
-type ToolState = import("@opencode-ai/sdk/v2").ToolState
+import type { ToolState } from "../types/tool-state"
 
 const TOOL_CALL_CACHE_SCOPE = "tool-call"
 

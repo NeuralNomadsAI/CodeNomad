@@ -10,11 +10,9 @@ import { getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances, waitForInstanceWorkspaceMetadataHydration } from "../../stores/instances"
 import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession } from "../../stores/sessions"
 import { clearSessionIdleFade, IDLE_STATUS_VISIBILITY_MS, getSessionStatus, isSessionBusy as getSessionBusyStatus, markSessionIdleFadeStarted } from "../../stores/session-status"
-import { deleteMessage } from "../../stores/session-actions"
 import { showAlertDialog } from "../../stores/alerts"
 import { getLogger } from "../../lib/logger"
 import { useActiveSessionMessageLoad } from "../../lib/hooks/use-active-session-message-load"
-import { requestData } from "../../lib/opencode-api"
 import { useI18n } from "../../lib/i18n"
 import type { PromptInputApi, PromptInsertMode } from "../prompt-input/types"
 import { clearConversationPlaybackForSession } from "../../stores/conversation-speech"
@@ -424,13 +422,10 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     if (!instance || !instance.client) return
 
     try {
-      await requestData(
-        instance.client.session.revert({
-          sessionID: props.sessionId,
-          messageID: messageId,
-        }),
-        "session.revert",
-      )
+      await instance.client.session.revert.stage({
+        sessionID: props.sessionId,
+        messageID: messageId,
+      })
 
       const restoredText = getUserMessageText(messageId)
       if (restoredText) {
@@ -446,35 +441,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         title: t("sessionView.alerts.revertFailed.title"),
         variant: "error",
       })
-    }
-  }
-
-  async function handleDeleteMessagesUpTo(messageId: string) {
-    const ids = messageStore().getSessionMessageIds(props.sessionId)
-    const index = ids.indexOf(messageId)
-    if (index === -1) return
-
-    const restoredText = getUserMessageText(messageId)
-    const toDelete = ids.slice(index)
-
-    try {
-      for (let idx = toDelete.length - 1; idx >= 0; idx -= 1) {
-        await deleteMessage(props.instanceId, props.sessionId, toDelete[idx])
-      }
-    } catch (error) {
-      log.error("Failed to delete messages up to", error)
-      showAlertDialog(t("sessionView.alerts.deleteUpToFailed.message"), {
-        title: t("sessionView.alerts.deleteUpToFailed.title"),
-        variant: "error",
-      })
-    } finally {
-      if (restoredText) {
-        if (promptInputApi) {
-          promptInputApi.setPromptText(restoredText, { focus: true })
-        } else {
-          pendingPromptText = restoredText
-        }
-      }
     }
   }
 
@@ -541,7 +507,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
                   explicitBottomPinIntent={activeSubmitBottomPinIntent()}
                   onExplicitBottomPinCancelled={() => setSubmitBottomPinIntent(null)}
                   onRevert={handleRevert}
-                  onDeleteMessagesUpTo={handleDeleteMessagesUpTo}
                   onFork={handleFork}
                   isActive={props.isActive}
                   registerScrollToBottom={(fn) => {

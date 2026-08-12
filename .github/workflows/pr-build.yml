@@ -124,9 +124,10 @@ jobs:
           packages/ui/src/stores/message-v2/instance-store.test.ts
           packages/ui/src/stores/message-v2/message-hydration-authority.test.ts
           packages/ui/src/stores/message-v2/message-status.test.ts
+          packages/ui/src/stores/message-v2/normalizers.test.ts
           packages/ui/src/stores/session-generation-recovery.test.ts
-          packages/ui/src/stores/session-metadata.test.ts
           packages/ui/src/stores/session-pagination.test.ts
+          packages/ui/src/types/session.test.ts
           packages/ui/src/stores/workspace-list-reconciliation-fence.test.ts
 
       - name: Test restore ownership integration
@@ -135,6 +136,7 @@ jobs:
           packages/ui/src/lib/hooks/use-active-session-message-load.test.ts
           packages/ui/src/stores/instances-restore-ownership.test.ts
           packages/ui/src/stores/permission-lifecycle.test.ts
+          packages/ui/src/stores/session-actions.test.ts
           packages/ui/src/stores/session-request-authority.test.ts
           packages/ui/src/stores/session-send-lifecycle.test.ts
 

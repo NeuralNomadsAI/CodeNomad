@@ -50,12 +50,12 @@ Executive summary of the entire project - **start here!**
 
 - File structure
 - TypeScript interfaces
-- Process management logic
-- SDK integration patterns
+- Shared OpenCode service and location ownership
+- Native `@opencode-ai/client` integration
 - IPC communication
 - Error handling strategies
 
-**Read this to understand:** How to actually build it
+**Read this to understand:** Current implementation boundaries
 
 ### [build-roadmap.md](build-roadmap.md)
 

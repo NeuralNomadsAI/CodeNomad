@@ -1,28 +1,17 @@
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
 import { Portal } from "solid-js/web"
-import { CheckSquare2, Copy, ListStart, Split, Square, Trash, Undo, Volume2 } from "lucide-solid"
-import type { MessageInfo, ClientPart, SDKAssistantMessageV2 } from "../types/message"
+import { Copy, Split, Undo, Volume2 } from "lucide-solid"
+import type { MessageInfo, ClientPart } from "../types/message"
 import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
 import MessagePart from "./message-part"
 import { copyToClipboard } from "../lib/clipboard"
 import { useI18n } from "../lib/i18n"
-import { showAlertDialog } from "../stores/alerts"
-import { deleteMessage } from "../stores/session-actions"
 import { isTauriHost } from "../lib/runtime-env"
-import type { DeleteHoverState } from "../types/delete-hover"
 import { useSpeech } from "../lib/hooks/use-speech"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
 import { getMessageDurationMs, getMessageStartedAt } from "../lib/message-timing"
 import SpeechActionButton from "./speech-action-button"
-
-function DeleteUpToIcon() {
-  return (
-    <span class="relative inline-block w-3.5 h-3.5" aria-hidden="true">
-      <ListStart class="absolute inset-0 w-3.5 h-3.5" aria-hidden="true" />
-    </span>
-  )
-}
 
 interface MessageItemProps {
   record: MessageRecord
@@ -32,22 +21,15 @@ interface MessageItemProps {
   isQueued?: boolean
   parts: ClientPart[]
   onRevert?: (messageId: string) => void
-  selectedMessageIds?: () => Set<string>
-  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
-  onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   onFork?: (messageId?: string) => void
   showAgentMeta?: boolean
   contentStartPartId?: string
   onContentRendered?: () => void
-  showDeleteMessage?: boolean
-  onDeleteHoverChange?: (state: DeleteHoverState) => void
 }
 
 export default function MessageItem(props: MessageItemProps) {
   const { t } = useI18n()
   const [copied, setCopied] = createSignal(false)
-  const [deletingMessage, setDeletingMessage] = createSignal(false)
-  const [deletingUpTo, setDeletingUpTo] = createSignal(false)
 
   type ImagePreviewState = {
     url: string
@@ -99,8 +81,6 @@ export default function MessageItem(props: MessageItemProps) {
       window.removeEventListener("resize", hide)
     })
   })
-
-  const isSelectedForDeletion = () => Boolean(props.selectedMessageIds?.().has(props.record.id))
 
   let topRowEl: HTMLDivElement | undefined
   let actionsEl: HTMLDivElement | undefined
@@ -325,33 +305,6 @@ export default function MessageItem(props: MessageItemProps) {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const handleDeleteMessage = async () => {
-    if (deletingMessage()) return
-    setDeletingMessage(true)
-    try {
-      await deleteMessage(props.instanceId, props.sessionId, props.record.id)
-    } catch (error) {
-      showAlertDialog(t("messageItem.actions.deleteMessageFailedMessage"), {
-        title: t("messageItem.actions.deleteMessageFailedTitle"),
-        detail: error instanceof Error ? error.message : String(error),
-        variant: "error",
-      })
-    } finally {
-      setDeletingMessage(false)
-    }
-  }
-
-  const handleDeleteUpTo = async () => {
-    if (!props.onDeleteMessagesUpTo) return
-    if (deletingUpTo()) return
-    setDeletingUpTo(true)
-    try {
-      await props.onDeleteMessagesUpTo(props.record.id)
-    } finally {
-      setDeletingUpTo(false)
-    }
-  }
-
   if (!hasContent() && !isGenerating()) {
     return null
   }
@@ -378,7 +331,7 @@ export default function MessageItem(props: MessageItemProps) {
     const base = modelID && providerID ? `${providerID}/${modelID}` : modelID
     if (!base) return ""
 
-    const variant = (info as SDKAssistantMessageV2).variant
+    const variant = info.variant
     if (typeof variant === "string" && variant.trim().length > 0) {
       return `${base} (${variant.trim()})`
     }
@@ -430,20 +383,6 @@ export default function MessageItem(props: MessageItemProps) {
   const actionMenuItems = (includePrimaryActions = false): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = []
 
-    if (props.showDeleteMessage) {
-      items.push({
-        key: "select",
-        label: isSelectedForDeletion()
-          ? t("messageItem.selection.deselectForDeletion")
-          : t("messageItem.selection.selectForDeletion"),
-        icon: isSelectedForDeletion()
-          ? <CheckSquare2 class="w-3.5 h-3.5" aria-hidden="true" />
-          : <Square class="w-3.5 h-3.5" aria-hidden="true" />,
-        checked: isSelectedForDeletion(),
-        onSelect: () => props.onToggleSelectedMessage?.(props.record.id, !isSelectedForDeletion()),
-      })
-    }
-
     if (includePrimaryActions) {
       items.push({
         key: "copy",
@@ -478,31 +417,6 @@ export default function MessageItem(props: MessageItemProps) {
         icon: <Undo class="w-3.5 h-3.5" aria-hidden="true" />,
         onSelect: handleRevert,
       })
-    }
-
-    if (props.showDeleteMessage) {
-      items.push(
-        {
-          key: "delete-up-to",
-          label: t("messageItem.actions.deleteMessagesUpTo"),
-          icon: <DeleteUpToIcon />,
-          disabled: !props.onDeleteMessagesUpTo || deletingUpTo(),
-          destructive: true,
-          onMouseEnter: () => props.onDeleteHoverChange?.({ kind: "deleteUpTo", messageId: props.record.id }),
-          onMouseLeave: () => props.onDeleteHoverChange?.({ kind: "none" }),
-          onSelect: () => void handleDeleteUpTo(),
-        },
-        {
-          key: "delete-message",
-          label: deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage"),
-          icon: <Trash class="w-3.5 h-3.5" aria-hidden="true" />,
-          disabled: deletingMessage(),
-          destructive: true,
-          onMouseEnter: () => props.onDeleteHoverChange?.({ kind: "message", messageId: props.record.id }),
-          onMouseLeave: () => props.onDeleteHoverChange?.({ kind: "none" }),
-          onSelect: handleDeleteMessage,
-        },
-      )
     }
 
     return items

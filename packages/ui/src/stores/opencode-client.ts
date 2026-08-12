@@ -1,11 +1,11 @@
-import { sdkManager, type OpencodeClient } from "../lib/sdk-manager"
+import { sdkManager, type OpenCodeClient } from "../lib/sdk-manager"
 
 function buildRootProxyPath(instanceId: string): string {
   return `/workspaces/${encodeURIComponent(instanceId)}/instance`
 }
 
-function getRootClient(instanceId: string): OpencodeClient {
+function getRootClient(instanceId: string): OpenCodeClient {
   return sdkManager.createClient(instanceId, buildRootProxyPath(instanceId))
 }
 
-export { buildRootProxyPath, getRootClient }
+export { buildRootProxyPath, getRootClient, type OpenCodeClient }

@@ -1,4 +1,4 @@
-import type { ToolState } from "@opencode-ai/sdk/v2"
+import type { ToolState } from "../../types/tool-state"
 import { getRelativePath, isToolStateCompleted, isToolStateError, isToolStateRunning } from "./utils"
 import { tGlobal } from "../../lib/i18n"
 

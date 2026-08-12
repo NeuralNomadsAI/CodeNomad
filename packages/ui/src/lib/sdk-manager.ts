@@ -1,14 +1,14 @@
-import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2/client"
+import { OpenCode, type OpenCodeClient } from "@opencode-ai/client"
 import { CODENOMAD_API_BASE } from "./api-client"
 
 class SDKManager {
-  private clients = new Map<string, OpencodeClient>()
+  private clients = new Map<string, OpenCodeClient>()
 
   private key(instanceId: string, proxyPath: string): string {
     return `${instanceId}:${normalizeProxyPath(proxyPath)}`
   }
 
-  createClient(instanceId: string, proxyPath: string): OpencodeClient {
+  createClient(instanceId: string, proxyPath: string): OpenCodeClient {
     const key = this.key(instanceId, proxyPath)
     const existing = this.clients.get(key)
     if (existing) {
@@ -16,19 +16,11 @@ class SDKManager {
     }
 
     const baseUrl = buildInstanceBaseUrl(proxyPath)
-    const client = createOpencodeClient({ baseUrl })
+    const client = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl) })
 
     this.clients.set(key, client)
 
     return client
-  }
-
-  getClient(instanceId: string, proxyPath: string): OpencodeClient | null {
-    return this.clients.get(this.key(instanceId, proxyPath)) ?? null
-  }
-
-  destroyClient(instanceId: string, proxyPath: string): void {
-    this.clients.delete(this.key(instanceId, proxyPath))
   }
 
   destroyClientsForInstance(instanceId: string): void {
@@ -38,18 +30,25 @@ class SDKManager {
       }
     }
   }
-
-  destroyAll(): void {
-    this.clients.clear()
-  }
 }
 
-export type { OpencodeClient }
+export type { OpenCodeClient }
 
-export function buildInstanceBaseUrl(proxyPath: string): string {
+export function buildInstanceBaseUrl(proxyPath: string, apiBase = CODENOMAD_API_BASE): string {
   const normalized = normalizeProxyPath(proxyPath)
-  const base = stripTrailingSlashes(CODENOMAD_API_BASE)
+  const base = stripTrailingSlashes(apiBase ?? "")
   return `${base}${normalized}/`
+}
+
+function createInstanceFetch(baseUrl: string): typeof globalThis.fetch {
+  return (input, init) => {
+    const requestUrl = new URL(input instanceof Request ? input.url : input)
+    const relativeUrl = `${requestUrl.pathname.replace(/^\/+/, "")}${requestUrl.search}`
+    return globalThis.fetch(new URL(relativeUrl, baseUrl), {
+      ...init,
+      credentials: init?.credentials ?? "include",
+    })
+  }
 }
 
 function normalizeProxyPath(proxyPath: string): string {

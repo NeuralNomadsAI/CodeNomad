@@ -29,8 +29,6 @@ import { SpeechService } from "./speech/service"
 import { SideCarManager } from "./sidecars/manager"
 import { PreviewManager } from "./previews/manager"
 import { ClientConnectionManager } from "./clients/connection-manager"
-import { PluginChannelManager } from "./plugins/channel"
-import { VoiceModeManager } from "./plugins/voice-mode"
 import { runCliUpgrade } from "./cli-upgrade"
 import { createServerShutdownHandler, orchestrateServerShutdown, type ServerShutdownTrigger } from "./shutdown"
 import { AutoAcceptManager } from "./permissions/auto-accept-manager"
@@ -388,7 +386,7 @@ async function main() {
   })
   const previewManager = new PreviewManager()
   const yoloLogger = logger.child({ component: "yolo" })
-  const sessionMetadataPersistence = createOpencodeYoloPersistence(workspaceManager)
+  const sessionMetadataPersistence = createOpencodeYoloPersistence(workspaceManager, settings)
   const yoloManager = new AutoAcceptManager({
     eventBus,
     logger: yoloLogger,
@@ -450,18 +448,11 @@ async function main() {
   const remoteAccessEnabled = options.host === "0.0.0.0" || !isLoopbackHost(options.host)
 
   const clientConnectionManager = new ClientConnectionManager(logger.child({ component: "client-connections" }))
-  const pluginChannel = new PluginChannelManager(logger.child({ component: "plugin-channel" }))
   const remoteProxySessionManager = new RemoteProxySessionManager({
     authManager,
     logger: logger.child({ component: "remote-proxy" }),
     httpsOptions: tlsResolution?.httpsOptions,
   })
-  const voiceModeManager = new VoiceModeManager({
-    connections: clientConnectionManager,
-    channel: pluginChannel,
-    logger: logger.child({ component: "voice-mode" }),
-  })
-
   const httpsPortExplicit = programHasArg(process.argv.slice(2), "--https-port") || Boolean(process.env.CLI_HTTPS_PORT)
   const httpPortExplicit = programHasArg(process.argv.slice(2), "--http-port") || Boolean(process.env.CLI_HTTP_PORT)
 
@@ -494,8 +485,6 @@ async function main() {
         previewManager,
         authManager,
         clientConnectionManager,
-        pluginChannel,
-        voiceModeManager,
         remoteProxySessionManager,
         yoloManager,
         sessionMetadataPersistence,
@@ -523,8 +512,6 @@ async function main() {
         previewManager,
         authManager,
         clientConnectionManager,
-        pluginChannel,
-        voiceModeManager,
         remoteProxySessionManager,
         yoloManager,
         sessionMetadataPersistence,

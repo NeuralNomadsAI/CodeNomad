@@ -1,109 +1,44 @@
-# SDK API Reference
+# Native OpenCode V2 Client Reference
 
-## Overview
+## Package
 
-CodeNomad uses the OpenCode SDK V2 (`@opencode-ai/sdk/v2/client`) via `createOpencodeClient()`.
+CodeNomad pins `@opencode-ai/client@0.0.0-next-17288` exactly in both `packages/server/package.json` and `packages/ui/package.json`.
 
-**Note:** The SDK implementation lives outside this repository.
+- Promise client: `import { OpenCode } from "@opencode-ai/client"`
+- Service lifecycle: `import { Service } from "@opencode-ai/client/service"`
+- Client construction: `OpenCode.make({ baseUrl, headers?, fetch? })`
+- Declarations: `node_modules/@opencode-ai/client/dist/promise/`
 
-- After `npm install`, inspect types in `node_modules/@opencode-ai/sdk/v2/client.d.ts`
-- **Fallback:** Use the CodeNomad wrapper locations documented below as the source of truth
-- When node_modules is unavailable, read how the SDK is imported in existing files
+Do not import `@opencode-ai/sdk`; its V1/V2 wrapper shapes, `{ data, error }` conventions, and `createOpencodeClient()` do not apply.
 
-## SDK Methods Used by CodeNomad
+## Used Native APIs
 
-### Session
+| Area | Calls | CodeNomad caller |
+|---|---|---|
+| Service | `Service.discover/ensure/headers/stop` | `packages/server/src/workspaces/opencode-service.ts` |
+| Location | `client.location.get`, `client.debug.location.evict` | shared service wrapper |
+| Events | `client.event.subscribe()` | `packages/server/src/workspaces/instance-events.ts` |
+| Sessions | `list/get/create/fork/remove/rename/prompt/command/shell/interrupt` | UI session stores |
+| Instructions | `client.session.instructions.entry.put/remove` | conversation-mode prompt setup |
+| Permissions | `permission.request.list`, `permission.reply` | UI and server Yolo replier |
+| Questions | `question.request.list` and reply/reject APIs | UI interruption flow |
 
-**SDK:** `client.session.promptAsync({ sessionID, content, command?, agent? })`
-**Wrapper:** `packages/ui/src/stores/session-actions.ts`
-```typescript
-const response = await requestData(
-  client.session.promptAsync({ sessionID, content }),
-  "session.promptAsync"
-)
-```
+Native methods return decoded Promise values. Follow the installed declarations and existing callers; do not wrap calls in stale SDK response-unwrapping helpers.
 
-**Other Session Methods Used:**
-- `client.session.list()` — List all sessions
-- `client.session.create({ parentID? })` — Create new session
-- `client.session.get({ sessionID })` — Get session info
-- `client.session.delete({ sessionID })` — Delete session
-- `client.session.children({ sessionID })` — Get child sessions
-- `client.session.diff({ sessionID })` — Get file changes
-- `client.session.revert({ sessionID, messageID? })` — Revert code
-- `client.session.summarize({ sessionID })` — Generate summary
-- `client.session.messages({ sessionID })` — List messages
-- `client.session.update({ sessionID, ... })` — Update session properties
-- `client.session.command({ sessionID, command })` — Send command
-- `client.session.shell({ sessionID, command })` — Execute shell command
-- `client.session.abort({ sessionID })` — Abort active session
+## Routing
 
-**Note on Message Deletion:** The SDK does not expose a typed method for message deletion. CodeNomad uses a raw client call:
-```typescript
-// packages/ui/src/stores/session-actions.ts:451-457
-await requestData(
-  (client as any).client.delete({
-    url: `/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(messageId)}`,
-  }),
-  "session.message.delete",
-)
-```
+The UI client base is `/workspaces/:id/instance/`. Generated methods append native `/api/*` endpoints. `packages/ui/src/lib/sdk-manager.ts` caches clients by instance/proxy path and supplies a fetch adapter with cookies.
 
-### Part
+Location-sensitive list/create calls include `directory` or `location`. Session-specific calls rely on the session's native location, while the CodeNomad proxy verifies that location belongs to the selected workspace.
 
-**SDK:** `client.part.delete({ sessionID, messageID, partID })`
-**Wrapper:** `packages/ui/src/stores/session-actions.ts:deleteMessagePart()`
-```typescript
-await requestData(
-  client.part.delete({ sessionID: sessionId, messageID: messageId, partID: partId }),
-  "part.delete",
-)
-```
+## CodeNomad-Owned APIs
 
-**⚠️ Constraint:** Message must retain ≥1 part. Delete entire message if removing last part.
+Do not look for these in the OpenCode client:
 
-**Note on Part Updates:** CodeNomad does not currently use `client.part.update()`. Part modifications are handled through other mechanisms.
+- Workspace create/delete and worktree management
+- Git status/diff/stage/unstage/commit
+- Yolo toggle, persistence and auto-accept policy
+- Authentication, storage, speech, sidecars and previews
+- Multiplexed browser SSE at `/api/events`
 
-### Permission
-
-**SDK:** `client.permission.reply({ requestID, reply: "allow" | "deny" | "once" })`
-**Wrapper:** `packages/ui/src/stores/instances.ts:sendPermissionResponse()`
-
-**Other Permission Methods:**
-- `client.permission.list()` — Get pending permissions
-
-### Question
-
-**SDK:** `client.question.reply({ requestID, answers: string[][] })`
-**Wrapper:** `packages/ui/src/stores/instances.ts:sendQuestionReply()`
-
-**Other Question Methods:**
-- `client.question.list()` — Get pending questions
-- `client.question.reject({ requestID })` — Reject question
-
-### File
-
-**SDK:** `client.file.list({ path })` — List directory contents
-**Wrapper:** `packages/ui/src/components/instance/shell/right-panel/RightPanel.tsx`
-
-**SDK:** `client.file.read({ path })` — Read file content
-**Wrapper:** `packages/ui/src/components/instance/shell/right-panel/RightPanel.tsx`
-
-**SDK:** `client.file.status()` — Get Git status of files
-**Wrapper:** `packages/ui/src/components/instance/shell/right-panel/useGitChanges.ts`
-
-### Config
-
-**SDK:** `client.config.get()` — Get current configuration
-**Wrapper:** `packages/ui/src/lib/hooks/use-instance-metadata.ts`
-
-**Note:** `client.config.update()` and `client.config.providers()` are available but configuration updates flow through server routes instead.
-
-## SDK Categories Not Currently Used
-
-The following SDK categories are available but not actively used by CodeNomad:
-
-- `client.find.*` — File/symbol search (CodeNomad uses server routes)
-- `client.global.*` — Global config/health (CodeNomad uses server meta endpoint)
-- `client.app.*` — App logging/agents
-- `client.worktree.*` — Git worktree management (CodeNomad uses server routes)
+These use `packages/ui/src/lib/api-client.ts` and server routes.

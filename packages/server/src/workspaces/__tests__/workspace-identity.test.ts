@@ -10,12 +10,6 @@ import { WorkspaceManager } from "../manager"
 import { normalizeWorkspaceIdentityPath, resolveWorkspaceIdentity } from "../workspace-identity"
 
 const temporaryDirectories: string[] = []
-const runtimeResult = (pid = 123) => ({
-  pid,
-  port: 4321,
-  exitPromise: new Promise<never>(() => undefined),
-  getLastOutput: () => "",
-})
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -39,17 +33,26 @@ async function createLinkedWorkspace() {
 
 function createManager(rootDir: string) {
   const logger = pino({ level: "silent" })
+  const sharedService = {
+    endpoint: async () => ({ url: "http://127.0.0.1:4321" }),
+    client: async () => ({}),
+    headers: async () => undefined,
+    validateLocation: async ({ directory }: { directory: string }) => ({
+      directory,
+      project: { id: directory, directory, canonical: directory },
+    }),
+    subscribe: async () => ({ async *[Symbol.asyncIterator]() {} }),
+    evict: async () => undefined,
+  }
   const manager = new WorkspaceManager({
     rootDir,
     settings: { getOwner: () => ({ environmentVariables: {} }) },
-    binaryResolver: { resolve: () => ({ path: process.execPath, label: "Node.js", version: process.version }) },
+    binaryResolver: { resolveDefault: () => ({ path: process.execPath, label: "Node.js", version: process.version }) },
     eventBus: new EventBus(logger),
     logger,
     getServerBaseUrl: () => "http://127.0.0.1:3000",
+    sharedService,
   } as unknown as ConstructorParameters<typeof WorkspaceManager>[0])
-  ;(manager as any).runtime.launch = async () => runtimeResult()
-  ;(manager as any).runtime.stop = async () => undefined
-  ;(manager as any).waitForWorkspaceReadiness = async () => undefined
   return manager
 }
 
@@ -64,10 +67,10 @@ async function createSharedLaunch() {
   const manager = createManager(root)
   const launchGate = deferred<void>()
   let launches = 0
-  ;(manager as any).runtime.launch = async () => {
+  ;(manager as any).sharedService.validateLocation = async ({ directory }: { directory: string }) => {
     launches += 1
     await launchGate.promise
-    return runtimeResult()
+    return { directory, project: { id: directory, directory, canonical: directory } }
   }
   const leader = manager.create(target, undefined, { requestId: "leader" })
   const follower = manager.create(link, undefined, { requestId: "follower" })
@@ -153,7 +156,7 @@ describe("workspace identity", () => {
     const manager = createManager(root)
     const launchGate = deferred<void>()
     let launches = 0
-    ;(manager as any).runtime.launch = async () => {
+    ;(manager as any).sharedService.validateLocation = async () => {
       launches += 1
       await launchGate.promise
       throw new Error("launch failed")
@@ -167,7 +170,10 @@ describe("workspace identity", () => {
     assert.deepEqual((await Promise.allSettled(failures)).map((result) => result.status), ["rejected", "rejected"])
     assert.equal(launches, 1)
 
-    ;(manager as any).runtime.launch = async () => runtimeResult(456)
+    ;(manager as any).sharedService.validateLocation = async ({ directory }: { directory: string }) => ({
+      directory,
+      project: { id: directory, directory, canonical: directory },
+    })
     assert.equal((await manager.create(target)).created, true)
   })
 

@@ -40,14 +40,9 @@ export class BinaryResolver {
   }
 
   resolveDefault(): ResolvedBinary {
-    return this.resolve()
-  }
-
-  resolve(explicitPath?: string): ResolvedBinary {
     const binaries = this.list()
     const configuredDefault = readDefaultBinaryPath(this.settings)
-    const fallback = binaries[0]?.path
-    const path = explicitPath?.trim() || configuredDefault || fallback || "opencode"
+    const path = configuredDefault ?? "opencode2"
 
     const entry = binaries.find((b) => b.path === path)
     return {

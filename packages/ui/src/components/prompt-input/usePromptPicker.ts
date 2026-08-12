@@ -1,5 +1,5 @@
 import { createSignal, type Accessor, type Setter } from "solid-js"
-import type { Command as SDKCommand } from "@opencode-ai/sdk/v2"
+import type { CommandInfo } from "@opencode-ai/client"
 import type { Agent } from "../../types/session"
 import { createAgentAttachment, createFileAttachment, createTextAttachment } from "../../types/attachment"
 import { addAttachment, getAttachments } from "../../stores/attachments"
@@ -9,7 +9,7 @@ import type { PickerSelectAction } from "../unified-picker"
 type PickerItem =
   | { type: "agent"; agent: Agent }
   | { type: "file"; file: { path: string; relativePath?: string; isGitFile: boolean; isDirectory?: boolean } }
-  | { type: "command"; command: SDKCommand }
+  | { type: "command"; command: CommandInfo }
 
 type PromptPickerOptions = {
   instanceId: Accessor<string>
@@ -21,7 +21,7 @@ type PromptPickerOptions = {
   getTextarea: () => HTMLTextAreaElement | null
 
   instanceAgents: Accessor<Agent[]>
-  commands: Accessor<SDKCommand[]>
+  commands: Accessor<CommandInfo[]>
 }
 
 type PromptPickerController = {

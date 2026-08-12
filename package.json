@@ -9,8 +9,7 @@
       "packages/server",
       "packages/ui",
       "packages/electron-app",
-      "packages/tauri-app",
-      "packages/opencode-plugin"
+      "packages/tauri-app"
     ]
   },
   "scripts": {

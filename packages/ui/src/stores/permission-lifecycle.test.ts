@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { afterEach, test } from "node:test"
-import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
+import type { OpenCodeClient, PermissionReplyInput, QuestionRejectInput, QuestionReplyInput } from "@opencode-ai/client"
 import { sdkManager } from "../lib/sdk-manager"
 import type { Instance } from "../types/instance"
 import {
@@ -12,16 +12,17 @@ import {
   getPermissionQueue,
   getQuestionQueue,
   sendPermissionResponse,
+  sendQuestionReject,
+  sendQuestionReply,
   syncPendingRequests,
   updateInstance,
 } from "./instances"
 import { messageStoreBus } from "./message-v2/bus"
-import { handlePermissionUpdated } from "./session-events"
 
 const instanceIds: string[] = []
 const originalCreateClient = sdkManager.createClient
 
-function addTestInstance(id: string, client: OpencodeClient): void {
+function addTestInstance(id: string, client: OpenCodeClient): void {
   instanceIds.push(id)
   addInstance({
     id,
@@ -44,117 +45,113 @@ afterEach(() => {
   sdkManager.createClient = originalCreateClient
 })
 
-test("permission.updated preserves the V2 reply route", async () => {
-  let legacyReplies = 0
-  let v2Replies = 0
+test("permission replies use the queued request session", async () => {
+  let input: PermissionReplyInput | undefined
   const client = {
     permission: {
-      reply: async () => { legacyReplies += 1; return { data: true } },
+      reply: async (next: PermissionReplyInput) => { input = next },
     },
-    v2: { session: { permission: {
-      reply: async () => { v2Replies += 1; return { data: true } },
-    } } },
-  } as unknown as OpencodeClient
+  } as unknown as OpenCodeClient
   sdkManager.createClient = (() => client) as typeof sdkManager.createClient
-  addTestInstance("permission-v2-source", client)
-
-  handlePermissionUpdated("permission-v2-source", {
-    type: "permission.v2.asked",
-    properties: { id: "permission", sessionID: "session", action: "external_directory", resources: ["C:/work"] },
-  } as never)
-  handlePermissionUpdated("permission-v2-source", {
-    type: "permission.updated",
-    properties: { id: "permission", sessionID: "session", patterns: ["C:/work"] },
+  addTestInstance("permission-reply", client)
+  addPermissionToQueue("permission-reply", {
+    id: "permission",
+    sessionID: "queued-session",
+    action: "external_directory",
+    resources: ["C:/work"],
   })
-  await sendPermissionResponse("permission-v2-source", "session", "permission", "always")
 
-  assert.equal(v2Replies, 1)
-  assert.equal(legacyReplies, 0)
-  handlePermissionUpdated("permission-v2-source", {
-    type: "permission.updated",
-    properties: { id: "permission", sessionID: "session", patterns: ["C:/work"] },
+  await sendPermissionResponse("permission-reply", "stale-session", "permission", "always", "trusted")
+
+  assert.deepEqual(input, {
+    sessionID: "queued-session",
+    requestID: "permission",
+    reply: "always",
+    message: "trusted",
   })
-  assert.deepEqual(getPermissionQueue("permission-v2-source"), [])
+  assert.deepEqual(getPermissionQueue("permission-reply"), [])
 })
 
-test("standalone permission.updated remains a legacy permission request", async () => {
-  let legacyReplies = 0
-  let v2Replies = 0
+test("question replies and rejects use queued request sessions", async () => {
+  const replies: QuestionReplyInput[] = []
+  const rejects: QuestionRejectInput[] = []
   const client = {
-    permission: {
-      reply: async () => { legacyReplies += 1; return { data: true } },
+    question: {
+      reply: async (input: QuestionReplyInput) => { replies.push(input) },
+      reject: async (input: QuestionRejectInput) => { rejects.push(input) },
     },
-    v2: { session: { permission: {
-      reply: async () => { v2Replies += 1; return { data: true } },
-    } } },
-  } as unknown as OpencodeClient
+  } as unknown as OpenCodeClient
   sdkManager.createClient = (() => client) as typeof sdkManager.createClient
-  addTestInstance("permission-legacy-update", client)
+  addTestInstance("question-replies", client)
+  addQuestionToQueue("question-replies", { id: "reply", sessionID: "reply-session", questions: [] })
+  addQuestionToQueue("question-replies", { id: "reject", sessionID: "reject-session", questions: [] })
 
-  handlePermissionUpdated("permission-legacy-update", {
-    type: "permission.updated",
-    properties: { id: "permission", sessionID: "session", patterns: ["C:/work"] },
-  })
-  assert.equal(getPermissionQueue("permission-legacy-update").length, 1)
-  await sendPermissionResponse("permission-legacy-update", "session", "permission", "always")
+  await sendQuestionReply("question-replies", "stale-session", "reply", [["yes"]])
+  await sendQuestionReject("question-replies", "stale-session", "reject")
 
-  assert.equal(legacyReplies, 1)
-  assert.equal(v2Replies, 0)
+  assert.deepEqual(replies, [{ sessionID: "reply-session", requestID: "reply", answers: [["yes"]] }])
+  assert.deepEqual(rejects, [{ sessionID: "reject-session", requestID: "reject" }])
+  assert.deepEqual(getQuestionQueue("question-replies"), [])
 })
 
 test("pending request sync cannot erase newer SSE mutations", async () => {
   const newPermission = {
-    id: "new-permission", sessionID: "session", permission: "edit", patterns: ["*"], metadata: {},
+    id: "new-permission", sessionID: "session", action: "edit", resources: ["*"], metadata: {},
   }
   const newQuestion = { id: "new-question", sessionID: "session", questions: [] }
-  let resolvePermissions!: (value: { data: never[] }) => void
-  let resolveQuestions!: (value: { data: never[] }) => void
+  let resolvePermissions!: (value: { location: never; data: never[] }) => void
+  let resolveQuestions!: (value: { location: never; data: never[] }) => void
   let permissionCalls = 0
   let questionCalls = 0
   const client = {
-    permission: { list: () => ++permissionCalls === 1
+    permission: { request: { list: () => ++permissionCalls === 1
       ? new Promise((resolve) => { resolvePermissions = resolve })
-      : Promise.resolve({ data: [newPermission] }) },
-    question: { list: () => ++questionCalls === 1
+      : Promise.resolve({ location: {} as never, data: [newPermission] }) } },
+    question: { request: { list: () => ++questionCalls === 1
       ? new Promise((resolve) => { resolveQuestions = resolve })
-      : Promise.resolve({ data: [newQuestion] }) },
-    v2: {
-      permission: { request: { list: async () => ({ data: { data: [] } }) } },
-      question: { request: { list: async () => ({ data: { data: [] } }) } },
-    },
-  } as unknown as OpencodeClient
+      : Promise.resolve({ location: {} as never, data: [newQuestion] }) } },
+  } as unknown as OpenCodeClient
   addTestInstance("pending-request-race", client)
-  addPermissionToQueue("pending-request-race", { id: "stale-permission", sessionID: "session" } as never)
-  addQuestionToQueue("pending-request-race", { id: "stale-question", sessionID: "session" } as never)
+  addPermissionToQueue("pending-request-race", { id: "stale-permission", sessionID: "session", action: "edit", resources: [] })
+  addQuestionToQueue("pending-request-race", { id: "stale-question", sessionID: "session", questions: [] })
 
   const sync = syncPendingRequests("pending-request-race")
   assert.equal(syncPendingRequests("pending-request-race"), sync)
   await new Promise<void>((resolve) => setImmediate(resolve))
   updateInstance("pending-request-race", { pid: 2 })
-  addPermissionToQueue("pending-request-race", newPermission as never)
-  addQuestionToQueue("pending-request-race", newQuestion as never)
-  resolvePermissions({ data: [] })
-  resolveQuestions({ data: [] })
+  addPermissionToQueue("pending-request-race", newPermission)
+  addQuestionToQueue("pending-request-race", newQuestion)
+  resolvePermissions({ location: {} as never, data: [] })
+  resolveQuestions({ location: {} as never, data: [] })
 
   await sync
   assert.deepEqual(getPermissionQueue("pending-request-race").map(({ id }) => id), ["new-permission"])
   assert.deepEqual(getQuestionQueue("pending-request-race").map(({ id }) => id), ["new-question"])
 })
 
-test("pending request sync still loads V2 requests when legacy listing fails", async () => {
+test("pending request sync uses native global lists with an explicit directory", async () => {
+  const locations: unknown[] = []
   const client = {
-    permission: { list: async () => ({ error: { message: "legacy unavailable" } }) },
-    question: { list: async () => ({ data: [] }) },
-    v2: {
-      permission: { request: { list: async () => ({ data: { data: [{
-        id: "v2-permission", sessionID: "session", permission: "edit", patterns: ["*"], metadata: {},
-      }] } }) } },
-      question: { request: { list: async () => ({ data: { data: [] } }) } },
-    },
-  } as unknown as OpencodeClient
-  addTestInstance("partial-pending-api", client)
+    permission: { request: {
+      list: async (input: { location?: unknown }) => {
+        locations.push(input.location)
+        return { location: {} as never, data: [{
+          id: "permission", sessionID: "session", action: "edit", resources: ["*"], metadata: {},
+        }] }
+      },
+    } },
+    question: { request: {
+      list: async (input: { location?: unknown }) => {
+        locations.push(input.location)
+        return { location: {} as never, data: [{ id: "question", sessionID: "session", questions: [] }] }
+      },
+    } },
+  } as unknown as OpenCodeClient
+  addTestInstance("native-pending-api", client)
 
-  await syncPendingRequests("partial-pending-api")
+  await syncPendingRequests("native-pending-api")
 
-  assert.deepEqual(getPermissionQueue("partial-pending-api").map(({ id }) => id), ["v2-permission"])
+  assert.deepEqual(locations, [{ directory: "/workspace" }, { directory: "/workspace" }])
+  assert.deepEqual(getPermissionQueue("native-pending-api").map(({ id }) => id), ["permission"])
+  assert.deepEqual(getQuestionQueue("native-pending-api").map(({ id }) => id), ["question"])
 })

@@ -3,7 +3,6 @@ import { describe, it } from "node:test"
 
 import { sdkManager } from "../lib/sdk-manager.ts"
 import { serverApi } from "../lib/api-client.ts"
-import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces.ts"
 import type { Session } from "../types/session.ts"
 import { addInstance, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
@@ -29,21 +28,20 @@ function session(instanceId: string, id: string, parentId: string | null = null)
   return {
     id, instanceId, parentId, title: id, agent: "build", model: { providerId: "provider", modelId: "model" },
     status: "idle", retry: null, idleSince: null, generationRecovery: null, runtimeStatusKnown: true,
-    version: "1", time: { created: 1, updated: 1 },
+    version: "1", projectID: "project", location: { directory: "/work" }, cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 1 },
   }
 }
 
 function apiSession(id: string, parentID?: string) {
-  return { id, parentID, title: id, version: "1", time: { created: 1, updated: 1 } }
+  return { id, parentID, title: id, projectID: "project", location: { directory: "/work" }, cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 1 } }
 }
 
-function apiMessage(id: string, sessionId: string) {
+function apiMessage(id: string, _sessionId: string) {
   return {
-    info: {
-      id, sessionID: sessionId, role: "assistant", agent: "build", providerID: "provider", modelID: "model",
-      time: { created: 1 },
-    },
-    parts: [],
+    id, type: "assistant", agent: "build", model: { providerID: "provider", id: "model" },
+    time: { created: 1 }, content: [],
   }
 }
 
@@ -61,7 +59,7 @@ async function loadTestWorktree(instanceId: string): Promise<void> {
 }
 
 function setup(instanceId: string) {
-  const client = { session: {} } as any
+  const client = { session: { active: async () => ({}) } } as any
   ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
   addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
   return {
@@ -106,7 +104,7 @@ describe("session request authority", () => {
     const instanceId = "late-message-delete", sessionId = "session"
     const { client, cleanup } = setup(instanceId)
     const response = deferred<any>()
-    ;(client.session as any).messages = () => response.promise
+    ;(client as any).message = { list: () => response.promise }
     setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
 
     try {
@@ -126,7 +124,7 @@ describe("session request authority", () => {
     const instanceId = "late-message-eviction", sessionId = "session"
     const { client, cleanup } = setup(instanceId)
     const response = deferred<any>()
-    ;(client.session as any).messages = () => response.promise
+    ;(client as any).message = { list: () => response.promise }
     setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
 
     try {
@@ -148,7 +146,7 @@ describe("session request authority", () => {
     const oldResponse = deferred<any>()
     const newResponse = deferred<any>()
     let calls = 0
-    ;(client.session as any).messages = () => (++calls === 1 ? oldResponse.promise : newResponse.promise)
+    ;(client as any).message = { list: () => (++calls === 1 ? oldResponse.promise : newResponse.promise) }
     setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
 
     try {
@@ -175,7 +173,7 @@ describe("session request authority", () => {
     const oldResponse = deferred<any>()
     const newResponse = deferred<any>()
     let calls = 0
-    ;(client.session as any).messages = () => (++calls === 1 ? oldResponse.promise : newResponse.promise)
+    ;(client as any).message = { list: () => (++calls === 1 ? oldResponse.promise : newResponse.promise) }
     setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
 
     try {
@@ -226,62 +224,66 @@ describe("session request authority", () => {
     }
   })
 
-  it("treats sessions omitted from an authoritative status response as idle", async () => {
+  it("reconciles stale runtime status from native active sessions", async () => {
     const instanceId = "authoritative-idle"
     const { client, cleanup } = setup(instanceId)
     const working = { ...session(instanceId, "working"), status: "working" as const }
     const compacting = { ...session(instanceId, "compacting"), status: "compacting" as const }
+    const staleWorking = { ...session(instanceId, "stale-working"), status: "working" as const }
     await loadTestWorktree(instanceId)
     setSessions((prev) => new Map(prev).set(instanceId, new Map<string, Session>([
       [working.id, working],
       [compacting.id, compacting],
+      [staleWorking.id, staleWorking],
     ])))
     const statusOptions: unknown[] = []
     let messageOptions: unknown
     ;(client.session as any).list = async () => ({ data: [
       apiSession("working"),
       { ...apiSession("compacting"), directory: "/worktree", workspaceID: "workspace-1" },
+      apiSession("stale-working"),
     ] })
+    ;(client.session as any).active = async () => ({ working: { type: "running" } })
     ;(client.session as any).status = async (options: unknown) => {
       statusOptions.push(options)
       return { data: {} }
     }
-    ;(client.session as any).messages = async (options: unknown) => {
+    ;(client as any).message = { list: async (options: unknown) => {
       messageOptions = options
       return { data: [] }
-    }
+    } }
     ;(client.session as any).get = async ({ sessionID }: { sessionID: string }) => ({ data: apiSession(sessionID) })
 
     try {
       await fetchSessions(instanceId)
 
-      assert.equal(sessions().get(instanceId)?.get("working")?.status, "idle")
+      assert.equal(sessions().get(instanceId)?.get("working")?.status, "working")
       assert.equal(sessions().get(instanceId)?.get("compacting")?.status, "idle")
-      assert.deepEqual(
-        statusOptions.map((value) => JSON.stringify(value)).sort(),
-        [JSON.stringify({ directory: "/work" }), JSON.stringify({ directory: "/work", workspace: "workspace-1" })].sort(),
-      )
+      assert.equal(sessions().get(instanceId)?.get("stale-working")?.status, "idle")
+      assert.equal(sessions().get(instanceId)?.get("compacting")?.runtimeStatusKnown, true)
+      assert.deepEqual(statusOptions, [])
       await loadMessages(instanceId, "compacting", { force: true })
-      assert.deepEqual(messageOptions, { sessionID: "compacting", workspace: "workspace-1" })
-      assert.equal(await getOpenCodeWorkspaceIdForSession(instanceId, "compacting"), "workspace-1")
+      assert.deepEqual(messageOptions, { sessionID: "compacting" })
     } finally {
       cleanup()
     }
   })
 
-  it("rejects strict status refresh when a worktree location is unresolved", async () => {
+  it("accepts native absolute session locations without workspace probing", async () => {
     const instanceId = "unresolved-worktree-status"
     const { client, cleanup } = setup(instanceId)
     const existing = { ...session(instanceId, "worktree-session"), status: "working" as const }
     await loadTestWorktree(instanceId)
     setSessions((prev) => new Map(prev).set(instanceId, new Map([[existing.id, existing]])))
     ;(client.session as any).list = async () => ({ data: [
-      { ...apiSession(existing.id), directory: "/worktree" },
+      { ...apiSession(existing.id), location: { directory: "/worktree" } },
     ] })
+    ;(client.session as any).active = async () => ({ [existing.id]: { type: "running" } })
 
     try {
-      await assert.rejects(() => fetchSessions(instanceId, { strictStatus: true }), /resolve OpenCode workspace/)
+      await fetchSessions(instanceId, { strictStatus: true })
       assert.equal(sessions().get(instanceId)?.get(existing.id)?.status, "working")
+      assert.equal(sessions().get(instanceId)?.get(existing.id)?.location.directory, "/worktree")
     } finally {
       cleanup()
     }

@@ -1,5 +1,5 @@
 import type { Command } from "./commands"
-import type { Command as SDKCommand } from "@opencode-ai/sdk"
+import type { CommandInfo } from "@opencode-ai/client"
 import { showAlertDialog, showPromptDialog } from "../stores/alerts"
 import { activeSessionId, executeCustomCommand } from "../stores/sessions"
 import { getLogger } from "./logger"
@@ -12,7 +12,7 @@ export function commandRequiresArguments(template?: string): boolean {
   return /\$(?:\d+|ARGUMENTS)/.test(template)
 }
 
-export async function promptForCommandArguments(command: SDKCommand): Promise<string | null> {
+export async function promptForCommandArguments(command: CommandInfo): Promise<string | null> {
   if (!commandRequiresArguments(command.template)) {
     return ""
   }
@@ -42,7 +42,7 @@ function formatCommandLabel(name: string): string {
   return name.charAt(0).toUpperCase() + name.slice(1)
 }
 
-export function buildCustomCommandEntries(instanceId: string, commands: SDKCommand[]): Command[] {
+export function buildCustomCommandEntries(instanceId: string, commands: CommandInfo[]): Command[] {
   return commands.map((cmd) => ({
     id: `custom:${instanceId}:${cmd.name}`,
     label: formatCommandLabel(cmd.name),

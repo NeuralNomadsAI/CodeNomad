@@ -1,5 +1,5 @@
 import type { Accessor, JSXElement } from "solid-js"
-import type { ToolState } from "@opencode-ai/sdk/v2"
+import type { ToolState } from "../../types/tool-state"
 import type { TextPart } from "../../types/message"
 import { Markdown } from "../markdown"
 import type { MarkdownRenderOptions, ToolScrollHelpers } from "./types"

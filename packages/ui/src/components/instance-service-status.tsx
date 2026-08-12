@@ -23,23 +23,19 @@ type ParsedMcpStatus = {
 }
 
 function parseMcpStatus(status?: RawMcpStatus): ParsedMcpStatus[] {
-  if (!status || typeof status !== "object") return []
-  const result: ParsedMcpStatus[] = []
-  for (const [name, value] of Object.entries(status)) {
-    if (!value || typeof value !== "object") continue
-    const rawStatus = (value as { status?: string }).status
-    if (!rawStatus) continue
+  if (!status) return []
+  return status.data.map((server) => {
+    const rawStatus = server.status.status
     let mapped: ParsedMcpStatus["status"]
     if (rawStatus === "connected") mapped = "running"
     else if (rawStatus === "failed") mapped = "error"
     else mapped = "stopped"
-    result.push({
-      name,
+    return {
+      name: server.name,
       status: mapped,
-      error: typeof (value as { error?: unknown }).error === "string" ? (value as { error?: string }).error : undefined,
-    })
-  }
-  return result
+      error: server.status.status === "failed" ? server.status.error : undefined,
+    }
+  })
 }
 
 const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => {
@@ -65,7 +61,6 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
   const hasMcpMetadata = () => metadata()?.mcpStatus !== undefined
   const hasPluginsMetadata = () => metadata()?.plugins !== undefined
 
-  const lspServers = createMemo(() => metadata()?.lspStatus ?? [])
   const mcpServers = createMemo(() => parseMcpStatus(metadata()?.mcpStatus ?? undefined))
   const plugins = createMemo(() => metadata()?.plugins ?? [])
 
@@ -91,10 +86,14 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
     const action: "connect" | "disconnect" = shouldEnable ? "connect" : "disconnect"
     setPendingMcpAction(serverName, action)
     try {
+      const resolved = metadata()?.mcpStatus?.location
+      const location = resolved
+        ? { directory: resolved.directory, ...(resolved.workspaceID ? { workspace: resolved.workspaceID } : {}) }
+        : { directory: instance().folder }
       if (shouldEnable) {
-        await client.mcp.connect({ name: serverName })
+        await client.mcp.connect({ server: serverName, location })
       } else {
-        await client.mcp.disconnect({ name: serverName })
+        await client.mcp.disconnect({ server: serverName, location })
       }
       await refreshMetadata()
     } catch (error) {
@@ -118,33 +117,10 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
         </div>
       </Show>
       <Show
-        when={!isLspLoading() && lspServers().length > 0}
-        fallback={renderEmptyState(isLspLoading() ? t("instanceServiceStatus.lsp.loading") : t("instanceServiceStatus.lsp.empty"))}
+        when={isLspLoading()}
+        fallback={renderEmptyState(t("instanceServiceStatus.lsp.empty"))}
       >
-        <div class="space-y-1.5">
-          <For each={lspServers()}>
-            {(server) => (
-              <div class="px-2 py-1.5 rounded border bg-surface-secondary border-base">
-                <div class="flex items-center justify-between gap-2">
-                  <div class="flex flex-col flex-1 min-w-0">
-                    <span class="text-xs text-primary font-medium truncate">{server.name ?? server.id}</span>
-                    <span class="text-[11px] text-secondary truncate" title={server.root}>
-                      {server.root}
-                    </span>
-                  </div>
-                  <div class="flex items-center gap-1.5 flex-shrink-0 text-xs text-secondary">
-                    <div class={`status-dot ${server.status === "connected" ? "ready animate-pulse" : "error"}`} />
-                    <span>
-                      {server.status === "connected"
-                        ? t("instanceServiceStatus.lsp.status.connected")
-                        : t("instanceServiceStatus.lsp.status.error")}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            )}
-          </For>
-        </div>
+        {renderEmptyState(t("instanceServiceStatus.lsp.loading"))}
       </Show>
     </section>
   )

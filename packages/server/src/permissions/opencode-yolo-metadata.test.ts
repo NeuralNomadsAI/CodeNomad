@@ -1,61 +1,64 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { createOpencodeYoloPersistence, hasPersistedYolo, mergePersistedYolo } from "./opencode-yolo-metadata"
+import type { OpenCodeClient } from "@opencode-ai/client"
 
-describe("OpenCode Yolo metadata", () => {
-  it("preserves unrelated metadata while replacing Yolo state", () => {
-    assert.deepEqual(
-      mergePersistedYolo({ thirdParty: { keep: true }, codenomad: { version: 1, worktreeSlug: "feature" } }, "root", true),
+import type { SettingsService } from "../settings/service"
+import type { WorkspaceManager } from "../workspaces/manager"
+import { createOpencodeYoloPersistence } from "./opencode-yolo-metadata"
+
+function createHarness() {
+  let owner: Record<string, unknown> = {}
+  const settings = {
+    getOwner: () => owner,
+    mergePatchOwner: (_kind: string, _owner: string, patch: { sessions: Record<string, unknown> }) => {
+      owner = {
+        ...owner,
+        sessions: { ...((owner.sessions as Record<string, unknown>) ?? {}), ...patch.sessions },
+      }
+      return owner
+    },
+  } as unknown as SettingsService
+  const workspaceManager = { get: () => ({ path: "/repo" }) } as unknown as WorkspaceManager
+  const client = {
+    session: {
+      async list(input: Record<string, unknown>) {
+        assert.deepEqual(input, { directory: "/repo", limit: 10_000 })
+        return {
+          data: [
+            {
+              id: "root",
+              parentID: undefined,
+              revert: undefined,
+              location: { directory: "/repo", workspaceID: "workspace" },
+            },
+          ],
+          cursor: {},
+        }
+      },
+    },
+  } as unknown as OpenCodeClient
+  const persistence = createOpencodeYoloPersistence(
+    workspaceManager,
+    settings,
+    async () => client,
+  )
+  return { persistence }
+}
+
+describe("OpenCode Yolo persistence", () => {
+  it("loads native sessions and Yolo state from the CodeNomad store", async () => {
+    const { persistence } = createHarness()
+    await persistence.persist("instance", "root", true)
+
+    assert.deepEqual(await persistence.loadSessions("instance"), [
       {
-        thirdParty: { keep: true },
-        codenomad: { version: 1, worktreeSlug: "feature", yolo: { enabled: true, rootSessionId: "root" } },
+        id: "root",
+        parentId: null,
+        revert: undefined,
+        workspaceId: "workspace",
+        yoloEnabled: true,
       },
-    )
-  })
-
-  it("accepts only a marker owned by its session", () => {
-    const metadata = mergePersistedYolo({}, "root", true)
-    assert.equal(hasPersistedYolo("root", metadata), true)
-    assert.equal(hasPersistedYolo("fork", metadata), false)
-    assert.equal(hasPersistedYolo("root", mergePersistedYolo({}, "root", false)), false)
-  })
-
-  it("uses the session workspace for metadata updates", async () => {
-    const calls: Array<Record<string, unknown>> = []
-    const client = {
-      session: {
-        async list() { return { data: [{ id: "root", parentID: null, workspaceID: "workspace", metadata: {} }] } },
-        async get(parameters: Record<string, unknown>) { calls.push(parameters); return { data: { metadata: {} } } },
-        async update(parameters: Record<string, unknown>) { calls.push(parameters); return { data: {} } },
-      },
-    }
-    const persistence = createOpencodeYoloPersistence({} as never, () => client as never)
-    const [session] = await persistence.loadSessions("instance")
-    await persistence.persist("instance", "root", true, session?.workspaceId)
-    assert.equal(session?.workspaceId, "workspace")
-    assert.equal(calls[0]?.workspace, "workspace")
-    assert.equal(calls[1]?.workspace, "workspace")
-  })
-
-  it("serializes Yolo and worktree metadata writes across instances", async () => {
-    let metadata: Record<string, unknown> = { thirdParty: true }
-    const client = {
-      session: {
-        async get() { return { data: { metadata } } },
-        async update(parameters: Record<string, unknown>) {
-          metadata = parameters.metadata as Record<string, unknown>
-          return { data: { metadata } }
-        },
-      },
-    }
-    const persistence = createOpencodeYoloPersistence({} as never, () => client as never)
-    await Promise.all([
-      persistence.persist("instance-a", "root", true),
-      persistence.setWorktreeSlug("instance-b", "root", "feature"),
     ])
-    assert.deepEqual(metadata, {
-      thirdParty: true,
-      codenomad: { version: 1, yolo: { enabled: true, rootSessionId: "root" }, worktreeSlug: "feature" },
-    })
   })
+
 })

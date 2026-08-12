@@ -2,311 +2,78 @@
 
 ## Overview
 
-CodeNomad is a cross-platform desktop application built with Electron that provides a multi-instance, multi-session interface for interacting with OpenCode servers. Each instance manages its own OpenCode server process and can handle multiple concurrent sessions.
+CodeNomad is a SolidJS UI and Fastify server hosted by Electron or Tauri. It integrates directly with native OpenCode V2 through exact dependency `@opencode-ai/client@0.0.0-next-17288`.
 
-## High-Level Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Electron Main Process                │
-│  - Window management                                    │
-│  - Process spawning (opencode serve)                    │
-│  - IPC bridge to renderer                               │
-│  - File system operations                               │
-└────────────────┬────────────────────────────────────────┘
-                 │ IPC
-┌────────────────┴────────────────────────────────────────┐
-│                  Electron Renderer Process              │
-│  ┌──────────────────────────────────────────────────┐  │
-│  │              SolidJS Application                 │  │
-│  │  ┌────────────────────────────────────────────┐  │  │
-│  │  │  Instance Manager                          │  │  │
-│  │  │  - Spawns/kills OpenCode servers           │  │  │
-│  │  │  - Manages SDK clients per instance        │  │  │
-│  │  │  - Handles port allocation                 │  │  │
-│  │  └────────────────────────────────────────────┘  │  │
-│  │  ┌────────────────────────────────────────────┐  │  │
-│  │  │  State Management (SolidJS Stores)         │  │  │
-│  │  │  - instances[]                             │  │  │
-│  │  │  - sessions[] per instance                 │  │  │
-│  │  │  - normalized message store per session    │  │  │
-│  │  └────────────────────────────────────────────┘  │  │
-│  │  ┌────────────────────────────────────────────┐  │  │
-│  │  │  UI Components                             │  │  │
-│  │  │  - InstanceTabs                            │  │  │
-│  │  │  - SessionTabs                             │  │  │
-│  │  │  - MessageSection                        │  │  │
-│  │  │  - PromptInput                             │  │  │
-│  │  └────────────────────────────────────────────┘  │  │
-│  └──────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────┘
-                 │ HTTP/SSE
-┌────────────────┴────────────────────────────────────────┐
-│           Multiple OpenCode Server Processes            │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │ Instance 1   │  │ Instance 2   │  │ Instance 3   │  │
-│  │ Port: 4096   │  │ Port: 4097   │  │ Port: 4098   │  │
-│  │ ~/project-a  │  │ ~/project-a  │  │ ~/api        │  │
-│  └──────────────┘  └──────────────┘  └──────────────┘  │
-└─────────────────────────────────────────────────────────┘
+```text
+Desktop host -> CodeNomad server -> one shared OpenCode service
+                    ^    |
+                    |    +-> CodeNomad /api/* and /api/events
+                    +------ UI clients through /workspaces/:id/instance/api/*
 ```
 
-## Component Layers
+There is no `@opencode-ai/sdk` integration and no `packages/opencode-plugin` package.
 
-### 1. Main Process Layer (Electron)
+## Shared Service And Locations
 
-**Responsibilities:**
+`packages/server/src/workspaces/opencode-service.ts` wraps native `Service.discover`, `Service.ensure`, `Service.headers` and `Service.stop`. The first workspace ensures one `opencode serve --service`; all workspaces share that endpoint, client and event stream.
 
-- Create and manage application window
-- Spawn OpenCode server processes as child processes
-- Parse server stdout to extract port information
-- Handle process lifecycle (start, stop, restart)
-- Provide IPC handlers for renderer requests
-- Manage native OS integrations (file dialogs, menus)
+`packages/server/src/workspaces/manager.ts` treats selected folders as native OpenCode locations:
 
-**Key Modules:**
+1. Validate the directory with `client.location.get`.
+2. Store the returned `LocationRef` and publish the logical workspace.
+3. Reuse the shared service for every additional directory.
+4. Evict a location only after its final CodeNomad owner is deleted.
+5. Stop the shared service at CodeNomad shutdown only if CodeNomad started it.
 
-- `main.ts` - Application entry point
-- `process-manager.ts` - OpenCode server process spawning
-- `ipc-handlers.ts` - IPC communication handlers
-- `menu.ts` - Native application menu
-
-### 2. Renderer Process Layer (SolidJS)
-
-**Responsibilities:**
-
-- Render UI components
-- Manage application state
-- Handle user interactions
-- Communicate with OpenCode servers via HTTP/SSE
-- Real-time message streaming
-
-**Key Modules:**
-
-- `App.tsx` - Root component
-- `stores/` - State management
-- `components/` - UI components
-- `contexts/` - SolidJS context providers
-- `lib/` - Utilities and helpers
-
-### 3. Communication Layer
-
-**HTTP API Communication:**
-
-- SDK client per instance
-- RESTful API calls for session/config/file operations
-- Error handling and retries
-
-**SSE (Server-Sent Events):**
-
-- One EventSource per instance
-- Real-time message updates
-- Event type routing
-- Reconnection logic
+Workspaces are not OpenCode processes and do not own ports or PIDs.
 
-**CLI Proxy Paths:**
-
-- The CLI server terminates all HTTP/SSE traffic and forwards it to the correct OpenCode instance.
-- Each `WorkspaceDescriptor` exposes `proxyPath` (e.g., `/workspaces/<id>/instance`), which acts as the base URL for both REST and SSE calls.
-- The renderer never touches the random per-instance port directly; it only talks to `window.location.origin + proxyPath` so a single CLI port can front every session.
+## API Boundaries
 
-## Data Flow
+CodeNomad control APIs live under `/api/*`. Important routes include:
 
-### Instance Creation Flow
+- `/api/workspaces` and `/api/workspaces/:id/worktrees/*`
+- `/api/workspaces/:id/worktrees/:slug/git-status|git-diff|git-stage|git-unstage|git-commit`
+- `/api/events` and `/api/client-connections/pong`
+- `/api/storage`, `/api/settings`, `/api/filesystem`, `/api/speech`
 
-1. User selects folder via Electron file dialog
-2. Main process receives folder path via IPC
-3. Main process spawns `opencode serve --port 0`
-4. Main process parses stdout for port number
-5. Main process sends port + PID back to renderer
-6. Renderer creates SDK client for that port
-7. Renderer fetches initial session list
-8. Renderer displays session picker
+Native OpenCode requests use `/workspaces/:id/instance/api/*`. The Fastify proxy adds shared-service authorization and rejects locations/directories outside the selected workspace or its worktrees. Session routes also verify `session.location.directory`.
 
-### Message Streaming Flow
+Yolo state endpoints currently live at `/workspaces/:id/yolo/sessions/:sessionId`; Yolo notifications use `/api/events`.
 
-1. User submits prompt in active session
-2. Renderer POSTs to `/session/:id/message`
-3. SSE connection receives `MessageUpdated` events
-4. Events are routed to correct instance → session
-5. Message state updates trigger UI re-render
-6. Messages display with auto-scroll
+## Client And Events
 
-### Child Session Creation Flow
+`packages/ui/src/lib/sdk-manager.ts` uses `OpenCode.make()` and caches generated Promise clients by instance proxy path. `packages/ui/src/stores/opencode-client.ts` is the root-client authority; native directory/location fields replace old per-worktree SDK clients.
 
-1. OpenCode server creates child session
-2. SSE emits `SessionUpdated` event with `parentId`
-3. Renderer adds session to instance's session list
-4. New session tab appears automatically
-5. Optional: Auto-switch to new tab
+The server holds one `client.event.subscribe()` stream. `InstanceEventBridge` maps native location events to CodeNomad `instance.event` records, and `/api/events` multiplexes them with workspace and Yolo events for the browser.
 
-## State Management
+## Feature Ownership
 
-### Instance State
+| Feature | Owner |
+|---|---|
+| Sessions, messages, permission/question APIs | OpenCode V2 |
+| Shell mode | `client.session.shell` |
+| Conversation instructions | `client.session.instructions.entry` |
+| Workspace lifecycle and directory authorization | CodeNomad |
+| Git status/diff/stage/unstage/commit | CodeNomad server |
+| Yolo state, persistence and auto-accept | CodeNomad server |
+| Browser SSE multiplexing | CodeNomad server |
 
-```
-instances: Map<instanceId, {
-  id: string
-  folder: string
-  port: number
-  pid: number
-  proxyPath: string // `/workspaces/:id/instance`
-  status: 'starting' | 'ready' | 'error' | 'stopped'
-  client: OpenCodeClient
-  eventSource: EventSource
-  sessions: Map<sessionId, Session>
-  activeSessionId: string | null
-  logs: string[]
-}>
-```
+Native Shell and session instructions replace the deleted plugin-backed integrations. Do not restore plugin background-process, voice-mode, channel or packaging paths.
 
-### Session State
+## Persistence
 
-```
-Session: {
-  id: string
-  title: string
-  parentId: string | null
-  messages: Message[]
-  agent: string
-  model: { providerId: string, modelId: string }
-  status: 'idle' | 'streaming' | 'error'
-}
-```
+CodeNomad configuration resolves through `packages/server/src/config/location.ts`: `config.yaml`, `state.yaml`, and `instances/` under `~/.config/codenomad/`. `config.json` is migration input only.
 
-### Message State
+## Key Files
 
-```
-Message: {
-  id: string
-  sessionId: string
-  type: 'user' | 'assistant'
-  parts: Part[]
-  timestamp: number
-  status: 'sending' | 'sent' | 'streaming' | 'complete' | 'error'
-}
-```
-
-## Tab Hierarchy
-
-### Level 1: Instance Tabs
-
-Each tab represents one OpenCode server instance:
-
-- Label: Folder name (with counter if duplicate)
-- Icon: Folder icon
-- Close button: Stops server and closes tab
-- "+" button: Opens folder picker for new instance
-
-### Level 2: Session Tabs
-
-Each instance has multiple session tabs:
-
-- Main session tab (always present)
-- Child session tabs (auto-created)
-- Logs tab (shows server output)
-- "+" button: Creates new session
-
-### Tab Behavior
-
-**Instance Tab Switching:**
-
-- Preserves session tabs
-- Switches active SDK client
-- Updates SSE event routing
-
-**Session Tab Switching:**
-
-- Loads messages for that session
-- Updates agent/model controls
-- Preserves scroll position
-
-## Technology Stack
-
-### Core
-
-- **Electron** - Desktop wrapper
-- **SolidJS** - Reactive UI framework
-- **TypeScript** - Type safety
-- **Vite** - Build tool
-
-### UI
-
-- **TailwindCSS** - Styling
-- **Kobalte** - Accessible UI primitives
-- **Shiki** - Code syntax highlighting
-- **Marked** - Markdown parsing
-
-### Communication
-
-- **OpenCode SDK** - API client
-- **EventSource** - SSE streaming
-- **Node Child Process** - Process spawning
-
-## Error Handling
-
-### Process Errors
-
-- Server fails to start → Show error in instance tab
-- Server crashes → Attempt auto-restart once
-- Port already in use → Find next available port
-
-### Network Errors
-
-- API call fails → Show inline error, allow retry
-- SSE disconnects → Auto-reconnect with backoff
-- Timeout → Show timeout error, allow manual retry
-
-### User Errors
-
-- Invalid folder selection → Show error dialog
-- Permission denied → Show actionable error message
-- Out of memory → Graceful degradation message
-
-## Performance Considerations
-
-**Note: Performance optimization is NOT a focus for MVP. These are future considerations.**
-
-### Message Rendering (Post-MVP)
-
-- Start with simple list rendering - no virtual scrolling
-- No message limits initially
-- Only optimize if users report issues
-- Virtual scrolling can be added in Phase 8 if needed
-
-### State Updates
-
-- SolidJS fine-grained reactivity handles most cases
-- No special optimizations needed for MVP
-- Batching/debouncing can be added later if needed
-
-### Memory Management (Post-MVP)
-
-- No memory management in MVP
-- Let browser/OS handle it
-- Add limits only if problems arise in testing
-
-## Security Considerations
-
-- No remote code execution
-- Server spawned with user permissions
-- No eval() or dangerous innerHTML
-- Sanitize markdown rendering
-- Validate all IPC messages
-- HTTPS only for external requests
-
-## Extensibility Points
-
-### Plugin System (Future)
-
-- Custom slash commands
-- Custom message renderers
-- Theme extensions
-- Keybinding customization
-
-### Configuration (Future)
-
-- Per-instance settings
-- Global preferences
-- Workspace-specific configs
-- Import/export settings
+- `packages/server/src/index.ts`
+- `packages/server/src/server/http-server.ts`
+- `packages/server/src/workspaces/opencode-service.ts`
+- `packages/server/src/workspaces/manager.ts`
+- `packages/server/src/workspaces/instance-events.ts`
+- `packages/server/src/workspaces/git-mutations.ts`
+- `packages/server/src/permissions/auto-accept-manager.ts`
+- `packages/ui/src/lib/sdk-manager.ts`
+- `packages/ui/src/lib/api-client.ts`
+- `packages/ui/src/stores/session-api.ts`
+- `packages/ui/src/stores/session-actions.ts`

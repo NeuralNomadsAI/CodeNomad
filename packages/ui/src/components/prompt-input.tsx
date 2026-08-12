@@ -819,7 +819,6 @@ export default function PromptInput(props: PromptInputProps) {
               }}
               agents={instanceAgents()}
               commands={getCommands(props.instanceId)}
-              instanceClient={instance()!.client}
               searchQuery={searchQuery()}
               textareaRef={textareaRef}
               workspaceId={props.instanceId}

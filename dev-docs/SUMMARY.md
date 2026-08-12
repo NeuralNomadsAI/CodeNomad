@@ -10,25 +10,13 @@ A comprehensive specification and task breakdown for building the CodeNomad desk
 
 ## Directory Structure
 
-```
-packages/opencode-client/
-├── docs/                           # Comprehensive documentation
-│   ├── architecture.md             # System architecture & design
-│   ├── user-interface.md           # UI/UX specifications
-│   ├── technical-implementation.md # Technical details & patterns
-│   ├── build-roadmap.md            # Phased development plan
-│   └── SUMMARY.md                  # This file
-├── tasks/
-│   ├── README.md                   # Task management guide
-│   ├── todo/                       # Tasks to implement
-│   │   ├── 001-project-setup.md
-│   │   ├── 002-empty-state-ui.md
-│   │   ├── 003-process-manager.md
-│   │   ├── 004-sdk-integration.md
-│   │   └── 005-session-picker-modal.md
-│   └── done/                       # Completed tasks (empty)
-└── README.md                       # Project overview
-
+```text
+packages/server/      Fastify control API and shared OpenCode service
+packages/ui/          SolidJS UI and native Promise clients
+packages/electron-app Electron host
+packages/tauri-app/   Tauri host
+dev-docs/             Development documentation
+tasks/                Task tracking
 ```
 
 ## Documentation Overview
@@ -81,9 +69,9 @@ packages/opencode-client/
 - Technology stack details
 - Project file structure
 - State management patterns
-- Process management implementation
-- SDK integration approach
-- SSE event handling
+- Shared OpenCode service and location ownership
+- Native `@opencode-ai/client` integration
+- `/api/events` multiplexing
 - IPC communication
 - Error handling strategies
 - Performance optimizations
@@ -92,8 +80,8 @@ packages/opencode-client/
 
 - Complete project structure
 - TypeScript interfaces
-- Process spawning logic
-- SDK client management
+- `Service.ensure` and location lifecycle
+- Native Promise client management
 - Message rendering implementation
 - Build and packaging config
 
@@ -137,17 +125,17 @@ packages/opencode-client/
 - Add keyboard shortcuts
 - Style and test responsiveness
 
-**003 - Process Manager** (4-5 hours)
+**003 - Shared Service Manager** (4-5 hours)
 
-- Spawn OpenCode server processes
-- Parse stdout for port extraction
-- Kill processes on command
+- Discover or start one OpenCode service with `Service.ensure`
+- Validate workspace locations/directories
+- Stop only the shared endpoint CodeNomad owns
 - Handle errors and timeouts
 - Auto-cleanup on app quit
 
-**004 - SDK Integration** (3-4 hours)
+**004 - Native Client Integration** (3-4 hours)
 
-- Create SDK client per instance
+- Create native clients through the CodeNomad proxy
 - Fetch sessions, agents, models
 - Implement session CRUD operations
 - Add error handling and retries
@@ -169,18 +157,18 @@ packages/opencode-client/
 - **Level 2**: Session tabs (multiple per instance)
 - Allows working on multiple projects with multiple conversations each
 
-### 2. Process Management in Main Process
+### 2. Shared Service Management
 
-- Electron main process spawns servers
-- Parses stdout to get port
-- IPC sends port to renderer
-- Ensures clean shutdown on app quit
+- CodeNomad server discovers or starts one service with `Service.ensure`
+- Workspace folders become validated native locations
+- UI traffic stays behind the CodeNomad proxy
+- Shutdown stops only the endpoint CodeNomad owns
 
-### 3. One SDK Client Per Instance
+### 3. One Shared Service, Location-Scoped Clients
 
-- Each instance has its own HTTP client
-- Connects to different port (different server)
-- Isolated state prevents cross-contamination
+- One `Service.ensure` endpoint serves all workspace locations
+- UI clients route through `/workspaces/:id/instance/api/*`
+- Server-side directory and session ownership prevents cross-contamination
 
 ### 4. SolidJS for Reactivity
 
@@ -307,15 +295,13 @@ packages/opencode-client/
 - SolidJS docs: https://solidjs.com
 - Kobalte UI: https://kobalte.dev
 
-## Questions to Resolve
+## Current OpenCode Baseline
 
-Before starting implementation, clarify:
-
-1. Exact OpenCode CLI syntax for spawning server
-2. Expected stdout format for port extraction
-3. SDK package location and version
-4. Any platform-specific gotchas
-5. Icon and branding assets location
+- Native client: `@opencode-ai/client@0.0.0-next-17288`
+- Service: one shared `Service.ensure`
+- Workspaces: native locations/directories
+- Shell and instructions: native session APIs
+- Git mutations and Yolo: CodeNomad-owned
 
 ## Estimated Timeline
 

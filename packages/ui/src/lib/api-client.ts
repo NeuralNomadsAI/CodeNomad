@@ -1,7 +1,4 @@
 import type {
-  BackgroundProcess,
-  BackgroundProcessListResponse,
-  BackgroundProcessOutputResponse,
   BinaryValidationResult,
   ConfigFileContentRequest,
   ConfigFileContentResponse,
@@ -20,12 +17,10 @@ import type {
   PreviewSession,
   ProviderUsageResponse,
   ServerMeta,
-  SessionMetadataResponse,
   RemoteProxySessionCreateRequest,
   RemoteProxySessionCreateResponse,
   RemoteServerProbeRequest,
   RemoteServerProbeResponse,
-  VoiceModeStateResponse,
   YoloStateResponse,
   WorkspaceCloneRequest,
   WorkspaceCloneResponse,
@@ -44,7 +39,6 @@ import type {
   WorkspaceEventPayload,
   WorkspaceEventType,
   WorktreeListResponse,
-  WorktreeMap,
   WorktreeCreateRequest,
   WorktreeGitDiffResponse,
   WorktreeGitStatusResponse,
@@ -61,12 +55,6 @@ const EVENTS_URL = buildEventsUrl(API_BASE, DEFAULT_EVENTS_PATH)
 
 export const CODENOMAD_API_BASE = API_BASE
 
-export function buildBackgroundProcessStreamUrl(instanceId: string, processId: string): string {
-  const encodedInstanceId = encodeURIComponent(instanceId)
-  const encodedProcessId = encodeURIComponent(processId)
-  return buildAbsoluteUrl(`/workspaces/${encodedInstanceId}/plugin/background-processes/${encodedProcessId}/stream`)
-}
-
 function buildEventsUrl(base: string | undefined, path: string): string {
   if (path.startsWith("http://") || path.startsWith("https://")) {
     return path
@@ -76,17 +64,6 @@ function buildEventsUrl(base: string | undefined, path: string): string {
     return `${base}${normalized}`
   }
   return path
-}
-
-function buildAbsoluteUrl(path: string): string {
-  if (path.startsWith("http://") || path.startsWith("https://")) {
-    return path
-  }
-  if (!API_BASE) {
-    return path
-  }
-  const normalized = path.startsWith("/") ? path : `/${path}`
-  return `${API_BASE}${normalized}`
 }
 
 const httpLogger = getLogger("api")
@@ -227,16 +204,6 @@ export const serverApi = {
     })
   },
 
-  readWorktreeMap(id: string): Promise<WorktreeMap> {
-    return request<WorktreeMap>(`/api/workspaces/${encodeURIComponent(id)}/worktrees/map`)
-  },
-
-  writeWorktreeMap(id: string, map: WorktreeMap): Promise<void> {
-    return request(`/api/workspaces/${encodeURIComponent(id)}/worktrees/map`, {
-      method: "PUT",
-      body: JSON.stringify(map),
-    })
-  },
   createWorkspace(payload: WorkspaceCreateRequest, options?: { signal?: AbortSignal }): Promise<WorkspaceCreateResponse> {
     return request<WorkspaceCreateResponse>("/api/workspaces", {
       method: "POST",
@@ -528,30 +495,6 @@ export const serverApi = {
   deleteInstanceData(id: string): Promise<void> {
     return request(`/api/storage/instances/${encodeURIComponent(id)}`, { method: "DELETE" })
   },
-  listBackgroundProcesses(instanceId: string): Promise<BackgroundProcessListResponse> {
-    return request<BackgroundProcessListResponse>(
-      `/workspaces/${encodeURIComponent(instanceId)}/plugin/background-processes`,
-    )
-  },
-  stopBackgroundProcess(instanceId: string, processId: string): Promise<BackgroundProcess> {
-    return request<BackgroundProcess>(
-      `/workspaces/${encodeURIComponent(instanceId)}/plugin/background-processes/${encodeURIComponent(processId)}/stop`,
-      { method: "POST" },
-    )
-  },
-  terminateBackgroundProcess(instanceId: string, processId: string): Promise<void> {
-    return request(
-      `/workspaces/${encodeURIComponent(instanceId)}/plugin/background-processes/${encodeURIComponent(processId)}/terminate`,
-      { method: "POST" },
-    )
-  },
-  updateVoiceMode(instanceId: string, enabled: boolean): Promise<VoiceModeStateResponse> {
-    const identity = getClientIdentity()
-    return request<VoiceModeStateResponse>(`/workspaces/${encodeURIComponent(instanceId)}/plugin/voice-mode`, {
-      method: "POST",
-      body: JSON.stringify({ ...identity, enabled }),
-    })
-  },
   getYoloState(instanceId: string, sessionId: string): Promise<YoloStateResponse> {
     return request<YoloStateResponse>(
       `/workspaces/${encodeURIComponent(instanceId)}/yolo/sessions/${encodeURIComponent(sessionId)}`,
@@ -563,12 +506,6 @@ export const serverApi = {
       { method: "POST" },
     )
   },
-  setSessionWorktreeSlug(instanceId: string, sessionId: string, worktreeSlug: string): Promise<SessionMetadataResponse> {
-    return request<SessionMetadataResponse>(
-      `/api/workspaces/${encodeURIComponent(instanceId)}/worktrees/sessions/${encodeURIComponent(sessionId)}`,
-      { method: "PUT", body: JSON.stringify({ worktreeSlug }) },
-    )
-  },
   sendClientConnectionPong(payload: { clientId: string; connectionId: string; pingTs?: number }, signal?: AbortSignal): Promise<void> {
     const init: RequestInit = {
       method: "POST",
@@ -578,30 +515,6 @@ export const serverApi = {
       init.signal = signal
     }
     return request<void>("/api/client-connections/pong", init)
-  },
-  fetchBackgroundProcessOutput(
-    instanceId: string,
-    processId: string,
-    options?: { method?: "full" | "tail" | "head" | "grep"; pattern?: string; lines?: number; maxBytes?: number },
-  ): Promise<BackgroundProcessOutputResponse> {
-    const params = new URLSearchParams()
-    if (options?.method) {
-      params.set("method", options.method)
-    }
-    if (options?.pattern) {
-      params.set("pattern", options.pattern)
-    }
-    if (options?.lines) {
-      params.set("lines", String(options.lines))
-    }
-    if (options?.maxBytes !== undefined) {
-      params.set("maxBytes", String(options.maxBytes))
-    }
-    const query = params.toString()
-    const suffix = query ? `?${query}` : ""
-    return request<BackgroundProcessOutputResponse>(
-      `/workspaces/${encodeURIComponent(instanceId)}/plugin/background-processes/${encodeURIComponent(processId)}/output${suffix}`,
-    )
   },
   connectEvents(
     onEvent: (event: WorkspaceEventPayload) => void,

@@ -10,38 +10,19 @@ interface OpencodeReplierDeps {
 
 /**
  * Default {@link PermissionReplier} that calls the OpenCode instance via the
- * generated SDK client over loopback, using the same `"once"` reply the UI
- * previously sent.
- *
- * Uses `createInstanceClient` so routes and body shapes are always correct
- * for the installed SDK version — no hand-assembled URLs.
+ * native Promise client, using the same `"once"` reply the UI previously sent.
  */
 export function createOpencodePermissionReplier(deps: OpencodeReplierDeps): PermissionReplier {
   return async (reply: AutoAcceptReply) => {
-    const client = createInstanceClient(deps.workspaceManager, reply.instanceId)
+    const client = await createInstanceClient(deps.workspaceManager, reply.instanceId)
     if (!client) {
-      throw new Error(`Yolo: instance ${reply.instanceId} has no open port`)
+      throw new Error(`Yolo: instance ${reply.instanceId} is not ready`)
     }
 
-    const opts = { throwOnError: true } as const
-
-    if (reply.source === "v2") {
-      await client.v2.session.permission.reply(
-        {
-          sessionID: reply.sessionId,
-          requestID: reply.permissionId,
-          reply: reply.reply,
-        },
-        opts,
-      )
-    } else {
-      await client.permission.reply(
-        {
-          requestID: reply.permissionId,
-          reply: reply.reply,
-        },
-        opts,
-      )
-    }
+    await client.permission.reply({
+      sessionID: reply.sessionId,
+      requestID: reply.permissionId,
+      reply: reply.reply,
+    })
   }
 }

@@ -1,11 +1,12 @@
 import { createEffect, createMemo, createSignal, lazy, type Accessor, type JSX } from "solid-js"
-import type { FileContent, FileNode } from "@opencode-ai/sdk/v2/client"
 
 import type { DiffWordWrapMode, RightPanelTab } from "../types"
+import type { FileBrowserEntry } from "./FilesTab"
+import { adaptFileSystemEntries, decodeFileContent } from "./file-v2-adapters"
 
 import { getRootClient } from "../../../../../stores/opencode-client"
-import { getOpenCodeWorkspaceIdForWorktree } from "../../../../../stores/opencode-workspaces"
-import { requestData } from "../../../../../lib/opencode-api"
+import { instances } from "../../../../../stores/instances"
+import { getWorktrees } from "../../../../../stores/worktrees"
 import { serverApi } from "../../../../../lib/api-client"
 import { showConfirmDialog } from "../../../../../stores/alerts"
 import { showToastNotification } from "../../../../../lib/notifications"
@@ -34,7 +35,7 @@ interface FilesTabRuntimeOptions {
 
 export function createFilesTabRuntime(options: FilesTabRuntimeOptions): () => JSX.Element {
   const [browserPath, setBrowserPath] = createSignal(".")
-  const [browserEntries, setBrowserEntries] = createSignal<FileNode[] | null>(null)
+  const [browserEntries, setBrowserEntries] = createSignal<FileBrowserEntry[] | null>(null)
   const [browserLoading, setBrowserLoading] = createSignal(false)
   const [browserError, setBrowserError] = createSignal<string | null>(null)
   const [browserSelectedPath, setBrowserSelectedPath] = createSignal<string | null>(null)
@@ -61,9 +62,12 @@ export function createFilesTabRuntime(options: FilesTabRuntimeOptions): () => JS
     options.isPhoneLayout() ? RIGHT_PANEL_FILES_LIST_OPEN_PHONE_KEY : RIGHT_PANEL_FILES_LIST_OPEN_NONPHONE_KEY,
   )
 
-  const fileWorkspacePayload = async () => {
-    const workspace = await getOpenCodeWorkspaceIdForWorktree(options.instanceId, options.worktreeSlug())
-    return workspace ? { workspace } : {}
+  const fileLocation = () => {
+    const slug = options.worktreeSlug()
+    const directory = getWorktrees(options.instanceId).find((worktree) => worktree.slug === slug)?.directory
+      ?? (slug === "root" ? instances().get(options.instanceId)?.folder : undefined)
+    if (!directory) throw new Error(`Missing directory for worktree ${slug}`)
+    return { directory }
   }
 
   createEffect(() => {
@@ -117,9 +121,9 @@ export function createFilesTabRuntime(options: FilesTabRuntimeOptions): () => JS
     setBrowserLoading(true)
     setBrowserError(null)
     try {
-      const nodes = await requestData<FileNode[]>(browserClient().file.list({ path: normalized, ...(await fileWorkspacePayload()) }), "file.list")
+      const result = await browserClient().file.list({ path: normalized, location: fileLocation() })
       setBrowserPath(normalized)
-      setBrowserEntries(Array.isArray(nodes) ? nodes : [])
+      setBrowserEntries(adaptFileSystemEntries(result.data))
     } catch (error) {
       setBrowserError(error instanceof Error ? error.message : "Failed to load files")
       setBrowserEntries([])
@@ -138,13 +142,7 @@ export function createFilesTabRuntime(options: FilesTabRuntimeOptions): () => JS
 
     if (options.isPhoneLayout()) setFilesListOpen(false)
     try {
-      const content = await requestData<FileContent>(browserClient().file.read({ path, ...(await fileWorkspacePayload()) }), "file.read")
-      const type = (content as any)?.type
-      const encoding = (content as any)?.encoding
-      if (type && type !== "text") throw new Error("Binary file cannot be displayed")
-      if (encoding === "base64") throw new Error("Binary file cannot be displayed")
-      const text = (content as any)?.content
-      if (typeof text !== "string") throw new Error("Unsupported file type")
+      const text = decodeFileContent(await browserClient().file.read({ path, location: fileLocation() }))
       setBrowserSelectedContent(text)
       setBrowserSelectedOriginalContent(text)
     } catch (error) {
@@ -161,11 +159,7 @@ export function createFilesTabRuntime(options: FilesTabRuntimeOptions): () => JS
     const originalContent = browserSelectedOriginalContent()
     if (originalContent !== null) {
       try {
-        const currentDiskContent = await requestData<FileContent>(
-          browserClient().file.read({ path, ...(await fileWorkspacePayload()) }),
-          "file.read",
-        )
-        const diskContent = (currentDiskContent as any)?.content
+        const diskContent = decodeFileContent(await browserClient().file.read({ path, location: fileLocation() }))
         if (diskContent !== originalContent && diskContent !== content) {
           const confirmed = await showConfirmDialog(options.t("instanceShell.rightPanel.actions.conflict.message", { path }), {
             variant: "warning",
@@ -260,13 +254,7 @@ export function createFilesTabRuntime(options: FilesTabRuntimeOptions): () => JS
     setBrowserSelectedLoading(true)
     setBrowserSelectedError(null)
     try {
-      const content = await requestData<FileContent>(browserClient().file.read({ path: selected, ...(await fileWorkspacePayload()) }), "file.read")
-      const type = (content as any)?.type
-      const encoding = (content as any)?.encoding
-      if (type && type !== "text") throw new Error("Binary file cannot be displayed")
-      if (encoding === "base64") throw new Error("Binary file cannot be displayed")
-      const text = (content as any)?.content
-      if (typeof text !== "string") throw new Error("Unsupported file type")
+      const text = decodeFileContent(await browserClient().file.read({ path: selected, location: fileLocation() }))
       setBrowserSelectedContent(text)
       setBrowserSelectedOriginalContent(text)
       setBrowserSelectedDirty(false)

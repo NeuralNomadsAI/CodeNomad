@@ -1,44 +1,43 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { buildV2RequestLocations } from "./request-locations.ts"
+import { buildV2RequestLocations, createRequestLocation } from "./request-locations.ts"
+
+describe("createRequestLocation", () => {
+  it("creates native request location shapes", () => {
+    assert.deepEqual(createRequestLocation("/repo"), { directory: "/repo" })
+    assert.deepEqual(createRequestLocation(), {})
+  })
+})
 
 describe("buildV2RequestLocations", () => {
-  it("includes root and each workspace-backed worktree location", () => {
+  it("includes root and each worktree directory", () => {
     const locations = buildV2RequestLocations(
       "/repo",
       [
-        { slug: "root" },
-        { slug: "feature-a" },
-        { slug: "feature-b" },
-        { slug: "missing-workspace" },
+        { directory: "/repo" },
+        { directory: "/repo-feature-a" },
+        { directory: "/repo-feature-b" },
+        {},
       ],
-      new Map([
-        ["feature-a", "workspace-a"],
-        ["feature-b", "workspace-b"],
-      ]),
     )
 
     assert.deepEqual(locations, [
       { directory: "/repo" },
-      { directory: "/repo", workspace: "workspace-a" },
-      { directory: "/repo", workspace: "workspace-b" },
+      { directory: "/repo-feature-a" },
+      { directory: "/repo-feature-b" },
     ])
   })
 
-  it("deduplicates repeated workspace locations", () => {
+  it("deduplicates repeated directories", () => {
     const locations = buildV2RequestLocations(
       "/repo",
-      [{ slug: "feature-a" }, { slug: "feature-b" }],
-      new Map([
-        ["feature-a", "workspace-shared"],
-        ["feature-b", "workspace-shared"],
-      ]),
+      [{ directory: "/repo-feature" }, { directory: "/repo-feature" }],
     )
 
     assert.deepEqual(locations, [
       { directory: "/repo" },
-      { directory: "/repo", workspace: "workspace-shared" },
+      { directory: "/repo-feature" },
     ])
   })
 })

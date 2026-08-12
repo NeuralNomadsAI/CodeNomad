@@ -310,6 +310,24 @@
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent-primary) 16%, transparent);
 }
 
+.providers-multiselect {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.providers-command-preview {
+  overflow-x: auto;
+  padding: 0.75rem;
+  border: 1px solid var(--border-base);
+  background: var(--surface-base);
+  color: var(--text-primary);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-sm);
+  white-space: pre;
+}
+
 .providers-method-row {
   margin-bottom: 1rem;
   padding-top: 0;

@@ -1,5 +1,5 @@
 import { Show, createEffect, createMemo, createSignal, onCleanup, on, untrack } from "solid-js"
-import { ArrowUpDown, ChevronDown, ChevronUp, MoreHorizontal, Pause, Search, Trash, X } from "lucide-solid"
+import { ArrowUpDown, ChevronDown, ChevronUp, Pause, Search, X } from "lucide-solid"
 import Kbd from "./kbd"
 import BrandedEmptyState from "./branded-empty-state"
 import LoadErrorState from "./load-error-state"
@@ -9,23 +9,17 @@ import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./
 import VirtualFollowList, { type VirtualExplicitBottomPinIntent, type VirtualFollowListApi, type VirtualFollowListState, type VirtualFollowScrollSnapshot } from "./virtual-follow-list"
 import { isScrollRestoreGenerationCurrent, isSnapshotAutoFollowing } from "./virtual-follow-behavior"
 import { useConfig } from "../stores/preferences"
-import { getSessionInfo } from "../stores/sessions"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { useI18n } from "../lib/i18n"
 import { copyToClipboard } from "../lib/clipboard"
 import { showToastNotification } from "../lib/notifications"
-import { showAlertDialog } from "../stores/alerts"
-import { deleteMessage, deleteMessagePart } from "../stores/session-actions"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
-import type { DeleteHoverState } from "../types/delete-hover"
 import { partHasRenderableText } from "../types/message"
 import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
-import { getPartCharCount } from "../lib/token-utils"
 import { getMessageSelectionActionPosition } from "../lib/message-selection-position"
 import { buildSessionSearchMatches } from "../lib/session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
 import { resolveThinkingExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
-import { collectToolDeletionCompanionPartIds, executeBulkDeletionPlan } from "./tool-deletion-companions"
 
 const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 const QUOTE_SELECTION_MAX_LENGTH = 2000
@@ -41,7 +35,6 @@ export interface MessageSectionProps {
   loadError?: string | null
   emptyStateVariant?: "messages" | "no-session"
   onRevert?: (messageId: string) => void
-  onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   onFork?: (messageId?: string) => void
   registerScrollToBottom?: (fn: (() => void) | null) => void
   showSidebarToggle?: boolean
@@ -95,29 +88,6 @@ export default function MessageSection(props: MessageSectionProps) {
   })
 
   const sessionRevision = createMemo(() => store().getSessionRevision(props.sessionId))
-  const usageSnapshot = createMemo(() => store().getSessionUsage(props.sessionId))
-  const sessionInfo = createMemo(() =>
-    getSessionInfo(props.instanceId, props.sessionId) ?? {
-      cost: 0,
-      contextWindow: 0,
-      isSubscriptionModel: false,
-      inputTokens: 0,
-      outputTokens: 0,
-      reasoningTokens: 0,
-      actualUsageTokens: 0,
-      modelOutputLimit: 0,
-      contextAvailableTokens: null,
-    },
-  )
-
-  const tokenStats = createMemo(() => {
-    const usage = usageSnapshot()
-    const info = sessionInfo()
-    return {
-      used: usage?.actualUsageTokens ?? info.actualUsageTokens ?? 0,
-      avail: info.contextAvailableTokens,
-    }
-  })
 
   const preferenceSignature = createMemo(() => {
     const pref = preferences()
@@ -139,22 +109,11 @@ export default function MessageSection(props: MessageSectionProps) {
       anchor?.scrollIntoView({ block: "start", behavior: "smooth" })
     }
 
-    if (selectionMode() === "tools" && segment.type !== "tool") {
-      setActiveSegmentId(segment.id)
-      scrollToMessage()
-      return
-    }
-
-    setLastSelectionAnchorId(segment.id)
     setActiveSegmentId(segment.id)
     scrollToMessage()
   }
 
-  const [selectedTimelineIds, setSelectedTimelineIds] = createSignal<Set<string>>(new Set())
-  const [lastSelectionAnchorId, setLastSelectionAnchorId] = createSignal<string | null>(null)
   const [expandedMessageIds, setExpandedMessageIds] = createSignal<Set<string>>(new Set())
-  const [selectionMode, setSelectionMode] = createSignal<"all" | "tools">("all")
-  const [isDeleteMenuOpen, setIsDeleteMenuOpen] = createSignal(false)
   const [isSearchOpen, setIsSearchOpen] = createSignal(false)
   const [searchQuery, setSearchQuery] = createSignal("")
   const [debouncedSearchQuery, setDebouncedSearchQuery] = createSignal("")
@@ -162,13 +121,8 @@ export default function MessageSection(props: MessageSectionProps) {
   const [isSearchPending, setIsSearchPending] = createSignal(false)
   const [searchMatches, setSearchMatches] = createSignal<SessionSearchMatch[]>([])
   const [activeSearchIndex, setActiveSearchIndex] = createSignal(0)
-  let deleteMenuRef: HTMLDivElement | undefined
-  let deleteMenuButtonRef: HTMLButtonElement | undefined
   let searchInputRef: HTMLInputElement | undefined
 
-  // Deletion is only allowed for messages/tool parts that occur AFTER the most
-  // recent compaction. Compaction effectively resets the stored context; deleting
-  // earlier items would not reliably reflect what the model sees.
   const messageIndexById = createMemo(() => {
     const ids = messageIds()
     const map = new Map<string, number>()
@@ -194,191 +148,6 @@ export default function MessageSection(props: MessageSectionProps) {
     const query = trimmedSearchQuery()
     return query.length >= SEARCH_MIN_CHARS && !isSearchPending() && searchedQuery().trim() === query
   })
-
-  const lastCompactionIndex = createMemo(() => {
-    // Depend on a single session revision signal (not every message/part read)
-    // to keep reactive overhead small.
-    sessionRevision()
-    return untrack(() => store().getLastCompactionMessageIndex(props.sessionId))
-  })
-
-  const deletableStartIndex = createMemo(() => {
-    const idx = lastCompactionIndex()
-    return idx === -1 ? 0 : idx + 1
-  })
-
-  const deletableMessageIds = createMemo(() => {
-    const ids = messageIds()
-    const start = deletableStartIndex()
-    return new Set(ids.slice(start))
-  })
-
-  const isMessageDeletable = (messageId: string): boolean => {
-    const idx = messageIndexById().get(messageId)
-    if (idx === undefined) return false
-    return idx >= deletableStartIndex()
-  }
-
-  // Build the message group for a segment.
-  // Tool calls belong to the same assistant turn (between user messages).
-  // Only assistant badges trigger group selection; user/tool badges are standalone.
-  const getAdjacentGroup = (_clickedIndex: number, segments: TimelineSegment[]): TimelineSegment[] => {
-    const clicked = segments[_clickedIndex]
-    if (clicked.type === "assistant") {
-      let currentTurn = -1
-      const turnByMessageId = new Map<string, number>()
-      for (const segment of segments) {
-        if (segment.type === "user") {
-          currentTurn += 1
-          continue
-        }
-        if (currentTurn === -1) currentTurn = 0
-        if (!turnByMessageId.has(segment.messageId)) {
-          turnByMessageId.set(segment.messageId, currentTurn)
-        }
-      }
-      const turnIndex = turnByMessageId.get(clicked.messageId)
-      if (turnIndex === undefined) {
-        return segments.filter((s) => s.messageId === clicked.messageId)
-      }
-      return segments.filter((s) => s.type !== "user" && turnByMessageId.get(s.messageId) === turnIndex)
-    }
-    // User, tool, and compaction segments are standalone.
-    return [clicked]
-  }
-
-  const handleToggleTimelineSelection = (id: string) => {
-    const segments = timelineSegments()
-    const segmentIndex = segments.findIndex((s) => s.id === id)
-    if (segmentIndex === -1) return
-    const segment = segments[segmentIndex]
-
-    if (!isMessageDeletable(segment.messageId)) {
-      return
-    }
-
-    setLastSelectionAnchorId(id)
-
-    if (selectionMode() === "tools" && segment.type !== "tool") {
-      return
-    }
-
-    const selected = selectedTimelineIds()
-    const isCurrentlySelected = selected.has(id)
-    const group = getAdjacentGroup(segmentIndex, segments)
-    const hasToolsInGroup = group.some((s) => s.type === "tool")
-    const isGroupCandidate = segment.type === "assistant" && hasToolsInGroup
-    const selectedInGroup = isGroupCandidate
-      ? group.reduce((count, s) => (selected.has(s.id) ? count + 1 : count), 0)
-      : 0
-    const isGroupEmpty = isGroupCandidate && selectedInGroup === 0
-
-    if (isGroupCandidate && !isCurrentlySelected && isGroupEmpty) {
-      // Parent click: select entire group only when none are selected yet.
-      // Tool visibility is handled by isSelectionActive() in isHidden() — no
-      // expand/collapse needed.
-      setSelectedTimelineIds((prev) => {
-        const next = new Set(prev)
-        for (const s of group) next.add(s.id)
-        return next
-      })
-    } else if (isCurrentlySelected) {
-      // Individual deselect (tool or parent). No group deselect.
-      const newSelected = new Set(selected)
-      newSelected.delete(id)
-      setSelectedTimelineIds(newSelected)
-    } else {
-      // Individual select (tool badge, parent with partial group, or standalone).
-      setSelectedTimelineIds((prev) => {
-        const next = new Set(prev)
-        next.add(id)
-        return next
-      })
-    }
-  }
-
-  const handleLongPressTimelineSelection = (segment: TimelineSegment) => {
-    const segments = timelineSegments()
-    const segmentIndex = segments.findIndex((s) => s.id === segment.id)
-    if (segmentIndex === -1) return
-
-    if (!isMessageDeletable(segment.messageId)) {
-      return
-    }
-
-    setLastSelectionAnchorId(segment.id)
-
-    if (selectionMode() === "tools" && segment.type !== "tool") {
-      return
-    }
-    const group = getAdjacentGroup(segmentIndex, segments)
-    const hasToolsInGroup = group.some((s) => s.type === "tool")
-    const isGroupCandidate = segment.type === "assistant" && hasToolsInGroup
-    if (!isGroupCandidate) {
-      handleToggleTimelineSelection(segment.id)
-      return
-    }
-    const selected = selectedTimelineIds()
-    const hasAnySelected = group.some((s) => selected.has(s.id))
-    if (!hasAnySelected) {
-      setSelectedTimelineIds((prev) => {
-        const next = new Set(prev)
-        for (const s of group) next.add(s.id)
-        return next
-      })
-      return
-    }
-    const newSelected = new Set(selected)
-    for (const s of group) newSelected.delete(s.id)
-    setSelectedTimelineIds(newSelected)
-  }
-
-  const handleSelectRangeTimeline = (id: string) => {
-    const anchorId = lastSelectionAnchorId()
-    if (!anchorId) {
-      handleToggleTimelineSelection(id)
-      return
-    }
-
-    const segments = timelineSegments()
-    const anchorIndex = segments.findIndex((s) => s.id === anchorId)
-    const targetIndex = segments.findIndex((s) => s.id === id)
-
-    if (anchorIndex === -1 || targetIndex === -1) {
-      handleToggleTimelineSelection(id)
-      return
-    }
-
-    const start = Math.min(anchorIndex, targetIndex)
-    const end = Math.max(anchorIndex, targetIndex)
-
-    const rangeSegments = selectionMode() === "tools"
-      ? segments.slice(start, end + 1).filter((s) => s.type === "tool" && isMessageDeletable(s.messageId))
-      : segments.slice(start, end + 1).filter((s) => isMessageDeletable(s.messageId))
-    // Range selection replaces current selection so it can grow or shrink.
-    setSelectedTimelineIds(new Set(rangeSegments.map((segment) => segment.id)))
-  }
-
-  const handleClearTimelineSelection = () => {
-    clearDeleteMode()
-  }
-
-  const applySelectionMode = (mode: "all" | "tools") => {
-    setSelectionMode(mode)
-    if (mode !== "tools") return
-    const segments = timelineSegments()
-    const toolIds = new Set(
-      segments
-        .filter((segment) => segment.type === "tool" && isMessageDeletable(segment.messageId))
-        .map((segment) => segment.id),
-    )
-    setSelectedTimelineIds((prev) => {
-      if (prev.size === 0) return prev
-      const next = new Set([...prev].filter((id) => toolIds.has(id)))
-      if (next.size === 0) setLastSelectionAnchorId(null)
-      return next
-    })
-  }
 
   const lastAssistantIndex = createMemo(() => {
     const messageId = lastAssistantMessageId()
@@ -468,227 +237,6 @@ export default function MessageSection(props: MessageSectionProps) {
   }
   const [activeSegmentId, setActiveSegmentId] = createSignal<string | null>(null)
 
-  const [deleteHover, setDeleteHover] = createSignal<DeleteHoverState>({ kind: "none" })
-
-  const [selectedForDeletion, setSelectedForDeletion] = createSignal<Set<string>>(new Set<string>())
-  const selectedToolParts = createMemo(() => {
-    const selected = selectedTimelineIds()
-    if (selected.size === 0) return [] as { messageId: string; partId: string }[]
-    const segments = timelineSegments()
-    const segmentById = new Map<string, TimelineSegment>()
-    for (const segment of segments) segmentById.set(segment.id, segment)
-    const toolParts: { messageId: string; partId: string }[] = []
-    const seen = new Set<string>()
-    for (const segId of selected) {
-      const segment = segmentById.get(segId)
-      if (!segment || segment.type !== "tool") continue
-      for (const partId of segment.toolPartIds ?? []) {
-        if (!partId) continue
-        const key = `${segment.messageId}:${partId}`
-        if (seen.has(key)) continue
-        seen.add(key)
-        toolParts.push({ messageId: segment.messageId, partId })
-      }
-    }
-    return toolParts
-  })
-  const deleteMessageIds = createMemo(() => selectedForDeletion())
-  const deleteToolParts = createMemo(() => {
-    const messageIds = deleteMessageIds()
-    const allowed = deletableMessageIds()
-    return selectedToolParts().filter((entry) => allowed.has(entry.messageId) && !messageIds.has(entry.messageId))
-  })
-
-  const deleteToolPartKeys = createMemo(() => {
-    const set = new Set<string>()
-    for (const entry of deleteToolParts()) {
-      set.add(`${entry.messageId}:${entry.partId}`)
-    }
-    return set
-  })
-  const deleteCompanionParts = createMemo(() => {
-    sessionRevision()
-    const selectedByMessage = new Map<string, Set<string>>()
-    for (const entry of deleteToolParts()) {
-      const selected = selectedByMessage.get(entry.messageId) ?? new Set<string>()
-      selected.add(entry.partId)
-      selectedByMessage.set(entry.messageId, selected)
-    }
-
-    const companions: { messageId: string; partId: string }[] = []
-    const s = store()
-    for (const [messageId, selectedToolPartIds] of selectedByMessage) {
-      const record = s.getMessage(messageId)
-      if (!record) continue
-      const partIds = collectToolDeletionCompanionPartIds(
-        record.partIds ?? [],
-        (partId) => record.parts?.[partId]?.data,
-        selectedToolPartIds,
-      )
-      for (const partId of partIds) {
-        companions.push({ messageId, partId })
-      }
-    }
-    return companions
-  })
-  const deleteCompanionPartKeys = createMemo(() =>
-    new Set(deleteCompanionParts().map((entry) => `${entry.messageId}:${entry.partId}`)),
-  )
-  const isDeleteMode = createMemo(() => deleteMessageIds().size > 0 || deleteToolParts().length > 0)
-  const selectedDeleteCount = createMemo(() => deleteMessageIds().size + deleteToolParts().length)
-
-  const selectedTokenTotal = createMemo(() => {
-    const selected = deleteMessageIds()
-    const toolParts = deleteToolParts()
-    if (selected.size === 0 && toolParts.length === 0) return 0
-    // Fresh-from-store chars: read parts directly via buildRecordDisplayData +
-    // getPartCharCount so the toolbar stays consistent with the xray overlay
-    // (which also reads live from the store). Falls back to segment totalChars
-    // when no record is found (e.g. compaction segments).
-    const s = store()
-    let total = 0
-    for (const messageId of selected) {
-      let chars = 0
-      const record = s.getMessage(messageId)
-      if (record) {
-        const displayData = buildRecordDisplayData(props.instanceId, record)
-        for (const part of displayData.orderedParts) {
-          chars += getPartCharCount(part)
-        }
-      } else {
-        // Fallback: sum from segments (O(n) pre-pass scoped to this branch)
-        for (const seg of timelineSegments()) {
-          if (seg.messageId === messageId) chars += seg.totalChars
-        }
-      }
-      total += Math.max(Math.round(chars / 4), 1)
-    }
-    if (toolParts.length > 0) {
-      const partFallbackChars = new Map<string, number>()
-      for (const segment of timelineSegments()) {
-        if (segment.type !== "tool") continue
-        for (const partId of segment.toolPartIds ?? []) {
-          if (!partId || partFallbackChars.has(partId)) continue
-          partFallbackChars.set(partId, segment.totalChars)
-        }
-      }
-      for (const { messageId, partId } of toolParts) {
-        let chars = 0
-        const record = s.getMessage(messageId)
-        const partRecord = record?.parts?.[partId]
-        if (partRecord?.data) {
-          chars = getPartCharCount(partRecord.data)
-        } else {
-          chars = partFallbackChars.get(partId) ?? 0
-        }
-        total += Math.max(Math.round(chars / 4), 1)
-      }
-      for (const { messageId, partId } of deleteCompanionParts()) {
-        const part = s.getMessage(messageId)?.parts?.[partId]?.data
-        if (part) total += Math.max(Math.round(getPartCharCount(part) / 4), 1)
-      }
-    }
-    return total
-  })
-
-  const formatTokenCount = (tokens: number): string => {
-    if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`
-    if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`
-    return String(tokens)
-  }
-
-  const isMessageSelectedForDeletion = (messageId: string) => selectedForDeletion().has(messageId)
-
-  const setMessageSelectedForDeletion = (messageId: string, selected: boolean) => {
-    if (!messageId) return
-    if (!isMessageDeletable(messageId)) return
-    setSelectedForDeletion((prev) => {
-      const next = new Set(prev)
-      if (selected) {
-        next.add(messageId)
-      } else {
-        next.delete(messageId)
-      }
-      return next
-    })
-  }
-
-  const clearDeleteMode = () => {
-    setSelectedForDeletion(new Set<string>())
-    setDeleteHover({ kind: "none" })
-    setSelectedTimelineIds(new Set<string>())
-    setLastSelectionAnchorId(null)
-    setIsDeleteMenuOpen(false)
-  }
-
-  createEffect(() => {
-    const timelineIds = selectedTimelineIds()
-    if (timelineIds.size === 0) {
-      return
-    }
-    const segments = timelineSegments()
-    const segmentById = new Map<string, TimelineSegment>()
-    for (const segment of segments) segmentById.set(segment.id, segment)
-    const affectedMessageIds = new Set<string>()
-    for (const segId of timelineIds) {
-      const segment = segmentById.get(segId)
-      if (segment && segment.type !== "tool" && isMessageDeletable(segment.messageId)) {
-        affectedMessageIds.add(segment.messageId)
-      }
-    }
-    setSelectedForDeletion(affectedMessageIds)
-  })
-
-  const selectAllForDeletion = () => {
-    const allMessageIds = [...deletableMessageIds()]
-    setSelectedForDeletion(new Set<string>(allMessageIds))
-    // Also select all timeline segments — tool visibility is handled by
-    // isSelectionActive() in isHidden(), no expand/collapse needed.
-    const segments = timelineSegments()
-    setSelectedTimelineIds(new Set(segments.filter((s) => isMessageDeletable(s.messageId)).map((s) => s.id)))
-  }
-
-  const deleteSelectedMessages = async () => {
-    const selected = deleteMessageIds()
-    const toolParts = deleteToolParts()
-    if (selected.size === 0 && toolParts.length === 0) return
-
-    const allowed = deletableMessageIds()
-
-    const idsInSessionOrder = messageIds()
-    const toDelete: string[] = []
-    for (let idx = idsInSessionOrder.length - 1; idx >= 0; idx -= 1) {
-      const id = idsInSessionOrder[idx]
-      if (allowed.has(id) && selected.has(id)) {
-        toDelete.push(id)
-      }
-    }
-
-    const companionParts = deleteCompanionParts()
-
-    try {
-      await executeBulkDeletionPlan(
-        {
-          messageIds: toDelete,
-          companionParts: companionParts.filter(({ messageId }) => allowed.has(messageId)),
-          toolParts: toolParts.filter(({ messageId }) => allowed.has(messageId)),
-        },
-        {
-          clearSelection: clearDeleteMode,
-          deleteMessage: (messageId) => deleteMessage(props.instanceId, props.sessionId, messageId),
-          deletePart: ({ messageId, partId }) =>
-            deleteMessagePart(props.instanceId, props.sessionId, messageId, partId),
-        },
-      )
-    } catch (error) {
-      showAlertDialog(t("messageSection.bulkDelete.failedMessage"), {
-        title: t("messageSection.bulkDelete.failedTitle"),
-        detail: error instanceof Error ? error.message : String(error),
-        variant: "error",
-      })
-    }
-  }
- 
   const isActive = createMemo(() => props.isActive !== false)
   const [listApi, setListApi] = createSignal<VirtualFollowListApi | null>(null)
   const [listState, setListState] = createSignal<VirtualFollowListState | null>(null)
@@ -1065,7 +613,6 @@ export default function MessageSection(props: MessageSectionProps) {
     // only needs to re-run when `messageIds` (memo) changes.
     untrack(() => {
       if (loading) {
-        handleClearTimelineSelection()
         previousTimelineIds = []
         setTimelineSegments([])
         seenTimelineMessageIds.clear()
@@ -1201,19 +748,11 @@ export default function MessageSection(props: MessageSectionProps) {
         return next
       })
 
-      // Prune stale selection IDs: segment IDs are positional and change on rebuild.
-      setSelectedTimelineIds((prev) => {
-        if (prev.size === 0) return prev
-        const currentIds = new Set(timelineSegments().map((s) => s.id))
-        const pruned = new Set([...prev].filter((id) => currentIds.has(id)))
-        return pruned.size === prev.size ? prev : pruned
-      })
     })
   }
 
   // Keep timeline segments in sync when message parts are added/removed.
-  // Part deletion does not remove message ids from the session, so we must
-  // explicitly replace segments for messages whose part count changed.
+  // Explicitly replace segments for messages whose part count changed.
   createEffect(() => {
     if (props.loading) return
     const ids = messageIds()
@@ -1376,9 +915,6 @@ export default function MessageSection(props: MessageSectionProps) {
         return
       }
 
-      if (event.key === "Escape" && (selectedTimelineIds().size > 0 || selectedForDeletion().size > 0)) {
-        clearDeleteMode()
-      }
     }
     document.addEventListener("keydown", handleKeyDown)
     onCleanup(() => document.removeEventListener("keydown", handleKeyDown))
@@ -1394,18 +930,6 @@ export default function MessageSection(props: MessageSectionProps) {
     onCleanup(() => window.removeEventListener(OPEN_SESSION_SEARCH_EVENT, handleOpenSearch))
   })
 
-  createEffect(() => {
-    if (!isDeleteMenuOpen()) return
-    if (typeof document === "undefined") return
-    const handleClick = (event: MouseEvent) => {
-      const target = event.target as Node
-      if (deleteMenuRef?.contains(target)) return
-      if (deleteMenuButtonRef?.contains(target)) return
-      setIsDeleteMenuOpen(false)
-    }
-    document.addEventListener("mousedown", handleClick)
-    onCleanup(() => document.removeEventListener("mousedown", handleClick))
-  })
   onCleanup(() => {
     clearPendingTimelinePartUpdateFrame()
     clearQuoteSelection()
@@ -1450,12 +974,6 @@ export default function MessageSection(props: MessageSectionProps) {
             persistMessageScrollSnapshot()
           }}
           onMouseUp={() => handleStreamMouseUp()}
-          onClick={(e) => {
-            if (selectedTimelineIds().size === 0) return
-            const target = e.target as HTMLElement
-            if (target.closest("button, a, input, [role='button']")) return
-            handleClearTimelineSelection()
-          }}
           onActiveKeyChange={(messageId) => {
             if (!messageId) return
             const firstSeg = timelineSegments().find((s) => s.messageId === messageId)
@@ -1616,14 +1134,7 @@ export default function MessageSection(props: MessageSectionProps) {
               thinkingDefaultExpanded={() => resolveThinkingExpansionDefault(preferences())}
               usageMetricsVisibility={usageMetricsVisibility}
               toolVisibility={(toolName) => resolveToolVisibility(preferences(), toolName)}
-              deleteHover={deleteHover}
-              onDeleteHoverChange={setDeleteHover}
-              selectedMessageIds={selectedForDeletion}
-              selectedToolPartKeys={deleteToolPartKeys}
-              selectedCompanionPartKeys={deleteCompanionPartKeys}
-              onToggleSelectedMessage={setMessageSelectedForDeletion}
               onRevert={props.onRevert}
-              onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
               onFork={props.onFork}
               onContentRendered={handleContentRendered}
               searchQuery={debouncedSearchQuery}
@@ -1736,146 +1247,16 @@ export default function MessageSection(props: MessageSectionProps) {
           )}
         />
 
-        <Show when={isDeleteMode()}>
-          <div
-            class="message-delete-mode-toolbar"
-            role="toolbar"
-            aria-label={t("messageSection.bulkDelete.toolbarAriaLabel", { count: selectedDeleteCount() })}
-          >
-            <div class="message-delete-mode-toolbar-row" aria-hidden="true">
-              <span class="message-delete-mode-token-group">
-                <span class="message-delete-mode-count message-delete-mode-count--before" title={`${tokenStats().used} tokens currently in context`}>
-                  {formatTokenCount(tokenStats().used)}
-                </span>
-                <span class="message-delete-mode-arrow" aria-hidden="true">{"\u203A"}</span>
-                <span
-                  class="message-delete-mode-count message-delete-mode-count--selection"
-                  title={`${selectedTokenTotal()} tokens selected (${selectedDeleteCount()} messages)`}
-                >
-                  {formatTokenCount(selectedTokenTotal())}
-                </span>
-                <span class="message-delete-mode-arrow" aria-hidden="true">{"\u203A"}</span>
-                <span
-                  class="message-delete-mode-count message-delete-mode-count--after"
-                  title={`${Math.max(0, tokenStats().used - selectedTokenTotal())} tokens remaining after deletion`}
-                >
-                  {formatTokenCount(Math.max(0, tokenStats().used - selectedTokenTotal()))}
-                </span>
-              </span>
-
-              <button
-                type="button"
-                class="message-delete-mode-button message-delete-mode-button--delete"
-                onClick={() => void deleteSelectedMessages()}
-                title={t("messageSection.bulkDelete.deleteSelectedTitle")}
-                aria-label={t("messageSection.bulkDelete.deleteSelectedTitle")}
-              >
-                <Trash class="w-4 h-4" aria-hidden="true" />
-              </button>
-
-              <div class="message-delete-mode-menu-container">
-                <button
-                  ref={(el) => {
-                    deleteMenuButtonRef = el
-                  }}
-                  type="button"
-                  class="message-delete-mode-button message-delete-mode-button--menu"
-                  onClick={() => setIsDeleteMenuOpen((prev) => !prev)}
-                  title={t("messageSection.bulkDelete.moreOptionsTitle")}
-                  aria-label={t("messageSection.bulkDelete.moreOptionsTitle")}
-                >
-                  <MoreHorizontal class="w-4 h-4" aria-hidden="true" />
-                </button>
-                <Show when={isDeleteMenuOpen()}>
-                  <div
-                    ref={(el) => {
-                      deleteMenuRef = el
-                    }}
-                    class="message-delete-mode-menu dropdown-surface"
-                  >
-                    <button
-                      type="button"
-                      class="dropdown-item"
-                      onClick={() => {
-                        selectAllForDeletion()
-                        setIsDeleteMenuOpen(false)
-                      }}
-                    >
-                      {t("messageSection.bulkDelete.selectAllTitle")}
-                    </button>
-                    <div class="message-delete-mode-menu-divider" aria-hidden="true" />
-                    <div class="message-delete-mode-menu-row">
-                      <span class="message-delete-mode-menu-label">{t("messageSection.bulkDelete.selectionModeLabel")}</span>
-                      <div class="message-delete-mode-menu-toggle">
-                        <button
-                          type="button"
-                          class="message-delete-mode-menu-toggle-button"
-                          data-mode="all"
-                          data-active={selectionMode() === "all"}
-                          onClick={() => applySelectionMode("all")}
-                        >
-                          {t("messageSection.bulkDelete.selectionModeAll")}
-                        </button>
-                        <button
-                          type="button"
-                          class="message-delete-mode-menu-toggle-button"
-                          data-mode="tools"
-                          data-active={selectionMode() === "tools"}
-                          onClick={() => applySelectionMode("tools")}
-                        >
-                          {t("messageSection.bulkDelete.selectionModeTools")}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </Show>
-              </div>
-
-              <button
-                type="button"
-                class="message-delete-mode-button message-delete-mode-button--cancel"
-                onClick={clearDeleteMode}
-                title={t("messageSection.bulkDelete.cancelTitle")}
-                aria-label={t("messageSection.bulkDelete.cancelTitle")}
-              >
-                <X class="w-4 h-4" aria-hidden="true" />
-              </button>
-            </div>
-
-            <div class="message-delete-mode-hint-row keyboard-hints" aria-hidden="true">
-              <Kbd shortcut="cmd+click" />
-              <span class="message-delete-mode-hint-text">{t("messageSection.bulkDelete.selectionHint.toggle")}</span>
-              <span class="message-delete-mode-hint-sep">·</span>
-              <Kbd shortcut="shift+click" />
-              <span class="message-delete-mode-hint-text">{t("messageSection.bulkDelete.selectionHint.range")}</span>
-              <span class="message-delete-mode-hint-sep">·</span>
-              <Kbd shortcut="esc" />
-              <span class="message-delete-mode-hint-text">{t("messageSection.bulkDelete.selectionHint.clear")}</span>
-            </div>
-          </div>
-        </Show>
-
         <Show when={showTimeline()}>
           <div class="message-timeline-sidebar">
             <MessageTimeline
               segments={timelineSegments()}
               onSegmentClick={handleTimelineSegmentClick}
-              onToggleSelection={handleToggleTimelineSelection}
-              onLongPressSelection={handleLongPressTimelineSelection}
-              onSelectRange={handleSelectRangeTimeline}
-              onClearSelection={handleClearTimelineSelection}
-              selectedIds={selectedTimelineIds}
               expandedMessageIds={expandedMessageIds}
-              deletableMessageIds={deletableMessageIds}
               activeSegmentId={activeSegmentId()}
               instanceId={props.instanceId}
               sessionId={props.sessionId}
               showToolSegments={showTimelineToolsPreference()}
-              deleteHover={deleteHover}
-              onDeleteHoverChange={setDeleteHover}
-              onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
-              selectedMessageIds={selectedForDeletion}
-              onToggleSelectedMessage={setMessageSelectedForDeletion}
               searchMatchedSegmentIds={searchMatchedTimelineSegmentIds}
               activeSearchSegmentId={activeSearchTimelineSegmentId}
             />

@@ -1,19 +1,20 @@
 import type {
-  Session as SDKSession,
-  Agent as SDKAgent,
-  Provider as SDKProvider,
-  Model as SDKModel,
+  AgentInfo as SDKAgent,
+  LocationRef,
+  ModelInfo as SDKModel,
+  ProviderInfo as SDKProvider,
+  SessionInfo as SDKSession,
   SessionStatus as SDKSessionStatus,
-} from "@opencode-ai/sdk/v2"
+} from "@opencode-ai/client"
 import type { GenerationRecoveryState } from "../stores/session-generation-recovery"
 
 // Export SDK types for external use
-export type { 
-  Session as SDKSession,
-  Agent as SDKAgent, 
-  Provider as SDKProvider,
-  Model as SDKModel
-} from "@opencode-ai/sdk/v2"
+export type {
+  AgentInfo as SDKAgent,
+  ModelInfo as SDKModel,
+  ProviderInfo as SDKProvider,
+  SessionInfo as SDKSession,
+} from "@opencode-ai/client"
 
 export type SessionStatus = "idle" | "working" | "compacting"
 
@@ -62,8 +63,7 @@ export function mapSdkSessionRetry(status: SDKSessionStatus | null | undefined):
 }
 
 // Our client-specific Session interface extending SDK Session
-export interface Session
-  extends Omit<SDKSession, "projectID" | "directory" | "parentID" | "slug" | "model"> {
+export interface Session extends Omit<SDKSession, "parentID" | "model"> {
   instanceId: string // Client-specific field
   parentId: string | null // Client-specific field (override parentID)
   agent: string // Client-specific field
@@ -71,7 +71,8 @@ export interface Session
     providerId: string
     modelId: string
   }
-  version: string // Include version from SDK Session
+  location: LocationRef
+  version?: string
   pendingPermission?: boolean // Indicates if session is waiting on user permission
   pendingQuestion?: boolean // Indicates if session is waiting on user input
   status: SessionStatus // Single source of truth for session status
@@ -80,7 +81,7 @@ export interface Session
   generationRecovery?: GenerationRecoveryState | null // Local recovery state for work interrupted across restarts
   runtimeStatusKnown?: boolean // Whether idle/working came from an authoritative runtime response
   generationAdmissionToken?: number // Guards recovery state while a new input is being admitted
-  metadata?: Record<string, unknown> // Session metadata persisted by OpenCode
+  metadata?: Record<string, unknown> // CodeNomad-local runtime state; V2 SessionInfo does not persist this
 }
 
 // Adapter function to convert SDK Session to client Session

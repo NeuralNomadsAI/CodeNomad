@@ -905,36 +905,6 @@
   }
 }
 
-/* Background process cards in status panel */
-.status-process-card {
-  @apply rounded-lg border flex flex-col gap-2 p-3 transition-all duration-150;
-  background-color: var(--surface-base);
-  border-color: var(--border-base);
-}
-
-.status-process-card:hover {
-  border-color: var(--border-strong);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-}
-
-.status-process-header {
-  @apply flex flex-col gap-1;
-}
-
-.status-process-title {
-  @apply text-xs font-semibold;
-  color: var(--text-primary);
-}
-
-.status-process-meta {
-  @apply flex flex-wrap gap-2 text-[11px];
-  color: var(--text-muted);
-}
-
-.status-process-actions {
-  @apply grid grid-cols-3 gap-2;
-}
-
 /* Empty states */
 .right-panel-empty {
   @apply flex flex-col items-center justify-center text-center gap-2;

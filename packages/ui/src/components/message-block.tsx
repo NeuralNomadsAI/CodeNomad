@@ -1,5 +1,5 @@
 import { For, Index, Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, untrack, type Accessor } from "solid-js"
-import { CheckSquare2, Copy, ExternalLink, FoldVertical, ListStart, Square, Trash, Volume2 } from "lucide-solid"
+import { Copy, ExternalLink, FoldVertical, Volume2 } from "lucide-solid"
 import MessageItem from "./message-item"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { ClientPart, MessageInfo } from "../types/message"
@@ -10,10 +10,7 @@ import { messageStoreBus } from "../stores/message-v2/bus"
 import { formatTokenTotal } from "../lib/formatters"
 import { ensureSessionAncestorsExpanded, sessions, setActiveSessionFromList } from "../stores/sessions"
 import { selectInstanceTab } from "../stores/app-tabs"
-import { showAlertDialog } from "../stores/alerts"
-import { deleteMessage } from "../stores/session-actions"
 import { useI18n } from "../lib/i18n"
-import type { DeleteHoverState } from "../types/delete-hover"
 import { useSpeech } from "../lib/hooks/use-speech"
 import { createFollowScroll } from "../lib/follow-scroll"
 import { inferReasoningDurationMs } from "../lib/message-timing"
@@ -22,14 +19,7 @@ import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overfl
 import { copyToClipboard } from "../lib/clipboard"
 import SpeechActionButton from "./speech-action-button"
 import type { VisibilityPreference } from "../stores/preferences"
-
-function DeleteUpToIcon() {
-  return (
-    <span class="relative inline-block w-3.5 h-3.5" aria-hidden="true">
-      <ListStart class="absolute inset-0 w-3.5 h-3.5" aria-hidden="true" />
-    </span>
-  )
-}
+import type { ToolState, ToolStateCompleted, ToolStateError, ToolStateRunning } from "../types/tool-state"
 
 const USER_BORDER_COLOR = "var(--message-user-border)"
 const ASSISTANT_BORDER_COLOR = "var(--message-assistant-border)"
@@ -43,11 +33,6 @@ function ToolCallFallback() {
 
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
-
-type ToolState = import("@opencode-ai/sdk/v2").ToolState
-type ToolStateRunning = import("@opencode-ai/sdk/v2").ToolStateRunning
-type ToolStateCompleted = import("@opencode-ai/sdk/v2").ToolStateCompleted
-type ToolStateError = import("@opencode-ai/sdk/v2").ToolStateError
 
 function isToolStateRunning(state: ToolState | undefined): state is ToolStateRunning {
   return Boolean(state && state.status === "running")
@@ -289,13 +274,8 @@ interface MessageContentItemProps {
   messageIndex: number
   lastAssistantIndex: () => number
   onRevert?: (messageId: string) => void
-  onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   onFork?: (messageId?: string) => void
   onContentRendered?: () => void
-  showDeleteMessage?: boolean
-  onDeleteHoverChange?: (state: DeleteHoverState) => void
-  selectedMessageIds?: () => Set<string>
-  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
 }
 
 function isSupportedPartType(part: unknown): boolean {
@@ -391,12 +371,7 @@ function MessageContentItem(props: MessageContentItemProps) {
           contentStartPartId={props.startPartId}
           isQueued={isQueued()}
           showAgentMeta={showAgentMeta()}
-          showDeleteMessage={props.showDeleteMessage}
-          onDeleteHoverChange={props.onDeleteHoverChange}
-          selectedMessageIds={props.selectedMessageIds}
-          onToggleSelectedMessage={props.onToggleSelectedMessage}
           onRevert={props.onRevert}
-          onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
           onFork={props.onFork}
           onContentRendered={props.onContentRendered}
         />
@@ -412,41 +387,10 @@ interface ToolCallItemProps {
   messageId: string
   partId: string
   onContentRendered?: () => void
-  showDeleteMessage?: boolean
-  deleteHover?: () => DeleteHoverState
-  onDeleteHoverChange?: (state: DeleteHoverState) => void
-  onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
-  selectedMessageIds?: () => Set<string>
-  selectedToolPartKeys?: () => Set<string>
-  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
 }
 
 function ToolCallItem(props: ToolCallItemProps) {
   const { t } = useI18n()
-  const [deletingMessage, setDeletingMessage] = createSignal(false)
-  const [deletingUpTo, setDeletingUpTo] = createSignal(false)
-
-  const isSelectedForDeletion = () => Boolean(props.selectedMessageIds?.().has(props.messageId))
-
-  const isSelectedToolPartForDeletion = () => Boolean(props.selectedToolPartKeys?.().has(`${props.messageId}:${props.partId}`))
-
-  const isDeleteOverlayActive = () => {
-    if (isSelectedForDeletion()) return true
-    if (isSelectedToolPartForDeletion()) return true
-    const hover = props.deleteHover?.() ?? ({ kind: "none" } as DeleteHoverState)
-    if (hover.kind === "message") {
-      return hover.messageId === props.messageId
-    }
-    if (hover.kind === "deleteUpTo") {
-      const ids = props.store().getSessionMessageIds(props.sessionId)
-      const targetIndex = ids.indexOf(hover.messageId)
-      if (targetIndex === -1) return false
-      const currentIndex = ids.indexOf(props.messageId)
-      if (currentIndex === -1) return false
-      return currentIndex >= targetIndex
-    }
-    return false
-  }
 
   const record = createMemo(() => props.store().getMessage(props.messageId))
   const messageInfo = createMemo(() => props.store().getMessageInfo(props.messageId))
@@ -483,35 +427,8 @@ function ToolCallItem(props: ToolCallItemProps) {
     navigateToTaskSession(location)
   }
 
-  const deleteUpTo = async () => {
-    if (!props.showDeleteMessage) return
-    if (!props.onDeleteMessagesUpTo) return
-    if (deletingUpTo()) return
-
-    setDeletingUpTo(true)
-    try {
-      await props.onDeleteMessagesUpTo(props.messageId)
-    } finally {
-      setDeletingUpTo(false)
-    }
-  }
-
   const actionMenuItems = (): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = []
-
-    if (props.showDeleteMessage) {
-      items.push({
-        key: "select",
-        label: isSelectedForDeletion()
-          ? t("messageItem.selection.deselectForDeletion")
-          : t("messageItem.selection.selectForDeletion"),
-        icon: isSelectedForDeletion()
-          ? <CheckSquare2 class="w-3.5 h-3.5" aria-hidden="true" />
-          : <Square class="w-3.5 h-3.5" aria-hidden="true" />,
-        checked: isSelectedForDeletion(),
-        onSelect: () => props.onToggleSelectedMessage?.(props.messageId, !isSelectedForDeletion()),
-      })
-    }
 
     if (taskSessionId()) {
       items.push({
@@ -523,52 +440,13 @@ function ToolCallItem(props: ToolCallItemProps) {
       })
     }
 
-    if (props.showDeleteMessage) {
-      items.push(
-        {
-          key: "delete-up-to",
-          label: t("messageItem.actions.deleteMessagesUpTo"),
-          icon: <DeleteUpToIcon />,
-          disabled: !props.onDeleteMessagesUpTo || deletingUpTo(),
-          destructive: true,
-          onMouseEnter: () => props.onDeleteHoverChange?.({ kind: "deleteUpTo", messageId: props.messageId }),
-          onMouseLeave: () => props.onDeleteHoverChange?.({ kind: "none" }),
-          onSelect: deleteUpTo,
-        },
-        {
-          key: "delete-message",
-          label: deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage"),
-          icon: <Trash class="w-3.5 h-3.5" aria-hidden="true" />,
-          disabled: deletingMessage(),
-          destructive: true,
-          onMouseEnter: () => props.onDeleteHoverChange?.({ kind: "message", messageId: props.messageId }),
-          onMouseLeave: () => props.onDeleteHoverChange?.({ kind: "none" }),
-          onSelect: async () => {
-            if (deletingMessage()) return
-            setDeletingMessage(true)
-            try {
-              await deleteMessage(props.instanceId, props.sessionId, props.messageId)
-            } catch (error) {
-              showAlertDialog(t("messageItem.actions.deleteMessageFailedMessage"), {
-                title: t("messageItem.actions.deleteMessageFailedTitle"),
-                detail: error instanceof Error ? error.message : String(error),
-                variant: "error",
-              })
-            } finally {
-              setDeletingMessage(false)
-            }
-          },
-        },
-      )
-    }
-
     return items
   }
 
   return (
     <Show when={toolPart()}>
       {(resolvedToolPart) => (
-        <div class="delete-hover-scope" data-delete-part-hover={isDeleteOverlayActive() ? "true" : undefined}>
+        <div>
           <Suspense fallback={<ToolCallFallback />}>
             <LazyToolCall
               toolCall={resolvedToolPart()}
@@ -636,14 +514,7 @@ interface MessageBlockProps {
   thinkingDefaultExpanded: () => boolean
   usageMetricsVisibility: () => VisibilityPreference
   toolVisibility: (toolName: string) => VisibilityPreference
-  deleteHover?: () => DeleteHoverState
-  onDeleteHoverChange?: (state: DeleteHoverState) => void
-  selectedMessageIds?: () => Set<string>
-  selectedToolPartKeys?: () => Set<string>
-  selectedCompanionPartKeys?: () => Set<string>
-  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
   onRevert?: (messageId: string) => void
-  onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   onFork?: (messageId?: string) => void
   onContentRendered?: () => void
   searchQuery?: Accessor<string>
@@ -657,29 +528,6 @@ export default function MessageBlock(props: MessageBlockProps) {
   const messageInfo = createMemo(() => props.store().getMessageInfo(props.messageId))
   const sessionCache = getSessionRenderCache(props.instanceId, props.sessionId)
   let blockRef: HTMLDivElement | undefined
-  const isDeleteMessageHovered = () => {
-    const hover = props.deleteHover?.() ?? ({ kind: "none" } as DeleteHoverState)
-
-    if (props.selectedMessageIds?.().has(props.messageId)) {
-      return true
-    }
-
-    if (hover.kind === "message") {
-      return hover.messageId === props.messageId
-    }
-
-    if (hover.kind === "deleteUpTo") {
-      const ids = props.store().getSessionMessageIds(props.sessionId)
-      const targetIndex = ids.indexOf(hover.messageId)
-      if (targetIndex === -1) return false
-      const currentIndex = ids.indexOf(props.messageId)
-      if (currentIndex === -1) return false
-      return currentIndex >= targetIndex
-    }
-
-    return false
-  }
-
   const isSearchResult = () => Boolean(props.searchResultMessageIds?.().has(props.messageId))
   const activeSearchMatch = () => props.activeSearchMatch?.() ?? null
   const isActiveSearchResult = () => activeSearchMatch()?.messageId === props.messageId
@@ -903,8 +751,6 @@ export default function MessageBlock(props: MessageBlockProps) {
     )
   }
 
-  const firstVisibleItemIndex = () => (block()?.items ?? []).findIndex(isDisplayItemVisible)
-
   return (
     <Show when={block()}>
       {(resolvedBlock) => (
@@ -915,7 +761,6 @@ export default function MessageBlock(props: MessageBlockProps) {
           }}
           class="message-stream-block"
           data-message-id={resolvedBlock().record.id}
-          data-delete-message-hover={isDeleteMessageHovered() ? "true" : undefined}
           data-search-result={isSearchResult() ? "true" : undefined}
           data-search-active={isActiveSearchResult() ? "true" : undefined}
         >
@@ -931,12 +776,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     startPartId={(item() as ContentDisplayItem).startPartId}
                     messageIndex={props.messageIndex}
                     lastAssistantIndex={props.lastAssistantIndex}
-                    showDeleteMessage={index === firstVisibleItemIndex()}
-                    onDeleteHoverChange={props.onDeleteHoverChange}
                     onRevert={props.onRevert}
-                    onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
-                    selectedMessageIds={props.selectedMessageIds}
-                    onToggleSelectedMessage={props.onToggleSelectedMessage}
                     onFork={props.onFork}
                     onContentRendered={props.onContentRendered}
                   />
@@ -953,13 +793,6 @@ export default function MessageBlock(props: MessageBlockProps) {
                             store={props.store}
                             messageId={toolItem.messageId}
                             partId={toolItem.partId}
-                            showDeleteMessage={index === firstVisibleItemIndex()}
-                          deleteHover={props.deleteHover}
-                          onDeleteHoverChange={props.onDeleteHoverChange}
-                          onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
-                          selectedMessageIds={props.selectedMessageIds}
-                          selectedToolPartKeys={props.selectedToolPartKeys}
-                          onToggleSelectedMessage={props.onToggleSelectedMessage}
                           onContentRendered={props.onContentRendered}
                         />
                       </div>
@@ -973,15 +806,9 @@ export default function MessageBlock(props: MessageBlockProps) {
                     part={(item() as StepDisplayItem).part}
                     messageInfo={(item() as StepDisplayItem).messageInfo}
                     showAgentMeta
-                    showDeleteMessage={index === firstVisibleItemIndex()}
                     instanceId={props.instanceId}
                     sessionId={props.sessionId}
                     messageId={props.messageId}
-                    onDeleteHoverChange={props.onDeleteHoverChange}
-                    onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
-                    selectedMessageIds={props.selectedMessageIds}
-                    selectedCompanionPartKeys={props.selectedCompanionPartKeys}
-                    onToggleSelectedMessage={props.onToggleSelectedMessage}
                   />
                 </Match>
                 <Match when={item().type === "step-finish"}>
@@ -991,15 +818,9 @@ export default function MessageBlock(props: MessageBlockProps) {
                     messageInfo={(item() as StepDisplayItem).messageInfo}
                     usageVisibility={props.usageMetricsVisibility()}
                     borderColor={(item() as StepDisplayItem).accentColor}
-                    showDeleteMessage={index === firstVisibleItemIndex()}
                     instanceId={props.instanceId}
                     sessionId={props.sessionId}
                     messageId={props.messageId}
-                    onDeleteHoverChange={props.onDeleteHoverChange}
-                    onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
-                    selectedMessageIds={props.selectedMessageIds}
-                    selectedCompanionPartKeys={props.selectedCompanionPartKeys}
-                    onToggleSelectedMessage={props.onToggleSelectedMessage}
                     onContentRendered={props.onContentRendered}
                   />
                 </Match>
@@ -1011,11 +832,6 @@ export default function MessageBlock(props: MessageBlockProps) {
                     instanceId={props.instanceId}
                     sessionId={props.sessionId}
                     messageId={(item() as CompactionDisplayItem).messageId}
-                    showDeleteMessage={index === firstVisibleItemIndex()}
-                    onDeleteHoverChange={props.onDeleteHoverChange}
-                    onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
-                    selectedMessageIds={props.selectedMessageIds}
-                    onToggleSelectedMessage={props.onToggleSelectedMessage}
                   />
                 </Match>
                 <Match when={item().type === "reasoning"}>
@@ -1028,12 +844,6 @@ export default function MessageBlock(props: MessageBlockProps) {
                     messageId={(item() as ReasoningDisplayItem).messageId}
                     showAgentMeta={(item() as ReasoningDisplayItem).showAgentMeta}
                     defaultExpanded={(item() as ReasoningDisplayItem).defaultExpanded}
-                    showDeleteMessage={index === firstVisibleItemIndex()}
-                    onDeleteHoverChange={props.onDeleteHoverChange}
-                    onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
-                    selectedMessageIds={props.selectedMessageIds}
-                    selectedCompanionPartKeys={props.selectedCompanionPartKeys}
-                    onToggleSelectedMessage={props.onToggleSelectedMessage}
                     onContentRendered={props.onContentRendered}
                     forceExpanded={activeSearchMatch()?.partId === (item() as ReasoningDisplayItem).partId}
                   />
@@ -1055,15 +865,9 @@ interface StepCardProps {
   showAgentMeta?: boolean
   usageVisibility?: VisibilityPreference
   borderColor?: string
-  showDeleteMessage?: boolean
   instanceId?: string
   sessionId?: string
   messageId?: string
-  onDeleteHoverChange?: (state: DeleteHoverState) => void
-  onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
-  selectedMessageIds?: () => Set<string>
-  selectedCompanionPartKeys?: () => Set<string>
-  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
   onContentRendered?: () => void
 }
 
@@ -1074,93 +878,16 @@ interface CompactionCardProps {
   instanceId: string
   sessionId: string
   messageId: string
-  showDeleteMessage?: boolean
-  onDeleteHoverChange?: (state: DeleteHoverState) => void
-  onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
-  selectedMessageIds?: () => Set<string>
-  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
 }
 
 function CompactionCard(props: CompactionCardProps) {
   const { t } = useI18n()
-  const [deletingMessage, setDeletingMessage] = createSignal(false)
-  const [deletingUpTo, setDeletingUpTo] = createSignal(false)
-  const isSelectedForDeletion = () => Boolean(props.selectedMessageIds?.().has(props.messageId))
   const isAuto = () => Boolean((props.part as any)?.auto)
   const label = () => (isAuto() ? t("messageBlock.compaction.autoLabel") : t("messageBlock.compaction.manualLabel"))
   const borderColor = () => props.borderColor ?? (isAuto() ? "var(--session-status-compacting-fg)" : USER_BORDER_COLOR)
 
   const containerClass = () =>
     `message-compaction-card ${isAuto() ? "message-compaction-card--auto" : "message-compaction-card--manual"}`
-
-  const canDeleteMessage = () => Boolean(props.showDeleteMessage) && !deletingMessage()
-
-  const deleteMessageNow = async () => {
-    if (!props.showDeleteMessage) return
-    if (!canDeleteMessage()) return
-    setDeletingMessage(true)
-    try {
-      await deleteMessage(props.instanceId, props.sessionId, props.messageId)
-    } catch (error) {
-      showAlertDialog(t("messageItem.actions.deleteMessageFailedMessage"), {
-        title: t("messageItem.actions.deleteMessageFailedTitle"),
-        detail: error instanceof Error ? error.message : String(error),
-        variant: "error",
-      })
-    } finally {
-      setDeletingMessage(false)
-    }
-  }
-
-  const deleteUpTo = async () => {
-    if (!props.showDeleteMessage) return
-    if (!props.onDeleteMessagesUpTo) return
-    if (deletingUpTo()) return
-
-    setDeletingUpTo(true)
-    try {
-      await props.onDeleteMessagesUpTo(props.messageId)
-    } finally {
-      setDeletingUpTo(false)
-    }
-  }
-
-  const actionMenuItems = (): ActionOverflowMenuItem[] => {
-    if (!props.showDeleteMessage) return []
-    return [
-      {
-        key: "select",
-        label: isSelectedForDeletion()
-          ? t("messageItem.selection.deselectForDeletion")
-          : t("messageItem.selection.selectForDeletion"),
-        icon: isSelectedForDeletion()
-          ? <CheckSquare2 class="w-3.5 h-3.5" aria-hidden="true" />
-          : <Square class="w-3.5 h-3.5" aria-hidden="true" />,
-        checked: isSelectedForDeletion(),
-        onSelect: () => props.onToggleSelectedMessage?.(props.messageId, !isSelectedForDeletion()),
-      },
-      {
-        key: "delete-up-to",
-        label: t("messageItem.actions.deleteMessagesUpTo"),
-        icon: <DeleteUpToIcon />,
-        disabled: !props.onDeleteMessagesUpTo || deletingUpTo(),
-        destructive: true,
-        onMouseEnter: () => props.onDeleteHoverChange?.({ kind: "deleteUpTo", messageId: props.messageId }),
-        onMouseLeave: () => props.onDeleteHoverChange?.({ kind: "none" }),
-        onSelect: deleteUpTo,
-      },
-      {
-        key: "delete-message",
-        label: deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage"),
-        icon: <Trash class="w-3.5 h-3.5" aria-hidden="true" />,
-        disabled: !canDeleteMessage(),
-        destructive: true,
-        onMouseEnter: () => props.onDeleteHoverChange?.({ kind: "message", messageId: props.messageId }),
-        onMouseLeave: () => props.onDeleteHoverChange?.({ kind: "none" }),
-        onSelect: deleteMessageNow,
-      },
-    ]
-  }
 
   return (
     <div
@@ -1169,15 +896,6 @@ function CompactionCard(props: CompactionCardProps) {
       role="status"
       aria-label={t("messageBlock.compaction.ariaLabel")}
     >
-      <div class="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
-        <ActionOverflowMenu
-          items={actionMenuItems()}
-          label={t("messageItem.actions.more")}
-          triggerClass="message-action-button"
-          minItems={1}
-        />
-      </div>
-
       <div class="message-compaction-row">
         <FoldVertical class="message-compaction-icon w-4 h-4" aria-hidden="true" />
         <span class="message-compaction-label">{label()}</span>
@@ -1188,8 +906,6 @@ function CompactionCard(props: CompactionCardProps) {
 
 function StepCard(props: StepCardProps) {
   const { t } = useI18n()
-  const [deletingMessage, setDeletingMessage] = createSignal(false)
-  const [deletingUpTo, setDeletingUpTo] = createSignal(false)
   const [usageExpandedOverride, setUsageExpandedOverride] = createSignal<boolean | null>(null)
   const usageExpanded = () => usageExpandedOverride() ?? props.usageVisibility === "expanded"
   let usagePartId = (props.part as { id?: string }).id
@@ -1199,15 +915,6 @@ function StepCard(props: StepCardProps) {
     usagePartId = nextPartId
     setUsageExpandedOverride(null)
   })
-  const isSelectedForDeletion = () => Boolean(props.messageId && props.selectedMessageIds?.().has(props.messageId))
-  const isSelectedCompanion = () => {
-    const partId = (props.part as { id?: unknown })?.id
-    return Boolean(
-      props.messageId &&
-      typeof partId === "string" &&
-      props.selectedCompanionPartKeys?.().has(`${props.messageId}:${partId}`),
-    )
-  }
   const timestamp = () => {
     const value = props.messageInfo?.time?.created ?? (props.part as any)?.time?.start ?? Date.now()
     const date = new Date(value)
@@ -1273,75 +980,6 @@ function StepCard(props: StepCardProps) {
     props.onContentRendered?.()
   })
 
-  const canDeleteMessage = () =>
-    Boolean(props.showDeleteMessage && props.instanceId && props.sessionId && props.messageId) && !deletingMessage()
-
-  const handleDeleteMessage = async () => {
-    if (!canDeleteMessage()) return
-    setDeletingMessage(true)
-    try {
-      await deleteMessage(props.instanceId!, props.sessionId!, props.messageId!)
-    } catch (error) {
-      showAlertDialog(t("messageItem.actions.deleteMessageFailedMessage"), {
-        title: t("messageItem.actions.deleteMessageFailedTitle"),
-        detail: error instanceof Error ? error.message : String(error),
-        variant: "error",
-      })
-    } finally {
-      setDeletingMessage(false)
-    }
-  }
-
-  const handleDeleteUpTo = async () => {
-    if (!props.messageId) return
-    if (!props.onDeleteMessagesUpTo) return
-    if (deletingUpTo()) return
-
-    setDeletingUpTo(true)
-    try {
-      await props.onDeleteMessagesUpTo(props.messageId)
-    } finally {
-      setDeletingUpTo(false)
-    }
-  }
-
-  const actionMenuItems = (): ActionOverflowMenuItem[] => {
-    if (!props.showDeleteMessage || !props.messageId) return []
-    return [
-      {
-        key: "select",
-        label: isSelectedForDeletion()
-          ? t("messageItem.selection.deselectForDeletion")
-          : t("messageItem.selection.selectForDeletion"),
-        icon: isSelectedForDeletion()
-          ? <CheckSquare2 class="w-3.5 h-3.5" aria-hidden="true" />
-          : <Square class="w-3.5 h-3.5" aria-hidden="true" />,
-        checked: isSelectedForDeletion(),
-        onSelect: () => props.onToggleSelectedMessage?.(props.messageId!, !isSelectedForDeletion()),
-      },
-      {
-        key: "delete-up-to",
-        label: t("messageItem.actions.deleteMessagesUpTo"),
-        icon: <DeleteUpToIcon />,
-        disabled: !props.onDeleteMessagesUpTo || deletingUpTo(),
-        destructive: true,
-        onMouseEnter: () => props.onDeleteHoverChange?.({ kind: "deleteUpTo", messageId: props.messageId! }),
-        onMouseLeave: () => props.onDeleteHoverChange?.({ kind: "none" }),
-        onSelect: handleDeleteUpTo,
-      },
-      {
-        key: "delete-message",
-        label: deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage"),
-        icon: <Trash class="w-3.5 h-3.5" aria-hidden="true" />,
-        disabled: !canDeleteMessage(),
-        destructive: true,
-        onMouseEnter: () => props.onDeleteHoverChange?.({ kind: "message", messageId: props.messageId! }),
-        onMouseLeave: () => props.onDeleteHoverChange?.({ kind: "none" }),
-        onSelect: handleDeleteMessage,
-      },
-    ]
-  }
-
 
   const usageEntries = (usage: NonNullable<ReturnType<typeof usageStats>>) => [
       { label: t("messageBlock.usage.input"), value: usage.input, formatter: formatTokenTotal },
@@ -1381,19 +1019,7 @@ function StepCard(props: StepCardProps) {
       <div
         class="delete-hover-scope message-step-card message-step-finish message-step-finish-flush relative"
         style={finishStyle()}
-        data-delete-part-hover={isSelectedCompanion() ? "true" : undefined}
       >
-        <Show when={props.showDeleteMessage}>
-          <div class="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
-            <ActionOverflowMenu
-              items={actionMenuItems()}
-              label={t("messageItem.actions.more")}
-              triggerClass="message-action-button"
-              minItems={1}
-            />
-          </div>
-        </Show>
-
         <button
           type="button"
           class="message-step-usage-toggle"
@@ -1422,14 +1048,6 @@ function StepCard(props: StepCardProps) {
           </div>
           <span class="message-step-right">
             <span class="message-step-time">{timestamp()}</span>
-            <Show when={props.showDeleteMessage && props.messageId}>
-              <ActionOverflowMenu
-                items={actionMenuItems()}
-                label={t("messageItem.actions.more")}
-                triggerClass="message-action-button"
-                minItems={1}
-              />
-            </Show>
           </span>
         </div>
       </div>
@@ -1452,12 +1070,6 @@ interface ReasoningCardProps {
   messageId: string
   showAgentMeta?: boolean
   defaultExpanded?: boolean
-  showDeleteMessage?: boolean
-  onDeleteHoverChange?: (state: DeleteHoverState) => void
-  onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
-  selectedMessageIds?: () => Set<string>
-  selectedCompanionPartKeys?: () => Set<string>
-  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
   onContentRendered?: () => void
   forceExpanded?: boolean
 }
@@ -1531,17 +1143,7 @@ function ReasoningStreamOutput(props: {
 function ReasoningCard(props: ReasoningCardProps) {
   const { t } = useI18n()
   const [expanded, setExpanded] = createSignal(Boolean(props.defaultExpanded))
-  const [deletingMessage, setDeletingMessage] = createSignal(false)
-  const [deletingUpTo, setDeletingUpTo] = createSignal(false)
   const [scrollTopSnapshot, setScrollTopSnapshot] = createSignal(0)
-  const isSelectedForDeletion = () => Boolean(props.selectedMessageIds?.().has(props.messageId))
-  const isSelectedCompanion = () => {
-    const partId = (props.part as { id?: unknown })?.id
-    return Boolean(
-      typeof partId === "string" &&
-      props.selectedCompanionPartKeys?.().has(`${props.messageId}:${partId}`),
-    )
-  }
 
   createEffect(() => {
     setExpanded(Boolean(props.defaultExpanded))
@@ -1660,43 +1262,14 @@ function ReasoningCard(props: ReasoningCardProps) {
 
   const canSpeakReasoning = () => reasoningText().trim().length > 0 && speech.canUseSpeech()
 
-  const canDeleteMessage = () => Boolean(props.showDeleteMessage) && !deletingMessage()
-
   const handleCopyReasoning = async () => {
     const text = reasoningText()
     if (!text.trim()) return
     await copyToClipboard(text)
   }
 
-  const deleteUpTo = async () => {
-    if (!props.showDeleteMessage) return
-    if (!props.onDeleteMessagesUpTo) return
-    if (deletingUpTo()) return
-
-    setDeletingUpTo(true)
-    try {
-      await props.onDeleteMessagesUpTo(props.messageId)
-    } finally {
-      setDeletingUpTo(false)
-    }
-  }
-
   const actionMenuItems = (includePrimaryActions = false): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = []
-
-    if (props.showDeleteMessage) {
-      items.push({
-        key: "select",
-        label: isSelectedForDeletion()
-          ? t("messageItem.selection.deselectForDeletion")
-          : t("messageItem.selection.selectForDeletion"),
-        icon: isSelectedForDeletion()
-          ? <CheckSquare2 class="w-3.5 h-3.5" aria-hidden="true" />
-          : <Square class="w-3.5 h-3.5" aria-hidden="true" />,
-        checked: isSelectedForDeletion(),
-        onSelect: () => props.onToggleSelectedMessage?.(props.messageId, !isSelectedForDeletion()),
-      })
-    }
 
     if (includePrimaryActions) {
       items.push({
@@ -1716,52 +1289,12 @@ function ReasoningCard(props: ReasoningCardProps) {
       }
     }
 
-    if (props.showDeleteMessage) {
-      items.push(
-        {
-          key: "delete-up-to",
-          label: t("messageItem.actions.deleteMessagesUpTo"),
-          icon: <DeleteUpToIcon />,
-          disabled: !props.onDeleteMessagesUpTo || deletingUpTo(),
-          destructive: true,
-          onMouseEnter: () => props.onDeleteHoverChange?.({ kind: "deleteUpTo", messageId: props.messageId }),
-          onMouseLeave: () => props.onDeleteHoverChange?.({ kind: "none" }),
-          onSelect: deleteUpTo,
-        },
-        {
-          key: "delete-message",
-          label: deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage"),
-          icon: <Trash class="w-3.5 h-3.5" aria-hidden="true" />,
-          disabled: !canDeleteMessage(),
-          destructive: true,
-          onMouseEnter: () => props.onDeleteHoverChange?.({ kind: "message", messageId: props.messageId }),
-          onMouseLeave: () => props.onDeleteHoverChange?.({ kind: "none" }),
-          onSelect: async () => {
-            if (!canDeleteMessage()) return
-            setDeletingMessage(true)
-            try {
-              await deleteMessage(props.instanceId, props.sessionId, props.messageId)
-            } catch (error) {
-              showAlertDialog(t("messageItem.actions.deleteMessageFailedMessage"), {
-                title: t("messageItem.actions.deleteMessageFailedTitle"),
-                detail: error instanceof Error ? error.message : String(error),
-                variant: "error",
-              })
-            } finally {
-              setDeletingMessage(false)
-            }
-          },
-        },
-      )
-    }
-
     return items
   }
 
   return (
     <div
       class="delete-hover-scope message-reasoning-card"
-      data-delete-part-hover={isSelectedCompanion() ? "true" : undefined}
       data-part-id={typeof (props.part as any)?.id === "string" ? (props.part as any).id : undefined}
     >
       <div class="message-reasoning-header">

@@ -1,30 +1,4 @@
-export type ProviderAuthMethod = {
-  type: "oauth" | "api"
-  label: string
-  prompts?: ProviderAuthPrompt[]
-}
-
-export type ProviderAuthPrompt =
-  | {
-      type: "text"
-      key: string
-      message: string
-      placeholder?: string
-      when?: ProviderAuthPromptCondition
-    }
-  | {
-      type: "select"
-      key: string
-      message: string
-      options: Array<{ label: string; value: string; hint?: string }>
-      when?: ProviderAuthPromptCondition
-    }
-
-export type ProviderAuthPromptCondition = {
-  key: string
-  op: "eq" | "neq"
-  value: string
-}
+import type { FormAnswer, FormField, FormFields, FormValue, IntegrationKeyMethod } from "@opencode-ai/client"
 
 export type ProviderAuthAuthorization = {
   url: string
@@ -32,7 +6,7 @@ export type ProviderAuthAuthorization = {
   instructions: string
 }
 
-export const genericApiMethod: ProviderAuthMethod = { type: "api", label: "" }
+export const genericApiMethod: IntegrationKeyMethod = { type: "key", label: "" }
 
 export function extractProviderAuthErrorMessage(error: unknown, fallback: string): string {
   const candidate = error as {
@@ -45,11 +19,39 @@ export function extractProviderAuthErrorMessage(error: unknown, fallback: string
   return typeof message === "string" && message.trim().length > 0 ? message : fallback
 }
 
-export function shouldShowProviderAuthPrompt(prompt: ProviderAuthPrompt, values: Record<string, string>): boolean {
-  if (!prompt.when) return true
-  const actual = values[prompt.when.key]
-  if (actual === undefined) return false
-  return prompt.when.op === "eq" ? actual === prompt.when.value : actual !== prompt.when.value
+export function getProviderAuthInitialAnswer(fields?: FormFields): FormAnswer {
+  const answer: FormAnswer = {}
+  for (const field of fields ?? []) {
+    if (field.type !== "external" && field.default !== undefined) answer[field.key] = field.default
+  }
+  return answer
+}
+
+export function shouldShowProviderAuthField(field: FormField, answer: FormAnswer): boolean {
+  if (field.type === "external") return true
+  return (field.when ?? []).every((condition) => {
+    const actual = answer[condition.key]
+    if (actual === undefined) return false
+    const matches = Array.isArray(actual) ? actual.includes(String(condition.value)) : actual === condition.value
+    return condition.op === "eq" ? matches : !matches
+  })
+}
+
+export function getProviderAuthAnswer(fields: FormFields | undefined, values: FormAnswer): FormAnswer | undefined {
+  if (!fields) return undefined
+  return Object.fromEntries(
+    fields
+      .filter((field) => field.type !== "external" && shouldShowProviderAuthField(field, values))
+      .flatMap((field) => values[field.key] === undefined ? [] : [[field.key, values[field.key] as FormValue]]),
+  )
+}
+
+export function isProviderAuthFieldComplete(field: FormField, answer: FormAnswer): boolean {
+  if (field.type === "external" || !field.required) return true
+  const value = answer[field.key]
+  if (typeof value === "string") return value.trim().length > 0
+  if (Array.isArray(value)) return value.length > 0
+  return value !== undefined
 }
 
 export function isAbortError(error: unknown): boolean {

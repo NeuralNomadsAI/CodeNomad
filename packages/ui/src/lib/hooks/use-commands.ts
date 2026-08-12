@@ -17,7 +17,6 @@ import type { MessageRecord } from "../../stores/message-v2/types"
 import { messageStoreBus } from "../../stores/message-v2/bus"
 import { cleanupBlankSessions } from "../../stores/session-state"
 import { getLogger } from "../logger"
-import { requestData } from "../opencode-api"
 import { emitSessionSidebarRequest } from "../session-sidebar-events"
 import { tGlobal } from "../i18n"
 import { registerBehaviorCommands } from "../settings/behavior-registry"
@@ -246,14 +245,7 @@ export function useCommands(options: UseCommandsOptions) {
         if (!session) return
 
         try {
-          await requestData(
-            instance.client.session.summarize({
-              sessionID: sessionId,
-              providerID: session.model.providerId,
-              modelID: session.model.modelId,
-            }),
-            "session.summarize",
-          )
+          await instance.client.session.compact({ sessionID: sessionId })
         } catch (error) {
           log.error("Failed to compact session", error)
           const message = error instanceof Error ? error.message : tGlobal("commands.compactSession.errorFallback")
@@ -337,13 +329,7 @@ export function useCommands(options: UseCommandsOptions) {
         }
 
         try {
-          await requestData(
-            instance.client.session.revert({
-              sessionID: sessionId,
-              messageID,
-            }),
-            "session.revert",
-          )
+          await instance.client.session.revert.stage({ sessionID: sessionId, messageID })
 
           if (!restoredText) {
             const fallbackRecord = store.getMessage(messageID)

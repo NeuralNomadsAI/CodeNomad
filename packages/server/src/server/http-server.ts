@@ -9,6 +9,7 @@ import { connect as connectTls, type TLSSocket } from "tls"
 import { fetch, type Headers } from "undici"
 import type { Logger } from "../logger"
 import { WorkspaceManager } from "../workspaces/manager"
+import type { OpenCodeClient } from "@opencode-ai/client"
 
 import type { SettingsService } from "../settings/service"
 import { FileSystemBrowser } from "../filesystem/browser"
@@ -20,8 +21,6 @@ import { registerConfigFileRoutes } from "./routes/config-files"
 import { registerMetaRoutes } from "./routes/meta"
 import { registerEventRoutes } from "./routes/events"
 import { registerStorageRoutes } from "./routes/storage"
-import { registerPluginRoutes } from "./routes/plugin"
-import { registerBackgroundProcessRoutes } from "./routes/background-processes"
 import { registerYoloRoutes } from "./routes/yolo"
 import { registerWorktreeRoutes } from "./routes/worktrees"
 import { registerSpeechRoutes } from "./routes/speech"
@@ -33,7 +32,6 @@ import { registerPreviewRoutes } from "./routes/previews"
 import { registerUsageRoutes } from "./routes/usage"
 import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
-import { BackgroundProcessManager } from "../background-processes/manager"
 import type { AutoAcceptManager } from "../permissions/auto-accept-manager"
 import type { OpencodeYoloPersistence } from "../permissions/opencode-yolo-metadata"
 import type { AuthManager } from "../auth/manager"
@@ -41,8 +39,6 @@ import { registerAuthRoutes } from "./routes/auth"
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth"
 import type { SpeechService } from "../speech/service"
 import { ClientConnectionManager } from "../clients/connection-manager"
-import { PluginChannelManager } from "../plugins/channel"
-import { VoiceModeManager } from "../plugins/voice-mode"
 import type { SideCarManager } from "../sidecars/manager"
 import type { PreviewManager } from "../previews/manager"
 import type { RemoteProxySessionManager } from "./remote-proxy"
@@ -66,8 +62,6 @@ interface HttpServerDeps {
   previewManager: PreviewManager
   authManager: AuthManager
   clientConnectionManager: ClientConnectionManager
-  pluginChannel: PluginChannelManager
-  voiceModeManager: VoiceModeManager
   remoteProxySessionManager: RemoteProxySessionManager
   yoloManager: AutoAcceptManager
   sessionMetadataPersistence: OpencodeYoloPersistence
@@ -131,7 +125,12 @@ export function createHttpServer(deps: HttpServerDeps) {
     }
     apiLogger.debug(base, "HTTP request completed")
     if (apiLogger.isLevelEnabled("trace")) {
-      apiLogger.trace({ ...base, params: request.params, query: request.query, body: request.body }, "HTTP request payload")
+      apiLogger.trace({
+        ...base,
+        params: redactSecrets(request.params),
+        query: redactSecrets(request.query),
+        body: typeof request.body === "string" ? "<redacted>" : redactSecrets(request.body),
+      }, "HTTP request payload")
     }
     done()
   })
@@ -200,12 +199,6 @@ export function createHttpServer(deps: HttpServerDeps) {
     },
   })
 
-  const backgroundProcessManager = new BackgroundProcessManager({
-    workspaceManager: deps.workspaceManager,
-    eventBus: deps.eventBus,
-    logger: deps.logger.child({ component: "background-processes" }),
-  })
-
   registerAuthRoutes(app, { authManager: deps.authManager })
 
   app.addHook("preHandler", (request, reply, done) => {
@@ -232,21 +225,6 @@ export function createHttpServer(deps: HttpServerDeps) {
 
     const requiresAuthForApi = pathname.startsWith("/api/") || pathname.startsWith("/workspaces/") || pathname.startsWith("/sidecars/") || pathname.startsWith("/previews/")
     if (requiresAuthForApi && !session) {
-      // Allow OpenCode plugin -> CodeNomad calls with per-instance basic auth.
-      const pluginMatch = pathname.match(/^\/workspaces\/([^/]+)\/plugin(?:\/|$)/)
-      if (pluginMatch) {
-        const workspaceId = pluginMatch[1]
-        const expected = deps.workspaceManager.getInstanceAuthorizationHeader(workspaceId)
-        const provided = Array.isArray(request.headers.authorization)
-          ? request.headers.authorization[0]
-          : request.headers.authorization
-
-        if (expected && provided && provided === expected) {
-          done()
-          return
-        }
-      }
-
       sendUnauthorized(request, reply)
       return
     }
@@ -296,10 +274,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     logger: sseLogger,
     connectionManager: deps.clientConnectionManager,
   })
-  registerWorktreeRoutes(app, {
-    workspaceManager: deps.workspaceManager,
-    sessionMetadataPersistence: deps.sessionMetadataPersistence,
-  })
+  registerWorktreeRoutes(app, { workspaceManager: deps.workspaceManager })
   registerStorageRoutes(app, {
     instanceStore: deps.instanceStore,
     eventBus: deps.eventBus,
@@ -323,14 +298,6 @@ export function createHttpServer(deps: HttpServerDeps) {
     authManager: deps.authManager,
     logger: proxyLogger,
   })
-  registerPluginRoutes(app, {
-    workspaceManager: deps.workspaceManager,
-    eventBus: deps.eventBus,
-    logger: proxyLogger,
-    channel: deps.pluginChannel,
-    voiceModeManager: deps.voiceModeManager,
-  })
-  registerBackgroundProcessRoutes(app, { backgroundProcessManager })
   registerYoloRoutes(app, { yoloManager: deps.yoloManager })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger })
 
@@ -394,8 +361,16 @@ export function createHttpServer(deps: HttpServerDeps) {
   }
 }
 
+export interface InstanceProxyWorkspaceManager {
+  get(id: string): ReturnType<WorkspaceManager["get"]>
+  getSharedServiceEndpoint(id: string): ReturnType<WorkspaceManager["getSharedServiceEndpoint"]>
+  getInstanceAuthorizationHeader(id: string): string | undefined
+  getSharedServiceClient(): Promise<OpenCodeClient>
+  ownsDirectory(id: string, directory: string): Promise<boolean>
+}
+
 interface InstanceProxyDeps {
-  workspaceManager: WorkspaceManager
+  workspaceManager: InstanceProxyWorkspaceManager
   logger: Logger
 }
 
@@ -523,9 +498,16 @@ function setupPreviewWebSocketProxy(app: FastifyInstance, deps: PreviewWebSocket
   })
 }
 
-function registerInstanceProxyRoutes(app: FastifyInstance, deps: InstanceProxyDeps) {
+export function registerInstanceProxyRoutes(app: FastifyInstance, deps: InstanceProxyDeps) {
   app.register(async (instance) => {
     instance.removeAllContentTypeParsers()
+    instance.addContentTypeParser("application/json", { parseAs: "string" }, (_req, body, done) => {
+      try {
+        done(null, body.length ? JSON.parse(body.toString()) : {})
+      } catch {
+        done(Object.assign(new Error("Invalid JSON request body"), { statusCode: 400 }), undefined)
+      }
+    })
     instance.addContentTypeParser("*", (req, body, done) => done(null, body))
 
     const proxyBaseHandler = async (
@@ -559,12 +541,10 @@ function registerInstanceProxyRoutes(app: FastifyInstance, deps: InstanceProxyDe
   })
 }
 
-const INSTANCE_PROXY_HOST = "127.0.0.1"
-
 async function proxyWorkspaceRequest(args: {
   request: FastifyRequest
   reply: FastifyReply
-  workspaceManager: WorkspaceManager
+  workspaceManager: InstanceProxyWorkspaceManager
   logger: Logger
   pathSuffix?: string
 }) {
@@ -572,132 +552,196 @@ async function proxyWorkspaceRequest(args: {
   const workspaceId = (request.params as { id: string }).id
   const workspace = workspaceManager.get(workspaceId)
 
-  const bodyToJson = (body: unknown): unknown => {
-    if (body == null) return null
-
-    const anyBody = body as any
-    if (anyBody && typeof anyBody.pipe === "function") {
-      // Don't consume streams (would break proxying).
-      // Best-effort: if the stream already has buffered chunks, parse those.
-      try {
-        const buffered = anyBody?._readableState?.buffer
-        if (Array.isArray(buffered) && buffered.length > 0) {
-          const chunks: Buffer[] = []
-          for (const entry of buffered) {
-            if (!entry) continue
-            if (Buffer.isBuffer(entry)) {
-              chunks.push(entry)
-              continue
-            }
-            const data = (entry as any).data
-            if (Buffer.isBuffer(data)) {
-              chunks.push(data)
-            }
-          }
-
-          if (chunks.length > 0) {
-            const text = Buffer.concat(chunks).toString("utf-8")
-            try {
-              return JSON.parse(text)
-            } catch {
-              return { __raw: text }
-            }
-          }
-        }
-      } catch {
-        // fall through
-      }
-
-      return { __stream: true }
-    }
-
-    const maybeParse = (input: string): unknown => {
-      try {
-        return JSON.parse(input)
-      } catch {
-        return { __raw: input }
-      }
-    }
-
-    if (Buffer.isBuffer(body)) {
-      return maybeParse(body.toString("utf-8"))
-    }
-
-    if (typeof body === "string") {
-      return maybeParse(body)
-    }
-
-    if (typeof body === "object") {
-      return body
-    }
-
-    return body
-  }
-
   if (!workspace) {
     reply.code(404).send({ error: "Workspace not found" })
     return
   }
 
-  const port = workspaceManager.getInstancePort(workspaceId)
-  if (!port) {
-    reply.code(502).send({ error: "Workspace instance is not ready" })
+  const endpoint = await workspaceManager.getSharedServiceEndpoint(workspaceId)
+  if (!endpoint) {
+    reply.code(502).send({ error: "OpenCode service is not ready" })
     return
   }
 
   const normalizedSuffix = normalizeInstanceSuffix(args.pathSuffix)
-  const queryIndex = (request.raw.url ?? "").indexOf("?")
-  const search = queryIndex >= 0 ? (request.raw.url ?? "").slice(queryIndex) : ""
-  const targetUrl = `http://${INSTANCE_PROXY_HOST}:${port}${normalizedSuffix}${search}`
-  const instanceAuthHeader = workspaceManager.getInstanceAuthorizationHeader(workspaceId)
-
-  logger.debug({ workspaceId, method: request.method, targetUrl }, "Proxying request to instance")
-  if (logger.isLevelEnabled("trace")) {
-    logger.trace({ workspaceId, targetUrl, body: request.body }, "Instance proxy payload")
+  const targetUrl = appendIncomingQuery(new URL(normalizedSuffix, endpoint.url), request.raw.url ?? "")
+  const requestLocations = readRequestDirectories(targetUrl, request.body)
+  readNativeCwd(targetUrl, request.body, requestLocations)
+  if (requestLocations.invalid || !(await allDirectoriesOwned(workspaceManager, workspaceId, requestLocations.directories))) {
+    reply.code(requestLocations.invalid ? 400 : 403).send({ error: "Location does not belong to workspace" })
+    return
   }
 
-  return reply.from(targetUrl, {
+  const sessionId = getSessionRouteId(targetUrl.pathname)
+  if (sessionId) {
+    let session
+    try {
+      session = await (await workspaceManager.getSharedServiceClient()).session.get({ sessionID: sessionId })
+    } catch {
+      reply.code(404).send({ error: "Session not found" })
+      return
+    }
+    if (!(await workspaceManager.ownsDirectory(workspaceId, session.location.directory))) {
+      reply.code(403).send({ error: "Session does not belong to workspace" })
+      return
+    }
+  }
+
+  const body = applyDefaultWorkspaceLocation(targetUrl, request.body, request.method, workspace.path, requestLocations.directories.length > 0, Boolean(sessionId))
+  const instanceAuthHeader = workspaceManager.getInstanceAuthorizationHeader(workspaceId)
+
+  logger.debug({ workspaceId, method: request.method, targetUrl: targetUrl.toString() }, "Proxying request to instance")
+
+  return reply.from(targetUrl.toString(), {
+    ...(body !== request.body ? { body } : {}),
     rewriteRequestHeaders: (_originalRequest, headers) => {
-      if (instanceAuthHeader) {
-        headers.authorization = instanceAuthHeader
-      }
+      const outgoingHeaders = sanitizeInstanceProxyRequestHeaders(headers, instanceAuthHeader)
 
       if (logger.isLevelEnabled("trace")) {
-        const outgoing: Record<string, unknown> = {}
-        for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
-          outgoing[key] = value
-        }
-
-        // Redact sensitive headers.
-        for (const key of Object.keys(outgoing)) {
-          const lower = key.toLowerCase()
-          if (lower === "authorization" || lower === "cookie" || lower === "set-cookie") {
-            outgoing[key] = "<redacted>"
-          }
-        }
-
         logger.trace(
           {
             workspaceId,
             method: request.method,
-            targetUrl,
+            targetUrl: targetUrl.toString(),
             contentType: request.headers["content-type"],
-            body: bodyToJson(request.body),
-            headers: outgoing,
+            headers: redactSecrets(outgoingHeaders),
           },
           "Proxy -> OpenCode request",
         )
       }
 
-      return headers
+      return outgoingHeaders
     },
+    rewriteHeaders: stripInstanceProxyResponseCookies,
     onError: (proxyReply, { error }) => {
-      logger.error({ err: error, workspaceId, targetUrl }, "Failed to proxy workspace request")
+      logger.error({ err: error, workspaceId, targetUrl: targetUrl.toString() }, "Failed to proxy workspace request")
       if (!proxyReply.sent) {
         proxyReply.code(502).send({ error: "Workspace instance proxy failed" })
       }
     },
   })
+}
+
+function appendIncomingQuery(targetUrl: URL, incomingUrl: string): URL {
+  const queryIndex = incomingUrl.indexOf("?")
+  const incomingSearch = queryIndex >= 0 ? incomingUrl.slice(queryIndex + 1) : ""
+  for (const [key, value] of new URLSearchParams(incomingSearch)) targetUrl.searchParams.append(key, value)
+  return targetUrl
+}
+
+function readRequestDirectories(targetUrl: URL, body: unknown): { directories: string[]; invalid: boolean } {
+  const directories: string[] = []
+  let invalid = false
+  for (const key of ["location[directory]", "directory"]) {
+    for (const value of targetUrl.searchParams.getAll(key)) {
+      if (value.trim()) directories.push(value)
+      else invalid = true
+    }
+  }
+
+  if (body && typeof body === "object" && !Array.isArray(body) && !Buffer.isBuffer(body)) {
+    const input = body as Record<string, unknown>
+    if ("directory" in input) {
+      if (typeof input.directory === "string" && input.directory.trim()) directories.push(input.directory)
+      else invalid = true
+    }
+    if ("location" in input) {
+      const location = input.location
+      if (location && typeof location === "object" && !Array.isArray(location)) {
+        const directory = (location as Record<string, unknown>).directory
+        if (typeof directory === "string" && directory.trim()) directories.push(directory)
+        else invalid = true
+      } else if (location !== null && location !== undefined) {
+        invalid = true
+      }
+    }
+  }
+  return { directories, invalid }
+}
+
+function readNativeCwd(
+  targetUrl: URL,
+  body: unknown,
+  locations: { directories: string[]; invalid: boolean },
+) {
+  if (!/^\/api\/(?:shell|pty)\/?$/.test(targetUrl.pathname) || !body || typeof body !== "object" || Array.isArray(body) || Buffer.isBuffer(body)) return
+  const input = body as Record<string, unknown>
+  if (!("cwd" in input)) return
+  if (typeof input.cwd === "string" && input.cwd.trim()) locations.directories.push(input.cwd)
+  else locations.invalid = true
+}
+
+function sanitizeInstanceProxyRequestHeaders(
+  headers: Record<string, string | string[] | undefined>,
+  authorization: string | undefined,
+) {
+  const blocked = new Set([
+    "authorization", "connection", "cookie", "forwarded", "host", "keep-alive", "proxy-authenticate",
+    "proxy-authorization", "proxy-connection", "set-cookie", "te", "trailer", "transfer-encoding", "upgrade",
+    "x-forwarded-for", "x-forwarded-host", "x-forwarded-port", "x-forwarded-proto",
+  ])
+  const connection = headers.connection
+  for (const name of (Array.isArray(connection) ? connection.join(",") : connection ?? "").split(",")) blocked.add(name.trim().toLowerCase())
+
+  const result: Record<string, string | string[] | undefined> = {}
+  for (const [key, value] of Object.entries(headers)) {
+    if (!blocked.has(key.toLowerCase())) result[key] = value
+  }
+  if (authorization) result.authorization = authorization
+  return result
+}
+
+function stripInstanceProxyResponseCookies(headers: Record<string, string | string[] | undefined>) {
+  return Object.fromEntries(Object.entries(headers).filter(([key]) => !["set-cookie", "set-cookie2"].includes(key.toLowerCase())))
+}
+
+export function redactSecrets(value: unknown): unknown {
+  if (value === null || value === undefined) return value
+  if (Array.isArray(value)) return value.map(redactSecrets)
+  if (typeof value !== "object") return value
+  if (Buffer.isBuffer(value)) return "<redacted>"
+  if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) return "<redacted>"
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
+    key,
+    /(authorization|cookie|key|code|token|password|secret)/i.test(key) ? "<redacted>" : redactSecrets(entry),
+  ]))
+}
+
+async function allDirectoriesOwned(manager: InstanceProxyWorkspaceManager, workspaceId: string, directories: string[]) {
+  return (await Promise.all(directories.map((directory) => manager.ownsDirectory(workspaceId, directory)))).every(Boolean)
+}
+
+function applyDefaultWorkspaceLocation(
+  targetUrl: URL,
+  body: unknown,
+  method: string,
+  directory: string,
+  hasLocation: boolean,
+  sessionRoute: boolean,
+): unknown {
+  if (hasLocation || sessionRoute) return body
+  if (targetUrl.pathname === "/api/session" && method === "GET") {
+    targetUrl.searchParams.set("directory", directory)
+    return body
+  }
+  if (targetUrl.pathname === "/api/session" && method === "POST") {
+    const input = body && typeof body === "object" && !Array.isArray(body) && !Buffer.isBuffer(body)
+      ? body as Record<string, unknown>
+      : {}
+    return { ...input, location: { directory } }
+  }
+  targetUrl.searchParams.set("location[directory]", directory)
+  return body
+}
+
+function getSessionRouteId(pathname: string): string | null {
+  const match = pathname.match(/^\/api\/session\/([^/]+)(?:\/|$)/)
+  if (!match || match[1] === "active" || match[1] === "import") return null
+  try {
+    return decodeURIComponent(match[1])
+  } catch {
+    return null
+  }
 }
 
 function normalizeInstanceSuffix(pathSuffix: string | undefined) {

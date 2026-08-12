@@ -17,7 +17,6 @@ import Toolbar from "@suid/material/Toolbar"
 import useMediaQuery from "@suid/material/useMediaQuery"
 import type { Instance } from "../../types/instance"
 import type { Command } from "../../lib/commands"
-import type { BackgroundProcess } from "../../../../server/src/api-types"
 import { keyboardRegistry, type KeyboardShortcut } from "../../lib/keyboard-registry"
 
 import { isOpen as isCommandPaletteOpen, hideCommandPalette, showCommandPalette } from "../../stores/command-palette"
@@ -35,9 +34,6 @@ import { formatTokenTotal } from "../../lib/formatters"
 import ContextMeter from "../context-meter"
 import { sseManager } from "../../lib/sse-manager"
 import { getLogger } from "../../lib/logger"
-import { serverApi } from "../../lib/api-client"
-import { loadBackgroundProcesses } from "../../stores/background-processes"
-import { BackgroundProcessOutputDialog } from "../background-process-output-dialog"
 import PromptInput from "../prompt-input"
 import { useI18n } from "../../lib/i18n"
 import { getPermissionQueueLength, getQuestionQueueLength } from "../../stores/instances"
@@ -119,8 +115,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [sessionCenterEl, setSessionCenterEl] = createSignal<HTMLElement | null>(null)
   const [sessionCenterWidthStep, setSessionCenterWidthStep] = createSignal<SessionCenterWidthStep>("wide")
 
-  const [selectedBackgroundProcess, setSelectedBackgroundProcess] = createSignal<BackgroundProcess | null>(null)
-  const [showBackgroundOutput, setShowBackgroundOutput] = createSignal(false)
   const [permissionModalOpen, setPermissionModalOpen] = createSignal(false)
   const [now, setNow] = createSignal(Date.now())
   const [sessionPromptApis, setSessionPromptApis] = createSignal<Record<string, PromptInputApi | null>>({})
@@ -141,7 +135,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     activeSessionForInstance,
     latestTodoState,
     tokenStats,
-    backgroundProcessList,
     handleSessionSelect,
   } = useInstanceSessionContext({
     instanceId: () => props.instance.id,
@@ -245,13 +238,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
     document.addEventListener("pointerdown", handleFloatingDrawerPointerDown, true)
     onCleanup(() => document.removeEventListener("pointerdown", handleFloatingDrawerPointerDown, true))
-  })
-
-  createEffect(() => {
-    const instanceId = props.instance.id
-    loadBackgroundProcesses(instanceId).catch((error) => {
-      log.warn("Failed to load background processes", error)
-    })
   })
 
   onMount(() => {
@@ -561,32 +547,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     ]
   })
 
-  const openBackgroundOutput = (process: BackgroundProcess) => {
-    setSelectedBackgroundProcess(process)
-    setShowBackgroundOutput(true)
-  }
-
-  const closeBackgroundOutput = () => {
-    setShowBackgroundOutput(false)
-    setSelectedBackgroundProcess(null)
-  }
-
-  const stopBackgroundProcess = async (processId: string) => {
-    try {
-      await serverApi.stopBackgroundProcess(props.instance.id, processId)
-    } catch (error) {
-      log.warn("Failed to stop background process", error)
-    }
-  }
-
-  const terminateBackgroundProcess = async (processId: string) => {
-    try {
-      await serverApi.terminateBackgroundProcess(props.instance.id, processId)
-    } catch (error) {
-      log.warn("Failed to terminate background process", error)
-    }
-  }
-
   const instancePaletteCommands = createMemo(() => props.paletteCommands())
   const paletteOpen = createMemo(() => isCommandPaletteOpen(props.instance.id))
 
@@ -781,10 +741,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             activeSessionId={activeSessionIdForInstance}
             activeSession={activeSessionForInstance}
             latestTodoState={latestTodoState}
-            backgroundProcessList={backgroundProcessList}
-            onOpenBackgroundOutput={openBackgroundOutput}
-            onStopBackgroundProcess={stopBackgroundProcess}
-            onTerminateBackgroundProcess={terminateBackgroundProcess}
             isPhoneLayout={isPhoneLayout}
             rightDrawerWidth={rightDrawerWidth}
             rightDrawerWidthInitialized={rightDrawerWidthInitialized}
@@ -849,10 +805,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           activeSessionId={activeSessionIdForInstance}
           activeSession={activeSessionForInstance}
           latestTodoState={latestTodoState}
-          backgroundProcessList={backgroundProcessList}
-          onOpenBackgroundOutput={openBackgroundOutput}
-          onStopBackgroundProcess={stopBackgroundProcess}
-          onTerminateBackgroundProcess={terminateBackgroundProcess}
           isPhoneLayout={isPhoneLayout}
           rightDrawerWidth={rightDrawerWidth}
           rightDrawerWidthInitialized={rightDrawerWidthInitialized}
@@ -1358,13 +1310,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         onClose={() => hideCommandPalette(props.instance.id)}
         commands={instancePaletteCommands()}
         onExecute={props.onExecuteCommand}
-      />
-
-      <BackgroundProcessOutputDialog
-        open={showBackgroundOutput()}
-        instanceId={props.instance.id}
-        process={selectedBackgroundProcess()}
-        onClose={closeBackgroundOutput}
       />
 
       <PermissionApprovalModal

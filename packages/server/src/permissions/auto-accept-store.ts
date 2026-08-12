@@ -9,7 +9,7 @@
  *   - enabling any session enables its whole family root and vice-versa
  *
  * This store remains in-memory; AutoAcceptManager hydrates and persists it
- * through OpenCode session metadata.
+ * through CodeNomad's state store.
  */
 
 export interface AutoAcceptSessionInfo {

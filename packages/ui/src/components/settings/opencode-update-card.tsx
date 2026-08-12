@@ -7,7 +7,7 @@ export const OpenCodeUpdateCard: Component = () => {
   const { t } = useI18n()
   const { serverSettings } = useConfig()
   const [status, { mutate, refetch }] = createResource(
-    () => serverSettings().opencodeBinary || "opencode",
+    () => serverSettings().opencodeBinary || "opencode2",
     () => serverApi.fetchOpenCodeUpdateStatus(),
   )
   const [updating, setUpdating] = createSignal(false)
@@ -22,12 +22,12 @@ export const OpenCodeUpdateCard: Component = () => {
 
   const handleUpdate = async () => {
     if (updating()) return
-    const binary = serverSettings().opencodeBinary || "opencode"
+    const binary = serverSettings().opencodeBinary || "opencode2"
     setUpdating(true)
     setUpdateFailed(false)
     try {
       const result = await serverApi.updateOpenCode()
-      if ((serverSettings().opencodeBinary || "opencode") !== binary) return
+      if ((serverSettings().opencodeBinary || "opencode2") !== binary) return
       setUpdatedVersion(result.version)
       mutate({
         currentVersion: result.version,
@@ -36,7 +36,7 @@ export const OpenCodeUpdateCard: Component = () => {
         canUpgrade: false,
       })
     } catch {
-      if ((serverSettings().opencodeBinary || "opencode") === binary) setUpdateFailed(true)
+      if ((serverSettings().opencodeBinary || "opencode2") === binary) setUpdateFailed(true)
     } finally {
       setUpdating(false)
     }

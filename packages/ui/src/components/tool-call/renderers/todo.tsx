@@ -1,5 +1,5 @@
 import { For, Show } from "solid-js"
-import type { ToolState } from "@opencode-ai/sdk/v2"
+import type { ToolState } from "../../../types/tool-state"
 import { CheckCircle, CircleEllipsis, MinusCircle, PauseCircle } from "lucide-solid"
 import type { ToolRenderer } from "../types"
 import { readToolStatePayload } from "../utils"

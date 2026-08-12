@@ -1,11 +1,10 @@
 import { createEffect, createMemo, createSignal, onCleanup, type Accessor } from "solid-js"
-import type { File as GitFileStatus } from "@opencode-ai/sdk/v2/client"
 import type { PromptInputApi } from "../../../prompt-input/types"
 import type { GitChangeEntry, GitChangeListItem, GitSelectionDescriptor, RightPanelTab } from "./types"
 
 import { getRootClient } from "../../../../stores/opencode-client"
-import { getOpenCodeWorkspaceIdForWorktree } from "../../../../stores/opencode-workspaces"
-import { requestData } from "../../../../lib/opencode-api"
+import { instances } from "../../../../stores/instances"
+import { getWorktrees } from "../../../../stores/worktrees"
 import { serverApi } from "../../../../lib/api-client"
 import { serverEvents } from "../../../../lib/server-events"
 import { showToastNotification } from "../../../../lib/notifications"
@@ -41,6 +40,13 @@ export function useGitChanges(options: UseGitChangesOptions) {
   let previousGitChangesActivationKey: string | null = null
 
   const gitListItems = createMemo(() => buildGitChangeListItems(gitStatusEntries()))
+
+  const gitLocation = (slug: string) => {
+    const directory = getWorktrees(options.instanceId).find((worktree) => worktree.slug === slug)?.directory
+      ?? (slug === "root" ? instances().get(options.instanceId)?.folder : undefined)
+    if (!directory) throw new Error(`Missing directory for worktree ${slug}`)
+    return { directory }
+  }
 
   const clearGitBulkSelection = () => {
     setGitBulkSelectedItemIds((current) => (current.size === 0 ? current : new Set<string>()))
@@ -168,12 +174,11 @@ export function useGitChanges(options: UseGitChangesOptions) {
     if (!force && gitStatusEntries() !== null) return
     const slug = options.worktreeSlug()
     const client = getRootClient(options.instanceId)
-    const workspace = await getOpenCodeWorkspaceIdForWorktree(options.instanceId, slug)
     const requestVersion = ++gitStatusRequestVersion
     setGitStatusLoading(true)
     setGitStatusError(null)
     try {
-      const sdkStatusPromise = requestData<GitFileStatus[]>(client.file.status({ ...(workspace ? { workspace } : {}) }), "file.status")
+      const sdkStatusPromise = client.vcs.status({ location: gitLocation(slug) }).then((result) => result.data)
       const detailList = await serverApi.fetchWorktreeGitStatus(options.instanceId, slug)
       if (requestVersion !== gitStatusRequestVersion) return
       if (slug !== options.worktreeSlug()) return

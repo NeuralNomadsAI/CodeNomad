@@ -1,5 +1,4 @@
 import { For, Show, Suspense, createEffect, createMemo, createSignal, lazy, type Accessor, type Component, type JSX } from "solid-js"
-import type { FileNode } from "@opencode-ai/sdk/v2/client"
 
 import { Copy, RefreshCw, Save, Search, WrapText } from "lucide-solid"
 
@@ -18,11 +17,17 @@ function isMarkdownPath(path: string | null | undefined): boolean {
   return /\.(md|markdown|mdown|mkdn)$/i.test(path)
 }
 
+export interface FileBrowserEntry {
+  name: string
+  path: string
+  type: "file" | "directory"
+}
+
 interface FilesTabProps {
   t: (key: string, vars?: Record<string, any>) => string
 
   browserPath: Accessor<string>
-  browserEntries: Accessor<FileNode[] | null>
+  browserEntries: Accessor<FileBrowserEntry[] | null>
   browserLoading: Accessor<boolean>
   browserError: Accessor<string | null>
 

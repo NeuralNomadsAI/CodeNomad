@@ -17,7 +17,7 @@ describe("message-v2 permission state", () => {
         sessionID: "session-1",
         action: "edit",
         resources: ["file-a.ts"],
-        source: { type: "tool", callID: "call-1", messageID: "message-1" },
+        source: { type: "tool", id: "call-1", messageID: "message-1" },
       },
       messageId: "message-1",
       partId: "part-1",
@@ -26,7 +26,7 @@ describe("message-v2 permission state", () => {
 
     assert.equal(store.state.permissions.queue.length, 1)
     assert.equal(store.getPermissionState(undefined, "permission-1"), null)
-    assert.equal((store.getPermissionState("message-1", "part-1")?.entry.permission as any).source?.callID, "call-1")
+    assert.equal(store.getPermissionState("message-1", "part-1")?.entry.permission.source?.id, "call-1")
     assert.equal(store.getPermissionState("message-1", "part-1")?.active, true)
   })
 

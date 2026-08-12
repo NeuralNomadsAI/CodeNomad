@@ -1,23 +1,33 @@
+import type { ModelRef } from "@opencode-ai/client"
 import { preparePromptDisplayText } from "../lib/prompt-display-metadata"
 import { instances } from "./instances"
 import { getRootClient } from "./opencode-client"
-import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 
 import { addRecentModelPreference, getModelThinkingSelection, setAgentModelPreference } from "./preferences"
 import { beginSessionGenerationAdmission, providers, sessions, withSession } from "./session-state"
 import { getDefaultModel, isModelValid } from "./session-models"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { messageStoreBus } from "./message-v2/bus"
-import { removeMessagePartV2, removeMessageV2 } from "./message-v2/bridge"
 import { getLogger } from "../lib/logger"
-import { requestData } from "../lib/opencode-api"
-import { clearConversationPlaybackForSession } from "./conversation-speech"
+import { clearConversationPlaybackForSession, isConversationModeEnabled } from "./conversation-speech"
 
 const log = getLogger("actions")
+const VOICE_MODE_INSTRUCTION_KEY = "codenomad.voice-mode"
+const VOICE_MODE_INSTRUCTION = [
+  "Voice conversation mode is enabled.",
+  "Prepend your reply with a fenced code block using language `spoken`.",
+  "The `spoken` block should be a concise, natural spoken gist of the full response in 2 to 4 sentences.",
+  "Do not include code, bullet lists, markdown formatting, or long technical detail in the spoken block.",
+  "After the `spoken` block, continue with your normal detailed response.",
+].join("\n\n")
 
-async function getSessionWorkspacePayload(instanceId: string, sessionId: string): Promise<{ workspace?: string }> {
-  const workspace = await getOpenCodeWorkspaceIdForSession(instanceId, sessionId)
-  return workspace ? { workspace } : {}
+async function syncVoiceModeInstruction(client: ReturnType<typeof getRootClient>, instanceId: string, sessionId: string): Promise<void> {
+  const instruction = client.session.instructions.entry
+  if (isConversationModeEnabled(instanceId)) {
+    await instruction.put({ sessionID: sessionId, key: VOICE_MODE_INSTRUCTION_KEY, value: VOICE_MODE_INSTRUCTION })
+  } else {
+    await instruction.remove({ sessionID: sessionId, key: VOICE_MODE_INSTRUCTION_KEY })
+  }
 }
 
 function getVariantKeysForModel(instanceId: string, model: { providerId: string; modelId: string }): string[] {
@@ -114,24 +124,14 @@ async function sendMessage(
     },
   ]
 
-  const requestParts: any[] = [
-    {
-      type: "text" as const,
-      text: preparedPrompt.promptToSend,
-    },
-  ]
+  const files: Array<{ uri: string; name?: string }> = []
 
   if (attachments.length > 0) {
     for (const att of attachments) {
       const source = att.source
       if (source.type === "file") {
         const partId = createId("prt")
-        requestParts.push({
-          type: "file" as const,
-          url: att.url,
-          mime: source.mime,
-          filename: att.filename,
-        })
+        files.push({ uri: att.url, name: att.filename })
         optimisticParts.push({
           id: partId,
           type: "file" as const,
@@ -153,10 +153,7 @@ async function sendMessage(
         }
 
         const partId = createId("prt")
-        requestParts.push({
-          type: "text" as const,
-          text: value,
-        })
+        preparedPrompt.promptToSend += `\n\n${value}`
         optimisticParts.push({
           id: partId,
           type: "text" as const,
@@ -185,7 +182,7 @@ async function sendMessage(
     clientPromptDisplayMetadata: preparedPrompt.displayMetadata,
   })
 
-  // Preserve the optimistic bubble only while promptAsync is unresolved.
+  // Preserve the optimistic bubble only while the prompt request is unresolved.
   store.markSendPending(messageId)
 
   withSession(instanceId, sessionId, () => {
@@ -198,22 +195,9 @@ async function sendMessage(
     // snapshot) instead of content matching, and the SSE echo updates the
     // existing record in place — no duplicate bubble, no ambiguity between
     // identical texts.
-    messageID: messageId,
-    parts: requestParts,
-    ...(session.agent && { agent: session.agent }),
-    ...(session.model.providerId &&
-      session.model.modelId && {
-        model: {
-          providerID: session.model.providerId,
-          modelID: session.model.modelId,
-        },
-      }),
-    ...(session.model.providerId &&
-      session.model.modelId &&
-      (() => {
-        const variant = getThinkingVariantToSend(instanceId, session.model)
-        return variant ? { variant } : {}
-      })()),
+    id: messageId,
+    text: preparedPrompt.promptToSend,
+    ...(files.length > 0 ? { files } : {}),
   }
 
   log.info("sendMessage", {
@@ -223,18 +207,11 @@ async function sendMessage(
   })
 
   try {
-    log.info("session.promptAsync", { instanceId, sessionId, requestBody })
-    const workspacePayload = await getSessionWorkspacePayload(instanceId, sessionId)
+    log.info("session.prompt", { instanceId, sessionId, requestBody })
     const admission = beginSessionGenerationAdmission(instanceId, sessionId)
     try {
-      await requestData(
-        client.session.promptAsync({
-          sessionID: sessionId,
-          ...workspacePayload,
-          ...(requestBody as any),
-        }),
-        "session.promptAsync",
-      )
+      await syncVoiceModeInstruction(client, instanceId, sessionId)
+      await client.session.prompt({ sessionID: sessionId, ...requestBody })
       admission.complete()
       store.acceptSend(messageId)
     } catch (error) {
@@ -269,14 +246,13 @@ async function executeCustomCommand(
   const body: {
     command: string
     arguments: string
-    messageID: string
+    id: string
     agent?: string
-    model?: string
-    variant?: string
+    model?: { providerID: string; id: string; variant?: string }
   } = {
     command: commandName,
     arguments: args,
-    messageID: createId("msg"),
+    id: createId("msg"),
   }
 
   if (session.agent) {
@@ -284,22 +260,15 @@ async function executeCustomCommand(
   }
 
   if (session.model.providerId && session.model.modelId) {
-    body.model = `${session.model.providerId}/${session.model.modelId}`
+    body.model = { providerID: session.model.providerId, id: session.model.modelId }
     const variant = getThinkingVariantToSend(instanceId, session.model)
-    if (variant) body.variant = variant
+    if (variant) body.model.variant = variant
   }
 
-  const workspacePayload = await getSessionWorkspacePayload(instanceId, sessionId)
   const admission = beginSessionGenerationAdmission(instanceId, sessionId)
   try {
-    await requestData(
-      client.session.command({
-        sessionID: sessionId,
-        ...workspacePayload,
-        ...(body as any),
-      }),
-      "session.command",
-    )
+    await syncVoiceModeInstruction(client, instanceId, sessionId)
+    await client.session.command({ sessionID: sessionId, ...body })
     admission.complete()
   } catch (error) {
     admission.rollback()
@@ -320,20 +289,10 @@ async function runShellCommand(instanceId: string, sessionId: string, command: s
     throw new Error("Session not found")
   }
 
-  const agent = session.agent || "build"
-
-  const workspacePayload = await getSessionWorkspacePayload(instanceId, sessionId)
   const admission = beginSessionGenerationAdmission(instanceId, sessionId)
   try {
-    await requestData(
-      client.session.shell({
-        sessionID: sessionId,
-        ...workspacePayload,
-        agent,
-        command,
-      }),
-      "session.shell",
-    )
+    await syncVoiceModeInstruction(client, instanceId, sessionId)
+    await client.session.shell({ sessionID: sessionId, command })
     admission.complete()
   } catch (error) {
     admission.rollback()
@@ -352,14 +311,8 @@ async function abortSession(instanceId: string, sessionId: string): Promise<void
   log.info("abortSession", { instanceId, sessionId })
 
   try {
-    log.info("session.abort", { instanceId, sessionId })
-    await requestData(
-      client.session.abort({
-        sessionID: sessionId,
-        ...(await getSessionWorkspacePayload(instanceId, sessionId)),
-      }),
-      "session.abort",
-    )
+    log.info("session.interrupt", { instanceId, sessionId })
+    await client.session.interrupt({ sessionID: sessionId })
     log.info("abortSession complete", { instanceId, sessionId })
   } catch (error) {
     log.error("Failed to abort session", error)
@@ -376,6 +329,8 @@ async function updateSessionAgent(instanceId: string, sessionId: string, agent: 
 
   const nextModel = await getDefaultModel(instanceId, agent)
   const shouldApplyModel = isModelValid(instanceId, nextModel)
+  const previousAgent = session.agent
+  const previousModel = session.model
 
   withSession(instanceId, sessionId, (current) => {
     current.agent = agent
@@ -383,6 +338,23 @@ async function updateSessionAgent(instanceId: string, sessionId: string, agent: 
       current.model = nextModel
     }
   })
+
+  try {
+    await getRootClient(instanceId).session.switchAgent({ sessionID: sessionId, agent })
+  } catch (error) {
+    withSession(instanceId, sessionId, (current) => {
+      if (current.agent !== agent) return false
+      current.agent = previousAgent
+      if (
+        shouldApplyModel &&
+        current.model.providerId === nextModel.providerId &&
+        current.model.modelId === nextModel.modelId
+      ) {
+        current.model = previousModel
+      }
+    })
+    throw error
+  }
 
   if (agent && shouldApplyModel) {
     await setAgentModelPreference(instanceId, agent, nextModel)
@@ -413,6 +385,17 @@ async function updateSessionModel(
     current.model = model
   })
 
+  const nativeModel: ModelRef = { providerID: model.providerId, id: model.modelId }
+  try {
+    await getRootClient(instanceId).session.switchModel({ sessionID: sessionId, model: nativeModel })
+  } catch (error) {
+    withSession(instanceId, sessionId, (current) => {
+      if (current.model.providerId !== model.providerId || current.model.modelId !== model.modelId) return false
+      current.model = session.model
+    })
+    throw error
+  }
+
   if (session.agent) {
     await setAgentModelPreference(instanceId, session.agent, model)
   }
@@ -439,14 +422,7 @@ async function renameSession(instanceId: string, sessionId: string, nextTitle: s
     throw new Error("Session title is required")
   }
 
-  await requestData(
-    client.session.update({
-      sessionID: sessionId,
-      ...(await getSessionWorkspacePayload(instanceId, sessionId)),
-      title: trimmedTitle,
-    }),
-    "session.update",
-  )
+  await client.session.rename({ sessionID: sessionId, title: trimmedTitle })
 
   withSession(instanceId, sessionId, (current) => {
     current.title = trimmedTitle
@@ -456,60 +432,24 @@ async function renameSession(instanceId: string, sessionId: string, nextTitle: s
   })
 }
 
-async function deleteMessagePart(instanceId: string, sessionId: string, messageId: string, partId: string): Promise<void> {
-  if (!instanceId || !sessionId || !messageId || !partId) return
-  const instance = instances().get(instanceId)
-  if (!instance || !instance.client) {
-    throw new Error("Instance not ready")
-  }
-
-  const client = getRootClient(instanceId)
-
-  await requestData(
-    client.part.delete({
-      sessionID: sessionId,
-      ...(await getSessionWorkspacePayload(instanceId, sessionId)),
-      messageID: messageId,
-      partID: partId,
-    }),
-    "part.delete",
-  )
-
-  // Optimistic removal; SSE will also broadcast a part-removed event.
-  removeMessagePartV2(instanceId, messageId, partId)
-  updateSessionInfo(instanceId, sessionId)
+async function moveSession(instanceId: string, sessionId: string, directory: string): Promise<void> {
+  if (!directory.trim()) throw new Error("Session directory is required")
+  await getRootClient(instanceId).session.move({ sessionID: sessionId, directory })
+  withSession(instanceId, sessionId, (session) => {
+    session.location = { directory }
+  })
 }
 
-async function deleteMessage(instanceId: string, sessionId: string, messageId: string): Promise<void> {
-  if (!instanceId || !sessionId || !messageId) return
-  const instance = instances().get(instanceId)
-  if (!instance || !instance.client) {
-    throw new Error("Instance not ready")
-  }
-
-  const client = getRootClient(instanceId)
-
-  // The SDK generator does not currently expose a typed method for deleting a message,
-  // but the API is available at DELETE /session/:sessionID/message/:messageID.
-  await requestData(
-    (client as any).client.delete({
-      url: `/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(messageId)}`,
-      query: await getSessionWorkspacePayload(instanceId, sessionId),
-    }),
-    "session.message.delete",
-  )
-
-  // Optimistic removal; SSE will also broadcast a message-removed event.
-  removeMessageV2(instanceId, messageId)
-  updateSessionInfo(instanceId, sessionId)
+async function compactSession(instanceId: string, sessionId: string): Promise<void> {
+  await getRootClient(instanceId).session.compact({ sessionID: sessionId })
 }
 
 export {
   abortSession,
-  deleteMessage,
-  deleteMessagePart,
   executeCustomCommand,
+  compactSession,
   renameSession,
+  moveSession,
   runShellCommand,
   sendMessage,
   updateSessionAgent,

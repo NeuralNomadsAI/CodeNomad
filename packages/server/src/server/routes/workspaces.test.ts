@@ -7,7 +7,7 @@ import type { WorkspaceManager } from "../../workspaces/manager"
 import { registerWorkspaceRoutes } from "./workspaces"
 
 describe("workspace routes", () => {
-  it("forwards a validated explicit binary path when creating a workspace", async () => {
+  it("forwards workspace creation options without per-workspace binary settings", async () => {
     const calls: unknown[][] = []
     const app = Fastify({ logger: false })
     const descriptor: WorkspaceDescriptor = {
@@ -39,7 +39,7 @@ describe("workspace routes", () => {
       payload: {
         path: "C:/work",
         name: "Work",
-        binaryPath: " C:/tools/opencode.exe ",
+        binaryPath: "C:/tools/ignored-opencode.exe",
         requestId: " restore-request ",
         forceNew: true,
       },
@@ -47,7 +47,6 @@ describe("workspace routes", () => {
 
     assert.equal(response.statusCode, 201)
     assert.deepEqual(calls, [["C:/work", "Work", {
-      binaryPath: "C:/tools/opencode.exe",
       requestId: "restore-request",
       forceNew: true,
     }]])
@@ -74,13 +73,6 @@ describe("workspace routes", () => {
     assert.equal(cancelled.statusCode, 204)
     assert.deepEqual(calls.at(-1), ["cancel", "restore-request"])
 
-    const invalid = await app.inject({
-      method: "POST",
-      url: "/api/workspaces",
-      payload: { path: "C:/work", binaryPath: "x".repeat(4097) },
-    })
-    assert.equal(invalid.statusCode, 400)
-    assert.equal(calls.length, 2)
     await app.close()
   })
 

@@ -20,12 +20,6 @@ export const CORE_STATUS_SECTION_ITEMS: readonly (RightPanelItem & { tooltipKey:
     order: 30,
   },
   {
-    id: "background-processes",
-    labelKey: "instanceShell.rightPanel.sections.backgroundProcesses",
-    tooltipKey: "instanceShell.rightPanel.sections.backgroundProcesses.tooltip",
-    order: 40,
-  },
-  {
     id: "mcp",
     labelKey: "instanceShell.rightPanel.sections.mcp",
     tooltipKey: "instanceShell.rightPanel.sections.mcp.tooltip",

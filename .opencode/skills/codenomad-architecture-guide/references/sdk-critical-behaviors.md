@@ -1,109 +1,33 @@
-# SDK Critical Behaviors
+# Native OpenCode V2 Critical Behaviors
 
-## Upstream OpenCode Behaviors
+## Contract
 
-The following behaviors are implemented in the upstream OpenCode SDK/server, not in the CodeNomad repository. They affect how CodeNomad must interact with the SDK.
+- Version is pinned to `@opencode-ai/client@0.0.0-next-17288`; update server and UI together.
+- The package root is the generated zero-Effect Promise client. Use installed declarations, not old SDK examples.
+- Native routes are `/api/*`; CodeNomad exposes them only through the authorized `/workspaces/:id/instance` proxy.
 
-## Critical Behaviors Table
+## Location Is Authority
 
-| Behavior | Detail | Impact | Verification |
-|----------|--------|--------|--------------|
-| `ignored: true` on assistant parts | Backend only checks for user parts | Assistant parts still sent to AI model | Observe via SSE behavior; not verifiable locally |
-| Part delete | Message must retain ≥1 part | Delete entire message if last part | `packages/ui/src/stores/session-actions.ts` |
-| Metadata on assistant parts | Passed as `providerMetadata` to ai SDK | Flat objects cause fatal schema violations | Avoid setting metadata on assistant parts |
-| Session revert | Only restores files to Git snapshot | Not an undo mechanism for messages | Test via `client.session.revert()` |
-| Empty messages | Backend rejects `parts: []` | Check part count before delete | `packages/ui/src/stores/session-actions.ts` |
+- A CodeNomad workspace must validate through `client.location.get` before becoming ready.
+- Directory-bearing proxy input is untrusted and must resolve to the workspace root or one of its Git worktrees.
+- Session ID alone is insufficient: the proxy fetches the session and verifies `session.location.directory`.
+- Evict an upstream location only after its final logical owner is deleted.
 
-## Schema Violation Details
+## Shared Lifecycle
 
-### Assistant Part Metadata (Fatal)
+- There is one shared `Service.ensure`, client and upstream event subscription.
+- A workspace stop removes location ownership; it does not stop a dedicated OpenCode process.
+- Shutdown stops the service only when CodeNomad started and still owns the discovered endpoint.
 
-**Behavior:** Assistant text part `metadata` is passed as `providerMetadata` to the underlying AI SDK.
+## Ownership Matrix
 
-**Expected format:**
-```typescript
-providerMetadata?: Record<string, Record<string, JsonValue>>
-```
+| Concern | Owner |
+|---|---|
+| Session/message/Shell/instructions | OpenCode native API |
+| Service discovery/start/stop | OpenCode `Service`, wrapped by CodeNomad |
+| Workspace and directory authorization | CodeNomad |
+| Git status/diff and mutations | CodeNomad |
+| Yolo policy/persistence/auto-reply | CodeNomad |
+| Browser event multiplexing | CodeNomad `/api/events` |
 
-**Violation examples:**
-```typescript
-// ❌ WRONG: Flat object
-metadata: { compacted: true }
-
-// ❌ WRONG: Missing provider name wrapper
-metadata: { key: "value" }
-
-// ✅ CORRECT: Nested by provider
-metadata: { openai: { key: "value" } }
-```
-
-**Fix:** Do not store metadata on assistant text parts. Use client-side registry instead:
-```typescript
-// ✅ Use client-side registry
-// packages/ui/src/stores/session-compaction.ts
-const compactedParts = new Set<string>() // part IDs
-```
-
-### Empty Messages After Part Deletion
-
-**Root Cause:** Backend validates messages have ≥1 part
-
-**Fix:** Check remaining part count before deleting last part
-```typescript
-// packages/ui/src/stores/session-actions.ts
-if (record.partIds.length <= 1) {
-  // Delete entire message instead
-  await deleteMessage(sessionID, messageID)
-} else {
-  await deleteMessagePart(sessionID, messageID, partID)
-}
-```
-
-## `ignored` Flag Asymmetry
-
-| Part Type | `ignored: true` Effect | Notes |
-|-----------|------------------------|-------|
-| User text | ✅ Excluded from AI model context | Safe to use |
-| Assistant text | ❌ No effect — still sent to model | Do not rely on this |
-| Tool | ❌ No `ignored` field exists | N/A |
-| Reasoning | ❌ No `ignored` field exists | N/A |
-
-**Implication:** Cannot "soft delete" assistant parts. Must delete or use client-side registry.
-
-## Decision Matrix: Context Modification
-
-| Goal | Strategy | SDK Support | Safe? |
-|------|----------|-------------|-------|
-| Update assistant text | `Part.update()` (if available) | ✅ | ✅ Yes (no metadata) |
-| Update user text | `Part.update()` (if available) | ✅ | ✅ Yes |
-| Hide user part from AI | `ignored: true` | ✅ | ✅ Yes |
-| Hide assistant part from AI | `ignored: true` | ⚠️ No effect | ❌ No effect |
-| Delete part | `client.part.delete()` | ✅ | ✅ Yes (check message parts) |
-| Delete message | Raw DELETE via client | ✅ | ✅ Yes (irreversible) |
-| Undo message deletion | Client-side restore | ⚠️ Manual | ⚠️ Must recreate |
-| Revert code changes | `client.session.revert()` | ✅ | ✅ Only affects files |
-| Store UI state | Client-side registry | N/A | ✅ localStorage/Set |
-
-## Race Conditions
-
-### Optimistic Updates
-
-**Symptom:** UI state desync after rapid operations
-
-**Cause:** `removeMessagePartV2()` and `removeMessageV2()` called optimistically before server confirmation
-
-**Mitigation:** SSE events eventually converge state. Do not rely on optimistic state for subsequent operations.
-
-### SSE Disconnection
-
-**Symptom:** Missed events during reconnection
-
-**Mitigation:** `serverEvents` reconnection triggers sync handlers (e.g., `syncPendingPermissions()`) to reconcile state.
-
-## Recommendations
-
-1. **Never store flat metadata on assistant text parts.** Always use client-side registries for UI state.
-2. **Prefer user messages for metadata-heavy operations.** User text parts don't pass metadata to ai SDK.
-3. **Implement client-side undo for destructive operations.** The SDK has no native message-level undo.
-4. **Validate part payloads before sending.** Always spread existing part and override only specific fields.
-5. **Handle `ignored` carefully.** It only works for user text parts. Don't rely on it for assistant parts.
+Do not restore `@opencode-ai/sdk`, per-workspace processes, `packages/opencode-plugin`, plugin background-process tools, or deleted plugin/runtime file paths.

@@ -384,8 +384,8 @@ const App: Component = () => {
 
   const launchErrorPath = () => {
     const value = launchError()?.binaryPath
-    if (!value) return "opencode"
-    return value.trim() || "opencode"
+    if (!value) return "opencode2"
+    return value.trim() || "opencode2"
   }
 
   const launchErrorMessage = () => launchError()?.message ?? ""
@@ -400,19 +400,19 @@ const App: Component = () => {
     return recent?.projectName?.trim() || getPathBasename(folderPath)
   }
 
-  async function handleSelectFolder(folderPath: string, binaryPath?: string, options?: { forceNew?: boolean }) {
+  async function handleSelectFolder(folderPath: string, options?: { forceNew?: boolean }) {
     if (!folderPath) {
       return
     }
 
-    const selectedBinary = binaryPath || serverSettings().opencodeBinary || "opencode"
+    const selectedBinary = serverSettings().opencodeBinary || "opencode2"
     const projectName = getProjectNameForFolder(folderPath)
     clearLaunchError()
 
     setIsSelectingFolder(true)
     try {
-      const result = await createInstance(folderPath, selectedBinary, projectName, { forceNew: options?.forceNew })
-      recordWorkspaceLaunch(instances().get(result.instanceId)?.folder ?? folderPath, selectedBinary, folderPath)
+      const result = await createInstance(folderPath, projectName, { forceNew: options?.forceNew })
+      recordWorkspaceLaunch(instances().get(result.instanceId)?.folder ?? folderPath, folderPath)
       if (result.reused) {
         selectInstanceTab(result.instanceId)
         setShowFolderSelection(false)
@@ -441,10 +441,10 @@ const App: Component = () => {
     }
   }
 
-  function handleSelectExistingInstance(instanceId: string, recentPath: string, binaryPath: string) {
+  function handleSelectExistingInstance(instanceId: string, recentPath: string) {
     const instance = instances().get(instanceId)
     if (!instance) return
-    recordWorkspaceLaunch(instance.folder, binaryPath, recentPath)
+    recordWorkspaceLaunch(instance.folder, recentPath)
     selectInstanceTab(instanceId)
     setShowFolderSelection(false)
     log.info("Selected existing instance", { instanceId, folderPath: instance.folder })

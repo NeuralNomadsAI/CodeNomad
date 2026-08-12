@@ -1,4 +1,4 @@
-import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
+import type { OpenCodeClient } from "@opencode-ai/client"
 
 export class OpencodeApiError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -57,4 +57,4 @@ export async function requestData<T>(
   return (result as any).data as T
 }
 
-export type { OpencodeClient }
+export type { OpenCodeClient }

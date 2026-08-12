@@ -129,8 +129,6 @@ export const instanceMessages = {
   "instanceShell.rightPanel.sections.yoloMode.tooltip": "מאשר אוטומטית בקשות הרשאה עבור הסשן הנוכחי. השתמשו בזה רק אם אתם סומכים על הכלים שרצים.",
   "instanceShell.rightPanel.sections.plan": "תוכנית",
   "instanceShell.rightPanel.sections.plan.tooltip": "מפת הדרכים של הסוכן לסשן זה. עוקב אחר משימות, תת-משימות וסטטוס השלמתן.",
-  "instanceShell.rightPanel.sections.backgroundProcesses": "מעטפות רקע",
-  "instanceShell.rightPanel.sections.backgroundProcesses.tooltip": "תהליכים ממושכים שהופעלו על ידי הסוכן. ניתן לעקוב אחר פלטם, לעצור אותם או לסיים אותם.",
   "instanceShell.rightPanel.sections.mcp": "שרתי MCP",
   "instanceShell.rightPanel.sections.mcp.tooltip": "שרתי Model Context Protocol המרחיבים את יכולות הסוכן עם כלים ושירותים חיצוניים.",
   "instanceShell.rightPanel.sections.lsp": "שרתי LSP",
@@ -214,15 +212,6 @@ export const instanceMessages = {
   "instanceShell.yoloMode.badge": "Yolo",
   "instanceShell.yoloMode.badgeAriaLabel": "מצב Yolo פעיל",
 
-  "instanceShell.backgroundProcesses.empty": "אין תהליכי רקע.",
-  "instanceShell.backgroundProcesses.status": "סטטוס: {status}",
-  "instanceShell.backgroundProcesses.output": "פלט: {sizeKb}KB",
-  "instanceShell.backgroundProcesses.notify.enabled": "התראת סיום פעילה",
-  "instanceShell.backgroundProcesses.notify.disabled": "התראת סיום כבויה",
-  "instanceShell.backgroundProcesses.actions.output": "פלט",
-  "instanceShell.backgroundProcesses.actions.stop": "עצור",
-  "instanceShell.backgroundProcesses.actions.terminate": "סיים",
-
   "versionPill.appWithVersion": "אפליקציה {version}",
   "versionPill.ui": "ממשק",
   "versionPill.uiWithVersion": "ממשק {version}",
@@ -230,7 +219,7 @@ export const instanceMessages = {
 
   "opencodeBinarySelector.title": "קובץ בינארי של OpenCode",
   "opencodeBinarySelector.subtitle": "בחר איזה קובץ הרצה OpenCode ישתמש",
-  "opencodeBinarySelector.customPath.placeholder": "הזן נתיב לקובץ בינארי של opencode…",
+  "opencodeBinarySelector.customPath.placeholder": "הזן נתיב לקובץ בינארי של {name}…",
   "opencodeBinarySelector.actions.add": "הוסף",
   "opencodeBinarySelector.actions.browse": "עיין אחר קובץ בינארי…",
   "opencodeBinarySelector.actions.removeTitle": "הסר קובץ בינארי",

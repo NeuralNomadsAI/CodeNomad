@@ -80,10 +80,6 @@
           "!icon.icns",
           "!icon.ico"
         ]
-      },
-      {
-        "from": "../server/dist/opencode-plugin",
-        "to": "opencode-plugin"
       }
     ],
     "mac": {

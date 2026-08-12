@@ -17,10 +17,9 @@
     "codenomad": "dist/bin.js"
   },
   "scripts": {
-    "build": "npm run build:ui && npm run prepare-ui && tsc -p tsconfig.json && node ./scripts/copy-auth-pages.mjs && npm run prepare-plugin",
+    "build": "npm run build:ui && npm run prepare-ui && tsc -p tsconfig.json && node ./scripts/copy-auth-pages.mjs",
     "build:ui": "npm run build --prefix ../ui",
     "prepare-ui": "node ./scripts/copy-ui-dist.mjs",
-    "prepare-plugin": "node ./scripts/package-opencode-plugin.mjs",
     "dev": "cross-env CODENOMAD_DEV=1 CODENOMAD_SERVER_PASSWORD=codenomad-dev CLI_UI_DEV_SERVER=http://localhost:3000 CLI_HTTPS=false CLI_HTTP=true tsx src/index.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
@@ -28,7 +27,7 @@
     "@fastify/cors": "^8.5.0",
     "@fastify/reply-from": "^9.8.0",
     "@fastify/static": "^7.0.4",
-    "@opencode-ai/sdk": "^1.17.8",
+    "@opencode-ai/client": "0.0.0-next-17288",
     "commander": "^12.1.0",
     "fastify": "^4.28.1",
     "fuzzysort": "^2.0.4",

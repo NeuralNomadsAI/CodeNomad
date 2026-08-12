@@ -40,7 +40,6 @@ export interface WorkspaceDescriptor {
 export interface WorkspaceCreateRequest {
   path: string
   name?: string
-  binaryPath?: string
   requestId?: string
   forceNew?: boolean
 }
@@ -109,14 +108,6 @@ export interface WorktreeCreateRequest {
   slug: string
   /** Optional branch name (defaults to slug). */
   branch?: string
-}
-
-export interface WorktreeMap {
-  version: 1
-  /** Default worktree to use for new sessions and as fallback. */
-  defaultWorktreeSlug: string
-  /** Mapping of *parent* session IDs to a worktree slug. */
-  parentSessionWorktreeSlug: Record<string, string>
 }
 
 export type GitChangeKind = "added" | "modified" | "deleted" | "renamed" | "copied" | "untracked" | "unmerged"
@@ -407,16 +398,8 @@ export interface SpeechSynthesisResponse {
   mimeType: string
 }
 
-export interface VoiceModeStateResponse {
-  enabled: boolean
-}
-
 export interface YoloStateResponse {
   enabled: boolean
-}
-
-export interface SessionMetadataResponse {
-  metadata: Record<string, unknown>
 }
 
 export interface RemoteServerProfile {
@@ -543,37 +526,6 @@ export interface ServerMeta {
   support?: SupportMeta
   /** Optional update info (dev channel only). */
   update?: LatestReleaseInfo | null
-}
-
-export type BackgroundProcessStatus = "running" | "stopped" | "error"
-
-export type BackgroundProcessTerminalReason = "finished" | "failed" | "user_stopped" | "user_terminated"
-
-export interface BackgroundProcess {
-  id: string
-  workspaceId: string
-  title: string
-  command: string
-  cwd: string
-  status: BackgroundProcessStatus
-  pid?: number
-  startedAt: string
-  stoppedAt?: string
-  exitCode?: number
-  outputSizeBytes?: number
-  terminalReason?: BackgroundProcessTerminalReason
-  notifyEnabled?: boolean
-}
-
-export interface BackgroundProcessListResponse {
-  processes: BackgroundProcess[]
-}
-
-export interface BackgroundProcessOutputResponse {
-  id: string
-  content: string
-  truncated: boolean
-  sizeBytes: number
 }
 
 export type {

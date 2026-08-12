@@ -3,13 +3,11 @@ import type { OpenCodeUpdateResponse, OpenCodeUpdateStatus } from "../api-types"
 import type { SettingsService } from "../settings/service"
 import { BinaryResolver, type ResolvedBinary } from "../settings/binaries"
 import type { WorkspaceManager } from "../workspaces/manager"
-import { createInstanceClient } from "../workspaces/instance-client"
 import { probeBinaryVersion } from "../workspaces/spawn"
 import { compareVersionStrings, stripTagPrefix } from "../releases/release-monitor"
 
 const OPENCODE_LATEST_URL = "https://registry.npmjs.org/opencode-ai/latest"
 const LATEST_VERSION_CACHE_MS = 5 * 60_000
-const UPGRADE_TIMEOUT_MS = 10 * 60_000
 const inFlightUpgrades = new Map<string, Promise<OpenCodeUpdateResponse>>()
 
 type UpgradeResult = { success: true; version: string } | { success: false; error: string }
@@ -180,15 +178,9 @@ export function createOpenCodeUpdateService(
       return { ...binary, path: workspaceManager.resolveBinaryPath(binary.path) }
     },
     probeBinary: probeBinaryVersion,
-    findReadyInstanceId: (binaryPath) => workspaceManager.findReadyInstanceIdByBinary(binaryPath),
+    // The native V2 client has no self-upgrade operation.
+    findReadyInstanceId: () => undefined,
     fetchLatestVersion: fetchLatestOpenCodeVersion,
-    upgradeInstance: async (instanceId, target) => {
-      const client = createInstanceClient(workspaceManager, instanceId, { timeoutMs: UPGRADE_TIMEOUT_MS })
-      if (!client) {
-        throw new OpenCodeUpdateError("no_ready_instance", "OpenCode instance is not ready")
-      }
-      const { data } = await client.global.upgrade({ target }, { throwOnError: true })
-      return data
-    },
+    upgradeInstance: async () => ({ success: false, error: "OpenCode V2 does not expose self-upgrade" }),
   })
 }

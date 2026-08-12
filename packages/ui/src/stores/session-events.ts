@@ -7,18 +7,26 @@ import type {
   MessageUpdateEvent,
 } from "../types/message"
 import type {
-  EventSessionCompacted,
-  EventSessionError,
-  EventSessionIdle,
-  EventSessionUpdated,
-  EventSessionStatus,
-} from "@opencode-ai/sdk"
+  PermissionAsked,
+  PermissionReplied,
+  QuestionAsked,
+  QuestionRejected,
+  QuestionReplied,
+  SessionCompactionEnded,
+  SessionCreated,
+  SessionExecutionFailed,
+  SessionIdle,
+  SessionRevertCleared,
+  SessionRevertCommitted,
+  SessionRevertStaged,
+  SessionStatus2,
+  TuiToastShow,
+} from "@opencode-ai/client"
 import type { MessageStatus } from "./message-v2/types"
 import { deriveMessageStatus } from "./message-v2/message-status"
 
 import { getLogger } from "../lib/logger"
-import type { EventSessionDeleted } from "../lib/sse-manager"
-import { requestData } from "../lib/opencode-api"
+import type { EventSessionDeleted, NativeSessionEvent } from "../lib/sse-manager"
 import {
   enqueueDelta,
   clearPendingDeltasForPart,
@@ -31,16 +39,9 @@ import {
   getPermissionSessionId,
   getRequestIdFromPermissionReply,
 } from "../types/permission"
-import type { LegacyPermissionAskedEvent, LegacyPermissionRepliedEvent, PermissionRequest } from "../types/permission"
+import type { PermissionRequest } from "../types/permission"
 import { getQuestionId, getQuestionSessionId, getRequestIdFromQuestionReply } from "../types/question"
-import type { LegacyQuestionAnsweredEvent, LegacyQuestionAskedEvent, QuestionRequest } from "../types/question"
-import type {
-  EventPermissionV2Asked,
-  EventPermissionV2Replied,
-  EventQuestionV2Asked,
-  EventQuestionV2Rejected,
-  EventQuestionV2Replied,
-} from "@opencode-ai/sdk/v2"
+import type { QuestionRequest } from "../types/question"
 import { showToastNotification, type ToastHandle, ToastVariant } from "../lib/notifications"
 import { sendOsNotification } from "../lib/os-notifications"
 import { preferences } from "./preferences"
@@ -72,8 +73,6 @@ import { tGlobal } from "../lib/i18n"
 
 import { loadMessages, removeSessionRuntimeState } from "./session-api"
 import { getRootClient } from "./opencode-client"
-import { getWorktreeSlugForDirectory, getWorktreeSlugForSession } from "./worktrees"
-import { getOpenCodeWorkspaceIdForWorktree } from "./opencode-workspaces"
 import {
   applyPartUpdateV2,
   applyPartDeltaV2,
@@ -93,7 +92,94 @@ import { handleConversationAssistantPartUpdated } from "./conversation-speech"
 
 const log = getLogger("sse")
 const pendingSessionFetches = new Map<string, Promise<void>>()
+const NATIVE_REFRESH_DELAY_MS = 75
+const nativeRefreshes = new Map<string, {
+  instanceId: string
+  sessionId: string
+  pending: boolean
+  speakAfter: boolean
+  timer?: ReturnType<typeof setTimeout>
+  running?: Promise<void>
+}>()
 let activeRetryToast: ToastHandle | null = null
+
+function speakCompletedAssistantText(instanceId: string, sessionId: string): void {
+  const store = messageStoreBus.getOrCreate(instanceId)
+  const messageId = store.getLastAssistantMessageId(sessionId)
+  const message = messageId ? store.getMessage(messageId) : undefined
+  if (!messageId || message?.status !== "complete") return
+  const info = store.getMessageInfo(messageId)
+  for (const partId of message.partIds) {
+    handleConversationAssistantPartUpdated(instanceId, message.parts[partId].data, info)
+  }
+}
+
+function requestNativeSessionRefresh(instanceId: string, sessionId: string, final = false): void {
+  const key = `${instanceId}:${sessionId}`
+  const refresh = nativeRefreshes.get(key) ?? { instanceId, sessionId, pending: false, speakAfter: false }
+  refresh.pending = true
+  refresh.speakAfter ||= final
+  if (refresh.timer) clearTimeout(refresh.timer)
+  nativeRefreshes.set(key, refresh)
+
+  const run = async () => {
+    if (refresh.running) return refresh.running
+    refresh.running = (async () => {
+      do {
+        refresh.pending = false
+        try {
+          await loadMessages(refresh.instanceId, refresh.sessionId, { force: true, skipChildren: true })
+        } catch (error) {
+          log.error("Failed to refresh native session messages", { instanceId, sessionId, error })
+        }
+      } while (refresh.pending)
+
+      if (refresh.speakAfter) {
+        refresh.speakAfter = false
+        speakCompletedAssistantText(refresh.instanceId, refresh.sessionId)
+      }
+    })().finally(() => {
+      refresh.running = undefined
+      if (!refresh.pending && !refresh.speakAfter) nativeRefreshes.delete(key)
+    })
+    return refresh.running
+  }
+
+  if (final) {
+    refresh.timer = undefined
+    void run()
+  } else {
+    refresh.timer = setTimeout(() => {
+      refresh.timer = undefined
+      void run()
+    }, NATIVE_REFRESH_DELAY_MS)
+  }
+}
+
+function clearNativeSessionRefresh(instanceId: string, sessionId: string): void {
+  const refresh = nativeRefreshes.get(`${instanceId}:${sessionId}`)
+  if (refresh?.timer) clearTimeout(refresh.timer)
+  nativeRefreshes.delete(`${instanceId}:${sessionId}`)
+}
+
+function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent): void {
+  const sessionId = event.data?.sessionID
+  if (!sessionId) return
+
+  if (event.type === "session.compaction.started" || event.type === "session.compaction.admitted") {
+    ensureSessionStatus(instanceId, sessionId, "compacting", event.location?.directory)
+  } else if (
+    event.type === "session.execution.started" ||
+    event.type === "session.step.started" ||
+    event.type.startsWith("session.text.") ||
+    event.type.startsWith("session.reasoning.") ||
+    event.type.startsWith("session.tool.")
+  ) {
+    ensureSessionStatus(instanceId, sessionId, "working", event.location?.directory)
+  }
+
+  requestNativeSessionRefresh(instanceId, sessionId)
+}
 
 function shouldSendOsNotification(kind: "needsInput" | "idle"): boolean {
   if (typeof document === "undefined") return false
@@ -146,50 +232,18 @@ function fireOsNotification(payload: { title: string; body: string }) {
   })
 }
 
-interface TuiToastEvent {
-  type: "tui.toast.show"
-  properties: {
-    title?: string
-    message: string
-    variant: "info" | "success" | "warning" | "error"
-    duration?: number
-  }
-}
-
 const ALLOWED_TOAST_VARIANTS = new Set<ToastVariant>(["info", "success", "warning", "error"])
 
 async function fetchSessionInfo(instanceId: string, sessionId: string, directory?: string): Promise<Session | null> {
   const instance = instances().get(instanceId)
   if (!instance?.client) return null
 
-  const slugFromDirectory = getWorktreeSlugForDirectory(instanceId, directory)
-  const slug = slugFromDirectory ?? getWorktreeSlugForSession(instanceId, sessionId)
   const client = getRootClient(instanceId)
-  const workspace = await getOpenCodeWorkspaceIdForWorktree(instanceId, slug)
+  void directory
 
   try {
-    const info = await requestData<any>(
-      client.session.get({ sessionID: sessionId, ...(workspace ? { workspace } : {}) }),
-      "session.get",
-    )
-
-    let rawStatus = (info as any)?.status
-    let fetchedStatusKnown = false
-    try {
-      const statuses = await requestData<Record<string, any>>(client.session.status(), "session.status")
-      rawStatus ??= statuses?.[sessionId]
-      fetchedStatusKnown = true
-    } catch (error) {
-      log.error("Failed to fetch session status", error)
-    }
-    const hasStatus = rawStatus && typeof rawStatus === "object" && typeof rawStatus.type === "string"
-    fetchedStatusKnown ||= Boolean(hasStatus)
-    const fetchedStatus: SessionStatus = hasStatus ? mapSdkSessionStatus(rawStatus) : "idle"
-    const fetchedRetry: SessionRetryState | null = hasStatus ? mapSdkSessionRetry(rawStatus) : null
-
-    const fetched = createClientSession(info, instanceId, "", { providerId: "", modelId: "" }, fetchedStatus)
-    fetched.retry = fetchedRetry
-    fetched.runtimeStatusKnown = fetchedStatusKnown
+    const info = await client.session.get({ sessionID: sessionId })
+    const fetched = createClientSession(info, instanceId)
 
     let updatedInstanceSessions: Map<string, Session> | undefined
     let shouldExpandAncestors = false
@@ -208,7 +262,7 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
         idleSince: getIdleSinceForStatusTransition(existing?.status, compacting ? "compacting" : fetched.status, existing?.idleSince),
         pendingPermission: existing?.pendingPermission ?? fetched.pendingPermission,
         pendingQuestion: existing?.pendingQuestion ?? false,
-        runtimeStatusKnown: compacting || fetched.runtimeStatusKnown,
+        runtimeStatusKnown: compacting || existing?.runtimeStatusKnown || false,
       }
       const merged = mergeFetchedSessionRuntimeState(
         candidate,
@@ -384,7 +438,7 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
       })
     }
 
-    upsertMessageInfoV2(instanceId, info, { status, bumpRevision: true })
+    upsertMessageInfoV2(instanceId, info as unknown as MessageInfo, { status, bumpRevision: true })
 
     updateSessionInfo(instanceId, sessionId)
   }
@@ -405,10 +459,24 @@ function handleMessagePartDelta(instanceId: string, event: MessagePartDeltaEvent
   enqueueDelta(instanceId, messageID, partID, field, delta)
 }
 
-function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): void {
-  const info = event.properties?.info
+function handleSessionUpdate(
+  instanceId: string,
+  event: SessionCreated | SessionRevertStaged | SessionRevertCleared | SessionRevertCommitted,
+): void {
+  if (event.type !== "session.created") {
+    const revert = event.type === "session.revert.staged" ? event.data.revert : null
+    setSessionRevertV2(instanceId, event.data.sessionID, revert)
+    withSession(instanceId, event.data.sessionID, (session) => {
+      session.revert = revert ?? undefined
+    })
+    return
+  }
 
-  if (!info) return
+  const info = {
+    ...event.data,
+    id: event.data.sessionID,
+    time: { created: event.created, updated: event.created },
+  }
   if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(info.id)) return
 
   const instanceSessions = sessions().get(instanceId) ?? new Map<string, Session>()
@@ -430,21 +498,16 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
       retry: null,
       idleSince: null,
       version: info.version || "0",
-      metadata: (info as any).metadata,
+      projectID: (info as any).projectID ?? "",
+      cost: (info as any).cost ?? 0,
+      tokens: (info as any).tokens ?? { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      location: (info as any).location ?? { directory: instances().get(instanceId)?.folder ?? "" },
       time: info.time
         ? { ...info.time }
         : {
             created: Date.now(),
             updated: Date.now(),
           },
-      revert: info.revert
-        ? {
-            messageID: info.revert.messageID,
-            partID: info.revert.partID,
-            snapshot: info.revert.snapshot,
-            diff: info.revert.diff,
-          }
-        : undefined,
     } as Session
 
     let updatedInstanceSessions: Map<string, Session> | undefined
@@ -459,7 +522,6 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
     })
 
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
-    setSessionRevertV2(instanceId, info.id, info.revert ?? null)
     if (!newSession.parentId) {
       prependSessionListId(instanceId, newSession.id)
     }
@@ -476,16 +538,7 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
       parentId: info.parentID ?? existingSession.parentId,
       status: existingSession.status ?? "idle",
       retry: existingSession.retry ?? null,
-      metadata: (info as any).metadata ?? existingSession.metadata,
       time: mergedTime,
-      revert: info.revert
-        ? {
-            messageID: info.revert.messageID,
-            partID: info.revert.partID,
-            snapshot: info.revert.snapshot,
-            diff: info.revert.diff,
-          }
-        : existingSession.revert,
     }
 
     let updatedInstanceSessions: Map<string, Session> | undefined
@@ -500,21 +553,20 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
     })
 
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
-    setSessionRevertV2(instanceId, info.id, info.revert ?? null)
   }
 }
 
 function handleSessionDeleted(instanceId: string, event: EventSessionDeleted): void {
-  const properties = event.properties
-  const sessionId = properties?.info?.id ?? properties?.sessionID ?? properties?.id
+  const sessionId = event.data?.sessionID ?? event.properties?.info?.id ?? event.properties?.sessionID ?? event.properties?.id
   if (!sessionId) return
 
   log.info(`[SSE] Session deleted: ${sessionId}`)
+  clearNativeSessionRefresh(instanceId, sessionId)
   removeSessionRuntimeState(instanceId, sessionId)
 }
 
-function handleSessionIdle(instanceId: string, event: EventSessionIdle): void {
-  const sessionId = event.properties?.sessionID
+function handleSessionIdle(instanceId: string, event: SessionIdle): void {
+  const sessionId = event.data.sessionID
   if (!sessionId) return
 
   if (shouldSendOsNotificationForSession("idle", instanceId, sessionId)) {
@@ -524,18 +576,19 @@ function handleSessionIdle(instanceId: string, event: EventSessionIdle): void {
     fireOsNotification({ title, body })
   }
 
-  ensureSessionStatus(instanceId, sessionId, "idle", (event as any)?.directory)
+  ensureSessionStatus(instanceId, sessionId, "idle", event.location?.directory)
+  requestNativeSessionRefresh(instanceId, sessionId, true)
   log.info(`[SSE] Session idle: ${sessionId}`)
 }
 
-function handleSessionStatus(instanceId: string, event: EventSessionStatus): void {
-  const sessionId = event.properties?.sessionID
+function handleSessionStatus(instanceId: string, event: SessionStatus2): void {
+  const sessionId = event.data.sessionID
   if (!sessionId) return
 
-  const rawStatus = event.properties.status
+  const rawStatus = event.data.status
   const status = mapSdkSessionStatus(rawStatus)
   const retry = mapSdkSessionRetry(rawStatus)
-  ensureSessionStatus(instanceId, sessionId, status, (event as any)?.directory, retry)
+  ensureSessionStatus(instanceId, sessionId, status, event.location?.directory, retry)
   if (retry) {
     const remainingSeconds = Math.max(0, Math.round((retry.next - Date.now()) / 1000))
     const countdown =
@@ -558,15 +611,15 @@ function handleSessionStatus(instanceId: string, event: EventSessionStatus): voi
   log.info(`[SSE] Session status updated: ${sessionId}`, { status })
 }
 
-function handleSessionCompacted(instanceId: string, event: EventSessionCompacted): void {
-  const sessionID = event.properties?.sessionID
+function handleSessionCompacted(instanceId: string, event: SessionCompactionEnded): void {
+  const sessionID = event.data.sessionID
   if (!sessionID) return
 
   log.info(`[SSE] Session compacted: ${sessionID}`)
 
   const existing = sessions().get(instanceId)?.get(sessionID)
   if (existing) setSessionStatus(instanceId, sessionID, "working", { force: true })
-  else ensureSessionStatus(instanceId, sessionID, "working", (event as any)?.directory)
+  else ensureSessionStatus(instanceId, sessionID, "working", event.location?.directory)
 
   loadMessages(instanceId, sessionID, { force: true }).catch((error) => log.error("Failed to reload session after compaction", error))
 
@@ -585,9 +638,9 @@ function handleSessionCompacted(instanceId: string, event: EventSessionCompacted
   })
 }
 
-function handleSessionError(instanceId: string, event: EventSessionError): void {
-  const error = event.properties?.error
-  const sessionId = event.properties?.sessionID
+function handleSessionError(instanceId: string, event: SessionExecutionFailed): void {
+  const error = event.data.error
+  const sessionId = event.data.sessionID
   if (sessionId) messageStoreBus.getOrCreate(instanceId).failPendingSends(sessionId)
   log.error(`[SSE] Session error:`, error)
 
@@ -625,8 +678,8 @@ function handleMessagePartRemoved(instanceId: string, event: MessagePartRemovedE
   updateSessionInfo(instanceId, sessionID)
 }
 
-function handleTuiToast(_instanceId: string, event: TuiToastEvent): void {
-  const payload = event?.properties
+function handleTuiToast(_instanceId: string, event: TuiToastShow): void {
+  const payload = event.data
   if (!payload || typeof payload.message !== "string" || typeof payload.variant !== "string") return
   if (!payload.message.trim()) return
 
@@ -642,8 +695,8 @@ function handleTuiToast(_instanceId: string, event: TuiToastEvent): void {
   })
 }
 
-function handlePermissionUpdated(instanceId: string, event: EventPermissionV2Asked | LegacyPermissionAskedEvent): void {
-  const permission = event?.properties as PermissionRequest | undefined
+function handlePermissionUpdated(instanceId: string, event: PermissionAsked): void {
+  const permission = event.data as PermissionRequest
   if (!permission) return
   const permissionId = getPermissionId(permission)
   if (!permissionId) return
@@ -652,12 +705,10 @@ function handlePermissionUpdated(instanceId: string, event: EventPermissionV2Ask
     return
   }
   const isPending = getPermissionQueue(instanceId).some((pending) => pending.id === permissionId)
-  const source = event.type === "permission.v2.asked"
-    ? "v2"
-    : event.type === "permission.updated" && isPending ? undefined : "legacy"
+  void isPending
 
   log.info(`[SSE] Permission request: ${permissionId} (${getPermissionKind(permission)})`)
-  const queuedPermission = addPermissionToQueue(instanceId, permission, source) ?? permission
+  const queuedPermission = addPermissionToQueue(instanceId, permission) ?? permission
   upsertPermissionV2(instanceId, queuedPermission)
 
   const sessionId = getPermissionSessionId(permission)
@@ -670,9 +721,8 @@ function handlePermissionUpdated(instanceId: string, event: EventPermissionV2Ask
   }
 }
 
-function handlePermissionReplied(instanceId: string, event: EventPermissionV2Replied | LegacyPermissionRepliedEvent): void {
-  const properties = event?.properties
-  const requestId = getRequestIdFromPermissionReply(properties)
+function handlePermissionReplied(instanceId: string, event: PermissionReplied): void {
+  const requestId = getRequestIdFromPermissionReply(event.data)
   if (!requestId) return
 
   log.info(`[SSE] Permission replied: ${requestId}`)
@@ -681,13 +731,11 @@ function handlePermissionReplied(instanceId: string, event: EventPermissionV2Rep
   removePermissionV2(instanceId, requestId)
 }
 
-function handleQuestionAsked(instanceId: string, event: EventQuestionV2Asked | LegacyQuestionAskedEvent): void {
-  const request = event?.properties as QuestionRequest | undefined
+function handleQuestionAsked(instanceId: string, event: QuestionAsked): void {
+  const request = event.data as QuestionRequest
   if (!request) return
-  const source = event.type === "question.asked" ? "legacy" : "v2"
-
   log.info(`[SSE] Question asked: ${getQuestionId(request)}`)
-  addQuestionToQueue(instanceId, request, source)
+  addQuestionToQueue(instanceId, request)
   upsertQuestionV2(instanceId, request)
 
   const sessionId = getQuestionSessionId(request)
@@ -702,10 +750,9 @@ function handleQuestionAsked(instanceId: string, event: EventQuestionV2Asked | L
 
 function handleQuestionAnswered(
   instanceId: string,
-  event: EventQuestionV2Replied | EventQuestionV2Rejected | LegacyQuestionAnsweredEvent,
+  event: QuestionReplied | QuestionRejected,
 ): void {
-  const properties = event?.properties
-  const requestId = getRequestIdFromQuestionReply(properties)
+  const requestId = getRequestIdFromQuestionReply(event.data)
   if (!requestId) return
 
   log.info(`[SSE] Question answered: ${requestId}`)
@@ -718,6 +765,7 @@ export {
   handleMessageRemoved,
   handleMessagePartDelta,
   handleMessageUpdate,
+  handleNativeSessionEvent,
   handlePermissionReplied,
   handlePermissionUpdated,
   handleQuestionAsked,

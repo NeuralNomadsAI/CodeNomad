@@ -1,13 +1,11 @@
-import { Agent, fetch } from "undici"
-import { Agent as UndiciAgent } from "undici"
+import type { OpenCodeEvent } from "@opencode-ai/client"
 import { EventBus } from "../events/bus"
 import { Logger } from "../logger"
 import { WorkspaceManager } from "./manager"
-import { LOOPBACK_HOST } from "./loopback"
 import { InstanceStreamEvent, InstanceStreamStatus } from "../api-types"
 
-const STREAM_AGENT = new UndiciAgent({ bodyTimeout: 0, headersTimeout: 0 })
 const RECONNECT_DELAY_MS = 1000
+const DIRECTORY_OWNER_CACHE_MS = 2000
 
 interface InstanceEventBridgeOptions {
   workspaceManager: WorkspaceManager
@@ -15,212 +13,125 @@ interface InstanceEventBridgeOptions {
   logger: Logger
 }
 
-interface ActiveStream {
-  controller: AbortController
-  task: Promise<void>
-}
-
 export class InstanceEventBridge {
-  private readonly streams = new Map<string, ActiveStream>()
+  private readonly controller = new AbortController()
+  private status: InstanceStreamStatus = "connecting"
+  private task?: Promise<void>
+  private readonly directoryOwners = new Map<string, { expiresAt: number; owner: Promise<string | undefined> }>()
+  private readonly onWorkspaceStarted = (event: { workspace: { id: string } }) => {
+    this.directoryOwners.clear()
+    if (!this.task) this.task = this.run()
+    else this.publishStatus(event.workspace.id, this.status)
+  }
+  private readonly onWorkspaceStopped = (event: { workspaceId: string }) => {
+    this.directoryOwners.clear()
+    this.publishStatus(event.workspaceId, "disconnected", "workspace stopped")
+  }
+  private readonly onWorkspaceError = (event: { workspace: { id: string } }) => {
+    this.directoryOwners.clear()
+    this.publishStatus(event.workspace.id, "disconnected", "workspace error")
+  }
 
   constructor(private readonly options: InstanceEventBridgeOptions) {
     const bus = this.options.eventBus
-    bus.on("workspace.started", (event) => this.startStream(event.workspace.id))
-    bus.on("workspace.stopped", (event) => this.stopStream(event.workspaceId, "workspace stopped"))
-    bus.on("workspace.error", (event) => this.stopStream(event.workspace.id, "workspace error"))
+    bus.on("workspace.started", this.onWorkspaceStarted)
+    bus.on("workspace.stopped", this.onWorkspaceStopped)
+    bus.on("workspace.error", this.onWorkspaceError)
   }
 
   shutdown() {
-    for (const [id, active] of this.streams) {
-      active.controller.abort()
-      this.publishStatus(id, "disconnected")
+    this.controller.abort()
+    const bus = this.options.eventBus
+    bus.off("workspace.started", this.onWorkspaceStarted)
+    bus.off("workspace.stopped", this.onWorkspaceStopped)
+    bus.off("workspace.error", this.onWorkspaceError)
+    for (const workspace of this.options.workspaceManager.list()) {
+      this.publishStatus(workspace.id, "disconnected")
     }
-    this.streams.clear()
   }
 
-  private startStream(workspaceId: string) {
-    if (this.streams.has(workspaceId)) {
-      return
-    }
-
-    const controller = new AbortController()
-    const task = this.runStream(workspaceId, controller.signal)
-      .catch((error) => {
-        if (!controller.signal.aborted) {
-          this.options.logger.warn({ workspaceId, err: error }, "Instance event stream failed")
-          this.publishStatus(workspaceId, "error", error instanceof Error ? error.message : String(error))
-        }
-      })
-      .finally(() => {
-        const active = this.streams.get(workspaceId)
-        if (active?.controller === controller) {
-          this.streams.delete(workspaceId)
-        }
-      })
-
-    this.streams.set(workspaceId, { controller, task })
-  }
-
-  private stopStream(workspaceId: string, reason?: string) {
-    const active = this.streams.get(workspaceId)
-    if (!active) {
-      return
-    }
-    active.controller.abort()
-    this.streams.delete(workspaceId)
-    this.publishStatus(workspaceId, "disconnected", reason)
-  }
-
-  private async runStream(workspaceId: string, signal: AbortSignal) {
-    while (!signal.aborted) {
-      const port = this.options.workspaceManager.getInstancePort(workspaceId)
-      if (!port) {
-        await this.delay(RECONNECT_DELAY_MS, signal)
-        continue
-      }
-
-      this.publishStatus(workspaceId, "connecting")
-
+  private async run() {
+    while (!this.controller.signal.aborted) {
+      this.updateStatus("connecting")
       try {
-        await this.consumeStream(workspaceId, port, signal)
-      } catch (error) {
-        if (signal.aborted) {
-          break
+        const events = await this.options.workspaceManager.subscribeToSharedService(this.controller.signal)
+        this.updateStatus("connected")
+        for await (const event of events) {
+          if (this.controller.signal.aborted) return
+          await this.publishEvent(event)
         }
-        this.options.logger.warn({ workspaceId, err: error }, "Instance event stream disconnected")
-        this.publishStatus(workspaceId, "error", error instanceof Error ? error.message : String(error))
-        await this.delay(RECONNECT_DELAY_MS, signal)
+        if (!this.controller.signal.aborted) throw new Error("Shared OpenCode event stream ended")
+      } catch (error) {
+        if (this.controller.signal.aborted) return
+        this.options.logger.warn({ err: error }, "Shared OpenCode event stream disconnected")
+        this.updateStatus("error", error instanceof Error ? error.message : String(error))
+        await this.delay(RECONNECT_DELAY_MS)
       }
     }
   }
 
-  private async consumeStream(workspaceId: string, port: number, signal: AbortSignal) {
-    const url = `http://${LOOPBACK_HOST}:${port}/global/event`
+  private async publishEvent(event: OpenCodeEvent) {
+    const directory = event.location?.directory
+    if (!directory) return
 
-    const headers: Record<string, string> = { Accept: "text/event-stream" }
-    const authHeader = this.options.workspaceManager.getInstanceAuthorizationHeader(workspaceId)
-    if (authHeader) {
-      headers["Authorization"] = authHeader
+    const instanceId = await this.resolveDirectoryOwner(directory)
+    if (!instanceId) return
+
+    // The server's auto-accept boundary still reads the legacy property name.
+    const compatibleEvent: InstanceStreamEvent = {
+      ...event,
+      properties: this.compatibilityProperties(event),
     }
-
-    const response = await fetch(url, {
-      headers,
-      signal,
-      dispatcher: STREAM_AGENT,
-    })
-
-    if (!response.ok || !response.body) {
-      throw new Error(`Instance event stream unavailable (${response.status})`)
-    }
-
-    this.publishStatus(workspaceId, "connected")
-
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ""
-
-    while (!signal.aborted) {
-      const { done, value } = await reader.read()
-      if (done || !value) {
-        break
-      }
-      buffer += decoder.decode(value, { stream: true })
-      buffer = this.flushEvents(buffer, workspaceId)
-    }
+    this.options.eventBus.publish({ type: "instance.event", instanceId, event: compatibleEvent })
   }
 
-  private flushEvents(buffer: string, workspaceId: string) {
-    let separatorIndex = buffer.indexOf("\n\n")
+  private resolveDirectoryOwner(directory: string): Promise<string | undefined> {
+    const now = Date.now()
+    const cached = this.directoryOwners.get(directory)
+    if (cached && cached.expiresAt > now) return cached.owner
 
-    while (separatorIndex >= 0) {
-      const chunk = buffer.slice(0, separatorIndex)
-      buffer = buffer.slice(separatorIndex + 2)
-      this.processChunk(chunk, workspaceId)
-      separatorIndex = buffer.indexOf("\n\n")
-    }
-
-    return buffer
+    const workspaces = this.options.workspaceManager.list()
+    const owner = Promise.all(workspaces.map((workspace) => (
+      this.options.workspaceManager.ownsDirectory(workspace.id, directory)
+    )))
+      .then((ownership) => workspaces.find((_, index) => ownership[index])?.id)
+      .catch((error) => {
+        this.options.logger.warn({ err: error, directory }, "Failed to resolve instance event directory owner")
+        return undefined
+      })
+    this.directoryOwners.set(directory, { expiresAt: now + DIRECTORY_OWNER_CACHE_MS, owner })
+    return owner
   }
 
-  private processChunk(chunk: string, workspaceId: string) {
-    const lines = chunk.split(/\r?\n/)
-    const dataLines: string[] = []
-
-    for (const line of lines) {
-      if (line.startsWith(":")) {
-        continue
-      }
-      if (line.startsWith("data:")) {
-        dataLines.push(line.slice(5).trimStart())
-      }
+  private compatibilityProperties(event: OpenCodeEvent): Record<string, unknown> {
+    if (event.type === "session.created") {
+      return { info: { ...event.data, id: event.data.sessionID } }
     }
-
-    if (dataLines.length === 0) {
-      return
+    if (event.type === "session.deleted") {
+      return { id: event.data.sessionID }
     }
+    return event.data as Record<string, unknown>
+  }
 
-    const payload = dataLines.join("\n").trim()
-    if (!payload) {
-      return
-    }
-
-    try {
-      const parsed = JSON.parse(payload) as any
-      if (!parsed || typeof parsed !== "object") {
-        this.options.logger.warn({ workspaceId, chunk: payload }, "Dropped malformed instance event")
-        return
-      }
-
-      // OpenCode SSE payload shapes vary across versions.
-      // Common variants:
-      // - { type, properties, ... }
-      // - { payload: { type, properties, ... }, directory: "/abs/path" }
-      // - { payload: { type, properties, ... } }
-      const base = parsed.payload && typeof parsed.payload === "object" ? parsed.payload : parsed
-
-      const event: InstanceStreamEvent | null = base && typeof base === "object" ? ({ ...base } as any) : null
-
-      // Attach directory when available (don't overwrite if already present).
-      if (event && !(event as any).directory && typeof (parsed as any).directory === "string") {
-        ;(event as any).directory = (parsed as any).directory
-      }
-
-      if (!event || typeof (event as any).type !== "string") {
-        this.options.logger.warn({ workspaceId, chunk: payload }, "Dropped malformed instance event")
-        return
-      }
-
-      this.options.logger.debug({ workspaceId, eventType: (event as any).type }, "Instance SSE event received")
-      if (this.options.logger.isLevelEnabled("trace")) {
-        this.options.logger.trace({ workspaceId, event }, "Instance SSE event payload")
-      }
-      this.options.eventBus.publish({ type: "instance.event", instanceId: workspaceId, event })
-    } catch (error) {
-      this.options.logger.warn({ workspaceId, chunk: payload, err: error }, "Failed to parse instance SSE payload")
+  private updateStatus(status: InstanceStreamStatus, reason?: string) {
+    this.status = status
+    for (const workspace of this.options.workspaceManager.list()) {
+      this.publishStatus(workspace.id, status, reason)
     }
   }
 
   private publishStatus(instanceId: string, status: InstanceStreamStatus, reason?: string) {
-    this.options.logger.debug({ instanceId, status, reason }, "Instance SSE status updated")
+    this.options.logger.debug({ instanceId, status, reason }, "Instance event status updated")
     this.options.eventBus.publish({ type: "instance.eventStatus", instanceId, status, reason })
   }
 
-  private delay(duration: number, signal: AbortSignal) {
-    if (duration <= 0) {
-      return Promise.resolve()
-    }
+  private delay(duration: number) {
     return new Promise<void>((resolve) => {
-      const timeout = setTimeout(() => {
-        signal.removeEventListener("abort", onAbort)
-        resolve()
-      }, duration)
-
-      const onAbort = () => {
+      const timeout = setTimeout(resolve, duration)
+      this.controller.signal.addEventListener("abort", () => {
         clearTimeout(timeout)
         resolve()
-      }
-
-      signal.addEventListener("abort", onAbort, { once: true })
+      }, { once: true })
     })
   }
 }

@@ -109,7 +109,7 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
     try {
       const instanceId = await runAbortable(async (operationSignal) => {
         const existingId = match.existingWorkspaceId
-        const create = (forceNew: boolean) => createInstance(tab.folder, tab.binaryPath, tab.projectName, {
+        const create = (forceNew: boolean) => createInstance(tab.folder, tab.projectName, {
           activate: false, signal: operationSignal, forceNew,
           waitForCreateCommit: waitForCreateCommit ? () => waitForCreateCommit : undefined,
           shouldCreateCommit: canCommitCreation,

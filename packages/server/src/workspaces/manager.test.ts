@@ -1,20 +1,17 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
+import type { LocationRef, OpenCodeClient, OpenCodeEvent } from "@opencode-ai/client"
 import pino from "pino"
 
 import { EventBus } from "../events/bus"
 import {
-  WorkspaceWindowsTreeCleanupIncompleteError,
-  type ProcessExitInfo,
-  type WorkspaceRuntime,
-} from "./runtime"
-import {
-  WorkspaceCleanupTimeoutError,
   WorkspaceLaunchCancelledError,
-  WorkspaceLaunchTimeoutError,
   WorkspaceManager,
   WorkspaceShutdownError,
 } from "./manager"
+import type { OpenCodeEnsureOptions } from "./opencode-service"
+import path from "node:path"
+import os from "node:os"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -26,49 +23,75 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-class ControlledRuntime {
-  readonly launchResult = deferred<Awaited<ReturnType<WorkspaceRuntime["launch"]>>>()
-  readonly launchCalled = deferred<string>()
-  readonly active = new Set<string>()
-  stopCalls = 0
-  failStops = 0
-  onExit?: (info: ProcessExitInfo) => void
+class ControlledSharedService {
+  readonly validationStarted = deferred<void>()
+  validationGate?: ReturnType<typeof deferred<void>>
+  validationCalls: Array<{ location: LocationRef; options?: OpenCodeEnsureOptions }> = []
+  evictions: LocationRef[] = []
+  failEvictions = 0
 
-  launch: WorkspaceRuntime["launch"] = (options) => {
-    this.active.add(options.workspaceId)
-    this.onExit = options.onExit
-    this.launchCalled.resolve(options.workspaceId)
-    options.signal?.addEventListener("abort", () => this.launchResult.reject(options.signal?.reason), { once: true })
-    return this.launchResult.promise
+  async endpoint(options?: OpenCodeEnsureOptions) {
+    this.assertCommand(options)
+    return { url: "http://127.0.0.1:4321", auth: { type: "basic" as const, username: "user", password: "pass" } }
   }
 
-  stop: WorkspaceRuntime["stop"] = async (workspaceId) => {
-    this.stopCalls += 1
-    if (this.failStops-- > 0) throw new Error("controlled stop failure")
-    this.active.delete(workspaceId)
+  async client() {
+    return {} as OpenCodeClient
   }
 
-  resolveLaunch(): void {
-    this.launchResult.resolve({
-      pid: 1234,
-      port: 4321,
-      exitPromise: new Promise<ProcessExitInfo>(() => undefined),
-      getLastOutput: () => "",
-    })
+  async headers(options?: OpenCodeEnsureOptions) {
+    this.assertCommand(options)
+    return { authorization: "Basic token" }
+  }
+
+  async validateLocation(location: LocationRef, requestOptions?: { signal?: AbortSignal }, options?: OpenCodeEnsureOptions) {
+    this.assertCommand(options)
+    this.validationCalls.push({ location, options })
+    this.validationStarted.resolve()
+    if (this.validationGate) {
+      await Promise.race([
+        this.validationGate.promise,
+        new Promise<never>((_resolve, reject) => {
+          const cancel = () => reject(requestOptions?.signal?.reason)
+          requestOptions?.signal?.addEventListener("abort", cancel, { once: true })
+          if (requestOptions?.signal?.aborted) cancel()
+        }),
+      ])
+    }
+    return {
+      directory: location.directory,
+      workspaceID: location.workspaceID ?? "location-1",
+      project: { id: "project-1", directory: location.directory, canonical: location.directory },
+    }
+  }
+
+  async subscribe(): Promise<AsyncIterable<OpenCodeEvent>> {
+    return { async *[Symbol.asyncIterator]() {} }
+  }
+
+  async evict(location: LocationRef) {
+    if (this.failEvictions-- > 0) throw new Error("controlled eviction failure")
+    this.evictions.push(location)
+  }
+
+  async shutdown() {}
+
+  private assertCommand(options?: OpenCodeEnsureOptions) {
+    assert.equal(options?.file, path.join(os.tmpdir(), "codenomad-opencode-v2", "opencode", "service.json"))
+    assert.equal(options?.environment?.XDG_STATE_HOME, path.join(os.tmpdir(), "codenomad-opencode-v2"))
+    assert.equal(
+      options?.command?.[5],
+      options?.environment?.CODENOMAD_SERVICE_CONTENDERS,
+    )
+    assert.match(options?.environment?.CODENOMAD_SERVICE_CONTENDERS ?? "", new RegExp(`contenders-${process.pid}-.*\\.txt$`))
+    assert.equal(options?.command?.[0], process.execPath)
+    assert.equal(options?.command?.[1], "-e")
+    assert.equal(options?.command?.[4], JSON.stringify(["serve", "--service"]))
   }
 }
 
-function createHarness(options: {
-  stubReadiness?: boolean
-  shutdownTimeoutMs?: number
-  launchTimeoutMs?: number
-  setTimeout?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>
-  clearTimeout?: (timer: ReturnType<typeof setTimeout>) => void
-} = {}) {
-  const { stubReadiness = true, ...managerOptions } = options
+function createHarness(service = new ControlledSharedService()) {
   const eventBus = new EventBus()
-  const runtime = new ControlledRuntime()
-  const readiness = deferred<string | undefined>()
   const started: string[] = []
   const stopped: string[] = []
   eventBus.on("workspace.started", (event) => started.push(event.workspace.id))
@@ -76,313 +99,98 @@ function createHarness(options: {
   const manager = new WorkspaceManager({
     rootDir: process.cwd(),
     settings: { getOwner: () => ({}) } as never,
-    binaryResolver: { resolve: () => ({ path: "test-opencode", label: "test-opencode" }) } as never,
+    binaryResolver: { resolveDefault: () => ({ path: process.execPath, label: "OpenCode V2" }) } as never,
     eventBus,
     logger: pino({ level: "silent" }),
     getServerBaseUrl: () => "http://127.0.0.1:4000",
-    runtime,
-    ...managerOptions,
+    sharedService: service,
   })
-  if (stubReadiness) {
-    ;(manager as any).waitForWorkspaceReadiness = ({ signal }: { signal?: AbortSignal }) => Promise.race([
-      readiness.promise,
-      new Promise<never>((_resolve, reject) => {
-        const cancel = () => reject(signal?.reason)
-        signal?.addEventListener("abort", cancel, { once: true })
-        if (signal?.aborted) cancel()
-      }),
+  return { manager, service, started, stopped }
+}
+
+describe("workspace manager shared service lifecycle", () => {
+  it("creates a ready logical location without a workspace process", async () => {
+    const { manager, service, started } = createHarness()
+    const { workspace, created } = await manager.create(process.cwd())
+
+    assert.equal(created, true)
+    assert.equal(workspace.status, "ready")
+    assert.equal(workspace.pid, undefined)
+    assert.equal(workspace.port, undefined)
+    assert.equal(manager.getInstanceAuthorizationHeader(workspace.id), "Basic token")
+    assert.deepEqual(service.validationCalls.map(({ location }) => location), [{ directory: process.cwd() }])
+    assert.deepEqual(started, [workspace.id])
+  })
+
+  it("shares one in-flight logical location creation", async () => {
+    const harness = createHarness()
+    harness.service.validationGate = deferred<void>()
+    const first = harness.manager.create(process.cwd())
+    await harness.service.validationStarted.promise
+    const second = harness.manager.create(process.cwd())
+    harness.service.validationGate.resolve()
+
+    const [leader, follower] = await Promise.all([first, second])
+    assert.equal(leader.workspace.id, follower.workspace.id)
+    assert.equal(Number(leader.created) + Number(follower.created), 1)
+    assert.equal(harness.service.validationCalls.length, 1)
+  })
+
+  it("evicts only after the last logical owner of a location is deleted", async () => {
+    const harness = createHarness()
+    const first = await harness.manager.create(process.cwd())
+    const forced = await harness.manager.create(process.cwd(), undefined, { forceNew: true })
+
+    await harness.manager.delete(forced.workspace.id)
+    assert.deepEqual(harness.service.evictions, [])
+    assert.equal(harness.manager.get(first.workspace.id)?.status, "ready")
+
+    await harness.manager.delete(first.workspace.id)
+    assert.deepEqual(harness.service.evictions, [{ directory: process.cwd(), workspaceID: "location-1" }])
+    assert.deepEqual(harness.stopped, [forced.workspace.id, first.workspace.id])
+  })
+
+  it("evicts a location once when duplicate owners are deleted concurrently", async () => {
+    const harness = createHarness()
+    const first = await harness.manager.create(process.cwd())
+    const forced = await harness.manager.create(process.cwd(), undefined, { forceNew: true })
+
+    await Promise.all([
+      harness.manager.delete(first.workspace.id),
+      harness.manager.delete(forced.workspace.id),
     ])
-  }
-  return { manager, runtime, readiness, started, stopped }
-}
 
-async function createReady(harness: ReturnType<typeof createHarness>) {
-  const creation = harness.manager.create(process.cwd())
-  const workspaceId = await harness.runtime.launchCalled.promise
-  harness.runtime.resolveLaunch()
-  harness.readiness.resolve(undefined)
-  await creation
-  return workspaceId
-}
-
-describe("workspace manager lifecycle", () => {
-  it("rejects a healthy workspace whose OpenCode configuration is invalid", async () => {
-    const originalFetch = globalThis.fetch
-    const requests: string[] = []
-    const configError = JSON.stringify({
-      name: "ConfigInvalidError",
-      data: {
-        path: "C:\\Users\\dev\\.config\\opencode\\agents\\invalid.md",
-        issues: [{ path: ["tools", "bash"], message: 'Expected boolean, got "ask"' }],
-      },
-    })
-    globalThis.fetch = (async (input: URL | RequestInfo) => {
-      const url = String(input)
-      requests.push(url)
-      if (url.includes("/global/health")) {
-        return new Response(JSON.stringify({ healthy: true, version: "1.18.5" }), {
-          headers: { "Content-Type": "application/json" },
-        })
-      }
-      return new Response(configError, { status: 400, headers: { "Content-Type": "application/json" } })
-    }) as typeof fetch
-
-    try {
-      const harness = createHarness({ stubReadiness: false })
-      ;(harness.manager as any).waitForPortAvailability = async () => undefined
-      const creation = harness.manager.create(process.cwd())
-      const workspaceId = await harness.runtime.launchCalled.promise
-      harness.runtime.resolveLaunch()
-
-      await assert.rejects(creation, (error: unknown) => {
-        assert.ok(error instanceof Error)
-        assert.equal(error.message, configError)
-        return true
-      })
-      assert.deepEqual(requests.map((url) => new URL(url).pathname), ["/global/health", "/config"])
-      assert.equal(new URL(requests[1]).search, "")
-      assert.equal(harness.runtime.active.has(workspaceId), false)
-      assert.deepEqual(harness.started, [])
-      assert.deepEqual(harness.manager.list(), [])
-    } finally {
-      globalThis.fetch = originalFetch
-    }
+    assert.equal(harness.service.evictions.length, 1)
+    assert.deepEqual(harness.manager.list(), [])
   })
 
-  for (const boundary of ["launch", "readiness", "shutdown"] as const) {
-    it(`cancels and cleans a workspace during ${boundary}`, async () => {
-      const harness = createHarness()
-      const creation = harness.manager.create(process.cwd())
-      const workspaceId = await harness.runtime.launchCalled.promise
-      let cleanup: Promise<unknown>
-      if (boundary === "readiness") {
-        harness.runtime.resolveLaunch()
-        await new Promise<void>((resolve) => setImmediate(resolve))
-        cleanup = harness.manager.delete(workspaceId)
-      } else {
-        cleanup = boundary === "shutdown" ? harness.manager.shutdown() : harness.manager.delete(workspaceId)
-        harness.runtime.resolveLaunch()
-      }
-
-      await assert.rejects(creation, WorkspaceLaunchCancelledError)
-      await cleanup
-      assert.deepEqual([harness.runtime.active.size, harness.started, harness.manager.list(), harness.stopped],
-        [0, [], [], boundary === "readiness" ? [workspaceId] : []])
-    })
-  }
-
-  it("shares failed cleanup and allows a later delete retry", async () => {
+  it("cancels validation and cleans its logical location", async () => {
     const harness = createHarness()
-    const workspaceId = await createReady(harness)
-    harness.runtime.failStops = 2
+    harness.service.validationGate = deferred<void>()
+    const creation = harness.manager.create(process.cwd())
+    await harness.service.validationStarted.promise
+    const record = [...(harness.manager as any).workspaces.values()][0]
+    const deletion = harness.manager.delete(record.id)
 
-    const first = harness.manager.delete(workspaceId)
-    const concurrent = harness.manager.delete(workspaceId)
-    assert.strictEqual(first, concurrent)
-    const failures = await Promise.allSettled([first, concurrent])
-    assert.deepEqual(failures.map((result) => result.status), ["rejected", "rejected"])
-    assert.equal(harness.runtime.active.has(workspaceId), true)
-
-    await harness.manager.delete(workspaceId)
-    assert.equal(harness.runtime.active.has(workspaceId), false)
-    assert.equal(harness.manager.get(workspaceId), undefined)
+    await assert.rejects(creation, WorkspaceLaunchCancelledError)
+    await deletion
+    assert.deepEqual(harness.manager.list(), [])
+    assert.deepEqual(harness.service.evictions, [{ directory: process.cwd() }])
   })
 
-  it("retries cancellation deletion for an already-cancelled request", async () => {
+  it("keeps a failed eviction retryable and reports shutdown failures", async () => {
     const harness = createHarness()
-    const creation = harness.manager.create(process.cwd(), undefined, { requestId: "retry-cancel" })
-    const workspaceId = await harness.runtime.launchCalled.promise
-    harness.runtime.resolveLaunch()
-    harness.readiness.resolve(undefined)
-    await creation
-    harness.runtime.failStops = 2
+    const { workspace } = await harness.manager.create(process.cwd())
+    harness.service.failEvictions = 1
 
-    await assert.rejects(harness.manager.cancelCreationRequest("retry-cancel"), /controlled stop failure/)
-    assert.equal(harness.manager.get(workspaceId)?.id, workspaceId)
-    assert.equal(harness.runtime.active.has(workspaceId), true)
-
-    await harness.manager.cancelCreationRequest("retry-cancel")
-    assert.equal(harness.manager.get(workspaceId), undefined)
-    assert.equal(harness.runtime.active.has(workspaceId), false)
-    assert.deepEqual(harness.stopped, [workspaceId])
-  })
-
-  it("gives release and cancellation one terminal winner", async () => {
-    const cancelled = createHarness()
-    const cancelledCreation = cancelled.manager.create(process.cwd(), undefined, { requestId: "cancel-wins" })
-    const cancelledId = await cancelled.runtime.launchCalled.promise
-    cancelled.runtime.resolveLaunch()
-    cancelled.readiness.resolve(undefined)
-    await cancelledCreation
-    const stopStarted = deferred<void>()
-    const finishStop = deferred<void>()
-    const originalStop = cancelled.runtime.stop
-    cancelled.runtime.stop = async (workspaceId) => {
-      stopStarted.resolve()
-      await finishStop.promise
-      await originalStop(workspaceId)
-    }
-
-    const cancellation = cancelled.manager.cancelCreationRequest("cancel-wins")
-    await stopStarted.promise
-    assert.equal(cancelled.manager.releaseCreationRequest(cancelledId, "cancel-wins"), false)
-    assert.equal(cancelled.manager.get(cancelledId)?.id, cancelledId)
-    finishStop.resolve()
-    await cancellation
-    assert.equal(cancelled.manager.get(cancelledId), undefined)
-
-    const released = createHarness()
-    const releasedCreation = released.manager.create(process.cwd(), undefined, { requestId: "release-wins" })
-    const releasedId = await released.runtime.launchCalled.promise
-    released.runtime.resolveLaunch()
-    released.readiness.resolve(undefined)
-    await releasedCreation
-
-    assert.equal(released.manager.releaseCreationRequest(releasedId, "release-wins"), true)
-    await released.manager.cancelCreationRequest("release-wins")
-    assert.equal(released.manager.releaseCreationRequest(releasedId, "release-wins"), true)
-    assert.equal(released.manager.get(releasedId)?.id, releasedId)
-    assert.equal(released.runtime.active.has(releasedId), true)
-  })
-
-  it("retains unresolved pre-creation cancellation until its delayed create", async () => {
-    const harness = createHarness()
-    const requestIds = Array.from({ length: 1_025 }, (_, index) => `pending-cancel-${index}`)
-    await Promise.all(requestIds.map((requestId) => harness.manager.cancelCreationRequest(requestId)))
-
-    assert.equal((harness.manager as any).cancelledCreationRequests.size, requestIds.length)
-    await assert.rejects(
-      harness.manager.create(process.cwd(), undefined, { requestId: requestIds[0] }),
-      /was cancelled/,
-    )
-    assert.equal((harness.manager as any).cancelledCreationRequests.has(requestIds[0]), false)
-    assert.equal((harness.manager as any).cancelledCreationRequests.size, requestIds.length - 1)
-  })
-
-  it("returns scoped correlation while an ordinary shared launch remains retained", async () => {
-    const harness = createHarness()
-    const ordinary = harness.manager.create(process.cwd())
-    const workspaceId = await harness.runtime.launchCalled.promise
-    const scoped = harness.manager.create(process.cwd(), undefined, { requestId: "restore-shared" })
-    harness.runtime.resolveLaunch()
-    harness.readiness.resolve(undefined)
-
-    const [ordinaryResult, scopedResult] = await Promise.all([ordinary, scoped])
-    assert.equal(ordinaryResult.created, true)
-    assert.equal(ordinaryResult.workspace.requestId, undefined)
-    assert.equal(scopedResult.created, false)
-    assert.equal(scopedResult.workspace.id, workspaceId)
-    assert.equal(scopedResult.workspace.requestId, "restore-shared")
-
-    assert.equal(harness.manager.releaseCreationRequest(workspaceId, "restore-shared"), true)
-    assert.equal(harness.manager.get(workspaceId)?.id, workspaceId)
-    assert.equal(harness.runtime.active.has(workspaceId), true)
-
-    const reused = await harness.manager.create(process.cwd(), undefined, { requestId: "restore-reused" })
-    assert.equal(reused.workspace.requestId, "restore-reused")
-    await harness.manager.cancelCreationRequest("restore-reused")
-    assert.equal(harness.manager.get(workspaceId)?.id, workspaceId)
-    assert.equal(harness.runtime.active.has(workspaceId), true)
-    await assert.rejects(
-      harness.manager.create(process.cwd(), undefined, { requestId: "restore-reused" }),
-      /was cancelled/,
-    )
-    assert.equal(harness.manager.releaseCreationRequest(workspaceId, "restore-reused"), false)
-  })
-
-  for (const boundary of ["runtime launch", "health readiness"] as const) {
-    it(`applies one shared end-to-end deadline during ${boundary} and cleans up`, async () => {
-      const deadlines: Array<() => void> = []
-      const harness = createHarness({
-        launchTimeoutMs: 25,
-        setTimeout: ((callback: () => void) => {
-          const timer = { active: true }
-          deadlines.push(() => { if (timer.active) callback() })
-          return timer as unknown as ReturnType<typeof setTimeout>
-        }) as typeof setTimeout,
-        clearTimeout: ((timer: { active: boolean }) => { timer.active = false }) as unknown as typeof clearTimeout,
-      })
-      const first = harness.manager.create(process.cwd(), undefined, { requestId: "deadline-one" })
-      const workspaceId = await harness.runtime.launchCalled.promise
-      const shared = harness.manager.create(process.cwd(), undefined, { requestId: "deadline-two" })
-      while ([...(harness.manager as any).pendingWorkspaceCreations.values()][0]?.ownership.size !== 2) {
-        await new Promise<void>((resolve) => setImmediate(resolve))
-      }
-      if (boundary === "health readiness") {
-        harness.runtime.resolveLaunch()
-        await new Promise<void>((resolve) => setImmediate(resolve))
-      }
-
-      for (const fire of deadlines) fire()
-      const outcomes = await Promise.allSettled([first, shared])
-      assert.deepEqual(outcomes.map((outcome) => outcome.status), ["rejected", "rejected"])
-      assert.ok(outcomes.every((outcome) => outcome.status === "rejected" && outcome.reason instanceof WorkspaceLaunchTimeoutError))
-      assert.strictEqual((outcomes[0] as PromiseRejectedResult).reason, (outcomes[1] as PromiseRejectedResult).reason)
-      assert.equal(harness.runtime.active.has(workspaceId), false)
-      assert.equal(harness.runtime.stopCalls >= 1, true)
-      assert.deepEqual(harness.manager.list(), [])
+    await assert.rejects(harness.manager.shutdown(), (error: unknown) => {
+      assert.ok(error instanceof WorkspaceShutdownError)
+      assert.match(String(error.errors[0]), /controlled eviction failure/)
+      return true
     })
-  }
+    assert.equal(harness.manager.get(workspace.id)?.status, "ready")
 
-  it("bounds shutdown instead of waiting forever", async () => {
-    let fireDeadline!: () => void
-    let cleared = 0
-    const harness = createHarness({
-      shutdownTimeoutMs: 25,
-      setTimeout: ((callback: () => void) => {
-        fireDeadline = callback
-        return {} as ReturnType<typeof setTimeout>
-      }) as typeof setTimeout,
-      clearTimeout: () => { cleared += 1 },
-    } as never)
-    const workspaceId = await createReady(harness)
-    cleared = 0
-    harness.runtime.stop = () => new Promise<void>(() => undefined)
-
-    const shutdown = harness.manager.shutdown()
-    fireDeadline()
-    await assert.rejects(shutdown, WorkspaceCleanupTimeoutError)
-    assert.equal(harness.manager.get(workspaceId)?.status, "ready")
-    assert.equal(cleared, 1)
+    await harness.manager.delete(workspace.id)
+    assert.equal(harness.manager.get(workspace.id), undefined)
   })
-
-  it("publishes stopped exactly once for normal exit, readiness failure, and manager cleanup", async () => {
-    const normal = createHarness()
-    const normalId = await createReady(normal)
-    normal.runtime.onExit?.({ workspaceId: normalId, code: 0, signal: null, requested: false })
-    await normal.manager.delete(normalId)
-    assert.deepEqual(normal.stopped, [normalId])
-
-    const failed = createHarness()
-    const failedCreation = failed.manager.create(process.cwd())
-    const failedId = await failed.runtime.launchCalled.promise
-    failed.runtime.resolveLaunch()
-    failed.readiness.reject(new Error("not ready"))
-    await assert.rejects(failedCreation, /not ready/)
-    assert.deepEqual(failed.stopped, [failedId])
-
-    const cleaned = createHarness()
-    const cleanedId = await createReady(cleaned)
-    await cleaned.manager.shutdown()
-    assert.deepEqual(cleaned.stopped, [cleanedId])
-  })
-
-  for (const [name, failure] of [
-    ["cleanup failures", new Error("stop failed")],
-    ["incomplete Windows tree cleanup", new WorkspaceWindowsTreeCleanupIncompleteError("workspace", 4242, ["taskkill failed"])],
-  ] as const) {
-    it(`aggregates ${name} during shutdown`, async () => {
-      const harness = createHarness()
-      const workspaceId = await createReady(harness)
-      harness.runtime.stop = async () => { throw failure }
-
-      await assert.rejects(harness.manager.shutdown(), (error: unknown) => {
-        assert.ok(error instanceof WorkspaceShutdownError)
-        assert.strictEqual(error.errors[0], failure)
-        return true
-      })
-      assert.equal(harness.manager.get(workspaceId)?.status, "ready")
-      assert.equal(harness.runtime.active.has(workspaceId), true)
-    })
-  }
 })

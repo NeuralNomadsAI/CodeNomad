@@ -5,7 +5,7 @@ Thank you for your interest in contributing! This guide will help you get starte
 ## Prerequisites
 
 - **Node.js 18+** and npm
-- **OpenCode CLI** in your `PATH` (the server connects to the OpenCode binary to manage workspaces)
+- **OpenCode CLI** in your `PATH` (CodeNomad uses one shared native V2 service for all workspace locations)
 
 ## Quick Start
 
@@ -107,8 +107,15 @@ Then open a pull request on GitHub targeting the `dev` branch.
 | `packages/ui` | SolidJS frontend — reactive UI components and stores |
 | `packages/electron-app` | Electron desktop shell |
 | `packages/tauri-app` | Tauri desktop shell (experimental) |
-| `packages/opencode-plugin` | OpenCode plugin integration |
 | `packages/cloudflare` | Cloudflare deployment adapters |
+
+### OpenCode V2 Boundaries
+
+- Server and UI pin `@opencode-ai/client@0.0.0-next-17288`; do not add `@opencode-ai/sdk`.
+- `packages/server/src/workspaces/opencode-service.ts` owns the single shared `Service.ensure` lifecycle. Workspaces are native OpenCode locations/directories, not separate server processes.
+- OpenCode session calls use `/workspaces/:id/instance/api/*`; CodeNomad control routes and multiplexed events use `/api/*` and `/api/events`.
+- Native `client.session.shell` and `client.session.instructions.entry` cover Shell and prompt instructions. There is no `packages/opencode-plugin` integration.
+- Git mutations and Yolo policy remain CodeNomad-owned server boundaries.
 
 ### Key UI Files
 
@@ -123,7 +130,7 @@ Then open a pull request on GitHub targeting the `dev` branch.
 | `packages/ui/src/components/session/session-view.tsx` | Main session view |
 | `packages/ui/src/lib/i18n/messages/` | Translation files (en, es, fr, ja, ru, he, zh-Hans) |
 
-> For a comprehensive map of all six functional areas (server, UI, desktop, speech/audio, build, Cloudflare), SDK integration patterns, and feature traces, load the `codenomad-architecture-guide` skill:  
+> For the package map, native OpenCode V2 integration, ownership boundaries, and feature traces, load the `codenomad-architecture-guide` skill:
 > `.opencode/skills/codenomad-architecture-guide/SKILL.md`
 
 ### Styling

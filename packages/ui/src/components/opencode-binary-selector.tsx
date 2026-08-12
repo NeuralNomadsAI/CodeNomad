@@ -43,11 +43,11 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
 
   const lastUsedBinary = () => serverSettings().opencodeBinary
 
-  const customBinaries = createMemo(() => binaries().filter((binary) => binary.path !== "opencode"))
+  const customBinaries = createMemo(() => binaries().filter((binary) => binary.path !== "opencode2"))
 
-  const binaryOptions = createMemo<BinaryOption[]>(() => [{ path: "opencode", isDefault: true }, ...customBinaries()])
+  const binaryOptions = createMemo<BinaryOption[]>(() => [{ path: "opencode2", isDefault: true }, ...customBinaries()])
 
-  const currentSelectionPath = () => props.selectedBinary || "opencode"
+  const currentSelectionPath = () => props.selectedBinary || "opencode2"
 
   createEffect(() => {
     if (!props.selectedBinary && lastUsedBinary()) {
@@ -79,7 +79,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
   createEffect(() => {
     if (!props.isVisible) return
     const cache = versionInfo()
-    const pathsToValidate = ["opencode", ...customBinaries().map((binary) => binary.path)].filter(
+    const pathsToValidate = ["opencode2", ...customBinaries().map((binary) => binary.path)].filter(
       (path) => !cache.has(path),
     )
 
@@ -191,8 +191,8 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
     removeOpenCodeBinary(path)
 
     if (props.selectedBinary === path) {
-      props.onBinaryChange("opencode")
-      updateLastUsedBinary("opencode")
+      props.onBinaryChange("opencode2")
+      updateLastUsedBinary("opencode2")
     }
   }
 
@@ -210,7 +210,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
   }
 
   function getDisplayName(path: string): string {
-    if (path === "opencode") return t("opencodeBinarySelector.display.systemPath", { name: "opencode" })
+    if (path === "opencode2") return t("opencodeBinarySelector.display.systemPath", { name: "opencode2" })
     const parts = path.split(/[/\\]/)
     return parts[parts.length - 1] ?? path
   }
@@ -246,7 +246,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
                 }
               }}
               disabled={props.disabled}
-              placeholder={t("opencodeBinarySelector.customPath.placeholder")}
+              placeholder={t("opencodeBinarySelector.customPath.placeholder", { name: "opencode2" })}
               class="selector-input"
             />
             <button
