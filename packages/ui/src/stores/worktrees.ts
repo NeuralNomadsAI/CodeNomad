@@ -1,10 +1,11 @@
 import { createSignal } from "solid-js"
 import type { WorktreeDescriptor } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
-import { getSessionRoot, sessions, withSession } from "./session-state"
+import { getSessionRoot, sessions } from "./session-state"
 import { getLogger } from "../lib/logger"
 import type { WorktreeReadyEvent } from "../lib/sse-manager"
-import { getRootClient } from "./opencode-client"
+import { showToastNotification } from "../lib/notifications"
+import { tGlobal } from "../lib/i18n"
 
 const log = getLogger("api")
 
@@ -13,6 +14,7 @@ const [gitRepoStatusByInstance, setGitRepoStatusByInstance] = createSignal<Map<s
 
 const worktreeRequests = new Map<string, Promise<void>>()
 const worktreeReadyRefreshes = new Map<string, Promise<void>>()
+const familyMoveRequests = new Map<string, Promise<void>>()
 
 type WorktreeReadyRefresh = (instanceId: string) => Promise<void>
 
@@ -34,7 +36,7 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean): Promi
       })
     } catch (error) {
       log.warn(initial ? "Failed to load worktrees" : "Failed to reload worktrees", { instanceId, error })
-      if (!initial) return
+      if (!initial) throw error
 
       setWorktreesByInstance((prev) => {
         const next = new Map(prev)
@@ -119,7 +121,13 @@ async function createWorktree(instanceId: string, slug: string): Promise<{ slug:
   return serverApi.createWorktree(instanceId, { slug: trimmed })
 }
 
-async function deleteWorktree(instanceId: string, slug: string, options?: { force?: boolean }): Promise<void> {
+async function deleteWorktree(
+  instanceId: string,
+  slug: string,
+  options?: { force?: boolean },
+  refreshSessions: (instanceId: string) => Promise<void> = (id) =>
+    import("./session-api").then(({ fetchSessions }) => fetchSessions(id, { reset: true, strictStatus: true })),
+): Promise<void> {
   if (!instanceId) {
     throw new Error("Missing instanceId")
   }
@@ -127,23 +135,21 @@ async function deleteWorktree(instanceId: string, slug: string, options?: { forc
   if (!trimmed || trimmed === "root") {
     throw new Error("Invalid worktree")
   }
-  await moveSessionsFromDeletedWorktree(instanceId, trimmed).catch((error) => {
-    log.warn("Failed to move sessions from deleted worktree", { instanceId, slug: trimmed, error })
+  let deleteError: unknown
+  try {
+    await serverApi.deleteWorktree(instanceId, trimmed, options)
+  } catch (error) {
+    deleteError = error
+  }
+  await Promise.all([
+    reloadWorktrees(instanceId),
+    refreshSessions(instanceId),
+  ]).catch((error) => {
+    if (!deleteError) throw error
+    log.warn("Failed to refresh after worktree deletion error", { instanceId, slug: trimmed, error })
   })
-  await serverApi.deleteWorktree(instanceId, trimmed, options)
-}
-
-async function moveSessionsFromDeletedWorktree(instanceId: string, slug: string): Promise<void> {
-  const instanceSessions = sessions().get(instanceId)
-  if (!instanceSessions) return
-
-  const parentSessionIds = Array.from(instanceSessions.values())
-    .filter((session) => !session.parentId)
-    .filter((session) => getWorktreeSlugForParentSession(instanceId, session.id) === slug)
-    .map((session) => session.id)
-
-  for (const parentSessionId of parentSessionIds) {
-    await setWorktreeSlugForParentSession(instanceId, parentSessionId, "root")
+  if (deleteError) {
+    throw deleteError
   }
 }
 
@@ -151,20 +157,8 @@ function getWorktrees(instanceId: string): WorktreeDescriptor[] {
   return worktreesByInstance().get(instanceId) ?? []
 }
 
-function isWorktreeSlugAvailable(instanceId: string, slug: string): boolean {
-  const normalized = (slug ?? "").trim() || "root"
-  if (normalized === "root") return true
-
-  const list = getWorktrees(instanceId)
-  // If worktrees aren't loaded yet, don't force root incorrectly.
-  if (list.length === 0) return true
-  return list.some((wt) => wt.slug === normalized)
-}
-
 function normalizeWorktreeSlug(instanceId: string, slug: string): string {
-  const normalized = (slug ?? "").trim() || "root"
-  if (normalized === "root") return "root"
-  return isWorktreeSlugAvailable(instanceId, normalized) ? normalized : "root"
+  return (slug ?? "").trim() || "root"
 }
 
 function getDefaultWorktreeSlug(instanceId: string): string {
@@ -198,19 +192,47 @@ async function setWorktreeSlugForParentSession(
   instanceId: string,
   parentSessionId: string,
   slug: string,
-  _options: { currentSlug?: string } = {},
+  options: {
+    currentSlug?: string
+    moveFamily?: (instanceId: string, rootSessionId: string, worktreeSlug: string) => Promise<unknown>
+    refreshSessions?: (instanceId: string) => Promise<void>
+  } = {},
 ): Promise<void> {
   await ensureWorktreesLoaded(instanceId)
+  const rootSessionId = getParentSessionId(instanceId, parentSessionId)
   const normalizedSlug = normalizeWorktreeSlug(instanceId, slug)
   const worktree = getWorktrees(instanceId).find((candidate) => candidate.slug === normalizedSlug)
   if (!worktree) throw new Error(`Worktree not found: ${normalizedSlug}`)
 
-  await getRootClient(instanceId).session.move({
-    sessionID: parentSessionId,
-    directory: worktree.directory,
+  const key = `${instanceId}:${rootSessionId}`
+  const previous = familyMoveRequests.get(key)
+  const moveFamily = options.moveFamily ?? ((id: string, sessionId: string, worktreeSlug: string) =>
+    serverApi.moveSessionFamily(id, sessionId, { worktreeSlug }))
+  const refreshSessions = options.refreshSessions ?? ((id: string) =>
+    import("./session-api").then(({ fetchSessions }) => fetchSessions(id, { reset: true, strictStatus: true })))
+  const task = (previous?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
+    let moveError: unknown
+    try {
+      await moveFamily(instanceId, rootSessionId, normalizedSlug)
+    } catch (error) {
+      moveError = error
+    }
+    await refreshSessions(instanceId).catch((error) => {
+      if (!moveError) throw error
+      log.warn("Failed to refresh sessions after family move error", { instanceId, rootSessionId, error })
+    })
+    if (moveError) {
+      showToastNotification({
+        message: moveError instanceof Error && moveError.message ? moveError.message : tGlobal("sessionList.worktreeMove.error"),
+        variant: "error",
+      })
+      throw moveError
+    }
   })
-  withSession(instanceId, parentSessionId, (session) => {
-    session.location = { directory: worktree.directory }
+
+  familyMoveRequests.set(key, task)
+  await task.finally(() => {
+    if (familyMoveRequests.get(key) === task) familyMoveRequests.delete(key)
   })
 }
 

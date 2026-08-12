@@ -178,6 +178,8 @@ export const instanceMessages = {
   "instanceShell.diff.enableWordWrap": "Включить перенос строк",
   "instanceShell.diff.disableWordWrap": "Отключить перенос строк",
   "instanceShell.worktree.create": "+ Создать worktree",
+  "instanceShell.worktree.openInFileManager.action": "Открыть в файловом менеджере",
+  "instanceShell.worktree.openInFileManager.error": "Не удалось открыть worktree в файловом менеджере",
 
   "instanceShell.plan.noSessionSelected": "Выберите сессию, чтобы просмотреть план.",
   "instanceShell.plan.empty": "Пока ничего не запланировано.",

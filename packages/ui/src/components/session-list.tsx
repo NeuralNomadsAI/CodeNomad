@@ -32,8 +32,9 @@ import {
   getSessionSearchThreads,
   isSessionSearchLoading,
 } from "../stores/sessions"
-import { getGitRepoStatus, getWorktreeSlugForParentSession } from "../stores/worktrees"
-import { collectSessionThreadIds, findSessionThread, flattenVisibleSessionThreads, sortSessionIdsDeepestFirst } from "../stores/session-tree"
+import { getGitRepoStatus, getWorktreeSlugForParentSession, getWorktrees } from "../stores/worktrees"
+import { collectSessionThreadIds, findSessionThread, flattenVisibleSessionThreads, projectSessionFamilies, sortSessionIdsDeepestFirst, type SessionFamilySort } from "../stores/session-tree"
+import { normalizeSessionDirectory } from "../stores/session-list-options"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
 import { useConfig } from "../stores/preferences"
@@ -66,6 +67,8 @@ const SessionList: Component<SessionListProps> = (props) => {
   const [isRenaming, setIsRenaming] = createSignal(false)
 
   const [filterQuery, setFilterQuery] = createSignal("")
+  const [sortBy, setSortBy] = createSignal<SessionFamilySort>("activity")
+  const [worktreeDirectory, setWorktreeDirectory] = createSignal("")
   const normalizedQuery = createMemo(() => (props.enableFilterBar ? filterQuery().trim().toLowerCase() : ""))
 
   const [selectedSessionIds, setSelectedSessionIds] = createSignal<Set<string>>(new Set())
@@ -186,32 +189,25 @@ const SessionList: Component<SessionListProps> = (props) => {
     return sessionId.toLowerCase().includes(query)
   }
 
-  const filterThreadTree = (thread: SessionThread, query: string): SessionThread | null => {
-    const matchingChildren: SessionThread[] = []
-    for (const child of thread.children) {
-      const filteredChild = filterThreadTree(child, query)
-      if (filteredChild !== null) matchingChildren.push(filteredChild)
-    }
-    if (!sessionMatchesQuery(thread.session.id, query) && matchingChildren.length === 0) return null
-    return { ...thread, children: matchingChildren }
-  }
-
   const filteredThreads = createMemo<SessionThread[]>(() => {
     const query = normalizedQuery()
-    if (!query) return props.threads
-
-    const searchQuery = getSessionSearchQuery(props.instanceId)
-    const searchLoading = isSessionSearchLoading(props.instanceId)
-    if (searchQuery === query && !searchLoading) {
-      return getSessionSearchThreads(props.instanceId)
+    const searchThreads = query && getSessionSearchQuery(props.instanceId) === query && !isSessionSearchLoading(props.instanceId)
+      ? getSessionSearchThreads(props.instanceId)
+      : props.threads
+    const worktrees = getWorktrees(props.instanceId)
+    const getWorktreeLabel = (directory: string) => {
+      const normalized = normalizeSessionDirectory(directory)
+      const worktree = worktrees.find((candidate) => normalizeSessionDirectory(candidate.directory) === normalized)
+      return worktree?.kind === "root" ? t("sessionList.worktree.workspace") : worktree?.slug ?? directory
     }
-
-    const result: SessionThread[] = []
-    for (const thread of props.threads) {
-      const filtered = filterThreadTree(thread, query)
-      if (filtered !== null) result.push(filtered)
-    }
-    return result
+    return projectSessionFamilies(searchThreads, {
+      sort: sortBy(),
+      worktreeDirectory: worktreeDirectory(),
+      getWorktreeLabel,
+      ...(query && searchThreads === props.threads
+        ? { matchesSession: (session) => sessionMatchesQuery(session.id, query) }
+        : {}),
+    })
   })
 
   const visibleProjection = createMemo(() => {
@@ -250,6 +246,14 @@ const SessionList: Component<SessionListProps> = (props) => {
   })
 
   const selectedCount = createMemo(() => selectedSessionIds().size)
+
+  createEffect(() => {
+    const available = new Set(allMatchingSessionIds())
+    setSelectedSessionIds((selected) => {
+      const next = new Set([...selected].filter((id) => available.has(id)))
+      return next.size === selected.size ? selected : next
+    })
+  })
 
   const isAllSelected = createMemo(() => {
     const ids = allMatchingSessionIds()
@@ -423,8 +427,7 @@ const SessionList: Component<SessionListProps> = (props) => {
   }
 
   const getSelectableThreadIds = (sessionId: string): string[] => {
-    const source = normalizedQuery() ? filteredThreads() : props.threads
-    const thread = findSessionThread(source, sessionId)
+    const thread = findSessionThread(filteredThreads(), sessionId)
     return thread ? collectSessionThreadIds([thread]) : [sessionId]
   }
 
@@ -528,14 +531,14 @@ const SessionList: Component<SessionListProps> = (props) => {
 
     const worktreeSlug = createMemo(() => {
       if (isChild()) return "root"
-      return getWorktreeSlugForParentSession(props.instanceId, sessionId())
+      const slug = getWorktreeSlugForParentSession(props.instanceId, sessionId())
+      return slug === "root" ? t("sessionList.worktree.workspace") : slug
     })
 
     const showWorktreeBadge = createMemo(() => {
       if (isChild()) return false
       if (getGitRepoStatus(props.instanceId) === false) return false
-      const slug = worktreeSlug()
-      return Boolean(slug) && slug !== "root"
+      return Boolean(worktreeSlug())
     })
 
     const isActive = () => props.activeSessionId === sessionId()
@@ -691,7 +694,7 @@ const SessionList: Component<SessionListProps> = (props) => {
                 </span>
               </Show>
               <Show when={showWorktreeBadge()}>
-                <span class="status-indicator session-status-list worktree-indicator" title={`Worktree: ${worktreeSlug()}`}>
+                <span class="status-indicator session-status-list worktree-indicator" title={t("sessionList.worktree.tooltip", { worktree: worktreeSlug() })}>
                   <Split class="w-3.5 h-3.5" aria-hidden="true" />
                   <span class="worktree-indicator-label">{worktreeSlug()}</span>
                 </span>
@@ -822,6 +825,30 @@ const SessionList: Component<SessionListProps> = (props) => {
                 <MinusSquare class="w-4 h-4" />
               </Show>
             </button>
+          </div>
+
+          <div class="mt-2 grid grid-cols-2 gap-2">
+            <select
+              class="selector-input min-w-0"
+              value={sortBy()}
+              onChange={(event) => setSortBy(event.currentTarget.value as SessionFamilySort)}
+              aria-label={t("sessionList.sort.ariaLabel")}
+            >
+              <option value="activity">{t("sessionList.sort.activity")}</option>
+              <option value="name">{t("sessionList.sort.name")}</option>
+              <option value="worktree">{t("sessionList.sort.worktree")}</option>
+            </select>
+            <select
+              class="selector-input min-w-0"
+              value={worktreeDirectory()}
+              onChange={(event) => setWorktreeDirectory(event.currentTarget.value)}
+              aria-label={t("sessionList.worktreeFilter.ariaLabel")}
+            >
+              <option value="">{t("sessionList.worktreeFilter.all")}</option>
+              {getWorktrees(props.instanceId).map((worktree) => (
+                <option value={worktree.directory}>{worktree.kind === "root" ? t("sessionList.worktree.workspace") : worktree.slug}</option>
+              ))}
+            </select>
           </div>
 
           <Show when={selectedCount() > 0}>

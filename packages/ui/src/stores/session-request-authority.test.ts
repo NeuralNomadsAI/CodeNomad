@@ -59,7 +59,10 @@ async function loadTestWorktree(instanceId: string): Promise<void> {
 }
 
 function setup(instanceId: string) {
-  const client = { session: { active: async () => ({}) } } as any
+  const client = {
+    location: { get: async () => ({ directory: "/work", project: { id: "project", directory: "/work", canonical: "/work" } }) },
+    session: { active: async () => ({}) },
+  } as any
   ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
   addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
   return {
@@ -85,11 +88,11 @@ describe("session request authority", () => {
 
     try {
       const request = searchSessions(instanceId, "child")
-      search.resolve({ data: [apiSession("child", "parent")] })
+      search.resolve({ data: [apiSession("child", "parent")], cursor: {} })
       await new Promise<void>((resolve) => setImmediate(resolve))
       removeSessionRuntimeState(instanceId, "child")
       removeSessionRuntimeState(instanceId, "parent")
-      parents.resolve({ data: [apiSession("parent")] })
+      parents.resolve({ data: [apiSession("parent")], cursor: {} })
       await request
 
       assert.equal(sessions().get(instanceId)?.has("child") ?? false, false)
@@ -212,9 +215,9 @@ describe("session request authority", () => {
       })
       const newRequest = fetchSessions(instanceId)
       invalidateOld()
-      newResponse.resolve({ data: [apiSession("new-session")] })
+      newResponse.resolve({ data: [apiSession("new-session")], cursor: {} })
       await newRequest
-      oldResponse.resolve({ data: [apiSession("old-session")] })
+      oldResponse.resolve({ data: [apiSession("old-session")], cursor: {} })
       await oldRequest
 
       assert.equal(sessions().get(instanceId)?.has("new-session"), true)
@@ -242,7 +245,7 @@ describe("session request authority", () => {
       apiSession("working"),
       { ...apiSession("compacting"), directory: "/worktree", workspaceID: "workspace-1" },
       apiSession("stale-working"),
-    ] })
+    ], cursor: {} })
     ;(client.session as any).active = async () => ({ working: { type: "running" } })
     ;(client.session as any).status = async (options: unknown) => {
       statusOptions.push(options)
@@ -277,7 +280,7 @@ describe("session request authority", () => {
     setSessions((prev) => new Map(prev).set(instanceId, new Map([[existing.id, existing]])))
     ;(client.session as any).list = async () => ({ data: [
       { ...apiSession(existing.id), location: { directory: "/worktree" } },
-    ] })
+    ], cursor: {} })
     ;(client.session as any).active = async () => ({ [existing.id]: { type: "running" } })
 
     try {

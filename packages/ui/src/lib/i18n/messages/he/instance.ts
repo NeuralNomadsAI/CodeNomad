@@ -178,6 +178,8 @@ export const instanceMessages = {
   "instanceShell.diff.enableWordWrap": "הפעל גלישת מילים",
   "instanceShell.diff.disableWordWrap": "כבה גלישת מילים",
   "instanceShell.worktree.create": "+ צור worktree",
+  "instanceShell.worktree.openInFileManager.action": "פתח במנהל הקבצים",
+  "instanceShell.worktree.openInFileManager.error": "לא ניתן לפתוח את ה-worktree במנהל הקבצים",
   "instanceShell.worktree.delete.error.title": "המחיקה נכשלה",
   "instanceShell.worktree.delete.error.fallback": "מחיקת ה-worktree נכשלה",
   "instanceShell.worktree.delete.error.causeLabel": "סיבה סבירה:",

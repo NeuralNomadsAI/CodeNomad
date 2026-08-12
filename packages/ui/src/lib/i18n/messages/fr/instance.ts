@@ -178,6 +178,8 @@ export const instanceMessages = {
   "instanceShell.diff.enableWordWrap": "Activer le retour à la ligne",
   "instanceShell.diff.disableWordWrap": "Désactiver le retour à la ligne",
   "instanceShell.worktree.create": "+ Créer un worktree",
+  "instanceShell.worktree.openInFileManager.action": "Ouvrir dans le gestionnaire de fichiers",
+  "instanceShell.worktree.openInFileManager.error": "Impossible d’ouvrir le worktree dans le gestionnaire de fichiers",
 
   "instanceShell.plan.noSessionSelected": "Sélectionnez une session pour voir le plan.",
   "instanceShell.plan.empty": "Aucun plan pour l'instant.",

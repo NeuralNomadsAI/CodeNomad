@@ -20,6 +20,25 @@ function session(instanceId: string, id: string): Session {
 }
 
 describe("native session event reducer", () => {
+  it("replaces the entire location on session.moved", () => {
+    const instanceId = "native-moved"
+    const current = session(instanceId, "session")
+    current.location = { directory: "/old", extra: "stale" } as any
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[current.id, current]])))
+
+    try {
+      handleNativeSessionEvent(instanceId, {
+        type: "session.moved",
+        data: { sessionID: current.id, location: { directory: "/new" }, projectID: "new-project", subpath: "apps/web" },
+      })
+      assert.deepEqual(sessions().get(instanceId)?.get(current.id)?.location, { directory: "/new" })
+      assert.equal(sessions().get(instanceId)?.get(current.id)?.projectID, "new-project")
+      assert.equal(sessions().get(instanceId)?.get(current.id)?.subpath, "apps/web")
+    } finally {
+      setSessions((prev) => { const next = new Map(prev); next.delete(instanceId); return next })
+    }
+  })
+
   it("coalesces text and tool events, then refreshes authoritatively on idle", async () => {
     const instanceId = "native-events"
     const sessionId = "session"

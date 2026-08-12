@@ -178,6 +178,8 @@ export const instanceMessages = {
   "instanceShell.diff.enableWordWrap": "折り返しを有効化",
   "instanceShell.diff.disableWordWrap": "折り返しを無効化",
   "instanceShell.worktree.create": "+ worktree を作成",
+  "instanceShell.worktree.openInFileManager.action": "ファイルマネージャーで開く",
+  "instanceShell.worktree.openInFileManager.error": "ファイルマネージャーで worktree を開けませんでした",
 
   "instanceShell.plan.noSessionSelected": "計画を表示するにはセッションを選択してください。",
   "instanceShell.plan.empty": "まだ計画はありません。",

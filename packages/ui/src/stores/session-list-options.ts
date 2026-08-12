@@ -1,21 +1,21 @@
 export const PROJECT_SESSION_LIST_LIMIT = 10000
 
 type ProjectSessionListInput = {
-  directory?: string
+  project: string
   search?: string
+  cursor?: string
 }
 
 export type ProjectSessionListOptions = ProjectSessionListInput & {
   limit: typeof PROJECT_SESSION_LIST_LIMIT
-  scope: "project"
+  order: "asc"
 }
 
 type SessionDirectorySource = {
-  directory?: string | null
   location?: { directory?: string | null }
 }
 
-function normalizeSessionDirectory(directory: string | null | undefined): string {
+export function normalizeSessionDirectory(directory: string | null | undefined): string {
   const trimmed = directory?.trim()
   if (!trimmed) return ""
 
@@ -28,15 +28,12 @@ function normalizeSessionDirectory(directory: string | null | undefined): string
 
 export function buildProjectSessionListOptions(options: ProjectSessionListInput): ProjectSessionListOptions {
   return {
-    ...(options.directory ? { directory: options.directory } : {}),
+    project: options.project,
     ...(options.search ? { search: options.search } : {}),
+    ...(options.cursor ? { cursor: options.cursor } : {}),
     limit: PROJECT_SESSION_LIST_LIMIT,
-    scope: "project",
+    order: "asc",
   }
-}
-
-export function isProjectSessionListComplete(resultCount: number): boolean {
-  return resultCount < PROJECT_SESSION_LIST_LIMIT
 }
 
 export function filterProjectScopedSessions<T extends SessionDirectorySource>(
@@ -47,7 +44,7 @@ export function filterProjectScopedSessions<T extends SessionDirectorySource>(
   if (allowed.size === 0) return sessions
 
   return sessions.filter((session) => {
-    const directory = normalizeSessionDirectory(session.location?.directory ?? session.directory)
+    const directory = normalizeSessionDirectory(session.location?.directory)
     return !directory || allowed.has(directory)
   })
 }

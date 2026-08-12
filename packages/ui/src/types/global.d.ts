@@ -43,6 +43,7 @@ declare global {
     saveClientState?: (accessToken: string, snapshot: unknown) => Promise<boolean>
     setClientStateRestoreEnabled?: (accessToken: string, enabled: boolean) => Promise<boolean>
     clearClientState?: (accessToken: string) => Promise<boolean>
+    openWorktreeInFileManager?: (accessToken: string, rootDirectory: string, registeredDirectory: string, targetDirectory: string) => Promise<void>
 
     showNotification?: (payload: { title: string; body: string }) => Promise<{ ok: boolean; reason?: string }>
     openRemoteWindow?: (payload: {

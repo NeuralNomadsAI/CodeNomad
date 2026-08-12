@@ -178,6 +178,8 @@ export const instanceMessages = {
   "instanceShell.diff.enableWordWrap": "Zeilenumbruch aktivieren",
   "instanceShell.diff.disableWordWrap": "Zeilenumbruch deaktivieren",
   "instanceShell.worktree.create": "+ Worktree erstellen",
+  "instanceShell.worktree.openInFileManager.action": "Im Dateimanager öffnen",
+  "instanceShell.worktree.openInFileManager.error": "Worktree konnte nicht im Dateimanager geöffnet werden",
   "instanceShell.worktree.delete.error.title": "Löschen fehlgeschlagen",
   "instanceShell.worktree.delete.error.fallback": "Worktree konnte nicht gelöscht werden",
   "instanceShell.worktree.delete.error.causeLabel": "Wahrscheinliche Ursache:",

@@ -7,28 +7,27 @@ import {
   buildProjectSessionListOptions,
   filterProjectScopedSessions,
   getAuthoritativelyMissingSessionIds,
-  isProjectSessionListComplete,
 } from "./session-list-options.ts"
 
 describe("project session list loading", () => {
-  it("builds a one-shot project-scoped request without pagination params", () => {
-    const options = buildProjectSessionListOptions({ directory: "/tmp/project", search: "worktree" })
+  it("builds a project-scoped cursor request", () => {
+    const options = buildProjectSessionListOptions({ project: "project-id", search: "worktree", cursor: "next" })
 
     assert.deepEqual(options, {
-      directory: "/tmp/project",
+      project: "project-id",
       search: "worktree",
+      cursor: "next",
       limit: PROJECT_SESSION_LIST_LIMIT,
-      scope: "project",
+      order: "asc",
     })
     assert.equal("start" in options, false)
-    assert.equal("cursor" in options, false)
   })
 
   it("filters project-scoped results to the root and known worktree directories", () => {
     const sessions = [
-      { id: "root", directory: "/repo" },
-      { id: "worktree", directory: "/repo/.codenomad/worktrees/feature" },
-      { id: "sibling", directory: "/other" },
+      { id: "root", location: { directory: "/repo" } },
+      { id: "worktree", location: { directory: "/repo/.codenomad/worktrees/feature" } },
+      { id: "sibling", location: { directory: "/other" } },
       { id: "unknown" },
     ]
 
@@ -40,9 +39,9 @@ describe("project session list loading", () => {
 
   it("normalizes Windows paths when filtering project-scoped results", () => {
     const sessions = [
-      { id: "root", directory: String.raw`C:\Repo` },
-      { id: "worktree", directory: "c:/repo/.codenomad/worktrees/feature/" },
-      { id: "other", directory: String.raw`C:\Other` },
+      { id: "root", location: { directory: String.raw`C:\Repo` } },
+      { id: "worktree", location: { directory: "c:/repo/.codenomad/worktrees/feature/" } },
+      { id: "other", location: { directory: String.raw`C:\Other` } },
     ]
 
     assert.deepEqual(
@@ -53,7 +52,7 @@ describe("project session list loading", () => {
     )
   })
 
-  it("marks the loaded session list complete because the API does not paginate", () => {
+  it("marks the projection complete after all API pages are collected", () => {
     const state = applySessionPage(getDefaultSessionPaginationState(), ["root-1", "root-2"], false, true)
 
     assert.deepEqual(state.ids, ["root-1", "root-2"])
@@ -61,7 +60,7 @@ describe("project session list loading", () => {
     assert.equal(state.nextCursor, undefined)
   })
 
-  it("resets stale cursor state when the one-shot list refreshes", () => {
+  it("resets stale UI cursor state after a complete project refresh", () => {
     const previous = applySessionPage(getDefaultSessionPaginationState(), ["old-root"], true, true, "old-cursor")
     const next = applySessionPage(previous, ["new-root"], false, true)
 
@@ -75,8 +74,6 @@ describe("project session list loading", () => {
     const listed = ["retained", "outside-current-worktree"]
 
     assert.deepEqual(getAuthoritativelyMissingSessionIds(existing, listed, true), ["deleted-remotely"])
-    assert.equal(isProjectSessionListComplete(PROJECT_SESSION_LIST_LIMIT - 1), true)
-    assert.equal(isProjectSessionListComplete(PROJECT_SESSION_LIST_LIMIT), false)
     assert.deepEqual(
       getAuthoritativelyMissingSessionIds(existing, listed, false),
       [],

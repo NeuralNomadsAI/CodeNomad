@@ -70,11 +70,11 @@ import {
   buildProjectSessionListOptions,
   filterProjectScopedSessions,
   getAuthoritativelyMissingSessionIds,
-  isProjectSessionListComplete,
 } from "./session-list-options"
 import { mergeFetchedSessionRuntimeState, resolveAuthoritativeGenerationRecovery } from "./session-generation-recovery"
 
 const log = getLogger("api")
+const MAX_PROJECT_SESSION_PAGES = 1000
 const sessionListRequestIds = new Map<string, number>()
 let nextSessionListRequestId = 0
 
@@ -133,15 +133,38 @@ function hasMissingParentChain(session: SDKSession, loaded: Map<string, SDKSessi
 
 async function fetchV2Sessions(instanceId: string, options: V2SessionListOptions): Promise<ProjectSessionListResponse> {
   const client = getRootClient(instanceId)
-  const listOptions = buildProjectSessionListOptions(options)
-  const response: SessionsResponse = await client.session.list(listOptions)
-  const data = response.data
+  const location = await client.location.get({ location: { directory: options.directory } })
+  if (!location?.project?.id) throw new Error("OpenCode could not resolve the workspace project")
+  const data: SDKSession[] = []
+  const listedIds = new Set<string>()
+  const cursors = new Set<string>()
+  let cursor: string | undefined
+  let page = 0
+  do {
+    if (++page > MAX_PROJECT_SESSION_PAGES) throw new Error("Session inventory exceeded the page limit")
+    const listOptions = buildProjectSessionListOptions({ project: location.project.id, search: options.search, cursor })
+    const response: SessionsResponse = await client.session.list(listOptions)
+    if (!response || !Array.isArray(response.data) || !response.cursor || typeof response.cursor !== "object") {
+      throw new Error("OpenCode returned an invalid session inventory")
+    }
+    for (const session of response.data) {
+      if (!session?.id || session.projectID !== location.project.id || listedIds.has(session.id)) {
+        throw new Error("OpenCode returned an inconsistent session inventory")
+      }
+      listedIds.add(session.id)
+      data.push(session)
+    }
+    const next = response.cursor.next || undefined
+    if (next && cursors.has(next)) throw new Error("OpenCode repeated a session inventory cursor")
+    if (next) cursors.add(next)
+    cursor = next
+  } while (cursor)
   const allowedDirectories = [options.directory, ...getWorktrees(instanceId).map((worktree) => worktree.directory)]
 
   return {
     data: filterProjectScopedSessions(data, allowedDirectories),
-    listedIds: new Set(data.map((session) => session.id)),
-    complete: isProjectSessionListComplete(data.length),
+    listedIds,
+    complete: true,
   }
 }
 
@@ -244,7 +267,7 @@ async function fetchSessions(instanceId: string, options?: {
     const sessionListOptions = instance.folder ? { directory: instance.folder } : {}
     const existingSessions = new Map(sessions().get(instanceId) ?? new Map<string, Session>())
 
-    log.info("session.list", { instanceId, limit: PROJECT_SESSION_LIST_LIMIT, directory: sessionListOptions.directory, scope: "project" })
+    log.info("session.list", { instanceId, limit: PROJECT_SESSION_LIST_LIMIT, directory: sessionListOptions.directory, project: true })
     const [response, activeSessions] = await Promise.all([
       fetchV2Sessions(instanceId, sessionListOptions),
       getRootClient(instanceId).session.active(),

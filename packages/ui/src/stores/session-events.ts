@@ -166,6 +166,18 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
   const sessionId = event.data?.sessionID
   if (!sessionId) return
 
+  const movedLocation = event.data?.location
+  if (event.type === "session.moved" && movedLocation) {
+    const projectID = typeof event.data?.projectID === "string" ? event.data.projectID : undefined
+    const subpath = typeof event.data?.subpath === "string" ? event.data.subpath : undefined
+    withSession(instanceId, sessionId, (session) => {
+      session.location = movedLocation
+      if (projectID !== undefined) session.projectID = projectID
+      if (subpath !== undefined) session.subpath = subpath
+    })
+    return
+  }
+
   if (event.type === "session.compaction.started" || event.type === "session.compaction.admitted") {
     ensureSessionStatus(instanceId, sessionId, "compacting", event.location?.directory)
   } else if (

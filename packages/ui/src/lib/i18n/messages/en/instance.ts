@@ -178,6 +178,8 @@ export const instanceMessages = {
   "instanceShell.diff.enableWordWrap": "Enable word wrap",
   "instanceShell.diff.disableWordWrap": "Disable word wrap",
   "instanceShell.worktree.create": "+ Create worktree",
+  "instanceShell.worktree.openInFileManager.action": "Open in file manager",
+  "instanceShell.worktree.openInFileManager.error": "Failed to open worktree in file manager",
   "instanceShell.worktree.delete.error.title": "Delete failed",
   "instanceShell.worktree.delete.error.fallback": "Failed to delete worktree",
   "instanceShell.worktree.delete.error.causeLabel": "Likely cause:",

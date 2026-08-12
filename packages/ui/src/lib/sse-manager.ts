@@ -7,6 +7,7 @@ import {
   MessagePartDeltaEvent,
 } from "../types/message"
 import type {
+  LocationRef,
   PermissionAsked,
   PermissionReplied,
   QuestionAsked,
@@ -42,6 +43,7 @@ export interface NativeSessionEvent {
   type: string
   data?: {
     sessionID?: string
+    location?: LocationRef
     [key: string]: unknown
   }
   location?: { directory?: string }

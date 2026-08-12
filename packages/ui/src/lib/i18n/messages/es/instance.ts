@@ -178,6 +178,8 @@ export const instanceMessages = {
   "instanceShell.diff.enableWordWrap": "Activar ajuste de línea",
   "instanceShell.diff.disableWordWrap": "Desactivar ajuste de línea",
   "instanceShell.worktree.create": "+ Crear worktree",
+  "instanceShell.worktree.openInFileManager.action": "Abrir en el administrador de archivos",
+  "instanceShell.worktree.openInFileManager.error": "No se pudo abrir el worktree en el administrador de archivos",
 
   "instanceShell.plan.noSessionSelected": "Selecciona una sesión para ver el plan.",
   "instanceShell.plan.empty": "Aún no hay nada planificado.",

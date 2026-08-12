@@ -1,7 +1,7 @@
 import { Select } from "@kobalte/core/select"
 import { Dialog } from "@kobalte/core/dialog"
 import { For, Show, createMemo, createSignal } from "solid-js"
-import { ChevronDown, Copy, Trash2 } from "lucide-solid"
+import { ChevronDown, Copy, FolderOpen, Trash2 } from "lucide-solid"
 import type { WorktreeDescriptor } from "../../../server/src/api-types"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
@@ -18,12 +18,14 @@ import {
 } from "../stores/worktrees"
 import { sessions } from "../stores/sessions"
 import { useI18n } from "../lib/i18n"
+import { isDesktopHost, isLocalWindow, isMobilePlatform } from "../lib/runtime-env"
+import { openNativeWorktreeInFileManager } from "../lib/native/client-state"
 
 const log = getLogger("session")
 
 type WorktreeOption =
   | { kind: "action"; key: "__create__"; label: string }
-  | { kind: "worktree"; key: string; slug: string; directory: string; raw: WorktreeDescriptor }
+  | { kind: "worktree"; key: string; slug: string; directory: string; registeredDirectory?: string; raw: WorktreeDescriptor }
 
 type DeleteErrorKind = "localChanges" | "inUse" | "notFound" | "permissionDenied" | "unknown"
 
@@ -43,6 +45,11 @@ function preventSelectPress(event: PointerEvent | MouseEvent) {
 
 function normalizePath(input: string): string {
   return (input ?? "").replace(/\\/g, "/").replace(/\/+$/, "")
+}
+
+function isLocalPath(input: string): boolean {
+  const prefix = input.slice(0, 2).replace(/\\/g, "/")
+  return prefix !== "//"
 }
 
 function relativePath(fromDir: string, toDir: string): string {
@@ -156,6 +163,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
       key: wt.slug,
       slug: wt.slug,
       directory: wt.directory,
+      registeredDirectory: wt.registeredDirectory,
       raw: wt,
     }))
     const createOption: WorktreeOption = { kind: "action", key: "__create__", label: t("instanceShell.worktree.create") }
@@ -187,6 +195,9 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
     const list = getWorktrees(props.instanceId)
     return list.find((wt) => wt.slug === "root")?.directory ?? ""
   })
+  const registeredRepoRoot = createMemo(() => {
+    return getWorktrees(props.instanceId).find((wt) => wt.slug === "root")?.registeredDirectory
+  })
 
   const displayPathFor = (directory: string) => {
     const base = repoRoot()
@@ -201,6 +212,17 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
     } catch (error) {
       log.error("Failed to copy worktree path", error)
       showToastNotification({ message: "Failed to copy path", variant: "error" })
+    }
+  }
+
+  const handleOpenInFileManager = async (registeredDirectory: string, targetDirectory: string) => {
+    const rootDirectory = registeredRepoRoot()
+    if (!rootDirectory) return
+    try {
+      await openNativeWorktreeInFileManager(rootDirectory, registeredDirectory, targetDirectory)
+    } catch (error) {
+      log.error("Failed to open worktree in file manager", error)
+      showToastNotification({ message: t("instanceShell.worktree.openInFileManager.error"), variant: "error" })
     }
   }
 
@@ -360,6 +382,30 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                   >
                     {displayPathFor(opt.directory)}
                   </span>
+                  <Show when={isDesktopHost() && !isMobilePlatform() && isLocalWindow() && registeredRepoRoot() && opt.registeredDirectory && isLocalPath(opt.directory)}>
+                    <button
+                      type="button"
+                      class="session-item-close opacity-80 hover:opacity-100 hover:bg-surface-hover"
+                      aria-label={t("instanceShell.worktree.openInFileManager.action")}
+                      title={t("instanceShell.worktree.openInFileManager.action")}
+                      onPointerDown={(event) => {
+                        preventSelectPress(event)
+                        void handleOpenInFileManager(opt.registeredDirectory!, opt.directory)
+                        setIsOpen(false)
+                      }}
+                      onPointerUp={preventSelectPress}
+                      onMouseDown={preventSelectPress}
+                      onMouseUp={preventSelectPress}
+                      onClick={(event) => {
+                        preventSelectPress(event)
+                        if (event.detail !== 0) return
+                        void handleOpenInFileManager(opt.registeredDirectory!, opt.directory)
+                        setIsOpen(false)
+                      }}
+                    >
+                      <FolderOpen class="w-3 h-3" />
+                    </button>
+                  </Show>
                   <button
                     type="button"
                     class="session-item-close opacity-80 hover:opacity-100 hover:bg-surface-hover"
@@ -546,7 +592,6 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                       setIsDeleting(true)
                       setDeleteError(null)
                        await deleteWorktree(props.instanceId, target.slug, { force: forceDelete() })
-                       await reloadWorktrees(props.instanceId)
 
                       if (currentSlug() === target.slug) {
                         await setWorktreeSlugForParentSession(props.instanceId, parentId(), "root")

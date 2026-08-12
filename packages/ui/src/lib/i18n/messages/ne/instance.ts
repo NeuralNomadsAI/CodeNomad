@@ -178,6 +178,8 @@ export const instanceMessages = {
   "instanceShell.diff.enableWordWrap": "Word wrap सक्षम गर्नुहोस्",
   "instanceShell.diff.disableWordWrap": "Word wrap अक्षम गर्नुहोस्",
   "instanceShell.worktree.create": "+ Worktree सिर्जना गर्नुहोस्",
+  "instanceShell.worktree.openInFileManager.action": "फाइल प्रबन्धकमा खोल्नुहोस्",
+  "instanceShell.worktree.openInFileManager.error": "फाइल प्रबन्धकमा worktree खोल्न सकिएन",
   "instanceShell.worktree.delete.error.title": "मेटाउन असफल भयो",
   "instanceShell.worktree.delete.error.fallback": "Worktree मेटाउन असफल भयो",
   "instanceShell.worktree.delete.error.causeLabel": "सम्भावित कारण:",

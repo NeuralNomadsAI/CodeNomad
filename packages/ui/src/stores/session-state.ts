@@ -887,21 +887,18 @@ function getSessionSearchThreads(instanceId: string): SessionThread[] {
   if (!instanceSessions) return []
 
   const rootIds: string[] = []
-  const childIds = new Set<string>()
-
   for (const sessionId of resultIds) {
     const session = instanceSessions.get(sessionId)
     if (!session) continue
     if (session.parentId === null) {
       if (!rootIds.includes(session.id)) rootIds.push(session.id)
     } else {
-      childIds.add(session.id)
       const root = getSessionRootFromMap(instanceSessions, session.id)
       if (root && !rootIds.includes(root.id)) rootIds.push(root.id)
     }
   }
 
-  return buildSessionThreads(instanceId, rootIds, childIds)
+  return buildSessionThreads(instanceId, rootIds)
 }
 
 function isSessionExpanded(instanceId: string, sessionId: string): boolean {

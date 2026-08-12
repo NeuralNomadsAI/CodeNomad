@@ -178,6 +178,8 @@ export const instanceMessages = {
   "instanceShell.diff.enableWordWrap": "启用自动换行",
   "instanceShell.diff.disableWordWrap": "禁用自动换行",
   "instanceShell.worktree.create": "+ 创建 worktree",
+  "instanceShell.worktree.openInFileManager.action": "在文件管理器中打开",
+  "instanceShell.worktree.openInFileManager.error": "无法在文件管理器中打开 worktree",
 
   "instanceShell.plan.noSessionSelected": "选择会话以查看计划。",
   "instanceShell.plan.empty": "暂无计划。",
