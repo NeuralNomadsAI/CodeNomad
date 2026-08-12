@@ -78,6 +78,7 @@ const [messagesLoaded, setMessagesLoaded] = createSignal<Map<string, Set<string>
 const [messageLoadErrors, setMessageLoadErrors] = createSignal<Map<string, Map<string, string>>>(new Map())
 const [sessionListErrors, setSessionListErrors] = createSignal<Map<string, string>>(new Map())
 const messageLoadEpochs = new Map<string, number>()
+const messageLoadControllers = new Map<string, AbortController>()
 let nextMessageLoadEpoch = 0
 const [sessionInfoByInstance, setSessionInfoByInstance] = createSignal<Map<string, Map<string, SessionInfo>>>(new Map())
 const [threadTotalsByInstance, setThreadTotalsByInstance] = createSignal<Map<string, Map<string, ThreadTotals>>>(new Map())
@@ -335,13 +336,24 @@ function clearLoadedFlag(instanceId: string, sessionId: string) {
 
 function advanceMessageLoadEpoch(instanceId: string, sessionId: string): number {
   const key = getDraftKey(instanceId, sessionId)
+  messageLoadControllers.get(key)?.abort()
   const epoch = ++nextMessageLoadEpoch
   messageLoadEpochs.set(key, epoch)
+  messageLoadControllers.set(key, new AbortController())
   return epoch
 }
 
 function isCurrentMessageLoad(instanceId: string, sessionId: string, epoch: number): boolean {
   return messageLoadEpochs.get(getDraftKey(instanceId, sessionId)) === epoch
+}
+
+function getMessageLoadSignal(instanceId: string, sessionId: string): AbortSignal | undefined {
+  return messageLoadControllers.get(getDraftKey(instanceId, sessionId))?.signal
+}
+
+function finishMessageLoad(instanceId: string, sessionId: string, epoch: number): void {
+  if (!isCurrentMessageLoad(instanceId, sessionId, epoch)) return
+  messageLoadControllers.delete(getDraftKey(instanceId, sessionId))
 }
 
 function clearMessageLoadingFlag(instanceId: string, sessionId: string): void {
@@ -358,12 +370,80 @@ function clearMessageLoadingFlag(instanceId: string, sessionId: string): void {
 }
 
 function invalidateSessionMessageLoad(instanceId: string, sessionId: string): void {
-  advanceMessageLoadEpoch(instanceId, sessionId)
+  const key = getDraftKey(instanceId, sessionId)
+  messageLoadControllers.get(key)?.abort()
+  messageLoadControllers.delete(key)
+  messageLoadEpochs.set(key, ++nextMessageLoadEpoch)
   clearLoadedFlag(instanceId, sessionId)
   clearMessageLoadingFlag(instanceId, sessionId)
 }
 
 messageStoreBus.onSessionCleared(invalidateSessionMessageLoad)
+
+function clearInstanceSessionState(instanceId: string): void {
+  if (!instanceId) return
+  const prefix = `${instanceId}:`
+  for (const [key, controller] of messageLoadControllers) {
+    if (!key.startsWith(prefix)) continue
+    controller.abort()
+    messageLoadControllers.delete(key)
+  }
+  for (const key of messageLoadEpochs.keys()) {
+    if (key.startsWith(prefix)) messageLoadEpochs.delete(key)
+  }
+  for (const key of generationAdmissions.keys()) {
+    if (key.startsWith(prefix)) generationAdmissions.delete(key)
+  }
+
+  const deleteInstance = <T,>(prev: Map<string, T>) => {
+    if (!prev.has(instanceId)) return prev
+    const next = new Map(prev)
+    next.delete(instanceId)
+    return next
+  }
+  const deletePrefixed = (prev: Set<string>) => {
+    const next = new Set([...prev].filter((key) => !key.startsWith(prefix)))
+    return next.size === prev.size ? prev : next
+  }
+
+  batch(() => {
+    setSessions(deleteInstance)
+    setActiveSessionId(deleteInstance)
+    setActiveParentSessionId(deleteInstance)
+    setAgents(deleteInstance)
+    setProviders(deleteInstance)
+    setMessagesLoaded(deleteInstance)
+    setMessageLoadErrors(deleteInstance)
+    setSessionListErrors(deleteInstance)
+    setSessionInfoByInstance(deleteInstance)
+    setThreadTotalsByInstance(deleteInstance)
+    setExpandedSessions(deleteInstance)
+    setInstanceIndicatorCounts(deleteInstance)
+    setSessionPagination(deleteInstance)
+    setSessionSearch(deleteInstance)
+    setLoading((prev) => ({
+      fetchingSessions: deleteInstance(prev.fetchingSessions),
+      creatingSession: deleteInstance(prev.creatingSession),
+      deletingSession: deleteInstance(prev.deletingSession),
+      loadingMessages: deleteInstance(prev.loadingMessages),
+    }))
+    setSessionDraftPrompts((prev) => {
+      const next = new Map([...prev].filter(([key]) => !key.startsWith(prefix)))
+      return next.size === prev.size ? prev : next
+    })
+    setAuthoritativeDraftKeys(deletePrefixed)
+    setAuthoritativelyDeletedSessionKeys(deletePrefixed)
+    setAuthoritativeSessionExpansionKeys(deletePrefixed)
+    setAuthoritativeSessionSelectionInstanceIds((prev) => {
+      if (!prev.has(instanceId)) return prev
+      const next = new Set(prev)
+      next.delete(instanceId)
+      return next
+    })
+  })
+}
+
+messageStoreBus.onInstanceDestroyed(clearInstanceSessionState)
 
 function getDraftKey(instanceId: string, sessionId: string): string {
   return `${instanceId}:${sessionId}`
@@ -1216,7 +1296,10 @@ export {
   setSessionListError,
   advanceMessageLoadEpoch,
   isCurrentMessageLoad,
+  getMessageLoadSignal,
+  finishMessageLoad,
   invalidateSessionMessageLoad,
+  clearInstanceSessionState,
   setSessionMessagesLoadError,
   sessionInfoByInstance,
   setSessionInfoByInstance,

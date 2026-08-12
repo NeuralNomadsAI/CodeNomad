@@ -1,11 +1,14 @@
-import { For, Index, Show, createEffect, createMemo, createSignal, untrack } from "solid-js"
+import { For, Index, Show, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
 import { Copy } from "lucide-solid"
 import type { ToolState } from "../../../types/tool-state"
 import type { ToolRenderer } from "../types"
 import { ensureMarkdownContent, getDefaultToolAction, getToolIcon, getToolName, limitToolOutputForRender, limitToolTitleForRender, readToolStatePayload } from "../utils"
 import { messageStoreBus } from "../../../stores/message-v2/bus"
 import { loadMessages } from "../../../stores/session-api"
-import { loading, messagesLoaded } from "../../../stores/session-state"
+import { messagesLoaded } from "../../../stores/session-state"
+import { setSessionTranscriptVisible } from "../../../stores/session-transcript-memory"
+import { waitForInstanceWorkspaceMetadataHydration } from "../../../stores/instances"
+import { useActiveSessionMessageLoad } from "../../../lib/hooks/use-active-session-message-load"
 import { getTaskToolSearchText } from "../search-text"
 import { copyToClipboard } from "../../../lib/clipboard"
 import { getLegacyTaskSummary, stringifyLegacyTaskSummary, TASK_STEP_RENDER_LIMIT } from "./task-summary"
@@ -174,8 +177,6 @@ export const taskRenderer: ToolRenderer = {
   },
   renderBody({ toolState, instanceId, renderToolCall, messageVersion, partVersion, scrollHelpers, renderMarkdown, t, onContentRendered }) {
     const store = messageStoreBus.getOrCreate(instanceId)
-    const [requestedChildLoad, setRequestedChildLoad] = createSignal(false)
-
     const childSessionId = createMemo(() => {
       const state = toolState()
       return extractSessionIdFromTaskState(state)
@@ -188,21 +189,24 @@ export const taskRenderer: ToolRenderer = {
       return loadedForInstance?.has(id) ?? false
     })
 
-    const childSessionLoading = createMemo(() => {
-      const id = childSessionId()
-      if (!id) return false
-      const loadingSet = loading().loadingMessages.get(instanceId)
-      return loadingSet?.has(id) ?? false
+    useActiveSessionMessageLoad({
+      isActive: () => Boolean(childSessionId()),
+      instanceId: () => instanceId,
+      session: () => {
+        const id = childSessionId()
+        return id ? { id } : undefined
+      },
+      loadMessages: (childInstanceId, id, options) => loadMessages(childInstanceId, id, {
+        registerInvalidation: options?.registerInvalidation,
+      }),
+      waitForHydration: waitForInstanceWorkspaceMetadataHydration,
     })
 
     createEffect(() => {
       const id = childSessionId()
       if (!id) return
-      if (requestedChildLoad()) return
-      if (childSessionLoaded()) return
-      if (childSessionLoading()) return
-      setRequestedChildLoad(true)
-      void loadMessages(instanceId, id)
+      setSessionTranscriptVisible(instanceId, id, true)
+      onCleanup(() => setSessionTranscriptVisible(instanceId, id, false))
     })
 
     const [childToolKeys, setChildToolKeys] = createSignal<string[]>([])

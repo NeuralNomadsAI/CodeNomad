@@ -116,4 +116,65 @@ describe("useActiveSessionMessageLoad", () => {
       dispose()
     }
   })
+
+  it("invalidates the owned request on session, workspace, and unmount changes", async () => {
+    const invalidated: string[] = []
+    const [instanceId, setInstanceId] = createSignal("one")
+    const [session, setSession] = createSignal<{ id: string } | undefined>({ id: "a" })
+    let dispose = () => {}
+    createRoot((rootDispose) => {
+      dispose = rootDispose
+      useActiveSessionMessageLoad({
+        isActive: () => true,
+        instanceId,
+        session,
+        loadMessages: (workspace, sessionId, options) => {
+          options?.registerInvalidation?.(() => invalidated.push(`${workspace}:${sessionId}`))
+          return new Promise<void>(() => {})
+        },
+        waitForHydration: () => Promise.resolve(),
+      })
+    })
+
+    await tick()
+    setSession({ id: "b" })
+    await tick()
+    setInstanceId("two")
+    await tick()
+    dispose()
+
+    assert.deepEqual(invalidated, ["one:a", "one:b", "two:b"])
+  })
+
+  it("uses the same abort policy when root or subagent views become hidden", async () => {
+    const invalidated: string[] = []
+    const [active, setActive] = createSignal(true)
+    const [session, setSession] = createSignal<{ id: string } | undefined>({ id: "root" })
+    let dispose = () => {}
+    createRoot((rootDispose) => {
+      dispose = rootDispose
+      useActiveSessionMessageLoad({
+        isActive: active,
+        instanceId: () => "inst",
+        session,
+        loadMessages: (_workspace, sessionId, options) => {
+          options?.registerInvalidation?.(() => invalidated.push(sessionId))
+          return new Promise<void>(() => {})
+        },
+        waitForHydration: () => Promise.resolve(),
+      })
+    })
+
+    await tick()
+    setActive(false)
+    await tick()
+    setSession({ id: "subagent" })
+    setActive(true)
+    await tick()
+    setActive(false)
+    await tick()
+    dispose()
+
+    assert.deepEqual(invalidated, ["root", "subagent"])
+  })
 })

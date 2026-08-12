@@ -131,7 +131,7 @@ function requestNativeSessionRefresh(instanceId: string, sessionId: string, fina
       do {
         refresh.pending = false
         try {
-          await loadMessages(refresh.instanceId, refresh.sessionId, { force: true, skipChildren: true })
+          await loadMessages(refresh.instanceId, refresh.sessionId, { force: true })
         } catch (error) {
           log.error("Failed to refresh native session messages", { instanceId, sessionId, error })
         }
@@ -143,12 +143,13 @@ function requestNativeSessionRefresh(instanceId: string, sessionId: string, fina
       }
     })().finally(() => {
       refresh.running = undefined
-      if (!refresh.pending && !refresh.speakAfter) nativeRefreshes.delete(key)
+      if (!refresh.pending && !refresh.speakAfter && nativeRefreshes.get(key) === refresh) nativeRefreshes.delete(key)
     })
     return refresh.running
   }
 
   if (final) {
+    if (refresh.timer) clearTimeout(refresh.timer)
     refresh.timer = undefined
     void run()
   } else {
@@ -242,16 +243,19 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
   if (!instance?.client) return null
 
   const client = getRootClient(instanceId)
+  const instanceClient = instance.client
   void directory
 
   try {
     const info = await client.session.get({ sessionID: sessionId })
+    if (instances().get(instanceId)?.client !== instanceClient) return null
     const fetched = createClientSession(info, instanceId)
 
     let updatedInstanceSessions: Map<string, Session> | undefined
     let shouldExpandAncestors = false
 
     setSessions((prev) => {
+      if (instances().get(instanceId)?.client !== instanceClient) return prev
       const next = new Map(prev)
       const instanceSessions = next.get(instanceId) ?? new Map<string, Session>()
       const existing = instanceSessions.get(sessionId)
@@ -328,6 +332,18 @@ function ensureSessionStatus(
     if (pendingSessionFetches.get(key) === pendingState) pendingSessionFetches.delete(key)
   })
 }
+
+messageStoreBus.onInstanceDestroyed((instanceId) => {
+  const prefix = `${instanceId}:`
+  for (const [key, refresh] of nativeRefreshes) {
+    if (!key.startsWith(prefix)) continue
+    if (refresh.timer) clearTimeout(refresh.timer)
+    nativeRefreshes.delete(key)
+  }
+  for (const key of pendingSessionFetches.keys()) {
+    if (key.startsWith(prefix)) pendingSessionFetches.delete(key)
+  }
+})
 
 function resolveMessageRole(info?: MessageInfo | null): "user" | "assistant" {
   return info?.role === "user" ? "user" : "assistant"

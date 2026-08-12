@@ -19,7 +19,6 @@ import {
   cancelSessionGenerationAdmissions,
   markSessionDeletedAuthoritative,
   getAuthoritativelyDeletedSessionIdsForInstance,
-  getDescendantSessions,
   isBlankSession,
   messagesLoaded,
   getSessionMessagesLoadError,
@@ -27,6 +26,8 @@ import {
   setAgents,
   setMessagesLoaded,
   advanceMessageLoadEpoch,
+  finishMessageLoad,
+  getMessageLoadSignal,
   invalidateSessionMessageLoad,
   isCurrentMessageLoad,
   setSessionMessagesLoadError,
@@ -153,6 +154,8 @@ async function hydrateRestoredSessionChain(
   requestedIds: Array<string | null | undefined>,
   signal?: AbortSignal,
 ): Promise<void> {
+  const instanceClient = instances().get(instanceId)?.client
+  if (!instanceClient) return
   const client = getRootClient(instanceId)
   const pending = requestedIds.filter((id): id is string => Boolean(id) && id !== "info")
   const visited = new Set<string>()
@@ -167,10 +170,13 @@ async function hydrateRestoredSessionChain(
     if (!session) {
       try {
         signal?.throwIfAborted()
-        const apiSession = await client.session.get({ sessionID: sessionId })
+        const apiSession = await client.session.get({ sessionID: sessionId }, { signal })
         signal?.throwIfAborted()
+        if (instances().get(instanceId)?.client !== instanceClient) return
         setSessions((prev) => {
-          if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId) || signal?.aborted) return prev
+          if (instances().get(instanceId)?.client !== instanceClient
+            || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)
+            || signal?.aborted) return prev
           const next = new Map(prev)
           const instanceSessions = new Map(next.get(instanceId) ?? new Map())
           instanceSessions.set(sessionId, toClientSessionV2(instanceId, apiSession, instanceSessions.get(sessionId)))
@@ -190,6 +196,8 @@ async function hydrateRestoredSessionChain(
 }
 
 async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: SDKSession[], directory?: string): Promise<void> {
+  const instanceClient = instances().get(instanceId)?.client
+  if (!instanceClient) return
   const currentSessions = sessions().get(instanceId) ?? new Map<string, Session>()
   const loaded = new Map<string, SDKSession | Session>(currentSessions)
   for (const session of apiSessions) loaded.set(session.id, session)
@@ -197,10 +205,12 @@ async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: SDKSe
   if (!apiSessions.some((session) => hasMissingParentChain(session, loaded))) return
 
   const page = await fetchV2Sessions(instanceId, { directory })
+  if (instances().get(instanceId)?.client !== instanceClient) return
   const items = getV2SessionItems(page)
   if (items.length === 0) return
 
   setSessions((prev) => {
+    if (instances().get(instanceId)?.client !== instanceClient) return prev
     const next = new Map(prev)
     const instanceSessions = new Map(next.get(instanceId) ?? new Map())
     const deletedSessionIds = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
@@ -228,6 +238,7 @@ async function fetchSessions(instanceId: string, options?: {
   }
 
   const requestId = beginSessionListRequest(instanceId)
+  const instanceClient = instance.client
   options?.registerInvalidation?.(() => {
     if (isLatestSessionListRequest(instanceId, requestId)) clearSessionListRequestState(instanceId)
   })
@@ -251,7 +262,7 @@ async function fetchSessions(instanceId: string, options?: {
         return null
       }),
     ])
-    if (!isLatestSessionListRequest(instanceId, requestId)) {
+    if (!isLatestSessionListRequest(instanceId, requestId) || instances().get(instanceId)?.client !== instanceClient) {
       if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
       return
     }
@@ -288,6 +299,7 @@ async function fetchSessions(instanceId: string, options?: {
     for (const sessionId of remotelyDeletedSessionIds) removeSessionRuntimeState(instanceId, sessionId)
 
     setSessions((prev) => {
+      if (instances().get(instanceId)?.client !== instanceClient) return prev
       const next = new Map(prev)
       const instanceSessions = new Map(next.get(instanceId) ?? new Map())
       const deletedSessionIds = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
@@ -377,6 +389,7 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
   }
 
   const requestId = beginSessionSearch(instanceId, trimmedQuery)
+  const instanceClient = instance.client
 
   try {
     log.info("v2.session.search", { instanceId, query: trimmedQuery, directory: instance.folder })
@@ -384,7 +397,8 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
       search: trimmedQuery,
       directory: instance.folder,
     })
-    if (!isLatestSessionSearch(instanceId, trimmedQuery, requestId)) return
+    if (!isLatestSessionSearch(instanceId, trimmedQuery, requestId)
+      || instances().get(instanceId)?.client !== instanceClient) return
 
     const searchResults = getV2SessionItems(response)
 
@@ -394,6 +408,7 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
     }
 
     setSessions((prev) => {
+      if (instances().get(instanceId)?.client !== instanceClient) return prev
       const next = new Map(prev)
       const instanceSessions = new Map(next.get(instanceId) ?? new Map())
       const deletedSessionIds = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
@@ -409,7 +424,8 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
     })
     await ensureV2ParentChainsLoaded(instanceId, searchResults, instance.folder)
 
-    if (!isLatestSessionSearch(instanceId, trimmedQuery, requestId)) return
+    if (!isLatestSessionSearch(instanceId, trimmedQuery, requestId)
+      || instances().get(instanceId)?.client !== instanceClient) return
 
     const hydratedSessions = sessions().get(instanceId)
     const deletedSessionIds = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
@@ -728,10 +744,12 @@ async function fetchAgents(instanceId: string): Promise<void> {
   }
 
   const rootClient = getRootClient(instanceId)
+  const instanceClient = instance.client
 
   try {
     log.info(`[HTTP] GET /agent.list for instance ${instanceId}`)
     const response = await rootClient.agent.list({ location: { directory: instance.folder } })
+    if (instances().get(instanceId)?.client !== instanceClient) return
     const agentList = (response.data ?? []).map((agent) => ({
       name: agent.name,
       description: agent.description || "",
@@ -762,11 +780,13 @@ async function fetchProviders(instanceId: string): Promise<void> {
   }
 
   const rootClient = getRootClient(instanceId)
+  const instanceClient = instance.client
 
   try {
     log.info(`[HTTP] GET /provider.list for instance ${instanceId}`)
     const response = await rootClient.provider.list({ location: { directory: instance.folder } })
     const models = await rootClient.model.list({ location: { directory: instance.folder } })
+    if (instances().get(instanceId)?.client !== instanceClient) return
     const providerList = response.data.map((provider) => ({
       id: provider.id,
       name: provider.name,
@@ -795,12 +815,10 @@ async function loadMessages(
   sessionId: string,
   options?: {
     force?: boolean
-    skipChildren?: boolean
     registerInvalidation?: (invalidate: () => void) => void
   },
 ): Promise<void> {
   const force = options?.force ?? false
-  const skipChildren = options?.skipChildren ?? false
 
   if (force) {
     setMessagesLoaded((prev) => {
@@ -834,6 +852,7 @@ async function loadMessages(
   }
 
   const client = getRootClient(instanceId)
+  const instanceClient = instance.client
 
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionId)
@@ -842,8 +861,11 @@ async function loadMessages(
   }
 
   const loadEpoch = advanceMessageLoadEpoch(instanceId, sessionId)
+  const signal = getMessageLoadSignal(instanceId, sessionId)
+  const isCurrentLoad = () => isCurrentMessageLoad(instanceId, sessionId, loadEpoch)
+    && instances().get(instanceId)?.client === instanceClient
   options?.registerInvalidation?.(() => {
-    if (isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) invalidateSessionMessageLoad(instanceId, sessionId)
+    if (isCurrentLoad()) invalidateSessionMessageLoad(instanceId, sessionId)
   })
   const messageRevision = messageStoreBus.getOrCreate(instanceId).getSessionRevision(sessionId)
   let retryAfterRevisionConflict = false
@@ -859,10 +881,10 @@ async function loadMessages(
 
   try {
     log.info(`[HTTP] GET /session.${"messages"} for instance ${instanceId}`, { sessionId })
-    const response: SessionMessagesResponse = await client.message.list({ sessionID: sessionId })
+    const response: SessionMessagesResponse = await client.message.list({ sessionID: sessionId }, { signal })
     const apiMessages = response.data
 
-    if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return
+    if (!isCurrentLoad() || !sessions().get(instanceId)?.has(sessionId)) return
 
     if (!Array.isArray(apiMessages)) {
       return
@@ -928,14 +950,14 @@ async function loadMessages(
 
       if (!agentName && !providerID && !modelID) {
         const defaultModel = await getDefaultModel(instanceId, session.agent)
-        if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return
+        if (!isCurrentLoad() || !sessions().get(instanceId)?.has(sessionId)) return
         agentName = session.agent
         providerID = defaultModel.providerId
         modelID = defaultModel.modelId
       }
 
       setSessions((prev) => {
-        if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return prev
+        if (!isCurrentLoad()) return prev
         const next = new Map(prev)
         const nextInstanceSessions = next.get(instanceId)
         if (!nextInstanceSessions) return next
@@ -953,7 +975,7 @@ async function loadMessages(
       const sessionForV2 = sessions().get(instanceId)?.get(sessionId) ?? {
         id: sessionId, title: session?.title, parentId: session?.parentId ?? null, revert: session?.revert,
       }
-      if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return
+      if (!isCurrentLoad()) return
       if (!seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, messageRevision)) {
         retryAfterRevisionConflict = true
       } else {
@@ -972,8 +994,9 @@ async function loadMessages(
 
 
   } catch (error) {
+    if (signal?.aborted || !isCurrentLoad()) return
     log.error("Failed to load messages:", error)
-    if (isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) {
+    if (isCurrentLoad()) {
       setSessionMessagesLoadError(instanceId, sessionId, getOpencodeErrorMessage(error, tGlobal("messageSection.loadError.detail")))
     }
     throw error
@@ -985,34 +1008,21 @@ async function loadMessages(
         if (loadingSet) loadingSet.delete(sessionId)
         return next
       })
+      finishMessageLoad(instanceId, sessionId, loadEpoch)
     }
   }
 
   if (retryAfterRevisionConflict && sessions().get(instanceId)?.has(sessionId)) {
     await new Promise((resolve) => setTimeout(resolve, 50))
-    if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return
+    if (!isCurrentLoad()) return
     return loadMessages(instanceId, sessionId, {
       force: true,
-      skipChildren,
       registerInvalidation: options?.registerInvalidation,
     })
   }
 
-  if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return
+  if (!isCurrentLoad() || !sessions().get(instanceId)?.has(sessionId)) return
   updateSessionInfo(instanceId, sessionId)
-
-  if (!skipChildren && session.parentId === null) {
-    for (const child of getDescendantSessions(instanceId, sessionId)) {
-      void loadMessages(instanceId, child.id, { skipChildren: true }).catch((error) =>
-        log.error("Failed to load child session messages", {
-          instanceId,
-          sessionId: child.id,
-          parentSessionId: sessionId,
-          error,
-        }),
-      )
-    }
-  }
 }
 
 export {

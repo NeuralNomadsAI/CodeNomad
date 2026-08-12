@@ -1575,21 +1575,18 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       return next
     })
 
-    setState("permissions", "byMessage", (prev) => {
-      const next = { ...prev }
-      removedIds.forEach((id) => {
-        if (next[id]) delete next[id]
-      })
-      return next
-    })
+    const removed = new Set(removedIds)
+    setState("permissions", produce((draft) => {
+      removedIds.forEach((id) => delete draft.byMessage[id])
+      draft.queue = draft.queue.filter((entry) => !entry.messageId || !removed.has(entry.messageId))
+      draft.active = draft.queue[0] ?? null
+    }))
 
-    setState("questions", "byMessage", (prev) => {
-      const next = { ...prev }
-      removedIds.forEach((id) => {
-        if (next[id]) delete next[id]
-      })
-      return next
-    })
+    setState("questions", produce((draft) => {
+      removedIds.forEach((id) => delete draft.byMessage[id])
+      draft.queue = draft.queue.filter((entry) => !entry.messageId || !removed.has(entry.messageId))
+      draft.active = draft.queue[0] ?? null
+    }))
 
     withUsageState(sessionId, (draft) => {
       removedIds.forEach((id) => removeUsageEntry(draft, id))

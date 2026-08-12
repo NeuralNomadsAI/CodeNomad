@@ -43,6 +43,33 @@ describe("message-v2 permission state", () => {
 
 })
 
+describe("message-v2 revert state", () => {
+  it("prunes reverted messages and their permission and question queues", () => {
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+    store.hydrateMessages("session-1", [
+      { id: "keep", sessionId: "session-1", role: "user", status: "complete" },
+      { id: "revert", sessionId: "session-1", role: "assistant", status: "complete" },
+    ])
+    store.upsertPermission({
+      permission: { id: "permission", sessionID: "session-1", action: "edit", resources: [] },
+      messageId: "revert", enqueuedAt: 1,
+    })
+    store.upsertQuestion({
+      request: { id: "question", sessionID: "session-1", questions: [] },
+      messageId: "revert", enqueuedAt: 1,
+    })
+
+    store.setSessionRevert("session-1", { messageID: "revert" })
+
+    assert.deepEqual(store.getSessionMessageIds("session-1"), ["keep"])
+    assert.equal(store.state.permissions.queue.length, 0)
+    assert.equal(store.state.permissions.active, null)
+    assert.equal(store.state.questions.queue.length, 0)
+    assert.equal(store.state.questions.active, null)
+  })
+})
+
 describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
   it("keeps an in-flight pending 'sending' message visible when a force reload snapshot doesn't include it yet", () => {
     const store = createInstanceMessageStore("instance-1")

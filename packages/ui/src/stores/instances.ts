@@ -14,11 +14,7 @@ import {
   fetchSessions,
   fetchAgents,
   fetchProviders,
-  clearInstanceDraftPrompts,
   clearSessionListRequestState,
-  clearInstanceDeletedSessionAuthority,
-  clearInstanceSessionExpansionState,
-  clearInstanceSessionSelection,
   resetSessionPagination,
 } from "./sessions"
 import {
@@ -336,6 +332,11 @@ function ensureActiveInstanceSelected(): void {
 }
 
 function upsertWorkspace(descriptor: WorkspaceDescriptor, projectName?: string) {
+  const existing = instances().get(descriptor.id)
+  const replaceClient = Boolean(existing?.client && (
+    existing.proxyPath !== descriptor.proxyPath
+    || (descriptor.pid !== undefined && existing.pid !== descriptor.pid)
+  ))
   const mapped = workspaceDescriptorToInstance(descriptor, projectName)
   if (instances().has(descriptor.id)) {
     updateInstance(descriptor.id, mapped)
@@ -344,7 +345,7 @@ function upsertWorkspace(descriptor: WorkspaceDescriptor, projectName?: string) 
   }
 
   if (descriptor.status === "ready") {
-    attachClient(descriptor)
+    attachClient(descriptor, replaceClient)
     // If no tab is currently selected (common after UI refresh),
     // auto-select the first ready instance.
     ensureActiveInstanceSelected()
@@ -357,14 +358,14 @@ function upsertWorkspace(descriptor: WorkspaceDescriptor, projectName?: string) 
   }
 }
 
-function attachClient(descriptor: WorkspaceDescriptor) {
+function attachClient(descriptor: WorkspaceDescriptor, replaceClient = false) {
   const instance = instances().get(descriptor.id)
   if (!instance) return
 
   const nextPort = descriptor.port ?? instance.port
   const nextProxyPath = descriptor.proxyPath
 
-  if (instance.client && instance.proxyPath === nextProxyPath) {
+  if (!replaceClient && instance.client && instance.proxyPath === nextProxyPath) {
     if (nextPort && instance.port !== nextPort) {
       updateInstance(descriptor.id, { port: nextPort })
     }
@@ -372,6 +373,7 @@ function attachClient(descriptor: WorkspaceDescriptor) {
   }
 
   if (instance.client) {
+    if (replaceClient) messageStoreBus.unregisterInstance(descriptor.id)
     sdkManager.destroyClientsForInstance(descriptor.id)
   }
 
@@ -1015,12 +1017,8 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   // Clean up session indexes and drafts for removed instance
   clearCacheForInstance(id)
   messageStoreBus.unregisterInstance(id)
-  clearInstanceDraftPrompts(id)
   clearSessionListRequestState(id)
   clearInstanceAttachments(id)
-  clearInstanceDeletedSessionAuthority(id)
-  clearInstanceSessionExpansionState(id)
-  clearInstanceSessionSelection(id)
   if (removedInstance && removedOccurrence >= 0 && options.authoritative !== false) {
     publishInstanceLifecycleAuthority({
       type: "removed",

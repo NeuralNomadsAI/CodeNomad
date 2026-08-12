@@ -4,7 +4,7 @@ import { describe, it } from "node:test"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import { serverApi } from "../lib/api-client.ts"
 import type { Session } from "../types/session.ts"
-import { addInstance, removeInstance } from "./instances.ts"
+import { addInstance, removeInstance, updateInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { fetchSessions, loadMessages, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
 import {
@@ -129,12 +129,72 @@ describe("session request authority", () => {
 
     try {
       const request = loadMessages(instanceId, sessionId)
-      invalidateSessionMessageLoad(instanceId, sessionId)
+      messageStoreBus.getOrCreate(instanceId).clearSession(sessionId)
       response.resolve({ data: [apiMessage("evicted-message", sessionId)] })
       await request
 
       assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), [])
       assert.equal(messagesLoaded().get(instanceId)?.has(sessionId) ?? false, false)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("aborts obsolete message requests and ignores clients that do not honor abort", async () => {
+    const instanceId = "aborted-message-load", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const response = deferred<any>()
+    let signal: AbortSignal | undefined
+    ;(client as any).message = { list: (_input: unknown, options: { signal?: AbortSignal }) => {
+      signal = options.signal
+      return response.promise
+    } }
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+
+    try {
+      const request = loadMessages(instanceId, sessionId)
+      invalidateSessionMessageLoad(instanceId, sessionId)
+      assert.equal(signal?.aborted, true)
+      response.resolve({ data: [apiMessage("late-message", sessionId)] })
+      await request
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), [])
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("does not eagerly load descendants with a root transcript", async () => {
+    const instanceId = "root-only-load", rootId = "root", childId = "child"
+    const { client, cleanup } = setup(instanceId)
+    const calls: string[] = []
+    ;(client as any).message = { list: async ({ sessionID }: { sessionID: string }) => {
+      calls.push(sessionID)
+      return { data: [] }
+    } }
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([
+      [rootId, session(instanceId, rootId)],
+      [childId, session(instanceId, childId, rootId)],
+    ])))
+
+    try {
+      await loadMessages(instanceId, rootId)
+      assert.deepEqual(calls, [rootId])
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("purges every session-state bucket when an instance is removed", async () => {
+    const instanceId = "instance-state-purge", sessionId = "session"
+    const { cleanup } = setup(instanceId)
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    messagesLoaded().set(instanceId, new Set([sessionId]))
+
+    try {
+      removeInstance(instanceId, { authoritative: false })
+      assert.equal(sessions().has(instanceId), false)
+      assert.equal(messagesLoaded().has(instanceId), false)
+      assert.equal(loading().loadingMessages.has(instanceId), false)
     } finally {
       cleanup()
     }
@@ -151,7 +211,7 @@ describe("session request authority", () => {
     setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
 
     try {
-      await loadMessages(instanceId, sessionId, { skipChildren: true })
+      await loadMessages(instanceId, sessionId)
       const store = messageStoreBus.getOrCreate(instanceId)
       store.restoreScrollSnapshot(sessionId, "message-stream", { scrollTop: 240, atBottom: false, updatedAt: 1 })
       store.clearSession(sessionId, { preserveScroll: true })
@@ -159,7 +219,7 @@ describe("session request authority", () => {
       assert.equal(messagesLoaded().get(instanceId)?.has(sessionId) ?? false, false)
       assert.deepEqual(store.getScrollSnapshot(sessionId, "message-stream"), { scrollTop: 240, atBottom: false, updatedAt: 1 })
 
-      await loadMessages(instanceId, sessionId, { skipChildren: true })
+      await loadMessages(instanceId, sessionId)
       assert.equal(calls, 2)
       assert.deepEqual(store.getSessionMessageIds(sessionId), ["message-2-a", "message-2-b"])
     } finally {
@@ -189,6 +249,25 @@ describe("session request authority", () => {
       await newRequest
 
       assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["new-message"])
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("does not accept a late response from a replaced client", async () => {
+    const instanceId = "replaced-message-client", sessionId = "session"
+    const { client: oldClient, cleanup } = setup(instanceId)
+    const oldResponse = deferred<any>()
+    ;(oldClient as any).message = { list: () => oldResponse.promise }
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+
+    try {
+      const oldRequest = loadMessages(instanceId, sessionId)
+      const newClient = { session: { active: async () => ({}) }, message: { list: async () => ({ data: [] }) } } as any
+      updateInstance(instanceId, { client: newClient })
+      oldResponse.resolve({ data: [apiMessage("old-client-message", sessionId)] })
+      await oldRequest
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), [])
     } finally {
       cleanup()
     }

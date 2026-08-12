@@ -7,7 +7,7 @@ import { loading, sessions } from "./session-state"
 export const SESSION_TRANSCRIPT_BYTE_BUDGET = 64 * 1024 * 1024
 
 const log = getLogger("session")
-const visible = new Set<string>()
+const visible = new Map<string, number>()
 const pendingMeasurements = new Map<string, { timer: ReturnType<typeof setTimeout>; controller: AbortController }>()
 const key = (instanceId: string, sessionId: string) => `${instanceId}\u0000${sessionId}`
 
@@ -61,10 +61,12 @@ export function touchSessionTranscript(instanceId: string, sessionId: string): v
 export function setSessionTranscriptVisible(instanceId: string, sessionId: string, value: boolean): void {
   const entryKey = key(instanceId, sessionId)
   if (value) {
-    visible.add(entryKey)
+    visible.set(entryKey, (visible.get(entryKey) ?? 0) + 1)
     coordinator.touch(instanceId, sessionId)
   } else {
-    visible.delete(entryKey)
+    const count = (visible.get(entryKey) ?? 0) - 1
+    if (count > 0) visible.set(entryKey, count)
+    else visible.delete(entryKey)
   }
   coordinator.enforce()
 }
@@ -92,6 +94,9 @@ messageStoreBus.onSessionCleared((instanceId, sessionId) => {
 })
 messageStoreBus.onInstanceDestroyed((instanceId) => {
   coordinator.forgetInstance(instanceId)
+  for (const entryKey of visible.keys()) {
+    if (entryKey.startsWith(`${instanceId}\u0000`)) visible.delete(entryKey)
+  }
   for (const [entryKey, pending] of pendingMeasurements) {
     if (!entryKey.startsWith(`${instanceId}\u0000`)) continue
     clearTimeout(pending.timer)

@@ -118,4 +118,36 @@ describe("native session event reducer", () => {
       sdkManager.destroyClientsForInstance(instanceId)
     }
   })
+
+  it("cannot refresh or restore a removed instance from pending native work", async () => {
+    const instanceId = "removed-native-events"
+    const refreshSessionId = "refresh-session"
+    const fetchedSessionId = "fetched-session"
+    let messageCalls = 0
+    let resolveGet!: (value: any) => void
+    const getResponse = new Promise<any>((resolve) => { resolveGet = resolve })
+    const client = {
+      session: { get: () => getResponse },
+      message: { list: async () => { messageCalls += 1; return { data: [] } } },
+    } as any
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([
+      [refreshSessionId, session(instanceId, refreshSessionId)],
+    ])))
+
+    handleNativeSessionEvent(instanceId, { type: "session.text.delta", data: { sessionID: refreshSessionId } })
+    handleSessionStatus(instanceId, {
+      type: "session.status",
+      data: { sessionID: fetchedSessionId, status: { type: "running" } },
+    } as any)
+    removeInstance(instanceId, { authoritative: false })
+    resolveGet({ id: fetchedSessionId, title: fetchedSessionId, parentID: null, projectID: "project",
+      location: { directory: "/work" }, time: { created: 1, updated: 1 } })
+    await delay(120)
+
+    assert.equal(messageCalls, 0)
+    assert.equal(sessions().has(instanceId), false)
+    sdkManager.destroyClientsForInstance(instanceId)
+  })
 })
