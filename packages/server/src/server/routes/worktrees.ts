@@ -8,8 +8,18 @@ import {
   createManagedWorktree,
   removeWorktree,
 } from "../../workspaces/git-worktrees"
-import type { WorktreeListResponse } from "../../api-types"
+import type {
+  WorktreeListResponse,
+  WorktreeSessionMoveRequest,
+  WorktreeSessionMoveResponse,
+} from "../../api-types"
 import { ensureCodenomadGitExclude } from "../../workspaces/worktree-map"
+import { invalidateWorktreeDirectoryCache } from "../../workspaces/worktree-directory"
+import {
+  moveProjectSessionFamily,
+  ProjectSessionError,
+  removeProjectWorktree,
+} from "../../workspaces/project-session-families"
 
 interface RouteDeps {
   workspaceManager: WorkspaceManager
@@ -18,6 +28,10 @@ interface RouteDeps {
 const WorktreeCreateSchema = z.object({
   slug: z.string().trim().min(1),
   branch: z.string().trim().min(1).optional(),
+})
+
+const WorktreeSessionMoveSchema = z.object({
+  worktreeSlug: z.string().trim().min(1),
 })
 
 export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
@@ -73,9 +87,55 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
         slug,
         logger: request.log,
       })
+      invalidateWorktreeDirectoryCache(workspace.id)
 
       reply.code(201)
       return created
+    } catch (error) {
+      return handleError(error, reply)
+    }
+  })
+
+  app.post<{
+    Params: { id: string; sessionId: string }
+    Body: WorktreeSessionMoveRequest
+  }>("/api/workspaces/:id/sessions/:sessionId/worktree", async (request, reply) => {
+    const workspace = deps.workspaceManager.get(request.params.id)
+    if (!workspace) {
+      reply.code(404)
+      return { error: "Workspace not found" }
+    }
+
+    try {
+      const { worktreeSlug } = WorktreeSessionMoveSchema.parse(request.body ?? {})
+      const { repoRoot, isGitRepo } = await resolveRepoRoot(workspace.path, request.log)
+      if (!isGitRepo) throw new ProjectSessionError("Workspace is not a Git repository", 409)
+      const worktrees = await strictWorktrees({
+        repoRoot,
+        workspaceFolder: workspace.path,
+        logger: request.log,
+        failClosed: true,
+      })
+      const target = worktrees.find((worktree) => worktree.slug === worktreeSlug)
+      if (!target) throw new ProjectSessionError("Worktree not found", 404)
+      const moved = await moveProjectSessionFamily({
+        client: await deps.workspaceManager.getSharedServiceClient(),
+        projectDirectory: workspace.path,
+        sessionId: request.params.sessionId,
+        targetDirectory: target.directory,
+        validateTarget: async () => {
+          const refreshed = await strictWorktrees({
+            repoRoot,
+            workspaceFolder: workspace.path,
+            logger: request.log,
+            failClosed: true,
+          })
+          return refreshed.some((worktree) => worktree.slug === worktreeSlug
+            && worktree.registeredDirectory === target.registeredDirectory)
+        },
+      })
+      const response: WorktreeSessionMoveResponse = { ...moved, worktreeSlug }
+      return response
     } catch (error) {
       return handleError(error, reply)
     }
@@ -105,14 +165,60 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
     const force = (request.query?.force ?? "").toString().toLowerCase() === "true"
 
     try {
-      const worktrees = await listWorktrees({ repoRoot, workspaceFolder: workspace.path, logger: request.log })
+      const worktrees = await strictWorktrees({
+        repoRoot,
+        workspaceFolder: workspace.path,
+        logger: request.log,
+        failClosed: true,
+      })
       const match = worktrees.find((wt) => wt.slug === slug)
       if (!match || match.kind === "root") {
         reply.code(404)
         return { error: "Worktree not found" }
       }
+      let releaseDeletion: () => void
+      try {
+        releaseDeletion = await deps.workspaceManager.reserveWorktreeDeletion(match.registeredDirectory ?? match.directory)
+      } catch (error) {
+        throw new ProjectSessionError(error instanceof Error ? error.message : "Unable to reserve worktree deletion", 409)
+      }
 
-      await removeWorktree({ workspaceFolder: workspace.path, directory: match.directory, force, logger: request.log })
+      try {
+        const client = await deps.workspaceManager.getSharedServiceClient()
+        await removeProjectWorktree({
+          client,
+          projectDirectory: workspace.path,
+          targetDirectory: match.registeredDirectory ?? match.directory,
+          rootDirectory: worktrees.find((worktree) => worktree.kind === "root")!.directory,
+          remove: async () => {
+            try {
+              await removeWorktree({
+                workspaceFolder: workspace.path,
+                directory: match.registeredDirectory ?? match.directory,
+                force,
+                logger: request.log,
+              })
+            } catch (error) {
+              throw new ProjectSessionError(error instanceof Error ? error.message : "Unable to remove worktree", 409)
+            }
+          },
+          isTargetRegistered: async () => {
+            const refreshed = await strictWorktrees({
+              repoRoot,
+              workspaceFolder: workspace.path,
+              logger: request.log,
+              failClosed: true,
+            })
+            return refreshed.some((worktree) => worktree.slug === slug
+              && worktree.kind === "worktree"
+              && worktree.registeredDirectory === match.registeredDirectory
+              && worktree.head === match.head)
+          },
+        })
+        invalidateWorktreeDirectoryCache(workspace.id)
+      } finally {
+        releaseDeletion()
+      }
 
       reply.code(204)
     } catch (error) {
@@ -122,7 +228,13 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
   )
 }
 
+function strictWorktrees(params: Parameters<typeof listWorktrees>[0]) {
+  return listWorktrees(params).catch((error) => {
+    throw new ProjectSessionError(error instanceof Error ? error.message : "Unable to read Git worktree inventory", 502)
+  })
+}
+
 function handleError(error: unknown, reply: FastifyReply) {
-  reply.code(400)
+  reply.code(error instanceof ProjectSessionError ? error.statusCode : 400)
   return { error: error instanceof Error ? error.message : "Unable to fulfill request" }
 }

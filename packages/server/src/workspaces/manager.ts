@@ -125,6 +125,7 @@ type WorkspaceCreationOwnership = Map<string, CreationRequestState>
 export class WorkspaceManager {
   private readonly workspaces = new Map<string, WorkspaceRecord>()
   private readonly pendingWorkspaceCreations = new Map<string, WorkspaceRecord>()
+  private readonly deletingWorktreeRoots = new Set<string>()
   private readonly cancelledCreationRequests = new Set<string>()
   private shuttingDown = false
   private readonly sharedService: SharedService
@@ -163,6 +164,18 @@ export class WorkspaceManager {
 
   getSharedServiceClient(): Promise<OpenCodeClient> {
     return this.sharedService.client()
+  }
+
+  async reserveWorktreeDeletion(directory: string): Promise<() => void> {
+    const target = (await resolveWorkspaceIdentity(directory, this.options.rootDir)).workspacePath
+    if (Array.from(this.deletingWorktreeRoots).some((root) => pathsOverlap(root, target))) {
+      throw new Error("Worktree deletion is already in progress")
+    }
+    if (Array.from(this.workspaces.values()).some((workspace) => pathContains(target, workspace.path))) {
+      throw new Error("Worktree is open as another workspace")
+    }
+    this.deletingWorktreeRoots.add(target)
+    return () => this.deletingWorktreeRoots.delete(target)
   }
 
   async ownsDirectory(id: string, directory: string): Promise<boolean> {
@@ -269,6 +282,9 @@ export class WorkspaceManager {
         launchDeadlineAt,
         launchTimeoutMs,
       )
+      if (Array.from(this.deletingWorktreeRoots).some((root) => pathContains(root, workspacePath))) {
+        throw new Error("Workspace directory is being removed")
+      }
       if (options.requestId && this.cancelledCreationRequests.has(options.requestId)) {
         throw new Error(`Workspace creation request ${options.requestId} was cancelled`)
       }
@@ -692,4 +708,13 @@ export class WorkspaceManager {
 
     return candidates[0] ?? ""
   }
+}
+
+function pathContains(parent: string, child: string): boolean {
+  const relative = path.relative(parent, child)
+  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+}
+
+function pathsOverlap(left: string, right: string): boolean {
+  return pathContains(left, right) || pathContains(right, left)
 }

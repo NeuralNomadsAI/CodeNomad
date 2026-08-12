@@ -93,9 +93,13 @@ export interface WorktreeDescriptor {
   slug: string
   /** Absolute directory path on the server host. */
   directory: string
+  /** Exact path registered in Git's worktree inventory. */
+  registeredDirectory?: string
   kind: WorktreeKind
   /** Optional VCS branch name when available. */
   branch?: string
+  /** Commit recorded by the Git worktree inventory. */
+  head?: string
 }
 
 export interface WorktreeListResponse {
@@ -108,6 +112,16 @@ export interface WorktreeCreateRequest {
   slug: string
   /** Optional branch name (defaults to slug). */
   branch?: string
+}
+
+export interface WorktreeSessionMoveRequest {
+  worktreeSlug: string
+}
+
+export interface WorktreeSessionMoveResponse {
+  rootSessionId: string
+  sessionIds: string[]
+  worktreeSlug: string
 }
 
 export type GitChangeKind = "added" | "modified" | "deleted" | "renamed" | "copied" | "untracked" | "unmerged"

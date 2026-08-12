@@ -12,6 +12,7 @@ import {
 import type { OpenCodeEnsureOptions } from "./opencode-service"
 import path from "node:path"
 import os from "node:os"
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -176,6 +177,25 @@ describe("workspace manager shared service lifecycle", () => {
     await deletion
     assert.deepEqual(harness.manager.list(), [])
     assert.deepEqual(harness.service.evictions, [{ directory: process.cwd() }])
+  })
+
+  it("blocks workspace creation beneath a reserved worktree deletion", async () => {
+    const temp = mkdtempSync(path.join(os.tmpdir(), "codenomad-worktree-reservation-"))
+    const worktree = path.join(temp, "worktree")
+    const nested = path.join(worktree, "apps", "web")
+    mkdirSync(nested, { recursive: true })
+    const harness = createHarness()
+
+    try {
+      const release = await harness.manager.reserveWorktreeDeletion(worktree)
+      await assert.rejects(() => harness.manager.create(nested), /being removed/)
+      release()
+      const created = await harness.manager.create(nested)
+      assert.equal(created.workspace.path, nested)
+      await harness.manager.delete(created.workspace.id)
+    } finally {
+      rmSync(temp, { recursive: true, force: true })
+    }
   })
 
   it("keeps a failed eviction retryable and reports shutdown failures", async () => {

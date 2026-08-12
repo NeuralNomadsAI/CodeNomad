@@ -11,6 +11,10 @@ type WorktreeCacheEntry = {
 const WORKTREE_CACHE_TTL_MS = 2000
 const worktreeCache = new Map<string, WorktreeCacheEntry>()
 
+export function invalidateWorktreeDirectoryCache(workspaceId: string): void {
+  worktreeCache.delete(workspaceId)
+}
+
 async function normalizeDirectoryPath(directory: string): Promise<string> {
   const trimmed = (directory ?? "").trim()
   if (!trimmed) return ""
