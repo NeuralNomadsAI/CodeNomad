@@ -106,6 +106,15 @@ type StateWriter =
     std::sync::Arc<dyn Fn(&Path, &[u8], &dyn Fn() -> bool) -> Result<(), String> + Send + Sync>;
 
 impl ClientState {
+    pub(crate) fn validate_renderer_access(
+        &self,
+        access_token: &str,
+        renderer_url: &Url,
+    ) -> Result<u64, String> {
+        self.renderer_access
+            .validate_stable(access_token, renderer_url)
+    }
+
     pub fn initialize(app: &AppHandle) -> Self {
         match app.path().app_data_dir() {
             Ok(app_data_dir) => {

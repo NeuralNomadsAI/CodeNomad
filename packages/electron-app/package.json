@@ -24,7 +24,7 @@
     "prebuild": "npm run prepare:resources",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test:native": "node --import tsx --test electron/main/client-state-cross-host.test.ts electron/main/client-state-process.test.ts electron/main/client-state.test.ts electron/main/client-state-ipc.test.ts electron/main/client-state-navigation.test.ts electron/main/client-state-lifecycle.test.ts electron/main/process-stop.test.ts electron/main/renderer-client-state-flush.test.ts electron/main/renderer-origin.test.ts electron/main/serialized-lifecycle.test.ts electron/main/window-state.test.ts",
+    "test:native": "node --import tsx --test electron/main/client-state-cross-host.test.ts electron/main/client-state-process.test.ts electron/main/client-state.test.ts electron/main/client-state-ipc.test.ts electron/main/client-state-navigation.test.ts electron/main/client-state-lifecycle.test.ts electron/main/process-stop.test.ts electron/main/renderer-client-state-flush.test.ts electron/main/renderer-origin.test.ts electron/main/serialized-lifecycle.test.ts electron/main/window-state.test.ts electron/main/worktree-file-manager.test.ts",
     "preview": "electron-vite preview",
     "build:binaries": "node scripts/build.js",
     "build:mac": "node scripts/build.js mac",

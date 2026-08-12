@@ -10,6 +10,7 @@ mod linux_tls;
 mod managed_node;
 mod shutdown;
 mod windows_update;
+mod worktree_file_manager;
 
 use cli_manager::{CliProcessManager, CliStatus};
 use desktop_event_transport::{
@@ -673,6 +674,7 @@ fn main() {
             client_state::client_state_clear,
             client_state::client_state_renderer_flushed,
             client_state::client_state_navigation_flushed,
+            worktree_file_manager::open_worktree_in_file_manager,
             windows_update::install_stable_update
         ])
         .on_menu_event(|app_handle, event| {

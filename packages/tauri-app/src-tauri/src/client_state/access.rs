@@ -75,6 +75,27 @@ impl RendererAccess {
         }
     }
 
+    pub(super) fn validate_stable(
+        &self,
+        access_token: &str,
+        renderer_url: &Url,
+    ) -> Result<u64, String> {
+        if access_token.is_empty() {
+            return Err("Client state access token must not be empty".to_string());
+        }
+        let renderer_origin = origin_key(renderer_url)?;
+        let state = self.state.lock().map_err(|err| err.to_string())?;
+        if state.token.as_deref() != Some(access_token)
+            || state.committed_origin.as_deref() != Some(renderer_origin.as_str())
+        {
+            return Err("Client state renderer access is no longer current".to_string());
+        }
+        if state.pending_origin.is_some() {
+            return Err("Renderer navigation is in progress".to_string());
+        }
+        Ok(state.generation)
+    }
+
     pub(super) fn is_generation_current(&self, generation: u64) -> bool {
         self.state
             .lock()

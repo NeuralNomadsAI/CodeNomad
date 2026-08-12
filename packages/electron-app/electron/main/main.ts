@@ -6,10 +6,11 @@ import { dirname, join } from "path"
 import { fileURLToPath } from "url"
 import { createApplicationMenu } from "./menu"
 import { ClientStateManager } from "./client-state"
-import { setupClientStateIPC } from "./client-state-ipc"
+import { setupClientStateIPC, validateClientStateSender } from "./client-state-ipc"
 import { ClientStateLifecycle } from "./client-state-lifecycle"
 import { ClientStateNavigationController } from "./client-state-navigation"
 import { setupCliIPC } from "./ipc"
+import { setupWorktreeFileManagerIPC } from "./worktree-file-manager"
 import { configureMediaPermissionHandlers, isAllowedRendererOrigin } from "./permissions"
 import { resolveConfiguredRendererOrigins } from "./renderer-origin"
 import { CliProcessManager } from "./process-manager"
@@ -120,6 +121,15 @@ const bindClientStateWindow = setupClientStateIPC(
   clientStateManager,
   () => mainWindow,
   getAllowedRendererOrigins,
+)
+setupWorktreeFileManagerIPC(
+  ipcMain,
+  (event, token) => {
+    const window = mainWindow
+    validateClientStateSender(event, window, getAllowedRendererOrigins(window))
+    clientStateManager.assertRendererAccessToken(token)
+  },
+  (value) => shell.openPath(value),
 )
 
 if (isMac) {

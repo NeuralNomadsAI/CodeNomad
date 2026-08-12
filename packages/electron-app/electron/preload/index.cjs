@@ -43,6 +43,8 @@ const localElectronAPI = {
   setClientStateRestoreEnabled: (token, enabled) =>
     ipcRenderer.invoke("client-state:setRestoreEnabled", token, Boolean(enabled)),
   clearClientState: (token) => ipcRenderer.invoke("client-state:clear", token),
+  openWorktreeInFileManager: (token, rootDirectory, registeredDirectory, targetDirectory) =>
+    ipcRenderer.invoke("worktree:openInFileManager", token, { rootDirectory, registeredDirectory, targetDirectory }),
 }
 
 const remoteElectronAPI = {
