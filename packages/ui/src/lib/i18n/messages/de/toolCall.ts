@@ -56,6 +56,9 @@ export const toolCallMessages = {
   "toolCall.renderer.action.listingDirectory": "Verzeichnis wird aufgelistet...",
 
   "toolCall.renderer.bash.title.timeout": "Zeitüberschreitung: {timeout}",
+  "toolCall.output.truncated": "[Ausgabe für die Darstellung gekürzt; kopieren Sie sie für die vollständige Ausgabe]",
+  "toolCall.input.tooLarge": "Die Eingabe wird nicht dargestellt, da sie zu groß ist.",
+  "toolCall.output.tooLarge": "Die strukturierte Ausgabe wird nicht dargestellt, da sie zu groß ist.",
   "toolCall.renderer.read.detail.offset": "Offset: {offset}",
   "toolCall.renderer.read.detail.limit": "Limit: {limit}",
 

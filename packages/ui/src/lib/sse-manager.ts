@@ -125,13 +125,30 @@ type SSEEvent =
 const [connectionStatus, setConnectionStatus] = createSignal<Map<string, ConnectionStatus>>(new Map())
 const [transportStatus, setTransportStatus] = createSignal<WorkspaceEventTransportStatus>("connecting")
 
+export function acceptInstanceStreamId(
+  streams: Map<string, string>,
+  instanceId: string,
+  streamId: string | undefined,
+  replace = false,
+): boolean {
+  if (streamId === undefined) return true
+  const current = streams.get(instanceId)
+  if (current === undefined || replace) streams.set(instanceId, streamId)
+  return current === undefined || replace || current === streamId
+}
+
 class SSEManager {
+  private readonly streamIds = new Map<string, string>()
+  private readonly acceptedEventHandlers = new Set<(instanceId: string, event: SSEEvent | InstanceStreamEvent) => void>()
+
   constructor() {
     log.info("sseManager initialized: listening for SSE disconnect and reconnect")
 
     serverEvents.on("instance.eventStatus", (event) => {
       const payload = event as InstanceStatusPayload
+      if (!acceptInstanceStreamId(this.streamIds, payload.instanceId, payload.streamId, payload.status === "connecting")) return
       this.updateConnectionStatus(payload.instanceId, payload.status)
+      if (payload.status === "connected") this.onConnectionRestored?.(payload.instanceId)
       if (payload.status === "disconnected") {
         if (payload.reason === "workspace stopped") {
           return
@@ -143,12 +160,14 @@ class SSEManager {
 
     serverEvents.on("instance.event", (event) => {
       const payload = event as InstanceEventPayload
-      this.updateConnectionStatus(payload.instanceId, "connected")
+      if (!acceptInstanceStreamId(this.streamIds, payload.instanceId, payload.streamId)) return
+      if (payload.streamId) this.updateConnectionStatus(payload.instanceId, "connected")
       this.handleEvent(payload.instanceId, payload.event as SSEEvent)
     })
 
     serverEvents.onTransportStatus((status) => {
       log.info("SSE transport status changed", { status })
+      if (status !== "connected") this.streamIds.clear()
       setTransportStatus(status)
     })
   }
@@ -166,7 +185,8 @@ class SSEManager {
       log.warn("Dropping malformed event", event)
       return
     }
-
+    if (this.shouldHandleEvent && !this.shouldHandleEvent(instanceId)) return
+    for (const handler of this.acceptedEventHandlers) handler(instanceId, event)
     log.info("Received event", { type: event.type, event })
 
     switch (event.type) {
@@ -293,7 +313,13 @@ class SSEManager {
   onInstanceDisposed?: (instanceId: string, event: ServerInstanceDisposedEvent) => void
   onWorktreeReady?: (instanceId: string, event: WorktreeReadyEvent) => void | Promise<void>
   onConnectionLost?: (instanceId: string, reason: string) => void | Promise<void>
+  onConnectionRestored?: (instanceId: string) => void
+  shouldHandleEvent?: (instanceId: string) => boolean
 
+  onAcceptedEvent(handler: (instanceId: string, event: SSEEvent | InstanceStreamEvent) => void): () => void {
+    this.acceptedEventHandlers.add(handler)
+    return () => this.acceptedEventHandlers.delete(handler)
+  }
   getStatus(instanceId: string): ConnectionStatus | null {
     return deriveDisplayConnectionStatus(connectionStatus().get(instanceId) ?? null, transportStatus())
   }

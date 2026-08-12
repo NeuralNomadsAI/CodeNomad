@@ -1,5 +1,5 @@
 import { preparePromptDisplayText } from "../lib/prompt-display-metadata"
-import { instances } from "./instances"
+import { instances, isInstanceRuntimeCurrent } from "./instances"
 import { getRootClient } from "./opencode-client"
 import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 
@@ -10,8 +10,9 @@ import { updateSessionInfo } from "./message-v2/session-info"
 import { messageStoreBus } from "./message-v2/bus"
 import { removeMessagePartV2, removeMessageV2 } from "./message-v2/bridge"
 import { getLogger } from "../lib/logger"
-import { requestData } from "../lib/opencode-api"
+import { isDeliveryAmbiguousError, requestData } from "../lib/opencode-api"
 import { clearConversationPlaybackForSession } from "./conversation-speech"
+import { normalizeMessagePart } from "./message-v2/normalizers"
 
 const log = getLogger("actions")
 
@@ -41,6 +42,17 @@ const BASE62_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuv
 
 let lastTimestamp = 0
 let localCounter = 0
+
+function uncertainDeliveryError(error: unknown): Error {
+  const result = new Error(error instanceof Error ? error.message : String(error))
+  ;(result as any).cause = error
+  ;(result as any).suppressPromptRecovery = true
+  return result
+}
+
+function classifyDeliveryError(error: unknown): unknown {
+  return isDeliveryAmbiguousError(error) ? uncertainDeliveryError(error) : error
+}
 
 function randomBase62(length: number): string {
   let result = ""
@@ -225,21 +237,76 @@ async function sendMessage(
   try {
     log.info("session.promptAsync", { instanceId, sessionId, requestBody })
     const workspacePayload = await getSessionWorkspacePayload(instanceId, sessionId)
+    if (!isInstanceRuntimeCurrent(instanceId, instance)) {
+      removeMessageV2(instanceId, messageId)
+      throw new Error("Instance no longer active")
+    }
     const admission = beginSessionGenerationAdmission(instanceId, sessionId)
     try {
       await requestData(
         client.session.promptAsync({
           sessionID: sessionId,
+          messageID: messageId,
           ...workspacePayload,
           ...(requestBody as any),
         }),
         "session.promptAsync",
       )
+      if (!isInstanceRuntimeCurrent(instanceId, instance)) {
+        if (store.getMessage(messageId)?.isEphemeral) removeMessageV2(instanceId, messageId)
+        throw uncertainDeliveryError(new Error("Instance changed after prompt delivery"))
+      }
       admission.complete()
       store.acceptSend(messageId)
     } catch (error) {
-      admission.rollback()
-      throw error
+      if (!isInstanceRuntimeCurrent(instanceId, instance)) {
+        if (store.getMessage(messageId)?.isEphemeral) removeMessageV2(instanceId, messageId)
+        throw uncertainDeliveryError(error)
+      }
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          const messages = await requestData<any[]>(
+            client.session.messages({ sessionID: sessionId, ...workspacePayload }),
+            "session.messages",
+          )
+          if (!isInstanceRuntimeCurrent(instanceId, instance)) {
+            if (store.getMessage(messageId)?.isEphemeral) removeMessageV2(instanceId, messageId)
+            throw uncertainDeliveryError(error)
+          }
+          const verified = messages.find((message) => (message?.info ?? message)?.id === messageId)
+          if (verified) {
+            const info = verified.info ?? verified
+            const createdAt = info.time?.created ?? Date.now()
+            const completedAt = info.time?.end ?? info.time?.completed ?? createdAt
+            store.upsertMessage({
+              id: messageId,
+              sessionId,
+              role: info.role === "assistant" ? "assistant" : "user",
+              status: info.error ? "error" : "complete",
+              parts: (verified.parts ?? []).map(normalizeMessagePart),
+              createdAt,
+              updatedAt: completedAt,
+              isEphemeral: false,
+            })
+            store.setMessageInfo(messageId, info)
+            if (isInstanceRuntimeCurrent(instanceId, instance)) admission.complete()
+            return
+          }
+        } catch {
+          if (!isInstanceRuntimeCurrent(instanceId, instance)) {
+            if (store.getMessage(messageId)?.isEphemeral) removeMessageV2(instanceId, messageId)
+            throw uncertainDeliveryError(error)
+          }
+          // A failed verification leaves delivery ambiguous.
+        }
+        if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      if (store.getMessageInfo(messageId)) {
+        if (isInstanceRuntimeCurrent(instanceId, instance)) admission.complete()
+        throw classifyDeliveryError(error)
+      }
+      if (isInstanceRuntimeCurrent(instanceId, instance)) admission.rollback()
+      throw classifyDeliveryError(error)
     }
   } catch (error) {
     store.failSend(messageId)
@@ -290,6 +357,7 @@ async function executeCustomCommand(
   }
 
   const workspacePayload = await getSessionWorkspacePayload(instanceId, sessionId)
+  if (!isInstanceRuntimeCurrent(instanceId, instance)) throw new Error("Instance no longer active")
   const admission = beginSessionGenerationAdmission(instanceId, sessionId)
   try {
     await requestData(
@@ -300,10 +368,13 @@ async function executeCustomCommand(
       }),
       "session.command",
     )
+    if (!isInstanceRuntimeCurrent(instanceId, instance)) {
+      throw uncertainDeliveryError(new Error("Instance changed after command delivery"))
+    }
     admission.complete()
   } catch (error) {
-    admission.rollback()
-    throw error
+    if (isInstanceRuntimeCurrent(instanceId, instance)) admission.rollback()
+    throw classifyDeliveryError(error)
   }
 }
 
@@ -323,6 +394,7 @@ async function runShellCommand(instanceId: string, sessionId: string, command: s
   const agent = session.agent || "build"
 
   const workspacePayload = await getSessionWorkspacePayload(instanceId, sessionId)
+  if (!isInstanceRuntimeCurrent(instanceId, instance)) throw new Error("Instance no longer active")
   const admission = beginSessionGenerationAdmission(instanceId, sessionId)
   try {
     await requestData(
@@ -334,10 +406,13 @@ async function runShellCommand(instanceId: string, sessionId: string, command: s
       }),
       "session.shell",
     )
+    if (!isInstanceRuntimeCurrent(instanceId, instance)) {
+      throw uncertainDeliveryError(new Error("Instance changed after shell delivery"))
+    }
     admission.complete()
   } catch (error) {
-    admission.rollback()
-    throw error
+    if (isInstanceRuntimeCurrent(instanceId, instance)) admission.rollback()
+    throw classifyDeliveryError(error)
   }
 }
 
@@ -353,10 +428,12 @@ async function abortSession(instanceId: string, sessionId: string): Promise<void
 
   try {
     log.info("session.abort", { instanceId, sessionId })
+    const workspace = await getSessionWorkspacePayload(instanceId, sessionId)
+    if (!isInstanceRuntimeCurrent(instanceId, instance)) return
     await requestData(
       client.session.abort({
         sessionID: sessionId,
-        ...(await getSessionWorkspacePayload(instanceId, sessionId)),
+        ...workspace,
       }),
       "session.abort",
     )
@@ -368,6 +445,8 @@ async function abortSession(instanceId: string, sessionId: string): Promise<void
 }
 
 async function updateSessionAgent(instanceId: string, sessionId: string, agent: string): Promise<void> {
+  const instance = instances().get(instanceId)
+  if (!instance?.client) throw new Error("Instance not ready")
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionId)
   if (!session) {
@@ -375,6 +454,7 @@ async function updateSessionAgent(instanceId: string, sessionId: string, agent: 
   }
 
   const nextModel = await getDefaultModel(instanceId, agent)
+  if (!isInstanceRuntimeCurrent(instanceId, instance)) return
   const shouldApplyModel = isModelValid(instanceId, nextModel)
 
   withSession(instanceId, sessionId, (current) => {
@@ -386,6 +466,7 @@ async function updateSessionAgent(instanceId: string, sessionId: string, agent: 
 
   if (agent && shouldApplyModel) {
     await setAgentModelPreference(instanceId, agent, nextModel)
+    if (!isInstanceRuntimeCurrent(instanceId, instance)) return
   }
 
   if (shouldApplyModel) {
@@ -398,6 +479,8 @@ async function updateSessionModel(
   sessionId: string,
   model: { providerId: string; modelId: string },
 ): Promise<void> {
+  const instance = instances().get(instanceId)
+  if (!instance?.client) throw new Error("Instance not ready")
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionId)
   if (!session) {
@@ -415,6 +498,7 @@ async function updateSessionModel(
 
   if (session.agent) {
     await setAgentModelPreference(instanceId, session.agent, model)
+    if (!isInstanceRuntimeCurrent(instanceId, instance)) return
   }
   addRecentModelPreference(model)
 
@@ -439,14 +523,17 @@ async function renameSession(instanceId: string, sessionId: string, nextTitle: s
     throw new Error("Session title is required")
   }
 
+  const workspace = await getSessionWorkspacePayload(instanceId, sessionId)
+  if (!isInstanceRuntimeCurrent(instanceId, instance)) return
   await requestData(
     client.session.update({
       sessionID: sessionId,
-      ...(await getSessionWorkspacePayload(instanceId, sessionId)),
+      ...workspace,
       title: trimmedTitle,
     }),
     "session.update",
   )
+  if (!isInstanceRuntimeCurrent(instanceId, instance)) return
 
   withSession(instanceId, sessionId, (current) => {
     current.title = trimmedTitle
@@ -464,16 +551,19 @@ async function deleteMessagePart(instanceId: string, sessionId: string, messageI
   }
 
   const client = getRootClient(instanceId)
+  const workspace = await getSessionWorkspacePayload(instanceId, sessionId)
+  if (!isInstanceRuntimeCurrent(instanceId, instance)) return
 
   await requestData(
     client.part.delete({
       sessionID: sessionId,
-      ...(await getSessionWorkspacePayload(instanceId, sessionId)),
+      ...workspace,
       messageID: messageId,
       partID: partId,
     }),
     "part.delete",
   )
+  if (!isInstanceRuntimeCurrent(instanceId, instance)) return
 
   // Optimistic removal; SSE will also broadcast a part-removed event.
   removeMessagePartV2(instanceId, messageId, partId)
@@ -488,16 +578,19 @@ async function deleteMessage(instanceId: string, sessionId: string, messageId: s
   }
 
   const client = getRootClient(instanceId)
+  const workspace = await getSessionWorkspacePayload(instanceId, sessionId)
+  if (!isInstanceRuntimeCurrent(instanceId, instance)) return
 
   // The SDK generator does not currently expose a typed method for deleting a message,
   // but the API is available at DELETE /session/:sessionID/message/:messageID.
   await requestData(
     (client as any).client.delete({
       url: `/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(messageId)}`,
-      query: await getSessionWorkspacePayload(instanceId, sessionId),
+      query: workspace,
     }),
     "session.message.delete",
   )
+  if (!isInstanceRuntimeCurrent(instanceId, instance)) return
 
   // Optimistic removal; SSE will also broadcast a message-removed event.
   removeMessageV2(instanceId, messageId)

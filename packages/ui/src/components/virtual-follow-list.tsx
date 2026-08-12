@@ -83,6 +83,7 @@ export interface VirtualFollowListProps<T> {
   onScrollElementChange?: (element: HTMLDivElement | undefined) => void
   onShellElementChange?: (element: HTMLDivElement | undefined) => void
   onScroll?: () => void
+  onUserScrollIntent?: () => void
   onExplicitBottomPinCancelled?: () => void
   onMouseUp?: (event: MouseEvent) => void
   onClick?: (event: MouseEvent) => void
@@ -175,6 +176,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function markUserScrollIntent(direction: "up" | "down" | null) {
+    props.onUserScrollIntent?.()
     cancelActiveScrollRestore()
     scrollController.setUserIntent(direction, performance.now() + USER_SCROLL_INTENT_WINDOW_MS)
     if (direction === "up") {
@@ -613,11 +615,13 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       if ((event.target as HTMLElement | null)?.closest(INTERACTIVE_KEY_TARGET_SELECTOR)) return
       if (event.key === "End") {
         event.preventDefault()
+        props.onUserScrollIntent?.()
         scrollToBottom(true)
         return
       }
       if (event.key === "Home") {
         event.preventDefault()
+        props.onUserScrollIntent?.()
         scrollToTop(true)
         return
       }

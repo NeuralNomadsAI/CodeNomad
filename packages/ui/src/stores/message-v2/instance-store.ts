@@ -11,9 +11,13 @@ import {
   setPromptDisplayOverride,
 } from "../message-prompt-display"
 import type { ClientPart, MessageInfo } from "../../types/message"
-import { mergePermissionRequest } from "../../types/permission"
+import { getPermissionSessionId, mergePermissionRequest } from "../../types/permission"
+import { getQuestionSessionId } from "../../types/question"
 import { clearRecordDisplayCacheForMessages } from "./record-display-cache"
+import { estimateRetainedValuesIncrementally } from "../../lib/session-memory-budget"
 import { mergePendingRequestEntry, shouldSkipPendingRequestUpsert } from "./pending-request-dedupe"
+
+const DERIVED_RENDER_MEMORY_MULTIPLIER = 3
 import type {
   InstanceMessageState,
   LatestTodoSnapshot,
@@ -35,6 +39,7 @@ const storeLog = getLogger("session")
 
 interface MessageStoreHooks {
   onSessionCleared?: (instanceId: string, sessionId: string) => void
+  onSessionChanged?: (instanceId: string, sessionId: string) => void
   onScrollSnapshotChanged?: (instanceId: string, sessionId: string, scope: string, snapshot: ScrollSnapshot) => void
 }
 
@@ -232,7 +237,7 @@ export interface InstanceMessageStore {
     delta: string
     bumpRevision?: boolean
     bumpSessionRevision: boolean
-  }) => void
+  }) => boolean
   removeMessage: (messageId: string, fallbackSessionId?: string) => void
   removeMessagePart: (messageId: string, partId: string, fallbackSessionId?: string) => void
   bufferPendingPart: (entry: PendingPartEntry) => void
@@ -255,13 +260,18 @@ export interface InstanceMessageStore {
   getScrollSnapshot: (sessionId: string, scope: string) => ScrollSnapshot | undefined
   getSessionRevision: (sessionId: string) => number
   getSessionMessageIds: (sessionId: string) => string[]
+  getResidentSessionIds: () => string[]
+  getSessionApproximateByteSizeIncrementally: (sessionId: string, signal?: AbortSignal) => Promise<number>
+  interruptSessionActiveMessages: (sessionId: string) => void
+  hasSessionActiveWork: (sessionId: string) => boolean
+  hasSessionPendingInput: (sessionId: string) => boolean
   getLastAssistantMessageId: (sessionId: string) => string | undefined
   // Index of the most recent message in the session that contains a compaction part.
   // Returns -1 if there has been no compaction.
   getLastCompactionMessageIndex: (sessionId: string) => number
   getMessage: (messageId: string) => MessageRecord | undefined
   getLatestTodoSnapshot: (sessionId: string) => LatestTodoSnapshot | undefined
-  clearSession: (sessionId: string, options?: { preserveScroll?: boolean; notify?: boolean }) => void
+  clearSession: (sessionId: string, options?: { preserveScroll?: boolean; preservePromptDisplay?: boolean; notify?: boolean }) => void
   clearScrollSnapshots: () => void
   clearInstance: () => void
 }
@@ -272,6 +282,27 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   const TODO_TOOL_NAME = "todowrite"
 
   const messageInfoCache = new Map<string, MessageInfo>()
+  const activeMessageCounts = new Map<string, number>()
+
+  function isActiveMessage(record: MessageRecord | undefined): boolean {
+    return record?.status === "sending" || record?.status === "streaming"
+  }
+
+  function updateActiveMessageCount(previous: MessageRecord | undefined, next: MessageRecord | undefined) {
+    if (isActiveMessage(previous)) {
+      const count = (activeMessageCounts.get(previous!.sessionId) ?? 1) - 1
+      if (count > 0) activeMessageCounts.set(previous!.sessionId, count)
+      else activeMessageCounts.delete(previous!.sessionId)
+    }
+    if (isActiveMessage(next)) activeMessageCounts.set(next!.sessionId, (activeMessageCounts.get(next!.sessionId) ?? 0) + 1)
+  }
+
+  function setActiveMessageCount(sessionId: string, records: Iterable<MessageRecord>) {
+    let count = 0
+    for (const record of records) if (isActiveMessage(record)) count += 1
+    if (count > 0) activeMessageCounts.set(sessionId, count)
+    else activeMessageCounts.delete(sessionId)
+  }
 
   // Requests awaiting same-ID persistence confirmation.
   const pendingSendIds = new Set<string>()
@@ -367,10 +398,75 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   function bumpSessionRevision(sessionId: string) {
     if (!sessionId) return
     setState("sessionRevisions", sessionId, (value = 0) => value + 1)
+    hooks?.onSessionChanged?.(instanceId, sessionId)
   }
 
   function getSessionRevisionValue(sessionId: string) {
     return state.sessionRevisions[sessionId] ?? 0
+  }
+
+  function getResidentSessionIds() {
+    const sessionIds = new Set(Object.values(state.sessions)
+      .filter((session) => session.messageIds.length > 0)
+      .map((session) => session.id))
+    for (const entry of state.permissions.queue) {
+      const sessionId = getPermissionSessionId(entry.permission)
+      if (sessionId) sessionIds.add(sessionId)
+    }
+    for (const entry of state.questions.queue) {
+      const sessionId = getQuestionSessionId(entry.request)
+      if (sessionId) sessionIds.add(sessionId)
+    }
+    return [...sessionIds]
+  }
+
+  async function getSessionApproximateByteSizeIncrementally(sessionId: string, signal?: AbortSignal) {
+    function* values(): Iterable<unknown> {
+      const session = state.sessions[sessionId]
+      yield session
+      yield state.usage[sessionId]
+      for (const messageId of session?.messageIds ?? []) {
+        yield state.messages[messageId]
+        yield messageInfoCache.get(messageId)
+      }
+      for (const entry of state.permissions.queue) {
+        if (getPermissionSessionId(entry.permission) === sessionId) yield entry.permission
+      }
+      for (const entry of state.questions.queue) {
+        if (getQuestionSessionId(entry.request) === sessionId) yield entry.request
+      }
+    }
+    return (await estimateRetainedValuesIncrementally(values(), { signal })) * DERIVED_RENDER_MEMORY_MULTIPLIER
+  }
+
+  function interruptSessionActiveMessages(sessionId: string) {
+    const messageIds = state.sessions[sessionId]?.messageIds ?? []
+    let changed = false
+    setState("messages", produce((draft) => {
+      for (const messageId of messageIds) {
+        const message = draft[messageId]
+        if (!message || (message.status !== "sending" && message.status !== "streaming")) continue
+        message.status = "error"
+        message.isEphemeral = false
+        message.updatedAt = Date.now()
+        message.revision += 1
+        changed = true
+      }
+    }))
+    if (changed) {
+      activeMessageCounts.delete(sessionId)
+      bumpSessionRevision(sessionId)
+    }
+  }
+
+  function hasSessionActiveWork(sessionId: string) {
+    if (hasSessionPendingInput(sessionId)) return true
+    return (activeMessageCounts.get(sessionId) ?? 0) > 0
+  }
+
+  function hasSessionPendingInput(sessionId: string) {
+    return state.permissions.queue.some((entry) => getPermissionSessionId(entry.permission) === sessionId) ||
+      state.questions.queue.some((entry) => getQuestionSessionId(entry.request) === sessionId)
   }
 
   function getLastAssistantMessageIdValue(sessionId: string) {
@@ -488,7 +584,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   // echoed are preserved via `pendingSendIds` instead (see hydrateMessages).
 
   function hydrateMessages(sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>) {
-    if (!Array.isArray(inputs) || inputs.length === 0) return
+    if (!Array.isArray(inputs)) return
 
     ensureSessionEntry(sessionId)
 
@@ -530,6 +626,12 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     }
 
     const incomingIds = pendingOptimisticIds.length > 0 ? [...serverIds, ...pendingOptimisticIds] : serverIds
+    const retainedIds = new Set(incomingIds)
+    for (const record of Object.values(state.messages)) {
+      if (record.sessionId === sessionId && !retainedIds.has(record.id) && !omittedIds.includes(record.id)) {
+        omittedIds.push(record.id)
+      }
+    }
 
     const normalizedRecords: Record<string, MessageRecord> = {}
     const now = Date.now()
@@ -571,10 +673,14 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     const nextPermissionsByMessage: Record<string, Record<string, PermissionEntry>> = {
       ...state.permissions.byMessage,
     }
-
+    const nextQuestionsByMessage: Record<string, Record<string, QuestionEntry>> = {
+      ...state.questions.byMessage,
+    }
     Object.entries(normalizedRecords).forEach(([id, record]) => {
       nextMessages[id] = record
     })
+
+    setActiveMessageCount(sessionId, incomingIds.flatMap((id) => nextMessages[id] ? [nextMessages[id]] : []))
 
     // The snapshot is authoritative: remove every omitted record except a
     // request that is still awaiting same-ID persistence confirmation.
@@ -587,6 +693,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         delete nextMessageInfoVersion[id]
         delete nextPendingParts[id]
         delete nextPermissionsByMessage[id]
+        delete nextQuestionsByMessage[id]
       })
       clearRecordDisplayCacheForMessages(instanceId, omittedIds)
     }
@@ -616,10 +723,11 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     }
 
     batch(() => {
-      setState("messages", () => nextMessages)
-      setState("messageInfoVersion", () => nextMessageInfoVersion)
-      setState("pendingParts", () => nextPendingParts)
-      setState("permissions", "byMessage", () => nextPermissionsByMessage)
+      setState("messages", reconcile(nextMessages))
+      setState("messageInfoVersion", reconcile(nextMessageInfoVersion))
+      setState("pendingParts", reconcile(nextPendingParts))
+      setState("permissions", "byMessage", reconcile(nextPermissionsByMessage))
+      setState("questions", "byMessage", reconcile(nextQuestionsByMessage))
 
       // Solid store object updates merge, so omitted keys are deleted explicitly.
       if (omittedIds.length > 0) {
@@ -871,7 +979,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   }
 
   function normalizeParts(messageId: string, parts: ClientPart[] | undefined) {
-    if (!parts || parts.length === 0) {
+    if (parts == null) {
       return null
     }
     const map: MessageRecord["parts"] = {}
@@ -897,8 +1005,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     const now = Date.now()
 
     let nextRecord: MessageRecord | undefined
+    let previousRecord: MessageRecord | undefined
 
     setState("messages", input.id, (previous) => {
+      previousRecord = previous ? { ...previous } : undefined
       const revision = previous ? previous.revision + (shouldBump ? 1 : 0) : 0
       const clientPromptDisplayMetadata = resolveClientPromptDisplayText(instanceId, input, previous)
       const record: MessageRecord = {
@@ -920,6 +1030,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     })
 
     if (nextRecord) {
+      updateActiveMessageCount(previousRecord, nextRecord)
       maybeUpdateLatestTodoFromRecord(nextRecord)
     }
 
@@ -1053,13 +1164,13 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     bumpSessionRevision?: boolean
   }) {
     if (!input?.messageId || !input.partId || !input.field || typeof input.delta !== "string") {
-      return
+      return false
     }
 
     const message = state.messages[input.messageId]
     if (!message) {
       // Best-effort: drop deltas for unknown messages.
-      return
+      return false
     }
 
     let applied = false
@@ -1088,6 +1199,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     if (applied && (input.bumpSessionRevision ?? true)) {
       bumpSessionRevision(message.sessionId)
     }
+    return applied
   }
 
   function removeMessage(messageId: string, fallbackSessionId?: string) {
@@ -1120,19 +1232,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         setState("sessions", sessionId, "messageIds", (ids = []) => ids.filter((id) => id !== messageId))
       })
 
-      setState("messages", (prev) => {
-        if (!prev[messageId]) return prev
-        const next = { ...prev }
-        delete next[messageId]
-        return next
-      })
-
-      setState("messageInfoVersion", (prev) => {
-        if (!(messageId in prev)) return prev
-        const next = { ...prev }
-        delete next[messageId]
-        return next
-      })
+      setState("messages", messageId, undefined as any)
+      setState("messageInfoVersion", messageId, undefined as any)
 
       messageInfoCache.delete(messageId)
 
@@ -1156,6 +1257,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
           clearLatestTodoSnapshot(sessionId)
         }
         recomputeLastAssistantMessageId(sessionId)
+        setActiveMessageCount(sessionId, (state.sessions[sessionId]?.messageIds ?? []).flatMap((id) => state.messages[id] ? [state.messages[id]] : []))
         bumpSessionRevision(sessionId)
       })
     })
@@ -1379,9 +1481,12 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         draft.active = draft.queue[0] ?? null
       }),
     )
+    const sessionId = getPermissionSessionId(entry.permission)
+    if (sessionId) bumpSessionRevision(sessionId)
   }
 
   function removePermission(permissionId: string) {
+    const sessionId = getPermissionSessionId(state.permissions.queue.find((item) => item.permission.id === permissionId)?.permission)
     setState(
       "permissions",
       produce((draft) => {
@@ -1402,6 +1507,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         })
       }),
     )
+    if (sessionId) bumpSessionRevision(sessionId)
   }
 
   function getPermissionState(messageId?: string, partId?: string) {
@@ -1467,9 +1573,12 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         }
       }),
     )
+    const sessionId = getQuestionSessionId(entry.request)
+    if (sessionId) bumpSessionRevision(sessionId)
   }
 
   function removeQuestion(requestId: string) {
+    const sessionId = getQuestionSessionId(state.questions.queue.find((item) => item.request.id === requestId)?.request)
     setState(
       "questions",
       produce((draft) => {
@@ -1490,6 +1599,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         })
       }),
     )
+    if (sessionId) bumpSessionRevision(sessionId)
   }
 
   function getQuestionState(messageId?: string, partId?: string) {
@@ -1501,14 +1611,14 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return { entry, active }
   }
 
-  function pruneMessagesAfterRevert(sessionId: string, revertMessageId: string) {
+  function pruneMessagesAfterRevert(sessionId: string, revertMessageId: string): boolean {
     const session = state.sessions[sessionId]
-    if (!session) return
+    if (!session) return false
     const stopIndex = session.messageIds.indexOf(revertMessageId)
-    if (stopIndex === -1) return
+    if (stopIndex === -1) return false
     const removedIds = session.messageIds.slice(stopIndex)
     const keptIds = session.messageIds.slice(0, stopIndex)
-    if (removedIds.length === 0) return
+    if (removedIds.length === 0) return false
 
     removedIds.forEach((messageId) => clearPromptDisplayOverride(instanceId, sessionId, messageId))
 
@@ -1557,16 +1667,17 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     })
 
     recomputeLastAssistantMessageId(sessionId, keptIds)
+    setActiveMessageCount(sessionId, keptIds.flatMap((id) => state.messages[id] ? [state.messages[id]] : []))
     bumpSessionRevision(sessionId)
+    return true
   }
 
   function setSessionRevert(sessionId: string, revert?: SessionRecord["revert"] | null) {
     if (!sessionId) return
     ensureSessionEntry(sessionId)
-    if (revert?.messageID) {
-      pruneMessagesAfterRevert(sessionId, revert.messageID)
-    }
+    const pruned = revert?.messageID ? pruneMessagesAfterRevert(sessionId, revert.messageID) : false
     setState("sessions", sessionId, "revert", revert ?? null)
+    if (!pruned) bumpSessionRevision(sessionId)
   }
 
   function getSessionRevert(sessionId: string) {
@@ -1594,57 +1705,38 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return state.scrollState[key]
   }
 
-  function clearSession(sessionId: string, options?: { preserveScroll?: boolean; notify?: boolean }) {
+  function clearSession(sessionId: string, options?: { preserveScroll?: boolean; preservePromptDisplay?: boolean; notify?: boolean }) {
     if (!sessionId) return
 
-    clearPromptDisplayOverridesForSession(instanceId, sessionId)
+    if (!options?.preservePromptDisplay) clearPromptDisplayOverridesForSession(instanceId, sessionId)
 
-    const messageIds = Object.values(state.messages)
-      .filter((record) => record.sessionId === sessionId)
-      .map((record) => record.id)
+    const messageIds = [...(state.sessions[sessionId]?.messageIds ?? [])]
  
     storeLog.info("Clearing session data", { instanceId, sessionId, messageCount: messageIds.length })
     clearRecordDisplayCacheForMessages(instanceId, messageIds)
     messageIds.forEach((id) => forgetPendingSend(id))
  
     batch(() => {
-      setState("messages", (prev) => {
-        const next = { ...prev }
-        messageIds.forEach((id) => delete next[id])
-        return next
-      })
+      const permissionQueue = state.permissions.queue.filter((entry) => getPermissionSessionId(entry.permission) !== sessionId)
+      const questionQueue = state.questions.queue.filter((entry) => getQuestionSessionId(entry.request) !== sessionId)
+      setState("permissions", "queue", permissionQueue)
+      setState("permissions", "active", (active) =>
+        active && getPermissionSessionId(active.permission) === sessionId ? permissionQueue[0] ?? null : active)
+      setState("questions", "queue", questionQueue)
+      setState("questions", "active", (active) =>
+        active && getQuestionSessionId(active.request) === sessionId ? questionQueue[0] ?? null : active)
 
-      setState("messageInfoVersion", (prev) => {
-        const next = { ...prev }
-        messageIds.forEach((id) => delete next[id])
-        return next
-      })
+      setState("messages", produce((next) => { messageIds.forEach((id) => delete next[id]) }))
+
+      setState("messageInfoVersion", produce((next) => { messageIds.forEach((id) => delete next[id]) }))
 
       messageIds.forEach((id) => messageInfoCache.delete(id))
 
-      setState("pendingParts", (prev) => {
-        const next = { ...prev }
-        messageIds.forEach((id) => {
-          if (next[id]) delete next[id]
-        })
-        return next
-      })
+      setState("pendingParts", produce((next) => { messageIds.forEach((id) => delete next[id]) }))
 
-      setState("permissions", "byMessage", (prev) => {
-        const next = { ...prev }
-        messageIds.forEach((id) => {
-          if (next[id]) delete next[id]
-        })
-        return next
-      })
+      setState("permissions", "byMessage", produce((next) => { messageIds.forEach((id) => delete next[id]) }))
 
-      setState("questions", "byMessage", (prev) => {
-        const next = { ...prev }
-        messageIds.forEach((id) => {
-          if (next[id]) delete next[id]
-        })
-        return next
-      })
+      setState("questions", "byMessage", produce((next) => { messageIds.forEach((id) => delete next[id]) }))
 
       setState("usage", (prev) => {
         const next = { ...prev }
@@ -1692,16 +1784,18 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     })
 
     clearLatestTodoSnapshot(sessionId)
+    activeMessageCounts.delete(sessionId)
  
     if (options?.notify !== false) hooks?.onSessionCleared?.(instanceId, sessionId)
   }
 
  
-   function clearInstance() {
-     clearPromptDisplayOverridesForInstance(instanceId, Object.keys(state.sessions))
-     messageInfoCache.clear()
-     pendingSendIds.clear()
-     optimisticPartIdsByMessage.clear()
+    function clearInstance() {
+      clearPromptDisplayOverridesForInstance(instanceId, Object.keys(state.sessions))
+      messageInfoCache.clear()
+      activeMessageCounts.clear()
+      pendingSendIds.clear()
+      optimisticPartIdsByMessage.clear()
       setState(reconcile(createInitialState(instanceId)))
     }
 
@@ -1749,6 +1843,11 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       getScrollSnapshot,
       getSessionRevision: getSessionRevisionValue,
       getSessionMessageIds: (sessionId: string) => state.sessions[sessionId]?.messageIds ?? [],
+      getResidentSessionIds,
+      getSessionApproximateByteSizeIncrementally,
+      interruptSessionActiveMessages,
+      hasSessionActiveWork,
+      hasSessionPendingInput,
       getLastAssistantMessageId: getLastAssistantMessageIdValue,
       getLastCompactionMessageIndex,
       getMessage: (messageId: string) => state.messages[messageId],

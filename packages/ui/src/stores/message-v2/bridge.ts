@@ -14,7 +14,7 @@ interface SessionMetadata {
   parentId?: string | null
 }
 
-function resolveSessionMetadata(session?: Session | null): SessionMetadata | undefined {
+function resolveSessionMetadata(session?: Session | SessionMetadata | null): SessionMetadata | undefined {
   if (!session) return undefined
   return {
     id: session.id,
@@ -87,17 +87,19 @@ export function upsertMessageInfoV2(instanceId: string, info: MessageInfo | null
     return
   }
   const store = messageStoreBus.getOrCreate(instanceId)
-  const timeInfo = (info.time ?? {}) as { created?: number; end?: number }
+  const timeInfo = (info.time ?? {}) as { created?: number; end?: number; completed?: number }
   const createdAt = typeof timeInfo.created === "number" ? timeInfo.created : Date.now()
-  const endAt = typeof timeInfo.end === "number" ? timeInfo.end : undefined
+  const endAt = typeof timeInfo.end === "number" ? timeInfo.end : timeInfo.completed
+  const status = options?.status ?? "complete"
 
   store.upsertMessage({
     id: info.id,
     sessionId: info.sessionID,
     role: info.role === "user" ? "user" : "assistant",
-    status: options?.status ?? "complete",
+    status,
     createdAt,
     updatedAt: endAt ?? createdAt,
+    isEphemeral: info.role === "user" ? false : status === "sending" || status === "streaming",
     bumpRevision: Boolean(options?.bumpRevision),
   })
   store.setMessageInfo(info.id, info)
@@ -117,12 +119,12 @@ export function applyPartUpdateV2(instanceId: string, part: ClientPart | null | 
 export function applyPartDeltaV2(
   instanceId: string,
   input: { messageId: string; partId: string; field: string; delta: string },
-): void {
+): boolean {
   if (!input?.messageId || !input.partId || !input.field || typeof input.delta !== "string") {
-    return
+    return false
   }
   const store = messageStoreBus.getOrCreate(instanceId)
-  store.applyPartDelta({
+  return store.applyPartDelta({
     messageId: input.messageId,
     partId: input.partId,
     field: input.field,

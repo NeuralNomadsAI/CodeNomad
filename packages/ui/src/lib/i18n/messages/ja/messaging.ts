@@ -200,6 +200,8 @@ export const messagingMessages = {
   "promptInput.send.ariaLabel": "メッセージを送信",
   "promptInput.send.errorFallback": "メッセージの送信に失敗しました",
   "promptInput.send.errorTitle": "送信に失敗",
+  "promptInput.send.ambiguousTitle": "配信を確認できませんでした",
+  "promptInput.send.ambiguousMessage": "サーバーがこのメッセージを受信した可能性があります。下書きとして復元され、送信を選択しない限り再送信されません。",
   "promptInput.conversationMode.enable.title": "会話モードを有効化",
   "promptInput.conversationMode.disable.title": "会話モードを無効化",
   "promptInput.conversationMode.error.title": "会話の読み上げに失敗しました",

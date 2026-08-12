@@ -3,7 +3,7 @@ import type { PermissionRequest } from "../../types/permission"
 import { getPermissionDisplayTitle, getPermissionKind } from "../../types/permission"
 import { getPermissionSessionId } from "../../types/permission"
 import { useI18n } from "../../lib/i18n"
-import { PERMISSION_REJECT_REASON_MAX_LENGTH } from "./permission-constants"
+import { isPermissionDiffTooLarge, PERMISSION_REJECT_REASON_MAX_LENGTH } from "./permission-constants"
 import type { DiffPayload, DiffRenderOptions } from "./types"
 import { getRelativePath } from "./utils"
 
@@ -15,6 +15,7 @@ export type PermissionToolBlockProps = {
   submitting: Accessor<boolean>
   error: Accessor<string | null>
   onRespond: (permission: PermissionRequest, sessionId: string, response: PermissionResponse, message?: string) => void | Promise<void>
+  onApprovalBlockedChange?: (blocked: boolean) => void
   renderDiff: (payload: DiffPayload, options?: DiffRenderOptions) => JSXElement | null
   fallbackSessionId: Accessor<string>
 }
@@ -22,10 +23,12 @@ export type PermissionToolBlockProps = {
 export function PermissionToolBlock(props: PermissionToolBlockProps) {
   const { t } = useI18n()
   const [rejectReason, setRejectReason] = createSignal("")
+  const [fullDiffAccessed, setFullDiffAccessed] = createSignal(false)
 
   createEffect(() => {
     props.permission()?.id
     setRejectReason("")
+    setFullDiffAccessed(false)
   })
 
   const diffPayload = () => {
@@ -57,6 +60,10 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
     respond("reject", rejectReason().trim() || undefined)
   }
 
+  const approvalBlocked = () => isPermissionDiffTooLarge(diffPayload()?.diffText) && !fullDiffAccessed()
+
+  createEffect(() => props.onApprovalBlockedChange?.(approvalBlocked()))
+
   return (
     <Show when={props.permission()}>
       {(permission) => (
@@ -77,12 +84,16 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
                   {props.renderDiff(payload(), {
                     variant: "permission-diff",
                     disableScrollTracking: true,
+                    onFullDiffAccess: () => setFullDiffAccessed(true),
                     label: payload().filePath
                       ? t("toolCall.permission.requestedDiff.withPath", { path: getRelativePath(payload().filePath || "") })
                       : t("toolCall.permission.requestedDiff.label"),
                   })}
                 </div>
               )}
+            </Show>
+            <Show when={approvalBlocked()}>
+              <div class="tool-call-diagnostic-message" role="status">{t("toolCall.output.truncated")}</div>
             </Show>
             <Show when={!props.active()}>
               <p class="tool-call-permission-queued-text">{t("toolCall.permission.queuedText")}</p>
@@ -105,7 +116,7 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
                 <button
                   type="button"
                   class="tool-call-permission-button"
-                  disabled={props.submitting()}
+                  disabled={props.submitting() || approvalBlocked()}
                   onClick={() => respond("once")}
                 >
                   {t("toolCall.permission.actions.allowOnce")}
@@ -113,7 +124,7 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
                 <button
                   type="button"
                   class="tool-call-permission-button"
-                  disabled={props.submitting()}
+                  disabled={props.submitting() || approvalBlocked()}
                   onClick={() => respond("always")}
                 >
                   {t("toolCall.permission.actions.alwaysAllow")}

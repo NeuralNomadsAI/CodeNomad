@@ -164,6 +164,14 @@ describe("message prompt display overrides", () => {
 
     assert.equal(getPromptDisplayOverride("other-instance", "session-a", "msg-1"), undefined)
     assert.deepEqual(getPromptDisplayOverride("other-instance", "session-b", "msg-2"), metadata)
+    assert.deepEqual(
+      JSON.parse(storage.getItem("codenomad:prompt-display:v3") ?? "{}"),
+      { "session-b:msg-2": metadata },
+    )
+
+    resetPromptDisplayOverrideStateForTests()
+    assert.equal(getPromptDisplayOverride("other-instance", "session-a", "msg-1"), undefined)
+    assert.deepEqual(getPromptDisplayOverride("other-instance", "session-b", "msg-2"), metadata)
 
     delete (globalThis as unknown as { window?: unknown }).window
   })

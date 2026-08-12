@@ -6,8 +6,10 @@ import {
   clearPendingDeltasForPart,
   enqueueDelta,
   flushPendingDeltasForMessage,
+  hasPendingDeltasForMessage,
   resetDeltaBufferForTests,
   setFlushCallback,
+  setRecoveryCallback,
 } from "./delta-buffer.ts"
 
 type DeltaBatch = Array<{ instanceId: string; messageId: string; partId: string; field: string; delta: string }>
@@ -98,5 +100,44 @@ describe("delta buffer", () => {
         { instanceId: "instance-2", messageId: "message-1", partId: "part-1", field: "text", delta: "other instance" },
       ],
     ])
+  })
+
+  it("drops oversized deltas and requests bounded authoritative recovery", async () => {
+    const recoveries: unknown[] = []
+    const flushed: DeltaBatch[] = []
+    setRecoveryCallback((pending) => recoveries.push(pending))
+    setFlushCallback((batch) => flushed.push(batch))
+
+    enqueueDelta("instance-1", "message-1", "part-1", "text", "x".repeat(300_000), "session-1")
+    await delay(75)
+
+    assert.deepEqual(flushed, [])
+    assert.deepEqual(recoveries, [{
+      instanceId: "instance-1", sessionId: "session-1", messageId: "message-1", partId: "part-1", field: "text",
+    }])
+  })
+
+  it("reports buffered message deltas without consuming them", async () => {
+    const flushed: DeltaBatch[] = []
+    setFlushCallback((batch) => flushed.push(batch))
+    enqueueDelta("instance-1", "message-1", "part-1", "text", "pending")
+
+    assert.equal(hasPendingDeltasForMessage("instance-1", "message-1"), true)
+    assert.equal(hasPendingDeltasForMessage("instance-1", "message-2"), false)
+    await delay(75)
+    assert.equal(flushed[0]?.[0]?.delta, "pending")
+  })
+
+  it("retains a delta until the flush callback has attempted application", async () => {
+    let pendingDuringApplication = false
+    setFlushCallback(() => {
+      pendingDuringApplication = hasPendingDeltasForMessage("instance-1", "message-1")
+    })
+    enqueueDelta("instance-1", "message-1", "part-1", "text", "orphan", "session-1")
+
+    await delay(75)
+
+    assert.equal(pendingDuringApplication, true)
+    assert.equal(hasPendingDeltasForMessage("instance-1", "message-1"), false)
   })
 })

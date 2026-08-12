@@ -7,7 +7,7 @@ import { getRootClient } from "../../../../stores/opencode-client"
 import { getOpenCodeWorkspaceIdForWorktree } from "../../../../stores/opencode-workspaces"
 import { requestData } from "../../../../lib/opencode-api"
 import { serverApi } from "../../../../lib/api-client"
-import { serverEvents } from "../../../../lib/server-events"
+import { sseManager } from "../../../../lib/sse-manager"
 import { showToastNotification } from "../../../../lib/notifications"
 import { adaptSdkGitStatusEntries, buildGitChangeListItems } from "./git-changes-model"
 
@@ -427,10 +427,9 @@ export function useGitChanges(options: UseGitChangesOptions) {
   createEffect(() => {
     if (options.rightPanelTab() !== "git-changes") return
 
-    const unsubscribe = serverEvents.on("instance.event", (event) => {
-      if (event.type !== "instance.event") return
-      if (event.instanceId !== options.instanceId) return
-      const eventType = (event.event as { type?: unknown } | undefined)?.type
+    const unsubscribe = sseManager.onAcceptedEvent((instanceId, event) => {
+      if (instanceId !== options.instanceId) return
+      const eventType = (event as { type?: unknown }).type
       if (eventType !== "session.updated") return
       void passiveRefreshGitStatus({ forceReloadSelectedDiff: true })
     })

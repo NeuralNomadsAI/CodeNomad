@@ -7,15 +7,15 @@ import type {
   VisibilityPreference,
 } from "../../stores/preferences"
 import { createCommandRegistry, type Command } from "../commands"
-import { activeInstanceId } from "../../stores/instances"
+import { activeInstanceId, isInstanceRuntimeCurrent } from "../../stores/instances"
 import { selectNextAppTab, selectPreviousAppTab } from "../../stores/app-tabs"
-import type { ClientPart, MessageInfo } from "../../types/message"
+import type { ClientPart } from "../../types/message"
 import { getSessions, getVisibleSessionIds, setActiveSession, setActiveSessionFromList } from "../../stores/sessions"
 import { showAlertDialog } from "../../stores/alerts"
 import type { Instance } from "../../types/instance"
 import type { MessageRecord } from "../../stores/message-v2/types"
 import { messageStoreBus } from "../../stores/message-v2/bus"
-import { cleanupBlankSessions } from "../../stores/session-state"
+import { cleanupBlankSessions, invalidateSessionMessageLoad } from "../../stores/session-state"
 import { getLogger } from "../logger"
 import { requestData } from "../opencode-api"
 import { emitSessionSidebarRequest } from "../session-sidebar-events"
@@ -299,25 +299,21 @@ export function useCommands(options: UseCommandsOptions) {
 
         const store = messageStoreBus.getOrCreate(instance.id)
         const messageIds = store.getSessionMessageIds(sessionId)
-        const infoMap = new Map<string, MessageInfo>()
-        messageIds.forEach((id) => {
-          const info = store.getMessageInfo(id)
-          if (info) infoMap.set(id, info)
-        })
 
         const revertState = store.getSessionRevert(sessionId) ?? session.revert
         let after = 0
         if (revertState?.messageID) {
-          const revertInfo = infoMap.get(revertState.messageID) ?? store.getMessageInfo(revertState.messageID)
+          const revertInfo = store.getMessageInfo(revertState.messageID)
           after = revertInfo?.time?.created || 0
         }
 
         let messageID = ""
         let restoredText: string | null = null
-        for (let i = messageIds.length - 1; i >= 0; i--) {
+        const firstScannedIndex = Math.max(0, messageIds.length - 10_000)
+        for (let i = messageIds.length - 1; i >= firstScannedIndex; i--) {
           const id = messageIds[i]
           const record = store.getMessage(id)
-          const info = infoMap.get(id) ?? store.getMessageInfo(id)
+          const info = store.getMessageInfo(id)
           if (record?.role === "user" && info?.time?.created) {
             if (after > 0 && info.time.created >= after) {
               continue
@@ -344,6 +340,10 @@ export function useCommands(options: UseCommandsOptions) {
             }),
             "session.revert",
           )
+          if (!isInstanceRuntimeCurrent(instance.id, instance)) return
+          if (store.getSessionRevert(sessionId)?.messageID !== messageID) {
+            invalidateSessionMessageLoad(instance.id, sessionId)
+          }
 
           if (!restoredText) {
             const fallbackRecord = store.getMessage(messageID)

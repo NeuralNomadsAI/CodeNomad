@@ -56,6 +56,9 @@ export const toolCallMessages = {
   "toolCall.renderer.action.listingDirectory": "Liste du répertoire...",
 
   "toolCall.renderer.bash.title.timeout": "Délai : {timeout}",
+  "toolCall.output.truncated": "[Sortie tronquée pour l’affichage ; copiez-la pour accéder à la sortie complète]",
+  "toolCall.input.tooLarge": "Entrée omise de l’affichage car elle est trop volumineuse.",
+  "toolCall.output.tooLarge": "Sortie structurée omise de l’affichage car elle est trop volumineuse.",
   "toolCall.renderer.read.detail.offset": "Décalage : {offset}",
   "toolCall.renderer.read.detail.limit": "Limite : {limit}",
 

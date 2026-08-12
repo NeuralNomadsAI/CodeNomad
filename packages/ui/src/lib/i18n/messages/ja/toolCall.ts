@@ -56,6 +56,9 @@ export const toolCallMessages = {
   "toolCall.renderer.action.listingDirectory": "ディレクトリ一覧を取得中...",
 
   "toolCall.renderer.bash.title.timeout": "タイムアウト: {timeout}",
+  "toolCall.output.truncated": "[表示用に出力を省略しました。完全な出力にアクセスするにはコピーしてください]",
+  "toolCall.input.tooLarge": "入力が大きすぎるため表示を省略しました。",
+  "toolCall.output.tooLarge": "構造化出力が大きすぎるため表示を省略しました。",
   "toolCall.renderer.read.detail.offset": "オフセット: {offset}",
   "toolCall.renderer.read.detail.limit": "上限: {limit}",
 

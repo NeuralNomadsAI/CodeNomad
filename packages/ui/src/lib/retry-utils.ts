@@ -1,3 +1,19 @@
+const RETRYABLE_TRANSPORT_CODES = new Set([
+  "ECONNABORTED",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EHOSTUNREACH",
+  "ENETDOWN",
+  "ENETUNREACH",
+  "ENOTFOUND",
+  "EPIPE",
+  "ETIMEDOUT",
+  "UND_ERR_BODY_TIMEOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_SOCKET",
+])
+
 interface RetryOptions {
   maxAttempts?: number
   initialDelayMs?: number
@@ -29,14 +45,22 @@ export async function retryWithBackoff<T>(
     try {
       if (timeoutMs) {
         const controller = new AbortController()
-        const timer = setTimeout(() => controller.abort(), timeoutMs)
+        let timer: ReturnType<typeof setTimeout> | undefined
         try {
-          const result = await fn(controller.signal)
-          clearTimeout(timer)
-          return result
-        } catch (error) {
-          clearTimeout(timer)
-          throw error
+          const operation = fn(controller.signal)
+          return await Promise.race([
+            operation,
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(() => {
+                const error = new Error(`Operation timed out after ${timeoutMs}ms`)
+                error.name = "TimeoutError"
+                controller.abort(error)
+                reject(error)
+              }, timeoutMs)
+            }),
+          ])
+        } finally {
+          if (timer) clearTimeout(timer)
         }
       }
 
@@ -58,9 +82,8 @@ export async function retryWithBackoff<T>(
 }
 
 export function isRetryableError(error: Error): boolean {
-  if (error.name === "AbortError" || error.name === "TimeoutError") return true
-  if (error.message.includes("Failed to fetch")) return true
-  if (error.message.includes("NetworkError")) return true
-  if (error.message.includes("timeout")) return true
-  return false
+  const code = (error as Error & { code?: unknown }).code
+  if (typeof code === "string" && RETRYABLE_TRANSPORT_CODES.has(code.toUpperCase())) return true
+  if (error.name === "AbortError" || error.name === "NetworkError" || error.name === "TimeoutError") return true
+  return /failed to fetch|fetch failed|network request failed|networkerror|load failed|timed?\s*out|timeout|socket hang up|connection reset/i.test(error.message)
 }

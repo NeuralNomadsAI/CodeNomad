@@ -56,6 +56,9 @@ export const toolCallMessages = {
   "toolCall.renderer.action.listingDirectory": "Listing directory...",
 
   "toolCall.renderer.bash.title.timeout": "Timeout: {timeout}",
+  "toolCall.output.truncated": "[Output truncated for rendering; copy to access the full output]",
+  "toolCall.input.tooLarge": "Input omitted from rendering because it is too large.",
+  "toolCall.output.tooLarge": "Structured output omitted from rendering because it is too large.",
   "toolCall.renderer.read.detail.offset": "Offset: {offset}",
   "toolCall.renderer.read.detail.limit": "Limit: {limit}",
 

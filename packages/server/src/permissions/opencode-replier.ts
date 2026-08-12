@@ -17,13 +17,14 @@ interface OpencodeReplierDeps {
  * for the installed SDK version — no hand-assembled URLs.
  */
 export function createOpencodePermissionReplier(deps: OpencodeReplierDeps): PermissionReplier {
-  return async (reply: AutoAcceptReply) => {
+  return async (reply: AutoAcceptReply, signal: AbortSignal) => {
+    if (signal.aborted) throw signal.reason ?? new DOMException("Operation aborted", "AbortError")
     const client = createInstanceClient(deps.workspaceManager, reply.instanceId)
     if (!client) {
       throw new Error(`Yolo: instance ${reply.instanceId} has no open port`)
     }
 
-    const opts = { throwOnError: true } as const
+    const opts = { throwOnError: true, signal } as const
 
     if (reply.source === "v2") {
       await client.v2.session.permission.reply(

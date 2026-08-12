@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { it } from "node:test"
 import { TrailingResyncCoordinator, waitForSettledPrerequisite } from "./trailing-resync.ts"
+import { retryWithBackoff } from "./retry-utils.ts"
 function deferred() {
   let resolve!: () => void, reject!: (error: unknown) => void
   const promise = new Promise<void>((resolvePromise, rejectPromise) => {
@@ -49,6 +50,28 @@ it("does not lose a request queued as the previous pass settles", async () => {
   firstPass.resolve(); await first; await boundaryRequest
   assert.equal(calls, 2)
 })
+it("coalesces arbitrarily many reconnects into one trailing pass", async () => {
+  const passes = [deferred(), deferred()]
+  const { coordinator, calls } = coordinatorFor(passes)
+  const active = coordinator.request("workspace-1")
+  const queued = Array.from({ length: 10_000 }, () => coordinator.request("workspace-1"))
+  assert.equal(new Set(queued).size, 1)
+  assert.equal(queued[0], active)
+  await Promise.resolve()
+  assert.equal(calls(), 1)
+  passes[0]!.resolve()
+  await turn()
+  assert.equal(calls(), 2)
+  passes[1]!.resolve()
+  await Promise.all(queued)
+  assert.equal(calls(), 2)
+})
 it("continues recovery after a prerequisite rejects", async () => {
   await assert.doesNotReject(waitForSettledPrerequisite(Promise.reject(new Error("initial hydration failed"))))
+})
+it("rejects a timed-out request even when it ignores abort", async () => {
+  await assert.rejects(
+    retryWithBackoff(() => new Promise<void>(() => undefined), { maxAttempts: 1, timeoutMs: 10 }),
+    (error: any) => error?.name === "TimeoutError",
+  )
 })

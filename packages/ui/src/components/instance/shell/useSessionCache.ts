@@ -1,10 +1,5 @@
-import { createEffect, createSignal, type Accessor } from "solid-js"
-import { messageStoreBus } from "../../../stores/message-v2/bus"
-import { clearSessionRenderCache } from "../../message-block"
-import { getLogger } from "../../../lib/logger"
-import { invalidateSessionMessageLoad } from "../../../stores/session-state"
-
-const log = getLogger("session")
+import { createEffect, createSignal, onCleanup, type Accessor } from "solid-js"
+import { setVisibleSessionMemory } from "../../../stores/session-memory"
 
 const SESSION_CACHE_LIMIT = 5
 
@@ -12,6 +7,7 @@ type SessionCacheOptions = {
   instanceId: Accessor<string>
   instanceSessions: Accessor<Map<string, unknown>>
   activeSessionId: Accessor<string | null>
+  visible: Accessor<boolean>
 }
 
 type SessionCacheState = {
@@ -20,55 +16,14 @@ type SessionCacheState = {
 
 export function useSessionCache(options: SessionCacheOptions): SessionCacheState {
   const [cachedSessionIds, setCachedSessionIds] = createSignal<string[]>([])
-  const [pendingEvictions, setPendingEvictions] = createSignal<string[]>([])
-
-  const evictSession = (sessionId: string) => {
-    if (!sessionId) return
-    const instanceId = options.instanceId()
-    log.info("Evicting cached session", { instanceId, sessionId })
-    const store = messageStoreBus.getInstance(instanceId)
-    invalidateSessionMessageLoad(instanceId, sessionId)
-    store?.clearSession(sessionId, { preserveScroll: true, notify: false })
-    clearSessionRenderCache(instanceId, sessionId)
-  }
-
-  const scheduleEvictions = (ids: string[]) => {
-    if (!ids.length) return
-    setPendingEvictions((current) => {
-      const existing = new Set(current)
-      const next = [...current]
-      ids.forEach((id) => {
-        if (!existing.has(id)) {
-          next.push(id)
-          existing.add(id)
-        }
-      })
-      return next
-    })
-  }
-
-  createEffect(() => {
-    const pending = pendingEvictions()
-    if (!pending.length) return
-    const cached = new Set(cachedSessionIds())
-    const remaining: string[] = []
-    pending.forEach((id) => {
-      if (cached.has(id)) {
-        remaining.push(id)
-      } else {
-        evictSession(id)
-      }
-    })
-    if (remaining.length !== pending.length) {
-      setPendingEvictions(remaining)
-    }
-  })
 
   createEffect(() => {
     const instanceSessions = options.instanceSessions()
     const activeId = options.activeSessionId()
+    const visible = options.visible()
 
     setCachedSessionIds((current) => {
+      if (!visible) return []
       const next = current.filter((id) => id !== "info" && instanceSessions.has(id))
 
       const touch = (id: string | null) => {
@@ -84,15 +39,17 @@ export function useSessionCache(options: SessionCacheOptions): SessionCacheState
 
       touch(activeId)
 
-      const trimmed = next.length > SESSION_CACHE_LIMIT ? next.slice(0, SESSION_CACHE_LIMIT) : next
-
-      const trimmedSet = new Set(trimmed)
-      const removed = current.filter((id) => !trimmedSet.has(id))
-      if (removed.length) {
-        scheduleEvictions(removed)
-      }
-      return trimmed
+      return next.length > SESSION_CACHE_LIMIT ? next.slice(0, SESSION_CACHE_LIMIT) : next
     })
+  })
+
+  createEffect(() => {
+    const instanceId = options.instanceId()
+    const mountedSessionIds = cachedSessionIds()
+    for (let index = mountedSessionIds.length - 1; index >= 0; index -= 1) {
+      setVisibleSessionMemory(instanceId, mountedSessionIds[index]!, true)
+    }
+    onCleanup(() => mountedSessionIds.forEach((sessionId) => setVisibleSessionMemory(instanceId, sessionId, false)))
   })
 
   return {

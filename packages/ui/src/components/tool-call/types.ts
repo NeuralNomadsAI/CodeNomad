@@ -37,6 +37,7 @@ export interface DiffRenderOptions {
   variant?: string
   disableScrollTracking?: boolean
   label?: string
+  onFullDiffAccess?: () => void
   /**
    * Optional cache key suffix to avoid collisions when rendering multiple diffs
    * within the same tool call (e.g. apply_patch).
@@ -57,6 +58,7 @@ export interface ToolRendererContext {
   toolName: Accessor<string>
   instanceId: string
   sessionId: string
+  visibilitySessionId: string
   t: (key: string, params?: Record<string, unknown>) => string
   messageVersion?: Accessor<number | undefined>
   partVersion?: Accessor<number | undefined>
@@ -73,6 +75,7 @@ export interface ToolRendererContext {
     messageVersion?: number
     partVersion?: number
     sessionId: string
+    visibilitySessionId?: string
     forceCollapsed?: boolean
   }) => JSXElement | null
   outputWrapEnabled?: Accessor<boolean>
@@ -84,6 +87,7 @@ export interface ToolSearchTextContext {
   toolCall: ToolCallPart
   toolState: ToolState | undefined
   toolName: string
+  checkpoint?: () => Promise<void>
 }
 
 export interface ToolRenderer {
@@ -95,7 +99,7 @@ export interface ToolRenderer {
    * Text that is visible or directly revealable through this renderer. Keep this
    * in sync with custom renderBody output when adding specialized tool UIs.
    */
-  getSearchText?(context: ToolSearchTextContext): string[]
+  getSearchText?(context: ToolSearchTextContext): AsyncIterable<string> | Promise<string[]> | string[]
   renderBody(context: ToolRendererContext): JSXElement | null
 }
 
@@ -103,6 +107,7 @@ export interface ToolOutputChrome {
   title?: string
   language?: string
   copyText?: string | null
+  getCopyText?: () => string | null
   actions?: JSXElement
   wrapToggle?: boolean
   suppressInnerHeader?: boolean

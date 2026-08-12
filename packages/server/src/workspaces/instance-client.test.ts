@@ -172,4 +172,142 @@ describe("createInstanceClient", () => {
       globalThis.fetch = original
     }
   })
+
+  it("preserves cancellation from the SDK Request signal", async () => {
+    const original = globalThis.fetch
+    let effectiveSignal: AbortSignal | null | undefined
+    globalThis.fetch = (async (_input: any, init: any) => {
+      effectiveSignal = (init as RequestInit | undefined)?.signal
+      return new Promise((_resolve, reject) => {
+        effectiveSignal?.addEventListener("abort", () => reject(effectiveSignal?.reason), { once: true })
+      })
+    }) as typeof fetch
+    try {
+      const manager = makeManager({ getInstancePort: () => 4321, get: () => ({ path: "/repo" }) })
+      const client = createInstanceClient(manager as unknown as WorkspaceManager, "ws-1", { timeoutMs: 1_000 })
+      const controller = new AbortController()
+      const cancellation = new Error("caller cancelled")
+      const request = client!.global.health({ signal: controller.signal })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      controller.abort(cancellation)
+
+      const result = await Promise.race([
+        request,
+        new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("cancellation was not preserved")), 200)),
+      ])
+      assert.ok(result.error)
+      assert.equal(effectiveSignal?.reason, cancellation)
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+
+  it("keeps the timeout active while the response body is stalled", async () => {
+    const original = globalThis.fetch
+    let effectiveSignal: AbortSignal | null | undefined
+    globalThis.fetch = (async (_input: any, init: any) => {
+      effectiveSignal = (init as RequestInit | undefined)?.signal
+      return new Response(new ReadableStream({
+        start(controller) {
+          effectiveSignal?.addEventListener("abort", () => controller.error(effectiveSignal?.reason), { once: true })
+        },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    }) as typeof fetch
+    try {
+      const manager = makeManager({ getInstancePort: () => 4321, get: () => ({ path: "/repo" }) })
+      const client = createInstanceClient(manager as unknown as WorkspaceManager, "ws-1", { timeoutMs: 10 })
+
+      await assert.rejects(Promise.race([
+        client!.global.health(),
+        new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("response body outlived timeout")), 200)),
+      ]), (error: Error) => error.name === "TimeoutError")
+      assert.equal(effectiveSignal?.aborted, true)
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+
+  it("cleans timeout and caller cancellation after the response body completes", async () => {
+    const original = globalThis.fetch
+    let effectiveSignal: AbortSignal | null | undefined
+    globalThis.fetch = (async (_input: any, init: any) => {
+      effectiveSignal = (init as RequestInit | undefined)?.signal
+      return new Response(JSON.stringify({ healthy: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    }) as typeof fetch
+    try {
+      const manager = makeManager({ getInstancePort: () => 4321, get: () => ({ path: "/repo" }) })
+      const client = createInstanceClient(manager as unknown as WorkspaceManager, "ws-1", { timeoutMs: 10 })
+      const controller = new AbortController()
+
+      await client!.global.health({ signal: controller.signal })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      controller.abort(new Error("late cancellation"))
+
+      assert.equal(effectiveSignal?.aborted, false)
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+
+  it("cleans timeout when a zero-length response body is not consumed", async () => {
+    const original = globalThis.fetch
+    let effectiveSignal: AbortSignal | null | undefined
+    globalThis.fetch = (async (_input: any, init: any) => {
+      effectiveSignal = (init as RequestInit | undefined)?.signal
+      return new Response(new ReadableStream({ start: (controller) => controller.close() }), {
+        status: 200,
+        headers: { "content-length": "0" },
+      })
+    }) as typeof fetch
+    try {
+      const manager = makeManager({ getInstancePort: () => 4321, get: () => ({ path: "/repo" }) })
+      const client = createInstanceClient(manager as unknown as WorkspaceManager, "ws-1", { timeoutMs: 10 })
+      const controller = new AbortController()
+
+      await client!.global.health({ signal: controller.signal })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      controller.abort(new Error("late cancellation"))
+
+      assert.equal(effectiveSignal?.aborted, false)
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+
+  it("cleans an unread response when the SDK rejects it after headers", async () => {
+    const original = globalThis.fetch
+    let effectiveSignal: AbortSignal | null | undefined
+    let bodyCancelled = false
+    globalThis.fetch = (async (_input: any, init: any) => {
+      effectiveSignal = (init as RequestInit | undefined)?.signal
+      return new Response(new ReadableStream({
+        cancel() {
+          bodyCancelled = true
+        },
+      }), {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      })
+    }) as typeof fetch
+    try {
+      const manager = makeManager({ getInstancePort: () => 4321, get: () => ({ path: "/repo" }) })
+      const client = createInstanceClient(manager as unknown as WorkspaceManager, "ws-1", { timeoutMs: 10 })
+      const controller = new AbortController()
+
+      await assert.rejects(client!.global.health({ signal: controller.signal, throwOnError: true }))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      controller.abort(new Error("late cancellation"))
+
+      assert.equal(bodyCancelled, true)
+      assert.equal(effectiveSignal?.aborted, false)
+    } finally {
+      globalThis.fetch = original
+    }
+  })
 })

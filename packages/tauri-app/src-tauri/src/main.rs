@@ -13,7 +13,8 @@ mod windows_update;
 
 use cli_manager::{CliProcessManager, CliStatus};
 use desktop_event_transport::{
-    DesktopEventTransportManager, DesktopEventsStartRequest, DesktopEventsStartResult,
+    DesktopEventTransportManager, DesktopEventsStartRequest, DesktopEventsStartReservation,
+    DesktopEventsStartResult,
 };
 use keepawake::KeepAwake;
 use serde::Deserialize;
@@ -148,18 +149,25 @@ fn cli_restart(app: AppHandle, state: tauri::State<AppState>) -> Result<CliStatu
 }
 
 #[tauri::command]
+fn desktop_events_reserve_start(
+    state: tauri::State<AppState>,
+) -> Result<DesktopEventsStartReservation, String> {
+    state.desktop_events.reserve_start()
+}
+
+#[tauri::command]
 fn desktop_events_start(
     app: AppHandle,
     state: tauri::State<AppState>,
-    request: Option<DesktopEventsStartRequest>,
+    request: DesktopEventsStartRequest,
 ) -> DesktopEventsStartResult {
     let config = state.manager.desktop_event_stream_config();
     state.desktop_events.start(app, config, request)
 }
 
 #[tauri::command]
-fn desktop_events_stop(state: tauri::State<AppState>) {
-    state.desktop_events.stop();
+fn desktop_events_stop(state: tauri::State<AppState>, lease: u64) {
+    state.desktop_events.stop_lease(lease);
 }
 
 #[tauri::command]
@@ -660,6 +668,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             cli_get_status,
             cli_restart,
+            desktop_events_reserve_start,
             desktop_events_start,
             desktop_events_stop,
             wake_lock_start,

@@ -39,9 +39,47 @@ interface GenerationAdmission {
   baseline: Pick<Session, "generationRecovery" | "runtimeStatusKnown" | "idleSince">
 }
 const generationAdmissions = new Map<string, GenerationAdmission>()
+let sessionMetadataMutationSequence = 0
+const sessionMetadataMutationVersions = new Map<string, number>()
+
+function snapshotSessionMetadataMutationVersion(): number {
+  return sessionMetadataMutationSequence
+}
+
+function markSessionMetadataMutation(instanceId: string, sessionId: string): void {
+  sessionMetadataMutationVersions.set(`${instanceId}:${sessionId}`, ++sessionMetadataMutationSequence)
+}
+
+function wasSessionMetadataMutatedAfter(instanceId: string, sessionId: string, version: number): boolean {
+  return (sessionMetadataMutationVersions.get(`${instanceId}:${sessionId}`) ?? 0) > version
+}
 
 function cancelSessionGenerationAdmissions(instanceId: string, sessionId: string): void {
   generationAdmissions.delete(`${instanceId}:${sessionId}`)
+}
+
+function resetInstanceSessionRequestState(instanceId: string): void {
+  const prefix = `${instanceId}:`
+  const activeMessageSessionIds = [...messageLoadControllers.keys()]
+    .filter((key) => key.startsWith(prefix))
+    .map((key) => key.slice(prefix.length))
+  for (const sessionId of activeMessageSessionIds) advanceMessageLoadEpoch(instanceId, sessionId)
+  for (const [key, admission] of generationAdmissions) {
+    if (!key.startsWith(prefix)) continue
+    const sessionId = key.slice(prefix.length)
+    withSession(instanceId, sessionId, (session) => {
+      if (session.generationAdmissionToken !== admission.token) return false
+      session.generationAdmissionToken = undefined
+      Object.assign(session, admission.baseline)
+    })
+    generationAdmissions.delete(key)
+  }
+  setLoading((prev) => ({
+    fetchingSessions: removeInstanceMapEntry(prev.fetchingSessions, instanceId),
+    creatingSession: removeInstanceMapEntry(prev.creatingSession, instanceId),
+    deletingSession: removeInstanceMapEntry(prev.deletingSession, instanceId),
+    loadingMessages: removeInstanceMapEntry(prev.loadingMessages, instanceId),
+  }))
 }
 
 export interface SessionInfo {
@@ -80,6 +118,7 @@ const [messagesLoaded, setMessagesLoaded] = createSignal<Map<string, Set<string>
 const [messageLoadErrors, setMessageLoadErrors] = createSignal<Map<string, Map<string, string>>>(new Map())
 const [sessionListErrors, setSessionListErrors] = createSignal<Map<string, string>>(new Map())
 const messageLoadEpochs = new Map<string, number>()
+const messageLoadControllers = new Map<string, { epoch: number; ownerSessionId: string; controller: AbortController }>()
 let nextMessageLoadEpoch = 0
 const [sessionInfoByInstance, setSessionInfoByInstance] = createSignal<Map<string, Map<string, SessionInfo>>>(new Map())
 const [threadTotalsByInstance, setThreadTotalsByInstance] = createSignal<Map<string, Map<string, ThreadTotals>>>(new Map())
@@ -337,9 +376,36 @@ function clearLoadedFlag(instanceId: string, sessionId: string) {
 
 function advanceMessageLoadEpoch(instanceId: string, sessionId: string): number {
   const key = getDraftKey(instanceId, sessionId)
+  messageLoadControllers.get(key)?.controller.abort()
+  messageLoadControllers.delete(key)
   const epoch = ++nextMessageLoadEpoch
   messageLoadEpochs.set(key, epoch)
   return epoch
+}
+
+function beginSessionMessageLoad(instanceId: string, sessionId: string): {
+  epoch: number
+  signal: AbortSignal
+  abort: (reason?: unknown) => void
+} {
+  const epoch = advanceMessageLoadEpoch(instanceId, sessionId)
+  const controller = new AbortController()
+  const ownerId = getSessionRoot(instanceId, sessionId)?.id ?? sessionId
+  messageLoadControllers.set(getDraftKey(instanceId, sessionId), { epoch, ownerSessionId: ownerId, controller })
+  return { epoch, signal: controller.signal, abort: (reason) => controller.abort(reason) }
+}
+
+function finishSessionMessageLoad(instanceId: string, sessionId: string, epoch: number): void {
+  const key = getDraftKey(instanceId, sessionId)
+  if (messageLoadControllers.get(key)?.epoch === epoch) messageLoadControllers.delete(key)
+}
+
+function invalidateOwnedSessionMessageLoads(instanceId: string, ownerSessionId: string): void {
+  const prefix = `${instanceId}:`
+  const sessionIds = [...messageLoadControllers]
+    .filter(([key, load]) => key.startsWith(prefix) && load.ownerSessionId === ownerSessionId)
+    .map(([key]) => key.slice(prefix.length))
+  for (const sessionId of sessionIds) invalidateSessionMessageLoad(instanceId, sessionId)
 }
 
 function isCurrentMessageLoad(instanceId: string, sessionId: string, epoch: number): boolean {
@@ -724,6 +790,10 @@ function writeSessionSelection(
 }
 
 function writeActiveSession(instanceId: string, sessionId: string | null): void {
+  const previousSessionId = activeSessionId().get(instanceId)
+  if (previousSessionId && previousSessionId !== sessionId) {
+    invalidateOwnedSessionMessageLoads(instanceId, getSessionRoot(instanceId, previousSessionId)?.id ?? previousSessionId)
+  }
   writeSessionSelection(setActiveSessionId, instanceId, sessionId)
   if (sessionId) {
     // Backfill authoritative Yolo state for the now-active session so the badge
@@ -1207,6 +1277,58 @@ async function cleanupBlankSessions(instanceId: string, excludeSessionId?: strin
   }
 }
 
+function removeInstanceMapEntry<T>(map: Map<string, T>, instanceId: string): Map<string, T> {
+  if (!map.has(instanceId)) return map
+  const next = new Map(map)
+  next.delete(instanceId)
+  return next
+}
+
+function purgeInstanceSessionState(instanceId: string): void {
+  if (!instanceId) return
+  const prefix = `${instanceId}:`
+  batch(() => {
+    setSessions((prev) => removeInstanceMapEntry(prev, instanceId))
+    setActiveSessionId((prev) => removeInstanceMapEntry(prev, instanceId))
+    setActiveParentSessionId((prev) => removeInstanceMapEntry(prev, instanceId))
+    setAgents((prev) => removeInstanceMapEntry(prev, instanceId))
+    setProviders((prev) => removeInstanceMapEntry(prev, instanceId))
+    setMessagesLoaded((prev) => removeInstanceMapEntry(prev, instanceId))
+    setMessageLoadErrors((prev) => removeInstanceMapEntry(prev, instanceId))
+    setSessionListErrors((prev) => removeInstanceMapEntry(prev, instanceId))
+    setSessionInfoByInstance((prev) => removeInstanceMapEntry(prev, instanceId))
+    setThreadTotalsByInstance((prev) => removeInstanceMapEntry(prev, instanceId))
+    setExpandedSessions((prev) => removeInstanceMapEntry(prev, instanceId))
+    setSessionPagination((prev) => removeInstanceMapEntry(prev, instanceId))
+    setSessionSearch((prev) => removeInstanceMapEntry(prev, instanceId))
+    setInstanceIndicatorCounts((prev) => removeInstanceMapEntry(prev, instanceId))
+    setLoading((prev) => ({
+      fetchingSessions: removeInstanceMapEntry(prev.fetchingSessions, instanceId),
+      creatingSession: removeInstanceMapEntry(prev.creatingSession, instanceId),
+      deletingSession: removeInstanceMapEntry(prev.deletingSession, instanceId),
+      loadingMessages: removeInstanceMapEntry(prev.loadingMessages, instanceId),
+    }))
+    setAuthoritativeSessionSelectionInstanceIds((prev) => {
+      if (!prev.has(instanceId)) return prev
+      const next = new Set(prev)
+      next.delete(instanceId)
+      return next
+    })
+    setSessionDraftPrompts((prev) => new Map([...prev].filter(([key]) => !key.startsWith(prefix))))
+    setAuthoritativeDraftKeys((prev) => new Set([...prev].filter((key) => !key.startsWith(prefix))))
+    setAuthoritativelyDeletedSessionKeys((prev) => new Set([...prev].filter((key) => !key.startsWith(prefix))))
+    setAuthoritativeSessionExpansionKeys((prev) => new Set([...prev].filter((key) => !key.startsWith(prefix))))
+  })
+  for (const key of generationAdmissions.keys()) if (key.startsWith(prefix)) generationAdmissions.delete(key)
+  for (const [key, load] of messageLoadControllers) {
+    if (!key.startsWith(prefix)) continue
+    load.controller.abort()
+    messageLoadControllers.delete(key)
+  }
+  for (const key of messageLoadEpochs.keys()) if (key.startsWith(prefix)) messageLoadEpochs.delete(key)
+  for (const key of sessionMetadataMutationVersions.keys()) if (key.startsWith(prefix)) sessionMetadataMutationVersions.delete(key)
+}
+
 export {
   sessions,
   setSessions,
@@ -1223,6 +1345,9 @@ export {
   getSessionListError,
   setSessionListError,
   advanceMessageLoadEpoch,
+  beginSessionMessageLoad,
+  finishSessionMessageLoad,
+  invalidateOwnedSessionMessageLoads,
   isCurrentMessageLoad,
   invalidateSessionMessageLoad,
   setSessionMessagesLoadError,
@@ -1257,6 +1382,10 @@ export {
   hydrateSessionGenerationRecovery,
   beginSessionGenerationAdmission,
   cancelSessionGenerationAdmissions,
+  resetInstanceSessionRequestState,
+  snapshotSessionMetadataMutationVersion,
+  markSessionMetadataMutation,
+  wasSessionMetadataMutatedAfter,
   setSessionStatus,
   setActiveSession,
   setActiveParentSession,
@@ -1291,6 +1420,7 @@ export {
   getSessionInfo,
   isBlankSession,
   cleanupBlankSessions,
+  purgeInstanceSessionState,
   SESSION_PAGE_SIZE,
   sessionPagination,
   sessionSearch,

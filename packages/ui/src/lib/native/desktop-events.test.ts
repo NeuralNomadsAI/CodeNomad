@@ -44,8 +44,11 @@ describe("connectTauriWorkspaceEvents", () => {
     const unlistened: string[] = []
     const bridge = {
       invoke: async (command: string) => {
+        if (command === "desktop_events_reserve_start") {
+          return { logicalStartEpoch: 1 }
+        }
         if (command === "desktop_events_start") {
-          return { started: true, generation: 1 }
+          return { started: true, generation: 1, lease: 1 }
         }
         if (command === "desktop_events_stop") {
           return undefined

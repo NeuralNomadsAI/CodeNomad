@@ -14,6 +14,7 @@ import type {
   EventSessionStatus,
 } from "@opencode-ai/sdk"
 import type { MessageStatus } from "./message-v2/types"
+import type { Instance } from "../types/instance"
 import { deriveMessageStatus } from "./message-v2/message-status"
 
 import { getLogger } from "../lib/logger"
@@ -21,8 +22,13 @@ import type { EventSessionDeleted } from "../lib/sse-manager"
 import { requestData } from "../lib/opencode-api"
 import {
   enqueueDelta,
+  clearPendingDeltasForInstance,
+  clearPendingDeltasForMessage,
   clearPendingDeltasForPart,
+  clearPendingDeltasForSession,
   flushPendingDeltasForMessage,
+  requestDeltaRecovery,
+  setRecoveryCallback,
   setFlushCallback,
 } from "./delta-buffer"
 import {
@@ -46,12 +52,15 @@ import { sendOsNotification } from "../lib/os-notifications"
 import { preferences } from "./preferences"
 import {
   instances,
+  isInstanceRuntimeCurrent,
   addPermissionToQueue,
   getPermissionQueue,
   removePermissionFromQueue,
   markPermissionReplied,
   hasRepliedPermission,
   addQuestionToQueue,
+  hasAnsweredQuestion,
+  markQuestionAnswered,
   removeQuestionFromQueue,
 } from "./instances"
 import { showAlertDialog } from "./alerts"
@@ -64,13 +73,13 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, prependSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
+import { activeSessionId, ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, markSessionMetadataMutation, prependSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { tGlobal } from "../lib/i18n"
 
-import { loadMessages, removeSessionRuntimeState } from "./session-api"
+import { clearBufferedDeltaSnapshotFence, loadMessages, removeSessionRuntimeState, SessionMessageLoadTimeoutError } from "./session-api"
 import { getRootClient } from "./opencode-client"
 import { getWorktreeSlugForDirectory, getWorktreeSlugForSession } from "./worktrees"
 import { getOpenCodeWorkspaceIdForWorktree } from "./opencode-workspaces"
@@ -90,10 +99,43 @@ import {
 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
 import { handleConversationAssistantPartUpdated } from "./conversation-speech"
+import { scheduleSessionMemorySweep } from "./session-memory"
 
 const log = getLogger("sse")
 const pendingSessionFetches = new Map<string, Promise<void>>()
+const pendingSessionFetchRuntimes = new Map<string, Instance>()
+const pendingSessionStatuses = new Map<string, { status: SessionStatus; retry?: SessionRetryState | null }>()
+const MAX_DELTA_RECOVERY_ATTEMPTS = 3
+const DELTA_RECOVERY_BACKOFF_MS = 100
+const DELTA_RECOVERY_LOAD_TIMEOUT_MS = 10_000
+type DeltaRecovery = {
+  dirty: boolean
+  running: boolean
+  attempts: number
+  deltas: Map<string, { messageId: string; partId: string; field: string; delta: string; expectedValue?: string }>
+  requireActive: boolean
+  idleReconcileRequested: boolean
+  instance: Instance
+}
+const pendingDeltaRecoveries = new Map<string, DeltaRecovery>()
+const pendingIdleMessageReconciliations = new Map<string, Instance>()
 let activeRetryToast: ToastHandle | null = null
+
+messageStoreBus.onInstanceDestroyed((instanceId) => {
+  const prefix = `${instanceId}:`
+  for (const key of pendingSessionFetches.keys()) if (key.startsWith(prefix)) pendingSessionFetches.delete(key)
+  for (const key of pendingSessionFetchRuntimes.keys()) if (key.startsWith(prefix)) pendingSessionFetchRuntimes.delete(key)
+  for (const key of pendingSessionStatuses.keys()) if (key.startsWith(prefix)) pendingSessionStatuses.delete(key)
+  for (const key of pendingDeltaRecoveries.keys()) if (key.startsWith(prefix)) pendingDeltaRecoveries.delete(key)
+  for (const key of pendingIdleMessageReconciliations.keys()) if (key.startsWith(prefix)) pendingIdleMessageReconciliations.delete(key)
+  clearPendingDeltasForInstance(instanceId)
+})
+
+messageStoreBus.onSessionCleared((instanceId, sessionId) => {
+  const key = `${instanceId}:${sessionId}`
+  pendingDeltaRecoveries.delete(key)
+  pendingIdleMessageReconciliations.delete(key)
+})
 
 function shouldSendOsNotification(kind: "needsInput" | "idle"): boolean {
   if (typeof document === "undefined") return false
@@ -166,22 +208,26 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
   const slug = slugFromDirectory ?? getWorktreeSlugForSession(instanceId, sessionId)
   const client = getRootClient(instanceId)
   const workspace = await getOpenCodeWorkspaceIdForWorktree(instanceId, slug)
+  if (!isInstanceRuntimeCurrent(instanceId, instance)) return null
 
   try {
     const info = await requestData<any>(
       client.session.get({ sessionID: sessionId, ...(workspace ? { workspace } : {}) }),
       "session.get",
     )
+    if (!isInstanceRuntimeCurrent(instanceId, instance)) return null
 
     let rawStatus = (info as any)?.status
     let fetchedStatusKnown = false
     try {
       const statuses = await requestData<Record<string, any>>(client.session.status(), "session.status")
+      if (!isInstanceRuntimeCurrent(instanceId, instance)) return null
       rawStatus ??= statuses?.[sessionId]
       fetchedStatusKnown = true
     } catch (error) {
       log.error("Failed to fetch session status", error)
     }
+    if (!isInstanceRuntimeCurrent(instanceId, instance)) return null
     const hasStatus = rawStatus && typeof rawStatus === "object" && typeof rawStatus.type === "string"
     fetchedStatusKnown ||= Boolean(hasStatus)
     const fetchedStatus: SessionStatus = hasStatus ? mapSdkSessionStatus(rawStatus) : "idle"
@@ -247,21 +293,36 @@ function ensureSessionStatus(
 ) {
   const existing = sessions().get(instanceId)?.get(sessionId)
   if (existing) {
+    const key = `${instanceId}:${sessionId}`
+    if (pendingSessionFetches.has(key)) pendingSessionStatuses.set(key, { status, retry })
     setSessionStatus(instanceId, sessionId, status, { retry })
+    scheduleSessionMemorySweep()
     return
   }
 
   const key = `${instanceId}:${sessionId}`
-  if (pendingSessionFetches.has(key)) return
+  pendingSessionStatuses.set(key, { status, retry })
+  const runtime = instances().get(instanceId)
+  const pendingRuntime = pendingSessionFetchRuntimes.get(key)
+  if (pendingSessionFetches.has(key) && pendingRuntime && isInstanceRuntimeCurrent(instanceId, pendingRuntime)) return
 
   const pending = (async () => {
     const fetched = await fetchSessionInfo(instanceId, sessionId, directory)
     if (!fetched) return
-    setSessionStatus(instanceId, sessionId, status, { retry })
+    const latest = pendingSessionStatuses.get(key) ?? { status, retry }
+    setSessionStatus(instanceId, sessionId, latest.status, { retry: latest.retry, force: true })
+    scheduleSessionMemorySweep()
   })()
 
   pendingSessionFetches.set(key, pending)
-  void pending.finally(() => pendingSessionFetches.delete(key))
+  if (runtime) pendingSessionFetchRuntimes.set(key, runtime)
+  void pending.finally(() => {
+    if (pendingSessionFetches.get(key) === pending) {
+      pendingSessionFetches.delete(key)
+      pendingSessionFetchRuntimes.delete(key)
+      pendingSessionStatuses.delete(key)
+    }
+  })
 }
 
 function resolveMessageRole(info?: MessageInfo | null): "user" | "assistant" {
@@ -284,6 +345,7 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     const sessionId = typeof part.sessionID === "string" ? part.sessionID : fallbackSessionId
     const messageId = typeof part.messageID === "string" ? part.messageID : fallbackMessageId
     if (!sessionId || !messageId) return
+    if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return
     if (part.type === "compaction") {
       ensureSessionStatus(instanceId, sessionId, "compacting", (event as any)?.directory)
     }
@@ -316,6 +378,7 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     // deltas would be stale and cause duplication if flushed later.
     if (part.id) {
       clearPendingDeltasForPart(instanceId, messageId, part.id)
+      clearBufferedDeltaSnapshotFence(instanceId, sessionId, messageId, part.id)
     }
     applyPartUpdateV2(instanceId, { ...part, sessionID: sessionId, messageID: messageId })
     handleConversationAssistantPartUpdated(instanceId, { ...part, sessionID: sessionId, messageID: messageId }, messageInfo)
@@ -334,6 +397,7 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     const sessionId = typeof info.sessionID === "string" ? info.sessionID : undefined
     const messageId = typeof info.id === "string" ? info.id : undefined
     if (!sessionId || !messageId) return
+    if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return
 
     // Flush any pending deltas for this message before applying the update.
     // Deltas are buffered for up to 50ms; if message.updated arrives before
@@ -343,15 +407,17 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     // message status/metadata update runs on the complete content.
     flushPendingDeltasForMessage(instanceId, messageId, applyPartDeltaV2)
 
-    const timeInfo = (info.time ?? {}) as { created?: number; updated?: number; end?: number }
+    const timeInfo = (info.time ?? {}) as { created?: number; updated?: number; end?: number; completed?: number }
     const nextUpdated =
       typeof timeInfo.end === "number" && timeInfo.end > 0
         ? timeInfo.end
-        : typeof timeInfo.updated === "number" && timeInfo.updated > 0
-          ? timeInfo.updated
-          : typeof timeInfo.created === "number" && timeInfo.created > 0
-            ? timeInfo.created
-            : Date.now()
+        : typeof timeInfo.completed === "number" && timeInfo.completed > 0
+          ? timeInfo.completed
+          : typeof timeInfo.updated === "number" && timeInfo.updated > 0
+            ? timeInfo.updated
+            : typeof timeInfo.created === "number" && timeInfo.created > 0
+              ? timeInfo.created
+              : Date.now()
 
     withSession(instanceId, sessionId, (session) => {
       const currentUpdated = session.time?.updated ?? 0
@@ -373,7 +439,7 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
 
     if (!record) {
       const createdAt = info.time?.created ?? Date.now()
-      const endAt = (info.time as { end?: number } | undefined)?.end
+      const endAt = timeInfo.end ?? timeInfo.completed
       store.upsertMessage({
         id: messageId,
         sessionId,
@@ -392,17 +458,137 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
 
 // Delta buffer callback setup
 setFlushCallback((batch) => {
-  for (const { instanceId, messageId, partId, field, delta } of batch) {
-    applyPartDeltaV2(instanceId, { messageId, partId, field, delta })
+  for (const { instanceId, sessionId, messageId, partId, field, delta } of batch) {
+    if (!applyPartDeltaV2(instanceId, { messageId, partId, field, delta })) {
+      requestDeltaRecovery({ instanceId, ...(sessionId ? { sessionId } : {}), messageId, partId, field, delta })
+    }
   }
 })
+
+setRecoveryCallback(({ instanceId, sessionId, messageId, partId, field, delta }) => {
+  if (!sessionId) {
+    log.warn("Dropped orphan delta without a session", { instanceId, messageId, partId })
+    return
+  }
+  const instance = instances().get(instanceId)
+  if (!instance) return
+  const key = `${instanceId}:${sessionId}`
+  const existing = pendingDeltaRecoveries.get(key)
+  if (existing && isInstanceRuntimeCurrent(instanceId, existing.instance)) {
+    if (delta !== undefined) {
+      const deltaKey = `${messageId}:${partId}:${field}`
+      const pending = existing.deltas.get(deltaKey)
+      existing.deltas.set(deltaKey, {
+        messageId,
+        partId,
+        field,
+        delta: `${pending?.delta ?? ""}${delta}`,
+        expectedValue: pending?.expectedValue === undefined ? undefined : `${pending.expectedValue}${delta}`,
+      })
+    }
+    existing.dirty = true
+    runDeltaRecovery(instanceId, sessionId, existing)
+    return
+  }
+  if (existing) pendingDeltaRecoveries.delete(key)
+  const recovery: DeltaRecovery = {
+    dirty: true,
+    running: false,
+    attempts: 0,
+    deltas: new Map(delta === undefined ? [] : [[`${messageId}:${partId}:${field}`, { messageId, partId, field, delta }]]),
+    requireActive: activeSessionId().get(instanceId) === sessionId,
+    idleReconcileRequested: false,
+    instance,
+  }
+  pendingDeltaRecoveries.set(key, recovery)
+  runDeltaRecovery(instanceId, sessionId, recovery)
+})
+
+function runDeltaRecovery(instanceId: string, sessionId: string, recovery: DeltaRecovery): void {
+  if (recovery.running) return
+  const key = `${instanceId}:${sessionId}`
+  if (!isInstanceRuntimeCurrent(instanceId, recovery.instance)) {
+    if (pendingDeltaRecoveries.get(key) === recovery) pendingDeltaRecoveries.delete(key)
+    return
+  }
+  const session = sessions().get(instanceId)?.get(sessionId)
+  if (session?.status === "working" || session?.status === "compacting") return
+  recovery.running = true
+  void (async () => {
+    try {
+      while (recovery.dirty && recovery.attempts < MAX_DELTA_RECOVERY_ATTEMPTS) {
+        if (!isInstanceRuntimeCurrent(instanceId, recovery.instance) || !sessions().get(instanceId)?.has(sessionId)) return
+        if (recovery.requireActive && activeSessionId().get(instanceId) !== sessionId) {
+          invalidateSessionMessageLoad(instanceId, sessionId)
+          return
+        }
+        const currentStatus = sessions().get(instanceId)?.get(sessionId)?.status
+        if (currentStatus === "working" || currentStatus === "compacting") return
+
+        await new Promise((resolve) => setTimeout(resolve, (recovery.attempts + 1) * DELTA_RECOVERY_BACKOFF_MS))
+        if (!isInstanceRuntimeCurrent(instanceId, recovery.instance) || !sessions().get(instanceId)?.has(sessionId)) return
+        if (recovery.requireActive && activeSessionId().get(instanceId) !== sessionId) {
+          invalidateSessionMessageLoad(instanceId, sessionId)
+          return
+        }
+        const statusAfterBackoff = sessions().get(instanceId)?.get(sessionId)?.status
+        if (statusAfterBackoff === "working" || statusAfterBackoff === "compacting") return
+
+        recovery.dirty = false
+        recovery.attempts += 1
+        try {
+          await loadMessages(instanceId, sessionId, { force: true, timeoutMs: DELTA_RECOVERY_LOAD_TIMEOUT_MS })
+          if (!isInstanceRuntimeCurrent(instanceId, recovery.instance)) return
+          for (const [deltaKey, pending] of recovery.deltas) {
+            const part = messageStoreBus.getInstance(instanceId)?.getMessage(pending.messageId)?.parts[pending.partId]?.data as any
+            const value = part?.[pending.field]
+            if (pending.expectedValue !== undefined && typeof value === "string" && value.startsWith(pending.expectedValue)) {
+              recovery.deltas.delete(deltaKey)
+            } else if (recovery.attempts < MAX_DELTA_RECOVERY_ATTEMPTS) {
+              if (pending.expectedValue === undefined && typeof value === "string") {
+                pending.expectedValue = `${value}${pending.delta}`
+              }
+              applyPartDeltaV2(instanceId, pending)
+              recovery.dirty = true
+            } else {
+              recovery.deltas.delete(deltaKey)
+            }
+          }
+        } catch (error) {
+          recovery.dirty = true
+          if (recovery.attempts >= MAX_DELTA_RECOVERY_ATTEMPTS) throw error
+        }
+      }
+      if (recovery.dirty) {
+        log.warn("Revision recovery exhausted", { instanceId, sessionId, attempts: recovery.attempts })
+      }
+    } catch (error) {
+      log.warn("Failed to recover orphan delta", { instanceId, sessionId, error })
+    } finally {
+      recovery.running = false
+      const latestStatus = sessions().get(instanceId)?.get(sessionId)?.status
+      const waitingForIdle = isInstanceRuntimeCurrent(instanceId, recovery.instance) &&
+        recovery.attempts < MAX_DELTA_RECOVERY_ATTEMPTS && recovery.dirty &&
+        (latestStatus === "working" || latestStatus === "compacting")
+      const forceIdleReconcile = isInstanceRuntimeCurrent(instanceId, recovery.instance) &&
+        (!recovery.requireActive || activeSessionId().get(instanceId) === sessionId) &&
+        recovery.idleReconcileRequested && !waitingForIdle
+      if (!waitingForIdle && pendingDeltaRecoveries.get(key) === recovery) pendingDeltaRecoveries.delete(key)
+      if (forceIdleReconcile) reconcileIdleSessionMessages(instanceId, sessionId, true, recovery.instance)
+    }
+  })()
+}
 
 function handleMessagePartDelta(instanceId: string, event: MessagePartDeltaEvent): void {
   const props = event.properties
   if (!props) return
   const { messageID, partID, field, delta } = props
   if (!messageID || !partID || !field || typeof delta !== "string") return
-  enqueueDelta(instanceId, messageID, partID, field, delta)
+  const sessionId = props.sessionID ?? messageStoreBus.getInstance(instanceId)?.getMessage(messageID)?.sessionId
+  if (sessionId) {
+    if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return
+  }
+  enqueueDelta(instanceId, messageID, partID, field, delta, sessionId)
 }
 
 function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): void {
@@ -410,10 +596,20 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
 
   if (!info) return
   if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(info.id)) return
-
+  markSessionMetadataMutation(instanceId, info.id)
   const instanceSessions = sessions().get(instanceId) ?? new Map<string, Session>()
-
   const existingSession = instanceSessions.get(info.id)
+  const incomingRevert = info.revert ?? null
+  const previousRevert = existingSession?.revert ?? null
+  const revertChanged = (
+    incomingRevert?.messageID !== previousRevert?.messageID ||
+    incomingRevert?.partID !== previousRevert?.partID ||
+    incomingRevert?.snapshot !== previousRevert?.snapshot ||
+    incomingRevert?.diff !== previousRevert?.diff
+  )
+  if (revertChanged) {
+    invalidateSessionMessageLoad(instanceId, info.id)
+  }
 
   if (!existingSession) {
     const newSession = {
@@ -459,7 +655,7 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
     })
 
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
-    setSessionRevertV2(instanceId, info.id, info.revert ?? null)
+    setSessionRevertV2(instanceId, info.id, incomingRevert)
     if (!newSession.parentId) {
       prependSessionListId(instanceId, newSession.id)
     }
@@ -485,7 +681,7 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
             snapshot: info.revert.snapshot,
             diff: info.revert.diff,
           }
-        : existingSession.revert,
+        : undefined,
     }
 
     let updatedInstanceSessions: Map<string, Session> | undefined
@@ -500,7 +696,7 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
     })
 
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
-    setSessionRevertV2(instanceId, info.id, info.revert ?? null)
+    setSessionRevertV2(instanceId, info.id, incomingRevert)
   }
 }
 
@@ -508,6 +704,7 @@ function handleSessionDeleted(instanceId: string, event: EventSessionDeleted): v
   const properties = event.properties
   const sessionId = properties?.info?.id ?? properties?.sessionID ?? properties?.id
   if (!sessionId) return
+  clearPendingDeltasForSession(instanceId, sessionId)
 
   log.info(`[SSE] Session deleted: ${sessionId}`)
   removeSessionRuntimeState(instanceId, sessionId)
@@ -525,6 +722,8 @@ function handleSessionIdle(instanceId: string, event: EventSessionIdle): void {
   }
 
   ensureSessionStatus(instanceId, sessionId, "idle", (event as any)?.directory)
+  reconcileIdleSessionMessages(instanceId, sessionId)
+  scheduleSessionMemorySweep()
   log.info(`[SSE] Session idle: ${sessionId}`)
 }
 
@@ -536,6 +735,8 @@ function handleSessionStatus(instanceId: string, event: EventSessionStatus): voi
   const status = mapSdkSessionStatus(rawStatus)
   const retry = mapSdkSessionRetry(rawStatus)
   ensureSessionStatus(instanceId, sessionId, status, (event as any)?.directory, retry)
+  if (status === "idle") reconcileIdleSessionMessages(instanceId, sessionId)
+  scheduleSessionMemorySweep()
   if (retry) {
     const remainingSeconds = Math.max(0, Math.round((retry.next - Date.now()) / 1000))
     const countdown =
@@ -556,6 +757,41 @@ function handleSessionStatus(instanceId: string, event: EventSessionStatus): voi
     })
   }
   log.info(`[SSE] Session status updated: ${sessionId}`, { status })
+}
+
+function reconcileIdleSessionMessages(instanceId: string, sessionId: string, force = false, expectedInstance?: Instance): void {
+  const instance = expectedInstance ?? instances().get(instanceId)
+  if (!instance || !isInstanceRuntimeCurrent(instanceId, instance)) return
+  const recoveryKey = `${instanceId}:${sessionId}`
+  const recovery = pendingDeltaRecoveries.get(recoveryKey)
+  let forceReconcile = false
+  if (recovery) {
+    if ((recovery.running || recovery.attempts < MAX_DELTA_RECOVERY_ATTEMPTS) && isInstanceRuntimeCurrent(instanceId, recovery.instance)) {
+      recovery.idleReconcileRequested = true
+      runDeltaRecovery(instanceId, sessionId, recovery)
+      return
+    }
+    forceReconcile = recovery.dirty && isInstanceRuntimeCurrent(instanceId, recovery.instance)
+    pendingDeltaRecoveries.delete(recoveryKey)
+  }
+  if (!force && !forceReconcile && !messageStoreBus.getInstance(instanceId)?.hasSessionActiveWork(sessionId)) return
+  const key = `${instanceId}:${sessionId}`
+  const pendingRuntime = pendingIdleMessageReconciliations.get(key)
+  if (pendingRuntime && isInstanceRuntimeCurrent(instanceId, pendingRuntime)) return
+  pendingIdleMessageReconciliations.set(key, instance)
+  void loadMessages(instanceId, sessionId, {
+    force: true,
+    timeoutMs: DELTA_RECOVERY_LOAD_TIMEOUT_MS,
+  })
+    .catch((error) => {
+      if (error instanceof SessionMessageLoadTimeoutError) {
+        messageStoreBus.getInstance(instanceId)?.interruptSessionActiveMessages(sessionId)
+      }
+      log.warn("Failed to reconcile idle session messages", { instanceId, sessionId, error })
+    })
+    .finally(() => {
+      if (pendingIdleMessageReconciliations.get(key) === instance) pendingIdleMessageReconciliations.delete(key)
+    })
 }
 
 function handleSessionCompacted(instanceId: string, event: EventSessionCompacted): void {
@@ -600,6 +836,7 @@ function handleSessionError(instanceId: string, event: EventSessionError): void 
       message = error.message
     }
   }
+  if (message.length > 10_000) message = `${message.slice(0, 10_000)}...`
 
   showAlertDialog(tGlobal("sessionEvents.sessionError.message", { message }), {
     title: tGlobal("sessionEvents.sessionError.title"),
@@ -610,8 +847,10 @@ function handleSessionError(instanceId: string, event: EventSessionError): void 
 function handleMessageRemoved(instanceId: string, event: MessageRemovedEvent): void {
   const { sessionID, messageID } = event.properties
   if (!sessionID || !messageID) return
+  if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionID)) return
 
   log.info(`[SSE] Message removed from session ${sessionID}`, { messageID })
+  clearPendingDeltasForMessage(instanceId, messageID)
   removeMessageV2(instanceId, messageID, sessionID)
   updateSessionInfo(instanceId, sessionID)
 }
@@ -619,8 +858,10 @@ function handleMessageRemoved(instanceId: string, event: MessageRemovedEvent): v
 function handleMessagePartRemoved(instanceId: string, event: MessagePartRemovedEvent): void {
   const { sessionID, messageID, partID } = event.properties
   if (!sessionID || !messageID || !partID) return
+  if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionID)) return
 
   log.info(`[SSE] Message part removed from session ${sessionID}`, { messageID, partID })
+  clearPendingDeltasForPart(instanceId, messageID, partID)
   removeMessagePartV2(instanceId, messageID, partID, sessionID)
   updateSessionInfo(instanceId, sessionID)
 }
@@ -684,6 +925,7 @@ function handlePermissionReplied(instanceId: string, event: EventPermissionV2Rep
 function handleQuestionAsked(instanceId: string, event: EventQuestionV2Asked | LegacyQuestionAskedEvent): void {
   const request = event?.properties as QuestionRequest | undefined
   if (!request) return
+  if (hasAnsweredQuestion(instanceId, request.id)) return
   const source = event.type === "question.asked" ? "legacy" : "v2"
 
   log.info(`[SSE] Question asked: ${getQuestionId(request)}`)
@@ -709,6 +951,7 @@ function handleQuestionAnswered(
   if (!requestId) return
 
   log.info(`[SSE] Question answered: ${requestId}`)
+  markQuestionAnswered(instanceId, requestId)
   removeQuestionFromQueue(instanceId, requestId)
   removeQuestionV2(instanceId, requestId)
 }

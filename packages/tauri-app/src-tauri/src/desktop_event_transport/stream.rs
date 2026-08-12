@@ -1,17 +1,17 @@
 use super::*;
-use reqwest::blocking::RequestBuilder;
+use reqwest::RequestBuilder;
 
 pub(super) fn build_stream_client() -> Result<Client, OpenStreamError> {
+    build_stream_client_with_read_timeout(Duration::from_millis(STREAM_READ_TIMEOUT_MS))
+}
+
+fn build_stream_client_with_read_timeout(
+    read_timeout: Duration,
+) -> Result<Client, OpenStreamError> {
     Client::builder()
         .connect_timeout(Duration::from_millis(STREAM_CONNECT_TIMEOUT_MS))
+        .read_timeout(read_timeout)
         .tcp_keepalive(Duration::from_millis(STREAM_TCP_KEEPALIVE_MS))
-        // Note: reqwest's blocking client doesn't expose a per-read timeout.
-        // The global `.timeout()` would kill the entire SSE stream, so we
-        // rely on:
-        //   1. tcp_keepalive to detect dead connections (OS will RST after
-        //      several unacked probes, typically ~2 min).
-        //   2. Consumer-side stall detection (STREAM_STALL_TIMEOUT_MS).
-        //   3. Reader thread breaking on channel send error (consumer dropped).
         .build()
         .map_err(|error: reqwest::Error| OpenStreamError {
             kind: OpenStreamErrorKind::Transport,
@@ -36,11 +36,14 @@ pub(super) fn open_stream(
         config,
     );
 
-    let response = request.send().map_err(|error| OpenStreamError {
-        kind: OpenStreamErrorKind::Transport,
-        message: error.to_string(),
-        status_code: None,
-    })?;
+    let response =
+        tauri::async_runtime::block_on(async { request.send().await }).map_err(|error| {
+            OpenStreamError {
+                kind: OpenStreamErrorKind::Transport,
+                message: error.to_string(),
+                status_code: None,
+            }
+        })?;
 
     if response.status().is_success() {
         return Ok(response);
@@ -152,51 +155,162 @@ fn read_session_cookie_from_webview(
 }
 
 pub(super) fn read_sse(
-    response: Response,
+    mut response: Response,
     tx: SyncSender<ReaderMessage>,
     stop: Arc<AtomicBool>,
     generation_atomic: Arc<AtomicU64>,
     generation: u64,
+    mut cancel: tokio::sync::oneshot::Receiver<()>,
 ) {
-    let mut reader = BufReader::new(response);
-    let mut line = String::new();
-    let mut event_name: Option<String> = None;
-    let mut data_lines: Vec<String> = Vec::new();
+    let mut buffer = [0_u8; SSE_READ_BUFFER_BYTES];
+    let mut decoder = SseDecoder::new(MAX_SSE_LINE_BYTES, MAX_SSE_FRAME_BYTES);
 
-    loop {
-        if stop.load(Ordering::SeqCst) || !generation_matches(&generation_atomic, generation) {
-            let _ = tx.send(ReaderMessage::End(Some("stopped".to_string())));
-            return;
-        }
-
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) => {
-                let _ = flush_sse_frame(&tx, &event_name, &data_lines);
-                let _ = tx.send(ReaderMessage::End(Some("stream closed".to_string())));
+    tauri::async_runtime::block_on(async move {
+        loop {
+            if stop.load(Ordering::SeqCst) || !generation_matches(&generation_atomic, generation) {
+                let _ = tx.send(ReaderMessage::End(Some("stopped".to_string())));
                 return;
             }
-            Ok(_) => {
-                if tx.send(ReaderMessage::Activity).is_err() {
-                    return; // consumer dropped — stop reading
+
+            let next_chunk = tokio::select! {
+                _ = &mut cancel => {
+                    let _ = tx.send(ReaderMessage::End(Some("stopped".to_string())));
+                    return;
                 }
-                let trimmed = line.trim_end_matches(['\r', '\n']);
-                if handle_sse_line(trimmed, &mut event_name, &mut data_lines) {
-                    if flush_sse_frame(&tx, &event_name, &data_lines).is_err() {
-                        return;
+                chunk = response.chunk() => chunk,
+            };
+
+            match next_chunk {
+                Ok(None) => {
+                    decoder.discard_frame();
+                    let _ = tx.send(ReaderMessage::End(Some("stream closed".to_string())));
+                    return;
+                }
+                Ok(Some(chunk)) => {
+                    if tx.send(ReaderMessage::Activity).is_err() {
+                        return; // consumer dropped - stop reading
                     }
-                    event_name = None;
-                    data_lines.clear();
+                    for bytes in chunk.chunks(buffer.len()) {
+                        buffer[..bytes.len()].copy_from_slice(bytes);
+                        if let Err(error) = decoder.push(&buffer[..bytes.len()], &tx) {
+                            let _ = tx.send(ReaderMessage::End(Some(error)));
+                            return;
+                        }
+                    }
+                }
+                Err(error) => {
+                    decoder.discard_frame();
+                    let _ = tx.send(ReaderMessage::End(Some(error.to_string())));
+                    return;
+                }
+            }
+        }
+    });
+}
+
+struct SseDecoder {
+    line: Vec<u8>,
+    event_name: Option<String>,
+    data_lines: Vec<String>,
+    frame_bytes: usize,
+    max_line_bytes: usize,
+    max_frame_bytes: usize,
+    skip_lf: bool,
+}
+
+impl SseDecoder {
+    fn new(max_line_bytes: usize, max_frame_bytes: usize) -> Self {
+        Self {
+            line: Vec::with_capacity(max_line_bytes.min(SSE_READ_BUFFER_BYTES)),
+            event_name: None,
+            data_lines: Vec::new(),
+            frame_bytes: 0,
+            max_line_bytes,
+            max_frame_bytes,
+            skip_lf: false,
+        }
+    }
+
+    fn push(&mut self, bytes: &[u8], tx: &SyncSender<ReaderMessage>) -> Result<(), String> {
+        for &byte in bytes {
+            if self.skip_lf {
+                self.skip_lf = false;
+                if byte == b'\n' {
                     continue;
                 }
             }
-            Err(error) => {
-                let _ = flush_sse_frame(&tx, &event_name, &data_lines);
-                let _ = tx.send(ReaderMessage::End(Some(error.to_string())));
-                return;
+
+            match byte {
+                b'\r' => {
+                    self.finish_line(tx)?;
+                    self.skip_lf = true;
+                }
+                b'\n' => self.finish_line(tx)?,
+                _ => {
+                    checked_sse_size(self.line.len(), 1, self.max_line_bytes, "SSE line")?;
+                    self.line.push(byte);
+                }
             }
         }
+
+        Ok(())
     }
+
+    fn discard_frame(&mut self) {
+        self.line.clear();
+        self.event_name = None;
+        self.data_lines.clear();
+        self.frame_bytes = 0;
+        self.skip_lf = false;
+    }
+
+    fn finish_line(&mut self, tx: &SyncSender<ReaderMessage>) -> Result<(), String> {
+        if self.line.is_empty() {
+            return self.flush_frame(tx);
+        }
+
+        let line_bytes = self
+            .line
+            .len()
+            .checked_add(1)
+            .ok_or_else(|| "SSE frame size overflow".to_string())?;
+        self.frame_bytes = checked_sse_size(
+            self.frame_bytes,
+            line_bytes,
+            self.max_frame_bytes,
+            "SSE frame",
+        )?;
+
+        let line = std::str::from_utf8(&self.line)
+            .map_err(|error| format!("invalid UTF-8 in SSE stream: {error}"))?;
+        handle_sse_line(line, &mut self.event_name, &mut self.data_lines);
+        self.line.clear();
+        Ok(())
+    }
+
+    fn flush_frame(&mut self, tx: &SyncSender<ReaderMessage>) -> Result<(), String> {
+        flush_sse_frame(tx, &self.event_name, &self.data_lines)
+            .map_err(|_| "desktop event consumer dropped".to_string())?;
+        self.event_name = None;
+        self.data_lines.clear();
+        self.frame_bytes = 0;
+        Ok(())
+    }
+}
+
+fn checked_sse_size(
+    current: usize,
+    additional: usize,
+    maximum: usize,
+    label: &str,
+) -> Result<usize, String> {
+    let next = current
+        .checked_add(additional)
+        .ok_or_else(|| format!("{label} size overflow"))?;
+    if next > maximum {
+        return Err(format!("{label} exceeded {maximum} bytes"));
+    }
+    Ok(next)
 }
 
 fn handle_sse_line(
@@ -256,6 +370,176 @@ fn parse_sse_payload(lines: &[String]) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    fn decode_single_event(input: &[u8]) -> Value {
+        let (tx, rx) = mpsc::sync_channel(1);
+        let mut decoder = SseDecoder::new(256, 1024);
+        decoder.push(input, &tx).expect("stream should decode");
+        decoder.discard_frame();
+
+        match rx.recv().expect("event should be emitted") {
+            ReaderMessage::Event(payload) => payload,
+            _ => panic!("expected event frame"),
+        }
+    }
+
+    #[test]
+    fn decodes_lf_crlf_and_cr_only_streams() {
+        for input in [
+            &b"data: {\"ending\":\"lf\"}\n\n"[..],
+            &b"data: {\"ending\":\"crlf\"}\r\n\r\n"[..],
+            &b"data: {\"ending\":\"cr\"}\r\r"[..],
+        ] {
+            assert!(decode_single_event(input).get("ending").is_some());
+        }
+    }
+
+    #[test]
+    fn rejects_oversized_line_when_peer_withholds_lf() {
+        let (tx, _rx) = mpsc::sync_channel(1);
+        let mut decoder = SseDecoder::new(8, 64);
+
+        let error = decoder
+            .push(b"data: 123", &tx)
+            .expect_err("ninth byte must exceed the line limit");
+
+        assert_eq!(error, "SSE line exceeded 8 bytes");
+    }
+
+    #[test]
+    fn rejects_oversized_frame_across_bounded_lines() {
+        let (tx, _rx) = mpsc::sync_channel(1);
+        let mut decoder = SseDecoder::new(16, 15);
+
+        let error = decoder
+            .push(b"data: a\ndata: b\n", &tx)
+            .expect_err("second line must exceed the frame limit");
+
+        assert_eq!(error, "SSE frame exceeded 15 bytes");
+    }
+
+    #[test]
+    fn server_maximum_wire_frame_fits_and_next_byte_is_rejected_without_allocation() {
+        let maximum_server_event_bytes = SERVER_MAX_EVENT_CHARACTERS
+            .checked_mul(MAX_UTF8_BYTES_PER_CHARACTER)
+            .and_then(|bytes| bytes.checked_add(MAX_WORKSPACE_EVENT_ENVELOPE_BYTES))
+            .expect("configured SSE line limit should fit usize");
+
+        assert_eq!(maximum_server_event_bytes, MAX_SSE_LINE_BYTES);
+        assert_eq!(
+            checked_sse_size(
+                0,
+                maximum_server_event_bytes,
+                MAX_SSE_LINE_BYTES,
+                "SSE line"
+            ),
+            Ok(MAX_SSE_LINE_BYTES)
+        );
+        assert_eq!(
+            checked_sse_size(MAX_SSE_LINE_BYTES, 1, MAX_SSE_LINE_BYTES, "SSE line"),
+            Err(format!("SSE line exceeded {MAX_SSE_LINE_BYTES} bytes"))
+        );
+        assert!(MAX_SSE_LINE_BYTES + 1 <= MAX_SSE_FRAME_BYTES);
+        assert_eq!(
+            checked_sse_size(0, MAX_SSE_FRAME_BYTES, MAX_SSE_FRAME_BYTES, "SSE frame"),
+            Ok(MAX_SSE_FRAME_BYTES)
+        );
+        assert_eq!(
+            checked_sse_size(MAX_SSE_FRAME_BYTES, 1, MAX_SSE_FRAME_BYTES, "SSE frame"),
+            Err(format!("SSE frame exceeded {MAX_SSE_FRAME_BYTES} bytes"))
+        );
+    }
+
+    #[test]
+    fn discards_unterminated_frame_at_eof() {
+        let (tx, rx) = mpsc::sync_channel(1);
+        let mut decoder = SseDecoder::new(256, 1024);
+        decoder
+            .push(b"data: {\"incomplete\":true}\n", &tx)
+            .expect("line should decode");
+
+        decoder.discard_frame();
+
+        assert!(matches!(rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    }
+
+    #[test]
+    fn read_timeout_ends_a_live_but_silent_response() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("listener should have an address");
+        let (release_tx, release_rx) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().expect("client should connect");
+            let mut request = [0_u8; 1024];
+            socket.read(&mut request).expect("request should arrive");
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n")
+                .expect("headers should send");
+            socket.flush().expect("headers should flush");
+            release_rx.recv().expect("test should release server");
+        });
+        let client = build_stream_client_with_read_timeout(Duration::from_millis(20))
+            .expect("client should build");
+        let mut response = tauri::async_runtime::block_on(async {
+            client.get(format!("http://{address}/events")).send().await
+        })
+        .expect("response headers should arrive");
+
+        let error = tauri::async_runtime::block_on(async { response.chunk().await })
+            .expect_err("silent body should time out");
+
+        assert!(error.is_timeout(), "unexpected error: {error}");
+        release_tx.send(()).expect("server should release");
+        server.join().expect("server should stop");
+    }
+
+    #[test]
+    fn cancellation_ends_a_silent_reader_promptly() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("listener should have an address");
+        let (release_tx, release_rx) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().expect("client should connect");
+            let mut request = [0_u8; 1024];
+            socket.read(&mut request).expect("request should arrive");
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n")
+                .expect("headers should send");
+            socket.flush().expect("headers should flush");
+            release_rx.recv().expect("test should release server");
+        });
+        let client = build_stream_client_with_read_timeout(Duration::from_secs(5))
+            .expect("client should build");
+        let response = tauri::async_runtime::block_on(async {
+            client.get(format!("http://{address}/events")).send().await
+        })
+        .expect("response headers should arrive");
+        let (tx, rx) = mpsc::sync_channel(READER_CHANNEL_CAPACITY);
+        let stop = Arc::new(AtomicBool::new(false));
+        let generation = Arc::new(AtomicU64::new(1));
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+        let started_at = Instant::now();
+        let reader = thread::spawn(move || {
+            read_sse(response, tx, stop, generation, 1, cancel_rx);
+        });
+
+        cancel_tx.send(()).expect("reader should be running");
+        reader.join().expect("reader should stop");
+
+        assert!(started_at.elapsed() < Duration::from_secs(1));
+        assert!(matches!(
+            rx.recv_timeout(Duration::from_secs(1)),
+            Ok(ReaderMessage::End(Some(reason))) if reason == "stopped"
+        ));
+        release_tx.send(()).expect("server should release");
+        server.join().expect("server should stop");
+    }
 
     #[test]
     fn named_ping_event_is_routed_to_ping_channel() {

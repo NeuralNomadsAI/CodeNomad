@@ -200,6 +200,8 @@ export const messagingMessages = {
   "promptInput.send.ariaLabel": "Envoyer le message",
   "promptInput.send.errorFallback": "Impossible d'envoyer le message",
   "promptInput.send.errorTitle": "Échec de l'envoi",
+  "promptInput.send.ambiguousTitle": "La remise n'a pas pu etre confirmee",
+  "promptInput.send.ambiguousMessage": "Le serveur a peut-etre recu ce message. Il a ete restaure comme brouillon et ne sera renvoye que si vous choisissez Envoyer.",
   "promptInput.conversationMode.enable.title": "Activer le mode conversation",
   "promptInput.conversationMode.disable.title": "Desactiver le mode conversation",
   "promptInput.conversationMode.error.title": "La lecture de la conversation a echoue",

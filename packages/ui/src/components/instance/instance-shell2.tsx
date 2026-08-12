@@ -609,6 +609,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     instanceId: () => props.instance.id,
     instanceSessions: allInstanceSessions,
     activeSessionId: activeSessionIdForInstance,
+    visible: () => Boolean(props.isActiveInstance),
   })
 
   const showEmbeddedSidebarToggle = createMemo(() => !leftPinned() && !leftOpen())
@@ -992,7 +993,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       await submit(session.id)
     } catch (error) {
       focusCreatedSessionPrompt(session.id)
-      throw error
+      const recoveryError = new Error(error instanceof Error ? error.message : String(error))
+      ;(recoveryError as any).cause = error
+      ;(recoveryError as any).promptRecoverySessionId = session.id
+      if ((error as any)?.suppressPromptRecovery === true) (recoveryError as any).suppressPromptRecovery = true
+      throw recoveryError
     }
   }
 

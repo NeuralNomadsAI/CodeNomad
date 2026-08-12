@@ -1,8 +1,11 @@
 import { For, Show, createMemo } from "solid-js"
+import { Copy } from "lucide-solid"
 import type { ToolRenderer } from "../types"
-import { getRelativePath, getToolName, isToolStateCompleted, readToolStatePayload } from "../utils"
-import { buildDiagnosticEntries, type DiagnosticEntry, type DiagnosticsMap } from "../diagnostics"
+import { getRelativePath, getToolName, isToolStateCompleted, limitToolOutputForRender, readToolStatePayload, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT } from "../utils"
+import { buildDiagnosticView, hasDiagnosticMessages, type DiagnosticEntry, type DiagnosticsMap } from "../diagnostics"
+import { DiagnosticsPayloadAccess } from "../diagnostics-section"
 import { getApplyPatchToolSearchText } from "../search-text"
+import { copyToClipboard } from "../../../lib/clipboard"
 
 type ApplyPatchFile = {
   filePath?: string
@@ -11,6 +14,8 @@ type ApplyPatchFile = {
   diff?: string
   patch?: string
 }
+
+const APPLY_PATCH_FILE_RENDER_LIMIT = 20
 
 function DiagnosticsInline(props: { entries: DiagnosticEntry[]; label: string; t: (key: string, params?: Record<string, unknown>) => string }) {
   return (
@@ -62,7 +67,7 @@ export const applyPatchRenderer: ToolRenderer = {
     }
     return getToolName("apply_patch")
   },
-  getOutputChrome({ toolState }) {
+  getOutputChrome({ toolState, t }) {
     const state = toolState()
     if (!state || state.status === "pending") return undefined
 
@@ -72,6 +77,23 @@ export const applyPatchRenderer: ToolRenderer = {
       .map((file) => (typeof file.diff === "string" ? file.diff : typeof file.patch === "string" ? file.patch : ""))
       .filter((diff) => diff.trim().length > 0)
     if (diffs.length > 0) {
+      if (diffs.reduce((total, diff) => total + diff.length, 0) > TOOL_OUTPUT_RENDER_CHARACTER_LIMIT) {
+        return {
+          language: "diff",
+          suppressInnerHeader: false,
+          actions: (
+            <button
+              type="button"
+              class="file-viewer-toolbar-icon-button"
+              onClick={() => void copyToClipboard(diffs.join("\n"))}
+              aria-label={t("toolCall.diff.copyPatch")}
+              title={t("toolCall.diff.copyPatch")}
+            >
+              <Copy class="h-4 w-4" aria-hidden="true" />
+            </button>
+          ),
+        }
+      }
       return { language: "diff", copyText: diffs.join("\n"), suppressInnerHeader: false }
     }
 
@@ -84,19 +106,32 @@ export const applyPatchRenderer: ToolRenderer = {
     if (!state || state.status === "pending") return null
 
     const payload = readToolStatePayload(state)
-    const files = createMemo(() => {
+    const allFiles = createMemo(() => {
       const list = (payload.metadata as any).files
       return Array.isArray(list) ? (list as ApplyPatchFile[]) : []
     })
+    const files = createMemo(() => allFiles().slice(0, APPLY_PATCH_FILE_RENDER_LIMIT))
     const diagnosticsMap = createMemo(() => {
       const value = (payload.metadata as any).diagnostics
       return value && typeof value === "object" ? (value as DiagnosticsMap) : {}
+    })
+    const diagnosticViews = createMemo(() => files().map((file) =>
+      buildDiagnosticView(diagnosticsMap(), [file.filePath, file.relativePath]),
+    ))
+    const hasDiagnostics = createMemo(() => hasDiagnosticMessages(diagnosticsMap()))
+    const diagnosticsTruncated = createMemo(() => {
+      const views = diagnosticViews()
+      const renderedKeys = new Set(views.map((view) => view.key).filter(Boolean))
+      return views.some((view) => view.truncated)
+        || Object.entries(diagnosticsMap()).some(([key, list]) =>
+          !renderedKeys.has(key) && Array.isArray(list) && list.some((entry) => typeof entry?.message === "string"),
+        )
     })
 
     if (files().length === 0) {
       const fallback = isToolStateCompleted(state) && typeof state.output === "string" ? state.output : null
       if (!fallback) return null
-      return renderMarkdown({ content: fallback, size: "large", disableHighlight: state.status === "running" })
+      return renderMarkdown({ content: limitToolOutputForRender(fallback), size: "large", disableHighlight: state.status === "running" })
     }
 
     return (
@@ -106,7 +141,7 @@ export const applyPatchRenderer: ToolRenderer = {
             const labelBase = file.relativePath || file.filePath || t("toolCall.applyPatch.fileFallback", { number: index() + 1 })
             const diffText = typeof file.diff === "string" ? file.diff : typeof file.patch === "string" ? file.patch : ""
             const filePath = typeof file.filePath === "string" ? file.filePath : file.relativePath
-            const entries = createMemo(() => buildDiagnosticEntries(diagnosticsMap(), [file.filePath, file.relativePath]))
+            const entries = createMemo(() => diagnosticViews()[index()]?.entries ?? [])
 
             return (
               <div class="tool-call-apply-patch-file">
@@ -124,6 +159,16 @@ export const applyPatchRenderer: ToolRenderer = {
             )
           }}
         </For>
+        <Show when={allFiles().length > APPLY_PATCH_FILE_RENDER_LIMIT}>
+          <div class="tool-call-diagnostic-message">{t("toolCall.output.truncated")}</div>
+        </Show>
+        <Show when={hasDiagnostics()}>
+          <div class="tool-call-diagnostics-wrapper">
+            <div class="tool-call-diagnostics">
+              <DiagnosticsPayloadAccess diagnostics={diagnosticsMap()} truncated={diagnosticsTruncated()} t={t} />
+            </div>
+          </div>
+        </Show>
       </div>
     )
   },

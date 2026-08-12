@@ -205,8 +205,8 @@ export const serverApi = {
     return request<ProviderUsageResponse>(`/api/usage/${encodeURIComponent(providerId)}${query ? `?${query}` : ""}`)
   },
 
-  fetchWorktrees(id: string): Promise<WorktreeListResponse> {
-    return request<WorktreeListResponse>(`/api/workspaces/${encodeURIComponent(id)}/worktrees`)
+  fetchWorktrees(id: string, signal?: AbortSignal): Promise<WorktreeListResponse> {
+    return request<WorktreeListResponse>(`/api/workspaces/${encodeURIComponent(id)}/worktrees`, { signal })
   },
 
   createWorktree(id: string, payload: WorktreeCreateRequest): Promise<{ slug: string; directory: string; branch?: string }> {
