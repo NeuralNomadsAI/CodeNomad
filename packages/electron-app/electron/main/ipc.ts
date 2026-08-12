@@ -119,18 +119,20 @@ export function setupCliIPC(mainWindow: BrowserWindow, cliManager: CliProcessMan
   })
 
   ipcMain.handle("filesystem:openDirectory", async (event, path: unknown, repoRoot: unknown): Promise<{ ok: boolean }> => {
-    if (event.sender !== mainWindow.webContents) throw new Error("Directory opening is unavailable from this window")
+    if (event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
+      throw new Error("Directory opening is unavailable from this frame")
+    }
     if (
       typeof path !== "string" || path.trim().length === 0
       || typeof repoRoot !== "string" || repoRoot.trim().length === 0
-      || path.startsWith("\\\\") || path.startsWith("//")
-      || repoRoot.startsWith("\\\\") || repoRoot.startsWith("//")
       || !fs.statSync(path).isDirectory()
       || !await isRegisteredGitWorktree(repoRoot, path)
     ) {
       throw new Error("Directory not found")
     }
-    const error = await shell.openPath(path)
+    const canonicalPath = fs.realpathSync.native(path)
+    if (!await isRegisteredGitWorktree(repoRoot, canonicalPath)) throw new Error("Directory not found")
+    const error = await shell.openPath(canonicalPath)
     if (error) throw new Error(error)
     return { ok: true }
   })

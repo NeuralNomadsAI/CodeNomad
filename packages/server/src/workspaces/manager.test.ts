@@ -15,6 +15,8 @@ import {
   WorkspaceManager,
   WorkspaceShutdownError,
 } from "./manager"
+import { acquireWorkspaceLifetimeClaim } from "./workspace-lifetime-claim"
+import { resolveGitRepositoryKey } from "./git-worktrees"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -106,6 +108,53 @@ async function createReady(harness: ReturnType<typeof createHarness>) {
 }
 
 describe("workspace manager lifecycle", () => {
+  it("rejects workspace creation while another process owns destination mutation", async () => {
+    const harness = createHarness()
+    const mutation = await acquireWorkspaceLifetimeClaim(await resolveGitRepositoryKey(process.cwd()), "mutation")
+    try {
+      await assert.rejects(harness.manager.create(process.cwd()), /being replaced/)
+      assert.equal(harness.runtime.active.size, 0)
+    } finally {
+      await mutation.release()
+    }
+  })
+
+  it("serializes workspace creation behind destination admission", async () => {
+    const harness = createHarness()
+    const entered = deferred<void>()
+    const release = deferred<void>()
+    const admitted = harness.manager.withWorkspaceAdmission(process.cwd(), async () => {
+      entered.resolve()
+      await release.promise
+    })
+    await entered.promise
+    const creation = harness.manager.create(process.cwd())
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(harness.runtime.active.size, 0)
+
+    release.resolve()
+    await admitted
+    const workspaceId = await harness.runtime.launchCalled.promise
+    harness.runtime.resolveLaunch()
+    harness.readiness.resolve(undefined)
+    await creation
+    await harness.manager.delete(workspaceId)
+  })
+
+  it("keeps an unpublished workspace as a repository blocker", async () => {
+    const harness = createHarness()
+    const creation = harness.manager.create(process.cwd())
+    const workspaceId = await harness.runtime.launchCalled.promise
+    try {
+      assert.equal(await harness.manager.hasRepositoryBlocker(process.cwd(), "other"), true)
+    } finally {
+      harness.runtime.resolveLaunch()
+      harness.readiness.resolve(undefined)
+      await creation
+      await harness.manager.delete(workspaceId)
+    }
+  })
+
   it("rejects a healthy workspace whose OpenCode configuration is invalid", async () => {
     const originalFetch = globalThis.fetch
     const requests: string[] = []

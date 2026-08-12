@@ -24,9 +24,12 @@ import {
   OPENCODE_SERVER_USERNAME_ENV,
   resolveOpencodeServerAuth,
 } from "./opencode-auth"
-import { resolveWorkspaceIdentity } from "./workspace-identity"
-import { parseWslUncPath } from "./spawn"
+import { normalizeWorkspaceIdentityPath, resolveWorkspaceIdentity } from "./workspace-identity"
+import { parseWslUncPath, resolveWslNativePath } from "./spawn"
 import { LOOPBACK_HOST } from "./loopback"
+import { resolveGitRepositoryKey } from "./git-worktrees"
+import { withWorkspaceAdmission } from "./workspace-admission"
+import { acquireWorkspaceLifetimeClaim, hasWorkspaceLifetimeClaim } from "./workspace-lifetime-claim"
 
 const STARTUP_STABILITY_DELAY_MS = 1500
 const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
@@ -83,6 +86,7 @@ interface WorkspaceState {
   deletePromise?: Promise<WorkspaceDescriptor | undefined>
   published: boolean
   stoppedPublished: boolean
+  lifetimeClaims?: Array<{ key: string; token: string; release: () => Promise<void> }>
 }
 export class WorkspaceLaunchCancelledError extends Error {
   constructor(workspaceId: string) {
@@ -114,6 +118,7 @@ export class WorkspaceShutdownError extends AggregateError {
     this.name = "WorkspaceShutdownError"
   }
 }
+export class WorkspaceInUseError extends Error {}
 export interface WorkspaceCreateResult {
   workspace: WorkspaceDescriptor
   created: boolean
@@ -162,6 +167,75 @@ export class WorkspaceManager {
 
   getInstanceAuthorizationHeader(id: string): string | undefined {
     return this.workspaces.get(id)?.[WORKSPACE_STATE].published ? this.opencodeAuth.get(id)?.authorization : undefined
+  }
+
+  async resolveInstanceDirectory(id: string, directory?: string): Promise<string> {
+    const record = this.workspaces.get(id)
+    if (!record) throw new Error("Workspace not found")
+    const wsl = parseWslUncPath(record.binaryId)
+    return wsl ? resolveWslNativePath(directory ?? record.path, wsl.distro) : (directory ?? record.path)
+  }
+
+  async withWorkspaceAdmission<T>(folder: string, operation: () => Promise<T>): Promise<T> {
+    return withWorkspaceAdmission(await this.workspaceAuthorityKeys(folder), operation)
+  }
+
+  async withWorkspaceExclusive<T>(folder: string, excludingId: string | undefined, operation: () => Promise<T>): Promise<T> {
+    return this.withWorkspaceAdmission(folder, async () => {
+      const keys = await this.workspaceAuthorityKeys(folder)
+      const mutations = await Promise.all(keys.map(async (key) => ({ key, ...await acquireWorkspaceLifetimeClaim(key, "mutation") })))
+      try {
+        if (await this.hasOtherClaim(keys, "mutation", mutations)
+          || await this.hasWorkspaceBlocker(folder, excludingId)) {
+          throw new WorkspaceInUseError("Another live workspace instance uses this destination")
+        }
+        return await operation()
+      } finally {
+        await Promise.all(mutations.map((mutation) => mutation.release()))
+      }
+    })
+  }
+
+  private async workspaceAuthorityKeys(folder: string): Promise<string[]> {
+    const { workspacePath } = await resolveWorkspaceIdentity(folder, this.options.rootDir)
+    return [...new Set([
+      `path:${normalizeWorkspaceIdentityPath(workspacePath)}`,
+      await resolveGitRepositoryKey(workspacePath),
+    ])]
+  }
+
+  private async hasOtherClaim(
+    keys: string[],
+    kind: "workspace" | "mutation",
+    owned: Array<{ key: string; token: string }> = [],
+  ): Promise<boolean> {
+    return (await Promise.all(keys.map((key) => hasWorkspaceLifetimeClaim(
+      key,
+      kind,
+      owned.find((claim) => claim.key === key)?.token,
+    )))).some(Boolean)
+  }
+
+  async hasWorkspaceBlocker(folder: string, excludingId?: string): Promise<boolean> {
+    const { identityKey } = await resolveWorkspaceIdentity(folder, this.options.rootDir)
+    const keys = await this.workspaceAuthorityKeys(folder)
+    const repositoryKey = await resolveGitRepositoryKey(folder)
+    for (const record of this.workspaces.values()) {
+      if (record.id === excludingId) continue
+      if (record.identityKey === identityKey || await resolveGitRepositoryKey(record.path) === repositoryKey) return true
+    }
+    const excludingClaims = excludingId ? this.workspaces.get(excludingId)?.[WORKSPACE_STATE].lifetimeClaims ?? [] : []
+    return this.hasOtherClaim(keys, "workspace", excludingClaims)
+  }
+
+  async hasRepositoryBlocker(folder: string, excludingId?: string): Promise<boolean> {
+    const keys = await this.workspaceAuthorityKeys(folder)
+    const repositoryKey = await resolveGitRepositoryKey(folder)
+    for (const record of this.workspaces.values()) {
+      if (record.id !== excludingId && await resolveGitRepositoryKey(record.path) === repositoryKey) return true
+    }
+    const excludingClaims = excludingId ? this.workspaces.get(excludingId)?.[WORKSPACE_STATE].lifetimeClaims ?? [] : []
+    return this.hasOtherClaim(keys, "workspace", excludingClaims)
   }
 
   findReadyInstanceIdByBinary(binaryPath: string): string | undefined {
@@ -253,46 +327,58 @@ export class WorkspaceManager {
         launchDeadlineAt,
         launchTimeoutMs,
       )
-      if (options.requestId && this.cancelledCreationRequests.has(options.requestId)) {
-        throw new Error(`Workspace creation request ${options.requestId} was cancelled`)
-      }
-      if (this.shuttingDown) {
-        throw new Error("Workspace manager is shutting down")
-      }
-      if (options.forceNew) {
+      const admitted = await withWorkspaceAdmission([identityKey, await resolveGitRepositoryKey(workspacePath)], async () => {
+        if (options.requestId && this.cancelledCreationRequests.has(options.requestId)) {
+          throw new Error(`Workspace creation request ${options.requestId} was cancelled`)
+        }
+        if (this.shuttingDown) throw new Error("Workspace manager is shutting down")
+        if (!options.forceNew) {
+          const existing = this.findReadyWorkspaceByIdentity(identityKey, Boolean(options.requestId))
+          if (existing) {
+            this.options.logger.info({ workspaceId: existing.id, folder: workspacePath }, "Reusing existing workspace")
+            const record = this.workspaces.get(existing.id)
+            if (options.requestId && record) {
+              if (!record.ownership.has(options.requestId)) record.ownership.set(options.requestId, "active")
+              this.syncOwnership(record)
+              return { result: this.finishCreation({ workspace: existing, created: false }, options.requestId, record.ownership) }
+            }
+            return { result: { workspace: existing, created: false } }
+          }
+          const pending = this.pendingWorkspaceCreations.get(identityKey)
+          if (pending) {
+            const owner = options.requestId ?? ORDINARY_CREATION_OWNER
+            if (!pending.ownership.has(owner)) pending.ownership.set(owner, "active")
+            this.syncOwnership(pending)
+            return { record: pending, created: false, cleanupPending: false }
+          }
+        }
         const ownership = this.createOwnership(options.requestId)
         const record = this.reserveWorkspace(workspacePath, identityKey, name, options, ownership, launchDeadlineAt)
-        const result = await this.startCreation(record, options, launchDeadlineAt, launchTimeoutMs)
-        return this.finishCreation(result, options.requestId, ownership)
-      }
-      const existing = this.findReadyWorkspaceByIdentity(identityKey, Boolean(options.requestId))
-      if (existing) {
-        this.options.logger.info({ workspaceId: existing.id, folder: workspacePath }, "Reusing existing workspace")
-        const record = this.workspaces.get(existing.id)
-        if (options.requestId && record) {
-          if (!record.ownership.has(options.requestId)) record.ownership.set(options.requestId, "active")
-          this.syncOwnership(record)
-          return this.finishCreation({ workspace: existing, created: false }, options.requestId, record.ownership)
+        try {
+          const keys = await this.workspaceAuthorityKeys(workspacePath)
+          record[WORKSPACE_STATE].lifetimeClaims = await Promise.all(keys.map(async (key) => ({
+            key,
+            ...await acquireWorkspaceLifetimeClaim(key, "workspace"),
+          })))
+          if (await this.hasOtherClaim(keys, "mutation")) {
+            throw new WorkspaceInUseError("Workspace destination is being replaced")
+          }
+          this.startCreation(record, options, launchDeadlineAt, launchTimeoutMs)
+        } catch (error) {
+          await Promise.all((record[WORKSPACE_STATE].lifetimeClaims ?? []).map((claim) => claim.release()))
+          record[WORKSPACE_STATE].lifetimeClaims = undefined
+          this.removeRecord(record.id, record, false)
+          throw error
         }
-        return { workspace: existing, created: false }
-      }
-      const pending = this.pendingWorkspaceCreations.get(identityKey)
-      if (pending) {
-        const state = pending[WORKSPACE_STATE]
-        const owner = options.requestId ?? ORDINARY_CREATION_OWNER
-        if (!pending.ownership.has(owner)) pending.ownership.set(owner, "active")
-        this.syncOwnership(pending)
-        const result = await state.creation!
-        return this.finishCreation({ workspace: result.workspace, created: false }, options.requestId, pending.ownership)
-      }
-      const ownership = this.createOwnership(options.requestId)
-      const record = this.reserveWorkspace(workspacePath, identityKey, name, options, ownership, launchDeadlineAt)
-      const creation = this.startCreation(record, options, launchDeadlineAt, launchTimeoutMs)
-      this.pendingWorkspaceCreations.set(identityKey, record)
+        if (!options.forceNew) this.pendingWorkspaceCreations.set(identityKey, record)
+        return { record, created: true, cleanupPending: !options.forceNew }
+      })
+      if ("result" in admitted && admitted.result) return admitted.result
       try {
-        return this.finishCreation(await creation, options.requestId, ownership)
+        const result = await admitted.record[WORKSPACE_STATE].creation!
+        return this.finishCreation({ workspace: result.workspace, created: admitted.created }, options.requestId, admitted.record.ownership)
       } finally {
-        if (this.pendingWorkspaceCreations.get(identityKey) === record) {
+        if (admitted.cleanupPending && this.pendingWorkspaceCreations.get(identityKey) === admitted.record) {
           this.pendingWorkspaceCreations.delete(identityKey)
         }
       }
@@ -465,6 +551,8 @@ export class WorkspaceManager {
         stopFailure = stopError
       })
       if (!stopFailure) {
+        await Promise.all((state.lifetimeClaims ?? []).map((claim) => claim.release()))
+        state.lifetimeClaims = undefined
         this.removeRecord(id, record, state.published)
         throw launchFailure
       }
@@ -630,6 +718,8 @@ export class WorkspaceManager {
     await immediateStop
     await this.runtime.stop(id)
 
+    await Promise.all((record[WORKSPACE_STATE].lifetimeClaims ?? []).map((claim) => claim.release()))
+    record[WORKSPACE_STATE].lifetimeClaims = undefined
     this.removeRecord(id, record, true)
     return record
   }
@@ -890,5 +980,12 @@ export class WorkspaceManager {
       workspace.error = `Process exited with code ${info.code}`
       this.options.eventBus.publish({ type: "workspace.error", workspace })
     }
+    void this.runtime.stop(workspaceId).then(async () => {
+      if (this.workspaces.get(workspaceId) !== record) return
+      await Promise.all((record[WORKSPACE_STATE].lifetimeClaims ?? []).map((claim) => claim.release()))
+      record[WORKSPACE_STATE].lifetimeClaims = undefined
+    }).catch((error) => {
+      this.options.logger.warn({ workspaceId, err: error }, "Workspace descendant cleanup remains unconfirmed")
+    })
   }
 }

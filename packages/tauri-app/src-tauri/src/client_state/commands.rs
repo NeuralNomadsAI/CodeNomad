@@ -60,7 +60,7 @@ fn validate_claim_origin(
     }
 }
 
-fn validate_access(
+pub(crate) fn validate_access(
     window: &WebviewWindow,
     state: &ClientState,
     access_token: &str,

@@ -1,56 +1,22 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-
 import { serverApi } from "../lib/api-client.ts"
-import { sdkManager } from "../lib/sdk-manager.ts"
 import type { Session } from "../types/session.ts"
-import { addInstance, removeInstance } from "./instances.ts"
-import { clearOpenCodeWorkspaceCache } from "./opencode-workspaces.ts"
 import { moveSessionToWorktree, requireSessionWorkspacePayload } from "./session-worktree-binding.ts"
+import { handleSessionUpdate } from "./session-events.ts"
 import { sessions, setSessions } from "./session-state.ts"
 import { deleteWorktree, reloadWorktreeMap, reloadWorktrees, removeLegacyParentSessionMapping } from "./worktrees.ts"
 
-function session(instanceId: string, id: string, parentId: string | null, metadata?: Record<string, unknown>): Session {
+function session(instanceId: string, id: string, parentId: string | null, directory = "/repo", metadata?: Record<string, unknown>): Session {
   return {
-    id,
-    instanceId,
-    parentId,
-    title: id,
-    agent: "build",
-    model: { providerId: "provider", modelId: "model" },
-    status: "idle",
-    retry: null,
-    idleSince: null,
-    generationRecovery: null,
-    runtimeStatusKnown: true,
-    version: "1",
-    time: { created: 1, updated: 1 },
-    directory: "/repo",
-    metadata,
+    id, instanceId, parentId, directory, title: id, agent: "build",
+    model: { providerId: "provider", modelId: "model" }, status: "idle", retry: null, idleSince: null,
+    generationRecovery: null, runtimeStatusKnown: true, version: "1", time: { created: 1, updated: 1 }, metadata,
   }
 }
 
-async function setup(
-  instanceId: string,
-  warp: (parameters: Record<string, unknown>) => Promise<unknown>,
-  listed: Array<Record<string, any>> = [{ id: "root-session" }, { id: "child-session", parentID: "root-session" }],
-) {
-  const client = {
-    session: {
-      async list() { return { data: listed } },
-    },
-    experimental: {
-      workspace: {
-        async syncList() { return { data: [] } },
-        async list() { return { data: [{ id: "workspace-feature", directory: "/repo-feature" }] } },
-        async warp(parameters: Record<string, unknown>) { return warp(parameters) },
-      },
-    },
-  } as any
-  ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
-  addInstance({ id: instanceId, folder: "/repo", port: 0, pid: 0, proxyPath: "", status: "ready", client })
-
-  const originalFetchWorktrees = serverApi.fetchWorktrees
+async function setup(instanceId: string) {
+  const originalFetch = serverApi.fetchWorktrees
   serverApi.fetchWorktrees = async () => ({
     isGitRepo: true,
     worktrees: [
@@ -59,313 +25,183 @@ async function setup(
     ],
   })
   await reloadWorktrees(instanceId)
-  serverApi.fetchWorktrees = originalFetchWorktrees
+  serverApi.fetchWorktrees = originalFetch
+  const root = session(instanceId, "root", null, "/repo", { codenomad: { version: 1, worktreeSlug: "feature" } })
+  const child = session(instanceId, "child", root.id)
+  setSessions((current) => new Map(current).set(instanceId, new Map([[root.id, root], [child.id, child]])))
+  return {
+    root,
+    child,
+    cleanup() {
+      setSessions((current) => {
+        const next = new Map(current)
+        next.delete(instanceId)
+        return next
+      })
+    },
+  }
+}
 
-  return () => {
-    setSessions((previous) => {
-      const next = new Map(previous)
-      next.delete(instanceId)
-      return next
-    })
-    clearOpenCodeWorkspaceCache(instanceId)
-    removeInstance(instanceId, { authoritative: false })
-    sdkManager.destroyClientsForInstance(instanceId)
+function moveResponse(slug: "root" | "feature") {
+  const feature = slug === "feature"
+  return {
+    rootSessionId: "root",
+    worktreeSlug: slug,
+    sessions: ["root", "child"].map((sessionId) => ({
+      sessionId,
+      directory: feature ? "/repo-feature" : "/repo",
+      workspaceId: feature ? "workspace-feature" : null,
+    })),
   }
 }
 
 describe("session worktree binding", () => {
-  it("warps a legacy session family before returning its workspace", async () => {
-    const instanceId = "legacy-worktree-warp"
-    const calls: Array<Record<string, unknown>> = []
-    const cleanup = await setup(instanceId, async (parameters) => {
-      calls.push(parameters)
-      return { data: true }
-    })
-    const originalSetWorktreeSlug = serverApi.setSessionWorktreeSlug
-    const metadataWrites: Array<string | null> = []
-    serverApi.setSessionWorktreeSlug = async (_instanceId, _sessionId, slug) => {
-      metadataWrites.push(slug)
-      return { metadata: { codenomad: { version: 1 } } }
-    }
-    const root = session(instanceId, "root-session", null, { codenomad: { version: 1, worktreeSlug: "feature" } })
-    const child = session(instanceId, "child-session", root.id)
-    setSessions((previous) => new Map(previous).set(instanceId, new Map([[root.id, root], [child.id, child]])))
-
+  it("applies one authoritative family move response", async () => {
+    const instanceId = "family-response"
+    const { child, cleanup } = await setup(instanceId)
+    const originalMove = serverApi.moveWorktreeSessionFamily
+    const originalMap = serverApi.readWorktreeMap
+    serverApi.moveWorktreeSessionFamily = async () => moveResponse("feature")
+    serverApi.readWorktreeMap = async () => ({ version: 1, defaultWorktreeSlug: "root", parentSessionWorktreeSlug: {} })
     try {
       assert.deepEqual(await requireSessionWorkspacePayload(instanceId, child.id), { workspace: "workspace-feature" })
-      assert.deepEqual(calls.map(({ sessionID, id }) => ({ sessionID, id })), [
-        { sessionID: root.id, id: "workspace-feature" },
-        { sessionID: child.id, id: "workspace-feature" },
-      ])
-      assert.equal(sessions().get(instanceId)?.get(root.id)?.directory, "/repo-feature")
-      assert.equal(sessions().get(instanceId)?.get(child.id)?.workspaceId, "workspace-feature")
-      assert.deepEqual(metadataWrites, [null])
+      assert.equal(sessions().get(instanceId)?.get("root")?.directory, "/repo-feature")
+      assert.equal(sessions().get(instanceId)?.get("child")?.workspaceId, "workspace-feature")
     } finally {
-      serverApi.setSessionWorktreeSlug = originalSetWorktreeSlug
+      serverApi.moveWorktreeSessionFamily = originalMove
+      serverApi.readWorktreeMap = originalMap
       cleanup()
     }
   })
 
-  it("rolls back an incomplete family warp", async () => {
-    const instanceId = "worktree-warp-rollback"
-    const calls: Array<Record<string, unknown>> = []
-    const cleanup = await setup(instanceId, async (parameters) => {
-      calls.push(parameters)
-      if (parameters.sessionID === "child-session") throw new Error("warp failed")
-      return { data: true }
-    })
-    const root = session(instanceId, "root-session", null, { codenomad: { version: 1, worktreeSlug: "feature" } })
-    const child = session(instanceId, "child-session", root.id)
-    setSessions((previous) => new Map(previous).set(instanceId, new Map([[root.id, root], [child.id, child]])))
-
+  it("ignores delayed pre-move session events until the moved location is observed", async () => {
+    const instanceId = "delayed-location-event"
+    const { root, cleanup } = await setup(instanceId)
+    const originalMove = serverApi.moveWorktreeSessionFamily
+    const originalMap = serverApi.readWorktreeMap
+    serverApi.moveWorktreeSessionFamily = async () => moveResponse("feature")
+    serverApi.readWorktreeMap = async () => ({ version: 1, defaultWorktreeSlug: "root", parentSessionWorktreeSlug: {} })
+    const update = (directory: string, workspaceID?: string, updated = 1) => handleSessionUpdate(instanceId, {
+      type: "session.updated",
+      properties: { info: { ...root, directory, workspaceID, time: { ...root.time, updated } } },
+    } as any)
     try {
-      await assert.rejects(() => requireSessionWorkspacePayload(instanceId, root.id), /warp failed/)
-      assert.deepEqual(calls.map(({ sessionID, id }) => ({ sessionID, id })), [
-        { sessionID: root.id, id: "workspace-feature" },
-        { sessionID: child.id, id: "workspace-feature" },
-        { sessionID: root.id, id: null },
-      ])
+      await moveSessionToWorktree(instanceId, root.id, "feature")
+      update("/repo")
+      assert.equal(sessions().get(instanceId)?.get(root.id)?.directory, "/repo-feature")
+      assert.equal(sessions().get(instanceId)?.get(root.id)?.workspaceId, "workspace-feature")
+
+      update("/repo-feature", "workspace-feature")
+      assert.equal(sessions().get(instanceId)?.get(root.id)?.directory, "/repo-feature")
+
+      update("/repo-other", "workspace-other", 2)
+      assert.equal(sessions().get(instanceId)?.get(root.id)?.directory, "/repo-other")
+      assert.equal(sessions().get(instanceId)?.get(root.id)?.workspaceId, "workspace-other")
+
+      serverApi.moveWorktreeSessionFamily = async () => moveResponse("root")
+      await moveSessionToWorktree(instanceId, root.id, "root")
+      update("/repo")
       assert.equal(sessions().get(instanceId)?.get(root.id)?.workspaceId, undefined)
-      assert.equal(sessions().get(instanceId)?.get(root.id)?.directory, "/repo")
     } finally {
+      serverApi.moveWorktreeSessionFamily = originalMove
+      serverApi.readWorktreeMap = originalMap
       cleanup()
     }
   })
 
-  it("repairs a divergent descendant before routing the family", async () => {
-    const instanceId = "worktree-divergent-child"
-    const calls: Array<Record<string, unknown>> = []
-    const cleanup = await setup(
-      instanceId,
-      async (parameters) => {
-        calls.push(parameters)
-        return { data: true }
-      },
-      [
-        { id: "root-session", directory: "/repo-feature", workspaceID: "workspace-feature" },
-        { id: "child-session", parentID: "root-session", directory: "/repo" },
-      ],
-    )
-    const originalSetWorktreeSlug = serverApi.setSessionWorktreeSlug
-    serverApi.setSessionWorktreeSlug = async () => ({ metadata: {} })
-    const root = {
-      ...session(instanceId, "root-session", null),
-      directory: "/repo-feature",
-      workspaceId: "workspace-feature",
-    }
-    const child = session(instanceId, "child-session", root.id)
-    setSessions((previous) => new Map(previous).set(instanceId, new Map([[root.id, root], [child.id, child]])))
-
-    try {
-      assert.deepEqual(await requireSessionWorkspacePayload(instanceId, child.id), { workspace: "workspace-feature" })
-      assert.deepEqual(calls.map(({ sessionID, id }) => ({ sessionID, id })), [
-        { sessionID: root.id, id: "workspace-feature" },
-        { sessionID: child.id, id: "workspace-feature" },
-      ])
-      assert.equal(sessions().get(instanceId)?.get(child.id)?.directory, "/repo-feature")
-    } finally {
-      serverApi.setSessionWorktreeSlug = originalSetWorktreeSlug
-      cleanup()
-    }
-  })
-
-  it("refuses to move a family with an unloaded descendant", async () => {
-    const instanceId = "worktree-incomplete-family"
-    let warpCalls = 0
-    const cleanup = await setup(instanceId, async () => {
-      warpCalls += 1
-      return { data: true }
-    })
-    const root = session(instanceId, "root-session", null, { codenomad: { version: 1, worktreeSlug: "feature" } })
-    setSessions((previous) => new Map(previous).set(instanceId, new Map([[root.id, root]])))
-
-    try {
-      await assert.rejects(() => moveSessionToWorktree(instanceId, root.id, "feature"), /Failed to move/)
-      assert.equal(warpCalls, 0)
-    } finally {
-      cleanup()
-    }
-  })
-
-  it("refreshes stale local locations from the authoritative project list", async () => {
-    const instanceId = "worktree-authoritative-location"
-    let warpCalls = 0
-    const cleanup = await setup(
-      instanceId,
-      async () => {
-        warpCalls += 1
-        return { data: true }
-      },
-      [
-        { id: "root-session", directory: "/repo-feature", workspaceID: "workspace-feature" },
-        { id: "child-session", parentID: "root-session", directory: "/repo-feature", workspaceID: "workspace-feature" },
-      ],
-    )
-    const root = {
-      ...session(instanceId, "root-session", null),
-      directory: "/repo-feature",
-      workspaceId: "workspace-feature",
-    }
-    const child = session(instanceId, "child-session", root.id)
-    setSessions((previous) => new Map(previous).set(instanceId, new Map([[root.id, root], [child.id, child]])))
-
-    try {
-      assert.deepEqual(await requireSessionWorkspacePayload(instanceId, child.id), { workspace: "workspace-feature" })
-      assert.equal(warpCalls, 0)
-      assert.equal(sessions().get(instanceId)?.get(child.id)?.directory, "/repo-feature")
-      assert.equal(sessions().get(instanceId)?.get(child.id)?.workspaceId, "workspace-feature")
-    } finally {
-      cleanup()
-    }
-  })
-
-  it("serializes concurrent moves for the same family", async () => {
-    const instanceId = "worktree-serialized-family"
-    const calls: Array<Record<string, unknown>> = []
-    const cleanup = await setup(instanceId, async (parameters) => {
-      calls.push(parameters)
-      return { data: true }
-    })
-    const originalSetWorktreeSlug = serverApi.setSessionWorktreeSlug
-    serverApi.setSessionWorktreeSlug = async () => ({ metadata: {} })
-    const root = session(instanceId, "root-session", null)
-    const child = session(instanceId, "child-session", root.id)
-    setSessions((previous) => new Map(previous).set(instanceId, new Map([[root.id, root], [child.id, child]])))
-
-    try {
-      await Promise.all([
-        moveSessionToWorktree(instanceId, root.id, "feature"),
-        moveSessionToWorktree(instanceId, root.id, "root"),
-      ])
-      assert.deepEqual(calls.map(({ sessionID, id }) => ({ sessionID, id })), [
-        { sessionID: root.id, id: "workspace-feature" },
-        { sessionID: child.id, id: "workspace-feature" },
-        { sessionID: root.id, id: null },
-        { sessionID: child.id, id: null },
-      ])
-      assert.equal(sessions().get(instanceId)?.get(root.id)?.directory, "/repo")
-      assert.equal(sessions().get(instanceId)?.get(child.id)?.workspaceId, undefined)
-    } finally {
-      serverApi.setSessionWorktreeSlug = originalSetWorktreeSlug
-      cleanup()
-    }
-  })
-
-  it("restores sessions when Git refuses worktree deletion", async () => {
-    const instanceId = "worktree-delete-rollback"
-    const calls: Array<Record<string, unknown>> = []
-    const listed = [
-      { id: "root-session", directory: "/repo-feature", workspaceID: "workspace-feature" as string | undefined },
-      { id: "child-session", parentID: "root-session", directory: "/repo-feature", workspaceID: "workspace-feature" as string | undefined },
-    ]
-    const cleanup = await setup(
-      instanceId,
-      async (parameters) => {
-        calls.push(parameters)
-        const session = listed.find((candidate) => candidate.id === parameters.sessionID)
-        if (session) {
-          session.directory = parameters.id ? "/repo-feature" : "/repo"
-          session.workspaceID = typeof parameters.id === "string" ? parameters.id : undefined
-        }
-        return { data: true }
-      },
-      listed,
-    )
-    const originalDeleteWorktree = serverApi.deleteWorktree
-    const originalSetWorktreeSlug = serverApi.setSessionWorktreeSlug
-    serverApi.deleteWorktree = async () => { throw new Error("contains modified files") }
-    serverApi.setSessionWorktreeSlug = async () => ({ metadata: {} })
-    const root = {
-      ...session(instanceId, "root-session", null),
-      directory: "/repo-feature",
-      workspaceId: "workspace-feature",
-    }
-    const child = {
-      ...session(instanceId, "child-session", root.id),
-      directory: "/repo-feature",
-      workspaceId: "workspace-feature",
-    }
-    setSessions((previous) => new Map(previous).set(instanceId, new Map([[root.id, root], [child.id, child]])))
-
-    try {
-      await assert.rejects(() => deleteWorktree(instanceId, "feature"), /modified files/)
-      assert.deepEqual(calls.map(({ sessionID, id }) => ({ sessionID, id })), [
-        { sessionID: root.id, id: null },
-        { sessionID: child.id, id: null },
-        { sessionID: root.id, id: "workspace-feature" },
-        { sessionID: child.id, id: "workspace-feature" },
-      ])
-      assert.equal(sessions().get(instanceId)?.get(root.id)?.directory, "/repo-feature")
-    } finally {
-      serverApi.deleteWorktree = originalDeleteWorktree
-      serverApi.setSessionWorktreeSlug = originalSetWorktreeSlug
-      cleanup()
-    }
-  })
-
-  it("does not move a legacy virtual family when deletion fails", async () => {
-    const instanceId = "worktree-delete-virtual-family"
-    let warpCalls = 0
-    const listed: Array<Record<string, any>> = [
-      { id: "root-session", directory: "/repo" },
-      { id: "child-session", parentID: "root-session", directory: "/repo" },
-    ]
-    const cleanup = await setup(instanceId, async () => {
-      warpCalls += 1
-      return { data: true }
-    }, listed)
-    const originalDeleteWorktree = serverApi.deleteWorktree
-    const originalSetWorktreeSlug = serverApi.setSessionWorktreeSlug
-    serverApi.deleteWorktree = async () => { throw new Error("contains modified files") }
-    serverApi.setSessionWorktreeSlug = async () => ({ metadata: {} })
-    const root = session(instanceId, "root-session", null, { codenomad: { version: 1, worktreeSlug: "feature" } })
-    const child = session(instanceId, "child-session", root.id)
-    setSessions((previous) => new Map(previous).set(instanceId, new Map([[root.id, root], [child.id, child]])))
-
-    try {
-      await assert.rejects(() => deleteWorktree(instanceId, "feature"), /modified files/)
-      assert.equal(warpCalls, 0)
-      assert.equal(sessions().get(instanceId)?.get(root.id)?.directory, "/repo")
-    } finally {
-      serverApi.deleteWorktree = originalDeleteWorktree
-      serverApi.setSessionWorktreeSlug = originalSetWorktreeSlug
-      cleanup()
-    }
-  })
-
-  it("serializes legacy map cleanup across families", async () => {
-    const instanceId = "worktree-map-serialization"
-    const originalReadWorktreeMap = serverApi.readWorktreeMap
-    const originalWriteWorktreeMap = serverApi.writeWorktreeMap
-    const writes: Array<Record<string, string>> = []
+  it("serializes concurrent moves for one family", async () => {
+    const instanceId = "serialized-family"
+    const { root, cleanup } = await setup(instanceId)
+    const originalMove = serverApi.moveWorktreeSessionFamily
+    const originalMap = serverApi.readWorktreeMap
+    const calls: string[] = []
     let releaseFirst!: () => void
-    let markFirstStarted!: () => void
-    const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve })
     const firstPending = new Promise<void>((resolve) => { releaseFirst = resolve })
-    serverApi.readWorktreeMap = async () => ({
-      version: 1,
-      defaultWorktreeSlug: "root",
-      parentSessionWorktreeSlug: { first: "feature", second: "feature" },
-    })
-    serverApi.writeWorktreeMap = async (_instanceId, map) => {
-      writes.push({ ...map.parentSessionWorktreeSlug })
-      if (writes.length === 1) {
-        markFirstStarted()
-        await firstPending
-      }
+    serverApi.moveWorktreeSessionFamily = async (_id, _session, { worktreeSlug }) => {
+      calls.push(worktreeSlug)
+      if (calls.length === 1) await firstPending
+      return moveResponse(worktreeSlug as "root" | "feature")
     }
-
+    serverApi.readWorktreeMap = async () => ({ version: 1, defaultWorktreeSlug: "root", parentSessionWorktreeSlug: {} })
     try {
-      await reloadWorktreeMap(instanceId)
-      const first = removeLegacyParentSessionMapping(instanceId, "first")
-      await firstStarted
-      const second = removeLegacyParentSessionMapping(instanceId, "second")
+      const first = moveSessionToWorktree(instanceId, root.id, "feature")
+      const second = moveSessionToWorktree(instanceId, root.id, "root")
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      assert.deepEqual(calls, ["feature"])
       releaseFirst()
       await Promise.all([first, second])
+      assert.deepEqual(calls, ["feature", "root"])
+      assert.equal(sessions().get(instanceId)?.get(root.id)?.directory, "/repo")
+    } finally {
+      serverApi.moveWorktreeSessionFamily = originalMove
+      serverApi.readWorktreeMap = originalMap
+      cleanup()
+    }
+  })
+
+  it("does not issue a renderer rollback when the server response is lost", async () => {
+    const instanceId = "lost-response"
+    const { root, cleanup } = await setup(instanceId)
+    const originalMove = serverApi.moveWorktreeSessionFamily
+    let calls = 0
+    serverApi.moveWorktreeSessionFamily = async () => {
+      calls += 1
+      throw new Error("connection lost")
+    }
+    try {
+      await assert.rejects(() => moveSessionToWorktree(instanceId, root.id, "feature"), /connection lost/)
+      assert.equal(calls, 1)
+    } finally {
+      serverApi.moveWorktreeSessionFamily = originalMove
+      cleanup()
+    }
+  })
+
+  it("delegates deletion transactionally without moving sessions locally", async () => {
+    const instanceId = "transactional-delete"
+    const { cleanup } = await setup(instanceId)
+    const originalDelete = serverApi.deleteWorktree
+    const originalMove = serverApi.moveWorktreeSessionFamily
+    let deletes = 0
+    let moves = 0
+    serverApi.deleteWorktree = async () => { deletes += 1 }
+    serverApi.moveWorktreeSessionFamily = async () => { moves += 1; return moveResponse("root") }
+    try {
+      await deleteWorktree(instanceId, "feature")
+      assert.deepEqual({ deletes, moves }, { deletes: 1, moves: 0 })
+    } finally {
+      serverApi.deleteWorktree = originalDelete
+      serverApi.moveWorktreeSessionFamily = originalMove
+      cleanup()
+    }
+  })
+
+  it("serializes legacy map cleanup", async () => {
+    const instanceId = "map-serialization"
+    const originalRead = serverApi.readWorktreeMap
+    const originalRemove = serverApi.removeWorktreeMapSession
+    const writes: Array<Record<string, string>> = []
+    let map = { version: 1 as const, defaultWorktreeSlug: "root", parentSessionWorktreeSlug: { first: "feature", second: "feature" } as Record<string, string> }
+    serverApi.readWorktreeMap = async () => ({
+      version: 1, defaultWorktreeSlug: "root", parentSessionWorktreeSlug: { first: "feature", second: "feature" },
+    })
+    serverApi.removeWorktreeMapSession = async (_id, sessionId) => {
+      const parentSessionWorktreeSlug = { ...map.parentSessionWorktreeSlug }
+      delete parentSessionWorktreeSlug[sessionId]
+      map = { ...map, parentSessionWorktreeSlug }
+      writes.push(parentSessionWorktreeSlug)
+      return map
+    }
+    try {
+      await reloadWorktreeMap(instanceId)
+      await Promise.all([
+        removeLegacyParentSessionMapping(instanceId, "first"),
+        removeLegacyParentSessionMapping(instanceId, "second"),
+      ])
       assert.deepEqual(writes, [{ second: "feature" }, {}])
     } finally {
-      serverApi.readWorktreeMap = originalReadWorktreeMap
-      serverApi.writeWorktreeMap = originalWriteWorktreeMap
+      serverApi.readWorktreeMap = originalRead
+      serverApi.removeWorktreeMapSession = originalRemove
     }
   })
 })

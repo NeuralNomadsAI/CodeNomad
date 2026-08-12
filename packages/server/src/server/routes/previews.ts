@@ -16,7 +16,11 @@ export function registerPreviewRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.post("/api/previews", async (request, reply): Promise<PreviewSession | { error: string }> => {
     try {
       const body = PreviewCreateSchema.parse(request.body ?? {})
-      return deps.previewManager.create(body.sessionId, body.url)
+      const host = request.headers.host ?? "localhost"
+      const separator = host.lastIndexOf(":")
+      const port = separator >= 0 ? host.slice(separator) : ""
+      const isolatedHost = request.hostname === "127.0.0.1" ? "localhost" : "127.0.0.1"
+      return deps.previewManager.create(body.sessionId, body.url, `${request.protocol}://${isolatedHost}${port}`)
     } catch (error) {
       reply.code(400)
       return { error: error instanceof Error ? error.message : "Failed to create preview" }

@@ -1,6 +1,6 @@
 import type { WorkspaceManager } from "../workspaces/manager"
 import type { Logger } from "../logger"
-import { createInstanceClient } from "../workspaces/instance-client"
+import { resolveNativeSessionScope } from "../workspaces/native-session-scope"
 import type { AutoAcceptReply, PermissionReplier } from "./auto-accept-manager"
 
 interface OpencodeReplierDeps {
@@ -13,15 +13,11 @@ interface OpencodeReplierDeps {
  * generated SDK client over loopback, using the same `"once"` reply the UI
  * previously sent.
  *
- * Uses `createInstanceClient` so routes and body shapes are always correct
- * for the installed SDK version — no hand-assembled URLs.
+ * Resolves the session's current native location immediately before replying.
  */
 export function createOpencodePermissionReplier(deps: OpencodeReplierDeps): PermissionReplier {
   return async (reply: AutoAcceptReply) => {
-    const client = createInstanceClient(deps.workspaceManager, reply.instanceId)
-    if (!client) {
-      throw new Error(`Yolo: instance ${reply.instanceId} has no open port`)
-    }
+    const { client, workspace } = await resolveNativeSessionScope(deps.workspaceManager, reply.instanceId, reply.sessionId)
 
     const opts = { throwOnError: true } as const
 
@@ -31,6 +27,7 @@ export function createOpencodePermissionReplier(deps: OpencodeReplierDeps): Perm
           sessionID: reply.sessionId,
           requestID: reply.permissionId,
           reply: reply.reply,
+          ...(workspace ? { workspace } : {}),
         },
         opts,
       )
@@ -39,6 +36,7 @@ export function createOpencodePermissionReplier(deps: OpencodeReplierDeps): Perm
         {
           requestID: reply.permissionId,
           reply: reply.reply,
+          ...(workspace ? { workspace } : {}),
         },
         opts,
       )

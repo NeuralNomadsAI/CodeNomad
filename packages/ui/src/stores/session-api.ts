@@ -63,6 +63,7 @@ import { seedSessionMessagesV2, reconcilePendingPermissionsV2, reconcilePendingQ
 import { messageStoreBus } from "./message-v2/bus"
 import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
+import { serverApi } from "../lib/api-client"
 import { getOpencodeErrorMessage, requestData } from "../lib/opencode-api"
 import { getRootClient } from "./opencode-client"
 import { tGlobal } from "../lib/i18n"
@@ -71,6 +72,7 @@ import {
   isWorktreeDeletionInProgress,
   getWorktreeSlugForDirectory,
   getWorktrees,
+  getNativeRootDirectory,
   migrateLegacyWorktreeMapToSessionMetadata,
   pruneStaleLegacyWorktreeMapEntries,
   removeLegacyParentSessionMapping,
@@ -93,13 +95,22 @@ import {
 import { mergeFetchedSessionRuntimeState, resolveAuthoritativeGenerationRecovery } from "./session-generation-recovery"
 import { normalizeWorkspacePath } from "./app-session-reconciliation"
 import { requireSessionWorkspacePayload } from "./session-worktree-binding"
+import {
+  captureSessionLocationEpoch,
+  clearSessionLocationAuthority,
+  isSessionLocationHydrationCurrent,
+  protectHydratedSessionLocation,
+} from "./session-location-authority"
 
 const log = getLogger("api")
 const sessionListRequestIds = new Map<string, number>()
 let nextSessionListRequestId = 0
 const pendingMetadataHydrations = new Map<string, Promise<void>>()
 const sessionWorkspaceHints = new Map<string, Map<string, string>>()
-messageStoreBus.onInstanceDestroyed((instanceId) => sessionWorkspaceHints.delete(instanceId))
+messageStoreBus.onInstanceDestroyed((instanceId) => {
+  sessionWorkspaceHints.delete(instanceId)
+  clearSessionLocationAuthority(instanceId)
+})
 
 function beginSessionListRequest(instanceId: string): number {
   const requestId = ++nextSessionListRequestId
@@ -123,6 +134,9 @@ function clearSessionListRequestState(instanceId: string): void {
 }
 
 async function getSessionWorkspacePayload(instanceId: string, sessionId: string): Promise<{ workspace?: string }> {
+  const current = sessions().get(instanceId)?.get(sessionId)
+  if (current?.workspaceId) return { workspace: current.workspaceId }
+  if (current && getWorktreeSlugForDirectory(instanceId, current.directory) === "root") return {}
   const hinted = sessionWorkspaceHints.get(instanceId)?.get(sessionId)
   if (hinted) return { workspace: hinted }
   const workspace = await getOpenCodeWorkspaceIdForSession(instanceId, sessionId)
@@ -163,12 +177,12 @@ function rememberSessionWorkspace(instanceId: string, sessionId: string, workspa
 async function recordSessionWorkspaceHints(
   instanceId: string,
   apiSessions: SDKSession[],
+  locationEpoch: number,
   isCurrent: () => boolean,
 ): Promise<void> {
   const hints = new Map(sessionWorkspaceHints.get(instanceId) ?? new Map<string, string>())
-  apiSessions.forEach((session) => hints.delete(session.id))
   const workspaceBySlug = new Map<string, Promise<string | null>>()
-  const explicitWorkspaceBySession = new Map<string, string>()
+  const resolvedWorkspaceBySession = new Map<string, string>()
   await Promise.all(apiSessions.map(async (session) => {
     const located = session as SDKSession & {
       directory?: string
@@ -178,8 +192,7 @@ async function recordSessionWorkspaceHints(
     }
     const explicitWorkspace = located.workspace ?? located.workspaceID ?? located.workspaceId
     if (explicitWorkspace) {
-      hints.set(session.id, explicitWorkspace)
-      explicitWorkspaceBySession.set(session.id, explicitWorkspace)
+      resolvedWorkspaceBySession.set(session.id, explicitWorkspace)
       return
     }
     const directory = located.directory
@@ -191,13 +204,20 @@ async function recordSessionWorkspaceHints(
       workspaceBySlug.set(slug, workspace)
     }
     const workspaceId = await workspace
-    if (workspaceId) hints.set(session.id, workspaceId)
+    if (workspaceId) resolvedWorkspaceBySession.set(session.id, workspaceId)
   }))
   if (!isCurrent()) return
+  const currentSessions = apiSessions.filter((session) => isSessionLocationHydrationCurrent(instanceId, session.id, locationEpoch))
+  for (const session of currentSessions) {
+    hints.delete(session.id)
+    const workspaceId = resolvedWorkspaceBySession.get(session.id)
+    if (workspaceId) hints.set(session.id, workspaceId)
+  }
   sessionWorkspaceHints.set(instanceId, hints)
-  for (const session of apiSessions) forgetOpenCodeWorkspaceIdForSession(instanceId, session.id)
-  for (const [sessionId, workspaceId] of explicitWorkspaceBySession) {
-    rememberOpenCodeWorkspaceIdForSession(instanceId, sessionId, workspaceId)
+  for (const session of currentSessions) forgetOpenCodeWorkspaceIdForSession(instanceId, session.id)
+  for (const session of currentSessions) {
+    const workspaceId = resolvedWorkspaceBySession.get(session.id)
+    if (workspaceId) rememberOpenCodeWorkspaceIdForSession(instanceId, session.id, workspaceId)
   }
 }
 
@@ -262,7 +282,10 @@ async function fetchV2Sessions(instanceId: string, options: V2SessionListOptions
   const client = getRootClient(instanceId)
   const listOptions = buildProjectSessionListOptions(options)
   const data = await requestData<SessionListResponse>(client.session.list(listOptions), "session.list")
-  const allowedDirectories = [options.directory, ...getWorktrees(instanceId).map((worktree) => worktree.directory)]
+  const allowedDirectories = [
+    options.directory,
+    ...getWorktrees(instanceId).flatMap((worktree) => [worktree.directory, worktree.nativeDirectory]),
+  ]
 
   return {
     data: filterProjectScopedSessions(data, allowedDirectories),
@@ -340,6 +363,7 @@ async function hydrateRestoredSessionChain(
     let session = sessions().get(instanceId)?.get(sessionId)
     if (!session) {
       try {
+        const locationEpoch = captureSessionLocationEpoch(instanceId)
         const workspaceCandidates = await getSessionWorkspaceCandidates(instanceId, sessionId, chainWorkspacePayload)
         signal?.throwIfAborted()
         let apiSession: SDKSession | undefined
@@ -359,12 +383,20 @@ async function hydrateRestoredSessionChain(
         }
         if (!apiSession) throw lastError
         signal?.throwIfAborted()
-        rememberSessionWorkspace(instanceId, sessionId, hydratedWorkspace)
+        if (isSessionLocationHydrationCurrent(instanceId, sessionId, locationEpoch)) {
+          rememberSessionWorkspace(instanceId, sessionId, hydratedWorkspace)
+        }
         setSessions((prev) => {
           if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId) || signal?.aborted) return prev
           const next = new Map(prev)
           const instanceSessions = new Map(next.get(instanceId) ?? new Map())
-          instanceSessions.set(sessionId, toClientSessionV2(instanceId, apiSession, instanceSessions.get(sessionId)))
+          const current = instanceSessions.get(sessionId)
+          instanceSessions.set(sessionId, protectHydratedSessionLocation(
+            instanceId,
+            toClientSessionV2(instanceId, apiSession, current),
+            current,
+            locationEpoch,
+          ))
           next.set(instanceId, instanceSessions)
           return next
         })
@@ -392,6 +424,7 @@ async function hydrateRestoredSessionChain(
 }
 
 async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: SDKSession[], directory?: string): Promise<void> {
+  const locationEpoch = captureSessionLocationEpoch(instanceId)
   const currentSessions = sessions().get(instanceId) ?? new Map<string, Session>()
   const loaded = new Map<string, SDKSession | Session>(currentSessions)
   for (const session of apiSessions) loaded.set(session.id, session)
@@ -410,7 +443,12 @@ async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: SDKSe
     for (const apiSession of items) {
       if (deletedSessionIds.has(apiSession.id)) continue
       const existingSession = instanceSessions.get(apiSession.id)
-      instanceSessions.set(apiSession.id, toClientSessionV2(instanceId, apiSession, existingSession))
+      instanceSessions.set(apiSession.id, protectHydratedSessionLocation(
+        instanceId,
+        toClientSessionV2(instanceId, apiSession, existingSession),
+        existingSession,
+        locationEpoch,
+      ))
       loaded.set(apiSession.id, apiSession)
     }
 
@@ -431,6 +469,7 @@ async function fetchSessions(instanceId: string, options?: {
 
   const rootClient = getRootClient(instanceId)
   const requestId = beginSessionListRequest(instanceId)
+  const locationEpoch = captureSessionLocationEpoch(instanceId)
   options?.registerInvalidation?.(() => {
     if (isLatestSessionListRequest(instanceId, requestId)) clearSessionListRequestState(instanceId)
   })
@@ -443,7 +482,8 @@ async function fetchSessions(instanceId: string, options?: {
   setSessionListError(instanceId, null)
 
   try {
-    const sessionListOptions = instance.folder ? { directory: instance.folder } : {}
+    const rootDirectory = getNativeRootDirectory(instanceId, instance.folder)
+    const sessionListOptions = rootDirectory ? { directory: rootDirectory } : {}
     const existingSessions = new Map(sessions().get(instanceId) ?? new Map<string, Session>())
 
     log.info("session.list", { instanceId, limit: PROJECT_SESSION_LIST_LIMIT, directory: sessionListOptions.directory, scope: "project" })
@@ -453,7 +493,7 @@ async function fetchSessions(instanceId: string, options?: {
       return
     }
     const apiSessions = getV2SessionItems(response)
-    await recordSessionWorkspaceHints(instanceId, apiSessions, () => isLatestSessionListRequest(instanceId, requestId))
+    await recordSessionWorkspaceHints(instanceId, apiSessions, locationEpoch, () => isLatestSessionListRequest(instanceId, requestId))
     if (!isLatestSessionListRequest(instanceId, requestId)) {
       if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
       return
@@ -475,7 +515,7 @@ async function fetchSessions(instanceId: string, options?: {
         ? { workspace: explicitWorkspace }
         : await getSessionWorkspacePayload(instanceId, apiSession.id)
       const requiresWorkspace = (slug && slug !== "root")
-        || Boolean(directory && normalizeWorkspacePath(directory) !== normalizeWorkspacePath(instance.folder))
+        || Boolean(directory && normalizeWorkspacePath(directory) !== normalizeWorkspacePath(rootDirectory))
       if (requiresWorkspace && !workspacePayload.workspace) {
         if (options?.strictStatus) {
           throw new Error(`Unable to resolve OpenCode workspace for session ${apiSession.id}`)
@@ -528,7 +568,7 @@ async function fetchSessions(instanceId: string, options?: {
         status = hasType ? mapSdkSessionStatus(rawStatus) : statusResponseKnown ? "idle" : existingStatus ?? "idle"
         retry = hasType ? mapSdkSessionRetry(rawStatus) : statusResponseKnown ? null : retry
       }
-      sessionMap.set(apiSession.id, {
+      sessionMap.set(apiSession.id, protectHydratedSessionLocation(instanceId, {
         ...toClientSessionV2(instanceId, apiSession, existingSession),
         status,
         retry,
@@ -537,7 +577,7 @@ async function fetchSessions(instanceId: string, options?: {
         generationRecovery: runtimeStatusKnown
           ? resolveAuthoritativeGenerationRecovery(existingSession?.generationRecovery, status)
           : existingSession?.generationRecovery ?? null,
-      })
+      }, existingSession, locationEpoch))
     }
 
     const remotelyDeletedSessionIds = getAuthoritativelyMissingSessionIds(
@@ -646,12 +686,14 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
   }
 
   const requestId = beginSessionSearch(instanceId, trimmedQuery)
+  const locationEpoch = captureSessionLocationEpoch(instanceId)
 
   try {
-    log.info("v2.session.search", { instanceId, query: trimmedQuery, directory: instance.folder })
+    const rootDirectory = getNativeRootDirectory(instanceId, instance.folder)
+    log.info("v2.session.search", { instanceId, query: trimmedQuery, directory: rootDirectory })
     const response = await fetchV2Sessions(instanceId, {
       search: trimmedQuery,
-      directory: instance.folder,
+      directory: rootDirectory,
     })
     if (!isLatestSessionSearch(instanceId, trimmedQuery, requestId)) return
 
@@ -670,7 +712,12 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
       for (const apiSession of searchResults) {
         if (deletedSessionIds.has(apiSession.id)) continue
         const existingSession = instanceSessions.get(apiSession.id)
-        instanceSessions.set(apiSession.id, toClientSessionV2(instanceId, apiSession, existingSession))
+        instanceSessions.set(apiSession.id, protectHydratedSessionLocation(
+          instanceId,
+          toClientSessionV2(instanceId, apiSession, existingSession),
+          existingSession,
+          locationEpoch,
+        ))
       }
 
       next.set(instanceId, instanceSessions)
@@ -678,7 +725,7 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
     })
     void hydrateMissingSessionMetadata(instanceId, searchResults.map((session) => session.id))
 
-    await ensureV2ParentChainsLoaded(instanceId, searchResults, instance.folder)
+    await ensureV2ParentChainsLoaded(instanceId, searchResults, rootDirectory)
 
     if (!isLatestSessionSearch(instanceId, trimmedQuery, requestId)) return
 
@@ -746,22 +793,9 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
     throw new Error("Instance not ready")
   }
 
-  // New parent sessions inherit the currently active session's worktree.
-  // If no session is active (fresh instance), fall back to root.
   const activeId = activeSessionId().get(instanceId)
-  const worktreeSlug = activeId && activeId !== "info" ? getWorktreeSlugForSession(instanceId, activeId) : "root"
-  if (isWorktreeDeletionInProgress(instanceId, worktreeSlug)) {
-    throw new Error(tGlobal("instanceShell.worktree.moveFailed"))
-  }
+  const sourceSessionId = activeId && activeId !== "info" ? activeId : null
   const client = getRootClient(instanceId)
-  const worktree = getWorktrees(instanceId).find((candidate) => candidate.slug === worktreeSlug)
-  if (!worktree) throw new Error(tGlobal("instanceShell.worktree.locationUnavailable", { slug: worktreeSlug }))
-  const workspaceId = worktreeSlug === "root"
-    ? null
-    : await getOpenCodeWorkspaceIdForWorktree(instanceId, worktreeSlug)
-  if (worktreeSlug !== "root" && !workspaceId) {
-    throw new Error(tGlobal("instanceShell.worktree.locationUnavailable", { slug: worktreeSlug }))
-  }
 
   const instanceAgents = agents().get(instanceId) || []
   const primaryAgents = instanceAgents.filter(isSelectablePrimaryAgent)
@@ -781,9 +815,9 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
 
   try {
     log.info(`[HTTP] POST /session.create for instance ${instanceId}`)
-    const response = await client.session.create({
-      ...(workspaceId ? { workspace: workspaceId, workspaceID: workspaceId } : {}),
-    })
+    const response = sourceSessionId
+      ? { data: await serverApi.createRelatedSession(instanceId, sourceSessionId) }
+      : await client.session.create()
 
     if (!response.data) {
       throw new Error("Failed to create session: No data returned")
@@ -793,8 +827,8 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
       id: response.data.id,
       instanceId,
       projectId: response.data.projectID,
-      workspaceId: response.data.workspaceID ?? workspaceId ?? undefined,
-      directory: response.data.directory || worktree.directory,
+      workspaceId: response.data.workspaceID,
+      directory: response.data.directory || getNativeRootDirectory(instanceId, instance.folder),
       title: response.data.title || "New Session",
       parentId: null,
       agent: selectedAgent,
@@ -823,7 +857,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
       next.set(instanceId, instanceSessions)
       return next
     })
-    if (workspaceId) rememberOpenCodeWorkspaceIdForSession(instanceId, session.id, workspaceId)
+    if (session.workspaceId) rememberOpenCodeWorkspaceIdForSession(instanceId, session.id, session.workspaceId)
 
     syncInstanceSessionIndicator(instanceId)
     prependSessionListId(instanceId, session.id)
@@ -1012,6 +1046,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
 
 function removeSessionRuntimeState(instanceId: string, sessionId: string): void {
   sessionWorkspaceHints.get(instanceId)?.delete(sessionId)
+  clearSessionLocationAuthority(instanceId, sessionId)
   cancelSessionGenerationAdmissions(instanceId, sessionId)
   markSessionDeletedAuthoritative(instanceId, sessionId)
   deleteSessionAttachments(instanceId, sessionId)

@@ -4,6 +4,7 @@ import { getLogger } from "../logger"
 import type { NativeDialogOptions } from "./types"
 import { openElectronNativeDialog } from "./electron/functions"
 import { openTauriNativeDialog } from "./tauri/functions"
+import { invokeWithNativeClientStateAccess } from "./client-state"
 
 const log = getLogger("actions")
 
@@ -68,7 +69,7 @@ export async function openLocalDirectory(path: string, repoRoot: string): Promis
       return result?.ok === true
     }
     if (isTauriHost()) {
-      await invoke("open_local_directory", { path: directory, repoRoot: root })
+      await invokeWithNativeClientStateAccess("open_local_directory", { path: directory, repoRoot: root })
       return true
     }
   } catch (error) {

@@ -104,7 +104,9 @@ jobs:
       - name: Test changed runnable UI behavior
         run: >-
           node --import tsx --test
+          packages/ui/src/components/session-list-projection.test.ts
           packages/ui/src/components/session-list-visibility.test.ts
+          packages/ui/src/components/session-preview-comment.test.ts
           packages/ui/src/components/unified-picker-path.test.ts
           packages/ui/src/lib/hooks/use-app-session-capture.test.ts
           packages/ui/src/lib/hooks/use-foreground-refresh.test.ts

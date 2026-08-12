@@ -11,7 +11,7 @@ interface PreviewRecord {
 export class PreviewManager {
   private readonly previews = new Map<string, PreviewRecord>()
 
-  create(sessionId: string, rawUrl: string): PreviewSession {
+  create(sessionId: string, rawUrl: string, proxyOrigin = ""): PreviewSession {
     const target = this.normalizeTargetUrl(rawUrl)
     const token = randomUUID()
     const record: PreviewRecord = {
@@ -21,7 +21,7 @@ export class PreviewManager {
       createdAt: new Date().toISOString(),
     }
     this.previews.set(token, record)
-    return this.toPreviewSession(record)
+    return this.toPreviewSession(record, proxyOrigin)
   }
 
   get(token: string): PreviewSession | undefined {
@@ -65,12 +65,12 @@ export class PreviewManager {
     return target
   }
 
-  private toPreviewSession(record: PreviewRecord): PreviewSession {
+  private toPreviewSession(record: PreviewRecord, proxyOrigin = ""): PreviewSession {
     return {
       token: record.token,
       sessionId: record.sessionId,
       targetUrl: record.target.toString(),
-      proxyUrl: `${this.buildProxyBasePath(record.token)}${record.target.pathname}${record.target.search}${record.target.hash}`,
+      proxyUrl: `${proxyOrigin}${this.buildProxyBasePath(record.token)}${record.target.pathname}${record.target.search}${record.target.hash}`,
       createdAt: record.createdAt,
     }
   }

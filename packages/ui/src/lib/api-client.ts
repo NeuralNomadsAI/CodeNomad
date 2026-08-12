@@ -46,9 +46,12 @@ import type {
   WorktreeListResponse,
   WorktreeMap,
   WorktreeCreateRequest,
+  WorktreeSessionMoveRequest,
+  WorktreeSessionMoveResponse,
   WorktreeGitDiffResponse,
   WorktreeGitStatusResponse,
 } from "../../../server/src/api-types"
+import type { Session as SDKSession } from "@opencode-ai/sdk/v2/client"
 import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
 import { attachEventSourceHandlers } from "./event-source-handlers"
@@ -227,15 +230,37 @@ export const serverApi = {
     })
   },
 
+  moveWorktreeSessionFamily(
+    id: string,
+    sessionId: string,
+    payload: WorktreeSessionMoveRequest,
+  ): Promise<WorktreeSessionMoveResponse> {
+    return request<WorktreeSessionMoveResponse>(
+      `/api/workspaces/${encodeURIComponent(id)}/worktrees/sessions/${encodeURIComponent(sessionId)}/move`,
+      { method: "POST", body: JSON.stringify(payload) },
+    )
+  },
+
+  createRelatedSession(id: string, sessionId: string): Promise<SDKSession> {
+    return request<SDKSession>(
+      `/api/workspaces/${encodeURIComponent(id)}/worktrees/sessions/${encodeURIComponent(sessionId)}/create-related`,
+      { method: "POST" },
+    )
+  },
+
   readWorktreeMap(id: string): Promise<WorktreeMap> {
     return request<WorktreeMap>(`/api/workspaces/${encodeURIComponent(id)}/worktrees/map`)
   },
 
-  writeWorktreeMap(id: string, map: WorktreeMap): Promise<void> {
-    return request(`/api/workspaces/${encodeURIComponent(id)}/worktrees/map`, {
-      method: "PUT",
-      body: JSON.stringify(map),
-    })
+  removeWorktreeMapSession(id: string, sessionId: string): Promise<WorktreeMap> {
+    return request<WorktreeMap>(
+      `/api/workspaces/${encodeURIComponent(id)}/worktrees/map/sessions/${encodeURIComponent(sessionId)}`,
+      { method: "DELETE" },
+    )
+  },
+
+  pruneWorktreeMap(id: string): Promise<WorktreeMap> {
+    return request<WorktreeMap>(`/api/workspaces/${encodeURIComponent(id)}/worktrees/map/prune`, { method: "POST" })
   },
   createWorkspace(payload: WorkspaceCreateRequest, options?: { signal?: AbortSignal }): Promise<WorkspaceCreateResponse> {
     return request<WorkspaceCreateResponse>("/api/workspaces", {

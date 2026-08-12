@@ -4,30 +4,13 @@ import { useI18n } from "../lib/i18n"
 import { showPromptDialog } from "../stores/alerts"
 import type { SessionPreviewRecord } from "../stores/session-previews"
 import { BrowserFrame, type BrowserFrameElementTarget } from "./browser-frame"
+import { buildPreviewCommentMarkdown } from "./session-preview-comment"
 
 interface SessionPreviewViewProps {
   preview: SessionPreviewRecord
   onBackToChat: () => void
   onClose: () => void
   onInsertComment: (markdown: string) => void
-}
-
-function describeElement(target: BrowserFrameElementTarget): string {
-  const label = target.ariaLabel || target.text
-  const role = target.role ? ` role="${target.role}"` : ""
-  return label ? `${target.tagName}${role} "${label}"` : `${target.tagName}${role}`
-}
-
-function buildCommentMarkdown(target: BrowserFrameElementTarget, comment: string): string {
-  const lines = [
-    "> Web preview comment",
-    `> Page: \`${target.pagePath}\``,
-    `> Element: \`${describeElement(target)}\``,
-  ]
-  if (target.selector) {
-    lines.push(`> Selector: \`${target.selector}\``)
-  }
-  return `${lines.join("\n")}\n\n${comment}\n\n`
 }
 
 export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) => {
@@ -44,7 +27,7 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
     })
     const normalized = comment?.trim()
     if (!normalized) return
-    props.onInsertComment(buildCommentMarkdown(elementTarget, normalized))
+    props.onInsertComment(buildPreviewCommentMarkdown(elementTarget, normalized))
   }
 
   return (
@@ -67,6 +50,7 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
         title={t("sessionPreview.title")}
         initialUrl={props.preview.proxyUrl}
         proxyBasePath={`/previews/${encodeURIComponent(props.preview.token)}`}
+        sandbox="allow-downloads allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
         lockedBaseLabel={target().host}
         labels={{
           back: t("sidecars.back"),

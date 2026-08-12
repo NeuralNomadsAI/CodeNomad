@@ -94,6 +94,8 @@ export interface WorktreeDescriptor {
   slug: string
   /** Absolute directory path on the server host. */
   directory: string
+  /** Absolute directory as seen by the OpenCode process. */
+  nativeDirectory?: string
   kind: WorktreeKind
   /** Optional VCS branch name when available. */
   branch?: string
@@ -117,6 +119,22 @@ export interface WorktreeMap {
   defaultWorktreeSlug: string
   /** Mapping of *parent* session IDs to a worktree slug. */
   parentSessionWorktreeSlug: Record<string, string>
+}
+
+export interface WorktreeSessionMoveRequest {
+  worktreeSlug: string
+}
+
+export interface WorktreeSessionLocation {
+  sessionId: string
+  directory: string
+  workspaceId: string | null
+}
+
+export interface WorktreeSessionMoveResponse {
+  rootSessionId: string
+  worktreeSlug: string
+  sessions: WorktreeSessionLocation[]
 }
 
 export type GitChangeKind = "added" | "modified" | "deleted" | "renamed" | "copied" | "untracked" | "unmerged"

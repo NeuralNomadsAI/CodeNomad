@@ -56,3 +56,7 @@ export const acknowledgeNativeClientStateNavigationFlush = (generation: number) 
   acknowledge("client_state_navigation_flushed", { generation })
 export const acknowledgeNativeClientStateRendererFlush = (generation: number) =>
   acknowledge("client_state_renderer_flushed", { generation })
+export function invokeWithNativeClientStateAccess<T>(command: string, args: Record<string, unknown>): Promise<T> {
+  if (!isTauriHost() || !nativeAccessClaimed) return Promise.reject(new Error("Native renderer access is unavailable"))
+  return invoke<T>(command, { accessToken, ...args })
+}
