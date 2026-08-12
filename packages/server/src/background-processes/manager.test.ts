@@ -47,6 +47,22 @@ async function runCompletionPrompt(
       headers: req.headers,
       body: await req.text(),
     })
+    const url = new URL(req.url)
+    if (url.pathname === "/experimental/workspace/sync-list") {
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } })
+    }
+    if (url.pathname === "/experimental/workspace") {
+      return new Response(JSON.stringify([{ id: "workspace-session", directory: sessionDir }]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    }
+    if (url.pathname === "/session" && req.method === "GET") {
+      return new Response(JSON.stringify([{ id: SESSION_ID, directory: sessionDir, workspaceID: "workspace-session" }]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    }
     return fetchImpl(input instanceof Request ? input : req, init)
   }) as typeof fetch
 
@@ -88,6 +104,7 @@ async function runCompletionPrompt(
     get: () => ({ path: workspacePath }),
     getInstancePort: () => INSTANCE_PORT,
     getInstanceAuthorizationHeader: () => AUTH_HEADER,
+    resolveInstanceDirectory: async () => workspacePath,
   } as unknown as WorkspaceManager
 
   const manager = new BackgroundProcessManager({ workspaceManager, eventBus, logger })
@@ -130,7 +147,7 @@ describe("BackgroundProcessManager.sendCompletionPrompt", () => {
     assert.equal(promptCall.method, "POST")
     assert.equal(
       promptCall.url,
-      `http://127.0.0.1:${INSTANCE_PORT}/session/${SESSION_ID}/prompt_async`,
+      `http://127.0.0.1:${INSTANCE_PORT}/session/${SESSION_ID}/prompt_async?workspace=workspace-session`,
     )
     assert.equal(promptCall.headers.get("authorization"), AUTH_HEADER)
     // The prompt is scoped to the session's directory (a POST keeps the

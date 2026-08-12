@@ -180,6 +180,12 @@ export const instanceMessages = {
   "instanceShell.diff.enableWordWrap": "Включить перенос строк",
   "instanceShell.diff.disableWordWrap": "Отключить перенос строк",
   "instanceShell.worktree.create": "+ Создать worktree",
+  "instanceShell.worktree.openDirectory.action": "Открыть в файловом менеджере",
+  "instanceShell.worktree.openDirectory.error": "Не удалось открыть worktree в файловом менеджере.",
+  "instanceShell.worktree.locationUnavailable": "Worktree {slug} недоступен в OpenCode.",
+  "instanceShell.worktree.moveBusy": "Дождитесь завершения сессии, прежде чем перемещать её в другой worktree.",
+  "instanceShell.worktree.moveFailed": "Не удалось переместить сессию в выбранный worktree.",
+  "instanceShell.worktree.sessionNotFound": "Сессия не найдена.",
 
   "instanceShell.plan.noSessionSelected": "Выберите сессию, чтобы просмотреть план.",
   "instanceShell.plan.empty": "Пока ничего не запланировано.",

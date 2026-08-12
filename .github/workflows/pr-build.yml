@@ -104,7 +104,9 @@ jobs:
       - name: Test changed runnable UI behavior
         run: >-
           node --import tsx --test
+          packages/ui/src/components/session-list-projection.test.ts
           packages/ui/src/components/session-list-visibility.test.ts
+          packages/ui/src/components/session-preview-comment.test.ts
           packages/ui/src/components/unified-picker-path.test.ts
           packages/ui/src/lib/hooks/use-app-session-capture.test.ts
           packages/ui/src/lib/hooks/use-foreground-refresh.test.ts
@@ -127,6 +129,7 @@ jobs:
           packages/ui/src/stores/session-generation-recovery.test.ts
           packages/ui/src/stores/session-metadata.test.ts
           packages/ui/src/stores/session-pagination.test.ts
+          packages/ui/src/stores/session-tree.test.ts
           packages/ui/src/stores/workspace-list-reconciliation-fence.test.ts
 
       - name: Test restore ownership integration
@@ -137,6 +140,8 @@ jobs:
           packages/ui/src/stores/permission-lifecycle.test.ts
           packages/ui/src/stores/session-request-authority.test.ts
           packages/ui/src/stores/session-send-lifecycle.test.ts
+          packages/ui/src/stores/session-worktree-binding.test.ts
+          packages/ui/src/stores/opencode-workspaces.test.ts
 
       - name: Test server
         run: node --import tsx --test "packages/server/src/**/*.test.ts"
@@ -182,4 +187,5 @@ jobs:
 
       - name: Test Tauri crate on Windows
         working-directory: packages/tauri-app/src-tauri
-        run: cargo test --locked
+        # ponytail: cross-host tests spawn real Node/PowerShell processes; avoid runner contention.
+        run: cargo test --locked -- --test-threads=1

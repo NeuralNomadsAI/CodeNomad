@@ -19,6 +19,11 @@ pub use commands::{
 pub(crate) use navigation::{
     before_main_window_navigation, before_main_window_navigation_if, NavigationKind,
 };
+pub(crate) use commands::validate_access;
+
+pub(crate) fn renderer_generation_is_current(state: &ClientState, generation: u64) -> bool {
+    state.renderer_access.is_generation_current(generation)
+}
 pub use window::{
     capture_and_flush_main_window, main_window_zoom, set_main_window_zoom, setup_main_window,
     DEFAULT_ZOOM_LEVEL,

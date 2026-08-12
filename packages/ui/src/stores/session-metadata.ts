@@ -39,6 +39,15 @@ export function getCodeNomadSessionMetadata(instanceId: string, sessionId: strin
   return normalizeCodeNomadMetadata(getSessionMetadata(instanceId, sessionId)[CODENOMAD_METADATA_KEY])
 }
 
+export function clearLocalSessionWorktreeSlug(instanceId: string, sessionId: string): void {
+  withSession(instanceId, sessionId, (session) => {
+    const metadata = normalizeMetadata(session.metadata)
+    const codenomad = normalizeMetadata(metadata[CODENOMAD_METADATA_KEY])
+    delete codenomad.worktreeSlug
+    session.metadata = { ...metadata, [CODENOMAD_METADATA_KEY]: codenomad }
+  })
+}
+
 export async function hydrateSessionMetadataWithClient(
   client: OpencodeClient,
   instanceId: string,
@@ -60,7 +69,7 @@ export async function hydrateSessionMetadataWithClient(
 export async function setSessionWorktreeSlug(
   instanceId: string,
   sessionId: string,
-  worktreeSlug: string,
+  worktreeSlug: string | null,
 ): Promise<void> {
   const { metadata } = await serverApi.setSessionWorktreeSlug(instanceId, sessionId, worktreeSlug)
   withSession(instanceId, sessionId, (session) => {

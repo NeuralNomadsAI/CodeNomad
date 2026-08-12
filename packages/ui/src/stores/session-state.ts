@@ -9,7 +9,6 @@ import { showConfirmDialog } from "./alerts"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
 import { getRootClient } from "./opencode-client"
-import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 import { tGlobal } from "../lib/i18n"
 import { computeThreadTotals, type ThreadTotals } from "../lib/thread-totals"
 import { applySessionPage, getDefaultSessionPaginationState, type SessionPaginationState } from "./session-pagination-model"
@@ -1118,9 +1117,10 @@ async function isBlankSession(session: Session, instanceId: string, fetchIfNeede
   let messages: any[] = []
   try {
     const client = getRootClient(instanceId)
-    const workspace = await getOpenCodeWorkspaceIdForSession(instanceId, session.id)
+    const { requireSessionWorkspacePayload } = await import("./session-worktree-binding")
+    const workspace = await requireSessionWorkspacePayload(instanceId, session.id)
     messages = await requestData<any[]>(
-      client.session.messages({ sessionID: session.id, ...(workspace ? { workspace } : {}) }),
+      client.session.messages({ sessionID: session.id, ...workspace }),
       "session.messages",
     )
   } catch (error) {

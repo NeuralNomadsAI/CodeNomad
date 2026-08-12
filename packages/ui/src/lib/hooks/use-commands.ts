@@ -21,6 +21,7 @@ import { requestData } from "../opencode-api"
 import { emitSessionSidebarRequest } from "../session-sidebar-events"
 import { tGlobal } from "../i18n"
 import { registerBehaviorCommands } from "../settings/behavior-registry"
+import { requireSessionWorkspacePayload } from "../../stores/session-worktree-binding"
 
 const log = getLogger("actions")
 
@@ -249,6 +250,7 @@ export function useCommands(options: UseCommandsOptions) {
           await requestData(
             instance.client.session.summarize({
               sessionID: sessionId,
+              ...(await requireSessionWorkspacePayload(instance.id, sessionId)),
               providerID: session.model.providerId,
               modelID: session.model.modelId,
             }),
@@ -340,6 +342,7 @@ export function useCommands(options: UseCommandsOptions) {
           await requestData(
             instance.client.session.revert({
               sessionID: sessionId,
+              ...(await requireSessionWorkspacePayload(instance.id, sessionId)),
               messageID,
             }),
             "session.revert",

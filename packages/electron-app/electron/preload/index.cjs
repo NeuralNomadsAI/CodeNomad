@@ -26,6 +26,7 @@ const localElectronAPI = {
   restartCli: () => ipcRenderer.invoke("cli:restart"),
   openDialog: (options) => ipcRenderer.invoke("dialog:open", options),
   getDirectoryPaths: (paths) => ipcRenderer.invoke("filesystem:getDirectoryPaths", paths),
+  openDirectory: (path, repoRoot) => ipcRenderer.invoke("filesystem:openDirectory", path, repoRoot),
   getPathForFile: (file) => {
     try {
       return webUtils.getPathForFile(file)

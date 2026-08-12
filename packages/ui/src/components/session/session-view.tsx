@@ -11,6 +11,7 @@ import { instances, waitForInstanceWorkspaceMetadataHydration } from "../../stor
 import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession } from "../../stores/sessions"
 import { clearSessionIdleFade, IDLE_STATUS_VISIBILITY_MS, getSessionStatus, isSessionBusy as getSessionBusyStatus, markSessionIdleFadeStarted } from "../../stores/session-status"
 import { deleteMessage } from "../../stores/session-actions"
+import { requireSessionWorkspacePayload } from "../../stores/session-worktree-binding"
 import { showAlertDialog } from "../../stores/alerts"
 import { getLogger } from "../../lib/logger"
 import { useActiveSessionMessageLoad } from "../../lib/hooks/use-active-session-message-load"
@@ -427,6 +428,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       await requestData(
         instance.client.session.revert({
           sessionID: props.sessionId,
+          ...(await requireSessionWorkspacePayload(props.instanceId, props.sessionId)),
           messageID: messageId,
         }),
         "session.revert",

@@ -69,6 +69,11 @@ import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { tGlobal } from "../lib/i18n"
+import {
+  captureSessionLocationEpoch,
+  protectHydratedSessionLocation,
+  resolveSessionEventLocation,
+} from "./session-location-authority"
 
 import { loadMessages, removeSessionRuntimeState } from "./session-api"
 import { getRootClient } from "./opencode-client"
@@ -161,6 +166,7 @@ const ALLOWED_TOAST_VARIANTS = new Set<ToastVariant>(["info", "success", "warnin
 async function fetchSessionInfo(instanceId: string, sessionId: string, directory?: string): Promise<Session | null> {
   const instance = instances().get(instanceId)
   if (!instance?.client) return null
+  const locationEpoch = captureSessionLocationEpoch(instanceId)
 
   const slugFromDirectory = getWorktreeSlugForDirectory(instanceId, directory)
   const slug = slugFromDirectory ?? getWorktreeSlugForSession(instanceId, sessionId)
@@ -199,7 +205,7 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
       const instanceSessions = next.get(instanceId) ?? new Map<string, Session>()
       const existing = instanceSessions.get(sessionId)
       const compacting = existing?.status === "compacting"
-      const candidate: Session = {
+      const candidate = protectHydratedSessionLocation(instanceId, {
         ...fetched,
         agent: existing?.agent ?? fetched.agent,
         model: existing?.model ?? fetched.model,
@@ -209,7 +215,7 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
         pendingPermission: existing?.pendingPermission ?? fetched.pendingPermission,
         pendingQuestion: existing?.pendingQuestion ?? false,
         runtimeStatusKnown: compacting || fetched.runtimeStatusKnown,
-      }
+      }, existing, locationEpoch)
       const merged = mergeFetchedSessionRuntimeState(
         candidate,
         existing,
@@ -409,16 +415,26 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
   const info = event.properties?.info
 
   if (!info) return
+  const workspaceId = (info as typeof info & { workspaceID?: string }).workspaceID
+  const hasWorkspaceId = Object.prototype.hasOwnProperty.call(info, "workspaceID")
+  const hasDirectory = Object.prototype.hasOwnProperty.call(info, "directory")
   if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(info.id)) return
 
   const instanceSessions = sessions().get(instanceId) ?? new Map<string, Session>()
 
   const existingSession = instanceSessions.get(info.id)
+  const eventLocation = resolveSessionEventLocation(instanceId, info.id, {
+    workspaceId,
+    directory: info.directory,
+  }, existingSession, { hasDirectory, hasWorkspaceId, serverUpdated: info.time?.updated })
 
   if (!existingSession) {
     const newSession = {
       id: info.id,
       instanceId,
+      projectId: info.projectID,
+      workspaceId: eventLocation.workspaceId,
+      directory: eventLocation.directory,
       title: info.title || tGlobal("sessionList.session.untitled"),
       parentId: info.parentID || null,
       agent: "",
@@ -472,6 +488,9 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
     }
     const updatedSession = {
       ...existingSession,
+      projectId: info.projectID ?? existingSession.projectId,
+      workspaceId: eventLocation.workspaceId,
+      directory: eventLocation.directory,
       title: info.title || existingSession.title,
       parentId: info.parentID ?? existingSession.parentId,
       status: existingSession.status ?? "idle",

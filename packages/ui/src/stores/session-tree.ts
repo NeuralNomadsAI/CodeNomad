@@ -17,6 +17,30 @@ export type VisibleSessionRow = {
   expanded: boolean
 }
 
+export type SessionThreadSortMode = "activity" | "name" | "worktree"
+
+export function projectSessionThreads(
+  threads: readonly SessionThread[],
+  options: {
+    sort: SessionThreadSortMode
+    worktree: string | null
+    getLabel: (thread: SessionThread) => string
+    getWorktree: (thread: SessionThread) => string
+  },
+): SessionThread[] {
+  const projected = options.worktree
+    ? threads.filter((thread) => options.getWorktree(thread) === options.worktree)
+    : [...threads]
+  if (options.sort === "activity") return projected
+
+  return projected.sort((left, right) => {
+    const primary = options.sort === "name"
+      ? options.getLabel(left).localeCompare(options.getLabel(right), undefined, { sensitivity: "base" })
+      : options.getWorktree(left).localeCompare(options.getWorktree(right), undefined, { sensitivity: "base" })
+    return primary || right.latestUpdated - left.latestUpdated || right.session.id.localeCompare(left.session.id)
+  })
+}
+
 export function getSessionRootFromMap(instanceSessions: Map<string, Session>, sessionId: string): Session | null {
   let current = instanceSessions.get(sessionId)
   if (!current) return null

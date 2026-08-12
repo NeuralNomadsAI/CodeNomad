@@ -1,7 +1,7 @@
 import { getRootClient } from "./opencode-client"
-import { getWorktreeSlugForSession, getWorktrees } from "./worktrees"
 import { getLogger } from "../lib/logger"
 import { mapOpenCodeWorkspacesToWorktreeSlugs } from "./opencode-workspace-matching"
+import { createSignal } from "solid-js"
 
 const WORKSPACE_SYNC_TIMEOUT_MS = 5_000
 
@@ -35,6 +35,21 @@ type OpenCodeWorkspace = {
 const workspaceIdByWorktreeSlug = new Map<string, Map<string, string>>()
 const workspaceIdBySession = new Map<string, Map<string, string>>()
 const workspaceSyncs = new Map<string, Promise<void>>()
+const workspaceMappingVersions = new Map<string, ReturnType<typeof createSignal<number>>>()
+
+function workspaceMappingVersion(instanceId: string) {
+  let version = workspaceMappingVersions.get(instanceId)
+  if (!version) {
+    version = createSignal(0)
+    workspaceMappingVersions.set(instanceId, version)
+  }
+  return version
+}
+
+function publishWorkspaceMap(instanceId: string, map: Map<string, string>): void {
+  workspaceIdByWorktreeSlug.set(instanceId, map)
+  workspaceMappingVersion(instanceId)[1]((value) => value + 1)
+}
 
 async function getInstance(instanceId: string) {
   const { instances } = await import("./instances")
@@ -43,12 +58,20 @@ async function getInstance(instanceId: string) {
 
 function getCachedOpenCodeWorkspaceIdForWorktree(instanceId: string, slug: string): string | null {
   if (!slug || slug === "root") return null
+  workspaceMappingVersion(instanceId)[0]()
   return workspaceIdByWorktreeSlug.get(instanceId)?.get(slug) ?? null
 }
 
 function getCachedOpenCodeWorkspaceIdForSession(instanceId: string, sessionId: string): string | null {
-  return workspaceIdBySession.get(instanceId)?.get(sessionId)
-    ?? getCachedOpenCodeWorkspaceIdForWorktree(instanceId, getWorktreeSlugForSession(instanceId, sessionId))
+  return workspaceIdBySession.get(instanceId)?.get(sessionId) ?? null
+}
+
+function getCachedWorktreeSlugForOpenCodeWorkspaceId(instanceId: string, workspaceId: string): string | null {
+  workspaceMappingVersion(instanceId)[0]()
+  for (const [slug, candidate] of workspaceIdByWorktreeSlug.get(instanceId) ?? []) {
+    if (candidate === workspaceId) return slug
+  }
+  return null
 }
 
 function rememberOpenCodeWorkspaceIdForSession(instanceId: string, sessionId: string, workspaceId: string): void {
@@ -71,26 +94,28 @@ async function syncOpenCodeWorkspaces(instanceId: string): Promise<void> {
   const task = (async () => {
     const instance = await getInstance(instanceId)
     if (!instance?.client || !instance.folder) return
+    const { getNativeRootDirectory, getWorktrees } = await import("./worktrees")
+    const rootDirectory = getNativeRootDirectory(instanceId, instance.folder)
 
     const rootClient = getRootClient(instanceId) as any
     const workspaceApi = rootClient.experimental?.workspace
     if (!workspaceApi?.syncList || !workspaceApi?.list) {
       log.warn("OpenCode experimental workspace API unavailable", { instanceId })
-      workspaceIdByWorktreeSlug.set(instanceId, new Map())
+      publishWorkspaceMap(instanceId, new Map())
       return
     }
 
-    await withWorkspaceSyncTimeout(workspaceApi.syncList({ directory: instance.folder }))
-    const result = await withWorkspaceSyncTimeout<any>(workspaceApi.list({ directory: instance.folder }))
+    await withWorkspaceSyncTimeout(workspaceApi.syncList({ directory: rootDirectory }))
+    const result = await withWorkspaceSyncTimeout<any>(workspaceApi.list({ directory: rootDirectory }))
     const workspaces = Array.isArray(result?.data) ? (result.data as OpenCodeWorkspace[]) : []
     const next = mapOpenCodeWorkspacesToWorktreeSlugs(getWorktrees(instanceId), workspaces)
 
-    workspaceIdByWorktreeSlug.set(instanceId, next)
+    publishWorkspaceMap(instanceId, next)
   })()
     .catch((error) => {
       log.warn("Failed to sync OpenCode workspaces", { instanceId, error })
       if (!workspaceIdByWorktreeSlug.has(instanceId)) {
-        workspaceIdByWorktreeSlug.set(instanceId, new Map())
+        publishWorkspaceMap(instanceId, new Map())
       }
     })
     .finally(() => {
@@ -119,14 +144,23 @@ async function getOpenCodeWorkspaceIdForWorktree(instanceId: string, slug: strin
 async function getOpenCodeWorkspaceIdForSession(instanceId: string, sessionId: string): Promise<string | null> {
   const cached = getCachedOpenCodeWorkspaceIdForSession(instanceId, sessionId)
   if (cached) return cached
+  const { getWorktreeSlugForSession } = await import("./worktrees")
   const slug = getWorktreeSlugForSession(instanceId, sessionId)
   return getOpenCodeWorkspaceIdForWorktree(instanceId, slug)
+}
+
+async function getWorktreeSlugForOpenCodeWorkspaceId(instanceId: string, workspaceId: string): Promise<string | null> {
+  const cached = getCachedWorktreeSlugForOpenCodeWorkspaceId(instanceId, workspaceId)
+  if (cached) return cached
+  await syncOpenCodeWorkspaces(instanceId)
+  return getCachedWorktreeSlugForOpenCodeWorkspaceId(instanceId, workspaceId)
 }
 
 function clearOpenCodeWorkspaceCache(instanceId: string): void {
   workspaceSyncs.delete(instanceId)
   workspaceIdByWorktreeSlug.delete(instanceId)
   workspaceIdBySession.delete(instanceId)
+  workspaceMappingVersions.get(instanceId)?.[1]((value) => value + 1)
 }
 
 async function removeOpenCodeWorkspaceForWorktree(instanceId: string, slug: string): Promise<void> {
@@ -139,16 +173,20 @@ async function removeOpenCodeWorkspaceForWorktree(instanceId: string, slug: stri
   const workspaceApi = rootClient.experimental?.workspace
   if (!workspaceApi?.remove) return
 
-  await workspaceApi.remove({ directory: instance.folder, id: workspaceId })
+  const { getNativeRootDirectory } = await import("./worktrees")
+  await workspaceApi.remove({ directory: getNativeRootDirectory(instanceId, instance.folder), id: workspaceId })
   workspaceIdByWorktreeSlug.get(instanceId)?.delete(slug)
+  workspaceMappingVersion(instanceId)[1]((value) => value + 1)
 }
 
 export {
   clearOpenCodeWorkspaceCache,
   getCachedOpenCodeWorkspaceIdForSession,
   getCachedOpenCodeWorkspaceIdForWorktree,
+  getCachedWorktreeSlugForOpenCodeWorkspaceId,
   getOpenCodeWorkspaceIdForSession,
   getOpenCodeWorkspaceIdForWorktree,
+  getWorktreeSlugForOpenCodeWorkspaceId,
   forgetOpenCodeWorkspaceIdForSession,
   rememberOpenCodeWorkspaceIdForSession,
   reloadOpenCodeWorkspaces,

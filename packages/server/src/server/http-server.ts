@@ -9,6 +9,14 @@ import { connect as connectTls, type TLSSocket } from "tls"
 import { fetch, type Headers } from "undici"
 import type { Logger } from "../logger"
 import { WorkspaceManager } from "../workspaces/manager"
+import { acquireGitRepositoryLock } from "../workspaces/git-repository-lock"
+import { resolveRepoRoot } from "../workspaces/git-worktrees"
+import { createInstanceClient } from "../workspaces/instance-client"
+import {
+  acquireWorkspaceMutation,
+  isForbiddenDirectWorktreeMutation,
+  isPromptControlMutation,
+} from "./workspace-mutation-gate"
 
 import type { SettingsService } from "../settings/service"
 import { FileSystemBrowser } from "../filesystem/browser"
@@ -223,7 +231,17 @@ export function createHttpServer(deps: HttpServerDeps) {
       pathname.startsWith("/api/remote-proxy/sessions/") &&
       deps.authManager.isLoopbackRequest(request)
 
-    if (publicApiPaths.has(pathname) || publicPagePaths.has(pathname) || isLoopbackRemoteProxyDelete) {
+    const encodedPreviewToken = pathname.match(/^\/previews\/([^/]+)(?:\/|$)/)?.[1]
+    let isPreviewCapability = false
+    if (encodedPreviewToken) {
+      try {
+        isPreviewCapability = Boolean(deps.previewManager.get(decodeURIComponent(encodedPreviewToken)))
+      } catch {
+        // Malformed capability paths remain subject to normal authentication.
+      }
+    }
+
+    if (publicApiPaths.has(pathname) || publicPagePaths.has(pathname) || isLoopbackRemoteProxyDelete || isPreviewCapability) {
       done()
       return
     }
@@ -331,7 +349,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     voiceModeManager: deps.voiceModeManager,
   })
   registerBackgroundProcessRoutes(app, { backgroundProcessManager })
-  registerYoloRoutes(app, { yoloManager: deps.yoloManager })
+  registerYoloRoutes(app, { yoloManager: deps.yoloManager, workspaceManager: deps.workspaceManager })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger })
 
 
@@ -389,6 +407,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     },
     stop: () => {
       closeSseClients()
+      app.server.closeAllConnections?.()
       return app.close()
     },
   }
@@ -526,7 +545,12 @@ function setupPreviewWebSocketProxy(app: FastifyInstance, deps: PreviewWebSocket
 function registerInstanceProxyRoutes(app: FastifyInstance, deps: InstanceProxyDeps) {
   app.register(async (instance) => {
     instance.removeAllContentTypeParsers()
-    instance.addContentTypeParser("*", (req, body, done) => done(null, body))
+    instance.addContentTypeParser("*", { parseAs: "buffer", bodyLimit: INSTANCE_MUTATION_BODY_LIMIT }, (_req, body, done) => done(null, body))
+    instance.addHook("onRequest", (request, reply, done) => {
+      if (request.method === "GET" || request.method === "HEAD") return done()
+      armInstanceMutationUploadTimeout(request.raw, reply.raw)
+      done()
+    })
 
     const proxyBaseHandler = async (
       request: FastifyRequest<{ Params: { id: string } }>,
@@ -560,6 +584,19 @@ function registerInstanceProxyRoutes(app: FastifyInstance, deps: InstanceProxyDe
 }
 
 const INSTANCE_PROXY_HOST = "127.0.0.1"
+const INSTANCE_MUTATION_BODY_LIMIT = 16 * 1024 * 1024
+const INSTANCE_MUTATION_UPLOAD_TIMEOUT_MS = 30_000
+
+export function armInstanceMutationUploadTimeout(
+  request: Pick<FastifyRequest["raw"], "setTimeout" | "destroy">,
+  response: Pick<FastifyReply["raw"], "once">,
+  timeoutMs = INSTANCE_MUTATION_UPLOAD_TIMEOUT_MS,
+): void {
+  const clearTimeout = () => request.setTimeout(0)
+  request.setTimeout(timeoutMs, () => request.destroy())
+  response.once("finish", clearTimeout)
+  response.once("close", clearTimeout)
+}
 
 async function proxyWorkspaceRequest(args: {
   request: FastifyRequest
@@ -647,57 +684,129 @@ async function proxyWorkspaceRequest(args: {
 
   const normalizedSuffix = normalizeInstanceSuffix(args.pathSuffix)
   const queryIndex = (request.raw.url ?? "").indexOf("?")
-  const search = queryIndex >= 0 ? (request.raw.url ?? "").slice(queryIndex) : ""
+  const rawSearch = queryIndex >= 0 ? (request.raw.url ?? "").slice(queryIndex) : ""
+  const rootDirectory = await workspaceManager.resolveInstanceDirectory(workspaceId)
+  let workspaceIds: Set<string> | undefined
+  if (new URLSearchParams(rawSearch).has("workspace")) {
+    const client = createInstanceClient(workspaceManager, workspaceId, { directory: rootDirectory })
+    if (!client) return reply.code(502).send({ error: "Workspace instance is not ready" })
+    const { data = [] } = await client.experimental.workspace.list(
+      { directory: rootDirectory },
+      { throwOnError: true },
+    )
+    workspaceIds = new Set(data.map((entry) => entry.id))
+  }
+  let search: string
+  try {
+    search = normalizeInstanceSearch(rawSearch, rootDirectory, workspaceIds)
+  } catch (error) {
+    return reply.code(400).send({ error: error instanceof Error ? error.message : "Invalid workspace selector" })
+  }
   const targetUrl = `http://${INSTANCE_PROXY_HOST}:${port}${normalizedSuffix}${search}`
   const instanceAuthHeader = workspaceManager.getInstanceAuthorizationHeader(workspaceId)
+
+  if (isForbiddenDirectWorktreeMutation(request.method, normalizedSuffix)) {
+    return reply.code(403).send({ error: "Use the CodeNomad worktree transaction API" })
+  }
+
+  const mutating = request.method !== "GET" && request.method !== "HEAD" && !isPromptControlMutation(request.method, normalizedSuffix)
+  let releaseMutation = () => {}
+  let releaseRepository: (() => Promise<void>) | undefined
+  const admissionController = new AbortController()
+  const abortAdmission = () => admissionController.abort(new Error("Proxy client disconnected before mutation admission"))
+  if (mutating) {
+    request.raw.once("aborted", abortAdmission)
+    reply.raw.once("close", abortAdmission)
+    try {
+      releaseMutation = await acquireWorkspaceMutation(workspaceId, admissionController.signal)
+      admissionController.signal.throwIfAborted()
+      if (workspaceManager.get(workspaceId) !== workspace || workspaceManager.getInstancePort(workspaceId) !== port) {
+        throw new Error("Workspace instance changed while mutation was queued")
+      }
+      const { isGitRepo } = await resolveRepoRoot(workspace.path, logger)
+      if (isGitRepo) releaseRepository = await acquireGitRepositoryLock(workspace.path, admissionController.signal)
+      admissionController.signal.throwIfAborted()
+      if (workspaceManager.get(workspaceId) !== workspace || workspaceManager.getInstancePort(workspaceId) !== port) {
+        throw new Error("Workspace instance changed while repository mutation was queued")
+      }
+    } catch (error) {
+      releaseMutation()
+      throw error
+    } finally {
+      request.raw.removeListener("aborted", abortAdmission)
+      reply.raw.removeListener("close", abortAdmission)
+    }
+  }
+
+  let released = false
+  const release = () => {
+    if (released) return
+    released = true
+    reply.raw.removeListener("finish", release)
+    reply.raw.removeListener("close", release)
+    Promise.resolve(releaseRepository?.()).finally(releaseMutation).catch((error) => {
+      logger.error({ err: error, workspaceId }, "Failed to release workspace mutation")
+    })
+  }
+  if (mutating) {
+    reply.raw.once("finish", release)
+    reply.raw.once("close", release)
+  }
 
   logger.debug({ workspaceId, method: request.method, targetUrl }, "Proxying request to instance")
   if (logger.isLevelEnabled("trace")) {
     logger.trace({ workspaceId, targetUrl, body: request.body }, "Instance proxy payload")
   }
 
-  return reply.from(targetUrl, {
-    rewriteRequestHeaders: (_originalRequest, headers) => {
-      if (instanceAuthHeader) {
-        headers.authorization = instanceAuthHeader
-      }
-
-      if (logger.isLevelEnabled("trace")) {
-        const outgoing: Record<string, unknown> = {}
-        for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
-          outgoing[key] = value
+  try {
+    return await reply.from(targetUrl, {
+      rewriteRequestHeaders: (_originalRequest, headers) => {
+        delete headers.expect
+        if (instanceAuthHeader) {
+          headers.authorization = instanceAuthHeader
         }
 
-        // Redact sensitive headers.
-        for (const key of Object.keys(outgoing)) {
-          const lower = key.toLowerCase()
-          if (lower === "authorization" || lower === "cookie" || lower === "set-cookie") {
-            outgoing[key] = "<redacted>"
+        if (logger.isLevelEnabled("trace")) {
+          const outgoing: Record<string, unknown> = {}
+          for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
+            outgoing[key] = value
           }
+
+          // Redact sensitive headers.
+          for (const key of Object.keys(outgoing)) {
+            const lower = key.toLowerCase()
+            if (lower === "authorization" || lower === "cookie" || lower === "set-cookie") {
+              outgoing[key] = "<redacted>"
+            }
+          }
+
+          logger.trace(
+            {
+              workspaceId,
+              method: request.method,
+              targetUrl,
+              contentType: request.headers["content-type"],
+              body: bodyToJson(request.body),
+              headers: outgoing,
+            },
+            "Proxy -> OpenCode request",
+          )
         }
 
-        logger.trace(
-          {
-            workspaceId,
-            method: request.method,
-            targetUrl,
-            contentType: request.headers["content-type"],
-            body: bodyToJson(request.body),
-            headers: outgoing,
-          },
-          "Proxy -> OpenCode request",
-        )
-      }
-
-      return headers
-    },
-    onError: (proxyReply, { error }) => {
-      logger.error({ err: error, workspaceId, targetUrl }, "Failed to proxy workspace request")
-      if (!proxyReply.sent) {
-        proxyReply.code(502).send({ error: "Workspace instance proxy failed" })
-      }
-    },
-  })
+        return headers
+      },
+      onError: (proxyReply, { error }) => {
+        release()
+        logger.error({ err: error, workspaceId, targetUrl }, "Failed to proxy workspace request")
+        if (!proxyReply.sent) {
+          proxyReply.code(502).send({ error: "Workspace instance proxy failed" })
+        }
+      },
+    })
+  } catch (error) {
+    release()
+    throw error
+  }
 }
 
 function normalizeInstanceSuffix(pathSuffix: string | undefined) {
@@ -928,7 +1037,7 @@ function rewritePreviewBodyUrls(body: string, publicBase: string, kind: "html" |
     return rewriteCssPreviewUrls(body, publicBase)
   }
 
-  return rewriteCssPreviewUrls(
+  const rewritten = rewriteCssPreviewUrls(
     body
       .replace(/\b(src|href|action|poster|data)=(["'])\/(?!\/)([^"']*)\2/gi, (_match, attr: string, quote: string, pathValue: string) => {
         return `${attr}=${quote}${publicBase}/${pathValue}${quote}`
@@ -938,6 +1047,21 @@ function rewritePreviewBodyUrls(body: string, publicBase: string, kind: "html" |
       }),
     publicBase,
   )
+  const bridge = `<script>(function(){var enabled=false,last=null;function selector(el){var out=[];while(el&&el.nodeType===1&&out.length<5){var part=el.tagName.toLowerCase();if(el.id){out.unshift(part+'#'+CSS.escape(el.id));break}out.unshift(part);el=el.parentElement}return out.join(' > ')}function target(el){var r=el.getBoundingClientRect();return{pagePath:location.pathname+location.search+location.hash,tagName:el.tagName.toLowerCase(),text:(el.textContent||'').replace(/\\s+/g,' ').trim().slice(0,120)||undefined,role:el.getAttribute('role')||undefined,ariaLabel:el.getAttribute('aria-label')||undefined,selector:selector(el),rect:{x:r.x,y:r.y,width:r.width,height:r.height}}}function send(kind,el){parent.postMessage({type:'codenomad-preview-comment',kind:kind,target:el?target(el):undefined},location.ancestorOrigins&&location.ancestorOrigins[0]||'*')}addEventListener('message',function(e){if(e.source!==parent||e.data?.type!=='codenomad-preview-comment-mode')return;enabled=Boolean(e.data.enabled)});addEventListener('mousemove',function(e){if(!enabled||!(e.target instanceof Element)||e.target===last)return;last=e.target;send('hover',last)},true);addEventListener('mouseleave',function(){if(enabled)send('leave')},true);addEventListener('click',function(e){if(!enabled||!(e.target instanceof Element))return;e.preventDefault();e.stopPropagation();send('select',e.target)},true)})();</script>`
+  return /<\/body\s*>/i.test(rewritten) ? rewritten.replace(/<\/body\s*>/i, `${bridge}</body>`) : `${rewritten}${bridge}`
+}
+
+export function normalizeInstanceSearch(
+  search: string,
+  rootDirectory: string,
+  workspaceIds?: ReadonlySet<string>,
+): string {
+  const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search)
+  if (params.has("directory")) params.set("directory", rootDirectory)
+  const workspace = params.get("workspace")
+  if (workspace !== null && !workspaceIds?.has(workspace)) throw new Error("Invalid workspace selector")
+  const normalized = params.toString()
+  return normalized ? `?${normalized}` : ""
 }
 
 function rewriteCssPreviewUrls(body: string, publicBase: string): string {

@@ -3,6 +3,7 @@ use reqwest::blocking::RequestBuilder;
 
 pub(super) fn build_stream_client() -> Result<Client, OpenStreamError> {
     Client::builder()
+        .no_proxy()
         .connect_timeout(Duration::from_millis(STREAM_CONNECT_TIMEOUT_MS))
         .tcp_keepalive(Duration::from_millis(STREAM_TCP_KEEPALIVE_MS))
         // Note: reqwest's blocking client doesn't expose a per-read timeout.

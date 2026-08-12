@@ -18,6 +18,7 @@ import {
   setSessions,
 } from "./session-state.ts"
 import { reloadWorktrees } from "./worktrees.ts"
+import { setAuthoritativeSessionLocation } from "./session-location-authority.ts"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -221,6 +222,43 @@ describe("session request authority", () => {
 
       assert.equal(sessions().get(instanceId)?.has("new-session"), true)
       assert.equal(sessions().get(instanceId)?.has("old-session"), false)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("does not let a search response restore a pre-move session location", async () => {
+    const instanceId = "late-search-location", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const response = deferred<any>()
+    ;(client.session as any).list = () => response.promise
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[
+      sessionId,
+      { ...session(instanceId, sessionId), directory: "/repo", workspaceId: undefined },
+    ]])))
+
+    try {
+      const request = searchSessions(instanceId, "session")
+      setAuthoritativeSessionLocation(instanceId, sessionId, {
+        directory: "/repo-feature",
+        workspaceId: "workspace-feature",
+      })
+      setSessions((prev) => {
+        const next = new Map(prev)
+        const instanceSessions = new Map(next.get(instanceId))
+        instanceSessions.set(sessionId, {
+          ...instanceSessions.get(sessionId)!,
+          directory: "/repo-feature",
+          workspaceId: "workspace-feature",
+        })
+        next.set(instanceId, instanceSessions)
+        return next
+      })
+      response.resolve({ data: [{ ...apiSession(sessionId), directory: "/repo" }] })
+      await request
+
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.directory, "/repo-feature")
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.workspaceId, "workspace-feature")
     } finally {
       cleanup()
     }

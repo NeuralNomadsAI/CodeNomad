@@ -1,7 +1,7 @@
 import { Select } from "@kobalte/core/select"
 import { Dialog } from "@kobalte/core/dialog"
 import { For, Show, createMemo, createSignal } from "solid-js"
-import { ChevronDown, Copy, Trash2 } from "lucide-solid"
+import { ChevronDown, Copy, FolderOpen, Trash2 } from "lucide-solid"
 import type { WorktreeDescriptor } from "../../../server/src/api-types"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
@@ -15,10 +15,11 @@ import {
   getWorktrees,
   reloadWorktreeMap,
   reloadWorktrees,
-  setWorktreeSlugForParentSession,
 } from "../stores/worktrees"
+import { moveSessionToWorktree } from "../stores/session-worktree-binding"
 import { sessions } from "../stores/sessions"
 import { useI18n } from "../lib/i18n"
+import { openLocalDirectory, supportsLocalDirectoryOpen } from "../lib/native/native-functions"
 
 const log = getLogger("session")
 
@@ -205,6 +206,11 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
     }
   }
 
+  const handleOpenDirectory = async (directory: string) => {
+    if (await openLocalDirectory(directory, repoRoot())) return
+    showToastNotification({ message: t("instanceShell.worktree.openDirectory.error"), variant: "error" })
+  }
+
   const sanitizeDeleteError = (input: string) => {
     let sanitized = (input ?? "").trim()
     if (!sanitized) {
@@ -297,7 +303,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
       setCreateOpen(true)
       return
     }
-    await setWorktreeSlugForParentSession(props.instanceId, parentId(), value.slug)
+    await moveSessionToWorktree(props.instanceId, parentId(), value.slug)
   }
 
   return (
@@ -361,6 +367,24 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                   >
                     {displayPathFor(opt.directory)}
                   </span>
+                  <Show when={supportsLocalDirectoryOpen()}>
+                    <button
+                      type="button"
+                      class="session-item-close opacity-80 hover:opacity-100 hover:bg-surface-hover"
+                      aria-label={t("instanceShell.worktree.openDirectory.action")}
+                      title={t("instanceShell.worktree.openDirectory.action")}
+                      onPointerDown={(event) => {
+                        preventSelectPress(event)
+                        void handleOpenDirectory(opt.directory).finally(() => setIsOpen(false))
+                      }}
+                      onPointerUp={preventSelectPress}
+                      onMouseDown={preventSelectPress}
+                      onMouseUp={preventSelectPress}
+                      onClick={preventSelectPress}
+                    >
+                      <FolderOpen class="w-3 h-3" />
+                    </button>
+                  </Show>
                   <button
                     type="button"
                     class="session-item-close opacity-80 hover:opacity-100 hover:bg-surface-hover"
@@ -468,7 +492,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                       setIsCreating(true)
                       await createWorktree(props.instanceId, slug)
                       await reloadWorktrees(props.instanceId)
-                      await setWorktreeSlugForParentSession(props.instanceId, parentId(), slug)
+                      await moveSessionToWorktree(props.instanceId, parentId(), slug)
                       setCreateOpen(false)
                       showToastNotification({ message: `Created worktree ${slug}`, variant: "success" })
                     })()
@@ -549,10 +573,6 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                       await deleteWorktree(props.instanceId, target.slug, { force: forceDelete() })
                       await reloadWorktrees(props.instanceId)
                       await reloadWorktreeMap(props.instanceId)
-
-                      if (currentSlug() === target.slug) {
-                        await setWorktreeSlugForParentSession(props.instanceId, parentId(), "root")
-                      }
 
                       closeDeleteDialog()
                       showToastNotification({ message: `Deleted worktree ${target.slug}`, variant: "success" })

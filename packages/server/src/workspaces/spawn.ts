@@ -1,4 +1,5 @@
-import { spawnSync } from "child_process"
+import { execFile, spawnSync } from "child_process"
+import { promisify } from "node:util"
 import { statSync } from "fs"
 import path from "path"
 
@@ -15,6 +16,7 @@ const CODENOMAD_PLUGIN_FILE_SPEC_REGEX = new RegExp(
 )
 const WSL_PATH_ENV_KEYS = new Set(["NODE_EXTRA_CA_CERTS", WSL_PLUGIN_PATH_ENV])
 const WINDOWS_DIRECT_EXTENSIONS = new Set([".com", ".exe"])
+const execFileAsync = promisify(execFile)
 const DEFAULT_WINDOWS_PATHEXT = ".COM;.EXE;.BAT;.CMD"
 const WINDOWS_SHELL_NAMES = new Set([
   "bash",
@@ -89,6 +91,20 @@ export function resolveWslWorkingDirectory(folder: string, distro: string): WslW
 
   const windowsFolder = normalizeWindowsPath(folder)
   return windowsFolder ? { kind: "windows", path: windowsFolder } : null
+}
+
+export async function resolveWslNativePath(folder: string, distro: string): Promise<string> {
+  const workingDirectory = resolveWslWorkingDirectory(folder, distro)
+  if (!workingDirectory) throw new Error(`Unable to translate path for WSL distro "${distro}": ${folder}`)
+  if (workingDirectory.kind === "linux") return workingDirectory.path
+  const { stdout } = await execFileAsync(
+    "wsl.exe",
+    ["--distribution", distro, "--exec", "wslpath", "-au", workingDirectory.path],
+    { windowsHide: true },
+  )
+  const nativePath = stdout.trim()
+  if (!nativePath.startsWith("/")) throw new Error(`WSL returned an invalid native path for ${folder}`)
+  return nativePath
 }
 
 export function buildWindowsSpawnSpec(binaryPath: string, args: string[], options: BuildSpawnSpecOptions = {}): SpawnSpec {

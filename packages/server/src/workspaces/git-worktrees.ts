@@ -2,6 +2,7 @@ import path from "path"
 import { spawn } from "child_process"
 import type { WorktreeDescriptor } from "../api-types"
 import { promises as fsp } from "fs"
+import { realpath } from "node:fs/promises"
 
 export interface LogLike {
   debug?: (obj: any, msg?: string) => void
@@ -59,6 +60,15 @@ export async function resolveRepoRoot(folder: string, logger?: LogLike): Promise
 export async function isGitAvailable(folder: string): Promise<boolean> {
   const result = await runGit(["--version"], folder)
   return result.ok || !isGitUnavailableResult(result)
+}
+
+export async function resolveGitRepositoryKey(folder: string): Promise<string> {
+  const result = await runGit(["rev-parse", "--git-common-dir"], folder)
+  if (!result.ok || !result.stdout.trim()) return `workspace:${await realpath(folder).catch(() => path.resolve(folder))}`
+  const commonDir = result.stdout.trim()
+  const resolved = path.isAbsolute(commonDir) ? commonDir : path.resolve(folder, commonDir)
+  const canonical = await realpath(resolved).catch(() => path.resolve(resolved))
+  return `git:${process.platform === "win32" ? canonical.toLowerCase() : canonical}`
 }
 
 function parseWorktreePorcelain(output: string): Array<{ worktree: string; branch?: string; head?: string; detached?: boolean }> {
@@ -257,4 +267,15 @@ export async function removeWorktree(params: {
 
   // Best-effort cleanup of stale metadata.
   await runGit(["worktree", "prune"], workspaceFolder).catch(() => undefined)
+}
+
+export async function isRegisteredWorktree(workspaceFolder: string, directory: string): Promise<boolean> {
+  const result = await runGit(["worktree", "list", "--porcelain"], workspaceFolder)
+  if (!result.ok) throw result.error
+  const normalize = (value: string) => {
+    const resolved = path.resolve(value)
+    return process.platform === "win32" ? resolved.toLowerCase() : resolved
+  }
+  const target = normalize(directory)
+  return parseWorktreePorcelain(result.stdout).some((entry) => normalize(entry.worktree) === target)
 }

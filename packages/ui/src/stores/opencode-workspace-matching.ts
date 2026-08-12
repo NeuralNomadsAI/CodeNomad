@@ -9,6 +9,7 @@ function normalizeWorkspaceDirectory(directory: string | null | undefined): stri
   const trimmed = (directory ?? "").trim()
   if (!trimmed) return ""
   const normalized = trimmed.replace(/\\+/g, "/").replace(/\/+$/g, "")
+  if (/^[A-Za-z]:$/.test(normalized) && /^[A-Za-z]:[\\/]+$/.test(trimmed)) return `${normalized}/`
   if (/^[\\/]{2}/.test(trimmed) && !normalized.startsWith("//")) {
     return `/${normalized}`
   }
@@ -23,8 +24,35 @@ function normalizeWindowsWorkspaceDirectory(directory: string): string {
   return normalizeWorkspaceDirectory(directory).toLowerCase()
 }
 
+function workspaceDirectoriesEqual(left: string | null | undefined, right: string | null | undefined): boolean {
+  const normalizedLeft = normalizeWorkspaceDirectory(left)
+  const normalizedRight = normalizeWorkspaceDirectory(right)
+  if (normalizedLeft === normalizedRight) return true
+  return isWindowsWorkspaceDirectory(normalizedLeft)
+    && isWindowsWorkspaceDirectory(normalizedRight)
+    && normalizeWindowsWorkspaceDirectory(normalizedLeft) === normalizeWindowsWorkspaceDirectory(normalizedRight)
+}
+
+function findWorktreeSlugForDirectory(
+  worktrees: Pick<WorktreeDescriptor, "slug" | "directory" | "nativeDirectory">[],
+  target: string | null | undefined,
+): string | null {
+  const directory = normalizeWorkspaceDirectory(target)
+  if (!directory) return null
+  const windowsDirectory = isWindowsWorkspaceDirectory(directory) ? normalizeWindowsWorkspaceDirectory(directory) : null
+  return worktrees.find((worktree) => {
+    return [worktree.directory, worktree.nativeDirectory].some((value) => {
+      const candidate = normalizeWorkspaceDirectory(value)
+      if (candidate === directory) return true
+      return windowsDirectory !== null
+        && isWindowsWorkspaceDirectory(candidate)
+        && normalizeWindowsWorkspaceDirectory(candidate) === windowsDirectory
+    })
+  })?.slug ?? null
+}
+
 function mapOpenCodeWorkspacesToWorktreeSlugs(
-  worktrees: Pick<WorktreeDescriptor, "slug" | "directory">[],
+  worktrees: Pick<WorktreeDescriptor, "slug" | "directory" | "nativeDirectory">[],
   workspaces: OpenCodeWorkspaceLike[],
 ): Map<string, string> {
   const byDirectory = new Map<string, OpenCodeWorkspaceLike>()
@@ -41,11 +69,13 @@ function mapOpenCodeWorkspacesToWorktreeSlugs(
   const next = new Map<string, string>()
   for (const worktree of worktrees) {
     if (worktree.slug === "root") continue
-    const directory = normalizeWorkspaceDirectory(worktree.directory)
-    const workspace = byDirectory.get(directory) ?? (isWindowsWorkspaceDirectory(directory) ? byWindowsDirectory.get(normalizeWindowsWorkspaceDirectory(directory)) : undefined)
+    const workspace = [worktree.directory, worktree.nativeDirectory].map(normalizeWorkspaceDirectory).filter(Boolean)
+      .map((directory) => byDirectory.get(directory)
+        ?? (isWindowsWorkspaceDirectory(directory) ? byWindowsDirectory.get(normalizeWindowsWorkspaceDirectory(directory)) : undefined))
+      .find(Boolean)
     if (workspace?.id) next.set(worktree.slug, workspace.id)
   }
   return next
 }
 
-export { mapOpenCodeWorkspacesToWorktreeSlugs }
+export { findWorktreeSlugForDirectory, mapOpenCodeWorkspacesToWorktreeSlugs, workspaceDirectoriesEqual }

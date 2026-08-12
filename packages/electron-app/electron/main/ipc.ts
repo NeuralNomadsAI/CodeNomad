@@ -1,5 +1,7 @@
-import { BrowserWindow, Notification, dialog, ipcMain, powerSaveBlocker, type OpenDialogOptions } from "electron"
+import { BrowserWindow, Notification, dialog, ipcMain, powerSaveBlocker, shell, type OpenDialogOptions } from "electron"
+import { execFile } from "child_process"
 import fs from "fs"
+import pathUtils from "path"
 import { requestMicrophoneAccess } from "./permissions"
 import type { CliProcessManager, CliStatus } from "./process-manager"
 
@@ -16,6 +18,34 @@ interface DialogOpenRequest {
 interface DialogOpenResult {
   canceled: boolean
   paths: string[]
+}
+
+function gitWorktreePaths(repoRoot: string): Promise<string[]> {
+  return new Promise((resolve, reject) => {
+    execFile("git", ["-C", repoRoot, "worktree", "list", "--porcelain", "-z"], (error, stdout) => {
+      if (error) return reject(error)
+      resolve(stdout.split("\0").flatMap((entry) => entry.startsWith("worktree ") ? [entry.slice(9)] : []))
+    })
+  })
+}
+
+async function isRegisteredGitWorktree(repoRoot: string, path: string): Promise<boolean> {
+  const requested = fs.realpathSync.native(path)
+  const root = fs.realpathSync.native(repoRoot)
+  const registered = await gitWorktreePaths(root)
+  return registered.some((candidate) => {
+    try {
+      const resolved = fs.realpathSync.native(candidate)
+      const normalize = (value: string) => process.platform === "win32" ? value.toLowerCase() : value
+      const exact = normalize(resolved) === normalize(requested)
+      const relative = pathUtils.relative(resolved, requested)
+      const rootSubdirectory = normalize(requested) === normalize(root)
+        && relative !== ".." && !relative.startsWith(`..${pathUtils.sep}`) && !pathUtils.isAbsolute(relative)
+      return exact || rootSubdirectory
+    } catch {
+      return false
+    }
+  })
 }
 
 export function setupCliIPC(mainWindow: BrowserWindow, cliManager: CliProcessManager) {
@@ -86,6 +116,25 @@ export function setupCliIPC(mainWindow: BrowserWindow, cliManager: CliProcessMan
       }
     })
     return directories
+  })
+
+  ipcMain.handle("filesystem:openDirectory", async (event, path: unknown, repoRoot: unknown): Promise<{ ok: boolean }> => {
+    if (event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
+      throw new Error("Directory opening is unavailable from this frame")
+    }
+    if (
+      typeof path !== "string" || path.trim().length === 0
+      || typeof repoRoot !== "string" || repoRoot.trim().length === 0
+      || !fs.statSync(path).isDirectory()
+      || !await isRegisteredGitWorktree(repoRoot, path)
+    ) {
+      throw new Error("Directory not found")
+    }
+    const canonicalPath = fs.realpathSync.native(path)
+    if (!await isRegisteredGitWorktree(repoRoot, canonicalPath)) throw new Error("Directory not found")
+    const error = await shell.openPath(canonicalPath)
+    if (error) throw new Error(error)
+    return { ok: true }
   })
 
   ipcMain.handle("power:setWakeLock", async (_event, enabled: boolean): Promise<{ enabled: boolean }> => {

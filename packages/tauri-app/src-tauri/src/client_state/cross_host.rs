@@ -16,6 +16,7 @@ const RECOVERY_PREFIX: &str = "recovery.";
 const RECOVERY_SUFFIX: &str = ".claim";
 const RETIRED_PREFIX: &str = "retired.";
 const ACQUIRE_ATTEMPTS: usize = 10;
+const LEGACY_PARTICIPANT_GRACE: std::time::Duration = std::time::Duration::from_millis(50);
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -229,7 +230,7 @@ impl Registration {
             let legacy_blocked = legacy_electron_data
                 .filter(|_| primary_candidate)
                 .map(|path| {
-                    has_live_legacy_electron_with(
+                    has_live_legacy_electron_with_grace(
                         path,
                         election_directory,
                         pid_alive,
@@ -305,7 +306,7 @@ impl Registration {
             .legacy_electron_data
             .as_deref()
             .map(|path| {
-                has_live_legacy_electron_with(
+                has_live_legacy_electron_with_grace(
                     path,
                     &self.election_directory,
                     pid_is_alive,
@@ -720,6 +721,34 @@ fn has_live_legacy_electron_with(
         }
     }
     Ok(false)
+}
+
+fn has_live_legacy_electron_with_grace(
+    directory: &Path,
+    election_directory: &Path,
+    pid_alive: impl Fn(u32) -> bool + Copy,
+    identity: impl Fn(u32) -> Option<String> + Copy,
+    expected_electron: impl Fn(u32) -> Option<bool> + Copy,
+) -> Result<bool, String> {
+    let blocked = has_live_legacy_electron_with(
+        directory,
+        election_directory,
+        pid_alive,
+        identity,
+        expected_electron,
+    )?;
+    if !blocked {
+        return Ok(false);
+    }
+    // ponytail: one bounded retry closes the modern participant-publication race.
+    std::thread::sleep(LEGACY_PARTICIPANT_GRACE);
+    has_live_legacy_electron_with(
+        directory,
+        election_directory,
+        pid_alive,
+        identity,
+        expected_electron,
+    )
 }
 
 fn expected_electron_process(pid: u32) -> Option<bool> {
@@ -1409,6 +1438,34 @@ mod tests {
             |_| true,
             |_| None,
             |_| None,
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn legacy_check_retries_after_a_modern_participant_is_published() {
+        let election = tempfile::tempdir().unwrap();
+        let legacy = tempfile::tempdir().unwrap();
+        let upgraded = owner(703, "electron", "electron-start");
+        let participant = participant_path(election.path(), &upgraded);
+        let published = std::cell::Cell::new(false);
+        fs::write(
+            legacy.path().join("client-state.running.703.electron.json"),
+            serialize_owner(&upgraded).unwrap(),
+        )
+        .unwrap();
+
+        assert!(!has_live_legacy_electron_with_grace(
+            legacy.path(),
+            election.path(),
+            |_| {
+                if !published.replace(true) {
+                    publish_participant(&participant, &upgraded).unwrap();
+                }
+                true
+            },
+            |_| Some("electron-start".to_string()),
+            |_| Some(true),
         )
         .unwrap());
     }

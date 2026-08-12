@@ -4,9 +4,12 @@ import path from "path"
 import { randomBytes } from "crypto"
 import type { EventBus } from "../events/bus"
 import type { WorkspaceManager } from "../workspaces/manager"
-import { createInstanceClient } from "../workspaces/instance-client"
 import type { Logger } from "../logger"
 import type { BackgroundProcess, BackgroundProcessStatus, BackgroundProcessTerminalReason } from "../api-types"
+import { resolveNativeSessionScope } from "../workspaces/native-session-scope"
+import { acquireGitRepositoryLock } from "../workspaces/git-repository-lock"
+import { resolveRepoRoot } from "../workspaces/git-worktrees"
+import { acquireWorkspaceMutation } from "../server/workspace-mutation-gate"
 
 const ROOT_DIR = ".codenomad/background_processes"
 const INDEX_FILE = "index.json"
@@ -626,26 +629,34 @@ export class BackgroundProcessManager {
     const notify = record.notify
     if (!notify || !record.terminalReason) return
 
-    const client = createInstanceClient(this.deps.workspaceManager, workspaceId, {
-      directory: notify.directory,
-    })
-    if (!client) {
-      throw new Error("Workspace instance is not ready")
+    const releaseMutation = await acquireWorkspaceMutation(workspaceId)
+    let releaseRepository: (() => Promise<void>) | undefined
+    try {
+      const workspaceRecord = this.deps.workspaceManager.get(workspaceId)
+      if (!workspaceRecord) throw new Error("Workspace instance is not ready")
+      if ((await resolveRepoRoot(workspaceRecord.path, this.deps.logger)).isGitRepo) {
+        releaseRepository = await acquireGitRepositoryLock(workspaceRecord.path)
+      }
+      const { client, workspace } = await resolveNativeSessionScope(
+        this.deps.workspaceManager,
+        workspaceId,
+        notify.sessionID,
+      )
+      await client.session.promptAsync(
+        {
+          sessionID: notify.sessionID,
+          ...(workspace ? { workspace } : {}),
+          parts: [{ type: "text", text: this.buildSyntheticCompletionPrompt(record), synthetic: true }],
+        },
+        { throwOnError: true },
+      )
+    } finally {
+      try {
+        await releaseRepository?.()
+      } finally {
+        releaseMutation()
+      }
     }
-
-    await client.session.promptAsync(
-      {
-        sessionID: notify.sessionID,
-        parts: [
-          {
-            type: "text",
-            text: this.buildSyntheticCompletionPrompt(record),
-            synthetic: true,
-          },
-        ],
-      },
-      { throwOnError: true },
-    )
   }
 
   private buildCompletionPrompt(record: PersistedBackgroundProcess): string {

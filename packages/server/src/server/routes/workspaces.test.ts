@@ -3,7 +3,7 @@ import { describe, it } from "node:test"
 import Fastify from "fastify"
 
 import type { WorkspaceDescriptor } from "../../api-types"
-import type { WorkspaceManager } from "../../workspaces/manager"
+import { WorkspaceInUseError, type WorkspaceManager } from "../../workspaces/manager"
 import { registerWorkspaceRoutes } from "./workspaces"
 
 describe("workspace routes", () => {
@@ -122,5 +122,29 @@ describe("workspace routes", () => {
     finishDeletion()
     assert.equal((await cancellation).statusCode, 204)
     await app.close()
+  })
+
+  it("rejects clone replacement while the destination is admitted by a workspace", async () => {
+    const app = Fastify({ logger: false })
+    let entered = false
+    const workspaceManager = {
+      withWorkspaceExclusive: async (_path: string, _excludingId: string | undefined, operation: () => Promise<unknown>) => {
+        entered = true
+        throw new WorkspaceInUseError("Clone destination is used by a live workspace")
+      },
+    } as unknown as WorkspaceManager
+    registerWorkspaceRoutes(app, { workspaceManager })
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/workspaces/clone",
+        payload: { repositoryUrl: "https://example.invalid/repo.git", destinationPath: process.cwd(), cleanup: true },
+      })
+      assert.equal(entered, true)
+      assert.equal(response.statusCode, 409)
+      assert.match(response.json().error, /live workspace/)
+    } finally {
+      await app.close()
+    }
   })
 })

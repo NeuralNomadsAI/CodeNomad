@@ -65,6 +65,9 @@ export function mapSdkSessionRetry(status: SDKSessionStatus | null | undefined):
 export interface Session
   extends Omit<SDKSession, "projectID" | "directory" | "parentID" | "slug" | "model"> {
   instanceId: string // Client-specific field
+  projectId?: string
+  workspaceId?: string
+  directory?: string
   parentId: string | null // Client-specific field (override parentID)
   agent: string // Client-specific field
   model: {
@@ -94,6 +97,9 @@ export function createClientSession(
   return {
     ...sdkSession,
     instanceId,
+    projectId: sdkSession.projectID,
+    workspaceId: sdkSession.workspaceID,
+    directory: sdkSession.directory,
     parentId: sdkSession.parentID || null,
     agent,
     model,

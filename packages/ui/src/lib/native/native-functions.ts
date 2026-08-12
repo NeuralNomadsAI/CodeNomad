@@ -1,7 +1,12 @@
-import { canUseNativeDialogs, isElectronHost, isTauriHost } from "../runtime-env"
+import { invoke } from "@tauri-apps/api/core"
+import { canOpenLocalDirectory, canUseNativeDialogs, isElectronHost, isTauriHost } from "../runtime-env"
+import { getLogger } from "../logger"
 import type { NativeDialogOptions } from "./types"
 import { openElectronNativeDialog } from "./electron/functions"
 import { openTauriNativeDialog } from "./tauri/functions"
+import { invokeWithNativeClientStateAccess } from "./client-state"
+
+const log = getLogger("actions")
 
 export type { NativeDialogOptions, NativeDialogFilter, NativeDialogMode } from "./types"
 
@@ -47,4 +52,28 @@ export async function openNativeFileDialogs(options?: Omit<NativeDialogOptions, 
   const result = await openNativeDialog({ mode: "file", multiple: true, ...(options ?? {}) })
   if (!result) return []
   return Array.isArray(result) ? result : [result]
+}
+
+export function supportsLocalDirectoryOpen(): boolean {
+  return canOpenLocalDirectory()
+}
+
+export async function openLocalDirectory(path: string, repoRoot: string): Promise<boolean> {
+  const directory = path.trim()
+  const root = repoRoot.trim()
+  if (!directory || !root || !canOpenLocalDirectory()) return false
+
+  try {
+    if (isElectronHost()) {
+      const result = await window.electronAPI?.openDirectory?.(directory, root)
+      return result?.ok === true
+    }
+    if (isTauriHost()) {
+      await invokeWithNativeClientStateAccess("open_local_directory", { path: directory, repoRoot: root })
+      return true
+    }
+  } catch (error) {
+    log.error("[native] failed to open local directory", error)
+  }
+  return false
 }

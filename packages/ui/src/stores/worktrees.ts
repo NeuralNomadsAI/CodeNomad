@@ -5,6 +5,10 @@ import { getSessionRoot, sessions } from "./session-state"
 import { getLogger } from "../lib/logger"
 import { getCodeNomadSessionMetadata, setSessionWorktreeSlug } from "./session-metadata"
 import type { WorktreeReadyEvent } from "../lib/sse-manager"
+import { findWorktreeSlugForDirectory } from "./opencode-workspace-matching"
+import { tGlobal } from "../lib/i18n"
+import { messageStoreBus } from "./message-v2/bus"
+import { getCachedWorktreeSlugForOpenCodeWorkspaceId } from "./opencode-workspaces"
 
 const log = getLogger("api")
 
@@ -16,6 +20,42 @@ const worktreeRequests = new Map<string, Promise<void>>()
 const worktreeReadyRefreshes = new Map<string, Promise<void>>()
 const mapLoads = new Map<string, Promise<void>>()
 const mapMigrations = new Map<string, Promise<void>>()
+const mapUpdates = new Map<string, Promise<void>>()
+const worktreeDeletions = new Set<string>()
+const lifecycleGenerations = new Map<string, number>()
+
+function lifecycleGeneration(instanceId: string): number {
+  return lifecycleGenerations.get(instanceId) ?? 0
+}
+
+function isCurrentLifecycle(instanceId: string, generation: number): boolean {
+  return lifecycleGeneration(instanceId) === generation
+}
+
+function clearWorktreeState(instanceId: string): void {
+  lifecycleGenerations.set(instanceId, lifecycleGeneration(instanceId) + 1)
+  for (const pending of [worktreeRequests, worktreeReadyRefreshes, mapLoads, mapMigrations, mapUpdates]) pending.delete(instanceId)
+  for (const key of worktreeDeletions) {
+    if (key.startsWith(`${instanceId}:`)) worktreeDeletions.delete(key)
+  }
+  setWorktreesByInstance((current) => {
+    const next = new Map(current)
+    next.delete(instanceId)
+    return next
+  })
+  setWorktreeMapByInstance((current) => {
+    const next = new Map(current)
+    next.delete(instanceId)
+    return next
+  })
+  setGitRepoStatusByInstance((current) => {
+    const next = new Map(current)
+    next.delete(instanceId)
+    return next
+  })
+}
+
+messageStoreBus.onInstanceDestroyed(clearWorktreeState)
 
 type WorktreeReadyRefresh = (instanceId: string) => Promise<void>
 
@@ -31,10 +71,12 @@ function normalizeMap(input?: WorktreeMap | null): WorktreeMap {
 }
 
 async function queueWorktreeRequest(instanceId: string, initial: boolean): Promise<void> {
+  const generation = lifecycleGeneration(instanceId)
   const previous = worktreeRequests.get(instanceId)
   const task = (previous?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
     try {
       const response = await serverApi.fetchWorktrees(instanceId)
+      if (!isCurrentLifecycle(instanceId, generation)) return
       setWorktreesByInstance((prev) => {
         const next = new Map(prev)
         next.set(instanceId, response.worktrees ?? [])
@@ -107,6 +149,7 @@ async function handleWorktreeReady(
   },
 ): Promise<void> {
   if (!instanceId) return
+  const generation = lifecycleGeneration(instanceId)
 
   log.info("OpenCode worktree ready", {
     instanceId,
@@ -117,6 +160,7 @@ async function handleWorktreeReady(
   const previous = worktreeReadyRefreshes.get(instanceId)
   const task = (previous?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
     await refreshWorktrees(instanceId)
+    if (!isCurrentLifecycle(instanceId, generation)) return
     await refreshWorkspaces(instanceId)
   })
 
@@ -155,31 +199,32 @@ async function deleteWorktree(instanceId: string, slug: string, options?: { forc
   if (!trimmed || trimmed === "root") {
     throw new Error("Invalid worktree")
   }
-  await moveSessionsFromDeletedWorktree(instanceId, trimmed).catch((error) => {
-    log.warn("Failed to move sessions from deleted worktree", { instanceId, slug: trimmed, error })
-  })
-  await import("./opencode-workspaces").then(({ removeOpenCodeWorkspaceForWorktree }) => removeOpenCodeWorkspaceForWorktree(instanceId, trimmed)).catch((error) => {
-    log.warn("Failed to remove OpenCode workspace for deleted worktree", { instanceId, slug: trimmed, error })
-  })
-  await serverApi.deleteWorktree(instanceId, trimmed, options)
-  await import("./opencode-workspaces").then(({ reloadOpenCodeWorkspaces }) => reloadOpenCodeWorkspaces(instanceId)).catch((error) => {
-    log.warn("Failed to sync OpenCode workspaces after worktree deletion", { instanceId, slug: trimmed, error })
-  })
+  const deletionKey = `${instanceId}:${trimmed}`
+  if (worktreeDeletions.has(deletionKey)) throw new Error(tGlobal("instanceShell.worktree.moveFailed"))
+  worktreeDeletions.add(deletionKey)
+  try {
+    await serverApi.deleteWorktree(instanceId, trimmed, options)
+    await Promise.all([reloadWorktrees(instanceId), reloadWorktreeMap(instanceId)])
+    await import("./opencode-workspaces").then(({ removeOpenCodeWorkspaceForWorktree }) => removeOpenCodeWorkspaceForWorktree(instanceId, trimmed)).catch((error) => {
+      log.warn("Failed to remove OpenCode workspace for deleted worktree", { instanceId, slug: trimmed, error })
+    })
+    await import("./opencode-workspaces").then(({ reloadOpenCodeWorkspaces }) => reloadOpenCodeWorkspaces(instanceId)).catch((error) => {
+      log.warn("Failed to sync OpenCode workspaces after worktree deletion", { instanceId, slug: trimmed, error })
+    })
+  } catch (error) {
+    await Promise.all([
+      import("./session-api").then(({ fetchSessions }) => fetchSessions(instanceId, { reset: false, strictStatus: true })),
+      reloadWorktrees(instanceId),
+      reloadWorktreeMap(instanceId),
+    ]).catch(() => undefined)
+    throw error
+  } finally {
+    worktreeDeletions.delete(deletionKey)
+  }
 }
 
-async function moveSessionsFromDeletedWorktree(instanceId: string, slug: string): Promise<void> {
-  const instanceSessions = sessions().get(instanceId)
-  if (!instanceSessions) return
-
-  const parentSessionIds = Array.from(instanceSessions.values())
-    .filter((session) => !session.parentId)
-    .filter((session) => getWorktreeSlugForParentSession(instanceId, session.id) === slug)
-    .map((session) => session.id)
-
-  for (const parentSessionId of parentSessionIds) {
-    await setSessionWorktreeSlug(instanceId, parentSessionId, "root")
-    await removeLegacyParentSessionMapping(instanceId, parentSessionId)
-  }
+function isWorktreeDeletionInProgress(instanceId: string, slug: string): boolean {
+  return worktreeDeletions.has(`${instanceId}:${slug}`)
 }
 
 async function ensureWorktreeMapLoaded(instanceId: string): Promise<void> {
@@ -188,9 +233,11 @@ async function ensureWorktreeMapLoaded(instanceId: string): Promise<void> {
   const existing = mapLoads.get(instanceId)
   if (existing) return existing
 
+  const generation = lifecycleGeneration(instanceId)
   const task = serverApi
     .readWorktreeMap(instanceId)
     .then((map) => {
+      if (!isCurrentLifecycle(instanceId, generation)) return
       setWorktreeMapByInstance((prev) => {
         const next = new Map(prev)
         next.set(instanceId, normalizeMap(map))
@@ -206,6 +253,7 @@ async function ensureWorktreeMapLoaded(instanceId: string): Promise<void> {
       })
     })
     .catch((error) => {
+      if (!isCurrentLifecycle(instanceId, generation)) return
       log.warn("Failed to load worktree map", { instanceId, error })
       setWorktreeMapByInstance((prev) => {
         const next = new Map(prev)
@@ -223,9 +271,11 @@ async function ensureWorktreeMapLoaded(instanceId: string): Promise<void> {
 
 async function reloadWorktreeMap(instanceId: string): Promise<void> {
   if (!instanceId) return
+  const generation = lifecycleGeneration(instanceId)
   await serverApi
     .readWorktreeMap(instanceId)
     .then((map) => {
+      if (!isCurrentLifecycle(instanceId, generation)) return
       setWorktreeMapByInstance((prev) => {
         const next = new Map(prev)
         next.set(instanceId, normalizeMap(map))
@@ -239,6 +289,11 @@ async function reloadWorktreeMap(instanceId: string): Promise<void> {
 
 function getWorktrees(instanceId: string): WorktreeDescriptor[] {
   return worktreesByInstance().get(instanceId) ?? []
+}
+
+function getNativeRootDirectory(instanceId: string, fallback = ""): string {
+  const root = getWorktrees(instanceId).find((worktree) => worktree.slug === "root")
+  return root?.nativeDirectory ?? root?.directory ?? fallback
 }
 
 function getWorktreeMap(instanceId: string): WorktreeMap {
@@ -263,31 +318,7 @@ function normalizeWorktreeSlug(instanceId: string, slug: string): string {
 
 async function pruneWorktreeMap(instanceId: string): Promise<boolean> {
   const current = getWorktreeMap(instanceId)
-  const available = new Set(getWorktrees(instanceId).map((wt) => wt.slug))
-  available.add("root")
-
-  let changed = false
-  let nextDefault = current.defaultWorktreeSlug || "root"
-  if (!available.has(nextDefault)) {
-    nextDefault = "root"
-    changed = true
-  }
-
-  const nextMapping: Record<string, string> = { ...(current.parentSessionWorktreeSlug ?? {}) }
-  for (const [sessionId, slug] of Object.entries(nextMapping)) {
-    if (!available.has(slug)) {
-      delete nextMapping[sessionId]
-      changed = true
-    }
-  }
-
-  if (!changed) return false
-
-  const next: WorktreeMap = {
-    version: 1,
-    defaultWorktreeSlug: nextDefault,
-    parentSessionWorktreeSlug: nextMapping,
-  }
+  const next = await serverApi.pruneWorktreeMap(instanceId)
 
   setWorktreeMapByInstance((prev) => {
     const map = new Map(prev)
@@ -295,11 +326,7 @@ async function pruneWorktreeMap(instanceId: string): Promise<boolean> {
     return map
   })
 
-  await serverApi.writeWorktreeMap(instanceId, next).catch((error) => {
-    log.warn("Failed to persist pruned worktree map", { instanceId, error })
-  })
-
-  return true
+  return JSON.stringify(current) !== JSON.stringify(next)
 }
 
 function getDefaultWorktreeSlug(instanceId: string): string {
@@ -311,13 +338,23 @@ function getParentSessionId(instanceId: string, sessionId: string): string {
 }
 
 function getWorktreeSlugForParentSession(instanceId: string, parentSessionId: string): string {
+  const session = sessions().get(instanceId)?.get(parentSessionId)
+  const nativeSlug = session?.workspaceId
+    ? getCachedWorktreeSlugForOpenCodeWorkspaceId(instanceId, session.workspaceId)
+      ?? findWorktreeSlugForDirectory(getWorktrees(instanceId), session.directory)
+    : null
+  if (nativeSlug) return nativeSlug
+  if (session?.workspaceId) return "root"
+
   const metadataSlug = getCodeNomadSessionMetadata(instanceId, parentSessionId).worktreeSlug
   if (metadataSlug) {
     return normalizeWorktreeSlug(instanceId, metadataSlug)
   }
 
   const map = getWorktreeMap(instanceId)
-  const candidate = map.parentSessionWorktreeSlug[parentSessionId] ?? "root"
+  const candidate = map.parentSessionWorktreeSlug[parentSessionId]
+    ?? findWorktreeSlugForDirectory(getWorktrees(instanceId), session?.directory)
+    ?? "root"
   return normalizeWorktreeSlug(instanceId, candidate)
 }
 
@@ -333,33 +370,33 @@ async function setWorktreeSlugForParentSession(
   _options: { currentSlug?: string } = {},
 ): Promise<void> {
   await ensureWorktreeMapLoaded(instanceId)
-  const current = getWorktreeMap(instanceId)
   const normalizedSlug = normalizeWorktreeSlug(instanceId, slug)
   await setSessionWorktreeSlug(instanceId, parentSessionId, normalizedSlug)
-  await removeLegacyParentSessionMapping(instanceId, parentSessionId, current)
+  await removeLegacyParentSessionMapping(instanceId, parentSessionId)
 }
 
 async function removeParentSessionMapping(instanceId: string, parentSessionId: string): Promise<void> {
   await ensureWorktreeMapLoaded(instanceId)
-  const current = getWorktreeMap(instanceId)
   await setSessionWorktreeSlug(instanceId, parentSessionId, "root")
-  await removeLegacyParentSessionMapping(instanceId, parentSessionId, current)
+  await removeLegacyParentSessionMapping(instanceId, parentSessionId)
 }
 
-async function removeLegacyParentSessionMapping(instanceId: string, parentSessionId: string, current = getWorktreeMap(instanceId)): Promise<void> {
-  if (!current.parentSessionWorktreeSlug[parentSessionId]) return
-  const nextMapping = { ...(current.parentSessionWorktreeSlug ?? {}) }
-  delete nextMapping[parentSessionId]
-  const next: WorktreeMap = { ...current, parentSessionWorktreeSlug: nextMapping }
-  setWorktreeMapByInstance((prev) => {
-    const map = new Map(prev)
-    map.set(instanceId, next)
-    return map
+async function removeLegacyParentSessionMapping(instanceId: string, parentSessionId: string): Promise<void> {
+  const task = (mapUpdates.get(instanceId) ?? Promise.resolve()).catch(() => undefined).then(async () => {
+    await ensureWorktreeMapLoaded(instanceId)
+    const current = getWorktreeMap(instanceId)
+    if (!current.parentSessionWorktreeSlug[parentSessionId]) return
+    const next = await serverApi.removeWorktreeMapSession(instanceId, parentSessionId)
+    setWorktreeMapByInstance((prev) => {
+      const map = new Map(prev)
+      map.set(instanceId, next)
+      return map
+    })
+  }).finally(() => {
+    if (mapUpdates.get(instanceId) === task) mapUpdates.delete(instanceId)
   })
-
-  await serverApi.writeWorktreeMap(instanceId, next).catch((error) => {
-    log.warn("Failed to persist legacy worktree mapping removal", { instanceId, parentSessionId, error })
-  })
+  mapUpdates.set(instanceId, task)
+  return task
 }
 
 async function migrateLegacyWorktreeMapToSessionMetadata(instanceId: string): Promise<void> {
@@ -410,10 +447,7 @@ async function pruneStaleLegacyWorktreeMapEntries(instanceId: string): Promise<v
 }
 
 function getWorktreeSlugForDirectory(instanceId: string, directory: string | undefined): string | null {
-  if (!directory) return null
-  const list = getWorktrees(instanceId)
-  const match = list.find((wt) => wt.directory === directory)
-  return match?.slug ?? null
+  return findWorktreeSlugForDirectory(getWorktrees(instanceId), directory)
 }
 
 export {
@@ -427,6 +461,7 @@ export {
   ensureWorktreeMapLoaded,
   getGitRepoStatus,
   getWorktrees,
+  getNativeRootDirectory,
   getWorktreeMap,
   getDefaultWorktreeSlug,
   getParentSessionId,
@@ -437,6 +472,7 @@ export {
   migrateLegacyWorktreeMapToSessionMetadata,
   pruneStaleLegacyWorktreeMapEntries,
   removeLegacyParentSessionMapping,
+  isWorktreeDeletionInProgress,
   getWorktreeSlugForDirectory,
   createWorktree,
   deleteWorktree,

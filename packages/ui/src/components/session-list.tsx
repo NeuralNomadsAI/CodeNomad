@@ -14,7 +14,6 @@ import { showConfirmDialog } from "../stores/alerts"
 import {
   deleteSession,
   ensureSessionAncestorsExpanded,
-  getVisibleSessionIds,
   isSessionExpanded,
   loadMessages,
   loading,
@@ -33,11 +32,19 @@ import {
   isSessionSearchLoading,
 } from "../stores/sessions"
 import { getGitRepoStatus, getWorktreeSlugForParentSession } from "../stores/worktrees"
-import { collectSessionThreadIds, findSessionThread, flattenVisibleSessionThreads, sortSessionIdsDeepestFirst } from "../stores/session-tree"
+import {
+  collectSessionThreadIds,
+  findSessionThread,
+  flattenVisibleSessionThreads,
+  projectSessionThreads,
+  sortSessionIdsDeepestFirst,
+  type SessionThreadSortMode,
+} from "../stores/session-tree"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
 import { useConfig } from "../stores/preferences"
 import { isSessionListViewportAttached, shouldRenderSessionRows } from "./session-list-visibility"
+import { filterSessionThreads, getSessionDeletionFallback, registerSessionListProjection } from "./session-list-projection"
 const log = getLogger("session")
 
 
@@ -53,6 +60,8 @@ interface SessionListProps {
   headerContent?: JSX.Element
   footerContent?: JSX.Element
   enableFilterBar?: boolean
+  sortMode: SessionThreadSortMode
+  worktreeFilter: string | null
 }
 
 function formatSessionStatus(status: SessionStatus): string {
@@ -179,23 +188,6 @@ const SessionList: Component<SessionListProps> = (props) => {
     return title || t("sessionList.session.untitled")
   }
 
-  const sessionMatchesQuery = (sessionId: string, query: string) => {
-    if (!query) return true
-    const label = normalizeSessionLabel(sessionId).toLowerCase()
-    if (label.includes(query)) return true
-    return sessionId.toLowerCase().includes(query)
-  }
-
-  const filterThreadTree = (thread: SessionThread, query: string): SessionThread | null => {
-    const matchingChildren: SessionThread[] = []
-    for (const child of thread.children) {
-      const filteredChild = filterThreadTree(child, query)
-      if (filteredChild !== null) matchingChildren.push(filteredChild)
-    }
-    if (!sessionMatchesQuery(thread.session.id, query) && matchingChildren.length === 0) return null
-    return { ...thread, children: matchingChildren }
-  }
-
   const filteredThreads = createMemo<SessionThread[]>(() => {
     const query = normalizedQuery()
     if (!query) return props.threads
@@ -206,18 +198,20 @@ const SessionList: Component<SessionListProps> = (props) => {
       return getSessionSearchThreads(props.instanceId)
     }
 
-    const result: SessionThread[] = []
-    for (const thread of props.threads) {
-      const filtered = filterThreadTree(thread, query)
-      if (filtered !== null) result.push(filtered)
-    }
-    return result
+    return filterSessionThreads(props.threads, query, (thread) => normalizeSessionLabel(thread.session.id))
   })
+
+  const projectedThreads = createMemo(() => projectSessionThreads(filteredThreads(), {
+    sort: props.sortMode,
+    worktree: props.worktreeFilter,
+    getLabel: (thread) => normalizeSessionLabel(thread.session.id),
+    getWorktree: (thread) => getWorktreeSlugForParentSession(props.instanceId, thread.session.id),
+  }))
 
   const visibleProjection = createMemo(() => {
     const expandAll = Boolean(normalizedQuery())
     const rows = flattenVisibleSessionThreads(
-      filteredThreads(),
+      projectedThreads(),
       (sessionId) => expandAll || isSessionExpanded(props.instanceId, sessionId),
     )
     const ids: string[] = []
@@ -230,6 +224,8 @@ const SessionList: Component<SessionListProps> = (props) => {
     })
     return { ids, rowsById, indexById }
   })
+  const unregisterProjection = registerSessionListProjection(props.instanceId, () => visibleProjection().ids)
+  onCleanup(unregisterProjection)
   const keptMountedIndexes = createMemo(() => {
     const sessionId = focusedSessionId()
     if (!sessionId) return undefined
@@ -245,8 +241,16 @@ const SessionList: Component<SessionListProps> = (props) => {
         collectIds(thread.children)
       }
     }
-    collectIds(filteredThreads())
+    collectIds(projectedThreads())
     return ids
+  })
+
+  createEffect(() => {
+    const matching = new Set(allMatchingSessionIds())
+    setSelectedSessionIds((selected) => {
+      if (Array.from(selected).every((sessionId) => matching.has(sessionId))) return selected
+      return new Set(Array.from(selected).filter((sessionId) => matching.has(sessionId)))
+    })
   })
 
   const selectedCount = createMemo(() => selectedSessionIds().size)
@@ -317,7 +321,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     let fallbackSessionId: string | undefined
 
     if (shouldSelectFallback) {
-      const visible = getVisibleSessionIds(props.instanceId)
+      const visible = visibleProjection().ids
       const currentIndex = visible.indexOf(sessionId)
       const remaining = visible.filter((id) => id !== sessionId)
 
@@ -423,13 +427,8 @@ const SessionList: Component<SessionListProps> = (props) => {
   }
 
   const getSelectableThreadIds = (sessionId: string): string[] => {
-    const source = normalizedQuery() ? filteredThreads() : props.threads
-    const thread = findSessionThread(source, sessionId)
+    const thread = findSessionThread(projectedThreads(), sessionId)
     return thread ? collectSessionThreadIds([thread]) : [sessionId]
-  }
-
-  const getAllSessionIdsInOrder = (threads: SessionThread[]): string[] => {
-    return collectSessionThreadIds(threads)
   }
 
   const handleToggleSelectAll = (checked: boolean) => {
@@ -467,25 +466,7 @@ const SessionList: Component<SessionListProps> = (props) => {
 
     let fallbackSessionId: string | undefined
     if (currentActiveId && deletedSet.has(currentActiveId)) {
-      const ordered = getAllSessionIdsInOrder(props.threads)
-      const currentIndex = ordered.indexOf(currentActiveId)
-
-      for (let i = Math.max(0, currentIndex); i < ordered.length; i++) {
-        const candidate = ordered[i]
-        if (candidate && !deletedSet.has(candidate)) {
-          fallbackSessionId = candidate
-          break
-        }
-      }
-      if (!fallbackSessionId) {
-        for (let i = currentIndex - 1; i >= 0; i--) {
-          const candidate = ordered[i]
-          if (candidate && !deletedSet.has(candidate)) {
-            fallbackSessionId = candidate
-            break
-          }
-        }
-      }
+      fallbackSessionId = getSessionDeletionFallback(visibleProjection().ids, currentActiveId, deletedSet)
     }
 
     const deletionOrder = sortSessionIdsDeepestFirst(sessionStateSessions().get(props.instanceId) ?? new Map(), selected)

@@ -55,6 +55,7 @@ interface BrowserFrameProps {
   commentMode?: boolean
   onToggleCommentMode?: () => void
   onCommentTarget?: (target: BrowserFrameElementTarget) => void
+  sandbox?: string
 }
 
 function getElementText(element: Element): string | undefined {
@@ -126,7 +127,8 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   const buildNormalizedTargetUrl = (rawInput: string): string => {
     const trimmed = rawInput.trim()
     const withLeadingSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`
-    const parsed = new URL(withLeadingSlash || "/", window.location.origin)
+    const base = new URL(props.initialUrl, window.location.origin)
+    const parsed = new URL(withLeadingSlash || "/", base.origin)
 
     const safeSegments: string[] = []
     for (const segment of parsed.pathname.split("/")) {
@@ -139,7 +141,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     }
 
     const normalizedPath = `/${safeSegments.join("/")}` || "/"
-    return `${props.proxyBasePath}${normalizedPath}${parsed.search}${parsed.hash}`
+    return `${base.origin}${props.proxyBasePath}${normalizedPath}${parsed.search}${parsed.hash}`
   }
 
   const buildElementTarget = (element: Element): BrowserFrameElementTarget => {
@@ -161,9 +163,34 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     cleanupFrameListeners = null
     setHighlight(null)
 
-    if (!props.commentMode || !iframeRef?.contentDocument || !iframeRef.contentWindow || !frameWrapRef) return
-    const doc = iframeRef.contentDocument
+    if (!iframeRef?.contentWindow || !frameWrapRef) return
     const frameWindow = iframeRef.contentWindow
+    const frameOrigin = new URL(props.initialUrl, window.location.origin).origin
+    if (frameOrigin !== window.location.origin) {
+      const handleMessage = (event: MessageEvent) => {
+        if (event.source !== frameWindow || event.origin !== frameOrigin || event.data?.type !== "codenomad-preview-comment") return
+        const target = event.data.target as BrowserFrameElementTarget | undefined
+        if (event.data.kind === "leave") return setHighlight(null)
+        if (!target?.rect) return
+        const frameRect = iframeRef?.getBoundingClientRect()
+        const wrapRect = frameWrapRef?.getBoundingClientRect()
+        if (!frameRect || !wrapRect) return
+        setHighlight({
+          x: frameRect.left - wrapRect.left + target.rect.x,
+          y: frameRect.top - wrapRect.top + target.rect.y,
+          width: target.rect.width,
+          height: target.rect.height,
+        })
+        if (event.data.kind === "select") props.onCommentTarget?.(target)
+      }
+      window.addEventListener("message", handleMessage)
+      frameWindow.postMessage({ type: "codenomad-preview-comment-mode", enabled: props.commentMode }, frameOrigin)
+      cleanupFrameListeners = () => window.removeEventListener("message", handleMessage)
+      return
+    }
+
+    if (!props.commentMode || !iframeRef.contentDocument) return
+    const doc = iframeRef.contentDocument
 
     const handleMove = (event: MouseEvent) => {
       const target = event.target
@@ -357,6 +384,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
               margin: viewport().width ? "0 auto" : "0",
             }}
             referrerPolicy="same-origin"
+            sandbox={props.sandbox}
             onLoad={syncPathInputFromFrame}
           />
         </div>

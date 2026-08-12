@@ -1,6 +1,7 @@
-import fs from "fs"
+import { execFile } from "child_process"
 import { promises as fsp } from "fs"
 import path from "path"
+import { promisify } from "util"
 import type { WorktreeMap } from "../api-types"
 import { resolveRepoRoot } from "./git-worktrees"
 import type { LogLike } from "./git-worktrees"
@@ -11,16 +12,21 @@ const DEFAULT_MAP: WorktreeMap = {
   parentSessionWorktreeSlug: {},
 }
 
-function getMapPath(repoRoot: string): string {
+const execFileAsync = promisify(execFile)
+
+function getLegacyMapPath(repoRoot: string): string {
   return path.join(repoRoot, ".codenomad", "worktreeMap.json")
 }
 
-function getGitExcludePath(repoRoot: string): string {
-  return path.join(repoRoot, ".git", "info", "exclude")
+async function getGitPath(workspaceFolder: string, relativePath: string): Promise<string> {
+  const { stdout } = await execFileAsync("git", ["rev-parse", "--git-common-dir"], { cwd: workspaceFolder })
+  const commonDir = stdout.trim()
+  if (!commonDir) throw new Error("Git did not resolve its common directory")
+  return path.join(path.isAbsolute(commonDir) ? commonDir : path.resolve(workspaceFolder, commonDir), relativePath)
 }
 
-async function ensureGitExclude(repoRoot: string, logger?: LogLike): Promise<void> {
-  const excludePath = getGitExcludePath(repoRoot)
+async function ensureGitExclude(workspaceFolder: string, logger?: LogLike): Promise<void> {
+  const excludePath = await getGitPath(workspaceFolder, "info/exclude")
   try {
     await fsp.mkdir(path.dirname(excludePath), { recursive: true })
   } catch {
@@ -57,56 +63,68 @@ async function ensureGitExclude(repoRoot: string, logger?: LogLike): Promise<voi
 }
 
 export async function ensureCodenomadGitExclude(workspaceFolder: string, logger?: LogLike): Promise<void> {
-  const { repoRoot, isGitRepo } = await resolveRepoRoot(workspaceFolder, logger)
+  const { isGitRepo } = await resolveRepoRoot(workspaceFolder, logger)
   if (!isGitRepo) {
     return
   }
-  await ensureGitExclude(repoRoot, logger)
+  await ensureGitExclude(workspaceFolder, logger)
+}
+
+function parseWorktreeMap(raw: string): WorktreeMap {
+  const parsed = JSON.parse(raw)
+  if (!parsed || typeof parsed !== "object") throw new Error("Invalid worktree map")
+  const version = (parsed as any).version
+  if (version !== 1) throw new Error("Unsupported worktree map version")
+  const defaultWorktreeSlug = (parsed as any).defaultWorktreeSlug
+  const parentSessionWorktreeSlug = (parsed as any).parentSessionWorktreeSlug
+  if (typeof defaultWorktreeSlug !== "string"
+    || !parentSessionWorktreeSlug
+    || typeof parentSessionWorktreeSlug !== "object"
+    || Array.isArray(parentSessionWorktreeSlug)
+    || Object.values(parentSessionWorktreeSlug).some((slug) => typeof slug !== "string")) {
+    throw new Error("Invalid worktree map")
+  }
+  return { version: 1, defaultWorktreeSlug, parentSessionWorktreeSlug: { ...parentSessionWorktreeSlug } }
 }
 
 export async function readWorktreeMap(workspaceFolder: string, logger?: LogLike): Promise<WorktreeMap> {
   const { repoRoot, isGitRepo } = await resolveRepoRoot(workspaceFolder, logger)
-  const filePath = getMapPath(repoRoot)
+  const legacyPath = getLegacyMapPath(repoRoot)
+  const filePath = isGitRepo ? await getGitPath(workspaceFolder, "codenomad/worktreeMap.json") : legacyPath
   try {
-    const raw = await fsp.readFile(filePath, "utf-8")
-    const parsed = JSON.parse(raw)
-    if (!parsed || typeof parsed !== "object") {
-      return DEFAULT_MAP
-    }
-    const version = (parsed as any).version
-    if (version !== 1) {
-      return DEFAULT_MAP
-    }
-    const defaultWorktreeSlug = typeof (parsed as any).defaultWorktreeSlug === "string" ? (parsed as any).defaultWorktreeSlug : "root"
-    const parentSessionWorktreeSlug = (parsed as any).parentSessionWorktreeSlug
-    const mapping = parentSessionWorktreeSlug && typeof parentSessionWorktreeSlug === "object" ? parentSessionWorktreeSlug : {}
-    return {
-      version: 1,
-      defaultWorktreeSlug,
-      parentSessionWorktreeSlug: { ...mapping },
-    }
+    return parseWorktreeMap(await fsp.readFile(filePath, "utf-8"))
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
     if (code === "ENOENT") {
+      if (filePath !== legacyPath) {
+        try {
+          const legacy = parseWorktreeMap(await fsp.readFile(legacyPath, "utf-8"))
+          // Migration happens on the next admitted write; reads never mutate shared state.
+          return legacy
+        } catch (legacyError) {
+          if ((legacyError as NodeJS.ErrnoException).code !== "ENOENT") throw legacyError
+        }
+      }
       if (isGitRepo) {
         // Best-effort ignore setup on first use.
-        await ensureGitExclude(repoRoot, logger).catch(() => undefined)
+        await ensureGitExclude(workspaceFolder, logger).catch(() => undefined)
       }
       return DEFAULT_MAP
     }
     logger?.warn?.({ err: error, filePath }, "Failed to read worktree map")
-    return DEFAULT_MAP
+    throw error
   }
 }
 
 export async function writeWorktreeMap(workspaceFolder: string, next: WorktreeMap, logger?: LogLike): Promise<void> {
   const { repoRoot, isGitRepo } = await resolveRepoRoot(workspaceFolder, logger)
-  const filePath = getMapPath(repoRoot)
+  const legacyPath = getLegacyMapPath(repoRoot)
+  const filePath = isGitRepo ? await getGitPath(workspaceFolder, "codenomad/worktreeMap.json") : legacyPath
   await fsp.mkdir(path.dirname(filePath), { recursive: true })
 
   // Ensure ignore rules are present (local-only).
   if (isGitRepo) {
-    await ensureGitExclude(repoRoot, logger).catch(() => undefined)
+    await ensureGitExclude(workspaceFolder, logger).catch(() => undefined)
   }
 
   if (Object.keys(next.parentSessionWorktreeSlug ?? {}).length === 0) {
@@ -124,23 +142,18 @@ export async function writeWorktreeMap(workspaceFolder: string, next: WorktreeMa
   const tmpPath = `${filePath}.${process.pid}.tmp`
   await fsp.writeFile(tmpPath, JSON.stringify(payload, null, 2), "utf-8")
   await fsp.rename(tmpPath, filePath)
+  if (filePath !== legacyPath) await fsp.rm(legacyPath, { force: true })
 }
 
 export async function deleteWorktreeMap(workspaceFolder: string, logger?: LogLike): Promise<void> {
-  const { repoRoot } = await resolveRepoRoot(workspaceFolder, logger)
-  const filePath = getMapPath(repoRoot)
+  const { repoRoot, isGitRepo } = await resolveRepoRoot(workspaceFolder, logger)
+  const legacyPath = getLegacyMapPath(repoRoot)
+  const filePath = isGitRepo ? await getGitPath(workspaceFolder, "codenomad/worktreeMap.json") : legacyPath
   try {
     await fsp.rm(filePath, { force: true })
+    if (filePath !== legacyPath) await fsp.rm(legacyPath, { force: true })
   } catch (error) {
     logger?.warn?.({ err: error, filePath }, "Failed to delete worktree map")
     throw error
-  }
-}
-
-export function worktreeMapExists(repoRoot: string): boolean {
-  try {
-    return fs.existsSync(getMapPath(repoRoot))
-  } catch {
-    return false
   }
 }

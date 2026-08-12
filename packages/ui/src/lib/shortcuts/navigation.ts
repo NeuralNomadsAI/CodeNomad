@@ -2,6 +2,7 @@ import { keyboardRegistry } from "../keyboard-registry"
 import { activeInstanceId } from "../../stores/instances"
 import { selectNextAppTab, selectPreviousAppTab } from "../../stores/app-tabs"
 import { activeSessionId, getVisibleSessionIds, setActiveSession, setActiveSessionFromList } from "../../stores/sessions"
+import { getSessionListProjectionIds } from "../../components/session-list-projection"
 
 export function registerNavigationShortcuts() {
   const isMac = () => navigator.platform.toLowerCase().includes("mac")
@@ -34,7 +35,7 @@ export function registerNavigationShortcuts() {
       const instanceId = activeInstanceId()
       if (!instanceId) return
 
-      const navigationIds = getVisibleSessionIds(instanceId)
+      const navigationIds = getSessionListProjectionIds(instanceId, () => getVisibleSessionIds(instanceId))
       if (navigationIds.length === 0) return
 
       const currentActiveId = activeSessionId().get(instanceId) ?? ""
@@ -64,7 +65,7 @@ export function registerNavigationShortcuts() {
       const instanceId = activeInstanceId()
       if (!instanceId) return
 
-      const navigationIds = getVisibleSessionIds(instanceId)
+      const navigationIds = getSessionListProjectionIds(instanceId, () => getVisibleSessionIds(instanceId))
       if (navigationIds.length === 0) return
 
       const currentActiveId = activeSessionId().get(instanceId) ?? ""

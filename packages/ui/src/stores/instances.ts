@@ -31,7 +31,7 @@ import {
   reloadWorktrees,
 } from "./worktrees"
 import { getRootClient } from "./opencode-client"
-import { clearOpenCodeWorkspaceCache, getOpenCodeWorkspaceIdForSession, getOpenCodeWorkspaceIdForWorktree, syncOpenCodeWorkspaces } from "./opencode-workspaces"
+import { clearOpenCodeWorkspaceCache, getOpenCodeWorkspaceIdForWorktree, syncOpenCodeWorkspaces } from "./opencode-workspaces"
 import { fetchCommands, clearCommands } from "./commands"
 import { serverSettings } from "./preferences"
 import {
@@ -207,6 +207,12 @@ async function getV2RequestLocations(instanceId: string): Promise<V2Location[]> 
   }
 
   return buildV2RequestLocations(instance?.folder, worktrees, workspaceBySlug)
+}
+
+async function requireInterruptionWorkspace(instanceId: string, sessionId: string) {
+  if (!sessions().get(instanceId)?.has(sessionId)) return {}
+  const { requireSessionWorkspacePayload } = await import("./session-worktree-binding")
+  return requireSessionWorkspacePayload(instanceId, sessionId)
 }
 
 const [activeInterruption, setActiveInterruption] = createSignal<Map<string, ActiveInterruption>>(new Map())
@@ -1764,11 +1770,13 @@ async function sendQuestionReply(
     const source = questionRegistry.getSource(instanceId, requestId)
 
     if (source === "legacy") {
-      const workspace = sessionId ? await getOpenCodeWorkspaceIdForSession(instanceId, sessionId) : null
+      const workspace = sessionId
+        ? await requireInterruptionWorkspace(instanceId, sessionId)
+        : {}
       await requestData(
         client.question.reply({
           requestID: requestId,
-          ...(workspace ? { workspace } : {}),
+          ...workspace,
           answers,
         }),
         "question.reply",
@@ -1802,11 +1810,13 @@ async function sendQuestionReject(instanceId: string, sessionId: string, request
     const source = questionRegistry.getSource(instanceId, requestId)
 
     if (source === "legacy") {
-      const workspace = sessionId ? await getOpenCodeWorkspaceIdForSession(instanceId, sessionId) : null
+      const workspace = sessionId
+        ? await requireInterruptionWorkspace(instanceId, sessionId)
+        : {}
       await requestData(
         client.question.reject({
           requestID: requestId,
-          ...(workspace ? { workspace } : {}),
+          ...workspace,
         }),
         "question.reject",
       )
@@ -1844,11 +1854,13 @@ async function sendPermissionResponse(
     const source = permissionRegistry.getSource(instanceId, requestId)
 
     if (source === "legacy") {
-      const workspace = sessionId ? await getOpenCodeWorkspaceIdForSession(instanceId, sessionId) : null
+      const workspace = sessionId
+        ? await requireInterruptionWorkspace(instanceId, sessionId)
+        : {}
       await requestData(
         client.permission.reply({
           requestID: requestId,
-          ...(workspace ? { workspace } : {}),
+          ...workspace,
           reply,
           ...(message ? { message } : {}),
         }),

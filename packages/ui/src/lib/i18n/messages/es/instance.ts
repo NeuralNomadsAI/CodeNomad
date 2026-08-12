@@ -180,6 +180,12 @@ export const instanceMessages = {
   "instanceShell.diff.enableWordWrap": "Activar ajuste de línea",
   "instanceShell.diff.disableWordWrap": "Desactivar ajuste de línea",
   "instanceShell.worktree.create": "+ Crear worktree",
+  "instanceShell.worktree.openDirectory.action": "Abrir en el explorador de archivos",
+  "instanceShell.worktree.openDirectory.error": "No se pudo abrir el worktree en el explorador de archivos.",
+  "instanceShell.worktree.locationUnavailable": "El worktree {slug} no está disponible en OpenCode.",
+  "instanceShell.worktree.moveBusy": "Espera a que termine la sesión antes de moverla a otro worktree.",
+  "instanceShell.worktree.moveFailed": "No se pudo mover la sesión al worktree seleccionado.",
+  "instanceShell.worktree.sessionNotFound": "No se encontró la sesión.",
 
   "instanceShell.plan.noSessionSelected": "Selecciona una sesión para ver el plan.",
   "instanceShell.plan.empty": "Aún no hay nada planificado.",
