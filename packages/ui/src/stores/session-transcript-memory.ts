@@ -1,5 +1,7 @@
 import { createEffect, createRoot } from "solid-js"
 import { getLogger } from "../lib/logger"
+import { onCacheSessionChanged } from "../lib/global-cache"
+import { SessionTranscriptMeasurementQueue } from "../lib/session-transcript-measurement"
 import { isSessionTranscriptProtected, SessionTranscriptLru } from "../lib/session-transcript-lru"
 import { messageStoreBus } from "./message-v2/bus"
 import { loading, sessions } from "./session-state"
@@ -8,7 +10,6 @@ export const SESSION_TRANSCRIPT_BYTE_BUDGET = 64 * 1024 * 1024
 
 const log = getLogger("session")
 const visible = new Map<string, number>()
-const pendingMeasurements = new Map<string, { timer: ReturnType<typeof setTimeout>; controller: AbortController }>()
 const key = (instanceId: string, sessionId: string) => `${instanceId}\u0000${sessionId}`
 
 const coordinator = new SessionTranscriptLru({
@@ -27,46 +28,39 @@ const coordinator = new SessionTranscriptLru({
   },
   evict: (instanceId, sessionId) => {
     log.info("Evicting inactive session transcript", { instanceId, sessionId })
-    messageStoreBus.getInstance(instanceId)?.clearSession(sessionId, { preserveScroll: true })
+    messageStoreBus.getInstance(instanceId)?.evictSessionTranscript(sessionId)
+  },
+})
+
+const measurements = new SessionTranscriptMeasurementQueue({
+  delayMs: 100,
+  measure: async (instanceId, sessionId, signal) =>
+    await messageStoreBus.getInstance(instanceId)?.estimateSessionRetainedBytes(sessionId, signal) ?? 0,
+  account: (instanceId, sessionId, bytes) => coordinator.account(instanceId, sessionId, bytes),
+  onError: (instanceId, sessionId, error) => {
+    log.warn("Failed to measure session transcript", { instanceId, sessionId, error })
   },
 })
 
 export function accountSessionTranscript(instanceId: string, sessionId: string): void {
-  const entryKey = key(instanceId, sessionId)
-  const previous = pendingMeasurements.get(entryKey)
-  if (previous) {
-    clearTimeout(previous.timer)
-    previous.controller.abort()
-  }
-  const controller = new AbortController()
-  const timer = setTimeout(async () => {
-    try {
-      const bytes = await messageStoreBus.getInstance(instanceId)?.estimateSessionRetainedBytes(sessionId, controller.signal)
-      if (!controller.signal.aborted && pendingMeasurements.get(entryKey)?.controller === controller) {
-        coordinator.account(instanceId, sessionId, bytes ?? 0)
-      }
-    } catch (error) {
-      if (!controller.signal.aborted) log.warn("Failed to measure session transcript", { instanceId, sessionId, error })
-    } finally {
-      if (pendingMeasurements.get(entryKey)?.controller === controller) pendingMeasurements.delete(entryKey)
-    }
-  }, 100)
-  pendingMeasurements.set(entryKey, { timer, controller })
+  measurements.schedule(instanceId, sessionId)
 }
 
 export function touchSessionTranscript(instanceId: string, sessionId: string): void {
   coordinator.touch(instanceId, sessionId)
+  measurements.schedule(instanceId, sessionId)
 }
 
 export function setSessionTranscriptVisible(instanceId: string, sessionId: string, value: boolean): void {
   const entryKey = key(instanceId, sessionId)
   if (value) {
     visible.set(entryKey, (visible.get(entryKey) ?? 0) + 1)
-    coordinator.touch(instanceId, sessionId)
+    touchSessionTranscript(instanceId, sessionId)
   } else {
     const count = (visible.get(entryKey) ?? 0) - 1
     if (count > 0) visible.set(entryKey, count)
     else visible.delete(entryKey)
+    measurements.schedule(instanceId, sessionId)
   }
   coordinator.enforce()
 }
@@ -82,14 +76,9 @@ createRoot(() => createEffect(() => {
 }))
 
 messageStoreBus.onSessionChanged(accountSessionTranscript)
+onCacheSessionChanged(accountSessionTranscript)
 messageStoreBus.onSessionCleared((instanceId, sessionId) => {
-  const entryKey = key(instanceId, sessionId)
-  const pending = pendingMeasurements.get(entryKey)
-  if (pending) {
-    clearTimeout(pending.timer)
-    pending.controller.abort()
-  }
-  pendingMeasurements.delete(entryKey)
+  measurements.cancel(instanceId, sessionId)
   coordinator.forget(instanceId, sessionId)
 })
 messageStoreBus.onInstanceDestroyed((instanceId) => {
@@ -97,10 +86,5 @@ messageStoreBus.onInstanceDestroyed((instanceId) => {
   for (const entryKey of visible.keys()) {
     if (entryKey.startsWith(`${instanceId}\u0000`)) visible.delete(entryKey)
   }
-  for (const [entryKey, pending] of pendingMeasurements) {
-    if (!entryKey.startsWith(`${instanceId}\u0000`)) continue
-    clearTimeout(pending.timer)
-    pending.controller.abort()
-    pendingMeasurements.delete(entryKey)
-  }
+  measurements.cancelInstance(instanceId)
 })

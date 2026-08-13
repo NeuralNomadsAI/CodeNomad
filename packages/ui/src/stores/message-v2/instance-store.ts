@@ -2,18 +2,13 @@ import { batch } from "solid-js"
 import { createStore, produce, reconcile } from "solid-js/store"
 import type { SetStoreFunction } from "solid-js/store"
 import { getLogger } from "../../lib/logger"
-import {
-  clearPromptDisplayOverride,
-  clearPromptDisplayOverridesForInstance,
-  clearPromptDisplayOverridesForSession,
-  getPromptDisplayOverride,
-  movePromptDisplayOverride,
-  setPromptDisplayOverride,
-} from "../message-prompt-display"
+import { getCacheRetainedEntriesForSession } from "../../lib/global-cache"
 import type { ClientPart, MessageInfo } from "../../types/message"
+import type { PromptDisplayMetadata } from "../../lib/prompt-display-metadata"
 import { mergePermissionRequest } from "../../types/permission"
-import { clearRecordDisplayCacheForMessages } from "./record-display-cache"
-import { estimateRetainedBytesIncrementally } from "../../lib/retained-size"
+import { clearRecordDisplayCacheForInstance, clearRecordDisplayCacheForMessages, getRecordDisplayCacheEntries } from "./record-display-cache"
+import { estimateRetainedBytes, estimateRetainedBytesIncrementally } from "../../lib/retained-size"
+import { clearInstanceMessageRenderCaches, clearSessionMessageRenderCache, peekSessionMessageRenderCache } from "../../lib/message-render-cache"
 import { mergePendingRequestEntry, shouldSkipPendingRequestUpsert } from "./pending-request-dedupe"
 import type {
   InstanceMessageState,
@@ -37,6 +32,7 @@ const storeLog = getLogger("session")
 interface MessageStoreHooks {
   onSessionCleared?: (instanceId: string, sessionId: string) => void
   onSessionChanged?: (instanceId: string, sessionId: string) => void
+  onMessagesRemoved?: (instanceId: string, sessionId: string, messageIds: readonly string[]) => void
   onScrollSnapshotChanged?: (instanceId: string, sessionId: string, scope: string, snapshot: ScrollSnapshot) => void
 }
 
@@ -81,6 +77,122 @@ function ensurePartId(messageId: string, part: ClientPart, index: number): strin
 }
 
 const PENDING_PART_MAX_AGE_MS = 30_000
+const PENDING_PARTS_PER_MESSAGE_LIMIT = 100
+const PENDING_PARTS_PER_SESSION_LIMIT = 100
+const PENDING_PARTS_GLOBAL_LIMIT = 500
+const PENDING_PART_MAX_RETAINED_BYTES = 1024 * 1024
+const PENDING_PARTS_PER_SESSION_BYTE_LIMIT = 4 * 1024 * 1024
+const PENDING_PARTS_GLOBAL_BYTE_LIMIT = 8 * 1024 * 1024
+const DROPPED_PENDING_MESSAGE_LIMIT = 500
+const MAX_TRANSCRIPT_MEASUREMENT_BYTES = 64 * 1024 * 1024
+const MAX_TRANSCRIPT_MEASUREMENT_NODES = 500_000
+const pendingPartRetainedBytes = Symbol("pendingPartRetainedBytes")
+const pendingPartBudgetId = Symbol("pendingPartBudgetId")
+const PROMPT_DISPLAY_OVERRIDE_ENTRY_LIMIT = 512
+const PROMPT_DISPLAY_OVERRIDE_BYTE_LIMIT = 1024 * 1024
+const PROMPT_DISPLAY_OVERRIDE_ENTRY_BYTE_LIMIT = 64 * 1024
+let nextPendingPartBudgetId = 0
+const pendingPartBudgetEntries = new Map<number, {
+  instanceId: string
+  bytes: number
+  receivedAt: number
+  isRetained: () => boolean
+  remove: () => void
+}>()
+const promptDisplayOverrides = new Map<string, {
+  instanceId: string
+  sessionId: string
+  messageId: string
+  metadata: PromptDisplayMetadata
+  bytes: number
+}>()
+let promptDisplayOverrideBytes = 0
+
+type SizedPendingPartEntry = PendingPartEntry & { [pendingPartRetainedBytes]?: number; [pendingPartBudgetId]?: number }
+
+function promptDisplayOverrideKey(sessionId: string, messageId: string): string {
+  return `${sessionId}\u0000${messageId}`
+}
+
+function deletePromptDisplayOverride(key: string): void {
+  const existing = promptDisplayOverrides.get(key)
+  if (!existing) return
+  promptDisplayOverrideBytes -= existing.bytes
+  promptDisplayOverrides.delete(key)
+}
+
+function getPromptDisplayOverride(instanceId: string, sessionId: string, messageId: string): PromptDisplayMetadata | undefined {
+  const key = promptDisplayOverrideKey(sessionId, messageId)
+  const existing = promptDisplayOverrides.get(key)
+  if (!existing) return undefined
+  promptDisplayOverrides.delete(key)
+  promptDisplayOverrides.set(key, { ...existing, instanceId })
+  return existing.metadata
+}
+
+function setPromptDisplayOverride(
+  instanceId: string,
+  sessionId: string,
+  messageId: string,
+  metadata: PromptDisplayMetadata | undefined,
+): void {
+  const key = promptDisplayOverrideKey(sessionId, messageId)
+  deletePromptDisplayOverride(key)
+  if (!metadata) return
+  const keyBytes = (sessionId.length + messageId.length) * 2 + 64
+  const bytes = estimateRetainedBytes(metadata, PROMPT_DISPLAY_OVERRIDE_ENTRY_BYTE_LIMIT) + keyBytes
+  if (bytes > PROMPT_DISPLAY_OVERRIDE_ENTRY_BYTE_LIMIT) return
+  promptDisplayOverrides.set(key, { instanceId, sessionId, messageId, metadata, bytes })
+  promptDisplayOverrideBytes += bytes
+  while (promptDisplayOverrides.size > PROMPT_DISPLAY_OVERRIDE_ENTRY_LIMIT || promptDisplayOverrideBytes > PROMPT_DISPLAY_OVERRIDE_BYTE_LIMIT) {
+    const oldest = promptDisplayOverrides.keys().next().value
+    if (oldest === undefined) break
+    deletePromptDisplayOverride(oldest)
+  }
+}
+
+function movePromptDisplayOverride(instanceId: string, sessionId: string, oldMessageId: string, newMessageId: string): void {
+  const oldKey = promptDisplayOverrideKey(sessionId, oldMessageId)
+  const metadata = promptDisplayOverrides.get(oldKey)?.metadata
+  if (!metadata) return
+  deletePromptDisplayOverride(oldKey)
+  setPromptDisplayOverride(instanceId, sessionId, newMessageId, metadata)
+}
+
+function clearPromptDisplayOverride(_instanceId: string, sessionId: string, messageId: string): void {
+  deletePromptDisplayOverride(promptDisplayOverrideKey(sessionId, messageId))
+}
+
+function clearPromptDisplayOverridesForSession(_instanceId: string, sessionId: string): void {
+  for (const [key, entry] of promptDisplayOverrides) if (entry.sessionId === sessionId) deletePromptDisplayOverride(key)
+}
+
+function clearPromptDisplayOverridesForInstance(instanceId: string, sessionIds: string[] = []): void {
+  const sessions = new Set(sessionIds)
+  for (const [key, entry] of promptDisplayOverrides) {
+    if (entry.instanceId === instanceId || sessions.has(entry.sessionId)) deletePromptDisplayOverride(key)
+  }
+}
+
+function getPendingPartRetainedBytes(entry: PendingPartEntry): number {
+  return (entry as SizedPendingPartEntry)[pendingPartRetainedBytes]
+    ?? estimateRetainedBytes(entry, PENDING_PART_MAX_RETAINED_BYTES)
+}
+
+function enforceGlobalPendingPartBudget(): void {
+  for (const [id, entry] of pendingPartBudgetEntries) if (!entry.isRetained()) pendingPartBudgetEntries.delete(id)
+  let bytes = 0
+  for (const entry of pendingPartBudgetEntries.values()) bytes += entry.bytes
+  if (bytes <= PENDING_PARTS_GLOBAL_BYTE_LIMIT) return
+  const oldest = [...pendingPartBudgetEntries.entries()].sort((left, right) =>
+    left[1].receivedAt - right[1].receivedAt || left[0] - right[0])
+  for (const [id, entry] of oldest) {
+    if (bytes <= PENDING_PARTS_GLOBAL_BYTE_LIMIT) break
+    pendingPartBudgetEntries.delete(id)
+    bytes -= entry.bytes
+    entry.remove()
+  }
+}
 
 function clonePart(part: ClientPart): ClientPart {
   // Cloning is intentionally disabled; message parts
@@ -265,6 +377,7 @@ export interface InstanceMessageStore {
   getLatestTodoSnapshot: (sessionId: string) => LatestTodoSnapshot | undefined
   estimateSessionRetainedBytes: (sessionId: string, signal?: AbortSignal) => Promise<number>
   hasLiveSessionMessages: (sessionId: string) => boolean
+  evictSessionTranscript: (sessionId: string) => void
   clearSession: (sessionId: string, options?: { preserveScroll?: boolean }) => void
   clearScrollSnapshots: () => void
   clearInstance: () => void
@@ -279,6 +392,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
   // Requests awaiting same-ID persistence confirmation.
   const pendingSendIds = new Set<string>()
+  const droppedPendingMessageIds = new Set<string>()
   const optimisticPartIdsByMessage = new Map<string, Set<string>>()
 
   function forgetPendingSend(messageId: string): void {
@@ -427,22 +541,50 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
   function estimateSessionRetainedBytes(sessionId: string, signal?: AbortSignal): Promise<number> {
     const session = state.sessions[sessionId]
-    if (!session) return Promise.resolve(0)
-    const messages = session.messageIds.map((id) => state.messages[id]).filter(Boolean)
-    const messageIds = new Set(session.messageIds)
-    return estimateRetainedBytesIncrementally({
-      session,
-      messages,
-      messageInfos: session.messageIds.map((id) => messageInfoCache.get(id)).filter(Boolean),
-      messageInfoVersions: session.messageIds.map((id) => state.messageInfoVersion[id]),
-      pendingParts: session.messageIds.map((id) => state.pendingParts[id]).filter(Boolean),
-      usage: state.usage[sessionId],
-      revision: state.sessionRevisions[sessionId],
-      lastAssistantMessageId: state.lastAssistantMessageIds[sessionId],
-      latestTodo: state.latestTodos[sessionId],
-      permissions: state.permissions.queue.filter((value) => value.messageId && messageIds.has(value.messageId)),
-      questions: state.questions.queue.filter((value) => value.messageId && messageIds.has(value.messageId)),
-    }, { signal })
+    const renderCache = peekSessionMessageRenderCache(instanceId, sessionId)
+    const globalCacheEntries = [...getCacheRetainedEntriesForSession(instanceId, sessionId)]
+    const globalCacheKeyBytes = globalCacheEntries.reduce((total, entry) => total + entry.keyBytes, 0)
+    let hasPendingParts = false
+    for (const messageId in state.pendingParts) {
+      if (state.pendingParts[messageId]?.some((entry) => entry.sessionId === sessionId)) {
+        hasPendingParts = true
+        break
+      }
+    }
+    if ((!session || (session.messageIds.length === 0 && !session.revert)) && !renderCache && !hasPendingParts && globalCacheEntries.length === 0) {
+      return Promise.resolve(0)
+    }
+    function* retainedValues(): Generator<unknown> {
+      if (session) yield session
+      for (const messageId of session?.messageIds ?? []) {
+        yield state.messages[messageId]
+        yield messageInfoCache.get(messageId)
+        yield state.messageInfoVersion[messageId]
+        yield state.pendingParts[messageId]
+      }
+      for (const messageId in state.pendingParts) {
+        const entries = state.pendingParts[messageId]
+        if (entries?.some((entry) => entry.sessionId === sessionId) && !state.messages[messageId]) yield entries
+      }
+      for (const entry of state.permissions.queue) if (entry.permission.sessionID === sessionId) yield entry
+      for (const entry of state.questions.queue) if (entry.request.sessionID === sessionId) yield entry
+      if (session) {
+        yield state.usage[sessionId]
+        yield state.sessionRevisions[sessionId]
+        yield state.lastAssistantMessageIds[sessionId]
+        yield state.latestTodos[sessionId]
+      }
+      yield renderCache
+      if (session) yield* getRecordDisplayCacheEntries(instanceId, session.messageIds)
+      for (const entry of globalCacheEntries) yield entry.value
+    }
+    if (globalCacheKeyBytes > MAX_TRANSCRIPT_MEASUREMENT_BYTES) return Promise.resolve(Number.POSITIVE_INFINITY)
+    return estimateRetainedBytesIncrementally(retainedValues(), {
+      signal,
+      rootIterable: true,
+      maxBytes: MAX_TRANSCRIPT_MEASUREMENT_BYTES - globalCacheKeyBytes,
+      maxNodes: MAX_TRANSCRIPT_MEASUREMENT_NODES,
+    }).then((bytes) => Number.isFinite(bytes) ? bytes + globalCacheKeyBytes : bytes)
   }
 
   function ensureSessionEntry(sessionId: string): SessionRecord {
@@ -536,6 +678,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       seenInputIds.add(input.id)
       return true
     })
+    for (const input of dedupedInputs) droppedPendingMessageIds.delete(input.id)
 
     const serverIds = dedupedInputs.map((item) => item.id)
     const serverIdSet = new Set(serverIds)
@@ -622,6 +765,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         delete nextPermissionsByMessage[id]
       })
       clearRecordDisplayCacheForMessages(instanceId, omittedIds)
+      hooks?.onMessagesRemoved?.(instanceId, sessionId, omittedIds)
     }
 
     // A send that reappears under its own id is confirmed — it is no longer in
@@ -839,6 +983,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       clearPromptDisplayOverride(instanceId, sessionId, id)
     })
     clearRecordDisplayCacheForMessages(instanceId, droppedIds)
+    hooks?.onMessagesRemoved?.(instanceId, sessionId, droppedIds)
 
     batch(() => {
       setState(
@@ -931,6 +1076,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   }
 
   function upsertMessage(input: MessageUpsertInput) {
+    const pendingDropRequiresReload = droppedPendingMessageIds.delete(input.id)
     const normalizedParts = normalizeParts(input.id, input.parts)
     const shouldBump = Boolean(input.bumpRevision || normalizedParts)
     const now = Date.now()
@@ -974,21 +1120,103 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     flushPendingParts(input.id)
     recomputeLastAssistantMessageId(input.sessionId)
     bumpSessionRevision(input.sessionId)
+    if (pendingDropRequiresReload) hooks?.onSessionCleared?.(instanceId, input.sessionId)
+  }
+
+  function markPendingPartDropped(messageId: string, sessionId?: string): void {
+    if (sessionId) {
+      hooks?.onSessionCleared?.(instanceId, sessionId)
+      hooks?.onSessionChanged?.(instanceId, sessionId)
+      return
+    }
+    droppedPendingMessageIds.delete(messageId)
+    droppedPendingMessageIds.add(messageId)
+    while (droppedPendingMessageIds.size > DROPPED_PENDING_MESSAGE_LIMIT) {
+      const oldest = droppedPendingMessageIds.values().next().value
+      if (oldest === undefined) break
+      droppedPendingMessageIds.delete(oldest)
+    }
   }
 
   function bufferPendingPart(entry: PendingPartEntry) {
-    setState("pendingParts", entry.messageId, (list = []) => [...list, entry])
+    const sessionId = entry.sessionId ?? (typeof (entry.part as any).sessionID === "string" ? (entry.part as any).sessionID : undefined)
+    const nextEntry = { ...entry, sessionId } as SizedPendingPartEntry
+    const retainedBytes = estimateRetainedBytes(nextEntry, PENDING_PART_MAX_RETAINED_BYTES)
+    if (retainedBytes > PENDING_PART_MAX_RETAINED_BYTES) {
+      markPendingPartDropped(entry.messageId, sessionId)
+      return
+    }
+    const budgetId = ++nextPendingPartBudgetId
+    Object.defineProperty(nextEntry, pendingPartRetainedBytes, { value: retainedBytes })
+    Object.defineProperty(nextEntry, pendingPartBudgetId, { value: budgetId })
+    const changedSessions = new Set<string>()
+    const droppedMessages = new Map<string, string | undefined>()
+    if (sessionId) changedSessions.add(sessionId)
+    setState("pendingParts", produce((draft: Record<string, PendingPartEntry[]>) => {
+      const messageEntries = [...(draft[entry.messageId] ?? []), nextEntry]
+      for (const dropped of messageEntries.slice(0, Math.max(0, messageEntries.length - PENDING_PARTS_PER_MESSAGE_LIMIT))) {
+        droppedMessages.set(entry.messageId, dropped.sessionId)
+      }
+      draft[entry.messageId] = messageEntries.slice(-PENDING_PARTS_PER_MESSAGE_LIMIT)
+
+      const pending: { messageId: string; entry: PendingPartEntry; bytes: number }[] = []
+      for (const messageId in draft) {
+        for (const value of draft[messageId] ?? []) pending.push({ messageId, entry: value, bytes: getPendingPartRetainedBytes(value) })
+      }
+      pending.sort((left, right) => left.entry.receivedAt - right.entry.receivedAt)
+
+      const sessionEntries = pending.filter((value) => value.entry.sessionId === sessionId)
+      const remove = new Set(pending.slice(0, Math.max(0, pending.length - PENDING_PARTS_GLOBAL_LIMIT)))
+      for (const value of sessionEntries.slice(0, Math.max(0, sessionEntries.length - PENDING_PARTS_PER_SESSION_LIMIT))) remove.add(value)
+      let sessionBytes = sessionEntries.reduce((total, value) => total + value.bytes, 0)
+      for (const value of sessionEntries) {
+        if (sessionBytes <= PENDING_PARTS_PER_SESSION_BYTE_LIMIT) break
+        remove.add(value)
+        sessionBytes -= value.bytes
+      }
+      let globalBytes = pending.reduce((total, value) => total + value.bytes, 0)
+      for (const value of pending) {
+        if (globalBytes <= PENDING_PARTS_GLOBAL_BYTE_LIMIT) break
+        remove.add(value)
+        globalBytes -= value.bytes
+      }
+      for (const value of remove) {
+        droppedMessages.set(value.messageId, value.entry.sessionId)
+        if (value.entry.sessionId) changedSessions.add(value.entry.sessionId)
+        const list = draft[value.messageId]
+        const index = list?.indexOf(value.entry) ?? -1
+        if (index >= 0) list.splice(index, 1)
+        if (list?.length === 0) delete draft[value.messageId]
+      }
+    }))
+    const isRetained = () => state.pendingParts[entry.messageId]?.some((value) => (value as SizedPendingPartEntry)[pendingPartBudgetId] === budgetId) ?? false
+    if (isRetained()) {
+      pendingPartBudgetEntries.set(budgetId, {
+        instanceId,
+        bytes: retainedBytes,
+        receivedAt: entry.receivedAt,
+        isRetained,
+        remove: () => {
+          setState("pendingParts", produce((draft: Record<string, PendingPartEntry[]>) => {
+            const list = draft[entry.messageId]
+            const index = list?.findIndex((value) => (value as SizedPendingPartEntry)[pendingPartBudgetId] === budgetId) ?? -1
+            if (index >= 0) list.splice(index, 1)
+            if (list?.length === 0) delete draft[entry.messageId]
+          }))
+          markPendingPartDropped(entry.messageId, sessionId)
+        },
+      })
+      enforceGlobalPendingPartBudget()
+    }
+    for (const [messageId, droppedSessionId] of droppedMessages) markPendingPartDropped(messageId, droppedSessionId)
+    for (const changedSessionId of changedSessions) hooks?.onSessionChanged?.(instanceId, changedSessionId)
   }
 
   function clearPendingPartsForMessage(messageId: string) {
-    setState("pendingParts", (prev) => {
-      if (!prev[messageId]) {
-        return prev
-      }
-      const next = { ...prev }
-      delete next[messageId]
-      return next
-    })
+    if (!state.pendingParts[messageId]) return
+    setState("pendingParts", produce((draft: Record<string, PendingPartEntry[]>) => {
+      delete draft[messageId]
+    }))
   }
 
   function rebindPermissionForPart(messageId: string, partId: string, part: ClientPart) {
@@ -1040,7 +1268,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   function applyPartUpdate(input: PartUpdateInput) {
     const message = state.messages[input.messageId]
     if (!message) {
-      bufferPendingPart({ messageId: input.messageId, part: input.part, receivedAt: Date.now() })
+      bufferPendingPart({ messageId: input.messageId, sessionId: typeof (input.part as any).sessionID === "string" ? (input.part as any).sessionID : undefined, part: input.part, receivedAt: Date.now() })
       return
     }
 
@@ -1153,6 +1381,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     if (!sessionIds.size && fallbackSessionId) sessionIds.add(fallbackSessionId)
 
     clearRecordDisplayCacheForMessages(instanceId, [messageId])
+    sessionIds.forEach((sessionId) => hooks?.onMessagesRemoved?.(instanceId, sessionId, [messageId]))
 
     batch(() => {
       sessionIds.forEach((sessionId) => {
@@ -1566,6 +1795,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     })
 
     removedIds.forEach((id) => messageInfoCache.delete(id))
+    clearRecordDisplayCacheForMessages(instanceId, removedIds)
+    hooks?.onMessagesRemoved?.(instanceId, sessionId, removedIds)
 
     setState("pendingParts", (prev) => {
       const next = { ...prev }
@@ -1575,13 +1806,15 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       return next
     })
 
-    const removed = new Set(removedIds)
-    setState("permissions", produce((draft) => {
-      removedIds.forEach((id) => delete draft.byMessage[id])
-      draft.queue = draft.queue.filter((entry) => !entry.messageId || !removed.has(entry.messageId))
-      draft.active = draft.queue[0] ?? null
-    }))
+    setState("permissions", "byMessage", (prev) => {
+      const next = { ...prev }
+      removedIds.forEach((id) => {
+        if (next[id]) delete next[id]
+      })
+      return next
+    })
 
+    const removed = new Set(removedIds)
     setState("questions", produce((draft) => {
       removedIds.forEach((id) => delete draft.byMessage[id])
       draft.queue = draft.queue.filter((entry) => !entry.messageId || !removed.has(entry.messageId))
@@ -1593,7 +1826,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     })
 
     recomputeLastAssistantMessageId(sessionId, keptIds)
-    bumpSessionRevision(sessionId)
   }
 
   function setSessionRevert(sessionId: string, revert?: SessionRecord["revert"] | null) {
@@ -1603,6 +1835,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       pruneMessagesAfterRevert(sessionId, revert.messageID)
     }
     setState("sessions", sessionId, "revert", revert ?? null)
+    bumpSessionRevision(sessionId)
   }
 
   function getSessionRevert(sessionId: string) {
@@ -1630,10 +1863,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return state.scrollState[key]
   }
 
-  function clearSession(sessionId: string, options?: { preserveScroll?: boolean }) {
+  function clearSession(sessionId: string, options?: { preserveScroll?: boolean; preservePromptDisplayOverrides?: boolean }) {
     if (!sessionId) return
 
-    clearPromptDisplayOverridesForSession(instanceId, sessionId)
+    if (!options?.preservePromptDisplayOverrides) clearPromptDisplayOverridesForSession(instanceId, sessionId)
 
     const messageIds = Object.values(state.messages)
       .filter((record) => record.sessionId === sessionId)
@@ -1641,6 +1874,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
  
     storeLog.info("Clearing session data", { instanceId, sessionId, messageCount: messageIds.length })
     clearRecordDisplayCacheForMessages(instanceId, messageIds)
+    clearSessionMessageRenderCache(instanceId, sessionId)
     messageIds.forEach((id) => forgetPendingSend(id))
  
     batch(() => {
@@ -1658,13 +1892,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
       messageIds.forEach((id) => messageInfoCache.delete(id))
 
-      setState("pendingParts", (prev) => {
-        const next = { ...prev }
-        messageIds.forEach((id) => {
-          if (next[id]) delete next[id]
-        })
-        return next
-      })
+      setState("pendingParts", produce((draft: Record<string, PendingPartEntry[]>) => {
+        for (const id of messageIds) delete draft[id]
+        for (const id in draft) if (draft[id]?.some((entry) => entry.sessionId === sessionId)) delete draft[id]
+      }))
 
       setState("permissions", "byMessage", (prev) => {
         const next = { ...prev }
@@ -1732,9 +1963,17 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     hooks?.onSessionCleared?.(instanceId, sessionId)
   }
 
+  function evictSessionTranscript(sessionId: string) {
+    clearSession(sessionId, { preserveScroll: true, preservePromptDisplayOverrides: true })
+  }
+
  
    function clearInstance() {
+     for (const [id, entry] of pendingPartBudgetEntries) if (entry.instanceId === instanceId) pendingPartBudgetEntries.delete(id)
+     droppedPendingMessageIds.clear()
      clearPromptDisplayOverridesForInstance(instanceId, Object.keys(state.sessions))
+     clearRecordDisplayCacheForInstance(instanceId)
+     clearInstanceMessageRenderCaches(instanceId)
      messageInfoCache.clear()
      pendingSendIds.clear()
      optimisticPartIdsByMessage.clear()
@@ -1791,6 +2030,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       getLatestTodoSnapshot: (sessionId: string) => state.latestTodos[sessionId],
       estimateSessionRetainedBytes,
       hasLiveSessionMessages,
+      evictSessionTranscript,
       clearSession,
       clearScrollSnapshots,
       clearInstance,

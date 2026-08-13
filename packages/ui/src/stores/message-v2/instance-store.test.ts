@@ -2,6 +2,9 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { createInstanceMessageStore } from "./instance-store.ts"
+import { getSessionMessageRenderCache, peekSessionMessageRenderCache } from "../../lib/message-render-cache.ts"
+import { buildRecordDisplayData } from "./record-display-cache.ts"
+import { clearCacheForInstance, setCacheEntry } from "../../lib/global-cache.ts"
 
 describe("message-v2 permission state", () => {
   it("keeps one permission attachment when a duplicate moves from global to a tool part", () => {
@@ -44,17 +47,13 @@ describe("message-v2 permission state", () => {
 })
 
 describe("message-v2 revert state", () => {
-  it("prunes reverted messages and their permission and question queues", () => {
+  it("prunes reverted messages and their question queue", () => {
     const store = createInstanceMessageStore("instance-1")
     store.addOrUpdateSession({ id: "session-1" })
     store.hydrateMessages("session-1", [
       { id: "keep", sessionId: "session-1", role: "user", status: "complete" },
       { id: "revert", sessionId: "session-1", role: "assistant", status: "complete" },
     ])
-    store.upsertPermission({
-      permission: { id: "permission", sessionID: "session-1", action: "edit", resources: [] },
-      messageId: "revert", enqueuedAt: 1,
-    })
     store.upsertQuestion({
       request: { id: "question", sessionID: "session-1", questions: [] },
       messageId: "revert", enqueuedAt: 1,
@@ -63,14 +62,292 @@ describe("message-v2 revert state", () => {
     store.setSessionRevert("session-1", { messageID: "revert" })
 
     assert.deepEqual(store.getSessionMessageIds("session-1"), ["keep"])
-    assert.equal(store.state.permissions.queue.length, 0)
-    assert.equal(store.state.permissions.active, null)
     assert.equal(store.state.questions.queue.length, 0)
     assert.equal(store.state.questions.active, null)
+  })
+
+  it("accounts for added and cleared revert state without messages", async () => {
+    let changes = 0
+    const store = createInstanceMessageStore("instance-1", { onSessionChanged: () => { changes += 1 } })
+    store.addOrUpdateSession({ id: "session-1" })
+    const baselineChanges = changes
+
+    store.setSessionRevert("session-1", { messageID: "revert", partID: "part" })
+    assert.ok(await store.estimateSessionRetainedBytes("session-1") > 0)
+    assert.equal(changes, baselineChanges + 1)
+
+    store.setSessionRevert("session-1", null)
+    assert.equal(await store.estimateSessionRetainedBytes("session-1"), 0)
+    assert.equal(changes, baselineChanges + 2)
   })
 })
 
 describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
+  it("reports no retained transcript bytes for an empty session", async () => {
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+
+    assert.equal(await store.estimateSessionRetainedBytes("session-1"), 0)
+  })
+
+  it("accounts for render caches and clears them with session eviction", async () => {
+    const store = createInstanceMessageStore("cache-accounting")
+    store.addOrUpdateSession({ id: "session-1" })
+    store.hydrateMessages("session-1", [{ id: "message-1", sessionId: "session-1", role: "assistant", status: "complete", parts: [{ id: "part-1", type: "text", text: "source" } as any] }])
+    const baselineBytes = await store.estimateSessionRetainedBytes("session-1")
+    const renderCache = getSessionMessageRenderCache("cache-accounting", "session-1")
+    renderCache.recordDisplayCache.set("message-1", { revision: 1, data: { orderedParts: [{ text: "display-copy" }] } })
+    const recordCachedBytes = await store.estimateSessionRetainedBytes("session-1")
+    renderCache.messageBlocks.set("message-1", { text: "x".repeat(4_000) })
+
+    const cachedBytes = await store.estimateSessionRetainedBytes("session-1")
+    store.clearSession("session-1")
+
+    assert.ok(recordCachedBytes > baselineBytes)
+    assert.ok(cachedBytes > recordCachedBytes + 8_000)
+    assert.equal(peekSessionMessageRenderCache("cache-accounting", "session-1"), undefined)
+    assert.equal(await store.estimateSessionRetainedBytes("session-1"), 0)
+  })
+
+  it("clears derived caches with instance cleanup", () => {
+    const store = createInstanceMessageStore("instance-cache-cleanup")
+    store.hydrateMessages("session-1", [{ id: "message-1", sessionId: "session-1", role: "assistant", status: "complete" }])
+    getSessionMessageRenderCache("instance-cache-cleanup", "session-1").messageBlocks.set("message-1", {})
+    buildRecordDisplayData("instance-cache-cleanup", store.getMessage("message-1")!)
+
+    store.clearInstance()
+
+    assert.equal(peekSessionMessageRenderCache("instance-cache-cleanup", "session-1"), undefined)
+  })
+
+  it("accounts for the module display cache and associated orphan pending parts", async () => {
+    const store = createInstanceMessageStore("cache-accounting-orphans")
+    store.addOrUpdateSession({ id: "session-1" })
+    store.hydrateMessages("session-1", [{ id: "message-1", sessionId: "session-1", role: "assistant", status: "complete", parts: [{ id: "part-1", type: "text", text: "source" } as any] }])
+    const baseline = await store.estimateSessionRetainedBytes("session-1")
+    buildRecordDisplayData("cache-accounting-orphans", store.getMessage("message-1")!)
+    const displayCached = await store.estimateSessionRetainedBytes("session-1")
+    store.bufferPendingPart({ messageId: "orphan", sessionId: "session-1", part: { type: "text", text: "x".repeat(4_000) } as any, receivedAt: Date.now() })
+    const withPending = await store.estimateSessionRetainedBytes("session-1")
+
+    store.clearSession("session-1")
+
+    assert.ok(displayCached > baseline)
+    assert.ok(withPending > displayCached + 8_000)
+    assert.equal(store.state.pendingParts.orphan, undefined)
+  })
+
+  it("accounts session-owned global cache values without double-counting shared objects", async () => {
+    const store = createInstanceMessageStore("global-cache-accounting")
+    store.addOrUpdateSession({ id: "session-1" })
+    const shared = { text: "x".repeat(4_000) }
+    getSessionMessageRenderCache("global-cache-accounting", "session-1").messageBlocks.set("message", shared)
+    const localBytes = await store.estimateSessionRetainedBytes("session-1")
+    const cacheEntry = { instanceId: "global-cache-accounting", sessionId: "session-1", scope: "markdown", cacheId: "part", version: "1" }
+    setCacheEntry(cacheEntry, { text: "y".repeat(4_000) })
+    const uniqueBytes = await store.estimateSessionRetainedBytes("session-1")
+    setCacheEntry(cacheEntry, shared)
+    const sharedBytes = await store.estimateSessionRetainedBytes("session-1")
+
+    assert.ok(uniqueBytes > localBytes + 8_000)
+    assert.ok(sharedBytes > localBytes)
+    assert.ok(sharedBytes < localBytes + 1_000)
+    clearCacheForInstance("global-cache-accounting")
+  })
+
+  it("byte-bounds individual and aggregate pending parts while accounting session orphans", async () => {
+    let changes = 0
+    const invalidated: string[] = []
+    const store = createInstanceMessageStore("pending-byte-cap", {
+      onSessionChanged: () => { changes += 1 },
+      onSessionCleared: (_instanceId, sessionId) => invalidated.push(sessionId),
+    })
+    store.bufferPendingPart({ messageId: "oversized", part: { type: "text", text: "x".repeat(600_000) } as any, receivedAt: 0 })
+    assert.equal(store.state.pendingParts.oversized, undefined)
+
+    store.bufferPendingPart({ messageId: "oversized-known", sessionId: "session-oversized", part: { type: "text", text: "x".repeat(600_000) } as any, receivedAt: 0 })
+    assert.deepEqual(invalidated, ["session-oversized"])
+    assert.equal(changes, 1)
+
+    store.bufferPendingPart({ messageId: "session-orphan", sessionId: "session-1", part: { type: "text", text: "x".repeat(100_000) } as any, receivedAt: 1 })
+    assert.ok(await store.estimateSessionRetainedBytes("session-1") > 0)
+    assert.equal(changes, 2)
+
+    for (let index = 0; index < 50; index += 1) {
+      store.bufferPendingPart({ messageId: `orphan-${index}`, part: { type: "text", text: "x".repeat(100_000) } as any, receivedAt: index + 2 })
+    }
+    assert.ok(Object.values(store.state.pendingParts).flat().length < 51)
+    store.clearInstance()
+  })
+
+  it("invalidates an unknown-owner pending drop when live ownership becomes known", () => {
+    const invalidated: string[] = []
+    const store = createInstanceMessageStore("pending-owner-reconciliation", {
+      onSessionCleared: (_instanceId, sessionId) => invalidated.push(sessionId),
+    })
+    store.bufferPendingPart({ messageId: "unknown", part: { type: "text", text: "x".repeat(600_000) } as any, receivedAt: 0 })
+
+    store.upsertMessage({ id: "unknown", sessionId: "session-1", role: "assistant", status: "streaming" })
+
+    assert.deepEqual(invalidated, ["session-1"])
+    store.clearInstance()
+  })
+
+  it("consumes an unknown-owner drop during authoritative hydration", () => {
+    const invalidated: string[] = []
+    const store = createInstanceMessageStore("pending-authoritative-reconciliation", {
+      onSessionCleared: (_instanceId, sessionId) => invalidated.push(sessionId),
+    })
+    store.bufferPendingPart({ messageId: "known", part: { type: "text", text: "x".repeat(600_000) } as any, receivedAt: 0 })
+    store.hydrateMessages("session-1", [{ id: "known", sessionId: "session-1", role: "assistant", status: "complete", parts: [{ id: "part", type: "text", text: "authoritative" } as any] }])
+
+    assert.deepEqual(invalidated, [])
+    assert.equal(store.getMessage("known")?.parts.part?.data.text, "authoritative")
+    store.clearInstance()
+  })
+
+  it("caps pending-part bytes globally across instance stores", () => {
+    const first = createInstanceMessageStore("pending-global-first")
+    const second = createInstanceMessageStore("pending-global-second")
+    for (let index = 0; index < 16; index += 1) {
+      const store = index % 2 === 0 ? first : second
+      store.bufferPendingPart({ messageId: `orphan-${index}`, part: { type: "text", text: "x".repeat(300_000) } as any, receivedAt: index })
+    }
+    const retained = Object.values(first.state.pendingParts).flat().length + Object.values(second.state.pendingParts).flat().length
+    assert.ok(retained < 16)
+    first.clearInstance()
+    second.clearInstance()
+  })
+
+  it("caps pending parts that have no associated session", () => {
+    const store = createInstanceMessageStore("pending-cap")
+    for (let index = 0; index < 101; index += 1) {
+      store.bufferPendingPart({ messageId: `unknown-${index}`, part: { type: "text", text: "late" } as any, receivedAt: Date.now() })
+    }
+    assert.equal(Object.keys(store.state.pendingParts).length, 100)
+    assert.equal(store.state.pendingParts["unknown-0"], undefined)
+  })
+
+  it("caps pending parts per session and globally across arbitrary session ids", () => {
+    const store = createInstanceMessageStore("pending-scoped-cap")
+    for (let index = 0; index < 101; index += 1) {
+      store.bufferPendingPart({ messageId: `same-${index}`, sessionId: "same", part: { type: "text", text: "late" } as any, receivedAt: index })
+    }
+    assert.equal(Object.values(store.state.pendingParts).flat().filter((entry) => entry.sessionId === "same").length, 100)
+    assert.equal(store.state.pendingParts["same-0"], undefined)
+
+    for (let index = 0; index < 501; index += 1) {
+      store.bufferPendingPart({ messageId: `global-${index}`, sessionId: `arbitrary-${index}`, part: { type: "text", text: "late" } as any, receivedAt: 1_000 + index })
+    }
+    assert.equal(Object.values(store.state.pendingParts).flat().length, 500)
+  })
+
+  it("preserves prompt display overrides during volatile eviction but clears them explicitly", () => {
+    const store = createInstanceMessageStore("volatile-eviction")
+    const displayMetadata = { segments: [{ kind: "inline", length: 4 }] } as any
+    store.upsertMessage({
+      id: "message-1",
+      sessionId: "session-1",
+      role: "user",
+      status: "complete",
+      clientPromptDisplayMetadata: displayMetadata,
+    })
+
+    store.evictSessionTranscript("session-1")
+    const restored = createInstanceMessageStore("volatile-eviction")
+    restored.hydrateMessages("session-1", [{ id: "message-1", sessionId: "session-1", role: "user", status: "complete" }])
+    assert.deepEqual(restored.getMessage("message-1")?.clientPromptDisplayMetadata, displayMetadata)
+
+    store.clearSession("session-1")
+    const cleared = createInstanceMessageStore("volatile-eviction")
+    cleared.hydrateMessages("session-1", [{ id: "message-1", sessionId: "session-1", role: "user", status: "complete" }])
+    assert.equal(cleared.getMessage("message-1")?.clientPromptDisplayMetadata, undefined)
+    restored.clearInstance()
+    cleared.clearInstance()
+    store.clearInstance()
+  })
+
+  it("evicts the least recently used prompt display override after 512 entries", () => {
+    const store = createInstanceMessageStore("prompt-display-count-cap")
+    const displayMetadata = { segments: [{ kind: "inline", length: 4 }] } as any
+    for (let index = 0; index < 512; index += 1) {
+      store.upsertMessage({
+        id: `message-${index}`,
+        sessionId: "session-1",
+        role: "user",
+        status: "complete",
+        clientPromptDisplayMetadata: displayMetadata,
+      })
+    }
+    store.evictSessionTranscript("session-1")
+    const reader = createInstanceMessageStore("prompt-display-count-cap")
+    reader.hydrateMessages("session-1", [{ id: "message-0", sessionId: "session-1", role: "user", status: "complete" }])
+    reader.upsertMessage({
+      id: "message-512",
+      sessionId: "session-1",
+      role: "user",
+      status: "complete",
+      clientPromptDisplayMetadata: displayMetadata,
+    })
+
+    reader.evictSessionTranscript("session-1")
+    const restored = createInstanceMessageStore("prompt-display-count-cap")
+    restored.hydrateMessages("session-1", [
+      { id: "message-0", sessionId: "session-1", role: "user", status: "complete" },
+      { id: "message-1", sessionId: "session-1", role: "user", status: "complete" },
+      { id: "message-512", sessionId: "session-1", role: "user", status: "complete" },
+    ])
+
+    assert.deepEqual(restored.getMessage("message-0")?.clientPromptDisplayMetadata, displayMetadata)
+    assert.equal(restored.getMessage("message-1")?.clientPromptDisplayMetadata, undefined)
+    assert.deepEqual(restored.getMessage("message-512")?.clientPromptDisplayMetadata, displayMetadata)
+    reader.clearInstance()
+    restored.clearInstance()
+    store.clearInstance()
+  })
+
+  it("bounds prompt display overrides by aggregate and per-entry bytes", () => {
+    const store = createInstanceMessageStore("prompt-display-byte-cap")
+    const oversizedMetadata = { segments: Array.from({ length: 1_000 }, () => ({ kind: "inline", length: 1 })) } as any
+    store.upsertMessage({
+      id: "oversized",
+      sessionId: "session-1",
+      role: "user",
+      status: "complete",
+      clientPromptDisplayMetadata: oversizedMetadata,
+    })
+    for (let index = 0; index < 40; index += 1) {
+      store.upsertMessage({
+        id: `message-${index}`,
+        sessionId: "session-1",
+        role: "user",
+        status: "complete",
+        clientPromptDisplayMetadata: {
+          segments: Array.from({ length: 300 }, () => ({ kind: "inline", length: index + 1 })),
+        } as any,
+      })
+    }
+
+    store.evictSessionTranscript("session-1")
+    const restored = createInstanceMessageStore("prompt-display-byte-cap")
+    restored.hydrateMessages("session-1", [
+      { id: "oversized", sessionId: "session-1", role: "user", status: "complete" },
+      { id: "message-0", sessionId: "session-1", role: "user", status: "complete" },
+      { id: "message-39", sessionId: "session-1", role: "user", status: "complete" },
+    ])
+
+    assert.equal(restored.getMessage("oversized")?.clientPromptDisplayMetadata, undefined)
+    assert.equal(restored.getMessage("message-0")?.clientPromptDisplayMetadata, undefined)
+    assert.equal(restored.getMessage("message-39")?.clientPromptDisplayMetadata?.segments.length, 300)
+
+    restored.clearInstance()
+    const cleared = createInstanceMessageStore("prompt-display-byte-cap")
+    cleared.hydrateMessages("session-1", [{ id: "message-39", sessionId: "session-1", role: "user", status: "complete" }])
+    assert.equal(cleared.getMessage("message-39")?.clientPromptDisplayMetadata, undefined)
+    cleared.clearInstance()
+    store.clearInstance()
+  })
+
   it("keeps an in-flight pending 'sending' message visible when a force reload snapshot doesn't include it yet", () => {
     const store = createInstanceMessageStore("instance-1")
     store.addOrUpdateSession({ id: "session-1" })

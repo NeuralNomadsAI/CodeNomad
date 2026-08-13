@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, it } from "node:test"
 import { setTimeout as delay } from "node:timers/promises"
 
 import {
+  clearPendingDeltasForInstance,
   clearPendingDeltasForPart,
   enqueueDelta,
   flushPendingDeltasForMessage,
@@ -98,5 +99,20 @@ describe("delta buffer", () => {
         { instanceId: "instance-2", messageId: "message-1", partId: "part-1", field: "text", delta: "other instance" },
       ],
     ])
+  })
+
+  it("clears a removed instance without dropping another instance's pending deltas", async () => {
+    const flushed: DeltaBatch[] = []
+    setFlushCallback((batch) => flushed.push(batch))
+
+    enqueueDelta("removed", "message-1", "part-1", "text", "stale")
+    enqueueDelta("active", "message-2", "part-2", "text", "keep")
+    clearPendingDeltasForInstance("removed")
+
+    await delay(75)
+
+    assert.deepEqual(flushed, [[
+      { instanceId: "active", messageId: "message-2", partId: "part-2", field: "text", delta: "keep" },
+    ]])
   })
 })

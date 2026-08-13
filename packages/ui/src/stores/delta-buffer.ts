@@ -34,6 +34,16 @@ export function clearPendingDeltasForPart(instanceId: string, messageId: string,
   }
 }
 
+export function clearPendingDeltasForInstance(instanceId: string): void {
+  for (const [key, pending] of pendingDeltas) {
+    if (pending.instanceId === instanceId) pendingDeltas.delete(key)
+  }
+  if (pendingDeltas.size === 0 && deltaFlushTimer !== null) {
+    clearTimeout(deltaFlushTimer)
+    deltaFlushTimer = null
+  }
+}
+
 export function flushPendingDeltasForMessage(
   instanceId: string,
   messageId: string,

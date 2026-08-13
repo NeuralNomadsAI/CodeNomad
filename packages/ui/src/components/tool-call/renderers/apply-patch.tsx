@@ -1,12 +1,10 @@
 import { For, Show, createMemo } from "solid-js"
 import type { ToolRenderer } from "../types"
-import { getRelativePath, getToolName, isToolStateCompleted, limitToolOutputForRender, readToolStatePayload, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT } from "../utils"
+import { getToolName, isToolStateCompleted, limitToolOutputForRender, limitToolTitleForRender, readToolStatePayload, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT } from "../utils"
 import { buildDiagnosticView, hasDiagnosticMessages, type DiagnosticEntry, type DiagnosticsMap } from "../diagnostics"
 import { DiagnosticsPayloadAccess } from "../diagnostics-section"
 import { getApplyPatchToolSearchText } from "../search-text"
-import { getApplyPatchCopyText, type ApplyPatchFile } from "./apply-patch-data"
-
-const APPLY_PATCH_FILE_RENDER_LIMIT = 20
+import { APPLY_PATCH_FILE_RENDER_LIMIT, getApplyPatchCopyAccess, getApplyPatchCopyText, getApplyPatchDiagnosticPaths, getApplyPatchFilesForRender, getApplyPatchPathLabel, getApplyPatchRenderData, hasApplyPatchCopyText, type ApplyPatchFile } from "./apply-patch-data"
 
 function DiagnosticsInline(props: { entries: DiagnosticEntry[]; label: string; t: (key: string, params?: Record<string, unknown>) => string }) {
   return (
@@ -64,46 +62,35 @@ export const applyPatchRenderer: ToolRenderer = {
 
     const payload = readToolStatePayload(state)
     const files = Array.isArray((payload.metadata as any).files) ? ((payload.metadata as any).files as ApplyPatchFile[]) : []
-    if (files.some((file) => typeof file.diff === "string" || typeof file.patch === "string")) {
-      return {
-        language: "diff",
-        getCopyText: () => getApplyPatchCopyText(files),
-        suppressInnerHeader: false,
-      }
-    }
-
-    const fallback = isToolStateCompleted(state) && typeof state.output === "string" ? state.output : null
-    if (!fallback) return undefined
-    return { language: "text", getCopyText: () => fallback, wrapToggle: true, suppressInnerHeader: true }
+    const fallback = isToolStateCompleted(state) && typeof state.output === "string" && state.output.length > 0 ? state.output : null
+    const access = getApplyPatchCopyAccess(files, fallback)
+    if (!access) return undefined
+    return access.language === "diff"
+      ? { ...access, suppressInnerHeader: false }
+      : { ...access, wrapToggle: true, suppressInnerHeader: true }
   },
   renderBody({ toolState, renderDiff, renderMarkdown, t }) {
     const state = toolState()
     if (!state || state.status === "pending") return null
 
     const payload = readToolStatePayload(state)
-    const allFiles = createMemo(() => {
-      const list = (payload.metadata as any).files
-      return Array.isArray(list) ? (list as ApplyPatchFile[]) : []
-    })
-    const files = createMemo(() => {
-      const rendered: ApplyPatchFile[] = []
-      let characters = 0
-      for (const file of allFiles()) {
-        if (rendered.length >= APPLY_PATCH_FILE_RENDER_LIMIT || characters >= TOOL_OUTPUT_RENDER_CHARACTER_LIMIT) break
-        const diff = typeof file.diff === "string" ? file.diff : typeof file.patch === "string" ? file.patch : ""
-        const remaining = TOOL_OUTPUT_RENDER_CHARACTER_LIMIT - characters
-        rendered.push(diff.length > remaining ? { ...file, diff: file.diff ? diff.slice(0, remaining + 1) : undefined, patch: file.patch ? diff.slice(0, remaining + 1) : undefined } : file)
-        characters += Math.min(diff.length, remaining)
-      }
-      return rendered
-    })
     const diagnosticsMap = createMemo(() => {
       const value = (payload.metadata as any).diagnostics
       return value && typeof value === "object" ? (value as DiagnosticsMap) : {}
     })
+    const allFiles = createMemo(() => {
+      const list = (payload.metadata as any).files
+      return getApplyPatchFilesForRender(Array.isArray(list) ? list as ApplyPatchFile[] : [], getApplyPatchDiagnosticPaths(diagnosticsMap()))
+    })
+    const renderData = createMemo(() => getApplyPatchRenderData(allFiles().files, APPLY_PATCH_FILE_RENDER_LIMIT, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT, allFiles().truncated))
+    const files = createMemo(() => renderData().rendered)
+    const fallback = createMemo(() => {
+      if (!isToolStateCompleted(state) || hasApplyPatchCopyText(files().map(({ file }) => file))) return null
+      return typeof state.output === "string" && state.output.length > 0 ? state.output : null
+    })
     const diagnosticViews = createMemo(() => {
       let remaining = 100
-      return files().map((file) => {
+      return files().map(({ file }) => {
         const view = buildDiagnosticView(diagnosticsMap(), [file.filePath, file.relativePath])
         const entries = view.entries.slice(0, remaining)
         remaining -= entries.length
@@ -115,8 +102,11 @@ export const applyPatchRenderer: ToolRenderer = {
       const renderedKeys = new Set(views.map((view) => view.key).filter(Boolean))
       if (views.some((view) => view.truncated)) return true
       let scanned = 0
+      let scannedKeys = 0
       for (const key in diagnosticsMap()) {
         if (!Object.prototype.hasOwnProperty.call(diagnosticsMap(), key)) continue
+        scannedKeys += 1
+        if (scannedKeys > 10_000) return true
         const list = diagnosticsMap()[key]
         if (!renderedKeys.has(key) && Array.isArray(list)) {
           const remaining = 10_000 - scanned
@@ -131,18 +121,20 @@ export const applyPatchRenderer: ToolRenderer = {
       return false
     })
 
-    if (files().length === 0) {
-      const fallback = isToolStateCompleted(state) && typeof state.output === "string" ? state.output : null
-      if (!fallback) return null
-      return renderMarkdown({ content: limitToolOutputForRender(fallback), size: "large", disableHighlight: state.status === "running" })
-    }
+    if (files().length === 0 && !fallback() && !renderData().truncated) return null
 
     return (
       <div class="tool-call-apply-patch">
+        <Show when={fallback()}>
+          {(content) => renderMarkdown({ content: limitToolOutputForRender(content()), size: "large", disableHighlight: state.status === "running" })}
+        </Show>
         <For each={files()}>
-          {(file, index) => {
+          {(renderedFile, index) => {
+            const file = renderedFile.file
             const labelBase = file.relativePath || file.filePath || t("toolCall.applyPatch.fileFallback", { number: index() + 1 })
-            const diffText = typeof file.diff === "string" ? file.diff : typeof file.patch === "string" ? file.patch : ""
+            const label = getApplyPatchPathLabel(labelBase)
+            const fullDiff = typeof file.diff === "string" ? file.diff : typeof file.patch === "string" ? file.patch : ""
+            const diffText = renderedFile.diffText
             const filePath = typeof file.filePath === "string" ? file.filePath : file.relativePath
             const entries = createMemo(() => diagnosticViews()[index()]?.entries ?? [])
 
@@ -150,19 +142,19 @@ export const applyPatchRenderer: ToolRenderer = {
               <div class="tool-call-apply-patch-file">
                 <Show when={diffText.trim().length > 0}>
                   {renderDiff(
-                    { diffText, filePath },
+                    { diffText, copyText: fullDiff, filePath },
                     {
-                      label: t("toolCall.diff.label.withPath", { path: getRelativePath(labelBase) }),
-                      cacheKey: `apply_patch:${labelBase}:${index()}`,
+                      label: limitToolTitleForRender(t("toolCall.diff.label.withPath", { path: label })),
+                      cacheKey: `apply_patch:${index()}`,
                     },
                   )}
                 </Show>
-                <DiagnosticsInline entries={entries()} label={labelBase} t={t} />
+                <DiagnosticsInline entries={entries()} label={label} t={t} />
               </div>
             )
           }}
         </For>
-        <Show when={allFiles().length > files().length}>
+        <Show when={renderData().truncated}>
           <div class="tool-call-diagnostic-message" role="status">{t("toolCall.output.truncated")}</div>
         </Show>
         <Show when={hasDiagnosticMessages(diagnosticsMap())}>

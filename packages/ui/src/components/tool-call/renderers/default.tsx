@@ -16,12 +16,13 @@ export const defaultRenderer: ToolRenderer = {
         ? metadata.output
         : metadata.diff ?? metadata.preview ?? input.content
 
-    if (primaryOutput === undefined || primaryOutput === null) return undefined
+    if (primaryOutput === undefined || primaryOutput === null || primaryOutput === "" || (Array.isArray(primaryOutput) && primaryOutput.length === 0)) return undefined
     const result = formatUnknownForRender(primaryOutput)
 
     return {
       language: result?.language ?? "text",
       getCopyText: () => formatUnknownForCopy(primaryOutput)?.text ?? null,
+      hasCopyText: true,
       wrapToggle: true,
       suppressInnerHeader: true,
     }

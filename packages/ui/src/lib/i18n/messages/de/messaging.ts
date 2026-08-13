@@ -36,8 +36,6 @@ export const messagingMessages = {
   "messageSection.search.count.searching": "Suche...",
   "messageSection.search.count.none": "Keine Treffer",
   "messageSection.search.count.matches": "{current} / {total}",
-  "messageSection.search.count.partial": "{current} / {total}+",
-  "messageSection.search.partialNotice": "Die ersten {count} Treffer werden angezeigt. Die Ergebnisse sind unvollständig.",
   "messageSection.search.previousAriaLabel": "Vorheriger Treffer",
   "messageSection.search.nextAriaLabel": "Nächster Treffer",
   "messageSection.search.closeAriaLabel": "Suche schließen",

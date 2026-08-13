@@ -36,8 +36,6 @@ export const messagingMessages = {
   "messageSection.search.count.searching": "Buscando...",
   "messageSection.search.count.none": "Sin coincidencias",
   "messageSection.search.count.matches": "{current} / {total}",
-  "messageSection.search.count.partial": "{current} / {total}+",
-  "messageSection.search.partialNotice": "Se muestran las primeras {count} coincidencias. Los resultados son parciales.",
   "messageSection.search.previousAriaLabel": "Coincidencia anterior",
   "messageSection.search.nextAriaLabel": "Siguiente coincidencia",
   "messageSection.search.closeAriaLabel": "Cerrar búsqueda",

@@ -58,8 +58,7 @@ export const toolCallMessages = {
   "toolCall.renderer.bash.title.timeout": "超时：{timeout}",
   "toolCall.output.truncated": "[输出已截断以便显示；复制即可访问完整输出]",
   "toolCall.output.tooLarge": "结构化输出过大，已省略显示。",
-  "toolCall.permission.fullDiffRequired": "批准此超大更改前，请先复制完整差异。",
-  "toolCall.task.steps.truncated": "正在显示最近的 {count} 个步骤。复制摘要可获取所有旧步骤。",
+  "toolCall.task.steps.truncated": "正在显示最近的 {count} 个步骤；更早的步骤已省略。",
   "toolCall.renderer.read.detail.offset": "偏移：{offset}",
   "toolCall.renderer.read.detail.limit": "限制：{limit}",
 

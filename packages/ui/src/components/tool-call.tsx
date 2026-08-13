@@ -1,6 +1,5 @@
 import { createSignal, Show, createEffect, createMemo, onCleanup, type Accessor, type JSXElement } from "solid-js"
 import { ArrowRightSquare, Check, Copy, Hourglass, Loader2, Volume2, WrapText, XCircle } from "lucide-solid"
-import { stringify as stringifyYaml } from "yaml"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { useTheme } from "../lib/theme"
 import { useGlobalCache } from "../lib/hooks/use-global-cache"
@@ -33,7 +32,8 @@ import type {
 import {
   buildToolSpeechText,
   ensureMarkdownContent,
-  formatUnknownForRender,
+  formatToolInputForCopy,
+  formatToolInputForRender,
   getRelativePath,
   getToolName,
   isToolStateCompleted,
@@ -193,7 +193,6 @@ function ToolCallDetails(props: {
 
   const [permissionSubmitting, setPermissionSubmitting] = createSignal(false)
   const [permissionError, setPermissionError] = createSignal<string | null>(null)
-  const [permissionApprovalBlocked, setPermissionApprovalBlocked] = createSignal(false)
 
   const followScroll = createFollowScroll({
     getScrollTopSnapshot: props.scrollTopSnapshot,
@@ -219,10 +218,8 @@ function ToolCallDetails(props: {
     if (!permission) {
       setPermissionSubmitting(false)
       setPermissionError(null)
-      setPermissionApprovalBlocked(false)
     } else {
       setPermissionError(null)
-      setPermissionApprovalBlocked(true)
     }
   })
 
@@ -236,7 +233,6 @@ function ToolCallDetails(props: {
 
   async function handlePermissionResponse(permission: PermissionRequest, response: "once" | "always" | "reject", message?: string) {
     if (!permission) return
-    if (response !== "reject" && permissionApprovalBlocked()) return
     setPermissionSubmitting(true)
     setPermissionError(null)
     try {
@@ -362,26 +358,11 @@ function ToolCallDetails(props: {
 
   const status = () => props.toolState()?.status || ""
 
-  const formatToolInput = () => {
-    const input = props.toolInput()
-    try {
-      return { text: stringifyYaml(input), language: "yaml" }
-    } catch (error) {
-      log.error("Failed to convert tool call input to YAML", error)
-      try {
-        return { text: JSON.stringify(input, null, 2), language: "json" }
-      } catch (nestedError) {
-        log.error("Failed to stringify tool call input", nestedError)
-        return null
-      }
-    }
-  }
-
   const toolInputDisplay = createMemo((): { content: string; language: string } | null => {
     const input = props.toolInput()
-    if (!input || Object.keys(input).length === 0) return null
-    if (!props.inputSectionExpanded()) return { content: "", language: "yaml" }
-    const formatted = formatUnknownForRender(input)
+    if (!input) return null
+    if (!props.inputSectionExpanded()) return { content: "", language: "json" }
+    const formatted = formatToolInputForRender(input)
     if (!formatted) return null
     const language = formatted.language ?? "text"
     const content = ensureMarkdownContent(formatted.text, language, true)
@@ -483,6 +464,7 @@ function ToolCallDetails(props: {
 
   const outputChrome = createMemo<ToolOutputChrome>(() => renderer().getOutputChrome?.(rendererContext) ?? {})
   const resolveOutputCopyText = () => outputChrome().copyText || outputChrome().getCopyText?.() || ""
+  const canCopyOutput = () => outputChrome().hasCopyText ?? Boolean(outputChrome().copyText || outputChrome().getCopyText)
 
   const renderError = () => {
     const state = props.toolState()
@@ -508,7 +490,6 @@ function ToolCallDetails(props: {
       active={props.isPermissionActive}
       submitting={permissionSubmitting}
       error={permissionError}
-      onApprovalBlockedChange={setPermissionApprovalBlocked}
       renderDiff={renderDiffContent}
       fallbackSessionId={() => props.sessionId}
       onRespond={(permission, sessionId, response, message) => void handlePermissionResponse(permission, response, message)}
@@ -544,8 +525,7 @@ function ToolCallDetails(props: {
   }
 
   const copyToolInput = async (event: MouseEvent) => {
-    const formatted = formatToolInput()
-    await copyIoText(event, formatted?.text)
+    await copyIoText(event, formatToolInputForCopy(props.toolInput())?.text)
   }
 
   const outputWrapTitle = () =>
@@ -579,7 +559,13 @@ function ToolCallDetails(props: {
       </Show>
 
       <Show when={Boolean(options.copyText?.() || options.onCopy)}>
-        <button type="button" class="tool-call-header-icon-button tool-call-header-copy tool-call-io-copy" onClick={(event) => options.onCopy ? options.onCopy(event) : void copyIoText(event, options.copyText?.())} aria-label={options.copyAriaLabel?.() ?? props.t("toolCall.io.copyOutputAriaLabel")} title={options.copyTitle?.() ?? props.t("toolCall.io.copyOutputTitle")}>
+        <button
+          type="button"
+          class="tool-call-header-icon-button tool-call-header-copy tool-call-io-copy"
+          onClick={(event) => options.onCopy ? options.onCopy(event) : void copyIoText(event, options.copyText?.())}
+          aria-label={options.copyAriaLabel?.() ?? props.t("toolCall.io.copyOutputAriaLabel")}
+          title={options.copyTitle?.() ?? props.t("toolCall.io.copyOutputTitle")}
+        >
           <Copy class="w-3.5 h-3.5" aria-hidden="true" />
         </button>
       </Show>
@@ -687,7 +673,7 @@ function ToolCallDetails(props: {
                     expanded: props.outputSectionExpanded,
                     onToggle: props.toggleOutputSection,
                     copyText: () => outputChrome().copyText,
-                    onCopy: outputChrome().getCopyText ? (event) => void copyIoText(event, resolveOutputCopyText()) : undefined,
+                    onCopy: canCopyOutput() ? (event) => void copyIoText(event, resolveOutputCopyText()) : undefined,
                     copyTitle: () => props.t("toolCall.io.copyOutputTitle"),
                     copyAriaLabel: () => props.t("toolCall.io.copyOutputAriaLabel"),
                     actions: () => outputChrome().actions,
@@ -831,7 +817,9 @@ export default function ToolCall(props: ToolCallProps) {
 
   const hasToolInput = createMemo(() => {
     const input = toolInput()
-    return input && Object.keys(input).length > 0
+    if (!input) return false
+    for (const key in input) if (Object.prototype.hasOwnProperty.call(input, key)) return true
+    return false
   })
 
   const [toolCallRootEl, setToolCallRootEl] = createSignal<HTMLDivElement | undefined>()
@@ -844,10 +832,7 @@ export default function ToolCall(props: ToolCallProps) {
     if (override !== undefined) return override
     return diagnosticsDefaultExpanded()
   }
-  const diagnosticsView = createMemo(() => {
-    const state = toolState()
-    return extractDiagnosticsView(state)
-  })
+  const diagnosticsView = createMemo(() => extractDiagnosticsView(toolState()))
 
   const toggleInputSection = () => {
     setInputSectionOverride((prev) => {
@@ -982,7 +967,7 @@ export default function ToolCall(props: ToolCallProps) {
   const renderedHeaderTitleDetail = createMemo(() => limitToolTitleForRender(headerTitleDetail()))
 
   const headerCopyText = () => headerOutputChrome().copyText || headerOutputChrome().getCopyText?.() || ""
-  const canCopyHeaderOutput = () => Boolean(headerOutputChrome().copyText || headerOutputChrome().getCopyText)
+  const canCopyHeaderOutput = () => headerOutputChrome().hasCopyText ?? Boolean(headerOutputChrome().copyText || headerOutputChrome().getCopyText)
   const canToggleOutputWrap = () => Boolean(headerOutputChrome().wrapToggle)
   const outputWrapTitle = () =>
     outputWrapEnabled()

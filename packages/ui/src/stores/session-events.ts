@@ -29,6 +29,7 @@ import { getLogger } from "../lib/logger"
 import type { EventSessionDeleted, NativeSessionEvent } from "../lib/sse-manager"
 import {
   enqueueDelta,
+  clearPendingDeltasForInstance,
   clearPendingDeltasForPart,
   flushPendingDeltasForMessage,
   setFlushCallback,
@@ -103,6 +104,7 @@ const nativeRefreshes = new Map<string, {
   speakAfter: boolean
   timer?: ReturnType<typeof setTimeout>
   running?: Promise<void>
+  cancelled: boolean
 }>()
 let activeRetryToast: ToastHandle | null = null
 
@@ -118,8 +120,9 @@ function speakCompletedAssistantText(instanceId: string, sessionId: string): voi
 }
 
 function requestNativeSessionRefresh(instanceId: string, sessionId: string, final = false): void {
+  if (!instances().has(instanceId)) return
   const key = `${instanceId}:${sessionId}`
-  const refresh = nativeRefreshes.get(key) ?? { instanceId, sessionId, pending: false, speakAfter: false }
+  const refresh = nativeRefreshes.get(key) ?? { instanceId, sessionId, pending: false, speakAfter: false, cancelled: false }
   refresh.pending = true
   refresh.speakAfter ||= final
   if (refresh.timer) clearTimeout(refresh.timer)
@@ -129,15 +132,16 @@ function requestNativeSessionRefresh(instanceId: string, sessionId: string, fina
     if (refresh.running) return refresh.running
     refresh.running = (async () => {
       do {
+        if (refresh.cancelled || !instances().has(instanceId)) return
         refresh.pending = false
         try {
           await loadMessages(refresh.instanceId, refresh.sessionId, { force: true })
         } catch (error) {
           log.error("Failed to refresh native session messages", { instanceId, sessionId, error })
         }
-      } while (refresh.pending)
+      } while (refresh.pending && !refresh.cancelled)
 
-      if (refresh.speakAfter) {
+      if (refresh.speakAfter && !refresh.cancelled && instances().has(instanceId)) {
         refresh.speakAfter = false
         speakCompletedAssistantText(refresh.instanceId, refresh.sessionId)
       }
@@ -162,11 +166,13 @@ function requestNativeSessionRefresh(instanceId: string, sessionId: string, fina
 
 function clearNativeSessionRefresh(instanceId: string, sessionId: string): void {
   const refresh = nativeRefreshes.get(`${instanceId}:${sessionId}`)
+  if (refresh) refresh.cancelled = true
   if (refresh?.timer) clearTimeout(refresh.timer)
   nativeRefreshes.delete(`${instanceId}:${sessionId}`)
 }
 
 function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent): void {
+  if (!instances().has(instanceId)) return
   const sessionId = event.data?.sessionID
   if (!sessionId) return
 
@@ -334,9 +340,11 @@ function ensureSessionStatus(
 }
 
 messageStoreBus.onInstanceDestroyed((instanceId) => {
+  clearPendingDeltasForInstance(instanceId)
   const prefix = `${instanceId}:`
   for (const [key, refresh] of nativeRefreshes) {
     if (!key.startsWith(prefix)) continue
+    refresh.cancelled = true
     if (refresh.timer) clearTimeout(refresh.timer)
     nativeRefreshes.delete(key)
   }
@@ -350,6 +358,7 @@ function resolveMessageRole(info?: MessageInfo | null): "user" | "assistant" {
 }
 
 function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | MessagePartUpdatedEvent): void {
+  if (!instances().has(instanceId)) return
   const instanceSessions = sessions().get(instanceId)
 
   if (event.type === "message.part.updated") {
@@ -474,11 +483,13 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
 // Delta buffer callback setup
 setFlushCallback((batch) => {
   for (const { instanceId, messageId, partId, field, delta } of batch) {
+    if (!instances().has(instanceId)) continue
     applyPartDeltaV2(instanceId, { messageId, partId, field, delta })
   }
 })
 
 function handleMessagePartDelta(instanceId: string, event: MessagePartDeltaEvent): void {
+  if (!instances().has(instanceId)) return
   const props = event.properties
   if (!props) return
   const { messageID, partID, field, delta } = props
@@ -490,6 +501,7 @@ function handleSessionUpdate(
   instanceId: string,
   event: SessionCreated | SessionRevertStaged | SessionRevertCleared | SessionRevertCommitted,
 ): void {
+  if (!instances().has(instanceId)) return
   if (event.type !== "session.created") {
     const revert = event.type === "session.revert.staged" ? event.data.revert : null
     setSessionRevertV2(instanceId, event.data.sessionID, revert)
@@ -584,6 +596,7 @@ function handleSessionUpdate(
 }
 
 function handleSessionDeleted(instanceId: string, event: EventSessionDeleted): void {
+  if (!instances().has(instanceId)) return
   const sessionId = event.data?.sessionID ?? event.properties?.info?.id ?? event.properties?.sessionID ?? event.properties?.id
   if (!sessionId) return
 
@@ -593,6 +606,7 @@ function handleSessionDeleted(instanceId: string, event: EventSessionDeleted): v
 }
 
 function handleSessionIdle(instanceId: string, event: SessionIdle): void {
+  if (!instances().has(instanceId)) return
   const sessionId = event.data.sessionID
   if (!sessionId) return
 
@@ -609,6 +623,7 @@ function handleSessionIdle(instanceId: string, event: SessionIdle): void {
 }
 
 function handleSessionStatus(instanceId: string, event: SessionStatus2): void {
+  if (!instances().has(instanceId)) return
   const sessionId = event.data.sessionID
   if (!sessionId) return
 
@@ -639,6 +654,7 @@ function handleSessionStatus(instanceId: string, event: SessionStatus2): void {
 }
 
 function handleSessionCompacted(instanceId: string, event: SessionCompactionEnded): void {
+  if (!instances().has(instanceId)) return
   const sessionID = event.data.sessionID
   if (!sessionID) return
 
@@ -666,6 +682,7 @@ function handleSessionCompacted(instanceId: string, event: SessionCompactionEnde
 }
 
 function handleSessionError(instanceId: string, event: SessionExecutionFailed): void {
+  if (!instances().has(instanceId)) return
   const error = event.data.error
   const sessionId = event.data.sessionID
   if (sessionId) messageStoreBus.getOrCreate(instanceId).failPendingSends(sessionId)
@@ -688,6 +705,7 @@ function handleSessionError(instanceId: string, event: SessionExecutionFailed): 
 }
 
 function handleMessageRemoved(instanceId: string, event: MessageRemovedEvent): void {
+  if (!instances().has(instanceId)) return
   const { sessionID, messageID } = event.properties
   if (!sessionID || !messageID) return
 
@@ -697,6 +715,7 @@ function handleMessageRemoved(instanceId: string, event: MessageRemovedEvent): v
 }
 
 function handleMessagePartRemoved(instanceId: string, event: MessagePartRemovedEvent): void {
+  if (!instances().has(instanceId)) return
   const { sessionID, messageID, partID } = event.properties
   if (!sessionID || !messageID || !partID) return
 
@@ -723,6 +742,7 @@ function handleTuiToast(_instanceId: string, event: TuiToastShow): void {
 }
 
 function handlePermissionUpdated(instanceId: string, event: PermissionAsked): void {
+  if (!instances().has(instanceId)) return
   const permission = event.data as PermissionRequest
   if (!permission) return
   const permissionId = getPermissionId(permission)
@@ -749,6 +769,7 @@ function handlePermissionUpdated(instanceId: string, event: PermissionAsked): vo
 }
 
 function handlePermissionReplied(instanceId: string, event: PermissionReplied): void {
+  if (!instances().has(instanceId)) return
   const requestId = getRequestIdFromPermissionReply(event.data)
   if (!requestId) return
 
@@ -759,6 +780,7 @@ function handlePermissionReplied(instanceId: string, event: PermissionReplied): 
 }
 
 function handleQuestionAsked(instanceId: string, event: QuestionAsked): void {
+  if (!instances().has(instanceId)) return
   const request = event.data as QuestionRequest
   if (!request) return
   log.info(`[SSE] Question asked: ${getQuestionId(request)}`)
@@ -779,6 +801,7 @@ function handleQuestionAnswered(
   instanceId: string,
   event: QuestionReplied | QuestionRejected,
 ): void {
+  if (!instances().has(instanceId)) return
   const requestId = getRequestIdFromQuestionReply(event.data)
   if (!requestId) return
 

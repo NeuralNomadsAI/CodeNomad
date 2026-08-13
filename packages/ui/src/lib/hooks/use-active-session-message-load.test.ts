@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
 import { describe, it } from "node:test"
 import { createRoot, createSignal } from "solid-js"
 
@@ -117,15 +118,89 @@ describe("useActiveSessionMessageLoad", () => {
     }
   })
 
-  it("invalidates the owned request on session, workspace, and unmount changes", async () => {
-    const invalidated: string[] = []
-    const [instanceId, setInstanceId] = createSignal("one")
-    const [session, setSession] = createSignal<{ id: string } | undefined>({ id: "a" })
+  it("waits for a mounted child session to be registered, then loads it once", async () => {
+    const loads: string[] = []
+    const [session, setSession] = createSignal<{ id: string } | undefined>()
     let dispose = () => {}
     createRoot((rootDispose) => {
       dispose = rootDispose
       useActiveSessionMessageLoad({
         isActive: () => true,
+        instanceId: () => "inst",
+        session,
+        loadMessages: (_instanceId, sessionId) => {
+          loads.push(sessionId)
+        },
+        waitForHydration: () => Promise.resolve(),
+      })
+    })
+
+    try {
+      await tick()
+      assert.deepEqual(loads, [], "an unregistered child must not load")
+      setSession({ id: "child" })
+      await tick()
+      assert.deepEqual(loads, ["child"], "registration must reactively trigger the load")
+      setSession({ id: "child" })
+      await tick()
+      assert.deepEqual(loads, ["child"], "same-id session updates must not loop")
+    } finally {
+      dispose()
+    }
+  })
+
+  it("reloads a still-mounted transcript after its loaded state is invalidated", async () => {
+    const [loaded, setLoaded] = createSignal(false)
+    let loads = 0
+    let dispose = () => {}
+    createRoot((rootDispose) => {
+      dispose = rootDispose
+      useActiveSessionMessageLoad({
+        isActive: () => true,
+        instanceId: () => "inst",
+        session: () => ({ id: "child" }),
+        shouldLoad: () => !loaded(),
+        loadMessages: () => {
+          loads += 1
+          setLoaded(true)
+        },
+        waitForHydration: () => Promise.resolve(),
+      })
+    })
+
+    try {
+      await tick()
+      assert.equal(loads, 1)
+      setLoaded(false)
+      await tick()
+      assert.equal(loads, 2, "invalidation must reload without remounting")
+    } finally {
+      dispose()
+    }
+  })
+
+  it("retains mounted child transcripts and releases them on cleanup", () => {
+    const source = readFileSync(new URL("../../components/tool-call/renderers/task.tsx", import.meta.url), "utf8")
+    assert.match(source, /setSessionTranscriptVisible\(instanceId, id, true\)/)
+    assert.match(source, /onCleanup\(\(\) => setSessionTranscriptVisible\(instanceId, id, false\)\)/)
+    assert.match(source, /sessions\(\)\.get\(instanceId\)\?\.get\(id\)/)
+    assert.match(source, /shouldLoad: \(\) =>/)
+    assert.match(source, /getSessionMessagesLoadError\(instanceId, id\)/)
+    assert.match(source, /loadMessages\(instanceId, id, \{ force: true \}\)/)
+    assert.match(source, /onRetry=\{retryChildSessionLoad\}/)
+    assert.doesNotMatch(source, /requestedChildLoad/)
+  })
+
+  it("invalidates pending loads on session, workspace, visibility, and unmount changes", async () => {
+    const invalidated: string[] = []
+    const [instanceId, setInstanceId] = createSignal("one")
+    const [session, setSession] = createSignal<{ id: string } | undefined>({ id: "a" })
+    const [active, setActive] = createSignal(true)
+    let dispose = () => {}
+    createRoot((rootDispose) => {
+      dispose = rootDispose
+      useActiveSessionMessageLoad({
+        isActive: active,
         instanceId,
         session,
         loadMessages: (workspace, sessionId, options) => {
@@ -141,40 +216,12 @@ describe("useActiveSessionMessageLoad", () => {
     await tick()
     setInstanceId("two")
     await tick()
-    dispose()
-
-    assert.deepEqual(invalidated, ["one:a", "one:b", "two:b"])
-  })
-
-  it("uses the same abort policy when root or subagent views become hidden", async () => {
-    const invalidated: string[] = []
-    const [active, setActive] = createSignal(true)
-    const [session, setSession] = createSignal<{ id: string } | undefined>({ id: "root" })
-    let dispose = () => {}
-    createRoot((rootDispose) => {
-      dispose = rootDispose
-      useActiveSessionMessageLoad({
-        isActive: active,
-        instanceId: () => "inst",
-        session,
-        loadMessages: (_workspace, sessionId, options) => {
-          options?.registerInvalidation?.(() => invalidated.push(sessionId))
-          return new Promise<void>(() => {})
-        },
-        waitForHydration: () => Promise.resolve(),
-      })
-    })
-
-    await tick()
     setActive(false)
     await tick()
-    setSession({ id: "subagent" })
     setActive(true)
     await tick()
-    setActive(false)
-    await tick()
     dispose()
 
-    assert.deepEqual(invalidated, ["root", "subagent"])
+    assert.deepEqual(invalidated, ["one:a", "one:b", "two:b", "two:b"])
   })
 })

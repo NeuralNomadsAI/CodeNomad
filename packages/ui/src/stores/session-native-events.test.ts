@@ -5,7 +5,13 @@ import { sdkManager } from "../lib/sdk-manager.ts"
 import type { Session } from "../types/session.ts"
 import { addInstance, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
-import { handleNativeSessionEvent, handleSessionIdle, handleSessionStatus } from "./session-events.ts"
+import {
+  handleMessagePartDelta,
+  handleMessageUpdate,
+  handleNativeSessionEvent,
+  handleSessionIdle,
+  handleSessionStatus,
+} from "./session-events.ts"
 import { clearInstanceDeletedSessionAuthority, sessions, setSessions } from "./session-state.ts"
 
 const delay = (duration: number) => new Promise<void>((resolve) => setTimeout(resolve, duration))
@@ -141,13 +147,30 @@ describe("native session event reducer", () => {
       type: "session.status",
       data: { sessionID: fetchedSessionId, status: { type: "running" } },
     } as any)
+    handleMessagePartDelta(instanceId, {
+      type: "message.part.delta",
+      properties: { messageID: "stale-message", partID: "part", field: "text", delta: "stale" },
+    } as any)
     removeInstance(instanceId, { authoritative: false })
+    handleMessageUpdate(instanceId, {
+      type: "message.updated",
+      properties: { info: { id: "late-message", sessionID: refreshSessionId, role: "assistant", time: { created: 1 } } },
+    } as any)
+    handleMessagePartDelta(instanceId, {
+      type: "message.part.delta",
+      properties: { messageID: "late-message", partID: "part", field: "text", delta: "late" },
+    } as any)
+    assert.equal(messageStoreBus.getInstance(instanceId), undefined)
+    const reopenedClient = { session: {}, message: { list: async () => ({ data: [] }) } } as any
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client: reopenedClient })
     resolveGet({ id: fetchedSessionId, title: fetchedSessionId, parentID: null, projectID: "project",
       location: { directory: "/work" }, time: { created: 1, updated: 1 } })
     await delay(120)
 
     assert.equal(messageCalls, 0)
-    assert.equal(sessions().has(instanceId), false)
+    assert.equal(sessions().get(instanceId)?.has(fetchedSessionId) ?? false, false)
+    assert.equal(messageStoreBus.getInstance(instanceId), undefined)
+    removeInstance(instanceId, { authoritative: false })
     sdkManager.destroyClientsForInstance(instanceId)
   })
 })

@@ -53,8 +53,11 @@ const DIAGNOSTIC_SCAN_LIMIT = 10_000
 
 export function hasDiagnosticMessages(diagnostics: DiagnosticsMap): boolean {
   let scanned = 0
+  let scannedKeys = 0
   for (const key in diagnostics) {
     if (!Object.prototype.hasOwnProperty.call(diagnostics, key)) continue
+    scannedKeys += 1
+    if (scannedKeys > DIAGNOSTIC_SCAN_LIMIT) return true
     const list = diagnostics[key]
     if (!Array.isArray(list)) continue
     const remaining = DIAGNOSTIC_SCAN_LIMIT - scanned
@@ -98,8 +101,11 @@ export function extractDiagnosticsView(state: ToolState | undefined): Diagnostic
     typeof value === "string" ? value : undefined,
   ))
   let scanned = 0
+  let scannedKeys = 0
   for (const key in diagnosticsMap) {
     if (!Object.prototype.hasOwnProperty.call(diagnosticsMap, key)) continue
+    scannedKeys += 1
+    if (scannedKeys > DIAGNOSTIC_SCAN_LIMIT) return { ...view, truncated: true }
     const list = diagnosticsMap[key]
     if (!Array.isArray(list)) continue
     const remaining = DIAGNOSTIC_SCAN_LIMIT - scanned

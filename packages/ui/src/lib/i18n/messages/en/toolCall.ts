@@ -58,8 +58,7 @@ export const toolCallMessages = {
   "toolCall.renderer.bash.title.timeout": "Timeout: {timeout}",
   "toolCall.output.truncated": "[Output truncated for rendering; copy to access the full output]",
   "toolCall.output.tooLarge": "Structured output omitted from rendering because it is too large.",
-  "toolCall.permission.fullDiffRequired": "Copy the full diff before approving this oversized change.",
-  "toolCall.task.steps.truncated": "Showing the most recent {count} steps. Copy the summary for all legacy steps.",
+  "toolCall.task.steps.truncated": "Showing the most recent {count} steps; older steps are omitted.",
   "toolCall.renderer.read.detail.offset": "Offset: {offset}",
   "toolCall.renderer.read.detail.limit": "Limit: {limit}",
 

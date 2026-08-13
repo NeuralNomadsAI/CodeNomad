@@ -3,9 +3,9 @@ import type { PermissionRequest } from "../../types/permission"
 import { getPermissionDisplayTitle, getPermissionKind } from "../../types/permission"
 import { getPermissionSessionId } from "../../types/permission"
 import { useI18n } from "../../lib/i18n"
-import { isPermissionDiffTooLarge, PERMISSION_REJECT_REASON_MAX_LENGTH } from "./permission-constants"
+import { PERMISSION_REJECT_REASON_MAX_LENGTH } from "./permission-constants"
 import type { DiffPayload, DiffRenderOptions } from "./types"
-import { getRelativePath, limitToolTitleForRender } from "./utils"
+import { getRelativePath } from "./utils"
 
 type PermissionResponse = "once" | "always" | "reject"
 
@@ -15,7 +15,6 @@ export type PermissionToolBlockProps = {
   submitting: Accessor<boolean>
   error: Accessor<string | null>
   onRespond: (permission: PermissionRequest, sessionId: string, response: PermissionResponse, message?: string) => void | Promise<void>
-  onApprovalBlockedChange?: (blocked: boolean) => void
   renderDiff: (payload: DiffPayload, options?: DiffRenderOptions) => JSXElement | null
   fallbackSessionId: Accessor<string>
 }
@@ -23,16 +22,10 @@ export type PermissionToolBlockProps = {
 export function PermissionToolBlock(props: PermissionToolBlockProps) {
   const { t } = useI18n()
   const [rejectReason, setRejectReason] = createSignal("")
-  const [accessedDiff, setAccessedDiff] = createSignal("")
 
   createEffect(() => {
-    const permission = props.permission()
-    const diff = (() => {
-      const metadata = (permission?.metadata ?? {}) as Record<string, unknown>
-      return typeof metadata.diff === "string" ? metadata.diff : ""
-    })()
+    props.permission()?.id
     setRejectReason("")
-    if (!permission || accessedDiff() !== diff) setAccessedDiff("")
   })
 
   const diffPayload = () => {
@@ -64,9 +57,6 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
     respond("reject", rejectReason().trim() || undefined)
   }
 
-  const approvalBlocked = () => isPermissionDiffTooLarge(diffPayload()?.diffText) && accessedDiff() !== diffPayload()?.diffText
-  createEffect(() => props.onApprovalBlockedChange?.(approvalBlocked()))
-
   return (
     <Show when={props.permission()}>
       {(permission) => (
@@ -79,7 +69,7 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
           </div>
           <div class="tool-call-permission-body">
             <div class="tool-call-permission-title">
-              <code>{limitToolTitleForRender(getPermissionDisplayTitle(permission()))}</code>
+              <code>{getPermissionDisplayTitle(permission())}</code>
             </div>
             <Show when={diffPayload()}>
               {(payload) => (
@@ -87,16 +77,12 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
                   {props.renderDiff(payload(), {
                     variant: "permission-diff",
                     disableScrollTracking: true,
-                    onFullDiffAccess: setAccessedDiff,
                     label: payload().filePath
                       ? t("toolCall.permission.requestedDiff.withPath", { path: getRelativePath(payload().filePath || "") })
                       : t("toolCall.permission.requestedDiff.label"),
                   })}
                 </div>
               )}
-            </Show>
-            <Show when={approvalBlocked()}>
-              <div class="tool-call-diagnostic-message" role="status">{t("toolCall.permission.fullDiffRequired")}</div>
             </Show>
             <Show when={!props.active()}>
               <p class="tool-call-permission-queued-text">{t("toolCall.permission.queuedText")}</p>
@@ -119,7 +105,7 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
                 <button
                   type="button"
                   class="tool-call-permission-button"
-                  disabled={props.submitting() || approvalBlocked()}
+                  disabled={props.submitting()}
                   onClick={() => respond("once")}
                 >
                   {t("toolCall.permission.actions.allowOnce")}
@@ -127,7 +113,7 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
                 <button
                   type="button"
                   class="tool-call-permission-button"
-                  disabled={props.submitting() || approvalBlocked()}
+                  disabled={props.submitting()}
                   onClick={() => respond("always")}
                 >
                   {t("toolCall.permission.actions.alwaysAllow")}

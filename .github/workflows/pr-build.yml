@@ -32,7 +32,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "$BASE_REF" = "dev" ]; then
+          if [ "$BASE_REF" = "dev" ] || [ "$BASE_REF" = "DEV-v2" ]; then
             echo "allowed=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -103,13 +103,21 @@ jobs:
 
       - name: Test changed runnable UI behavior
         run: >-
-          node --import tsx --test
+          node --import tsx --test --test-force-exit
+          packages/ui/src/components/markdown-render-limit.test.ts
+          packages/ui/src/components/message-block-render-limit.test.ts
           packages/ui/src/components/session-list-visibility.test.ts
+          packages/ui/src/components/tool-call/render-memory.test.ts
           packages/ui/src/components/unified-picker-path.test.ts
+          packages/ui/src/lib/global-cache.test.ts
           packages/ui/src/lib/hooks/use-app-session-capture.test.ts
           packages/ui/src/lib/hooks/use-foreground-refresh.test.ts
           packages/ui/src/lib/launch-errors.test.ts
+          packages/ui/src/lib/message-render-cache.test.ts
           packages/ui/src/lib/message-selection-position.test.ts
+          packages/ui/src/lib/retained-size.test.ts
+          packages/ui/src/lib/session-transcript-lru.test.ts
+          packages/ui/src/lib/session-transcript-measurement.test.ts
           packages/ui/src/lib/trailing-resync.test.ts
           packages/ui/src/stores/abort-created-workspace-cleanup.test.ts
           packages/ui/src/stores/app-session-reconciliation.test.ts
@@ -120,12 +128,14 @@ jobs:
           packages/ui/src/stores/restore-workspace-commit-gates.test.ts
           packages/ui/src/stores/client-state-codec.test.ts
           packages/ui/src/stores/client-state.test.ts
+          packages/ui/src/stores/delta-buffer.test.ts
           packages/ui/src/stores/instances-restore-cancellation.test.ts
           packages/ui/src/stores/message-v2/instance-store.test.ts
           packages/ui/src/stores/message-v2/message-hydration-authority.test.ts
           packages/ui/src/stores/message-v2/message-status.test.ts
           packages/ui/src/stores/message-v2/normalizers.test.ts
           packages/ui/src/stores/session-generation-recovery.test.ts
+          packages/ui/src/stores/session-message-pages.test.ts
           packages/ui/src/stores/session-pagination.test.ts
           packages/ui/src/types/session.test.ts
           packages/ui/src/stores/workspace-list-reconciliation-fence.test.ts
@@ -133,9 +143,12 @@ jobs:
       - name: Test restore ownership integration
         run: >-
           node --conditions=browser --import tsx --test --test-force-exit
+          packages/ui/src/components/tool-call/renderer-copy.test.ts
           packages/ui/src/lib/hooks/use-active-session-message-load.test.ts
           packages/ui/src/stores/instances-restore-ownership.test.ts
+          packages/ui/src/stores/message-v2/bus.test.ts
           packages/ui/src/stores/permission-lifecycle.test.ts
+          packages/ui/src/stores/session-native-events.test.ts
           packages/ui/src/stores/session-actions.test.ts
           packages/ui/src/stores/session-request-authority.test.ts
           packages/ui/src/stores/session-send-lifecycle.test.ts

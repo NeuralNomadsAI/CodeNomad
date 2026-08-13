@@ -1299,7 +1299,6 @@ export {
   getMessageLoadSignal,
   finishMessageLoad,
   invalidateSessionMessageLoad,
-  clearInstanceSessionState,
   setSessionMessagesLoadError,
   sessionInfoByInstance,
   setSessionInfoByInstance,

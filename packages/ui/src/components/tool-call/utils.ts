@@ -13,14 +13,25 @@ export type { ToolStateCompleted, ToolStateError, ToolStateRunning }
 export const diffCapableTools = new Set(["edit", "patch"])
 export const TOOL_OUTPUT_RENDER_CHARACTER_LIMIT = 10_000
 export const TOOL_TITLE_RENDER_CHARACTER_LIMIT = 384
+export const MESSAGE_PART_RENDER_LIMIT = 200
+
+export function getItemsForRender<T>(items: readonly T[], limit: number) {
+  return { parts: items.slice(0, limit), truncated: items.length > limit }
+}
 
 export function limitToolOutputForRender(text: string): string {
   if (text.length <= TOOL_OUTPUT_RENDER_CHARACTER_LIMIT) return text
-  return `${text.slice(0, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT)}\n\n${tGlobal("toolCall.output.truncated")}`
+  const suffix = `\n\n${tGlobal("toolCall.output.truncated")}`
+  return `${text.slice(0, Math.max(0, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT - suffix.length))}${suffix}`
 }
 
 export function shouldRenderDiffAsPlainText(text: string): boolean {
   return text.length > TOOL_OUTPUT_RENDER_CHARACTER_LIMIT
+}
+
+export function shouldRenderDiffPayloadAsPlainText(payload: DiffPayload): boolean {
+  return shouldRenderDiffAsPlainText(payload.diffText)
+    || (payload.copyText?.length ?? 0) > TOOL_OUTPUT_RENDER_CHARACTER_LIMIT
 }
 
 export function limitToolTitleForRender(text: string): string {
@@ -173,6 +184,24 @@ export function formatUnknownForRender(value: unknown): { text: string; language
   return result ? { ...result, text: limitToolOutputForRender(result.text) } : null
 }
 
+export function formatToolInputForCopy(input: unknown): { text: string; language?: string } | null {
+  try {
+    const text = JSON.stringify(input, null, 2)
+    return typeof text === "string" ? { text, language: "json" } : null
+  } catch (error) {
+    log.error("Failed to stringify tool call input", error)
+    return null
+  }
+}
+
+export function formatToolInputForRender(input: unknown): { text: string; language?: string } | null {
+  if (typeof input !== "string" && exceedsRetainedByteLimit(input, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT)) {
+    return { text: JSON.stringify(tGlobal("toolCall.output.tooLarge")), language: "json" }
+  }
+  const formatted = formatToolInputForCopy(input)
+  return formatted ? { ...formatted, text: limitToolOutputForRender(formatted.text) } : null
+}
+
 export function formatUnknownForCopy(value: unknown): { text: string; language?: string } | null {
   try {
     return formatUnknown(value)
@@ -195,7 +224,11 @@ export function extractDiffPayload(toolName: string, state?: ToolState): DiffPay
   let diffText: string | null = null
 
   for (const candidate of candidates) {
-    if (typeof candidate === "string" && isRenderableDiffText(candidate)) {
+    if (typeof candidate !== "string") continue
+    const renderable = candidate.length > TOOL_OUTPUT_RENDER_CHARACTER_LIMIT
+      ? /(^|\n)@@/.test(candidate.slice(0, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT))
+      : isRenderableDiffText(candidate)
+    if (renderable) {
       diffText = candidate
       break
     }

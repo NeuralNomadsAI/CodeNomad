@@ -4,15 +4,27 @@ import { describe, it } from "node:test"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import { serverApi } from "../lib/api-client.ts"
 import type { Session } from "../types/session.ts"
-import { addInstance, removeInstance, updateInstance } from "./instances.ts"
+import { addInstance, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
-import { fetchSessions, loadMessages, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
 import {
+  createSession,
+  deleteSession,
+  fetchAgents,
+  fetchProviders,
+  fetchSessions,
+  forkSession,
+  loadMessages,
+  removeSessionRuntimeState,
+  searchSessions,
+} from "./session-api.ts"
+import {
+  agents,
   clearInstanceDeletedSessionAuthority,
+  getSessionMessagesLoadError,
   getSessionSearchResultIds,
-  invalidateSessionMessageLoad,
   loading,
   messagesLoaded,
+  providers,
   sessions,
   setSessions,
 } from "./session-state.ts"
@@ -140,30 +152,148 @@ describe("session request authority", () => {
     }
   })
 
-  it("aborts obsolete message requests and ignores clients that do not honor abort", async () => {
-    const instanceId = "aborted-message-load", sessionId = "session"
+  it("loads every message page before hydrating the transcript", async () => {
+    const instanceId = "paginated-message-load", sessionId = "session"
     const { client, cleanup } = setup(instanceId)
-    const response = deferred<any>()
-    let signal: AbortSignal | undefined
-    ;(client as any).message = { list: (_input: unknown, options: { signal?: AbortSignal }) => {
-      signal = options.signal
-      return response.promise
+    const finalPage = deferred<any>()
+    const inputs: any[] = []
+    ;(client as any).message = { list: async (input: any) => {
+      inputs.push(input)
+      if (!input.cursor) return { data: [apiMessage("first", sessionId)], cursor: { next: "page-2" } }
+      return finalPage.promise
     } }
     setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    const store = messageStoreBus.getOrCreate(instanceId)
+    store.upsertMessage({ id: "evicted", sessionId, role: "assistant", status: "complete", createdAt: 1, updatedAt: 1 })
+    messagesLoaded().set(instanceId, new Set([sessionId]))
+    store.clearSession(sessionId)
 
     try {
+      assert.equal(messagesLoaded().get(instanceId)?.has(sessionId) ?? false, false)
       const request = loadMessages(instanceId, sessionId)
-      invalidateSessionMessageLoad(instanceId, sessionId)
-      assert.equal(signal?.aborted, true)
-      response.resolve({ data: [apiMessage("late-message", sessionId)] })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      assert.deepEqual(store.getSessionMessageIds(sessionId), [])
+      finalPage.resolve({ data: [apiMessage("second", sessionId)], cursor: {} })
       await request
-      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), [])
+
+      assert.deepEqual(inputs, [
+        { sessionID: sessionId, limit: 200, order: "asc" },
+        { sessionID: sessionId, limit: 200, cursor: "page-2" },
+      ])
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["first", "second"])
     } finally {
       cleanup()
     }
   })
 
-  it("does not eagerly load descendants with a root transcript", async () => {
+  it("rejects a repeated cursor without hydrating a partial transcript", async () => {
+    const instanceId = "repeated-message-cursor", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    ;(client as any).message = { list: async () => ({
+      data: [apiMessage("partial", sessionId)],
+      cursor: { next: "repeat" },
+    }) }
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+
+    try {
+      await assert.rejects(loadMessages(instanceId, sessionId), /Repeated message cursor/)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), [])
+      assert.equal(messagesLoaded().get(instanceId)?.has(sessionId) ?? false, false)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("bounds retries while message revisions keep changing", async () => {
+    const instanceId = "bounded-message-retry", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    let calls = 0
+    ;(client as any).message = { list: async (input: any) => {
+      calls += 1
+      if (!input.cursor) return { data: [apiMessage(`first-${calls}`, sessionId)], cursor: { next: `page-${calls}` } }
+      messageStoreBus.getOrCreate(instanceId).upsertMessage({
+        id: `stream-${calls}`, sessionId, role: "assistant", status: "streaming", createdAt: calls, updatedAt: calls,
+      })
+      return { data: [apiMessage(`last-${calls}`, sessionId)], cursor: {} }
+    } }
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+
+    try {
+      await loadMessages(instanceId, sessionId, { force: true })
+      assert.equal(calls, 4)
+      assert.equal(messagesLoaded().get(instanceId)?.has(sessionId) ?? false, false)
+      assert.ok(getSessionMessagesLoadError(instanceId, sessionId), "exhausted conflicts must remain explicit")
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("rejects late create and fork responses after an instance reopens", async () => {
+    const instanceId = "late-session-mutations"
+    const { client, cleanup } = setup(instanceId)
+    const created = deferred<any>()
+    const forked = deferred<any>()
+    ;(client.session as any).create = () => created.promise
+    ;(client.session as any).fork = () => forked.promise
+    const reopenedClient = { session: { active: async () => ({}) } } as any
+
+    try {
+      const createRequest = createSession(instanceId)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      removeInstance(instanceId, { authoritative: false })
+      addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client: reopenedClient })
+      created.resolve(apiSession("late-created"))
+      await assert.rejects(createRequest, /Instance no longer ready/)
+      assert.equal(sessions().get(instanceId)?.has("late-created") ?? false, false)
+
+      removeInstance(instanceId, { authoritative: false })
+      addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+      const forkRequest = forkSession(instanceId, "source")
+      removeInstance(instanceId, { authoritative: false })
+      addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client: reopenedClient })
+      forked.resolve(apiSession("late-fork"))
+      await assert.rejects(forkRequest, /Instance no longer ready/)
+      assert.equal(sessions().get(instanceId)?.has("late-fork") ?? false, false)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("ignores late delete, agent, and provider responses after an instance reopens", async () => {
+    const instanceId = "late-instance-operations", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const removed = deferred<any>()
+    const agentList = deferred<any>()
+    const providerList = deferred<any>()
+    ;(client.session as any).remove = () => removed.promise
+    ;(client as any).agent = { list: () => agentList.promise }
+    ;(client as any).provider = { list: () => providerList.promise }
+    ;(client as any).model = { list: async () => ({ data: [] }) }
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+
+    try {
+      const deleteRequest = deleteSession(instanceId, sessionId)
+      const agentsRequest = fetchAgents(instanceId)
+      const providersRequest = fetchProviders(instanceId)
+      removeInstance(instanceId, { authoritative: false })
+      const reopenedClient = { session: { active: async () => ({}) } } as any
+      addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client: reopenedClient })
+      setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+
+      removed.resolve({ data: true })
+      agentList.resolve({ data: [{ name: "late-agent", mode: "primary" }] })
+      providerList.resolve({ data: [{ id: "late-provider", name: "Late" }] })
+      await Promise.all([deleteRequest, agentsRequest, providersRequest])
+
+      assert.equal(sessions().get(instanceId)?.has(sessionId), true)
+      assert.equal(agents().has(instanceId), false)
+      assert.equal(providers().has(instanceId), false)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("does not eagerly load descendant transcripts", async () => {
     const instanceId = "root-only-load", rootId = "root", childId = "child"
     const { client, cleanup } = setup(instanceId)
     const calls: string[] = []
@@ -184,44 +314,29 @@ describe("session request authority", () => {
     }
   })
 
-  it("purges every session-state bucket when an instance is removed", async () => {
+  it("purges session state and rejects late loads when an instance closes", async () => {
     const instanceId = "instance-state-purge", sessionId = "session"
-    const { cleanup } = setup(instanceId)
+    const { client, cleanup } = setup(instanceId)
+    const response = deferred<any>()
+    let signal: AbortSignal | undefined
+    ;(client as any).message = { list: (_input: unknown, options: { signal?: AbortSignal }) => {
+      signal = options.signal
+      return response.promise
+    } }
     setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
     messagesLoaded().set(instanceId, new Set([sessionId]))
 
     try {
+      const request = loadMessages(instanceId, sessionId, { force: true })
       removeInstance(instanceId, { authoritative: false })
+      assert.equal(signal?.aborted, true)
+      response.resolve({ data: [apiMessage("late", sessionId)] })
+      await request
+
       assert.equal(sessions().has(instanceId), false)
       assert.equal(messagesLoaded().has(instanceId), false)
       assert.equal(loading().loadingMessages.has(instanceId), false)
-    } finally {
-      cleanup()
-    }
-  })
-
-  it("reloads complete native history after an evicted session is selected again", async () => {
-    const instanceId = "evicted-message-reload", sessionId = "session"
-    const { client, cleanup } = setup(instanceId)
-    let calls = 0
-    ;(client as any).message = { list: async () => ({ data: [
-      apiMessage(`message-${++calls}-a`, sessionId),
-      apiMessage(`message-${calls}-b`, sessionId),
-    ] }) }
-    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
-
-    try {
-      await loadMessages(instanceId, sessionId)
-      const store = messageStoreBus.getOrCreate(instanceId)
-      store.restoreScrollSnapshot(sessionId, "message-stream", { scrollTop: 240, atBottom: false, updatedAt: 1 })
-      store.clearSession(sessionId, { preserveScroll: true })
-
-      assert.equal(messagesLoaded().get(instanceId)?.has(sessionId) ?? false, false)
-      assert.deepEqual(store.getScrollSnapshot(sessionId, "message-stream"), { scrollTop: 240, atBottom: false, updatedAt: 1 })
-
-      await loadMessages(instanceId, sessionId)
-      assert.equal(calls, 2)
-      assert.deepEqual(store.getSessionMessageIds(sessionId), ["message-2-a", "message-2-b"])
+      assert.equal(messageStoreBus.getInstance(instanceId), undefined)
     } finally {
       cleanup()
     }
@@ -249,25 +364,6 @@ describe("session request authority", () => {
       await newRequest
 
       assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["new-message"])
-    } finally {
-      cleanup()
-    }
-  })
-
-  it("does not accept a late response from a replaced client", async () => {
-    const instanceId = "replaced-message-client", sessionId = "session"
-    const { client: oldClient, cleanup } = setup(instanceId)
-    const oldResponse = deferred<any>()
-    ;(oldClient as any).message = { list: () => oldResponse.promise }
-    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
-
-    try {
-      const oldRequest = loadMessages(instanceId, sessionId)
-      const newClient = { session: { active: async () => ({}) }, message: { list: async () => ({ data: [] }) } } as any
-      updateInstance(instanceId, { client: newClient })
-      oldResponse.resolve({ data: [apiMessage("old-client-message", sessionId)] })
-      await oldRequest
-      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), [])
     } finally {
       cleanup()
     }
@@ -369,7 +465,7 @@ describe("session request authority", () => {
       assert.equal(sessions().get(instanceId)?.get("compacting")?.runtimeStatusKnown, true)
       assert.deepEqual(statusOptions, [])
       await loadMessages(instanceId, "compacting", { force: true })
-      assert.deepEqual(messageOptions, { sessionID: "compacting" })
+      assert.deepEqual(messageOptions, { sessionID: "compacting", limit: 200, order: "asc" })
     } finally {
       cleanup()
     }

@@ -6,19 +6,15 @@ import {
   isToolStateRunning,
   readToolStatePayload,
 } from "./utils"
-import { exceedsRetainedByteLimit } from "../../lib/retained-size"
-import { getApplyPatchCopyText } from "./renderers/apply-patch-data"
 
 type QuestionOption = { label?: unknown; description?: unknown }
 type QuestionPrompt = { header?: unknown; question?: unknown; options?: unknown; multiple?: unknown; answer?: unknown }
-const SEARCH_FORMAT_BYTE_LIMIT = 2_000_000
 
 function appendString(values: string[], value: unknown) {
   if (typeof value === "string" && value.trim().length > 0) values.push(value)
 }
 
 function appendFormatted(values: string[], value: unknown) {
-  if (typeof value !== "string" && exceedsRetainedByteLimit(value, SEARCH_FORMAT_BYTE_LIMIT)) return
   const result = formatUnknown(value)
   if (result?.text.trim()) values.push(result.text)
 }
@@ -112,13 +108,14 @@ export function getDiffToolSearchText(context: ToolSearchTextContext): string[] 
 export function getApplyPatchToolSearchText(context: ToolSearchTextContext): string[] {
   const values = getDiffToolSearchText(context)
   const { metadata, output } = readToolStatePayload(context.toolState)
-  const files = Array.isArray((metadata as any).files) ? ((metadata as any).files as any[]).slice(0, 10_000) : []
+  const files = Array.isArray((metadata as any).files) ? ((metadata as any).files as any[]) : []
 
-  for (const file of files.slice(0, 200)) {
+  for (const file of files) {
     appendString(values, file?.filePath)
     appendString(values, file?.relativePath)
+    appendString(values, file?.diff)
+    appendString(values, file?.patch)
   }
-  appendString(values, getApplyPatchCopyText(files, SEARCH_FORMAT_BYTE_LIMIT))
 
   appendFormatted(values, (metadata as any).diagnostics)
   appendFormatted(values, output)
@@ -151,7 +148,7 @@ export function getTaskToolSearchText(context: ToolSearchTextContext): string[] 
 export function getTodoToolSearchText(context: ToolSearchTextContext): string[] {
   const values: string[] = []
   const { metadata } = readToolStatePayload(context.toolState)
-  const todos = Array.isArray((metadata as any).todos) ? ((metadata as any).todos as any[]).slice(0, 10_000) : []
+  const todos = Array.isArray((metadata as any).todos) ? ((metadata as any).todos as any[]) : []
   appendBaseToolText(values, context)
 
   for (const todo of todos) {
@@ -166,14 +163,14 @@ export function getTodoToolSearchText(context: ToolSearchTextContext): string[] 
 export function getQuestionToolSearchText(context: ToolSearchTextContext): string[] {
   const values: string[] = []
   const { input, metadata } = readToolStatePayload(context.toolState)
-  const questions = Array.isArray(input.questions) ? (input.questions as QuestionPrompt[]).slice(0, 10_000) : []
-  const answers = Array.isArray((metadata as any).answers) ? ((metadata as any).answers as unknown[]).slice(0, 10_000) : []
+  const questions = Array.isArray(input.questions) ? (input.questions as QuestionPrompt[]) : []
+  const answers = Array.isArray((metadata as any).answers) ? ((metadata as any).answers as unknown[]) : []
   appendBaseToolText(values, context)
 
   for (const question of questions) {
     appendString(values, question.header)
     appendString(values, question.question)
-    const options = Array.isArray(question.options) ? (question.options as QuestionOption[]).slice(0, 10_000) : []
+    const options = Array.isArray(question.options) ? (question.options as QuestionOption[]) : []
     for (const option of options) {
       appendString(values, option.label)
       appendString(values, option.description)
@@ -184,20 +181,4 @@ export function getQuestionToolSearchText(context: ToolSearchTextContext): strin
   appendFormatted(values, answers)
   appendToolErrorText(values, context)
   return values
-}
-
-export function getToolSearchText(context: ToolSearchTextContext): string[] {
-  switch (context.toolName) {
-    case "bash": return getBashToolSearchText(context)
-    case "read": return getReadToolSearchText(context)
-    case "write": return getWriteToolSearchText(context)
-    case "edit":
-    case "patch": return getDiffToolSearchText(context)
-    case "apply_patch": return getApplyPatchToolSearchText(context)
-    case "webfetch": return getWebfetchToolSearchText(context)
-    case "task": return getTaskToolSearchText(context)
-    case "todowrite": return getTodoToolSearchText(context)
-    case "question": return getQuestionToolSearchText(context)
-    default: return getDefaultToolSearchText(context)
-  }
 }

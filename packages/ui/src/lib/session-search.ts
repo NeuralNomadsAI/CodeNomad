@@ -2,7 +2,8 @@ import type { ClientPart, MessageInfo } from "../types/message"
 import { isHiddenSyntheticTextPart } from "../types/message"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { MessageRecord, MessageRole } from "../stores/message-v2/types"
-import { getToolSearchText } from "../components/tool-call/search-text"
+import { resolveToolRenderer } from "../components/tool-call/renderers"
+import { getDefaultToolSearchText } from "../components/tool-call/search-text"
 
 export interface SessionSearchMatch {
   id: string
@@ -20,7 +21,6 @@ interface SearchablePartText {
   partId?: string
   partType?: string
   text: string
-  truncated?: boolean
 }
 
 export interface BuildSessionSearchMatchesOptions {
@@ -30,74 +30,55 @@ export interface BuildSessionSearchMatchesOptions {
   includeThinking: boolean
 }
 
-export interface SessionSearchResult {
-  matches: SessionSearchMatch[]
-  partial: boolean
-}
-
-export const SESSION_SEARCH_MATCH_LIMIT = 250
-export const SESSION_SEARCH_WORK_CHARACTER_LIMIT = 2_000_000
-
 const PREVIEW_RADIUS = 56
 
 function normalizeSearchValue(value: string): string {
   return value.toLocaleLowerCase()
 }
 
-function segmentToText(segment: unknown, limit = SESSION_SEARCH_WORK_CHARACTER_LIMIT): { text: string; truncated: boolean } {
+function segmentToText(segment: unknown): string {
+  if (typeof segment === "string") return segment
+  if (Array.isArray(segment)) return segment.map((entry) => segmentToText(entry)).filter(Boolean).join("\n")
+  if (!segment || typeof segment !== "object") return ""
+
+  const candidate = segment as { text?: unknown; value?: unknown; content?: unknown[] }
   const parts: string[] = []
-  const pending: unknown[] = [segment]
-  const seen = new WeakSet<object>()
-  let characters = 0
-  let nodes = 0
-  let truncated = false
-  while (pending.length > 0 && characters < limit && nodes < 10_000) {
-    const current = pending.pop()
-    nodes += 1
-    if (typeof current === "string") {
-      const text = current.slice(0, limit - characters)
-      if (text) parts.push(text)
-      characters += text.length
-      continue
-    }
-    if (!current || typeof current !== "object" || seen.has(current)) continue
-    seen.add(current)
-    if (Array.isArray(current)) {
-      const count = Math.min(current.length, 10_000 - nodes - pending.length)
-      if (count < current.length) truncated = true
-      for (let index = count - 1; index >= 0; index -= 1) pending.push(current[index])
-      continue
-    }
-    const candidate = current as { text?: unknown; value?: unknown; content?: unknown }
-    if (candidate.content !== undefined) pending.push(candidate.content)
-    if (candidate.value !== undefined) pending.push(candidate.value)
-    if (candidate.text !== undefined) pending.push(candidate.text)
+  if (typeof candidate.text === "string") parts.push(candidate.text)
+  if (typeof candidate.value === "string") parts.push(candidate.value)
+  if (Array.isArray(candidate.content)) {
+    parts.push(candidate.content.map((entry) => segmentToText(entry)).filter(Boolean).join("\n"))
   }
-  return { text: parts.join("\n"), truncated: truncated || pending.length > 0 }
+  return parts.filter(Boolean).join("\n")
 }
 
-function extractToolText(part: Extract<ClientPart, { type: "tool" }>): { text: string; truncated: boolean } {
+function extractReasoningText(part: ClientPart): string {
+  const text = segmentToText((part as any).text)
+  const content = Array.isArray((part as any).content)
+    ? (part as any).content.map((entry: unknown) => segmentToText(entry)).filter(Boolean).join("\n")
+    : ""
+  return [text, content].filter(Boolean).join("\n")
+}
+
+function extractGenericPartText(part: ClientPart): string {
+  const candidate = part as Record<string, unknown>
+  const values = [
+    candidate.text,
+    candidate.content,
+    candidate.value,
+    candidate.title,
+    candidate.name,
+    candidate.filename,
+    candidate.message,
+  ]
+  return values.map((value) => segmentToText(value)).filter(Boolean).join("\n")
+}
+
+function extractToolText(part: Extract<ClientPart, { type: "tool" }>): string {
   const toolName = typeof part.tool === "string" ? part.tool : ""
   const context = { toolCall: part, toolState: (part as any).state, toolName }
-  const values = getToolSearchText(context)
-  const rendered: string[] = []
-  let characters = 0
-  let truncated = false
-  for (const value of values) {
-    if (!value.trim()) continue
-    const remaining = SESSION_SEARCH_WORK_CHARACTER_LIMIT - characters
-    if (remaining <= 0) {
-      truncated = true
-      break
-    }
-    rendered.push(value.slice(0, remaining))
-    characters += Math.min(value.length, remaining)
-    if (value.length > remaining) {
-      truncated = true
-      break
-    }
-  }
-  return { text: rendered.join("\n"), truncated }
+  const renderer = resolveToolRenderer(toolName)
+  const values = renderer.getSearchText?.(context) ?? getDefaultToolSearchText(context)
+  return values.filter((value) => value.trim().length > 0).join("\n")
 }
 
 function extractMessageInfoText(info: MessageInfo | undefined): string {
@@ -115,15 +96,14 @@ function extractSearchablePartText(part: ClientPart, includeThinking: boolean): 
   const partType = typeof (part as any).type === "string" ? (part as any).type : undefined
 
   if (part.type === "text") {
-    const raw = (part as any).text
-    const result = typeof raw === "string" ? { text: raw, truncated: false } : segmentToText(raw)
-    return result.text.trim().length > 0 ? { partId, partType, ...result } : null
+    const text = typeof (part as any).text === "string" ? (part as any).text : segmentToText((part as any).text)
+    return text.trim().length > 0 ? { partId, partType, text } : null
   }
 
   if (part.type === "reasoning") {
     if (!includeThinking) return null
-    const result = segmentToText([(part as any).text, (part as any).content])
-    return result.text.trim().length > 0 ? { partId, partType, ...result } : null
+    const text = extractReasoningText(part)
+    return text.trim().length > 0 ? { partId, partType, text } : null
   }
 
   if (part.type === "file") {
@@ -132,8 +112,8 @@ function extractSearchablePartText(part: ClientPart, includeThinking: boolean): 
   }
 
   if (part.type === "tool") {
-    const result = extractToolText(part)
-    return result.text.trim().length > 0 ? { partId, partType, ...result } : null
+    const text = extractToolText(part)
+    return text.trim().length > 0 ? { partId, partType, text } : null
   }
 
   if (part.type === "compaction") {
@@ -141,9 +121,8 @@ function extractSearchablePartText(part: ClientPart, includeThinking: boolean): 
     return { partId, partType, text }
   }
 
-  const candidate = part as Record<string, unknown>
-  const result = segmentToText([candidate.text, candidate.content, candidate.value, candidate.title, candidate.name, candidate.filename, candidate.message])
-  return result.text.trim().length > 0 ? { partId, partType, ...result } : null
+  const text = extractGenericPartText(part)
+  return text.trim().length > 0 ? { partId, partType, text } : null
 }
 
 function buildPreview(text: string, start: number, end: number): string {
@@ -154,36 +133,38 @@ function buildPreview(text: string, start: number, end: number): string {
   return `${prefix}${text.slice(from, to).replace(/\s+/g, " ").trim()}${suffix}`
 }
 
-export function buildSessionSearchMatches(options: BuildSessionSearchMatchesOptions): SessionSearchResult {
+function collectRecordSearchableText(store: InstanceMessageStore, record: MessageRecord, includeThinking: boolean): SearchablePartText[] {
+  const results: SearchablePartText[] = []
+  for (const partId of record.partIds) {
+    const part = record.parts[partId]?.data
+    if (!part) continue
+    const text = extractSearchablePartText(part, includeThinking)
+    if (text) results.push(text)
+  }
+
+  const infoText = extractMessageInfoText(store.getMessageInfo(record.id))
+  if (infoText.trim().length > 0) {
+    results.push({ partType: "error", text: infoText })
+  }
+
+  return results
+}
+
+export function buildSessionSearchMatches(options: BuildSessionSearchMatchesOptions): SessionSearchMatch[] {
   const query = options.query.trim()
-  if (!query) return { matches: [], partial: false }
+  if (!query) return []
 
   const needle = normalizeSearchValue(query)
   const matches: SessionSearchMatch[] = []
   const messageIds = options.store.getSessionMessageIds(options.sessionId)
-  let remainingWork = SESSION_SEARCH_WORK_CHARACTER_LIMIT
 
   for (const messageId of messageIds) {
-    if (remainingWork <= 0) return { matches, partial: true }
     const record = options.store.getMessage(messageId)
     if (!record) continue
-    const searchableParts = function* (): Generator<SearchablePartText> {
-      for (const partId of record.partIds) {
-        if (remainingWork <= 0) return
-        const part = record.parts[partId]?.data
-        if (!part) continue
-        const searchable = extractSearchablePartText(part, options.includeThinking)
-        if (searchable) yield searchable
-      }
-      const infoText = extractMessageInfoText(options.store.getMessageInfo(record.id))
-      if (infoText.trim()) yield { partType: "error", text: infoText }
-    }
+    const searchableParts = collectRecordSearchableText(options.store, record, options.includeThinking)
 
-    for (const searchable of searchableParts()) {
-      if (remainingWork <= 0) return { matches, partial: true }
-      const text = searchable.text.slice(0, remainingWork)
-      remainingWork -= text.length
-      const haystack = normalizeSearchValue(text)
+    for (const searchable of searchableParts) {
+      const haystack = normalizeSearchValue(searchable.text)
       let from = 0
       let occurrence = 0
       while (from < haystack.length) {
@@ -199,16 +180,13 @@ export function buildSessionSearchMatches(options: BuildSessionSearchMatchesOpti
           start: index,
           end,
           occurrence,
-          preview: buildPreview(text, index, end),
+          preview: buildPreview(searchable.text, index, end),
         })
-        if (matches.length >= SESSION_SEARCH_MATCH_LIMIT) return { matches, partial: true }
         occurrence += 1
         from = end > index ? end : index + 1
       }
-      if (text.length < searchable.text.length) return { matches, partial: true }
-      if (searchable.truncated) return { matches, partial: true }
     }
   }
 
-  return { matches, partial: false }
+  return matches
 }

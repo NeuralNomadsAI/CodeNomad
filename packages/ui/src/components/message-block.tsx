@@ -20,11 +20,20 @@ import { copyToClipboard } from "../lib/clipboard"
 import SpeechActionButton from "./speech-action-button"
 import type { VisibilityPreference } from "../stores/preferences"
 import type { ToolState, ToolStateCompleted, ToolStateError, ToolStateRunning } from "../types/tool-state"
+import {
+  clearInstanceMessageRenderCaches,
+  clearSessionMessageRenderCache,
+  getSessionMessageRenderCache,
+  peekSessionMessageRenderCache,
+  purgeMessageRenderCache,
+  extractReasoningTextForCopy,
+  extractReasoningTitleForRender,
+} from "../lib/message-render-cache"
+import { accountSessionTranscript } from "../stores/session-transcript-memory"
 
 const USER_BORDER_COLOR = "var(--message-user-border)"
 const ASSISTANT_BORDER_COLOR = "var(--message-assistant-border)"
 const NO_STEP_BORDER = "none"
-
 const LazyToolCall = lazy(() => import("./tool-call"))
 
 function ToolCallFallback() {
@@ -51,38 +60,6 @@ function extractTaskSessionId(state: ToolState | undefined): string {
   const metadata = (state as unknown as { metadata?: Record<string, unknown> }).metadata ?? {}
   const directId = metadata?.sessionId ?? metadata?.sessionID
   return typeof directId === "string" ? directId : ""
-}
-
-function reasoningHasRenderableContent(part: ClientPart): boolean {
-  if (!part || part.type !== "reasoning") {
-    return false
-  }
-  const checkSegment = (segment: unknown): boolean => {
-    if (typeof segment === "string") {
-      return segment.trim().length > 0
-    }
-    if (segment && typeof segment === "object") {
-      const candidate = segment as { text?: unknown; value?: unknown; content?: unknown[] }
-      if (typeof candidate.text === "string" && candidate.text.trim().length > 0) {
-        return true
-      }
-      if (typeof candidate.value === "string" && candidate.value.trim().length > 0) {
-        return true
-      }
-      if (Array.isArray(candidate.content)) {
-        return candidate.content.some((entry) => checkSegment(entry))
-      }
-    }
-    return false
-  }
-
-  if (checkSegment((part as any).text)) {
-    return true
-  }
-  if (Array.isArray((part as any).content)) {
-    return (part as any).content.some((entry: unknown) => checkSegment(entry))
-  }
-  return false
 }
 
 interface TaskSessionLocation {
@@ -132,48 +109,27 @@ interface CachedBlockEntry {
   toolKeys: string[]
 }
 
-interface SessionRenderCache {
-  messageItems: Map<string, ContentDisplayItem>
-  toolItems: Map<string, ToolDisplayItem>
-  messageBlocks: Map<string, CachedBlockEntry>
-}
-
-const renderCaches = new Map<string, SessionRenderCache>()
-
-function makeSessionCacheKey(instanceId: string, sessionId: string) {
-  return `${instanceId}:${sessionId}`
-}
-
 export function clearSessionRenderCache(instanceId: string, sessionId: string) {
-  renderCaches.delete(makeSessionCacheKey(instanceId, sessionId))
+  clearSessionMessageRenderCache(instanceId, sessionId)
 }
 
-function getSessionRenderCache(instanceId: string, sessionId: string): SessionRenderCache {
-  const key = makeSessionCacheKey(instanceId, sessionId)
-  let cache = renderCaches.get(key)
-  if (!cache) {
-    cache = {
-      messageItems: new Map(),
-      toolItems: new Map(),
-      messageBlocks: new Map(),
-    }
-    renderCaches.set(key, cache)
+function clearMessageRenderCache(instanceId: string, sessionId: string, messageIds: readonly string[]) {
+  const cache = peekSessionMessageRenderCache(instanceId, sessionId)
+  if (!cache) return
+  purgeMessageRenderCache(cache, messageIds)
+  if (cache.messageBlocks.size === 0 && cache.messageItems.size === 0 && cache.toolItems.size === 0 && cache.recordDisplayCache.size === 0) {
+    clearSessionMessageRenderCache(instanceId, sessionId)
   }
-  return cache
 }
 
 function clearInstanceCaches(instanceId: string) {
   clearRecordDisplayCacheForInstance(instanceId)
-  const prefix = `${instanceId}:`
-  for (const key of renderCaches.keys()) {
-    if (key.startsWith(prefix)) {
-      renderCaches.delete(key)
-    }
-  }
+  clearInstanceMessageRenderCaches(instanceId)
 }
 
 messageStoreBus.onInstanceDestroyed(clearInstanceCaches)
 messageStoreBus.onSessionCleared(clearSessionRenderCache)
+messageStoreBus.onMessagesRemoved(clearMessageRenderCache)
 
 function removeSearchMarks(root: HTMLElement) {
   const marks = Array.from(root.querySelectorAll("mark.session-search-match"))
@@ -257,6 +213,7 @@ interface ContentDisplayItem {
   key: string
   messageId: string
   startPartId: string
+  partCount: number
 }
 
 interface ToolDisplayItem {
@@ -272,6 +229,7 @@ interface MessageContentItemProps {
   store: () => InstanceMessageStore
   messageId: string
   startPartId: string
+  partCount: number
   messageIndex: number
   lastAssistantIndex: () => number
   onRevert?: (messageId: string) => void
@@ -315,7 +273,7 @@ function MessageContentItem(props: MessageContentItemProps) {
     if (startIndex === -1) return []
 
     const resolved: ClientPart[] = []
-    for (let idx = startIndex; idx < ids.length; idx++) {
+    for (let idx = startIndex; idx < ids.length && resolved.length < props.partCount; idx++) {
       const partId = ids[idx]
       const part = current.parts[partId]?.data
       if (!part) continue
@@ -478,7 +436,7 @@ interface StepDisplayItem {
 type ReasoningDisplayItem = {
   type: "reasoning"
   key: string
-  part: ClientPart
+  text: string
   messageInfo?: MessageInfo
   durationMs?: number
   showAgentMeta?: boolean
@@ -500,8 +458,9 @@ type CompactionDisplayItem = {
 type MessageBlockItem = ContentDisplayItem | ToolDisplayItem | StepDisplayItem | ReasoningDisplayItem | CompactionDisplayItem
 
 interface MessageDisplayBlock {
-  record: MessageRecord
+  messageId: string
   items: MessageBlockItem[]
+  truncated: boolean
 }
 
 interface MessageBlockProps {
@@ -527,12 +486,23 @@ export default function MessageBlock(props: MessageBlockProps) {
   const { t } = useI18n()
   const record = createMemo(() => props.store().getMessage(props.messageId))
   const messageInfo = createMemo(() => props.store().getMessageInfo(props.messageId))
-  const sessionCache = getSessionRenderCache(props.instanceId, props.sessionId)
+  const sessionCache = getSessionMessageRenderCache(props.instanceId, props.sessionId) as {
+    messageItems: Map<string, ContentDisplayItem>
+    toolItems: Map<string, ToolDisplayItem>
+    messageBlocks: Map<string, CachedBlockEntry>
+    recordDisplayCache: Map<string, unknown>
+  }
   let blockRef: HTMLDivElement | undefined
   const isSearchResult = () => Boolean(props.searchResultMessageIds?.().has(props.messageId))
   const activeSearchMatch = () => props.activeSearchMatch?.() ?? null
   const isActiveSearchResult = () => activeSearchMatch()?.messageId === props.messageId
   let lastInlineScrolledSearchMatchId: string | null = null
+  const handleContentRendered = () => {
+    props.onContentRendered?.()
+    accountSessionTranscript(props.instanceId, props.sessionId)
+  }
+
+  onCleanup(() => accountSessionTranscript(props.instanceId, props.sessionId))
 
   createEffect(() => {
     const query = props.searchQuery?.() ?? ""
@@ -582,7 +552,9 @@ export default function MessageBlock(props: MessageBlockProps) {
     // Only capture info after cache check fails - ensures fresh data on version bump
     const info = untrack(messageInfo)
 
-    const { orderedParts } = buildRecordDisplayData(props.instanceId, current)
+    const displayData = buildRecordDisplayData(props.instanceId, current)
+    sessionCache.recordDisplayCache.set(current.id, { revision: current.revision, data: displayData })
+    const { orderedParts } = displayData
     const items: MessageBlockItem[] = []
     const blockContentKeys: string[] = []
     const blockToolKeys: string[] = []
@@ -611,8 +583,11 @@ export default function MessageBlock(props: MessageBlockProps) {
           key: segmentKey,
           messageId: current.id,
           startPartId,
+          partCount: pendingParts.length,
         }
         sessionCache.messageItems.set(segmentKey, cached)
+      } else {
+        cached.partCount = pendingParts.length
       }
 
       items.push(cached)
@@ -690,7 +665,8 @@ export default function MessageBlock(props: MessageBlockProps) {
 
       if (part.type === "reasoning") {
         flushContent()
-        if (props.showThinking() && reasoningHasRenderableContent(part)) {
+        const text = typeof (part as any).text === "string" ? (part as any).text : ""
+        if (props.showThinking() && text.trim().length > 0) {
           const partId = part.id ?? ""
           const key = `${current.id}:${partId || partIndex}:reasoning`
           const showAgentMeta = current.role === "assistant" && !agentMetaAttached
@@ -700,7 +676,7 @@ export default function MessageBlock(props: MessageBlockProps) {
           items.push({
             type: "reasoning",
             key,
-            part,
+            text,
             messageInfo: info,
             durationMs: inferReasoningDurationMs(orderedParts, part, info, current.status),
             showAgentMeta,
@@ -718,13 +694,14 @@ export default function MessageBlock(props: MessageBlockProps) {
 
     flushContent()
 
-    const resultBlock: MessageDisplayBlock = { record: current, items }
+    const resultBlock: MessageDisplayBlock = { messageId: current.id, items, truncated: displayData.truncated }
     sessionCache.messageBlocks.set(current.id, {
       signature: cacheSignature,
       block: resultBlock,
       contentKeys: blockContentKeys.slice(),
       toolKeys: blockToolKeys.slice(),
     })
+    accountSessionTranscript(props.instanceId, props.sessionId)
 
     const messagePrefix = `${current.id}:`
     for (const [key] of sessionCache.messageItems) {
@@ -755,13 +732,13 @@ export default function MessageBlock(props: MessageBlockProps) {
   return (
     <Show when={block()}>
       {(resolvedBlock) => (
-        <Show when={resolvedBlock().items.some(isDisplayItemVisible)}>
+        <Show when={resolvedBlock().truncated || resolvedBlock().items.some(isDisplayItemVisible)}>
         <div
           ref={(el) => {
             blockRef = el
           }}
           class="message-stream-block"
-          data-message-id={resolvedBlock().record.id}
+          data-message-id={resolvedBlock().messageId}
           data-search-result={isSearchResult() ? "true" : undefined}
           data-search-active={isActiveSearchResult() ? "true" : undefined}
         >
@@ -774,12 +751,13 @@ export default function MessageBlock(props: MessageBlockProps) {
                     sessionId={props.sessionId}
                     store={props.store}
                     messageId={(item() as ContentDisplayItem).messageId}
-                    startPartId={(item() as ContentDisplayItem).startPartId}
+                     startPartId={(item() as ContentDisplayItem).startPartId}
+                    partCount={(item() as ContentDisplayItem).partCount}
                     messageIndex={props.messageIndex}
                     lastAssistantIndex={props.lastAssistantIndex}
                     onRevert={props.onRevert}
                     onFork={props.onFork}
-                    onContentRendered={props.onContentRendered}
+                    onContentRendered={handleContentRendered}
                   />
                 </Match>
                 <Match when={item().type === "tool"}>
@@ -794,7 +772,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                             store={props.store}
                             messageId={toolItem.messageId}
                             partId={toolItem.partId}
-                          onContentRendered={props.onContentRendered}
+                          onContentRendered={handleContentRendered}
                         />
                       </div>
                       </Show>
@@ -822,7 +800,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     instanceId={props.instanceId}
                     sessionId={props.sessionId}
                     messageId={props.messageId}
-                    onContentRendered={props.onContentRendered}
+                    onContentRendered={handleContentRendered}
                   />
                 </Match>
                 <Match when={item().type === "compaction"}>
@@ -837,7 +815,11 @@ export default function MessageBlock(props: MessageBlockProps) {
                 </Match>
                 <Match when={item().type === "reasoning"}>
                   <ReasoningCard
-                    part={(item() as ReasoningDisplayItem).part}
+                    text={(item() as ReasoningDisplayItem).text}
+                    partId={(item() as ReasoningDisplayItem).partId}
+                    copyText={() => extractReasoningTextForCopy(
+                      props.store().getMessage((item() as ReasoningDisplayItem).messageId)?.parts[(item() as ReasoningDisplayItem).partId]?.data,
+                    )}
                     messageInfo={(item() as ReasoningDisplayItem).messageInfo}
                     durationMs={(item() as ReasoningDisplayItem).durationMs}
                     instanceId={props.instanceId}
@@ -845,18 +827,42 @@ export default function MessageBlock(props: MessageBlockProps) {
                     messageId={(item() as ReasoningDisplayItem).messageId}
                     showAgentMeta={(item() as ReasoningDisplayItem).showAgentMeta}
                     defaultExpanded={(item() as ReasoningDisplayItem).defaultExpanded}
-                    onContentRendered={props.onContentRendered}
+                    onContentRendered={handleContentRendered}
                     forceExpanded={activeSearchMatch()?.partId === (item() as ReasoningDisplayItem).partId}
                   />
                 </Match>
               </Switch>
             )}
           </Index>
+          <Show when={resolvedBlock().truncated}>
+            <div class="tool-call-diagnostic-message" role="status">
+              <span>{t("toolCall.output.truncated")}</span>
+              <button
+                type="button"
+                class="tool-call-header-icon-button tool-call-header-copy"
+                onClick={() => {
+                  const current = props.store().getMessage(resolvedBlock().messageId)
+                  if (current) void copyToClipboard(JSON.stringify(orderedMessageParts(current), null, 2))
+                }}
+                aria-label={t("toolCall.io.copyOutputAriaLabel")}
+                title={t("toolCall.io.copyOutputTitle")}
+              >
+                <Copy class="w-3.5 h-3.5" aria-hidden="true" />
+              </button>
+            </div>
+          </Show>
         </div>
         </Show>
       )}
     </Show>
   )
+}
+
+function orderedMessageParts(record: MessageRecord): ClientPart[] {
+  return record.partIds.flatMap((partId) => {
+    const part = record.parts[partId]?.data
+    return part ? [part] : []
+  })
 }
 
 interface StepCardProps {
@@ -1063,7 +1069,9 @@ function formatCostValue(value: number) {
 }
 
 interface ReasoningCardProps {
-  part: ClientPart
+  text: string
+  partId: string
+  copyText: () => string
   messageInfo?: MessageInfo
   durationMs?: number
   instanceId: string
@@ -1171,51 +1179,9 @@ function ReasoningCard(props: ReasoningCardProps) {
     return modelID
   }
 
-  const reasoningText = () => {
-    const part = props.part as any
-    if (!part) return ""
+  const reasoningText = () => props.text
 
-    const stringifySegment = (segment: unknown): string => {
-      if (typeof segment === "string") {
-        return segment
-      }
-      if (segment && typeof segment === "object") {
-        const obj = segment as { text?: unknown; value?: unknown; content?: unknown[] }
-        const pieces: string[] = []
-        if (typeof obj.text === "string") {
-          pieces.push(obj.text)
-        }
-        if (typeof obj.value === "string") {
-          pieces.push(obj.value)
-        }
-        if (Array.isArray(obj.content)) {
-          pieces.push(obj.content.map((entry) => stringifySegment(entry)).join("\n"))
-        }
-        return pieces.filter((piece) => piece && piece.trim().length > 0).join("\n")
-      }
-      return ""
-    }
-
-    const textValue = stringifySegment(part.text)
-    if (textValue.trim().length > 0) {
-      return textValue
-    }
-    if (Array.isArray(part.content)) {
-      return part.content.map((entry: unknown) => stringifySegment(entry)).join("\n")
-    }
-    return ""
-  }
-
-  const extractedTitle = () => {
-    const firstLine = reasoningText()
-      .split(/\r?\n/)
-      .map((line: string) => line.trim())
-      .find((line: string) => line.length > 0)
-    if (!firstLine) return ""
-
-    const match = firstLine.match(/^\*\*([^*]+)\*\*/)
-    return match?.[1]?.trim() ?? ""
-  }
+  const extractedTitle = () => extractReasoningTitleForRender(reasoningText())
 
   const thoughtDurationTitle = () => {
     const duration = props.durationMs
@@ -1257,14 +1223,14 @@ function ReasoningCard(props: ReasoningCardProps) {
   const toggle = () => setExpanded((prev) => !prev)
 
   const speech = useSpeech({
-    id: () => `${props.instanceId}:${props.sessionId}:${props.messageId}:${(props.part as any)?.id ?? "reasoning"}`,
+    id: () => `${props.instanceId}:${props.sessionId}:${props.messageId}:${props.partId || "reasoning"}`,
     text: reasoningText,
   })
 
   const canSpeakReasoning = () => reasoningText().trim().length > 0 && speech.canUseSpeech()
 
   const handleCopyReasoning = async () => {
-    const text = reasoningText()
+    const text = props.copyText()
     if (!text.trim()) return
     await copyToClipboard(text)
   }
@@ -1296,7 +1262,7 @@ function ReasoningCard(props: ReasoningCardProps) {
   return (
     <div
       class="delete-hover-scope message-reasoning-card"
-      data-part-id={typeof (props.part as any)?.id === "string" ? (props.part as any).id : undefined}
+      data-part-id={props.partId || undefined}
     >
       <div class="message-reasoning-header">
         <button

@@ -6,6 +6,7 @@ export type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
 export interface DiffPayload {
   diffText: string
+  copyText?: string
   filePath?: string
 }
 
@@ -105,6 +106,7 @@ export interface ToolOutputChrome {
   language?: string
   copyText?: string | null
   getCopyText?: () => string | null
+  hasCopyText?: boolean
   actions?: JSXElement
   wrapToggle?: boolean
   suppressInnerHeader?: boolean

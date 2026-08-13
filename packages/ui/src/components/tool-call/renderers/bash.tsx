@@ -199,7 +199,12 @@ export const bashRenderer: ToolRenderer = {
   getOutputChrome({ toolState }) {
     const state = toolState()
     if (!state || state.status === "pending") return undefined
-    return { language: "bash", getCopyText: () => getBashCopyText(state), wrapToggle: true, suppressInnerHeader: true }
+    const { input, metadata } = readToolStatePayload(state)
+    const output = isToolStateCompleted(state) ? state.output : (isToolStateRunning(state) || isToolStateError(state)) ? metadata.output : undefined
+    const hasCopyText = (typeof input.command === "string" && input.command.length > 0)
+      || (output !== undefined && output !== null && output !== "" && (!Array.isArray(output) || output.length > 0))
+    if (!hasCopyText) return undefined
+    return { language: "bash", getCopyText: () => getBashCopyText(state), hasCopyText: true, wrapToggle: true, suppressInnerHeader: true }
   },
   renderBody({ toolState, renderMarkdown, scrollHelpers, onContentRendered }) {
     return <BashToolBody toolState={toolState} renderMarkdown={renderMarkdown as any} scrollHelpers={scrollHelpers} onContentRendered={onContentRendered} />

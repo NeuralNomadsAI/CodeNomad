@@ -1,4 +1,4 @@
-import { createEffect, createMemo, onCleanup } from "solid-js"
+import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
 
 /**
  * Dependencies for {@link useActiveSessionMessageLoad}. Everything is injected
@@ -13,6 +13,8 @@ export interface ActiveSessionMessageLoadDeps {
   instanceId: () => string
   /** The current session object (or undefined). Read reactively. */
   session: () => { id: string } | undefined
+  /** Optional reactive gate. Each false-to-true transition reloads the same session. */
+  shouldLoad?: () => boolean
   /** Loads the messages for a session. */
   loadMessages: (
     instanceId: string,
@@ -46,8 +48,22 @@ export function useActiveSessionMessageLoad(deps: ActiveSessionMessageLoadDeps):
     const sessionId = deps.isActive() ? deps.session()?.id : undefined
     return sessionId ? `${deps.instanceId()}\u0000${sessionId}` : null
   })
+  const [reloadVersion, setReloadVersion] = createSignal(0)
+  let previousLoadBinding: string | null = null
+  createEffect(() => {
+    if (!deps.shouldLoad) return
+    const binding = activeBinding()
+    const loadBinding = binding && deps.shouldLoad() ? binding : null
+    if (loadBinding && loadBinding !== previousLoadBinding) setReloadVersion((value) => value + 1)
+    previousLoadBinding = loadBinding
+  })
+
   createEffect(() => {
     const binding = activeBinding()
+    if (deps.shouldLoad) {
+      reloadVersion()
+      if (!untrack(deps.shouldLoad)) return
+    }
     if (!binding) return
     const [instanceId, sessionId] = binding.split("\u0000")
     let invalidate = () => {}

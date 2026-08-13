@@ -13,9 +13,7 @@ import {
 } from "../stores/instances"
 import { ensureSessionAncestorsExpanded, loadMessages, sessions as sessionStateSessions, setActiveSessionFromList } from "../stores/sessions"
 import { messageStoreBus } from "../stores/message-v2/bus"
-import { isPermissionDiffTooLarge, PERMISSION_REJECT_REASON_MAX_LENGTH } from "./tool-call/permission-constants"
-import { copyToClipboard } from "../lib/clipboard"
-import { limitToolTitleForRender } from "./tool-call/utils"
+import { PERMISSION_REJECT_REASON_MAX_LENGTH } from "./tool-call/permission-constants"
 
 const LazyToolCall = lazy(() => import("./tool-call"))
 
@@ -141,20 +139,6 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
   const [permissionSubmitting, setPermissionSubmitting] = createSignal<Set<string>>(new Set())
   const [permissionError, setPermissionError] = createSignal<Map<string, string>>(new Map())
   const [permissionRejectReasons, setPermissionRejectReasons] = createSignal<Map<string, string>>(new Map())
-  const [accessedDiffs, setAccessedDiffs] = createSignal<Map<string, string>>(new Map())
-
-  const permissionDiff = (permission: PermissionRequest): string => {
-    const metadata = (permission.metadata ?? {}) as Record<string, unknown>
-    return typeof metadata.diff === "string" ? metadata.diff : ""
-  }
-
-  const approvalBlocked = (permission: PermissionRequest) =>
-    isPermissionDiffTooLarge(permissionDiff(permission)) && accessedDiffs().get(permission.id) !== permissionDiff(permission)
-
-  const copyFullPermissionDiff = async (permission: PermissionRequest) => {
-    if (!await copyToClipboard(permissionDiff(permission))) return
-    setAccessedDiffs((previous) => new Map(previous).set(permission.id, permissionDiff(permission)))
-  }
 
   const getPermissionRejectReason = (permissionId: string) => permissionRejectReasons().get(permissionId) ?? ""
 
@@ -190,7 +174,6 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
     if (!permissionId) return
 
     if (permissionSubmitting().has(permissionId)) return
-    if (response !== "reject" && approvalBlocked(permission)) return
 
     setPermissionBusy(permissionId, true)
     setPermissionItemError(permissionId, null)
@@ -213,11 +196,6 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
   const permissionQueue = createMemo(() => getPermissionQueue(props.instanceId))
   const questionQueue = createMemo(() => getQuestionQueue(props.instanceId))
   const active = createMemo(() => activeInterruption().get(props.instanceId) ?? null)
-
-  createEffect(() => {
-    const current = new Map(permissionQueue().map((permission) => [permission.id, permissionDiff(permission)]))
-    setAccessedDiffs((previous) => new Map([...previous].filter(([id, diff]) => current.get(id) === diff)))
-  })
 
   type InterruptionItem =
     | { kind: "permission"; id: string; sessionId: string; createdAt: number; payload: PermissionRequest }
@@ -339,10 +317,10 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
 
                     const primaryTitle = () => {
                       if (item.kind === "permission") {
-                        return limitToolTitleForRender(getPermissionDisplayTitle(item.payload))
+                        return getPermissionDisplayTitle(item.payload)
                       }
                       const first = item.payload.questions?.[0]?.question
-                      return typeof first === "string" && first.trim().length > 0 ? limitToolTitleForRender(first) : t("permissionApproval.kind.question")
+                      return typeof first === "string" && first.trim().length > 0 ? first : t("permissionApproval.kind.question")
                     }
 
                     const secondaryTitle = () => {
@@ -406,18 +384,6 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
                                   <code>{primaryTitle()}</code>
                                 </div>
                                 <Show when={item.kind === "permission"}>
-                                  <Show when={approvalBlocked(item.payload as PermissionRequest)}>
-                                    <div class="tool-call-diagnostic-message" role="status">
-                                      {t("toolCall.permission.fullDiffRequired")}
-                                      <button
-                                        type="button"
-                                        class="tool-call-permission-button"
-                                        onClick={() => void copyFullPermissionDiff(item.payload as PermissionRequest)}
-                                      >
-                                        {t("toolCall.diff.copyPatch")}
-                                      </button>
-                                    </div>
-                                  </Show>
                                   <div class="tool-call-permission-reject-reason">
                                     <textarea
                                       id={`permission-center-reject-reason-${item.id}`}
@@ -436,7 +402,7 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
                                       <button
                                         type="button"
                                         class="tool-call-permission-button"
-                                        disabled={permissionSubmitting().has(item.id) || approvalBlocked(item.payload as PermissionRequest)}
+                                        disabled={permissionSubmitting().has(item.id)}
                                         onClick={() => void handlePermissionDecision(item.payload as PermissionRequest, "once")}
                                       >
                                         {t("permissionApproval.actions.allowOnce")}
@@ -444,7 +410,7 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
                                       <button
                                         type="button"
                                         class="tool-call-permission-button"
-                                        disabled={permissionSubmitting().has(item.id) || approvalBlocked(item.payload as PermissionRequest)}
+                                        disabled={permissionSubmitting().has(item.id)}
                                         onClick={() => void handlePermissionDecision(item.payload as PermissionRequest, "always")}
                                       >
                                         {t("permissionApproval.actions.alwaysAllow")}

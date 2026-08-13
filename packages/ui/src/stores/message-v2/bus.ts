@@ -17,6 +17,7 @@ class MessageStoreBus {
   private teardownHandlers = new Set<(instanceId: string) => void>()
   private sessionClearHandlers = new Set<(instanceId: string, sessionId: string) => void>()
   private sessionChangeHandlers = new Set<(instanceId: string, sessionId: string) => void>()
+  private messageRemovalHandlers = new Set<(instanceId: string, sessionId: string, messageIds: readonly string[]) => void>()
   private scrollSnapshotHandlers = new Set<
     (instanceId: string, sessionId: string, scope: string, snapshot: ScrollSnapshot) => void
   >()
@@ -32,6 +33,7 @@ class MessageStoreBus {
       createInstanceMessageStore(instanceId, {
         onSessionCleared: (id, sessionId) => this.notifySessionCleared(id, sessionId),
         onSessionChanged: (id, sessionId) => this.notifySessionChanged(id, sessionId),
+        onMessagesRemoved: (id, sessionId, messageIds) => this.notifyMessagesRemoved(id, sessionId, messageIds),
         onScrollSnapshotChanged: (id, sessionId, scope, snapshot) =>
           this.notifyScrollSnapshotChanged(id, sessionId, scope, snapshot),
       })
@@ -75,6 +77,22 @@ class MessageStoreBus {
         handler(instanceId, sessionId)
       } catch (error) {
         log.error("Failed to run session change handler", error)
+      }
+    }
+  }
+
+  onMessagesRemoved(handler: (instanceId: string, sessionId: string, messageIds: readonly string[]) => void): () => void {
+    this.messageRemovalHandlers.add(handler)
+    return () => this.messageRemovalHandlers.delete(handler)
+  }
+
+  private notifyMessagesRemoved(instanceId: string, sessionId: string, messageIds: readonly string[]) {
+    clearCacheForSession(instanceId, sessionId)
+    for (const handler of this.messageRemovalHandlers) {
+      try {
+        handler(instanceId, sessionId, messageIds)
+      } catch (error) {
+        log.error("Failed to run message removal handler", error)
       }
     }
   }
