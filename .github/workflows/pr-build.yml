@@ -111,6 +111,7 @@ jobs:
           packages/ui/src/lib/launch-errors.test.ts
           packages/ui/src/lib/message-selection-position.test.ts
           packages/ui/src/lib/model-visibility.test.ts
+          packages/ui/src/lib/runtime-env.test.ts
           packages/ui/src/lib/trailing-resync.test.ts
           packages/ui/src/stores/abort-created-workspace-cleanup.test.ts
           packages/ui/src/stores/app-session-reconciliation.test.ts
@@ -133,6 +134,7 @@ jobs:
       - name: Test restore ownership integration
         run: >-
           node --conditions=browser --import tsx --test --test-force-exit
+          packages/ui/src/lib/hooks/use-active-session-message-load.test.ts
           packages/ui/src/stores/instances-restore-ownership.test.ts
           packages/ui/src/stores/permission-lifecycle.test.ts
           packages/ui/src/stores/session-request-authority.test.ts

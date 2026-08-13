@@ -37,7 +37,8 @@
         ]
       },
       "capabilities": [
-        "main-window-native-dialogs"
+        "main-window-native-dialogs",
+        "remote-window-notifications"
       ]
     }
   },

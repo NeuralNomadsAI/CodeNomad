@@ -35,6 +35,15 @@ declare global {
     restartCli?: () => Promise<unknown>
     openDialog?: (options: ElectronDialogOptions) => Promise<ElectronDialogResult>
     getDirectoryPaths?: (paths: string[]) => Promise<string[]>
+    openWorkspaceTarget?: (payload: {
+      target: "default" | "reveal" | "terminal" | "editor"
+      instanceId: string
+      worktreeSlug: string
+      path?: string
+      editor?: "vscode" | "cursor" | "zed" | "vscodium"
+    }) => Promise<{ ok: true }>
+    setWorkspaceMenuEnabled?: (enabled: boolean) => Promise<{ ok: true }>
+    onMenuAction?: (callback: (action: string) => void) => () => void
     getPathForFile?: (file: File) => string | null
     requestMicrophoneAccess?: () => Promise<{ granted: boolean }>
     setWakeLock?: (enabled: boolean) => Promise<{ enabled: boolean }>

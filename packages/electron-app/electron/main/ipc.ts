@@ -1,7 +1,9 @@
-import { BrowserWindow, Notification, dialog, ipcMain, powerSaveBlocker, type OpenDialogOptions } from "electron"
+import { BrowserWindow, Notification, dialog, ipcMain, powerSaveBlocker, shell, type OpenDialogOptions } from "electron"
 import fs from "fs"
 import { requestMicrophoneAccess } from "./permissions"
 import type { CliProcessManager, CliStatus } from "./process-manager"
+import { openWorkspaceTarget, type WorkspaceEditor, type WorkspaceOpenTarget } from "./workspace-open"
+import { setWorkspaceMenuEnabled } from "./menu"
 
 let wakeLockId: number | null = null
 
@@ -16,6 +18,34 @@ interface DialogOpenRequest {
 interface DialogOpenResult {
   canceled: boolean
   paths: string[]
+}
+
+async function resolveLocalWorkspaceFolder(
+  mainWindow: BrowserWindow,
+  cliManager: CliProcessManager,
+  instanceId: string,
+  worktreeSlug: string,
+): Promise<string> {
+  const baseUrl = cliManager.getStatus().url
+  if (!baseUrl) throw new Error("Local CodeNomad server is unavailable")
+  const cookieName = cliManager.getAuthCookieName()
+  const cookie = (await mainWindow.webContents.session.cookies.get({ url: baseUrl, name: cookieName }))[0]
+  const headers = cookie ? { Cookie: `${cookie.name}=${cookie.value}` } : undefined
+  const workspaceResponse = await fetch(`${baseUrl.replace(/\/$/, "")}/api/workspaces/${encodeURIComponent(instanceId)}`, { headers })
+  if (!workspaceResponse.ok) throw new Error("Workspace is not active")
+  const workspace = await workspaceResponse.json() as { path?: unknown }
+  if (typeof workspace.path !== "string") throw new Error("Workspace path is unavailable")
+  if (worktreeSlug === "root") return workspace.path
+
+  const worktreeResponse = await fetch(
+    `${baseUrl.replace(/\/$/, "")}/api/workspaces/${encodeURIComponent(instanceId)}/worktrees`,
+    { headers },
+  )
+  if (!worktreeResponse.ok) throw new Error("Workspace worktrees are unavailable")
+  const payload = await worktreeResponse.json() as { worktrees?: Array<{ slug?: unknown; directory?: unknown }> }
+  const worktree = payload.worktrees?.find((candidate) => candidate.slug === worktreeSlug)
+  if (!worktree || typeof worktree.directory !== "string") throw new Error("Selected worktree is unavailable")
+  return worktree.directory
 }
 
 export function setupCliIPC(mainWindow: BrowserWindow, cliManager: CliProcessManager) {
@@ -86,6 +116,49 @@ export function setupCliIPC(mainWindow: BrowserWindow, cliManager: CliProcessMan
       }
     })
     return directories
+  })
+
+  ipcMain.handle(
+    "workspace:openTarget",
+    async (event, payload: { target?: unknown; instanceId?: unknown; worktreeSlug?: unknown; path?: unknown; editor?: unknown }): Promise<{ ok: true }> => {
+      if (mainWindow.isDestroyed() || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
+        throw new Error("Workspace open requests are limited to the local main window")
+      }
+      const localUrl = cliManager.getStatus().url
+      if (!localUrl || new URL(event.senderFrame.url).origin !== new URL(localUrl).origin) {
+        throw new Error("Workspace open requests require the local CodeNomad origin")
+      }
+      const target = payload?.target
+      const instanceId = payload?.instanceId
+      const worktreeSlug = payload?.worktreeSlug
+      const editor = payload?.editor
+      if (
+        (target !== "default" && target !== "reveal" && target !== "terminal" && target !== "editor")
+        || typeof instanceId !== "string"
+        || typeof worktreeSlug !== "string"
+        || (payload.path !== undefined && typeof payload.path !== "string")
+        || (editor !== undefined && editor !== "vscode" && editor !== "cursor" && editor !== "zed" && editor !== "vscodium")
+      ) {
+        throw new Error("Invalid workspace open request")
+      }
+      const workspaceFolder = await resolveLocalWorkspaceFolder(mainWindow, cliManager, instanceId, worktreeSlug)
+      await openWorkspaceTarget(
+        target as WorkspaceOpenTarget,
+        workspaceFolder,
+        payload.path as string | undefined,
+        editor as WorkspaceEditor | undefined,
+        { openPath: (path) => shell.openPath(path), revealPath: (path) => shell.showItemInFolder(path) },
+      )
+      return { ok: true }
+    },
+  )
+
+  ipcMain.handle("workspace:setMenuEnabled", (event, enabled: unknown): { ok: true } => {
+    if (mainWindow.isDestroyed() || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
+      throw new Error("Workspace menu updates are limited to the local main window")
+    }
+    setWorkspaceMenuEnabled(enabled === true)
+    return { ok: true }
   })
 
   ipcMain.handle("power:setWakeLock", async (_event, enabled: boolean): Promise<{ enabled: boolean }> => {
