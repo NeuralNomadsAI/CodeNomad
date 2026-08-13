@@ -6,7 +6,7 @@ import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
 import { openExternalUrl } from "../../lib/external-url"
 import { useI18n } from "../../lib/i18n"
 import { requestData } from "../../lib/opencode-api"
-import { isTauriHost } from "../../lib/runtime-env"
+import { isLocalTauriHost } from "../../lib/runtime-env"
 import {
   extractProviderAuthErrorMessage,
   genericApiMethod,
@@ -186,7 +186,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   }
 
   function isBrowserHostForOAuth(): boolean {
-    return !isTauriHost() && typeof window !== "undefined"
+    return !isLocalTauriHost() && typeof window !== "undefined"
   }
 
   function prepareOAuthPopupWindow(): Window | null {

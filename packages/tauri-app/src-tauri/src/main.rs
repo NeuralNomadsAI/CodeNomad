@@ -47,7 +47,8 @@ use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 const ZOOM_STEP: f64 = 0.1;
 const RELEASES_URL: &str = "https://github.com/NeuralNomadsAI/CodeNomad/releases/latest";
 const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_WINDOW_CONTEXT__ = 'local';";
-const REMOTE_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_WINDOW_CONTEXT__ = 'remote';";
+const REMOTE_WINDOW_CONTEXT_SCRIPT: &str =
+    "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'remote';";
 
 #[cfg(windows)]
 const WINDOWS_APP_USER_MODEL_ID: &str = "ai.neuralnomads.codenomad.client";
@@ -218,19 +219,20 @@ fn should_allow_window_origin<R: Runtime>(
     window_label: &str,
     url: &Url,
 ) -> bool {
-    if should_allow_internal(url) {
-        return true;
-    }
-
     let state = app_handle.state::<AppState>();
     let Ok(allowed) = state.remote_origins.lock() else {
         return false;
     };
-    if let Some(origin) = allowed.get(window_label) {
-        return origin == &url.origin().ascii_serialization();
-    }
+    should_allow_registered_origin(allowed.get(window_label).map(String::as_str), url)
+}
 
-    false
+fn should_allow_registered_origin(registered_origin: Option<&str>, url: &Url) -> bool {
+    if let Some(origin) = registered_origin {
+        if matches!(url.scheme(), "http" | "https") {
+            return origin == url.origin().ascii_serialization();
+        }
+    }
+    should_allow_internal(url)
 }
 
 fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
@@ -1059,8 +1061,13 @@ fn build_about_metadata(version: &str, include_update_link: bool) -> AboutMetada
 
 #[cfg(test)]
 mod menu_tests {
-    use super::{build_about_metadata, run_update_with_fallback, RELEASES_URL};
+    use super::{
+        build_about_metadata, run_update_with_fallback, should_allow_registered_origin,
+        RELEASES_URL, REMOTE_WINDOW_CONTEXT_SCRIPT,
+    };
+    use serde_json::json;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use url::Url;
 
     #[test]
     fn failed_update_uses_release_fallback() {
@@ -1090,5 +1097,54 @@ mod menu_tests {
 
         assert_eq!(metadata.website, None);
         assert_eq!(metadata.website_label, None);
+    }
+
+    #[test]
+    fn remote_windows_identify_as_remote_tauri_windows() {
+        assert!(REMOTE_WINDOW_CONTEXT_SCRIPT.contains("__CODENOMAD_RUNTIME_HOST__ = 'tauri'"));
+        assert!(REMOTE_WINDOW_CONTEXT_SCRIPT.contains("__CODENOMAD_WINDOW_CONTEXT__ = 'remote'"));
+
+        let capability: serde_json::Value = serde_json::from_str(include_str!(
+            "../capabilities/remote-window-notifications.json"
+        ))
+        .unwrap();
+        assert_eq!(capability["local"], false);
+        assert_eq!(
+            capability["remote"]["urls"],
+            json!(["http://*:*", "https://*:*"])
+        );
+        assert_eq!(capability["windows"], json!(["remote-*"]));
+        assert_eq!(
+            capability["permissions"],
+            json!([
+                "notification:allow-is-permission-granted",
+                "notification:allow-request-permission",
+                "notification:allow-notify"
+            ])
+        );
+
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert!(config["app"]["security"]["capabilities"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("remote-window-notifications")));
+    }
+
+    #[test]
+    fn remote_windows_stay_on_their_registered_http_origin() {
+        let origin = "https://remote.example:9898";
+        assert!(should_allow_registered_origin(
+            Some(origin),
+            &Url::parse("https://remote.example:9898/settings").unwrap()
+        ));
+        assert!(!should_allow_registered_origin(
+            Some(origin),
+            &Url::parse("http://localhost:9898/").unwrap()
+        ));
+        assert!(should_allow_registered_origin(
+            Some(origin),
+            &Url::parse("about:blank").unwrap()
+        ));
     }
 }
