@@ -71,6 +71,10 @@
   gap: 0.5rem;
 }
 
+.provider-model-card-actions .selector-button {
+  width: auto;
+}
+
 @media (max-width: 700px) {
   .provider-model-visibility-toolbar {
     grid-template-columns: 1fr;
@@ -82,7 +86,8 @@
     flex-direction: column;
   }
 
-  .provider-model-visibility-toolbar .selector-button {
+  .provider-model-visibility-toolbar .selector-button,
+  .provider-model-card-actions .selector-button {
     width: 100%;
     justify-content: center;
   }
