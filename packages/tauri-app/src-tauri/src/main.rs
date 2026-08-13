@@ -10,6 +10,7 @@ mod linux_tls;
 mod managed_node;
 mod shutdown;
 mod windows_update;
+mod workspace_open;
 
 use cli_manager::{CliProcessManager, CliStatus};
 use desktop_event_transport::{
@@ -23,7 +24,9 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::menu::{AboutMetadata, MenuBuilder, MenuItem, PredefinedMenuItem, SubmenuBuilder};
+use tauri::menu::{
+    AboutMetadata, MenuBuilder, MenuItem, PredefinedMenuItem, Submenu, SubmenuBuilder,
+};
 use tauri::plugin::{Builder as PluginBuilder, TauriPlugin};
 use tauri::webview::{PageLoadEvent, Webview};
 use tauri::{
@@ -62,6 +65,70 @@ pub struct AppState {
     pub remote_skip_tls_verify: Mutex<HashMap<String, bool>>,
     pub remote_tls_handlers: Mutex<HashSet<String>>,
     pub remote_titles: Mutex<HashMap<String, String>>,
+    pub workspace_menu_items: Mutex<Option<WorkspaceMenuItems>>,
+    pub workspace_menu_requested_enabled: Mutex<bool>,
+}
+
+pub struct WorkspaceMenuItems {
+    folder: MenuItem<Wry>,
+    terminal: MenuItem<Wry>,
+    editor: Submenu<Wry>,
+}
+
+fn update_workspace_menu_state(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let requested = state
+        .workspace_menu_requested_enabled
+        .lock()
+        .map(|value| *value)
+        .unwrap_or(false);
+    let focused = app
+        .get_webview_window("main")
+        .and_then(|window| window.is_focused().ok())
+        .unwrap_or(false);
+    if let Ok(items) = state.workspace_menu_items.lock() {
+        if let Some(items) = items.as_ref() {
+            let enabled = requested && focused;
+            let _ = items.folder.set_enabled(enabled);
+            let _ = items.terminal.set_enabled(enabled);
+            let _ = items.editor.set_enabled(enabled);
+        }
+    };
+}
+
+#[tauri::command]
+fn set_workspace_menu_enabled(
+    window: tauri::WebviewWindow,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("Workspace menu updates are limited to the local main window".into());
+    }
+    if !enabled {
+        *state
+            .workspace_menu_requested_enabled
+            .lock()
+            .map_err(|error| error.to_string())? = false;
+        update_workspace_menu_state(&app);
+        return Ok(());
+    }
+    let config = state
+        .manager
+        .desktop_event_stream_config()
+        .ok_or("Local CodeNomad server is unavailable")?;
+    let expected = Url::parse(&config.base_url).map_err(|error| error.to_string())?;
+    let current = window.url().map_err(|error| error.to_string())?;
+    if current.origin() != expected.origin() {
+        return Err("Workspace menu updates require the local CodeNomad origin".into());
+    }
+    *state
+        .workspace_menu_requested_enabled
+        .lock()
+        .map_err(|error| error.to_string())? = enabled;
+    update_workspace_menu_state(&app);
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -368,6 +435,9 @@ async fn open_remote_window_impl(
     let app_handle = app.clone();
     let label_for_cleanup = label.clone();
     window.on_window_event(move |event| {
+        if matches!(event, WindowEvent::Focused(_)) {
+            update_workspace_menu_state(&app_handle);
+        }
         if let WindowEvent::Destroyed = event {
             if let Ok(mut origins) = app_handle.state::<AppState>().remote_origins.lock() {
                 origins.remove(&label_for_cleanup);
@@ -607,8 +677,21 @@ fn main() {
             remote_skip_tls_verify: Mutex::new(HashMap::new()),
             remote_tls_handlers: Mutex::new(HashSet::new()),
             remote_titles: Mutex::new(HashMap::new()),
+            workspace_menu_items: Mutex::new(None),
+            workspace_menu_requested_enabled: Mutex::new(false),
         })
         .on_page_load(|webview, payload| {
+            if webview.label() == "main" && payload.event() == PageLoadEvent::Started {
+                if let Ok(mut enabled) = webview
+                    .app_handle()
+                    .state::<AppState>()
+                    .workspace_menu_requested_enabled
+                    .lock()
+                {
+                    *enabled = false;
+                }
+                update_workspace_menu_state(&webview.app_handle());
+            }
             if matches!(
                 payload.event(),
                 PageLoadEvent::Started | PageLoadEvent::Finished
@@ -629,6 +712,12 @@ fn main() {
                 shutdown::install_windows_session_end_handler(&window)
                     .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
                 let _ = window.eval(LOCAL_WINDOW_CONTEXT_SCRIPT);
+                let app_handle = app.handle().clone();
+                window.on_window_event(move |event| {
+                    if matches!(event, WindowEvent::Focused(_)) {
+                        update_workspace_menu_state(&app_handle);
+                    }
+                });
             }
             if let Some(shortcut) = fullscreen_shortcut() {
                 let shortcut_manager = app.handle().global_shortcut();
@@ -675,14 +764,27 @@ fn main() {
             client_state::client_state_clear,
             client_state::client_state_renderer_flushed,
             client_state::client_state_navigation_flushed,
-            windows_update::install_stable_update
+            windows_update::install_stable_update,
+            workspace_open::open_workspace_target,
+            set_workspace_menu_enabled
         ])
         .on_menu_event(|app_handle, event| {
             match event.id().0.as_str() {
                 // File menu
-                "new_instance" => {
+                action @ ("new-instance"
+                | "open-workspace-folder"
+                | "open-workspace-terminal"
+                | "open-workspace-editor-vscode"
+                | "open-workspace-editor-cursor"
+                | "open-workspace-editor-zed"
+                | "open-workspace-editor-vscodium") => {
                     if let Some(window) = app_handle.get_webview_window("main") {
-                        let _ = window.emit("menu:newInstance", ());
+                        if action.starts_with("open-workspace-")
+                            && !window.is_focused().unwrap_or(false)
+                        {
+                            return;
+                        }
+                        let _ = window.emit("menu:action", action);
                     }
                 }
                 "quit" => {
@@ -885,21 +987,59 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     // File menu - create New Instance with accelerator
     let new_instance_item = MenuItem::with_id(
         app,
-        "new_instance",
+        "new-instance",
         "New Instance",
         true,
         Some("CmdOrCtrl+N"),
     )?;
+    let open_folder_item = MenuItem::with_id(
+        app,
+        "open-workspace-folder",
+        "Open Project Folder",
+        true,
+        None::<&str>,
+    )?;
+    let open_terminal_item = MenuItem::with_id(
+        app,
+        "open-workspace-terminal",
+        "Open Terminal Here",
+        true,
+        None::<&str>,
+    )?;
+    let open_editor_menu = SubmenuBuilder::new(app, "Open Project In")
+        .text("open-workspace-editor-vscode", "VS Code")
+        .text("open-workspace-editor-cursor", "Cursor")
+        .text("open-workspace-editor-zed", "Zed")
+        .text("open-workspace-editor-vscodium", "VSCodium")
+        .build()?;
+    open_folder_item.set_enabled(false)?;
+    open_terminal_item.set_enabled(false)?;
+    open_editor_menu.set_enabled(false)?;
+    if let Ok(mut items) = app.state::<AppState>().workspace_menu_items.lock() {
+        *items = Some(WorkspaceMenuItems {
+            folder: open_folder_item.clone(),
+            terminal: open_terminal_item.clone(),
+            editor: open_editor_menu.clone(),
+        });
+    }
 
     let file_menu = if is_mac {
         SubmenuBuilder::new(app, "File")
             .item(&new_instance_item)
+            .separator()
+            .item(&open_folder_item)
+            .item(&open_terminal_item)
+            .item(&open_editor_menu)
             .separator()
             .close_window()
             .build()?
     } else {
         SubmenuBuilder::new(app, "File")
             .item(&new_instance_item)
+            .separator()
+            .item(&open_folder_item)
+            .item(&open_terminal_item)
+            .item(&open_editor_menu)
             .separator()
             .text("quit", "Quit")
             .build()?

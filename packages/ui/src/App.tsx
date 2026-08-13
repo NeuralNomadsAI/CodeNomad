@@ -28,6 +28,8 @@ import { initReleaseNotifications } from "./stores/releases"
 import { isTauriHost, isWebHost, runtimeEnv } from "./lib/runtime-env"
 import { useI18n } from "./lib/i18n"
 import { setWakeLockDesired } from "./lib/native/wake-lock"
+import { resolveResolvable } from "./lib/commands"
+import { setWorkspaceMenuEnabled } from "./lib/workspace-open"
 import {
   isSelectingFolder,
   setIsSelectingFolder,
@@ -608,26 +610,42 @@ const App: Component = () => {
     getActiveSessionIdForInstance: activeSessionIdForInstance,
   })
 
-  // Listen for Tauri menu events
+  // Native menus execute the same commands as the command palette.
   onMount(() => {
+    const executeMenuAction = (action: unknown) => {
+      if (typeof action !== "string") return
+      const command = paletteCommands().find((candidate) => candidate.id === action)
+      if (command && !(command.disabled && resolveResolvable(command.disabled))) executeCommand(command)
+    }
+
     if (isTauriHost()) {
       const tauriBridge = (window as { __TAURI__?: { event?: { listen: (event: string, handler: (event: { payload: unknown }) => void) => Promise<() => void> } } }).__TAURI__
       if (tauriBridge?.event) {
         let unlistenMenu: (() => void) | null = null
 
-        tauriBridge.event.listen("menu:newInstance", () => {
-          handleNewInstanceRequest()
+        tauriBridge.event.listen("menu:action", (event) => {
+          executeMenuAction(event.payload)
         }).then((unlisten) => {
           unlistenMenu = unlisten
         }).catch((error) => {
-          log.error("Failed to listen for menu:newInstance event", error)
+          log.error("Failed to listen for native menu actions", error)
         })
 
         onCleanup(() => {
           unlistenMenu?.()
         })
       }
+      return
     }
+
+    const unsubscribe = window.electronAPI?.onMenuAction?.(executeMenuAction)
+    onCleanup(() => unsubscribe?.())
+  })
+
+  createEffect(() => {
+    void setWorkspaceMenuEnabled(Boolean(activeInstance())).catch((error) => {
+      log.warn("Failed to update native workspace menu state", error)
+    })
   })
 
   return (

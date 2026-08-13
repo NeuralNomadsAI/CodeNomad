@@ -21,6 +21,8 @@ import { requestData } from "../opencode-api"
 import { emitSessionSidebarRequest } from "../session-sidebar-events"
 import { tGlobal } from "../i18n"
 import { registerBehaviorCommands } from "../settings/behavior-registry"
+import { canOpenWorkspacePaths, openWorkspacePath, type WorkspaceEditor, type WorkspaceOpenTarget } from "../workspace-open"
+import { getDefaultWorktreeSlug, getWorktreeSlugForSession } from "../../stores/worktrees"
 
 const log = getLogger("actions")
 
@@ -82,6 +84,36 @@ export function useCommands(options: UseCommandsOptions) {
     const activeInstance = options.getActiveInstance
     const activeSessionIdForInstance = options.getActiveSessionIdForInstance
 
+    const activeWorkspace = () => {
+      const instance = activeInstance()
+      if (!instance) return null
+      const sessionId = activeSessionIdForInstance()
+      const worktreeSlug = !sessionId || sessionId === "info"
+        ? getDefaultWorktreeSlug(instance.id)
+        : getWorktreeSlugForSession(instance.id, sessionId)
+      return { instanceId: instance.id, worktreeSlug }
+    }
+
+    const openActiveWorkspace = async (target: WorkspaceOpenTarget, editor?: WorkspaceEditor) => {
+      const workspace = activeWorkspace()
+      if (!workspace) {
+        showAlertDialog(tGlobal("commands.openWorkspace.projectRequired.message"), {
+          title: tGlobal("commands.openWorkspace.projectRequired.title"),
+        })
+        return
+      }
+      try {
+        await openWorkspacePath({ target, ...workspace, editor })
+      } catch (error) {
+        showAlertDialog(tGlobal("commands.openWorkspace.failed.message", {
+          message: error instanceof Error ? error.message : String(error),
+        }), {
+          title: tGlobal("commands.openWorkspace.failed.title"),
+          variant: "error",
+        })
+      }
+    }
+
     commandRegistry.register({
       id: "new-instance",
       label: () => tGlobal("commands.newInstance.label"),
@@ -103,6 +135,44 @@ export function useCommands(options: UseCommandsOptions) {
         await options.handleCloseActiveTab()
       },
     })
+
+    if (canOpenWorkspacePaths()) {
+      commandRegistry.register({
+        id: "open-workspace-folder",
+        label: () => tGlobal("commands.openWorkspace.folder.label"),
+        description: () => tGlobal("commands.openWorkspace.folder.description"),
+        category: "Instance",
+        keywords: () => splitKeywords("commands.openWorkspace.folder.keywords"),
+        disabled: () => !activeInstance(),
+        action: () => openActiveWorkspace("default"),
+      })
+      commandRegistry.register({
+        id: "open-workspace-terminal",
+        label: () => tGlobal("commands.openWorkspace.terminal.label"),
+        description: () => tGlobal("commands.openWorkspace.terminal.description"),
+        category: "Instance",
+        keywords: () => splitKeywords("commands.openWorkspace.terminal.keywords"),
+        disabled: () => !activeInstance(),
+        action: () => openActiveWorkspace("terminal"),
+      })
+      const editors: Array<[WorkspaceEditor, string]> = [
+        ["vscode", "VS Code"],
+        ["cursor", "Cursor"],
+        ["zed", "Zed"],
+        ["vscodium", "VSCodium"],
+      ]
+      for (const [editor, name] of editors) {
+        commandRegistry.register({
+          id: `open-workspace-editor-${editor}`,
+          label: () => tGlobal("commands.openWorkspace.editor.label", { editor: name }),
+          description: () => tGlobal("commands.openWorkspace.editor.description", { editor: name }),
+          category: "Instance",
+          keywords: () => [name, ...splitKeywords("commands.openWorkspace.editor.keywords")],
+          disabled: () => !activeInstance(),
+          action: () => openActiveWorkspace("editor", editor),
+        })
+      }
+    }
 
     commandRegistry.register({
       id: "instance-next",
