@@ -14,6 +14,12 @@ import {
 import { getLogger } from "../lib/logger"
 import { loadSpeechCapabilities, resetSpeechCapabilities } from "./speech"
 import { buildSpeechPatch } from "../lib/speech-patch"
+import {
+  normalizeModelVisibilityPreference,
+  normalizeModelVisibilityPreferences,
+  type ModelVisibilityPreference,
+  type ModelVisibilityPreferences,
+} from "../lib/model-visibility"
 
 const log = getLogger("actions")
 
@@ -103,6 +109,7 @@ export interface UiSettings {
   usageMetricsExpansion: ExpansionPreference
   autoCleanupBlankSessions: boolean
   keepUnseenSubagentIdleStatus: boolean
+  modelVisibility: ModelVisibilityPreferences
 
   // OS notifications
   osNotificationsEnabled: boolean
@@ -193,6 +200,7 @@ const defaultUiSettings: UiSettings = {
   usageMetricsExpansion: "collapsed",
   autoCleanupBlankSessions: true,
   keepUnseenSubagentIdleStatus: false,
+  modelVisibility: {},
 
   osNotificationsEnabled: false,
   osNotificationsAllowWhenVisible: false,
@@ -299,6 +307,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     autoCleanupBlankSessions: sanitized.autoCleanupBlankSessions ?? defaultUiSettings.autoCleanupBlankSessions,
     keepUnseenSubagentIdleStatus:
       sanitized.keepUnseenSubagentIdleStatus ?? defaultUiSettings.keepUnseenSubagentIdleStatus,
+    modelVisibility: normalizeModelVisibilityPreferences(sanitized.modelVisibility),
     osNotificationsEnabled: sanitized.osNotificationsEnabled ?? defaultUiSettings.osNotificationsEnabled,
     osNotificationsAllowWhenVisible:
       sanitized.osNotificationsAllowWhenVisible ?? defaultUiSettings.osNotificationsAllowWhenVisible,
@@ -616,12 +625,77 @@ async function patchStateOwner(owner: string, patch: unknown) {
 function updateUiSettings(updates: Partial<UiSettings>) {
   const current = uiConfigBucket()
   const nextSettings = normalizeUiSettings({ ...(current.settings ?? {}), ...updates })
-  const patch = { settings: nextSettings }
+  const patch = {
+    settings: Object.fromEntries(
+      Object.keys(updates).map((key) => [key, nextSettings[key as keyof UiSettings]]),
+    ),
+  }
   void patchConfigOwner("ui", patch).catch((error) => log.error("Failed to patch ui settings", error))
 }
 
 function updatePreferences(updates: Partial<UiSettings>): void {
   updateUiSettings(updates)
+}
+
+const modelVisibilityWriteQueues = new Map<string, Promise<void>>()
+let modelVisibilityWriteQueue = Promise.resolve()
+const [pendingModelVisibility, setPendingModelVisibility] = createSignal(new Map<string, ModelVisibilityPreference>())
+const [modelVisibilityWriteFailures, setModelVisibilityWriteFailures] = createSignal(new Set<string>())
+
+function getProviderModelVisibilityPreference(providerId: string): ModelVisibilityPreference {
+  return pendingModelVisibility().get(providerId)
+    ?? normalizeModelVisibilityPreference(preferences().modelVisibility[providerId])
+}
+
+function providerModelVisibilitySaveFailed(providerId: string): boolean {
+  return modelVisibilityWriteFailures().has(providerId)
+}
+
+async function setProviderModelVisibility(providerId: string, preference: ModelVisibilityPreference): Promise<void> {
+  if (!providerId) return
+  const normalized = normalizeModelVisibilityPreference(preference)
+  setPendingModelVisibility((current) => new Map(current).set(providerId, normalized))
+  setModelVisibilityWriteFailures((current) => {
+    const next = new Set(current)
+    next.delete(providerId)
+    return next
+  })
+  const previous = modelVisibilityWriteQueue
+  const write = previous
+    .catch(() => undefined)
+    .then(() => patchConfigOwner("ui", {
+      settings: {
+        modelVisibility: {
+          [providerId]: normalized,
+        },
+      },
+    }))
+
+  modelVisibilityWriteQueue = write
+  modelVisibilityWriteQueues.set(providerId, write)
+  void write.then(
+    () => {
+      if (modelVisibilityWriteQueues.get(providerId) !== write) return
+      modelVisibilityWriteQueues.delete(providerId)
+      setPendingModelVisibility((current) => {
+        const next = new Map(current)
+        next.delete(providerId)
+        return next
+      })
+    },
+    (error) => {
+      log.error("Failed to update provider model visibility", error)
+      if (modelVisibilityWriteQueues.get(providerId) !== write) return
+      modelVisibilityWriteQueues.delete(providerId)
+      setPendingModelVisibility((current) => {
+        const next = new Map(current)
+        next.delete(providerId)
+        return next
+      })
+      setModelVisibilityWriteFailures((current) => new Set(current).add(providerId))
+    },
+  )
+  await write
 }
 
 function setThemePreference(preference: ThemePreference): void {
@@ -945,6 +1019,9 @@ interface ConfigContextValue {
   useTauriNativeEventTransport: typeof useTauriNativeEventTransport
   setUseTauriNativeEventTransport: typeof setUseTauriNativeEventTransport
   updatePreferences: typeof updatePreferences
+  setProviderModelVisibility: typeof setProviderModelVisibility
+  getProviderModelVisibilityPreference: typeof getProviderModelVisibilityPreference
+  providerModelVisibilitySaveFailed: typeof providerModelVisibilitySaveFailed
   themePreference: typeof themePreference
   setThemePreference: typeof setThemePreference
 
@@ -1008,6 +1085,9 @@ const configContextValue: ConfigContextValue = {
   useTauriNativeEventTransport,
   setUseTauriNativeEventTransport,
   updatePreferences,
+  setProviderModelVisibility,
+  getProviderModelVisibilityPreference,
+  providerModelVisibilitySaveFailed,
   themePreference,
   setThemePreference,
   serverSettings,
@@ -1105,6 +1185,9 @@ export {
   themePreference,
   setThemePreference,
   updatePreferences,
+  setProviderModelVisibility,
+  getProviderModelVisibilityPreference,
+  providerModelVisibilitySaveFailed,
   setListeningMode,
   updateEnvironmentVariables,
   addEnvironmentVariable,
