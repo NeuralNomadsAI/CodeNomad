@@ -2,7 +2,7 @@
 
 ## Package
 
-CodeNomad pins `@opencode-ai/client@0.0.0-next-17288` exactly in both `packages/server/package.json` and `packages/ui/package.json`.
+CodeNomad pins `@opencode-ai/client@0.0.0-next-17353` exactly in both `packages/server/package.json` and `packages/ui/package.json`.
 
 - Promise client: `import { OpenCode } from "@opencode-ai/client"`
 - Service lifecycle: `import { Service } from "@opencode-ai/client/service"`

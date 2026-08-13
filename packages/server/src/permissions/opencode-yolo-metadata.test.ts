@@ -18,7 +18,10 @@ function createHarness() {
       return owner
     },
   } as unknown as SettingsService
-  const workspaceManager = { get: () => ({ path: "/repo" }) } as unknown as WorkspaceManager
+  const workspaceManager = {
+    get: () => ({ path: "/repo" }),
+    ownsDirectory: async (_instanceId: string, directory: string) => directory === "/repo",
+  } as unknown as WorkspaceManager
   const client = {
     session: {
       async list(input: Record<string, unknown>) {
@@ -33,6 +36,14 @@ function createHarness() {
             },
           ],
           cursor: {},
+        }
+      },
+      async get({ sessionID }: { sessionID: string }) {
+        return {
+          id: sessionID,
+          parentID: undefined,
+          revert: undefined,
+          location: { directory: sessionID === "foreign" ? "/other" : "/repo", workspaceID: "workspace" },
         }
       },
     },
@@ -59,6 +70,12 @@ describe("OpenCode Yolo persistence", () => {
         yoloEnabled: true,
       },
     ])
+  })
+
+  it("loads an exact session only when its native location belongs to the logical workspace", async () => {
+    const { persistence } = createHarness()
+    assert.equal((await persistence.loadSession!("instance", "root"))?.id, "root")
+    assert.equal(await persistence.loadSession!("instance", "foreign"), null)
   })
 
 })

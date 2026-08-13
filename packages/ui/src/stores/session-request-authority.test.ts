@@ -269,6 +269,25 @@ describe("session request authority", () => {
     }
   })
 
+  it("refreshes sessions when active status is unavailable", async () => {
+    const instanceId = "active-status-unavailable"
+    const { client, cleanup } = setup(instanceId)
+    const existing = { ...session(instanceId, "existing"), status: "working" as const }
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[existing.id, existing]])))
+    ;(client.session as any).list = async () => ({ data: [apiSession(existing.id), apiSession("new")] })
+    ;(client.session as any).active = async () => { throw new Error("forbidden") }
+
+    try {
+      await fetchSessions(instanceId)
+      assert.equal(sessions().get(instanceId)?.get(existing.id)?.status, "working")
+      assert.equal(sessions().get(instanceId)?.get(existing.id)?.runtimeStatusKnown, true)
+      assert.equal(sessions().get(instanceId)?.get("new")?.status, "idle")
+      assert.equal(sessions().get(instanceId)?.get("new")?.runtimeStatusKnown, false)
+    } finally {
+      cleanup()
+    }
+  })
+
   it("accepts native absolute session locations without workspace probing", async () => {
     const instanceId = "unresolved-worktree-status"
     const { client, cleanup } = setup(instanceId)

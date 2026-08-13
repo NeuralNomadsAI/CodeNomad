@@ -367,6 +367,7 @@ export interface InstanceProxyWorkspaceManager {
   getInstanceAuthorizationHeader(id: string): string | undefined
   getSharedServiceClient(): Promise<OpenCodeClient>
   ownsDirectory(id: string, directory: string): Promise<boolean>
+  ownsPath(id: string, candidate: string): Promise<boolean>
 }
 
 interface InstanceProxyDeps {
@@ -563,16 +564,56 @@ async function proxyWorkspaceRequest(args: {
     return
   }
 
-  const normalizedSuffix = normalizeInstanceSuffix(args.pathSuffix)
-  const targetUrl = appendIncomingQuery(new URL(normalizedSuffix, endpoint.url), request.raw.url ?? "")
-  const requestLocations = readRequestDirectories(targetUrl, request.body)
-  readNativeCwd(targetUrl, request.body, requestLocations)
+  const rawInstancePath = (request.raw.url ?? "").split("?", 1)[0]?.match(/\/instance(?:\/(.*))?$/)?.[1] ?? ""
+  if (/\\|%2f|%5c/i.test(rawInstancePath)) {
+    reply.code(400).send({ error: "Invalid workspace instance path" })
+    return
+  }
+  const targetUrl = buildInstanceTargetUrl(endpoint.url, args.pathSuffix)
+  if (!targetUrl) {
+    reply.code(400).send({ error: "Invalid workspace instance path" })
+    return
+  }
+  appendIncomingQuery(targetUrl, request.raw.url ?? "")
+  const pathname = normalizeInstanceSuffix(args.pathSuffix)
+  if (!isAllowedInstanceApiRoute(request.method, pathname)) {
+    reply.code(403).send({ error: "OpenCode route is not available through a workspace" })
+    return
+  }
+  if (pathname.replace(/\/+$/, "") === "/api/session/active") {
+    if (request.method !== "GET") {
+      reply.code(405).send({ error: "Method not allowed" })
+      return
+    }
+    const client = await workspaceManager.getSharedServiceClient()
+    const active = await client.session.active()
+    const entries = await Promise.all(Object.entries(active).map(async ([sessionId, status]) => {
+      try {
+        const session = await client.session.get({ sessionID: sessionId })
+        return await workspaceManager.ownsDirectory(workspaceId, session.location.directory) ? [sessionId, status] as const : null
+      } catch {
+        return null
+      }
+    }))
+    reply.send({ data: Object.fromEntries(entries.filter((entry): entry is NonNullable<typeof entry> => entry !== null)) })
+    return
+  }
+  const imported = prepareSessionImport(pathname, request.method, request.body, workspace.path)
+  const requestLocations = readRequestDirectories(targetUrl, imported.body)
+  requestLocations.directories.push(...imported.directories)
+  requestLocations.invalid ||= imported.invalid
+  readNativeCwd(targetUrl, imported.body, requestLocations)
+  const promptFiles = readPromptFilePaths(pathname, request.method, imported.body)
   if (requestLocations.invalid || !(await allDirectoriesOwned(workspaceManager, workspaceId, requestLocations.directories))) {
     reply.code(requestLocations.invalid ? 400 : 403).send({ error: "Location does not belong to workspace" })
     return
   }
+  if (promptFiles.invalid || !(await allPathsOwned(workspaceManager, workspaceId, promptFiles.paths))) {
+    reply.code(promptFiles.invalid ? 400 : 403).send({ error: "Prompt file does not belong to workspace" })
+    return
+  }
 
-  const sessionId = getSessionRouteId(targetUrl.pathname)
+  const sessionId = getSessionRouteId(pathname)
   if (sessionId) {
     let session
     try {
@@ -587,7 +628,7 @@ async function proxyWorkspaceRequest(args: {
     }
   }
 
-  const body = applyDefaultWorkspaceLocation(targetUrl, request.body, request.method, workspace.path, requestLocations.directories.length > 0, Boolean(sessionId))
+  const body = applyDefaultWorkspaceLocation(targetUrl, imported.body, request.method, workspace.path, requestLocations.directories.length > 0, Boolean(sessionId))
   const instanceAuthHeader = workspaceManager.getInstanceAuthorizationHeader(workspaceId)
 
   logger.debug({ workspaceId, method: request.method, targetUrl: targetUrl.toString() }, "Proxying request to instance")
@@ -685,7 +726,8 @@ function sanitizeInstanceProxyRequestHeaders(
 
   const result: Record<string, string | string[] | undefined> = {}
   for (const [key, value] of Object.entries(headers)) {
-    if (!blocked.has(key.toLowerCase())) result[key] = value
+    const normalized = key.toLowerCase()
+    if (!blocked.has(normalized) && !normalized.startsWith("x-opencode-")) result[key] = value
   }
   if (authorization) result.authorization = authorization
   return result
@@ -709,6 +751,10 @@ export function redactSecrets(value: unknown): unknown {
 
 async function allDirectoriesOwned(manager: InstanceProxyWorkspaceManager, workspaceId: string, directories: string[]) {
   return (await Promise.all(directories.map((directory) => manager.ownsDirectory(workspaceId, directory)))).every(Boolean)
+}
+
+async function allPathsOwned(manager: InstanceProxyWorkspaceManager, workspaceId: string, paths: string[]) {
+  return (await Promise.all(paths.map((candidate) => manager.ownsPath(workspaceId, candidate)))).every(Boolean)
 }
 
 function applyDefaultWorkspaceLocation(
@@ -735,13 +781,141 @@ function applyDefaultWorkspaceLocation(
 }
 
 function getSessionRouteId(pathname: string): string | null {
-  const match = pathname.match(/^\/api\/session\/([^/]+)(?:\/|$)/)
+  const match = pathname.match(/^\/api\/(?:experimental\/)?session\/([^/]+)(?:\/|$)/)
   if (!match || match[1] === "active" || match[1] === "import") return null
-  try {
-    return decodeURIComponent(match[1])
-  } catch {
-    return null
+  return match[1]
+}
+
+function buildInstanceTargetUrl(endpoint: string, pathSuffix: string | undefined): URL | null {
+  const suffix = pathSuffix ?? ""
+  if (/\\|%2f|%5c/i.test(suffix)) return null
+  const targetUrl = new URL(endpoint)
+  const origin = targetUrl.origin
+  targetUrl.pathname = normalizeInstanceSuffix(suffix).split("/").map(encodeURIComponent).join("/")
+  targetUrl.search = ""
+  targetUrl.hash = ""
+  return targetUrl.origin === origin ? targetUrl : null
+}
+
+function isAllowedInstanceApiRoute(method: string, pathname: string): boolean {
+  const route = pathname.replace(/\/+$/, "")
+  const allowed: Array<[string, RegExp]> = [
+    ["GET", /^\/api\/(?:agent|command|config|integration|mcp|model|provider)$/],
+    ["GET", /^\/api\/(?:permission|question)\/request$/],
+    ["GET", /^\/api\/project\/current$/],
+    ["GET", /^\/api\/vcs\/status$/],
+    ["GET", /^\/api\/fs\/(?:list|read\/.+)$/],
+    ["POST", /^\/api\/(?:pty|shell)$/],
+    ["POST", /^\/api\/mcp\/[^/]+\/(?:connect|disconnect)$/],
+    ["DELETE", /^\/api\/credential\/[^/]+$/],
+    ["POST", /^\/api\/integration\/[^/]+\/connect\/(?:key|oauth|command)$/],
+    ["GET", /^\/api\/integration\/[^/]+\/connect\/(?:oauth|command)\/[^/]+$/],
+    ["DELETE", /^\/api\/integration\/[^/]+\/connect\/(?:oauth|command)\/[^/]+$/],
+    ["POST", /^\/api\/integration\/[^/]+\/connect\/oauth\/[^/]+\/complete$/],
+    ["GET", /^\/api\/session(?:\/active)?$/],
+    ["POST", /^\/api\/session(?:\/import)?$/],
+    ["GET", /^\/api\/session\/[^/]+(?:\/message(?:\/[^/]+)?)?$/],
+    ["DELETE", /^\/api\/session\/[^/]+$/],
+    ["POST", /^\/api\/session\/[^/]+\/(?:agent|model|rename|move|prompt|command|shell|compact|interrupt|fork)$/],
+    ["POST", /^\/api\/session\/[^/]+\/revert\/stage$/],
+    ["PUT", /^\/api\/session\/[^/]+\/instructions\/entries\/[^/]+$/],
+    ["DELETE", /^\/api\/session\/[^/]+\/instructions\/entries\/[^/]+$/],
+    ["POST", /^\/api\/session\/[^/]+\/permission\/[^/]+\/reply$/],
+    ["POST", /^\/api\/session\/[^/]+\/question\/[^/]+\/(?:reply|reject)$/],
+    ["GET", /^\/api\/experimental\/session\/[^/]+\/log$/],
+  ]
+  return allowed.some(([allowedMethod, pattern]) => method === allowedMethod && pattern.test(route))
+}
+
+function readPromptFilePaths(pathname: string, method: string, body: unknown) {
+  const result = { paths: [] as string[], invalid: false }
+  if (method !== "POST" || !/^\/api\/session\/[^/]+\/(?:prompt|command)\/?$/.test(pathname)) return result
+  if (!body || typeof body !== "object" || Array.isArray(body) || Buffer.isBuffer(body)) return result
+  const files = (body as Record<string, unknown>).files
+  if (files === undefined) return result
+  if (!Array.isArray(files)) return { paths: [], invalid: true }
+
+  for (const file of files) {
+    if (!file || typeof file !== "object" || Array.isArray(file) || Buffer.isBuffer(file)) {
+      result.invalid = true
+      continue
+    }
+    const uri = (file as Record<string, unknown>).uri
+    if (typeof uri !== "string" || !uri.trim()) {
+      result.invalid = true
+      continue
+    }
+    const parsed = parsePromptFileUri(uri)
+    if (parsed.invalid) result.invalid = true
+    else if (parsed.path) result.paths.push(parsed.path)
   }
+  return result
+}
+
+function parsePromptFileUri(value: string): { path?: string; invalid: boolean } {
+  if (path.isAbsolute(value) || path.win32.isAbsolute(value)) return { path: value, invalid: value.includes("\0") }
+  let uri: URL
+  try {
+    uri = new URL(value)
+  } catch {
+    return { invalid: true }
+  }
+  if (["data:", "http:", "https:"].includes(uri.protocol)) return { invalid: false }
+  if (uri.protocol !== "file:" || (uri.hostname && uri.hostname !== "localhost") || uri.search || uri.hash || /%2f|%5c/i.test(uri.pathname)) {
+    return { invalid: true }
+  }
+  try {
+    const decoded = decodeURIComponent(uri.pathname)
+    const localPath = /^\/[A-Za-z]:\//.test(decoded) ? decoded.slice(1) : decoded
+    return { path: localPath, invalid: !localPath || localPath.includes("\0") }
+  } catch {
+    return { invalid: true }
+  }
+}
+
+function prepareSessionImport(pathname: string, method: string, body: unknown, directory: string) {
+  const result = { body, directories: [] as string[], invalid: false }
+  if (pathname !== "/api/session/import" || method !== "POST") return result
+  if (!body || typeof body !== "object" || Array.isArray(body) || Buffer.isBuffer(body)) {
+    result.invalid = true
+    return result
+  }
+
+  const input = body as Record<string, unknown>
+  const addLocation = (owner: Record<string, unknown>, key: string) => {
+    const value = owner[key]
+    if (value === null || value === undefined) {
+      owner[key] = { directory }
+      result.directories.push(directory)
+      return
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value) || Buffer.isBuffer(value)) {
+      result.invalid = true
+      return
+    }
+    const location = value as Record<string, unknown>
+    if (location.directory === null || location.directory === undefined) location.directory = directory
+    if (typeof location.directory === "string" && location.directory.trim()) result.directories.push(location.directory)
+    else result.invalid = true
+  }
+
+  addLocation(input, "location")
+  if (input.info && typeof input.info === "object" && !Array.isArray(input.info) && !Buffer.isBuffer(input.info)) {
+    addLocation(input.info as Record<string, unknown>, "location")
+  }
+
+  if (Array.isArray(input.messages)) {
+    for (const value of input.messages) {
+      if (!value || typeof value !== "object" || Array.isArray(value) || Buffer.isBuffer(value)) continue
+      const message = value as Record<string, unknown>
+      if (message.type !== "location-switched") continue
+      addLocation(message, "location")
+      if (message.previous && typeof message.previous === "object" && !Array.isArray(message.previous) && !Buffer.isBuffer(message.previous)) {
+        addLocation(message.previous as Record<string, unknown>, "location")
+      }
+    }
+  }
+  return result
 }
 
 function normalizeInstanceSuffix(pathSuffix: string | undefined) {

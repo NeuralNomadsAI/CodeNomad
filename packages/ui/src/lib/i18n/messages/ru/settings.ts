@@ -317,8 +317,6 @@ export const settingsMessages = {
   "settings.behavior.autoCleanup.subtitle": "Автоматически очищать пустые сессии при создании новых.",
   "settings.behavior.keepUnseenSubagentIdle.title": "Оставлять idle-маркеры субагентов",
   "settings.behavior.keepUnseenSubagentIdle.subtitle": "Оставлять idle-маркеры субагентов видимыми до просмотра вместо скрытия через 5 секунд.",
-  "settings.behavior.tauriNativeEventTransport.title": "Нативный транспорт событий Tauri",
-  "settings.behavior.tauriNativeEventTransport.subtitle": "Использовать нативный транспорт событий Rust в Tauri. Отключите, чтобы вернуться к пути browser EventSource.",
   "settings.behavior.promptVoiceInput.title": "Голосовой ввод промпта",
   "settings.behavior.promptVoiceInput.subtitle": "Показывать микрофон для ввода промпта через распознавание речи, когда речь настроена.",
   "settings.behavior.promptSubmit.title": "Enter для отправки",

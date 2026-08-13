@@ -2,7 +2,7 @@
 
 ## Contract
 
-- Version is pinned to `@opencode-ai/client@0.0.0-next-17288`; update server and UI together.
+- Version is pinned to `@opencode-ai/client@0.0.0-next-17353`; update server, UI, and the required `opencode2` CLI together.
 - The package root is the generated zero-Effect Promise client. Use installed declarations, not old SDK examples.
 - Native routes are `/api/*`; CodeNomad exposes them only through the authorized `/workspaces/:id/instance` proxy.
 

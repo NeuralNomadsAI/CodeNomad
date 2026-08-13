@@ -14,7 +14,11 @@ function logger(): Logger {
   return value as unknown as Logger
 }
 
-async function harness(sessionDirectory = "/repo/worktree") {
+async function harness(
+  sessionDirectory = "/repo/worktree",
+  activeSessions: Record<string, { type: "running" }> = {},
+  sessionLocations: Record<string, string | Error> = {},
+) {
   const upstream = Fastify()
   apps.push(upstream)
   let requests = 0
@@ -33,8 +37,11 @@ async function harness(sessionDirectory = "/repo/worktree") {
     session: {
       get: async ({ sessionID }: { sessionID: string }) => {
         sessionGets.push(sessionID)
-        return { id: sessionID, location: { directory: sessionDirectory } } as SessionInfo
+        const location = sessionLocations[sessionID] ?? sessionDirectory
+        if (location instanceof Error) throw location
+        return { id: sessionID, location: { directory: location } } as SessionInfo
       },
+      active: async () => activeSessions,
     },
   } as OpenCodeClient
   const manager: InstanceProxyWorkspaceManager = {
@@ -43,6 +50,7 @@ async function harness(sessionDirectory = "/repo/worktree") {
     getInstanceAuthorizationHeader: () => "Basic internal-secret",
     getSharedServiceClient: async () => client,
     ownsDirectory: async (_id, directory) => owned.has(directory),
+    ownsPath: async (_id, candidate) => candidate === "/repo" || candidate.startsWith("/repo/"),
   }
   const app = Fastify()
   apps.push(app)
@@ -118,6 +126,9 @@ describe("instance proxy location enforcement", () => {
         connection: "keep-alive, x-remove-me",
         cookie: "codenomad_session=browser-secret; other=value",
         "x-forwarded-for": "203.0.113.1",
+        "x-opencode-directory": "/other",
+        "x-opencode-workspace": "foreign-workspace",
+        "x-opencode-routing-test": "foreign-route",
         "x-remove-me": "secret",
       },
     })
@@ -126,6 +137,9 @@ describe("instance proxy location enforcement", () => {
     assert.equal(headers.cookie, undefined)
     assert.doesNotMatch(headers.connection ?? "", /x-remove-me/i)
     assert.equal(headers["x-forwarded-for"], undefined)
+    assert.equal(headers["x-opencode-directory"], undefined)
+    assert.equal(headers["x-opencode-workspace"], undefined)
+    assert.equal(headers["x-opencode-routing-test"], undefined)
     assert.equal(headers["x-remove-me"], undefined)
     assert.equal(response.headers["set-cookie"], undefined)
   })
@@ -144,6 +158,168 @@ describe("instance proxy location enforcement", () => {
     assert.equal(response.statusCode, 403)
     assert.equal(requestCount(), 0)
     assert.doesNotMatch(response.body, /internal-secret/)
+  })
+
+  it("uses the same once-decoded percent-bearing session id for ownership and forwarding", async () => {
+    const { app, sessionGets } = await harness()
+    const response = await app.inject({
+      method: "DELETE",
+      url: "/workspaces/workspace/instance/api/session/owned%25session",
+    })
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual(sessionGets, ["owned%session"])
+    assert.equal(JSON.parse(response.body).url, "/api/session/owned%25session")
+  })
+
+  it("rejects deletion through a double-encoded alias of a foreign session", async () => {
+    const { app, sessionGets, requestCount } = await harness("/repo/worktree", {}, {
+      "foreign%25session": "/other",
+    })
+    const response = await app.inject({
+      method: "DELETE",
+      url: "/workspaces/workspace/instance/api/session/foreign%2525session",
+    })
+    assert.equal(response.statusCode, 403)
+    assert.deepEqual(sessionGets, ["foreign%25session"])
+    assert.equal(requestCount(), 0)
+  })
+
+  it("filters active sessions to the workspace without failing on stale ids", async () => {
+    const active = { owned: { type: "running" as const }, foreign: { type: "running" as const }, stale: { type: "running" as const } }
+    const { app, sessionGets, requestCount } = await harness("/repo/worktree", active, {
+      foreign: "/other",
+      stale: new Error("missing"),
+    })
+    const response = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/session/active" })
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual(JSON.parse(response.body), { data: { owned: { type: "running" } } })
+    assert.deepEqual(sessionGets.sort(), ["foreign", "owned", "stale"])
+    assert.equal(requestCount(), 0)
+  })
+
+  it("blocks global routes through a workspace", async () => {
+    const { app, requestCount } = await harness()
+    for (const route of ["global/dispose", "global/config", "global/upgrade"]) {
+      const response = await app.inject({ method: "POST", url: `/workspaces/workspace/instance/${route}` })
+      assert.equal(response.statusCode, 403)
+    }
+    for (const route of ["event", "project", "debug/location"]) {
+      const response = await app.inject({ method: "GET", url: `/workspaces/workspace/instance/api/${route}` })
+      assert.equal(response.statusCode, 403)
+    }
+    assert.equal((await app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/service/stop",
+      payload: { instanceID: "instance-1" },
+    })).statusCode, 403)
+    assert.equal((await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/permission/saved" })).statusCode, 403)
+    assert.equal((await app.inject({ method: "DELETE", url: "/workspaces/workspace/instance/api/permission/saved/global-rule" })).statusCode, 403)
+    assert.equal(requestCount(), 0)
+  })
+
+  it("rejects legacy session routes before foreign session lookup", async () => {
+    const { app, sessionGets, requestCount } = await harness("/other")
+    const response = await app.inject({ method: "DELETE", url: "/workspaces/workspace/instance/session/foreign" })
+    assert.equal(response.statusCode, 403)
+    assert.deepEqual(sessionGets, [])
+    assert.equal(requestCount(), 0)
+  })
+
+  it("rejects foreign prompt file URIs and accepts owned files", async () => {
+    const { app, requestCount } = await harness()
+    const malformed = await app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/session/session-1/prompt",
+      payload: { text: "read this", files: [{ uri: "file:///%ZZ" }] },
+    })
+    assert.equal(malformed.statusCode, 400)
+
+    const foreign = await app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/session/session-1/prompt",
+      payload: { text: "read this", files: [{ uri: "file:///other/secret.txt" }] },
+    })
+    assert.equal(foreign.statusCode, 403)
+    assert.equal(requestCount(), 0)
+
+    const owned = await app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/session/session-1/prompt",
+      payload: { text: "read this", files: [{ uri: "file:///repo/worktree/notes.txt" }] },
+    })
+    assert.equal(owned.statusCode, 200)
+    assert.equal(JSON.parse(owned.body).body.files[0].uri, "file:///repo/worktree/notes.txt")
+    assert.equal(requestCount(), 1)
+  })
+
+  it("enforces ownership for experimental session logs", async () => {
+    const owned = await harness()
+    const accepted = await owned.app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/experimental/session/session-1/log" })
+    assert.equal(accepted.statusCode, 200)
+    assert.deepEqual(owned.sessionGets, ["session-1"])
+
+    const foreign = await harness("/other")
+    const rejected = await foreign.app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/experimental/session/session-2/log" })
+    assert.equal(rejected.statusCode, 403)
+    assert.equal(foreign.requestCount(), 0)
+  })
+
+  it("defaults and validates only schema-defined imported session locations", async () => {
+    const { app, requestCount } = await harness()
+    const accepted = await app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/session/import",
+      payload: {
+        info: { id: "session-1", metadata: { location: { directory: "/other" } } },
+        messages: [{
+          type: "location-switched",
+          location: { directory: "/repo/worktree" },
+          previous: { location: null },
+          metadata: { location: { directory: "/other" } },
+          content: [{ type: "tool", state: { input: { location: "/other" } } }],
+        }],
+      },
+    })
+    assert.equal(accepted.statusCode, 200)
+    const body = JSON.parse(accepted.body).body
+    assert.deepEqual(body.location, { directory: "/repo" })
+    assert.deepEqual(body.info.location, { directory: "/repo" })
+    assert.deepEqual(body.messages[0].previous.location, { directory: "/repo" })
+    assert.deepEqual(body.messages[0].metadata.location, { directory: "/other" })
+    assert.equal(body.messages[0].content[0].state.input.location, "/other")
+
+    const rejected = await app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/session/import",
+      payload: {
+        info: { id: "session-2", location: { directory: "/repo" } },
+        messages: [{ type: "location-switched", location: { directory: "/repo/worktree" }, previous: { location: { directory: "/other" } } }],
+      },
+    })
+    assert.equal(rejected.statusCode, 403)
+    assert.equal(requestCount(), 1)
+  })
+
+  it("never sends workspace credentials to an encoded or backslash foreign origin", async () => {
+    const foreign = Fastify()
+    apps.push(foreign)
+    const credentials: unknown[] = []
+    foreign.all("/*", async (request) => credentials.push(request.headers.authorization))
+    await foreign.listen({ host: "127.0.0.1", port: 0 })
+    const address = foreign.server.address()
+    assert.ok(address && typeof address === "object")
+
+    const { app, requestCount } = await harness()
+    for (const prefix of ["%2F%2F", "%5C%5C"]) {
+      const proxyResponse: Awaited<ReturnType<typeof app.inject>> = await app.inject({
+        method: "GET",
+        url: `/workspaces/workspace/instance/${prefix}127.0.0.1:${address.port}/steal`,
+      })
+      assert.equal(proxyResponse.statusCode, 400)
+      assert.doesNotMatch(proxyResponse.body, /internal-secret/)
+    }
+    assert.equal(requestCount(), 0)
+    assert.deepEqual(credentials, [])
   })
 })
 

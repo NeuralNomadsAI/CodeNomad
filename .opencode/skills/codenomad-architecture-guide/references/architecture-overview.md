@@ -16,7 +16,7 @@ The server calls `Service.ensure` once through `packages/server/src/workspaces/o
 
 | Owner | Responsibilities | Main paths |
 |---|---|---|
-| OpenCode V2 | Sessions, messages, permissions/questions, files, native Shell and instructions | `@opencode-ai/client@0.0.0-next-17288` |
+| OpenCode V2 | Sessions, messages, permissions/questions, files, native Shell and instructions | `@opencode-ai/client@0.0.0-next-17353` |
 | CodeNomad server | Shared service lifecycle, locations, proxy authorization, Git mutations, Yolo, auth, storage, speech, SSE multiplexing | `packages/server/src/` |
 | CodeNomad UI | Generated Promise clients, state reconciliation, interaction and rendering | `packages/ui/src/` |
 | Desktop hosts | Start CodeNomad and provide native OS integration | `packages/electron-app/`, `packages/tauri-app/` |

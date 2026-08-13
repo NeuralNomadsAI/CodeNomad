@@ -111,7 +111,7 @@ Then open a pull request on GitHub targeting the `dev` branch.
 
 ### OpenCode V2 Boundaries
 
-- Server and UI pin `@opencode-ai/client@0.0.0-next-17288`; do not add `@opencode-ai/sdk`.
+- Server and UI pin `@opencode-ai/client@0.0.0-next-17353`; do not add `@opencode-ai/sdk`.
 - `packages/server/src/workspaces/opencode-service.ts` owns the single shared `Service.ensure` lifecycle. Workspaces are native OpenCode locations/directories, not separate server processes.
 - OpenCode session calls use `/workspaces/:id/instance/api/*`; CodeNomad control routes and multiplexed events use `/api/*` and `/api/events`.
 - Native `client.session.shell` and `client.session.instructions.entry` cover Shell and prompt instructions. There is no `packages/opencode-plugin` integration.

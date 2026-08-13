@@ -317,8 +317,6 @@ export const settingsMessages = {
   "settings.behavior.autoCleanup.subtitle": "创建新会话时自动清理空会话。",
   "settings.behavior.keepUnseenSubagentIdle.title": "保留子智能体 idle 标记",
   "settings.behavior.keepUnseenSubagentIdle.subtitle": "让子智能体 idle 标记保持可见直到查看，而不是 5 秒后隐藏。",
-  "settings.behavior.tauriNativeEventTransport.title": "Tauri 原生事件传输",
-  "settings.behavior.tauriNativeEventTransport.subtitle": "在 Tauri 中使用 Rust 原生桌面事件传输。禁用后将回退到浏览器 EventSource 路径。",
   "settings.behavior.promptVoiceInput.title": "提示词语音输入",
   "settings.behavior.promptVoiceInput.subtitle": "语音已配置时，显示用于语音转文字提示词输入的麦克风控件。",
   "settings.behavior.promptSubmit.title": "回车发送",

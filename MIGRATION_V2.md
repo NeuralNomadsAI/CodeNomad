@@ -8,12 +8,13 @@ The migration removes the V1 compatibility layer rather than maintaining both in
 
 ## Main Changes
 
-- Replace `@opencode-ai/sdk` with the pinned native V2 client, `@opencode-ai/client@0.0.0-next-17288`.
+- Replace `@opencode-ai/sdk` with the pinned native V2 client, `@opencode-ai/client@0.0.0-next-17353`.
 - Use one shared OpenCode V2 service instead of one runtime per workspace.
 - Represent CodeNomad workspaces as logical instances associated with absolute directories.
 - Use native `Location` and `SessionInfo.location` data to associate sessions, files, events, and Git worktrees.
 - Migrate sessions, messages, streaming events, permissions, questions, files, VCS, commands, MCP, providers, models, and agents to native V2 APIs.
 - Handle native text, reasoning, tool, status, and terminal session events.
+- Use browser `EventSource` as the single desktop and web event transport; the duplicate Rust-native Tauri transport was removed.
 - Reconcile session state through `session.active()` after reconnecting so missed events do not leave stale working states.
 - Route events from owned Git worktrees to their corresponding logical CodeNomad workspace.
 
@@ -53,21 +54,17 @@ The migration removes the V1 compatibility layer rather than maintaining both in
 ## Current Status
 
 - Server and UI typechecks pass.
-- Focused tests for service ownership, proxy security, worktree event routing, provider authentication, and voice instructions pass.
-- UI tests and builds passed earlier in the migration.
-- A real service smoke test is blocked because `opencode2` is not installed in the current `PATH`.
-- The migration is not merge-ready yet. The final security review found unresolved proxy isolation issues that must be fixed first.
+- The complete UI suite passes with 433 tests.
+- Focused proxy, service ownership, worktree event routing, provider authentication, voice instruction, Windows, WSL, and Tauri tests pass.
+- The pinned client and installed `opencode2` CLI are aligned on `0.0.0-next-17353`.
+- The final critical/high security gate has no unresolved proxy, authentication, event-isolation, or process-ownership finding.
+- A real `opencode2@0.0.0-next-17353` lifecycle smoke test passed: authenticated discovery, workspace location validation, and confirmed service shutdown.
+- The migration remains a Draft until the GitHub build matrix completes.
 
 ## Remaining Work
 
-- Fix the encoded-path proxy issue that can redirect an authenticated upstream request to another host.
-- Restrict or filter global V2 endpoints that are not scoped by `Location`.
-- Enforce session ownership for experimental session log routes.
-- Validate embedded locations when importing sessions.
-- Harden shared service registration and multi-process shutdown behavior.
-- Complete the remaining high-priority event and provider-auth security fixes.
 - Run the complete test and build matrix after the fixes.
-- Run an end-to-end smoke test with the actual `opencode2` binary.
+- Run the GitHub build matrix by marking the PR ready for review.
 
 ## Validation
 

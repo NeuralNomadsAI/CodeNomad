@@ -29,6 +29,7 @@ class ControlledSharedService {
   validationCalls: Array<{ location: LocationRef; options?: OpenCodeEnsureOptions }> = []
   evictions: LocationRef[] = []
   failEvictions = 0
+  shutdownGate?: ReturnType<typeof deferred<void>>
 
   async endpoint(options?: OpenCodeEnsureOptions) {
     this.assertCommand(options)
@@ -74,19 +75,22 @@ class ControlledSharedService {
     this.evictions.push(location)
   }
 
-  async shutdown() {}
+  async shutdown() {
+    await this.shutdownGate?.promise
+  }
 
   private assertCommand(options?: OpenCodeEnsureOptions) {
-    assert.equal(options?.file, path.join(os.tmpdir(), "codenomad-opencode-v2", "opencode", "service.json"))
-    assert.equal(options?.environment?.XDG_STATE_HOME, path.join(os.tmpdir(), "codenomad-opencode-v2"))
-    assert.equal(
-      options?.command?.[5],
-      options?.environment?.CODENOMAD_SERVICE_CONTENDERS,
-    )
-    assert.match(options?.environment?.CODENOMAD_SERVICE_CONTENDERS ?? "", new RegExp(`contenders-${process.pid}-.*\\.txt$`))
+    const stateRoot = path.join(os.homedir(), ".codenomad", "state", "opencode-v2")
+    assert.equal(options?.file, path.join(stateRoot, "opencode", "service.json"))
+    assert.match(options?.contenderFile ?? "", new RegExp(`contenders-${process.pid}-.*\\.txt$`))
+    assert.match(options?.leaseFile ?? "", new RegExp(`leases[/\\\\]process-${process.pid}-.*\\.json$`))
     assert.equal(options?.command?.[0], process.execPath)
     assert.equal(options?.command?.[1], "-e")
+    assert.equal(options?.command?.[3], process.execPath)
     assert.equal(options?.command?.[4], JSON.stringify(["serve", "--service"]))
+    assert.equal(options?.command?.[5], options?.contenderFile)
+    assert.equal(options?.launcherRecordsPid, true)
+    assert.equal(options?.environment?.XDG_STATE_HOME, stateRoot)
   }
 }
 
@@ -192,5 +196,18 @@ describe("workspace manager shared service lifecycle", () => {
 
     await harness.manager.delete(workspace.id)
     assert.equal(harness.manager.get(workspace.id), undefined)
+  })
+
+  it("bounds a stalled shared service shutdown", async () => {
+    const service = new ControlledSharedService()
+    service.shutdownGate = deferred<void>()
+    const { manager } = createHarness(service)
+    ;(manager as any).options.shutdownTimeoutMs = 10
+
+    await assert.rejects(manager.shutdown(), (error: unknown) => {
+      assert.ok(error instanceof WorkspaceShutdownError)
+      assert.match(String(error.errors[0]), /did not finish within/)
+      return true
+    })
   })
 })

@@ -4,6 +4,7 @@ import type { FormFields } from "@opencode-ai/client"
 import {
   getProviderAuthAnswer,
   getProviderAuthInitialAnswer,
+  isProviderAuthHttpUrl,
   isProviderAuthFieldComplete,
   shouldShowProviderAuthField,
 } from "./provider-auth.ts"
@@ -28,5 +29,38 @@ describe("native provider auth answers", () => {
     assert.equal(shouldShowProviderAuthField(fields[1], answer), true)
     assert.equal(isProviderAuthFieldComplete(fields[1], answer), false)
     assert.equal(isProviderAuthFieldComplete(fields[1], { ...answer, account: "123" }), true)
+  })
+
+  it("accepts only explicit HTTP authorization URLs", () => {
+    assert.equal(isProviderAuthHttpUrl("https://example.com/oauth"), true)
+    assert.equal(isProviderAuthHttpUrl("http://localhost:3000/oauth"), true)
+    assert.equal(isProviderAuthHttpUrl("javascript:alert(1)"), false)
+    assert.equal(isProviderAuthHttpUrl("data:text/html,hello"), false)
+    assert.equal(isProviderAuthHttpUrl("file:///tmp/token"), false)
+    assert.equal(isProviderAuthHttpUrl("//example.com/oauth"), false)
+  })
+
+  it("rejects answers outside supported field constraints", () => {
+    const constrained = [
+      { key: "code", type: "string", required: true, minLength: 3, maxLength: 5, pattern: "[A-Z]+" },
+      { key: "email", type: "string", format: "email" },
+      { key: "count", type: "integer", minimum: 2, maximum: 4 },
+      { key: "scopes", type: "multiselect", options: [{ label: "Read", value: "read" }, { label: "Write", value: "write" }], minItems: 1, maxItems: 2 },
+    ] satisfies FormFields
+
+    assert.equal(isProviderAuthFieldComplete(constrained[0], { code: "AB" }), false)
+    assert.equal(isProviderAuthFieldComplete(constrained[0], { code: "ABCDEF" }), false)
+    assert.equal(isProviderAuthFieldComplete(constrained[0], { code: "AbC" }), false)
+    assert.equal(isProviderAuthFieldComplete(constrained[0], { code: "ABC" }), true)
+    assert.equal(isProviderAuthFieldComplete(constrained[1], { email: "invalid" }), false)
+    assert.equal(isProviderAuthFieldComplete(constrained[1], { email: "user@example.com" }), true)
+    assert.equal(isProviderAuthFieldComplete(constrained[2], { count: 1 }), false)
+    assert.equal(isProviderAuthFieldComplete(constrained[2], { count: 2.5 }), false)
+    assert.equal(isProviderAuthFieldComplete(constrained[2], { count: 5 }), false)
+    assert.equal(isProviderAuthFieldComplete(constrained[2], { count: 3 }), true)
+    assert.equal(isProviderAuthFieldComplete(constrained[3], { scopes: [] }), false)
+    assert.equal(isProviderAuthFieldComplete(constrained[3], { scopes: ["read", "write", "read"] }), false)
+    assert.equal(isProviderAuthFieldComplete(constrained[3], { scopes: ["other"] }), false)
+    assert.equal(isProviderAuthFieldComplete(constrained[3], { scopes: ["read"] }), true)
   })
 })

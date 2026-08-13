@@ -72,6 +72,29 @@ describe("voice instruction sync", () => {
 
     assert.deepEqual(calls, ["remove", "shell"])
   })
+
+  it("serializes concurrent syncs so the latest mode wins remotely", async () => {
+    const calls: string[] = []
+    let releasePut!: () => void
+    const putGate = new Promise<void>((resolve) => { releasePut = resolve })
+    seed({ session: {
+      instructions: { entry: {
+        put: async () => { calls.push("put:start"); await putGate; calls.push("put:end") },
+        remove: async () => { calls.push("remove") },
+      } },
+      command: async () => { calls.push("command") },
+      shell: async () => { calls.push("shell") },
+    } })
+    setConversationModeEnabled(instanceId, true)
+    const first = executeCustomCommand(instanceId, sessionId, "review", "")
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    setConversationModeEnabled(instanceId, false)
+    releasePut()
+    await first
+
+    assert.deepEqual(calls, ["put:start", "put:end", "remove", "command"])
+    assert.equal(calls.filter((call) => call === "remove").length, 1)
+  })
 })
 
 describe("native session selection persistence", () => {

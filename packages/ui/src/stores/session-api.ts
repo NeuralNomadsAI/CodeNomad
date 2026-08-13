@@ -247,7 +247,10 @@ async function fetchSessions(instanceId: string, options?: {
     log.info("session.list", { instanceId, limit: PROJECT_SESSION_LIST_LIMIT, directory: sessionListOptions.directory, scope: "project" })
     const [response, activeSessions] = await Promise.all([
       fetchV2Sessions(instanceId, sessionListOptions),
-      getRootClient(instanceId).session.active(),
+      getRootClient(instanceId).session.active().catch((error) => {
+        log.warn("Failed to refresh active sessions", { instanceId, error })
+        return null
+      }),
     ])
     if (!isLatestSessionListRequest(instanceId, requestId)) {
       if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
@@ -259,16 +262,20 @@ async function fetchSessions(instanceId: string, options?: {
     for (const apiSession of getV2SessionItems(response)) {
       const existingSession = existingSessions?.get(apiSession.id)
       const existingStatus = existingSession?.status
-      const active = Object.prototype.hasOwnProperty.call(activeSessions, apiSession.id)
-      const status = active && existingStatus === "compacting" ? "compacting" : active ? "working" : "idle"
-      const runtimeStatusKnown = true
+      const active = activeSessions && Object.prototype.hasOwnProperty.call(activeSessions, apiSession.id)
+      const status = activeSessions === null
+        ? existingStatus ?? "idle"
+        : active && existingStatus === "compacting" ? "compacting" : active ? "working" : "idle"
+      const runtimeStatusKnown = activeSessions === null ? existingSession?.runtimeStatusKnown ?? false : true
       sessionMap.set(apiSession.id, {
         ...toClientSessionV2(instanceId, apiSession, existingSession),
         status,
-        retry: null,
+        retry: activeSessions === null ? existingSession?.retry ?? null : null,
         idleSince: getIdleSinceForStatusTransition(existingStatus, status, existingSession?.idleSince),
         runtimeStatusKnown,
-        generationRecovery: runtimeStatusKnown
+        generationRecovery: activeSessions === null
+          ? existingSession?.generationRecovery ?? null
+          : runtimeStatusKnown
           ? resolveAuthoritativeGenerationRecovery(existingSession?.generationRecovery, status)
           : existingSession?.generationRecovery ?? null,
       })

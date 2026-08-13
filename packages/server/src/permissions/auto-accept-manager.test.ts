@@ -71,6 +71,69 @@ describe("AutoAcceptManager session tree", () => {
     manager.stop()
   })
 
+  it("updates family boundaries from native revert events", async () => {
+    const bus = new EventBus(noopLogger)
+    const replier = makeRecordingReplier()
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier })
+    manager.start()
+    publishSession(bus, "inst", "session.updated", { id: "root", parentID: null })
+    publishSession(bus, "inst", "session.updated", { id: "child", parentID: "root" })
+    manager.toggle("inst", "root")
+
+    publishInstanceEvent(bus, "inst", {
+      type: "session.revert.staged",
+      properties: { sessionID: "child", revert: { messageID: "message" } },
+    })
+    publishInstanceEvent(bus, "inst", {
+      type: "permission.asked",
+      properties: { id: "staged", sessionID: "child" },
+    })
+    await flushMicrotasks()
+    assert.equal(replier.calls.length, 0)
+
+    publishInstanceEvent(bus, "inst", {
+      type: "session.revert.cleared",
+      properties: { sessionID: "child" },
+    })
+    await flushMicrotasks()
+    assert.deepEqual(replier.calls.map((call) => call.permissionId), ["staged"])
+
+    publishInstanceEvent(bus, "inst", {
+      type: "session.revert.staged",
+      properties: { sessionID: "child", revert: { messageID: "message" } },
+    })
+    publishInstanceEvent(bus, "inst", {
+      type: "permission.asked",
+      properties: { id: "committed", sessionID: "child" },
+    })
+    publishInstanceEvent(bus, "inst", {
+      type: "session.revert.committed",
+      properties: { sessionID: "child" },
+    })
+    await flushMicrotasks()
+    assert.deepEqual(replier.calls.map((call) => call.permissionId), ["staged", "committed"])
+    manager.stop()
+  })
+
+  it("does not apply Yolo policy to a session unknown to that logical workspace", async () => {
+    const bus = new EventBus(noopLogger)
+    const replier = makeRecordingReplier()
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier })
+    manager.start()
+    manager.toggle("wrong-owner", "session")
+    publishInstanceEvent(bus, "wrong-owner", {
+      type: "permission.asked",
+      properties: { id: "permission", sessionID: "session" },
+    })
+    await flushMicrotasks()
+    assert.equal(replier.calls.length, 0)
+
+    publishSession(bus, "wrong-owner", "session.updated", { id: "session", parentID: null })
+    await flushMicrotasks()
+    assert.equal(replier.calls.length, 1)
+    manager.stop()
+  })
+
   it("session.deleted removes the tree entry but keeps the toggle", () => {
     const bus = new EventBus(noopLogger)
     const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier() })
@@ -129,6 +192,7 @@ describe("AutoAcceptManager persistence", () => {
     const writes: unknown[][] = []
     const persistence: AutoAcceptPersistence = {
       async loadSessions() { return [{ id: "root", parentId: null, yoloEnabled: false }] },
+      async loadSession() { return { id: "root", parentId: null, yoloEnabled: false } },
       async persist(...args) { writes.push(args); await gate },
     }
     const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier(), persistence })
@@ -148,6 +212,7 @@ describe("AutoAcceptManager persistence", () => {
     const writes: boolean[] = []
     const persistence: AutoAcceptPersistence = {
       async loadSessions() { return [{ id: "root", parentId: null, yoloEnabled: false }] },
+      async loadSession() { return { id: "root", parentId: null, yoloEnabled: false } },
       async persist(_instanceId, _rootSessionId, enabled) { writes.push(enabled) },
     }
     const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier(), persistence })
@@ -181,6 +246,20 @@ describe("AutoAcceptManager persistence", () => {
     manager.stop()
   })
 
+  it("rejects a persisted toggle when the native session belongs to another logical workspace", async () => {
+    const bus = new EventBus(noopLogger)
+    let writes = 0
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions() { return [{ id: "foreign", parentId: null, yoloEnabled: false }] },
+      async loadSession() { return null },
+      async persist() { writes += 1 },
+    }
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier(), persistence })
+    await assert.rejects(Promise.resolve(manager.toggle("inst", "foreign")), /does not belong to workspace/)
+    assert.equal(writes, 0)
+    assert.equal(manager.isEnabled("inst", "foreign"), false)
+  })
+
   it("does not re-enable memory when a persisted toggle finishes after cleanup", async () => {
     const bus = new EventBus(noopLogger)
     const changes: Record<string, unknown>[] = []
@@ -190,6 +269,7 @@ describe("AutoAcceptManager persistence", () => {
     let writes = 0
     const persistence: AutoAcceptPersistence = {
       async loadSessions() { return [{ id: "root", parentId: null, yoloEnabled: false }] },
+      async loadSession() { return { id: "root", parentId: null, yoloEnabled: false } },
       async persist() { writes += 1; await gate },
     }
     const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier(), persistence })
@@ -245,6 +325,7 @@ describe("AutoAcceptManager persistence", () => {
           { id: "child", parentId: null, workspaceId: "workspace", yoloEnabled: true },
         ]
       },
+      async loadSession() { return { id: "child", parentId: null, workspaceId: "workspace", yoloEnabled: true } },
       async persist(...args) {
         writes.push(args)
         if (writes.length === 1) await firstGate
@@ -273,6 +354,7 @@ describe("AutoAcceptManager persistence", () => {
     let attempts = 0
     const persistence: AutoAcceptPersistence = {
       async loadSessions() { return [{ id: "root", parentId: null, yoloEnabled: false }] },
+      async loadSession() { return { id: "root", parentId: null, yoloEnabled: false } },
       async persist() { if (++attempts === 1) throw new Error("write failed") },
     }
     const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier(), persistence })
@@ -301,6 +383,25 @@ describe("AutoAcceptManager persistence", () => {
 })
 
 describe("AutoAcceptManager permission interception", () => {
+  it("replies once when duplicate logical workspaces receive the same native permission", async () => {
+    const bus = new EventBus(noopLogger)
+    const replier = makeRecordingReplier()
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier })
+    manager.start()
+    for (const instanceId of ["first", "second"]) {
+      publishSession(bus, instanceId, "session.updated", { id: "session", parentID: null })
+      manager.toggle(instanceId, "session")
+      publishInstanceEvent(bus, instanceId, {
+        type: "permission.asked",
+        properties: { id: "permission", sessionID: "session" },
+      })
+    }
+    await flushMicrotasks()
+
+    assert.equal(replier.calls.length, 1)
+    manager.stop()
+  })
+
   it("auto-replies to a v2 permission on an enabled family", async () => {
     const bus = new EventBus(noopLogger)
     const replier = makeRecordingReplier()

@@ -318,8 +318,6 @@ export const settingsMessages = {
   "settings.behavior.autoCleanup.subtitle": "नयाँ सत्रहरू सिर्जना गर्दा खाली सत्रहरू स्वतः सफा गर्नुहोस्।",
   "settings.behavior.keepUnseenSubagentIdle.title": "उप-एजेन्ट निष्क्रिय (idle) मार्करहरू राख्नुहोस्",
   "settings.behavior.keepUnseenSubagentIdle.subtitle": "नहेरेसम्म उप-एजेन्ट निष्क्रिय मार्करहरू देखिने राख्नुहोस्।",
-  "settings.behavior.tauriNativeEventTransport.title": "नेटिभ Tauri इभेन्ट ट्रान्सपोर्ट",
-  "settings.behavior.tauriNativeEventTransport.subtitle": "Tauri मा Rust-नेटिभ डेस्कटप इभेन्ट ट्रान्सपोर्ट प्रयोग गर्नुहोस्। ब्राउजर EventSource मार्गमा फर्कन यसलाई अक्षम गर्नुहोस्।",
   "settings.behavior.promptVoiceInput.title": "प्रम्प्ट ध्वनि इनपुट",
   "settings.behavior.promptVoiceInput.subtitle": "वाचन कन्फिगर हुँदा स्पीच-टु-टेक्स्ट प्रम्प्ट इनपुटको लागि माइक्रोफोन नियन्त्रण देखाउनुहोस्।",
   "settings.behavior.promptSubmit.title": "Enter थिचेर बुझाउनुहोस्",

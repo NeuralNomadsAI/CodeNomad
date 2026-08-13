@@ -91,7 +91,10 @@ import { messageStoreBus } from "./message-v2/bus"
 import { handleConversationAssistantPartUpdated } from "./conversation-speech"
 
 const log = getLogger("sse")
-const pendingSessionFetches = new Map<string, Promise<void>>()
+const pendingSessionFetches = new Map<string, {
+  status: SessionStatus
+  retry?: SessionRetryState | null
+}>()
 const NATIVE_REFRESH_DELAY_MS = 75
 const nativeRefreshes = new Map<string, {
   instanceId: string
@@ -306,16 +309,24 @@ function ensureSessionStatus(
   }
 
   const key = `${instanceId}:${sessionId}`
-  if (pendingSessionFetches.has(key)) return
+  const existingFetch = pendingSessionFetches.get(key)
+  if (existingFetch) {
+    existingFetch.status = status
+    existingFetch.retry = retry
+    return
+  }
 
+  const pendingState = { status, retry }
   const pending = (async () => {
     const fetched = await fetchSessionInfo(instanceId, sessionId, directory)
     if (!fetched) return
-    setSessionStatus(instanceId, sessionId, status, { retry })
+    setSessionStatus(instanceId, sessionId, pendingState.status, { retry: pendingState.retry })
   })()
 
-  pendingSessionFetches.set(key, pending)
-  void pending.finally(() => pendingSessionFetches.delete(key))
+  pendingSessionFetches.set(key, pendingState)
+  void pending.finally(() => {
+    if (pendingSessionFetches.get(key) === pendingState) pendingSessionFetches.delete(key)
+  })
 }
 
 function resolveMessageRole(info?: MessageInfo | null): "user" | "assistant" {

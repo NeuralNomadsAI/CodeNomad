@@ -297,7 +297,7 @@ tasks/                Task tracking
 
 ## Current OpenCode Baseline
 
-- Native client: `@opencode-ai/client@0.0.0-next-17288`
+- Native client and required CLI: `@opencode-ai/client@0.0.0-next-17353` / `opencode2@0.0.0-next-17353`
 - Service: one shared `Service.ensure`
 - Workspaces: native locations/directories
 - Shell and instructions: native session APIs

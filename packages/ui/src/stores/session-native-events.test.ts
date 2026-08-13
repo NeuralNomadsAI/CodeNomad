@@ -5,7 +5,7 @@ import { sdkManager } from "../lib/sdk-manager.ts"
 import type { Session } from "../types/session.ts"
 import { addInstance, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
-import { handleNativeSessionEvent, handleSessionIdle } from "./session-events.ts"
+import { handleNativeSessionEvent, handleSessionIdle, handleSessionStatus } from "./session-events.ts"
 import { clearInstanceDeletedSessionAuthority, sessions, setSessions } from "./session-state.ts"
 
 const delay = (duration: number) => new Promise<void>((resolve) => setTimeout(resolve, duration))
@@ -73,6 +73,45 @@ describe("native session event reducer", () => {
       assert.equal((store.getMessage("assistant")?.parts["assistant-text-0"]?.data as any)?.text, "completed text")
     } finally {
       messageStoreBus.unregisterInstance(instanceId)
+      setSessions((prev) => { const next = new Map(prev); next.delete(instanceId); return next })
+      clearInstanceDeletedSessionAuthority(instanceId)
+      removeInstance(instanceId, { authoritative: false })
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("keeps the newest status while an unknown session is hydrating", async () => {
+    const instanceId = "native-status-race"
+    const sessionId = "unknown"
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const client = {
+      session: {
+        get: async () => {
+          await gate
+          return {
+            id: sessionId, title: sessionId, parentID: null, version: "1", projectID: "project",
+            location: { directory: "/work" }, time: { created: 1, updated: 1 },
+          }
+        },
+      },
+    } as any
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+
+    try {
+      handleNativeSessionEvent(instanceId, {
+        type: "session.execution.started", data: { sessionID: sessionId }, location: { directory: "/work" },
+      })
+      handleSessionStatus(instanceId, {
+        type: "session.status", data: { sessionID: sessionId, status: { type: "idle" } },
+      } as any)
+      release()
+      await delay(20)
+
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.status, "idle")
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.runtimeStatusKnown, true)
+    } finally {
       setSessions((prev) => { const next = new Map(prev); next.delete(instanceId); return next })
       clearInstanceDeletedSessionAuthority(instanceId)
       removeInstance(instanceId, { authoritative: false })

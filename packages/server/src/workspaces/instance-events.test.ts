@@ -105,4 +105,27 @@ describe("InstanceEventBridge", () => {
       bridge.shutdown()
     }
   })
+
+  it("fans an event out to every logical workspace for the same directory", async () => {
+    const manager = {
+      list: () => [{ id: "first", path: "/repo" }, { id: "second", path: "/repo" }],
+      ownsDirectory: async (_workspaceId: string, directory: string) => directory === "/repo",
+      subscribeToSharedService: async (signal?: AbortSignal) => (async function* () {
+        yield { id: "1", created: 1, type: "permission.asked", location: { directory: "/repo" }, data: { id: "p1" } } as OpenCodeEvent
+        await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }))
+      })(),
+    } as unknown as WorkspaceManager
+    const bus = new EventBus()
+    const received: string[] = []
+    bus.on("instance.event", (event) => received.push(event.instanceId))
+
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
+      await waitFor(() => received.length === 2)
+      assert.deepEqual(received, ["first", "second"])
+    } finally {
+      bridge.shutdown()
+    }
+  })
 })

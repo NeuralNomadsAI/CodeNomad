@@ -97,6 +97,17 @@ export class AutoAcceptStore {
     this.sessions.get(instanceId)?.delete(sessionId)
   }
 
+  hasSession(instanceId: string, sessionId: string): boolean {
+    return this.sessions.get(instanceId)?.has(sessionId) ?? false
+  }
+
+  setSessionRevert(instanceId: string, sessionId: string, revert: unknown): void {
+    const session = this.sessions.get(instanceId)?.get(sessionId)
+    if (!session) return
+    session.revert = revert
+    this.migrateEnabledRoots(instanceId)
+  }
+
   clearInstance(instanceId: string): void {
     this.sessions.delete(instanceId)
     this.enabled.delete(instanceId)

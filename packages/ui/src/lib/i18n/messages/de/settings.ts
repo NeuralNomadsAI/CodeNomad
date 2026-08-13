@@ -318,8 +318,6 @@ export const settingsMessages = {
   "settings.behavior.autoCleanup.subtitle": "Leere Sitzungen beim Erstellen neuer Sitzungen automatisch bereinigen.",
   "settings.behavior.keepUnseenSubagentIdle.title": "Statusanzeigen von Unteragenten beibehalten",
   "settings.behavior.keepUnseenSubagentIdle.subtitle": "Statusanzeigen von Unteragenten sichtbar lassen, bis sie angesehen wurden.",
-  "settings.behavior.tauriNativeEventTransport.title": "Nativer Tauri-Ereignistransport",
-  "settings.behavior.tauriNativeEventTransport.subtitle": "Den Rust-nativen Desktop-Ereignistransport in Tauri verwenden. Deaktivieren, um auf den Browser-EventSource-Pfad zurückzufallen.",
   "settings.behavior.promptVoiceInput.title": "Prompt-Spracheingabe",
   "settings.behavior.promptVoiceInput.subtitle": "Mikrofon-Steuerung für Sprache-zu-Text anzeigen, wenn Sprache konfiguriert ist.",
   "settings.behavior.promptSubmit.title": "Enter zum Absenden",

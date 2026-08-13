@@ -1,8 +1,6 @@
 import path from "path"
 import { spawnSync } from "child_process"
 import { randomUUID } from "node:crypto"
-import { mkdirSync } from "node:fs"
-import os from "node:os"
 import type { Endpoint } from "@opencode-ai/client/service"
 import type { LocationGetOutput, LocationRef, OpenCodeClient, OpenCodeEvent } from "@opencode-ai/client"
 import { EventBus } from "../events/bus"
@@ -16,14 +14,20 @@ import { Logger } from "../logger"
 import { resolveWorkspaceIdentity } from "./workspace-identity"
 import { buildServiceLaunchSpec, parseWslUncPath } from "./spawn"
 import { OpenCodeSharedService, type OpenCodeEnsureOptions } from "./opencode-service"
-import { resolveWorktreeSlugForDirectory } from "./worktree-directory"
+import {
+  prepareServiceState,
+  SERVICE_LEASE_DIRECTORY,
+  SERVICE_REGISTRATION_FILE,
+  SERVICE_STATE_ROOT,
+  SERVICE_STOP_LOCK,
+} from "./service-state"
+import { isPathOwnedByWorktree, resolveWorktreeSlugForDirectory } from "./worktree-directory"
 
 const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
 const ORDINARY_CREATION_OWNER = ""
 const WORKSPACE_STATE = Symbol("workspaceState")
-const SERVICE_STATE_ROOT = path.join(os.tmpdir(), "codenomad-opencode-v2")
-const SERVICE_REGISTRATION_FILE = path.join(SERVICE_STATE_ROOT, "opencode", "service.json")
 const SERVICE_CONTENDER_FILE = path.join(SERVICE_STATE_ROOT, `contenders-${process.pid}-${randomUUID()}.txt`)
+const SERVICE_LEASE_FILE = path.join(SERVICE_LEASE_DIRECTORY, `process-${process.pid}-${randomUUID()}.json`)
 type ManagerTimeout = ReturnType<typeof setTimeout>
 
 interface SharedService {
@@ -33,7 +37,7 @@ interface SharedService {
   validateLocation: (location: LocationRef, requestOptions?: { signal?: AbortSignal }, ensureOptions?: OpenCodeEnsureOptions) => Promise<LocationGetOutput>
   subscribe: (requestOptions?: { signal?: AbortSignal }, ensureOptions?: OpenCodeEnsureOptions) => Promise<AsyncIterable<OpenCodeEvent>>
   evict: (location: LocationRef, requestOptions?: { signal?: AbortSignal }, ensureOptions?: OpenCodeEnsureOptions) => Promise<void>
-  shutdown: () => Promise<void>
+  shutdown: (options?: { timeoutMs?: number }) => Promise<void>
 }
 
 export function binaryPathsEqual(left: string, right: string, platform = process.platform): boolean {
@@ -174,6 +178,17 @@ export class WorkspaceManager {
       directory,
       logger: this.options.logger,
     })) !== null
+  }
+
+  async ownsPath(id: string, candidate: string): Promise<boolean> {
+    const workspace = this.get(id)
+    if (!workspace) return false
+    return isPathOwnedByWorktree({
+      workspaceId: id,
+      workspacePath: workspace.path,
+      candidate,
+      logger: this.options.logger,
+    })
   }
 
   subscribeToSharedService(signal?: AbortSignal): Promise<AsyncIterable<OpenCodeEvent>> {
@@ -377,7 +392,10 @@ export class WorkspaceManager {
       }
     }, timeoutMs)
     try {
-      return await this.createResolvedWorkspace(record)
+      const deadline = new Promise<never>((_resolve, reject) => {
+        state.abortController.signal.addEventListener("abort", () => reject(state.abortController.signal.reason), { once: true })
+      })
+      return await Promise.race([this.createResolvedWorkspace(record, timeoutMs), deadline])
     } finally {
       if (timeout) (this.options.clearTimeout ?? clearTimeout)(timeout)
     }
@@ -401,6 +419,7 @@ export class WorkspaceManager {
   }
   private async createResolvedWorkspace(
     record: WorkspaceRecord,
+    timeoutMs: number,
   ): Promise<WorkspaceCreateResult> {
     const state = record[WORKSPACE_STATE]
     const { id, path: workspacePath, binaryId: resolvedBinaryPath } = record
@@ -408,8 +427,7 @@ export class WorkspaceManager {
     const configuredEnvironment = this.readConfiguredEnvironment(serverConfig)
     if (this.options.nodeExtraCaCertsPath) configuredEnvironment.NODE_EXTRA_CA_CERTS = this.options.nodeExtraCaCertsPath
     configuredEnvironment.XDG_STATE_HOME = SERVICE_STATE_ROOT
-    configuredEnvironment.CODENOMAD_SERVICE_CONTENDERS = SERVICE_CONTENDER_FILE
-    mkdirSync(SERVICE_STATE_ROOT, { recursive: true })
+    prepareServiceState(SERVICE_CONTENDER_FILE)
     const launch = buildServiceLaunchSpec(resolvedBinaryPath, ["serve", "--service"], {
       env: { ...process.env, ...configuredEnvironment },
       propagateEnvKeys: Object.keys(configuredEnvironment),
@@ -418,10 +436,15 @@ export class WorkspaceManager {
     const ensureOptions: OpenCodeEnsureOptions = {
       file: SERVICE_REGISTRATION_FILE,
       command: launch.command,
-      environment: {
-        ...configuredEnvironment,
-        ...(launch.env?.WSLENV ? { WSLENV: launch.env.WSLENV } : {}),
-      },
+      contenderFile: SERVICE_CONTENDER_FILE,
+      leaseFile: SERVICE_LEASE_FILE,
+      lockDirectory: SERVICE_STOP_LOCK,
+      nativePid: launch.nativePid,
+      wslDistro: launch.wslDistro,
+      environment: launch.env,
+      launcherRecordsPid: launch.launcherRecordsPid,
+      windowsVerbatimArguments: launch.windowsVerbatimArguments,
+      timeoutMs,
     }
     try {
       this.throwIfCancelled(record)
@@ -557,15 +580,23 @@ export class WorkspaceManager {
   async shutdown() {
     this.shuttingDown = true
     this.options.logger.info("Shutting down all workspaces")
+    const shutdownTimeoutMs = Math.max(1, this.options.shutdownTimeoutMs ?? 10000)
+    const deadlineAt = Date.now() + shutdownTimeoutMs
     const stopTasks = Array.from(this.workspaces.keys(), (id) => this.delete(id))
     const results = stopTasks.length
-      ? await this.withTimeout(Promise.allSettled(stopTasks), this.options.shutdownTimeoutMs ?? 10000, "shutdown")
+      ? await this.withTimeout(Promise.allSettled(stopTasks), shutdownTimeoutMs, "shutdown")
       : []
     const stopFailures = results.flatMap((result) => result.status === "rejected" ? [result.reason] : [])
     if (this.workspaces.size === 0) {
       this.pendingWorkspaceCreations.clear()
       this.cancelledCreationRequests.clear()
-      await this.sharedService.shutdown().catch((error) => stopFailures.push(error))
+      const remaining = deadlineAt - Date.now()
+      if (remaining <= 0) stopFailures.push(new WorkspaceCleanupTimeoutError("shared service shutdown", shutdownTimeoutMs))
+      else await this.withTimeout(
+        this.sharedService.shutdown({ timeoutMs: remaining }),
+        remaining,
+        "shared service shutdown",
+      ).catch((error) => stopFailures.push(error))
     } else if (!stopFailures.length) stopFailures.push(
       new Error(`Workspace cleanup remains incomplete for: ${Array.from(this.workspaces.keys()).join(", ")}`),
     )

@@ -20,14 +20,37 @@ const VOICE_MODE_INSTRUCTION = [
   "Do not include code, bullet lists, markdown formatting, or long technical detail in the spoken block.",
   "After the `spoken` block, continue with your normal detailed response.",
 ].join("\n\n")
+const voiceInstructionSyncs = new Map<string, { desired: boolean; running: Promise<void> }>()
 
 async function syncVoiceModeInstruction(client: ReturnType<typeof getRootClient>, instanceId: string, sessionId: string): Promise<void> {
-  const instruction = client.session.instructions.entry
-  if (isConversationModeEnabled(instanceId)) {
-    await instruction.put({ sessionID: sessionId, key: VOICE_MODE_INSTRUCTION_KEY, value: VOICE_MODE_INSTRUCTION })
-  } else {
-    await instruction.remove({ sessionID: sessionId, key: VOICE_MODE_INSTRUCTION_KEY })
+  const key = `${instanceId}:${sessionId}`
+  const existing = voiceInstructionSyncs.get(key)
+  if (existing) {
+    existing.desired = isConversationModeEnabled(instanceId)
+    return existing.running
   }
+
+  const state = { desired: isConversationModeEnabled(instanceId), running: Promise.resolve() }
+  state.running = (async () => {
+    try {
+      let applied: boolean | undefined
+      while (applied !== state.desired) {
+        const desired = state.desired
+        const instruction = client.session.instructions.entry
+        if (desired) {
+          await instruction.put({ sessionID: sessionId, key: VOICE_MODE_INSTRUCTION_KEY, value: VOICE_MODE_INSTRUCTION })
+        } else {
+          await instruction.remove({ sessionID: sessionId, key: VOICE_MODE_INSTRUCTION_KEY })
+        }
+        applied = desired
+        state.desired = isConversationModeEnabled(instanceId)
+      }
+    } finally {
+      if (voiceInstructionSyncs.get(key) === state) voiceInstructionSyncs.delete(key)
+    }
+  })()
+  voiceInstructionSyncs.set(key, state)
+  return state.running
 }
 
 function getVariantKeysForModel(instanceId: string, model: { providerId: string; modelId: string }): string[] {

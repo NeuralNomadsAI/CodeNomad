@@ -17,7 +17,7 @@ export class InstanceEventBridge {
   private readonly controller = new AbortController()
   private status: InstanceStreamStatus = "connecting"
   private task?: Promise<void>
-  private readonly directoryOwners = new Map<string, { expiresAt: number; owner: Promise<string | undefined> }>()
+  private readonly directoryOwners = new Map<string, { expiresAt: number; owners: Promise<string[]> }>()
   private readonly onWorkspaceStarted = (event: { workspace: { id: string } }) => {
     this.directoryOwners.clear()
     if (!this.task) this.task = this.run()
@@ -74,33 +74,35 @@ export class InstanceEventBridge {
     const directory = event.location?.directory
     if (!directory) return
 
-    const instanceId = await this.resolveDirectoryOwner(directory)
-    if (!instanceId) return
+    const instanceIds = await this.resolveDirectoryOwners(directory)
+    if (instanceIds.length === 0) return
 
     // The server's auto-accept boundary still reads the legacy property name.
     const compatibleEvent: InstanceStreamEvent = {
       ...event,
       properties: this.compatibilityProperties(event),
     }
-    this.options.eventBus.publish({ type: "instance.event", instanceId, event: compatibleEvent })
+    for (const instanceId of instanceIds) {
+      this.options.eventBus.publish({ type: "instance.event", instanceId, event: compatibleEvent })
+    }
   }
 
-  private resolveDirectoryOwner(directory: string): Promise<string | undefined> {
+  private resolveDirectoryOwners(directory: string): Promise<string[]> {
     const now = Date.now()
     const cached = this.directoryOwners.get(directory)
-    if (cached && cached.expiresAt > now) return cached.owner
+    if (cached && cached.expiresAt > now) return cached.owners
 
     const workspaces = this.options.workspaceManager.list()
-    const owner = Promise.all(workspaces.map((workspace) => (
+    const owners = Promise.all(workspaces.map((workspace) => (
       this.options.workspaceManager.ownsDirectory(workspace.id, directory)
     )))
-      .then((ownership) => workspaces.find((_, index) => ownership[index])?.id)
+      .then((ownership) => workspaces.filter((_, index) => ownership[index]).map((workspace) => workspace.id))
       .catch((error) => {
         this.options.logger.warn({ err: error, directory }, "Failed to resolve instance event directory owner")
-        return undefined
+        return []
       })
-    this.directoryOwners.set(directory, { expiresAt: now + DIRECTORY_OWNER_CACHE_MS, owner })
-    return owner
+    this.directoryOwners.set(directory, { expiresAt: now + DIRECTORY_OWNER_CACHE_MS, owners })
+    return owners
   }
 
   private compatibilityProperties(event: OpenCodeEvent): Record<string, unknown> {

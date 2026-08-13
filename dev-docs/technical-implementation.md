@@ -2,7 +2,7 @@
 
 ## OpenCode Dependency
 
-Server and UI pin `@opencode-ai/client@0.0.0-next-17288`. Import the generated Promise client from `@opencode-ai/client` and service lifecycle APIs from `@opencode-ai/client/service`.
+Server and UI pin `@opencode-ai/client@0.0.0-next-17353`. Import the generated Promise client from `@opencode-ai/client`; CodeNomad owns the safe shared-service launch lifecycle because the beta service helper does not expose sufficient process-identity guarantees.
 
 Do not add `@opencode-ai/sdk`, old `{ data, error }` SDK wrappers, `createOpencodeClient()`, or a `packages/opencode-plugin` package. Verify method signatures in `node_modules/@opencode-ai/client/dist/promise/`.
 

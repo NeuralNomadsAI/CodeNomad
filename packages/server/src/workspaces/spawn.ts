@@ -1,5 +1,5 @@
 import { spawnSync } from "child_process"
-import { statSync } from "fs"
+import { readFileSync, statSync } from "fs"
 import path from "path"
 
 export const WINDOWS_CMD_EXTENSIONS = new Set([".cmd", ".bat"])
@@ -41,6 +41,10 @@ export interface SpawnSpec {
 export interface ServiceLaunchSpec {
   command: string[]
   env?: NodeJS.ProcessEnv
+  nativePid: boolean
+  wslDistro?: string
+  launcherRecordsPid?: boolean
+  windowsVerbatimArguments?: boolean
 }
 
 interface BuildSpawnSpecOptions {
@@ -93,7 +97,8 @@ export function buildWindowsSpawnSpec(binaryPath: string, args: string[], option
     return buildWslSpawnSpec(wslPath, args, options)
   }
 
-  const resolvedBinaryPath = resolveBareWindowsCommand(binaryPath, options) ?? binaryPath
+  const resolvedCommand = resolveBareWindowsCommand(binaryPath, options) ?? binaryPath
+  const resolvedBinaryPath = resolveWindowsNpmExecutable(resolvedCommand) ?? resolvedCommand
   const extension = path.win32.extname(resolvedBinaryPath).toLowerCase()
 
   if (WINDOWS_CMD_EXTENSIONS.has(extension)) {
@@ -157,37 +162,37 @@ export function buildServiceLaunchSpec(
   options: BuildSpawnSpecOptions = {},
 ): ServiceLaunchSpec {
   const spec = buildSpawnSpec(binaryPath, args, options)
-  if (spec.processKind === "wsl") {
-    return { command: [spec.command, ...spec.args], env: spec.env }
+  const direct = spec.processKind === "posix" || spec.processKind === "windows-direct"
+  if (direct && options.contenderFile) {
+    const launcher = [
+      'const { spawn } = require("node:child_process")',
+      'const { appendFileSync } = require("node:fs")',
+      'const child = spawn(process.argv[1], JSON.parse(process.argv[2]), { detached: true, stdio: "ignore", windowsHide: true, windowsVerbatimArguments: process.argv[4] === "true" })',
+      'child.once("error", (error) => { console.error(error); process.exitCode = 1 })',
+      'if (child.pid) { appendFileSync(process.argv[3], `${child.pid}\\n`); child.unref() }',
+    ].join(";")
+    return {
+      command: [
+        process.execPath,
+        "-e",
+        launcher,
+        spec.command,
+        JSON.stringify(spec.args),
+        options.contenderFile,
+        String(Boolean(spec.options.windowsVerbatimArguments)),
+      ],
+      env: spec.env,
+      nativePid: true,
+      launcherRecordsPid: true,
+    }
   }
-  const contenderFile = spec.processKind === "posix" || spec.processKind === "windows-direct"
-    ? options.contenderFile
-    : undefined
-  if (!spec.options.windowsVerbatimArguments && !contenderFile) {
-    return { command: [spec.command, ...spec.args], env: spec.env }
-  }
-
-  // Service.ensure cannot pass spawn options or expose contender PIDs. A Node
-  // trampoline supplies both for commands whose child PID is the service PID.
-  const launcher = [
-    'const { spawn } = require("node:child_process")',
-    'const { appendFileSync } = require("node:fs")',
-    'const child = spawn(process.argv[1], JSON.parse(process.argv[2]), { stdio: "inherit", windowsVerbatimArguments: process.argv[4] === "true" })',
-    'if (process.argv[3]) appendFileSync(process.argv[3], `${child.pid}\\n`)',
-    'child.once("error", (error) => { console.error(error); process.exit(1) })',
-    'child.once("exit", (code) => process.exit(code ?? 1))',
-  ].join(";")
   return {
-    command: [
-      process.execPath,
-      "-e",
-      launcher,
-      spec.command,
-      JSON.stringify(spec.args),
-      contenderFile ?? "",
-      String(Boolean(spec.options.windowsVerbatimArguments)),
-    ],
+    command: [spec.command, ...spec.args],
     env: spec.env,
+    nativePid: direct,
+    wslDistro: spec.wsl?.distro,
+    launcherRecordsPid: spec.processKind === "wsl" && Boolean(options.contenderFile),
+    windowsVerbatimArguments: spec.options.windowsVerbatimArguments,
   }
 }
 
@@ -372,6 +377,20 @@ function buildWslLaunchScript(workingDirectory: WslWorkingDirectory | undefined,
 
   steps.push('exec "$@"')
   return steps.join(" && ")
+}
+
+function resolveWindowsNpmExecutable(command: string): string | null {
+  if (!WINDOWS_CMD_EXTENSIONS.has(path.win32.extname(command).toLowerCase())) return null
+  try {
+    const script = readFileSync(command, "utf8")
+    if (script.length > 64 * 1024) return null
+    const match = script.match(/["'](?:%~dp0|%dp0%)[\\/]([^"'\r\n]+\.exe)["']\s+%\*/i)
+    if (!match?.[1]) return null
+    const executable = path.win32.resolve(path.win32.dirname(command), match[1])
+    return statSync(executable).isFile() ? executable : null
+  } catch {
+    return null
+  }
 }
 
 function normalizeWindowsPath(input: string): string | null {

@@ -1,4 +1,3 @@
-use crate::desktop_event_transport::DesktopEventStreamConfig;
 use crate::managed_node::resolve_bundled_node_binary;
 use dirs::home_dir;
 use parking_lot::Mutex;
@@ -565,15 +564,6 @@ fn generate_auth_cookie_name() -> String {
     format!("{SESSION_COOKIE_NAME_PREFIX}_{pid}_{timestamp}")
 }
 
-fn generate_transport_connection_id() -> String {
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
-    let tid = std::thread::current().id();
-    format!("tauri-{}-{:?}", ts, tid)
-}
-
 const DEFAULT_CONFIG_PATH: &str = "~/.config/codenomad/config.json";
 
 #[derive(Debug, Deserialize)]
@@ -731,8 +721,6 @@ pub struct CliProcessManager {
     #[cfg(windows)]
     job: Arc<Mutex<Option<WindowsJobObject>>>,
     bootstrap_token: Arc<Mutex<Option<String>>>,
-    session_cookie: Arc<Mutex<Option<String>>>,
-    auth_cookie_name: Arc<Mutex<Option<String>>>,
     lifecycle: Arc<Mutex<()>>,
     generation: Arc<AtomicU64>,
 }
@@ -745,8 +733,6 @@ impl CliProcessManager {
             #[cfg(windows)]
             job: Arc::new(Mutex::new(None)),
             bootstrap_token: Arc::new(Mutex::new(None)),
-            session_cookie: Arc::new(Mutex::new(None)),
-            auth_cookie_name: Arc::new(Mutex::new(None)),
             lifecycle: Arc::new(Mutex::new(())),
             generation: Arc::new(AtomicU64::new(0)),
         }
@@ -758,8 +744,6 @@ impl CliProcessManager {
         log_line(&format!("start requested (dev={dev})"));
         self.stop_tracked_child()?;
         *self.bootstrap_token.lock() = None;
-        *self.session_cookie.lock() = None;
-        *self.auth_cookie_name.lock() = None;
         {
             let mut status = self.status.lock();
             status.state = CliState::Starting;
@@ -855,7 +839,6 @@ impl CliProcessManager {
         status.port = None;
         status.url = None;
         status.error = None;
-        *self.session_cookie.lock() = None;
     }
 
     fn publish_error(&self, app: &AppHandle, generation: u64, message: String) {
@@ -872,26 +855,6 @@ impl CliProcessManager {
 
     pub fn status(&self) -> CliStatus {
         self.status.lock().clone()
-    }
-
-    pub fn desktop_event_stream_config(&self) -> Option<DesktopEventStreamConfig> {
-        let base_url = self.status.lock().url.clone()?;
-        let events_url = format!("{}/api/events", base_url.trim_end_matches('/'));
-        let client_id = format!("tauri-{}", std::process::id());
-        let cookie_name = self
-            .auth_cookie_name
-            .lock()
-            .clone()
-            .unwrap_or_else(|| SESSION_COOKIE_NAME_PREFIX.to_string());
-
-        Some(DesktopEventStreamConfig {
-            base_url,
-            events_url,
-            client_id,
-            connection_id: generate_transport_connection_id(),
-            cookie_name,
-            session_cookie: self.session_cookie.lock().clone(),
-        })
     }
 
     fn spawn_cli(
@@ -1037,7 +1000,6 @@ impl CliProcessManager {
         let stdout = child.stdout.take().map(BufReader::new);
         let stderr = child.stderr.take().map(BufReader::new);
         debug_assert!(manager.child.lock().is_none());
-        *manager.auth_cookie_name.lock() = Some(auth_cookie_name.as_str().to_string());
         manager.status.lock().pid = Some(pid);
         *manager.child.lock() = Some(child);
         #[cfg(windows)]
@@ -1317,9 +1279,6 @@ impl CliProcessManager {
                             log_line(&format!("failed to set session cookie: {err}"));
                             navigate_main(manager, generation, app, &format!("{base_url}/login"));
                         } else {
-                            manager.with_current_generation(generation, || {
-                                *manager.session_cookie.lock() = Some(session_id.clone());
-                            });
                             navigate_main(manager, generation, app, &base_url);
                         }
                     }

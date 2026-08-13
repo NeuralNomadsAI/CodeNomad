@@ -56,8 +56,8 @@ describe("buildWindowsSpawnSpec", () => {
     assert.equal(buildWindowsSpawnSpec("powershell.exe", []).processKind, "windows-wrapper")
   })
 
-  it("conservatively classifies bare commands as wrappers", () => {
-    assert.equal(buildWindowsSpawnSpec("opencode", []).processKind, "windows-wrapper")
+  it("resolves an installed bare npm command to its packaged executable", () => {
+    assert.equal(buildWindowsSpawnSpec("opencode2", []).processKind, "windows-direct")
   })
 
   it("resolves a bare cmd shim from a quoted PATH entry and wraps its absolute path", { skip: process.platform !== "win32" }, () => {
@@ -233,22 +233,23 @@ describe("buildServiceLaunchSpec", () => {
     )
   })
 
-  it("uses a Node trampoline for the verbatim cmd.exe batch command", () => {
+  it("passes through a non-npm cmd wrapper with its required verbatim arguments", () => {
     const launch = buildServiceLaunchSpec(String.raw`C:\Program Files\OpenCode\opencode.cmd`, ["serve", "--service"], {
       platform: "win32",
       env: { ComSpec: "test-cmd.exe" },
     })
 
-    assert.equal(launch.command[0], process.execPath)
-    assert.equal(launch.command[1], "-e")
-    assert.equal(launch.command[3], "test-cmd.exe")
-    assert.deepEqual(JSON.parse(launch.command[4] ?? "[]"), [
+    assert.equal(launch.command[0], "test-cmd.exe")
+    assert.deepEqual(launch.command.slice(1), [
       "/d", "/s", "/c", String.raw`""C:\Program Files\OpenCode\opencode.cmd" serve --service"`,
     ])
-    assert.equal(launch.command[5], "")
+    assert.equal(launch.windowsVerbatimArguments, true)
+    assert.equal(launch.nativePid, false)
+    assert.equal(buildServiceLaunchSpec("custom.bat", ["serve"], { platform: "win32" }).nativePid, false)
+    assert.equal(buildServiceLaunchSpec("custom.ps1", ["serve"], { platform: "win32" }).nativePid, false)
   })
 
-  it("records a direct service contender PID", () => {
+  it("launches a direct service executable without a wrapper", () => {
     const launch = buildServiceLaunchSpec("opencode.exe", ["serve", "--service"], {
       platform: "win32",
       contenderFile: String.raw`C:\Temp\codenomad-contenders.txt`,
@@ -256,8 +257,10 @@ describe("buildServiceLaunchSpec", () => {
 
     assert.equal(launch.command[0], process.execPath)
     assert.equal(launch.command[3], "opencode.exe")
+    assert.deepEqual(JSON.parse(launch.command[4] ?? "[]"), ["serve", "--service"])
     assert.equal(launch.command[5], String.raw`C:\Temp\codenomad-contenders.txt`)
-    assert.equal(launch.command[6], "false")
+    assert.equal(launch.nativePid, true)
+    assert.equal(launch.launcherRecordsPid, true)
   })
 
   it("translates shared Windows state and contender files for WSL", () => {
@@ -273,9 +276,46 @@ describe("buildServiceLaunchSpec", () => {
     )
 
     assert.equal(launch.command[0], "wsl.exe")
-    assert.match(launch.command[6] ?? "", /wslpath -au/)
-    assert.equal(launch.command[8], contenderFile)
+    const wslArgs = launch.command.slice(1)
+    assert.match(wslArgs[5] ?? "", /wslpath -au/)
+    assert.equal(wslArgs[7], contenderFile)
     assert.equal(launch.env?.WSLENV, "XDG_STATE_HOME/p")
+    assert.equal(launch.nativePid, false)
+    assert.equal(launch.wslDistro, "Ubuntu")
+  })
+
+  it("passes configured service variables only to the launched child", () => {
+    const launch = buildServiceLaunchSpec("opencode", ["serve", "--service"], {
+      platform: "linux",
+      env: { ...process.env, XDG_STATE_HOME: "/private/state", SERVICE_ONLY: "yes" },
+      propagateEnvKeys: ["XDG_STATE_HOME", "SERVICE_ONLY"],
+    })
+
+    assert.deepEqual(launch.command, ["opencode", "serve", "--service"])
+    assert.equal(launch.env?.XDG_STATE_HOME, "/private/state")
+    assert.equal(launch.env?.SERVICE_ONLY, "yes")
+  })
+
+  it("resolves the standard Windows npm opencode2 shim to its packaged executable", { skip: process.platform !== "win32" }, () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codenomad-npm-shim-"))
+    const executable = path.join(root, "node_modules", "@opencode-ai", "cli", "bin", "opencode2.exe")
+    mkdirSync(path.dirname(executable), { recursive: true })
+    writeFileSync(executable, "")
+    writeFileSync(path.join(root, "opencode2.cmd"), '@ECHO off\r\n"%~dp0\\node_modules\\@opencode-ai\\cli\\bin\\opencode2.exe" %*\r\n')
+    try {
+      const launch = buildServiceLaunchSpec("opencode2", ["serve", "--service"], {
+        platform: "win32",
+        cwd: root,
+        env: { PATH: root, PATHEXT: ".CMD" },
+        contenderFile: path.join(root, "contenders.txt"),
+      })
+      assert.equal(launch.command[0], process.execPath)
+      assert.equal(launch.command[3]?.toLowerCase(), executable.toLowerCase())
+      assert.equal(launch.nativePid, true)
+      assert.equal(launch.launcherRecordsPid, true)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
 
