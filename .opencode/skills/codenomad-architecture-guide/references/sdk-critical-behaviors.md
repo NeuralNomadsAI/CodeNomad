@@ -26,11 +26,13 @@
 
 | Concern | Owner |
 |---|---|
-| Session/message/Shell/instructions | OpenCode native API; PTY/background parity not integrated |
+| Session/message/Shell/instructions | OpenCode native API; Shell remains separate from PTY management |
+| PTY list/metadata/title/remove | Location-scoped OpenCode native API through CodeNomad ownership checks; Status UI refreshes on PTY events/reconnect |
+| PTY output/distinct stop | Unavailable in exact `next-17353`; removal is the native stop action for a running PTY |
 | Service discovery/start/stop | CodeNomad hardened adapter using selected OpenCode primitives |
 | Workspace and directory authorization | CodeNomad |
 | Git status/diff and mutations | CodeNomad |
 | Yolo policy/persistence/auto-reply | CodeNomad |
 | Browser event multiplexing | CodeNomad `/api/events` |
 
-Do not restore `@opencode-ai/sdk`, per-workspace processes, `packages/opencode-plugin`, plugin background-process tools, or deleted plugin/runtime file paths.
+Exact `next-17353` has no PTY output/read/stream API or separate stop endpoint, so the UI cannot display PTY output or offer a distinct stop action. Do not restore `@opencode-ai/sdk`, per-workspace processes, `packages/opencode-plugin`, server plugin/background-process tools, or deleted plugin/runtime file paths.

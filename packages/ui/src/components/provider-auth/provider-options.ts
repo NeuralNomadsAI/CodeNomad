@@ -9,6 +9,22 @@ export type ListedProvider = {
   canConnect: boolean
 }
 
+export function buildProviderVisibilityModels(
+  providerId: string,
+  providers: readonly ProviderInfo[],
+  models: readonly ModelInfo[],
+): Array<{ id: string; name: string; providerId: string }> {
+  const providerIds = new Set(
+    providers
+      .filter((provider) => (provider.integrationID ?? provider.id) === providerId)
+      .map((provider) => provider.id),
+  )
+  if (providerIds.size === 0) providerIds.add(providerId)
+  return models
+    .filter((model) => providerIds.has(model.providerID))
+    .map((model) => ({ id: model.id, name: model.name || model.id, providerId: model.providerID }))
+}
+
 export function buildListedProviders(
   providers: ProviderInfo[],
   models: ModelInfo[],

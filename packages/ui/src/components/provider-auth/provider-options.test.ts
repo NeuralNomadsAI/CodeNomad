@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { buildListedProviders } from "./provider-options.ts"
+import { buildListedProviders, buildProviderVisibilityModels } from "./provider-options.ts"
 
 test("keeps unmatched custom and model-only providers in the cold-start catalog", () => {
   const providers = [
@@ -31,4 +31,20 @@ test("only integrations with native auth methods offer Connect", () => {
   const listed = buildListedProviders([], [], integrations)
   assert.equal(listed.find((provider) => provider.id === "env-only")?.canConnect, false)
   assert.equal(listed.find((provider) => provider.id === "oauth")?.canConnect, true)
+})
+
+test("keeps native provider ids when one integration groups multiple providers", () => {
+  const providers = [
+    { id: "openai-api", integrationID: "openai" },
+    { id: "openai-subscription", integrationID: "openai" },
+  ] as any[]
+  const models = [
+    { id: "gpt-api", name: "GPT API", providerID: "openai-api" },
+    { id: "gpt-subscription", name: "GPT Subscription", providerID: "openai-subscription" },
+  ] as any[]
+
+  assert.deepEqual(buildProviderVisibilityModels("openai", providers, models), [
+    { id: "gpt-api", name: "GPT API", providerId: "openai-api" },
+    { id: "gpt-subscription", name: "GPT Subscription", providerId: "openai-subscription" },
+  ])
 })

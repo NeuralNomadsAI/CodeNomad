@@ -303,7 +303,9 @@ tasks/                Task tracking
 - Database: user-supplied `OPENCODE_DB` is required for V2 and must never be shared with V1; changes apply at service start/restart
 - Events: volatile native stream with authoritative reconnect reconciliation
 - Proxy: explicit method/path allowlist; upstream additions are not automatic
-- Shell and instructions: native session APIs; PTY/background-process parity is not integrated
+- Shell and instructions: native session APIs, separate from PTY management
+- PTYs: location-scoped native entries in Status, refreshed on PTY events/reconnect with metadata, title updates, and ownership-checked removal; exact `next-17353` has no output/read/stream or separate stop API, so output and distinct stop are unavailable and removal stops a running PTY
+- Legacy plugin/background processes: `packages/opencode-plugin` and server plugin/background-process paths remain deleted
 - Git mutations and Yolo: CodeNomad-owned
 
 ## Estimated Timeline

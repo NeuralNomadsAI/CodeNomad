@@ -112,3 +112,18 @@ describe("renderMarkdown bracket math delimiters", () => {
     }
   })
 })
+
+describe("renderMarkdown raw HTML", () => {
+  it("preserves text after style tags inside malformed inline code", async () => {
+    const content = [
+      "- evidence: [source] `return ",
+      '`<!DOCTYPE html><html><head><meta charset="utf-8"><style>${options.styles.join(";")}</style></head>',
+      '<body>${options.html}</body></html>`;` - and the test remains visible',
+    ].join("")
+
+    const html = await renderMarkdown(content, { suppressHighlight: true, escapeRawHtml: true })
+
+    assert.doesNotMatch(html, /<style>/)
+    assert.match(html, /and the test remains visible/)
+  })
+})

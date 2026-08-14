@@ -116,7 +116,8 @@ Then open a pull request on GitHub targeting the `dev` branch.
 - V2 startup requires a user-configured, non-empty `OPENCODE_DB`; there is no CodeNomad default. Never reuse a V1 database for V2. Environment changes take effect when the shared service starts or restarts.
 - OpenCode session calls use `/workspaces/:id/instance/api/*`; CodeNomad control routes and multiplexed events use `/api/*` and `/api/events`.
 - The proxy is method/path allowlisted, so new upstream functionality is not exposed automatically.
-- Native `client.session.shell` and `client.session.instructions.entry` cover Shell and prompt instructions. PTY/background-process parity is not integrated, and there is no `packages/opencode-plugin` integration.
+- Native Shell (`client.session.shell`) and prompt instructions (`client.session.instructions.entry`) remain separate from native V2 PTY management.
+- Native PTYs are location-scoped and listed in the Status panel. The UI refreshes them on PTY events and reconnect, displays native metadata, and supports title updates and ownership-checked removal. With exact `0.0.0-next-17353`, removal is the native stop action for a running PTY; there is no PTY output/read/stream API or separate stop endpoint, so output display and a distinct stop action are unavailable. `packages/opencode-plugin` and the server plugin/background-process paths remain deleted and must not be restored.
 - Native events are volatile. Reconnect handlers must refetch authoritative state instead of assuming missed events will replay.
 - Git mutations and Yolo policy remain CodeNomad-owned server boundaries.
 

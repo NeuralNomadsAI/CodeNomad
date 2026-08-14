@@ -22,11 +22,15 @@ const client = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl) })
 
 Use `getRootClient(instanceId)` from `packages/ui/src/stores/opencode-client.ts`. Native location/directory inputs replace the old per-worktree-client pattern. Destroy cached clients when an instance is removed.
 
-## Native Shell And Instructions
+## Native Shell, Instructions, And PTYs
 
 - Shell mode calls `client.session.shell({ sessionID, command })`.
 - Conversation mode adds/removes `client.session.instructions.entry` before `client.session.prompt`.
-- PTY and background-process feature parity are not integrated.
+- Shell remains separate from native PTY management.
+- PTYs are location-scoped and listed with `client.pty.list`; the Status panel refreshes on PTY lifecycle events and reconnect, displays native metadata, and supports title updates.
+- PTY ID operations are ownership-checked against the native `cwd`. Removal is the native stop action for a running PTY.
+- Exact `next-17353` has no PTY output/read/stream API or separate stop endpoint, so output display and a distinct stop action are unavailable.
+- Keep `packages/opencode-plugin` and server plugin/background-process paths deleted.
 
 ## Event Flow
 

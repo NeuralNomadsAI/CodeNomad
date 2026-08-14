@@ -1,0 +1,94 @@
+.provider-model-visibility {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.provider-model-visibility-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border-base);
+}
+
+.provider-model-visibility-header > .selector-button {
+  flex: 0 0 auto;
+  width: auto;
+}
+
+.provider-model-visibility-item span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.provider-model-visibility-item small {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
+  overflow-wrap: anywhere;
+}
+
+.provider-model-visibility-toolbar {
+  display: grid;
+  grid-template-columns: minmax(10rem, 1fr) auto auto auto;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.provider-model-visibility-count {
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.provider-model-visibility-list {
+  height: min(22rem, 45dvh);
+  overflow-y: auto;
+  border: 1px solid var(--border-base);
+  background: var(--surface-base);
+}
+
+.provider-model-visibility-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 3.375rem;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--border-base) 70%, transparent);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.provider-model-visibility-item:hover {
+  background: var(--surface-secondary);
+}
+
+.provider-model-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.provider-model-card-actions .selector-button {
+  width: auto;
+}
+
+@media (max-width: 700px) {
+  .provider-model-visibility-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .provider-model-visibility-header,
+  .provider-model-card-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .provider-model-visibility-toolbar .selector-button,
+  .provider-model-card-actions .selector-button {
+    width: 100%;
+    justify-content: center;
+  }
+}

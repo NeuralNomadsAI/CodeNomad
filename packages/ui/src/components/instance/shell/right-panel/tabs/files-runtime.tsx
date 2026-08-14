@@ -300,6 +300,8 @@ export function createFilesTabRuntime(options: FilesTabRuntimeOptions): () => JS
       wordWrapMode={filesWordWrapMode}
       parentPath={browserParentPath}
       scopeKey={browserScopeKey}
+      instanceId={options.instanceId}
+      worktreeSlug={options.worktreeSlug}
       onLoadEntries={(path: string) => void loadBrowserEntries(path)}
       onRequestOpenFile={(path: string) => void handleOpenBrowserFileRequest(path)}
       onRefresh={() => void refreshFilesTab()}

@@ -57,13 +57,14 @@ Current native events include session lifecycle/output events (`session.created`
 | Sessions, messages, permission/question APIs | OpenCode V2 |
 | Shell mode | `client.session.shell` |
 | Conversation instructions | `client.session.instructions.entry` |
-| PTY/background-process parity | Not integrated |
+| PTY management | Location-scoped OpenCode V2 API through the ownership-checking proxy; Status panel UI |
+| PTY output and distinct stop | Unavailable in exact `next-17353`; removal is the native stop action for a running PTY |
 | Workspace lifecycle and directory authorization | CodeNomad |
 | Git status/diff/stage/unstage/commit | CodeNomad server |
 | Yolo state, persistence and auto-accept | CodeNomad server |
 | Browser SSE multiplexing | CodeNomad server |
 
-Native Shell and session instructions replace the corresponding deleted plugin-backed integrations. Do not claim PTY/background-process parity or restore deleted plugin routes.
+Native Shell remains separate from PTY management. The Status panel lists location-scoped native PTYs, refreshes on PTY events/reconnect, displays native metadata, and allows title updates and ownership-checked removal. Exact `next-17353` exposes no PTY output/read/stream API or separate stop endpoint, so output display and a distinct stop action are unavailable. `packages/opencode-plugin` and the server plugin/background-process paths remain deleted and must not be restored.
 
 ## Persistence
 

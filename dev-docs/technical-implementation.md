@@ -34,7 +34,9 @@ await client.session.shell({ sessionID, command })
 await client.session.instructions.entry.put({ sessionID, key, value })
 ```
 
-Shell mode and conversation instructions are upstream features. They do not require a CodeNomad plugin. CodeNomad does not currently integrate PTY or background-process parity.
+Shell mode and conversation instructions are upstream features and remain separate from native V2 PTYs. None requires a CodeNomad plugin.
+
+Native PTYs are location-scoped and listed in the Status panel. `packages/ui/src/stores/pty-store.ts` refreshes the list on native PTY events and reconnect, exposes native metadata, and supports title updates and removal. The proxy verifies PTY `cwd` ownership before ID-scoped operations. With exact `0.0.0-next-17353`, the client has no PTY output/read/stream API and no separate stop endpoint: output is not displayed, and removing a running PTY is the only native stop action.
 
 ## Routing And Security
 
@@ -55,7 +57,7 @@ Yolo also remains CodeNomad-owned. `AutoAcceptManager` persists policy state, ob
 
 `InstanceEventBridge` consumes the one shared `client.event.subscribe()` iterable. It maps location-scoped events to workspace IDs and publishes `instance.event` through the CodeNomad `EventBus`. This stream is volatile: reconnection does not replay a guaranteed history, so UI stores refetch sessions and pending requests and other consumers must re-read authoritative file/config state.
 
-Use current protocol names. Session events include `session.created`, `session.renamed`, `session.moved`, `session.status`, `session.idle`, `session.execution.*`, `session.compaction.*`, `session.text.*`, `session.reasoning.*`, and `session.tool.*`; file and config invalidations are `filesystem.changed` and `config.updated`.
+Use current protocol names. Session events include `session.created`, `session.renamed`, `session.moved`, `session.status`, `session.idle`, `session.execution.*`, `session.compaction.*`, `session.text.*`, `session.reasoning.*`, and `session.tool.*`; PTY refresh events include `pty.created`, `pty.updated`, `pty.exited`, and `pty.deleted`; file and config invalidations are `filesystem.changed` and `config.updated`.
 
 ## Current Structure
 
@@ -75,9 +77,10 @@ packages/ui/src/
   stores/opencode-client.ts root client authority
   stores/session-api.ts     session queries/lifecycle
   stores/session-actions.ts prompt, Shell, instructions
+  stores/pty-store.ts       location-scoped native PTY state/actions
 ```
 
-Deleted plugin, background-process, and per-workspace runtime files are not architectural extension points.
+Deleted `packages/opencode-plugin`, server plugin/background-process, and per-workspace runtime files are not architectural extension points and must not be restored.
 
 ## Validation
 

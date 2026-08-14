@@ -9,15 +9,18 @@
 5. CodeNomad publishes workspace events on `/api/events` and exposes `/workspaces/:id/instance` as the authorized native API proxy.
 6. Final-owner deletion queues location eviction. Proven final shared-service shutdown flushes queued evictions and sends an authenticated stop only if no live CodeNomad peer remains and the exact daemon identity still matches.
 
-## Prompt, Shell And Instructions
+## Prompt, Shell, Instructions, And PTYs
 
 1. UI obtains `getRootClient(instanceId)`.
 2. Conversation mode updates `client.session.instructions.entry` for the voice instruction.
-3. A normal prompt calls `client.session.prompt`; `!` shell mode calls native `client.session.shell`. There is no integrated PTY/background-process parity.
-4. The proxy checks directory/session ownership and forwards to the shared service's `/api/*` route.
-5. One upstream event subscription feeds `InstanceEventBridge`, then CodeNomad `/api/events`, then UI stores.
+3. A normal prompt calls `client.session.prompt`; `!` shell mode calls native `client.session.shell`. Native Shell remains separate from PTY management.
+4. The Status panel lists native PTYs for the active location, displays their native metadata, and refreshes on PTY events and reconnect.
+5. Title updates and removal use native PTY APIs; the proxy verifies native `cwd` ownership before ID-scoped operations. Removing a running PTY is its native stop action.
+6. Exact `next-17353` has no PTY output/read/stream API or separate stop endpoint, so output display and a distinct stop action are unavailable.
+7. The proxy checks directory/session ownership and forwards to the shared service's `/api/*` route.
+8. One upstream event subscription feeds `InstanceEventBridge`, then CodeNomad `/api/events`, then UI stores.
 
-No CodeNomad OpenCode plugin participates in this flow.
+No CodeNomad OpenCode plugin participates in this flow. `packages/opencode-plugin` and server plugin/background-process paths remain deleted and must not be restored.
 
 ## Permission And Yolo
 

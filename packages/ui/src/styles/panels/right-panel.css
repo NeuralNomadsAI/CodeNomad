@@ -415,6 +415,10 @@
   transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
 }
 
+.file-list-item .action-overflow-trigger.file-row-action-menu {
+  display: inline-flex;
+}
+
 .git-change-row-action:hover {
   background-color: var(--surface-hover);
   border-color: var(--border-base);
