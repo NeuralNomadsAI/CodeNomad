@@ -96,7 +96,7 @@ class ControlledSharedService {
     assert.equal(options?.command?.[5], options?.contenderFile)
     assert.equal(options?.launcherRecordsPid, true)
     assert.equal(options?.environment?.XDG_STATE_HOME, stateRoot)
-    assert.equal(options?.environment?.OPENCODE_DB, path.join(os.tmpdir(), "user-opencode.db"))
+    assert.equal(options?.environment?.OPENCODE_DB, path.join(os.homedir(), ".local", "share", "opencode2", "opencode.db"))
   }
 }
 
@@ -120,14 +120,6 @@ function createHarness(service = new ControlledSharedService(), overrides: Recor
 }
 
 describe("workspace manager shared service lifecycle", () => {
-  it("fails before contacting the service when OPENCODE_DB is absent", async () => {
-    const { manager, service } = createHarness()
-    ;(manager as any).options.settings = { getOwner: () => ({ environmentVariables: { OPENCODE_DB: "" } }) }
-    await assert.rejects(manager.create(process.cwd()), /non-empty OPENCODE_DB/)
-    assert.equal(service.validationCalls.length, 0)
-    assert.equal((manager as any).workspaces.size, 0)
-  })
-
   it("translates a matching WSL UNC workspace for service API calls", () => {
     const { manager } = createHarness()
     assert.equal(

@@ -1,4 +1,5 @@
 import path from "path"
+import os from "node:os"
 import { spawnSync } from "child_process"
 import { randomUUID } from "node:crypto"
 import type { Endpoint } from "@opencode-ai/client/service"
@@ -30,6 +31,7 @@ import { isPathOwnedByWorktree, resolveWorktreeSlugForDirectory } from "./worktr
 
 const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
 const OPENCODE_SERVICE_VERSION = "0.0.0-next-17353"
+const OPENCODE_DATABASE = path.join(os.homedir(), ".local", "share", "opencode2", "opencode.db")
 const ORDINARY_CREATION_OWNER = ""
 const WORKSPACE_STATE = Symbol("workspaceState")
 const SERVICE_CONTENDER_FILE = path.join(SERVICE_STATE_ROOT, `contenders-${process.pid}-${randomUUID()}.txt`)
@@ -474,9 +476,8 @@ export class WorkspaceManager {
       if (this.options.nodeExtraCaCertsPath) configuredEnvironment.NODE_EXTRA_CA_CERTS = this.options.nodeExtraCaCertsPath
       configuredEnvironment.XDG_STATE_HOME = SERVICE_STATE_ROOT
       const serviceEnvironment = { ...process.env, ...configuredEnvironment }
-      if (!serviceEnvironment.OPENCODE_DB?.trim()) {
-        throw new Error("OpenCode V2 requires a non-empty OPENCODE_DB environment variable")
-      }
+      // ponytail: fixed V2 storage root until database selection needs to be configurable.
+      serviceEnvironment.OPENCODE_DB = OPENCODE_DATABASE
       prepareServiceState(SERVICE_CONTENDER_FILE)
       const launch = buildServiceLaunchSpec(resolvedBinaryPath, ["serve", "--service"], {
         env: serviceEnvironment,

@@ -489,7 +489,8 @@ function buildRecentFolderList(folderPath: string, source: RecentFolder[], alias
   return folders.slice(0, MAX_RECENT_FOLDERS)
 }
 
-function buildBinaryList(binaryPath: string, version: string | undefined, source: OpenCodeBinary[]): OpenCodeBinary[] {
+export function buildBinaryList(binaryPath: string, version: string | undefined, source: OpenCodeBinary[]): OpenCodeBinary[] {
+  if (binaryPath === "opencode" || binaryPath === "opencode2") return source
   const timestamp = Date.now()
   const existing = source.find((b) => b.path === binaryPath)
   if (existing) {

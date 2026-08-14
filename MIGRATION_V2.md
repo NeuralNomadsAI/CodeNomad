@@ -82,6 +82,30 @@ The final validation should include:
 - `git diff --check`.
 - A real OpenCode V2 startup, session, event, Shell, and shutdown smoke test.
 
+### Required Parallel UI Smoke
+
+CodeNomad V1 is the working environment and must remain open and untouched. V2 always uses `~/.local/share/opencode2/opencode.db`; launch the V2 build beside V1 from PowerShell with a dedicated CDP port and WebView profile:
+
+```powershell
+Start-Process `
+  -FilePath 'D:\CodeNomad-worktrees\opencode-v2-foundation\packages\tauri-app\target\release\codenomad-tauri.exe' `
+  -Environment @{
+    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9223'
+    WEBVIEW2_USER_DATA_FOLDER = "$env:TEMP\codenomad-webview-v2"
+  }
+```
+
+The smoke is complete only after all of these actions succeed in the visible V2 UI:
+
+1. Confirm the binary selected in CodeNomad's OpenCode settings reports exactly the pinned protocol baseline above.
+2. Open `D:\CodeNomad` from Recent Folders or the folder picker.
+3. Open an existing session from the session list; direct API session creation is not a substitute.
+4. Send a prompt from the composer and receive its visible assistant response.
+5. Reload the V2 window and confirm the workspace and session list recover. While V1 owns cross-host restore, reopen the existing V2 session from the list and confirm its messages and pending state recover correctly.
+6. Exercise one PTY create/list/remove cycle through the workspace proxy, then close only the V2 process after collecting its logs. PTY creation is not currently exposed in the visible UI.
+
+Do not count direct HTTP/CDP calls as validation for workspace, session, prompt, response, or reload behavior. CDP may inspect the V2 DOM and operate visible controls, but it must follow the same controls and state transitions as a user. The PTY protocol check is the sole exception until the UI exposes creation.
+
 ## Review Notes
 
 - The pinned OpenCode V2 protocol client is experimental and may change; public `@opencode-ai/sdk` examples are not authoritative for this build.
