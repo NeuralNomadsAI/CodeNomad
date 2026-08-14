@@ -6,7 +6,7 @@
 
 Lifecycle leases serialize processes and carry transferable proof: registration and endpoint credentials, daemon PID/process-start identity, host/WSL namespace, and launch signature. A peer can inherit proof, but only the final verified process may send the authenticated stop and wait for that daemon to exit.
 
-V2 requires a user-configured `OPENCODE_DB`; CodeNomad has no default. Never point V1 and V2 at the same database. The configured/inherited environment is part of the launch signature and applies when the service starts/restarts.
+V2 forces `OPENCODE_DB` to `~/.local/share/opencode2/opencode.db`. Never point V1 and V2 at the same database. The configured/inherited environment is part of the launch signature and applies when the service starts/restarts.
 
 ## Locations And Directories
 
@@ -29,7 +29,7 @@ Use `getRootClient(instanceId)` from `packages/ui/src/stores/opencode-client.ts`
 - Shell remains separate from native PTY management.
 - PTYs are location-scoped and listed with `client.pty.list`; the Status panel refreshes on PTY lifecycle events and reconnect, displays native metadata, and supports title updates.
 - PTY ID operations are ownership-checked against the native `cwd`. Removal is the native stop action for a running PTY.
-- Exact `next-17353` has no PTY output/read/stream API or separate stop endpoint, so output display and a distinct stop action are unavailable.
+- Current installed declarations have no PTY output/read/stream API or separate stop endpoint, so output display and a distinct stop action are unavailable.
 - Keep `packages/opencode-plugin` and server plugin/background-process paths deleted.
 
 ## Event Flow

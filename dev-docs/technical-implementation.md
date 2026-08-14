@@ -2,7 +2,7 @@
 
 ## OpenCode Dependency
 
-Server and UI pin the experimental `@opencode-ai/client` protocol exactly to `0.0.0-next-17353`. Import the generated Promise client from `@opencode-ai/client`. This differs from the current public `@opencode-ai/sdk` documentation; verify signatures in the installed package.
+Server and UI use the same latest reviewed experimental `@opencode-ai/client` `next` release. Import the generated Promise client from `@opencode-ai/client`. Runtime service discovery does not require an exact CLI version. Every upgrade must review OpenCode release notes, current documentation, installed declarations, and proxy/API parity.
 
 Do not add `@opencode-ai/sdk`, old `{ data, error }` SDK wrappers, `createOpencodeClient()`, or a `packages/opencode-plugin` package. Verify method signatures in `node_modules/@opencode-ai/client/dist/promise/`.
 
@@ -12,7 +12,7 @@ Do not add `@opencode-ai/sdk`, old `{ data, error }` SDK wrappers, `createOpenco
 
 Startup and shutdown are serialized by filesystem leases. Each CodeNomad process proves its own PID/start identity and launch signature; service proof contains the registration contents, endpoint credentials, daemon PID/start identity, and host/WSL namespace. On exit, an owner transfers that proof to an elected live peer and releases its lease; a replacement can also inherit matching proof from a stale peer under the lifecycle lock. The final process stops only after all peers are proven stale/absent and the registration, endpoint, process identity, and launch signature still match; uncertainty retains the lease and leaks safely rather than signaling a PID.
 
-`OPENCODE_DB` must be supplied by the user through the server environment configuration or inherited process environment. It has no hardcoded default. V1 and V2 schemas must never share a database. The complete environment is part of the launch signature and takes effect on service start/restart, not on an already-running daemon.
+The V2 service database is fixed at `~/.local/share/opencode2/opencode.db`; V1 and V2 schemas must never share a database. The complete environment is part of the launch signature and takes effect on service start/restart, not on an already-running daemon.
 
 Workspace creation passes a native location:
 
@@ -36,7 +36,7 @@ await client.session.instructions.entry.put({ sessionID, key, value })
 
 Shell mode and conversation instructions are upstream features and remain separate from native V2 PTYs. None requires a CodeNomad plugin.
 
-Native PTYs are location-scoped and listed in the Status panel. `packages/ui/src/stores/pty-store.ts` refreshes the list on native PTY events and reconnect, exposes native metadata, and supports title updates and removal. The proxy verifies PTY `cwd` ownership before ID-scoped operations. With exact `0.0.0-next-17353`, the client has no PTY output/read/stream API and no separate stop endpoint: output is not displayed, and removing a running PTY is the only native stop action.
+Native PTYs are location-scoped and listed in the Status panel. `packages/ui/src/stores/pty-store.ts` refreshes the list on native PTY events and reconnect, exposes native metadata, and supports title updates and removal. The proxy verifies PTY `cwd` ownership before ID-scoped operations. Current installed declarations have no PTY output/read/stream API and no separate stop endpoint: output is not displayed, and removing a running PTY is the only native stop action.
 
 ## Routing And Security
 

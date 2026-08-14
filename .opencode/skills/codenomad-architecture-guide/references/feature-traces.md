@@ -16,7 +16,7 @@
 3. A normal prompt calls `client.session.prompt`; `!` shell mode calls native `client.session.shell`. Native Shell remains separate from PTY management.
 4. The Status panel lists native PTYs for the active location, displays their native metadata, and refreshes on PTY events and reconnect.
 5. Title updates and removal use native PTY APIs; the proxy verifies native `cwd` ownership before ID-scoped operations. Removing a running PTY is its native stop action.
-6. Exact `next-17353` has no PTY output/read/stream API or separate stop endpoint, so output display and a distinct stop action are unavailable.
+6. Current installed declarations have no PTY output/read/stream API or separate stop endpoint, so output display and a distinct stop action are unavailable.
 7. The proxy checks directory/session ownership and forwards to the shared service's `/api/*` route.
 8. One upstream event subscription feeds `InstanceEventBridge`, then CodeNomad `/api/events`, then UI stores.
 

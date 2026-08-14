@@ -2,7 +2,7 @@
 
 ## Package
 
-CodeNomad pins the experimental `@opencode-ai/client` protocol to exact version `0.0.0-next-17353` in both `packages/server/package.json` and `packages/ui/package.json`. This is distinct from the current public `@opencode-ai/sdk` documentation.
+CodeNomad keeps the experimental `@opencode-ai/client` protocol aligned in `packages/server/package.json` and `packages/ui/package.json` on the latest reviewed `next` release. Runtime CLI discovery is not exact-version-gated. This is distinct from the current public `@opencode-ai/sdk` documentation.
 
 - Promise client: `import { OpenCode } from "@opencode-ai/client"`
 - Service lifecycle: `import { Service } from "@opencode-ai/client/service"`

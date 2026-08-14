@@ -20,8 +20,8 @@
 
 ## Prerequisites
 
-- **OpenCode V2**: `opencode2` must be installed and configured on your system. This build requires protocol version `0.0.0-next-17353`.
-- **OpenCode database**: Set a non-empty `OPENCODE_DB` path. V1 and V2 must use separate databases because their schemas are incompatible.
+- **OpenCode V2**: Install the latest `opencode2` CLI. Runtime discovery does not require an exact version match.
+- **OpenCode database**: V2 uses `~/.local/share/opencode2/opencode.db`, separate from the incompatible V1 database.
 - Node.js 18+ and npm (for running or building from source).
 - A workspace folder on disk you want to serve.
 - Optional: a Chromium-based browser if you want `--launch` to open the UI automatically.

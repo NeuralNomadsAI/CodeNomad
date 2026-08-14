@@ -45,7 +45,7 @@ describe("OpenCodeSharedService", () => {
 
     assert.equal(ensureCalls, 0)
     const [endpoint, resolvedClient, location] = await Promise.all([
-      service.endpoint({ version: "0.0.0-next-17353" }),
+      service.endpoint({ version: "0.0.0-next-17444" }),
       service.client(),
       service.validateLocation({ directory: "/repo" }),
     ])
@@ -55,7 +55,7 @@ describe("OpenCodeSharedService", () => {
     assert.equal(location.workspaceID, "workspace-1")
     assert.deepEqual([ensureCalls, makeCalls], [1, 1])
     assert.deepEqual(discoveryVersions, [])
-    assert.deepEqual(ensureVersions, ["0.0.0-next-17353"])
+    assert.deepEqual(ensureVersions, ["0.0.0-next-17444"])
   })
 
   it("uses the required version when rediscovering a connected service", async () => {
@@ -71,10 +71,10 @@ describe("OpenCodeSharedService", () => {
       makeClient: () => ({} as OpenCodeClient),
     })
 
-    await service.endpoint({ version: "0.0.0-next-17353" })
+    await service.endpoint({ version: "0.0.0-next-17444" })
     await service.endpoint()
 
-    assert.deepEqual(versions, ["0.0.0-next-17353"])
+    assert.deepEqual(versions, ["0.0.0-next-17444"])
   })
 
   it("uses the generated location, event, and eviction APIs", async () => {
@@ -119,11 +119,11 @@ describe("OpenCodeSharedService", () => {
       headers: () => undefined,
       makeClient: () => ({} as OpenCodeClient),
     })
-    await service.endpoint({ version: "0.0.0-next-17353", command: ["first"], environment: { OPENCODE_DB: "/one" } })
+    await service.endpoint({ version: "0.0.0-next-17444", command: ["first"], environment: { OPENCODE_DB: "/one" } })
     for (const options of [
       { version: "other", command: ["first"], environment: { OPENCODE_DB: "/one" } },
-      { version: "0.0.0-next-17353", command: ["second"], environment: { OPENCODE_DB: "/one" } },
-      { version: "0.0.0-next-17353", command: ["first"], environment: { OPENCODE_DB: "/two" } },
+      { version: "0.0.0-next-17444", command: ["second"], environment: { OPENCODE_DB: "/one" } },
+      { version: "0.0.0-next-17444", command: ["first"], environment: { OPENCODE_DB: "/two" } },
     ]) {
       await assert.rejects(service.endpoint(options), /launch configuration/)
     }

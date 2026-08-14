@@ -297,14 +297,14 @@ tasks/                Task tracking
 
 ## Current OpenCode Baseline
 
-- Experimental protocol client and required CLI: exact `@opencode-ai/client@0.0.0-next-17353` / `opencode2@0.0.0-next-17353`; public `@opencode-ai/sdk` docs do not describe this contract
+- Experimental protocol client: server and UI use the same latest reviewed `@opencode-ai/client` `next` release; the runtime `opencode2` CLI is not exact-version-gated, and every upgrade reviews release notes, current documentation, installed declarations, and proxy/API parity
 - Service: one shared endpoint managed by CodeNomad's lease-locked process-proof lifecycle
 - Workspaces: native locations/directories
-- Database: user-supplied `OPENCODE_DB` is required for V2 and must never be shared with V1; changes apply at service start/restart
+- Database: V2 always uses `~/.local/share/opencode2/opencode.db`, separate from V1
 - Events: volatile native stream with authoritative reconnect reconciliation
 - Proxy: explicit method/path allowlist; upstream additions are not automatic
 - Shell and instructions: native session APIs, separate from PTY management
-- PTYs: location-scoped native entries in Status, refreshed on PTY events/reconnect with metadata, title updates, and ownership-checked removal; exact `next-17353` has no output/read/stream or separate stop API, so output and distinct stop are unavailable and removal stops a running PTY
+- PTYs: location-scoped native entries in Status, refreshed on PTY events/reconnect with metadata, title updates, and ownership-checked removal; current installed declarations have no output/read/stream or separate stop API, so output and distinct stop are unavailable and removal stops a running PTY
 - Legacy plugin/background processes: `packages/opencode-plugin` and server plugin/background-process paths remain deleted
 - Git mutations and Yolo: CodeNomad-owned
 

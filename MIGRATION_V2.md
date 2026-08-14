@@ -8,7 +8,7 @@ The migration removes the V1 compatibility layer rather than maintaining both in
 
 ## Main Changes
 
-- Replace `@opencode-ai/sdk` with the experimental `@opencode-ai/client` protocol, pinned exactly to `0.0.0-next-17353`. This contract is distinct from the current public `@opencode-ai/sdk` documentation.
+- Replace `@opencode-ai/sdk` with the experimental `@opencode-ai/client` protocol. Server and UI track the latest reviewed `next` release together; this contract is distinct from the current public `@opencode-ai/sdk` documentation.
 - Use one shared OpenCode V2 service instead of one runtime per workspace.
 - Represent CodeNomad workspaces as logical instances associated with absolute directories.
 - Use native `Location` and `SessionInfo.location` data to associate sessions, files, events, and Git worktrees.
@@ -45,10 +45,10 @@ The migration removes the V1 compatibility layer rather than maintaining both in
 - Avoid logging unredacted secret-bearing proxy request bodies.
 - Expose only an explicit method/path allowlist through the OpenCode proxy. New upstream APIs require an intentional proxy and ownership review; future OpenCode functionality is not automatic.
 - Share a consistent service registration location between Windows and WSL.
-- Require the shared service to match the pinned `0.0.0-next-17353` version.
-- Use CodeNomad's hardened discovery/launch lifecycle in production rather than direct `Service.ensure`/`Service.stop` calls. A lifecycle lease records the registration, authenticated endpoint, daemon PID plus process-start identity and host/WSL namespace, and a hash of the launch command/environment/version. Proof can transfer between live CodeNomad processes through peer leases; the final process stops the daemon only after proving there are no live peers and every recorded identity still matches.
+- Discover the installed `opencode2` service without requiring an exact runtime version match. Each dependency upgrade must review OpenCode release notes, current documentation, installed client declarations, and proxy/API parity.
+- Use CodeNomad's hardened discovery/launch lifecycle in production rather than direct `Service.ensure`/`Service.stop` calls. A lifecycle lease records the registration, authenticated endpoint, daemon PID plus process-start identity and host/WSL namespace, and a hash of the launch command/environment. Proof can transfer between live CodeNomad processes through peer leases; the final process stops the daemon only after proving there are no live peers and every recorded identity still matches.
 - Queue location eviction when its final logical owner is removed, then perform it only during proven final shared-service shutdown so another CodeNomad process cannot lose active upstream state.
-- Require the user to configure a non-empty `OPENCODE_DB` before V2 service startup. CodeNomad supplies no default path, and V1 and V2 must never point at the same database because their schemas are incompatible. Environment changes apply when the shared service next starts or restarts, not to an already-running daemon.
+- Force the V2 service database to `~/.local/share/opencode2/opencode.db`. V1 and V2 must never point at the same database because their schemas are incompatible.
 - Isolate V2 restore state under `~/.codenomad/client-state/v2` and copy V1 state non-destructively on first launch, preserving downgrade history.
 
 ## Expected Benefits
@@ -61,9 +61,9 @@ The migration removes the V1 compatibility layer rather than maintaining both in
 
 ## Current Status
 
-- The server/UI client dependency and required `opencode2` protocol baseline are pinned to `0.0.0-next-17353`.
-- The current working tree includes hardened lifecycle proof, launch-configuration matching, required `OPENCODE_DB` validation, deferred location eviction, proxy path/location validation, and reconnect reconciliation changes.
-- Native PTY V1 parity is limited by `@opencode-ai/client@0.0.0-next-17353`: it provides list/get/title-or-size update/remove and PTY lifecycle events, but no output/read/stream API and no separate stop API. Removing a running PTY is therefore the only native stop action, and PTY output is not displayed.
+- The server/UI client dependencies are aligned on the latest reviewed OpenCode `next` release. The installed `opencode2` CLI is not exact-version-gated at runtime.
+- The current working tree includes hardened lifecycle proof, launch-configuration matching, an isolated V2 database, deferred location eviction, proxy path/location validation, and reconnect reconciliation changes.
+- Current installed client declarations provide native PTY list/get/create/title-or-size update/remove and lifecycle events, but no output/read/stream API and no separate stop API. Removing a running PTY is therefore the only native stop action, and PTY output is not displayed.
 - The migration remains a Draft. The full validation matrix and a real current-tree OpenCode V2 startup/session/event/Shell/shutdown smoke test are not yet recorded complete.
 
 ## Remaining Work
@@ -97,7 +97,7 @@ Start-Process `
 
 The smoke is complete only after all of these actions succeed in the visible V2 UI:
 
-1. Confirm the binary selected in CodeNomad's OpenCode settings reports exactly the pinned protocol baseline above.
+1. Confirm the selected `opencode2` binary reports the latest version reviewed for this branch.
 2. Open `D:\CodeNomad` from Recent Folders or the folder picker.
 3. Open an existing session from the session list; direct API session creation is not a substitute.
 4. Send a prompt from the composer and receive its visible assistant response.
@@ -108,6 +108,7 @@ Do not count direct HTTP/CDP calls as validation for workspace, session, prompt,
 
 ## Review Notes
 
-- The pinned OpenCode V2 protocol client is experimental and may change; public `@opencode-ai/sdk` examples are not authoritative for this build.
+- The OpenCode V2 protocol client is experimental and may change. Review its release notes, current documentation, and installed declarations on every upgrade; public `@opencode-ai/sdk` examples are not authoritative for this build.
+- Upgrade references: [OpenCode releases](https://github.com/anomalyco/opencode/releases), [OpenCode documentation](https://opencode.ai/docs/), and the installed `node_modules/@opencode-ai/client/dist/promise/` declarations.
 - This branch intentionally provides no OpenCode V1 fallback.
 - The branch should remain a Draft Pull Request until gatekeeper review, the validation matrix, and the real-service smoke test are complete.

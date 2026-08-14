@@ -13,7 +13,7 @@
 - Keep one CodeNomad-managed shared-service lifecycle and one event subscription for all workspaces. Production lifecycle is custom and process-proofed; do not replace it with direct `Service.ensure`/`Service.stop`.
 - Model workspaces with native `LocationRef`/directories in `packages/server/src/workspaces/manager.ts`.
 - Never spawn or stop OpenCode per workspace and never add plugin installation/packaging.
-- Require user-supplied `OPENCODE_DB` for V2 startup, never share it with V1, and remember environment changes apply only at service start/restart.
+- Force V2 `OPENCODE_DB` to `~/.local/share/opencode2/opencode.db` and never share the V1 database with V2.
 
 ## Trust Boundaries
 

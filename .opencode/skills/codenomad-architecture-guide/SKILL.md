@@ -15,14 +15,14 @@ description: |
 
 ## Native OpenCode V2 Baseline
 
-- The only OpenCode client dependency is the experimental `@opencode-ai/client` protocol at exact version `0.0.0-next-17353` in server and UI. Current public `@opencode-ai/sdk` docs describe a different contract.
+- The only OpenCode client dependency is the experimental `@opencode-ai/client` protocol. Server and UI must stay aligned on the latest reviewed `next` release; runtime CLI discovery is not exact-version-gated. Current public `@opencode-ai/sdk` docs describe a different contract.
 - Do not use `@opencode-ai/sdk`, `@opencode-ai/sdk/v2/client`, or `createOpencodeClient()`; follow installed `@opencode-ai/client` declarations.
 - There is no `packages/opencode-plugin/`. Do not restore plugin tools, plugin routes, or plugin packaging.
 - The server owns one shared OpenCode service through `OpenCodeSharedService` and its custom lease-locked discovery, launcher, process-proof, and authenticated-stop lifecycle. Production does not call `Service.ensure` or `Service.stop` directly. Workspaces are native OpenCode `Location`/directory scopes, not separate OpenCode processes.
 - The UI uses generated Promise clients from `OpenCode.make()` through the CodeNomad proxy.
-- OpenCode owns session APIs, native Shell (`client.session.shell`), session instructions (`client.session.instructions.entry`), and location-scoped native PTYs. Shell remains separate. The Status panel lists PTYs, refreshes on PTY events/reconnect, displays native metadata, and supports title updates and ownership-checked removal. Exact `next-17353` has no PTY output/read/stream or separate stop API, so output and distinct stop are unavailable; removal is the native stop action for a running PTY.
+- OpenCode owns session APIs, native Shell (`client.session.shell`), session instructions (`client.session.instructions.entry`), and location-scoped native PTYs. Shell remains separate. The Status panel lists PTYs, refreshes on PTY events/reconnect, displays native metadata, and supports title updates and ownership-checked removal. Current installed declarations have no PTY output/read/stream or separate stop API, so output and distinct stop are unavailable; removal is the native stop action for a running PTY.
 - CodeNomad owns workspace lifecycle, directory authorization, Git status/diff/stage/unstage/commit, Yolo persistence/auto-replies, and `/api/events`.
-- V2 service startup requires a user-configured `OPENCODE_DB`. There is no default path; never share a V1 database with V2. Environment changes apply at service start/restart.
+- V2 service startup forces `OPENCODE_DB` to `~/.local/share/opencode2/opencode.db`; never share the V1 database with V2.
 
 ## Package Map
 
@@ -58,7 +58,7 @@ description: |
 
 | Avoid | Use |
 |---|---|
-| Public `@opencode-ai/sdk` examples | Installed experimental `@opencode-ai/client@0.0.0-next-17353` declarations |
+| Public `@opencode-ai/sdk` examples | Installed experimental `@opencode-ai/client` declarations |
 | One `opencode serve` per workspace | One CodeNomad-managed shared service |
 | Per-worktree clients/processes | Root proxy client plus native location/directory inputs |
 | Reintroducing `packages/opencode-plugin` or server plugin/background-process paths | Separate native Shell/instructions and native PTY management |

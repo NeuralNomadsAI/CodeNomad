@@ -16,12 +16,12 @@ The server uses `packages/server/src/workspaces/opencode-service.ts` for a custo
 
 | Owner | Responsibilities | Main paths |
 |---|---|---|
-| OpenCode V2 | Sessions, messages, permissions/questions, files, native Shell/instructions, location-scoped PTYs | experimental `@opencode-ai/client@0.0.0-next-17353` protocol |
+| OpenCode V2 | Sessions, messages, permissions/questions, files, native Shell/instructions, location-scoped PTYs | latest reviewed experimental `@opencode-ai/client` `next` protocol |
 | CodeNomad server | Shared service lifecycle, locations, proxy authorization, Git mutations, Yolo, auth, storage, speech, SSE multiplexing | `packages/server/src/` |
 | CodeNomad UI | Generated Promise clients, state reconciliation, interaction and rendering | `packages/ui/src/` |
 | Desktop hosts | Start CodeNomad and provide native OS integration | `packages/electron-app/`, `packages/tauri-app/` |
 
-Native Shell remains separate from PTY management. The Status panel lists location-scoped PTYs, refreshes on PTY events/reconnect, displays native metadata, and supports title updates and ownership-checked removal. Exact `next-17353` has no PTY output/read/stream or separate stop endpoint; output display and a distinct stop action are unavailable, and removal is the native stop action for a running PTY. `packages/opencode-plugin/` and the server plugin/background-process integration remain deleted and must not be restored or used as extension points.
+Native Shell remains separate from PTY management. The Status panel lists location-scoped PTYs, refreshes on PTY events/reconnect, displays native metadata, and supports title updates and ownership-checked removal. Current installed declarations have no PTY output/read/stream or separate stop endpoint; output display and a distinct stop action are unavailable, and removal is the native stop action for a running PTY. `packages/opencode-plugin/` and the server plugin/background-process integration remain deleted and must not be restored or used as extension points.
 
 ## HTTP And Events
 
@@ -36,7 +36,7 @@ Native Shell remains separate from PTY management. The Status panel lists locati
 
 OpenCode location/workspace identity is upstream state. CodeNomad persists only its own preferences and policy metadata, including Yolo state.
 
-OpenCode V2 additionally requires a user-supplied `OPENCODE_DB`. CodeNomad supplies no path; V1 and V2 databases must remain separate, and environment changes apply when the shared service starts/restarts.
+OpenCode V2 forces `OPENCODE_DB` to `~/.local/share/opencode2/opencode.db`; V1 and V2 databases must remain separate.
 
 ## Entry Points
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-CodeNomad is a SolidJS UI and Fastify server hosted by Electron or Tauri. It integrates with the experimental `@opencode-ai/client` protocol pinned exactly to `0.0.0-next-17353`, not the current public `@opencode-ai/sdk` contract.
+CodeNomad is a SolidJS UI and Fastify server hosted by Electron or Tauri. It integrates with the experimental `@opencode-ai/client` protocol, with server and UI kept on the same latest reviewed `next` release. This is not the current public `@opencode-ai/sdk` contract.
 
 ```text
 Desktop host -> CodeNomad server -> one shared OpenCode service
@@ -15,9 +15,9 @@ There is no `@opencode-ai/sdk` integration and no `packages/opencode-plugin` pac
 
 ## Shared Service And Locations
 
-`packages/server/src/workspaces/opencode-service.ts` uses native discovery and headers, but production startup/shutdown does not call `Service.ensure` or `Service.stop` directly. Its custom launcher serializes lifecycle changes with cross-process leases, records the registration and authenticated endpoint, proves daemon and CodeNomad PIDs with process-start identity in the host or WSL namespace, and binds that proof to a launch command/environment/version hash. Live peer leases can inherit that proof; only the final verified CodeNomad process may request authenticated shutdown and wait for the exact daemon to exit.
+`packages/server/src/workspaces/opencode-service.ts` uses native discovery and headers, but production startup/shutdown does not call `Service.ensure` or `Service.stop` directly. Its custom launcher serializes lifecycle changes with cross-process leases, records the registration and authenticated endpoint, proves daemon and CodeNomad PIDs with process-start identity in the host or WSL namespace, and binds that proof to a launch command/environment hash. Live peer leases can inherit that proof; only the final verified CodeNomad process may request authenticated shutdown and wait for the exact daemon to exit.
 
-`OPENCODE_DB` is a required user configuration for V2 startup. CodeNomad does not choose a path. V1 and V2 must use separate databases because their schemas are incompatible, and environment changes apply only when the shared service starts or restarts.
+The V2 service always uses `~/.local/share/opencode2/opencode.db`. V1 and V2 must use separate databases because their schemas are incompatible.
 
 `packages/server/src/workspaces/manager.ts` treats selected folders as native OpenCode locations:
 
@@ -58,13 +58,13 @@ Current native events include session lifecycle/output events (`session.created`
 | Shell mode | `client.session.shell` |
 | Conversation instructions | `client.session.instructions.entry` |
 | PTY management | Location-scoped OpenCode V2 API through the ownership-checking proxy; Status panel UI |
-| PTY output and distinct stop | Unavailable in exact `next-17353`; removal is the native stop action for a running PTY |
+| PTY output and distinct stop | Unavailable in the current installed declarations; removal is the native stop action for a running PTY |
 | Workspace lifecycle and directory authorization | CodeNomad |
 | Git status/diff/stage/unstage/commit | CodeNomad server |
 | Yolo state, persistence and auto-accept | CodeNomad server |
 | Browser SSE multiplexing | CodeNomad server |
 
-Native Shell remains separate from PTY management. The Status panel lists location-scoped native PTYs, refreshes on PTY events/reconnect, displays native metadata, and allows title updates and ownership-checked removal. Exact `next-17353` exposes no PTY output/read/stream API or separate stop endpoint, so output display and a distinct stop action are unavailable. `packages/opencode-plugin` and the server plugin/background-process paths remain deleted and must not be restored.
+Native Shell remains separate from PTY management. The Status panel lists location-scoped native PTYs, refreshes on PTY events/reconnect, displays native metadata, and allows title updates and ownership-checked removal. Current installed declarations expose no PTY output/read/stream API or separate stop endpoint, so output display and a distinct stop action are unavailable. `packages/opencode-plugin` and the server plugin/background-process paths remain deleted and must not be restored.
 
 ## Persistence
 
