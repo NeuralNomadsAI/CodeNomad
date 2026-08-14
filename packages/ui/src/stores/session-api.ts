@@ -68,9 +68,7 @@ import {
 import {
   PROJECT_SESSION_LIST_LIMIT,
   buildProjectSessionListOptions,
-  filterProjectScopedSessions,
-  getAuthoritativelyMissingSessionIds,
-  isProjectSessionListComplete,
+  getUniqueSessionDirectories,
 } from "./session-list-options"
 import { mergeFetchedSessionRuntimeState, resolveAuthoritativeGenerationRecovery } from "./session-generation-recovery"
 
@@ -106,8 +104,6 @@ type V2SessionListOptions = {
 
 type ProjectSessionListResponse = {
   data: SDKSession[]
-  listedIds: Set<string>
-  complete: boolean
 }
 
 function getKnownParentId(session: SDKSession | Session): string | null | undefined {
@@ -133,15 +129,24 @@ function hasMissingParentChain(session: SDKSession, loaded: Map<string, SDKSessi
 
 async function fetchV2Sessions(instanceId: string, options: V2SessionListOptions): Promise<ProjectSessionListResponse> {
   const client = getRootClient(instanceId)
-  const listOptions = buildProjectSessionListOptions(options)
-  const response: SessionsResponse = await client.session.list(listOptions)
-  const data = response.data
-  const allowedDirectories = [options.directory, ...getWorktrees(instanceId).map((worktree) => worktree.directory)]
+  const directories = getUniqueSessionDirectories([
+    options.directory,
+    ...getWorktrees(instanceId).map((worktree) => worktree.directory),
+  ])
+  const responses: SessionsResponse[] = await Promise.all(
+    (directories.length ? directories : [undefined]).map((directory) => client.session.list(
+      buildProjectSessionListOptions({ ...options, directory }),
+    )),
+  )
+  const sessionsById = new Map<string, SDKSession>()
+  for (const response of responses) {
+    for (const session of response.data) {
+      if (!sessionsById.has(session.id)) sessionsById.set(session.id, session)
+    }
+  }
 
   return {
-    data: filterProjectScopedSessions(data, allowedDirectories),
-    listedIds: new Set(data.map((session) => session.id)),
-    complete: isProjectSessionListComplete(data.length),
+    data: Array.from(sessionsById.values()),
   }
 }
 
@@ -244,7 +249,7 @@ async function fetchSessions(instanceId: string, options?: {
     const sessionListOptions = instance.folder ? { directory: instance.folder } : {}
     const existingSessions = new Map(sessions().get(instanceId) ?? new Map<string, Session>())
 
-    log.info("session.list", { instanceId, limit: PROJECT_SESSION_LIST_LIMIT, directory: sessionListOptions.directory, scope: "project" })
+    log.info("session.list", { instanceId, limit: PROJECT_SESSION_LIST_LIMIT, directory: sessionListOptions.directory })
     const [response, activeSessions] = await Promise.all([
       fetchV2Sessions(instanceId, sessionListOptions),
       getRootClient(instanceId).session.active().catch((error) => {
@@ -280,13 +285,6 @@ async function fetchSessions(instanceId: string, options?: {
           : existingSession?.generationRecovery ?? null,
       })
     }
-
-    const remotelyDeletedSessionIds = getAuthoritativelyMissingSessionIds(
-      existingSessions.keys(),
-      response.listedIds,
-      response.complete,
-    )
-    for (const sessionId of remotelyDeletedSessionIds) removeSessionRuntimeState(instanceId, sessionId)
 
     setSessions((prev) => {
       const next = new Map(prev)

@@ -26,6 +26,34 @@ function waitFor(check: () => boolean): Promise<void> {
   })
 }
 
+function locationlessManager(
+  events: OpenCodeEvent[],
+  sessionLocations: Record<string, string | Error>,
+  workspaces = [{ id: "a", path: "/repo-a" }],
+) {
+  let sessionGets = 0
+  const manager = {
+    list: () => workspaces,
+    ownsDirectory: async (workspaceId: string, directory: string) => (
+      workspaces.some((workspace) => workspace.id === workspaceId && workspace.path === directory)
+    ),
+    getSharedServiceClient: async () => ({
+      session: { get: async ({ sessionID }: { sessionID: string }) => {
+        sessionGets++
+        const location = sessionLocations[sessionID]
+        if (location instanceof Error) throw location
+        if (!location) throw new Error("Session not found")
+        return { id: sessionID, location: { directory: location } }
+      } },
+    }),
+    subscribeToSharedService: async (signal?: AbortSignal) => (async function* () {
+      yield* events
+      await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }))
+    })(),
+  } as unknown as WorkspaceManager
+  return { manager, sessionGets: () => sessionGets }
+}
+
 describe("InstanceEventBridge", () => {
   it("routes root and owned worktree events to the logical workspace and caches ownership", async () => {
     const events = [
@@ -124,6 +152,84 @@ describe("InstanceEventBridge", () => {
       bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
       await waitFor(() => received.length === 2)
       assert.deepEqual(received, ["first", "second"])
+    } finally {
+      bridge.shutdown()
+    }
+  })
+
+  it("routes known locationless session events and invalidates the cache after deletion", async () => {
+    const events = [
+      { type: "session.text.delta", data: { sessionID: "known", delta: "one" } },
+      { type: "session.status", data: { sessionID: "known", status: { type: "busy" } } },
+      { type: "session.deleted", data: { sessionID: "known" } },
+      { type: "session.status", data: { sessionID: "known", status: { type: "idle" } } },
+    ] as OpenCodeEvent[]
+    const { manager, sessionGets } = locationlessManager(events, { known: "/repo-a" })
+    const bus = new EventBus()
+    const received: any[] = []
+    bus.on("instance.event", (event) => received.push(event))
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
+      await waitFor(() => received.length === 4)
+      assert.deepEqual(received.map((event) => event.instanceId), ["a", "a", "a", "a"])
+      assert.equal(sessionGets(), 2)
+    } finally {
+      bridge.shutdown()
+    }
+  })
+
+  it("drops an unknown locationless session event", async () => {
+    const events = [{ type: "session.status", data: { sessionID: "unknown", status: { type: "idle" } } }] as OpenCodeEvent[]
+    const { manager, sessionGets } = locationlessManager(events, { unknown: new Error("not found") })
+    const bus = new EventBus()
+    const received: any[] = []
+    bus.on("instance.event", (event) => received.push(event))
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
+      await waitFor(() => sessionGets() === 1)
+      assert.deepEqual(received, [])
+    } finally {
+      bridge.shutdown()
+    }
+  })
+
+  it("broadcasts an unresolvable locationless deletion", async () => {
+    const events = [{ type: "session.deleted", data: { sessionID: "deleted" } }] as OpenCodeEvent[]
+    const workspaces = [{ id: "a", path: "/repo-a" }, { id: "b", path: "/repo-b" }]
+    const { manager, sessionGets } = locationlessManager(events, { deleted: new Error("not found") }, workspaces)
+    const bus = new EventBus()
+    const received: any[] = []
+    bus.on("instance.event", (event) => received.push(event))
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
+      await waitFor(() => received.length === 2)
+      assert.equal(sessionGets(), 1)
+      assert.deepEqual(received.map((event) => event.instanceId), ["a", "b"])
+      assert.deepEqual(received.map((event) => event.event.properties.id), ["deleted", "deleted"])
+    } finally {
+      bridge.shutdown()
+    }
+  })
+
+  it("routes a locationless session only to its owning workspace", async () => {
+    const events = [{ type: "session.status", data: { sessionID: "foreign", status: { type: "idle" } } }] as OpenCodeEvent[]
+    const workspaces = [{ id: "a", path: "/repo-a" }, { id: "b", path: "/repo-b" }]
+    const { manager } = locationlessManager(events, { foreign: "/repo-b" }, workspaces)
+    const bus = new EventBus()
+    const received: any[] = []
+    bus.on("instance.event", (event) => received.push(event))
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
+      await waitFor(() => received.length === 1)
+      assert.equal(received[0].instanceId, "b")
     } finally {
       bridge.shutdown()
     }

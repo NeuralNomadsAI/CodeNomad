@@ -269,6 +269,40 @@ describe("session request authority", () => {
     }
   })
 
+  it("lists each logical root and worktree once without deleting from a potentially incomplete union", async () => {
+    const instanceId = "multi-directory-session-list"
+    const { client, cleanup } = setup(instanceId)
+    await loadTestWorktree(instanceId)
+    const root = session(instanceId, "root")
+    const worktree = { ...session(instanceId, "worktree"), location: { directory: "/worktree" } }
+    const deleted = session(instanceId, "deleted")
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([
+      [root.id, root],
+      [worktree.id, worktree],
+      [deleted.id, deleted],
+    ])))
+    const listOptions: any[] = []
+    ;(client.session as any).list = async (options: any) => {
+      listOptions.push(options)
+      return { data: options.directory === "/worktree"
+        ? [{ ...apiSession(worktree.id), location: { directory: "/worktree" } }]
+        : [apiSession(root.id)] }
+    }
+    ;(client.session as any).active = async () => ({})
+
+    try {
+      await fetchSessions(instanceId)
+
+      assert.deepEqual(listOptions, [
+        { directory: "/work", limit: 10000 },
+        { directory: "/worktree", limit: 10000 },
+      ])
+      assert.deepEqual(Array.from(sessions().get(instanceId)?.keys() ?? []), [root.id, worktree.id, deleted.id])
+    } finally {
+      cleanup()
+    }
+  })
+
   it("refreshes sessions when active status is unavailable", async () => {
     const instanceId = "active-status-unavailable"
     const { client, cleanup } = setup(instanceId)

@@ -82,6 +82,7 @@ class ControlledSharedService {
   private assertCommand(options?: OpenCodeEnsureOptions) {
     const stateRoot = path.join(os.homedir(), ".codenomad", "state", "opencode-v2")
     assert.equal(options?.file, path.join(stateRoot, "opencode", "service.json"))
+    assert.equal(options?.version, "0.0.0-next-17353")
     assert.match(options?.contenderFile ?? "", new RegExp(`contenders-${process.pid}-.*\\.txt$`))
     assert.match(options?.leaseFile ?? "", new RegExp(`leases[/\\\\]process-${process.pid}-.*\\.json$`))
     assert.equal(options?.command?.[0], process.execPath)

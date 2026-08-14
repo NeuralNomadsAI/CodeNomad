@@ -13,6 +13,8 @@ describe("OpenCodeSharedService", () => {
   it("lazily ensures one authenticated service for concurrent callers", async () => {
     let ensureCalls = 0
     let makeCalls = 0
+    const discoveryVersions: unknown[] = []
+    const ensureVersions: unknown[] = []
     const client = {
       location: { get: async () => ({
         directory: "/repo",
@@ -21,9 +23,13 @@ describe("OpenCodeSharedService", () => {
       }) },
     } as unknown as OpenCodeClient
     const service = new OpenCodeSharedService({
-      discover: async () => undefined,
-      ensure: async () => {
+      discover: async (options) => {
+        discoveryVersions.push(options?.version)
+        return undefined
+      },
+      ensure: async (options) => {
         ensureCalls += 1
+        ensureVersions.push(options?.version)
         await new Promise<void>((resolve) => setImmediate(resolve))
         return { url: "http://127.0.0.1:4321", auth: { type: "basic", username: "user", password: "pass" } }
       },
@@ -38,7 +44,7 @@ describe("OpenCodeSharedService", () => {
 
     assert.equal(ensureCalls, 0)
     const [endpoint, resolvedClient, location] = await Promise.all([
-      service.endpoint(),
+      service.endpoint({ version: "0.0.0-next-17353" }),
       service.client(),
       service.validateLocation({ directory: "/repo" }),
     ])
@@ -47,6 +53,27 @@ describe("OpenCodeSharedService", () => {
     assert.strictEqual(resolvedClient, client)
     assert.equal(location.workspaceID, "workspace-1")
     assert.deepEqual([ensureCalls, makeCalls], [1, 1])
+    assert.deepEqual(discoveryVersions, [])
+    assert.deepEqual(ensureVersions, ["0.0.0-next-17353"])
+  })
+
+  it("uses the required version when rediscovering a connected service", async () => {
+    const versions: unknown[] = []
+    const endpoint = { url: "http://127.0.0.1:4321", auth: undefined }
+    const service = new OpenCodeSharedService({
+      discover: async (options) => {
+        versions.push(options?.version)
+        return endpoint
+      },
+      ensure: async () => endpoint,
+      headers: () => undefined,
+      makeClient: () => ({} as OpenCodeClient),
+    })
+
+    await service.endpoint({ version: "0.0.0-next-17353" })
+    await service.endpoint()
+
+    assert.deepEqual(versions, ["0.0.0-next-17353"])
   })
 
   it("uses the generated location, event, and eviction APIs", async () => {

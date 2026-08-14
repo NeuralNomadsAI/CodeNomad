@@ -6,6 +6,7 @@ import { InstanceStreamEvent, InstanceStreamStatus } from "../api-types"
 
 const RECONNECT_DELAY_MS = 1000
 const DIRECTORY_OWNER_CACHE_MS = 2000
+const SESSION_DIRECTORY_CACHE_MS = 2000
 
 interface InstanceEventBridgeOptions {
   workspaceManager: WorkspaceManager
@@ -18,17 +19,18 @@ export class InstanceEventBridge {
   private status: InstanceStreamStatus = "connecting"
   private task?: Promise<void>
   private readonly directoryOwners = new Map<string, { expiresAt: number; owners: Promise<string[]> }>()
+  private readonly sessionDirectories = new Map<string, { expiresAt: number; directory: Promise<string | undefined> }>()
   private readonly onWorkspaceStarted = (event: { workspace: { id: string } }) => {
-    this.directoryOwners.clear()
+    this.clearLocationCaches()
     if (!this.task) this.task = this.run()
     else this.publishStatus(event.workspace.id, this.status)
   }
   private readonly onWorkspaceStopped = (event: { workspaceId: string }) => {
-    this.directoryOwners.clear()
+    this.clearLocationCaches()
     this.publishStatus(event.workspaceId, "disconnected", "workspace stopped")
   }
   private readonly onWorkspaceError = (event: { workspace: { id: string } }) => {
-    this.directoryOwners.clear()
+    this.clearLocationCaches()
     this.publishStatus(event.workspace.id, "disconnected", "workspace error")
   }
 
@@ -71,11 +73,37 @@ export class InstanceEventBridge {
   }
 
   private async publishEvent(event: OpenCodeEvent) {
-    const directory = event.location?.directory
-    if (!directory) return
+    const sessionId = this.sessionId(event)
+    if (event.type === "session.moved" && sessionId) this.sessionDirectories.delete(sessionId)
+
+    const directory = event.location?.directory ?? (sessionId ? await this.resolveSessionDirectory(sessionId) : undefined)
+    if (!directory) {
+      if (event.type === "session.deleted" && sessionId) {
+        // Deletion can make session.get return 404 before the event arrives. Session IDs are
+        // service-global, so notifying every logical workspace cannot delete another session.
+        const compatibleEvent: InstanceStreamEvent = {
+          ...event,
+          properties: this.compatibilityProperties(event),
+        }
+        for (const workspace of this.options.workspaceManager.list()) {
+          this.options.eventBus.publish({ type: "instance.event", instanceId: workspace.id, event: compatibleEvent })
+        }
+        this.sessionDirectories.delete(sessionId)
+      }
+      return
+    }
+    if (sessionId) {
+      this.sessionDirectories.set(sessionId, {
+        expiresAt: Date.now() + SESSION_DIRECTORY_CACHE_MS,
+        directory: Promise.resolve(directory),
+      })
+    }
 
     const instanceIds = await this.resolveDirectoryOwners(directory)
-    if (instanceIds.length === 0) return
+    if (instanceIds.length === 0) {
+      if (event.type === "session.deleted" && sessionId) this.sessionDirectories.delete(sessionId)
+      return
+    }
 
     // The server's auto-accept boundary still reads the legacy property name.
     const compatibleEvent: InstanceStreamEvent = {
@@ -85,6 +113,28 @@ export class InstanceEventBridge {
     for (const instanceId of instanceIds) {
       this.options.eventBus.publish({ type: "instance.event", instanceId, event: compatibleEvent })
     }
+    if (event.type === "session.deleted" && sessionId) this.sessionDirectories.delete(sessionId)
+  }
+
+  private sessionId(event: OpenCodeEvent): string | undefined {
+    const sessionId = (event.data as { sessionID?: unknown }).sessionID
+    return typeof sessionId === "string" && sessionId ? sessionId : undefined
+  }
+
+  private resolveSessionDirectory(sessionId: string): Promise<string | undefined> {
+    const now = Date.now()
+    const cached = this.sessionDirectories.get(sessionId)
+    if (cached && cached.expiresAt > now) return cached.directory
+
+    const directory = this.options.workspaceManager.getSharedServiceClient()
+      .then((client) => client.session.get({ sessionID: sessionId }))
+      .then((session) => session.location.directory)
+      .catch((error) => {
+        this.options.logger.warn({ err: error, sessionId }, "Failed to resolve instance event session location")
+        return undefined
+      })
+    this.sessionDirectories.set(sessionId, { expiresAt: now + SESSION_DIRECTORY_CACHE_MS, directory })
+    return directory
   }
 
   private resolveDirectoryOwners(directory: string): Promise<string[]> {
@@ -103,6 +153,11 @@ export class InstanceEventBridge {
       })
     this.directoryOwners.set(directory, { expiresAt: now + DIRECTORY_OWNER_CACHE_MS, owners })
     return owners
+  }
+
+  private clearLocationCaches(): void {
+    this.directoryOwners.clear()
+    this.sessionDirectories.clear()
   }
 
   private compatibilityProperties(event: OpenCodeEvent): Record<string, unknown> {

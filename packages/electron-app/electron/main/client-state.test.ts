@@ -100,8 +100,8 @@ test("first shared primary deterministically migrates legacy host envelopes", as
   const manager = new ClientStateManager(electron, undefined, { crossHostElectionDirectory: election, legacyTauriDataPath: tauri })
   assert.deepEqual(manager.loadClientState().snapshot, { savedAt: 20, host: "tauri" })
   assert.equal(manager.getWindowState(), undefined)
-  assert.equal(existsSync(join(electron, "client-state.json")), false)
-  assert.equal(existsSync(join(tauri, "client-state.json")), false)
+  assert.equal(existsSync(join(electron, "client-state.json")), true)
+  assert.equal(existsSync(join(tauri, "client-state.json")), true)
   await manager.drainAndReleasePrimary()
 })
 
@@ -130,20 +130,41 @@ test("legacy migration does not resurrect a snapshot after clear", async (t) => 
   await manager.drainAndReleasePrimary()
 })
 
-test("legacy cleanup failure cannot abort startup after shared state replacement", async (t) => {
+test("V1 shared state is copied once and V2 mutations remain isolated", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "codenomad-migration-"))
-  const electron = join(root, "electron"), shared = join(root, "shared"), election = join(shared, "election")
-  mkdirSync(electron, { recursive: true })
+  const electron = join(root, "electron"), shared = join(root, "shared"), v2 = join(shared, "v2"), election = join(v2, "election")
+  const legacyShared = join(shared, "client-state.json"), v2State = join(v2, "client-state.json")
+  mkdirSync(electron, { recursive: true }); mkdirSync(shared, { recursive: true })
   t.after(() => rmSync(root, { recursive: true, force: true }))
-  writeFileSync(join(electron, "client-state.json"), JSON.stringify({ version: 1, restoreEnabled: true, snapshot: { savedAt: 10 } }))
+  const legacyBytes = '{\n  "version": 1, "restoreEnabled": true, "snapshot": { "source": "v1" }, "v1Only": true\n}'
+  writeFileSync(legacyShared, legacyBytes)
+  writeFileSync(join(electron, "client-state.json"), JSON.stringify({ version: 1, restoreEnabled: true, snapshot: { source: "host-local" } }))
 
   const manager = new ClientStateManager(electron, undefined, {
     crossHostElectionDirectory: election,
-    removeLegacyState: () => { throw new Error("injected cleanup failure") },
+    legacySharedStatePath: legacyShared,
   })
-  assert.deepEqual(manager.loadClientState().snapshot, { savedAt: 10 })
-  assert.equal(existsSync(join(shared, "client-state.json")), true)
+  assert.equal(readFileSync(v2State, "utf8"), legacyBytes)
+  assert.deepEqual(manager.loadClientState().snapshot, { source: "v1" })
+  await manager.saveClientState({ source: "v2-save" })
+  assert.equal(JSON.parse(readFileSync(v2State, "utf8")).snapshot.source, "v2-save")
+  assert.equal(readFileSync(legacyShared, "utf8"), legacyBytes)
+  assert.equal(await manager.setRestoreEnabled(false), true)
+  assert.equal(JSON.parse(readFileSync(v2State, "utf8")).restoreEnabled, false)
+  assert.equal(readFileSync(legacyShared, "utf8"), legacyBytes)
+  assert.equal(await manager.clearClientState(), true)
+  assert.equal(readFileSync(legacyShared, "utf8"), legacyBytes)
+  assert.equal(JSON.parse(readFileSync(join(electron, "client-state.json"), "utf8")).snapshot.source, "host-local")
   await manager.drainAndReleasePrimary()
+
+  const restarted = new ClientStateManager(electron, undefined, {
+    crossHostElectionDirectory: election,
+    legacySharedStatePath: legacyShared,
+  })
+  assert.equal(restarted.loadClientState().restoreEnabled, false)
+  assert.notEqual(readFileSync(v2State, "utf8"), legacyBytes)
+  assert.equal(readFileSync(legacyShared, "utf8"), legacyBytes)
+  await restarted.drainAndReleasePrimary()
 })
 
 test("ownership loss immediately disables restore reads and mutations", async (t) => {

@@ -109,17 +109,22 @@ impl ClientState {
     pub fn initialize(app: &AppHandle) -> Self {
         match app.path().app_data_dir() {
             Ok(app_data_dir) => {
-                match (cross_host::election_directory(), cross_host::state_path()) {
-                    (Ok(election_dir), Ok(state_path)) => {
+                match (
+                    cross_host::election_directory(),
+                    cross_host::state_path(),
+                    cross_host::legacy_state_path(),
+                ) {
+                    (Ok(election_dir), Ok(state_path), Ok(legacy_state_path)) => {
                         let legacy_electron = cross_host::legacy_electron_data_directory();
                         Self::initialize_managed_at_with_election(
                             &app_data_dir,
                             &election_dir,
                             &state_path,
+                            Some(&legacy_state_path),
                             legacy_electron.as_deref(),
                         )
                     }
-                    (Err(err), _) | (_, Err(err)) => {
+                    (Err(err), _, _) | (_, Err(err), _) | (_, _, Err(err)) => {
                         eprintln!("[client-state] initialization failed; restore disabled: {err}");
                         Self::disabled(app_data_dir.join(CLIENT_STATE_FILENAME))
                     }
@@ -144,12 +149,14 @@ impl ClientState {
         app_data_dir: &Path,
         election_dir: &Path,
         state_path: &Path,
+        legacy_shared_state_path: Option<&Path>,
         legacy_electron_data_dir: Option<&Path>,
     ) -> Self {
         Self::initialize_at_with_writer_and_election(
             app_data_dir,
             election_dir,
             state_path,
+            legacy_shared_state_path,
             legacy_electron_data_dir,
             std::sync::Arc::new(write_atomically),
         )
@@ -212,6 +219,7 @@ impl ClientState {
             &app_data_dir.join(".cross-host-election"),
             &app_data_dir.join(CLIENT_STATE_FILENAME),
             None,
+            None,
             write_state,
         )
     }
@@ -220,6 +228,7 @@ impl ClientState {
         app_data_dir: &Path,
         election_dir: &Path,
         state_path: &Path,
+        legacy_shared_state_path: Option<&Path>,
         legacy_electron_data_dir: Option<&Path>,
         write_state: StateWriter,
     ) -> Result<Self, String> {
@@ -235,6 +244,11 @@ impl ClientState {
             election_dir,
             legacy_electron_data_dir,
         )?;
+        if registration.is_primary() && !state_path.exists() {
+            if let Some(legacy_path) = legacy_shared_state_path {
+                copy_legacy_shared_state(legacy_path, state_path, &|| registration.is_primary())?;
+            }
+        }
         let future_legacy =
             !state_path.exists() && has_future_legacy_state(app_data_dir, legacy_electron_data_dir);
         if registration.is_primary() && !state_path.exists() && !future_legacy {
@@ -615,24 +629,44 @@ fn migrate_legacy_state(
             .map_err(|err| format!("failed to create shared client-state directory: {err}"))?;
     }
     write_atomically(state_path, &bytes, ownership_valid)?;
-    for path in [
-        electron_data_dir.map(|path| path.join(CLIENT_STATE_FILENAME)),
-        Some(tauri_data_dir.join(CLIENT_STATE_FILENAME)),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        match fs::remove_file(path) {
-            Ok(()) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => {
-                return Err(format!(
-                    "failed to remove migrated legacy client state: {err}"
-                ))
-            }
-        }
-    }
     Ok(())
+}
+
+fn copy_legacy_shared_state(
+    legacy_path: &Path,
+    state_path: &Path,
+    ownership_valid: &dyn Fn() -> bool,
+) -> Result<(), String> {
+    if state_path.exists() {
+        return Ok(());
+    }
+    let bytes = match fs::read(legacy_path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(format!("failed to read legacy shared client state: {err}")),
+    };
+    let parent = state_path
+        .parent()
+        .ok_or_else(|| format!("state path has no parent: {}", state_path.display()))?;
+    fs::create_dir_all(parent)
+        .map_err(|err| format!("failed to create shared client-state directory: {err}"))?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|err| format!("failed to create temporary state file: {err}"))?;
+    temporary
+        .write_all(&bytes)
+        .and_then(|_| temporary.as_file().sync_all())
+        .map_err(|err| format!("failed to copy legacy shared client state: {err}"))?;
+    if !ownership_valid() {
+        return Err("Client state ownership changed before atomic replacement".to_string());
+    }
+    match temporary.persist_noclobber(state_path) {
+        Ok(_) => Ok(()),
+        Err(err) if err.error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(err) => Err(format!(
+            "failed to publish copied legacy shared client state: {}",
+            err.error
+        )),
+    }
 }
 
 fn serialized_value_size(value: &Value) -> Result<usize, String> {

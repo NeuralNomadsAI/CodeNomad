@@ -5,51 +5,34 @@ import { applySessionPage, getDefaultSessionPaginationState } from "./session-pa
 import {
   PROJECT_SESSION_LIST_LIMIT,
   buildProjectSessionListOptions,
-  filterProjectScopedSessions,
-  getAuthoritativelyMissingSessionIds,
-  isProjectSessionListComplete,
+  getUniqueSessionDirectories,
 } from "./session-list-options.ts"
 
 describe("project session list loading", () => {
-  it("builds a one-shot project-scoped request without pagination params", () => {
+  it("builds a native directory request without fake scope or pagination params", () => {
     const options = buildProjectSessionListOptions({ directory: "/tmp/project", search: "worktree" })
 
     assert.deepEqual(options, {
       directory: "/tmp/project",
       search: "worktree",
       limit: PROJECT_SESSION_LIST_LIMIT,
-      scope: "project",
     })
+    assert.equal("scope" in options, false)
     assert.equal("start" in options, false)
     assert.equal("cursor" in options, false)
   })
 
-  it("filters project-scoped results to the root and known worktree directories", () => {
-    const sessions = [
-      { id: "root", directory: "/repo" },
-      { id: "worktree", directory: "/repo/.codenomad/worktrees/feature" },
-      { id: "sibling", directory: "/other" },
-      { id: "unknown" },
-    ]
-
+  it("queries each unique logical root and known worktree directory", () => {
     assert.deepEqual(
-      filterProjectScopedSessions(sessions, ["/repo", "/repo/.codenomad/worktrees/feature"]).map((session) => session.id),
-      ["root", "worktree", "unknown"],
+      getUniqueSessionDirectories(["/repo", "/repo", "/repo/.codenomad/worktrees/feature"]),
+      ["/repo", "/repo/.codenomad/worktrees/feature"],
     )
   })
 
-  it("normalizes Windows paths when filtering project-scoped results", () => {
-    const sessions = [
-      { id: "root", directory: String.raw`C:\Repo` },
-      { id: "worktree", directory: "c:/repo/.codenomad/worktrees/feature/" },
-      { id: "other", directory: String.raw`C:\Other` },
-    ]
-
+  it("normalizes Windows paths when deduplicating directories", () => {
     assert.deepEqual(
-      filterProjectScopedSessions(sessions, ["c:/repo/", String.raw`C:\Repo\.codenomad\worktrees\feature`]).map(
-        (session) => session.id,
-      ),
-      ["root", "worktree"],
+      getUniqueSessionDirectories([String.raw`C:\Repo`, "c:/repo/", String.raw`C:\Repo\.codenomad\worktrees\feature`]),
+      [String.raw`C:\Repo`, String.raw`C:\Repo\.codenomad\worktrees\feature`],
     )
   })
 
@@ -70,17 +53,4 @@ describe("project session list loading", () => {
     assert.equal(next.nextCursor, undefined)
   })
 
-  it("reconciles sessions deleted while disconnected only from a complete refresh", () => {
-    const existing = ["retained", "outside-current-worktree", "deleted-remotely"]
-    const listed = ["retained", "outside-current-worktree"]
-
-    assert.deepEqual(getAuthoritativelyMissingSessionIds(existing, listed, true), ["deleted-remotely"])
-    assert.equal(isProjectSessionListComplete(PROJECT_SESSION_LIST_LIMIT - 1), true)
-    assert.equal(isProjectSessionListComplete(PROJECT_SESSION_LIST_LIMIT), false)
-    assert.deepEqual(
-      getAuthoritativelyMissingSessionIds(existing, listed, false),
-      [],
-      "a result capped at the request limit may be truncated",
-    )
-  })
 })

@@ -17,6 +17,8 @@ The migration removes the V1 compatibility layer rather than maintaining both in
 - Use browser `EventSource` as the single desktop and web event transport; the duplicate Rust-native Tauri transport was removed.
 - Reconcile session state through `session.active()` after reconnecting so missed events do not leave stale working states.
 - Route events from owned Git worktrees to their corresponding logical CodeNomad workspace.
+- Query native sessions for every known root and worktree directory instead of relying on an unsupported project-scope parameter.
+- Resolve locationless session events through native session ownership so prompt status and output reach the correct logical workspace.
 
 ## Removed Legacy Components
 
@@ -42,7 +44,9 @@ The migration removes the V1 compatibility layer rather than maintaining both in
 - Prevent OpenCode `Set-Cookie` headers from being relayed to the browser.
 - Avoid logging unredacted secret-bearing proxy request bodies.
 - Share a consistent service registration location between Windows and WSL.
+- Require the shared service to match the pinned `0.0.0-next-17353` version.
 - Stop a shared service only when CodeNomad can prove that its own process started it.
+- Isolate V2 restore state under `~/.codenomad/client-state/v2` and copy V1 state non-destructively on first launch, preserving downgrade history.
 
 ## Expected Benefits
 

@@ -24,6 +24,7 @@ import {
 import { isPathOwnedByWorktree, resolveWorktreeSlugForDirectory } from "./worktree-directory"
 
 const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
+const OPENCODE_SERVICE_VERSION = "0.0.0-next-17353"
 const ORDINARY_CREATION_OWNER = ""
 const WORKSPACE_STATE = Symbol("workspaceState")
 const SERVICE_CONTENDER_FILE = path.join(SERVICE_STATE_ROOT, `contenders-${process.pid}-${randomUUID()}.txt`)
@@ -435,6 +436,7 @@ export class WorkspaceManager {
     })
     const ensureOptions: OpenCodeEnsureOptions = {
       file: SERVICE_REGISTRATION_FILE,
+      version: OPENCODE_SERVICE_VERSION,
       command: launch.command,
       contenderFile: SERVICE_CONTENDER_FILE,
       leaseFile: SERVICE_LEASE_FILE,

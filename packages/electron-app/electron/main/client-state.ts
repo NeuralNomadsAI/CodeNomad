@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { closeSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { open, rename, rm } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import {
@@ -18,6 +18,7 @@ import {
   crossHostParticipants,
   resolveCrossHostElectionDirectory,
   resolveCrossHostStatePath,
+  resolveLegacyCrossHostStatePath,
   resolveLegacyTauriDataDirectory,
   type CrossHostLeaseDependencies,
 } from "./client-state-cross-host"
@@ -65,9 +66,9 @@ export type ClientStateWriter = (
 interface ClientStateManagerOptions {
   crossHostElectionDirectory?: string
   crossHostDependencies?: CrossHostLeaseDependencies
+  legacySharedStatePath?: string | null
   legacyTauriDataPath?: string | null
   processOwner?: ProcessOwner
-  removeLegacyState?(path: string): void
 }
 
 async function writeClientStateTemporary(temporaryPath: string, serializedState: string): Promise<void> {
@@ -213,11 +214,15 @@ export class ClientStateManager {
       this.primary = false
     }
     if (this.isPrimary) {
+      const legacySharedStatePath = options?.legacySharedStatePath === undefined
+        ? (options?.crossHostElectionDirectory ? null : resolveLegacyCrossHostStatePath())
+        : options.legacySharedStatePath
+      this.copyLegacySharedStateIfNeeded(legacySharedStatePath)
       const legacyPaths = [
         ["electron", join(userDataPath, CLIENT_STATE_FILENAME)],
         ...(legacyTauriDataPath ? [["tauri", join(legacyTauriDataPath, CLIENT_STATE_FILENAME)] as const] : []),
       ] as ReadonlyArray<readonly ["electron" | "tauri", string]>
-      this.migrateLegacyStateIfNeeded(legacyPaths, options?.removeLegacyState)
+      this.migrateLegacyStateIfNeeded(legacyPaths)
       const futureLegacyBlocked = this.unsupportedFutureEnvelope
       const persisted = this.readState()
       this.state = futureLegacyBlocked
@@ -379,7 +384,6 @@ export class ClientStateManager {
 
   private migrateLegacyStateIfNeeded(
     paths: ReadonlyArray<readonly ["electron" | "tauri", string]>,
-    removeLegacyState = (path: string) => rmSync(path, { force: true }),
   ): void {
     try {
       readFileSync(this.statePath)
@@ -412,12 +416,42 @@ export class ClientStateManager {
       descriptor = undefined
       this.assertReplacementAllowed()
       renameSync(temporaryPath, this.statePath)
-      for (const [, path] of paths) {
-        try {
-          removeLegacyState(path)
-        } catch (error) {
-          console.warn(`[client-state] failed to remove migrated legacy state at ${path}`, error)
-        }
+    } finally {
+      if (descriptor !== undefined) closeSync(descriptor)
+      rm(temporaryPath, { force: true }).catch(() => {})
+    }
+  }
+
+  private copyLegacySharedStateIfNeeded(legacyPath: string | null): void {
+    if (!legacyPath) return
+    try {
+      readFileSync(this.statePath)
+      return
+    } catch (error) {
+      if (!hasErrorCode(error, "ENOENT")) return
+    }
+
+    let bytes: Buffer
+    try {
+      bytes = readFileSync(legacyPath)
+    } catch (error) {
+      if (hasErrorCode(error, "ENOENT")) return
+      throw error
+    }
+
+    const temporaryPath = join(dirname(this.statePath), `.${CLIENT_STATE_FILENAME}.${this.owner.pid}.${this.owner.runToken}.shared-migration.tmp`)
+    let descriptor: number | undefined
+    try {
+      descriptor = openSync(temporaryPath, "wx", 0o600)
+      writeFileSync(descriptor, bytes)
+      fsyncSync(descriptor)
+      closeSync(descriptor)
+      descriptor = undefined
+      this.assertReplacementAllowed()
+      try {
+        linkSync(temporaryPath, this.statePath)
+      } catch (error) {
+        if (!hasErrorCode(error, "EEXIST")) throw error
       }
     } finally {
       if (descriptor !== undefined) closeSync(descriptor)
