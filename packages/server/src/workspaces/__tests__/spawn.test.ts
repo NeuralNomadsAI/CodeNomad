@@ -1,10 +1,18 @@
 import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { describe, it } from "node:test"
 
-import { buildServiceLaunchSpec, buildWindowsSpawnSpec, parseWslUncPath, resolveWslWorkingDirectory } from "../spawn"
+import {
+  buildServiceLaunchSpec,
+  buildWindowsSpawnSpec,
+  parseWslUncPath,
+  resolveWslHostDirectory,
+  resolveWslServiceDirectory,
+  resolveWslWorkingDirectory,
+} from "../spawn"
 
 describe("parseWslUncPath", () => {
   it("parses WSL UNC paths into distro and linux path", () => {
@@ -145,11 +153,36 @@ describe("buildWindowsSpawnSpec", () => {
       {
         env: {
           NODE_EXTRA_CA_CERTS: String.raw`C:\certs\root.pem`,
+          OPENCODE_DB: String.raw`C:\state\opencode.db`,
         },
       },
     )
 
-    assert.equal(spec.env?.WSLENV, "NODE_EXTRA_CA_CERTS/p")
+    assert.equal(spec.env?.WSLENV, "NODE_EXTRA_CA_CERTS/p:OPENCODE_DB/p")
+  })
+
+  it("preserves a Linux-native OPENCODE_DB path in WSL", () => {
+    const spec = buildWindowsSpawnSpec(
+      String.raw`\\wsl.localhost\Ubuntu\home\dev\.opencode\bin\opencode`,
+      ["serve"],
+      { env: { OPENCODE_DB: "/home/dev/.local/share/opencode.db", WSLENV: "OPENCODE_DB/lp" } },
+    )
+
+    assert.equal(spec.env?.OPENCODE_DB, "/home/dev/.local/share/opencode.db")
+    assert.equal(spec.env?.WSLENV, "OPENCODE_DB/l")
+  })
+
+  it("marks Windows and UNC OPENCODE_DB paths for WSL translation", () => {
+    for (const database of [String.raw`C:\state\opencode.db`, String.raw`\\server\state\opencode.db`]) {
+      const spec = buildWindowsSpawnSpec(
+        String.raw`\\wsl.localhost\Ubuntu\home\dev\.opencode\bin\opencode`,
+        ["serve"],
+        { env: { OPENCODE_DB: database } },
+      )
+
+      assert.equal(spec.env?.OPENCODE_DB, database)
+      assert.equal(spec.env?.WSLENV, "OPENCODE_DB/p")
+    }
   })
 
   it("propagates requested configured variables into WSL", () => {
@@ -215,6 +248,54 @@ describe("buildWindowsSpawnSpec", () => {
     ])
   })
 
+})
+
+describe("resolveWslServiceDirectory", () => {
+  it("converts WSL UNC paths without invoking wslpath", () => {
+    assert.equal(
+      resolveWslServiceDirectory(String.raw`\\wsl.localhost\Ubuntu\home\dev\workspace`, "Ubuntu", () => {
+        throw new Error("wslpath should not run")
+      }),
+      "/home/dev/workspace",
+    )
+  })
+
+  it("uses wslpath for Windows workspace paths", () => {
+    assert.equal(
+      resolveWslServiceDirectory(String.raw`C:\Users\dev\workspace`, "Ubuntu", (folder, distro) => {
+        assert.equal(folder, String.raw`C:\Users\dev\workspace`)
+        assert.equal(distro, "Ubuntu")
+        return "/mnt/c/Users/dev/workspace"
+      }),
+      "/mnt/c/Users/dev/workspace",
+    )
+  })
+
+  it("bounds Windows path translation and returns null on timeout", () => {
+    let timeoutMs = 0
+    const startedAt = Date.now()
+    assert.equal(
+      resolveWslServiceDirectory(String.raw`C:\Users\dev\workspace`, "Ubuntu", (_folder, _distro, timeout) => {
+        timeoutMs = timeout
+        const result = spawnSync(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { timeout })
+        assert.equal((result.error as NodeJS.ErrnoException | undefined)?.code, "ETIMEDOUT")
+        return result.status === 0 ? result.stdout.toString() : undefined
+      }, 25),
+      null,
+    )
+    assert.equal(timeoutMs, 25)
+    assert.ok(Date.now() - startedAt < 1_000)
+  })
+
+  it("maps service paths back to host paths with the same bound", () => {
+    assert.equal(
+      resolveWslHostDirectory("/mnt/c/Users/dev/workspace", "Ubuntu", (folder, distro, timeout) => {
+        assert.deepEqual([folder, distro, timeout], ["/mnt/c/Users/dev/workspace", "Ubuntu", 23])
+        return String.raw`C:\Users\dev\workspace`
+      }, 23),
+      String.raw`C:\Users\dev\workspace`,
+    )
+  })
 })
 
 describe("buildServiceLaunchSpec", () => {

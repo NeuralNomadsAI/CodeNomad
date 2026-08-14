@@ -3,6 +3,7 @@ import { access, mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from
 import os from "node:os"
 import path from "node:path"
 import { describe, it } from "node:test"
+import { createHash } from "node:crypto"
 import type { OpenCodeClient } from "@opencode-ai/client"
 import type { Endpoint, Info } from "@opencode-ai/client/service"
 
@@ -84,7 +85,7 @@ describe("OpenCodeSharedService", () => {
       location: {
         get: async (...args: unknown[]) => {
           calls.push(["get", ...args])
-          return { directory: "/repo", project: { id: "p", directory: "/repo", canonical: "/repo" } }
+          return { directory: "/repo", workspaceID: "ws", project: { id: "p", directory: "/repo", canonical: "/repo" } }
         },
       },
       event: { subscribe: (...args: unknown[]) => { calls.push(["subscribe", ...args]); return events } },
@@ -105,10 +106,66 @@ describe("OpenCodeSharedService", () => {
     await service.evict({ directory: "/repo", workspaceID: "ws" }, { signal })
 
     assert.deepEqual(calls, [
-      ["get", { location: { directory: "/repo", workspace: "ws" } }, { signal }],
+      ["get", { location: { directory: "/repo" } }, { signal }],
       ["subscribe", { signal }],
-      ["evict", { location: { directory: "/repo", workspace: "ws" } }, { signal }],
     ])
+  })
+
+  it("rejects a changed launch signature instead of reusing the connected daemon", async () => {
+    const endpoint = { url: "http://127.0.0.1:4321", auth: undefined }
+    const service = new OpenCodeSharedService({
+      discover: async () => endpoint,
+      ensure: async () => endpoint,
+      headers: () => undefined,
+      makeClient: () => ({} as OpenCodeClient),
+    })
+    await service.endpoint({ version: "0.0.0-next-17353", command: ["first"], environment: { OPENCODE_DB: "/one" } })
+    for (const options of [
+      { version: "other", command: ["first"], environment: { OPENCODE_DB: "/one" } },
+      { version: "0.0.0-next-17353", command: ["second"], environment: { OPENCODE_DB: "/one" } },
+      { version: "0.0.0-next-17353", command: ["first"], environment: { OPENCODE_DB: "/two" } },
+    ]) {
+      await assert.rejects(service.endpoint(options), /launch configuration/)
+    }
+  })
+
+  it("validates a caller workspace selector against the canonical location", async () => {
+    const service = new OpenCodeSharedService({
+      discover: async () => undefined,
+      ensure: async () => ({ url: "http://127.0.0.1:4321" }),
+      headers: () => undefined,
+      makeClient: () => ({ location: { get: async () => ({
+        directory: "/repo", workspaceID: "canonical", project: { id: "p", directory: "/repo", canonical: "/repo" },
+      }) } }) as unknown as OpenCodeClient,
+    })
+    await assert.rejects(service.validateLocation({ directory: "/repo", workspaceID: "foreign" }), /does not match/)
+  })
+
+  it("defers location eviction until the last shared-service owner shuts down", async () => {
+    const state = await serviceState("codenomad-service-deferred-eviction-")
+    let evictions = 0
+    const client = { debug: { location: { evict: async () => { evictions += 1 } } } } as unknown as OpenCodeClient
+    const service = new OpenCodeSharedService({
+      discover: async () => ({ url: state.info.url, auth: { type: "basic", username: "opencode", password: state.info.password } }),
+      ensure: async (options) => {
+        options?.onStart?.("missing")
+        return { url: state.info.url, auth: { type: "basic", username: "opencode", password: state.info.password } }
+      },
+      headers: () => undefined,
+      makeClient: () => client,
+      requestStop: async () => true,
+      waitForStop: async () => true,
+      getProcessIdentity: async (pid, _timeoutMs, namespace = { kind: "host" }) => processIdentity(pid, undefined, namespace),
+    })
+    try {
+      await service.endpoint(state.options("owner", true))
+      await service.evict({ directory: "/repo", workspaceID: "workspace" })
+      assert.equal(evictions, 0)
+      await service.shutdown()
+      assert.equal(evictions, 1)
+    } finally {
+      await rm(state.root, { recursive: true, force: true })
+    }
   })
 
   it("rejects malformed endpoints and locations", async () => {
@@ -293,6 +350,12 @@ describe("OpenCodeSharedService", () => {
   it("quarantines stale registration after deterministic PID reuse without signaling it", async () => {
     const state = await serviceState("codenomad-service-stale-registration-")
     const reusedPid = state.info.pid
+    const options = {
+      ...state.options("successor", false),
+      command: [process.execPath, "-e", "process.exit(0)"],
+      timeoutMs: 50,
+    }
+    const launchSignature = signature(options)
     await writeFile(state.lease("dead-owner"), JSON.stringify({
       version: 1,
       identity: "dead-owner",
@@ -301,12 +364,14 @@ describe("OpenCodeSharedService", () => {
       createdAt: 1,
       updatedAt: 1,
       state: "active",
+      launchSignature,
       service: {
         info: state.info,
         endpoint: { url: state.info.url, auth: { type: "basic", username: "opencode", password: state.info.password } },
         registrationFile: state.file,
         nativePid: true,
         processIdentity: processIdentity(reusedPid, "old-service-process"),
+        launchSignature,
       },
     }))
     const service = new OpenCodeSharedService({
@@ -321,11 +386,7 @@ describe("OpenCodeSharedService", () => {
       makeClient: () => ({} as OpenCodeClient),
     })
     try {
-      await assert.rejects(service.endpoint({
-        ...state.options("successor", false),
-        command: [process.execPath, "-e", "process.exit(0)"],
-        timeoutMs: 50,
-      }), /exited before registration|timed out/)
+      await assert.rejects(service.endpoint(options), /exited before registration|timed out/)
       await assert.rejects(access(state.file))
     } finally {
       await rm(state.root, { recursive: true, force: true })
@@ -336,6 +397,8 @@ describe("OpenCodeSharedService", () => {
     const state = await serviceState("codenomad-service-crash-window-")
     const deadPid = 7654321
     const launchCreatedAt = Date.now() - 1_000
+    const options = state.options("successor", false)
+    const launchSignature = signature(options)
     await writeFile(state.lease("dead-owner"), JSON.stringify({
       version: 1,
       identity: "dead-owner",
@@ -344,6 +407,7 @@ describe("OpenCodeSharedService", () => {
       createdAt: launchCreatedAt,
       updatedAt: launchCreatedAt,
       state: "active",
+      launchSignature,
       launch: {
         identity: "launch-before-crash",
         createdAt: launchCreatedAt,
@@ -359,7 +423,7 @@ describe("OpenCodeSharedService", () => {
       makeClient: () => ({} as OpenCodeClient),
     })
     try {
-      await service.endpoint(state.options("successor", false))
+      await service.endpoint(options)
       const lease = JSON.parse(await readFile(state.lease("successor"), "utf8"))
       assert.deepEqual(lease.service.processIdentity, processIdentity(state.info.pid))
       assert.equal(lease.service.info.pid, state.info.pid)
@@ -404,6 +468,8 @@ describe("OpenCodeSharedService", () => {
   it("inherits proven ownership from a dead owner lease", async () => {
     const state = await serviceState("codenomad-service-dead-owner-")
     const deadPid = 7654321
+    const options = state.options("peer", false)
+    const launchSignature = signature(options)
     await writeFile(state.lease("dead-owner"), JSON.stringify({
       version: 1,
       identity: "dead-owner",
@@ -412,20 +478,44 @@ describe("OpenCodeSharedService", () => {
       createdAt: 1,
       updatedAt: 1,
       state: "active",
+      launchSignature,
       service: {
         info: state.info,
         endpoint: { url: state.info.url, auth: { type: "basic", username: "opencode", password: state.info.password } },
         registrationFile: state.file,
         nativePid: true,
+        launchSignature,
       },
     }))
     let stops = 0
     const peer = createOwnedService(state, async () => { stops += 1; return true }, false, (pid) => pid !== deadPid)
     try {
-      await peer.endpoint(state.options("peer", false))
+      await peer.endpoint(options)
       await peer.shutdown()
       assert.equal(stops, 1)
       await assert.rejects(access(state.lease("dead-owner")))
+    } finally {
+      await rm(state.root, { recursive: true, force: true })
+    }
+  })
+
+  it("rejects stale ownership proof from a daemon launched with a different OPENCODE_DB", async () => {
+    const state = await serviceState("codenomad-service-stale-signature-")
+    const owner = createOwnedService(state, async () => true)
+    const successor = createOwnedService(state, async () => true, false, () => true)
+    const deadPid = 7654321
+    try {
+      await owner.endpoint({ ...state.options("dead-owner", true), environment: { OPENCODE_DB: "/db/one" } })
+      const staleLease = JSON.parse(await readFile(state.lease("dead-owner"), "utf8"))
+      staleLease.pid = deadPid
+      staleLease.processIdentity = processIdentity(deadPid, "dead-codenomad")
+      await writeFile(state.lease("dead-owner"), JSON.stringify(staleLease))
+
+      await assert.rejects(
+        successor.endpoint({ ...state.options("successor", false), environment: { OPENCODE_DB: "/db/two" } }),
+        /does not match the discovered daemon/,
+      )
+      await assert.rejects(access(state.lease("successor")))
     } finally {
       await rm(state.root, { recursive: true, force: true })
     }
@@ -738,4 +828,15 @@ function processIdentity(
   namespace: ProcessNamespace = { kind: "host" },
 ): ProcessIdentity {
   return { namespace, pid, start }
+}
+
+function signature(options: OpenCodeEnsureOptions): string {
+  const environment = Object.entries(options.environment ?? {}).sort(([left], [right]) => left.localeCompare(right))
+  return createHash("sha256").update(JSON.stringify({
+    command: options.command ?? [],
+    environment,
+    version: options.version ?? null,
+    wslDistro: options.wslDistro ?? null,
+    windowsVerbatimArguments: options.windowsVerbatimArguments ?? false,
+  })).digest("hex")
 }

@@ -6,14 +6,22 @@ import { serverApi } from "../lib/api-client.ts"
 import type { Session } from "../types/session.ts"
 import { addInstance, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
-import { fetchSessions, loadMessages, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
+import { createSession, fetchAgents, fetchProviders, fetchSessions, loadMessages, refreshSessionCatalog, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
+import { getCommands } from "./commands.ts"
 import {
   clearInstanceDeletedSessionAuthority,
   getSessionSearchResultIds,
+  getSessionListIds,
   invalidateSessionMessageLoad,
   loading,
   messagesLoaded,
+  agents,
+  providers,
   sessions,
+  setAgents,
+  setProviders,
+  setActiveSession,
+  setSessionPage,
   setSessions,
 } from "./session-state.ts"
 import { reloadWorktrees } from "./worktrees.ts"
@@ -67,6 +75,8 @@ function setup(instanceId: string) {
     cleanup() {
       messageStoreBus.unregisterInstance(instanceId)
       setSessions((prev) => { const next = new Map(prev); next.delete(instanceId); return next })
+      setAgents((prev) => { const next = new Map(prev); next.delete(instanceId); return next })
+      setProviders((prev) => { const next = new Map(prev); next.delete(instanceId); return next })
       clearInstanceDeletedSessionAuthority(instanceId)
       removeInstance(instanceId, { authoritative: false })
       sdkManager.destroyClientsForInstance(instanceId)
@@ -263,18 +273,19 @@ describe("session request authority", () => {
       assert.equal(sessions().get(instanceId)?.get("compacting")?.runtimeStatusKnown, true)
       assert.deepEqual(statusOptions, [])
       await loadMessages(instanceId, "compacting", { force: true })
-      assert.deepEqual(messageOptions, { sessionID: "compacting" })
+      assert.deepEqual(messageOptions, { sessionID: "compacting", limit: 200, order: "asc" })
     } finally {
       cleanup()
     }
   })
 
-  it("lists each logical root and worktree once without deleting from a potentially incomplete union", async () => {
+  it("lists each logical root and worktree once and reconciles a complete union", async () => {
     const instanceId = "multi-directory-session-list"
     const { client, cleanup } = setup(instanceId)
     await loadTestWorktree(instanceId)
     const root = session(instanceId, "root")
     const worktree = { ...session(instanceId, "worktree"), location: { directory: "/worktree" } }
+    const worktreePageTwo = { ...session(instanceId, "worktree-2"), location: { directory: "/worktree" } }
     const deleted = session(instanceId, "deleted")
     setSessions((prev) => new Map(prev).set(instanceId, new Map([
       [root.id, root],
@@ -284,9 +295,10 @@ describe("session request authority", () => {
     const listOptions: any[] = []
     ;(client.session as any).list = async (options: any) => {
       listOptions.push(options)
-      return { data: options.directory === "/worktree"
-        ? [{ ...apiSession(worktree.id), location: { directory: "/worktree" } }]
-        : [apiSession(root.id)] }
+      if (options.directory !== "/worktree") return { data: [apiSession(root.id)], cursor: {} }
+      return options.cursor
+        ? { data: [{ ...apiSession(worktreePageTwo.id), location: { directory: "/worktree" } }], cursor: {} }
+        : { data: [{ ...apiSession(worktree.id), location: { directory: "/worktree" } }], cursor: { next: "worktree-2" } }
     }
     ;(client.session as any).active = async () => ({})
 
@@ -296,8 +308,217 @@ describe("session request authority", () => {
       assert.deepEqual(listOptions, [
         { directory: "/work", limit: 10000 },
         { directory: "/worktree", limit: 10000 },
+        { directory: "/worktree", cursor: "worktree-2", limit: 10000 },
       ])
-      assert.deepEqual(Array.from(sessions().get(instanceId)?.keys() ?? []), [root.id, worktree.id, deleted.id])
+      assert.deepEqual(Array.from(sessions().get(instanceId)?.keys() ?? []), [root.id, worktree.id, worktreePageTwo.id])
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("keeps missing local sessions when any directory cursor walk is partial", async () => {
+    const instanceId = "partial-multi-directory-session-list"
+    const { client, cleanup } = setup(instanceId)
+    await loadTestWorktree(instanceId)
+    const existing = session(instanceId, "existing")
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[existing.id, existing]])))
+    setSessionPage(instanceId, [existing.id], false, true)
+    ;(client.session as any).list = async (options: any) => {
+      if (options.directory === "/work") return { data: [apiSession("root")], cursor: {} }
+      if (!options.cursor) return { data: [apiSession("worktree")], cursor: { next: "page-2" } }
+      throw new Error("cursor failed")
+    }
+    ;(client.session as any).active = async () => ({})
+
+    try {
+      await fetchSessions(instanceId)
+      assert.deepEqual(Array.from(sessions().get(instanceId)?.keys() ?? []), [existing.id, "root", "worktree"])
+      assert.deepEqual(getSessionListIds(instanceId), [existing.id])
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("loads every ascending message page and hydrates once in page order", async () => {
+    const instanceId = "multi-page-messages", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const options: any[] = []
+    ;(client as any).message = { list: async (input: any) => {
+      options.push(input)
+      return input.cursor
+        ? { data: [apiMessage("message-2", sessionId)], cursor: {} }
+        : { data: [apiMessage("message-1", sessionId)], cursor: { next: "page-2" } }
+    } }
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+
+    try {
+      await loadMessages(instanceId, sessionId)
+      assert.deepEqual(options, [
+        { sessionID: sessionId, limit: 200, order: "asc" },
+        { sessionID: sessionId, limit: 200, cursor: "page-2" },
+      ])
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["message-1", "message-2"])
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("does not replace messages when a later page fails", async () => {
+    const instanceId = "partial-message-pages", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    let failSecondPage = false
+    ;(client as any).message = { list: async (input: any) => {
+      if (input.cursor && failSecondPage) throw new Error("cursor failed")
+      return input.cursor
+        ? { data: [apiMessage("old-2", sessionId)], cursor: {} }
+        : { data: [apiMessage("old-1", sessionId)], cursor: { next: "page-2" } }
+    } }
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+
+    try {
+      await loadMessages(instanceId, sessionId)
+      failSecondPage = true
+      await assert.rejects(loadMessages(instanceId, sessionId, { force: true }), /cursor failed/)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["old-1", "old-2"])
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("keeps session agent ids independent from catalog labels and defaults new sessions", async () => {
+    const instanceId = "cold-agent-list"
+    const { client, cleanup } = setup(instanceId)
+    const created: any[] = []
+    const persisted = { ...session(instanceId, "persisted"), agent: "Build" }
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[persisted.id, persisted]])))
+    ;(client as any).agent = {
+      list: async () => ({ data: [] }),
+      get: async ({ agentID }: any) => ({ data: {
+        id: agentID,
+        name: agentID === "build" ? "Build" : "Plan",
+        description: "",
+        mode: "primary",
+        hidden: false,
+      } }),
+    }
+    ;(client as any).model = { default: async () => ({ data: {
+      id: "model", providerID: "opencode",
+    } }) }
+    ;(client.session as any).create = async (input: any) => {
+      created.push(input)
+      return apiSession("created")
+    }
+
+    try {
+      await fetchAgents(instanceId)
+      assert.deepEqual(agents().get(instanceId)?.map(({ id, name }) => ({ id, name })), [
+        { id: "build", name: "Build" },
+        { id: "plan", name: "Plan" },
+      ])
+      assert.equal(sessions().get(instanceId)?.get("persisted")?.agent, "Build")
+      setSessions((prev) => new Map(prev).set(instanceId, new Map()))
+      await createSession(instanceId)
+      assert.equal(created[0].agent, "build")
+      assert.deepEqual(created[0].model, { providerID: "opencode", id: "model" })
+      assert.equal(sessions().get(instanceId)?.get("created")?.agent, "build")
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("builds a deterministic provider catalog from cold-start model results", async () => {
+    const instanceId = "cold-provider-list"
+    const { client, cleanup } = setup(instanceId)
+    const model = {
+      id: "model", modelID: "model", providerID: "opencode", name: "Model",
+      variants: [], cost: [{ input: 0, output: 0 }], limit: { context: 100, output: 10 },
+    }
+    ;(client as any).provider = { list: async () => ({ data: [] }) }
+    ;(client as any).model = {
+      list: async () => ({ data: [model] }),
+      default: async () => ({ data: model }),
+    }
+
+    try {
+      await fetchProviders(instanceId)
+      assert.deepEqual(providers().get(instanceId)?.map((provider) => ({
+        id: provider.id,
+        name: provider.name,
+        defaultModelId: provider.defaultModelId,
+        models: provider.models.map((item) => item.id),
+      })), [{ id: "opencode", name: "opencode", defaultModelId: "model", models: ["model"] }])
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("refreshes agents, providers, models, and commands for the active session location", async () => {
+    const instanceId = "active-catalog-location"
+    const { client, cleanup } = setup(instanceId)
+    const locations: Array<[string, unknown]> = []
+    const record = (kind: string, input: any) => locations.push([kind, input?.location])
+    ;(client as any).agent = {
+      list: async (input: any) => {
+        record("agent", input)
+        return { data: ["build", "plan"].map((id) => ({ id, name: id, description: "", mode: "primary" })) }
+      },
+    }
+    ;(client as any).provider = { list: async (input: any) => { record("provider", input); return { data: [] } } }
+    ;(client as any).model = {
+      list: async (input: any) => { record("model", input); return { data: [] } },
+      default: async (input: any) => { record("default", input); return { data: null } },
+    }
+    ;(client as any).command = { list: async (input: any) => { record("command", input); return { data: [] } } }
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([
+      ["root", session(instanceId, "root")],
+      ["worktree", { ...session(instanceId, "worktree"), location: { directory: "/worktree", workspaceID: "workspace-1" } }],
+    ])))
+
+    try {
+      setActiveSession(instanceId, "root")
+      await refreshSessionCatalog(instanceId)
+      setActiveSession(instanceId, "worktree")
+      await refreshSessionCatalog(instanceId)
+
+      assert.deepEqual(locations, [
+        ["agent", { directory: "/work" }], ["provider", { directory: "/work" }], ["model", { directory: "/work" }], ["default", { directory: "/work" }], ["command", { directory: "/work" }],
+        ["agent", { directory: "/worktree", workspaceID: "workspace-1" }], ["provider", { directory: "/worktree", workspaceID: "workspace-1" }], ["model", { directory: "/worktree", workspaceID: "workspace-1" }], ["default", { directory: "/worktree", workspaceID: "workspace-1" }], ["command", { directory: "/worktree", workspaceID: "workspace-1" }],
+      ])
+      assert.deepEqual(getCommands(instanceId), [])
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("retries a catalog location after a transient request failure", async () => {
+    const instanceId = "catalog-refresh-retry"
+    const { client, cleanup } = setup(instanceId)
+    let agentCalls = 0
+    let providerCalls = 0
+    let commandCalls = 0
+    ;(client as any).agent = {
+      list: async () => {
+        agentCalls++
+        return { data: ["build", "plan"].map((id) => ({ id, name: id, description: "", mode: "primary" })) }
+      },
+    }
+    ;(client as any).provider = { list: async () => { providerCalls++; return { data: [] } } }
+    ;(client as any).model = {
+      list: async () => ({ data: [] }),
+      default: async () => ({ data: null }),
+    }
+    ;(client as any).command = { list: async () => {
+      commandCalls++
+      if (commandCalls === 1) throw new Error("temporary")
+      return { data: [] }
+    } }
+
+    try {
+      await refreshSessionCatalog(instanceId)
+      await refreshSessionCatalog(instanceId)
+      await refreshSessionCatalog(instanceId)
+
+      assert.deepEqual({ agentCalls, providerCalls, commandCalls }, { agentCalls: 2, providerCalls: 2, commandCalls: 2 })
     } finally {
       cleanup()
     }

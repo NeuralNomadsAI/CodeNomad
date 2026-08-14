@@ -70,8 +70,8 @@ describe("right panel plugin manifests", () => {
       renderYoloModeSection: render,
       renderProviderUsage: render,
       renderPlanSectionContent: render,
+      renderBackgroundProcesses: render,
       renderMcpStatus: render,
-      renderLspStatus: render,
       renderPluginStatus: render,
     })
 
@@ -83,8 +83,8 @@ describe("right panel plugin manifests", () => {
       "yolo-mode",
       "provider-usage",
       "plan",
+      "background-processes",
       "mcp",
-      "lsp",
       "plugins",
     ])
   })

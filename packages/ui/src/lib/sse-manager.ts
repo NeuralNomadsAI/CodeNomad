@@ -1,11 +1,4 @@
 import { createSignal } from "solid-js"
-import {
-  MessageUpdateEvent,
-  MessageRemovedEvent,
-  MessagePartUpdatedEvent,
-  MessagePartRemovedEvent,
-  MessagePartDeltaEvent,
-} from "../types/message"
 import type {
   PermissionAsked,
   PermissionReplied,
@@ -22,6 +15,7 @@ import type {
   SessionRevertStaged,
   SessionStatus2,
   TuiToastShow,
+  V2Event,
 } from "@opencode-ai/client"
 import { serverEvents } from "./server-events"
 import type { WorkspaceEventTransportStatus } from "./event-transport"
@@ -38,14 +32,7 @@ const log = getLogger("sse")
 type InstanceEventPayload = Extract<WorkspaceEventPayload, { type: "instance.event" }>
 type InstanceStatusPayload = Extract<WorkspaceEventPayload, { type: "instance.eventStatus" }>
 
-export interface NativeSessionEvent {
-  type: string
-  data?: {
-    sessionID?: string
-    [key: string]: unknown
-  }
-  location?: { directory?: string }
-}
+export type NativeSessionEvent = V2Event
 
 interface ServerInstanceDisposedEvent {
   type: "server.instance.disposed"
@@ -70,11 +57,6 @@ export interface EventSessionDeleted {
 }
 
 type SSEEvent =
-  | MessageUpdateEvent
-  | MessageRemovedEvent
-  | MessagePartUpdatedEvent
-  | MessagePartRemovedEvent
-  | MessagePartDeltaEvent
   | SessionCreated
   | SessionDeleted
   | SessionCompactionEnded
@@ -92,7 +74,7 @@ type SSEEvent =
   | TuiToastShow
   | ServerInstanceDisposedEvent
   | WorktreeReadyEvent
-  | { type: string; properties?: Record<string, unknown> }
+  | V2Event
 
 const [connectionStatus, setConnectionStatus] = createSignal<Map<string, ConnectionStatus>>(new Map())
 const [transportStatus, setTransportStatus] = createSignal<WorkspaceEventTransportStatus>("connecting")
@@ -140,23 +122,9 @@ class SSEManager {
     }
 
     log.info("Received event", { type: event.type, event })
+    this.onInvalidation?.(instanceId, event as V2Event)
 
     switch (event.type) {
-      case "message.updated":
-        this.onMessageUpdate?.(instanceId, event as MessageUpdateEvent)
-        break
-      case "message.part.updated":
-        this.onMessagePartUpdated?.(instanceId, event as MessagePartUpdatedEvent)
-        break
-      case "message.part.delta":
-        this.onMessagePartDelta?.(instanceId, event as MessagePartDeltaEvent)
-        break
-      case "message.removed":
-        this.onMessageRemoved?.(instanceId, event as MessageRemovedEvent)
-        break
-      case "message.part.removed":
-        this.onMessagePartRemoved?.(instanceId, event as MessagePartRemovedEvent)
-        break
       case "session.created":
         this.onSessionUpdate?.(instanceId, event as SessionCreated)
         break
@@ -210,11 +178,7 @@ class SSEManager {
         }
         break
       default:
-        if (event.type.startsWith("session.")) {
-          this.onNativeSessionEvent?.(instanceId, event as NativeSessionEvent)
-        } else {
-          log.warn("Unknown SSE event type", { type: event.type })
-        }
+        this.onNativeSessionEvent?.(instanceId, event as NativeSessionEvent)
     }
   }
 
@@ -226,11 +190,6 @@ class SSEManager {
     })
   }
 
-  onMessageUpdate?: (instanceId: string, event: MessageUpdateEvent) => void
-  onMessageRemoved?: (instanceId: string, event: MessageRemovedEvent) => void
-  onMessagePartUpdated?: (instanceId: string, event: MessagePartUpdatedEvent) => void
-  onMessagePartDelta?: (instanceId: string, event: MessagePartDeltaEvent) => void
-  onMessagePartRemoved?: (instanceId: string, event: MessagePartRemovedEvent) => void
   onSessionUpdate?: (instanceId: string, event: SessionCreated | SessionRevertStaged | SessionRevertCleared | SessionRevertCommitted) => void
   onSessionDeleted?: (instanceId: string, event: EventSessionDeleted) => void
   onSessionCompacted?: (instanceId: string, event: SessionCompactionEnded) => void
@@ -243,7 +202,7 @@ class SSEManager {
   onQuestionAsked?: (instanceId: string, event: QuestionAsked) => void
   onQuestionAnswered?: (instanceId: string, event: QuestionReplied | QuestionRejected) => void
   onNativeSessionEvent?: (instanceId: string, event: NativeSessionEvent) => void
-  onLspUpdated?: (instanceId: string, event: { type: string }) => void | Promise<void>
+  onInvalidation?: (instanceId: string, event: V2Event) => void
   onInstanceDisposed?: (instanceId: string, event: ServerInstanceDisposedEvent) => void
   onWorktreeReady?: (instanceId: string, event: WorktreeReadyEvent) => void | Promise<void>
   onConnectionLost?: (instanceId: string, reason: string) => void | Promise<void>

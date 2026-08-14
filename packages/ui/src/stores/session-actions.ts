@@ -1,4 +1,5 @@
-import type { ModelRef } from "@opencode-ai/client"
+import type { ModelRef, SessionPromptInput } from "@opencode-ai/client"
+import type { Attachment } from "../types/attachment"
 import { preparePromptDisplayText } from "../lib/prompt-display-metadata"
 import { instances } from "./instances"
 import { getRootClient } from "./opencode-client"
@@ -69,6 +70,19 @@ function getThinkingVariantToSend(instanceId: string, model: { providerId: strin
   return keys.includes(selected) ? selected : undefined
 }
 
+function getNativeModel(instanceId: string, model: { providerId: string; modelId: string }): ModelRef {
+  const nativeModel: ModelRef = { providerID: model.providerId, id: model.modelId }
+  const variant = getThinkingVariantToSend(instanceId, model)
+  if (variant) nativeModel.variant = variant
+  return nativeModel
+}
+
+function getAgentMention(text: string, name: string): { start: number; end: number; text: string } | undefined {
+  const mentionText = `@${name}`
+  const start = text.indexOf(mentionText)
+  return start < 0 ? undefined : { start, end: start + mentionText.length, text: mentionText }
+}
+
 const ID_LENGTH = 26
 const BASE62_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
@@ -117,7 +131,7 @@ async function sendMessage(
   instanceId: string,
   sessionId: string,
   prompt: string,
-  attachments: any[] = [],
+  attachments: Attachment[] = [],
 ): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
@@ -148,6 +162,7 @@ async function sendMessage(
   ]
 
   const files: Array<{ uri: string; name?: string }> = []
+  const agents: Array<NonNullable<SessionPromptInput["agents"]>[number]> = []
 
   if (attachments.length > 0) {
     for (const att of attachments) {
@@ -163,6 +178,9 @@ async function sendMessage(
           filename: att.filename,
           synthetic: true,
         })
+      } else if (source.type === "agent") {
+        const mention = getAgentMention(preparedPrompt.promptToSend, source.name)
+        agents.push({ name: source.name, ...(mention ? { mention } : {}) })
       } else if (source.type === "text") {
         const display: string | undefined = att.display
         const value: unknown = source.value
@@ -221,6 +239,7 @@ async function sendMessage(
     id: messageId,
     text: preparedPrompt.promptToSend,
     ...(files.length > 0 ? { files } : {}),
+    ...(agents.length > 0 ? { agents } : {}),
   }
 
   log.info("sendMessage", {
@@ -234,6 +253,9 @@ async function sendMessage(
     const admission = beginSessionGenerationAdmission(instanceId, sessionId)
     try {
       await syncVoiceModeInstruction(client, instanceId, sessionId)
+      if (session.model.providerId && session.model.modelId) {
+        await client.session.switchModel({ sessionID: sessionId, model: getNativeModel(instanceId, session.model) })
+      }
       await client.session.prompt({ sessionID: sessionId, ...requestBody })
       admission.complete()
       store.acceptSend(messageId)
@@ -283,9 +305,7 @@ async function executeCustomCommand(
   }
 
   if (session.model.providerId && session.model.modelId) {
-    body.model = { providerID: session.model.providerId, id: session.model.modelId }
-    const variant = getThinkingVariantToSend(instanceId, session.model)
-    if (variant) body.model.variant = variant
+    body.model = getNativeModel(instanceId, session.model)
   }
 
   const admission = beginSessionGenerationAdmission(instanceId, sessionId)
@@ -364,6 +384,9 @@ async function updateSessionAgent(instanceId: string, sessionId: string, agent: 
 
   try {
     await getRootClient(instanceId).session.switchAgent({ sessionID: sessionId, agent })
+    if (shouldApplyModel) {
+      await getRootClient(instanceId).session.switchModel({ sessionID: sessionId, model: getNativeModel(instanceId, nextModel) })
+    }
   } catch (error) {
     withSession(instanceId, sessionId, (current) => {
       if (current.agent !== agent) return false
@@ -408,7 +431,7 @@ async function updateSessionModel(
     current.model = model
   })
 
-  const nativeModel: ModelRef = { providerID: model.providerId, id: model.modelId }
+  const nativeModel = getNativeModel(instanceId, model)
   try {
     await getRootClient(instanceId).session.switchModel({ sessionID: sessionId, model: nativeModel })
   } catch (error) {

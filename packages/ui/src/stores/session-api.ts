@@ -4,7 +4,7 @@ import {
   type Session,
 } from "../types/session"
 import type { Message } from "../types/message"
-import type { SessionInfo as SDKSession, SessionMessagesResponse, SessionsResponse } from "@opencode-ai/client"
+import type { LocationRef, SessionInfo as SDKSession, SessionMessagesResponse } from "@opencode-ai/client"
 
 import { instances, reconcilePendingSessionIndicators } from "./instances"
 import { preferences, setAgentModelPreference } from "./preferences"
@@ -52,7 +52,7 @@ import {
   setSessionExpanded,
 } from "./session-state"
 import { deleteSessionAttachments } from "./attachments"
-import { DEFAULT_MODEL_OUTPUT_LIMIT, getDefaultModel, isModelValid } from "./session-models"
+import { DEFAULT_MODEL_OUTPUT_LIMIT, getActiveCatalogLocation, getDefaultModel, isModelValid } from "./session-models"
 import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { seedSessionMessagesV2, reconcilePendingPermissionsV2, reconcilePendingQuestionsV2 } from "./message-v2/bridge"
@@ -71,10 +71,42 @@ import {
   getUniqueSessionDirectories,
 } from "./session-list-options"
 import { mergeFetchedSessionRuntimeState, resolveAuthoritativeGenerationRecovery } from "./session-generation-recovery"
+import { fetchCommands } from "./commands"
 
 const log = getLogger("api")
 const sessionListRequestIds = new Map<string, number>()
+const catalogLocations = new Map<string, string>()
+const catalogRefreshes = new Map<string, { key: string; promise: Promise<void> }>()
+const agentRequestIds = new Map<string, number>()
+const providerRequestIds = new Map<string, number>()
 let nextSessionListRequestId = 0
+
+function catalogLocationKey(location: LocationRef): string {
+  return `${location.directory}\0${location.workspaceID ?? ""}`
+}
+
+async function refreshSessionCatalog(instanceId: string): Promise<void> {
+  const instance = instances().get(instanceId)
+  if (!instance?.client) return
+  const location = getActiveCatalogLocation(instanceId)
+  const key = catalogLocationKey(location)
+  if (catalogLocations.get(instanceId) === key) return
+  const existing = catalogRefreshes.get(instanceId)
+  if (existing?.key === key) return existing.promise
+  const promise = Promise.all([
+    fetchAgents(instanceId, location),
+    fetchProviders(instanceId, location),
+    fetchCommands(instanceId, instance.client, location),
+  ]).then((successes) => {
+    if (successes.every(Boolean) && catalogLocationKey(getActiveCatalogLocation(instanceId)) === key) {
+      catalogLocations.set(instanceId, key)
+    }
+  }).finally(() => {
+    if (catalogRefreshes.get(instanceId)?.promise === promise) catalogRefreshes.delete(instanceId)
+  })
+  catalogRefreshes.set(instanceId, { key, promise })
+  return promise
+}
 
 function beginSessionListRequest(instanceId: string): number {
   const requestId = ++nextSessionListRequestId
@@ -97,13 +129,22 @@ function clearSessionListRequestState(instanceId: string): void {
   })
 }
 
+function clearSessionCatalogState(instanceId: string): void {
+  catalogLocations.delete(instanceId)
+  catalogRefreshes.delete(instanceId)
+  agentRequestIds.delete(instanceId)
+  providerRequestIds.delete(instanceId)
+}
+
 type V2SessionListOptions = {
   directory?: string
   search?: string
+  cursor?: string
 }
 
 type ProjectSessionListResponse = {
   data: SDKSession[]
+  complete: boolean
 }
 
 function getKnownParentId(session: SDKSession | Session): string | null | undefined {
@@ -133,20 +174,37 @@ async function fetchV2Sessions(instanceId: string, options: V2SessionListOptions
     options.directory,
     ...getWorktrees(instanceId).map((worktree) => worktree.directory),
   ])
-  const responses: SessionsResponse[] = await Promise.all(
-    (directories.length ? directories : [undefined]).map((directory) => client.session.list(
-      buildProjectSessionListOptions({ ...options, directory }),
-    )),
-  )
   const sessionsById = new Map<string, SDKSession>()
-  for (const response of responses) {
-    for (const session of response.data) {
-      if (!sessionsById.has(session.id)) sessionsById.set(session.id, session)
+  let complete = true
+  let loadedPage = false
+  let firstError: unknown
+
+  await Promise.all((directories.length ? directories : [undefined]).map(async (directory) => {
+    let cursor: string | undefined
+    const seenCursors = new Set<string>()
+    try {
+      do {
+        const response = await client.session.list(buildProjectSessionListOptions({ ...options, directory, cursor }))
+        loadedPage = true
+        for (const session of response.data) {
+          if (!sessionsById.has(session.id)) sessionsById.set(session.id, session)
+        }
+        cursor = response.cursor?.next ?? undefined
+        if (cursor && seenCursors.has(cursor)) throw new Error(`Repeated session cursor: ${cursor}`)
+        if (cursor) seenCursors.add(cursor)
+      } while (cursor)
+    } catch (error) {
+      complete = false
+      firstError ??= error
+      log.warn("Failed to complete session list", { instanceId, directory, error })
     }
-  }
+  }))
+
+  if (!loadedPage && firstError) throw firstError
 
   return {
     data: Array.from(sessionsById.values()),
+    complete,
   }
 }
 
@@ -305,6 +363,13 @@ async function fetchSessions(instanceId: string, options?: {
       return next
     })
 
+    if (response.complete) {
+      const fetchedIds = new Set(apiSessions.map((session) => session.id))
+      for (const sessionId of existingSessions.keys()) {
+        if (!fetchedIds.has(sessionId)) removeSessionRuntimeState(instanceId, sessionId, false)
+      }
+    }
+
     const rootIds: string[] = []
     const seenRootIds = new Set<string>()
     const missingRootSessionIds: string[] = []
@@ -327,7 +392,7 @@ async function fetchSessions(instanceId: string, options?: {
       })
     }
 
-    setSessionPage(instanceId, rootIds, false, options?.reset ?? true)
+    if (response.complete) setSessionPage(instanceId, rootIds, false, options?.reset ?? true)
 
     reconcilePendingSessionIndicators(instanceId)
 
@@ -481,7 +546,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
 
   const instanceAgents = agents().get(instanceId) || []
   const primaryAgents = instanceAgents.filter(isSelectablePrimaryAgent)
-  const selectedAgent = agent || (primaryAgents.length > 0 ? primaryAgents[0].name : "")
+  const selectedAgent = agent || primaryAgents[0]?.id || ""
 
   const defaultModel = await getDefaultModel(instanceId, selectedAgent)
 
@@ -667,9 +732,9 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
   }
 }
 
-function removeSessionRuntimeState(instanceId: string, sessionId: string): void {
+function removeSessionRuntimeState(instanceId: string, sessionId: string, authoritative = true): void {
   cancelSessionGenerationAdmissions(instanceId, sessionId)
-  markSessionDeletedAuthoritative(instanceId, sessionId)
+  if (authoritative) markSessionDeletedAuthoritative(instanceId, sessionId)
   deleteSessionAttachments(instanceId, sessionId)
   clearSessionDraftPrompt(instanceId, sessionId)
   setSessionExpanded(instanceId, sessionId, false)
@@ -721,18 +786,30 @@ function removeSessionRuntimeState(instanceId: string, sessionId: string): void 
   }
 }
 
-async function fetchAgents(instanceId: string): Promise<void> {
+async function fetchAgents(instanceId: string, location = getActiveCatalogLocation(instanceId)): Promise<boolean> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
   }
 
   const rootClient = getRootClient(instanceId)
+  const requestId = (agentRequestIds.get(instanceId) ?? 0) + 1
+  agentRequestIds.set(instanceId, requestId)
 
   try {
     log.info(`[HTTP] GET /agent.list for instance ${instanceId}`)
-    const response = await rootClient.agent.list({ location: { directory: instance.folder } })
-    const agentList = (response.data ?? []).map((agent) => ({
+    const response = await rootClient.agent.list({ location })
+    const agentsById = new Map((response.data ?? []).map((agent) => [agent.id, agent]))
+    await Promise.all(["build", "plan"].filter((id) => !agentsById.has(id)).map(async (id) => {
+      try {
+        const result = await rootClient.agent.get({ agentID: id, location })
+        agentsById.set(result.data.id, result.data)
+      } catch (error) {
+        log.warn("Failed to fetch built-in agent", { instanceId, agentId: id, error })
+      }
+    }))
+    const agentList = Array.from(agentsById.values()).sort((a, b) => a.id.localeCompare(b.id)).map((agent) => ({
+      id: agent.id,
       name: agent.name,
       description: agent.description || "",
       mode: agent.mode,
@@ -745,48 +822,65 @@ async function fetchAgents(instanceId: string): Promise<void> {
         : undefined,
     }))
 
+    if (agentRequestIds.get(instanceId) !== requestId || catalogLocationKey(getActiveCatalogLocation(instanceId)) !== catalogLocationKey(location)) return false
     setAgents((prev) => {
       const next = new Map(prev)
       next.set(instanceId, agentList)
       return next
     })
+    return true
   } catch (error) {
     log.error("Failed to fetch agents:", error)
+    return false
   }
 }
 
-async function fetchProviders(instanceId: string): Promise<void> {
+async function fetchProviders(instanceId: string, location = getActiveCatalogLocation(instanceId)): Promise<boolean> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
   }
 
   const rootClient = getRootClient(instanceId)
+  const requestId = (providerRequestIds.get(instanceId) ?? 0) + 1
+  providerRequestIds.set(instanceId, requestId)
 
   try {
     log.info(`[HTTP] GET /provider.list for instance ${instanceId}`)
-    const response = await rootClient.provider.list({ location: { directory: instance.folder } })
-    const models = await rootClient.model.list({ location: { directory: instance.folder } })
-    const providerList = response.data.map((provider) => ({
-      id: provider.id,
-      name: provider.name,
-      models: models.data.filter((model) => model.providerID === provider.id).map((model) => ({
+    const request = { location }
+    const [response, models, defaultModel] = await Promise.all([
+      rootClient.provider.list(request),
+      rootClient.model.list(request),
+      rootClient.model.default(request),
+    ])
+    const providersById = new Map(response.data.map((provider) => [provider.id, provider]))
+    const modelsById = new Map(models.data.map((model) => [`${model.providerID}:${model.id}`, model]))
+    if (defaultModel.data) modelsById.set(`${defaultModel.data.providerID}:${defaultModel.data.id}`, defaultModel.data)
+    const providerIds = new Set([...providersById.keys(), ...Array.from(modelsById.values(), (model) => model.providerID)])
+    const providerList = Array.from(providerIds).sort().map((providerId) => ({
+      id: providerId,
+      name: providersById.get(providerId)?.name ?? providerId,
+      defaultModelId: defaultModel.data?.providerID === providerId ? defaultModel.data.id : undefined,
+      models: Array.from(modelsById.values()).filter((model) => model.providerID === providerId).sort((a, b) => a.id.localeCompare(b.id)).map((model) => ({
         id: model.id,
         name: model.name,
-        providerId: provider.id,
+        providerId,
         limit: model.limit,
         cost: model.cost[0],
         variantKeys: model.variants.map((variant) => variant.id),
       })),
     }))
 
+    if (providerRequestIds.get(instanceId) !== requestId || catalogLocationKey(getActiveCatalogLocation(instanceId)) !== catalogLocationKey(location)) return false
     setProviders((prev) => {
       const next = new Map(prev)
       next.set(instanceId, providerList)
       return next
     })
+    return true
   } catch (error) {
     log.error("Failed to fetch providers:", error)
+    return false
   }
 }
 
@@ -859,8 +953,20 @@ async function loadMessages(
 
   try {
     log.info(`[HTTP] GET /session.${"messages"} for instance ${instanceId}`, { sessionId })
-    const response: SessionMessagesResponse = await client.message.list({ sessionID: sessionId })
-    const apiMessages = response.data
+    const apiMessages: SessionMessagesResponse["data"] = []
+    let cursor: string | undefined
+    const seenCursors = new Set<string>()
+    do {
+      const response: SessionMessagesResponse = await client.message.list({
+        sessionID: sessionId,
+        limit: 200,
+        ...(cursor ? { cursor } : { order: "asc" }),
+      })
+      apiMessages.push(...response.data)
+      cursor = response.cursor?.next ?? undefined
+      if (cursor && seenCursors.has(cursor)) throw new Error(`Repeated message cursor: ${cursor}`)
+      if (cursor) seenCursors.add(cursor)
+    } while (cursor)
 
     if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return
 
@@ -1021,6 +1127,8 @@ export {
   removeSessionRuntimeState,
   fetchAgents,
   fetchProviders,
+  getActiveCatalogLocation,
+  refreshSessionCatalog,
 
   fetchSessions,
   hydrateRestoredSessionChain,
@@ -1029,4 +1137,5 @@ export {
   forkSession,
   loadMessages,
   clearSessionListRequestState,
+  clearSessionCatalogState,
 }

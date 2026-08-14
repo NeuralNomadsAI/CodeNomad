@@ -3,6 +3,7 @@ export const PROJECT_SESSION_LIST_LIMIT = 10000
 type ProjectSessionListInput = {
   directory?: string
   search?: string
+  cursor?: string
 }
 
 export type ProjectSessionListOptions = ProjectSessionListInput & {
@@ -24,6 +25,7 @@ export function buildProjectSessionListOptions(options: ProjectSessionListInput)
   return {
     ...(options.directory ? { directory: options.directory } : {}),
     ...(options.search ? { search: options.search } : {}),
+    ...(options.cursor ? { cursor: options.cursor } : {}),
     limit: PROJECT_SESSION_LIST_LIMIT,
   }
 }

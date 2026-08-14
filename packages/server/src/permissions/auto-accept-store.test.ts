@@ -25,10 +25,10 @@ describe("resolveFamilyRoot", () => {
     assert.equal(root, "master")
   })
 
-  it("keeps a fork session (with revert) as its own root", () => {
+  it("keeps a session with native fork metadata as its own root", () => {
     const root = resolveFamilyRoot("fork", (id) => {
       if (id === "fork")
-        return { id: "fork", parentId: "master", revert: { messageID: "msg", partID: "part" } }
+        return { id: "fork", parentId: "master", fork: { sessionID: "master", boundary: { type: "through", messageID: "msg" } } }
       if (id === "master") return { id: "master", parentId: null }
       return undefined
     })
@@ -84,7 +84,7 @@ describe("AutoAcceptStore inheritance", () => {
     store.upsertSession("inst", {
       id: "fork",
       parentId: "master",
-      revert: { messageID: "msg", partID: "part" },
+      fork: { sessionID: "master", boundary: { type: "through", messageID: "msg" } },
     })
 
     store.setEnabled("inst", "fork", true)
@@ -160,7 +160,7 @@ describe("AutoAcceptStore session tree maintenance", () => {
     assert.equal(store.isEnabled("inst", "master"), false)
   })
 
-  it("changing revert status re-roots a session as a fork", () => {
+  it("discovering native fork metadata re-roots the session", () => {
     const store = new AutoAcceptStore()
     store.upsertSession("inst", { id: "master", parentId: null })
     store.upsertSession("inst", { id: "child", parentId: "master" })
@@ -168,11 +168,11 @@ describe("AutoAcceptStore session tree maintenance", () => {
     // parent family enabled
     assert.equal(store.isEnabled("inst", "master"), true)
 
-    // child becomes a fork
+    // The exact session.forked event adds the native fork marker.
     store.upsertSession("inst", {
       id: "child",
       parentId: "master",
-      revert: { messageID: "m", partID: "p" },
+      fork: { sessionID: "master", boundary: { type: "before", messageID: "m" } },
     })
     // now child resolves to itself; the family setting was on "master" so still on for master
     assert.equal(store.isEnabled("inst", "master"), true)

@@ -111,10 +111,13 @@ Then open a pull request on GitHub targeting the `dev` branch.
 
 ### OpenCode V2 Boundaries
 
-- Server and UI pin `@opencode-ai/client@0.0.0-next-17353`; do not add `@opencode-ai/sdk`.
-- `packages/server/src/workspaces/opencode-service.ts` owns the single shared `Service.ensure` lifecycle. Workspaces are native OpenCode locations/directories, not separate server processes.
+- Server and UI pin the experimental `@opencode-ai/client` protocol exactly to `0.0.0-next-17353`. It is not the current public `@opencode-ai/sdk` contract; use the installed declarations.
+- `packages/server/src/workspaces/opencode-service.ts` owns a custom lease-locked discovery, launch, process-proof, and authenticated-stop lifecycle. Production does not call `Service.ensure` or `Service.stop` directly. Workspaces are native OpenCode locations/directories, not separate server processes.
+- V2 startup requires a user-configured, non-empty `OPENCODE_DB`; there is no CodeNomad default. Never reuse a V1 database for V2. Environment changes take effect when the shared service starts or restarts.
 - OpenCode session calls use `/workspaces/:id/instance/api/*`; CodeNomad control routes and multiplexed events use `/api/*` and `/api/events`.
-- Native `client.session.shell` and `client.session.instructions.entry` cover Shell and prompt instructions. There is no `packages/opencode-plugin` integration.
+- The proxy is method/path allowlisted, so new upstream functionality is not exposed automatically.
+- Native `client.session.shell` and `client.session.instructions.entry` cover Shell and prompt instructions. PTY/background-process parity is not integrated, and there is no `packages/opencode-plugin` integration.
+- Native events are volatile. Reconnect handlers must refetch authoritative state instead of assuming missed events will replay.
 - Git mutations and Yolo policy remain CodeNomad-owned server boundaries.
 
 ### Key UI Files

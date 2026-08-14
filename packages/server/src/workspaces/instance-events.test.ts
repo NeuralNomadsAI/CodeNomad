@@ -11,9 +11,15 @@ const logger = {
   warn() {},
 } as unknown as Logger
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => { resolve = done })
+  return { promise, resolve }
+}
+
 function waitFor(check: () => boolean): Promise<void> {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("Timed out waiting for event")), 1000)
+    const timeout = setTimeout(() => reject(new Error("Timed out waiting for event")), 2000)
     const poll = () => {
       if (check()) {
         clearTimeout(timeout)
@@ -55,6 +61,60 @@ function locationlessManager(
 }
 
 describe("InstanceEventBridge", () => {
+  it("does not publish connected until the stream confirms with its first event", async () => {
+    const gate = deferred<void>()
+    const manager = {
+      list: () => [{ id: "a", path: "/repo-a" }],
+      ownsDirectory: async () => true,
+      subscribeToSharedService: async (signal?: AbortSignal) => (async function* () {
+        await gate.promise
+        yield { type: "permission.asked", location: { directory: "/repo-a" }, data: { id: "p1" } } as OpenCodeEvent
+        await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }))
+      })(),
+    } as unknown as WorkspaceManager
+    const bus = new EventBus()
+    const statuses: string[] = []
+    bus.on("instance.eventStatus", (event) => statuses.push(event.status))
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
+      await waitFor(() => statuses.includes("connecting"))
+      assert.equal(statuses.includes("connected"), false)
+      gate.resolve()
+      await waitFor(() => statuses.includes("connected"))
+    } finally {
+      bridge.shutdown()
+    }
+  })
+
+  it("clears routing caches before reconnecting", async () => {
+    let subscriptions = 0
+    let ownershipChecks = 0
+    const event = { type: "permission.asked", location: { directory: "/repo-a" }, data: { id: "p1" } } as OpenCodeEvent
+    const manager = {
+      list: () => [{ id: "a", path: "/repo-a" }],
+      ownsDirectory: async () => ++ownershipChecks === 1,
+      subscribeToSharedService: async (signal?: AbortSignal) => {
+        subscriptions += 1
+        const current = subscriptions
+        return (async function* () {
+          yield event
+          if (current > 1) await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }))
+        })()
+      },
+    } as unknown as WorkspaceManager
+    const bus = new EventBus()
+    const received: unknown[] = []
+    bus.on("instance.event", (value) => received.push(value))
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
+      await waitFor(() => subscriptions === 2 && ownershipChecks === 2)
+      assert.equal(received.length, 1)
+    } finally {
+      bridge.shutdown()
+    }
+  })
   it("routes root and owned worktree events to the logical workspace and caches ownership", async () => {
     const events = [
       { id: "1", created: 1, type: "permission.asked", location: { directory: "/repo-a" }, data: { id: "p1" } },
@@ -197,6 +257,29 @@ describe("InstanceEventBridge", () => {
     }
   })
 
+  it("routes locationless PTY events by cwd without broadcasting ownership", async () => {
+    const events = [
+      { type: "pty.created", data: { info: { id: "pty-1", title: "dev", command: "npm", args: [], cwd: "/repo-b", status: "running", pid: 42 } } },
+      { type: "pty.exited", data: { id: "pty-1", exitCode: 0 } },
+      { type: "pty.deleted", data: { id: "pty-1" } },
+    ] as OpenCodeEvent[]
+    const workspaces = [{ id: "a", path: "/repo-a" }, { id: "b", path: "/repo-b" }]
+    const { manager } = locationlessManager(events, {}, workspaces)
+    const bus = new EventBus()
+    const received: any[] = []
+    bus.on("instance.event", (event) => received.push(event))
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
+      await waitFor(() => received.length === 3)
+      assert.deepEqual(received.map((event) => event.instanceId), ["b", "b", "b"])
+      assert.deepEqual(received.map((event) => event.event.type), ["pty.created", "pty.exited", "pty.deleted"])
+    } finally {
+      bridge.shutdown()
+    }
+  })
+
   it("broadcasts an unresolvable locationless deletion", async () => {
     const events = [{ type: "session.deleted", data: { sessionID: "deleted" } }] as OpenCodeEvent[]
     const workspaces = [{ id: "a", path: "/repo-a" }, { id: "b", path: "/repo-b" }]
@@ -217,8 +300,11 @@ describe("InstanceEventBridge", () => {
     }
   })
 
-  it("routes a locationless session only to its owning workspace", async () => {
-    const events = [{ type: "session.status", data: { sessionID: "foreign", status: { type: "idle" } } }] as OpenCodeEvent[]
+  it("keeps locationless session and permission events scoped to their owning workspace", async () => {
+    const events = [
+      { type: "session.status", data: { sessionID: "foreign", status: { type: "idle" } } },
+      { type: "permission.asked", data: { id: "permission", sessionID: "foreign" } },
+    ] as OpenCodeEvent[]
     const workspaces = [{ id: "a", path: "/repo-a" }, { id: "b", path: "/repo-b" }]
     const { manager } = locationlessManager(events, { foreign: "/repo-b" }, workspaces)
     const bus = new EventBus()
@@ -228,8 +314,61 @@ describe("InstanceEventBridge", () => {
 
     try {
       bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
+      await waitFor(() => received.length === 2)
+      assert.deepEqual(received.map((event) => event.instanceId), ["b", "b"])
+    } finally {
+      bridge.shutdown()
+    }
+  })
+
+  it("routes locationless form.created through data.form.sessionID", async () => {
+    const events = [{
+      type: "form.created",
+      data: { form: { id: "form", sessionID: "owned", title: "Question", fields: [] } },
+    }] as unknown as OpenCodeEvent[]
+    const workspaces = [{ id: "a", path: "/repo-a" }, { id: "b", path: "/repo-b" }]
+    const { manager, sessionGets } = locationlessManager(events, { owned: "/repo-b" }, workspaces)
+    const bus = new EventBus()
+    const received: any[] = []
+    bus.on("instance.event", (event) => received.push(event))
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
       await waitFor(() => received.length === 1)
+      assert.equal(sessionGets(), 1)
       assert.equal(received[0].instanceId, "b")
+      assert.equal(received[0].event.properties.form.sessionID, "owned")
+    } finally {
+      bridge.shutdown()
+    }
+  })
+
+  it("broadcasts safe global locationless service events", async () => {
+    const events = [
+      { type: "agent.updated", data: {} },
+      { type: "catalog.updated", data: {} },
+      { type: "command.updated", data: {} },
+      { type: "config.updated", data: {} },
+      { type: "integration.connection.updated", data: { integrationID: "test" } },
+      { type: "integration.updated", data: {} },
+      { type: "mcp.resources.changed", data: { server: "test" } },
+      { type: "mcp.status.changed", data: { server: "test" } },
+      { type: "models-dev.refreshed", data: {} },
+      { type: "installation.updated", data: { version: "1.2.3" } },
+      { type: "installation.update-available", data: { version: "1.2.4" } },
+    ] as OpenCodeEvent[]
+    const workspaces = [{ id: "a", path: "/repo-a" }, { id: "b", path: "/repo-b" }]
+    const { manager, sessionGets } = locationlessManager(events, {}, workspaces)
+    const bus = new EventBus()
+    const received: any[] = []
+    bus.on("instance.event", (event) => received.push(event))
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
+      await waitFor(() => received.length === events.length * workspaces.length)
+      assert.equal(sessionGets(), 0)
+      assert.deepEqual(received.map((event) => event.event.type), events.flatMap((event) => [event.type, event.type]))
+      assert.deepEqual(received.map((event) => event.instanceId), events.flatMap(() => ["a", "b"]))
     } finally {
       bridge.shutdown()
     }

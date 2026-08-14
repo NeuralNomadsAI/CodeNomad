@@ -249,7 +249,7 @@ export default function MessageSection(props: MessageSectionProps) {
   let scrollControlsRef: HTMLDivElement | undefined
 
   // Only preferences should force a follow-token re-anchor. Message/session
-  // revision churn at the end of a turn (message.updated, session.idle, etc.)
+  // revision churn at the end of a turn (terminal updates, session idle, etc.)
   // should not trigger an immediate scroll-to-bottom.
   const followToken = createMemo(() => preferenceSignature())
 

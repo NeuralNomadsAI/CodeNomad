@@ -30,7 +30,7 @@ The UI uses a small custom i18n layer (no ICU/messageformat). When building feat
 - **Interpolation:** placeholders are simple `{name}` replacements (word characters only). Avoid placeholders like `{file-name}`.
 - **Pluralization:** handle manually via separate keys like `something.one` / `something.other` and choose in code.
 - **Adding a new language:** add a new `messages/<locale>/` folder + `index.ts`, register it in `packages/ui/src/lib/i18n/index.tsx`, and add it to the language picker in `packages/ui/src/components/folder-selection-view.tsx`.
-- **Locale persistence:** the selected locale is stored in app preferences (`locale`) and persisted via the server config (default `~/.config/codenomad/config.json`).
+- **Locale persistence:** the selected locale is stored in app preferences (`locale`) and persisted via the server config (default `~/.config/codenomad/config.yaml`; `config.json` is migration input only).
 - **Avoid English-only paths:** do not import `enMessages` directly in feature code; always go through `t(...)` so locale changes apply.
 
 ## File Length Guidelines (Highlight Only)

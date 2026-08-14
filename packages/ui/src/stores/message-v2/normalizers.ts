@@ -83,6 +83,23 @@ export interface NormalizedSessionMessage {
   info: MessageInfo
 }
 
+function structuredError(error: { type: string; message: string; status?: number }): NonNullable<MessageInfo["error"]> {
+  return { ...error, name: error.type, data: { message: error.message } }
+}
+
+function normalizeStatus(source: SessionMessageInfo): Message["status"] {
+  if (source.type === "assistant") {
+    if (source.error) return "error"
+    return source.time.completed ? "complete" : "streaming"
+  }
+  if (source.type === "compaction") return source.status === "failed" ? "error" : source.status === "running" ? "sent" : "complete"
+  if (source.type === "shell") {
+    if (source.status === "running") return "sent"
+    return source.status === "exited" && (source.exit === undefined || source.exit === 0) ? "complete" : "error"
+  }
+  return "complete"
+}
+
 function toolOutput(content: unknown): unknown {
   if (!Array.isArray(content)) return content
   const text = content
@@ -109,11 +126,10 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
           variant: assistant.model.variant,
           cost: assistant.cost,
           tokens: assistant.tokens,
-          error: assistant.error
-            ? { ...assistant.error, name: assistant.error.type, data: { message: assistant.error.message } }
-            : undefined,
+          error: assistant.error ? structuredError(assistant.error) : undefined,
         }
       : {}),
+    ...(source.type === "compaction" && source.status === "failed" ? { error: structuredError(source.error) } : {}),
     ...(source.type === "user" ? { text: source.text } : {}),
   }
 
@@ -153,7 +169,7 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
       ...(source.files ?? []).map((file, index) => ({
         id: `${source.id}-file-${index}`,
         type: "file" as const,
-        url: file.source.type === "uri" ? file.source.uri : file.data,
+        url: file.source.type === "uri" ? file.source.uri : `data:${file.mime};base64,${file.data}`,
         mime: file.mime,
         filename: file.name,
         sessionID: sessionId,
@@ -189,7 +205,7 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
       type: role,
       parts,
       timestamp: source.time.created,
-      status: assistant?.error ? "error" : role === "user" || assistant?.time.completed ? "complete" : "streaming",
+      status: normalizeStatus(source),
       version: 0,
     },
   }

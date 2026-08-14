@@ -80,7 +80,7 @@ tasks/                Task tracking
 
 - Complete project structure
 - TypeScript interfaces
-- `Service.ensure` and location lifecycle
+- Hardened shared-service proof and location lifecycle
 - Native Promise client management
 - Message rendering implementation
 - Build and packaging config
@@ -127,9 +127,9 @@ tasks/                Task tracking
 
 **003 - Shared Service Manager** (4-5 hours)
 
-- Discover or start one OpenCode service with `Service.ensure`
+- Discover or launch one OpenCode service through CodeNomad's lease-locked process-proof lifecycle
 - Validate workspace locations/directories
-- Stop only the shared endpoint CodeNomad owns
+- Transfer proof to a live peer or stop only the exact proven daemon on final shutdown
 - Handle errors and timeouts
 - Auto-cleanup on app quit
 
@@ -159,14 +159,14 @@ tasks/                Task tracking
 
 ### 2. Shared Service Management
 
-- CodeNomad server discovers or starts one service with `Service.ensure`
+- CodeNomad server discovers or launches one service through its hardened lifecycle; production does not call `Service.ensure`/`Service.stop` directly
 - Workspace folders become validated native locations
 - UI traffic stays behind the CodeNomad proxy
-- Shutdown stops only the endpoint CodeNomad owns
+- Shutdown transfers proof to a live peer or stops only the exact proven daemon when no peer remains
 
 ### 3. One Shared Service, Location-Scoped Clients
 
-- One `Service.ensure` endpoint serves all workspace locations
+- One proven shared endpoint serves all workspace locations
 - UI clients route through `/workspaces/:id/instance/api/*`
 - Server-side directory and session ownership prevents cross-contamination
 
@@ -297,10 +297,13 @@ tasks/                Task tracking
 
 ## Current OpenCode Baseline
 
-- Native client and required CLI: `@opencode-ai/client@0.0.0-next-17353` / `opencode2@0.0.0-next-17353`
-- Service: one shared `Service.ensure`
+- Experimental protocol client and required CLI: exact `@opencode-ai/client@0.0.0-next-17353` / `opencode2@0.0.0-next-17353`; public `@opencode-ai/sdk` docs do not describe this contract
+- Service: one shared endpoint managed by CodeNomad's lease-locked process-proof lifecycle
 - Workspaces: native locations/directories
-- Shell and instructions: native session APIs
+- Database: user-supplied `OPENCODE_DB` is required for V2 and must never be shared with V1; changes apply at service start/restart
+- Events: volatile native stream with authoritative reconnect reconciliation
+- Proxy: explicit method/path allowlist; upstream additions are not automatic
+- Shell and instructions: native session APIs; PTY/background-process parity is not integrated
 - Git mutations and Yolo: CodeNomad-owned
 
 ## Estimated Timeline

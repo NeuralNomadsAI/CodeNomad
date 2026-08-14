@@ -18,8 +18,9 @@ import {
   type ProviderAuthAuthorization,
 } from "../../lib/provider-auth"
 import { instances } from "../../stores/instances"
-import { fetchProviders } from "../../stores/sessions"
+import { fetchProviders, getActiveCatalogLocation } from "../../stores/sessions"
 import { ProviderAuthForm } from "./provider-auth-form"
+import { buildListedProviders, type ListedProvider } from "./provider-options"
 
 type AuthStage = "idle" | "prompts" | "authorizing" | "code" | "waiting" | "success" | "error"
 
@@ -35,14 +36,7 @@ type ConfigurableProviderOption = {
   name: string
   modelCount: number
   connectionSummary: string
-}
-
-type ListedProvider = {
-  id: string
-  name: string
-  modelCount: number
-  source: "env" | "config" | "custom" | "api" | "unknown"
-  credentialIds: string[]
+  canConnect: boolean
 }
 
 type DisconnectMode = "credential-remove" | "not-disconnectable" | "unknown"
@@ -97,7 +91,6 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
 
   const configurableProviders = createMemo<ConfigurableProviderOption[]>(() => {
     return availableProviders()
-      .filter((provider) => (methodsByProvider()[provider.id]?.length ?? 0) > 0)
       .sort((left, right) => left.id.localeCompare(right.id, undefined, { sensitivity: "base" }))
       .map((listed) => {
         return {
@@ -105,6 +98,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
           name: providerNameById().get(listed.id) ?? listed.id,
           modelCount: listed.modelCount,
           connectionSummary: methodSummary(listed.id),
+          canConnect: listed.canConnect,
         }
       })
   })
@@ -265,39 +259,18 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     setLoading(true)
     setLoadError(null)
     try {
+      const location = { location: getActiveCatalogLocation(props.instanceId) }
       const [providerResponse, modelResponse, integrationResponse] = await Promise.all([
-        authClient.provider.list(),
-        authClient.model.list(),
-        authClient.integration.list(),
+        authClient.provider.list(location),
+        authClient.model.list(location),
+        authClient.integration.list(location),
       ])
       if (version !== loadVersion) return
-      const modelsByProvider = new Map<string, number>()
-      for (const model of modelResponse.data) {
-        modelsByProvider.set(model.providerID, (modelsByProvider.get(model.providerID) ?? 0) + 1)
-      }
-      const listed: ListedProvider[] = integrationResponse.data.map((integration) => {
-        const providerIds = providerResponse.data
-          .filter((provider) => (provider.integrationID ?? provider.id) === integration.id)
-          .map((provider) => provider.id)
-        const credentialIds = integration.connections
-          .filter((connection) => connection.type === "credential")
-          .map((connection) => connection.id)
-        return {
-          id: integration.id,
-          name: integration.name,
-          modelCount: providerIds.reduce((count, providerId) => count + (modelsByProvider.get(providerId) ?? 0), 0),
-          source: credentialIds.length > 0
-            ? "api" as const
-            : integration.connections.some((connection) => connection.type === "env")
-              ? "env" as const
-              : providerIds.length > 0 ? "config" as const : "unknown" as const,
-          credentialIds,
-        }
-      })
-       const methods = Object.fromEntries(integrationResponse.data.map((integration) => [
-         integration.id,
-         integration.methods.filter((method): method is NativeAuthMethod => method.type !== "env"),
-       ]))
+      const listed = buildListedProviders(providerResponse.data, modelResponse.data, integrationResponse.data)
+      const methods = Object.fromEntries(integrationResponse.data.map((integration) => [
+        integration.id,
+        integration.methods.filter((method): method is NativeAuthMethod => method.type !== "env"),
+      ]))
       setAvailableProviders(listed)
       setMethodsByProvider(methods)
       setSelectedProviderId((current) => current ?? listed[0]?.id ?? integrationResponse.data[0]?.id ?? null)
@@ -327,6 +300,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   }
 
   function resetFlow(nextProviderId: string | null = null) {
+    if (nextProviderId && !(methodsByProvider()[nextProviderId]?.length)) return
     disposePendingAuth()
     setActiveProviderId(nextProviderId)
     setSelectedMethodIndex(0)
@@ -368,6 +342,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
       integrationID: providerId,
       key: apiKey().trim(),
       answer: getProviderAuthAnswer(selectedForm(), formAnswer()),
+      location: getActiveCatalogLocation(instanceId),
     })
     if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
     await refreshAfterAuth(authClient, instanceId, operationVersion)
@@ -381,6 +356,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
       integrationID: providerId,
       methodID: method.id,
       answer: getProviderAuthAnswer(selectedForm(), formAnswer()),
+      location: getActiveCatalogLocation(instanceId),
     })
     if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
     const data = response.data
@@ -404,7 +380,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     callbackAbortController = new AbortController()
     while (true) {
       const result = await authClient.integration.oauth.status(
-        { integrationID: providerId, attemptID: data.attemptID },
+        { integrationID: providerId, attemptID: data.attemptID, location: getActiveCatalogLocation(instanceId) },
         { signal: callbackAbortController.signal },
       )
       if (result.data.status === "complete") break
@@ -421,7 +397,11 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   async function submitCommandAuth(providerId: string, authClient: OpenCodeClient, instanceId: string, operationVersion: number) {
     const method = selectedMethod()
     if (method.type !== "command") throw new Error(t("settings.providers.errors.noAuthorization"))
-    const response = await authClient.integration.command.connect({ integrationID: providerId, methodID: method.id })
+    const response = await authClient.integration.command.connect({
+      integrationID: providerId,
+      methodID: method.id,
+      location: getActiveCatalogLocation(instanceId),
+    })
     if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
     const attemptID = response.data.attemptID
     setCommandAttemptId(attemptID)
@@ -430,7 +410,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     callbackAbortController = new AbortController()
     while (true) {
       const result = await authClient.integration.command.status(
-        { integrationID: providerId, attemptID },
+        { integrationID: providerId, attemptID, location: getActiveCatalogLocation(instanceId) },
         { signal: callbackAbortController.signal },
       )
       if (result.data.status === "complete") break
@@ -491,7 +471,12 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     try {
       const attemptID = authorization()?.attemptID
       if (!attemptID) throw new Error(t("settings.providers.errors.noAuthorization"))
-      await authClient.integration.oauth.complete({ integrationID: providerId, attemptID, code: code().trim() })
+      await authClient.integration.oauth.complete({
+        integrationID: providerId,
+        attemptID,
+        code: code().trim(),
+        location: getActiveCatalogLocation(instanceId),
+      })
       if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
       await refreshAfterAuth(authClient, instanceId, operationVersion)
       if (isCurrentOperation(operationVersion, instanceId, authClient)) resetFlow(null)
@@ -519,7 +504,10 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
         return
       }
       if (disconnectMode !== "credential-remove") return
-      await Promise.all(provider.credentialIds.map((credentialID) => authClient.credential.remove({ credentialID })))
+      await Promise.all(provider.credentialIds.map((credentialID) => authClient.credential.remove({
+        credentialID,
+        location: getActiveCatalogLocation(instanceId),
+      })))
       if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
       await refreshAfterAuth(authClient, instanceId, operationVersion)
       if (isCurrentOperation(operationVersion, instanceId, authClient)) resetFlow(null)
@@ -535,11 +523,20 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     const attemptID = authorization()?.attemptID
     const commandAttemptID = commandAttemptId()
     const authClient = client()
+    const instanceId = props.instanceId
     if (providerId && attemptID && authClient) {
-      void authClient.integration.oauth.cancel({ integrationID: providerId, attemptID }).catch(() => undefined)
+      void authClient.integration.oauth.cancel({
+        integrationID: providerId,
+        attemptID,
+        location: getActiveCatalogLocation(instanceId),
+      }).catch(() => undefined)
     }
     if (providerId && commandAttemptID && authClient) {
-      void authClient.integration.command.cancel({ integrationID: providerId, attemptID: commandAttemptID }).catch(() => undefined)
+      void authClient.integration.command.cancel({
+        integrationID: providerId,
+        attemptID: commandAttemptID,
+        location: getActiveCatalogLocation(instanceId),
+      }).catch(() => undefined)
     }
     disposePendingAuth()
     setStage("prompts")
@@ -551,7 +548,10 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
 
   function methodSummary(providerId: string) {
     const methods = methodsByProvider()[providerId]
-    if (!methods || methods.length === 0) return t("settings.providers.method.fallback")
+    if (!methods || methods.length === 0) {
+      const source = availableProviders().find((provider) => provider.id === providerId)?.source ?? "unknown"
+      return t(`settings.providers.source.${source}`)
+    }
     const kinds = new Set(methods.map((method) => method.type))
     if (kinds.size > 1) return t("settings.providers.method.mixed")
     if (kinds.has("oauth")) return t("settings.providers.method.oauth")
@@ -632,7 +632,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                   </Select.Trigger>
                   <Select.Portal><Select.Content class="selector-popover"><Select.Listbox class="selector-listbox" /></Select.Content></Select.Portal>
                 </Select>
-                <button type="button" class="selector-button selector-button-primary" disabled={!selectedProviderOption()} onClick={() => resetFlow(selectedProviderOption()?.id ?? null)}>
+                <button type="button" class="selector-button selector-button-primary" disabled={!selectedProviderOption()?.canConnect} onClick={() => resetFlow(selectedProviderOption()?.id ?? null)}>
                   {t("settings.providers.actions.connect")}
                 </button>
                 <button type="button" class="settings-pill-button" disabled={loading()} onClick={() => client() && void loadProviderData(client()!)}>

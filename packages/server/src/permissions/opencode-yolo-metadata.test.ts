@@ -6,7 +6,7 @@ import type { SettingsService } from "../settings/service"
 import type { WorkspaceManager } from "../workspaces/manager"
 import { createOpencodeYoloPersistence } from "./opencode-yolo-metadata"
 
-function createHarness() {
+function createHarness(serviceDirectory = "/repo") {
   let owner: Record<string, unknown> = {}
   const settings = {
     getOwner: () => owner,
@@ -18,32 +18,48 @@ function createHarness() {
       return owner
     },
   } as unknown as SettingsService
+  const listInputs: Record<string, unknown>[] = []
   const workspaceManager = {
     get: () => ({ path: "/repo" }),
-    ownsDirectory: async (_instanceId: string, directory: string) => directory === "/repo",
+    getServiceDirectory: () => serviceDirectory,
+    ownsDirectory: async (_instanceId: string, directory: string) => directory === "/repo" || directory === "/worktree",
   } as unknown as WorkspaceManager
   const client = {
     session: {
       async list(input: Record<string, unknown>) {
-        assert.deepEqual(input, { directory: "/repo", limit: 10_000 })
+        listInputs.push(input)
+        const cursor = input.cursor
         return {
-          data: [
+          data: cursor ? [
+            {
+              id: "second-page",
+              parentID: undefined,
+              fork: undefined,
+              location: { directory: "/repo", workspaceID: "workspace" },
+            },
+          ] : [
             {
               id: "root",
               parentID: undefined,
-              revert: undefined,
+              fork: undefined,
               location: { directory: "/repo", workspaceID: "workspace" },
             },
           ],
-          cursor: {},
+          cursor: { next: cursor ? null : "page-2" },
         }
       },
       async get({ sessionID }: { sessionID: string }) {
         return {
           id: sessionID,
           parentID: undefined,
-          revert: undefined,
-          location: { directory: sessionID === "foreign" ? "/other" : "/repo", workspaceID: "workspace" },
+          fork: sessionID === "worktree" ? {
+            sessionID: "root",
+            boundary: { type: "through", messageID: "message" },
+          } : undefined,
+          location: {
+            directory: sessionID === "foreign" ? "/other" : sessionID === "worktree" ? "/worktree" : "/repo",
+            workspaceID: "workspace",
+          },
         }
       },
     },
@@ -53,22 +69,33 @@ function createHarness() {
     settings,
     async () => client,
   )
-  return { persistence }
+  return { persistence, listInputs }
 }
 
 describe("OpenCode Yolo persistence", () => {
   it("loads native sessions and Yolo state from the CodeNomad store", async () => {
-    const { persistence } = createHarness()
+    const { persistence, listInputs } = createHarness()
     await persistence.persist("instance", "root", true)
 
     assert.deepEqual(await persistence.loadSessions("instance"), [
       {
         id: "root",
         parentId: null,
-        revert: undefined,
+        fork: undefined,
         workspaceId: "workspace",
         yoloEnabled: true,
       },
+      {
+        id: "second-page",
+        parentId: null,
+        fork: undefined,
+        workspaceId: "workspace",
+        yoloEnabled: false,
+      },
+    ])
+    assert.deepEqual(listInputs, [
+      { directory: "/repo", limit: 10_000, cursor: undefined },
+      { directory: "/repo", limit: 10_000, cursor: "page-2" },
     ])
   })
 
@@ -76,6 +103,26 @@ describe("OpenCode Yolo persistence", () => {
     const { persistence } = createHarness()
     assert.equal((await persistence.loadSession!("instance", "root"))?.id, "root")
     assert.equal(await persistence.loadSession!("instance", "foreign"), null)
+  })
+
+  it("lists sessions with the translated service location", async () => {
+    const { persistence, listInputs } = createHarness("/service/repo")
+    await persistence.loadSessions("instance")
+    assert.equal(listInputs[0]?.directory, "/service/repo")
+  })
+
+  it("restores a persisted Yolo session from an owned worktree", async () => {
+    const { persistence } = createHarness()
+    await persistence.persist("instance", "worktree", true)
+
+    const worktree = (await persistence.loadSessions("instance")).find((session) => session.id === "worktree")
+    assert.deepEqual(worktree, {
+      id: "worktree",
+      parentId: null,
+      fork: { sessionID: "root", boundary: { type: "through", messageID: "message" } },
+      workspaceId: "workspace",
+      yoloEnabled: true,
+    })
   })
 
 })

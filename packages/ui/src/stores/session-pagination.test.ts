@@ -9,7 +9,7 @@ import {
 } from "./session-list-options.ts"
 
 describe("project session list loading", () => {
-  it("builds a native directory request without fake scope or pagination params", () => {
+  it("builds a native directory request without fake scope params", () => {
     const options = buildProjectSessionListOptions({ directory: "/tmp/project", search: "worktree" })
 
     assert.deepEqual(options, {
@@ -20,6 +20,14 @@ describe("project session list loading", () => {
     assert.equal("scope" in options, false)
     assert.equal("start" in options, false)
     assert.equal("cursor" in options, false)
+  })
+
+  it("passes native cursors through unchanged", () => {
+    assert.deepEqual(buildProjectSessionListOptions({ directory: "/tmp/project", cursor: "next-page" }), {
+      directory: "/tmp/project",
+      cursor: "next-page",
+      limit: PROJECT_SESSION_LIST_LIMIT,
+    })
   })
 
   it("queries each unique logical root and known worktree directory", () => {

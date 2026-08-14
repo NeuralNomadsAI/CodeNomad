@@ -7,6 +7,19 @@ import { InstanceStreamEvent, InstanceStreamStatus } from "../api-types"
 const RECONNECT_DELAY_MS = 1000
 const DIRECTORY_OWNER_CACHE_MS = 2000
 const SESSION_DIRECTORY_CACHE_MS = 2000
+const GLOBAL_EVENT_TYPES = new Set([
+  "agent.updated",
+  "catalog.updated",
+  "command.updated",
+  "config.updated",
+  "integration.connection.updated",
+  "integration.updated",
+  "installation.update-available",
+  "installation.updated",
+  "mcp.resources.changed",
+  "mcp.status.changed",
+  "models-dev.refreshed",
+])
 
 interface InstanceEventBridgeOptions {
   workspaceManager: WorkspaceManager
@@ -20,6 +33,7 @@ export class InstanceEventBridge {
   private task?: Promise<void>
   private readonly directoryOwners = new Map<string, { expiresAt: number; owners: Promise<string[]> }>()
   private readonly sessionDirectories = new Map<string, { expiresAt: number; directory: Promise<string | undefined> }>()
+  private readonly ptyDirectories = new Map<string, string>()
   private readonly onWorkspaceStarted = (event: { workspace: { id: string } }) => {
     this.clearLocationCaches()
     if (!this.task) this.task = this.run()
@@ -54,12 +68,17 @@ export class InstanceEventBridge {
 
   private async run() {
     while (!this.controller.signal.aborted) {
+      this.clearLocationCaches()
       this.updateStatus("connecting")
       try {
         const events = await this.options.workspaceManager.subscribeToSharedService(this.controller.signal)
-        this.updateStatus("connected")
+        let confirmed = false
         for await (const event of events) {
           if (this.controller.signal.aborted) return
+          if (!confirmed) {
+            confirmed = true
+            this.updateStatus("connected")
+          }
           await this.publishEvent(event)
         }
         if (!this.controller.signal.aborted) throw new Error("Shared OpenCode event stream ended")
@@ -74,20 +93,22 @@ export class InstanceEventBridge {
 
   private async publishEvent(event: OpenCodeEvent) {
     const sessionId = this.sessionId(event)
+    const ptyId = this.ptyId(event)
     if (event.type === "session.moved" && sessionId) this.sessionDirectories.delete(sessionId)
 
-    const directory = event.location?.directory ?? (sessionId ? await this.resolveSessionDirectory(sessionId) : undefined)
+    const directory = event.location?.directory
+      ?? this.ptyInfoDirectory(event)
+      ?? (ptyId ? this.ptyDirectories.get(ptyId) : undefined)
+      ?? (sessionId ? await this.resolveSessionDirectory(sessionId) : undefined)
     if (!directory) {
+      if (GLOBAL_EVENT_TYPES.has(event.type)) {
+        this.broadcastEvent(event)
+        return
+      }
       if (event.type === "session.deleted" && sessionId) {
         // Deletion can make session.get return 404 before the event arrives. Session IDs are
         // service-global, so notifying every logical workspace cannot delete another session.
-        const compatibleEvent: InstanceStreamEvent = {
-          ...event,
-          properties: this.compatibilityProperties(event),
-        }
-        for (const workspace of this.options.workspaceManager.list()) {
-          this.options.eventBus.publish({ type: "instance.event", instanceId: workspace.id, event: compatibleEvent })
-        }
+        this.broadcastEvent(event)
         this.sessionDirectories.delete(sessionId)
       }
       return
@@ -98,10 +119,12 @@ export class InstanceEventBridge {
         directory: Promise.resolve(directory),
       })
     }
+    if (ptyId) this.ptyDirectories.set(ptyId, directory)
 
     const instanceIds = await this.resolveDirectoryOwners(directory)
     if (instanceIds.length === 0) {
       if (event.type === "session.deleted" && sessionId) this.sessionDirectories.delete(sessionId)
+      if (event.type === "pty.deleted" && ptyId) this.ptyDirectories.delete(ptyId)
       return
     }
 
@@ -114,11 +137,36 @@ export class InstanceEventBridge {
       this.options.eventBus.publish({ type: "instance.event", instanceId, event: compatibleEvent })
     }
     if (event.type === "session.deleted" && sessionId) this.sessionDirectories.delete(sessionId)
+    if (event.type === "pty.deleted" && ptyId) this.ptyDirectories.delete(ptyId)
   }
 
   private sessionId(event: OpenCodeEvent): string | undefined {
-    const sessionId = (event.data as { sessionID?: unknown }).sessionID
+    const data = event.data as { sessionID?: unknown; form?: { sessionID?: unknown } }
+    const sessionId = data.sessionID ?? (event.type === "form.created" ? data.form?.sessionID : undefined)
     return typeof sessionId === "string" && sessionId ? sessionId : undefined
+  }
+
+  private ptyId(event: OpenCodeEvent): string | undefined {
+    if (!event.type.startsWith("pty.")) return undefined
+    const data = event.data as { id?: unknown; info?: { id?: unknown } }
+    const id = data.id ?? data.info?.id
+    return typeof id === "string" && id ? id : undefined
+  }
+
+  private ptyInfoDirectory(event: OpenCodeEvent): string | undefined {
+    if (event.type !== "pty.created" && event.type !== "pty.updated") return undefined
+    const cwd = (event.data as { info?: { cwd?: unknown } }).info?.cwd
+    return typeof cwd === "string" && cwd ? cwd : undefined
+  }
+
+  private broadcastEvent(event: OpenCodeEvent): void {
+    const compatibleEvent: InstanceStreamEvent = {
+      ...event,
+      properties: this.compatibilityProperties(event),
+    }
+    for (const workspace of this.options.workspaceManager.list()) {
+      this.options.eventBus.publish({ type: "instance.event", instanceId: workspace.id, event: compatibleEvent })
+    }
   }
 
   private resolveSessionDirectory(sessionId: string): Promise<string | undefined> {
@@ -158,6 +206,7 @@ export class InstanceEventBridge {
   private clearLocationCaches(): void {
     this.directoryOwners.clear()
     this.sessionDirectories.clear()
+    this.ptyDirectories.clear()
   }
 
   private compatibilityProperties(event: OpenCodeEvent): Record<string, unknown> {

@@ -18,6 +18,10 @@ async function harness(
   sessionDirectory = "/repo/worktree",
   activeSessions: Record<string, { type: "running" }> = {},
   sessionLocations: Record<string, string | Error> = {},
+  workspacePath = "/repo",
+  serviceDirectory = workspacePath,
+  pathMappings: Record<string, string> = {},
+  ptyDirectories: Record<string, string | Error> = {},
 ) {
   const upstream = Fastify()
   apps.push(upstream)
@@ -31,9 +35,17 @@ async function harness(
   const address = upstream.server.address()
   assert.ok(address && typeof address === "object")
 
-  const owned = new Set(["/repo", "/repo/worktree"])
+  const owned = new Set([workspacePath, serviceDirectory, "/repo", "/repo/worktree"])
   const sessionGets: string[] = []
+  const pathOwnershipChecks: string[] = []
+  const servicePathCalls: string[] = []
   const client = {
+    project: {
+      list: async () => [
+        { id: "owned-project", canonical: serviceDirectory, time: { created: 1, updated: 1 }, sandboxes: [sessionDirectory, "/other"] },
+        { id: "foreign-project", canonical: "/other", time: { created: 1, updated: 1 }, sandboxes: [] },
+      ],
+    },
     session: {
       get: async ({ sessionID }: { sessionID: string }) => {
         sessionGets.push(sessionID)
@@ -43,21 +55,44 @@ async function harness(
       },
       active: async () => activeSessions,
     },
+    pty: {
+      list: async () => ({
+        location: { directory: serviceDirectory, project: { id: "project", directory: serviceDirectory, canonical: serviceDirectory } },
+        data: Object.entries(ptyDirectories).filter((entry): entry is [string, string] => typeof entry[1] === "string").map(([id, cwd]) => ({
+          id, title: id, command: "npm", args: ["run", "dev"], cwd, status: "running" as const, pid: 42,
+        })),
+      }),
+      get: async ({ ptyID }: { ptyID: string }) => {
+        const cwd = ptyDirectories[ptyID] ?? sessionDirectory
+        if (cwd instanceof Error) throw cwd
+        return { data: { id: ptyID, title: ptyID, command: "npm", args: ["run", "dev"], cwd, status: "running", pid: 42 } }
+      },
+    },
   } as OpenCodeClient
   const manager: InstanceProxyWorkspaceManager = {
-    get: () => ({ id: "workspace", path: "/repo" }) as never,
+    get: () => ({ id: "workspace", path: workspacePath }) as never,
     getSharedServiceEndpoint: async () => ({ url: `http://127.0.0.1:${address.port}` }),
     getInstanceAuthorizationHeader: () => "Basic internal-secret",
+    getServiceDirectory: () => serviceDirectory,
+    getServiceDirectoryForPath: async (_id, directory) => directory === workspacePath ? serviceDirectory : owned.has(directory) ? directory : undefined,
+    getServicePathForPath: async (_id, candidate) => {
+      assert.ok(pathOwnershipChecks.includes(candidate), "prompt path must be ownership-checked before translation")
+      servicePathCalls.push(candidate)
+      return pathMappings[candidate] ?? candidate
+    },
     getSharedServiceClient: async () => client,
     ownsDirectory: async (_id, directory) => owned.has(directory),
-    ownsPath: async (_id, candidate) => candidate === "/repo" || candidate.startsWith("/repo/"),
+    ownsPath: async (_id, candidate) => {
+      pathOwnershipChecks.push(candidate)
+      return candidate === "/repo" || candidate.startsWith("/repo/") || candidate in pathMappings
+    },
   }
   const app = Fastify()
   apps.push(app)
   await app.register(replyFrom)
   registerInstanceProxyRoutes(app, { workspaceManager: manager, logger: logger() })
   await app.ready()
-  return { app, sessionGets, requestCount: () => requests }
+  return { app, servicePathCalls, sessionGets, requestCount: () => requests }
 }
 
 describe("instance proxy location enforcement", () => {
@@ -68,7 +103,9 @@ describe("instance proxy location enforcement", () => {
       url: "/workspaces/workspace/instance/api/session?directory=%2Frepo%2Fworktree&limit=5",
     })
     assert.equal(listed.statusCode, 200)
-    assert.equal(JSON.parse(listed.body).url, "/api/session?directory=%2Frepo%2Fworktree&limit=5")
+    const listedUrl = new URL(JSON.parse(listed.body).url, "http://localhost")
+    assert.equal(listedUrl.pathname, "/api/session")
+    assert.deepEqual(Object.fromEntries(listedUrl.searchParams), { directory: "/repo/worktree", limit: "5" })
 
     const created = await app.inject({
       method: "POST",
@@ -76,7 +113,7 @@ describe("instance proxy location enforcement", () => {
       payload: { title: "test", location: { directory: "/repo/worktree", workspaceID: "worktree" } },
     })
     assert.equal(created.statusCode, 200)
-    assert.deepEqual(JSON.parse(created.body).body.location, { directory: "/repo/worktree", workspaceID: "worktree" })
+    assert.deepEqual(JSON.parse(created.body).body.location, { directory: "/repo/worktree" })
   })
 
   it("defaults session list and create to the workspace root", async () => {
@@ -86,6 +123,50 @@ describe("instance proxy location enforcement", () => {
 
     const created = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/session", payload: { title: "test" } })
     assert.deepEqual(JSON.parse(created.body).body.location, { directory: "/repo" })
+  })
+
+  it("allows the exact model default route", async () => {
+    const { app } = await harness()
+    const response = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/model/default" })
+    assert.equal(response.statusCode, 200)
+    assert.match(JSON.parse(response.body).url, /^\/api\/model\/default\?/)
+  })
+
+  it("allows ownership-scoped agent fallback lookups", async () => {
+    const { app } = await harness()
+    const response = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/agent/build" })
+    assert.equal(response.statusCode, 200)
+    assert.match(JSON.parse(response.body).url, /^\/api\/agent\/build\?/)
+  })
+
+  it("filters the project list and its sandboxes to the workspace", async () => {
+    const { app, requestCount } = await harness()
+    const response = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/project" })
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual(JSON.parse(response.body), [{
+      id: "owned-project",
+      canonical: "/repo",
+      time: { created: 1, updated: 1 },
+      sandboxes: ["/repo/worktree"],
+    }])
+    assert.equal(requestCount(), 0)
+  })
+
+  it("translates the WSL workspace root in proxied API locations without changing native paths", async () => {
+    const unc = String.raw`\\wsl.localhost\Ubuntu\home\dev\repo`
+    const { app } = await harness("/home/dev/repo", {}, {}, unc, "/home/dev/repo")
+    const listed = await app.inject({
+      method: "GET",
+      url: `/workspaces/workspace/instance/api/session?directory=${encodeURIComponent(unc)}`,
+    })
+    assert.equal(JSON.parse(listed.body).url, "/api/session?directory=%2Fhome%2Fdev%2Frepo")
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/session",
+      payload: { location: { directory: unc, workspaceID: "caller-selector" } },
+    })
+    assert.deepEqual(JSON.parse(created.body).body.location, { directory: "/home/dev/repo" })
   })
 
   it("rejects arbitrary locations instead of overwriting them", async () => {
@@ -114,6 +195,36 @@ describe("instance proxy location enforcement", () => {
       assert.equal(rejected.statusCode, 403)
     }
     assert.equal(requestCount(), 2)
+  })
+
+  it("allows only ownership-checked native PTY list, get, update, and remove routes", async () => {
+    const { app, requestCount } = await harness("/repo/worktree", {}, {}, "/repo", "/repo", {}, {
+      owned: "/repo/worktree",
+      foreign: "/other",
+    })
+
+    const listed = await app.inject({
+      method: "GET",
+      url: "/workspaces/workspace/instance/api/pty?location%5Bdirectory%5D=%2Frepo%2Fworktree",
+    })
+    assert.equal(listed.statusCode, 200)
+    assert.deepEqual(JSON.parse(listed.body).data.map((pty: { id: string }) => pty.id), ["owned"])
+    assert.equal((await app.inject({
+      method: "GET",
+      url: "/workspaces/workspace/instance/api/pty?location%5Bdirectory%5D=%2Fother",
+    })).statusCode, 403)
+
+    for (const [method, payload] of [["GET", undefined], ["PUT", { title: "renamed" }], ["DELETE", undefined]] as const) {
+      const url = "/workspaces/workspace/instance/api/pty/owned?location%5Bdirectory%5D=%2Frepo%2Fworktree"
+      assert.equal((await app.inject({ method, url, payload })).statusCode, 200, method)
+      assert.equal((await app.inject({ method, url: url.replace("owned", "foreign"), payload })).statusCode, 403, method)
+    }
+
+    assert.equal((await app.inject({
+      method: "GET",
+      url: "/workspaces/workspace/instance/api/pty/owned/output?location%5Bdirectory%5D=%2Frepo%2Fworktree",
+    })).statusCode, 403)
+    assert.equal(requestCount(), 3)
   })
 
   it("strips browser session and hop-by-hop headers in both directions", async () => {
@@ -203,7 +314,7 @@ describe("instance proxy location enforcement", () => {
       const response = await app.inject({ method: "POST", url: `/workspaces/workspace/instance/${route}` })
       assert.equal(response.statusCode, 403)
     }
-    for (const route of ["event", "project", "debug/location"]) {
+    for (const route of ["event", "debug/location"]) {
       const response = await app.inject({ method: "GET", url: `/workspaces/workspace/instance/api/${route}` })
       assert.equal(response.statusCode, 403)
     }
@@ -225,8 +336,66 @@ describe("instance proxy location enforcement", () => {
     assert.equal(requestCount(), 0)
   })
 
-  it("rejects foreign prompt file URIs and accepts owned files", async () => {
-    const { app, requestCount } = await harness()
+  it("rejects literal and encoded dot-segment aliases before authorization", async () => {
+    const { app, sessionGets, requestCount } = await harness("/other")
+    for (const route of [
+      "api/session/owned/%2e%2e/foreign",
+      "api/session/owned/%252e%252e/%252e%252e/event",
+      "api/session/owned/../../debug/location",
+    ]) {
+      const response = await app.inject({ method: "GET", url: `/workspaces/workspace/instance/${route}` })
+      assert.ok([400, 403, 404].includes(response.statusCode), `${route}: ${response.statusCode}`)
+    }
+    assert.deepEqual(sessionGets, ["foreign"])
+    assert.equal(requestCount(), 0)
+  })
+
+  it("allows ownership-checked form request, list, reply, and cancel routes", async () => {
+    const owned = await harness()
+    for (const [method, route, payload] of [
+      ["GET", "api/form/request", undefined],
+      ["GET", "api/session/owned/form", undefined],
+      ["POST", "api/session/owned/form/form-1/reply", { answer: { choice: "yes" } }],
+      ["POST", "api/session/owned/form/form-1/cancel", undefined],
+    ] as const) {
+      const response = await owned.app.inject({ method, url: `/workspaces/workspace/instance/${route}`, payload })
+      assert.equal(response.statusCode, 200, route)
+    }
+    assert.deepEqual(owned.sessionGets, ["owned", "owned", "owned"])
+
+    const foreign = await harness("/other")
+    for (const [method, route] of [
+      ["GET", "api/session/foreign/form"],
+      ["POST", "api/session/foreign/form/form-1/reply"],
+      ["POST", "api/session/foreign/form/form-1/cancel"],
+    ] as const) {
+      const response = await foreign.app.inject({ method, url: `/workspaces/workspace/instance/${route}` })
+      assert.equal(response.statusCode, 403, route)
+    }
+    assert.equal(foreign.requestCount(), 0)
+  })
+
+  it("propagates session transport failures instead of mapping them to not found", async () => {
+    const { app, requestCount } = await harness("/repo/worktree", {}, { broken: new TypeError("fetch failed") })
+    const response = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/session/broken/form" })
+    assert.equal(response.statusCode, 500)
+    assert.equal(requestCount(), 0)
+  })
+
+  it("maps only typed session-not-found failures to 404", async () => {
+    const missing = Object.assign(new Error("missing"), { _tag: "SessionNotFoundError", sessionID: "missing" })
+    const { app } = await harness("/repo/worktree", {}, { missing })
+    const response = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/session/missing/form" })
+    assert.equal(response.statusCode, 404)
+  })
+
+  it("validates prompt file ownership before translating root, worktree, and Windows URIs", async () => {
+    const mappings = {
+      "/repo/notes.txt": "/home/dev/repo/notes.txt",
+      "/repo/worktree/notes.txt": "/home/dev/worktree/notes.txt",
+      "C:/repo/notes.txt": "/mnt/c/repo/notes.txt",
+    }
+    const { app, servicePathCalls, requestCount } = await harness("/repo/worktree", {}, {}, "/repo", "/repo", mappings)
     const malformed = await app.inject({
       method: "POST",
       url: "/workspaces/workspace/instance/api/session/session-1/prompt",
@@ -240,15 +409,31 @@ describe("instance proxy location enforcement", () => {
       payload: { text: "read this", files: [{ uri: "file:///other/secret.txt" }] },
     })
     assert.equal(foreign.statusCode, 403)
+    const traversed = await app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/session/session-1/prompt",
+      payload: { text: "read this", files: [{ uri: "file:///repo/worktree/../../other/secret.txt" }] },
+    })
+    assert.equal(traversed.statusCode, 403)
     assert.equal(requestCount(), 0)
+    assert.deepEqual(servicePathCalls, [])
 
     const owned = await app.inject({
       method: "POST",
       url: "/workspaces/workspace/instance/api/session/session-1/prompt",
-      payload: { text: "read this", files: [{ uri: "file:///repo/worktree/notes.txt" }] },
+      payload: { text: "read this", files: [
+        { uri: "file:///repo/notes.txt" },
+        { uri: "file:///repo/worktree/notes.txt" },
+        { uri: "file:///C:/repo/notes.txt" },
+      ] },
     })
     assert.equal(owned.statusCode, 200)
-    assert.equal(JSON.parse(owned.body).body.files[0].uri, "file:///repo/worktree/notes.txt")
+    assert.deepEqual(JSON.parse(owned.body).body.files.map((file: { uri: string }) => file.uri), [
+      "file:///home/dev/repo/notes.txt",
+      "file:///home/dev/worktree/notes.txt",
+      "file:///mnt/c/repo/notes.txt",
+    ])
+    assert.deepEqual(servicePathCalls, Object.keys(mappings))
     assert.equal(requestCount(), 1)
   })
 

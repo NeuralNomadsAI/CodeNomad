@@ -7,7 +7,7 @@ import {
 } from "@opencode-ai/client"
 import { Service, type Endpoint, type EnsureOptions, type Info, type StopOptions } from "@opencode-ai/client/service"
 import { spawn, type ChildProcess } from "node:child_process"
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import type { Stats } from "node:fs"
 import { appendFile, lstat, mkdir, open, readdir, rename, rm } from "node:fs/promises"
 import path from "node:path"
@@ -26,6 +26,7 @@ type ServiceProof = {
   registrationFile: string
   nativePid?: boolean
   processIdentity?: ProcessIdentity
+  launchSignature?: string
 }
 interface LaunchIntent {
   identity: string
@@ -46,6 +47,7 @@ interface LeaseMetadata {
   contenderFile?: string
   launch?: LaunchIntent
   service?: ServiceProof
+  launchSignature?: string
 }
 interface LockOwner {
   version: 1
@@ -83,6 +85,7 @@ interface ServiceConnection {
   endpoint: Endpoint
   client: OpenCodeClient
   stopOptions: StopOptions
+  launchSignature: string
 }
 
 interface OwnedService {
@@ -91,6 +94,7 @@ interface OwnedService {
   endpoint: Endpoint
   nativePid: boolean
   processIdentity?: ProcessIdentity
+  launchSignature: string
 }
 
 export interface OpenCodeSharedServiceDependencies {
@@ -117,6 +121,7 @@ export class OpenCodeSharedService {
   private lease?: LeaseHandle
   private shutdownAttempt?: Promise<void>
   private shutdownRequested = false
+  private readonly pendingEvictions = new Map<string, LocationRef>()
 
   constructor(private readonly dependencies: OpenCodeSharedServiceDependencies = {
     discover: Service.discover,
@@ -142,7 +147,7 @@ export class OpenCodeSharedService {
     ensureOptions?: OpenCodeEnsureOptions,
   ): Promise<LocationGetOutput> {
     const result = await this.withClient(ensureOptions, (client) => client.location.get({
-      location: { directory: location.directory, workspace: location.workspaceID },
+      location: { directory: location.directory },
     }, requestOptions))
     if (
       !result
@@ -152,6 +157,9 @@ export class OpenCodeSharedService {
       || typeof result.project.canonical !== "string"
     ) {
       throw new Error("OpenCode returned an invalid location")
+    }
+    if (location.workspaceID && result.workspaceID !== location.workspaceID) {
+      throw new Error("OpenCode location workspace does not match the canonical location")
     }
     return result
   }
@@ -173,9 +181,9 @@ export class OpenCodeSharedService {
     requestOptions?: RequestOptions,
     ensureOptions?: OpenCodeEnsureOptions,
   ): Promise<void> {
-    await this.withClient(ensureOptions, (client) => client.debug.location.evict({
-      location: { directory: location.directory, workspace: location.workspaceID },
-    }, requestOptions))
+    requestOptions?.signal?.throwIfAborted()
+    if (ensureOptions) await this.connect(ensureOptions)
+    this.pendingEvictions.set(`${location.directory}\0${location.workspaceID ?? ""}`, location)
   }
 
   shutdown(options: { timeoutMs?: number } = {}): Promise<void> {
@@ -209,7 +217,12 @@ export class OpenCodeSharedService {
       }
       const leaseDirectory = path.dirname(lease.file)
       const initialPeers = await this.readPeerLeases(leaseDirectory, lease.file)
-      const inheritedProof = await this.deadPeerProof(initialPeers, this.ensureOptions?.file, deadlineAt)
+      const inheritedProof = await this.deadPeerProof(
+        initialPeers,
+        this.ensureOptions?.file,
+        deadlineAt,
+        ownMetadata.launchSignature,
+      )
       await this.pruneLeaseArtifacts(leaseDirectory, lease.file, lease.staleLockMs, deadlineAt)
       const peers = await this.readPeerLeases(leaseDirectory, lease.file)
       const peerEntries = (await readdir(leaseDirectory))
@@ -221,14 +234,22 @@ export class OpenCodeSharedService {
       if (leasedProof && leasedProof.registrationFile !== this.ensureOptions?.file) {
         throw new Error("OpenCode service lease proof references an unexpected registration; retaining lease")
       }
-      const owned = leasedProof ? {
-        stopOptions: { file: leasedProof.registrationFile },
-        info: leasedProof.info,
-        endpoint: leasedProof.endpoint,
-        nativePid: leasedProof.nativePid === true,
-        processIdentity: leasedProof.processIdentity,
-      } : this.owned
-      if (leasedProof) this.owned = owned
+      let owned = this.owned
+      if (leasedProof) {
+        const launchSignature = ownMetadata.launchSignature
+        if (!launchSignature || leasedProof.launchSignature !== launchSignature) {
+          throw new Error("OpenCode service lease proof has a different launch configuration; retaining lease")
+        }
+        owned = {
+          stopOptions: { file: leasedProof.registrationFile },
+          info: leasedProof.info,
+          endpoint: leasedProof.endpoint,
+          nativePid: leasedProof.nativePid === true,
+          processIdentity: leasedProof.processIdentity,
+          launchSignature,
+        }
+        this.owned = owned
+      }
       if (!owned) {
         await this.releaseLease(lease)
         return
@@ -248,7 +269,12 @@ export class OpenCodeSharedService {
       }
       const livePeers = peerStates.filter(({ state }) => state === "live").map(({ peer }) => peer)
       if (livePeers.length) {
-        if (!livePeers.some((peer) => peer.metadata.service && this.sameInfo(peer.metadata.service.info, owned.info))) {
+        if (livePeers.some((peer) => peer.metadata.launchSignature !== owned.launchSignature)) {
+          throw new Error("OpenCode service peer launch configuration changed; retaining lease")
+        }
+        if (!livePeers.some((peer) => peer.metadata.service
+          && peer.metadata.service.launchSignature === owned.launchSignature
+          && this.sameInfo(peer.metadata.service.info, owned.info))) {
           const elected = livePeers.sort((left, right) => left.metadata.identity.localeCompare(right.metadata.identity))[0]
           await this.writeLease(elected.file, {
             ...elected.metadata,
@@ -271,6 +297,8 @@ export class OpenCodeSharedService {
       )) {
         throw new Error("OpenCode service process identity changed; retaining lease")
       }
+      // ponytail: eviction is process-local and only safe after proving no peer and the exact daemon identity.
+      await this.flushPendingEvictions(owned)
       const remaining = deadlineAt - Date.now()
       if (remaining <= 0) throw new Error("OpenCode service shutdown deadline elapsed; retaining lease")
       const proof = this.serviceProof(owned)
@@ -317,11 +345,18 @@ export class OpenCodeSharedService {
 
   private connect(options?: OpenCodeEnsureOptions): Promise<ServiceConnection> {
     const selectedOptions = options ?? this.ensureOptions ?? {}
+    const launchSignature = this.launchSignature(selectedOptions)
     if (!this.connected) {
       if (this.pendingLaunch) {
+        if (this.ensureOptions && launchSignature !== this.launchSignature(this.ensureOptions)) {
+          return Promise.reject(new Error("OpenCode service launch configuration changed while startup is in progress"))
+        }
         return this.withDeadline(this.pendingLaunch, selectedOptions.timeoutMs ?? 30_000, "OpenCode service ensure")
       }
       return this.connection ?? this.startConnection(selectedOptions)
+    }
+    if (launchSignature !== this.connected.launchSignature) {
+      return Promise.reject(new Error("OpenCode service launch configuration does not match the connected daemon"))
     }
     if (this.healthCheck) return this.healthCheck
 
@@ -372,6 +407,7 @@ export class OpenCodeSharedService {
       windowsVerbatimArguments,
       ...ensureOptions
     } = options
+    const launchSignature = this.launchSignature(options)
     const onStart = ensureOptions.onStart
     const pending = this.ensureLease(
       leaseFile,
@@ -380,6 +416,7 @@ export class OpenCodeSharedService {
       ensureOptions.file,
       timeoutMs,
       staleLockMs,
+      launchSignature,
     ).then(() => {
       const launch = (this.dependencies.ensure
         ? this.dependencies.ensure({
@@ -396,6 +433,7 @@ export class OpenCodeSharedService {
             baseUrl: endpoint.url,
             headers: this.dependencies.headers(endpoint),
           }),
+          launchSignature,
         }
         const info = await this.proveOwnership(connection.stopOptions.file, contenderFile, endpoint, started, timeoutMs)
         if (info) {
@@ -406,6 +444,7 @@ export class OpenCodeSharedService {
             endpoint,
             nativePid: options.nativePid !== false,
             processIdentity,
+            launchSignature,
           }
           await this.updateLeaseService({
             info,
@@ -413,6 +452,7 @@ export class OpenCodeSharedService {
             registrationFile: connection.stopOptions.file!,
             nativePid: this.owned.nativePid,
             processIdentity,
+            launchSignature,
           })
         }
         this.connected = connection
@@ -683,8 +723,16 @@ export class OpenCodeSharedService {
     registrationFile: string | undefined,
     timeoutMs: number,
     staleLockMs: number,
+    launchSignature: string,
   ): Promise<void> {
-    if (!file || !lockDirectory || this.lease) return
+    if (!file || !lockDirectory) return
+    if (this.lease) {
+      const metadata = await this.readLease(this.lease.file)
+      if (!metadata || metadata.identity !== this.lease.identity || metadata.launchSignature !== launchSignature) {
+        throw new Error("OpenCode service launch configuration does not match the active lifecycle lease")
+      }
+      return
+    }
     const identity = randomUUID()
     const lease = {
       file,
@@ -696,14 +744,30 @@ export class OpenCodeSharedService {
     }
     const deadlineAt = Date.now() + timeoutMs
     await this.withLifecycleLock(lease, deadlineAt, async () => {
+      const peerLeases = await this.readPeerLeases(path.dirname(file))
+      const peerStates = await Promise.all(peerLeases.map((peer) => this.processOwnerState(peer.metadata, deadlineAt)))
+      if (peerLeases.some((peer, index) => peerStates[index] === "live" && peer.metadata.launchSignature !== launchSignature)) {
+        throw new Error("OpenCode service launch configuration does not match the shared daemon")
+      }
+      if (await this.hasConflictingStaleService(
+        peerLeases,
+        peerStates,
+        registrationFile,
+        launchSignature,
+        deadlineAt,
+      )) {
+        throw new Error("OpenCode service launch configuration does not match the discovered daemon")
+      }
       const inheritedProof = await this.deadPeerProof(
-        await this.readPeerLeases(path.dirname(file)),
+        peerLeases,
         registrationFile,
         deadlineAt,
+        launchSignature,
       )
       const inheritedLaunch = inheritedProof ? undefined : await this.deadPeerLaunch(
-        await this.readPeerLeases(path.dirname(file)),
+        peerLeases,
         deadlineAt,
+        launchSignature,
       )
       await this.pruneLeaseArtifacts(path.dirname(file), undefined, lease.staleLockMs, deadlineAt)
       const now = Date.now()
@@ -719,6 +783,7 @@ export class OpenCodeSharedService {
         contenderFile,
         launch: inheritedLaunch,
         service: inheritedProof,
+        launchSignature,
       }, true)
       this.lease = lease
     })
@@ -790,13 +855,16 @@ export class OpenCodeSharedService {
     peers: Array<{ file: string; metadata: LeaseMetadata }>,
     registrationFile: string | undefined,
     deadlineAt: number,
+    launchSignature: string | undefined,
   ): Promise<ServiceProof | undefined> {
-    if (!registrationFile) return undefined
+    if (!registrationFile || !launchSignature) return undefined
     const states = await Promise.all(peers.map((peer) => this.processOwnerState(peer.metadata, deadlineAt)))
     const proofs = peers
-      .filter((_peer, index) => states[index] === "stale")
+      .filter((peer, index) => states[index] === "stale" && peer.metadata.launchSignature === launchSignature)
       .map((peer) => peer.metadata.service)
-      .filter((proof): proof is ServiceProof => proof?.registrationFile === registrationFile)
+      .filter((proof): proof is ServiceProof => (
+        proof?.registrationFile === registrationFile && proof.launchSignature === launchSignature
+      ))
     const first = proofs[0]
     if (!first) return undefined
     return proofs.every((proof) => this.sameInfo(proof.info, first.info)
@@ -812,12 +880,61 @@ export class OpenCodeSharedService {
   private async deadPeerLaunch(
     peers: Array<{ file: string; metadata: LeaseMetadata }>,
     deadlineAt: number,
+    launchSignature: string,
   ): Promise<LaunchIntent | undefined> {
     for (const peer of peers) {
-      if (!peer.metadata.launch || await this.processOwnerState(peer.metadata, deadlineAt) !== "stale") continue
+      if (
+        peer.metadata.launchSignature !== launchSignature
+        || !peer.metadata.launch
+        || await this.processOwnerState(peer.metadata, deadlineAt) !== "stale"
+      ) continue
       return peer.metadata.launch
     }
     return undefined
+  }
+
+  private async hasConflictingStaleService(
+    peers: Array<{ file: string; metadata: LeaseMetadata }>,
+    states: ProcessOwnerState[],
+    registrationFile: string | undefined,
+    launchSignature: string,
+    deadlineAt: number,
+  ): Promise<boolean> {
+    if (!registrationFile) return false
+    const current = await readSecureServiceInfo(registrationFile)
+    if (!current) return false
+    for (let index = 0; index < peers.length; index++) {
+      const peer = peers[index]
+      const proof = peer?.metadata.service
+      if (
+        states[index] !== "stale"
+        || !proof
+        || (peer?.metadata.launchSignature === launchSignature && proof.launchSignature === launchSignature)
+        || proof.registrationFile !== registrationFile
+        || !this.sameInfo(proof.info, current)
+      ) continue
+      if (!proof.processIdentity) return true
+      if (proof.processIdentity.namespace.kind === "host" && !this.processIsAlive(proof.info.pid)) continue
+      if (proof.processIdentity.namespace.kind === "wsl") {
+        const timeoutMs = deadlineAt - Date.now()
+        if (timeoutMs <= 0) return true
+        const probe = await (this.dependencies.probeProcessIdentity ?? probeProcessStartIdentity)(
+          proof.info.pid,
+          timeoutMs,
+          proof.processIdentity.namespace,
+        )
+        if (probe.status === "missing") continue
+        if (probe.status !== "found" || this.sameProcessIdentity(probe.identity, proof.processIdentity)) return true
+        continue
+      }
+      const identity = await this.currentProcessIdentity(
+        proof.info.pid,
+        deadlineAt,
+        proof.processIdentity.namespace,
+      )
+      if (!identity || this.sameProcessIdentity(identity, proof.processIdentity)) return true
+    }
+    return false
   }
 
   private async processOwnerState(
@@ -921,6 +1038,7 @@ export class OpenCodeSharedService {
       && (lease.contenderFile === undefined || typeof lease.contenderFile === "string")
       && (lease.launch === undefined || this.isLaunchIntent(lease.launch))
       && (lease.service === undefined || this.isServiceProof(lease.service))
+      && (lease.launchSignature === undefined || typeof lease.launchSignature === "string")
   }
 
   private isLaunchIntent(value: unknown): value is LaunchIntent {
@@ -941,6 +1059,7 @@ export class OpenCodeSharedService {
     if (!proof.info.id || !Number.isInteger(proof.info.pid) || proof.info.pid <= 0) return false
     if (proof.nativePid !== undefined && typeof proof.nativePid !== "boolean") return false
     if (proof.processIdentity !== undefined && !this.isProcessIdentity(proof.processIdentity)) return false
+    if (proof.launchSignature !== undefined && typeof proof.launchSignature !== "string") return false
     if (proof.info.url !== proof.endpoint.url || proof.info.password !== proof.endpoint.auth?.password) return false
     try { assertLoopbackServiceUrl(proof.endpoint.url) } catch { return false }
     return true
@@ -954,6 +1073,7 @@ export class OpenCodeSharedService {
       registrationFile: owned.stopOptions.file,
       nativePid: owned.nativePid,
       processIdentity: owned.processIdentity,
+      launchSignature: owned.launchSignature,
     }
   }
 
@@ -1155,5 +1275,30 @@ export class OpenCodeSharedService {
       && left.namespace.kind === right.namespace.kind
       && (left.namespace.kind !== "wsl"
         || right.namespace.kind === "wsl" && left.namespace.distro.toLowerCase() === right.namespace.distro.toLowerCase())
+  }
+
+  private launchSignature(options: OpenCodeEnsureOptions): string {
+    const environment = Object.entries(options.environment ?? {}).sort(([left], [right]) => left.localeCompare(right))
+    return createHash("sha256").update(JSON.stringify({
+      command: options.command ?? [],
+      environment,
+      version: options.version ?? null,
+      wslDistro: options.wslDistro ?? null,
+      windowsVerbatimArguments: options.windowsVerbatimArguments ?? false,
+    })).digest("hex")
+  }
+
+  private async flushPendingEvictions(owned: OwnedService): Promise<void> {
+    if (!this.pendingEvictions.size) return
+    const client = this.connected?.client ?? this.dependencies.makeClient({
+      baseUrl: owned.endpoint.url,
+      headers: this.dependencies.headers(owned.endpoint),
+    })
+    for (const location of this.pendingEvictions.values()) {
+      await client.debug.location.evict({
+        location: { directory: location.directory, workspace: location.workspaceID },
+      })
+    }
+    this.pendingEvictions.clear()
   }
 }

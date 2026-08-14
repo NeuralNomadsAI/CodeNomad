@@ -15,13 +15,14 @@ description: |
 
 ## Native OpenCode V2 Baseline
 
-- The only OpenCode client dependency is exact version `@opencode-ai/client@0.0.0-next-17353` in server and UI.
-- Do not use `@opencode-ai/sdk`, `@opencode-ai/sdk/v2/client`, or `createOpencodeClient()`.
+- The only OpenCode client dependency is the experimental `@opencode-ai/client` protocol at exact version `0.0.0-next-17353` in server and UI. Current public `@opencode-ai/sdk` docs describe a different contract.
+- Do not use `@opencode-ai/sdk`, `@opencode-ai/sdk/v2/client`, or `createOpencodeClient()`; follow installed `@opencode-ai/client` declarations.
 - There is no `packages/opencode-plugin/`. Do not restore plugin tools, plugin routes, or plugin packaging.
-- The server owns one shared OpenCode service through `OpenCodeSharedService` and upstream `Service.ensure`; workspaces are native OpenCode `Location`/directory scopes, not separate OpenCode processes.
+- The server owns one shared OpenCode service through `OpenCodeSharedService` and its custom lease-locked discovery, launcher, process-proof, and authenticated-stop lifecycle. Production does not call `Service.ensure` or `Service.stop` directly. Workspaces are native OpenCode `Location`/directory scopes, not separate OpenCode processes.
 - The UI uses generated Promise clients from `OpenCode.make()` through the CodeNomad proxy.
-- OpenCode owns session APIs, native Shell (`client.session.shell`) and session instructions (`client.session.instructions.entry`).
+- OpenCode owns session APIs, native Shell (`client.session.shell`) and session instructions (`client.session.instructions.entry`). PTY/background-process parity is not integrated.
 - CodeNomad owns workspace lifecycle, directory authorization, Git status/diff/stage/unstage/commit, Yolo persistence/auto-replies, and `/api/events`.
+- V2 service startup requires a user-configured `OPENCODE_DB`. There is no default path; never share a V1 database with V2. Environment changes apply at service start/restart.
 
 ## Package Map
 
@@ -48,7 +49,8 @@ description: |
 - Inspect installed declarations under `node_modules/@opencode-ai/client/dist/promise/`; generated names are the source of truth.
 - Preserve `LocationRef` and explicit directory routing. Never infer workspace ownership from a client-provided path.
 - Send CodeNomad operations through `/api/*`; send OpenCode operations through `/workspaces/:id/instance/api/*`.
-- Consume the multiplexed CodeNomad SSE stream at `/api/events`; do not create one OpenCode process or event stream per workspace.
+- Consume the multiplexed CodeNomad SSE stream at `/api/events`; do not create one OpenCode process or event stream per workspace. Native events are volatile, so reconnect must reconcile authoritative state.
+- Treat the instance proxy allowlist as an integration boundary. Upstream routes are not exposed automatically.
 - Keep Git mutations and Yolo in CodeNomad. They are policy/security boundaries, not upstream client features.
 - Check `packages/server/src/api-types.ts` and UI consumers together when changing CodeNomad events or responses.
 
@@ -56,10 +58,10 @@ description: |
 
 | Avoid | Use |
 |---|---|
-| `@opencode-ai/sdk` | `@opencode-ai/client@0.0.0-next-17353` |
-| One `opencode serve` per workspace | One `Service.ensure` shared service |
+| Public `@opencode-ai/sdk` examples | Installed experimental `@opencode-ai/client@0.0.0-next-17353` declarations |
+| One `opencode serve` per workspace | One CodeNomad-managed shared service |
 | Per-worktree clients/processes | Root proxy client plus native location/directory inputs |
-| Reintroducing `packages/opencode-plugin` | Native OpenCode Shell/instructions |
+| Reintroducing `packages/opencode-plugin` | Native OpenCode Shell/instructions; no PTY/background parity claim |
 | OpenCode APIs for stage/commit/Yolo policy | CodeNomad routes and managers |
 | Hardcoded UI strings | `t()` / `tGlobal()` and every locale |
 

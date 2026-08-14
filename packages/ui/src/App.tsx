@@ -41,6 +41,8 @@ import {
   stopInstance,
   disconnectedInstance,
   acknowledgeDisconnectedInstance,
+  reconcilePendingSessionIndicators,
+  refreshVolatileInstanceState,
   syncPendingRequests,
 } from "./stores/instances"
 import {
@@ -306,6 +308,7 @@ const App: Component = () => {
                 registerInvalidation: (invalidate) => { invalidateSessions = invalidate },
               }),
               syncPendingRequests(id, (invalidate) => { invalidatePendingRequests = invalidate }),
+              refreshVolatileInstanceState(id),
             ]),
             `Foreground refresh for ${id}`,
             () => {
@@ -317,6 +320,7 @@ const App: Component = () => {
       )
       const failedInstanceIds: string[] = []
       sessionListResults.forEach((result, i) => {
+        reconcilePendingSessionIndicators(instanceIds[i])
         if (result.status === "rejected") {
           failedInstanceIds.push(instanceIds[i])
           log.error("Foreground refresh: fetchSessions failed", { instanceId: instanceIds[i], error: result.reason })

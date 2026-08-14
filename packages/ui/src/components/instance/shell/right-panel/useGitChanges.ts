@@ -6,9 +6,9 @@ import { getRootClient } from "../../../../stores/opencode-client"
 import { instances } from "../../../../stores/instances"
 import { getWorktrees } from "../../../../stores/worktrees"
 import { serverApi } from "../../../../lib/api-client"
-import { serverEvents } from "../../../../lib/server-events"
 import { showToastNotification } from "../../../../lib/notifications"
 import { adaptSdkGitStatusEntries, buildGitChangeListItems } from "./git-changes-model"
+import { createDebouncedRefresh, filesystemInvalidationVersion } from "../../../../lib/filesystem-events"
 
 type UseGitChangesOptions = {
   t: (key: string, vars?: Record<string, any>) => string
@@ -38,6 +38,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
   let passiveGitRefreshInFlight = false
   let pendingGitPassiveRefreshOptions: { forceReloadSelectedDiff?: boolean } | null = null
   let previousGitChangesActivationKey: string | null = null
+  let seenFilesystemInvalidation = filesystemInvalidationVersion(options.instanceId)
 
   const gitListItems = createMemo(() => buildGitChangeListItems(gitStatusEntries()))
 
@@ -429,21 +430,15 @@ export function useGitChanges(options: UseGitChangesOptions) {
     void passiveRefreshGitStatus()
   })
 
+  const filesystemRefresh = createDebouncedRefresh(() => void passiveRefreshGitStatus({ forceReloadSelectedDiff: true }))
   createEffect(() => {
-    if (options.rightPanelTab() !== "git-changes") return
-
-    const unsubscribe = serverEvents.on("instance.event", (event) => {
-      if (event.type !== "instance.event") return
-      if (event.instanceId !== options.instanceId) return
-      const eventType = (event.event as { type?: unknown } | undefined)?.type
-      if (eventType !== "session.updated") return
-      void passiveRefreshGitStatus({ forceReloadSelectedDiff: true })
-    })
-
-    onCleanup(() => {
-      unsubscribe()
-    })
+    const version = filesystemInvalidationVersion(options.instanceId)
+    if (version === seenFilesystemInvalidation) return
+    seenFilesystemInvalidation = version
+    if (options.rightPanelTab() === "git-changes") filesystemRefresh.trigger()
+    else setGitStatusEntries(null)
   })
+  onCleanup(() => filesystemRefresh.cancel())
 
   createEffect(() => {
     if (options.rightPanelTab() === "git-changes") return

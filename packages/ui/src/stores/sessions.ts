@@ -76,6 +76,8 @@ import {
   deleteSession,
   fetchAgents,
   fetchProviders,
+  getActiveCatalogLocation,
+  refreshSessionCatalog,
   fetchSessions,
   hydrateRestoredSessionChain,
   loadMoreSessions,
@@ -83,6 +85,7 @@ import {
   forkSession,
   loadMessages,
   clearSessionListRequestState,
+  clearSessionCatalogState,
 } from "./session-api"
 import {
   abortSession,
@@ -94,10 +97,6 @@ import {
   updateSessionModel,
 } from "./session-actions"
 import {
-  handleMessagePartRemoved,
-  handleMessageRemoved,
-  handleMessagePartDelta,
-  handleMessageUpdate,
   handleNativeSessionEvent,
   handlePermissionReplied,
   handlePermissionUpdated,
@@ -112,11 +111,6 @@ import {
   handleTuiToast,
 } from "./session-events"
 
-sseManager.onMessageUpdate = handleMessageUpdate
-sseManager.onMessagePartUpdated = handleMessageUpdate
-sseManager.onMessagePartDelta = handleMessagePartDelta
-sseManager.onMessageRemoved = handleMessageRemoved
-sseManager.onMessagePartRemoved = handleMessagePartRemoved
 sseManager.onNativeSessionEvent = handleNativeSessionEvent
 sseManager.onSessionUpdate = handleSessionUpdate
 sseManager.onSessionCompacted = handleSessionCompacted
@@ -152,6 +146,8 @@ export {
   runShellCommand,
   fetchAgents,
   fetchProviders,
+  getActiveCatalogLocation,
+  refreshSessionCatalog,
   fetchSessions,
   hydrateRestoredSessionChain,
   loadMoreSessions,
@@ -191,6 +187,7 @@ export {
   isSessionExpanded,
   loadMessages,
   clearSessionListRequestState,
+  clearSessionCatalogState,
   loading,
   markSessionIdleSeen,
   markViewedSessionIdleSeen,

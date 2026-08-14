@@ -19,6 +19,11 @@ export function createOpencodePermissionReplier(deps: OpencodeReplierDeps): Perm
       throw new Error(`Yolo: instance ${reply.instanceId} is not ready`)
     }
 
+    const session = await client.session.get({ sessionID: reply.sessionId })
+    if (!(await deps.workspaceManager.ownsDirectory(reply.instanceId, session.location.directory))) {
+      throw new Error(`Yolo: session ${reply.sessionId} does not belong to workspace ${reply.instanceId}`)
+    }
+
     await client.permission.reply({
       sessionID: reply.sessionId,
       requestID: reply.permissionId,

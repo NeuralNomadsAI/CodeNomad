@@ -21,28 +21,36 @@ const noopLogger: Logger = {
 } as unknown as Logger
 
 function publishInstanceEvent(bus: EventBus, instanceId: string, event: Record<string, unknown>) {
-  bus.publish({ type: "instance.event", instanceId, event: { ...event } as InstanceStreamEvent })
+  const type = event.type === "permission.v2.asked"
+    ? "permission.asked"
+    : event.type === "permission.v2.replied"
+      ? "permission.replied"
+      : event.type
+  bus.publish({ type: "instance.event", instanceId, event: { ...event, type } as InstanceStreamEvent })
 }
 
-/** Publish a `session.*` event using the real OpenCode shape (`properties.info`). */
+/** Publish session creation using the compatibility shape produced by InstanceEventBridge. */
 function publishSession(
   bus: EventBus,
   instanceId: string,
   eventType: "session.updated" | "session.created" | "session.deleted",
   info: Record<string, unknown>,
 ) {
-  publishInstanceEvent(bus, instanceId, { type: eventType, properties: { info: { ...info } } })
+  publishInstanceEvent(bus, instanceId, {
+    type: eventType === "session.updated" ? "session.created" : eventType,
+    properties: { info: { ...info } },
+  })
 }
 
 describe("AutoAcceptManager session tree", () => {
-  it("ingests session.updated to build the parent chain", () => {
+  it("ingests session.created to build the parent chain", () => {
     const bus = new EventBus(noopLogger)
     const replier = makeRecordingReplier()
     const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier })
     manager.start()
 
-    publishSession(bus, "inst", "session.updated", { id: "master", parentID: null })
-    publishSession(bus, "inst", "session.updated", { id: "child", parentID: "master" })
+    publishSession(bus, "inst", "session.created", { id: "master", parentID: null })
+    publishSession(bus, "inst", "session.created", { id: "child", parentID: "master" })
 
     assert.equal(manager.isEnabled("inst", "master"), false)
     manager.toggle("inst", "child")
@@ -52,32 +60,37 @@ describe("AutoAcceptManager session tree", () => {
     manager.stop()
   })
 
-  it("treats a session with revert as a fork root", () => {
+  it("uses the exact V2 session.forked payload as the family boundary", () => {
     const bus = new EventBus(noopLogger)
     const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier() })
     manager.start()
 
-    publishSession(bus, "inst", "session.updated", { id: "master", parentID: null })
-    publishSession(bus, "inst", "session.updated", {
-      id: "fork",
-      parentID: "master",
-      revert: { messageID: "m", partID: "p" },
+    publishSession(bus, "inst", "session.created", { id: "master", parentID: null })
+    manager.toggle("inst", "master")
+    publishInstanceEvent(bus, "inst", {
+      type: "session.forked",
+      properties: {
+        sessionID: "fork",
+        parentID: "master",
+        boundary: { type: "through", messageID: "m" },
+      },
     })
 
+    assert.equal(manager.isEnabled("inst", "fork"), false)
+    assert.equal(manager.isEnabled("inst", "master"), true)
     manager.toggle("inst", "fork")
     assert.equal(manager.isEnabled("inst", "fork"), true)
-    assert.equal(manager.isEnabled("inst", "master"), false)
 
     manager.stop()
   })
 
-  it("updates family boundaries from native revert events", async () => {
+  it("does not change the family boundary for revert events", async () => {
     const bus = new EventBus(noopLogger)
     const replier = makeRecordingReplier()
     const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier })
     manager.start()
-    publishSession(bus, "inst", "session.updated", { id: "root", parentID: null })
-    publishSession(bus, "inst", "session.updated", { id: "child", parentID: "root" })
+    publishSession(bus, "inst", "session.created", { id: "root", parentID: null })
+    publishSession(bus, "inst", "session.created", { id: "child", parentID: "root" })
     manager.toggle("inst", "root")
 
     publishInstanceEvent(bus, "inst", {
@@ -89,7 +102,7 @@ describe("AutoAcceptManager session tree", () => {
       properties: { id: "staged", sessionID: "child" },
     })
     await flushMicrotasks()
-    assert.equal(replier.calls.length, 0)
+    assert.deepEqual(replier.calls.map((call) => call.permissionId), ["staged"])
 
     publishInstanceEvent(bus, "inst", {
       type: "session.revert.cleared",
@@ -131,6 +144,28 @@ describe("AutoAcceptManager session tree", () => {
     publishSession(bus, "wrong-owner", "session.updated", { id: "session", parentID: null })
     await flushMicrotasks()
     assert.equal(replier.calls.length, 1)
+    manager.stop()
+  })
+
+  it("does not auto-reply when API hydration rejects cross-workspace ownership", async () => {
+    const bus = new EventBus(noopLogger)
+    const replier = makeRecordingReplier()
+    const persistence: AutoAcceptPersistence = {
+      async loadSessions() { return [{ id: "root", parentId: null, yoloEnabled: true }] },
+      async loadSession() { return null },
+      async persist() {},
+    }
+    const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier, persistence })
+    manager.start()
+    await manager.hydrateInstance("inst")
+
+    publishInstanceEvent(bus, "inst", {
+      type: "permission.asked",
+      properties: { id: "foreign-permission", sessionID: "foreign-session" },
+    })
+    await flushMicrotasks()
+
+    assert.equal(replier.calls.length, 0)
     manager.stop()
   })
 
@@ -434,7 +469,7 @@ describe("AutoAcceptManager permission interception", () => {
     manager.stop()
   })
 
-  it("auto-replies to a legacy permission.asked event", async () => {
+  it("auto-replies to the native permission.asked event", async () => {
     const bus = new EventBus(noopLogger)
     const replier = makeRecordingReplier()
     const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier })
@@ -451,7 +486,7 @@ describe("AutoAcceptManager permission interception", () => {
     await flushMicrotasks()
 
     assert.equal(replier.calls.length, 1)
-    assert.equal(replier.calls[0].source, "legacy")
+    assert.equal(replier.calls[0].source, "v2")
     assert.equal(replier.calls[0].permissionId, "perm-2")
 
     manager.stop()
