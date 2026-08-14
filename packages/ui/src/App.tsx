@@ -20,7 +20,7 @@ import { useCommands } from "./lib/hooks/use-commands"
 import { useAppLifecycle } from "./lib/hooks/use-app-lifecycle"
 import { useAppSessionRestore } from "./lib/hooks/use-app-session-restore"
 import { loadedRestorableSession } from "./stores/client-state"
-import { shouldShowAppHomeOverlay, shouldShowEmptyAppHome } from "./stores/app-session-restore-gate"
+import { shouldShowAppHomeOverlay, shouldShowAppRestoreLoading } from "./stores/app-session-restore-gate"
 import { getLogger } from "./lib/logger"
 import { launchError, showLaunchError, clearLaunchError } from "./stores/launch-errors"
 import { formatLaunchErrorMessage, isMissingBinaryMessage } from "./lib/launch-errors"
@@ -755,14 +755,12 @@ const App: Component = () => {
             </>
           }
         >
-          <Show when={shouldShowEmptyAppHome(loadedRestorableSession())}>
-            <FolderSelectionView
-              onSelectFolder={handleSelectFolder}
-              onSelectExistingInstance={handleSelectExistingInstance}
-              isLoading={isSelectingFolder()}
-              onOpenSidecar={handleOpenSidecarPicker}
-            />
-          </Show>
+          <FolderSelectionView
+            onSelectFolder={handleSelectFolder}
+            onSelectExistingInstance={handleSelectExistingInstance}
+            isLoading={isSelectingFolder() || shouldShowAppRestoreLoading(loadedRestorableSession())}
+            onOpenSidecar={handleOpenSidecarPicker}
+          />
         </Show>
 
         <Show when={shouldShowAppHomeOverlay(showFolderSelection(), appTabs().length)}>

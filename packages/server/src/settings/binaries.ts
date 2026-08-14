@@ -42,7 +42,7 @@ export class BinaryResolver {
   resolveDefault(): ResolvedBinary {
     const binaries = this.list()
     const configuredDefault = readDefaultBinaryPath(this.settings)
-    const path = configuredDefault ?? "opencode2"
+    const path = !configuredDefault || configuredDefault === "opencode" ? "opencode2" : configuredDefault
 
     const entry = binaries.find((b) => b.path === path)
     return {

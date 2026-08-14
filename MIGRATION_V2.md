@@ -24,6 +24,7 @@ The migration removes the V1 compatibility layer rather than maintaining both in
 - Remove V1 plugin communication channels and per-workspace runtime management.
 - Replace the custom background-process implementation with native V2 Shell and PTY APIs.
 - Replace per-workspace OpenCode binary selection with one global `opencode2` binary.
+- Migrate the persisted V1 default command `opencode` to `opencode2` during workspace launch.
 - Remove message and part deletion controls because V2 currently has no equivalent API.
 - Keep Git mutation operations on the CodeNomad server where V2 does not yet provide sufficient parity.
 
@@ -59,6 +60,7 @@ The migration removes the V1 compatibility layer rather than maintaining both in
 - The pinned client and installed `opencode2` CLI are aligned on `0.0.0-next-17353`.
 - The final critical/high security gate has no unresolved proxy, authentication, event-isolation, or process-ownership finding.
 - A real `opencode2@0.0.0-next-17353` lifecycle smoke test passed: authenticated discovery, workspace location validation, and confirmed service shutdown.
+- Startup restore now renders its loading state immediately instead of leaving a blank renderer while saved workspaces launch.
 - The migration remains a Draft until the GitHub build matrix completes.
 
 ## Remaining Work
