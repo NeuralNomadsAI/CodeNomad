@@ -617,6 +617,19 @@ fn set_windows_app_user_model_id() {
 #[cfg(not(windows))]
 fn set_windows_app_user_model_id() {}
 
+#[cfg(windows)]
+fn isolate_windows_webview_profile() {
+    if std::env::var_os("WEBVIEW2_USER_DATA_FOLDER").is_some() {
+        return;
+    }
+    if let Some(root) = dirs::data_local_dir() {
+        std::env::set_var(
+            "WEBVIEW2_USER_DATA_FOLDER",
+            root.join("ai.neuralnomads.codenomad.client-v2"),
+        );
+    }
+}
+
 fn main() {
     #[cfg(windows)]
     if let Some(code) = cli_manager::run_windows_cli_launcher_if_requested() {
@@ -624,6 +637,8 @@ fn main() {
     }
 
     let _ = rustls::crypto::ring::default_provider().install_default();
+    #[cfg(windows)]
+    isolate_windows_webview_profile();
 
     let navigation_guard: TauriPlugin<Wry, ()> = PluginBuilder::new("external-link-guard")
         .on_navigation(|webview, url| intercept_navigation(webview, url))
@@ -687,7 +702,7 @@ fn main() {
                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
             if let Some(window) = app.get_webview_window("main") {
                 #[cfg(windows)]
-                shutdown::install_windows_session_end_handler(&window)
+                shutdown::schedule_windows_session_end_handler(&window)
                     .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
                 let _ = window.eval(LOCAL_WINDOW_CONTEXT_SCRIPT);
                 let app_handle = app.handle().clone();
