@@ -168,6 +168,7 @@ function resolvePartIdFromCallId(store: ReturnType<typeof messageStoreBus.getOrC
       (part as any).callId ??
       (part as any).toolCallID ??
       (part as any).toolCallId ??
+      (part as any).id ??
       undefined
     if (toolCallId === callId && typeof part.id === "string" && part.id.length > 0) {
       return part.id
@@ -257,7 +258,7 @@ export function reconcilePendingQuestionsV2(instanceId: string, sessionId?: stri
   if (!pending || pending.length === 0) return
 
   for (const entry of pending) {
-    if (!entry || entry.partId) continue
+    if (!entry) continue
     const request = entry.request
     if (!request) continue
 
@@ -269,6 +270,7 @@ export function reconcilePendingQuestionsV2(instanceId: string, sessionId?: stri
     const messageId = entry.messageId ?? extractQuestionMessageId(request)
     const callId = extractQuestionCallId(request)
     const resolvedPartId = resolvePartIdFromCallId(store, messageId, callId)
+    if (entry.partId && (!resolvedPartId || resolvedPartId === entry.partId)) continue
     if (!resolvedPartId) continue
 
     store.upsertQuestion({

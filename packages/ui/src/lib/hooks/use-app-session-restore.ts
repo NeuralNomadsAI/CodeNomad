@@ -25,6 +25,7 @@ import {
   hydrateRestoredWorkspaceState,
 } from "../../stores/app-session-workspace-hydration"
 import { runWithSerializedCommits } from "../../stores/app-session-restore-queue"
+import { shouldWaitForSavedSessionList } from "../../stores/app-session-restore-readiness"
 import { waitForSettledPrerequisite } from "../trailing-resync"
 const log = getLogger("actions")
 const INITIAL_LOAD_TIMEOUT_MS = 15_000
@@ -75,7 +76,7 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
   const sidecars = snapshot.tabs.map((tab, index) => tab.kind === "sidecar" ? restoreSidecar(tab, index) : undefined)
   try {
     await runAbortable(async (operationSignal) => {
-      await waitForInitialWorkspaceLoad()
+      await waitForInitialWorkspaceLoad(operationSignal)
       if (operationSignal.aborted) throw getAbortReason(operationSignal)
     }, { timeoutMs: INITIAL_LOAD_TIMEOUT_MS, message: "Timed out loading initial workspaces", signal })
   } catch (error) {
@@ -129,15 +130,21 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
         const created = creation?.reused === false
         if (created) createdId = id
         try {
-          // A reconnect can recover the list; saved IDs still restore directly after an initial failure.
-          await runAbortable(
-            () => waitForSettledPrerequisite(waitForInstanceInitialSessionHydration(id)),
-            { signal: operationSignal },
-          )
           const tabId = getInstanceAppTabId(id)
           const isCurrentBinding = () => capture.hasRestoredTabBinding(match.tabIndex, tabId)
           if (!isCurrentBinding()) return id
-          const unavailable = await hydrateRestoredWorkspaceState(id, tab, operationSignal, isCurrentBinding)
+          // Restore the exact saved session before the potentially expensive
+          // all-worktree list walk. Only wait for that authoritative list when
+          // direct session hydration could not resolve the saved selection.
+          let unavailable = await hydrateRestoredWorkspaceState(id, tab, operationSignal, isCurrentBinding)
+          if (shouldWaitForSavedSessionList(tab.activeParentSessionId, tab.activeSessionId, unavailable)) {
+            await runAbortable(
+              () => waitForSettledPrerequisite(waitForInstanceInitialSessionHydration(id)),
+              { signal: operationSignal },
+            )
+            if (!isCurrentBinding()) return id
+            unavailable = await hydrateRestoredWorkspaceState(id, tab, operationSignal, isCurrentBinding)
+          }
           if (operationSignal.aborted) throw getAbortReason(operationSignal)
           if (!unavailable || !isCurrentBinding()) return id
           if (creation?.requestId) await releaseRestoreCreatedInstance(id, creation.requestId)

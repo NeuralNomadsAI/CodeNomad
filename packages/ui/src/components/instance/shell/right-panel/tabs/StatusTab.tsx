@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, type Accessor, type Component } from "solid-js"
+import { For, Show, createEffect, createMemo, on, type Accessor, type Component } from "solid-js"
 import type { ToolState } from "../../../../../types/tool-state"
 import {
   DragDropProvider,
@@ -85,9 +85,10 @@ const StatusTab: Component<StatusTabProps> = (props) => {
   const ptyDirectory = createMemo(() => props.activeSession()?.location.directory ?? props.instance.folder)
   const ptyState = createMemo(() => ptyStore.getState(props.instanceId, ptyDirectory()))
 
-  createEffect(() => {
-    void ptyStore.load(props.instanceId, ptyDirectory())
-  })
+  createEffect(on(
+    () => [props.instanceId, ptyDirectory()] as const,
+    ([instanceId, directory]) => void ptyStore.load(instanceId, directory),
+  ))
 
   const renderYoloModeSection = () => {
     const session = props.activeSession()

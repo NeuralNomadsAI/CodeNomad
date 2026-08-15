@@ -104,6 +104,7 @@ jobs:
       - name: Test changed runnable UI behavior
         run: >-
           node --import tsx --test
+          packages/ui/src/components/message-loading-visibility.test.ts
           packages/ui/src/components/provider-auth/provider-options.test.ts
           packages/ui/src/components/session-list-visibility.test.ts
           packages/ui/src/components/unified-picker-path.test.ts
@@ -120,6 +121,8 @@ jobs:
           packages/ui/src/stores/app-session-reconciliation.test.ts
           packages/ui/src/stores/app-session-restore-gate.test.ts
           packages/ui/src/stores/app-session-restore-queue.test.ts
+          packages/ui/src/stores/app-session-restore-readiness.test.ts
+          packages/ui/src/stores/app-session-restored-session-ids.test.ts
           packages/ui/src/stores/app-session-restore-timeout.test.ts
           packages/ui/src/stores/app-session-snapshot-merge.test.ts
           packages/ui/src/stores/restore-workspace-commit-gates.test.ts
@@ -134,6 +137,7 @@ jobs:
           packages/ui/src/stores/session-generation-recovery.test.ts
           packages/ui/src/stores/session-pagination.test.ts
           packages/ui/src/stores/session-pending-state.test.ts
+          packages/ui/src/stores/workspace-load-readiness.test.ts
           packages/ui/src/types/session.test.ts
           packages/ui/src/stores/workspace-list-reconciliation-fence.test.ts
 
@@ -145,6 +149,7 @@ jobs:
           packages/ui/src/stores/forms.test.ts
           packages/ui/src/stores/instances-restore-ownership.test.ts
           packages/ui/src/stores/permission-lifecycle.test.ts
+          packages/ui/src/stores/pty-store-reactivity.test.ts
           packages/ui/src/stores/session-actions.test.ts
           packages/ui/src/stores/session-native-events.test.ts
           packages/ui/src/stores/session-request-authority.test.ts

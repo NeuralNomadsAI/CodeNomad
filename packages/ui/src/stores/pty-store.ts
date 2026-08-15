@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js"
+import { createSignal, untrack } from "solid-js"
 import type { OpenCodeClient, Pty } from "@opencode-ai/client"
 
 export interface PtyApi {
@@ -44,18 +44,20 @@ export function createPtyStore(apiForInstance: (instanceId: string) => PtyApi) {
     setStates((current) => new Map(current).set(stateKey, state))
   }
 
+  const readState = (stateKey: string): PtyState => untrack(() => states().get(stateKey) ?? EMPTY_STATE)
+
   const load = async (instanceId: string, directory: string): Promise<void> => {
     if (!instanceId || !directory) return
     const stateKey = key(instanceId, directory)
     const generation = (generations.get(stateKey) ?? 0) + 1
     generations.set(stateKey, generation)
-    setState(stateKey, { ...(states().get(stateKey) ?? EMPTY_STATE), loading: true, failed: false })
+    setState(stateKey, { ...readState(stateKey), loading: true, failed: false })
     try {
       const items = await apiForInstance(instanceId).list(directory)
       if (generations.get(stateKey) === generation) setState(stateKey, { items, loading: false, failed: false })
     } catch {
       if (generations.get(stateKey) === generation) {
-        setState(stateKey, { ...(states().get(stateKey) ?? EMPTY_STATE), loading: false, failed: true })
+        setState(stateKey, { ...readState(stateKey), loading: false, failed: true })
       }
     }
   }

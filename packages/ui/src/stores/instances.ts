@@ -74,6 +74,7 @@ import {
 } from "./forms"
 import { invalidateFilesystemCaches } from "../lib/filesystem-events"
 import { appSessionRestoreGateActive } from "./app-session-restore-gate"
+import { waitForLatestWorkspaceLoadResult } from "./workspace-load-readiness"
 import { clearInstanceAttachments } from "./attachments"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 import { getUnavailableWorkspaceIds } from "./app-session-reconciliation"
@@ -856,25 +857,48 @@ const initialWorkspaceLoad = (async function initializeWorkspaces(): Promise<{ e
   }
 })()
 let latestWorkspaceLoad = initialWorkspaceLoad
+const workspaceLoadChangeListeners = new Set<() => void>()
+
+function publishLatestWorkspaceLoad(load: Promise<{ error?: unknown }>) {
+  latestWorkspaceLoad = load
+  workspaceLoadChangeListeners.forEach((listener) => listener())
+}
+
+function waitForWorkspaceLoadChange(
+  current: Promise<{ error?: unknown }>,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (latestWorkspaceLoad !== current) return Promise.resolve()
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      workspaceLoadChangeListeners.delete(onChange)
+      signal?.removeEventListener("abort", onAbort)
+    }
+    const onChange = () => { cleanup(); resolve() }
+    const onAbort = () => { cleanup(); reject(signal?.reason) }
+    workspaceLoadChangeListeners.add(onChange)
+    signal?.addEventListener("abort", onAbort, { once: true })
+    if (latestWorkspaceLoad !== current) onChange()
+  })
+}
 
 serverEvents.onOpen(() => {
-  latestWorkspaceLoad = refreshWorkspaceList().then(
+  publishLatestWorkspaceLoad(refreshWorkspaceList().then(
     () => ({}),
     (error) => {
       log.warn("Failed to reconcile workspaces after event reconnect", error)
       return { error }
     },
-  )
+  ))
 })
 
-async function waitForInitialWorkspaceLoad(): Promise<void> {
-  let load = initialWorkspaceLoad
-  while (true) {
-    const result = await load
-    if (result.error !== undefined) throw result.error
-    if (load === latestWorkspaceLoad) return
-    load = latestWorkspaceLoad
-  }
+async function waitForInitialWorkspaceLoad(signal?: AbortSignal): Promise<void> {
+  await waitForLatestWorkspaceLoadResult(
+    initialWorkspaceLoad,
+    () => latestWorkspaceLoad,
+    waitForWorkspaceLoadChange,
+    signal,
+  )
 }
 
 
@@ -1754,6 +1778,7 @@ async function sendQuestionReply(
     })
 
     removeQuestionFromQueue(instanceId, requestId)
+    removeQuestionV2(instanceId, requestId)
   } catch (error) {
     log.error("Failed to send question reply", error)
     throw error
@@ -1775,6 +1800,7 @@ async function sendQuestionReject(instanceId: string, _sessionId: string, reques
     })
 
     removeQuestionFromQueue(instanceId, requestId)
+    removeQuestionV2(instanceId, requestId)
   } catch (error) {
     log.error("Failed to send question reject", error)
     throw error

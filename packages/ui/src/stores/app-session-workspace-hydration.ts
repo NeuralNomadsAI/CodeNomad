@@ -1,6 +1,7 @@
 import type { RestorableWorkspaceTabState } from "./client-state-codec"
 import { getUnavailableRestoredSessionIds, resolveRestoredSessionSelection } from "./app-session-reconciliation"
 import { getAbortReason } from "./app-session-restore-timeout"
+import { getRestoredSessionIds } from "./app-session-restored-session-ids"
 import { hydrateWorkspacePromptState } from "./app-session-prompt-hydration"
 import { messageStoreBus, type MessageScrollSnapshotSeed } from "./message-v2/bus"
 import { getSessionAncestorIdsFromMap } from "./session-tree"
@@ -21,9 +22,25 @@ export async function hydrateRestoredWorkspaceState(
   await hydrateRestoredSessionChain(instanceId, [snapshot.activeParentSessionId, snapshot.activeSessionId], signal)
   if (signal.aborted) throw getAbortReason(signal)
   if (!isCurrentBinding()) return null
-  const sessions = getSessions(instanceId)
+  let sessions = getSessions(instanceId)
+  let selection = resolveRestoredSessionSelection(sessions, snapshot.activeParentSessionId, snapshot.activeSessionId)
+  if (!hasAuthoritativeSessionSelection(instanceId)) {
+    hydrateActiveSessionSelection(instanceId, selection?.parentSessionId ?? null, selection?.activeSessionId ?? null)
+  }
+
+  await hydrateRestoredSessionChain(instanceId, getRestoredSessionIds([
+    Object.keys(snapshot.drafts),
+    Object.keys(snapshot.attachments),
+    Object.keys(snapshot.scrollSnapshots),
+    Object.keys(snapshot.unseenIdleSince),
+    Object.keys(snapshot.generationRecovery),
+    snapshot.expandedSessionIds ?? [],
+  ]), signal)
+  if (signal.aborted) throw getAbortReason(signal)
+  if (!isCurrentBinding()) return null
+  sessions = getSessions(instanceId)
   const validIds = new Set(sessions.map(({ id }) => id))
-  const selection = resolveRestoredSessionSelection(sessions, snapshot.activeParentSessionId, snapshot.activeSessionId)
+  selection = resolveRestoredSessionSelection(sessions, snapshot.activeParentSessionId, snapshot.activeSessionId)
   const unavailable = getUnavailableRestoredSessionIds(sessions, {
     activeParentSessionId: snapshot.activeParentSessionId, activeSessionId: snapshot.activeSessionId,
     draftSessionIds: Object.keys(snapshot.drafts), attachmentSessionIds: Object.keys(snapshot.attachments),
@@ -41,8 +58,6 @@ export async function hydrateRestoredWorkspaceState(
   const scrollSeeds: MessageScrollSnapshotSeed[] = Object.entries(snapshot.scrollSnapshots)
     .map(([sessionId, scrollSnapshot]) => ({ sessionId, scope: MESSAGE_SCROLL_SCOPE, snapshot: scrollSnapshot }))
   messageStoreBus.seedScrollSnapshots(instanceId, scrollSeeds)
-  if (!hasAuthoritativeSessionSelection(instanceId)) {
-    hydrateActiveSessionSelection(instanceId, selection?.parentSessionId ?? null, selection?.activeSessionId ?? null)
-  }
+  if (!hasAuthoritativeSessionSelection(instanceId)) hydrateActiveSessionSelection(instanceId, selection?.parentSessionId ?? null, selection?.activeSessionId ?? null)
   return unavailable
 }

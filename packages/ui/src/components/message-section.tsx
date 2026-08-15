@@ -5,6 +5,7 @@ import BrandedEmptyState from "./branded-empty-state"
 import LoadErrorState from "./load-error-state"
 import MessageBlock from "./message-block"
 import { getMessageAnchorId } from "./message-anchors"
+import { isInitialMessageLoad } from "./message-loading-visibility"
 import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./message-timeline"
 import VirtualFollowList, { type VirtualExplicitBottomPinIntent, type VirtualFollowListApi, type VirtualFollowListState, type VirtualFollowScrollSnapshot } from "./virtual-follow-list"
 import { isScrollRestoreGenerationCurrent, isSnapshotAutoFollowing } from "./virtual-follow-behavior"
@@ -612,7 +613,7 @@ export default function MessageSection(props: MessageSectionProps) {
     // to prevent O(n) per-element reactive subscriptions.  The effect
     // only needs to re-run when `messageIds` (memo) changes.
     untrack(() => {
-      if (loading) {
+      if (isInitialMessageLoad(loading, ids.length)) {
         previousTimelineIds = []
         setTimelineSegments([])
         seenTimelineMessageIds.clear()
@@ -1103,7 +1104,7 @@ export default function MessageSection(props: MessageSectionProps) {
                 </Show>
               </Show>
 
-              <Show when={props.loading}>
+              <Show when={isInitialMessageLoad(Boolean(props.loading), messageIds().length)}>
                 <div class="loading-state">
                   <div class="spinner" />
                   <p>{t("messageSection.loading.messages")}</p>
