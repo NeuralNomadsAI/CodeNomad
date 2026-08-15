@@ -195,8 +195,9 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
   if (event.type === "session.text.delta" || event.type === "session.reasoning.delta") {
     const sessionId = event.data.sessionID
     if (!instances().has(instanceId) || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return
+    if (!applyNativeContentDelta(instanceId, event)) return
     ensureSessionStatus(instanceId, sessionId, "working", event.location?.directory)
-    applyNativeContentDelta(instanceId, event)
+    requestNativeSessionRefresh(instanceId, sessionId, false)
     return
   }
   switch (event.type) {

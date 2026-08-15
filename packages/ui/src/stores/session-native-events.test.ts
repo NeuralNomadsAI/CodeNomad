@@ -102,7 +102,7 @@ describe("native session event reducer", () => {
         data: { sessionID: sessionId, assistantMessageID: "assistant", ordinal: 0, delta: "streaming text" },
       })
       const store = messageStoreBus.getOrCreate(instanceId)
-      assert.equal((store.getMessage("assistant")?.parts["assistant-text-0"]?.data as any)?.text, "streaming text")
+      assert.equal((store.getMessage("assistant")?.parts["assistant-text-native-0"]?.data as any)?.text, "streaming text")
       handleNativeSessionEvent(instanceId, {
         id: "tool", created: 2, type: "session.tool.progress",
         data: { sessionID: sessionId, assistantMessageID: "assistant", id: "tool", metadata: {} },
@@ -153,7 +153,7 @@ describe("native session event reducer", () => {
         data: type === "session.text.delta"
           ? { sessionID: sessionId, assistantMessageID: "assistant", ordinal: 0, delta: "text " }
           : type === "session.reasoning.delta"
-            ? { sessionID: sessionId, assistantMessageID: "assistant", ordinal: 1, delta: "reason " }
+            ? { sessionID: sessionId, assistantMessageID: "assistant", ordinal: 0, delta: "reason " }
             : { sessionID: sessionId, assistantMessageID: "assistant", id: "tool", metadata: {} },
       } as any)
     }, 10)
@@ -166,8 +166,8 @@ describe("native session event reducer", () => {
       assert.ok(calls >= 2, `expected periodic refreshes, received ${calls}`)
       assert.ok(calls <= 5, `expected refreshes to stay bounded, received ${calls}`)
       const streamed = messageStoreBus.getOrCreate(instanceId).getMessage("assistant")
-      assert.match((streamed?.parts["assistant-text-0"]?.data as any)?.text ?? "", /text/)
-      assert.match((streamed?.parts["assistant-reasoning-1"]?.data as any)?.text ?? "", /reason/)
+      assert.match((streamed?.parts["assistant-text-native-0"]?.data as any)?.text ?? "", /text/)
+      assert.match((streamed?.parts["assistant-reasoning-native-0"]?.data as any)?.text ?? "", /reason/)
     } finally {
       clearInterval(stream)
       clearNativeContentDeltaState(instanceId)
