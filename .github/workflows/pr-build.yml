@@ -148,6 +148,7 @@ jobs:
           packages/ui/src/lib/hooks/use-active-session-message-load.test.ts
           packages/ui/src/stores/forms.test.ts
           packages/ui/src/stores/instances-restore-ownership.test.ts
+          packages/ui/src/stores/native-session-streaming.test.ts
           packages/ui/src/stores/permission-lifecycle.test.ts
           packages/ui/src/stores/pty-store-reactivity.test.ts
           packages/ui/src/stores/session-actions.test.ts

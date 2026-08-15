@@ -41,6 +41,7 @@ import {
 } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
+import { clearNativeContentDeltaState } from "./native-session-streaming"
 import { upsertPermissionV2, removePermissionV2, upsertQuestionV2, removeQuestionV2 } from "./message-v2/bridge"
 import {
   clearRepliedPermissions,
@@ -1118,6 +1119,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
 
   // Clean up session indexes and drafts for removed instance
   clearCacheForInstance(id)
+  clearNativeContentDeltaState(id)
   messageStoreBus.unregisterInstance(id)
   clearInstanceDraftPrompts(id)
   clearSessionListRequestState(id)

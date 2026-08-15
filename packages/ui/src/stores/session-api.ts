@@ -57,6 +57,7 @@ import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { seedSessionMessagesV2, reconcilePendingPermissionsV2, reconcilePendingQuestionsV2 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
+import { clearNativeContentDeltaState, reconcileNativeContentAfterSnapshot } from "./native-session-streaming"
 import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
@@ -733,6 +734,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
 }
 
 function removeSessionRuntimeState(instanceId: string, sessionId: string, authoritative = true): void {
+  clearNativeContentDeltaState(instanceId, sessionId)
   cancelSessionGenerationAdmissions(instanceId, sessionId)
   if (authoritative) markSessionDeletedAuthoritative(instanceId, sessionId)
   deleteSessionAttachments(instanceId, sessionId)
@@ -968,7 +970,9 @@ async function loadMessages(
       if (cursor) seenCursors.add(cursor)
     } while (cursor)
 
-    if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return
+    if (!instances().has(instanceId)
+      || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch)
+      || !sessions().get(instanceId)?.has(sessionId)) return
 
     if (!Array.isArray(apiMessages)) {
       return
@@ -1034,14 +1038,16 @@ async function loadMessages(
 
       if (!agentName && !providerID && !modelID) {
         const defaultModel = await getDefaultModel(instanceId, session.agent)
-        if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return
+        if (!instances().has(instanceId)
+          || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch)
+          || !sessions().get(instanceId)?.has(sessionId)) return
         agentName = session.agent
         providerID = defaultModel.providerId
         modelID = defaultModel.modelId
       }
 
       setSessions((prev) => {
-        if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return prev
+        if (!instances().has(instanceId) || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return prev
         const next = new Map(prev)
         const nextInstanceSessions = next.get(instanceId)
         if (!nextInstanceSessions) return next
@@ -1059,7 +1065,7 @@ async function loadMessages(
       const sessionForV2 = sessions().get(instanceId)?.get(sessionId) ?? {
         id: sessionId, title: session?.title, parentId: session?.parentId ?? null, revert: session?.revert,
       }
-      if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return
+      if (!instances().has(instanceId) || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return
       if (!seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, messageRevision)) {
         retryAfterRevisionConflict = true
       } else {
@@ -1092,6 +1098,9 @@ async function loadMessages(
         return next
       })
     }
+    if (instances().has(instanceId) && sessions().get(instanceId)?.has(sessionId)) {
+      reconcileNativeContentAfterSnapshot(instanceId, sessionId)
+    }
   }
 
   if (retryAfterRevisionConflict && sessions().get(instanceId)?.has(sessionId)) {
@@ -1104,7 +1113,9 @@ async function loadMessages(
     })
   }
 
-  if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch) || !sessions().get(instanceId)?.has(sessionId)) return
+  if (!instances().has(instanceId)
+    || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch)
+    || !sessions().get(instanceId)?.has(sessionId)) return
   updateSessionInfo(instanceId, sessionId)
 
   if (!skipChildren && session.parentId === null) {

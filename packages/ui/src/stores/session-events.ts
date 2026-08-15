@@ -68,6 +68,11 @@ import {
 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
 import { handleConversationAssistantPartUpdated } from "./conversation-speech"
+import {
+  applyNativeContentDelta,
+  clearNativeContentDeltaState,
+  settleNativeContentDeltas,
+} from "./native-session-streaming"
 
 const log = getLogger("sse")
 const pendingSessionFetches = new Map<string, {
@@ -75,6 +80,8 @@ const pendingSessionFetches = new Map<string, {
   retry?: SessionRetryState | null
 }>()
 const NATIVE_REFRESH_DELAY_MS = 75
+const NATIVE_TERMINAL_RETRY_DELAY_MS = 500
+const MAX_NATIVE_TERMINAL_REFRESH_ATTEMPTS = 3
 const nativeRefreshes = new Map<string, {
   instanceId: string
   sessionId: string
@@ -82,6 +89,7 @@ const nativeRefreshes = new Map<string, {
   speakAfter: boolean
   timer?: ReturnType<typeof setTimeout>
   running?: Promise<void>
+  terminalAttempts?: number
 }>()
 let activeRetryToast: ToastHandle | null = null
 
@@ -115,21 +123,47 @@ function requestNativeSessionRefresh(instanceId: string, sessionId: string, fina
     if (refresh.running) return refresh.running
     refresh.pending = false
     refresh.running = (async () => {
+      const terminal = refresh.speakAfter
+      if (!instances().has(refresh.instanceId)
+        || !sessions().get(refresh.instanceId)?.has(refresh.sessionId)
+        || getAuthoritativelyDeletedSessionIdsForInstance(refresh.instanceId).has(refresh.sessionId)) {
+        clearNativeContentDeltaState(refresh.instanceId, refresh.sessionId)
+        return
+      }
       try {
         await loadMessages(refresh.instanceId, refresh.sessionId, { force: true, skipChildren: true })
+        if (!instances().has(refresh.instanceId)
+          || !sessions().get(refresh.instanceId)?.has(refresh.sessionId)
+          || getAuthoritativelyDeletedSessionIdsForInstance(refresh.instanceId).has(refresh.sessionId)) {
+          clearNativeContentDeltaState(refresh.instanceId, refresh.sessionId)
+          return
+        }
+        if (terminal) {
+          settleNativeContentDeltas(refresh.instanceId, refresh.sessionId)
+          refresh.terminalAttempts = 0
+        }
       } catch (error) {
         log.error("Failed to refresh native session messages", { instanceId, sessionId, error })
+        if (terminal
+          && (refresh.terminalAttempts ?? 0) + 1 < MAX_NATIVE_TERMINAL_REFRESH_ATTEMPTS
+          && instances().has(refresh.instanceId)
+          && sessions().get(refresh.instanceId)?.has(refresh.sessionId)) {
+          refresh.terminalAttempts = (refresh.terminalAttempts ?? 0) + 1
+          refresh.pending = true
+        }
       }
     })().finally(() => {
       refresh.running = undefined
       if (refresh.pending) {
-        if (refresh.speakAfter) void run()
+        if (refresh.speakAfter) schedule(NATIVE_TERMINAL_RETRY_DELAY_MS)
         else schedule(NATIVE_REFRESH_DELAY_MS)
         return
       }
       if (refresh.speakAfter) {
         refresh.speakAfter = false
-        speakCompletedAssistantText(refresh.instanceId, refresh.sessionId)
+        if (instances().has(refresh.instanceId) && sessions().get(refresh.instanceId)?.has(refresh.sessionId)) {
+          speakCompletedAssistantText(refresh.instanceId, refresh.sessionId)
+        }
       }
       nativeRefreshes.delete(key)
     })
@@ -158,6 +192,13 @@ function clearNativeSessionRefresh(instanceId: string, sessionId: string): void 
 }
 
 function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent): void {
+  if (event.type === "session.text.delta" || event.type === "session.reasoning.delta") {
+    const sessionId = event.data.sessionID
+    if (!instances().has(instanceId) || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return
+    ensureSessionStatus(instanceId, sessionId, "working", event.location?.directory)
+    applyNativeContentDelta(instanceId, event)
+    return
+  }
   switch (event.type) {
     case "form.created":
       addPendingForm(instanceId, event.data.form)
@@ -225,6 +266,7 @@ function setTerminalNativeSessionStatus(instanceId: string, sessionId: string, f
   if (existing) setSessionStatus(instanceId, sessionId, "idle", { force: true })
   else ensureSessionStatus(instanceId, sessionId, "idle", directory)
   if (failed) messageStoreBus.getOrCreate(instanceId).failPendingSends(sessionId)
+  settleNativeContentDeltas(instanceId, sessionId)
   requestNativeSessionRefresh(instanceId, sessionId, true)
 }
 
@@ -535,6 +577,7 @@ function handleSessionDeleted(instanceId: string, event: EventSessionDeleted): v
 
   log.info(`[SSE] Session deleted: ${sessionId}`)
   clearNativeSessionRefresh(instanceId, sessionId)
+  clearNativeContentDeltaState(instanceId, sessionId)
   removeSessionRuntimeState(instanceId, sessionId)
 }
 
@@ -550,6 +593,7 @@ function handleSessionIdle(instanceId: string, event: SessionIdle): void {
   }
 
   ensureSessionStatus(instanceId, sessionId, "idle", event.location?.directory)
+  settleNativeContentDeltas(instanceId, sessionId)
   requestNativeSessionRefresh(instanceId, sessionId, true)
   log.info(`[SSE] Session idle: ${sessionId}`)
 }
