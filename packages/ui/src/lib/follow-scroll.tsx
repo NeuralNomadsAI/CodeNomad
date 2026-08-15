@@ -104,7 +104,7 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
       const containerRect = container.getBoundingClientRect()
       const sentinelRect = sentinel.getBoundingClientRect()
       const delta = sentinelRect.bottom - containerRect.bottom
-      if (Math.abs(delta) > 1) {
+      if (delta > 1) {
         suppressNextScrollHandling = true
         container.scrollBy({ top: delta, behavior: immediate ? "auto" : "smooth" })
       }
