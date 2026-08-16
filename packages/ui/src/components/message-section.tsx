@@ -7,6 +7,7 @@ import MessageBlock from "./message-block"
 import { getMessageAnchorId } from "./message-anchors"
 import { isInitialMessageLoad } from "./message-loading-visibility"
 import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./message-timeline"
+import { getTimelineRecordSignature } from "./message-timeline-projection"
 import VirtualFollowList, { type VirtualExplicitBottomPinIntent, type VirtualFollowListApi, type VirtualFollowListState, type VirtualFollowScrollSnapshot } from "./virtual-follow-list"
 import { isScrollRestoreGenerationCurrent, isSnapshotAutoFollowing } from "./virtual-follow-behavior"
 import { useConfig } from "../stores/preferences"
@@ -51,7 +52,7 @@ export interface MessageSectionProps {
 
 export default function MessageSection(props: MessageSectionProps) {
   const { preferences, updatePreferences } = useConfig()
-  const { t } = useI18n()
+  const { locale, t } = useI18n()
   const usageMetricsVisibility = () =>
     preferences().showUsageMetrics ? preferences().usageMetricsExpansion : "hidden"
   const showMessageTimelinePreference = () => preferences().showMessageTimeline ?? true
@@ -83,8 +84,8 @@ export default function MessageSection(props: MessageSectionProps) {
         return true
       }
 
-      const timeInfo = info.time as { created: number; end?: number } | undefined
-      return Boolean(timeInfo && (timeInfo.end === undefined || timeInfo.end === 0))
+      const timeInfo = info.time as { created: number; completed?: number } | undefined
+      return Boolean(timeInfo && (timeInfo.completed === undefined || timeInfo.completed === 0))
     })
   })
 
@@ -156,7 +157,37 @@ export default function MessageSection(props: MessageSectionProps) {
     return messageIndexById().get(messageId) ?? -1
   })
  
-  const [timelineSegments, setTimelineSegments] = createSignal<TimelineSegment[]>([])
+  const timelineSegmentCache = new Map<string, { revision: number; status: string; locale: string; signature: string; segments: TimelineSegment[] }>()
+  const timelineSegments = createMemo(() => {
+    sessionRevision()
+    const ids = messageIds()
+    const resolvedStore = store()
+    const activeLocale = locale()
+
+    return untrack(() => {
+      const activeIds = new Set(ids)
+      const segments: TimelineSegment[] = []
+      for (const messageId of ids) {
+        const record = resolvedStore.getMessage(messageId)
+        if (!record) continue
+        const cached = timelineSegmentCache.get(messageId)
+        if (cached?.revision === record.revision && cached.status === record.status && cached.locale === activeLocale) {
+          segments.push(...cached.segments)
+          continue
+        }
+        const signature = getTimelineRecordSignature(record)
+        const current = cached?.signature === signature && cached.locale === activeLocale
+          ? cached.segments
+          : buildTimelineSegments(props.instanceId, record, t)
+        timelineSegmentCache.set(messageId, { revision: record.revision, status: record.status, locale: activeLocale, signature, segments: current })
+        segments.push(...current)
+      }
+      for (const messageId of timelineSegmentCache.keys()) {
+        if (!activeIds.has(messageId)) timelineSegmentCache.delete(messageId)
+      }
+      return segments
+    })
+  })
   const hasTimelineSegments = () => timelineSegments().length > 0
 
   function segmentMatchesSearch(segment: TimelineSegment, match: { messageId: string; partId?: string; partType?: string }): boolean {
@@ -186,56 +217,6 @@ export default function MessageSection(props: MessageSectionProps) {
     return timelineSegments().find((segment) => segmentMatchesSearch(segment, match))?.id ?? null
   })
 
-  const seenTimelineMessageIds = new Set<string>()
-  const seenTimelineSegmentKeys = new Set<string>()
-  const timelinePartCountsByMessageId = new Map<string, number>()
-  let pendingTimelineMessagePartUpdates = new Set<string>()
-  let pendingTimelinePartUpdateFrame: number | null = null
-
-  function makeTimelineKey(segment: TimelineSegment) {
-    return `${segment.messageId}:${segment.id}:${segment.type}`
-  }
-
-  function seedTimeline() {
-    seenTimelineMessageIds.clear()
-    seenTimelineSegmentKeys.clear()
-    timelinePartCountsByMessageId.clear()
-    const ids = untrack(messageIds)
-    const resolvedStore = untrack(store)
-    const segments: TimelineSegment[] = []
-    ids.forEach((messageId) => {
-      const record = resolvedStore.getMessage(messageId)
-      if (!record) return
-      seenTimelineMessageIds.add(messageId)
-      timelinePartCountsByMessageId.set(messageId, record.partIds.length)
-      const built = buildTimelineSegments(props.instanceId, record, t)
-      built.forEach((segment) => {
-        const key = makeTimelineKey(segment)
-        if (seenTimelineSegmentKeys.has(key)) return
-        seenTimelineSegmentKeys.add(key)
-        segments.push(segment)
-      })
-    })
-    setTimelineSegments(segments)
-  }
-
-  function appendTimelineForMessage(messageId: string) {
-    const record = untrack(() => store().getMessage(messageId))
-    if (!record) return
-    timelinePartCountsByMessageId.set(messageId, record.partIds.length)
-    const built = buildTimelineSegments(props.instanceId, record, t)
-    if (built.length === 0) return
-    const newSegments: TimelineSegment[] = []
-    built.forEach((segment) => {
-      const key = makeTimelineKey(segment)
-      if (seenTimelineSegmentKeys.has(key)) return
-      seenTimelineSegmentKeys.add(key)
-      newSegments.push(segment)
-    })
-    if (newSegments.length > 0) {
-      setTimelineSegments((prev) => [...prev, ...newSegments])
-    }
-  }
   const [activeSegmentId, setActiveSegmentId] = createSignal<string | null>(null)
 
   const isActive = createMemo(() => props.isActive !== false)
@@ -407,8 +388,8 @@ export default function MessageSection(props: MessageSectionProps) {
     if (record.status !== "streaming") return false
 
     const info = resolvedStore.getMessageInfo(messageId)
-    const timeInfo = info?.time as { end?: number } | undefined
-    if (typeof timeInfo?.end === "number" && timeInfo.end > 0) return false
+    const timeInfo = info?.time as { completed?: number } | undefined
+    if (typeof timeInfo?.completed === "number" && timeInfo.completed > 0) return false
 
     const { orderedParts } = buildRecordDisplayData(props.instanceId, record)
     return orderedParts.some((part) => {
@@ -603,205 +584,6 @@ export default function MessageSection(props: MessageSectionProps) {
     listApi()?.notifyContentRendered()
   }
 
-  let previousTimelineIds: string[] = []
-
-  createEffect(() => {
-    const loading = Boolean(props.loading)
-    const ids = messageIds()
-
-    // Wrap all iteration of the store-proxied `ids` array in untrack()
-    // to prevent O(n) per-element reactive subscriptions.  The effect
-    // only needs to re-run when `messageIds` (memo) changes.
-    untrack(() => {
-      if (isInitialMessageLoad(loading, ids.length)) {
-        previousTimelineIds = []
-        setTimelineSegments([])
-        seenTimelineMessageIds.clear()
-        seenTimelineSegmentKeys.clear()
-        timelinePartCountsByMessageId.clear()
-        pendingTimelineMessagePartUpdates.clear()
-        if (pendingTimelinePartUpdateFrame !== null) {
-          cancelAnimationFrame(pendingTimelinePartUpdateFrame)
-          pendingTimelinePartUpdateFrame = null
-        }
-        return
-      }
-
-      if (previousTimelineIds.length === 0 && ids.length > 0) {
-        seedTimeline()
-        previousTimelineIds = [...ids]
-        return
-      }
-
-      if (ids.length < previousTimelineIds.length) {
-        seedTimeline()
-        previousTimelineIds = [...ids]
-        return
-      }
-
-      if (ids.length === previousTimelineIds.length) {
-        let changedIndex = -1
-        let changeCount = 0
-        for (let index = 0; index < ids.length; index++) {
-          if (ids[index] !== previousTimelineIds[index]) {
-            changedIndex = index
-            changeCount += 1
-            if (changeCount > 1) break
-          }
-        }
-        if (changeCount === 1 && changedIndex >= 0) {
-          const oldId = previousTimelineIds[changedIndex]
-          const newId = ids[changedIndex]
-          if (seenTimelineMessageIds.has(oldId) && !seenTimelineMessageIds.has(newId)) {
-            seenTimelineMessageIds.delete(oldId)
-            seenTimelineMessageIds.add(newId)
-            setTimelineSegments((prev) => {
-              const next = prev.map((segment) => {
-                if (segment.messageId !== oldId) return segment
-                const updatedId = segment.id.replace(oldId, newId)
-                return { ...segment, messageId: newId, id: updatedId }
-              })
-              seenTimelineSegmentKeys.clear()
-              next.forEach((segment) => seenTimelineSegmentKeys.add(makeTimelineKey(segment)))
-              return next
-            })
-
-            // Keep part count tracking in sync with id replacement.
-            const existingPartCount = timelinePartCountsByMessageId.get(oldId)
-            if (existingPartCount !== undefined) {
-              timelinePartCountsByMessageId.delete(oldId)
-              timelinePartCountsByMessageId.set(newId, existingPartCount)
-            }
-
-            previousTimelineIds = [...ids]
-            return
-          }
-        }
-      }
-
-      const newIds: string[] = []
-      ids.forEach((id) => {
-        if (!seenTimelineMessageIds.has(id)) {
-          newIds.push(id)
-        }
-      })
-
-      if (newIds.length > 0) {
-        newIds.forEach((id) => {
-          seenTimelineMessageIds.add(id)
-          appendTimelineForMessage(id)
-        })
-      }
-
-      previousTimelineIds = [...ids]
-    })
-  })
-
-  function clearPendingTimelinePartUpdateFrame() {
-    if (pendingTimelinePartUpdateFrame !== null) {
-      cancelAnimationFrame(pendingTimelinePartUpdateFrame)
-      pendingTimelinePartUpdateFrame = null
-    }
-  }
-
-  function scheduleTimelinePartUpdateFlush() {
-    if (pendingTimelinePartUpdateFrame !== null) return
-    pendingTimelinePartUpdateFrame = requestAnimationFrame(() => {
-      pendingTimelinePartUpdateFrame = null
-      if (pendingTimelineMessagePartUpdates.size === 0) return
-      const changedIds = Array.from(pendingTimelineMessagePartUpdates)
-      pendingTimelineMessagePartUpdates = new Set<string>()
-
-      const ids = messageIds()
-      const resolvedStore = store()
-
-      setTimelineSegments((prev) => {
-        let next = prev
-
-        for (const changedId of changedIds) {
-          // Remove old segments for this message.
-          next = next.filter((segment) => segment.messageId !== changedId)
-
-          const record = resolvedStore.getMessage(changedId)
-          const rebuilt = record ? buildTimelineSegments(props.instanceId, record, t) : []
-
-          // Insert rebuilt segments in the correct place based on session message order.
-          if (rebuilt.length > 0) {
-            let insertAt = next.length
-            const changedIndex = ids.indexOf(changedId)
-            if (changedIndex >= 0) {
-              for (let i = changedIndex + 1; i < ids.length; i++) {
-                const followingId = ids[i]
-                const existingIndex = next.findIndex((segment) => segment.messageId === followingId)
-                if (existingIndex >= 0) {
-                  insertAt = existingIndex
-                  break
-                }
-              }
-            }
-            next = [...next.slice(0, insertAt), ...rebuilt, ...next.slice(insertAt)]
-          }
-        }
-
-        // Rebuild the segment key set since we may have removed/replaced segments.
-        seenTimelineSegmentKeys.clear()
-        next.forEach((segment) => seenTimelineSegmentKeys.add(makeTimelineKey(segment)))
-        return next
-      })
-
-    })
-  }
-
-  // Keep timeline segments in sync when message parts are added/removed.
-  // Explicitly replace segments for messages whose part count changed.
-  createEffect(() => {
-    if (props.loading) return
-    const ids = messageIds()
-    // Also re-run when sessionRevision bumps (covers part additions within
-    // existing messages) but read individual records inside untrack() to
-    // avoid creating O(n) fine-grained subscriptions.
-    sessionRevision()
-
-    // Wrap the iteration in untrack() so that accessing individual elements
-    // of the store-proxied `ids` array does not create O(n) per-element
-    // reactive subscriptions.  We only need to re-run when the memo
-    // (messageIds) or sessionRevision changes — not per-element.
-    untrack(() => {
-      const resolvedStore = store()
-      const idsSet = new Set(ids)
-      let hasChanges = false
-
-      for (const messageId of ids) {
-        const record = resolvedStore.getMessage(messageId)
-        const partCount = record?.partIds.length ?? 0
-        const previousCount = timelinePartCountsByMessageId.get(messageId)
-
-        if (previousCount === undefined) {
-          timelinePartCountsByMessageId.set(messageId, partCount)
-          continue
-        }
-
-        if (previousCount !== partCount) {
-          timelinePartCountsByMessageId.set(messageId, partCount)
-          pendingTimelineMessagePartUpdates.add(messageId)
-          hasChanges = true
-        }
-      }
-
-      // Drop tracking for ids that are no longer present.
-      // Use the Set for O(1) lookups instead of ids.includes() which is O(n).
-      for (const trackedId of Array.from(timelinePartCountsByMessageId.keys())) {
-        if (!idsSet.has(trackedId)) {
-          timelinePartCountsByMessageId.delete(trackedId)
-        }
-      }
-
-      if (hasChanges) {
-        scheduleTimelinePartUpdateFlush()
-      }
-    })
-  })
-
   createEffect(() => {
     if (!props.onQuoteSelection) {
       clearQuoteSelection()
@@ -932,7 +714,7 @@ export default function MessageSection(props: MessageSectionProps) {
   })
 
   onCleanup(() => {
-    clearPendingTimelinePartUpdateFrame()
+    timelineSegmentCache.clear()
     clearQuoteSelection()
   })
 

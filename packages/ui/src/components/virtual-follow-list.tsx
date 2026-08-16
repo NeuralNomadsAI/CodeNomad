@@ -277,7 +277,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const index = props.items().findIndex((item, i) => props.getKey(item, i) === key)
     if (index === -1) return
     markProgrammaticScroll()
-    virtuaHandle()?.scrollToIndex(index, { align: opts.block, smooth: opts.smooth })
+    // Large smooth jumps over dynamically measured items can leave Virtua's
+    // mounted range behind the viewport. Semantic navigation must land first.
+    virtuaHandle()?.scrollToIndex(index, { align: opts.block, smooth: false })
   }
 
   function updateScrollStateFromDom() {
@@ -296,9 +298,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const now = performance.now()
     const programmatic = hasProgrammaticScrollIntent()
     const result = scrollController.observeViewport(metrics, now, programmatic)
-    if (result.state.mode.type === "escaped" && explicitBottomPinIntent()) {
-      cancelExplicitBottomPinFromUser()
-    }
     syncControllerResult(result)
   }
 
@@ -587,6 +586,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const handleWheelIntent = (event: WheelEvent) => markUserScrollIntent(event.deltaY < 0 ? "up" : event.deltaY > 0 ? "down" : null)
     const handlePointerIntent = (event: PointerEvent) => {
       if ((event.target as HTMLElement | null)?.closest(INTERACTIVE_KEY_TARGET_SELECTOR)) return
+      if (event.target !== element) return
       markUserScrollIntent(null)
     }
     let lastTouchY: number | null = null
@@ -651,11 +651,13 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   function scrollToTop(immediate = true) {
     cancelActiveScrollRestore()
+    if (hasActiveExplicitBottomPin() || explicitBottomPinIntent()) cancelExplicitBottomPinFromUser()
     dispatchFollowEvent({ type: "jump-top", immediate })
   }
 
   function scrollToKey(key: string, opts?: { behavior?: ScrollBehavior; block?: ScrollLogicalPosition }) {
     cancelActiveScrollRestore()
+    if (hasActiveExplicitBottomPin() || explicitBottomPinIntent()) cancelExplicitBottomPinFromUser()
     dispatchFollowEvent({ type: "jump-key", key, block: opts?.block ?? "start", smooth: opts?.behavior === "smooth" })
   }
 

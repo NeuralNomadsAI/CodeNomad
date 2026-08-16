@@ -337,15 +337,21 @@ export class VirtualScrollController {
       return this.setFollow(false)
     }
 
-    const direction = actualDirection ?? this.state.userIntentDirection
-
-    if (!hasFreshIntent && (!actualDirection || programmatic)) {
+    if (!hasFreshIntent) {
+      if (!programmatic && this.isAutoFollowing() && !atBottom && !this.state.restoring) {
+        return this.result({ type: "scroll-bottom", immediate: true })
+      }
       return this.result(noFollowEffect)
     }
 
-    if (direction === "up" && (!programmatic || hasFreshIntent)) {
+    const direction = this.state.userIntentDirection ?? actualDirection
+    if (direction === "up") {
       return this.setFollow(false)
     }
+
+    // Explicit bottom commands enter follow mode through jumpBottom. A
+    // measured programmatic move alone must never rejoin an escaped viewport.
+    if (programmatic && this.state.mode.type === "escaped") return this.result(noFollowEffect)
 
     const next = transitionFollowMode(this.state.mode, { type: "user-scroll", direction, atBottom })
     this.state.mode = next.mode

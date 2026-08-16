@@ -164,6 +164,37 @@ describe("virtual follow behavior", () => {
     assert.deepEqual(result.effect, { type: "none" })
   })
 
+  it("repins after an unowned virtualizer measurement correction", () => {
+    const controller = new VirtualScrollController(true)
+    controller.recordProgrammaticOffset(2400, true)
+
+    const result = controller.observeViewport(metrics(2200), 1000, false)
+
+    assert.deepEqual(result.state.mode, { type: "following" })
+    assert.deepEqual(result.effect, { type: "scroll-bottom", immediate: true })
+  })
+
+  it("does not rejoin escaped mode from measurement-only downward movement", () => {
+    const controller = new VirtualScrollController(false)
+    controller.recordProgrammaticOffset(2200, false)
+
+    const result = controller.observeViewport(metrics(2400), 1000, false)
+
+    assert.deepEqual(result.state.mode, { type: "escaped" })
+    assert.deepEqual(result.effect, { type: "none" })
+  })
+
+  it("keeps hold-driven escape stable across later viewport measurements", () => {
+    const controller = new VirtualScrollController(true)
+    controller.setFollow(false)
+    controller.recordProgrammaticOffset(2200, false)
+
+    const result = controller.observeViewport(metrics(2400), 1000, false)
+
+    assert.deepEqual(result.state.mode, { type: "escaped" })
+    assert.deepEqual(result.effect, { type: "none" })
+  })
+
   it("blocks content pinning while restoring", () => {
     const controller = new VirtualScrollController(true)
     controller.setRestoring(true)

@@ -876,6 +876,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     }
     const map: MessageRecord["parts"] = {}
     const ids: string[] = []
+    const seenIds = new Set<string>()
 
     parts.forEach((part, index) => {
       const id = ensurePartId(messageId, part, index)
@@ -885,7 +886,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         data: cloned,
         revision: 0,
       }
-      ids.push(id)
+      if (!seenIds.has(id)) {
+        seenIds.add(id)
+        ids.push(id)
+      }
     })
 
     return { map, ids }

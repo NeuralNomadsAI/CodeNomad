@@ -105,9 +105,12 @@ jobs:
         run: >-
           node --import tsx --test
           packages/ui/src/components/message-loading-visibility.test.ts
+          packages/ui/src/components/message-timeline-v2.test.ts
           packages/ui/src/components/provider-auth/provider-options.test.ts
+          packages/ui/src/components/session/session-bottom-pin-intent.test.ts
           packages/ui/src/components/session-list-visibility.test.ts
           packages/ui/src/components/unified-picker-path.test.ts
+          packages/ui/src/components/virtual-follow-behavior.test.ts
           packages/ui/src/lib/filesystem-events.test.ts
           packages/ui/src/lib/hooks/use-instance-metadata.test.ts
           packages/ui/src/lib/hooks/use-app-session-capture.test.ts

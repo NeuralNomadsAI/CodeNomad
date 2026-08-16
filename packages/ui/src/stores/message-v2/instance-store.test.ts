@@ -211,6 +211,26 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
     assert.deepEqual(store.getSessionMessageIds("session-1"), ["msg-real-1"])
   })
 
+  it("dedupes repeated part ids while keeping the newest part payload", () => {
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+
+    store.upsertMessage({
+      id: "msg-1",
+      sessionId: "session-1",
+      role: "assistant",
+      status: "complete",
+      parts: [
+        { id: "part-1", type: "text", text: "stale" } as any,
+        { id: "part-1", type: "text", text: "current" } as any,
+      ],
+    })
+
+    const message = store.getMessage("msg-1")
+    assert.deepEqual(message?.partIds, ["part-1"])
+    assert.equal((message?.parts["part-1"]?.data as any)?.text, "current")
+  })
+
   it("drops a definitively failed send on the next authoritative snapshot", () => {
     // promptAsync rejection retires the in-flight marker and marks the bubble.
     // The failed bubble stays visible until the next authoritative snapshot,
