@@ -181,7 +181,7 @@ See full workaround in the original README.
 
 ## Community
 
-[![Star History](https://api.star-history.com/svg?repos=NeuralNomadsAI/CodeNomad&type=Date)](https://star-history.com/#NeuralNomadsAI/CodeNomad&Date)
+[![Star History](https://star-history.dera.page/svg?repos=NeuralNomadsAI/CodeNomad&type=Date)](https://star-history.dera.page/#NeuralNomadsAI/CodeNomad&Date)
 
 ---
 
