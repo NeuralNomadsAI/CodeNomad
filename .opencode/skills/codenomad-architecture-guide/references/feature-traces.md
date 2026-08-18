@@ -4,20 +4,23 @@
 
 1. UI posts a folder to `/api/workspaces`.
 2. `WorkspaceManager` resolves the binary launch spec and calls the single `OpenCodeSharedService`.
-3. `Service.ensure` discovers or starts one shared `opencode serve --service` endpoint.
+3. The CodeNomad adapter discovers or launches one shared `opencode serve --service` endpoint under a lifecycle lock and records transferable registration, endpoint, launch-signature, PID, process-start, and namespace proof.
 4. `client.location.get` validates the directory and returns native location/workspace identity.
 5. CodeNomad publishes workspace events on `/api/events` and exposes `/workspaces/:id/instance` as the authorized native API proxy.
-6. On final owner deletion, CodeNomad calls `client.debug.location.evict`; server shutdown stops only its owned shared endpoint.
+6. Final-owner deletion queues location eviction. Proven final shared-service shutdown flushes queued evictions and sends an authenticated stop only if no live CodeNomad peer remains and the exact daemon identity still matches.
 
-## Prompt, Shell And Instructions
+## Prompt, Shell, Instructions, And PTYs
 
 1. UI obtains `getRootClient(instanceId)`.
 2. Conversation mode updates `client.session.instructions.entry` for the voice instruction.
-3. A normal prompt calls `client.session.prompt`; `!` shell mode calls native `client.session.shell`.
-4. The proxy checks directory/session ownership and forwards to the shared service's `/api/*` route.
-5. One upstream event subscription feeds `InstanceEventBridge`, then CodeNomad `/api/events`, then UI stores.
+3. A normal prompt calls `client.session.prompt`; `!` shell mode calls native `client.session.shell`. Native Shell remains separate from PTY management.
+4. The Status panel lists native PTYs for the active location, displays their native metadata, and refreshes on PTY events and reconnect.
+5. Title updates and removal use native PTY APIs; the proxy verifies native `cwd` ownership before ID-scoped operations. Removing a running PTY is its native stop action.
+6. Current installed declarations have no PTY output/read/stream API or separate stop endpoint, so output display and a distinct stop action are unavailable.
+7. The proxy checks directory/session ownership and forwards to the shared service's `/api/*` route.
+8. One upstream event subscription feeds `InstanceEventBridge`, then CodeNomad `/api/events`, then UI stores.
 
-No CodeNomad OpenCode plugin participates in this flow.
+No CodeNomad OpenCode plugin participates in this flow. `packages/opencode-plugin` and server plugin/background-process paths remain deleted and must not be restored.
 
 ## Permission And Yolo
 
@@ -41,3 +44,5 @@ Do not replace mutation routes with OpenCode file/status calls; CodeNomad owns t
 - OpenCode events: shared `client.event.subscribe()` -> `InstanceEventBridge` -> `EventBus`.
 - CodeNomad events: workspace/Git-adjacent policy/Yolo producers -> `EventBus`.
 - Browser transport: `GET /api/events` with heartbeat/pong via `/api/client-connections/pong`.
+- The native stream is volatile. On reconnect, refetch authoritative session/pending-request/file/config state rather than expecting replay.
+- Current invalidations use `filesystem.changed` and `config.updated`; session lifecycle/output uses `session.created`, `session.renamed`, `session.moved`, `session.status`, `session.idle`, `session.execution.*`, `session.compaction.*`, `session.text.*`, `session.reasoning.*`, and `session.tool.*`.

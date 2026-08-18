@@ -5,8 +5,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "macos", windows))]
 use std::process::{Command, Stdio};
+use std::time::Duration;
 #[cfg(any(target_os = "macos", windows))]
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 const OWNER_DIRECTORY: &str = "primary.owner.json";
 const OWNER_FILENAME: &str = "owner.json";
@@ -16,6 +17,7 @@ const RECOVERY_PREFIX: &str = "recovery.";
 const RECOVERY_SUFFIX: &str = ".claim";
 const RETIRED_PREFIX: &str = "retired.";
 const ACQUIRE_ATTEMPTS: usize = 10;
+const CROSS_HOST_PARTICIPANT_GRACE: Duration = Duration::from_millis(50);
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -110,18 +112,47 @@ fn resolve_election_directory_for(
     let home = configured_home(platform, &environment, fallback_home)?;
     Some(if platform == "windows" {
         format!(
-            "{}\\.codenomad\\client-state\\election",
+            "{}\\.codenomad\\client-state\\v2\\election",
             home.trim_end_matches(['\\', '/'])
         )
     } else {
         format!(
-            "{}/.codenomad/client-state/election",
+            "{}/.codenomad/client-state/v2/election",
             home.trim_end_matches('/')
         )
     })
 }
 
 fn resolve_state_path_for(
+    platform: &str,
+    environment: impl Fn(&str) -> Option<OsString>,
+    fallback_home: Option<&Path>,
+) -> Option<String> {
+    let home = configured_home(platform, &environment, fallback_home)?;
+    Some(if platform == "windows" {
+        format!(
+            "{}\\.codenomad\\client-state\\v2\\client-state.json",
+            home.trim_end_matches(['\\', '/'])
+        )
+    } else {
+        format!(
+            "{}/.codenomad/client-state/v2/client-state.json",
+            home.trim_end_matches('/')
+        )
+    })
+}
+
+pub(super) fn legacy_state_path() -> Result<PathBuf, String> {
+    resolve_legacy_state_path_for(
+        std::env::consts::OS,
+        |name| std::env::var_os(name),
+        dirs::home_dir().as_deref(),
+    )
+    .map(PathBuf::from)
+    .ok_or_else(|| "user home directory is unavailable".to_string())
+}
+
+fn resolve_legacy_state_path_for(
     platform: &str,
     environment: impl Fn(&str) -> Option<OsString>,
     fallback_home: Option<&Path>,
@@ -226,7 +257,7 @@ impl Registration {
         let mut recovery_claim = None;
 
         let result = (|| {
-            let legacy_blocked = legacy_electron_data
+            let mut legacy_blocked = legacy_electron_data
                 .filter(|_| primary_candidate)
                 .map(|path| {
                     has_live_legacy_electron_with(
@@ -239,6 +270,23 @@ impl Registration {
                 })
                 .transpose()?
                 .unwrap_or(false);
+            if legacy_blocked {
+                // A peer may have published its legacy marker just before its
+                // cross-host participant. Reconcile once before yielding ownership.
+                std::thread::sleep(CROSS_HOST_PARTICIPANT_GRACE);
+                legacy_blocked = legacy_electron_data
+                    .map(|path| {
+                        has_live_legacy_electron_with(
+                            path,
+                            election_directory,
+                            pid_alive,
+                            identity,
+                            expected_electron,
+                        )
+                    })
+                    .transpose()?
+                    .unwrap_or(false);
+            }
             let mut primary = false;
             if primary_candidate && !legacy_blocked {
                 for _ in 0..ACQUIRE_ATTEMPTS {
@@ -1425,7 +1473,7 @@ mod tests {
         };
         assert_eq!(
             resolve("linux", HashMap::from([("HOME", "/home/dev")]), "/fallback"),
-            "/home/dev/.codenomad/client-state/election"
+            "/home/dev/.codenomad/client-state/v2/election"
         );
         assert_eq!(
             resolve(
@@ -1433,7 +1481,7 @@ mod tests {
                 HashMap::from([("USERPROFILE", ""), ("HOME", "D:\\Home")]),
                 "C:\\Fallback"
             ),
-            "D:\\Home\\.codenomad\\client-state\\election"
+            "D:\\Home\\.codenomad\\client-state\\v2\\election"
         );
         let resolve_state = |platform: &str, values: HashMap<&str, &str>, fallback: &str| {
             resolve_state_path_for(
@@ -1449,11 +1497,11 @@ mod tests {
                 HashMap::from([("HOME", "/Users/dev")]),
                 "/fallback"
             ),
-            "/Users/dev/.codenomad/client-state/client-state.json"
+            "/Users/dev/.codenomad/client-state/v2/client-state.json"
         );
         assert_eq!(
             resolve_state("linux", HashMap::from([("HOME", "/home/dev")]), "/fallback"),
-            "/home/dev/.codenomad/client-state/client-state.json"
+            "/home/dev/.codenomad/client-state/v2/client-state.json"
         );
         assert_eq!(
             resolve_state(
@@ -1461,7 +1509,37 @@ mod tests {
                 HashMap::from([("USERPROFILE", ""), ("HOME", "D:\\Home")]),
                 "C:\\Fallback"
             ),
-            "D:\\Home\\.codenomad\\client-state\\client-state.json"
+            "D:\\Home\\.codenomad\\client-state\\v2\\client-state.json"
         );
+        for (platform, home, fallback, expected) in [
+            (
+                "macos",
+                "/Users/dev",
+                "/fallback",
+                "/Users/dev/.codenomad/client-state/client-state.json",
+            ),
+            (
+                "linux",
+                "/home/dev",
+                "/fallback",
+                "/home/dev/.codenomad/client-state/client-state.json",
+            ),
+            (
+                "windows",
+                "D:\\Home",
+                "C:\\Fallback",
+                "D:\\Home\\.codenomad\\client-state\\client-state.json",
+            ),
+        ] {
+            assert_eq!(
+                resolve_legacy_state_path_for(
+                    platform,
+                    |name| (name == "HOME").then(|| OsString::from(home)),
+                    Some(Path::new(fallback)),
+                )
+                .unwrap(),
+                expected
+            );
+        }
     }
 }

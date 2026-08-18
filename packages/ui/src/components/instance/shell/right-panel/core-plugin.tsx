@@ -14,8 +14,8 @@ interface CoreStatusSectionRenderers {
   renderYoloModeSection: () => JSX.Element
   renderProviderUsage: () => JSX.Element
   renderPlanSectionContent: () => JSX.Element
+  renderBackgroundProcesses: () => JSX.Element
   renderMcpStatus: () => JSX.Element
-  renderLspStatus: () => JSX.Element
   renderPluginStatus: () => JSX.Element
 }
 
@@ -60,8 +60,8 @@ export function createCoreStatusSectionManifest(renderers: CoreStatusSectionRend
     "yolo-mode": renderers.renderYoloModeSection,
     "provider-usage": renderers.renderProviderUsage,
     plan: renderers.renderPlanSectionContent,
+    "background-processes": renderers.renderBackgroundProcesses,
     mcp: renderers.renderMcpStatus,
-    lsp: renderers.renderLspStatus,
     plugins: renderers.renderPluginStatus,
   }
 

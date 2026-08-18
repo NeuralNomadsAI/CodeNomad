@@ -7,7 +7,7 @@ import { getLogger } from "../lib/logger"
 
 const log = getLogger("session")
 
-type ServiceSection = "lsp" | "mcp" | "plugins"
+type ServiceSection = "mcp" | "plugins"
 
 interface InstanceServiceStatusProps {
   sections?: ServiceSection[]
@@ -49,22 +49,19 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
   })
   const isLoading = metadataContext?.isLoading ?? (() => false)
   const refreshMetadata = metadataContext?.refreshMetadata ?? (async () => Promise.resolve())
-  const sections = createMemo<ServiceSection[]>(() => props.sections ?? ["lsp", "mcp", "plugins"])
-  const includeLsp = createMemo(() => sections().includes("lsp"))
+  const sections = createMemo<ServiceSection[]>(() => props.sections ?? ["mcp", "plugins"])
   const includeMcp = createMemo(() => sections().includes("mcp"))
   const includePlugins = createMemo(() => sections().includes("plugins"))
   const showHeadings = () => props.showSectionHeadings !== false
 
   const metadataAccessor = metadataContext?.metadata ?? (() => instance().metadata)
   const metadata = createMemo(() => metadataAccessor())
-  const hasLspMetadata = () => metadata()?.lspStatus !== undefined
   const hasMcpMetadata = () => metadata()?.mcpStatus !== undefined
   const hasPluginsMetadata = () => metadata()?.plugins !== undefined
 
   const mcpServers = createMemo(() => parseMcpStatus(metadata()?.mcpStatus ?? undefined))
   const plugins = createMemo(() => metadata()?.plugins ?? [])
 
-  const isLspLoading = () => isLoading() || !hasLspMetadata()
   const isMcpLoading = () => isLoading() || !hasMcpMetadata()
   const isPluginsLoading = () => isLoading() || !hasPluginsMetadata()
 
@@ -107,22 +104,6 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
     <p class="text-[11px] text-secondary italic" role="status">
       {message}
     </p>
-  )
-
-  const renderLspSection = () => (
-    <section class="space-y-1.5">
-      <Show when={showHeadings()}>
-        <div class="text-xs font-medium text-muted uppercase tracking-wide">
-          {t("instanceServiceStatus.sections.lsp")}
-        </div>
-      </Show>
-      <Show
-        when={isLspLoading()}
-        fallback={renderEmptyState(t("instanceServiceStatus.lsp.empty"))}
-      >
-        {renderEmptyState(t("instanceServiceStatus.lsp.loading"))}
-      </Show>
-    </section>
   )
 
   const renderMcpSection = () => (
@@ -226,7 +207,6 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
 
   return (
     <div class={props.class}>
-      <Show when={includeLsp()}>{renderLspSection()}</Show>
       <Show when={includeMcp()}>{renderMcpSection()}</Show>
       <Show when={includePlugins()}>{renderPluginsSection()}</Show>
     </div>

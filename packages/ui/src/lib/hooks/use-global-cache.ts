@@ -39,9 +39,7 @@ export function useGlobalCache(params: UseGlobalCacheParams): GlobalCacheHandle 
   return {
     get<T>() {
       const entry = resolvedEntry()
-      const value = getCacheEntry<T>(entry)
-      pendingAuthority = captureCacheAuthority(entry)
-      return value
+      return getCacheEntry<T>(entry)
     },
     set<T>(value: T | undefined, authority?: CacheAuthority) {
       setCacheEntry(resolvedEntry(), value, authority ?? pendingAuthority)

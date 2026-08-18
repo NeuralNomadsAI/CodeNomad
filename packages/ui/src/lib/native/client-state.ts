@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core"
 import { isElectronHost, isLocalWindow, isTauriHost } from "../runtime-env"
+import { getLogger } from "../logger"
 const LEGACY_WEB_KEYS = ["codenomad-client-snapshot-v1", "codenomad-client-restore-enabled-v1"]
 export type NativeClientStateLoadResult = {
   isPrimary: boolean
@@ -7,6 +8,7 @@ export type NativeClientStateLoadResult = {
   snapshot: unknown | null
 }
 const SECONDARY_CLIENT_STATE: NativeClientStateLoadResult = { isPrimary: false, restoreEnabled: false, snapshot: null }
+const log = getLogger("actions")
 const accessToken = (() => {
   const bytes = new Uint8Array(32)
   globalThis.crypto.getRandomValues(bytes)
@@ -23,8 +25,9 @@ async function claimNativeClientStateAccess(): Promise<boolean> {
   try {
     const result = await dispatchNative<boolean | void>((api) => api?.claimClientStateAccess?.(accessToken), "client_state_claim_access")
     nativeAccessClaimed = isTauriHost() || result === true
-  } catch {
+  } catch (error) {
     nativeAccessClaimed = false
+    log.warn("Client state native access claim failed", error)
   }
   return nativeAccessClaimed
 }

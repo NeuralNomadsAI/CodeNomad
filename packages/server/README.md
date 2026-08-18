@@ -20,7 +20,8 @@
 
 ## Prerequisites
 
-- **OpenCode**: `opencode` must be installed and configured on your system.
+- **OpenCode V2**: Install the latest `opencode2` CLI. Runtime discovery does not require an exact version match.
+- **OpenCode database**: V2 uses `~/.local/share/opencode2/opencode.db`, separate from the incompatible V1 database.
 - Node.js 18+ and npm (for running or building from source).
 - A workspace folder on disk you want to serve.
 - Optional: a Chromium-based browser if you want `--launch` to open the UI automatically.
@@ -96,8 +97,9 @@ You can configure the server using flags or environment variables:
 | `--ui-dir <path>` | `CLI_UI_DIR` | Directory containing the built UI bundle |
 | `--ui-dev-server <url>` | `CLI_UI_DEV_SERVER` | Proxy UI requests to a running dev server (requires `--https=false --http=true`) |
 | `--ui-no-update` | `CLI_UI_NO_UPDATE` | Disable remote UI updates |
-| `--ui-auto-update <enabled>` | `CLI_UI_AUTO_UPDATE` | Enable remote UI updates (`true` |
+| `--ui-auto-update <enabled>` | `CLI_UI_AUTO_UPDATE` | Enable remote UI updates (`true`) |
 | `--ui-manifest-url <url>` | `CLI_UI_MANIFEST_URL` | Remote UI manifest URL |
+| - | `OPENCODE_DB` | Required OpenCode V2 database path. CodeNomad provides no default; do not reuse a V1 database. |
 
 ### Dev Releases (Advanced)
 
@@ -215,8 +217,21 @@ When running as a server CodeNomad can also be installed as a PWA from any suppo
 
 ### Data Storage
 
-- **Config**: `~/.config/codenomad/config.json`
-- **Instance Data**: `~/.config/codenomad/instances` (chat history, etc.)
+- **Stable server configuration**: `~/.config/codenomad/config.yaml`
+- **Mutable server state**: `~/.config/codenomad/state.yaml`
+- **Legacy migration input**: `~/.config/codenomad/config.json` is migrated to the YAML files above.
+- **CodeNomad instance data**: `~/.config/codenomad/instances/`
+- **OpenCode V2 sessions and messages**: the user-selected `OPENCODE_DB`; CodeNomad does not choose a default path.
+- **Shared-service coordination state**: `~/.codenomad/state/opencode-v2/`
+- **Desktop restore state**: `~/.codenomad/client-state/v2/`
+
+Changing the OpenCode binary or its environment, including `OPENCODE_DB`, takes effect when the shared service next starts or restarts. It does not reconfigure an already-running service.
+
+### Event Delivery
+
+CodeNomad holds one shared OpenCode V2 `client.event.subscribe()` stream. It routes native location-scoped events to logical workspaces and multiplexes them with CodeNomad events over `GET /api/events` for browser `EventSource` clients.
+
+The stream is volatile and has no replay guarantee. After reconnecting, clients must refetch authoritative sessions and pending permission, question, and form requests; file and config consumers must also refetch after `filesystem.changed` and `config.updated` invalidations.
 
 ### Provider Plan Usage
 

@@ -75,6 +75,7 @@ export interface Session extends Omit<SDKSession, "parentID" | "model"> {
   version?: string
   pendingPermission?: boolean // Indicates if session is waiting on user permission
   pendingQuestion?: boolean // Indicates if session is waiting on user input
+  pendingForm?: boolean // Indicates if session is waiting on a structured form response
   status: SessionStatus // Single source of truth for session status
   retry?: SessionRetryState | null // Retry metadata for transient backoff states
   idleSince?: number | null // Timestamp set when work finished but the session has not been viewed yet
@@ -109,6 +110,7 @@ export function createClientSession(
 
 // Our client-specific Agent interface (simplified version of SDK Agent)
 export interface Agent {
+  id: string
   name: string
   description: string
   mode: string
@@ -126,9 +128,20 @@ export function isSelectablePrimaryAgent(agent: Agent): boolean {
   return !agent.hidden && agent.mode !== "subagent"
 }
 
+export function findAgentById(agentList: Agent[], agentId: string): Agent | undefined {
+  return agentList.find((agent) => agent.id === agentId)
+}
+
+export function resolveAgentId(agentList: Agent[], value: string): string {
+  const exact = findAgentById(agentList, value)
+  if (exact) return exact.id
+  const legacyMatches = agentList.filter((agent) => agent.name === value)
+  return legacyMatches.length === 1 ? legacyMatches[0].id : value
+}
+
 export function getSelectableAgentsForSession(
   agentList: Agent[],
-  currentAgentName: string,
+  currentAgentId: string,
   isChildSession: boolean,
 ): Agent[] {
   if (!isChildSession) {
@@ -136,9 +149,9 @@ export function getSelectableAgentsForSession(
   }
 
   const visibleAgents = agentList.filter((agent) => !agent.hidden)
-  const currentHiddenAgent = agentList.find((agent) => agent.hidden && agent.name === currentAgentName)
+  const currentHiddenAgent = agentList.find((agent) => agent.hidden && agent.id === currentAgentId)
 
-  return currentHiddenAgent && !visibleAgents.some((agent) => agent.name === currentHiddenAgent.name)
+  return currentHiddenAgent && !visibleAgents.some((agent) => agent.id === currentHiddenAgent.id)
     ? [...visibleAgents, currentHiddenAgent]
     : visibleAgents
 }

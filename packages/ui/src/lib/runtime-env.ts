@@ -117,6 +117,9 @@ export const runtimeEnv = detectRuntimeEnvironment()
 export const isElectronHost = () => detectHost() === "electron"
 export const isTauriHost = () => detectHost() === "tauri"
 export const isWebHost = () => detectHost() === "web"
+export const isLocalTauriHost = (
+  environment: Pick<RuntimeEnvironment, "host" | "windowContext"> = detectRuntimeEnvironment(),
+) => environment.host === "tauri" && environment.windowContext === "local"
 export const isDesktopHost = () => isElectronHost() || isTauriHost()
 export const isMobilePlatform = () => detectPlatform() === "mobile"
 export const isLocalWindow = () => detectWindowContext() === "local"

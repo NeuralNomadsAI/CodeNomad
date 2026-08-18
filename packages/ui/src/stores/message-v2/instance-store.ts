@@ -3,12 +3,20 @@ import { createStore, produce, reconcile } from "solid-js/store"
 import type { SetStoreFunction } from "solid-js/store"
 import { getLogger } from "../../lib/logger"
 import { getCacheRetainedEntriesForSession } from "../../lib/global-cache"
+import {
+  clearPromptDisplayOverride,
+  clearPromptDisplayOverridesForInstance,
+  clearPromptDisplayOverridesForSession,
+  getPromptDisplayOverride,
+  movePromptDisplayOverride,
+  setPromptDisplayOverride,
+} from "../message-prompt-display"
 import type { ClientPart, MessageInfo } from "../../types/message"
-import type { PromptDisplayMetadata } from "../../lib/prompt-display-metadata"
 import { mergePermissionRequest } from "../../types/permission"
 import { clearRecordDisplayCacheForInstance, clearRecordDisplayCacheForMessages, getRecordDisplayCacheEntries } from "./record-display-cache"
 import { estimateRetainedBytes, estimateRetainedBytesIncrementally } from "../../lib/retained-size"
 import { clearInstanceMessageRenderCaches, clearSessionMessageRenderCache, peekSessionMessageRenderCache } from "../../lib/message-render-cache"
+import type { MessageWindowState } from "./message-window"
 import { mergePendingRequestEntry, shouldSkipPendingRequestUpsert } from "./pending-request-dedupe"
 import type {
   InstanceMessageState,
@@ -88,9 +96,6 @@ const MAX_TRANSCRIPT_MEASUREMENT_BYTES = 64 * 1024 * 1024
 const MAX_TRANSCRIPT_MEASUREMENT_NODES = 500_000
 const pendingPartRetainedBytes = Symbol("pendingPartRetainedBytes")
 const pendingPartBudgetId = Symbol("pendingPartBudgetId")
-const PROMPT_DISPLAY_OVERRIDE_ENTRY_LIMIT = 512
-const PROMPT_DISPLAY_OVERRIDE_BYTE_LIMIT = 1024 * 1024
-const PROMPT_DISPLAY_OVERRIDE_ENTRY_BYTE_LIMIT = 64 * 1024
 let nextPendingPartBudgetId = 0
 const pendingPartBudgetEntries = new Map<number, {
   instanceId: string
@@ -99,84 +104,16 @@ const pendingPartBudgetEntries = new Map<number, {
   isRetained: () => boolean
   remove: () => void
 }>()
-const promptDisplayOverrides = new Map<string, {
-  instanceId: string
-  sessionId: string
-  messageId: string
-  metadata: PromptDisplayMetadata
-  bytes: number
-}>()
-let promptDisplayOverrideBytes = 0
-
 type SizedPendingPartEntry = PendingPartEntry & { [pendingPartRetainedBytes]?: number; [pendingPartBudgetId]?: number }
-
-function promptDisplayOverrideKey(sessionId: string, messageId: string): string {
-  return `${sessionId}\u0000${messageId}`
-}
-
-function deletePromptDisplayOverride(key: string): void {
-  const existing = promptDisplayOverrides.get(key)
-  if (!existing) return
-  promptDisplayOverrideBytes -= existing.bytes
-  promptDisplayOverrides.delete(key)
-}
-
-function getPromptDisplayOverride(instanceId: string, sessionId: string, messageId: string): PromptDisplayMetadata | undefined {
-  const key = promptDisplayOverrideKey(sessionId, messageId)
-  const existing = promptDisplayOverrides.get(key)
-  if (!existing) return undefined
-  promptDisplayOverrides.delete(key)
-  promptDisplayOverrides.set(key, { ...existing, instanceId })
-  return existing.metadata
-}
-
-function setPromptDisplayOverride(
-  instanceId: string,
-  sessionId: string,
-  messageId: string,
-  metadata: PromptDisplayMetadata | undefined,
-): void {
-  const key = promptDisplayOverrideKey(sessionId, messageId)
-  deletePromptDisplayOverride(key)
-  if (!metadata) return
-  const keyBytes = (sessionId.length + messageId.length) * 2 + 64
-  const bytes = estimateRetainedBytes(metadata, PROMPT_DISPLAY_OVERRIDE_ENTRY_BYTE_LIMIT) + keyBytes
-  if (bytes > PROMPT_DISPLAY_OVERRIDE_ENTRY_BYTE_LIMIT) return
-  promptDisplayOverrides.set(key, { instanceId, sessionId, messageId, metadata, bytes })
-  promptDisplayOverrideBytes += bytes
-  while (promptDisplayOverrides.size > PROMPT_DISPLAY_OVERRIDE_ENTRY_LIMIT || promptDisplayOverrideBytes > PROMPT_DISPLAY_OVERRIDE_BYTE_LIMIT) {
-    const oldest = promptDisplayOverrides.keys().next().value
-    if (oldest === undefined) break
-    deletePromptDisplayOverride(oldest)
-  }
-}
-
-function movePromptDisplayOverride(instanceId: string, sessionId: string, oldMessageId: string, newMessageId: string): void {
-  const oldKey = promptDisplayOverrideKey(sessionId, oldMessageId)
-  const metadata = promptDisplayOverrides.get(oldKey)?.metadata
-  if (!metadata) return
-  deletePromptDisplayOverride(oldKey)
-  setPromptDisplayOverride(instanceId, sessionId, newMessageId, metadata)
-}
-
-function clearPromptDisplayOverride(_instanceId: string, sessionId: string, messageId: string): void {
-  deletePromptDisplayOverride(promptDisplayOverrideKey(sessionId, messageId))
-}
-
-function clearPromptDisplayOverridesForSession(_instanceId: string, sessionId: string): void {
-  for (const [key, entry] of promptDisplayOverrides) if (entry.sessionId === sessionId) deletePromptDisplayOverride(key)
-}
-
-function clearPromptDisplayOverridesForInstance(instanceId: string, sessionIds: string[] = []): void {
-  const sessions = new Set(sessionIds)
-  for (const [key, entry] of promptDisplayOverrides) {
-    if (entry.instanceId === instanceId || sessions.has(entry.sessionId)) deletePromptDisplayOverride(key)
-  }
-}
 
 function getPendingPartRetainedBytes(entry: PendingPartEntry): number {
   return (entry as SizedPendingPartEntry)[pendingPartRetainedBytes]
     ?? estimateRetainedBytes(entry, PENDING_PART_MAX_RETAINED_BYTES)
+}
+
+function forgetPendingPartBudgetEntry(entry: PendingPartEntry): void {
+  const id = (entry as SizedPendingPartEntry)[pendingPartBudgetId]
+  if (id !== undefined) pendingPartBudgetEntries.delete(id)
 }
 
 function enforceGlobalPendingPartBudget(): void {
@@ -375,6 +312,10 @@ export interface InstanceMessageStore {
   getLastCompactionMessageIndex: (sessionId: string) => number
   getMessage: (messageId: string) => MessageRecord | undefined
   getLatestTodoSnapshot: (sessionId: string) => LatestTodoSnapshot | undefined
+  hasPendingSends: (sessionId: string) => boolean
+  setMessageWindow: (sessionId: string, window: MessageWindowState) => void
+  getMessageWindow: (sessionId: string) => MessageWindowState | undefined
+  trimSessionMessages: (sessionId: string, limit: number) => void
   estimateSessionRetainedBytes: (sessionId: string, signal?: AbortSignal) => Promise<number>
   hasLiveSessionMessages: (sessionId: string) => boolean
   evictSessionTranscript: (sessionId: string) => void
@@ -482,6 +423,13 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     setState("latestTodos", sessionId, undefined)
   }
 
+  function getLatestTodoSnapshot(sessionId: string): LatestTodoSnapshot | undefined {
+    const snapshot = state.latestTodos[sessionId]
+    if (!snapshot) return undefined
+    const messageIds = state.sessions[sessionId]?.messageIds ?? []
+    return messageIds.indexOf(snapshot.messageId) > getLastCompactionMessageIndex(sessionId) ? snapshot : undefined
+  }
+
   function bumpSessionRevision(sessionId: string) {
     if (!sessionId) return
     setState("sessionRevisions", sessionId, (value = 0) => value + 1)
@@ -535,6 +483,13 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     for (const messageId of state.sessions[sessionId]?.messageIds ?? []) {
       const message = state.messages[messageId]
       if (pendingSendIds.has(messageId) || message?.status === "sending" || message?.status === "streaming") return true
+    }
+    return false
+  }
+
+  function hasPendingSends(sessionId: string): boolean {
+    for (const messageId of pendingSendIds) {
+      if (state.messages[messageId]?.sessionId === sessionId) return true
     }
     return false
   }
@@ -759,6 +714,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         messageInfoCache.delete(id)
         forgetPendingSend(id)
         clearPromptDisplayOverride(instanceId, sessionId, id)
+        nextPendingParts[id]?.forEach(forgetPendingPartBudgetEntry)
         delete nextMessages[id]
         delete nextMessageInfoVersion[id]
         delete nextPendingParts[id]
@@ -1060,6 +1016,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     }
     const map: MessageRecord["parts"] = {}
     const ids: string[] = []
+    const seenIds = new Set<string>()
 
     parts.forEach((part, index) => {
       const id = ensurePartId(messageId, part, index)
@@ -1069,7 +1026,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         data: cloned,
         revision: 0,
       }
-      ids.push(id)
+      if (!seenIds.has(id)) {
+        seenIds.add(id)
+        ids.push(id)
+      }
     })
 
     return { map, ids }
@@ -1181,6 +1141,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         globalBytes -= value.bytes
       }
       for (const value of remove) {
+        forgetPendingPartBudgetEntry(value.entry)
         droppedMessages.set(value.messageId, value.entry.sessionId)
         if (value.entry.sessionId) changedSessions.add(value.entry.sessionId)
         const list = draft[value.messageId]
@@ -1213,7 +1174,9 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   }
 
   function clearPendingPartsForMessage(messageId: string) {
-    if (!state.pendingParts[messageId]) return
+    const entries = state.pendingParts[messageId]
+    if (!entries) return
+    entries.forEach(forgetPendingPartBudgetEntry)
     setState("pendingParts", produce((draft: Record<string, PendingPartEntry[]>) => {
       delete draft[messageId]
     }))
@@ -1229,6 +1192,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       (part as any).callId ??
       (part as any).toolCallID ??
       (part as any).toolCallId ??
+      (part as any).id ??
       undefined
     if (!toolCallId) {
       return
@@ -1265,6 +1229,26 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     )
   }
 
+  function rebindQuestionForPart(messageId: string, partId: string, part: ClientPart) {
+    if (!messageId || !partId || part.type !== "tool") return
+
+    const toolCallId =
+      (part as any).callID ??
+      (part as any).callId ??
+      (part as any).toolCallID ??
+      (part as any).toolCallId ??
+      (part as any).id ??
+      undefined
+    if (!toolCallId) return
+
+    const detached = Object.values(state.questions.byMessage[messageId] ?? {}).find((entry) => {
+      return entry && entry.partId !== partId && entry.request.tool?.id === toolCallId
+    })
+    if (!detached) return
+
+    upsertQuestion({ ...detached, messageId, partId })
+  }
+
   function applyPartUpdate(input: PartUpdateInput) {
     const message = state.messages[input.messageId]
     if (!message) {
@@ -1297,6 +1281,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     )
 
     rebindPermissionForPart(input.messageId, partId, cloned)
+    rebindQuestionForPart(input.messageId, partId, cloned)
 
     if (isCompletedTodoPart(cloned)) {
       recordLatestTodoSnapshot(message.sessionId, {
@@ -1863,6 +1848,21 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return state.scrollState[key]
   }
 
+  function setMessageWindow(sessionId: string, window: MessageWindowState) {
+    ensureSessionEntry(sessionId)
+    setState("sessions", sessionId, "messageWindow", window)
+  }
+
+  function getMessageWindow(sessionId: string) {
+    return state.sessions[sessionId]?.messageWindow
+  }
+
+  function trimSessionMessages(sessionId: string, limit: number) {
+    const ids = state.sessions[sessionId]?.messageIds ?? []
+    const overflow = ids.length - Math.max(1, Math.floor(limit))
+    for (const messageId of ids.slice(0, Math.max(0, overflow))) removeMessage(messageId, sessionId)
+  }
+
   function clearSession(sessionId: string, options?: { preserveScroll?: boolean; preservePromptDisplayOverrides?: boolean }) {
     if (!sessionId) return
 
@@ -1871,6 +1871,12 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     const messageIds = Object.values(state.messages)
       .filter((record) => record.sessionId === sessionId)
       .map((record) => record.id)
+    const messageIdSet = new Set(messageIds)
+    for (const [messageId, entries] of Object.entries(state.pendingParts)) {
+      for (const entry of entries) {
+        if (messageIdSet.has(messageId) || entry.sessionId === sessionId) forgetPendingPartBudgetEntry(entry)
+      }
+    }
  
     storeLog.info("Clearing session data", { instanceId, sessionId, messageCount: messageIds.length })
     clearRecordDisplayCacheForMessages(instanceId, messageIds)
@@ -2027,7 +2033,11 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       getLastAssistantMessageId: getLastAssistantMessageIdValue,
       getLastCompactionMessageIndex,
       getMessage: (messageId: string) => state.messages[messageId],
-      getLatestTodoSnapshot: (sessionId: string) => state.latestTodos[sessionId],
+      getLatestTodoSnapshot,
+      hasPendingSends,
+      setMessageWindow,
+      getMessageWindow,
+      trimSessionMessages,
       estimateSessionRetainedBytes,
       hasLiveSessionMessages,
       evictSessionTranscript,

@@ -12,6 +12,7 @@ import { getCommands } from "../stores/commands"
 import { showAlertDialog } from "../stores/alerts"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
+import { getOpencodeErrorMessage } from "../lib/opencode-api"
 import { serverApi } from "../lib/api-client"
 import { isDesktopHost, isLocalWindow } from "../lib/runtime-env"
 import { preferences } from "../stores/preferences"
@@ -537,7 +538,7 @@ export default function PromptInput(props: PromptInputProps) {
       log.error("Failed to send message:", error)
       showAlertDialog(t("promptInput.send.errorFallback"), {
         title: t("promptInput.send.errorTitle"),
-        detail: error instanceof Error ? error.message : String(error),
+        detail: getOpencodeErrorMessage(error, t("promptInput.send.errorFallback")),
         variant: "error",
       })
       if (!isTouchOnlyPointer()) {

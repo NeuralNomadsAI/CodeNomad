@@ -479,6 +479,21 @@ fn extract_cookie_value(set_cookie: &str, name: &str) -> Option<String> {
     Some(value.to_string())
 }
 
+fn is_loopback_http_url(base_url: &str) -> bool {
+    let Ok(parsed) = Url::parse(base_url) else {
+        return false;
+    };
+    if parsed.scheme() != "http" || !parsed.username().is_empty() || parsed.password().is_some() {
+        return false;
+    }
+    match parsed.host() {
+        Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(host)) => host.is_loopback(),
+        Some(url::Host::Ipv6(host)) => host.is_loopback(),
+        None => false,
+    }
+}
+
 fn exchange_bootstrap_token(
     base_url: &str,
     token: &str,
@@ -702,6 +717,13 @@ pub struct CliStatus {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LocalCliAccess {
+    pub(crate) base_url: String,
+    pub(crate) cookie_name: String,
+    pub(crate) session_cookie: String,
+}
+
 impl Default for CliStatus {
     fn default() -> Self {
         Self {
@@ -721,6 +743,7 @@ pub struct CliProcessManager {
     #[cfg(windows)]
     job: Arc<Mutex<Option<WindowsJobObject>>>,
     bootstrap_token: Arc<Mutex<Option<String>>>,
+    local_access: Arc<Mutex<Option<LocalCliAccess>>>,
     lifecycle: Arc<Mutex<()>>,
     generation: Arc<AtomicU64>,
 }
@@ -733,6 +756,7 @@ impl CliProcessManager {
             #[cfg(windows)]
             job: Arc::new(Mutex::new(None)),
             bootstrap_token: Arc::new(Mutex::new(None)),
+            local_access: Arc::new(Mutex::new(None)),
             lifecycle: Arc::new(Mutex::new(())),
             generation: Arc::new(AtomicU64::new(0)),
         }
@@ -741,9 +765,10 @@ impl CliProcessManager {
     pub fn start(&self, app: AppHandle, dev: bool) -> anyhow::Result<()> {
         let _lifecycle = self.lifecycle.lock();
         let generation = self.advance_generation();
+        *self.bootstrap_token.lock() = None;
+        *self.local_access.lock() = None;
         log_line(&format!("start requested (dev={dev})"));
         self.stop_tracked_child()?;
-        *self.bootstrap_token.lock() = None;
         {
             let mut status = self.status.lock();
             status.state = CliState::Starting;
@@ -768,6 +793,8 @@ impl CliProcessManager {
     pub fn stop(&self) -> anyhow::Result<()> {
         let _lifecycle = self.lifecycle.lock();
         self.advance_generation();
+        *self.bootstrap_token.lock() = None;
+        *self.local_access.lock() = None;
         self.stop_tracked_child()?;
         self.reset_stopped_status();
         Ok(())
@@ -839,10 +866,12 @@ impl CliProcessManager {
         status.port = None;
         status.url = None;
         status.error = None;
+        *self.local_access.lock() = None;
     }
 
     fn publish_error(&self, app: &AppHandle, generation: u64, message: String) {
         self.with_current_generation(generation, || {
+            *self.local_access.lock() = None;
             let mut status = self.status.lock();
             status.state = CliState::Error;
             status.error = Some(message.clone());
@@ -855,6 +884,14 @@ impl CliProcessManager {
 
     pub fn status(&self) -> CliStatus {
         self.status.lock().clone()
+    }
+
+    pub(crate) fn local_cli_access(&self) -> Option<LocalCliAccess> {
+        let _lifecycle = self.lifecycle.lock();
+        if self.status.lock().state != CliState::Ready {
+            return None;
+        }
+        self.local_access.lock().clone()
     }
 
     fn spawn_cli(
@@ -1129,6 +1166,7 @@ impl CliProcessManager {
                 }
                 Poll::Exited(code) => {
                     manager.with_current_generation(generation, || {
+                        *manager.local_access.lock() = None;
                         let mut status = manager.status.lock();
                         if status.state != CliState::Ready {
                             status.state = CliState::Error;
@@ -1261,10 +1299,8 @@ impl CliProcessManager {
         log_line(&format!("cli ready on {base_url}"));
 
         if let Some(token) = token {
-            // Token exchange is only implemented for loopback HTTP. If localUrl is HTTPS,
-            // skip the exchange and let the user authenticate normally.
-            let scheme = Url::parse(&base_url).ok().map(|u| u.scheme().to_string());
-            if scheme.as_deref() != Some("http") {
+            // Native credentials are only established against the managed loopback listener.
+            if !is_loopback_http_url(&base_url) {
                 navigate_main(manager, generation, app, &base_url);
             } else {
                 match exchange_bootstrap_token(&base_url, &token, &auth_cookie_name) {
@@ -1279,6 +1315,13 @@ impl CliProcessManager {
                             log_line(&format!("failed to set session cookie: {err}"));
                             navigate_main(manager, generation, app, &format!("{base_url}/login"));
                         } else {
+                            manager.with_current_generation(generation, || {
+                                *manager.local_access.lock() = Some(LocalCliAccess {
+                                    base_url: base_url.clone(),
+                                    cookie_name: auth_cookie_name.to_string(),
+                                    session_cookie: session_id,
+                                });
+                            });
                             navigate_main(manager, generation, app, &base_url);
                         }
                     }
@@ -1719,6 +1762,34 @@ mod tests {
             })
             .is_some());
         assert_eq!(manager.status().state, CliState::Ready);
+    }
+
+    #[test]
+    fn local_cli_access_requires_readiness_and_clears_on_stop() {
+        let manager = CliProcessManager::new();
+        let access = LocalCliAccess {
+            base_url: "http://127.0.0.1:3000".into(),
+            cookie_name: "codenomad_session_test".into(),
+            session_cookie: "secret".into(),
+        };
+        *manager.local_access.lock() = Some(access.clone());
+
+        assert_eq!(manager.local_cli_access(), None);
+        manager.status.lock().state = CliState::Ready;
+        assert_eq!(manager.local_cli_access(), Some(access));
+
+        manager.stop().unwrap();
+        assert_eq!(manager.local_cli_access(), None);
+    }
+
+    #[test]
+    fn native_auth_is_limited_to_loopback_http() {
+        assert!(is_loopback_http_url("http://127.0.0.1:3000"));
+        assert!(is_loopback_http_url("http://[::1]:3000"));
+        assert!(is_loopback_http_url("http://localhost:3000"));
+        assert!(!is_loopback_http_url("https://localhost:3000"));
+        assert!(!is_loopback_http_url("http://remote.example:3000"));
+        assert!(!is_loopback_http_url("http://user@localhost:3000"));
     }
 
     #[test]

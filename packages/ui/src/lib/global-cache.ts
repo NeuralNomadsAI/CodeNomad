@@ -83,6 +83,17 @@ function notifyCacheSessionChanged(params: CacheEntryBaseParams): void {
   for (const handler of cacheSessionChangeHandlers) handler(params.instanceId, params.sessionId)
 }
 
+function getRetainedCacheSessions(): { instanceId: string; sessionId: string }[] {
+  const sessions: { instanceId: string; sessionId: string }[] = []
+  for (const [instanceId, sessionMap] of cacheStore) {
+    if (instanceId === GLOBAL_KEY) continue
+    for (const sessionId of sessionMap.keys()) {
+      if (sessionId !== GLOBAL_KEY) sessions.push({ instanceId, sessionId })
+    }
+  }
+  return sessions
+}
+
 export function onCacheSessionChanged(handler: (instanceId: string, sessionId: string) => void): () => void {
   cacheSessionChangeHandlers.add(handler)
   return () => cacheSessionChangeHandlers.delete(handler)
@@ -222,10 +233,12 @@ export function setCacheEntry<T>(params: CacheEntryParams, value: T | undefined,
     return
   }
   if (retainedBytes + byteSize > MAX_GLOBAL_CACHE_BYTES || retainedEntries >= MAX_GLOBAL_CACHE_ENTRIES) {
+    const affectedSessions = getRetainedCacheSessions()
     cacheStore.clear()
     retainedBytes = 0
     retainedEntries = 0
     invalidateAllPendingWrites()
+    for (const session of affectedSessions) notifyCacheSessionChanged({ ...session, scope: "" })
   }
   const target = getScopeValueMap(params, true)
   if (!target) return

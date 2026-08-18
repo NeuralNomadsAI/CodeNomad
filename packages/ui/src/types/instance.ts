@@ -18,7 +18,6 @@ export type RawMcpStatus = McpListOutput
 export interface InstanceMetadata {
   project?: ProjectInfo | null
   mcpStatus?: RawMcpStatus | null
-  lspStatus?: [] | null
   plugins?: string[] | null
   version?: string
 }

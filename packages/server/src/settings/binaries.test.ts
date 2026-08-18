@@ -25,4 +25,15 @@ describe("BinaryResolver", () => {
     } as unknown as SettingsService
     assert.equal(new BinaryResolver(settings).resolveDefault().path, "opencode2")
   })
+
+  it("upgrades the legacy bare opencode default to opencode2", () => {
+    const settings = {
+      getOwner(scope: string, owner: string) {
+        if (scope === "config" && owner === "server") return { opencodeBinary: "opencode" }
+        return {}
+      },
+    } as unknown as SettingsService
+
+    assert.equal(new BinaryResolver(settings).resolveDefault().path, "opencode2")
+  })
 })

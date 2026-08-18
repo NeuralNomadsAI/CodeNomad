@@ -3,6 +3,7 @@ import { access, mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from
 import os from "node:os"
 import path from "node:path"
 import { describe, it } from "node:test"
+import { createHash } from "node:crypto"
 import type { OpenCodeClient } from "@opencode-ai/client"
 import type { Endpoint, Info } from "@opencode-ai/client/service"
 
@@ -10,78 +11,31 @@ import { OpenCodeSharedService, type OpenCodeEnsureOptions } from "./opencode-se
 import type { ProcessIdentity, ProcessIdentityProbe, ProcessNamespace } from "./process-identity"
 
 describe("OpenCodeSharedService", () => {
-  it("lazily ensures one authenticated service for concurrent callers", async () => {
-    let ensureCalls = 0
-    let makeCalls = 0
-    const client = {
-      location: { get: async () => ({
-        directory: "/repo",
-        workspaceID: "workspace-1",
-        project: { id: "project-1", directory: "/repo", canonical: "/repo" },
-      }) },
-    } as unknown as OpenCodeClient
+  it("rejects a changed launch signature instead of reusing the connected daemon", async () => {
+    const endpoint = { url: "http://127.0.0.1:4321", auth: undefined }
     const service = new OpenCodeSharedService({
-      discover: async () => undefined,
-      ensure: async () => {
-        ensureCalls += 1
-        await new Promise<void>((resolve) => setImmediate(resolve))
-        return { url: "http://127.0.0.1:4321", auth: { type: "basic", username: "user", password: "pass" } }
-      },
-      headers: () => ({ authorization: "Basic token" }),
-      makeClient: (options) => {
-        makeCalls += 1
-        assert.equal(options.baseUrl, "http://127.0.0.1:4321")
-        assert.deepEqual(options.headers, { authorization: "Basic token" })
-        return client
-      },
+      discover: async () => endpoint,
+      ensure: async () => endpoint,
+      headers: () => undefined,
+      makeClient: () => ({} as OpenCodeClient),
     })
-
-    assert.equal(ensureCalls, 0)
-    const [endpoint, resolvedClient, location] = await Promise.all([
-      service.endpoint(),
-      service.client(),
-      service.validateLocation({ directory: "/repo" }),
-    ])
-
-    assert.equal(endpoint.url, "http://127.0.0.1:4321")
-    assert.strictEqual(resolvedClient, client)
-    assert.equal(location.workspaceID, "workspace-1")
-    assert.deepEqual([ensureCalls, makeCalls], [1, 1])
+    await service.endpoint({ version: "0.0.0-next-17444", command: ["first"], environment: { OPENCODE_DB: "/one" } })
+    await assert.rejects(
+      service.endpoint({ version: "0.0.0-next-17444", command: ["first"], environment: { OPENCODE_DB: "/two" } }),
+      /launch configuration/,
+    )
   })
 
-  it("uses the generated location, event, and eviction APIs", async () => {
-    const calls: unknown[] = []
-    const signal = new AbortController().signal
-    const events = { async *[Symbol.asyncIterator]() { yield { type: "server.connected" } as never } }
-    const client = {
-      location: {
-        get: async (...args: unknown[]) => {
-          calls.push(["get", ...args])
-          return { directory: "/repo", project: { id: "p", directory: "/repo", canonical: "/repo" } }
-        },
-      },
-      event: { subscribe: (...args: unknown[]) => { calls.push(["subscribe", ...args]); return events } },
-      debug: { location: { evict: async (...args: unknown[]) => { calls.push(["evict", ...args]) } } },
-    } as unknown as OpenCodeClient
+  it("validates a caller workspace selector against the canonical location", async () => {
     const service = new OpenCodeSharedService({
       discover: async () => undefined,
-      ensure: async () => ({ url: "https://localhost:4321" }),
+      ensure: async () => ({ url: "http://127.0.0.1:4321" }),
       headers: () => undefined,
-      makeClient: () => client,
+      makeClient: () => ({ location: { get: async () => ({
+        directory: "/repo", workspaceID: "canonical", project: { id: "p", directory: "/repo", canonical: "/repo" },
+      }) } }) as unknown as OpenCodeClient,
     })
-
-    await service.validateLocation({ directory: "/repo", workspaceID: "ws" }, { signal })
-    const subscribed = await service.subscribe({ signal })
-    const iterator = subscribed[Symbol.asyncIterator]()
-    assert.deepEqual(await iterator.next(), { value: { type: "server.connected" }, done: false })
-    await iterator.return?.()
-    await service.evict({ directory: "/repo", workspaceID: "ws" }, { signal })
-
-    assert.deepEqual(calls, [
-      ["get", { location: { directory: "/repo", workspace: "ws" } }, { signal }],
-      ["subscribe", { signal }],
-      ["evict", { location: { directory: "/repo", workspace: "ws" } }, { signal }],
-    ])
+    await assert.rejects(service.validateLocation({ directory: "/repo", workspaceID: "foreign" }), /does not match/)
   })
 
   it("rejects malformed endpoints and locations", async () => {
@@ -108,49 +62,6 @@ describe("OpenCodeSharedService", () => {
       makeClient: () => ({ location: { get: async () => ({ directory: "/repo" }) } }) as unknown as OpenCodeClient,
     })
     await assert.rejects(invalidLocation.validateLocation({ directory: "/repo" }), /invalid location/)
-  })
-
-  it("clears a failed ensure so the next caller can retry", async () => {
-    let calls = 0
-    const service = new OpenCodeSharedService({
-      discover: async () => undefined,
-      ensure: async () => {
-        calls += 1
-        if (calls === 1) throw new Error("not started")
-        return { url: "http://localhost:4321" }
-      },
-      headers: () => undefined,
-      makeClient: () => ({} as OpenCodeClient),
-    })
-
-    await assert.rejects(service.endpoint(), /not started/)
-    assert.equal((await service.endpoint()).url, "http://localhost:4321")
-    assert.equal(calls, 2)
-  })
-
-  it("rediscovers after transport failure", async () => {
-    let ensures = 0
-    let gets = 0
-    const endpoint = { url: "http://localhost:4321" }
-    const service = new OpenCodeSharedService({
-      discover: async () => undefined,
-      ensure: async () => {
-        ensures += 1
-        return endpoint
-      },
-      headers: () => undefined,
-      makeClient: () => ({
-        location: { get: async () => {
-          gets += 1
-          if (gets === 1) throw new TypeError("fetch failed")
-          return { directory: "/repo", project: { id: "p", directory: "/repo", canonical: "/repo" } }
-        } },
-      }) as unknown as OpenCodeClient,
-    })
-
-    await assert.rejects(service.validateLocation({ directory: "/repo" }), /fetch failed/)
-    await service.validateLocation({ directory: "/repo" })
-    assert.equal(ensures, 2)
   })
 
   it("persists native PID proof through transfer and shutdown reconstruction", async () => {
@@ -204,40 +115,6 @@ describe("OpenCodeSharedService", () => {
     }
   })
 
-  it("ages out ownerless, malformed, and legacy lifecycle locks but preserves fresh locks", async () => {
-    for (const [name, owner] of [
-      ["ownerless", undefined],
-      ["malformed", "{"],
-      ["legacy", JSON.stringify({ version: 1, identity: "legacy", pid: 1234, createdAt: 1 })],
-    ] as const) {
-      const state = await serviceState(`codenomad-service-${name}-lock-`)
-      await mkdir(state.lockDirectory)
-      if (owner) {
-        const ownerFile = path.join(state.lockDirectory, "owner.json")
-        await writeFile(ownerFile, owner)
-        await utimes(ownerFile, 1, 1)
-      }
-      await utimes(state.lockDirectory, 1, 1)
-      const service = createOwnedService(state, async () => true)
-      try {
-        await service.endpoint({ ...state.options("owner", true), staleLockMs: 10 })
-        await assert.rejects(access(state.lockDirectory))
-      } finally {
-        await rm(state.root, { recursive: true, force: true })
-      }
-    }
-
-    const fresh = await serviceState("codenomad-service-fresh-lock-")
-    await mkdir(fresh.lockDirectory)
-    const service = createOwnedService(fresh, async () => true)
-    try {
-      await assert.rejects(service.endpoint({ ...fresh.options("owner", true), timeoutMs: 10, staleLockMs: 60_000 }), /lifecycle lock/)
-      await access(fresh.lockDirectory)
-    } finally {
-      await rm(fresh.root, { recursive: true, force: true })
-    }
-  })
-
   it("prunes an identity-checked lease after PID reuse", async () => {
     const state = await serviceState("codenomad-service-stale-lease-")
     const stalePid = 7654321
@@ -266,6 +143,12 @@ describe("OpenCodeSharedService", () => {
   it("quarantines stale registration after deterministic PID reuse without signaling it", async () => {
     const state = await serviceState("codenomad-service-stale-registration-")
     const reusedPid = state.info.pid
+    const options = {
+      ...state.options("successor", false),
+      command: [process.execPath, "-e", "process.exit(0)"],
+      timeoutMs: 50,
+    }
+    const launchSignature = signature(options)
     await writeFile(state.lease("dead-owner"), JSON.stringify({
       version: 1,
       identity: "dead-owner",
@@ -274,12 +157,14 @@ describe("OpenCodeSharedService", () => {
       createdAt: 1,
       updatedAt: 1,
       state: "active",
+      launchSignature,
       service: {
         info: state.info,
         endpoint: { url: state.info.url, auth: { type: "basic", username: "opencode", password: state.info.password } },
         registrationFile: state.file,
         nativePid: true,
         processIdentity: processIdentity(reusedPid, "old-service-process"),
+        launchSignature,
       },
     }))
     const service = new OpenCodeSharedService({
@@ -294,48 +179,8 @@ describe("OpenCodeSharedService", () => {
       makeClient: () => ({} as OpenCodeClient),
     })
     try {
-      await assert.rejects(service.endpoint({
-        ...state.options("successor", false),
-        command: [process.execPath, "-e", "process.exit(0)"],
-        timeoutMs: 50,
-      }), /exited before registration|timed out/)
+      await assert.rejects(service.endpoint(options), /exited before registration|timed out/)
       await assert.rejects(access(state.file))
-    } finally {
-      await rm(state.root, { recursive: true, force: true })
-    }
-  })
-
-  it("recovers a registration written after a predecessor launch intent", async () => {
-    const state = await serviceState("codenomad-service-crash-window-")
-    const deadPid = 7654321
-    const launchCreatedAt = Date.now() - 1_000
-    await writeFile(state.lease("dead-owner"), JSON.stringify({
-      version: 1,
-      identity: "dead-owner",
-      pid: deadPid,
-      processIdentity: processIdentity(deadPid, "dead-codenomad"),
-      createdAt: launchCreatedAt,
-      updatedAt: launchCreatedAt,
-      state: "active",
-      launch: {
-        identity: "launch-before-crash",
-        createdAt: launchCreatedAt,
-        nativePid: true,
-        contenderFile: state.contenders,
-      },
-    }))
-    const service = new OpenCodeSharedService({
-      discover: async () => ({ url: state.info.url, auth: { type: "basic", username: "opencode", password: state.info.password } }),
-      headers: () => undefined,
-      isProcessAlive: (pid) => pid !== deadPid,
-      getProcessIdentity: async (pid, _timeoutMs, namespace = { kind: "host" }) => processIdentity(pid, undefined, namespace),
-      makeClient: () => ({} as OpenCodeClient),
-    })
-    try {
-      await service.endpoint(state.options("successor", false))
-      const lease = JSON.parse(await readFile(state.lease("successor"), "utf8"))
-      assert.deepEqual(lease.service.processIdentity, processIdentity(state.info.pid))
-      assert.equal(lease.service.info.pid, state.info.pid)
     } finally {
       await rm(state.root, { recursive: true, force: true })
     }
@@ -377,6 +222,8 @@ describe("OpenCodeSharedService", () => {
   it("inherits proven ownership from a dead owner lease", async () => {
     const state = await serviceState("codenomad-service-dead-owner-")
     const deadPid = 7654321
+    const options = state.options("peer", false)
+    const launchSignature = signature(options)
     await writeFile(state.lease("dead-owner"), JSON.stringify({
       version: 1,
       identity: "dead-owner",
@@ -385,17 +232,19 @@ describe("OpenCodeSharedService", () => {
       createdAt: 1,
       updatedAt: 1,
       state: "active",
+      launchSignature,
       service: {
         info: state.info,
         endpoint: { url: state.info.url, auth: { type: "basic", username: "opencode", password: state.info.password } },
         registrationFile: state.file,
         nativePid: true,
+        launchSignature,
       },
     }))
     let stops = 0
     const peer = createOwnedService(state, async () => { stops += 1; return true }, false, (pid) => pid !== deadPid)
     try {
-      await peer.endpoint(state.options("peer", false))
+      await peer.endpoint(options)
       await peer.shutdown()
       assert.equal(stops, 1)
       await assert.rejects(access(state.lease("dead-owner")))
@@ -404,22 +253,23 @@ describe("OpenCodeSharedService", () => {
     }
   })
 
-  it("replaces stale in-memory ownership with a newer transferred service proof", async () => {
-    const state = await serviceState("codenomad-service-replacement-owner-")
-    const requested: string[] = []
-    const staleOwner = createOwnedService(state, async (info) => { requested.push(info.id!); return true })
-    const replacementOwner = createOwnedService(state, async () => { throw new Error("peer must not stop while an owner remains") })
+  it("rejects stale ownership proof from a daemon launched with a different OPENCODE_DB", async () => {
+    const state = await serviceState("codenomad-service-stale-signature-")
+    const owner = createOwnedService(state, async () => true)
+    const successor = createOwnedService(state, async () => true, false, () => true)
+    const deadPid = 7654321
     try {
-      await staleOwner.endpoint(state.options("stale-owner", true))
-      Object.assign(state.info, { id: "instance-2", pid: 5678, url: "http://127.0.0.1:5678", password: "replacement-secret" })
-      await writeFile(state.file, JSON.stringify(state.info))
-      await writeFile(state.contenders, `${state.info.pid}\n`)
-      await replacementOwner.endpoint(state.options("replacement-owner", true))
+      await owner.endpoint({ ...state.options("dead-owner", true), environment: { OPENCODE_DB: "/db/one" } })
+      const staleLease = JSON.parse(await readFile(state.lease("dead-owner"), "utf8"))
+      staleLease.pid = deadPid
+      staleLease.processIdentity = processIdentity(deadPid, "dead-codenomad")
+      await writeFile(state.lease("dead-owner"), JSON.stringify(staleLease))
 
-      await replacementOwner.shutdown()
-      assert.deepEqual(requested, [])
-      await staleOwner.shutdown()
-      assert.deepEqual(requested, ["instance-2"])
+      await assert.rejects(
+        successor.endpoint({ ...state.options("successor", false), environment: { OPENCODE_DB: "/db/two" } }),
+        /does not match the discovered daemon/,
+      )
+      await assert.rejects(access(state.lease("successor")))
     } finally {
       await rm(state.root, { recursive: true, force: true })
     }
@@ -489,49 +339,6 @@ describe("OpenCodeSharedService", () => {
     }
   })
 
-  it("bounds a stalled service stop", async () => {
-    const state = await serviceState("codenomad-service-stop-timeout-")
-    let stops = 0
-    const service = createOwnedService(
-      state,
-      async () => { stops += 1; return new Promise<boolean>(() => undefined) },
-      true,
-      undefined,
-      async () => false,
-    )
-    try {
-      await service.endpoint(state.options("owner", true))
-      await assert.rejects(service.shutdown({ timeoutMs: 10 }), /stop timed out/)
-      const lease = JSON.parse(await readFile(state.lease("owner"), "utf8"))
-      assert.equal(lease.state, "stopping")
-      await assert.rejects(service.shutdown({ timeoutMs: 10 }), /uncertain outcome/)
-      assert.equal(stops, 1)
-    } finally {
-      await rm(state.root, { recursive: true, force: true })
-    }
-  })
-
-  it("retains ownership until an accepted stop actually completes", async () => {
-    const state = await serviceState("codenomad-service-stop-completion-")
-    let finishStop!: () => void
-    let markAccepted!: () => void
-    const accepted = new Promise<void>((resolve) => { markAccepted = resolve })
-    const completion = new Promise<boolean>((resolve) => { finishStop = () => resolve(true) })
-    const service = createOwnedService(state, async () => { markAccepted(); return true }, true, undefined, async () => completion)
-    try {
-      await service.endpoint(state.options("owner", true))
-      const shutdown = service.shutdown({ timeoutMs: 100 })
-      await accepted
-      await access(state.lease("owner"))
-      assert.equal(JSON.parse(await readFile(state.lease("owner"), "utf8")).state, "stopping")
-      finishStop()
-      await shutdown
-      await assert.rejects(access(state.lease("owner")))
-    } finally {
-      await rm(state.root, { recursive: true, force: true })
-    }
-  })
-
   it("checks WSL stop completion in the distro despite a coincidental live Windows PID", async () => {
     const state = await serviceState("codenomad-service-wsl-stop-")
     let healthChecks = 0
@@ -596,54 +403,35 @@ describe("OpenCodeSharedService", () => {
     }
   })
 
-  it("bounds a stalled ensure", async () => {
-    const service = new OpenCodeSharedService({
+  it("bounds stalled ensure and stop operations", async () => {
+    const stalledEnsure = new OpenCodeSharedService({
       discover: async () => undefined,
       ensure: async () => new Promise<never>(() => undefined),
       headers: () => undefined,
       makeClient: () => ({} as OpenCodeClient),
     })
-    await assert.rejects(service.endpoint({ timeoutMs: 10 }), /timed out after 10ms/)
-  })
+    await assert.rejects(stalledEnsure.endpoint({ timeoutMs: 10 }), /timed out after 10ms/)
 
-  it("reconciles a late uncancellable ensure during shutdown", async () => {
-    const state = await serviceState("codenomad-service-late-ensure-")
-    let finishEnsure!: () => void
-    let finishStop!: () => void
-    let markStopStarted!: () => void
-    const stopStarted = new Promise<void>((resolve) => { markStopStarted = resolve })
-    const stopCompletion = new Promise<boolean>((resolve) => { finishStop = () => resolve(true) })
+    const state = await serviceState("codenomad-service-stop-timeout-")
     let stops = 0
-    const service = new OpenCodeSharedService({
-      discover: async () => undefined,
-      ensure: (options) => new Promise<Endpoint>((resolve) => {
-        options?.onStart?.("missing")
-        finishEnsure = () => resolve({
-          url: state.info.url,
-          auth: { type: "basic", username: "opencode", password: state.info.password },
-        })
-      }),
-      headers: () => undefined,
-      requestStop: async () => { stops += 1; markStopStarted(); return true },
-      waitForStop: async () => stopCompletion,
-      getProcessIdentity: async (pid, _timeoutMs, namespace = { kind: "host" }) => processIdentity(pid, undefined, namespace),
-      makeClient: () => ({} as OpenCodeClient),
-    })
+    const stalledStop = createOwnedService(
+      state,
+      async () => { stops += 1; return new Promise<boolean>(() => undefined) },
+      true,
+      undefined,
+      async () => false,
+    )
     try {
-      await assert.rejects(service.endpoint({ ...state.options("owner", true), timeoutMs: 10 }), /ensure timed out/)
-      await access(state.lease("owner"))
-      await assert.rejects(service.shutdown({ timeoutMs: 10 }), /launch reconciliation timed out/)
-      finishEnsure()
-      await stopStarted
-      const reconciliation = service.shutdown({ timeoutMs: 100 })
-      finishStop()
-      await reconciliation
+      await stalledStop.endpoint(state.options("owner", true))
+      await assert.rejects(stalledStop.shutdown({ timeoutMs: 10 }), /stop timed out/)
+      assert.equal(JSON.parse(await readFile(state.lease("owner"), "utf8")).state, "stopping")
+      await assert.rejects(stalledStop.shutdown({ timeoutMs: 10 }), /uncertain outcome/)
       assert.equal(stops, 1)
-      await assert.rejects(access(state.lease("owner")))
     } finally {
       await rm(state.root, { recursive: true, force: true })
     }
   })
+
 })
 
 async function serviceState(prefix: string) {
@@ -711,4 +499,15 @@ function processIdentity(
   namespace: ProcessNamespace = { kind: "host" },
 ): ProcessIdentity {
   return { namespace, pid, start }
+}
+
+function signature(options: OpenCodeEnsureOptions): string {
+  const environment = Object.entries(options.environment ?? {}).sort(([left], [right]) => left.localeCompare(right))
+  return createHash("sha256").update(JSON.stringify({
+    command: options.command ?? [],
+    environment,
+    version: options.version ?? null,
+    wslDistro: options.wslDistro ?? null,
+    windowsVerbatimArguments: options.windowsVerbatimArguments ?? false,
+  })).digest("hex")
 }

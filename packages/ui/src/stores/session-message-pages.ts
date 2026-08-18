@@ -1,51 +1,42 @@
 import type { SessionMessageInfo as SDKMessage } from "@opencode-ai/client"
-import { estimateRetainedBytes } from "../lib/retained-size"
 import type { OpenCodeClient } from "./opencode-client"
 
-const PAGE_LIMIT = 200
-const MAX_PAGES = 10_000
-const MAX_MESSAGES = 100_000
-const MAX_RETAINED_BYTES = 64 * 1024 * 1024
+export interface MessageWindowPage {
+  messages: SDKMessage[]
+  olderCursor?: string
+}
 
-async function listAllSessionMessages(
+const MAX_WINDOW_PAGES = 1_000
+
+async function listMessageWindow(
   client: OpenCodeClient,
   sessionId: string,
-  signal?: AbortSignal,
-  isAuthoritative: () => boolean = () => true,
-): Promise<SDKMessage[] | null> {
+  options: { limit: number; cursor?: string; signal?: AbortSignal; isAuthoritative?: () => boolean },
+): Promise<MessageWindowPage | null> {
+  const isAuthoritative = options.isAuthoritative ?? (() => true)
   const messages: SDKMessage[] = []
   const seenCursors = new Set<string>()
-  let retainedBytes = 0
-  let cursor: string | undefined
+  let cursor = options.cursor
 
-  for (let page = 0; page < MAX_PAGES; page += 1) {
-    signal?.throwIfAborted()
+  for (let page = 0; page < MAX_WINDOW_PAGES && messages.length < options.limit; page += 1) {
+    options.signal?.throwIfAborted()
     if (!isAuthoritative()) return null
+    const remaining = options.limit - messages.length
     const response = await client.message.list(cursor
-      ? { sessionID: sessionId, limit: PAGE_LIMIT, cursor }
-      : { sessionID: sessionId, limit: PAGE_LIMIT, order: "asc" }, { signal })
+      ? { sessionID: sessionId, limit: remaining, cursor }
+      : { sessionID: sessionId, limit: remaining, order: "desc" }, { signal: options.signal })
     if (!isAuthoritative()) return null
-    if (messages.length + response.data.length > MAX_MESSAGES) {
-      throw new Error(`Message reload exceeded ${MAX_MESSAGES} messages for session ${sessionId}`)
-    }
-    if (response.data.length > 0) {
-      const remainingBytes = MAX_RETAINED_BYTES - retainedBytes
-      const pageBytes = estimateRetainedBytes(response.data, remainingBytes)
-      if (pageBytes > remainingBytes) {
-        throw new Error(`Message reload exceeded 64 MiB for session ${sessionId}`)
-      }
-      retainedBytes += pageBytes
-    }
-    messages.push(...response.data)
+    messages.unshift(...response.data.slice(0, remaining).reverse())
 
     const nextCursor = response.cursor?.next ?? undefined
-    if (!nextCursor) return messages
+    if (!nextCursor) return { messages, olderCursor: undefined }
     if (seenCursors.has(nextCursor)) throw new Error(`Repeated message cursor for session ${sessionId}`)
     seenCursors.add(nextCursor)
     cursor = nextCursor
   }
 
-  throw new Error(`Message pagination exceeded ${MAX_PAGES} pages for session ${sessionId}`)
+  if (messages.length >= options.limit) return { messages, olderCursor: cursor }
+  throw new Error(`Message window pagination exceeded ${MAX_WINDOW_PAGES} pages for session ${sessionId}`)
 }
 
-export { listAllSessionMessages }
+export { listMessageWindow }

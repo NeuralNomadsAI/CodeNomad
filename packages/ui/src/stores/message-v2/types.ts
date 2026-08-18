@@ -2,6 +2,7 @@ import type { ClientPart } from "../../types/message"
 import type { PromptDisplayMetadata } from "../../lib/prompt-display-metadata"
 import type { PermissionRequest } from "../../types/permission"
 import type { QuestionRequest } from "../../types/question"
+import type { MessageWindowState } from "./message-window"
 
 export type MessageStatus = "sending" | "sent" | "streaming" | "complete" | "error"
 export type MessageRole = "user" | "assistant"
@@ -41,6 +42,7 @@ export interface SessionRecord {
   updatedAt: number
   messageIds: string[]
   revert?: SessionRevertState | null
+  messageWindow?: MessageWindowState
 }
 
 export interface PendingPartEntry {
@@ -84,6 +86,8 @@ export interface ScrollSnapshot {
   anchorOffset?: number
   atBottom: boolean
   followModeType?: "following" | "escaped"
+  windowCursor?: string
+  newerCursors?: (string | null)[]
   updatedAt: number
 }
 

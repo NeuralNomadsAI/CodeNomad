@@ -117,7 +117,7 @@ function clearMessageRenderCache(instanceId: string, sessionId: string, messageI
   const cache = peekSessionMessageRenderCache(instanceId, sessionId)
   if (!cache) return
   purgeMessageRenderCache(cache, messageIds)
-  if (cache.messageBlocks.size === 0 && cache.messageItems.size === 0 && cache.toolItems.size === 0 && cache.recordDisplayCache.size === 0) {
+  if (cache.messageBlocks.size === 0 && cache.messageItems.size === 0 && cache.toolItems.size === 0) {
     clearSessionMessageRenderCache(instanceId, sessionId)
   }
 }
@@ -490,7 +490,6 @@ export default function MessageBlock(props: MessageBlockProps) {
     messageItems: Map<string, ContentDisplayItem>
     toolItems: Map<string, ToolDisplayItem>
     messageBlocks: Map<string, CachedBlockEntry>
-    recordDisplayCache: Map<string, unknown>
   }
   let blockRef: HTMLDivElement | undefined
   const isSearchResult = () => Boolean(props.searchResultMessageIds?.().has(props.messageId))
@@ -553,7 +552,6 @@ export default function MessageBlock(props: MessageBlockProps) {
     const info = untrack(messageInfo)
 
     const displayData = buildRecordDisplayData(props.instanceId, current)
-    sessionCache.recordDisplayCache.set(current.id, { revision: current.revision, data: displayData })
     const { orderedParts } = displayData
     const items: MessageBlockItem[] = []
     const blockContentKeys: string[] = []

@@ -30,7 +30,7 @@ The UI uses a small custom i18n layer (no ICU/messageformat). When building feat
 - **Interpolation:** placeholders are simple `{name}` replacements (word characters only). Avoid placeholders like `{file-name}`.
 - **Pluralization:** handle manually via separate keys like `something.one` / `something.other` and choose in code.
 - **Adding a new language:** add a new `messages/<locale>/` folder + `index.ts`, register it in `packages/ui/src/lib/i18n/index.tsx`, and add it to the language picker in `packages/ui/src/components/folder-selection-view.tsx`.
-- **Locale persistence:** the selected locale is stored in app preferences (`locale`) and persisted via the server config (default `~/.config/codenomad/config.json`).
+- **Locale persistence:** the selected locale is stored in app preferences (`locale`) and persisted via the server config (default `~/.config/codenomad/config.yaml`; `config.json` is migration input only).
 - **Avoid English-only paths:** do not import `enMessages` directly in feature code; always go through `t(...)` so locale changes apply.
 
 ## File Length Guidelines (Highlight Only)
@@ -48,6 +48,13 @@ Behavior for agents:
 ## Tooling Preferences
 - Use the `edit` tool for modifying existing files; prefer it over other editing methods.
 - Use the `write` tool only when creating new files from scratch.
+
+## V2 Runtime Handoff
+- Treat `codenomad-v2-slots/build-{A|B}/release` as build staging and `codenomad-v2-slots/{A|B}` as the runnable deployment slots. Launch the deployed slot recorded by its `deployment.json`.
+- For a first V2 launch, start the deployed executable from PowerShell with the dedicated WebView2 profile, CDP port, Rust backtraces, and Node source maps described in `MIGRATION_V2.md`.
+- To replace a running V2 instance, submit `codenomad-v2-handoff-request.json` to `codenomad-v2-handoff.ps1` through an interactive Windows scheduled task. The task must be owned by the logged-in user so it runs outside the CodeNomad process tree while retaining desktop access.
+- Set `waitForPid` to the top-level CodeNomad window process, `executable` to the deployed target slot, and `fallbackExecutable` to the previously validated slot.
+- Consider the handoff complete after `codenomad-v2-handoff-result.json` reports `status: "started"`. Then verify that the reported PID is running from the requested slot and that the executable hash matches that slot's `deployment.json` before reporting success.
 
 ## Commit Message Guidelines
 - When creating commits, use detailed commit messages: a concise conventional-style subject followed by body paragraphs that explain the user-visible behavior change, the implementation approach, important edge cases or platform considerations, and the validation or test coverage added.

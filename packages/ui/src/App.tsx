@@ -20,7 +20,7 @@ import { useCommands } from "./lib/hooks/use-commands"
 import { useAppLifecycle } from "./lib/hooks/use-app-lifecycle"
 import { useAppSessionRestore } from "./lib/hooks/use-app-session-restore"
 import { loadedRestorableSession } from "./stores/client-state"
-import { shouldShowAppHomeOverlay, shouldShowEmptyAppHome } from "./stores/app-session-restore-gate"
+import { shouldShowAppHomeOverlay, shouldShowAppRestoreLoading } from "./stores/app-session-restore-gate"
 import { getLogger } from "./lib/logger"
 import { launchError, showLaunchError, clearLaunchError } from "./stores/launch-errors"
 import { formatLaunchErrorMessage, isMissingBinaryMessage } from "./lib/launch-errors"
@@ -28,6 +28,8 @@ import { initReleaseNotifications } from "./stores/releases"
 import { isTauriHost, isWebHost, runtimeEnv } from "./lib/runtime-env"
 import { useI18n } from "./lib/i18n"
 import { setWakeLockDesired } from "./lib/native/wake-lock"
+import { resolveResolvable } from "./lib/commands"
+import { setWorkspaceMenuEnabled } from "./lib/workspace-open"
 import {
   isSelectingFolder,
   setIsSelectingFolder,
@@ -41,6 +43,8 @@ import {
   stopInstance,
   disconnectedInstance,
   acknowledgeDisconnectedInstance,
+  reconcilePendingSessionIndicators,
+  refreshVolatileInstanceState,
   syncPendingRequests,
 } from "./stores/instances"
 import {
@@ -306,6 +310,7 @@ const App: Component = () => {
                 registerInvalidation: (invalidate) => { invalidateSessions = invalidate },
               }),
               syncPendingRequests(id, (invalidate) => { invalidatePendingRequests = invalidate }),
+              refreshVolatileInstanceState(id),
             ]),
             `Foreground refresh for ${id}`,
             () => {
@@ -317,6 +322,7 @@ const App: Component = () => {
       )
       const failedInstanceIds: string[] = []
       sessionListResults.forEach((result, i) => {
+        reconcilePendingSessionIndicators(instanceIds[i])
         if (result.status === "rejected") {
           failedInstanceIds.push(instanceIds[i])
           log.error("Foreground refresh: fetchSessions failed", { instanceId: instanceIds[i], error: result.reason })
@@ -604,26 +610,42 @@ const App: Component = () => {
     getActiveSessionIdForInstance: activeSessionIdForInstance,
   })
 
-  // Listen for Tauri menu events
+  // Native menus execute the same commands as the command palette.
   onMount(() => {
+    const executeMenuAction = (action: unknown) => {
+      if (typeof action !== "string") return
+      const command = paletteCommands().find((candidate) => candidate.id === action)
+      if (command && !(command.disabled && resolveResolvable(command.disabled))) executeCommand(command)
+    }
+
     if (isTauriHost()) {
       const tauriBridge = (window as { __TAURI__?: { event?: { listen: (event: string, handler: (event: { payload: unknown }) => void) => Promise<() => void> } } }).__TAURI__
       if (tauriBridge?.event) {
         let unlistenMenu: (() => void) | null = null
 
-        tauriBridge.event.listen("menu:newInstance", () => {
-          handleNewInstanceRequest()
+        tauriBridge.event.listen("menu:action", (event) => {
+          executeMenuAction(event.payload)
         }).then((unlisten) => {
           unlistenMenu = unlisten
         }).catch((error) => {
-          log.error("Failed to listen for menu:newInstance event", error)
+          log.error("Failed to listen for native menu actions", error)
         })
 
         onCleanup(() => {
           unlistenMenu?.()
         })
       }
+      return
     }
+
+    const unsubscribe = window.electronAPI?.onMenuAction?.(executeMenuAction)
+    onCleanup(() => unsubscribe?.())
+  })
+
+  createEffect(() => {
+    void setWorkspaceMenuEnabled(Boolean(activeInstance())).catch((error) => {
+      log.warn("Failed to update native workspace menu state", error)
+    })
   })
 
   return (
@@ -755,14 +777,12 @@ const App: Component = () => {
             </>
           }
         >
-          <Show when={shouldShowEmptyAppHome(loadedRestorableSession())}>
-            <FolderSelectionView
-              onSelectFolder={handleSelectFolder}
-              onSelectExistingInstance={handleSelectExistingInstance}
-              isLoading={isSelectingFolder()}
-              onOpenSidecar={handleOpenSidecarPicker}
-            />
-          </Show>
+          <FolderSelectionView
+            onSelectFolder={handleSelectFolder}
+            onSelectExistingInstance={handleSelectExistingInstance}
+            isLoading={isSelectingFolder() || shouldShowAppRestoreLoading(loadedRestorableSession())}
+            onOpenSidecar={handleOpenSidecarPicker}
+          />
         </Show>
 
         <Show when={shouldShowAppHomeOverlay(showFolderSelection(), appTabs().length)}>

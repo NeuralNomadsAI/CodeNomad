@@ -6,11 +6,15 @@ import {
   ANCHOR_RESTORE_STABLE_FRAMES,
   AnchorRestoreStabilizer,
   BOTTOM_FOLLOW_EPSILON_PX,
+  getKeyboardScrollIntent,
+  getPrimaryPointerDragDirection,
   ScrollRestoreTokenGuard,
   VirtualScrollController,
   isAtBottom,
   isAutoFollowing,
+  isMiddleButtonScrollIntent,
   isScrollRestoreGenerationCurrent,
+  isScrollRestoreMeasurementReady,
   isSnapshotAutoFollowing,
   resolveAutoPinHoldElement,
   restoreFollowModeFromSnapshot,
@@ -28,6 +32,35 @@ function metrics(offset: number, scrollHeight = 3000, clientHeight = 600, sentin
 }
 
 describe("virtual follow behavior", () => {
+  it("treats only the middle pointer button as scroll ownership", () => {
+    assert.equal(isMiddleButtonScrollIntent(1), true)
+    assert.equal(isMiddleButtonScrollIntent(0), false)
+    assert.equal(isMiddleButtonScrollIntent(2), false)
+  })
+
+  it("classifies primary selection drags without treating hover as scroll ownership", () => {
+    assert.equal(getPrimaryPointerDragDirection(200, 150, 1), "up")
+    assert.equal(getPrimaryPointerDragDirection(150, 200, 1), "down")
+    assert.equal(getPrimaryPointerDragDirection(200, 150, 0), null)
+  })
+
+  it("keeps page navigation available from non-editing interactive descendants", () => {
+    assert.deepEqual(getKeyboardScrollIntent({ key: "PageUp", shiftKey: false, interactive: true, textEditing: false }), {
+      type: "direction",
+      direction: "up",
+    })
+    assert.deepEqual(getKeyboardScrollIntent({ key: "Home", shiftKey: false, interactive: true, textEditing: false }), { type: "top" })
+    assert.equal(getKeyboardScrollIntent({ key: "PageUp", shiftKey: false, interactive: true, textEditing: true }), null)
+    assert.equal(getKeyboardScrollIntent({ key: " ", shiftKey: false, interactive: true, textEditing: false }), null)
+  })
+
+  it("waits for Virtua measurements before applying a restored offset", () => {
+    assert.equal(isScrollRestoreMeasurementReady({ hasHandle: false, itemCount: 20, scrollSize: 0, viewportSize: 0 }), false)
+    assert.equal(isScrollRestoreMeasurementReady({ hasHandle: true, itemCount: 20, scrollSize: 0, viewportSize: 600 }), false)
+    assert.equal(isScrollRestoreMeasurementReady({ hasHandle: true, itemCount: 20, scrollSize: 3000, viewportSize: 600 }), true)
+    assert.equal(isScrollRestoreMeasurementReady({ hasHandle: false, itemCount: 0, scrollSize: 0, viewportSize: 0 }), true)
+  })
+
   it("escapes follow on any upward user intent", () => {
     const next = transitionFollowMode({ type: "following" }, userScroll("up", true))
 
@@ -154,13 +187,54 @@ describe("virtual follow behavior", () => {
     assert.deepEqual(result.state.mode, { type: "escaped" })
   })
 
-  it("does not escape for owned programmatic upward movement", () => {
+  it("repins an off-bottom correction during the programmatic window", () => {
     const controller = new VirtualScrollController(true)
     controller.recordProgrammaticOffset(2400, true)
 
     const result = controller.observeViewport(metrics(2200), 100, true)
 
     assert.deepEqual(result.state.mode, { type: "following" })
+    assert.deepEqual(result.effect, { type: "scroll-bottom", immediate: true })
+  })
+
+  it("lets fresh downward intent rejoin at bottom during a programmatic window", () => {
+    const controller = new VirtualScrollController(false)
+    controller.recordProgrammaticOffset(2200, false)
+    controller.setUserIntent("down", 700)
+
+    const result = controller.observeViewport(metrics(2400), 100, true)
+
+    assert.deepEqual(result.state.mode, { type: "following" })
+  })
+
+  it("repins after an unowned virtualizer measurement correction", () => {
+    const controller = new VirtualScrollController(true)
+    controller.recordProgrammaticOffset(2400, true)
+
+    const result = controller.observeViewport(metrics(2200), 1000, false)
+
+    assert.deepEqual(result.state.mode, { type: "following" })
+    assert.deepEqual(result.effect, { type: "scroll-bottom", immediate: true })
+  })
+
+  it("does not rejoin escaped mode from measurement-only downward movement", () => {
+    const controller = new VirtualScrollController(false)
+    controller.recordProgrammaticOffset(2200, false)
+
+    const result = controller.observeViewport(metrics(2400), 1000, false)
+
+    assert.deepEqual(result.state.mode, { type: "escaped" })
+    assert.deepEqual(result.effect, { type: "none" })
+  })
+
+  it("keeps hold-driven escape stable across later viewport measurements", () => {
+    const controller = new VirtualScrollController(true)
+    controller.setFollow(false)
+    controller.recordProgrammaticOffset(2200, false)
+
+    const result = controller.observeViewport(metrics(2400), 1000, false)
+
+    assert.deepEqual(result.state.mode, { type: "escaped" })
     assert.deepEqual(result.effect, { type: "none" })
   })
 
@@ -225,6 +299,16 @@ describe("virtual follow behavior", () => {
     }
 
     assert.deepEqual(result, { type: "retry", reissueIndex: true })
+  })
+
+  it("waits for a paginated anchor before falling back at the strict frame bound", () => {
+    const stabilizer = new AnchorRestoreStabilizer()
+    let result
+    for (let frame = 1; frame < ANCHOR_RESTORE_MAX_FRAMES; frame += 1) {
+      result = stabilizer.nextFrame({ targetExists: false, mounted: false })
+    }
+    assert.deepEqual(result, { type: "retry", reissueIndex: false })
+    assert.deepEqual(stabilizer.nextFrame({ targetExists: false, mounted: false }), { type: "fallback" })
   })
 
   it("resets stable frame counting after an anchor offset correction", () => {

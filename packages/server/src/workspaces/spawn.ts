@@ -7,7 +7,7 @@ export const WINDOWS_POWERSHELL_EXTENSIONS = new Set([".ps1"])
 
 const VERSION_REGEX = /([0-9]+\.[0-9]+\.[0-9A-Za-z.-]+)/
 const WSL_UNC_PATH_REGEX = /^\\\\wsl(?:\.localhost|\$)\\([^\\/]+)(?:[\\/](.*))?$/i
-const WSL_PATH_ENV_KEYS = new Set(["NODE_EXTRA_CA_CERTS", "XDG_STATE_HOME"])
+const WSL_PATH_ENV_KEYS = new Set(["NODE_EXTRA_CA_CERTS", "OPENCODE_DB", "XDG_STATE_HOME"])
 const WINDOWS_DIRECT_EXTENSIONS = new Set([".com", ".exe"])
 const DEFAULT_WINDOWS_PATHEXT = ".COM;.EXE;.BAT;.CMD"
 const WINDOWS_SHELL_NAMES = new Set([
@@ -154,6 +154,44 @@ export function buildSpawnSpec(binaryPath: string, args: string[], options: Buil
   }
 
   return buildWindowsSpawnSpec(binaryPath, args, options)
+}
+
+export function resolveWslServiceDirectory(
+  folder: string,
+  distro: string,
+  translateWindowsPath: (folder: string, distro: string, timeoutMs: number) => string | undefined = (windowsFolder, wslDistro, timeoutMs) => {
+    const result = spawnSync("wsl.exe", ["--distribution", wslDistro, "--exec", "wslpath", "-au", windowsFolder], {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: timeoutMs,
+      maxBuffer: 64 * 1024,
+    })
+    return result.status === 0 ? result.stdout.trim() : undefined
+  },
+  timeoutMs = 5_000,
+): string | null {
+  const directory = resolveWslWorkingDirectory(folder, distro)
+  if (!directory) return null
+  if (directory.kind === "linux") return directory.path
+  return translateWindowsPath(directory.path, distro, Math.max(1, timeoutMs))?.trim() || null
+}
+
+export function resolveWslHostDirectory(
+  folder: string,
+  distro: string,
+  translateLinuxPath: (folder: string, distro: string, timeoutMs: number) => string | undefined = (linuxFolder, wslDistro, timeoutMs) => {
+    const result = spawnSync("wsl.exe", ["--distribution", wslDistro, "--exec", "wslpath", "-aw", linuxFolder], {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: timeoutMs,
+      maxBuffer: 64 * 1024,
+    })
+    return result.status === 0 ? result.stdout.trim() : undefined
+  },
+  timeoutMs = 5_000,
+): string | null {
+  if (!path.posix.isAbsolute(folder)) return null
+  return translateLinuxPath(folder, distro, Math.max(1, timeoutMs))?.trim() || null
 }
 
 export function buildServiceLaunchSpec(
@@ -424,27 +462,23 @@ function buildWslEnvironment(env: NodeJS.ProcessEnv | undefined, propagateEnvKey
   const byName = new Map(entries.map((entry) => [entry.split("/")[0] ?? entry, entry]))
 
   for (const key of keysToPropagate) {
+    const requiresPathTranslation = WSL_PATH_ENV_KEYS.has(key) && (
+      key !== "OPENCODE_DB" || normalizeWindowsPath(next[key] ?? "") !== null
+    )
     const existingEntry = byName.get(key)
     if (existingEntry) {
-      byName.set(key, ensureWslenvEntry(existingEntry, WSL_PATH_ENV_KEYS.has(key)))
+      byName.set(key, setWslenvPathFlag(existingEntry, requiresPathTranslation))
       continue
     }
-    byName.set(key, WSL_PATH_ENV_KEYS.has(key) ? `${key}/p` : key)
+    byName.set(key, requiresPathTranslation ? `${key}/p` : key)
   }
 
   next.WSLENV = Array.from(byName.values()).join(":")
   return next
 }
 
-function ensureWslenvEntry(entry: string, requiresPathTranslation: boolean): string {
-  if (!requiresPathTranslation) {
-    return entry
-  }
-
+function setWslenvPathFlag(entry: string, requiresPathTranslation: boolean): string {
   const [name, rawFlags = ""] = entry.split("/")
-  if (rawFlags.includes("p")) {
-    return entry
-  }
-
-  return rawFlags.length > 0 ? `${name}/${rawFlags}p` : `${name}/p`
+  const flags = rawFlags.replaceAll("p", "") + (requiresPathTranslation ? "p" : "")
+  return flags ? `${name}/${flags}` : name
 }

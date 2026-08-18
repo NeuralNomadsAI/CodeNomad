@@ -20,7 +20,7 @@ export interface ActiveSessionMessageLoadDeps {
     instanceId: string,
     sessionId: string,
     options?: { registerInvalidation?: (invalidate: () => void) => void },
-  ) => Promise<void> | void
+  ) => Promise<unknown> | void
   /** Resolves once the instance's workspace metadata has hydrated. */
   waitForHydration: (instanceId: string) => Promise<void>
   /** Optional error sink for a rejected load. */

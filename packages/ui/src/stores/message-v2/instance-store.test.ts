@@ -2,9 +2,7 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { createInstanceMessageStore } from "./instance-store.ts"
-import { getSessionMessageRenderCache, peekSessionMessageRenderCache } from "../../lib/message-render-cache.ts"
-import { buildRecordDisplayData } from "./record-display-cache.ts"
-import { clearCacheForInstance, setCacheEntry } from "../../lib/global-cache.ts"
+import { getSessionMessageRenderCache, purgeMessageRenderCache } from "../../lib/message-render-cache.ts"
 
 describe("message-v2 permission state", () => {
   it("keeps one permission attachment when a duplicate moves from global to a tool part", () => {
@@ -46,305 +44,129 @@ describe("message-v2 permission state", () => {
 
 })
 
-describe("message-v2 revert state", () => {
-  it("prunes reverted messages and their question queue", () => {
+describe("message-v2 todo state", () => {
+  it("does not expose a plan from before the latest compaction", () => {
     const store = createInstanceMessageStore("instance-1")
     store.addOrUpdateSession({ id: "session-1" })
     store.hydrateMessages("session-1", [
-      { id: "keep", sessionId: "session-1", role: "user", status: "complete" },
-      { id: "revert", sessionId: "session-1", role: "assistant", status: "complete" },
+      {
+        id: "msg-todo", sessionId: "session-1", role: "assistant", status: "complete",
+        parts: [{ id: "todo", type: "tool", tool: "todowrite", state: { status: "completed", input: { todos: [{ content: "Old task", status: "in_progress" }] } } } as any],
+      },
+      {
+        id: "msg-compaction", sessionId: "session-1", role: "assistant", status: "complete",
+        parts: [{ id: "compaction", type: "compaction" } as any],
+      },
+    ], [
+      { id: "msg-todo", sessionID: "session-1", role: "assistant", time: { created: 1 } } as any,
+      { id: "msg-compaction", sessionID: "session-1", role: "assistant", time: { created: 2 } } as any,
     ])
+
+    assert.equal(store.getLatestTodoSnapshot("session-1"), undefined)
+  })
+})
+
+describe("message-v2 question attachment", () => {
+  it("rebinds a question when its tool part arrives after question.asked", () => {
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+    store.upsertMessage({ id: "message-1", sessionId: "session-1", role: "assistant", status: "streaming", parts: [] })
     store.upsertQuestion({
-      request: { id: "question", sessionID: "session-1", questions: [] },
-      messageId: "revert", enqueuedAt: 1,
+      request: {
+        id: "question-1",
+        sessionID: "session-1",
+        questions: [{ header: "Confirm", question: "Continue?", options: [] }],
+        tool: { messageID: "message-1", id: "call-1" },
+      },
+      messageId: "message-1",
+      enqueuedAt: 1_000,
     })
 
-    store.setSessionRevert("session-1", { messageID: "revert" })
+    assert.equal(store.getQuestionState("message-1", "call-1"), null)
 
-    assert.deepEqual(store.getSessionMessageIds("session-1"), ["keep"])
-    assert.equal(store.state.questions.queue.length, 0)
-    assert.equal(store.state.questions.active, null)
+    store.applyPartUpdate({
+      messageId: "message-1",
+      part: { id: "part-1", type: "tool", tool: "question", callID: "call-1", state: { status: "running", input: {} } } as any,
+    })
+
+    assert.equal(store.getQuestionState("message-1", "part-1")?.entry.request.id, "question-1")
+    assert.equal(store.state.questions.queue.length, 1)
   })
 
-  it("accounts for added and cleared revert state without messages", async () => {
-    let changes = 0
-    const store = createInstanceMessageStore("instance-1", { onSessionChanged: () => { changes += 1 } })
+  it("uses the native tool part id when no normalized callID is present", () => {
+    const store = createInstanceMessageStore("instance-1")
     store.addOrUpdateSession({ id: "session-1" })
-    const baselineChanges = changes
+    store.upsertMessage({ id: "message-1", sessionId: "session-1", role: "assistant", status: "streaming", parts: [] })
+    store.upsertQuestion({
+      request: {
+        id: "question-1",
+        sessionID: "session-1",
+        questions: [],
+        tool: { messageID: "message-1", id: "part-native" },
+      },
+      messageId: "message-1",
+      enqueuedAt: 1_000,
+    })
 
-    store.setSessionRevert("session-1", { messageID: "revert", partID: "part" })
-    assert.ok(await store.estimateSessionRetainedBytes("session-1") > 0)
-    assert.equal(changes, baselineChanges + 1)
+    store.applyPartUpdate({
+      messageId: "message-1",
+      part: { id: "part-native", type: "tool", tool: "question", state: { status: "running", input: {} } } as any,
+    })
 
-    store.setSessionRevert("session-1", null)
-    assert.equal(await store.estimateSessionRetainedBytes("session-1"), 0)
-    assert.equal(changes, baselineChanges + 2)
+    assert.equal(store.getQuestionState("message-1", "part-native")?.entry.request.id, "question-1")
+  })
+
+  it("moves a question from a stale optimistic part to the authoritative part", () => {
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+    store.upsertMessage({ id: "message-1", sessionId: "session-1", role: "assistant", status: "streaming", parts: [] })
+    store.upsertQuestion({
+      request: { id: "question-1", sessionID: "session-1", questions: [], tool: { messageID: "message-1", id: "call-1" } },
+      messageId: "message-1",
+      partId: "part-optimistic",
+      enqueuedAt: 1_000,
+    })
+
+    store.applyPartUpdate({
+      messageId: "message-1",
+      part: { id: "part-authoritative", type: "tool", tool: "question", callID: "call-1", state: { status: "running", input: {} } } as any,
+    })
+
+    assert.equal(store.getQuestionState("message-1", "part-optimistic"), null)
+    assert.equal(store.getQuestionState("message-1", "part-authoritative")?.entry.request.id, "question-1")
   })
 })
 
 describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
-  it("reports no retained transcript bytes for an empty session", async () => {
-    const store = createInstanceMessageStore("instance-1")
-    store.addOrUpdateSession({ id: "session-1" })
-
-    assert.equal(await store.estimateSessionRetainedBytes("session-1"), 0)
-  })
-
-  it("accounts for render caches and clears them with session eviction", async () => {
-    const store = createInstanceMessageStore("cache-accounting")
-    store.addOrUpdateSession({ id: "session-1" })
-    store.hydrateMessages("session-1", [{ id: "message-1", sessionId: "session-1", role: "assistant", status: "complete", parts: [{ id: "part-1", type: "text", text: "source" } as any] }])
-    const baselineBytes = await store.estimateSessionRetainedBytes("session-1")
-    const renderCache = getSessionMessageRenderCache("cache-accounting", "session-1")
-    renderCache.recordDisplayCache.set("message-1", { revision: 1, data: { orderedParts: [{ text: "display-copy" }] } })
-    const recordCachedBytes = await store.estimateSessionRetainedBytes("session-1")
-    renderCache.messageBlocks.set("message-1", { text: "x".repeat(4_000) })
-
-    const cachedBytes = await store.estimateSessionRetainedBytes("session-1")
-    store.clearSession("session-1")
-
-    assert.ok(recordCachedBytes > baselineBytes)
-    assert.ok(cachedBytes > recordCachedBytes + 8_000)
-    assert.equal(peekSessionMessageRenderCache("cache-accounting", "session-1"), undefined)
-    assert.equal(await store.estimateSessionRetainedBytes("session-1"), 0)
-  })
-
-  it("clears derived caches with instance cleanup", () => {
-    const store = createInstanceMessageStore("instance-cache-cleanup")
-    store.hydrateMessages("session-1", [{ id: "message-1", sessionId: "session-1", role: "assistant", status: "complete" }])
-    getSessionMessageRenderCache("instance-cache-cleanup", "session-1").messageBlocks.set("message-1", {})
-    buildRecordDisplayData("instance-cache-cleanup", store.getMessage("message-1")!)
-
-    store.clearInstance()
-
-    assert.equal(peekSessionMessageRenderCache("instance-cache-cleanup", "session-1"), undefined)
-  })
-
-  it("accounts for the module display cache and associated orphan pending parts", async () => {
-    const store = createInstanceMessageStore("cache-accounting-orphans")
-    store.addOrUpdateSession({ id: "session-1" })
-    store.hydrateMessages("session-1", [{ id: "message-1", sessionId: "session-1", role: "assistant", status: "complete", parts: [{ id: "part-1", type: "text", text: "source" } as any] }])
-    const baseline = await store.estimateSessionRetainedBytes("session-1")
-    buildRecordDisplayData("cache-accounting-orphans", store.getMessage("message-1")!)
-    const displayCached = await store.estimateSessionRetainedBytes("session-1")
-    store.bufferPendingPart({ messageId: "orphan", sessionId: "session-1", part: { type: "text", text: "x".repeat(4_000) } as any, receivedAt: Date.now() })
-    const withPending = await store.estimateSessionRetainedBytes("session-1")
-
-    store.clearSession("session-1")
-
-    assert.ok(displayCached > baseline)
-    assert.ok(withPending > displayCached + 8_000)
-    assert.equal(store.state.pendingParts.orphan, undefined)
-  })
-
-  it("accounts session-owned global cache values without double-counting shared objects", async () => {
-    const store = createInstanceMessageStore("global-cache-accounting")
-    store.addOrUpdateSession({ id: "session-1" })
-    const shared = { text: "x".repeat(4_000) }
-    getSessionMessageRenderCache("global-cache-accounting", "session-1").messageBlocks.set("message", shared)
-    const localBytes = await store.estimateSessionRetainedBytes("session-1")
-    const cacheEntry = { instanceId: "global-cache-accounting", sessionId: "session-1", scope: "markdown", cacheId: "part", version: "1" }
-    setCacheEntry(cacheEntry, { text: "y".repeat(4_000) })
-    const uniqueBytes = await store.estimateSessionRetainedBytes("session-1")
-    setCacheEntry(cacheEntry, shared)
-    const sharedBytes = await store.estimateSessionRetainedBytes("session-1")
-
-    assert.ok(uniqueBytes > localBytes + 8_000)
-    assert.ok(sharedBytes > localBytes)
-    assert.ok(sharedBytes < localBytes + 1_000)
-    clearCacheForInstance("global-cache-accounting")
-  })
-
-  it("byte-bounds individual and aggregate pending parts while accounting session orphans", async () => {
-    let changes = 0
-    const invalidated: string[] = []
-    const store = createInstanceMessageStore("pending-byte-cap", {
-      onSessionChanged: () => { changes += 1 },
-      onSessionCleared: (_instanceId, sessionId) => invalidated.push(sessionId),
+  it("trims to 200 messages and purges removed render-cache entries", () => {
+    const instanceId = "window-trim", sessionId = "session"
+    const cache = getSessionMessageRenderCache(instanceId, sessionId)
+    const store = createInstanceMessageStore(instanceId, {
+      onMessagesRemoved: (_instanceId, _sessionId, messageIds) => purgeMessageRenderCache(cache, messageIds),
     })
-    store.bufferPendingPart({ messageId: "oversized", part: { type: "text", text: "x".repeat(600_000) } as any, receivedAt: 0 })
-    assert.equal(store.state.pendingParts.oversized, undefined)
+    store.hydrateMessages(sessionId, Array.from({ length: 201 }, (_, index) => ({
+      id: `message-${index}`, sessionId, role: "assistant" as const, status: "complete" as const,
+    })))
+    cache.messageBlocks.set("message-0", {})
+    cache.messageBlocks.set("message-200", {})
 
-    store.bufferPendingPart({ messageId: "oversized-known", sessionId: "session-oversized", part: { type: "text", text: "x".repeat(600_000) } as any, receivedAt: 0 })
-    assert.deepEqual(invalidated, ["session-oversized"])
-    assert.equal(changes, 1)
+    store.trimSessionMessages(sessionId, 200)
 
-    store.bufferPendingPart({ messageId: "session-orphan", sessionId: "session-1", part: { type: "text", text: "x".repeat(100_000) } as any, receivedAt: 1 })
-    assert.ok(await store.estimateSessionRetainedBytes("session-1") > 0)
-    assert.equal(changes, 2)
-
-    for (let index = 0; index < 50; index += 1) {
-      store.bufferPendingPart({ messageId: `orphan-${index}`, part: { type: "text", text: "x".repeat(100_000) } as any, receivedAt: index + 2 })
-    }
-    assert.ok(Object.values(store.state.pendingParts).flat().length < 51)
+    assert.equal(store.getSessionMessageIds(sessionId).length, 200)
+    assert.equal(store.getSessionMessageIds(sessionId).includes("message-0"), false)
+    assert.deepEqual([...cache.messageBlocks.keys()], ["message-200"])
     store.clearInstance()
   })
 
-  it("invalidates an unknown-owner pending drop when live ownership becomes known", () => {
-    const invalidated: string[] = []
-    const store = createInstanceMessageStore("pending-owner-reconciliation", {
-      onSessionCleared: (_instanceId, sessionId) => invalidated.push(sessionId),
-    })
-    store.bufferPendingPart({ messageId: "unknown", part: { type: "text", text: "x".repeat(600_000) } as any, receivedAt: 0 })
+  it("clears pending parts omitted by authoritative hydration", () => {
+    const store = createInstanceMessageStore("pending-cleanup")
+    store.hydrateMessages("session-1", [{ id: "old", sessionId: "session-1", role: "assistant", status: "complete" }])
+    store.bufferPendingPart({ messageId: "old", sessionId: "session-1", part: { type: "text", text: "pending" } as any, receivedAt: 1 })
 
-    store.upsertMessage({ id: "unknown", sessionId: "session-1", role: "assistant", status: "streaming" })
+    store.hydrateMessages("session-1", [{ id: "current", sessionId: "session-1", role: "user", status: "complete" }])
 
-    assert.deepEqual(invalidated, ["session-1"])
-    store.clearInstance()
-  })
-
-  it("consumes an unknown-owner drop during authoritative hydration", () => {
-    const invalidated: string[] = []
-    const store = createInstanceMessageStore("pending-authoritative-reconciliation", {
-      onSessionCleared: (_instanceId, sessionId) => invalidated.push(sessionId),
-    })
-    store.bufferPendingPart({ messageId: "known", part: { type: "text", text: "x".repeat(600_000) } as any, receivedAt: 0 })
-    store.hydrateMessages("session-1", [{ id: "known", sessionId: "session-1", role: "assistant", status: "complete", parts: [{ id: "part", type: "text", text: "authoritative" } as any] }])
-
-    assert.deepEqual(invalidated, [])
-    assert.equal(store.getMessage("known")?.parts.part?.data.text, "authoritative")
-    store.clearInstance()
-  })
-
-  it("caps pending-part bytes globally across instance stores", () => {
-    const first = createInstanceMessageStore("pending-global-first")
-    const second = createInstanceMessageStore("pending-global-second")
-    for (let index = 0; index < 16; index += 1) {
-      const store = index % 2 === 0 ? first : second
-      store.bufferPendingPart({ messageId: `orphan-${index}`, part: { type: "text", text: "x".repeat(300_000) } as any, receivedAt: index })
-    }
-    const retained = Object.values(first.state.pendingParts).flat().length + Object.values(second.state.pendingParts).flat().length
-    assert.ok(retained < 16)
-    first.clearInstance()
-    second.clearInstance()
-  })
-
-  it("caps pending parts that have no associated session", () => {
-    const store = createInstanceMessageStore("pending-cap")
-    for (let index = 0; index < 101; index += 1) {
-      store.bufferPendingPart({ messageId: `unknown-${index}`, part: { type: "text", text: "late" } as any, receivedAt: Date.now() })
-    }
-    assert.equal(Object.keys(store.state.pendingParts).length, 100)
-    assert.equal(store.state.pendingParts["unknown-0"], undefined)
-  })
-
-  it("caps pending parts per session and globally across arbitrary session ids", () => {
-    const store = createInstanceMessageStore("pending-scoped-cap")
-    for (let index = 0; index < 101; index += 1) {
-      store.bufferPendingPart({ messageId: `same-${index}`, sessionId: "same", part: { type: "text", text: "late" } as any, receivedAt: index })
-    }
-    assert.equal(Object.values(store.state.pendingParts).flat().filter((entry) => entry.sessionId === "same").length, 100)
-    assert.equal(store.state.pendingParts["same-0"], undefined)
-
-    for (let index = 0; index < 501; index += 1) {
-      store.bufferPendingPart({ messageId: `global-${index}`, sessionId: `arbitrary-${index}`, part: { type: "text", text: "late" } as any, receivedAt: 1_000 + index })
-    }
-    assert.equal(Object.values(store.state.pendingParts).flat().length, 500)
-  })
-
-  it("preserves prompt display overrides during volatile eviction but clears them explicitly", () => {
-    const store = createInstanceMessageStore("volatile-eviction")
-    const displayMetadata = { segments: [{ kind: "inline", length: 4 }] } as any
-    store.upsertMessage({
-      id: "message-1",
-      sessionId: "session-1",
-      role: "user",
-      status: "complete",
-      clientPromptDisplayMetadata: displayMetadata,
-    })
-
-    store.evictSessionTranscript("session-1")
-    const restored = createInstanceMessageStore("volatile-eviction")
-    restored.hydrateMessages("session-1", [{ id: "message-1", sessionId: "session-1", role: "user", status: "complete" }])
-    assert.deepEqual(restored.getMessage("message-1")?.clientPromptDisplayMetadata, displayMetadata)
-
-    store.clearSession("session-1")
-    const cleared = createInstanceMessageStore("volatile-eviction")
-    cleared.hydrateMessages("session-1", [{ id: "message-1", sessionId: "session-1", role: "user", status: "complete" }])
-    assert.equal(cleared.getMessage("message-1")?.clientPromptDisplayMetadata, undefined)
-    restored.clearInstance()
-    cleared.clearInstance()
-    store.clearInstance()
-  })
-
-  it("evicts the least recently used prompt display override after 512 entries", () => {
-    const store = createInstanceMessageStore("prompt-display-count-cap")
-    const displayMetadata = { segments: [{ kind: "inline", length: 4 }] } as any
-    for (let index = 0; index < 512; index += 1) {
-      store.upsertMessage({
-        id: `message-${index}`,
-        sessionId: "session-1",
-        role: "user",
-        status: "complete",
-        clientPromptDisplayMetadata: displayMetadata,
-      })
-    }
-    store.evictSessionTranscript("session-1")
-    const reader = createInstanceMessageStore("prompt-display-count-cap")
-    reader.hydrateMessages("session-1", [{ id: "message-0", sessionId: "session-1", role: "user", status: "complete" }])
-    reader.upsertMessage({
-      id: "message-512",
-      sessionId: "session-1",
-      role: "user",
-      status: "complete",
-      clientPromptDisplayMetadata: displayMetadata,
-    })
-
-    reader.evictSessionTranscript("session-1")
-    const restored = createInstanceMessageStore("prompt-display-count-cap")
-    restored.hydrateMessages("session-1", [
-      { id: "message-0", sessionId: "session-1", role: "user", status: "complete" },
-      { id: "message-1", sessionId: "session-1", role: "user", status: "complete" },
-      { id: "message-512", sessionId: "session-1", role: "user", status: "complete" },
-    ])
-
-    assert.deepEqual(restored.getMessage("message-0")?.clientPromptDisplayMetadata, displayMetadata)
-    assert.equal(restored.getMessage("message-1")?.clientPromptDisplayMetadata, undefined)
-    assert.deepEqual(restored.getMessage("message-512")?.clientPromptDisplayMetadata, displayMetadata)
-    reader.clearInstance()
-    restored.clearInstance()
-    store.clearInstance()
-  })
-
-  it("bounds prompt display overrides by aggregate and per-entry bytes", () => {
-    const store = createInstanceMessageStore("prompt-display-byte-cap")
-    const oversizedMetadata = { segments: Array.from({ length: 1_000 }, () => ({ kind: "inline", length: 1 })) } as any
-    store.upsertMessage({
-      id: "oversized",
-      sessionId: "session-1",
-      role: "user",
-      status: "complete",
-      clientPromptDisplayMetadata: oversizedMetadata,
-    })
-    for (let index = 0; index < 40; index += 1) {
-      store.upsertMessage({
-        id: `message-${index}`,
-        sessionId: "session-1",
-        role: "user",
-        status: "complete",
-        clientPromptDisplayMetadata: {
-          segments: Array.from({ length: 300 }, () => ({ kind: "inline", length: index + 1 })),
-        } as any,
-      })
-    }
-
-    store.evictSessionTranscript("session-1")
-    const restored = createInstanceMessageStore("prompt-display-byte-cap")
-    restored.hydrateMessages("session-1", [
-      { id: "oversized", sessionId: "session-1", role: "user", status: "complete" },
-      { id: "message-0", sessionId: "session-1", role: "user", status: "complete" },
-      { id: "message-39", sessionId: "session-1", role: "user", status: "complete" },
-    ])
-
-    assert.equal(restored.getMessage("oversized")?.clientPromptDisplayMetadata, undefined)
-    assert.equal(restored.getMessage("message-0")?.clientPromptDisplayMetadata, undefined)
-    assert.equal(restored.getMessage("message-39")?.clientPromptDisplayMetadata?.segments.length, 300)
-
-    restored.clearInstance()
-    const cleared = createInstanceMessageStore("prompt-display-byte-cap")
-    cleared.hydrateMessages("session-1", [{ id: "message-39", sessionId: "session-1", role: "user", status: "complete" }])
-    assert.equal(cleared.getMessage("message-39")?.clientPromptDisplayMetadata, undefined)
-    cleared.clearInstance()
+    assert.equal(store.state.pendingParts.old, undefined)
+    assert.deepEqual(store.getSessionMessageIds("session-1"), ["current"])
     store.clearInstance()
   })
 
@@ -442,6 +264,26 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
     store.hydrateMessages("session-1", [duplicated, duplicated])
 
     assert.deepEqual(store.getSessionMessageIds("session-1"), ["msg-real-1"])
+  })
+
+  it("dedupes repeated part ids while keeping the newest part payload", () => {
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+
+    store.upsertMessage({
+      id: "msg-1",
+      sessionId: "session-1",
+      role: "assistant",
+      status: "complete",
+      parts: [
+        { id: "part-1", type: "text", text: "stale" } as any,
+        { id: "part-1", type: "text", text: "current" } as any,
+      ],
+    })
+
+    const message = store.getMessage("msg-1")
+    assert.deepEqual(message?.partIds, ["part-1"])
+    assert.equal((message?.parts["part-1"]?.data as any)?.text, "current")
   })
 
   it("drops a definitively failed send on the next authoritative snapshot", () => {

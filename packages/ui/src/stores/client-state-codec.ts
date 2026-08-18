@@ -101,6 +101,15 @@ function normalizeScrollSnapshot(value: unknown, budget: StringBudget): ScrollSn
   if (anchorKey !== undefined) result.anchorKey = anchorKey
   if (anchorOffset !== undefined) result.anchorOffset = anchorOffset
   if (value.followModeType === "following" || value.followModeType === "escaped") result.followModeType = value.followModeType
+  const windowCursor = value.windowCursor === undefined ? undefined : takeString(value.windowCursor, MAX_ANCHOR_KEY, budget)
+  if (windowCursor !== undefined) result.windowCursor = windowCursor
+  if (Array.isArray(value.newerCursors)) {
+    result.newerCursors = value.newerCursors.slice(-256).flatMap((cursor) => {
+      if (cursor === null) return [null]
+      const normalized = takeString(cursor, MAX_ANCHOR_KEY, budget)
+      return normalized === undefined ? [] : [normalized]
+    })
+  }
   return result
 }
 

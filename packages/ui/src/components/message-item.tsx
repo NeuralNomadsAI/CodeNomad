@@ -12,6 +12,7 @@ import { useSpeech } from "../lib/hooks/use-speech"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
 import { getMessageDurationMs, getMessageStartedAt } from "../lib/message-timing"
 import SpeechActionButton from "./speech-action-button"
+import { shouldShowGeneratingPlaceholder } from "../stores/message-v2/message-status"
 
 interface MessageItemProps {
   record: MessageRecord
@@ -260,18 +261,7 @@ export default function MessageItem(props: MessageItemProps) {
   }
 
   const isGenerating = () => {
-    if (hasContent()) {
-      return false
-    }
-
-    // Prefer the local record status for streaming placeholders.
-    if (!isUser() && props.record.status === "streaming") {
-      return true
-    }
-
-    const info = props.messageInfo
-    const timeInfo = info?.time as { created: number; end?: number } | undefined
-    return Boolean(info && info.role === "assistant" && (timeInfo?.end === undefined || timeInfo?.end === 0))
+    return shouldShowGeneratingPlaceholder(hasContent(), isUser() ? "user" : "assistant", props.record.status)
   }
 
   const handleRevert = () => {

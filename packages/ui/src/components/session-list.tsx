@@ -560,7 +560,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       }
     }
     const needsPermission = () => Boolean(rowProps.session.pendingPermission)
-    const needsQuestion = () => Boolean((rowProps.session as any)?.pendingQuestion)
+    const needsQuestion = () => Boolean(rowProps.session.pendingQuestion || rowProps.session.pendingForm)
     const needsInput = () => needsPermission() || needsQuestion()
     const statusClassName = () => {
       if (needsInput()) return "session-permission"

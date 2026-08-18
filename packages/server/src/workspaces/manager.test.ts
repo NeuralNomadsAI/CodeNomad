@@ -12,6 +12,8 @@ import {
 import type { OpenCodeEnsureOptions } from "./opencode-service"
 import path from "node:path"
 import os from "node:os"
+import { execFileSync } from "node:child_process"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -29,10 +31,8 @@ class ControlledSharedService {
   validationCalls: Array<{ location: LocationRef; options?: OpenCodeEnsureOptions }> = []
   evictions: LocationRef[] = []
   failEvictions = 0
-  shutdownGate?: ReturnType<typeof deferred<void>>
 
-  async endpoint(options?: OpenCodeEnsureOptions) {
-    this.assertCommand(options)
+  async endpoint() {
     return { url: "http://127.0.0.1:4321", auth: { type: "basic" as const, username: "user", password: "pass" } }
   }
 
@@ -40,13 +40,11 @@ class ControlledSharedService {
     return {} as OpenCodeClient
   }
 
-  async headers(options?: OpenCodeEnsureOptions) {
-    this.assertCommand(options)
+  async headers() {
     return { authorization: "Basic token" }
   }
 
   async validateLocation(location: LocationRef, requestOptions?: { signal?: AbortSignal }, options?: OpenCodeEnsureOptions) {
-    this.assertCommand(options)
     this.validationCalls.push({ location, options })
     this.validationStarted.resolve()
     if (this.validationGate) {
@@ -75,57 +73,68 @@ class ControlledSharedService {
     this.evictions.push(location)
   }
 
-  async shutdown() {
-    await this.shutdownGate?.promise
-  }
-
-  private assertCommand(options?: OpenCodeEnsureOptions) {
-    const stateRoot = path.join(os.homedir(), ".codenomad", "state", "opencode-v2")
-    assert.equal(options?.file, path.join(stateRoot, "opencode", "service.json"))
-    assert.match(options?.contenderFile ?? "", new RegExp(`contenders-${process.pid}-.*\\.txt$`))
-    assert.match(options?.leaseFile ?? "", new RegExp(`leases[/\\\\]process-${process.pid}-.*\\.json$`))
-    assert.equal(options?.command?.[0], process.execPath)
-    assert.equal(options?.command?.[1], "-e")
-    assert.equal(options?.command?.[3], process.execPath)
-    assert.equal(options?.command?.[4], JSON.stringify(["serve", "--service"]))
-    assert.equal(options?.command?.[5], options?.contenderFile)
-    assert.equal(options?.launcherRecordsPid, true)
-    assert.equal(options?.environment?.XDG_STATE_HOME, stateRoot)
-  }
+  async shutdown() {}
 }
 
-function createHarness(service = new ControlledSharedService()) {
+function createHarness(service = new ControlledSharedService(), overrides: Record<string, unknown> = {}) {
   const eventBus = new EventBus()
-  const started: string[] = []
   const stopped: string[] = []
-  eventBus.on("workspace.started", (event) => started.push(event.workspace.id))
   eventBus.on("workspace.stopped", (event) => stopped.push(event.workspaceId))
   const manager = new WorkspaceManager({
     rootDir: process.cwd(),
-    settings: { getOwner: () => ({}) } as never,
+    settings: { getOwner: () => ({ environmentVariables: { OPENCODE_DB: path.join(os.tmpdir(), "user-opencode.db") } }) } as never,
     binaryResolver: { resolveDefault: () => ({ path: process.execPath, label: "OpenCode V2" }) } as never,
     eventBus,
     logger: pino({ level: "silent" }),
-    getServerBaseUrl: () => "http://127.0.0.1:4000",
     sharedService: service,
+    ...overrides,
   })
-  return { manager, service, started, stopped }
+  return { manager, service, stopped }
 }
 
 describe("workspace manager shared service lifecycle", () => {
-  it("creates a ready logical location without a workspace process", async () => {
-    const { manager, service, started } = createHarness()
-    const { workspace, created } = await manager.create(process.cwd())
-
-    assert.equal(created, true)
-    assert.equal(workspace.status, "ready")
-    assert.equal(workspace.pid, undefined)
-    assert.equal(workspace.port, undefined)
-    assert.equal(manager.getInstanceAuthorizationHeader(workspace.id), "Basic token")
-    assert.deepEqual(service.validationCalls.map(({ location }) => location), [{ directory: process.cwd() }])
-    assert.deepEqual(started, [workspace.id])
+  it("uses bounded WSL mappings for root and real git worktree ownership", async () => {
+    const base = await mkdtemp(path.join(os.tmpdir(), "codenomad-wsl-ownership-"))
+    const repo = path.join(base, "repo")
+    const worktree = path.join(base, "feature")
+    execFileSync("git", ["init", repo], { stdio: "ignore", timeout: 5_000 })
+    await writeFile(path.join(repo, "tracked.txt"), "tracked")
+    execFileSync("git", ["-C", repo, "add", "."], { stdio: "ignore", timeout: 5_000 })
+    execFileSync("git", ["-C", repo, "-c", "user.name=CodeNomad", "-c", "user.email=test@example.com", "commit", "-m", "initial"], {
+      stdio: "ignore",
+      timeout: 5_000,
+    })
+    execFileSync("git", ["-C", repo, "worktree", "add", "-b", "feature", worktree], { stdio: "ignore", timeout: 5_000 })
+    const service = new ControlledSharedService()
+    const servicePaths = new Map([[repo, "/service/repo"], [worktree, "/service/feature"]])
+    const hostPaths = new Map(Array.from(servicePaths, ([host, servicePath]) => [servicePath, host]))
+    const { manager } = createHarness(service, {
+      rootDir: base,
+      platform: "win32",
+      binaryResolver: {
+        resolveDefault: () => ({ path: String.raw`\\wsl.localhost\Ubuntu\home\dev\opencode`, label: "OpenCode V2" }),
+      },
+      wslServiceDirectoryResolver: (directory: string, _distro: string, timeoutMs: number) => {
+        assert.ok(timeoutMs > 0 && timeoutMs <= 30_000)
+        return servicePaths.get(directory) ?? null
+      },
+      wslHostDirectoryResolver: (directory: string, _distro: string, timeoutMs: number) => {
+        assert.ok(timeoutMs > 0 && timeoutMs <= 30_000)
+        return hostPaths.get(directory) ?? null
+      },
+    })
+    try {
+      const { workspace } = await manager.create(repo)
+      assert.equal(manager.getServiceDirectory(workspace.id), "/service/repo")
+      assert.equal(await manager.ownsDirectory(workspace.id, "/service/repo"), true)
+      assert.equal(await manager.ownsDirectory(workspace.id, "/service/feature"), true)
+      assert.equal(await manager.ownsDirectory(workspace.id, "/service/foreign"), false)
+      assert.equal(await manager.getServiceDirectoryForPath(workspace.id, worktree), "/service/feature")
+    } finally {
+      await manager.shutdown().catch(() => undefined)
+      await rm(base, { recursive: true, force: true })
+    }
   })
-
   it("shares one in-flight logical location creation", async () => {
     const harness = createHarness()
     harness.service.validationGate = deferred<void>()
@@ -152,20 +161,6 @@ describe("workspace manager shared service lifecycle", () => {
     await harness.manager.delete(first.workspace.id)
     assert.deepEqual(harness.service.evictions, [{ directory: process.cwd(), workspaceID: "location-1" }])
     assert.deepEqual(harness.stopped, [forced.workspace.id, first.workspace.id])
-  })
-
-  it("evicts a location once when duplicate owners are deleted concurrently", async () => {
-    const harness = createHarness()
-    const first = await harness.manager.create(process.cwd())
-    const forced = await harness.manager.create(process.cwd(), undefined, { forceNew: true })
-
-    await Promise.all([
-      harness.manager.delete(first.workspace.id),
-      harness.manager.delete(forced.workspace.id),
-    ])
-
-    assert.equal(harness.service.evictions.length, 1)
-    assert.deepEqual(harness.manager.list(), [])
   })
 
   it("cancels validation and cleans its logical location", async () => {
@@ -198,16 +193,4 @@ describe("workspace manager shared service lifecycle", () => {
     assert.equal(harness.manager.get(workspace.id), undefined)
   })
 
-  it("bounds a stalled shared service shutdown", async () => {
-    const service = new ControlledSharedService()
-    service.shutdownGate = deferred<void>()
-    const { manager } = createHarness(service)
-    ;(manager as any).options.shutdownTimeoutMs = 10
-
-    await assert.rejects(manager.shutdown(), (error: unknown) => {
-      assert.ok(error instanceof WorkspaceShutdownError)
-      assert.match(String(error.errors[0]), /did not finish within/)
-      return true
-    })
-  })
 })

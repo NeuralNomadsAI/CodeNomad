@@ -78,4 +78,67 @@ describe("native session message normalization", () => {
     const part = normalizeSessionMessage("session", source).message.parts[0] as any
     assert.deepEqual({ type: part.type, text: part.text }, { type: "reasoning", text: "one < two" })
   })
+
+  it("reconstructs inline base64 files and preserves URI sources", () => {
+    const inline = normalizeSessionMessage("session", {
+      id: "inline", type: "user", text: "image", time: { created: 1 },
+      files: [{ data: "aGVsbG8=", mime: "image/png", source: { type: "inline" }, name: "image.png" }],
+    }).message.parts[1] as any
+    const uri = normalizeSessionMessage("session", {
+      id: "uri", type: "user", text: "file", time: { created: 1 },
+      files: [{ data: "", mime: "text/plain", source: { type: "uri", uri: "file:///repo/readme.txt" } }],
+    }).message.parts[1] as any
+
+    assert.equal(inline.url, "data:image/png;base64,aGVsbG8=")
+    assert.equal(uri.url, "file:///repo/readme.txt")
+  })
+
+  it("completes immutable control records instead of marking them as streaming", () => {
+    const controls: SessionMessageInfo[] = [
+      { id: "agent", type: "agent-switched", agent: "build", time: { created: 1 } },
+      { id: "model", type: "model-switched", model: { providerID: "p", id: "m" }, time: { created: 1 } },
+      { id: "location", type: "location-switched", location: { directory: "/repo" }, time: { created: 1 } },
+      { id: "system", type: "system", text: "notice", time: { created: 1 } },
+    ]
+
+    assert.deepEqual(controls.map((source) => normalizeSessionMessage("session", source).message.status), [
+      "complete", "complete", "complete", "complete",
+    ])
+  })
+
+  it("maps completed shell and compaction records to terminal statuses", () => {
+    const shell = normalizeSessionMessage("session", {
+      id: "shell", type: "shell", shellID: "sh", command: "pwd", status: "exited", exit: 0,
+      output: { output: "/repo", cursor: 5, size: 5, truncated: false }, time: { created: 1, completed: 2 },
+    }).message
+    const compacted = normalizeSessionMessage("session", {
+      id: "compact", type: "compaction", status: "completed", reason: "manual", summary: "summary", recent: "recent",
+      time: { created: 1 },
+    }).message
+    const failed = normalizeSessionMessage("session", {
+      id: "failed", type: "compaction", status: "failed", reason: "auto",
+      error: { type: "CompactionError", message: "too large", status: 413 }, time: { created: 1 },
+    })
+
+    assert.equal(shell.status, "complete")
+    assert.equal(compacted.status, "complete")
+    assert.equal(failed.message.status, "error")
+    assert.deepEqual(failed.info.error, {
+      type: "CompactionError", message: "too large", status: 413,
+      name: "CompactionError", data: { message: "too large" },
+    })
+  })
+
+  it("keeps assistant prompt errors structured", () => {
+    const result = normalizeSessionMessage("session", {
+      id: "assistant-error", type: "assistant", agent: "build", model: { providerID: "p", id: "m" },
+      content: [], error: { type: "ProviderError", message: "rate limited", status: 429 }, time: { created: 1 },
+    })
+
+    assert.equal(result.message.status, "error")
+    assert.deepEqual(result.info.error, {
+      type: "ProviderError", message: "rate limited", status: 429,
+      name: "ProviderError", data: { message: "rate limited" },
+    })
+  })
 })

@@ -1,4 +1,4 @@
-import { For, Show, createMemo, type Accessor, type Component } from "solid-js"
+import { For, Show, createEffect, createMemo, on, type Accessor, type Component } from "solid-js"
 import type { ToolState } from "../../../../../types/tool-state"
 import {
   DragDropProvider,
@@ -12,7 +12,7 @@ import { Accordion } from "@kobalte/core"
 import { Tooltip } from "@kobalte/core/tooltip"
 import Switch from "@suid/material/Switch"
 
-import { ChevronDown, GripVertical, Info } from "lucide-solid"
+import { ChevronDown, GripVertical, Info, Pencil, Trash2, XOctagon } from "lucide-solid"
 
 import type { Instance } from "../../../../../types/instance"
 import type { Session } from "../../../../../types/session"
@@ -25,6 +25,8 @@ import { togglePermissionAutoAcceptForSession } from "../../../../../stores/inst
 import { isPermissionAutoAcceptEnabled } from "../../../../../stores/permission-auto-accept"
 import { applyRightPanelItemCustomization, type RightPanelCustomization, type RightPanelSectionModule } from "../registry"
 import { createCoreStatusSectionManifest } from "../core-plugin"
+import { ptyStore } from "../../../../../stores/ptys"
+import { showConfirmDialog, showPromptDialog } from "../../../../../stores/alerts"
 
 interface StatusTabProps {
   t: (key: string, vars?: Record<string, any>) => string
@@ -80,6 +82,13 @@ const SortableStatusSection: Component<SortableStatusSectionProps> = (props) => 
 
 const StatusTab: Component<StatusTabProps> = (props) => {
   const isSectionExpanded = (id: string) => props.expandedItems().includes(id)
+  const ptyDirectory = createMemo(() => props.activeSession()?.location.directory ?? props.instance.folder)
+  const ptyState = createMemo(() => ptyStore.getState(props.instanceId, ptyDirectory()))
+
+  createEffect(on(
+    () => [props.instanceId, ptyDirectory()] as const,
+    ([instanceId, directory]) => void ptyStore.load(instanceId, directory),
+  ))
 
   const renderYoloModeSection = () => {
     const session = props.activeSession()
@@ -127,6 +136,105 @@ const StatusTab: Component<StatusTabProps> = (props) => {
     return <TodoListView state={todoState} emptyLabel={props.t("instanceShell.plan.empty")} showStatusLabel={false} />
   }
 
+  const renamePty = async (ptyId: string, currentTitle: string) => {
+    const title = await showPromptDialog(props.t("instanceShell.backgroundProcesses.rename.message"), {
+      title: props.t("instanceShell.backgroundProcesses.rename.title"),
+      inputLabel: props.t("instanceShell.backgroundProcesses.rename.inputLabel"),
+      inputDefaultValue: currentTitle,
+      confirmLabel: props.t("instanceShell.backgroundProcesses.actions.rename"),
+    })
+    const trimmed = title?.trim()
+    if (trimmed && trimmed !== currentTitle) {
+      await ptyStore.updateTitle(props.instanceId, ptyDirectory(), ptyId, trimmed)
+    }
+  }
+
+  const removePty = async (ptyId: string, title: string, running: boolean) => {
+    const confirmed = await showConfirmDialog(
+      props.t("instanceShell.backgroundProcesses.remove.message", { title }),
+      {
+        title: props.t("instanceShell.backgroundProcesses.remove.title"),
+        confirmLabel: props.t(running
+          ? "instanceShell.backgroundProcesses.actions.stopRemove"
+          : "instanceShell.backgroundProcesses.actions.remove"),
+      },
+    )
+    if (confirmed) await ptyStore.remove(props.instanceId, ptyDirectory(), ptyId)
+  }
+
+  const renderBackgroundProcesses = () => (
+    <Show
+      when={!ptyState().failed}
+      fallback={<div class="right-panel-empty right-panel-empty--left"><span class="text-xs">{props.t("instanceShell.backgroundProcesses.error")}</span></div>}
+    >
+      <Show
+        when={!ptyState().loading || ptyState().items.length > 0}
+        fallback={<div class="right-panel-empty right-panel-empty--left"><span class="text-xs">{props.t("instanceShell.backgroundProcesses.loading")}</span></div>}
+      >
+        <Show
+          when={ptyState().items.length > 0}
+          fallback={<div class="right-panel-empty right-panel-empty--left"><span class="text-xs">{props.t("instanceShell.backgroundProcesses.empty")}</span></div>}
+        >
+          <div class="flex flex-col gap-2">
+            <For each={ptyState().items}>
+              {(pty) => {
+                const running = () => pty.status === "running"
+                return (
+                  <article class="border border-base bg-surface-secondary px-3 py-2">
+                    <div class="flex items-start justify-between gap-2">
+                      <div class="min-w-0 flex-1">
+                        <h4 class="truncate text-xs font-medium text-primary" title={pty.title}>{pty.title}</h4>
+                        <code class="mt-1 block truncate text-xs text-secondary" title={[pty.command, ...pty.args].join(" ")}>
+                          {[pty.command, ...pty.args].join(" ")}
+                        </code>
+                      </div>
+                      <div class="flex shrink-0 gap-1">
+                        <button
+                          type="button"
+                          class="button-tertiary inline-flex items-center justify-center p-1"
+                          disabled={ptyState().loading}
+                          onClick={() => void renamePty(pty.id, pty.title)}
+                          aria-label={props.t("instanceShell.backgroundProcesses.actions.rename")}
+                          title={props.t("instanceShell.backgroundProcesses.actions.rename")}
+                        >
+                          <Pencil class="h-3.5 w-3.5" aria-hidden="true" />
+                        </button>
+                        <button
+                          type="button"
+                          class="button-tertiary inline-flex items-center justify-center p-1"
+                          disabled={ptyState().loading}
+                          onClick={() => void removePty(pty.id, pty.title, running())}
+                          aria-label={props.t(running()
+                            ? "instanceShell.backgroundProcesses.actions.stopRemove"
+                            : "instanceShell.backgroundProcesses.actions.remove")}
+                          title={props.t(running()
+                            ? "instanceShell.backgroundProcesses.actions.stopRemove"
+                            : "instanceShell.backgroundProcesses.actions.remove")}
+                        >
+                          <Show when={running()} fallback={<Trash2 class="h-3.5 w-3.5" aria-hidden="true" />}>
+                            <XOctagon class="h-3.5 w-3.5" aria-hidden="true" />
+                          </Show>
+                        </button>
+                      </div>
+                    </div>
+                    <div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-tertiary">
+                      <span>{props.t(`instanceShell.backgroundProcesses.status.${pty.status}`)}</span>
+                      <span>{props.t("instanceShell.backgroundProcesses.pid", { pid: pty.pid })}</span>
+                      <Show when={pty.exitCode !== undefined}>
+                        <span>{props.t("instanceShell.backgroundProcesses.exitCode", { code: pty.exitCode })}</span>
+                      </Show>
+                    </div>
+                    <div class="mt-1 truncate text-xs text-tertiary" title={pty.cwd}>{pty.cwd}</div>
+                  </article>
+                )
+              }}
+            </For>
+          </div>
+        </Show>
+      </Show>
+    </Show>
+  )
+
   const renderProviderUsage = () => {
     const session = props.activeSession()
     if (!session) {
@@ -144,8 +252,8 @@ const StatusTab: Component<StatusTabProps> = (props) => {
       renderYoloModeSection,
       renderProviderUsage,
       renderPlanSectionContent,
+      renderBackgroundProcesses,
       renderMcpStatus: () => <InstanceServiceStatus initialInstance={props.instance} sections={["mcp"]} showSectionHeadings={false} class="space-y-2" />,
-      renderLspStatus: () => <InstanceServiceStatus initialInstance={props.instance} sections={["lsp"]} showSectionHeadings={false} class="space-y-2" />,
       renderPluginStatus: () => (
         <InstanceServiceStatus initialInstance={props.instance} sections={["plugins"]} showSectionHeadings={false} class="space-y-2" />
       ),

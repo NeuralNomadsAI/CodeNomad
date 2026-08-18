@@ -41,7 +41,6 @@ export const OpenCodeUpdateCard: Component = () => {
       setUpdating(false)
     }
   }
-
   return (
     <div class="settings-card">
       <div class="settings-card-header">
@@ -86,20 +85,22 @@ export const OpenCodeUpdateCard: Component = () => {
                 <Show when={updateStatus().updateAvailable} fallback={
                   <div class="settings-toggle-caption" role="status">{t("settings.opencode.update.upToDate")}</div>
                 }>
-                  <div class="settings-info-actions">
-                    <button
-                      type="button"
-                      class="settings-pill-button"
-                      disabled={!updateStatus().canUpgrade || updating()}
-                      onClick={() => void handleUpdate()}
-                    >
-                      {updating()
-                        ? t("settings.opencode.update.updating")
-                        : t("settings.opencode.update.action", { version: updateStatus().latestVersion ?? "" })}
-                    </button>
-                  </div>
-                  <Show when={!updateStatus().canUpgrade}>
-                    <div class="settings-toggle-caption">{t("settings.opencode.update.requiresInstance")}</div>
+                  <Show
+                    when={updateStatus().canUpgrade}
+                    fallback={<div class="settings-toggle-caption">{t("settings.opencode.update.availableUnsupported", { version: updateStatus().latestVersion ?? "" })}</div>}
+                  >
+                    <div class="settings-info-actions">
+                      <button
+                        type="button"
+                        class="settings-pill-button"
+                        disabled={updating()}
+                        onClick={() => void handleUpdate()}
+                      >
+                        {updating()
+                          ? t("settings.opencode.update.updating")
+                          : t("settings.opencode.update.action", { version: updateStatus().latestVersion ?? "" })}
+                      </button>
+                    </div>
                   </Show>
                 </Show>
               </Show>
@@ -107,7 +108,6 @@ export const OpenCodeUpdateCard: Component = () => {
           )}
         </Show>
       </Show>
-
       <Show when={updatedVersion()}>
         {(version) => (
           <div class="settings-info-toast" role="status" aria-live="polite">

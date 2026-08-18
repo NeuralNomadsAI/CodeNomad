@@ -1,7 +1,7 @@
 import { batch, createSignal } from "solid-js"
 
 import { getIdleSinceForStatusTransition, type Session, type SessionRetryState, type SessionStatus, type Agent, type Provider } from "../types/session"
-import { deleteSession, loadMessages } from "./session-api"
+import { deleteSession, loadMessages, refreshSessionCatalog } from "./session-api"
 import { showToastNotification } from "../lib/notifications"
 import { messageStoreBus } from "./message-v2/bus"
 import { instances, ensureYoloStateSynced } from "./instances"
@@ -201,8 +201,8 @@ function isSessionSearchLoading(instanceId: string): boolean {
   return sessionSearch().get(instanceId)?.loading ?? false
 }
 
-function getIndicatorBucket(session: Pick<Session, "status" | "pendingPermission" | "pendingQuestion">): InstanceSessionIndicatorStatus | "idle" {
-  if (session.pendingPermission || session.pendingQuestion) {
+function getIndicatorBucket(session: Pick<Session, "status" | "pendingPermission" | "pendingQuestion" | "pendingForm">): InstanceSessionIndicatorStatus | "idle" {
+  if (session.pendingPermission || session.pendingQuestion || session.pendingForm) {
     return "permission"
   }
   const status = session.status ?? "idle"
@@ -269,7 +269,7 @@ function recomputeIndicatorCounts(instanceId: string, instanceSessions: Map<stri
   let compacting = 0
 
   for (const session of instanceSessions.values()) {
-    if (session.pendingPermission || session.pendingQuestion) {
+    if (session.pendingPermission || session.pendingQuestion || session.pendingForm) {
       permission += 1
       continue
     }
@@ -642,7 +642,7 @@ function withSession(instanceId: string, sessionId: string, updater: (session: S
 function setSessionPending(
   instanceId: string,
   sessionId: string,
-  field: "pendingPermission" | "pendingQuestion",
+  field: "pendingPermission" | "pendingQuestion" | "pendingForm",
   pending: boolean,
 ): void {
   if (pending) cancelSessionGenerationAdmissions(instanceId, sessionId)
@@ -664,16 +664,21 @@ function setSessionPendingQuestion(instanceId: string, sessionId: string, pendin
   setSessionPending(instanceId, sessionId, "pendingQuestion", pending)
 }
 
+function setSessionPendingForm(instanceId: string, sessionId: string, pending: boolean): void {
+  setSessionPending(instanceId, sessionId, "pendingForm", pending)
+}
+
 function reconcileSessionPendingState(
   instanceId: string,
   permissionSessionIds: ReadonlySet<string>,
   questionSessionIds: ReadonlySet<string>,
+  formSessionIds: ReadonlySet<string> = new Set(),
 ): void {
   setSessions((prev) => {
     const instanceSessions = prev.get(instanceId)
     if (!instanceSessions) return prev
 
-    const reconciled = applySessionPendingState(instanceSessions, permissionSessionIds, questionSessionIds)
+    const reconciled = applySessionPendingState(instanceSessions, permissionSessionIds, questionSessionIds, formSessionIds)
     if (reconciled === instanceSessions) return prev
 
     const next = new Map(prev)
@@ -729,7 +734,7 @@ function hydrateSessionGenerationRecovery(
 ): void {
   for (const [sessionId, persisted] of Object.entries(markers)) {
     withSession(instanceId, sessionId, (session) => {
-      const recovery = session.pendingPermission || session.pendingQuestion
+      const recovery = session.pendingPermission || session.pendingQuestion || session.pendingForm
         ? null
         : resolveHydratedGenerationRecovery(persisted, session.status, session.runtimeStatusKnown === true)
       if ((session.generationRecovery ?? null) === recovery) return false
@@ -803,6 +808,7 @@ function writeSessionSelection(
 
 function writeActiveSession(instanceId: string, sessionId: string | null): void {
   writeSessionSelection(setActiveSessionId, instanceId, sessionId)
+  void refreshSessionCatalog(instanceId).catch((error) => log.warn("Failed to refresh session catalog", { instanceId, error }))
   if (sessionId) {
     // Backfill authoritative Yolo state for the now-active session so the badge
     // matches the server even on first connect / multi-client scenarios.
@@ -1096,13 +1102,6 @@ function setActiveSessionFromList(instanceId: string, sessionId: string): void {
   })
 }
 
-function isSessionBusy(instanceId: string, sessionId: string): boolean {
-  const instanceSessions = sessions().get(instanceId)
-  if (!instanceSessions) return false
-  if (!instanceSessions.has(sessionId)) return false
-  return true
-}
-
 function isSessionMessagesLoading(instanceId: string, sessionId: string): boolean {
   return Boolean(loading().loadingMessages.get(instanceId)?.has(sessionId))
 }
@@ -1222,7 +1221,7 @@ async function isBlankSession(session: Session, instanceId: string, fetchIfNeede
       part.type === "tool" || part.data?.type === "tool"
     )
 
-    return !hasStreaming && !session.pendingPermission && !hasToolPart
+    return !hasStreaming && !session.pendingPermission && !session.pendingForm && !hasToolPart
   } else {
     // Fork: blank if somehow has no messages or at revert point
     if (messages.length === 0) return true
@@ -1324,6 +1323,7 @@ export {
   withSession,
   setSessionPendingPermission,
   setSessionPendingQuestion,
+  setSessionPendingForm,
   reconcileSessionPendingState,
   markSessionIdleSeen,
   markViewedSessionIdleSeen,
@@ -1359,7 +1359,6 @@ export {
   getSessionAncestorIds,
   ensureSessionAncestorsExpanded,
   setActiveSessionFromList,
-  isSessionBusy,
   isSessionMessagesLoading,
   getSessionMessagesLoadError,
   getSessionInfo,

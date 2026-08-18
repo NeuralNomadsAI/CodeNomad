@@ -4,7 +4,8 @@ import { messageStoreBus } from "../stores/message-v2/bus"
 import { useTheme } from "../lib/theme"
 import { useGlobalCache } from "../lib/hooks/use-global-cache"
 import { useConfig } from "../stores/preferences"
-import { activeInterruption, sendPermissionResponse, sendQuestionReject, sendQuestionReply } from "../stores/instances"
+import { activeInterruption, sendFormCancel, sendFormReply, sendPermissionResponse, sendQuestionReject, sendQuestionReply } from "../stores/instances"
+import { getFormQueue, type FormInfo } from "../stores/forms"
 import { copyToClipboard } from "../lib/clipboard"
 import type { PermissionRequest } from "../types/permission"
 import { getPermissionSessionId } from "../types/permission"
@@ -14,6 +15,8 @@ import { resolveToolRenderer } from "./tool-call/renderers"
 import { resolveToolExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
 import { QuestionToolBlock } from "./tool-call/question-block"
 import { PermissionToolBlock } from "./tool-call/permission-block"
+import FormRequest from "./form-request"
+import { resolveFormToolTarget } from "./form-request-tool-target"
 import { createAnsiContentRenderer } from "./tool-call/ansi-render"
 import { createDiffContentRenderer } from "./tool-call/diff-render"
 import { createMarkdownContentRenderer } from "./tool-call/markdown-render"
@@ -750,6 +753,12 @@ export default function ToolCall(props: ToolCallProps) {
     return undefined
   })
 
+  const pendingForm = createMemo(() => getFormQueue(props.instanceId).find((form) => {
+    if (form.sessionID !== props.sessionId || !props.messageId) return false
+    const target = resolveFormToolTarget(form, store())
+    return target?.messageId === props.messageId && target.partId === toolCallIdentifier()
+  }))
+
   const diagnosticsVisibility = createMemo(() => preferences().diagnosticsExpansion || "expanded")
   const diagnosticsDefaultExpanded = createMemo(() => diagnosticsVisibility() === "expanded")
   const toolVisibility = createMemo(() => resolveToolVisibility(preferences(), toolCallMemo()?.tool || ""))
@@ -801,10 +810,12 @@ export default function ToolCall(props: ToolCallProps) {
     return active?.kind === "question" && active.id === pending.request.id
   })
 
-  const isToolVisible = createMemo(() => toolVisibility() !== "hidden" || isPermissionActive() || isQuestionActive())
+  const hasPendingForm = createMemo(() => Boolean(pendingForm()))
+
+  const isToolVisible = createMemo(() => toolVisibility() !== "hidden" || isPermissionActive() || isQuestionActive() || hasPendingForm())
 
   const expanded = () => {
-    if (isPermissionActive() || isQuestionActive()) return true
+    if (isPermissionActive() || isQuestionActive() || hasPendingForm()) return true
     const override = userExpanded()
     if (override !== null) return override
     return defaultExpandedForTool()
@@ -827,7 +838,7 @@ export default function ToolCall(props: ToolCallProps) {
   const [diagnosticsOverride, setDiagnosticsOverride] = createSignal<boolean | undefined>(undefined)
 
   const diagnosticsExpanded = () => {
-    if (isPermissionActive() || isQuestionActive()) return true
+    if (isPermissionActive() || isQuestionActive() || hasPendingForm()) return true
     const override = diagnosticsOverride()
     if (override !== undefined) return override
     return diagnosticsDefaultExpanded()
@@ -857,7 +868,7 @@ export default function ToolCall(props: ToolCallProps) {
 
   const combinedStatusClass = () => {
     const base = statusClass()
-    return pendingPermission() || pendingQuestion() ? `${base} tool-call-awaiting-permission` : base
+    return pendingPermission() || pendingQuestion() || pendingForm() ? `${base} tool-call-awaiting-permission` : base
   }
 
   function toggle() {
@@ -1070,7 +1081,8 @@ export default function ToolCall(props: ToolCallProps) {
         data-message-id={props.messageId}
         data-part-id={toolCallIdentifier()}
       >
-      <div class="tool-call-header" data-action-overflow={actionMenuItems(true).length > 0 ? "true" : undefined}>
+      <Show when={!hasPendingForm()}>
+        <div class="tool-call-header" data-action-overflow={actionMenuItems(true).length > 0 ? "true" : undefined}>
         <button
           type="button"
           class="tool-call-header-toggle"
@@ -1141,9 +1153,10 @@ export default function ToolCall(props: ToolCallProps) {
           triggerClass="tool-call-header-icon-button tool-call-header-copy action-overflow-narrow"
           minItems={1}
         />
-      </div>
+        </div>
+      </Show>
 
-      <Show when={expanded()}>
+      <Show when={!hasPendingForm() && expanded()}>
         <ToolCallDetails
           toolCallMemo={toolCallMemo}
           toolState={toolState}
@@ -1179,7 +1192,7 @@ export default function ToolCall(props: ToolCallProps) {
         />
       </Show>
  
-      <Show when={(diagnosticsView().entries.length > 0 || diagnosticsView().truncated) && diagnosticsVisibility() !== "hidden"}>
+      <Show when={!hasPendingForm() && (diagnosticsView().entries.length > 0 || diagnosticsView().truncated) && diagnosticsVisibility() !== "hidden"}>
 
         {renderDiagnosticsSection(
           t,
@@ -1190,6 +1203,16 @@ export default function ToolCall(props: ToolCallProps) {
             return !current
           }),
           diagnosticFileName(diagnosticsView().entries),
+        )}
+      </Show>
+
+      <Show keyed when={pendingForm()}>
+        {(form) => (
+          <FormRequest
+            form={form}
+            onReply={(answer) => sendFormReply(props.instanceId, form.id, answer)}
+            onCancel={() => sendFormCancel(props.instanceId, form.id)}
+          />
         )}
       </Show>
     </div>

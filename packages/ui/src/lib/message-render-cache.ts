@@ -6,7 +6,6 @@ export interface MessageRenderCache {
   messageItems: Map<string, MessageCacheItem>
   toolItems: Map<string, MessageCacheItem>
   messageBlocks: Map<string, unknown>
-  recordDisplayCache: Map<string, unknown>
 }
 
 const renderCaches = new Map<string, MessageRenderCache>()
@@ -100,7 +99,7 @@ export function getSessionMessageRenderCache(instanceId: string, sessionId: stri
   const key = makeSessionCacheKey(instanceId, sessionId)
   let cache = renderCaches.get(key)
   if (!cache) {
-    cache = { messageItems: new Map(), toolItems: new Map(), messageBlocks: new Map(), recordDisplayCache: new Map() }
+    cache = { messageItems: new Map(), toolItems: new Map(), messageBlocks: new Map() }
     renderCaches.set(key, cache)
   }
   return cache
@@ -122,7 +121,6 @@ export function clearInstanceMessageRenderCaches(instanceId: string): void {
 export function purgeMessageRenderCache(cache: MessageRenderCache, messageIds: readonly string[]): void {
   const removed = new Set(messageIds)
   for (const messageId of removed) cache.messageBlocks.delete(messageId)
-  for (const messageId of removed) cache.recordDisplayCache.delete(messageId)
   for (const [key, item] of cache.messageItems) {
     if (removed.has(item.messageId)) cache.messageItems.delete(key)
   }

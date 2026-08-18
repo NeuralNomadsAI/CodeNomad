@@ -5,7 +5,9 @@ import { SessionTranscriptMeasurementQueue } from "../lib/session-transcript-mea
 import { isSessionTranscriptProtected, SessionTranscriptLru } from "../lib/session-transcript-lru"
 import { messageStoreBus } from "./message-v2/bus"
 import { loading, sessions } from "./session-state"
+import { clearNativeContentDeltaState, estimateNativeContentDeltaRetainedBytes } from "./native-session-streaming"
 
+// Inactive transcript budget. Protected active/live 200-message windows retain authoritative content and may exceed it.
 export const SESSION_TRANSCRIPT_BYTE_BUDGET = 64 * 1024 * 1024
 
 const log = getLogger("session")
@@ -28,14 +30,19 @@ const coordinator = new SessionTranscriptLru({
   },
   evict: (instanceId, sessionId) => {
     log.info("Evicting inactive session transcript", { instanceId, sessionId })
+    clearNativeContentDeltaState(instanceId, sessionId)
     messageStoreBus.getInstance(instanceId)?.evictSessionTranscript(sessionId)
   },
 })
 
 const measurements = new SessionTranscriptMeasurementQueue({
   delayMs: 100,
-  measure: async (instanceId, sessionId, signal) =>
-    await messageStoreBus.getInstance(instanceId)?.estimateSessionRetainedBytes(sessionId, signal) ?? 0,
+  measure: async (instanceId, sessionId, signal) => {
+    const transcriptBytes = await messageStoreBus.getInstance(instanceId)?.estimateSessionRetainedBytes(sessionId, signal) ?? 0
+    if (!Number.isFinite(transcriptBytes)) return transcriptBytes
+    const nativeBytes = await estimateNativeContentDeltaRetainedBytes(instanceId, sessionId, signal)
+    return Number.isFinite(nativeBytes) ? transcriptBytes + nativeBytes : nativeBytes
+  },
   account: (instanceId, sessionId, bytes) => coordinator.account(instanceId, sessionId, bytes),
   onError: (instanceId, sessionId, error) => {
     log.warn("Failed to measure session transcript", { instanceId, sessionId, error })

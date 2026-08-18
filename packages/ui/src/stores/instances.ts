@@ -14,8 +14,10 @@ import {
   fetchSessions,
   fetchAgents,
   fetchProviders,
+  getActiveCatalogLocation,
   clearInstanceDraftPrompts,
   clearSessionListRequestState,
+  clearSessionCatalogState,
   clearInstanceDeletedSessionAuthority,
   clearInstanceSessionExpansionState,
   clearInstanceSessionSelection,
@@ -29,15 +31,19 @@ import {
 import { getRootClient } from "./opencode-client"
 import { buildV2RequestLocations } from "./request-locations"
 import { fetchCommands, clearCommands } from "./commands"
+import { getInstanceRefreshTargets, type InstanceRefreshTarget } from "./instance-invalidation"
+import { ConnectionResyncGate } from "./connection-resync-gate"
 import { serverSettings } from "./preferences"
 import {
   reconcileSessionPendingState,
   sessions,
+  setSessionPendingForm,
   setSessionPendingPermission,
   setSessionPendingQuestion,
 } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
+import { clearNativeContentDeltaState } from "./native-session-streaming"
 import { upsertPermissionV2, removePermissionV2, upsertQuestionV2, removeQuestionV2 } from "./message-v2/bridge"
 import {
   clearRepliedPermissions,
@@ -55,12 +61,23 @@ import {
 } from "./permission-auto-accept"
 import { clearCacheForInstance } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
-import { mergeInstanceMetadata, clearInstanceMetadata } from "./instance-metadata"
+import { clearInstanceMetadata } from "./instance-metadata"
 import { showWorkspaceLaunchError } from "./launch-errors"
 import { activeSidecarToken } from "./sidecars"
 import { showToastNotification } from "../lib/notifications"
 import { tGlobal } from "../lib/i18n"
+import { loadInstanceMetadata } from "../lib/hooks/use-instance-metadata"
+import {
+  addFormToQueue,
+  clearFormQueue as clearStoredFormQueue,
+  getFormQueue,
+  removeFormFromQueue,
+  type FormAnswer,
+  type FormInfo,
+} from "./forms"
+import { invalidateFilesystemCaches } from "../lib/filesystem-events"
 import { appSessionRestoreGateActive } from "./app-session-restore-gate"
+import { waitForLatestWorkspaceLoadResult } from "./workspace-load-readiness"
 import { clearInstanceAttachments } from "./attachments"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 import { getUnavailableWorkspaceIds } from "./app-session-reconciliation"
@@ -167,8 +184,9 @@ class InterruptionRegistry<T extends { id: string }> {
 
 const permissionRegistry = new InterruptionRegistry<PermissionRequest>()
 const questionRegistry = new InterruptionRegistry<QuestionRequest>()
+const formRegistry = new InterruptionRegistry<FormInfo>()
 
-type InterruptionKind = "permission" | "question"
+type InterruptionKind = "permission" | "question" | "form"
 
 type ActiveInterruption = { kind: InterruptionKind; id: string } | null
 
@@ -196,6 +214,7 @@ const initialWorkspaceMetadataHydrations = new Map<string, Promise<void>>()
 const pendingRequestSyncEpochs = new Map<string, number>()
 const pendingPermissionMutationEpochs = new Map<string, number>()
 const pendingQuestionMutationEpochs = new Map<string, number>()
+const pendingFormMutationEpochs = new Map<string, number>()
 const pendingRequestSyncGenerations = new Map<string, number>()
 const pendingRequestSyncs = new Map<string, {
   generation: number
@@ -213,6 +232,7 @@ function invalidatePendingRequestSync(instanceId: string): void {
   bumpEpoch(pendingRequestSyncEpochs, instanceId)
   bumpEpoch(pendingPermissionMutationEpochs, instanceId)
   bumpEpoch(pendingQuestionMutationEpochs, instanceId)
+  bumpEpoch(pendingFormMutationEpochs, instanceId)
 }
 type RestoreWorkspaceDescriptor = WorkspaceDescriptor & { reused?: boolean }
 const workspaceListReconciliationFence = new WorkspaceListReconciliationFence()
@@ -244,23 +264,64 @@ const connectionResyncs = new TrailingResyncCoordinator(
     await Promise.all([
       fetchSessions(instanceId, { reset: false }),
       syncPendingRequests(instanceId),
+      refreshVolatileInstanceState(instanceId),
     ])
+    reconcilePendingSessionIndicators(instanceId)
   },
   (instanceId, error) => {
     log.warn("Failed to resync sessions after instance connection", { instanceId, error })
   },
 )
+const connectionResyncGate = new ConnectionResyncGate()
 
 function resyncConnectedInstance(instanceId: string): void {
   void connectionResyncs.request(instanceId)
 }
 
+const allInstanceRefreshTargets: readonly InstanceRefreshTarget[] = ["agents", "providers", "commands", "metadata", "filesystem"]
+const volatileInstanceRefreshes = new Map<string, { promise: Promise<void>; pending: Set<InstanceRefreshTarget> }>()
+
+function refreshVolatileInstanceState(
+  instanceId: string,
+  targets: readonly InstanceRefreshTarget[] = allInstanceRefreshTargets,
+): Promise<void> {
+  const existing = volatileInstanceRefreshes.get(instanceId)
+  if (existing) {
+    for (const target of targets) existing.pending.add(target)
+    return existing.promise
+  }
+  const instance = instances().get(instanceId)
+  if (!instance?.client || instance.status !== "ready") return Promise.resolve()
+  const client = instance.client
+
+  const state = { promise: Promise.resolve(), pending: new Set(targets) }
+  state.promise = (async () => {
+    do {
+      const current = new Set(state.pending)
+      state.pending.clear()
+      if (current.has("filesystem")) invalidateFilesystemCaches(instanceId)
+      const requests: Promise<unknown>[] = []
+      if (current.has("agents")) requests.push(fetchAgents(instanceId))
+      if (current.has("providers")) requests.push(fetchProviders(instanceId))
+      if (current.has("commands")) requests.push(fetchCommands(instanceId, client, getActiveCatalogLocation(instanceId)))
+      if (current.has("metadata")) requests.push(loadInstanceMetadata(instance, { force: true }))
+      await Promise.all(requests)
+    } while (state.pending.size)
+  })().finally(() => {
+    if (volatileInstanceRefreshes.get(instanceId) === state) volatileInstanceRefreshes.delete(instanceId)
+  })
+  volatileInstanceRefreshes.set(instanceId, state)
+  return state.promise
+}
+
 serverEvents.on("instance.eventStatus", (event) => {
-  if (event.type !== "instance.eventStatus" || event.status !== "connected") return
+  if (event.type !== "instance.eventStatus") return
+  const shouldResync = connectionResyncGate.observe(event.instanceId, event.status, event.reason)
+  if (event.status !== "connected") return
   if (disconnectedInstance()?.id === event.instanceId) {
     setDisconnectedInstance(null)
   }
-  resyncConnectedInstance(event.instanceId)
+  if (shouldResync) resyncConnectedInstance(event.instanceId)
 })
 
 function createRestoreCreationRequestId(): string {
@@ -296,6 +357,7 @@ function reconcilePendingSessionIndicators(instanceId: string): void {
     instanceId,
     new Set(permissionRegistry.sessionIds(instanceId)),
     new Set(questionRegistry.sessionIds(instanceId)),
+    new Set(formRegistry.sessionIds(instanceId)),
   )
 }
 
@@ -546,6 +608,33 @@ async function syncPendingQuestions(
   }
 }
 
+async function syncPendingForms(
+  instanceId: string,
+  propagateErrors = false,
+  isCurrent: () => boolean = () => true,
+): Promise<void> {
+  const instance = instances().get(instanceId)
+  if (!instance?.client) return
+  const mutationEpoch = pendingFormMutationEpochs.get(instanceId) ?? 0
+
+  try {
+    const remote: FormInfo[] = []
+    for (const location of buildV2RequestLocations(instance.folder, getWorktrees(instanceId))) {
+      const response = await instance.client.form.request.list({ location })
+      remote.push(...response.data)
+    }
+    if (!isCurrent() || (pendingFormMutationEpochs.get(instanceId) ?? 0) !== mutationEpoch) {
+      if (propagateErrors) throw pendingRequestSyncSuperseded
+      return
+    }
+    replacePendingForms(instanceId, remote)
+    reconcilePendingSessionIndicators(instanceId)
+  } catch (error) {
+    log.warn("Failed to sync pending forms", { instanceId, error })
+    if (propagateErrors) throw error
+  }
+}
+
 async function runPendingRequestSync(
   instanceId: string,
   generation: number,
@@ -561,6 +650,7 @@ async function runPendingRequestSync(
       await Promise.all([
         syncPendingPermissions(instanceId, true, isCurrent),
         syncPendingQuestions(instanceId, true, isCurrent),
+        syncPendingForms(instanceId, true, isCurrent),
       ])
       return
     } catch (error) {
@@ -639,7 +729,7 @@ async function hydrateInstanceData(instanceId: string, options?: {
     await ensureInstanceConfigLoaded(instanceId)
     const instance = instances().get(instanceId)
     if (!instance?.client) return
-    await fetchCommands(instanceId, instance.client)
+    await fetchCommands(instanceId, instance.client, getActiveCatalogLocation(instanceId))
     await syncPendingRequests(instanceId)
   } catch (error) {
     log.error("Failed to fetch initial data", error)
@@ -692,6 +782,7 @@ function clearReloadableInstanceState(instanceId: string): void {
   messageStoreBus.clearInstanceScrollSnapshots(instanceId)
   clearPermissionQueue(instanceId)
   clearQuestionQueue(instanceId)
+  clearPendingFormQueue(instanceId)
 }
 
 async function rehydrateInstance(instanceId: string, options?: { reason?: string }): Promise<void> {
@@ -777,25 +868,48 @@ const initialWorkspaceLoad = (async function initializeWorkspaces(): Promise<{ e
   }
 })()
 let latestWorkspaceLoad = initialWorkspaceLoad
+const workspaceLoadChangeListeners = new Set<() => void>()
+
+function publishLatestWorkspaceLoad(load: Promise<{ error?: unknown }>) {
+  latestWorkspaceLoad = load
+  workspaceLoadChangeListeners.forEach((listener) => listener())
+}
+
+function waitForWorkspaceLoadChange(
+  current: Promise<{ error?: unknown }>,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (latestWorkspaceLoad !== current) return Promise.resolve()
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      workspaceLoadChangeListeners.delete(onChange)
+      signal?.removeEventListener("abort", onAbort)
+    }
+    const onChange = () => { cleanup(); resolve() }
+    const onAbort = () => { cleanup(); reject(signal?.reason) }
+    workspaceLoadChangeListeners.add(onChange)
+    signal?.addEventListener("abort", onAbort, { once: true })
+    if (latestWorkspaceLoad !== current) onChange()
+  })
+}
 
 serverEvents.onOpen(() => {
-  latestWorkspaceLoad = refreshWorkspaceList().then(
+  publishLatestWorkspaceLoad(refreshWorkspaceList().then(
     () => ({}),
     (error) => {
       log.warn("Failed to reconcile workspaces after event reconnect", error)
       return { error }
     },
-  )
+  ))
 })
 
-async function waitForInitialWorkspaceLoad(): Promise<void> {
-  let load = initialWorkspaceLoad
-  while (true) {
-    const result = await load
-    if (result.error !== undefined) throw result.error
-    if (load === latestWorkspaceLoad) return
-    load = latestWorkspaceLoad
-  }
+async function waitForInitialWorkspaceLoad(signal?: AbortSignal): Promise<void> {
+  await waitForLatestWorkspaceLoadResult(
+    initialWorkspaceLoad,
+    () => latestWorkspaceLoad,
+    waitForWorkspaceLoadChange,
+    signal,
+  )
 }
 
 
@@ -954,6 +1068,7 @@ function updateInstance(id: string, updates: Partial<Instance>) {
 }
 
 function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
+  connectionResyncGate.clear(id)
   const removedInstance = instances().get(id)
   const removedOccurrence = removedInstance
     ? Array.from(instances().values())
@@ -998,6 +1113,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   clearPermissionQueue(id)
   clearRepliedPermissions(id)
   clearQuestionQueue(id)
+  clearPendingFormQueue(id)
   clearInstanceMetadata(id)
   clearPermissionAutoAcceptForInstance(id)
   clearSyncedYoloSessionsForInstance(id)
@@ -1014,9 +1130,11 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
 
   // Clean up session indexes and drafts for removed instance
   clearCacheForInstance(id)
+  clearNativeContentDeltaState(id)
   messageStoreBus.unregisterInstance(id)
   clearInstanceDraftPrompts(id)
   clearSessionListRequestState(id)
+  clearSessionCatalogState(id)
   clearInstanceAttachments(id)
   clearInstanceDeletedSessionAuthority(id)
   clearInstanceSessionExpansionState(id)
@@ -1094,6 +1212,7 @@ async function createInstance(
     activate?: boolean
     signal?: AbortSignal
     shouldCreateCommit?: () => boolean
+    onBeforeCreateCommit?: (instanceId: string) => void
     onCreateCommit?: (instanceId: string) => void
     waitForCreateCommit?: () => Promise<void>
     forceNew?: boolean
@@ -1172,6 +1291,7 @@ async function createInstance(
       || options?.shouldCreateCommit?.() === false
     if (!discarded) {
       workspaceListReconciliationFence.markMutation(workspace.id)
+      options?.onBeforeCreateCommit?.(workspace.id)
       upsertWorkspace(committedWorkspace, reused ? undefined : projectName)
       options?.onCreateCommit?.(workspace.id)
       if (!reused && (options?.activate ?? true)) setActiveInstanceId(workspace.id)
@@ -1345,16 +1465,26 @@ function getPermissionEnqueuedAtForInstance(instanceId: string, permissionId: st
 function computeActiveInterruption(instanceId: string): ActiveInterruption {
   const permissions = getPermissionQueue(instanceId)
   const questions = getQuestionQueue(instanceId)
-  const firstPermission = permissions[0]
-  const firstQuestion = questions[0]
-  if (!firstPermission && !firstQuestion) return null
-  if (firstPermission && !firstQuestion) return { kind: "permission", id: firstPermission.id }
-  if (firstQuestion && !firstPermission) return { kind: "question", id: firstQuestion.id }
-
-  const permTime = firstPermission ? permissionRegistry.ensureEnqueuedAt(firstPermission) : Number.MAX_SAFE_INTEGER
-  const quesTime = firstQuestion ? questionRegistry.ensureEnqueuedAt(firstQuestion) : Number.MAX_SAFE_INTEGER
-  if (permTime <= quesTime) return { kind: "permission", id: firstPermission.id }
-  return { kind: "question", id: firstQuestion!.id }
+  const forms = getFormQueue(instanceId)
+  const candidates: Array<{ kind: InterruptionKind; id: string; enqueuedAt: number }> = []
+  if (permissions[0]) candidates.push({
+    kind: "permission",
+    id: permissions[0].id,
+    enqueuedAt: permissionRegistry.ensureEnqueuedAt(permissions[0]),
+  })
+  if (questions[0]) candidates.push({
+    kind: "question",
+    id: questions[0].id,
+    enqueuedAt: questionRegistry.ensureEnqueuedAt(questions[0]),
+  })
+  if (forms[0]) candidates.push({
+    kind: "form",
+    id: forms[0].id,
+    enqueuedAt: formRegistry.ensureEnqueuedAt(forms[0]),
+  })
+  candidates.sort((left, right) => left.enqueuedAt - right.enqueuedAt)
+  const first = candidates[0]
+  return first ? { kind: first.kind, id: first.id } : null
 }
 
 function setActiveInterruptionForInstance(instanceId: string, nextActive: ActiveInterruption): void {
@@ -1663,6 +1793,7 @@ async function sendQuestionReply(
     })
 
     removeQuestionFromQueue(instanceId, requestId)
+    removeQuestionV2(instanceId, requestId)
   } catch (error) {
     log.error("Failed to send question reply", error)
     throw error
@@ -1684,6 +1815,7 @@ async function sendQuestionReject(instanceId: string, _sessionId: string, reques
     })
 
     removeQuestionFromQueue(instanceId, requestId)
+    removeQuestionV2(instanceId, requestId)
   } catch (error) {
     log.error("Failed to send question reject", error)
     throw error
@@ -1723,6 +1855,82 @@ async function sendPermissionResponse(
   }
 }
 
+async function sendFormReply(instanceId: string, formId: string, answer: FormAnswer): Promise<void> {
+  const form = getFormQueue(instanceId).find((item) => item.id === formId)
+  if (!form) throw new Error(`Form request not found: ${formId}`)
+  bumpEpoch(pendingFormMutationEpochs, instanceId)
+  await getRootClient(instanceId).form.reply({ sessionID: form.sessionID, formID: form.id, answer })
+  removePendingForm(instanceId, form.id)
+}
+
+let pendingFormAddedHandler: ((instanceId: string, form: FormInfo) => void) | undefined
+
+function setPendingFormAddedHandler(handler: (instanceId: string, form: FormInfo) => void): void {
+  pendingFormAddedHandler = handler
+}
+
+function addPendingForm(instanceId: string, form: FormInfo): FormInfo | undefined {
+  bumpEpoch(pendingFormMutationEpochs, instanceId)
+  const previous = getFormQueue(instanceId).find((item) => item.id === form.id)
+  addFormToQueue(instanceId, form)
+  formRegistry.ensureEnqueuedAt(form)
+  if (previous?.sessionID && previous.sessionID !== form.sessionID) {
+    const remaining = formRegistry.decrement(instanceId, previous.sessionID)
+    setSessionPendingForm(instanceId, previous.sessionID, remaining > 0)
+  }
+  if (!previous || previous.sessionID !== form.sessionID) formRegistry.increment(instanceId, form.sessionID)
+  setSessionPendingForm(instanceId, form.sessionID, true)
+  recomputeActiveInterruption(instanceId)
+  if (!previous) pendingFormAddedHandler?.(instanceId, form)
+  return previous ? undefined : form
+}
+
+function removePendingForm(instanceId: string, formId: string): void {
+  bumpEpoch(pendingFormMutationEpochs, instanceId)
+  const form = getFormQueue(instanceId).find((item) => item.id === formId)
+  removeFormFromQueue(instanceId, formId)
+  formRegistry.remove(instanceId, formId)
+  if (form) {
+    const remaining = formRegistry.decrement(instanceId, form.sessionID)
+    setSessionPendingForm(instanceId, form.sessionID, remaining > 0)
+  }
+  recomputeActiveInterruption(instanceId)
+}
+
+function replacePendingForms(instanceId: string, forms: readonly FormInfo[]): void {
+  const ids = new Set(forms.map((form) => form.id))
+  for (const form of getFormQueue(instanceId)) {
+    if (!ids.has(form.id)) removePendingForm(instanceId, form.id)
+  }
+  for (const form of forms) addPendingForm(instanceId, form)
+}
+
+function clearPendingFormQueue(instanceId: string): void {
+  bumpEpoch(pendingFormMutationEpochs, instanceId)
+  formRegistry.clear(instanceId, getFormQueue(instanceId), (sessionId) => {
+    setSessionPendingForm(instanceId, sessionId, false)
+  })
+  clearStoredFormQueue(instanceId)
+  recomputeActiveInterruption(instanceId)
+}
+
+async function sendFormCancel(instanceId: string, formId: string): Promise<void> {
+  const form = getFormQueue(instanceId).find((item) => item.id === formId)
+  if (!form) throw new Error(`Form request not found: ${formId}`)
+  bumpEpoch(pendingFormMutationEpochs, instanceId)
+  await getRootClient(instanceId).form.cancel({ sessionID: form.sessionID, formID: form.id })
+  removePendingForm(instanceId, form.id)
+}
+
+function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNullable<typeof sseManager.onInvalidation>>[1]): void {
+  const instance = instances().get(instanceId)
+  if (!instance?.client) return
+  const targets = getInstanceRefreshTargets(event.type)
+  if (targets.length) void refreshVolatileInstanceState(instanceId, targets)
+}
+
+sseManager.onInvalidation = handleInstanceInvalidation
+
 sseManager.onConnectionLost = (instanceId, reason) => {
   const instance = instances().get(instanceId)
   if (!instance) {
@@ -1734,11 +1942,6 @@ sseManager.onConnectionLost = (instanceId, reason) => {
     folder: instance.folder,
     reason,
   })
-}
-
-sseManager.onLspUpdated = (instanceId) => {
-  log.info("lsp.updated", { instanceId })
-  mergeInstanceMetadata(instanceId, { lspStatus: [] })
 }
 
 sseManager.onInstanceDisposed = (sourceInstanceId, event) => {
@@ -1832,6 +2035,11 @@ export {
   clearQuestionQueue,
   sendQuestionReply,
   sendQuestionReject,
+  sendFormReply,
+  sendFormCancel,
+  addPendingForm,
+  removePendingForm,
+  setPendingFormAddedHandler,
   setActiveQuestionIdForInstance,
   disconnectedInstance,
   acknowledgeDisconnectedInstance,
@@ -1839,5 +2047,7 @@ export {
   reconcilePendingSessionIndicators,
   syncPendingRequests,
   invalidatePendingRequestSync,
+  refreshVolatileInstanceState,
+  handleInstanceInvalidation,
   clearReloadableInstanceState,
 }
