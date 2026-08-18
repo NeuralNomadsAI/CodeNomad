@@ -5,6 +5,7 @@ import {
   getFormFieldDefaultValue,
   getFormStringInputType,
   normalizeFormStringValue,
+  shouldRenderFormOptionsAsSelect,
   shouldRenderFormOptionsInline,
 } from "./form-request.tsx"
 import { isFormFieldVisible, isHttpFormUrl } from "../lib/form-schema.ts"
@@ -47,5 +48,7 @@ describe("form request protocol mapping", () => {
     assert.equal(shouldRenderFormOptionsInline([{ value: "one" }, { value: "two" }]), true)
     assert.equal(shouldRenderFormOptionsInline(Array.from({ length: 5 })), false)
     assert.equal(shouldRenderFormOptionsInline([]), false)
+    assert.equal(shouldRenderFormOptionsAsSelect(Array.from({ length: 5 })), true)
+    assert.equal(shouldRenderFormOptionsAsSelect(Array.from({ length: 4 })), false)
   })
 })

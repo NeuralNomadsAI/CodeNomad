@@ -41,6 +41,10 @@ export function shouldRenderFormOptionsInline(options: readonly unknown[] | unde
   return Boolean(options?.length && options.length <= 4)
 }
 
+export function shouldRenderFormOptionsAsSelect(options: readonly unknown[] | undefined): boolean {
+  return Boolean(options?.length && !shouldRenderFormOptionsInline(options))
+}
+
 const FormRequest: Component<FormRequestProps> = (props) => {
   const { t } = useI18n()
   const [values, setValues] = createSignal<Record<string, FormValue | undefined>>(
@@ -133,7 +137,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
               <Show when={field.type === "string"}>
                 <Show when={shouldRenderFormOptionsInline(stringField.options)} fallback={
                   <>
-                    <Show when={stringField.options?.length && !stringField.custom} fallback={
+                    <Show when={shouldRenderFormOptionsAsSelect(stringField.options)} fallback={
                       <input
                         id={`form-${props.form.id}-${field.key}`}
                         class="form-request-input"
@@ -161,10 +165,15 @@ const FormRequest: Component<FormRequestProps> = (props) => {
                         <For each={stringField.options}>{(option) => <option value={option.value}>{option.label}</option>}</For>
                       </select>
                     </Show>
-                    <Show when={stringField.custom && stringField.options?.length}>
-                      <datalist id={`form-${props.form.id}-${field.key}-options`}>
-                        <For each={stringField.options}>{(option) => <option value={option.value}>{option.label}</option>}</For>
-                      </datalist>
+                    <Show when={stringField.custom && shouldRenderFormOptionsAsSelect(stringField.options)}>
+                      <input
+                        class="form-request-input"
+                        type="text"
+                        value={customString()}
+                        placeholder={t("toolCall.question.custom.placeholder")}
+                        aria-describedby={field.description ? descriptionId : undefined}
+                        onInput={(event) => update(field.key, event.currentTarget.value || undefined)}
+                      />
                     </Show>
                   </>
                 }>
