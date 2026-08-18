@@ -31,6 +31,7 @@ import {
 import { getRootClient } from "./opencode-client"
 import { buildV2RequestLocations } from "./request-locations"
 import { fetchCommands, clearCommands } from "./commands"
+import { getInstanceRefreshTargets, type InstanceRefreshTarget } from "./instance-invalidation"
 import { serverSettings } from "./preferences"
 import {
   reconcileSessionPendingState,
@@ -275,30 +276,35 @@ function resyncConnectedInstance(instanceId: string): void {
   void connectionResyncs.request(instanceId)
 }
 
-const volatileInstanceRefreshes = new Map<string, { promise: Promise<void>; trailing: boolean }>()
+const allInstanceRefreshTargets: readonly InstanceRefreshTarget[] = ["agents", "providers", "commands", "metadata", "filesystem"]
+const volatileInstanceRefreshes = new Map<string, { promise: Promise<void>; pending: Set<InstanceRefreshTarget> }>()
 
-function refreshVolatileInstanceState(instanceId: string, requestTrailing = false): Promise<void> {
+function refreshVolatileInstanceState(
+  instanceId: string,
+  targets: readonly InstanceRefreshTarget[] = allInstanceRefreshTargets,
+): Promise<void> {
   const existing = volatileInstanceRefreshes.get(instanceId)
   if (existing) {
-    if (requestTrailing) existing.trailing = true
+    for (const target of targets) existing.pending.add(target)
     return existing.promise
   }
   const instance = instances().get(instanceId)
   if (!instance?.client || instance.status !== "ready") return Promise.resolve()
   const client = instance.client
 
-  const state = { promise: Promise.resolve(), trailing: false }
+  const state = { promise: Promise.resolve(), pending: new Set(targets) }
   state.promise = (async () => {
     do {
-      state.trailing = false
-      invalidateFilesystemCaches(instanceId)
-      await Promise.all([
-        fetchAgents(instanceId),
-        fetchProviders(instanceId),
-        fetchCommands(instanceId, client, getActiveCatalogLocation(instanceId)),
-        loadInstanceMetadata(instance, { force: true }),
-      ])
-    } while (state.trailing)
+      const current = new Set(state.pending)
+      state.pending.clear()
+      if (current.has("filesystem")) invalidateFilesystemCaches(instanceId)
+      const requests: Promise<unknown>[] = []
+      if (current.has("agents")) requests.push(fetchAgents(instanceId))
+      if (current.has("providers")) requests.push(fetchProviders(instanceId))
+      if (current.has("commands")) requests.push(fetchCommands(instanceId, client, getActiveCatalogLocation(instanceId)))
+      if (current.has("metadata")) requests.push(loadInstanceMetadata(instance, { force: true }))
+      await Promise.all(requests)
+    } while (state.pending.size)
   })().finally(() => {
     if (volatileInstanceRefreshes.get(instanceId) === state) volatileInstanceRefreshes.delete(instanceId)
   })
@@ -1914,30 +1920,8 @@ async function sendFormCancel(instanceId: string, formId: string): Promise<void>
 function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNullable<typeof sseManager.onInvalidation>>[1]): void {
   const instance = instances().get(instanceId)
   if (!instance?.client) return
-  switch (event.type) {
-    case "agent.updated":
-    case "command.updated":
-    case "catalog.updated":
-    case "models-dev.refreshed":
-    case "integration.updated":
-    case "integration.connection.updated":
-    case "config.updated":
-      void refreshVolatileInstanceState(instanceId, true)
-      break
-    case "plugin.added":
-    case "plugin.updated":
-    case "mcp.status.changed":
-    case "mcp.resources.changed":
-      void loadInstanceMetadata(instance, { force: true })
-      break
-    case "filesystem.changed":
-      invalidateFilesystemCaches(instanceId)
-      break
-    case "vcs.branch.updated":
-      invalidateFilesystemCaches(instanceId)
-      void loadInstanceMetadata(instance, { force: true })
-      break
-  }
+  const targets = getInstanceRefreshTargets(event.type)
+  if (targets.length) void refreshVolatileInstanceState(instanceId, targets)
 }
 
 sseManager.onInvalidation = handleInstanceInvalidation
