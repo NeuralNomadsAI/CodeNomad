@@ -198,15 +198,17 @@ export class WorkspaceManager {
   async getServiceDirectoryForPath(id: string, directory: string): Promise<string | undefined> {
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published || !await this.ownsDirectory(id, directory)) return undefined
-    if (!record.wslDistro || path.posix.isAbsolute(directory)) return directory
-    return this.resolveWslServiceDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS) ?? undefined
+    if (!record.wslDistro) return directory
+    return this.resolveWslServiceDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
+      ?? (path.posix.isAbsolute(directory) ? directory : undefined)
   }
 
   async getServicePathForPath(id: string, candidate: string): Promise<string | undefined> {
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published || !await this.ownsPath(id, candidate)) return undefined
-    if (!record.wslDistro || path.posix.isAbsolute(candidate)) return candidate
-    return this.resolveWslServiceDirectory(candidate, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS) ?? undefined
+    if (!record.wslDistro) return candidate
+    return this.resolveWslServiceDirectory(candidate, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
+      ?? (path.posix.isAbsolute(candidate) ? candidate : undefined)
   }
 
   private async ownsHostDirectory(record: WorkspaceRecord, directory: string): Promise<boolean> {

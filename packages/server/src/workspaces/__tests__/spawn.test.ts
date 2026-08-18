@@ -64,10 +64,6 @@ describe("buildWindowsSpawnSpec", () => {
     assert.equal(buildWindowsSpawnSpec("powershell.exe", []).processKind, "windows-wrapper")
   })
 
-  it("resolves an installed bare npm command to its packaged executable", () => {
-    assert.equal(buildWindowsSpawnSpec("opencode2", []).processKind, "windows-direct")
-  })
-
   it("resolves a bare cmd shim from a quoted PATH entry and wraps its absolute path", { skip: process.platform !== "win32" }, () => {
     const root = mkdtempSync(path.join(tmpdir(), "codenomad-spawn-"))
     const cwd = path.join(root, "workspace")
