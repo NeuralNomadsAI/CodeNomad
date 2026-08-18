@@ -27,7 +27,7 @@ import CommandPalette from "../command-palette"
 import PermissionNotificationBanner from "../permission-notification-banner"
 import PermissionApprovalModal from "../permission-approval-modal"
 import { getFormRequestAutoOpenId } from "../form-request-auto-open"
-import { resolveInlineFormToolTarget } from "../form-request-tool-target"
+import { shouldRenderFormInFallback } from "../form-request-tool-target"
 import SessionView from "../session/session-view"
 import MessageSection from "../message-section"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
@@ -40,7 +40,6 @@ import PromptInput from "../prompt-input"
 import { useI18n } from "../../lib/i18n"
 import { activeInterruption, getPermissionQueueLength, getQuestionQueueLength } from "../../stores/instances"
 import { getFormQueue } from "../../stores/forms"
-import { messageStoreBus } from "../../stores/message-v2/bus"
 import SessionSidebar from "./shell/SessionSidebar"
 import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
 import RightPanel from "./shell/right-panel/RightPanel"
@@ -150,11 +149,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const form = active?.kind === "form"
       ? getFormQueue(props.instance.id).find((entry) => entry.id === active.id)
       : undefined
-    const store = messageStoreBus.getInstance(props.instance.id)
-    const target = form && store
-      ? resolveInlineFormToolTarget(form, store, activeSessionIdForInstance())
-      : null
-    if (form && target) {
+    if (form && !shouldRenderFormInFallback(form, activeSessionIdForInstance())) {
       lastAutoOpenedFormId = form.id
       return
     }

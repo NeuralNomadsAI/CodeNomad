@@ -17,7 +17,7 @@ import { resolveToolExpansionDefault, resolveToolVisibility } from "./tool-call/
 import { QuestionToolBlock } from "./tool-call/question-block"
 import { PermissionToolBlock } from "./tool-call/permission-block"
 import FormRequest from "./form-request"
-import { resolveFormToolTarget, shouldRenderLegacyQuestionBlock } from "./form-request-tool-target"
+import { resolveFormToolTarget } from "./form-request-tool-target"
 import { createAnsiContentRenderer } from "./tool-call/ansi-render"
 import { createDiffContentRenderer } from "./tool-call/diff-render"
 import { createMarkdownContentRenderer } from "./tool-call/markdown-render"
@@ -125,7 +125,6 @@ function ToolCallDetails(props: {
   store: () => ReturnType<typeof messageStoreBus.getOrCreate>
   pendingPermission: () => { permission: PermissionRequest; active: boolean } | undefined
   pendingQuestion: () => { request: QuestionRequest; active: boolean } | undefined
-  pendingForm: () => FormInfo | undefined
   isPermissionActive: () => boolean
   isQuestionActive: () => boolean
   hasToolInput: () => boolean
@@ -499,33 +498,19 @@ function ToolCallDetails(props: {
   )
 
   const renderQuestionBlock = () => (
-    <Show when={shouldRenderLegacyQuestionBlock(props.pendingForm())}>
-      <QuestionToolBlock
-        toolName={props.toolName}
-        toolState={props.toolState}
-        toolCallId={props.toolCallIdentifier}
-        request={questionDetails}
-        active={props.isQuestionActive}
-        submitting={questionSubmitting}
-        error={questionError}
-        draftAnswers={questionDraftAnswers}
-        setDraftAnswers={setQuestionDraftAnswers}
-        onSubmit={() => void handleQuestionSubmit()}
-        onDismiss={() => void handleQuestionDismiss()}
-      />
-    </Show>
-  )
-
-  const renderFormBlock = () => (
-    <Show keyed when={props.pendingForm()}>
-      {(form) => (
-        <FormRequest
-          form={form}
-          onReply={(answer) => sendFormReply(props.instanceId, form.id, answer)}
-          onCancel={() => sendFormCancel(props.instanceId, form.id)}
-        />
-      )}
-    </Show>
+    <QuestionToolBlock
+      toolName={props.toolName}
+      toolState={props.toolState}
+      toolCallId={props.toolCallIdentifier}
+      request={questionDetails}
+      active={props.isQuestionActive}
+      submitting={questionSubmitting}
+      error={questionError}
+      draftAnswers={questionDraftAnswers}
+      setDraftAnswers={setQuestionDraftAnswers}
+      onSubmit={() => void handleQuestionSubmit()}
+      onDismiss={() => void handleQuestionDismiss()}
+    />
   )
 
   const shouldShowPendingMessage = () => {
@@ -718,7 +703,6 @@ function ToolCallDetails(props: {
 
       {renderPermissionBlock()}
       {renderQuestionBlock()}
-      {renderFormBlock()}
     </div>
   )
 }
@@ -1091,7 +1075,8 @@ export default function ToolCall(props: ToolCallProps) {
         data-message-id={props.messageId}
         data-part-id={toolCallIdentifier()}
       >
-      <div class="tool-call-header" data-action-overflow={actionMenuItems(true).length > 0 ? "true" : undefined}>
+      <Show when={!hasPendingForm()}>
+        <div class="tool-call-header" data-action-overflow={actionMenuItems(true).length > 0 ? "true" : undefined}>
         <button
           type="button"
           class="tool-call-header-toggle"
@@ -1162,9 +1147,10 @@ export default function ToolCall(props: ToolCallProps) {
           triggerClass="tool-call-header-icon-button tool-call-header-copy action-overflow-narrow"
           minItems={1}
         />
-      </div>
+        </div>
+      </Show>
 
-      <Show when={expanded()}>
+      <Show when={!hasPendingForm() && expanded()}>
         <ToolCallDetails
           toolCallMemo={toolCallMemo}
           toolState={toolState}
@@ -1183,7 +1169,6 @@ export default function ToolCall(props: ToolCallProps) {
           store={store}
           pendingPermission={pendingPermission}
           pendingQuestion={pendingQuestion}
-          pendingForm={pendingForm}
           isPermissionActive={isPermissionActive}
           isQuestionActive={isQuestionActive}
           hasToolInput={hasToolInput}
@@ -1201,7 +1186,7 @@ export default function ToolCall(props: ToolCallProps) {
         />
       </Show>
  
-      <Show when={diagnosticsEntries().length && diagnosticsVisibility() !== "hidden"}>
+      <Show when={!hasPendingForm() && diagnosticsEntries().length && diagnosticsVisibility() !== "hidden"}>
 
         {renderDiagnosticsSection(
           t,
@@ -1212,6 +1197,16 @@ export default function ToolCall(props: ToolCallProps) {
             return !current
           }),
           diagnosticFileName(diagnosticsEntries()),
+        )}
+      </Show>
+
+      <Show keyed when={pendingForm()}>
+        {(form) => (
+          <FormRequest
+            form={form}
+            onReply={(answer) => sendFormReply(props.instanceId, form.id, answer)}
+            onCancel={() => sendFormCancel(props.instanceId, form.id)}
+          />
         )}
       </Show>
     </div>

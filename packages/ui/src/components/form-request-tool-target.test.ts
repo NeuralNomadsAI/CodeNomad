@@ -2,9 +2,7 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import {
   resolveFormToolTarget,
-  resolveInlineFormToolTarget,
   shouldRenderFormInFallback,
-  shouldRenderLegacyQuestionBlock,
 } from "./form-request-tool-target.ts"
 
 function store(messages: Record<string, any>, ids = Object.keys(messages)) {
@@ -45,25 +43,14 @@ describe("form request tool target", () => {
     assert.equal(resolveFormToolTarget(form, store({})), null)
   })
 
-  it("lets a native form replace the legacy question block for its tool call", () => {
-    const form = { id: "form-question", sessionID: "session", title: "Questions", fields: [] } as any
-
-    assert.equal(shouldRenderLegacyQuestionBlock(form), false)
-    assert.equal(shouldRenderLegacyQuestionBlock(undefined), true)
-  })
-
-  it("uses floating fallback when the resolved tool belongs to another session", () => {
+  it("keeps an inline form out of the fallback while its tool call is still arriving", () => {
     const form = {
       id: "form-question", sessionID: "other", title: "Questions", fields: [],
       metadata: { tool: { messageID: "message-1", id: "call-1" } },
     } as any
-    const reader = store({
-      "message-1": { partIds: ["part-1"], parts: { "part-1": { data: { id: "part-1", type: "tool", callID: "call-1" } } } },
-    })
 
-    assert.equal(resolveInlineFormToolTarget(form, reader, "current"), null)
-    assert.deepEqual(resolveInlineFormToolTarget(form, reader, "other"), { messageId: "message-1", partId: "part-1" })
-    assert.equal(shouldRenderFormInFallback(form, reader, "current"), true)
-    assert.equal(shouldRenderFormInFallback(form, reader, "other"), false)
+    assert.equal(shouldRenderFormInFallback(form, "current"), true)
+    assert.equal(shouldRenderFormInFallback(form, "other"), false)
+    assert.equal(shouldRenderFormInFallback({ ...form, metadata: undefined }, "other"), true)
   })
 })

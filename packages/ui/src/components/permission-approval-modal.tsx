@@ -226,7 +226,6 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
 
     const formsForFallback = formQueue().filter((form) => shouldRenderFormInFallback(
       form,
-      messageStoreBus.getInstance(props.instanceId),
       activeSessionId().get(props.instanceId),
     ))
     const forms = formsForFallback.map((form, index) => ({

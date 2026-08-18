@@ -61,6 +61,11 @@ function inferredToolName(form: FormInfo): string | undefined {
   return undefined
 }
 
+function expectsInlineFormTarget(form: FormInfo): boolean {
+  const reference = explicitToolReference(form)
+  return Boolean(reference.messageId && reference.callId) || Boolean(inferredToolName(form))
+}
+
 export function resolveFormToolTarget(form: FormInfo, store: MessageStoreReader): FormToolTarget | null {
   const reference = explicitToolReference(form)
   if (reference.messageId && reference.callId) {
@@ -84,23 +89,9 @@ export function resolveFormToolTarget(form: FormInfo, store: MessageStoreReader)
   return null
 }
 
-export function resolveInlineFormToolTarget(
-  form: FormInfo,
-  store: MessageStoreReader,
-  activeSessionId: string | null | undefined,
-): FormToolTarget | null {
-  if (form.sessionID !== activeSessionId) return null
-  return resolveFormToolTarget(form, store)
-}
-
 export function shouldRenderFormInFallback(
   form: FormInfo,
-  store: MessageStoreReader | undefined,
   activeSessionId: string | null | undefined,
 ): boolean {
-  return !store || !resolveInlineFormToolTarget(form, store, activeSessionId)
-}
-
-export function shouldRenderLegacyQuestionBlock(form: FormInfo | undefined): boolean {
-  return form === undefined
+  return form.sessionID !== activeSessionId || !expectsInlineFormTarget(form)
 }
