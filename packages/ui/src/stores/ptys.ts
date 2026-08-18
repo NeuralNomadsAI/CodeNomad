@@ -1,12 +1,13 @@
 import { serverEvents } from "../lib/server-events"
 import { getRootClient } from "./opencode-client"
-import { createPtyApi, createPtyStore } from "./pty-store"
+import { createPtyApi, createPtyStore, type PtyRefreshEvent } from "./pty-store"
 
 const ptyStore = createPtyStore((instanceId) => createPtyApi(getRootClient(instanceId)))
 
 serverEvents.on("instance.event", (event) => {
   if (event.type !== "instance.event") return
-  void ptyStore.refreshForEvent(event.instanceId, event.event)
+  if (!event.event.type.startsWith("pty.")) return
+  void ptyStore.refreshForEvent(event.instanceId, event.event as PtyRefreshEvent)
 })
 
 serverEvents.on("instance.eventStatus", (event) => {

@@ -6,6 +6,7 @@ import type {
   Preferences,
   RecentFolder,
 } from "./config/schema"
+import type { OpenCodeEvent } from "@opencode-ai/client"
 
 /**
  * Canonical HTTP/SSE contract for the CLI server.
@@ -278,11 +279,7 @@ export interface InstanceData {
 
 export type InstanceStreamStatus = "connecting" | "connected" | "error" | "disconnected"
 
-export interface InstanceStreamEvent {
-  type: string
-  properties?: Record<string, unknown>
-  [key: string]: unknown
-}
+export type InstanceStreamEvent = OpenCodeEvent
 
 export type SideCarKind = "port"
 

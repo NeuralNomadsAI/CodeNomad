@@ -176,18 +176,18 @@ describe("InstanceEventBridge", () => {
       assert.equal(received[0].instanceId, "a")
       assert.deepEqual(received[0].event.location, { directory: "/repo-a" })
       assert.deepEqual(received[0].event.data, { id: "p1" })
-      assert.deepEqual(received[0].event.properties, { id: "p1" })
+      assert.equal(received[0].event.properties, undefined)
       assert.equal(received[1].event.data.sessionID, "session-1")
-      assert.equal(received[1].event.properties.info.id, "session-1")
+      assert.equal(received[1].event.properties, undefined)
       assert.equal(received[2].instanceId, "a")
-      assert.deepEqual(received[2].event.properties, {
+      assert.deepEqual(received[2].event.data, {
         sessionID: "session-2",
         assistantMessageID: "message-1",
         ordinal: 0,
         delta: "hello",
       })
       assert.equal(received[3].instanceId, "a")
-      assert.equal(received[3].event.properties.delta, " again")
+      assert.equal(received[3].event.data.delta, " again")
       assert.equal(ownerLookups.get("/repo-a/.worktrees/feature"), 2)
     } finally {
       bridge.shutdown()
@@ -294,7 +294,7 @@ describe("InstanceEventBridge", () => {
       await waitFor(() => received.length === 2)
       assert.equal(sessionGets(), 1)
       assert.deepEqual(received.map((event) => event.instanceId), ["a", "b"])
-      assert.deepEqual(received.map((event) => event.event.properties.id), ["deleted", "deleted"])
+      assert.deepEqual(received.map((event) => event.event.data.sessionID), ["deleted", "deleted"])
     } finally {
       bridge.shutdown()
     }
@@ -337,7 +337,7 @@ describe("InstanceEventBridge", () => {
       await waitFor(() => received.length === 1)
       assert.equal(sessionGets(), 1)
       assert.equal(received[0].instanceId, "b")
-      assert.equal(received[0].event.properties.form.sessionID, "owned")
+      assert.equal(received[0].event.data.form.sessionID, "owned")
     } finally {
       bridge.shutdown()
     }

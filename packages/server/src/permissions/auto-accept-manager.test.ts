@@ -26,10 +26,15 @@ function publishInstanceEvent(bus: EventBus, instanceId: string, event: Record<s
     : event.type === "permission.v2.replied"
       ? "permission.replied"
       : event.type
-  bus.publish({ type: "instance.event", instanceId, event: { ...event, type } as InstanceStreamEvent })
+  const { properties, ...nativeEvent } = event
+  const wrapped = properties as { info?: Record<string, unknown> } | undefined
+  const data = event.data ?? (wrapped?.info
+    ? { ...wrapped.info, sessionID: wrapped.info.sessionID ?? wrapped.info.id }
+    : properties)
+  bus.publish({ type: "instance.event", instanceId, event: { ...nativeEvent, type, data } as InstanceStreamEvent })
 }
 
-/** Publish session creation using the compatibility shape produced by InstanceEventBridge. */
+/** Publish session lifecycle events using the native V2 data envelope. */
 function publishSession(
   bus: EventBus,
   instanceId: string,
@@ -38,7 +43,7 @@ function publishSession(
 ) {
   publishInstanceEvent(bus, instanceId, {
     type: eventType === "session.updated" ? "session.created" : eventType,
-    properties: { info: { ...info } },
+    data: { ...info, sessionID: info.sessionID ?? info.id },
   })
 }
 

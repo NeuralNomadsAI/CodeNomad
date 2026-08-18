@@ -2,7 +2,7 @@ import type { OpenCodeEvent } from "@opencode-ai/client"
 import { EventBus } from "../events/bus"
 import { Logger } from "../logger"
 import { WorkspaceManager } from "./manager"
-import { InstanceStreamEvent, InstanceStreamStatus } from "../api-types"
+import { InstanceStreamStatus } from "../api-types"
 
 const RECONNECT_DELAY_MS = 1000
 const DIRECTORY_OWNER_CACHE_MS = 2000
@@ -128,13 +128,8 @@ export class InstanceEventBridge {
       return
     }
 
-    // The server's auto-accept boundary still reads the legacy property name.
-    const compatibleEvent: InstanceStreamEvent = {
-      ...event,
-      properties: this.compatibilityProperties(event),
-    }
     for (const instanceId of instanceIds) {
-      this.options.eventBus.publish({ type: "instance.event", instanceId, event: compatibleEvent })
+      this.options.eventBus.publish({ type: "instance.event", instanceId, event })
     }
     if (event.type === "session.deleted" && sessionId) this.sessionDirectories.delete(sessionId)
     if (event.type === "pty.deleted" && ptyId) this.ptyDirectories.delete(ptyId)
@@ -160,12 +155,8 @@ export class InstanceEventBridge {
   }
 
   private broadcastEvent(event: OpenCodeEvent): void {
-    const compatibleEvent: InstanceStreamEvent = {
-      ...event,
-      properties: this.compatibilityProperties(event),
-    }
     for (const workspace of this.options.workspaceManager.list()) {
-      this.options.eventBus.publish({ type: "instance.event", instanceId: workspace.id, event: compatibleEvent })
+      this.options.eventBus.publish({ type: "instance.event", instanceId: workspace.id, event })
     }
   }
 
@@ -207,16 +198,6 @@ export class InstanceEventBridge {
     this.directoryOwners.clear()
     this.sessionDirectories.clear()
     this.ptyDirectories.clear()
-  }
-
-  private compatibilityProperties(event: OpenCodeEvent): Record<string, unknown> {
-    if (event.type === "session.created") {
-      return { info: { ...event.data, id: event.data.sessionID } }
-    }
-    if (event.type === "session.deleted") {
-      return { id: event.data.sessionID }
-    }
-    return event.data as Record<string, unknown>
   }
 
   private updateStatus(status: InstanceStreamStatus, reason?: string) {

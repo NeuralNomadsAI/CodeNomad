@@ -572,7 +572,7 @@ function handleSessionUpdate(
 }
 
 function handleSessionDeleted(instanceId: string, event: EventSessionDeleted): void {
-  const sessionId = event.data?.sessionID ?? event.properties?.info?.id ?? event.properties?.sessionID ?? event.properties?.id
+  const sessionId = event.data?.sessionID
   if (!sessionId) return
 
   log.info(`[SSE] Session deleted: ${sessionId}`)

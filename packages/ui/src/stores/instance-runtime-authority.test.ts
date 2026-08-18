@@ -79,7 +79,7 @@ describe("instance runtime authority", () => {
   for (const test of [
     { label: "direct definitive session removal", remove: removeSessionRuntimeState },
     { label: "session.deleted event", remove: (id: string, sessionId: string) => handleSessionDeleted(id,
-      { type: "session.deleted", properties: { info: { id: sessionId } } }) },
+      { type: "session.deleted", data: { sessionID: sessionId } }) },
   ]) it(`removes attachment authority on ${test.label}`, () => {
     const id = `authority-${test.label}`, sessionId = "deleted-session"
     addAttachment(id, sessionId, createTextAttachment("pasted", "pasted #1", "paste.txt"))

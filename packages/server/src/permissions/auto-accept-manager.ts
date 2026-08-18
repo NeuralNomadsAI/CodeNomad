@@ -258,16 +258,16 @@ export class AutoAcceptManager {
     if (!event || typeof event.type !== "string") return
 
     if (SESSION_UPSERT_TYPES.has(event.type)) {
-      this.ingestSession(instanceId, event.properties)
+      this.ingestSession(instanceId, event.data)
       return
     }
     if (event.type === "session.forked") {
-      this.ingestSessionForked(instanceId, event.properties)
+      this.ingestSessionForked(instanceId, event.data)
       return
     }
     if (SESSION_REMOVE_TYPES.has(event.type)) {
-      const info = (event.properties as { info?: SessionProperties } | undefined)?.info
-      const id = readString(info?.id) ?? readString(event.properties?.id)
+      const data = event.data as SessionProperties | undefined
+      const id = readString(data?.sessionID) ?? readString(data?.id)
       if (id) {
         this.store.removeSession(instanceId, id)
         this.removePendingForSession(instanceId, id)
@@ -275,29 +275,24 @@ export class AutoAcceptManager {
       return
     }
     if (PERMISSION_REPLIED_TYPES.has(event.type)) {
-      this.handlePermissionReplied(instanceId, event.properties)
+      this.handlePermissionReplied(instanceId, event.data)
       return
     }
     if (PERMISSION_ASK_TYPES.has(event.type)) {
-      this.handlePermissionRequest(instanceId, event.properties)
+      this.handlePermissionRequest(instanceId, event.data)
     }
   }
 
-  private ingestSession(instanceId: string, properties: unknown): void {
-    // OpenCode wraps session records under `properties.info` for
-    // session.created/updated/deleted (see SDK EventSessionUpdated). Accept a
-    // flat fallback only for defensive compatibility.
-    const info = (properties as { info?: SessionProperties } | SessionProperties | undefined)
-    const session = (info && typeof info === "object" && "info" in info ? info.info : info) as
-      | SessionProperties
-      | undefined
-    if (!session || typeof session.id !== "string") return
+  private ingestSession(instanceId: string, data: unknown): void {
+    const session = data as SessionProperties | undefined
+    const sessionId = readString(session?.sessionID) ?? readString(session?.id)
+    if (!session || !sessionId) return
     const parentId = session.parentID ?? session.parentId ?? null
     const enabledBefore = this.store.enabledRoots(instanceId)
-    this.store.upsertSession(instanceId, { id: session.id, parentId, fork: session.fork })
+    this.store.upsertSession(instanceId, { id: sessionId, parentId, fork: session.fork })
     if (typeof session.workspaceID === "string" && session.workspaceID) {
       const workspaces = this.sessionWorkspaces.get(instanceId) ?? new Map<string, string>()
-      workspaces.set(session.id, session.workspaceID)
+      workspaces.set(sessionId, session.workspaceID)
       this.sessionWorkspaces.set(instanceId, workspaces)
     }
     this.persistRootMigration(instanceId, enabledBefore, this.store.enabledRoots(instanceId))
@@ -305,7 +300,7 @@ export class AutoAcceptManager {
     // Re-drain pending permissions whose family root may have migrated into
     // an enabled family — mirrors the old UI's drainAutoAcceptPermissions-
     // ForInstance trigger from the previous UI implementation (#497).
-    this.drainPending(instanceId, session.id)
+    this.drainPending(instanceId, sessionId)
   }
 
   private ingestSessionForked(instanceId: string, properties: unknown): void {
@@ -484,11 +479,12 @@ export class AutoAcceptManager {
 
 interface InstanceStreamPayload {
   type?: string
-  properties?: Record<string, unknown>
+  data?: unknown
 }
 
 interface SessionProperties {
   id?: string
+  sessionID?: string
   parentID?: string | null
   parentId?: string | null
   fork?: unknown

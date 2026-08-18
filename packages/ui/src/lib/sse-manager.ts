@@ -53,7 +53,6 @@ export interface WorktreeReadyEvent {
 export interface EventSessionDeleted {
   type: "session.deleted"
   data?: { sessionID?: string }
-  properties?: { info?: { id?: string }; id?: string; sessionID?: string }
 }
 
 type SSEEvent =
