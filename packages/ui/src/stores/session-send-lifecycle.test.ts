@@ -190,7 +190,7 @@ describe("optimistic send lifecycle", () => {
     }
   })
 
-  it("refreshes an accepted send on native success without marking it failed", async () => {
+  it("does not reload an accepted send on native success", async () => {
     const instanceId = "send-session-success"
     const sessionId = "session"
     let request: any
@@ -216,7 +216,7 @@ describe("optimistic send lifecycle", () => {
 
       assert.equal(store.getMessage(request.id)?.status, "sent")
       await new Promise<void>((resolve) => setImmediate(resolve))
-      assert.equal(refreshCalls, 1)
+      assert.equal(refreshCalls, 0)
       assert.notEqual(store.getMessage(request.id)?.status, "error")
     } finally {
       cleanup()

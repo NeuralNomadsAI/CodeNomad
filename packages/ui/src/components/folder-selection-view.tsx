@@ -30,7 +30,7 @@ type HomeTab = "local" | "servers"
 
 
 interface FolderSelectionViewProps {
-  onSelectFolder: (folder: string, options?: { forceNew?: boolean }) => void
+  onSelectFolder: (folder: string) => void
   onSelectExistingInstance: (instanceId: string, recentPath: string) => void
   onOpenSidecar?: () => void
   isLoading?: boolean
@@ -179,7 +179,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     if (activeTab() === "local") {
       const folder = folders()[index]
       if (folder) {
-        handleFolderSelect(folder.path, true)
+        handleFolderSelect(folder.path)
       }
       return
     }
@@ -279,9 +279,9 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     return t("time.relative.justNow")
   }
 
-  function handleFolderSelect(path: string, forceNew = false) {
+  function handleFolderSelect(path: string) {
     if (isLoading()) return
-    props.onSelectFolder(path, forceNew ? { forceNew: true } : undefined)
+    props.onSelectFolder(path)
   }
 
   function handleExistingInstanceSelect(instanceId: string, recentPath: string) {
@@ -800,8 +800,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                     class="folder-home-recent-primary-action"
                                     disabled={isLoading()}
                                     aria-labelledby={projectLabelId()}
-                                    title={t("folderSelection.recent.openNewInstance")}
-                                    onClick={() => handleFolderSelect(folder.path, true)}
+                                    onClick={() => handleFolderSelect(folder.path)}
                                     onFocus={() => {
                                       setFocusMode("recent")
                                       setSelectedIndex(index())

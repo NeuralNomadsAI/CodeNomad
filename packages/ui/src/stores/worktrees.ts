@@ -127,9 +127,7 @@ async function deleteWorktree(instanceId: string, slug: string, options?: { forc
   if (!trimmed || trimmed === "root") {
     throw new Error("Invalid worktree")
   }
-  await moveSessionsFromDeletedWorktree(instanceId, trimmed).catch((error) => {
-    log.warn("Failed to move sessions from deleted worktree", { instanceId, slug: trimmed, error })
-  })
+  await moveSessionsFromDeletedWorktree(instanceId, trimmed)
   await serverApi.deleteWorktree(instanceId, trimmed, options)
 }
 

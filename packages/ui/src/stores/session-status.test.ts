@@ -8,18 +8,17 @@ import { shouldSessionHoldWakeLock } from "./wake-lock-eligibility.ts"
 
 describe("shouldSessionHoldWakeLock", () => {
   it("holds wake lock only for qualifying active work", () => {
-    assert.equal(shouldSessionHoldWakeLock({ status: "working", pendingPermission: false, pendingQuestion: false, pendingForm: false }), true)
+    assert.equal(shouldSessionHoldWakeLock({ status: "working", pendingPermission: false, pendingForm: false }), true)
     assert.equal(
-      shouldSessionHoldWakeLock({ status: "compacting", pendingPermission: false, pendingQuestion: false, pendingForm: false }),
+      shouldSessionHoldWakeLock({ status: "compacting", pendingPermission: false, pendingForm: false }),
       true,
     )
-    assert.equal(shouldSessionHoldWakeLock({ status: "idle", pendingPermission: false, pendingQuestion: false, pendingForm: false }), false)
+    assert.equal(shouldSessionHoldWakeLock({ status: "idle", pendingPermission: false, pendingForm: false }), false)
   })
 
   it("does not hold wake lock while waiting for permission or input", () => {
-    assert.equal(shouldSessionHoldWakeLock({ status: "working", pendingPermission: true, pendingQuestion: false, pendingForm: false }), false)
-    assert.equal(shouldSessionHoldWakeLock({ status: "working", pendingPermission: false, pendingQuestion: true, pendingForm: false }), false)
-    assert.equal(shouldSessionHoldWakeLock({ status: "working", pendingPermission: false, pendingQuestion: false, pendingForm: true }), false)
+    assert.equal(shouldSessionHoldWakeLock({ status: "working", pendingPermission: true, pendingForm: false }), false)
+    assert.equal(shouldSessionHoldWakeLock({ status: "working", pendingPermission: false, pendingForm: true }), false)
   })
 })
 

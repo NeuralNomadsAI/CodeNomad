@@ -1,9 +1,6 @@
 import type {
   PermissionAsked,
   PermissionReplied,
-  QuestionAsked,
-  QuestionRejected,
-  QuestionReplied,
   SessionCompactionEnded,
   SessionCreated,
   SessionExecutionFailed,
@@ -23,23 +20,14 @@ import {
   getRequestIdFromPermissionReply,
 } from "../types/permission"
 import type { PermissionRequest } from "../types/permission"
-import { getQuestionId, getQuestionSessionId, getRequestIdFromQuestionReply } from "../types/question"
-import type { QuestionRequest } from "../types/question"
 import { showToastNotification, type ToastHandle, ToastVariant } from "../lib/notifications"
 import { sendOsNotification } from "../lib/os-notifications"
 import { preferences } from "./preferences"
 import {
   instances,
-  addPermissionToQueue,
-  getPermissionQueue,
-  removePermissionFromQueue,
   markPermissionReplied,
   hasRepliedPermission,
-  addQuestionToQueue,
-  removeQuestionFromQueue,
-  addPendingForm,
   reconcilePendingSessionIndicators,
-  removePendingForm,
   setPendingFormAddedHandler,
 } from "./instances"
 import { showAlertDialog } from "./alerts"
@@ -56,40 +44,19 @@ import { ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForI
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { tGlobal } from "../lib/i18n"
 
-import { fetchSessions, loadMessages, removeSessionRuntimeState } from "./session-api"
+import { fetchSessions, removeSessionRuntimeState } from "./session-api"
 import { getRootClient } from "./opencode-client"
 import { getWorktrees } from "./worktrees"
 import {
-  upsertPermissionV2,
-  upsertQuestionV2,
-  removePermissionV2,
-  removeQuestionV2,
   setSessionRevertV2,
 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
 import { handleConversationAssistantPartUpdated } from "./conversation-speech"
-import {
-  applyNativeContentDelta,
-  clearNativeContentDeltaState,
-  settleNativeContentDeltas,
-} from "./native-session-streaming"
 
 const log = getLogger("sse")
 const pendingSessionFetches = new Map<string, {
   status: SessionStatus
   retry?: SessionRetryState | null
-}>()
-const NATIVE_REFRESH_DELAY_MS = 75
-const NATIVE_TERMINAL_RETRY_DELAY_MS = 500
-const MAX_NATIVE_TERMINAL_REFRESH_ATTEMPTS = 3
-const nativeRefreshes = new Map<string, {
-  instanceId: string
-  sessionId: string
-  pending: boolean
-  speakAfter: boolean
-  timer?: ReturnType<typeof setTimeout>
-  running?: Promise<void>
-  terminalAttempts?: number
 }>()
 let activeRetryToast: ToastHandle | null = null
 
@@ -104,108 +71,11 @@ function speakCompletedAssistantText(instanceId: string, sessionId: string): voi
   }
 }
 
-function requestNativeSessionRefresh(instanceId: string, sessionId: string, final = false): void {
-  const key = `${instanceId}:${sessionId}`
-  const refresh = nativeRefreshes.get(key) ?? { instanceId, sessionId, pending: false, speakAfter: false }
-  refresh.pending = true
-  refresh.speakAfter ||= final
-  nativeRefreshes.set(key, refresh)
-
-  function schedule(delay: number): void {
-    if (refresh.timer || refresh.running) return
-    refresh.timer = setTimeout(() => {
-      refresh.timer = undefined
-      void run()
-    }, delay)
-  }
-
-  async function run(): Promise<void> {
-    if (refresh.running) return refresh.running
-    refresh.pending = false
-    refresh.running = (async () => {
-      const terminal = refresh.speakAfter
-      if (!instances().has(refresh.instanceId)
-        || !sessions().get(refresh.instanceId)?.has(refresh.sessionId)
-        || getAuthoritativelyDeletedSessionIdsForInstance(refresh.instanceId).has(refresh.sessionId)) {
-        clearNativeContentDeltaState(refresh.instanceId, refresh.sessionId)
-        return
-      }
-      try {
-        await loadMessages(refresh.instanceId, refresh.sessionId, { force: true, skipChildren: true })
-        if (!instances().has(refresh.instanceId)
-          || !sessions().get(refresh.instanceId)?.has(refresh.sessionId)
-          || getAuthoritativelyDeletedSessionIdsForInstance(refresh.instanceId).has(refresh.sessionId)) {
-          clearNativeContentDeltaState(refresh.instanceId, refresh.sessionId)
-          return
-        }
-        if (terminal) {
-          settleNativeContentDeltas(refresh.instanceId, refresh.sessionId)
-          refresh.terminalAttempts = 0
-        }
-      } catch (error) {
-        log.error("Failed to refresh native session messages", { instanceId, sessionId, error })
-        if (terminal
-          && (refresh.terminalAttempts ?? 0) + 1 < MAX_NATIVE_TERMINAL_REFRESH_ATTEMPTS
-          && instances().has(refresh.instanceId)
-          && sessions().get(refresh.instanceId)?.has(refresh.sessionId)) {
-          refresh.terminalAttempts = (refresh.terminalAttempts ?? 0) + 1
-          refresh.pending = true
-        }
-      }
-    })().finally(() => {
-      refresh.running = undefined
-      if (refresh.pending) {
-        if (refresh.speakAfter) schedule(NATIVE_TERMINAL_RETRY_DELAY_MS)
-        else schedule(NATIVE_REFRESH_DELAY_MS)
-        return
-      }
-      if (refresh.speakAfter) {
-        refresh.speakAfter = false
-        if (instances().has(refresh.instanceId) && sessions().get(refresh.instanceId)?.has(refresh.sessionId)) {
-          speakCompletedAssistantText(refresh.instanceId, refresh.sessionId)
-        }
-      }
-      nativeRefreshes.delete(key)
-    })
-    return refresh.running
-  }
-
-  if (final) {
-    if (refresh.timer) {
-      clearTimeout(refresh.timer)
-      refresh.timer = undefined
-    }
-    if (!refresh.running) void run()
-  } else {
-    schedule(NATIVE_REFRESH_DELAY_MS)
-  }
-}
-
-function clearNativeSessionRefresh(instanceId: string, sessionId: string): void {
-  const refresh = nativeRefreshes.get(`${instanceId}:${sessionId}`)
-  if (refresh?.timer) clearTimeout(refresh.timer)
-  if (refresh) {
-    refresh.pending = false
-    refresh.speakAfter = false
-  }
-  nativeRefreshes.delete(`${instanceId}:${sessionId}`)
-}
-
 function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent): void {
-  if (event.type === "session.text.delta" || event.type === "session.reasoning.delta") {
-    const sessionId = event.data.sessionID
-    if (!instances().has(instanceId) || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return
-    if (!applyNativeContentDelta(instanceId, event)) return
-    ensureSessionStatus(instanceId, sessionId, "working", event.location?.directory)
-    return
-  }
   switch (event.type) {
     case "form.created":
-      addPendingForm(instanceId, event.data.form)
-      return
     case "form.replied":
     case "form.cancelled":
-      removePendingForm(instanceId, event.data.id)
       return
     case "session.renamed":
       if (!sessions().get(instanceId)?.has(event.data.sessionID)) void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
@@ -235,7 +105,6 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
       return
     case "session.compaction.started":
       ensureSessionStatus(instanceId, event.data.sessionID, "compacting", event.location?.directory)
-      requestNativeSessionRefresh(instanceId, event.data.sessionID)
       return
     case "session.compaction.failed":
     case "session.execution.interrupted":
@@ -258,7 +127,6 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
   ) {
     ensureSessionStatus(instanceId, sessionId, "working", event.location?.directory)
   }
-  requestNativeSessionRefresh(instanceId, sessionId)
 }
 
 function setTerminalNativeSessionStatus(instanceId: string, sessionId: string, failed: boolean, directory?: string): void {
@@ -266,8 +134,7 @@ function setTerminalNativeSessionStatus(instanceId: string, sessionId: string, f
   if (existing) setSessionStatus(instanceId, sessionId, "idle", { force: true })
   else ensureSessionStatus(instanceId, sessionId, "idle", directory)
   if (failed) messageStoreBus.getOrCreate(instanceId).failPendingSends(sessionId)
-  settleNativeContentDeltas(instanceId, sessionId)
-  requestNativeSessionRefresh(instanceId, sessionId, true)
+  speakCompletedAssistantText(instanceId, sessionId)
 }
 
 function handleSessionMoved(sourceInstanceId: string, sessionId: string, directory: string): void {
@@ -407,7 +274,6 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
         retry: compacting ? null : fetched.retry,
         idleSince: getIdleSinceForStatusTransition(existing?.status, compacting ? "compacting" : fetched.status, existing?.idleSince),
         pendingPermission: existing?.pendingPermission ?? fetched.pendingPermission,
-        pendingQuestion: existing?.pendingQuestion ?? false,
         pendingForm: existing?.pendingForm ?? false,
         runtimeStatusKnown: compacting || existing?.runtimeStatusKnown || false,
       }
@@ -576,8 +442,6 @@ function handleSessionDeleted(instanceId: string, event: EventSessionDeleted): v
   if (!sessionId) return
 
   log.info(`[SSE] Session deleted: ${sessionId}`)
-  clearNativeSessionRefresh(instanceId, sessionId)
-  clearNativeContentDeltaState(instanceId, sessionId)
   removeSessionRuntimeState(instanceId, sessionId)
 }
 
@@ -593,8 +457,7 @@ function handleSessionIdle(instanceId: string, event: SessionIdle): void {
   }
 
   ensureSessionStatus(instanceId, sessionId, "idle", event.location?.directory)
-  settleNativeContentDeltas(instanceId, sessionId)
-  requestNativeSessionRefresh(instanceId, sessionId, true)
+  speakCompletedAssistantText(instanceId, sessionId)
   log.info(`[SSE] Session idle: ${sessionId}`)
 }
 
@@ -637,8 +500,6 @@ function handleSessionCompacted(instanceId: string, event: SessionCompactionEnde
   const existing = sessions().get(instanceId)?.get(sessionID)
   if (existing) setSessionStatus(instanceId, sessionID, "working", { force: true })
   else ensureSessionStatus(instanceId, sessionID, "working", event.location?.directory)
-
-  loadMessages(instanceId, sessionID, { force: true }).catch((error) => log.error("Failed to reload session after compaction", error))
 
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionID)
@@ -703,12 +564,7 @@ function handlePermissionUpdated(instanceId: string, event: PermissionAsked): vo
     log.info(`[SSE] Ignoring stale permission request after local reply: ${permissionId}`)
     return
   }
-  const isPending = getPermissionQueue(instanceId).some((pending) => pending.id === permissionId)
-  void isPending
-
   log.info(`[SSE] Permission request: ${permissionId} (${getPermissionKind(permission)})`)
-  const queuedPermission = addPermissionToQueue(instanceId, permission) ?? permission
-  upsertPermissionV2(instanceId, queuedPermission)
 
   const sessionId = getPermissionSessionId(permission)
 
@@ -726,45 +582,12 @@ function handlePermissionReplied(instanceId: string, event: PermissionReplied): 
 
   log.info(`[SSE] Permission replied: ${requestId}`)
   markPermissionReplied(instanceId, requestId)
-  removePermissionFromQueue(instanceId, requestId)
-  removePermissionV2(instanceId, requestId)
-}
-
-function handleQuestionAsked(instanceId: string, event: QuestionAsked): void {
-  const request = event.data as QuestionRequest
-  if (!request) return
-  log.info(`[SSE] Question asked: ${getQuestionId(request)}`)
-  addQuestionToQueue(instanceId, request)
-  upsertQuestionV2(instanceId, request)
-
-  const sessionId = getQuestionSessionId(request)
-
-  if (shouldSendOsNotificationForSession("needsInput", instanceId, sessionId)) {
-    const title = getInstanceDisplayName(instanceId)
-    const label = getSessionTitle(instanceId, sessionId)
-    const body = label ? `Session "${label}" needs input` : "Session needs input"
-    fireOsNotification({ title, body })
-  }
-}
-
-function handleQuestionAnswered(
-  instanceId: string,
-  event: QuestionReplied | QuestionRejected,
-): void {
-  const requestId = getRequestIdFromQuestionReply(event.data)
-  if (!requestId) return
-
-  log.info(`[SSE] Question answered: ${requestId}`)
-  removeQuestionFromQueue(instanceId, requestId)
-  removeQuestionV2(instanceId, requestId)
 }
 
 export {
   handleNativeSessionEvent,
   handlePermissionReplied,
   handlePermissionUpdated,
-  handleQuestionAsked,
-  handleQuestionAnswered,
   handleSessionCompacted,
   handleSessionDeleted,
   handleSessionError,

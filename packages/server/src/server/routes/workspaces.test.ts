@@ -41,14 +41,12 @@ describe("workspace routes", () => {
         name: "Work",
         binaryPath: "C:/tools/ignored-opencode.exe",
         requestId: " restore-request ",
-        forceNew: true,
       },
     })
 
     assert.equal(response.statusCode, 201)
     assert.deepEqual(calls, [["C:/work", "Work", {
       requestId: "restore-request",
-      forceNew: true,
     }]])
 
     const released = await app.inject({

@@ -13,7 +13,7 @@ import {
 import type { ClientPart, MessageInfo } from "../../types/message"
 import { mergePermissionRequest } from "../../types/permission"
 import { clearRecordDisplayCacheForMessages } from "./record-display-cache"
-import { mergePendingRequestEntry, shouldSkipPendingRequestUpsert } from "./pending-request-dedupe"
+import { shouldSkipPendingRequestUpsert } from "./pending-request-dedupe"
 import type {
   InstanceMessageState,
   LatestTodoSnapshot,
@@ -22,7 +22,6 @@ import type {
   PartUpdateInput,
   PendingPartEntry,
   PermissionEntry,
-  QuestionEntry,
   ReplaceMessageIdOptions,
   ScrollSnapshot,
   SessionRecord,
@@ -49,11 +48,6 @@ function createInitialState(instanceId: string): InstanceMessageState {
     pendingParts: {},
     sessionRevisions: {},
     permissions: {
-      queue: [],
-      active: null,
-      byMessage: {},
-    },
-    questions: {
       queue: [],
       active: null,
       byMessage: {},
@@ -243,9 +237,6 @@ export interface InstanceMessageStore {
   upsertPermission: (entry: PermissionEntry) => void
   removePermission: (permissionId: string) => void
   getPermissionState: (messageId?: string, partId?: string) => { entry: PermissionEntry; active: boolean } | null
-  upsertQuestion: (entry: QuestionEntry) => void
-  removeQuestion: (requestId: string) => void
-  getQuestionState: (messageId?: string, partId?: string) => { entry: QuestionEntry; active: boolean } | null
   setSessionRevert: (sessionId: string, revert?: SessionRecord["revert"] | null) => void
   getSessionRevert: (sessionId: string) => SessionRecord["revert"] | undefined | null
   rebuildUsage: (sessionId: string, infos: Iterable<MessageInfo>) => void
@@ -665,17 +656,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
             draft.active = draft.queue[0] ?? null
           }),
         )
-        setState(
-          "questions",
-          produce((draft) => {
-            const omitted = new Set(omittedIds)
-            omittedIds.forEach((id) => {
-              delete draft.byMessage[id]
-            })
-            draft.queue = draft.queue.filter((entry) => !entry.messageId || !omitted.has(entry.messageId))
-            draft.active = draft.queue[0] ?? null
-          }),
-        )
       }
 
       if (usageState) {
@@ -844,17 +824,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
           draft.active = draft.queue[0] ?? null
         }),
       )
-      setState(
-        "questions",
-        produce((draft) => {
-          const dropped = new Set(droppedIds)
-          droppedIds.forEach((id) => {
-            delete draft.byMessage[id]
-          })
-          draft.queue = draft.queue.filter((entry) => !entry.messageId || !dropped.has(entry.messageId))
-          draft.active = draft.queue[0] ?? null
-        }),
-      )
       setState("usage", sessionId, createEmptyUsageState())
       setState("latestTodos", sessionId, undefined)
       setState("sessions", sessionId, (current) => ({
@@ -1010,26 +979,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     )
   }
 
-  function rebindQuestionForPart(messageId: string, partId: string, part: ClientPart) {
-    if (!messageId || !partId || part.type !== "tool") return
-
-    const toolCallId =
-      (part as any).callID ??
-      (part as any).callId ??
-      (part as any).toolCallID ??
-      (part as any).toolCallId ??
-      (part as any).id ??
-      undefined
-    if (!toolCallId) return
-
-    const detached = Object.values(state.questions.byMessage[messageId] ?? {}).find((entry) => {
-      return entry && entry.partId !== partId && entry.request.tool?.id === toolCallId
-    })
-    if (!detached) return
-
-    upsertQuestion({ ...detached, messageId, partId })
-  }
-
   function applyPartUpdate(input: PartUpdateInput) {
     const message = state.messages[input.messageId]
     if (!message) {
@@ -1062,7 +1011,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     )
 
     rebindPermissionForPart(input.messageId, partId, cloned)
-    rebindQuestionForPart(input.messageId, partId, cloned)
 
     if (isCompletedTodoPart(cloned)) {
       recordLatestTodoSnapshot(message.sessionId, {
@@ -1319,18 +1267,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       })
     }
 
-    const questionMap = state.questions.byMessage[options.oldId]
-    if (questionMap) {
-      setState("questions", "byMessage", options.newId, questionMap)
-      setState("questions", (prev) => {
-        const next = { ...prev }
-        const nextByMessage = { ...next.byMessage }
-        delete nextByMessage[options.oldId]
-        next.byMessage = nextByMessage
-        return next
-      })
-    }
-
     const pending = state.pendingParts[options.oldId]
     if (pending) {
       setState("pendingParts", options.newId, pending)
@@ -1446,94 +1382,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return { entry, active }
   }
 
-  function mergeQuestionEntry(entry: QuestionEntry): QuestionEntry {
-    const existing = state.questions.queue.find((item) => item.request.id === entry.request.id)
-    return mergePendingRequestEntry(entry, existing)
-  }
-
-  function upsertQuestion(input: QuestionEntry) {
-    const entry = mergeQuestionEntry(input)
-    const messageKey = entry.messageId ?? "__global__"
-    const partKey = entry.partId ?? entry.request?.id ?? "__global__"
-    const existing = state.questions.queue.find((item) => item.request.id === entry.request.id)
-    const existingAtLocation = state.questions.byMessage[messageKey]?.[partKey]
-    const expectedActiveId = state.questions.queue[0]?.request.id
-    if (shouldSkipPendingRequestUpsert({
-      existing,
-      existingAtLocationId: existingAtLocation?.request.id,
-      expectedActiveId,
-      activeId: state.questions.active?.request.id,
-      incomingId: entry.request.id,
-      incomingMessageId: entry.messageId,
-      incomingPartId: entry.partId,
-      incomingEnqueuedAt: entry.enqueuedAt,
-      existingValue: existing?.request,
-      incomingValue: entry.request,
-    })) {
-      return
-    }
-
-    setState(
-      "questions",
-      produce((draft) => {
-        Object.keys(draft.byMessage).forEach((existingMessageKey) => {
-          const partEntries = draft.byMessage[existingMessageKey]
-          Object.keys(partEntries).forEach((existingPartKey) => {
-            if (partEntries[existingPartKey].request.id === entry.request.id) {
-              delete partEntries[existingPartKey]
-            }
-          })
-          if (Object.keys(partEntries).length === 0) {
-            delete draft.byMessage[existingMessageKey]
-          }
-        })
-        draft.byMessage[messageKey] = draft.byMessage[messageKey] ?? {}
-        draft.byMessage[messageKey][partKey] = entry
-        const existingIndex = draft.queue.findIndex((item) => item.request.id === entry.request.id)
-        if (existingIndex === -1) {
-          draft.queue.push(entry)
-        } else {
-          draft.queue[existingIndex] = entry
-        }
-        if (!draft.active || draft.active.request.id === entry.request.id) {
-          draft.active = entry
-        }
-      }),
-    )
-  }
-
-  function removeQuestion(requestId: string) {
-    setState(
-      "questions",
-      produce((draft) => {
-        draft.queue = draft.queue.filter((item) => item.request.id !== requestId)
-        if (draft.active?.request.id === requestId) {
-          draft.active = draft.queue[0] ?? null
-        }
-        Object.keys(draft.byMessage).forEach((messageKey) => {
-          const partEntries = draft.byMessage[messageKey]
-          Object.keys(partEntries).forEach((partKey) => {
-            if (partEntries[partKey].request.id === requestId) {
-              delete partEntries[partKey]
-            }
-          })
-          if (Object.keys(partEntries).length === 0) {
-            delete draft.byMessage[messageKey]
-          }
-        })
-      }),
-    )
-  }
-
-  function getQuestionState(messageId?: string, partId?: string) {
-    const messageKey = messageId ?? "__global__"
-    const partKey = partId ?? "__global__"
-    const entry = state.questions.byMessage[messageKey]?.[partKey]
-    if (!entry) return null
-    const active = state.questions.active?.request.id === entry.request.id
-    return { entry, active }
-  }
-
   function pruneMessagesAfterRevert(sessionId: string, revertMessageId: string) {
     const session = state.sessions[sessionId]
     if (!session) return
@@ -1570,14 +1418,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     })
 
     setState("permissions", "byMessage", (prev) => {
-      const next = { ...prev }
-      removedIds.forEach((id) => {
-        if (next[id]) delete next[id]
-      })
-      return next
-    })
-
-    setState("questions", "byMessage", (prev) => {
       const next = { ...prev }
       removedIds.forEach((id) => {
         if (next[id]) delete next[id]
@@ -1664,14 +1504,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       })
 
       setState("permissions", "byMessage", (prev) => {
-        const next = { ...prev }
-        messageIds.forEach((id) => {
-          if (next[id]) delete next[id]
-        })
-        return next
-      })
-
-      setState("questions", "byMessage", (prev) => {
         const next = { ...prev }
         messageIds.forEach((id) => {
           if (next[id]) delete next[id]
@@ -1769,9 +1601,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       upsertPermission,
       removePermission,
       getPermissionState,
-      upsertQuestion,
-      removeQuestion,
-      getQuestionState,
 
      setSessionRevert,
      getSessionRevert,

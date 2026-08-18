@@ -8,6 +8,7 @@ import {
   WorkspaceLaunchCancelledError,
   WorkspaceManager,
   WorkspaceShutdownError,
+  EXPECTED_OPENCODE_VERSION,
 } from "./manager"
 import type { OpenCodeEnsureOptions } from "./opencode-service"
 import path from "node:path"
@@ -87,12 +88,26 @@ function createHarness(service = new ControlledSharedService(), overrides: Recor
     eventBus,
     logger: pino({ level: "silent" }),
     sharedService: service,
+    probeBinaryVersion: () => ({ valid: true, version: EXPECTED_OPENCODE_VERSION }),
     ...overrides,
   })
   return { manager, service, stopped }
 }
 
 describe("workspace manager shared service lifecycle", () => {
+  it("rejects a mismatched CLI before service startup and passes the exact client version", async () => {
+    const service = new ControlledSharedService()
+    const mismatch = createHarness(service, {
+      probeBinaryVersion: () => ({ valid: true, version: "0.0.0-wrong" }),
+    })
+    await assert.rejects(mismatch.manager.create(process.cwd()), new RegExp(`expected ${EXPECTED_OPENCODE_VERSION}.*0\\.0\\.0-wrong`))
+    assert.equal(service.validationCalls.length, 0)
+
+    const matching = createHarness(service)
+    await matching.manager.create(process.cwd())
+    assert.equal(service.validationCalls[0]?.options?.version, EXPECTED_OPENCODE_VERSION)
+  })
+
   it("uses bounded WSL mappings for root and real git worktree ownership", async () => {
     const base = await mkdtemp(path.join(os.tmpdir(), "codenomad-wsl-ownership-"))
     const repo = path.join(base, "repo")
@@ -147,20 +162,6 @@ describe("workspace manager shared service lifecycle", () => {
     assert.equal(leader.workspace.id, follower.workspace.id)
     assert.equal(Number(leader.created) + Number(follower.created), 1)
     assert.equal(harness.service.validationCalls.length, 1)
-  })
-
-  it("evicts only after the last logical owner of a location is deleted", async () => {
-    const harness = createHarness()
-    const first = await harness.manager.create(process.cwd())
-    const forced = await harness.manager.create(process.cwd(), undefined, { forceNew: true })
-
-    await harness.manager.delete(forced.workspace.id)
-    assert.deepEqual(harness.service.evictions, [])
-    assert.equal(harness.manager.get(first.workspace.id)?.status, "ready")
-
-    await harness.manager.delete(first.workspace.id)
-    assert.deepEqual(harness.service.evictions, [{ directory: process.cwd(), workspaceID: "location-1" }])
-    assert.deepEqual(harness.stopped, [forced.workspace.id, first.workspace.id])
   })
 
   it("cancels validation and cleans its logical location", async () => {
