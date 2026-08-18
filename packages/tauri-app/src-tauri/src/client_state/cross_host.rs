@@ -5,8 +5,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "macos", windows))]
 use std::process::{Command, Stdio};
+use std::time::Duration;
 #[cfg(any(target_os = "macos", windows))]
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 const OWNER_DIRECTORY: &str = "primary.owner.json";
 const OWNER_FILENAME: &str = "owner.json";
@@ -16,6 +17,7 @@ const RECOVERY_PREFIX: &str = "recovery.";
 const RECOVERY_SUFFIX: &str = ".claim";
 const RETIRED_PREFIX: &str = "retired.";
 const ACQUIRE_ATTEMPTS: usize = 10;
+const CROSS_HOST_PARTICIPANT_GRACE: Duration = Duration::from_millis(50);
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -255,7 +257,7 @@ impl Registration {
         let mut recovery_claim = None;
 
         let result = (|| {
-            let legacy_blocked = legacy_electron_data
+            let mut legacy_blocked = legacy_electron_data
                 .filter(|_| primary_candidate)
                 .map(|path| {
                     has_live_legacy_electron_with(
@@ -268,6 +270,23 @@ impl Registration {
                 })
                 .transpose()?
                 .unwrap_or(false);
+            if legacy_blocked {
+                // A peer may have published its legacy marker just before its
+                // cross-host participant. Reconcile once before yielding ownership.
+                std::thread::sleep(CROSS_HOST_PARTICIPANT_GRACE);
+                legacy_blocked = legacy_electron_data
+                    .map(|path| {
+                        has_live_legacy_electron_with(
+                            path,
+                            election_directory,
+                            pid_alive,
+                            identity,
+                            expected_electron,
+                        )
+                    })
+                    .transpose()?
+                    .unwrap_or(false);
+            }
             let mut primary = false;
             if primary_candidate && !legacy_blocked {
                 for _ in 0..ACQUIRE_ATTEMPTS {

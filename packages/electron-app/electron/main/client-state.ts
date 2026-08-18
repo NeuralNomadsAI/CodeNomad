@@ -28,6 +28,7 @@ const CLIENT_STATE_VERSION = 1
 const CLIENT_STATE_FILENAME = "client-state.json"
 const PRIMARY_LOCK_FILENAME = "client-state.primary.lock"
 const REGISTRATION_LOCK_FILENAME = "client-state.registration.lock"
+const CROSS_HOST_PARTICIPANT_GRACE_MS = 50
 
 export const MAX_CLIENT_SNAPSHOT_BYTES = 1024 * 1024
 
@@ -192,13 +193,18 @@ export class ClientStateManager {
         () => {
           if (!this.primary || !legacyTauriDataPath) return this.primary
           try {
-            return !hasLiveTauriClient(
+            const legacyBlocked = () => hasLiveTauriClient(
               legacyTauriDataPath,
               options?.crossHostDependencies?.pidAlive,
               options?.crossHostDependencies?.processStartIdentity,
               undefined,
               crossHostParticipants(crossHostElectionDirectory),
             )
+            if (!legacyBlocked()) return true
+            // A peer may have published its legacy marker just before its
+            // cross-host participant. Reconcile once before yielding ownership.
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, CROSS_HOST_PARTICIPANT_GRACE_MS)
+            return !legacyBlocked()
           } catch (error) {
             console.warn("[client-state] failed to inspect legacy Tauri process markers; continuing as secondary", error)
             return false
