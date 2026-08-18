@@ -370,7 +370,6 @@ async function main() {
     binaryResolver,
     eventBus,
     logger: workspaceLogger,
-    getServerBaseUrl: () => serverMeta.localUrl,
     nodeExtraCaCertsPath,
   })
   const fileSystemBrowser = new FileSystemBrowser({
@@ -390,7 +389,7 @@ async function main() {
   const yoloManager = new AutoAcceptManager({
     eventBus,
     logger: yoloLogger,
-    replier: createOpencodePermissionReplier({ workspaceManager, logger: yoloLogger }),
+    replier: createOpencodePermissionReplier({ workspaceManager }),
     persistence: sessionMetadataPersistence,
   })
   yoloManager.start()
@@ -487,7 +486,6 @@ async function main() {
         clientConnectionManager,
         remoteProxySessionManager,
         yoloManager,
-        sessionMetadataPersistence,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: uiResolution.uiDevServerUrl,
         logger,
@@ -514,7 +512,6 @@ async function main() {
         clientConnectionManager,
         remoteProxySessionManager,
         yoloManager,
-        sessionMetadataPersistence,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: undefined,
         logger,

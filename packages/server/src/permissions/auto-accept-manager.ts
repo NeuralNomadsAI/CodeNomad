@@ -16,15 +16,10 @@ import { AutoAcceptStore, type AutoAcceptSessionInfo } from "./auto-accept-store
  *     so the UI stays a pure view
  */
 
-export type PermissionSource = "v2"
-export type PermissionReplyValue = "once"
-
 export interface AutoAcceptReply {
   instanceId: string
   permissionId: string
   sessionId: string
-  source: PermissionSource
-  reply: PermissionReplyValue
 }
 
 export type PermissionReplier = (reply: AutoAcceptReply) => Promise<void>
@@ -32,7 +27,6 @@ export type PermissionReplier = (reply: AutoAcceptReply) => Promise<void>
 interface PendingPermission {
   permissionId: string
   sessionId: string
-  source: PermissionSource
 }
 
 interface AutoAcceptManagerDeps {
@@ -44,13 +38,12 @@ interface AutoAcceptManagerDeps {
 
 export interface PersistedAutoAcceptSession extends AutoAcceptSessionInfo {
   yoloEnabled: boolean
-  workspaceId?: string
 }
 
 export interface AutoAcceptPersistence {
   loadSessions(instanceId: string): Promise<PersistedAutoAcceptSession[]>
   loadSession?(instanceId: string, sessionId: string): Promise<PersistedAutoAcceptSession | null>
-  persist(instanceId: string, rootSessionId: string, enabled: boolean, workspaceId?: string): Promise<void>
+  persist(instanceId: string, rootSessionId: string, enabled: boolean): Promise<void>
 }
 
 const PERMISSION_ASK_TYPES = new Set(["permission.asked"])
@@ -71,7 +64,6 @@ export class AutoAcceptManager {
   private readonly hydration = new Map<string, Promise<void>>()
   private readonly queuedEvents = new Map<string, InstanceStreamPayload[]>()
   private readonly instanceGeneration = new Map<string, number>()
-  private readonly sessionWorkspaces = new Map<string, Map<string, string>>()
   private readonly mutations = new Map<string, Promise<boolean>>()
   private unsubscribe?: () => void
 
@@ -135,12 +127,9 @@ export class AutoAcceptManager {
     const pending = this.deps.persistence.loadSessions(instanceId).then((sessions) => {
       if ((this.instanceGeneration.get(instanceId) ?? 0) !== generation) return
       this.store.clearInstance(instanceId)
-      const workspaces = new Map<string, string>()
       for (const session of sessions) {
         this.store.upsertSession(instanceId, session)
-        if (session.workspaceId) workspaces.set(session.id, session.workspaceId)
       }
-      this.sessionWorkspaces.set(instanceId, workspaces)
       for (const session of sessions) {
         if (!session.yoloEnabled || this.store.familyRoot(instanceId, session.id) !== session.id) continue
         this.store.setEnabled(instanceId, session.id, true)
@@ -184,11 +173,6 @@ export class AutoAcceptManager {
         return this.store.isEnabled(instanceId, sessionId)
       }
       this.store.upsertSession(instanceId, session)
-      if (session.workspaceId) {
-        const workspaces = this.sessionWorkspaces.get(instanceId) ?? new Map<string, string>()
-        workspaces.set(session.id, session.workspaceId)
-        this.sessionWorkspaces.set(instanceId, workspaces)
-      }
       const rootSessionId = this.store.familyRoot(instanceId, sessionId)
       const traversedRootSessionIds = new Set([rootSessionId])
       const enabled = !this.store.isEnabled(instanceId, rootSessionId)
@@ -196,7 +180,6 @@ export class AutoAcceptManager {
         instanceId,
         rootSessionId,
         enabled,
-        this.sessionWorkspaces.get(instanceId)?.get(rootSessionId),
       )
       if ((this.instanceGeneration.get(instanceId) ?? 0) !== generation) {
         return this.store.isEnabled(instanceId, rootSessionId)
@@ -209,14 +192,12 @@ export class AutoAcceptManager {
           instanceId,
           currentRootSessionId,
           enabled,
-          this.sessionWorkspaces.get(instanceId)?.get(currentRootSessionId),
         )
         if (enabled) {
           await this.deps.persistence!.persist(
             instanceId,
             persistedRootSessionId,
             false,
-            this.sessionWorkspaces.get(instanceId)?.get(persistedRootSessionId),
           )
         }
         persistedRootSessionId = currentRootSessionId
@@ -248,7 +229,6 @@ export class AutoAcceptManager {
     this.hydratedInstances.delete(instanceId)
     this.hydration.delete(instanceId)
     this.queuedEvents.delete(instanceId)
-    this.sessionWorkspaces.delete(instanceId)
     this.mutations.delete(instanceId)
     this.store.clearInstance(instanceId)
     this.pending.delete(instanceId)
@@ -290,11 +270,6 @@ export class AutoAcceptManager {
     const parentId = session.parentID ?? session.parentId ?? null
     const enabledBefore = this.store.enabledRoots(instanceId)
     this.store.upsertSession(instanceId, { id: sessionId, parentId, fork: session.fork })
-    if (typeof session.workspaceID === "string" && session.workspaceID) {
-      const workspaces = this.sessionWorkspaces.get(instanceId) ?? new Map<string, string>()
-      workspaces.set(sessionId, session.workspaceID)
-      this.sessionWorkspaces.set(instanceId, workspaces)
-    }
     this.persistRootMigration(instanceId, enabledBefore, this.store.enabledRoots(instanceId))
     // Session ancestry may have changed as parents are discovered.
     // Re-drain pending permissions whose family root may have migrated into
@@ -330,14 +305,14 @@ export class AutoAcceptManager {
       for (const rootSessionId of added) {
         if (!enabledRoots.has(rootSessionId)) continue
         await this.deps.persistence!.persist(
-          instanceId, rootSessionId, true, this.sessionWorkspaces.get(instanceId)?.get(rootSessionId),
+          instanceId, rootSessionId, true,
         )
       }
       for (const rootSessionId of removed) {
         if (enabledRoots.has(rootSessionId)) continue
         if ((this.instanceGeneration.get(instanceId) ?? 0) !== generation) return false
         await this.deps.persistence!.persist(
-          instanceId, rootSessionId, false, this.sessionWorkspaces.get(instanceId)?.get(rootSessionId),
+          instanceId, rootSessionId, false,
         )
       }
       return false
@@ -358,15 +333,14 @@ export class AutoAcceptManager {
     const sessionId = readString(request.sessionID) ?? readString(request.sessionId)
     if (!permissionId || !sessionId) return
 
-    const source: PermissionSource = "v2"
-    this.addPending(instanceId, { permissionId, sessionId, source })
+    this.addPending(instanceId, { permissionId, sessionId })
 
     if (!this.store.hasSession(instanceId, sessionId)) {
       void this.hydrateSession(instanceId, sessionId)
       return
     }
     if (!this.store.isEnabled(instanceId, sessionId)) return
-    this.tryAutoAccept(instanceId, permissionId, sessionId, source)
+    this.tryAutoAccept(instanceId, permissionId, sessionId)
   }
 
   private async hydrateSession(instanceId: string, sessionId: string): Promise<void> {
@@ -382,10 +356,6 @@ export class AutoAcceptManager {
 
   private ingestPersistedSession(instanceId: string, session: PersistedAutoAcceptSession): void {
     this.store.upsertSession(instanceId, session)
-    if (!session.workspaceId) return
-    const workspaces = this.sessionWorkspaces.get(instanceId) ?? new Map<string, string>()
-    workspaces.set(session.id, session.workspaceId)
-    this.sessionWorkspaces.set(instanceId, workspaces)
   }
 
   private handlePermissionReplied(instanceId: string, properties: unknown): void {
@@ -403,7 +373,6 @@ export class AutoAcceptManager {
     instanceId: string,
     permissionId: string,
     sessionId: string,
-    source: PermissionSource,
   ): void {
     const key = permissionId
     if (this.inFlight.has(key)) return
@@ -412,7 +381,7 @@ export class AutoAcceptManager {
     this.inFlight.add(key)
     this.replyAttempts.set(key, attempts + 1)
 
-    const reply: AutoAcceptReply = { instanceId, permissionId, sessionId, source, reply: "once" }
+    const reply: AutoAcceptReply = { instanceId, permissionId, sessionId }
 
     void this.deps.replier(reply)
       .then(() => {
@@ -438,7 +407,7 @@ export class AutoAcceptManager {
     const root = this.store.familyRoot(instanceId, sessionId)
     for (const entry of Array.from(instancePending.values())) {
       if (this.store.hasSession(instanceId, entry.sessionId) && this.store.familyRoot(instanceId, entry.sessionId) === root) {
-        this.tryAutoAccept(instanceId, entry.permissionId, entry.sessionId, entry.source)
+        this.tryAutoAccept(instanceId, entry.permissionId, entry.sessionId)
       }
     }
   }
@@ -488,7 +457,6 @@ interface SessionProperties {
   parentID?: string | null
   parentId?: string | null
   fork?: unknown
-  workspaceID?: string
 }
 
 interface PermissionProperties {

@@ -3,7 +3,6 @@ import type { OpenCodeClient, Pty } from "@opencode-ai/client"
 
 export interface PtyApi {
   list(directory: string): Promise<Pty[]>
-  get(directory: string, ptyId: string): Promise<Pty>
   updateTitle(directory: string, ptyId: string, title: string): Promise<Pty>
   remove(directory: string, ptyId: string): Promise<void>
 }
@@ -27,7 +26,6 @@ export function createPtyApi(client: OpenCodeClient): PtyApi {
   const location = (directory: string) => ({ directory })
   return {
     list: async (directory) => (await client.pty.list({ location: location(directory) })).data,
-    get: async (directory, ptyId) => (await client.pty.get({ ptyID: ptyId, location: location(directory) })).data,
     updateTitle: async (directory, ptyId, title) => (
       await client.pty.update({ ptyID: ptyId, location: location(directory), title })
     ).data,

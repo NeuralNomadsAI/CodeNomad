@@ -104,7 +104,6 @@ jobs:
       - name: Test changed runnable UI behavior
         run: >-
           node --import tsx --test
-          packages/ui/src/components/message-loading-visibility.test.ts
           packages/ui/src/components/message-timeline-v2.test.ts
           packages/ui/src/components/provider-auth/provider-options.test.ts
           packages/ui/src/components/session/session-bottom-pin-intent.test.ts

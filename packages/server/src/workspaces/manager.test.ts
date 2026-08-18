@@ -112,7 +112,6 @@ function createHarness(service = new ControlledSharedService(), overrides: Recor
     binaryResolver: { resolveDefault: () => ({ path: process.execPath, label: "OpenCode V2" }) } as never,
     eventBus,
     logger: pino({ level: "silent" }),
-    getServerBaseUrl: () => "http://127.0.0.1:4000",
     sharedService: service,
     ...overrides,
   })

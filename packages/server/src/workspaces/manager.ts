@@ -67,7 +67,6 @@ interface WorkspaceManagerOptions {
   binaryResolver: BinaryResolver
   eventBus: EventBus
   logger: Logger
-  getServerBaseUrl: () => string
   /** Optional CA bundle path to trust CodeNomad HTTPS certs. */
   nodeExtraCaCertsPath?: string
   sharedService?: SharedService
@@ -143,7 +142,6 @@ export class WorkspaceManager {
   private readonly cancelledCreationRequests = new Set<string>()
   private shuttingDown = false
   private readonly sharedService: SharedService
-  private serviceEndpoint?: Endpoint
   private serviceAuthorization?: string
 
   constructor(private readonly options: WorkspaceManagerOptions) {
@@ -172,7 +170,6 @@ export class WorkspaceManager {
     if (!this.workspaces.get(id)?.[WORKSPACE_STATE].published) return undefined
     try {
       const [endpoint, headers] = await Promise.all([this.sharedService.endpoint(), this.sharedService.headers()])
-      this.serviceEndpoint = endpoint
       this.serviceAuthorization = headers?.authorization
       return endpoint
     } catch (error) {
@@ -505,8 +502,7 @@ export class WorkspaceManager {
         ? this.requireWslServiceDirectory(workspacePath, launch.wslDistro, timeoutMs)
         : workspacePath
       record.location = { directory: serviceDirectory }
-      const [endpoint, headers, location] = await Promise.all([
-        this.sharedService.endpoint(ensureOptions),
+      const [headers, location] = await Promise.all([
         this.sharedService.headers(ensureOptions),
         this.sharedService.validateLocation(
           { directory: serviceDirectory },
@@ -514,7 +510,6 @@ export class WorkspaceManager {
           ensureOptions,
         ),
       ])
-      this.serviceEndpoint = endpoint
       this.serviceAuthorization = headers?.authorization
       record.location = { directory: location.directory, workspaceID: location.workspaceID }
       this.throwIfCancelled(record)

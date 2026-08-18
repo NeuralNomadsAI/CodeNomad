@@ -238,7 +238,7 @@ describe("AutoAcceptManager persistence", () => {
     const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier: makeRecordingReplier(), persistence })
     const toggle = manager.toggle("inst", "root")
     await flushMicrotasks()
-    assert.deepEqual(writes, [["inst", "root", true, undefined]])
+    assert.deepEqual(writes, [["inst", "root", true]])
     assert.equal(manager.isEnabled("inst", "root"), false)
     assert.equal(changes.length, 0)
     release()
@@ -331,8 +331,8 @@ describe("AutoAcceptManager persistence", () => {
     const persistence: AutoAcceptPersistence = {
       async loadSessions() {
         return [
-          { id: "parent", parentId: null, workspaceId: "workspace", yoloEnabled: false },
-          { id: "child", parentId: null, workspaceId: "workspace", yoloEnabled: true },
+          { id: "parent", parentId: null, yoloEnabled: false },
+          { id: "child", parentId: null, yoloEnabled: true },
         ]
       },
       async persist(...args) { writes.push(args) },
@@ -344,8 +344,8 @@ describe("AutoAcceptManager persistence", () => {
     await flushMicrotasks()
     assert.equal(manager.isEnabled("inst", "parent"), true)
     assert.deepEqual(writes, [
-      ["inst", "parent", true, "workspace"],
-      ["inst", "child", false, "workspace"],
+      ["inst", "parent", true],
+      ["inst", "child", false],
     ])
     manager.stop()
   })
@@ -360,12 +360,12 @@ describe("AutoAcceptManager persistence", () => {
     const persistence: AutoAcceptPersistence = {
       async loadSessions() {
         return [
-          { id: "grandparent", parentId: null, workspaceId: "workspace", yoloEnabled: false },
-          { id: "parent", parentId: null, workspaceId: "workspace", yoloEnabled: false },
-          { id: "child", parentId: null, workspaceId: "workspace", yoloEnabled: true },
+          { id: "grandparent", parentId: null, yoloEnabled: false },
+          { id: "parent", parentId: null, yoloEnabled: false },
+          { id: "child", parentId: null, yoloEnabled: true },
         ]
       },
-      async loadSession() { return { id: "child", parentId: null, workspaceId: "workspace", yoloEnabled: true } },
+      async loadSession() { return { id: "child", parentId: null, yoloEnabled: true } },
       async persist(...args) {
         writes.push(args)
         if (writes.length === 1) await firstGate
@@ -466,8 +466,6 @@ describe("AutoAcceptManager permission interception", () => {
     assert.equal(call.instanceId, "inst")
     assert.equal(call.permissionId, "perm-1")
     assert.equal(call.sessionId, "child")
-    assert.equal(call.source, "v2")
-    assert.equal(call.reply, "once")
     assert.equal(accepted.length, 1)
     assert.equal((accepted[0] as any).permissionId, "perm-1")
 
@@ -491,7 +489,6 @@ describe("AutoAcceptManager permission interception", () => {
     await flushMicrotasks()
 
     assert.equal(replier.calls.length, 1)
-    assert.equal(replier.calls[0].source, "v2")
     assert.equal(replier.calls[0].permissionId, "perm-2")
 
     manager.stop()
@@ -847,22 +844,22 @@ describe("AutoAcceptManager clearInstance clears pending", () => {
   })
 })
 
-describe("AutoAcceptManager permission.updated source inference", () => {
-  it("preserves the original v2 source when permission.updated arrives", async () => {
+describe("AutoAcceptManager pending permission updates", () => {
+  it("does not duplicate a pending permission reply when permission.updated arrives", async () => {
     const bus = new EventBus(noopLogger)
     const replier = makeRecordingReplier()
     const manager = new AutoAcceptManager({ eventBus: bus, logger: noopLogger, replier })
     manager.start()
 
     publishSession(bus, "inst", "session.updated", { id: "solo", parentID: null })
-    // yolo is OFF — permission goes to pending with source "v2"
+    // Yolo is off, so the permission remains pending.
     publishInstanceEvent(bus, "inst", {
       type: "permission.v2.asked",
       properties: { id: "perm-v2", sessionID: "solo" },
     })
     await flushMicrotasks()
 
-    // enable yolo, then send permission.updated — should keep source "v2"
+    // Enabling Yolo drains it before the follow-up update arrives.
     manager.toggle("inst", "solo")
     publishInstanceEvent(bus, "inst", {
       type: "permission.updated",
@@ -871,7 +868,6 @@ describe("AutoAcceptManager permission.updated source inference", () => {
     await flushMicrotasks()
 
     assert.equal(replier.calls.length, 1)
-    assert.equal(replier.calls[0].source, "v2")
 
     manager.stop()
   })

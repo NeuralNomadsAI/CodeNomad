@@ -2,11 +2,11 @@
 
 ## Current Status
 
-We have completed the MVP milestones (Phases 1-3) and are now operating in post-MVP mode. Future work prioritizes multi-instance support, advanced input polish, and system integrations outlined in later phases.
+The MVP and multi-instance milestones are complete. Current architecture and implementation details live in the documents indexed below.
 
 ## What We've Created
 
-A comprehensive specification and task breakdown for building the CodeNomad desktop application.
+Development documentation for the CodeNomad desktop application.
 
 ## Directory Structure
 
@@ -16,7 +16,6 @@ packages/ui/          SolidJS UI and native Promise clients
 packages/electron-app Electron host
 packages/tauri-app/   Tauri host
 dev-docs/             Development documentation
-tasks/                Task tracking
 ```
 
 ## Documentation Overview
@@ -85,70 +84,6 @@ tasks/                Task tracking
 - Message rendering implementation
 - Build and packaging config
 
-### 4. Build Roadmap (build-roadmap.md)
-
-**What it covers:**
-
-- 8 development phases
-- Task dependencies
-- Timeline estimates
-- Success criteria per phase
-- Risk mitigation
-- Release strategy
-
-**Phases:**
-
-1. **Foundation** (Week 1) - Project setup, process management
-2. **Core Chat** (Week 2) - Message display, SSE streaming
-3. **Essential Features** (Week 3) - Markdown, agents, errors
-4. **Multi-Instance** (Week 4) - Multiple projects support
-5. **Advanced Input** (Week 5) - Commands, file attachments
-6. **Polish** (Week 6) - UX refinements, settings
-7. **System Integration** (Week 7) - Native features
-8. **Advanced** (Week 8+) - Performance, plugins
-
-## Task Breakdown
-
-### Current Tasks (Phase 1)
-
-**001 - Project Setup** (2-3 hours)
-
-- Set up Electron + SolidJS + Vite
-- Configure TypeScript, TailwindCSS
-- Create basic project structure
-- Verify build pipeline works
-
-**002 - Empty State UI** (2-3 hours)
-
-- Create empty state component
-- Implement folder selection dialog
-- Add keyboard shortcuts
-- Style and test responsiveness
-
-**003 - Shared Service Manager** (4-5 hours)
-
-- Discover or launch one OpenCode service through CodeNomad's lease-locked process-proof lifecycle
-- Validate workspace locations/directories
-- Transfer proof to a live peer or stop only the exact proven daemon on final shutdown
-- Handle errors and timeouts
-- Auto-cleanup on app quit
-
-**004 - Native Client Integration** (3-4 hours)
-
-- Create native clients through the CodeNomad proxy
-- Fetch sessions, agents, models
-- Implement session CRUD operations
-- Add error handling and retries
-
-**005 - Session Picker Modal** (3-4 hours)
-
-- Build modal with session list
-- Agent selector for new sessions
-- Keyboard navigation
-- Loading and error states
-
-**Total Phase 1 time: ~15-20 hours (2-3 weeks part-time)**
-
 ## Key Design Decisions
 
 ### 1. Two-Level Tabs
@@ -194,15 +129,6 @@ tasks/                Task tracking
 
 ## Implementation Guidelines
 
-### For Each Task:
-
-1. Read task file completely
-2. Review related documentation
-3. Follow steps in order
-4. Check off acceptance criteria
-5. Test thoroughly
-6. Move to done/ when complete
-
 ### Code Standards:
 
 - TypeScript for everything
@@ -220,73 +146,14 @@ tasks/                Task tracking
 - Test edge cases (long text, special chars)
 - Keyboard navigation verification
 
-## Next Steps
-
-### To Start Building:
-
-1. **Read all documentation**
-   - Understand architecture
-   - Review UI specifications
-   - Study technical approach
-
-2. **Start with Task 001**
-   - Set up project structure
-   - Install dependencies
-   - Verify build works
-
-3. **Follow sequential order**
-   - Each task builds on previous
-   - Don't skip ahead
-   - Dependencies matter
-
-4. **Track progress**
-   - Update task checkboxes
-   - Move completed tasks to done/
-   - Update roadmap as you go
-
-### When You Hit Issues:
-
-1. Review task prerequisites
-2. Check documentation for clarification
-3. Look at related specs
-4. Ask questions on unclear requirements
-5. Document blockers and solutions
-
-## Success Metrics
-
-### MVP (After Task 015)
-
-- Can select folder → spawn server → chat
-- Messages stream in real-time
-- Can switch agents and models
-- Tool executions visible
-- Basic error handling works
-- **Performance is NOT a concern** - focus on functionality
-
-### Beta (After Task 030)
-
-- Multi-instance support
-- Advanced input (files, commands)
-- Polished UX
-- Settings and preferences
-- Native menus
-
-### v1.0 (After Task 035)
-
-- System tray integration
-- Auto-updates
-- Crash reporting
-- Production-ready stability
-
 ## Useful References
 
 ### Within This Project:
 
 - `README.md` - Project overview and getting started
-- `docs/architecture.md` - System design
-- `docs/user-interface.md` - UI specifications
-- `docs/technical-implementation.md` - Implementation details
-- `tasks/README.md` - Task workflow guide
+- `dev-docs/architecture.md` - System design
+- `dev-docs/user-interface.md` - UI specifications
+- `dev-docs/technical-implementation.md` - Implementation details
 
 ### External:
 
@@ -307,33 +174,3 @@ tasks/                Task tracking
 - PTYs: location-scoped native entries in Status, refreshed on PTY events/reconnect with metadata, title updates, and ownership-checked removal; current installed declarations have no output/read/stream or separate stop API, so output and distinct stop are unavailable and removal stops a running PTY
 - Legacy plugin/background processes: `packages/opencode-plugin` and server plugin/background-process paths remain deleted
 - Git mutations and Yolo: CodeNomad-owned
-
-## Estimated Timeline
-
-**Conservative estimate (part-time, ~15 hours/week):**
-
-- Phase 1 (MVP Foundation): 2-3 weeks
-- Phase 2 (Core Chat): 2 weeks
-- Phase 3 (Essential): 2 weeks
-- **MVP Complete: 6-7 weeks**
-
-**Aggressive estimate (full-time, ~40 hours/week):**
-
-- Phase 1: 1 week
-- Phase 2: 1 week
-- Phase 3: 1 week
-- **MVP Complete: 3 weeks**
-
-Add 2-4 weeks for testing, bug fixes, and polish before alpha release.
-
-## This is a Living Document
-
-As you build:
-
-- Update estimates based on actual time
-- Add new tasks as needed
-- Refine specifications
-- Document learnings
-- Track blockers and solutions
-
-Good luck! 🚀

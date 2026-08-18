@@ -59,7 +59,6 @@ export function createOpencodeYoloPersistence(
     id: session.id,
     parentId: session.parentID ?? null,
     fork: session.fork,
-    workspaceId: session.location.workspaceID,
     yoloEnabled: sessionState(settings, session.id).yoloEnabled === true,
   })
   const updateYolo = (

@@ -19,7 +19,6 @@ describe("native PTY adapter", () => {
     const client = {
       pty: {
         list: async (input: unknown) => { calls.push(["list", input]); return { data: [pty("one")] } },
-        get: async (input: unknown) => { calls.push(["get", input]); return { data: pty("one") } },
         update: async (input: unknown) => { calls.push(["update", input]); return { data: { ...pty("one"), title: "renamed" } } },
         remove: async (input: unknown) => { calls.push(["remove", input]) },
       },
@@ -27,13 +26,11 @@ describe("native PTY adapter", () => {
     const api = createPtyApi(client)
 
     assert.deepEqual(await api.list("/repo/worktree"), [pty("one")])
-    assert.equal((await api.get("/repo/worktree", "one")).id, "one")
     assert.equal((await api.updateTitle("/repo/worktree", "one", "renamed")).title, "renamed")
     await api.remove("/repo/worktree", "one")
 
     assert.deepEqual(calls, [
       ["list", { location: { directory: "/repo/worktree" } }],
-      ["get", { ptyID: "one", location: { directory: "/repo/worktree" } }],
       ["update", { ptyID: "one", location: { directory: "/repo/worktree" }, title: "renamed" }],
       ["remove", { ptyID: "one", location: { directory: "/repo/worktree" } }],
     ])
@@ -45,7 +42,6 @@ describe("PTY store", () => {
     const lists: string[] = []
     const api: PtyApi = {
       list: async (directory) => { lists.push(directory); return [pty(directory, directory)] },
-      get: async () => pty("unused"),
       updateTitle: async () => pty("unused"),
       remove: async () => {},
     }
@@ -71,7 +67,6 @@ describe("PTY store", () => {
     let items = [pty("one")]
     const api: PtyApi = {
       list: async () => items,
-      get: async () => items[0]!,
       updateTitle: async (_directory, id, title) => {
         controls.push(["update", id, title])
         items = [{ ...items[0]!, title }]

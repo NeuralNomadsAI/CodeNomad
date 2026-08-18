@@ -82,14 +82,12 @@ describe("OpenCode Yolo persistence", () => {
         id: "root",
         parentId: null,
         fork: undefined,
-        workspaceId: "workspace",
         yoloEnabled: true,
       },
       {
         id: "second-page",
         parentId: null,
         fork: undefined,
-        workspaceId: "workspace",
         yoloEnabled: false,
       },
     ])
@@ -120,7 +118,6 @@ describe("OpenCode Yolo persistence", () => {
       id: "worktree",
       parentId: null,
       fork: { sessionID: "root", boundary: { type: "through", messageID: "message" } },
-      workspaceId: "workspace",
       yoloEnabled: true,
     })
   })

@@ -5,7 +5,6 @@ import BrandedEmptyState from "./branded-empty-state"
 import LoadErrorState from "./load-error-state"
 import MessageBlock from "./message-block"
 import { getMessageAnchorId } from "./message-anchors"
-import { isInitialMessageLoad } from "./message-loading-visibility"
 import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./message-timeline"
 import { getTimelineRecordSignature } from "./message-timeline-projection"
 import VirtualFollowList, { type VirtualExplicitBottomPinIntent, type VirtualFollowListApi, type VirtualFollowListState, type VirtualFollowScrollSnapshot } from "./virtual-follow-list"
@@ -890,7 +889,7 @@ export default function MessageSection(props: MessageSectionProps) {
                 </Show>
               </Show>
 
-              <Show when={isInitialMessageLoad(Boolean(props.loading), messageIds().length)}>
+              <Show when={Boolean(props.loading) && messageIds().length === 0}>
                 <div class="loading-state">
                   <div class="spinner" />
                   <p>{t("messageSection.loading.messages")}</p>

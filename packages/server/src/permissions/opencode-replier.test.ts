@@ -2,7 +2,6 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import type { OpenCodeClient } from "@opencode-ai/client"
 
-import type { Logger } from "../logger"
 import type { WorkspaceManager } from "../workspaces/manager"
 import { createOpencodePermissionReplier } from "./opencode-replier"
 
@@ -20,14 +19,12 @@ describe("createOpencodePermissionReplier", () => {
       getSharedServiceClient: async () => client,
       ownsDirectory: async (_instanceId: string, directory: string) => directory === "/repo",
     } as unknown as WorkspaceManager
-    const replier = createOpencodePermissionReplier({ workspaceManager, logger: {} as Logger })
+    const replier = createOpencodePermissionReplier({ workspaceManager })
 
     await replier({
       instanceId: "instance",
       sessionId: "session",
       permissionId: "permission",
-      source: "v2",
-      reply: "once",
     })
 
     assert.deepEqual(calls, [{ sessionID: "session", requestID: "permission", reply: "once" }])
@@ -44,14 +41,12 @@ describe("createOpencodePermissionReplier", () => {
       getSharedServiceClient: async () => client,
       ownsDirectory: async () => false,
     } as unknown as WorkspaceManager
-    const replier = createOpencodePermissionReplier({ workspaceManager, logger: {} as Logger })
+    const replier = createOpencodePermissionReplier({ workspaceManager })
 
     await assert.rejects(replier({
       instanceId: "instance",
       sessionId: "foreign-session",
       permissionId: "permission",
-      source: "v2",
-      reply: "once",
     }), /does not belong/)
     assert.deepEqual(calls, [])
   })

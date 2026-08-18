@@ -9,7 +9,7 @@ import { Service, type Endpoint, type EnsureOptions, type Info, type StopOptions
 import { spawn, type ChildProcess } from "node:child_process"
 import { createHash, randomUUID } from "node:crypto"
 import type { Stats } from "node:fs"
-import { appendFile, lstat, mkdir, open, readdir, rename, rm } from "node:fs/promises"
+import { appendFile, lstat, mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises"
 import path from "node:path"
 import {
   getProcessStartIdentity,
@@ -533,9 +533,7 @@ export class OpenCodeSharedService {
     if (!file) return undefined
     const [info, contenders] = await Promise.all([
       readSecureServiceInfo(file),
-      contenderFile ? open(contenderFile, "r").then(async (handle) => {
-        try { return await handle.readFile("utf8") } finally { await handle.close() }
-      }).catch(() => "") : "",
+      contenderFile ? readFile(contenderFile, "utf8").catch(() => "") : "",
     ])
     if (!info || !started) return undefined
     if (info.url !== endpoint.url || info.password !== endpoint.auth?.password) return undefined
@@ -644,9 +642,7 @@ export class OpenCodeSharedService {
     if (!launch || !info || info.url !== endpoint.url || info.password !== endpoint.auth?.password) return false
     if (launch.servicePid !== undefined) return launch.servicePid === info.pid
     if (launch.contenderFile) {
-      const contenders = await open(launch.contenderFile, "r").then(async (handle) => {
-        try { return await handle.readFile("utf8") } finally { await handle.close() }
-      }).catch(() => "")
+      const contenders = await readFile(launch.contenderFile, "utf8").catch(() => "")
       if (contenders.split(/\r?\n/).includes(String(info.pid))) return true
     }
     return false

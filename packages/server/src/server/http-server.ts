@@ -33,7 +33,6 @@ import { registerUsageRoutes } from "./routes/usage"
 import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import type { AutoAcceptManager } from "../permissions/auto-accept-manager"
-import type { OpencodeYoloPersistence } from "../permissions/opencode-yolo-metadata"
 import type { AuthManager } from "../auth/manager"
 import { registerAuthRoutes } from "./routes/auth"
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth"
@@ -64,7 +63,6 @@ interface HttpServerDeps {
   clientConnectionManager: ClientConnectionManager
   remoteProxySessionManager: RemoteProxySessionManager
   yoloManager: AutoAcceptManager
-  sessionMetadataPersistence: OpencodeYoloPersistence
   uiStaticDir: string
   uiDevServerUrl?: string
   logger: Logger

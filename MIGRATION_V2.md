@@ -51,14 +51,6 @@ The migration removes the V1 compatibility layer rather than maintaining both in
 - Force the V2 service database to `~/.local/share/opencode2/opencode.db`. V1 and V2 must never point at the same database because their schemas are incompatible.
 - Isolate V2 restore state under `~/.codenomad/client-state/v2` and copy V1 state non-destructively on first launch, preserving downgrade history.
 
-## Expected Benefits
-
-- Less custom integration code and fewer long-running processes.
-- Closer alignment with the supported OpenCode V2 architecture.
-- A smaller native integration surface without maintaining V1 compatibility code.
-- Consistent behavior between root workspaces and Git worktrees.
-- Simpler service startup, event handling, and client-side API access.
-
 ## Current Status
 
 - The server/UI client dependencies are aligned on the latest reviewed OpenCode `next` release. The installed `opencode2` CLI is not exact-version-gated at runtime.

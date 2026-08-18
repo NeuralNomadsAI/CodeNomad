@@ -1,11 +1,9 @@
 import type { WorkspaceManager } from "../workspaces/manager"
-import type { Logger } from "../logger"
 import { createInstanceClient } from "../workspaces/instance-client"
 import type { AutoAcceptReply, PermissionReplier } from "./auto-accept-manager"
 
 interface OpencodeReplierDeps {
   workspaceManager: WorkspaceManager
-  logger: Logger
 }
 
 /**
@@ -27,7 +25,7 @@ export function createOpencodePermissionReplier(deps: OpencodeReplierDeps): Perm
     await client.permission.reply({
       sessionID: reply.sessionId,
       requestID: reply.permissionId,
-      reply: reply.reply,
+      reply: "once",
     })
   }
 }
