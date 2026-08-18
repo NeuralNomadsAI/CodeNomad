@@ -9,7 +9,9 @@ export function getTimelineRecordSignature(record: MessageRecord): string {
     const data = part?.data
     const structuralRevision = data?.type === "tool" || data?.type === "compaction" ? part.revision : 0
     const fileName = data?.type === "file" && typeof data.filename === "string" ? data.filename : ""
-    const textLength = data?.type === "text" || data?.type === "reasoning" ? data.text.length : 0
+    const textLength = (data?.type === "text" || data?.type === "reasoning") && typeof data.text === "string"
+      ? data.text.length
+      : 0
     const textBucket = Math.ceil(textLength / STREAMED_TEXT_SIGNATURE_BUCKET)
     return `${partId}:${data?.type ?? "unknown"}:${data && partHasRenderableText(data) ? 1 : 0}:${structuralRevision}:${fileName}:${textBucket}`
   }).join("|")

@@ -156,7 +156,6 @@ async function sendMessage(
       id: textPartId,
       type: "text" as const,
       text: preparedPrompt.promptToSend,
-      synthetic: true,
       renderCache: undefined,
     },
   ]
@@ -199,7 +198,6 @@ async function sendMessage(
           id: partId,
           type: "text" as const,
           text: value,
-          synthetic: true,
           renderCache: undefined,
         })
       }

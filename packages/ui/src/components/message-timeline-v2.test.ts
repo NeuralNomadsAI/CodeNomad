@@ -39,6 +39,15 @@ describe("V2 timeline projection", () => {
     assert.notEqual(getTimelineRecordSignature(text), getTimelineRecordSignature(tool))
   })
 
+  it("accepts provisional text and reasoning parts without text", () => {
+    assert.doesNotThrow(() => getTimelineRecordSignature(record([{ id: "text", type: "text" }])))
+    assert.doesNotThrow(() => getTimelineRecordSignature(record([{ id: "reasoning", type: "reasoning" }])))
+    assert.equal(
+      getTimelineRecordSignature(record([{ id: "text", type: "text" }])),
+      getTimelineRecordSignature(record([{ id: "text", type: "text", text: "" }])),
+    )
+  })
+
   it("throttles streamed text projection updates and tracks tool revisions", () => {
     const shortText = record([{ id: "text", type: "text", text: "a" }])
     const sameBucketText = record([{ id: "text", type: "text", text: "a longer streamed value", revision: 20 }])

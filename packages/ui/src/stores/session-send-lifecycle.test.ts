@@ -9,6 +9,7 @@ import { setConversationModeEnabled } from "./conversation-speech.ts"
 import { sendMessage } from "./session-actions.ts"
 import { handleNativeSessionEvent, handleSessionError } from "./session-events.ts"
 import { clearInstanceDeletedSessionAuthority, setSessions } from "./session-state.ts"
+import { partHasRenderableText } from "../types/message.ts"
 
 function session(instanceId: string, id: string): Session {
   return {
@@ -66,6 +67,36 @@ function setup(
 }
 
 describe("optimistic send lifecycle", () => {
+  it("renders the optimistic prompt before any native request resolves", async () => {
+    const instanceId = "send-immediate"
+    const sessionId = "session"
+    let releaseInstruction!: () => void
+    const instruction = new Promise<undefined>((resolve) => { releaseInstruction = () => resolve(undefined) })
+    const cleanup = setup(
+      instanceId,
+      sessionId,
+      async () => undefined,
+      { put: async () => instruction, remove: async () => instruction },
+    )
+
+    try {
+      const sending = sendMessage(instanceId, sessionId, "hello")
+      const store = messageStoreBus.getOrCreate(instanceId)
+      const [messageId] = store.getSessionMessageIds(sessionId)
+      const record = messageId ? store.getMessage(messageId) : undefined
+      const textPart = record?.partIds.map((id) => record.parts[id]?.data).find((part) => part?.type === "text")
+
+      assert.equal(record?.status, "sending")
+      assert.equal(textPart?.text, "hello")
+      assert.equal(textPart ? partHasRenderableText(textPart) : false, true)
+
+      releaseInstruction()
+      await sending
+    } finally {
+      cleanup()
+    }
+  })
+
   it("writes the native session voice instruction before prompting", async () => {
     const instanceId = "send-voice-mode"
     const sessionId = "session"
