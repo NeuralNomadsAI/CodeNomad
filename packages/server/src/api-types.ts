@@ -42,7 +42,6 @@ export interface WorkspaceCreateRequest {
   path: string
   name?: string
   requestId?: string
-  forceNew?: boolean
 }
 
 export interface WorkspaceCloneRequest {
@@ -477,7 +476,7 @@ export type WorkspaceEventPayload =
   | { type: "storage.stateChanged"; owner: SettingsOwner; value: SettingsBucket }
   | { type: "instance.dataChanged"; instanceId: string; data: InstanceData }
   | { type: "instance.event"; instanceId: string; event: InstanceStreamEvent }
-  | { type: "instance.eventStatus"; instanceId: string; status: InstanceStreamStatus; reason?: string }
+  | { type: "instance.eventStatus"; instanceId: string; status: InstanceStreamStatus; generation: number; reason?: string }
   | { type: "yolo.stateChanged"; instanceId: string; sessionId: string; enabled: boolean }
   | { type: "yolo.autoAccepted"; instanceId: string; sessionId: string; permissionId: string }
 

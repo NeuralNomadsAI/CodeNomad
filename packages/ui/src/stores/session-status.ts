@@ -123,7 +123,7 @@ export function shouldShowSessionStatus(
     return false
   }
 
-  if (session.pendingPermission || session.pendingQuestion || session.pendingForm || session.retry) {
+  if (session.pendingPermission || session.pendingForm || session.retry) {
     return true
   }
 

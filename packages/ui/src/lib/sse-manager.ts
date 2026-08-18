@@ -2,9 +2,6 @@ import { createSignal } from "solid-js"
 import type {
   PermissionAsked,
   PermissionReplied,
-  QuestionAsked,
-  QuestionRejected,
-  QuestionReplied,
   SessionCompactionEnded,
   SessionCreated,
   SessionDeleted,
@@ -67,9 +64,6 @@ type SSEEvent =
   | SessionStatus2
   | PermissionAsked
   | PermissionReplied
-  | QuestionAsked
-  | QuestionReplied
-  | QuestionRejected
   | TuiToastShow
   | ServerInstanceDisposedEvent
   | WorktreeReadyEvent
@@ -156,13 +150,6 @@ class SSEManager {
       case "permission.replied":
         this.onPermissionReplied?.(instanceId, event as PermissionReplied)
         break
-      case "question.asked":
-        this.onQuestionAsked?.(instanceId, event as QuestionAsked)
-        break
-      case "question.replied":
-      case "question.rejected":
-        this.onQuestionAnswered?.(instanceId, event as QuestionReplied | QuestionRejected)
-        break
       case "server.instance.disposed":
         this.onInstanceDisposed?.(instanceId, event as ServerInstanceDisposedEvent)
         break
@@ -198,8 +185,6 @@ class SSEManager {
   onSessionStatus?: (instanceId: string, event: SessionStatus2) => void
   onPermissionUpdated?: (instanceId: string, event: PermissionAsked) => void
   onPermissionReplied?: (instanceId: string, event: PermissionReplied) => void
-  onQuestionAsked?: (instanceId: string, event: QuestionAsked) => void
-  onQuestionAnswered?: (instanceId: string, event: QuestionReplied | QuestionRejected) => void
   onNativeSessionEvent?: (instanceId: string, event: NativeSessionEvent) => void
   onInvalidation?: (instanceId: string, event: V2Event) => void
   onInstanceDisposed?: (instanceId: string, event: ServerInstanceDisposedEvent) => void

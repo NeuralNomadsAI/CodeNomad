@@ -404,7 +404,7 @@ const App: Component = () => {
     return recent?.projectName?.trim() || getPathBasename(folderPath)
   }
 
-  async function handleSelectFolder(folderPath: string, options?: { forceNew?: boolean }) {
+  async function handleSelectFolder(folderPath: string) {
     if (!folderPath) {
       return
     }
@@ -415,7 +415,7 @@ const App: Component = () => {
 
     setIsSelectingFolder(true)
     try {
-      const result = await createInstance(folderPath, projectName, { forceNew: options?.forceNew })
+      const result = await createInstance(folderPath, projectName)
       recordWorkspaceLaunch(instances().get(result.instanceId)?.folder ?? folderPath, folderPath)
       if (result.reused) {
         selectInstanceTab(result.instanceId)

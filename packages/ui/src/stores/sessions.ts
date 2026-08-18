@@ -100,8 +100,6 @@ import {
   handleNativeSessionEvent,
   handlePermissionReplied,
   handlePermissionUpdated,
-  handleQuestionAnswered,
-  handleQuestionAsked,
   handleSessionCompacted,
   handleSessionDeleted,
   handleSessionError,
@@ -121,8 +119,6 @@ sseManager.onSessionStatus = handleSessionStatus
 sseManager.onTuiToast = handleTuiToast
 sseManager.onPermissionUpdated = handlePermissionUpdated
 sseManager.onPermissionReplied = handlePermissionReplied
-sseManager.onQuestionAsked = handleQuestionAsked
-sseManager.onQuestionAnswered = handleQuestionAnswered
 sseManager.onWorktreeReady = handleWorktreeReady
 
 export {

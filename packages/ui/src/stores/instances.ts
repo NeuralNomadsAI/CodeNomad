@@ -2,8 +2,6 @@ import { createSignal } from "solid-js"
 import type { Instance, LogEntry } from "../types/instance"
 import type { PermissionReply, PermissionRequest } from "../types/permission"
 import { getPermissionSessionId, mergePermissionRequest } from "../types/permission"
-import type { QuestionRequest } from "../types/question"
-import { getQuestionSessionId } from "../types/question"
 import { buildInstanceBaseUrl, sdkManager } from "../lib/sdk-manager"
 import { sseManager } from "../lib/sse-manager"
 import { serverApi } from "../lib/api-client"
@@ -39,12 +37,11 @@ import {
   sessions,
   setSessionPendingForm,
   setSessionPendingPermission,
-  setSessionPendingQuestion,
 } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
-import { clearNativeContentDeltaState } from "./native-session-streaming"
-import { upsertPermissionV2, removePermissionV2, upsertQuestionV2, removeQuestionV2 } from "./message-v2/bridge"
+import { applyOpenCodeDataEvent, destroyOpenCodeData, projectOpenCodeMessages } from "./opencode-data"
+import { upsertPermissionV2, removePermissionV2 } from "./message-v2/bridge"
 import {
   clearRepliedPermissions,
   hasRepliedPermission,
@@ -130,12 +127,10 @@ const [activeInstanceId, setActiveInstanceId] = createSignal<string | null>(null
 const [instanceLogs, setInstanceLogs] = createSignal<Map<string, LogEntry[]>>(new Map())
 const [logStreamingState, setLogStreamingState] = createSignal<Map<string, boolean>>(new Map())
 
-// Interruption queues (permissions + questions) per instance
+// Interruption queues per instance
 const [permissionQueues, setPermissionQueues] = createSignal<Map<string, PermissionRequest[]>>(new Map())
 const [activePermissionId, setActivePermissionId] = createSignal<Map<string, string | null>>(new Map())
 
-const [questionQueues, setQuestionQueues] = createSignal<Map<string, QuestionRequest[]>>(new Map())
-const [activeQuestionId, setActiveQuestionId] = createSignal<Map<string, string | null>>(new Map())
 class InterruptionRegistry<T extends { id: string }> {
   private readonly enqueuedAt = new Map<string, number>()
   private readonly sessionCounts = new Map<string, Map<string, number>>()
@@ -183,10 +178,9 @@ class InterruptionRegistry<T extends { id: string }> {
 }
 
 const permissionRegistry = new InterruptionRegistry<PermissionRequest>()
-const questionRegistry = new InterruptionRegistry<QuestionRequest>()
 const formRegistry = new InterruptionRegistry<FormInfo>()
 
-type InterruptionKind = "permission" | "question" | "form"
+type InterruptionKind = "permission" | "form"
 
 type ActiveInterruption = { kind: InterruptionKind; id: string } | null
 
@@ -213,7 +207,6 @@ const initialSessionHydrations = new Map<string, Promise<void>>()
 const initialWorkspaceMetadataHydrations = new Map<string, Promise<void>>()
 const pendingRequestSyncEpochs = new Map<string, number>()
 const pendingPermissionMutationEpochs = new Map<string, number>()
-const pendingQuestionMutationEpochs = new Map<string, number>()
 const pendingFormMutationEpochs = new Map<string, number>()
 const pendingRequestSyncGenerations = new Map<string, number>()
 const pendingRequestSyncs = new Map<string, {
@@ -231,7 +224,6 @@ function bumpEpoch(epochs: Map<string, number>, instanceId: string): void {
 function invalidatePendingRequestSync(instanceId: string): void {
   bumpEpoch(pendingRequestSyncEpochs, instanceId)
   bumpEpoch(pendingPermissionMutationEpochs, instanceId)
-  bumpEpoch(pendingQuestionMutationEpochs, instanceId)
   bumpEpoch(pendingFormMutationEpochs, instanceId)
 }
 type RestoreWorkspaceDescriptor = WorkspaceDescriptor & { reused?: boolean }
@@ -356,7 +348,6 @@ function reconcilePendingSessionIndicators(instanceId: string): void {
   reconcileSessionPendingState(
     instanceId,
     new Set(permissionRegistry.sessionIds(instanceId)),
-    new Set(questionRegistry.sessionIds(instanceId)),
     new Set(formRegistry.sessionIds(instanceId)),
   )
 }
@@ -511,6 +502,7 @@ function releaseInstanceResources(instanceId: string) {
   if (instance.client) {
     sdkManager.destroyClientsForInstance(instanceId)
   }
+  destroyOpenCodeData(instanceId)
   sseManager.seedStatus(instanceId, "disconnected")
 }
 
@@ -563,51 +555,6 @@ async function syncPendingPermissions(
   }
 }
 
-async function syncPendingQuestions(
-  instanceId: string,
-  propagateErrors = false,
-  isCurrent: () => boolean = () => true,
-): Promise<void> {
-  const instance = instances().get(instanceId)
-  if (!instance?.client) return
-  const mutationEpoch = pendingQuestionMutationEpochs.get(instanceId) ?? 0
-
-  try {
-    const remote: QuestionRequest[] = []
-    for (const location of buildV2RequestLocations(instance.folder, getWorktrees(instanceId))) {
-      const response = await instance.client.question.request.list({ location })
-      log.info("question.request.list", { instanceId, location, resolvedLocation: response.location })
-      remote.push(...response.data)
-    }
-
-    const remoteIds = new Set(remote.map((request) => request.id))
-    if (!isCurrent() || (pendingQuestionMutationEpochs.get(instanceId) ?? 0) !== mutationEpoch) {
-      if (propagateErrors) throw pendingRequestSyncSuperseded
-      return
-    }
-    const local = getQuestionQueue(instanceId)
-
-    // Remove any stale local requests missing from server.
-    for (const entry of local) {
-      if (!remoteIds.has(entry.id)) {
-        removeQuestionFromQueue(instanceId, entry.id)
-        removeQuestionV2(instanceId, entry.id)
-      }
-    }
-
-    // Upsert all server-side pending questions.
-    for (const request of remote) {
-      questionRegistry.ensureEnqueuedAt(request)
-      addQuestionToQueue(instanceId, request)
-      upsertQuestionV2(instanceId, request)
-    }
-    reconcilePendingSessionIndicators(instanceId)
-  } catch (error) {
-    log.warn("Failed to sync pending questions", { instanceId, error })
-    if (propagateErrors) throw error
-  }
-}
-
 async function syncPendingForms(
   instanceId: string,
   propagateErrors = false,
@@ -649,7 +596,6 @@ async function runPendingRequestSync(
     try {
       await Promise.all([
         syncPendingPermissions(instanceId, true, isCurrent),
-        syncPendingQuestions(instanceId, true, isCurrent),
         syncPendingForms(instanceId, true, isCurrent),
       ])
       return
@@ -781,7 +727,6 @@ function clearReloadableInstanceState(instanceId: string): void {
   clearInstanceMetadata(instanceId)
   messageStoreBus.clearInstanceScrollSnapshots(instanceId)
   clearPermissionQueue(instanceId)
-  clearQuestionQueue(instanceId)
   clearPendingFormQueue(instanceId)
 }
 
@@ -1112,7 +1057,6 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   clearCommands(id)
   clearPermissionQueue(id)
   clearRepliedPermissions(id)
-  clearQuestionQueue(id)
   clearPendingFormQueue(id)
   clearInstanceMetadata(id)
   clearPermissionAutoAcceptForInstance(id)
@@ -1130,7 +1074,6 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
 
   // Clean up session indexes and drafts for removed instance
   clearCacheForInstance(id)
-  clearNativeContentDeltaState(id)
   messageStoreBus.unregisterInstance(id)
   clearInstanceDraftPrompts(id)
   clearSessionListRequestState(id)
@@ -1215,7 +1158,6 @@ async function createInstance(
     onBeforeCreateCommit?: (instanceId: string) => void
     onCreateCommit?: (instanceId: string) => void
     waitForCreateCommit?: () => Promise<void>
-    forceNew?: boolean
   },
 ): Promise<{ instanceId: string; reused: boolean; requestId?: string }> {
   const restoreRequestId = options?.signal ? createRestoreCreationRequestId() : undefined
@@ -1245,7 +1187,6 @@ async function createInstance(
       path: folder,
       name: projectName,
       requestId: restoreRequestId,
-      forceNew: options?.forceNew,
     }, { signal: options?.signal })
     requestResolved = true
     const reused = workspace.reused === true
@@ -1431,28 +1372,6 @@ function hasPendingPermission(instanceId: string, permissionId: string): boolean
   return getPermissionQueue(instanceId).some((permission) => permission.id === permissionId)
 }
 
-function getQuestionQueue(instanceId: string): QuestionRequest[] {
-  const queue = questionQueues().get(instanceId)
-  if (!queue) {
-    return []
-  }
-  return queue
-}
-
-function getQuestionQueueLength(instanceId: string): number {
-  return getQuestionQueue(instanceId).length
-}
-
-function getQuestionEnqueuedAtForInstance(instanceId: string, requestId: string): number {
-  // Ensure we have a stable timestamp for sorting/ordering.
-  const queue = getQuestionQueue(instanceId)
-  const match = queue.find((q) => q.id === requestId)
-  if (match) {
-    return questionRegistry.ensureEnqueuedAt(match)
-  }
-  return questionRegistry.enqueuedAtFor(requestId)
-}
-
 function getPermissionEnqueuedAtForInstance(instanceId: string, permissionId: string): number {
   const queue = getPermissionQueue(instanceId)
   const match = queue.find((permission) => permission.id === permissionId)
@@ -1464,18 +1383,12 @@ function getPermissionEnqueuedAtForInstance(instanceId: string, permissionId: st
 
 function computeActiveInterruption(instanceId: string): ActiveInterruption {
   const permissions = getPermissionQueue(instanceId)
-  const questions = getQuestionQueue(instanceId)
   const forms = getFormQueue(instanceId)
   const candidates: Array<{ kind: InterruptionKind; id: string; enqueuedAt: number }> = []
   if (permissions[0]) candidates.push({
     kind: "permission",
     id: permissions[0].id,
     enqueuedAt: permissionRegistry.ensureEnqueuedAt(permissions[0]),
-  })
-  if (questions[0]) candidates.push({
-    kind: "question",
-    id: questions[0].id,
-    enqueuedAt: questionRegistry.ensureEnqueuedAt(questions[0]),
   })
   if (forms[0]) candidates.push({
     kind: "form",
@@ -1508,15 +1421,6 @@ function setActiveInterruptionForInstance(instanceId: string, nextActive: Active
     return next
   })
 
-  setActiveQuestionId((prev) => {
-    const next = new Map(prev)
-    if (nextActive?.kind === "question") {
-      next.set(instanceId, nextActive.id)
-    } else {
-      next.set(instanceId, null)
-    }
-    return next
-  })
 }
 
 function recomputeActiveInterruption(instanceId: string): void {
@@ -1686,140 +1590,8 @@ function clearPermissionQueue(instanceId: string): void {
   recomputeActiveInterruption(instanceId)
 }
 
-function addQuestionToQueue(instanceId: string, request: QuestionRequest): void {
-  bumpEpoch(pendingQuestionMutationEpochs, instanceId)
-  let inserted = false
-  setQuestionQueues((prev) => {
-    const next = new Map(prev)
-    const queue = next.get(instanceId) ?? ([] as QuestionRequest[])
-
-    if (queue.some((q) => q.id === request.id)) {
-      return next
-    }
-
-    questionRegistry.ensureEnqueuedAt(request)
-    const updatedQueue = [...queue, request].sort((a, b) => {
-      return questionRegistry.ensureEnqueuedAt(a) - questionRegistry.ensureEnqueuedAt(b)
-    })
-    next.set(instanceId, updatedQueue)
-    inserted = true
-    return next
-  })
-
-  if (!inserted) {
-    return
-  }
-
-  recomputeActiveInterruption(instanceId)
-
-  const sessionId = getQuestionSessionId(request)
-  if (sessionId) {
-    questionRegistry.increment(instanceId, sessionId)
-    setSessionPendingQuestion(instanceId, sessionId, true)
-
-  }
-}
-
-function removeQuestionFromQueue(instanceId: string, requestId: string): void {
-  bumpEpoch(pendingQuestionMutationEpochs, instanceId)
-  const removedSessionId = getQuestionSessionId(getQuestionQueue(instanceId).find((q) => q.id === requestId))
-
-  setQuestionQueues((prev) => {
-    const next = new Map(prev)
-    const queue = next.get(instanceId) ?? ([] as QuestionRequest[])
-    const filtered = queue.filter((item) => item.id !== requestId)
-
-    if (filtered.length > 0) {
-      next.set(instanceId, filtered)
-    } else {
-      next.delete(instanceId)
-    }
-    return next
-  })
-
-  questionRegistry.remove(instanceId, requestId)
-  recomputeActiveInterruption(instanceId)
-
-  if (removedSessionId) {
-    const remaining = questionRegistry.decrement(instanceId, removedSessionId)
-    setSessionPendingQuestion(instanceId, removedSessionId, remaining > 0)
-  }
-}
-
-function clearQuestionQueue(instanceId: string): void {
-  bumpEpoch(pendingQuestionMutationEpochs, instanceId)
-  questionRegistry.clear(instanceId, getQuestionQueue(instanceId), (sessionId) => {
-    setSessionPendingQuestion(instanceId, sessionId, false)
-  })
-  setQuestionQueues((prev) => {
-    const next = new Map(prev)
-    next.delete(instanceId)
-    return next
-  })
-  setActiveQuestionId((prev) => {
-    const next = new Map(prev)
-    next.delete(instanceId)
-    return next
-  })
-  recomputeActiveInterruption(instanceId)
-}
-
 function setActivePermissionIdForInstance(instanceId: string, permissionId: string): void {
   setActiveInterruptionForInstance(instanceId, { kind: "permission", id: permissionId })
-}
-
-function setActiveQuestionIdForInstance(instanceId: string, requestId: string): void {
-  setActiveInterruptionForInstance(instanceId, { kind: "question", id: requestId })
-}
-
-async function sendQuestionReply(
-  instanceId: string,
-  _sessionId: string,
-  requestId: string,
-  answers: string[][],
-): Promise<void> {
-  const instance = instances().get(instanceId)
-  if (!instance?.client) {
-    throw new Error("Instance not ready")
-  }
-
-  try {
-    const request = getQuestionQueue(instanceId).find((entry) => entry.id === requestId)
-    if (!request) throw new Error(`Question request not found: ${requestId}`)
-    await getRootClient(instanceId).question.reply({
-      sessionID: request.sessionID,
-      requestID: requestId,
-      answers,
-    })
-
-    removeQuestionFromQueue(instanceId, requestId)
-    removeQuestionV2(instanceId, requestId)
-  } catch (error) {
-    log.error("Failed to send question reply", error)
-    throw error
-  }
-}
-
-async function sendQuestionReject(instanceId: string, _sessionId: string, requestId: string): Promise<void> {
-  const instance = instances().get(instanceId)
-  if (!instance?.client) {
-    throw new Error("Instance not ready")
-  }
-
-  try {
-    const request = getQuestionQueue(instanceId).find((entry) => entry.id === requestId)
-    if (!request) throw new Error(`Question request not found: ${requestId}`)
-    await getRootClient(instanceId).question.reject({
-      sessionID: request.sessionID,
-      requestID: requestId,
-    })
-
-    removeQuestionFromQueue(instanceId, requestId)
-    removeQuestionV2(instanceId, requestId)
-  } catch (error) {
-    log.error("Failed to send question reject", error)
-    throw error
-  }
 }
 
 async function sendPermissionResponse(
@@ -1925,6 +1697,35 @@ async function sendFormCancel(instanceId: string, formId: string): Promise<void>
 function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNullable<typeof sseManager.onInvalidation>>[1]): void {
   const instance = instances().get(instanceId)
   if (!instance?.client) return
+  const data = applyOpenCodeDataEvent(instanceId, instance.folder, event)
+  const sessionId = "sessionID" in event.data && typeof event.data.sessionID === "string"
+    ? event.data.sessionID
+    : event.type === "form.created"
+      ? event.data.form.sessionID
+      : undefined
+  if (sessionId && event.type.startsWith("session.")) projectOpenCodeMessages(instanceId, sessionId, data)
+  if (sessionId && (event.type === "permission.asked" || event.type === "permission.replied")) {
+    const remote = (data.session.permission.list(sessionId) ?? []).filter((permission) => !hasRepliedPermission(instanceId, permission.id))
+    const ids = new Set(remote.map((permission) => permission.id))
+    for (const permission of getPermissionQueue(instanceId)) {
+      if (permission.sessionID === sessionId && !ids.has(permission.id)) {
+        removePermissionFromQueue(instanceId, permission.id)
+        removePermissionV2(instanceId, permission.id)
+      }
+    }
+    for (const permission of remote) {
+      const queued = addPermissionToQueue(instanceId, permission) ?? permission
+      upsertPermissionV2(instanceId, queued)
+    }
+  }
+  if (sessionId && event.type.startsWith("form.")) {
+    const remote = data.session.form.list(sessionId) ?? []
+    const ids = new Set(remote.map((form) => form.id))
+    for (const form of getFormQueue(instanceId)) {
+      if (form.sessionID === sessionId && !ids.has(form.id)) removePendingForm(instanceId, form.id)
+    }
+    for (const form of remote) addPendingForm(instanceId, form)
+  }
   const targets = getInstanceRefreshTargets(event.type)
   if (targets.length) void refreshVolatileInstanceState(instanceId, targets)
 }
@@ -2010,7 +1811,7 @@ export {
   getInstanceLogs,
   isInstanceLogStreaming,
   setInstanceLogStreaming,
-  // Permission + question management
+  // Permission and form management
   permissionQueues,
   activePermissionId,
   getPermissionQueue,
@@ -2024,23 +1825,12 @@ export {
   clearPermissionQueue,
   sendPermissionResponse,
   setActivePermissionIdForInstance,
-  questionQueues,
-  activeQuestionId,
   activeInterruption,
-  getQuestionQueue,
-  getQuestionQueueLength,
-  getQuestionEnqueuedAtForInstance,
-  addQuestionToQueue,
-  removeQuestionFromQueue,
-  clearQuestionQueue,
-  sendQuestionReply,
-  sendQuestionReject,
   sendFormReply,
   sendFormCancel,
   addPendingForm,
   removePendingForm,
   setPendingFormAddedHandler,
-  setActiveQuestionIdForInstance,
   disconnectedInstance,
   acknowledgeDisconnectedInstance,
   disposeInstance,

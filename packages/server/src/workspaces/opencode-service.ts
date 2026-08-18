@@ -100,6 +100,7 @@ interface OwnedService {
 export interface OpenCodeSharedServiceDependencies {
   discover: typeof Service.discover
   ensure?: typeof Service.ensure
+  stop?: typeof Service.stop
   headers: typeof Service.headers
   makeClient: typeof OpenCode.make
   requestStop?: (info: Info, endpoint: Endpoint, timeoutMs: number) => Promise<boolean>
@@ -125,6 +126,7 @@ export class OpenCodeSharedService {
 
   constructor(private readonly dependencies: OpenCodeSharedServiceDependencies = {
     discover: Service.discover,
+    stop: Service.stop,
     headers: Service.headers,
     makeClient: OpenCode.make,
   }) {}
@@ -304,7 +306,9 @@ export class OpenCodeSharedService {
       const proof = this.serviceProof(owned)
       await this.writeLease(lease.file, { ...ownMetadata, service: proof, state: "stopping", updatedAt: Date.now() })
       const stopped = await this.withDeadline(
-        (this.dependencies.requestStop ?? this.requestStop)(owned.info, owned.endpoint, remaining),
+        this.dependencies.requestStop
+          ? this.dependencies.requestStop(owned.info, owned.endpoint, remaining)
+          : this.requestStop(owned),
         remaining,
         "OpenCode service stop",
       )
@@ -1187,17 +1191,9 @@ export class OpenCodeSharedService {
     }
   }
 
-  private requestStop = async (info: Info, endpoint: Endpoint, timeoutMs: number): Promise<boolean> => {
-    if (!info.id) return false
-    const response = await fetch(new URL("/api/service/stop", info.url), {
-      method: "POST",
-      headers: { ...this.dependencies.headers(endpoint), "content-type": "application/json" },
-      body: JSON.stringify({ instanceID: info.id }),
-      signal: AbortSignal.timeout(timeoutMs),
-    })
-    if (!response.ok) return false
-    const body = await response.json() as { accepted?: unknown }
-    return body?.accepted === true
+  private requestStop = async (owned: OwnedService): Promise<boolean> => {
+    await (this.dependencies.stop ?? Service.stop)(owned.stopOptions)
+    return true
   }
 
   private waitForStop = async (

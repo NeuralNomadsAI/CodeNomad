@@ -15,7 +15,7 @@ There is no `@opencode-ai/sdk` integration and no `packages/opencode-plugin` pac
 
 ## Shared Service And Locations
 
-`packages/server/src/workspaces/opencode-service.ts` uses native discovery and headers, but production startup/shutdown does not call `Service.ensure` or `Service.stop` directly. Its custom launcher serializes lifecycle changes with cross-process leases, records the registration and authenticated endpoint, proves daemon and CodeNomad PIDs with process-start identity in the host or WSL namespace, and binds that proof to a launch command/environment hash. Live peer leases can inherit that proof; only the final verified CodeNomad process may request authenticated shutdown and wait for the exact daemon to exit.
+`packages/server/src/workspaces/opencode-service.ts` uses native discovery and headers while retaining a custom launcher that serializes lifecycle changes with cross-process leases, records the registration and authenticated endpoint, proves daemon and CodeNomad PIDs with process-start identity in the host or WSL namespace, and binds that proof to a launch command/environment hash. Live peer leases can inherit that proof; only the final verified CodeNomad process may call `Service.stop`. WSL daemons use the same authenticated graceful-stop request instead because the published fallback signals PIDs in the caller's namespace.
 
 The V2 service always uses `~/.local/share/opencode2/opencode.db`. V1 and V2 must use separate databases because their schemas are incompatible.
 

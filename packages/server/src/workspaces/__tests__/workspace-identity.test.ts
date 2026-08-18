@@ -6,7 +6,7 @@ import { afterEach, describe, it } from "node:test"
 import pino from "pino"
 
 import { EventBus } from "../../events/bus"
-import { WorkspaceManager } from "../manager"
+import { EXPECTED_OPENCODE_VERSION, WorkspaceManager } from "../manager"
 import { normalizeWorkspaceIdentityPath, resolveWorkspaceIdentity } from "../workspace-identity"
 
 const temporaryDirectories: string[] = []
@@ -51,6 +51,7 @@ function createManager(rootDir: string) {
     eventBus: new EventBus(logger),
     logger,
     sharedService,
+    probeBinaryVersion: () => ({ valid: true, version: EXPECTED_OPENCODE_VERSION }),
   } as unknown as ConstructorParameters<typeof WorkspaceManager>[0])
   return manager
 }
@@ -174,18 +175,5 @@ describe("workspace identity", () => {
       project: { id: directory, directory, canonical: directory },
     })
     assert.equal((await manager.create(target)).created, true)
-  })
-
-  it("allows forced canonical duplicates without replacing the reusable workspace", async () => {
-    const { root, target, link } = await createLinkedWorkspace()
-    const manager = createManager(root)
-    const normal = await manager.create(target)
-    const forced = await manager.create(link, undefined, { forceNew: true })
-    assert.notEqual(normal.workspace.id, forced.workspace.id)
-
-    await manager.delete(forced.workspace.id)
-    const reused = await manager.create(link)
-    assert.equal(reused.created, false)
-    assert.equal(reused.workspace.id, normal.workspace.id)
   })
 })

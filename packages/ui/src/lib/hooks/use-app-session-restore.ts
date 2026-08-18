@@ -113,19 +113,14 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
     try {
       const instanceId = await runAbortable(async (operationSignal) => {
         const existingId = match.existingWorkspaceId
-        const create = (forceNew: boolean) => createInstance(tab.folder, tab.projectName, {
-          activate: false, signal: operationSignal, forceNew,
+        const create = () => createInstance(tab.folder, tab.projectName, {
+          activate: false, signal: operationSignal,
           waitForCreateCommit: waitForCreateCommit ? () => waitForCreateCommit : undefined,
           shouldCreateCommit: canCommitCreation,
           onBeforeCreateCommit: (id) => seedRestoredWorkspaceScrollSnapshots(id, tab),
           onCreateCommit: (id) => capture.recordRestoredTab(match.tabIndex, getInstanceAppTabId(id)),
         })
-        let creation = existingId || isWebHost() ? null : await create(match.descriptor.occurrence > 0)
-        if (creation && claimedIds.has(creation.instanceId)) {
-          if (operationSignal.aborted) throw getAbortReason(operationSignal)
-          if (creation.requestId) await cancelRestoreCreationRequest(creation.instanceId, creation.requestId)
-          creation = await create(true)
-        }
+        const creation = existingId || isWebHost() ? null : await create()
         if (creation && finishCreateCommit) await waitForWorkspaceMountAdoption()
         finishCreateCommit?.()
         const id = existingId ?? creation?.instanceId ?? null

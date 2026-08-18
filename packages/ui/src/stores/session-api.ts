@@ -50,14 +50,14 @@ import {
   setSessionSearchResults,
   setSessionListError,
   setSessionExpanded,
+  getSessionNextCursor,
 } from "./session-state"
 import { deleteSessionAttachments } from "./attachments"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getActiveCatalogLocation, getDefaultModel, isModelValid } from "./session-models"
 import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
-import { seedSessionMessagesV2, reconcilePendingPermissionsV2, reconcilePendingQuestionsV2 } from "./message-v2/bridge"
+import { seedSessionMessagesV2, reconcilePendingPermissionsV2 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
-import { clearNativeContentDeltaState, reconcileNativeContentAfterSnapshot } from "./native-session-streaming"
 import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
@@ -69,8 +69,8 @@ import {
 import {
   PROJECT_SESSION_LIST_LIMIT,
   buildProjectSessionListOptions,
-  getUniqueSessionDirectories,
 } from "./session-list-options"
+import { getInstanceMetadata } from "./instance-metadata"
 import { mergeFetchedSessionRuntimeState, resolveAuthoritativeGenerationRecovery } from "./session-generation-recovery"
 import { fetchCommands } from "./commands"
 import { toRequestLocation } from "./request-locations"
@@ -81,6 +81,7 @@ const catalogLocations = new Map<string, string>()
 const catalogRefreshes = new Map<string, { key: string; promise: Promise<void> }>()
 const agentRequestIds = new Map<string, number>()
 const providerRequestIds = new Map<string, number>()
+const sessionPageRequests = new Map<string, Promise<void>>()
 let nextSessionListRequestId = 0
 
 function catalogLocationKey(location: LocationRef): string {
@@ -142,11 +143,16 @@ type V2SessionListOptions = {
   directory?: string
   search?: string
   cursor?: string
+  project?: string
+  subpath?: string
+  parentID?: string | null
+  order?: "asc" | "desc"
 }
 
 type ProjectSessionListResponse = {
   data: SDKSession[]
   complete: boolean
+  nextCursor?: string
 }
 
 function getKnownParentId(session: SDKSession | Session): string | null | undefined {
@@ -172,41 +178,35 @@ function hasMissingParentChain(session: SDKSession, loaded: Map<string, SDKSessi
 
 async function fetchV2Sessions(instanceId: string, options: V2SessionListOptions): Promise<ProjectSessionListResponse> {
   const client = getRootClient(instanceId)
-  const directories = getUniqueSessionDirectories([
-    options.directory,
-    ...getWorktrees(instanceId).map((worktree) => worktree.directory),
-  ])
-  const sessionsById = new Map<string, SDKSession>()
-  let complete = true
-  let loadedPage = false
-  let firstError: unknown
+  const project = options.project ?? getInstanceMetadata(instanceId)?.project?.id
+  const listOptions = { ...options, project, order: options.order ?? "desc" as const }
+  const response = await client.session.list(buildProjectSessionListOptions(listOptions))
+  const sessionsById = new Map(response.data.map((session) => [session.id, session]))
 
-  await Promise.all((directories.length ? directories : [undefined]).map(async (directory) => {
-    let cursor: string | undefined
-    const seenCursors = new Set<string>()
-    try {
+  if (options.parentID === null && !options.search) {
+    await Promise.all(response.data.map(async (root) => {
+      let cursor: string | undefined
+      const seenCursors = new Set<string>()
       do {
-        const response = await client.session.list(buildProjectSessionListOptions({ ...options, directory, cursor }))
-        loadedPage = true
-        for (const session of response.data) {
-          if (!sessionsById.has(session.id)) sessionsById.set(session.id, session)
-        }
-        cursor = response.cursor?.next ?? undefined
-        if (cursor && seenCursors.has(cursor)) throw new Error(`Repeated session cursor: ${cursor}`)
+        const children = await client.session.list(buildProjectSessionListOptions({
+          project: project ?? root.projectID,
+          subpath: root.subpath,
+          parentID: root.id,
+          order: "asc",
+          cursor,
+        }))
+        for (const child of children.data) sessionsById.set(child.id, child)
+        cursor = children.cursor?.next ?? undefined
+        if (cursor && seenCursors.has(cursor)) throw new Error(`Repeated child session cursor: ${cursor}`)
         if (cursor) seenCursors.add(cursor)
       } while (cursor)
-    } catch (error) {
-      complete = false
-      firstError ??= error
-      log.warn("Failed to complete session list", { instanceId, directory, error })
-    }
-  }))
-
-  if (!loadedPage && firstError) throw firstError
+    }))
+  }
 
   return {
     data: Array.from(sessionsById.values()),
-    complete,
+    complete: !response.cursor?.next,
+    nextCursor: response.cursor?.next ?? undefined,
   }
 }
 
@@ -306,7 +306,7 @@ async function fetchSessions(instanceId: string, options?: {
   setSessionListError(instanceId, null)
 
   try {
-    const sessionListOptions = instance.folder ? { directory: instance.folder } : {}
+    const sessionListOptions = { ...(instance.folder ? { directory: instance.folder } : {}), parentID: null as null, order: "desc" as const }
     const existingSessions = new Map(sessions().get(instanceId) ?? new Map<string, Session>())
 
     log.info("session.list", { instanceId, limit: PROJECT_SESSION_LIST_LIMIT, directory: sessionListOptions.directory })
@@ -394,7 +394,7 @@ async function fetchSessions(instanceId: string, options?: {
       })
     }
 
-    if (response.complete) setSessionPage(instanceId, rootIds, false, options?.reset ?? true)
+    setSessionPage(instanceId, rootIds, Boolean(response.nextCursor), options?.reset ?? true, response.nextCursor)
 
     reconcilePendingSessionIndicators(instanceId)
 
@@ -430,7 +430,37 @@ async function fetchSessions(instanceId: string, options?: {
 }
 
 async function loadMoreSessions(instanceId: string): Promise<void> {
-  return
+  const pending = sessionPageRequests.get(instanceId)
+  if (pending) return pending
+  const request = loadNextSessionPage(instanceId).finally(() => sessionPageRequests.delete(instanceId))
+  sessionPageRequests.set(instanceId, request)
+  return request
+}
+
+async function loadNextSessionPage(instanceId: string): Promise<void> {
+  const cursor = getSessionNextCursor(instanceId)
+  if (!cursor) return
+  const instance = instances().get(instanceId)
+  if (!instance?.client) throw new Error("Instance not ready")
+  const response = await fetchV2Sessions(instanceId, {
+    directory: instance.folder,
+    parentID: null,
+    order: "desc",
+    cursor,
+  })
+  if (getSessionNextCursor(instanceId) !== cursor) return
+  const deleted = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
+  setSessions((previous) => {
+    const next = new Map(previous)
+    const current = new Map(next.get(instanceId) ?? [])
+    for (const item of response.data) {
+      if (!deleted.has(item.id)) current.set(item.id, toClientSessionV2(instanceId, item, current.get(item.id)))
+    }
+    next.set(instanceId, current)
+    return next
+  })
+  const roots = response.data.filter((item) => !item.parentID).map((item) => item.id)
+  setSessionPage(instanceId, roots, Boolean(response.nextCursor), false, response.nextCursor)
 }
 
 async function searchSessions(instanceId: string, query: string): Promise<void> {
@@ -530,7 +560,6 @@ function toClientSessionV2(instanceId: string, apiSession: SDKSession, existingS
     },
     revert: apiSession.revert ?? existingSession?.revert,
     pendingPermission: existingSession?.pendingPermission,
-    pendingQuestion: existingSession?.pendingQuestion,
   }
 }
 
@@ -735,7 +764,6 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
 }
 
 function removeSessionRuntimeState(instanceId: string, sessionId: string, authoritative = true): void {
-  clearNativeContentDeltaState(instanceId, sessionId)
   cancelSessionGenerationAdmissions(instanceId, sessionId)
   if (authoritative) markSessionDeletedAuthoritative(instanceId, sessionId)
   deleteSessionAttachments(instanceId, sessionId)
@@ -1079,7 +1107,6 @@ async function loadMessages(
           return next
         })
         reconcilePendingPermissionsV2(instanceId, sessionId)
-        reconcilePendingQuestionsV2(instanceId, sessionId)
       }
     }
   
@@ -1099,9 +1126,6 @@ async function loadMessages(
         if (loadingSet) loadingSet.delete(sessionId)
         return next
       })
-    }
-    if (instances().has(instanceId) && sessions().get(instanceId)?.has(sessionId)) {
-      reconcileNativeContentAfterSnapshot(instanceId, sessionId)
     }
   }
 
