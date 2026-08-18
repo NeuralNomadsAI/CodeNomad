@@ -3,7 +3,7 @@ import type { FormAnswer, FormField, FormFields, FormValue } from "@opencode-ai/
 import { ChevronDown, ExternalLink } from "lucide-solid"
 import { createMemo, For, Show, type Component } from "solid-js"
 import { useI18n } from "../../lib/i18n"
-import { isProviderAuthHttpUrl, shouldShowProviderAuthField } from "../../lib/provider-auth"
+import { isFormFieldVisible, isHttpFormUrl } from "../../lib/form-schema"
 
 type Option = { label: string; value: string; description?: string }
 
@@ -14,7 +14,7 @@ export const ProviderAuthForm: Component<{
   onAnswer: (key: string, value: FormValue | undefined) => void
 }> = (props) => {
   const { t } = useI18n()
-  const visibleFields = createMemo(() => (props.fields ?? []).filter((field) => shouldShowProviderAuthField(field, props.answer)))
+  const visibleFields = createMemo(() => (props.fields ?? []).filter((field) => isFormFieldVisible(field, props.answer)))
 
   const title = (field: FormField) => field.title || field.key
   const selected = (field: FormField) => props.answer[field.key]
@@ -46,7 +46,7 @@ export const ProviderAuthForm: Component<{
         <Show
           when={field.type !== "external"}
           fallback={(
-            <Show when={field.type === "external" && isProviderAuthHttpUrl(field.url)}>
+            <Show when={field.type === "external" && isHttpFormUrl(field.url)}>
               <div class="providers-field">
                 <a href={field.type === "external" ? field.url : undefined} target="_blank" rel="noopener noreferrer" class="selector-button selector-button-secondary providers-oauth-link">
                   <ExternalLink class="w-4 h-4" />

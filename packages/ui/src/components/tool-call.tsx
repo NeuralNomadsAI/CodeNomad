@@ -5,7 +5,8 @@ import { messageStoreBus } from "../stores/message-v2/bus"
 import { useTheme } from "../lib/theme"
 import { useGlobalCache } from "../lib/hooks/use-global-cache"
 import { useConfig } from "../stores/preferences"
-import { activeInterruption, sendPermissionResponse, sendQuestionReject, sendQuestionReply } from "../stores/instances"
+import { activeInterruption, sendFormCancel, sendFormReply, sendPermissionResponse, sendQuestionReject, sendQuestionReply } from "../stores/instances"
+import { getFormQueue, type FormInfo } from "../stores/forms"
 import { copyToClipboard } from "../lib/clipboard"
 import type { PermissionRequest } from "../types/permission"
 import { getPermissionSessionId } from "../types/permission"
@@ -15,6 +16,8 @@ import { resolveToolRenderer } from "./tool-call/renderers"
 import { resolveToolExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
 import { QuestionToolBlock } from "./tool-call/question-block"
 import { PermissionToolBlock } from "./tool-call/permission-block"
+import FormRequest from "./form-request"
+import { resolveFormToolTarget } from "./form-request-tool-target"
 import { createAnsiContentRenderer } from "./tool-call/ansi-render"
 import { createDiffContentRenderer } from "./tool-call/diff-render"
 import { createMarkdownContentRenderer } from "./tool-call/markdown-render"
@@ -122,6 +125,7 @@ function ToolCallDetails(props: {
   store: () => ReturnType<typeof messageStoreBus.getOrCreate>
   pendingPermission: () => { permission: PermissionRequest; active: boolean } | undefined
   pendingQuestion: () => { request: QuestionRequest; active: boolean } | undefined
+  pendingForm: () => FormInfo | undefined
   isPermissionActive: () => boolean
   isQuestionActive: () => boolean
   hasToolInput: () => boolean
@@ -510,6 +514,18 @@ function ToolCallDetails(props: {
     />
   )
 
+  const renderFormBlock = () => (
+    <Show keyed when={props.pendingForm()}>
+      {(form) => (
+        <FormRequest
+          form={form}
+          onReply={(answer) => sendFormReply(props.instanceId, form.id, answer)}
+          onCancel={() => sendFormCancel(props.instanceId, form.id)}
+        />
+      )}
+    </Show>
+  )
+
   const shouldShowPendingMessage = () => {
     const tool = props.toolName()
     return status() === "pending" && !props.pendingPermission() && tool !== "todowrite"
@@ -700,6 +716,7 @@ function ToolCallDetails(props: {
 
       {renderPermissionBlock()}
       {renderQuestionBlock()}
+      {renderFormBlock()}
     </div>
   )
 }
@@ -743,6 +760,12 @@ export default function ToolCall(props: ToolCallProps) {
     }
     return undefined
   })
+
+  const pendingForm = createMemo(() => getFormQueue(props.instanceId).find((form) => {
+    if (form.sessionID !== props.sessionId || !props.messageId) return false
+    const target = resolveFormToolTarget(form, store())
+    return target?.messageId === props.messageId && target.partId === toolCallIdentifier()
+  }))
 
   const diagnosticsVisibility = createMemo(() => preferences().diagnosticsExpansion || "expanded")
   const diagnosticsDefaultExpanded = createMemo(() => diagnosticsVisibility() === "expanded")
@@ -795,10 +818,12 @@ export default function ToolCall(props: ToolCallProps) {
     return active?.kind === "question" && active.id === pending.request.id
   })
 
-  const isToolVisible = createMemo(() => toolVisibility() !== "hidden" || isPermissionActive() || isQuestionActive())
+  const hasPendingForm = createMemo(() => Boolean(pendingForm()))
+
+  const isToolVisible = createMemo(() => toolVisibility() !== "hidden" || isPermissionActive() || isQuestionActive() || hasPendingForm())
 
   const expanded = () => {
-    if (isPermissionActive() || isQuestionActive()) return true
+    if (isPermissionActive() || isQuestionActive() || hasPendingForm()) return true
     const override = userExpanded()
     if (override !== null) return override
     return defaultExpandedForTool()
@@ -819,7 +844,7 @@ export default function ToolCall(props: ToolCallProps) {
   const [diagnosticsOverride, setDiagnosticsOverride] = createSignal<boolean | undefined>(undefined)
 
   const diagnosticsExpanded = () => {
-    if (isPermissionActive() || isQuestionActive()) return true
+    if (isPermissionActive() || isQuestionActive() || hasPendingForm()) return true
     const override = diagnosticsOverride()
     if (override !== undefined) return override
     return diagnosticsDefaultExpanded()
@@ -853,7 +878,7 @@ export default function ToolCall(props: ToolCallProps) {
 
   const combinedStatusClass = () => {
     const base = statusClass()
-    return pendingPermission() || pendingQuestion() ? `${base} tool-call-awaiting-permission` : base
+    return pendingPermission() || pendingQuestion() || pendingForm() ? `${base} tool-call-awaiting-permission` : base
   }
 
   function toggle() {
@@ -1156,6 +1181,7 @@ export default function ToolCall(props: ToolCallProps) {
           store={store}
           pendingPermission={pendingPermission}
           pendingQuestion={pendingQuestion}
+          pendingForm={pendingForm}
           isPermissionActive={isPermissionActive}
           isQuestionActive={isQuestionActive}
           hasToolInput={hasToolInput}

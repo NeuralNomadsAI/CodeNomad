@@ -103,7 +103,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const scrollToMessage = () => {
       const api = listApi()
       if (api) {
-        api.scrollToKey(segment.messageId, { behavior: "smooth", block: "start" })
+        api.scrollToKey(segment.messageId, { block: "start" })
         return
       }
       if (typeof document === "undefined") return
@@ -648,7 +648,7 @@ export default function MessageSection(props: MessageSectionProps) {
     if (!match || !isSearchOpen()) return
     if (match.id === lastScrolledSearchMatchId) return
     lastScrolledSearchMatchId = match.id
-    listApi()?.scrollToKey(match.messageId, { behavior: "smooth", block: "start" })
+    listApi()?.scrollToKey(match.messageId, { block: "start" })
   })
 
 

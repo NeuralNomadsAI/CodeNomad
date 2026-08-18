@@ -13,12 +13,27 @@ import {
 const MESSAGE_SCROLL_SCOPE = "message-stream"
 export const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
 
+export function seedRestoredWorkspaceScrollSnapshots(
+  instanceId: string,
+  snapshot: RestorableWorkspaceTabState,
+): void {
+  const scrollSeeds: MessageScrollSnapshotSeed[] = Object.entries(snapshot.scrollSnapshots)
+    .map(([sessionId, scrollSnapshot]) => ({ sessionId, scope: MESSAGE_SCROLL_SCOPE, snapshot: scrollSnapshot }))
+  messageStoreBus.seedScrollSnapshots(instanceId, scrollSeeds)
+}
+
 export async function hydrateRestoredWorkspaceState(
   instanceId: string,
   snapshot: RestorableWorkspaceTabState,
   signal: AbortSignal,
   isCurrentBinding: () => boolean,
 ): Promise<Set<string> | null> {
+  if (signal.aborted) throw getAbortReason(signal)
+  if (!isCurrentBinding()) return null
+  // Session selection mounts MessageSection synchronously. Seed scroll state
+  // first so its initial restore cannot mistake an unavailable snapshot for a
+  // deliberate at-bottom state.
+  seedRestoredWorkspaceScrollSnapshots(instanceId, snapshot)
   await hydrateRestoredSessionChain(instanceId, [snapshot.activeParentSessionId, snapshot.activeSessionId], signal)
   if (signal.aborted) throw getAbortReason(signal)
   if (!isCurrentBinding()) return null
@@ -55,9 +70,6 @@ export async function hydrateRestoredWorkspaceState(
     ? getSessionAncestorIdsFromMap(new Map(sessions.map((session) => [session.id, session])), selection.activeSessionId)
     : [])
   hydrateSessionExpansion(instanceId, expandedSessionIds)
-  const scrollSeeds: MessageScrollSnapshotSeed[] = Object.entries(snapshot.scrollSnapshots)
-    .map(([sessionId, scrollSnapshot]) => ({ sessionId, scope: MESSAGE_SCROLL_SCOPE, snapshot: scrollSnapshot }))
-  messageStoreBus.seedScrollSnapshots(instanceId, scrollSeeds)
   if (!hasAuthoritativeSessionSelection(instanceId)) hydrateActiveSessionSelection(instanceId, selection?.parentSessionId ?? null, selection?.activeSessionId ?? null)
   return unavailable
 }

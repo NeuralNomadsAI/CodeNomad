@@ -1,15 +1,3 @@
-import type { OpenCodeClient } from "@opencode-ai/client"
-
-export class OpencodeApiError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
-    super(message)
-    this.name = "OpencodeApiError"
-    if (options && "cause" in options) {
-      ;(this as any).cause = options.cause
-    }
-  }
-}
-
 export function getOpencodeErrorMessage(error: unknown, fallback: string): string {
   const seen = new Set<unknown>()
 
@@ -32,29 +20,3 @@ export function getOpencodeErrorMessage(error: unknown, fallback: string): strin
 
   return extract(error) ?? fallback
 }
-
-type RequestResultLike<T> =
-  | {
-      data: T
-      error?: undefined
-    }
-  | {
-      data?: undefined
-      error: unknown
-    }
-
-export async function requestData<T>(
-  promise: Promise<RequestResultLike<T> | undefined>,
-  label: string,
-): Promise<T> {
-  const result = await promise
-  if (!result) {
-    throw new OpencodeApiError(`${label} returned no result`)
-  }
-  if ((result as any).error) {
-    throw new OpencodeApiError(`${label} failed`, { cause: (result as any).error })
-  }
-  return (result as any).data as T
-}
-
-export type { OpenCodeClient }

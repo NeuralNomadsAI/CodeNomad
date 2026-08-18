@@ -1,4 +1,5 @@
 import type { FormAnswer, FormField, FormFields, FormValue, IntegrationKeyMethod } from "@opencode-ai/client"
+import { isFormFieldVisible } from "./form-schema"
 
 export type ProviderAuthAuthorization = {
   url: string
@@ -7,15 +8,6 @@ export type ProviderAuthAuthorization = {
 }
 
 export const genericApiMethod: IntegrationKeyMethod = { type: "key", label: "" }
-
-export function isProviderAuthHttpUrl(value: string): boolean {
-  try {
-    const protocol = new URL(value).protocol
-    return protocol === "http:" || protocol === "https:"
-  } catch {
-    return false
-  }
-}
 
 function matchesStringFormat(value: string, format: Extract<FormField, { type: "string" }>["format"]): boolean {
   if (!format) return true
@@ -51,21 +43,11 @@ export function getProviderAuthInitialAnswer(fields?: FormFields): FormAnswer {
   return answer
 }
 
-export function shouldShowProviderAuthField(field: FormField, answer: FormAnswer): boolean {
-  if (field.type === "external") return true
-  return (field.when ?? []).every((condition) => {
-    const actual = answer[condition.key]
-    if (actual === undefined) return false
-    const matches = Array.isArray(actual) ? actual.includes(String(condition.value)) : actual === condition.value
-    return condition.op === "eq" ? matches : !matches
-  })
-}
-
 export function getProviderAuthAnswer(fields: FormFields | undefined, values: FormAnswer): FormAnswer | undefined {
   if (!fields) return undefined
   return Object.fromEntries(
     fields
-      .filter((field) => field.type !== "external" && shouldShowProviderAuthField(field, values))
+      .filter((field) => field.type !== "external" && isFormFieldVisible(field, values))
       .flatMap((field) => values[field.key] === undefined ? [] : [[field.key, values[field.key] as FormValue]]),
   )
 }

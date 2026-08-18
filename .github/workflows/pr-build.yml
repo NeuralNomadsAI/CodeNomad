@@ -128,6 +128,7 @@ jobs:
           packages/ui/src/stores/app-session-restored-session-ids.test.ts
           packages/ui/src/stores/app-session-restore-timeout.test.ts
           packages/ui/src/stores/app-session-snapshot-merge.test.ts
+          packages/ui/src/stores/app-session-workspace-hydration.test.ts
           packages/ui/src/stores/restore-workspace-commit-gates.test.ts
           packages/ui/src/stores/client-state-codec.test.ts
           packages/ui/src/stores/client-state.test.ts
@@ -147,6 +148,8 @@ jobs:
       - name: Test restore ownership integration
         run: >-
           node --conditions=browser --import tsx --test --test-force-exit
+          packages/ui/src/components/form-request-auto-open.test.ts
+          packages/ui/src/components/form-request-tool-target.test.ts
           packages/ui/src/components/form-request.test.ts
           packages/ui/src/lib/hooks/use-active-session-message-load.test.ts
           packages/ui/src/stores/forms.test.ts

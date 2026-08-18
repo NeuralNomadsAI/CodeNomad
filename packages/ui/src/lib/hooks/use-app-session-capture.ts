@@ -125,9 +125,11 @@ export function useAppSessionCapture() {
   const instanceLifecycleTokens = new Map<string, number>()
   let nextInstanceLifecycleToken = 0
   let disposed = false
+  let nativeShutdownStarted = false
   const hydrationController = new AbortController()
   let timer: ReturnType<typeof setTimeout> | null = null
   let preservation: RestorableSessionPreservation | null = null
+  let nativeFallbackState: RestorableSessionState | null = null
   const hydratePreservedPrompts = (instanceId: string) => {
     if (!preservation) return
     const instance = instances().get(instanceId)
@@ -151,23 +153,36 @@ export function useAppSessionCapture() {
   }
   const capture = () => {
     timer = null
-    if (enabled() && !disposed) updateRestorableSession(mergedState())
+    if (enabled() && !disposed && !nativeShutdownStarted) {
+      const state = mergedState()
+      if (state.tabs.length > 0) nativeFallbackState = state
+      updateRestorableSession(state)
+    }
   }
   const schedule = () => {
-    if (!enabled() || disposed) return
+    if (!enabled() || disposed || nativeShutdownStarted) return
     if (timer) clearTimeout(timer)
     timer = setTimeout(capture, CAPTURE_DEBOUNCE_MS)
   }
-  const flush = async () => {
+  const flush = async (nativeShutdown = false) => {
+    if (nativeShutdown) nativeShutdownStarted = true
     if (timer) clearTimeout(timer)
     timer = null
-    if (enabled()) updateRestorableSession(mergedState())
+    if (enabled()) {
+      const current = mergedState()
+      const state = nativeShutdown
+        && current.tabs.length === 0
+        && (nativeFallbackState?.tabs.length ?? 0) > 0
+        ? nativeFallbackState!
+        : current
+      updateRestorableSession(state)
+    }
     await flushClientState()
   }
   const nativeUnlisteners: Array<() => void> = []
   let nativeDisposed = false
   const register = <T,>(event: string, acknowledge: (payload: T) => void | Promise<void>) => listen<T>(event, ({ payload }) => {
-    void flush().then(() => acknowledge(payload)).catch((error) => log.error(`Failed to handle ${event}`, error))
+    void flush(true).then(() => acknowledge(payload)).catch((error) => log.error(`Failed to handle ${event}`, error))
   }).then((unlisten) => {
     if (nativeDisposed) unlisten()
     else nativeUnlisteners.push(unlisten)
@@ -198,7 +213,14 @@ export function useAppSessionCapture() {
     onInstanceLifecycleAuthority((event) => {
       const lifecycleToken = ++nextInstanceLifecycleToken
       instanceLifecycleTokens.set(event.instanceId, lifecycleToken)
-      if (!preservation) return
+      if (!preservation) {
+        if (event.type === "removed") {
+          const authoritativeState = captureState(scrollAuthority).state
+          nativeFallbackState = authoritativeState.tabs.length > 0 ? authoritativeState : null
+        }
+        schedule()
+        return
+      }
       const workspace = { runtimeTabId: getInstanceAppTabId(event.instanceId), folder: event.folder, occurrence: event.occurrence }
       if (event.type === "unavailable") {
         const captured = captureState(scrollAuthority)
@@ -215,6 +237,8 @@ export function useAppSessionCapture() {
       }
       if (event.type === "removed") {
         markPreservedWorkspaceRemoved(preservation, workspace)
+        const authoritativeState = mergedState()
+        nativeFallbackState = authoritativeState.tabs.length > 0 ? authoritativeState : null
       } else {
         const target = getPreservedWorkspaceReopenTarget(preservation, workspace)
         markPreservedWorkspaceReopened(preservation, workspace)
@@ -263,29 +287,36 @@ export function useAppSessionCapture() {
   })
   onMount(() => {
     const flushNow = () => void flush()
-    window.addEventListener("pagehide", flushNow)
-    window.addEventListener("beforeunload", flushNow)
+    const useBrowserLifecycleFlush = !isLocalWindow()
+    if (useBrowserLifecycleFlush) {
+      window.addEventListener("pagehide", flushNow)
+      window.addEventListener("beforeunload", flushNow)
+    }
     if (isElectronHost() && isLocalWindow()) window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ = flush
     onCleanup(() => {
-      window.removeEventListener("pagehide", flushNow)
-      window.removeEventListener("beforeunload", flushNow)
+      if (useBrowserLifecycleFlush) {
+        window.removeEventListener("pagehide", flushNow)
+        window.removeEventListener("beforeunload", flushNow)
+      }
       if (window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ === flush) {
         delete window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__
       }
     })
   })
   onCleanup(() => {
+    disposed = true
+    if (timer) clearTimeout(timer)
+    timer = null
     hydrationController.abort(new Error("App session capture disposed"))
     nativeDisposed = true
     nativeUnlisteners.forEach((unlisten) => unlisten())
-    void flush()
-    disposed = true
     cleanups.forEach((cleanup) => cleanup())
   })
   return {
     ready,
     start(snapshot?: RestorableSessionState) {
       if (snapshot) preservation = createRestorableSessionPreservation(snapshot)
+      nativeFallbackState = snapshot?.tabs.length ? snapshot : null
       setStarted(true)
     },
     recordRestoredTab(index: number, tabId: string | null, unavailable?: ReadonlySet<string>) {

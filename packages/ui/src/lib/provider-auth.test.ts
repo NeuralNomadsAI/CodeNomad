@@ -4,10 +4,9 @@ import type { FormFields } from "@opencode-ai/client"
 import {
   getProviderAuthAnswer,
   getProviderAuthInitialAnswer,
-  isProviderAuthHttpUrl,
   isProviderAuthFieldComplete,
-  shouldShowProviderAuthField,
 } from "./provider-auth.ts"
+import { isFormFieldVisible, isHttpFormUrl } from "./form-schema.ts"
 
 const fields = [
   { key: "region", type: "string", required: true, default: "us", options: [{ label: "US", value: "us" }] },
@@ -19,25 +18,25 @@ describe("native provider auth answers", () => {
   it("preserves defaults and omits inactive or external fields", () => {
     const answer = { ...getProviderAuthInitialAnswer(fields), account: "stale" }
 
-    assert.equal(shouldShowProviderAuthField(fields[1], answer), false)
+    assert.equal(isFormFieldVisible(fields[1], answer), false)
     assert.deepEqual(getProviderAuthAnswer(fields, answer), { region: "us" })
   })
 
   it("requires only active required fields", () => {
     const answer = { region: "eu" }
 
-    assert.equal(shouldShowProviderAuthField(fields[1], answer), true)
+    assert.equal(isFormFieldVisible(fields[1], answer), true)
     assert.equal(isProviderAuthFieldComplete(fields[1], answer), false)
     assert.equal(isProviderAuthFieldComplete(fields[1], { ...answer, account: "123" }), true)
   })
 
   it("accepts only explicit HTTP authorization URLs", () => {
-    assert.equal(isProviderAuthHttpUrl("https://example.com/oauth"), true)
-    assert.equal(isProviderAuthHttpUrl("http://localhost:3000/oauth"), true)
-    assert.equal(isProviderAuthHttpUrl("javascript:alert(1)"), false)
-    assert.equal(isProviderAuthHttpUrl("data:text/html,hello"), false)
-    assert.equal(isProviderAuthHttpUrl("file:///tmp/token"), false)
-    assert.equal(isProviderAuthHttpUrl("//example.com/oauth"), false)
+    assert.equal(isHttpFormUrl("https://example.com/oauth"), true)
+    assert.equal(isHttpFormUrl("http://localhost:3000/oauth"), true)
+    assert.equal(isHttpFormUrl("javascript:alert(1)"), false)
+    assert.equal(isHttpFormUrl("data:text/html,hello"), false)
+    assert.equal(isHttpFormUrl("file:///tmp/token"), false)
+    assert.equal(isHttpFormUrl("//example.com/oauth"), false)
   })
 
   it("rejects answers outside supported field constraints", () => {

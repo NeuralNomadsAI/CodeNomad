@@ -130,6 +130,40 @@ describe("native session event reducer", () => {
     }
   })
 
+  it("does not download message history for deltas already applied locally", async () => {
+    const instanceId = "native-delta-only"
+    const sessionId = "session"
+    let calls = 0
+    const client = { message: { list: async () => { calls += 1; return { data: [] } } } } as any
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+
+    try {
+      handleNativeSessionEvent(instanceId, {
+        id: "text", created: 1, type: "session.text.delta",
+        data: { sessionID: sessionId, assistantMessageID: "assistant", ordinal: 0, delta: "streamed" },
+      })
+      handleNativeSessionEvent(instanceId, {
+        id: "reasoning", created: 2, type: "session.reasoning.delta",
+        data: { sessionID: sessionId, assistantMessageID: "assistant", ordinal: 0, delta: "thought" },
+      })
+      await delay(120)
+
+      assert.equal(calls, 0)
+      const streamed = messageStoreBus.getOrCreate(instanceId).getMessage("assistant")
+      assert.equal((streamed?.parts["assistant-text-native-0"]?.data as any)?.text, "streamed")
+      assert.equal((streamed?.parts["assistant-reasoning-native-0"]?.data as any)?.text, "thought")
+    } finally {
+      clearNativeContentDeltaState(instanceId)
+      messageStoreBus.unregisterInstance(instanceId)
+      setSessions((prev) => { const next = new Map(prev); next.delete(instanceId); return next })
+      clearInstanceDeletedSessionAuthority(instanceId)
+      removeInstance(instanceId, { authoritative: false })
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
   it("refreshes periodically during a continuous fast native stream", async () => {
     const instanceId = "native-fast-stream"
     const sessionId = "session"

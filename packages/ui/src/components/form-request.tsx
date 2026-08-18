@@ -1,6 +1,7 @@
 import { For, Show, createMemo, createSignal, type Component } from "solid-js"
 import type { FormAnswer, FormField, FormInfo, FormValue } from "@opencode-ai/client"
 import { useI18n } from "../lib/i18n"
+import { isFormFieldVisible, isHttpFormUrl } from "../lib/form-schema"
 
 interface FormRequestProps {
   form: FormInfo
@@ -44,13 +45,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
   const [submitting, setSubmitting] = createSignal(false)
   const [error, setError] = createSignal<string | null>(null)
 
-  const visibleFields = createMemo(() => props.form.fields.filter((field) => {
-    if (field.type === "external" || !field.when?.length) return true
-    return field.when.every((condition) => {
-      const equal = values()[condition.key] === condition.value
-      return condition.op === "eq" ? equal : !equal
-    })
-  }))
+  const visibleFields = createMemo(() => props.form.fields.filter((field) => isFormFieldVisible(field, values())))
 
   const update = (key: string, value: FormValue | undefined) => {
     setValues((current) => ({ ...current, [key]: value }))
@@ -210,7 +205,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
                   />
                 </Show>
               </Show>
-              <Show when={field.type === "external"}>
+              <Show when={field.type === "external" && isHttpFormUrl(field.url)}>
                 <a class="form-request-link" href={field.type === "external" ? field.url : ""} target="_blank" rel="noreferrer">
                   {t("formRequest.openExternal")}
                 </a>

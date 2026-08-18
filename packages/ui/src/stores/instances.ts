@@ -1201,6 +1201,7 @@ async function createInstance(
     activate?: boolean
     signal?: AbortSignal
     shouldCreateCommit?: () => boolean
+    onBeforeCreateCommit?: (instanceId: string) => void
     onCreateCommit?: (instanceId: string) => void
     waitForCreateCommit?: () => Promise<void>
     forceNew?: boolean
@@ -1279,6 +1280,7 @@ async function createInstance(
       || options?.shouldCreateCommit?.() === false
     if (!discarded) {
       workspaceListReconciliationFence.markMutation(workspace.id)
+      options?.onBeforeCreateCommit?.(workspace.id)
       upsertWorkspace(committedWorkspace, reused ? undefined : projectName)
       options?.onCreateCommit?.(workspace.id)
       if (!reused && (options?.activate ?? true)) setActiveInstanceId(workspace.id)

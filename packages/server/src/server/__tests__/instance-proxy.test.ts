@@ -303,7 +303,7 @@ describe("instance proxy location enforcement", () => {
     })
     const response = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/session/active" })
     assert.equal(response.statusCode, 200)
-    assert.deepEqual(JSON.parse(response.body), { data: { owned: { type: "running" } } })
+    assert.deepEqual(JSON.parse(response.body), { owned: { type: "running" } })
     assert.deepEqual(sessionGets.sort(), ["foreign", "owned", "stale"])
     assert.equal(requestCount(), 0)
   })
@@ -350,22 +350,20 @@ describe("instance proxy location enforcement", () => {
     assert.equal(requestCount(), 0)
   })
 
-  it("allows ownership-checked form request, list, reply, and cancel routes", async () => {
+  it("allows ownership-checked form request, reply, and cancel routes", async () => {
     const owned = await harness()
     for (const [method, route, payload] of [
       ["GET", "api/form/request", undefined],
-      ["GET", "api/session/owned/form", undefined],
       ["POST", "api/session/owned/form/form-1/reply", { answer: { choice: "yes" } }],
       ["POST", "api/session/owned/form/form-1/cancel", undefined],
     ] as const) {
       const response = await owned.app.inject({ method, url: `/workspaces/workspace/instance/${route}`, payload })
       assert.equal(response.statusCode, 200, route)
     }
-    assert.deepEqual(owned.sessionGets, ["owned", "owned", "owned"])
+    assert.deepEqual(owned.sessionGets, ["owned", "owned"])
 
     const foreign = await harness("/other")
     for (const [method, route] of [
-      ["GET", "api/session/foreign/form"],
       ["POST", "api/session/foreign/form/form-1/reply"],
       ["POST", "api/session/foreign/form/form-1/cancel"],
     ] as const) {
@@ -373,20 +371,6 @@ describe("instance proxy location enforcement", () => {
       assert.equal(response.statusCode, 403, route)
     }
     assert.equal(foreign.requestCount(), 0)
-  })
-
-  it("propagates session transport failures instead of mapping them to not found", async () => {
-    const { app, requestCount } = await harness("/repo/worktree", {}, { broken: new TypeError("fetch failed") })
-    const response = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/session/broken/form" })
-    assert.equal(response.statusCode, 500)
-    assert.equal(requestCount(), 0)
-  })
-
-  it("maps only typed session-not-found failures to 404", async () => {
-    const missing = Object.assign(new Error("missing"), { _tag: "SessionNotFoundError", sessionID: "missing" })
-    const { app } = await harness("/repo/worktree", {}, { missing })
-    const response = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/session/missing/form" })
-    assert.equal(response.statusCode, 404)
   })
 
   it("validates prompt file ownership before translating root, worktree, and Windows URIs", async () => {

@@ -11,12 +11,13 @@ import {
   getQuestionEnqueuedAtForInstance,
   sendPermissionResponse,
 } from "../stores/instances"
-import { ensureSessionAncestorsExpanded, loadMessages, sessions as sessionStateSessions, setActiveSessionFromList } from "../stores/sessions"
+import { activeSessionId, ensureSessionAncestorsExpanded, loadMessages, sessions as sessionStateSessions, setActiveSessionFromList } from "../stores/sessions"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { PERMISSION_REJECT_REASON_MAX_LENGTH } from "./tool-call/permission-constants"
 import FormRequest from "./form-request"
 import { getFormQueue, type FormInfo } from "../stores/forms"
 import { sendFormCancel, sendFormReply } from "../stores/instances"
+import { shouldRenderFormInFallback } from "./form-request-tool-target"
 
 const LazyToolCall = lazy(() => import("./tool-call"))
 
@@ -223,11 +224,16 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
       payload: question,
     }))
 
-    const forms = formQueue().map((form, index) => ({
+    const formsForFallback = formQueue().filter((form) => shouldRenderFormInFallback(
+      form,
+      messageStoreBus.getInstance(props.instanceId),
+      activeSessionId().get(props.instanceId),
+    ))
+    const forms = formsForFallback.map((form, index) => ({
       kind: "form" as const,
       id: form.id,
       sessionId: form.sessionID,
-      createdAt: Number.MAX_SAFE_INTEGER - formQueue().length + index,
+      createdAt: Number.MAX_SAFE_INTEGER - formsForFallback.length + index,
       payload: form,
     }))
 

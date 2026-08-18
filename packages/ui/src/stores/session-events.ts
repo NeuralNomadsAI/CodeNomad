@@ -197,7 +197,6 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
     if (!instances().has(instanceId) || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return
     if (!applyNativeContentDelta(instanceId, event)) return
     ensureSessionStatus(instanceId, sessionId, "working", event.location?.directory)
-    requestNativeSessionRefresh(instanceId, sessionId, false)
     return
   }
   switch (event.type) {

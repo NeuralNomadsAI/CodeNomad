@@ -6,6 +6,15 @@ export const ANCHOR_RESTORE_STABLE_FRAMES = 10
 export const ANCHOR_RESTORE_REISSUE_INTERVAL_FRAMES = 12
 export const ANCHOR_RESTORE_TOLERANCE_PX = 1
 
+export function isScrollRestoreMeasurementReady(input: {
+  hasHandle: boolean
+  itemCount: number
+  scrollSize: number
+  viewportSize: number
+}) {
+  return input.itemCount === 0 || (input.hasHandle && input.scrollSize > 0 && input.viewportSize > 0)
+}
+
 export interface ViewportAnchorCandidate {
   key: string
   top: number

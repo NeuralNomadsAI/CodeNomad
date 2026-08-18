@@ -598,7 +598,7 @@ async function proxyWorkspaceRequest(args: {
         return null
       }
     }))
-    reply.send({ data: Object.fromEntries(entries.filter((entry): entry is NonNullable<typeof entry> => entry !== null)) })
+    reply.send(Object.fromEntries(entries.filter((entry): entry is NonNullable<typeof entry> => entry !== null)))
     return
   }
   if (pathname.replace(/\/+$/, "") === "/api/project") {
@@ -917,7 +917,6 @@ function isAllowedInstanceApiRoute(method: string, pathname: string): boolean {
     ["GET", /^\/api\/session(?:\/active)?$/],
     ["POST", /^\/api\/session(?:\/import)?$/],
     ["GET", /^\/api\/session\/[^/]+(?:\/message(?:\/[^/]+)?)?$/],
-    ["GET", /^\/api\/session\/[^/]+\/form$/],
     ["DELETE", /^\/api\/session\/[^/]+$/],
     ["POST", /^\/api\/session\/[^/]+\/(?:agent|model|rename|move|prompt|command|shell|compact|interrupt|fork)$/],
     ["POST", /^\/api\/session\/[^/]+\/revert\/stage$/],

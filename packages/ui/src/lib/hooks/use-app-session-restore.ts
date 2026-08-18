@@ -22,7 +22,7 @@ import {
 } from "../../stores/instances"
 import { openSidecarTab, SidecarNotFoundError } from "../../stores/sidecars"
 import {
-  hydrateRestoredWorkspaceState,
+  hydrateRestoredWorkspaceState, seedRestoredWorkspaceScrollSnapshots,
 } from "../../stores/app-session-workspace-hydration"
 import { runWithSerializedCommits } from "../../stores/app-session-restore-queue"
 import { shouldWaitForSavedSessionList } from "../../stores/app-session-restore-readiness"
@@ -58,7 +58,7 @@ function createRestoreContext(snapshot: RestorableSessionState, signal: AbortSig
     selectActive(tabId: string | null, requested: boolean) {
       if (appTabSelectionRevision() !== selectionRevision) return
       const current = activeAppTabId()
-      if ((current && current !== ownedActiveTabId) || (!requested && ownedActiveTabId)) return
+      if (!requested && (current || ownedActiveTabId)) return
       selectAppTab(tabId, { source: "restore" })
       ownedActiveTabId = tabId
     },
@@ -90,8 +90,11 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
        .map(({ id, folder, status }) => ({ id, folderPath: folder, status })))
   const existing = matches.filter(({ existingWorkspaceId }) => existingWorkspaceId)
   const missing = matches.filter(({ existingWorkspaceId }) => !existingWorkspaceId)
-  existing.forEach(({ tabIndex, existingWorkspaceId }) =>
-    capture.recordRestoredTab(tabIndex, getInstanceAppTabId(existingWorkspaceId!)))
+  existing.forEach(({ tabIndex, existingWorkspaceId }) => {
+    const tab = snapshot.tabs[tabIndex]
+    if (tab?.kind === "workspace") seedRestoredWorkspaceScrollSnapshots(existingWorkspaceId!, tab)
+    capture.recordRestoredTab(tabIndex, getInstanceAppTabId(existingWorkspaceId!))
+  })
   const claimedIds = new Set(existing.map(({ existingWorkspaceId }) => existingWorkspaceId!))
   context.applyOrder()
   const restoredIds = capture.restoredTabIds()
@@ -114,6 +117,7 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
           activate: false, signal: operationSignal, forceNew,
           waitForCreateCommit: waitForCreateCommit ? () => waitForCreateCommit : undefined,
           shouldCreateCommit: canCommitCreation,
+          onBeforeCreateCommit: (id) => seedRestoredWorkspaceScrollSnapshots(id, tab),
           onCreateCommit: (id) => capture.recordRestoredTab(match.tabIndex, getInstanceAppTabId(id)),
         })
         let creation = existingId || isWebHost() ? null : await create(match.descriptor.occurrence > 0)
@@ -203,11 +207,12 @@ export function useAppSessionRestore(): void {
   let disposed = false
   onMount(() => {
     const snapshot = loadedRestorableSession()
+    const shouldRestore = shouldRestoreSessionState(clientStateIsPrimary(), restorePreviousStateEnabled(), snapshot)
     setShowFolderSelection(snapshot?.homeActive === true)
     void (async () => {
       try {
         await capture.ready
-        if (!shouldRestoreSessionState(clientStateIsPrimary(), restorePreviousStateEnabled(), snapshot)) return capture.start()
+        if (!shouldRestore) return capture.start()
         capture.start(snapshot!)
         await runAbortable(async (signal) => {
           const context = createRestoreContext(snapshot!, signal, capture)

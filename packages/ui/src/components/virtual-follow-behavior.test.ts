@@ -11,6 +11,7 @@ import {
   isAtBottom,
   isAutoFollowing,
   isScrollRestoreGenerationCurrent,
+  isScrollRestoreMeasurementReady,
   isSnapshotAutoFollowing,
   resolveAutoPinHoldElement,
   restoreFollowModeFromSnapshot,
@@ -28,6 +29,13 @@ function metrics(offset: number, scrollHeight = 3000, clientHeight = 600, sentin
 }
 
 describe("virtual follow behavior", () => {
+  it("waits for Virtua measurements before applying a restored offset", () => {
+    assert.equal(isScrollRestoreMeasurementReady({ hasHandle: false, itemCount: 20, scrollSize: 0, viewportSize: 0 }), false)
+    assert.equal(isScrollRestoreMeasurementReady({ hasHandle: true, itemCount: 20, scrollSize: 0, viewportSize: 600 }), false)
+    assert.equal(isScrollRestoreMeasurementReady({ hasHandle: true, itemCount: 20, scrollSize: 3000, viewportSize: 600 }), true)
+    assert.equal(isScrollRestoreMeasurementReady({ hasHandle: false, itemCount: 0, scrollSize: 0, viewportSize: 0 }), true)
+  })
+
   it("escapes follow on any upward user intent", () => {
     const next = transitionFollowMode({ type: "following" }, userScroll("up", true))
 

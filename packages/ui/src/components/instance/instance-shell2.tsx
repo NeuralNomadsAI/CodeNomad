@@ -26,6 +26,8 @@ import InfoView from "../info-view"
 import CommandPalette from "../command-palette"
 import PermissionNotificationBanner from "../permission-notification-banner"
 import PermissionApprovalModal from "../permission-approval-modal"
+import { getFormRequestAutoOpenId } from "../form-request-auto-open"
+import { resolveInlineFormToolTarget } from "../form-request-tool-target"
 import SessionView from "../session/session-view"
 import MessageSection from "../message-section"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
@@ -36,8 +38,9 @@ import { sseManager } from "../../lib/sse-manager"
 import { getLogger } from "../../lib/logger"
 import PromptInput from "../prompt-input"
 import { useI18n } from "../../lib/i18n"
-import { getPermissionQueueLength, getQuestionQueueLength } from "../../stores/instances"
+import { activeInterruption, getPermissionQueueLength, getQuestionQueueLength } from "../../stores/instances"
 import { getFormQueue } from "../../stores/forms"
+import { messageStoreBus } from "../../stores/message-v2/bus"
 import SessionSidebar from "./shell/SessionSidebar"
 import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
 import RightPanel from "./shell/right-panel/RightPanel"
@@ -117,6 +120,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [sessionCenterWidthStep, setSessionCenterWidthStep] = createSignal<SessionCenterWidthStep>("wide")
 
   const [permissionModalOpen, setPermissionModalOpen] = createSignal(false)
+  let lastAutoOpenedFormId: string | null = null
   const [now, setNow] = createSignal(Date.now())
   const [sessionPromptApis, setSessionPromptApis] = createSignal<Record<string, PromptInputApi | null>>({})
   const [draftAgent, setDraftAgent] = createSignal("")
@@ -139,6 +143,26 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     handleSessionSelect,
   } = useInstanceSessionContext({
     instanceId: () => props.instance.id,
+  })
+
+  createEffect(() => {
+    const active = activeInterruption().get(props.instance.id)
+    const form = active?.kind === "form"
+      ? getFormQueue(props.instance.id).find((entry) => entry.id === active.id)
+      : undefined
+    const store = messageStoreBus.getInstance(props.instance.id)
+    const target = form && store
+      ? resolveInlineFormToolTarget(form, store, activeSessionIdForInstance())
+      : null
+    if (form && target) {
+      lastAutoOpenedFormId = form.id
+      return
+    }
+
+    const formId = getFormRequestAutoOpenId(active, lastAutoOpenedFormId)
+    if (!formId) return
+    lastAutoOpenedFormId = formId
+    setPermissionModalOpen(true)
   })
 
   const desktopQuery = useMediaQuery("(min-width: 1280px)")

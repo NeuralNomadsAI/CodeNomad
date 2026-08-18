@@ -6,15 +6,14 @@ import type { FormAnswer, FormValue, IntegrationMethod, ModelInfo, OpenCodeClien
 import { openExternalUrl } from "../../lib/external-url"
 import { useI18n } from "../../lib/i18n"
 import { isLocalTauriHost } from "../../lib/runtime-env"
+import { isFormFieldVisible, isHttpFormUrl } from "../../lib/form-schema"
 import {
   extractProviderAuthErrorMessage,
   genericApiMethod,
   getProviderAuthAnswer,
   getProviderAuthInitialAnswer,
-  isProviderAuthHttpUrl,
   isProviderAuthFieldComplete,
   isAbortError,
-  shouldShowProviderAuthField,
   type ProviderAuthAuthorization,
 } from "../../lib/provider-auth"
 import { instances } from "../../stores/instances"
@@ -179,7 +178,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     const method = selectedMethod()
     if (method.type === "key" && apiKey().trim().length === 0) return false
     return (method.type === "command" ? [] : method.form ?? [])
-      .filter((field) => shouldShowProviderAuthField(field, formAnswer()))
+      .filter((field) => isFormFieldVisible(field, formAnswer()))
       .every((field) => isProviderAuthFieldComplete(field, formAnswer()))
   })
 
@@ -213,7 +212,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   }
 
   async function launchAuthorizationUrl(url: string, options?: { popup?: Window | null; sameTab?: boolean }): Promise<boolean> {
-    if (!isProviderAuthHttpUrl(url)) {
+    if (!isHttpFormUrl(url)) {
       if (options?.popup && !options.popup.closed) options.popup.close()
       return false
     }
@@ -752,7 +751,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
 
                   <Show when={stage() === "code"}><div class="providers-form-stack"><div class="providers-oauth-instructions"><ExternalLink class="providers-instructions-icon" /><span>{authorization()?.instructions || t("settings.providers.oauth.enterCode")}</span></div><label class="providers-field"><span class="settings-form-label">{t("settings.providers.oauth.codeLabel")}</span><input ref={(element) => { oauthCodeInput = element }} type="text" class="providers-input" value={code()} onInput={(event) => setCode(event.currentTarget.value)} placeholder={t("settings.providers.oauth.codePlaceholder")} autocomplete="one-time-code" /></label></div></Show>
                   <Show when={stage() === "waiting"}><div class="providers-waiting-card" role="status"><Loader2 class="providers-spin-icon" /><div><div class="settings-toggle-title">{selectedMethod().type === "command" ? t("settings.providers.command.waitingTitle") : t("settings.providers.oauth.waitingTitle")}</div><div class="settings-toggle-caption">{selectedMethod().type === "command" ? commandStatusMessage() ?? t("settings.providers.command.waitingMessage") : authorization()?.instructions}</div></div><button type="button" class="selector-button selector-button-secondary providers-wait-cancel" onClick={cancelOAuthWait}>{t("settings.providers.oauth.cancelWait")}</button></div></Show>
-                  <Show when={authorization() && isProviderAuthHttpUrl(authorization()!.url) && (stage() === "code" || stage() === "waiting")}>
+                  <Show when={authorization() && isHttpFormUrl(authorization()!.url) && (stage() === "code" || stage() === "waiting")}>
                     <div class="providers-oauth-actions">
                       <a href={authorization()?.url} target="_blank" rel="noopener noreferrer" class="selector-button selector-button-secondary providers-oauth-link">
                         <ExternalLink class="w-4 h-4" />

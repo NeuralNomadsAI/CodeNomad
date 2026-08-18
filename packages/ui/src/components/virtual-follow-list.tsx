@@ -1,6 +1,6 @@
 import { Show, createEffect, createMemo, createSignal, type Accessor, type JSX, on, onCleanup } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
-import { AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, getFollowSnapshotState, isAtBottom, isAutoFollowing, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, ScrollRestoreTokenGuard, selectTopViewportAnchor, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
+import { AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, getFollowSnapshotState, isAtBottom, isAutoFollowing, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, ScrollRestoreTokenGuard, selectTopViewportAnchor, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
 
 const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
 const EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES = 2
@@ -8,6 +8,7 @@ const TOP_SCROLL_EPSILON_PX = 0
 const EXPLICIT_BOTTOM_PIN_MAX_FRAMES = 90
 const USER_SCROLL_INTENT_WINDOW_MS = 600
 const PROGRAMMATIC_SCROLL_WINDOW_MS = 120
+const SCROLL_RESTORE_MEASUREMENT_MAX_FRAMES = 90
 const SCROLL_INTENT_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Spacebar"])
 const INTERACTIVE_KEY_TARGET_SELECTOR = "button, a, input, textarea, select, [contenteditable='true'], [role='button'], [role='textbox']"
 
@@ -21,7 +22,7 @@ export interface VirtualFollowListApi {
   scrollToBottom: (opts?: { immediate?: boolean }) => void
   scrollToKey: (
     key: string,
-    opts?: { behavior?: ScrollBehavior; block?: ScrollLogicalPosition },
+    opts?: { block?: ScrollLogicalPosition },
   ) => void
   notifyContentRendered: () => void
   setAutoScroll: (enabled: boolean) => void
@@ -490,30 +491,48 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       opts?.onApplied?.()
     }
 
-    if (snapshot.atBottom) {
-      performScrollToBottom(true)
-      requestAnimationFrame(finish)
-      return
-    }
-
-    if (snapshot.anchorKey) {
-      const index = props.items().findIndex((item, i) => props.getKey(item, i) === snapshot.anchorKey)
-      if (index !== -1) {
-        markProgrammaticScroll()
-        virtuaHandle()?.scrollToIndex(index, { align: "start", smooth: opts?.behavior === "smooth" })
-        const stabilizer = new AnchorRestoreStabilizer()
-        restartAnchorRestore = () => {
-          if (!isCurrent()) return
-          stabilizer.restartStability()
-          scrollToAnchorIndex(snapshot.anchorKey!)
-        }
-        retryAnchorRestore(snapshot, stabilizer, isCurrent, finish)
+    let measurementFrames = 0
+    const apply = () => {
+      if (!isCurrent()) return
+      const handle = virtuaHandle()
+      const ready = isScrollRestoreMeasurementReady({
+        hasHandle: Boolean(handle),
+        itemCount: props.items().length,
+        scrollSize: handle?.scrollSize ?? element.scrollHeight,
+        viewportSize: handle?.viewportSize ?? element.clientHeight,
+      })
+      if (!ready && measurementFrames < SCROLL_RESTORE_MEASUREMENT_MAX_FRAMES) {
+        measurementFrames += 1
+        requestAnimationFrame(apply)
         return
       }
-    }
 
-    applyPixelSnapshot(snapshot, opts?.behavior ?? "auto")
-    requestAnimationFrame(finish)
+      if (snapshot.atBottom) {
+        performScrollToBottom(true)
+        requestAnimationFrame(finish)
+        return
+      }
+
+      if (snapshot.anchorKey) {
+        const index = props.items().findIndex((item, i) => props.getKey(item, i) === snapshot.anchorKey)
+        if (index !== -1) {
+          markProgrammaticScroll()
+          virtuaHandle()?.scrollToIndex(index, { align: "start", smooth: opts?.behavior === "smooth" })
+          const stabilizer = new AnchorRestoreStabilizer()
+          restartAnchorRestore = () => {
+            if (!isCurrent()) return
+            stabilizer.restartStability()
+            scrollToAnchorIndex(snapshot.anchorKey!)
+          }
+          retryAnchorRestore(snapshot, stabilizer, isCurrent, finish)
+          return
+        }
+      }
+
+      applyPixelSnapshot(snapshot, opts?.behavior ?? "auto")
+      requestAnimationFrame(finish)
+    }
+    apply()
   }
 
   function scrollToAnchorIndex(key: string) {
@@ -655,10 +674,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     dispatchFollowEvent({ type: "jump-top", immediate })
   }
 
-  function scrollToKey(key: string, opts?: { behavior?: ScrollBehavior; block?: ScrollLogicalPosition }) {
+  function scrollToKey(key: string, opts?: { block?: ScrollLogicalPosition }) {
     cancelActiveScrollRestore()
     if (hasActiveExplicitBottomPin() || explicitBottomPinIntent()) cancelExplicitBottomPinFromUser()
-    dispatchFollowEvent({ type: "jump-key", key, block: opts?.block ?? "start", smooth: opts?.behavior === "smooth" })
+    dispatchFollowEvent({ type: "jump-key", key, block: opts?.block ?? "start", smooth: false })
   }
 
   const api: VirtualFollowListApi = {

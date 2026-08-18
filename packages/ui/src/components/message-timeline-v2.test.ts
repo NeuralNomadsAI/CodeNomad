@@ -39,13 +39,15 @@ describe("V2 timeline projection", () => {
     assert.notEqual(getTimelineRecordSignature(text), getTimelineRecordSignature(tool))
   })
 
-  it("keeps text streaming out of the structural signature but tracks tool revisions", () => {
+  it("throttles streamed text projection updates and tracks tool revisions", () => {
     const shortText = record([{ id: "text", type: "text", text: "a" }])
-    const longText = record([{ id: "text", type: "text", text: "a longer streamed value", revision: 20 }])
+    const sameBucketText = record([{ id: "text", type: "text", text: "a longer streamed value", revision: 20 }])
+    const nextBucketText = record([{ id: "text", type: "text", text: "a".repeat(129), revision: 40 }])
     const firstTool = record([{ id: "tool", type: "tool", revision: 1 }])
     const updatedTool = record([{ id: "tool", type: "tool", revision: 2 }])
 
-    assert.equal(getTimelineRecordSignature(shortText), getTimelineRecordSignature(longText))
+    assert.equal(getTimelineRecordSignature(shortText), getTimelineRecordSignature(sameBucketText))
+    assert.notEqual(getTimelineRecordSignature(sameBucketText), getTimelineRecordSignature(nextBucketText))
     assert.notEqual(getTimelineRecordSignature(firstTool), getTimelineRecordSignature(updatedTool))
   })
 
