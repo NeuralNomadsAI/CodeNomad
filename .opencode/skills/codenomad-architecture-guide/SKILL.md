@@ -15,7 +15,7 @@ description: |
 
 ## Native OpenCode V2 Baseline
 
-- The only OpenCode client dependency is the experimental `@opencode-ai/client` protocol. Server and UI must stay aligned on the latest reviewed `next` release; runtime CLI discovery is not exact-version-gated. Current public `@opencode-ai/sdk` docs describe a different contract.
+- The only OpenCode client dependency is the experimental `@opencode-ai/client` protocol. Server, UI, and the selected runtime CLI must stay on the exact version pinned by the server package. Current public `@opencode-ai/sdk` docs describe a different contract.
 - Do not use `@opencode-ai/sdk`, `@opencode-ai/sdk/v2/client`, or `createOpencodeClient()`; follow installed `@opencode-ai/client` declarations.
 - There is no `packages/opencode-plugin/`. Do not restore plugin tools, plugin routes, or plugin packaging.
 - The server owns one shared OpenCode service through `OpenCodeSharedService` and its custom lease-locked discovery, launcher, process-proof, and authenticated-stop lifecycle. Production does not call `Service.ensure` or `Service.stop` directly. Workspaces are native OpenCode `Location`/directory scopes, not separate OpenCode processes.

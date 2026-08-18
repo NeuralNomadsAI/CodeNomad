@@ -295,6 +295,30 @@ describe("OpenCodeSharedService", () => {
     }
   })
 
+  it("delegates proven host shutdown to Service.stop with the registration file", async () => {
+    const state = await serviceState("codenomad-service-sdk-stop-")
+    let stopFile: string | undefined
+    const service = new OpenCodeSharedService({
+      discover: async () => ({ url: state.info.url, auth: { type: "basic", username: "opencode", password: state.info.password } }),
+      ensure: async (options) => {
+        options?.onStart?.("missing")
+        return { url: state.info.url, auth: { type: "basic", username: "opencode", password: state.info.password } }
+      },
+      stop: async (options) => { stopFile = options?.file },
+      headers: () => undefined,
+      waitForStop: async () => true,
+      getProcessIdentity: async (pid, _timeoutMs, namespace = { kind: "host" }) => processIdentity(pid, undefined, namespace),
+      makeClient: () => ({} as OpenCodeClient),
+    })
+    try {
+      await service.endpoint(state.options("owner", true))
+      await service.shutdown()
+      assert.equal(stopFile, state.file)
+    } finally {
+      await rm(state.root, { recursive: true, force: true })
+    }
+  })
+
   it("never owns a symlinked registration", { skip: process.platform === "win32" }, async () => {
     const state = await serviceState("codenomad-service-link-")
     const target = path.join(state.root, "target.json")
@@ -342,8 +366,9 @@ describe("OpenCodeSharedService", () => {
   it("checks WSL stop completion in the distro despite a coincidental live Windows PID", async () => {
     const state = await serviceState("codenomad-service-wsl-stop-")
     let healthChecks = 0
+    let sdkStops = 0
     let wslPidExists = true
-    const server = (await import("node:http")).createServer((_request, response) => {
+    const server = (await import("node:http")).createServer((request, response) => {
       healthChecks += 1
       if (healthChecks <= 2) {
         response.destroy()
@@ -358,23 +383,25 @@ describe("OpenCodeSharedService", () => {
     state.info.url = `http://127.0.0.1:${address.port}`
     await writeFile(state.file, JSON.stringify(state.info))
     const wslNamespace = { kind: "wsl", distro: "Ubuntu" } as const
-    const service = createOwnedService(
-      state,
-      async () => true,
-      true,
-      () => true,
-      undefined,
-      true,
-      async (pid, _timeoutMs, namespace = { kind: "host" }) => processIdentity(pid, undefined, namespace),
-      async (pid, _timeoutMs, namespace) => wslPidExists
+    const endpoint = { url: state.info.url, auth: { type: "basic" as const, username: "opencode", password: state.info.password } }
+    const service = new OpenCodeSharedService({
+      discover: async () => endpoint,
+      ensure: async (options) => { options?.onStart?.("missing"); return endpoint },
+      stop: async () => { sdkStops += 1 },
+      headers: () => undefined,
+      isProcessAlive: () => true,
+      getProcessIdentity: async (pid, _timeoutMs, namespace = { kind: "host" }) => processIdentity(pid, undefined, namespace),
+      probeProcessIdentity: async (pid, _timeoutMs, namespace) => wslPidExists
         ? { status: "found", identity: processIdentity(pid, undefined, namespace) }
         : { status: "missing" },
-    )
+      makeClient: () => ({} as OpenCodeClient),
+    })
     try {
       await service.endpoint({ ...state.options("owner", true), nativePid: false, wslDistro: "Ubuntu" })
       assert.equal(JSON.parse(await readFile(state.lease("owner"), "utf8")).service.nativePid, false)
       assert.deepEqual(JSON.parse(await readFile(state.lease("owner"), "utf8")).service.processIdentity.namespace, wslNamespace)
       await assert.rejects(service.shutdown({ timeoutMs: 500 }), /did not exit|completion timed out/)
+      assert.equal(sdkStops, 1)
       assert.ok(healthChecks > 2)
       assert.equal(JSON.parse(await readFile(state.lease("owner"), "utf8")).state, "stopping")
       wslPidExists = false

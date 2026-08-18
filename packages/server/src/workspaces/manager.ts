@@ -2,6 +2,7 @@ import path from "path"
 import os from "node:os"
 import { spawnSync } from "child_process"
 import { randomUUID } from "node:crypto"
+import { createRequire } from "node:module"
 import type { Endpoint } from "@opencode-ai/client/service"
 import type { LocationGetOutput, LocationRef, OpenCodeClient, OpenCodeEvent } from "@opencode-ai/client"
 import { EventBus } from "../events/bus"
@@ -18,6 +19,7 @@ import {
   parseWslUncPath,
   resolveWslHostDirectory,
   resolveWslServiceDirectory,
+  probeBinaryVersion,
 } from "./spawn"
 import { OpenCodeSharedService, type OpenCodeEnsureOptions } from "./opencode-service"
 import {
@@ -30,6 +32,9 @@ import {
 import { isPathOwnedByWorktree, resolveWorktreeSlugForDirectory } from "./worktree-directory"
 
 const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
+const require = createRequire(import.meta.url)
+const packageJson = require("../../package.json") as { dependencies: { "@opencode-ai/client": string } }
+export const EXPECTED_OPENCODE_VERSION = packageJson.dependencies["@opencode-ai/client"]
 const OPENCODE_DATABASE = path.join(os.homedir(), ".local", "share", "opencode2", "opencode.db")
 const ORDINARY_CREATION_OWNER = ""
 const WORKSPACE_STATE = Symbol("workspaceState")
@@ -78,6 +83,7 @@ interface WorkspaceManagerOptions {
   platform?: NodeJS.Platform
   wslServiceDirectoryResolver?: (directory: string, distro: string, timeoutMs: number) => string | null
   wslHostDirectoryResolver?: (directory: string, distro: string, timeoutMs: number) => string | null
+  probeBinaryVersion?: typeof probeBinaryVersion
 }
 
 interface WorkspaceRecord extends WorkspaceDescriptor {
@@ -132,7 +138,6 @@ export interface WorkspaceCreateResult {
 }
 export interface WorkspaceCreateOptions {
   requestId?: string
-  forceNew?: boolean
 }
 type CreationRequestState = "active" | "cancelled" | "released"
 type WorkspaceCreationOwnership = Map<string, CreationRequestState>
@@ -334,12 +339,6 @@ export class WorkspaceManager {
       if (this.shuttingDown) {
         throw new Error("Workspace manager is shutting down")
       }
-      if (options.forceNew) {
-        const ownership = this.createOwnership(options.requestId)
-        const record = this.reserveWorkspace(workspacePath, identityKey, name, options, ownership, launchDeadlineAt)
-        const result = await this.startCreation(record, options, launchDeadlineAt, launchTimeoutMs)
-        return this.finishCreation(result, options.requestId, ownership)
-      }
       const existing = this.findReadyWorkspaceByIdentity(identityKey, Boolean(options.requestId))
       if (existing) {
         this.options.logger.info({ workspaceId: existing.id, folder: workspacePath }, "Reusing existing workspace")
@@ -470,6 +469,11 @@ export class WorkspaceManager {
     const { id, path: workspacePath, binaryId: resolvedBinaryPath } = record
     try {
       const serverConfig = this.options.settings.getOwner("config", "server")
+      const version = (this.options.probeBinaryVersion ?? probeBinaryVersion)(resolvedBinaryPath)
+      if (!version.valid || version.version !== EXPECTED_OPENCODE_VERSION) {
+        const actual = version.version ?? version.reported ?? version.error ?? "unknown"
+        throw new Error(`OpenCode CLI version mismatch: expected ${EXPECTED_OPENCODE_VERSION}, selected binary reported ${actual}`)
+      }
       const configuredEnvironment = this.readConfiguredEnvironment(serverConfig)
       if (this.options.nodeExtraCaCertsPath) configuredEnvironment.NODE_EXTRA_CA_CERTS = this.options.nodeExtraCaCertsPath
       configuredEnvironment.XDG_STATE_HOME = SERVICE_STATE_ROOT
@@ -485,6 +489,7 @@ export class WorkspaceManager {
       })
       const ensureOptions: OpenCodeEnsureOptions = {
         file: SERVICE_REGISTRATION_FILE,
+        version: EXPECTED_OPENCODE_VERSION,
         command: launch.command,
         contenderFile: SERVICE_CONTENDER_FILE,
         leaseFile: SERVICE_LEASE_FILE,

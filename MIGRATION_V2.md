@@ -45,18 +45,22 @@ The migration removes the V1 compatibility layer rather than maintaining both in
 - Avoid logging unredacted secret-bearing proxy request bodies.
 - Expose only an explicit method/path allowlist through the OpenCode proxy. New upstream APIs require an intentional proxy and ownership review; future OpenCode functionality is not automatic.
 - Share a consistent service registration location between Windows and WSL.
-- Discover the installed `opencode2` service without requiring an exact runtime version match. Each dependency upgrade must review OpenCode release notes, current documentation, installed client declarations, and proxy/API parity.
-- Use CodeNomad's hardened discovery/launch lifecycle in production rather than direct `Service.ensure`/`Service.stop` calls. A lifecycle lease records the registration, authenticated endpoint, daemon PID plus process-start identity and host/WSL namespace, and a hash of the launch command/environment. Proof can transfer between live CodeNomad processes through peer leases; the final process stops the daemon only after proving there are no live peers and every recorded identity still matches.
+- Probe the selected `opencode2` CLI and discover/ensure only the exact version pinned by `packages/server/package.json`. Each dependency upgrade must review OpenCode release notes, current documentation, installed client declarations, and proxy/API parity.
+- Wrap native `Service.ensure`/`Service.stop` with CodeNomad's ownership checks. A lifecycle lease records the registration, authenticated endpoint, daemon PID plus process-start identity and host/WSL namespace, and a hash of the launch command/environment. Proof can transfer between live CodeNomad processes through peer leases; the final process calls `Service.stop` only after proving there are no live peers and every recorded identity still matches.
 - Queue location eviction when its final logical owner is removed, then perform it only during proven final shared-service shutdown so another CodeNomad process cannot lose active upstream state.
 - Force the V2 service database to `~/.local/share/opencode2/opencode.db`. V1 and V2 must never point at the same database because their schemas are incompatible.
 - Isolate V2 restore state under `~/.codenomad/client-state/v2` and copy V1 state non-destructively on first launch, preserving downgrade history.
 
 ## Current Status
 
-- The server/UI client dependencies are aligned on the latest reviewed OpenCode `next` release. The installed `opencode2` CLI is not exact-version-gated at runtime.
-- The current working tree includes hardened lifecycle proof, launch-configuration matching, an isolated V2 database, deferred location eviction, proxy path/location validation, and reconnect reconciliation changes.
+- Server, UI, and the selected `opencode2` CLI are exact-version-gated to `0.0.0-beta-17595`.
+- Shared-service shutdown delegates to native `Service.stop` after CodeNomad proves ownership and excludes live peer leases.
+- The UI uses native Forms instead of the removed Question API and `@opencode-ai/client/solid` `createData` for live message, tool, permission, and form reduction.
+- Session inventory uses native project/subpath/parent/order cursor pagination; internal OpenCode stream generations trigger authoritative UI reconciliation even when browser SSE remains connected.
+- A worktree is not deleted if session evacuation fails, and one canonical folder maps to one logical workspace instead of creating non-isolated duplicates.
+- The current working tree retains the isolated V2 database, deferred location eviction, and proxy path/location ownership validation.
 - Current installed client declarations provide native PTY list/get/create/title-or-size update/remove and lifecycle events, but no output/read/stream API and no separate stop API. Removing a running PTY is therefore the only native stop action, and PTY output is not displayed.
-- The migration remains a Draft. The full validation matrix and a real current-tree OpenCode V2 startup/session/event/Shell/shutdown smoke test are not yet recorded complete.
+- Local validation passes server/UI/Electron typechecks, the CI UI partitions, Electron native tests, server tests (with three platform skips), UI/server/Electron builds, Tauri `cargo check --locked`, and `git diff --check`.
 
 ## Remaining Work
 

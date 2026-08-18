@@ -201,8 +201,8 @@ function isSessionSearchLoading(instanceId: string): boolean {
   return sessionSearch().get(instanceId)?.loading ?? false
 }
 
-function getIndicatorBucket(session: Pick<Session, "status" | "pendingPermission" | "pendingQuestion" | "pendingForm">): InstanceSessionIndicatorStatus | "idle" {
-  if (session.pendingPermission || session.pendingQuestion || session.pendingForm) {
+function getIndicatorBucket(session: Pick<Session, "status" | "pendingPermission" | "pendingForm">): InstanceSessionIndicatorStatus | "idle" {
+  if (session.pendingPermission || session.pendingForm) {
     return "permission"
   }
   const status = session.status ?? "idle"
@@ -269,7 +269,7 @@ function recomputeIndicatorCounts(instanceId: string, instanceSessions: Map<stri
   let compacting = 0
 
   for (const session of instanceSessions.values()) {
-    if (session.pendingPermission || session.pendingQuestion || session.pendingForm) {
+    if (session.pendingPermission || session.pendingForm) {
       permission += 1
       continue
     }
@@ -642,7 +642,7 @@ function withSession(instanceId: string, sessionId: string, updater: (session: S
 function setSessionPending(
   instanceId: string,
   sessionId: string,
-  field: "pendingPermission" | "pendingQuestion" | "pendingForm",
+  field: "pendingPermission" | "pendingForm",
   pending: boolean,
 ): void {
   if (pending) cancelSessionGenerationAdmissions(instanceId, sessionId)
@@ -660,10 +660,6 @@ function setSessionPendingPermission(instanceId: string, sessionId: string, pend
   setSessionPending(instanceId, sessionId, "pendingPermission", pending)
 }
 
-function setSessionPendingQuestion(instanceId: string, sessionId: string, pending: boolean): void {
-  setSessionPending(instanceId, sessionId, "pendingQuestion", pending)
-}
-
 function setSessionPendingForm(instanceId: string, sessionId: string, pending: boolean): void {
   setSessionPending(instanceId, sessionId, "pendingForm", pending)
 }
@@ -671,14 +667,13 @@ function setSessionPendingForm(instanceId: string, sessionId: string, pending: b
 function reconcileSessionPendingState(
   instanceId: string,
   permissionSessionIds: ReadonlySet<string>,
-  questionSessionIds: ReadonlySet<string>,
   formSessionIds: ReadonlySet<string> = new Set(),
 ): void {
   setSessions((prev) => {
     const instanceSessions = prev.get(instanceId)
     if (!instanceSessions) return prev
 
-    const reconciled = applySessionPendingState(instanceSessions, permissionSessionIds, questionSessionIds, formSessionIds)
+    const reconciled = applySessionPendingState(instanceSessions, permissionSessionIds, formSessionIds)
     if (reconciled === instanceSessions) return prev
 
     const next = new Map(prev)
@@ -734,7 +729,7 @@ function hydrateSessionGenerationRecovery(
 ): void {
   for (const [sessionId, persisted] of Object.entries(markers)) {
     withSession(instanceId, sessionId, (session) => {
-      const recovery = session.pendingPermission || session.pendingQuestion || session.pendingForm
+      const recovery = session.pendingPermission || session.pendingForm
         ? null
         : resolveHydratedGenerationRecovery(persisted, session.status, session.runtimeStatusKnown === true)
       if ((session.generationRecovery ?? null) === recovery) return false
@@ -1322,7 +1317,6 @@ export {
   pruneDraftPrompts,
   withSession,
   setSessionPendingPermission,
-  setSessionPendingQuestion,
   setSessionPendingForm,
   reconcileSessionPendingState,
   markSessionIdleSeen,

@@ -30,6 +30,7 @@ interface InstanceEventBridgeOptions {
 export class InstanceEventBridge {
   private readonly controller = new AbortController()
   private status: InstanceStreamStatus = "connecting"
+  private generation = 0
   private task?: Promise<void>
   private readonly directoryOwners = new Map<string, { expiresAt: number; owners: Promise<string[]> }>()
   private readonly sessionDirectories = new Map<string, { expiresAt: number; directory: Promise<string | undefined> }>()
@@ -68,6 +69,7 @@ export class InstanceEventBridge {
 
   private async run() {
     while (!this.controller.signal.aborted) {
+      this.generation += 1
       this.clearLocationCaches()
       this.updateStatus("connecting")
       try {
@@ -209,7 +211,7 @@ export class InstanceEventBridge {
 
   private publishStatus(instanceId: string, status: InstanceStreamStatus, reason?: string) {
     this.options.logger.debug({ instanceId, status, reason }, "Instance event status updated")
-    this.options.eventBus.publish({ type: "instance.eventStatus", instanceId, status, reason })
+    this.options.eventBus.publish({ type: "instance.eventStatus", instanceId, status, generation: this.generation, reason })
   }
 
   private delay(duration: number) {

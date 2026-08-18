@@ -1,9 +1,9 @@
 import type { Session } from "../types/session"
 
 export function shouldSessionHoldWakeLock(
-  session: Pick<Session, "status" | "pendingPermission" | "pendingQuestion" | "pendingForm">,
+  session: Pick<Session, "status" | "pendingPermission" | "pendingForm">,
 ): boolean {
-  if (session.pendingPermission || session.pendingQuestion || session.pendingForm) {
+  if (session.pendingPermission || session.pendingForm) {
     return false
   }
 

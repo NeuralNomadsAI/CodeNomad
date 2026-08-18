@@ -20,7 +20,7 @@
 
 ## Prerequisites
 
-- **OpenCode V2**: Install the latest `opencode2` CLI. Runtime discovery does not require an exact version match.
+- **OpenCode V2**: Install the exact `opencode2` CLI version pinned by `@opencode-ai/client` in this package. Startup rejects a different version.
 - **OpenCode database**: V2 uses `~/.local/share/opencode2/opencode.db`, separate from the incompatible V1 database.
 - Node.js 18+ and npm (for running or building from source).
 - A workspace folder on disk you want to serve.

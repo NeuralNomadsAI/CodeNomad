@@ -74,7 +74,6 @@ export interface Session extends Omit<SDKSession, "parentID" | "model"> {
   location: LocationRef
   version?: string
   pendingPermission?: boolean // Indicates if session is waiting on user permission
-  pendingQuestion?: boolean // Indicates if session is waiting on user input
   pendingForm?: boolean // Indicates if session is waiting on a structured form response
   status: SessionStatus // Single source of truth for session status
   retry?: SessionRetryState | null // Retry metadata for transient backoff states

@@ -38,7 +38,7 @@ import { sseManager } from "../../lib/sse-manager"
 import { getLogger } from "../../lib/logger"
 import PromptInput from "../prompt-input"
 import { useI18n } from "../../lib/i18n"
-import { activeInterruption, getPermissionQueueLength, getQuestionQueueLength } from "../../stores/instances"
+import { activeInterruption, getPermissionQueueLength } from "../../stores/instances"
 import { getFormQueue } from "../../stores/forms"
 import SessionSidebar from "./shell/SessionSidebar"
 import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
@@ -351,8 +351,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const hasPendingRequests = createMemo(() => {
     const permissions = getPermissionQueueLength(props.instance.id)
-    const questions = getQuestionQueueLength(props.instance.id)
-    return permissions + questions + getFormQueue(props.instance.id).length > 0
+    return permissions + getFormQueue(props.instance.id).length > 0
   })
 
   const activePromptInputApi = createMemo(() => {
@@ -431,7 +430,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
     const activeSession = activeSessionForInstance()
     const needsPermission = Boolean(activeSession?.pendingPermission)
-    const needsQuestion = Boolean(activeSession?.pendingQuestion || activeSession?.pendingForm)
+    const needsQuestion = Boolean(activeSession?.pendingForm)
     const needsInput = needsPermission || needsQuestion
 
     if (needsInput) {

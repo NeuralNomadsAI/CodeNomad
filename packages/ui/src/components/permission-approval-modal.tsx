@@ -1,14 +1,11 @@
 import { For, Show, Suspense, createMemo, createSignal, createEffect, lazy, onCleanup, type Component } from "solid-js"
 import type { PermissionRequest } from "../types/permission"
 import { getPermissionCallId, getPermissionDisplayTitle, getPermissionKind, getPermissionMessageId, getPermissionSessionId } from "../types/permission"
-import { getQuestionCallId, getQuestionMessageId, getQuestionSessionId, type QuestionRequest } from "../types/question"
 import { useI18n } from "../lib/i18n"
 import {
   activeInterruption,
   getPermissionQueue,
   getPermissionEnqueuedAtForInstance,
-  getQuestionQueue,
-  getQuestionEnqueuedAtForInstance,
   sendPermissionResponse,
 } from "../stores/instances"
 import { activeSessionId, ensureSessionAncestorsExpanded, loadMessages, sessions as sessionStateSessions, setActiveSessionFromList } from "../stores/sessions"
@@ -103,40 +100,6 @@ function resolveToolCallFromPermission(
   return null
 }
 
-function resolveToolCallFromQuestion(instanceId: string, request: QuestionRequest): ResolvedToolCall | null {
-  const sessionId = getQuestionSessionId(request)
-  const messageId = getQuestionMessageId(request)
-  if (!sessionId || !messageId) return null
-
-  const store = messageStoreBus.getInstance(instanceId)
-  if (!store) return null
-
-  const record = store.getMessage(messageId)
-  if (!record) return null
-
-  const callId = getQuestionCallId(request)
-  if (!callId) return null
-
-  for (const partId of record.partIds) {
-    const partRecord = record.parts?.[partId]
-    const part = partRecord?.data as any
-    if (!part || part.type !== "tool") continue
-    const partCallId = part.callID ?? part.callId ?? part.toolCallID ?? part.toolCallId ?? undefined
-    if (partCallId !== callId) continue
-
-    if (typeof part.id !== "string" || part.id.length === 0) continue
-    return {
-      messageId,
-      sessionId,
-      toolPart: part as ResolvedToolCall["toolPart"],
-      messageVersion: record.revision,
-      partVersion: partRecord?.revision ?? 0,
-    }
-  }
-
-  return null
-}
-
 const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props) => {
   const { t } = useI18n()
   const [loadingSession, setLoadingSession] = createSignal<string | null>(null)
@@ -198,13 +161,11 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
   }
 
   const permissionQueue = createMemo(() => getPermissionQueue(props.instanceId))
-  const questionQueue = createMemo(() => getQuestionQueue(props.instanceId))
   const formQueue = createMemo(() => getFormQueue(props.instanceId))
   const active = createMemo(() => activeInterruption().get(props.instanceId) ?? null)
 
   type InterruptionItem =
     | { kind: "permission"; id: string; sessionId: string; createdAt: number; payload: PermissionRequest }
-    | { kind: "question"; id: string; sessionId: string; createdAt: number; payload: QuestionRequest }
     | { kind: "form"; id: string; sessionId: string; createdAt: number; payload: FormInfo }
 
   const orderedQueue = createMemo<InterruptionItem[]>(() => {
@@ -214,14 +175,6 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
       sessionId: getPermissionSessionId(permission) || "",
       createdAt: getPermissionEnqueuedAtForInstance(props.instanceId, permission.id),
       payload: permission,
-    }))
-
-    const questions = questionQueue().map((question) => ({
-      kind: "question" as const,
-      id: question.id,
-      sessionId: getQuestionSessionId(question) || "",
-      createdAt: getQuestionEnqueuedAtForInstance(props.instanceId, question.id),
-      payload: question,
     }))
 
     const formsForFallback = formQueue().filter((form) => shouldRenderFormInFallback(
@@ -236,7 +189,7 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
       payload: form,
     }))
 
-    return [...permissions, ...questions, ...forms].sort((a, b) => a.createdAt - b.createdAt)
+    return [...permissions, ...forms].sort((a, b) => a.createdAt - b.createdAt)
   })
 
   const hasRequests = createMemo(() => orderedQueue().length > 0)
@@ -323,8 +276,7 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
                       if (item.kind === "permission") {
                         return resolveToolCallFromPermission(props.instanceId, item.payload)
                       }
-                      if (item.kind === "question") return resolveToolCallFromQuestion(props.instanceId, item.payload)
-                      return null
+                       return null
                     })
 
                     const showFallback = () => !resolved()
@@ -332,28 +284,20 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
                     const kindLabel = () =>
                       item.kind === "permission"
                         ? t("permissionApproval.kind.permission")
-                        : item.kind === "question"
-                          ? t("permissionApproval.kind.question")
-                          : t("permissionApproval.kind.form")
+                        : t("permissionApproval.kind.form")
 
                     const primaryTitle = () => {
                       if (item.kind === "permission") {
                         return getPermissionDisplayTitle(item.payload)
                       }
-                      if (item.kind === "form") return item.payload.title
-                      const first = item.payload.questions?.[0]?.question
-                      return typeof first === "string" && first.trim().length > 0 ? first : t("permissionApproval.kind.question")
+                       return item.payload.title
                     }
 
                     const secondaryTitle = () => {
                       if (item.kind === "permission") {
                         return getPermissionKind(item.payload)
                       }
-                      if (item.kind === "form") return t("permissionApproval.kind.form")
-                      const count = item.payload.questions?.length ?? 0
-                      return count === 1
-                        ? t("permissionApproval.questionCount.one", { count })
-                        : t("permissionApproval.questionCount.other", { count })
+                       return t("permissionApproval.kind.form")
                     }
 
                     return (
@@ -442,9 +386,6 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
                                     <Show when={permissionError().get(item.id)}>
                                       {(err) => <div class="tool-call-permission-error">{err()}</div>}
                                     </Show>
-                                  </Show>
-                                  <Show when={item.kind === "question"}>
-                                    <div class="permission-center-fallback-hint">{t("permissionApproval.fallbackHint")}</div>
                                   </Show>
                                 </div>
                               }

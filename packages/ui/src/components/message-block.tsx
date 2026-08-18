@@ -722,8 +722,7 @@ export default function MessageBlock(props: MessageBlockProps) {
     if (part?.type !== "tool" || props.toolVisibility(part.tool || "") !== "hidden") return true
     return Boolean(
       part.pendingPermission?.active ||
-      props.store().getPermissionState(item.messageId, item.partId)?.active ||
-      props.store().getQuestionState(item.messageId, item.partId)?.active,
+      props.store().getPermissionState(item.messageId, item.partId)?.active,
     )
   }
 

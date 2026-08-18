@@ -170,7 +170,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
                         class="form-request-input"
                         type="text"
                         value={customString()}
-                        placeholder={t("toolCall.question.custom.placeholder")}
+                        placeholder={t("formRequest.customValuesPlaceholder")}
                         aria-describedby={field.description ? descriptionId : undefined}
                         onInput={(event) => update(field.key, event.currentTarget.value || undefined)}
                       />
@@ -206,7 +206,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
                       class="form-request-input"
                       type="text"
                       value={customString()}
-                      placeholder={t("toolCall.question.custom.placeholder")}
+                      placeholder={t("formRequest.customValuesPlaceholder")}
                       aria-describedby={field.description ? descriptionId : undefined}
                       onInput={(event) => update(field.key, event.currentTarget.value || undefined)}
                     />

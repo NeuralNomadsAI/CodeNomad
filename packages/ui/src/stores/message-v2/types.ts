@@ -1,7 +1,6 @@
 import type { ClientPart } from "../../types/message"
 import type { PromptDisplayMetadata } from "../../lib/prompt-display-metadata"
 import type { PermissionRequest } from "../../types/permission"
-import type { QuestionRequest } from "../../types/question"
 import type { MessageWindowState } from "./message-window"
 
 export type MessageStatus = "sending" | "sent" | "streaming" | "complete" | "error"
@@ -65,19 +64,6 @@ export interface InstancePermissionState {
   byMessage: Record<string, Record<string, PermissionEntry>>
 }
 
-export interface QuestionEntry {
-  request: QuestionRequest
-  messageId?: string
-  partId?: string
-  enqueuedAt: number
-}
-
-export interface InstanceQuestionState {
-  queue: QuestionEntry[]
-  active: QuestionEntry | null
-  byMessage: Record<string, Record<string, QuestionEntry>>
-}
-
 export interface ScrollSnapshot {
   scrollTop: number
   scrollRatio?: number
@@ -130,7 +116,6 @@ export interface InstanceMessageState {
   pendingParts: Record<string, PendingPartEntry[]>
   sessionRevisions: Record<string, number>
   permissions: InstancePermissionState
-  questions: InstanceQuestionState
   usage: Record<string, SessionUsageState>
   scrollState: Record<string, ScrollSnapshot>
   latestTodos: Record<string, LatestTodoSnapshot | undefined>

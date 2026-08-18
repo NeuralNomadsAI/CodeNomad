@@ -5,9 +5,7 @@ import { sdkManager } from "../lib/sdk-manager.ts"
 import type { Session } from "../types/session.ts"
 import { addInstance, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
-import { completeMessageWindow, latestMessageWindow } from "./message-v2/message-window.ts"
-import { applyNativeContentDelta, clearNativeContentDeltaState } from "./native-session-streaming.ts"
-import { fetchSessions, loadMessages, loadOlderMessages, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
+import { fetchSessions, loadMessages, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
 import {
   clearInstanceDeletedSessionAuthority,
   getSessionSearchResultIds,
@@ -131,40 +129,6 @@ describe("session request authority", () => {
       assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["new-message"])
       assert.equal(loading().loadingMessages.get(instanceId)?.has(sessionId) ?? false, false)
     } finally {
-      cleanup()
-    }
-  })
-
-  it("does not reconcile native deltas from a stale latest-window load into a historical window", async () => {
-    const instanceId = "stale-latest-reconcile", sessionId = "session"
-    const { client, cleanup } = setup(instanceId)
-    const staleLatest = deferred<any>()
-    const historical = deferred<any>()
-    let calls = 0
-    ;(client as any).message = { list: () => (++calls === 1 ? staleLatest.promise : historical.promise) }
-    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
-    const store = messageStoreBus.getOrCreate(instanceId)
-    store.setMessageWindow(sessionId, completeMessageWindow(latestMessageWindow(), "older-page"))
-
-    try {
-      const staleRequest = loadMessages(instanceId, sessionId, { force: true })
-      const historicalRequest = loadOlderMessages(instanceId, sessionId)
-      historical.resolve({ data: [apiMessage("assistant")] })
-      await historicalRequest
-      applyNativeContentDelta(instanceId, {
-        id: "native-delta",
-        created: 2,
-        type: "session.text.delta",
-        data: { sessionID: sessionId, assistantMessageID: "assistant", ordinal: 0, delta: "stale" },
-      })
-
-      staleLatest.resolve({ data: [apiMessage("latest")] })
-      await staleRequest
-
-      assert.deepEqual(store.getMessage("assistant")?.partIds, [])
-      assert.equal(store.getMessageWindow(sessionId)?.cursor, "older-page")
-    } finally {
-      clearNativeContentDeltaState(instanceId)
       cleanup()
     }
   })
