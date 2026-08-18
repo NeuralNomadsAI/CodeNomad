@@ -44,4 +44,15 @@ describe("restored workspace hydration", () => {
       "created workspace scroll state must exist before upsert mounts InstanceShell",
     )
   })
+
+  it("retries an initial no-snapshot render when the native scroll seed arrives", () => {
+    const section = readFileSync(new URL("../components/message-section.tsx", import.meta.url), "utf8")
+    const snapshotIndex = section.indexOf("const snapshot = initialScrollSnapshot()")
+    const settledGuardIndex = section.indexOf("if (didRestoreScroll() && (!restoredWithoutSnapshot || !snapshot)) return")
+
+    assert.notEqual(snapshotIndex, -1)
+    assert.ok(snapshotIndex < settledGuardIndex, "the restore effect must observe a late snapshot before its settled guard")
+    assert.match(section, /restoredWithoutSnapshot = true\s+setDidRestoreScroll\(true\)/)
+    assert.match(section, /restoredWithoutSnapshot = false\s+const restoreSessionId/)
+  })
 })

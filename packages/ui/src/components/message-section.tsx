@@ -241,6 +241,7 @@ export default function MessageSection(props: MessageSectionProps) {
   const [didRestoreScroll, setDidRestoreScroll] = createSignal(false)
   const lastGoodScrollSnapshots = new Map<string, VirtualFollowScrollSnapshot>()
   let restoringScrollSnapshot = false
+  let restoredWithoutSnapshot = false
   let scrollRestoreGeneration = 0
 
   function getLastGoodScrollSnapshot(sessionId: string) {
@@ -257,6 +258,7 @@ export default function MessageSection(props: MessageSectionProps) {
       () => {
         scrollRestoreGeneration += 1
         restoringScrollSnapshot = false
+        restoredWithoutSnapshot = false
         setDidRestoreScroll(false)
         const snapshot = store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE)
         if (snapshot) setLastGoodScrollSnapshot(props.sessionId, snapshot)
@@ -416,16 +418,18 @@ export default function MessageSection(props: MessageSectionProps) {
     if (!isActive()) return
     if (props.loading) return
     if (visibleMessageIds().length === 0) return
-    if (didRestoreScroll()) return
 
-    const snapshot = store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE)
+    const snapshot = initialScrollSnapshot()
+    if (didRestoreScroll() && (!restoredWithoutSnapshot || !snapshot)) return
     if (!snapshot) {
       api.setAutoScroll(true)
       api.scrollToBottom({ immediate: true })
+      restoredWithoutSnapshot = true
       setDidRestoreScroll(true)
       return
     }
 
+    restoredWithoutSnapshot = false
     const restoreSessionId = props.sessionId
     const restoreGeneration = ++scrollRestoreGeneration
     const isCurrentRestore = () => isScrollRestoreGenerationCurrent(
