@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core"
-import { isElectronHost, isLocalWindow, isMobilePlatform, isTauriHost } from "../runtime-env"
+import { isElectronHost, isLocalWindow, isTauriHost } from "../runtime-env"
+import { getLogger } from "../logger"
 const LEGACY_WEB_KEYS = ["codenomad-client-snapshot-v1", "codenomad-client-restore-enabled-v1"]
 export type NativeClientStateLoadResult = {
   isPrimary: boolean
@@ -7,6 +8,7 @@ export type NativeClientStateLoadResult = {
   snapshot: unknown | null
 }
 const SECONDARY_CLIENT_STATE: NativeClientStateLoadResult = { isPrimary: false, restoreEnabled: false, snapshot: null }
+const log = getLogger("actions")
 const accessToken = (() => {
   const bytes = new Uint8Array(32)
   globalThis.crypto.getRandomValues(bytes)
@@ -23,8 +25,9 @@ async function claimNativeClientStateAccess(): Promise<boolean> {
   try {
     const result = await dispatchNative<boolean | void>((api) => api?.claimClientStateAccess?.(accessToken), "client_state_claim_access")
     nativeAccessClaimed = isTauriHost() || result === true
-  } catch {
+  } catch (error) {
     nativeAccessClaimed = false
+    log.warn("Client state native access claim failed", error)
   }
   return nativeAccessClaimed
 }
@@ -48,16 +51,6 @@ export const setNativeRestoreEnabled = (enabled: boolean): Promise<boolean> =>
   mutateNativeClientState((api) => api.setClientStateRestoreEnabled?.(accessToken, enabled), "client_state_set_restore_enabled", { enabled })
 export const clearNativeClientState = (): Promise<boolean> =>
   mutateNativeClientState((api) => api.clearClientState?.(accessToken), "client_state_clear")
-export async function openNativeWorktreeInFileManager(rootDirectory: string, registeredDirectory: string, targetDirectory: string): Promise<void> {
-  if (isMobilePlatform() || !isLocalWindow() || !nativeAccessClaimed) throw new Error("Native renderer access is unavailable")
-  const result = dispatchNative(
-    (api) => api?.openWorktreeInFileManager?.(accessToken, rootDirectory, registeredDirectory, targetDirectory),
-    "open_worktree_in_file_manager",
-    { rootDirectory, registeredDirectory, targetDirectory },
-  )
-  if (!result) throw new Error("Native file manager is unavailable")
-  await result
-}
 function acknowledge(command: string, args: Record<string, unknown> = {}): Promise<void> {
   if (!isTauriHost() || !nativeAccessClaimed) return Promise.resolve()
   return invoke(command, { accessToken, ...args })

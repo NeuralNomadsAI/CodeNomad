@@ -111,10 +111,15 @@ Then open a pull request on GitHub targeting the `dev` branch.
 
 ### OpenCode V2 Boundaries
 
-- Server and UI pin `@opencode-ai/client@0.0.0-next-17288`; do not add `@opencode-ai/sdk`.
-- `packages/server/src/workspaces/opencode-service.ts` owns the single shared `Service.ensure` lifecycle. Workspaces are native OpenCode locations/directories, not separate server processes.
+- Server and UI must use the same latest reviewed `@opencode-ai/client` `next` release. Runtime discovery does not require an exact CLI version. Review OpenCode release notes, current documentation, and installed declarations on every upgrade; this is not the public `@opencode-ai/sdk` contract.
+- Upgrade references: [OpenCode releases](https://github.com/anomalyco/opencode/releases), [OpenCode documentation](https://opencode.ai/docs/), and `node_modules/@opencode-ai/client/dist/promise/`.
+- `packages/server/src/workspaces/opencode-service.ts` owns a custom lease-locked discovery, launch, process-proof, and authenticated-stop lifecycle. Production does not call `Service.ensure` or `Service.stop` directly. Workspaces are native OpenCode locations/directories, not separate server processes.
+- V2 always uses `~/.local/share/opencode2/opencode.db`. Never reuse the V1 database for V2.
 - OpenCode session calls use `/workspaces/:id/instance/api/*`; CodeNomad control routes and multiplexed events use `/api/*` and `/api/events`.
-- Native `client.session.shell` and `client.session.instructions.entry` cover Shell and prompt instructions. There is no `packages/opencode-plugin` integration.
+- The proxy is method/path allowlisted, so new upstream functionality is not exposed automatically.
+- Native Shell (`client.session.shell`) and prompt instructions (`client.session.instructions.entry`) remain separate from native V2 PTY management.
+- Native PTYs are location-scoped and listed in the Status panel. The UI refreshes them on PTY events and reconnect, displays native metadata, and supports title updates and ownership-checked removal. Current installed declarations have no PTY output/read/stream API or separate stop endpoint, so removal is the native stop action for a running PTY. `packages/opencode-plugin` and the server plugin/background-process paths remain deleted and must not be restored.
+- Native events are volatile. Reconnect handlers must refetch authoritative state instead of assuming missed events will replay.
 - Git mutations and Yolo policy remain CodeNomad-owned server boundaries.
 
 ### Key UI Files

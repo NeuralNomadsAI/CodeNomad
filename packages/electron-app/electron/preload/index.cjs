@@ -26,6 +26,13 @@ const localElectronAPI = {
   restartCli: () => ipcRenderer.invoke("cli:restart"),
   openDialog: (options) => ipcRenderer.invoke("dialog:open", options),
   getDirectoryPaths: (paths) => ipcRenderer.invoke("filesystem:getDirectoryPaths", paths),
+  openWorkspaceTarget: (payload) => ipcRenderer.invoke("workspace:openTarget", payload),
+  setWorkspaceMenuEnabled: (enabled) => ipcRenderer.invoke("workspace:setMenuEnabled", Boolean(enabled)),
+  onMenuAction: (callback) => {
+    const handler = (_event, action) => callback(action)
+    ipcRenderer.on("menu:action", handler)
+    return () => ipcRenderer.removeListener("menu:action", handler)
+  },
   getPathForFile: (file) => {
     try {
       return webUtils.getPathForFile(file)
@@ -43,8 +50,6 @@ const localElectronAPI = {
   setClientStateRestoreEnabled: (token, enabled) =>
     ipcRenderer.invoke("client-state:setRestoreEnabled", token, Boolean(enabled)),
   clearClientState: (token) => ipcRenderer.invoke("client-state:clear", token),
-  openWorktreeInFileManager: (token, rootDirectory, registeredDirectory, targetDirectory) =>
-    ipcRenderer.invoke("worktree:openInFileManager", token, { rootDirectory, registeredDirectory, targetDirectory }),
 }
 
 const remoteElectronAPI = {

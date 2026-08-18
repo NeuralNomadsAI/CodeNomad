@@ -1,5 +1,5 @@
 import { spawnSync } from "child_process"
-import { statSync } from "fs"
+import { readFileSync, statSync } from "fs"
 import path from "path"
 
 export const WINDOWS_CMD_EXTENSIONS = new Set([".cmd", ".bat"])
@@ -7,7 +7,7 @@ export const WINDOWS_POWERSHELL_EXTENSIONS = new Set([".ps1"])
 
 const VERSION_REGEX = /([0-9]+\.[0-9]+\.[0-9A-Za-z.-]+)/
 const WSL_UNC_PATH_REGEX = /^\\\\wsl(?:\.localhost|\$)\\([^\\/]+)(?:[\\/](.*))?$/i
-const WSL_PATH_ENV_KEYS = new Set(["NODE_EXTRA_CA_CERTS", "XDG_STATE_HOME"])
+const WSL_PATH_ENV_KEYS = new Set(["NODE_EXTRA_CA_CERTS", "OPENCODE_DB", "XDG_STATE_HOME"])
 const WINDOWS_DIRECT_EXTENSIONS = new Set([".com", ".exe"])
 const DEFAULT_WINDOWS_PATHEXT = ".COM;.EXE;.BAT;.CMD"
 const WINDOWS_SHELL_NAMES = new Set([
@@ -41,6 +41,10 @@ export interface SpawnSpec {
 export interface ServiceLaunchSpec {
   command: string[]
   env?: NodeJS.ProcessEnv
+  nativePid: boolean
+  wslDistro?: string
+  launcherRecordsPid?: boolean
+  windowsVerbatimArguments?: boolean
 }
 
 interface BuildSpawnSpecOptions {
@@ -93,7 +97,8 @@ export function buildWindowsSpawnSpec(binaryPath: string, args: string[], option
     return buildWslSpawnSpec(wslPath, args, options)
   }
 
-  const resolvedBinaryPath = resolveBareWindowsCommand(binaryPath, options) ?? binaryPath
+  const resolvedCommand = resolveBareWindowsCommand(binaryPath, options) ?? binaryPath
+  const resolvedBinaryPath = resolveWindowsNpmExecutable(resolvedCommand) ?? resolvedCommand
   const extension = path.win32.extname(resolvedBinaryPath).toLowerCase()
 
   if (WINDOWS_CMD_EXTENSIONS.has(extension)) {
@@ -151,43 +156,81 @@ export function buildSpawnSpec(binaryPath: string, args: string[], options: Buil
   return buildWindowsSpawnSpec(binaryPath, args, options)
 }
 
+export function resolveWslServiceDirectory(
+  folder: string,
+  distro: string,
+  translateWindowsPath: (folder: string, distro: string, timeoutMs: number) => string | undefined = (windowsFolder, wslDistro, timeoutMs) => {
+    const result = spawnSync("wsl.exe", ["--distribution", wslDistro, "--exec", "wslpath", "-au", windowsFolder], {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: timeoutMs,
+      maxBuffer: 64 * 1024,
+    })
+    return result.status === 0 ? result.stdout.trim() : undefined
+  },
+  timeoutMs = 5_000,
+): string | null {
+  const directory = resolveWslWorkingDirectory(folder, distro)
+  if (!directory) return null
+  if (directory.kind === "linux") return directory.path
+  return translateWindowsPath(directory.path, distro, Math.max(1, timeoutMs))?.trim() || null
+}
+
+export function resolveWslHostDirectory(
+  folder: string,
+  distro: string,
+  translateLinuxPath: (folder: string, distro: string, timeoutMs: number) => string | undefined = (linuxFolder, wslDistro, timeoutMs) => {
+    const result = spawnSync("wsl.exe", ["--distribution", wslDistro, "--exec", "wslpath", "-aw", linuxFolder], {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: timeoutMs,
+      maxBuffer: 64 * 1024,
+    })
+    return result.status === 0 ? result.stdout.trim() : undefined
+  },
+  timeoutMs = 5_000,
+): string | null {
+  if (!path.posix.isAbsolute(folder)) return null
+  return translateLinuxPath(folder, distro, Math.max(1, timeoutMs))?.trim() || null
+}
+
 export function buildServiceLaunchSpec(
   binaryPath: string,
   args: string[],
   options: BuildSpawnSpecOptions = {},
 ): ServiceLaunchSpec {
   const spec = buildSpawnSpec(binaryPath, args, options)
-  if (spec.processKind === "wsl") {
-    return { command: [spec.command, ...spec.args], env: spec.env }
+  const direct = spec.processKind === "posix" || spec.processKind === "windows-direct"
+  if (direct && options.contenderFile) {
+    const launcher = [
+      'const { spawn } = require("node:child_process")',
+      'const { appendFileSync } = require("node:fs")',
+      'const child = spawn(process.argv[1], JSON.parse(process.argv[2]), { detached: true, stdio: "ignore", windowsHide: true, windowsVerbatimArguments: process.argv[4] === "true" })',
+      'child.once("error", (error) => { console.error(error); process.exitCode = 1 })',
+      'if (child.pid) { appendFileSync(process.argv[3], `${child.pid}\\n`); child.unref() }',
+    ].join(";")
+    return {
+      command: [
+        process.execPath,
+        "-e",
+        launcher,
+        spec.command,
+        JSON.stringify(spec.args),
+        options.contenderFile,
+        String(Boolean(spec.options.windowsVerbatimArguments)),
+      ],
+      env: spec.env,
+      nativePid: true,
+      launcherRecordsPid: true,
+    }
   }
-  const contenderFile = spec.processKind === "posix" || spec.processKind === "windows-direct"
-    ? options.contenderFile
-    : undefined
-  if (!spec.options.windowsVerbatimArguments && !contenderFile) {
-    return { command: [spec.command, ...spec.args], env: spec.env }
-  }
-
-  // Service.ensure cannot pass spawn options or expose contender PIDs. A Node
-  // trampoline supplies both for commands whose child PID is the service PID.
-  const launcher = [
-    'const { spawn } = require("node:child_process")',
-    'const { appendFileSync } = require("node:fs")',
-    'const child = spawn(process.argv[1], JSON.parse(process.argv[2]), { stdio: "inherit", windowsVerbatimArguments: process.argv[4] === "true" })',
-    'if (process.argv[3]) appendFileSync(process.argv[3], `${child.pid}\\n`)',
-    'child.once("error", (error) => { console.error(error); process.exit(1) })',
-    'child.once("exit", (code) => process.exit(code ?? 1))',
-  ].join(";")
   return {
-    command: [
-      process.execPath,
-      "-e",
-      launcher,
-      spec.command,
-      JSON.stringify(spec.args),
-      contenderFile ?? "",
-      String(Boolean(spec.options.windowsVerbatimArguments)),
-    ],
+    command: [spec.command, ...spec.args],
     env: spec.env,
+    nativePid: direct,
+    wslDistro: spec.wsl?.distro,
+    launcherRecordsPid: spec.processKind === "wsl" && Boolean(options.contenderFile),
+    windowsVerbatimArguments: spec.options.windowsVerbatimArguments,
   }
 }
 
@@ -374,6 +417,20 @@ function buildWslLaunchScript(workingDirectory: WslWorkingDirectory | undefined,
   return steps.join(" && ")
 }
 
+function resolveWindowsNpmExecutable(command: string): string | null {
+  if (!WINDOWS_CMD_EXTENSIONS.has(path.win32.extname(command).toLowerCase())) return null
+  try {
+    const script = readFileSync(command, "utf8")
+    if (script.length > 64 * 1024) return null
+    const match = script.match(/["'](?:%~dp0|%dp0%)[\\/]([^"'\r\n]+\.exe)["']\s+%\*/i)
+    if (!match?.[1]) return null
+    const executable = path.win32.resolve(path.win32.dirname(command), match[1])
+    return statSync(executable).isFile() ? executable : null
+  } catch {
+    return null
+  }
+}
+
 function normalizeWindowsPath(input: string): string | null {
   const normalized = path.win32.normalize(input.trim().replace(/\//g, "\\"))
   if (!normalized) {
@@ -405,27 +462,23 @@ function buildWslEnvironment(env: NodeJS.ProcessEnv | undefined, propagateEnvKey
   const byName = new Map(entries.map((entry) => [entry.split("/")[0] ?? entry, entry]))
 
   for (const key of keysToPropagate) {
+    const requiresPathTranslation = WSL_PATH_ENV_KEYS.has(key) && (
+      key !== "OPENCODE_DB" || normalizeWindowsPath(next[key] ?? "") !== null
+    )
     const existingEntry = byName.get(key)
     if (existingEntry) {
-      byName.set(key, ensureWslenvEntry(existingEntry, WSL_PATH_ENV_KEYS.has(key)))
+      byName.set(key, setWslenvPathFlag(existingEntry, requiresPathTranslation))
       continue
     }
-    byName.set(key, WSL_PATH_ENV_KEYS.has(key) ? `${key}/p` : key)
+    byName.set(key, requiresPathTranslation ? `${key}/p` : key)
   }
 
   next.WSLENV = Array.from(byName.values()).join(":")
   return next
 }
 
-function ensureWslenvEntry(entry: string, requiresPathTranslation: boolean): string {
-  if (!requiresPathTranslation) {
-    return entry
-  }
-
+function setWslenvPathFlag(entry: string, requiresPathTranslation: boolean): string {
   const [name, rawFlags = ""] = entry.split("/")
-  if (rawFlags.includes("p")) {
-    return entry
-  }
-
-  return rawFlags.length > 0 ? `${name}/${rawFlags}p` : `${name}/p`
+  const flags = rawFlags.replaceAll("p", "") + (requiresPathTranslation ? "p" : "")
+  return flags ? `${name}/${flags}` : name
 }

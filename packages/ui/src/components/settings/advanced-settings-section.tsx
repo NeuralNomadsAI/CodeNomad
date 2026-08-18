@@ -12,8 +12,7 @@ export const AdvancedSettingsSection: Component = () => {
     getBehaviorSettings(config).filter(
       (setting) =>
         setting.id === "behavior.autoCleanupBlankSessions" ||
-        setting.id === "behavior.keepUnseenSubagentIdleStatus" ||
-        setting.id === "behavior.tauriNativeEventTransport",
+        setting.id === "behavior.keepUnseenSubagentIdleStatus",
     ),
   )
 

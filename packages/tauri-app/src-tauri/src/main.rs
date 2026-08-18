@@ -4,18 +4,14 @@
 mod cert_manager;
 mod cli_manager;
 mod client_state;
-mod desktop_event_transport;
 #[cfg(target_os = "linux")]
 mod linux_tls;
 mod managed_node;
 mod shutdown;
 mod windows_update;
-mod worktree_file_manager;
+mod workspace_open;
 
 use cli_manager::{CliProcessManager, CliStatus};
-use desktop_event_transport::{
-    DesktopEventTransportManager, DesktopEventsStartRequest, DesktopEventsStartResult,
-};
 use keepawake::KeepAwake;
 use serde::Deserialize;
 use serde_json::json;
@@ -24,7 +20,9 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::menu::{AboutMetadata, MenuBuilder, MenuItem, PredefinedMenuItem, SubmenuBuilder};
+use tauri::menu::{
+    AboutMetadata, MenuBuilder, MenuItem, PredefinedMenuItem, Submenu, SubmenuBuilder,
+};
 use tauri::plugin::{Builder as PluginBuilder, TauriPlugin};
 use tauri::webview::{PageLoadEvent, Webview};
 use tauri::{
@@ -48,20 +46,84 @@ use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 const ZOOM_STEP: f64 = 0.1;
 const RELEASES_URL: &str = "https://github.com/NeuralNomadsAI/CodeNomad/releases/latest";
 const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_WINDOW_CONTEXT__ = 'local';";
-const REMOTE_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_WINDOW_CONTEXT__ = 'remote';";
+const REMOTE_WINDOW_CONTEXT_SCRIPT: &str =
+    "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'remote';";
 
 #[cfg(windows)]
 const WINDOWS_APP_USER_MODEL_ID: &str = "ai.neuralnomads.codenomad.client";
 
 pub struct AppState {
     pub manager: CliProcessManager,
-    pub desktop_events: DesktopEventTransportManager,
     pub wake_lock: Mutex<Option<KeepAwake>>,
     pub remote_origins: Mutex<HashMap<String, String>>,
     pub remote_proxy_sessions: Mutex<HashMap<String, String>>,
     pub remote_skip_tls_verify: Mutex<HashMap<String, bool>>,
     pub remote_tls_handlers: Mutex<HashSet<String>>,
     pub remote_titles: Mutex<HashMap<String, String>>,
+    pub workspace_menu_items: Mutex<Option<WorkspaceMenuItems>>,
+    pub workspace_menu_requested_enabled: Mutex<bool>,
+}
+
+pub struct WorkspaceMenuItems {
+    folder: MenuItem<Wry>,
+    terminal: MenuItem<Wry>,
+    editor: Submenu<Wry>,
+}
+
+fn update_workspace_menu_state(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let requested = state
+        .workspace_menu_requested_enabled
+        .lock()
+        .map(|value| *value)
+        .unwrap_or(false);
+    let focused = app
+        .get_webview_window("main")
+        .and_then(|window| window.is_focused().ok())
+        .unwrap_or(false);
+    if let Ok(items) = state.workspace_menu_items.lock() {
+        if let Some(items) = items.as_ref() {
+            let enabled = requested && focused;
+            let _ = items.folder.set_enabled(enabled);
+            let _ = items.terminal.set_enabled(enabled);
+            let _ = items.editor.set_enabled(enabled);
+        }
+    };
+}
+
+#[tauri::command]
+fn set_workspace_menu_enabled(
+    window: tauri::WebviewWindow,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("Workspace menu updates are limited to the local main window".into());
+    }
+    if !enabled {
+        *state
+            .workspace_menu_requested_enabled
+            .lock()
+            .map_err(|error| error.to_string())? = false;
+        update_workspace_menu_state(&app);
+        return Ok(());
+    }
+    let config = state
+        .manager
+        .local_cli_access()
+        .ok_or("Local CodeNomad server is unavailable")?;
+    let expected = Url::parse(&config.base_url).map_err(|error| error.to_string())?;
+    let current = window.url().map_err(|error| error.to_string())?;
+    if current.origin() != expected.origin() {
+        return Err("Workspace menu updates require the local CodeNomad origin".into());
+    }
+    *state
+        .workspace_menu_requested_enabled
+        .lock()
+        .map_err(|error| error.to_string())? = enabled;
+    update_workspace_menu_state(&app);
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -139,28 +201,12 @@ fn cli_get_status(state: tauri::State<AppState>) -> CliStatus {
 #[tauri::command]
 fn cli_restart(app: AppHandle, state: tauri::State<AppState>) -> Result<CliStatus, String> {
     let dev_mode = is_dev_mode();
-    state.desktop_events.stop();
     state.manager.stop().map_err(|e| e.to_string())?;
     state
         .manager
         .start(app, dev_mode)
         .map_err(|e| e.to_string())?;
     Ok(state.manager.status())
-}
-
-#[tauri::command]
-fn desktop_events_start(
-    app: AppHandle,
-    state: tauri::State<AppState>,
-    request: Option<DesktopEventsStartRequest>,
-) -> DesktopEventsStartResult {
-    let config = state.manager.desktop_event_stream_config();
-    state.desktop_events.start(app, config, request)
-}
-
-#[tauri::command]
-fn desktop_events_stop(state: tauri::State<AppState>) {
-    state.desktop_events.stop();
 }
 
 #[tauri::command]
@@ -219,19 +265,20 @@ fn should_allow_window_origin<R: Runtime>(
     window_label: &str,
     url: &Url,
 ) -> bool {
-    if should_allow_internal(url) {
-        return true;
-    }
-
     let state = app_handle.state::<AppState>();
     let Ok(allowed) = state.remote_origins.lock() else {
         return false;
     };
-    if let Some(origin) = allowed.get(window_label) {
-        return origin == &url.origin().ascii_serialization();
-    }
+    should_allow_registered_origin(allowed.get(window_label).map(String::as_str), url)
+}
 
-    false
+fn should_allow_registered_origin(registered_origin: Option<&str>, url: &Url) -> bool {
+    if let Some(origin) = registered_origin {
+        if matches!(url.scheme(), "http" | "https") {
+            return origin == url.origin().ascii_serialization();
+        }
+    }
+    should_allow_internal(url)
 }
 
 fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
@@ -367,6 +414,9 @@ async fn open_remote_window_impl(
     let app_handle = app.clone();
     let label_for_cleanup = label.clone();
     window.on_window_event(move |event| {
+        if matches!(event, WindowEvent::Focused(_)) {
+            update_workspace_menu_state(&app_handle);
+        }
         if let WindowEvent::Destroyed = event {
             if let Ok(mut origins) = app_handle.state::<AppState>().remote_origins.lock() {
                 origins.remove(&label_for_cleanup);
@@ -567,6 +617,19 @@ fn set_windows_app_user_model_id() {
 #[cfg(not(windows))]
 fn set_windows_app_user_model_id() {}
 
+#[cfg(windows)]
+fn isolate_windows_webview_profile() {
+    if std::env::var_os("WEBVIEW2_USER_DATA_FOLDER").is_some() {
+        return;
+    }
+    if let Some(root) = dirs::data_local_dir() {
+        std::env::set_var(
+            "WEBVIEW2_USER_DATA_FOLDER",
+            root.join("ai.neuralnomads.codenomad.client-v2"),
+        );
+    }
+}
+
 fn main() {
     #[cfg(windows)]
     if let Some(code) = cli_manager::run_windows_cli_launcher_if_requested() {
@@ -574,6 +637,8 @@ fn main() {
     }
 
     let _ = rustls::crypto::ring::default_provider().install_default();
+    #[cfg(windows)]
+    isolate_windows_webview_profile();
 
     let navigation_guard: TauriPlugin<Wry, ()> = PluginBuilder::new("external-link-guard")
         .on_navigation(|webview, url| intercept_navigation(webview, url))
@@ -599,15 +664,27 @@ fn main() {
         .plugin(navigation_guard)
         .manage(AppState {
             manager: CliProcessManager::new(),
-            desktop_events: DesktopEventTransportManager::new(),
             wake_lock: Mutex::new(None),
             remote_origins: Mutex::new(HashMap::new()),
             remote_proxy_sessions: Mutex::new(HashMap::new()),
             remote_skip_tls_verify: Mutex::new(HashMap::new()),
             remote_tls_handlers: Mutex::new(HashSet::new()),
             remote_titles: Mutex::new(HashMap::new()),
+            workspace_menu_items: Mutex::new(None),
+            workspace_menu_requested_enabled: Mutex::new(false),
         })
         .on_page_load(|webview, payload| {
+            if webview.label() == "main" && payload.event() == PageLoadEvent::Started {
+                if let Ok(mut enabled) = webview
+                    .app_handle()
+                    .state::<AppState>()
+                    .workspace_menu_requested_enabled
+                    .lock()
+                {
+                    *enabled = false;
+                }
+                update_workspace_menu_state(&webview.app_handle());
+            }
             if matches!(
                 payload.event(),
                 PageLoadEvent::Started | PageLoadEvent::Finished
@@ -625,9 +702,15 @@ fn main() {
                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
             if let Some(window) = app.get_webview_window("main") {
                 #[cfg(windows)]
-                shutdown::install_windows_session_end_handler(&window)
+                shutdown::schedule_windows_session_end_handler(&window)
                     .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
                 let _ = window.eval(LOCAL_WINDOW_CONTEXT_SCRIPT);
+                let app_handle = app.handle().clone();
+                window.on_window_event(move |event| {
+                    if matches!(event, WindowEvent::Focused(_)) {
+                        update_workspace_menu_state(&app_handle);
+                    }
+                });
             }
             if let Some(shortcut) = fullscreen_shortcut() {
                 let shortcut_manager = app.handle().global_shortcut();
@@ -661,8 +744,6 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             cli_get_status,
             cli_restart,
-            desktop_events_start,
-            desktop_events_stop,
             wake_lock_start,
             wake_lock_stop,
             needs_local_certificate_install,
@@ -674,15 +755,27 @@ fn main() {
             client_state::client_state_clear,
             client_state::client_state_renderer_flushed,
             client_state::client_state_navigation_flushed,
-            worktree_file_manager::open_worktree_in_file_manager,
-            windows_update::install_stable_update
+            windows_update::install_stable_update,
+            workspace_open::open_workspace_target,
+            set_workspace_menu_enabled
         ])
         .on_menu_event(|app_handle, event| {
             match event.id().0.as_str() {
                 // File menu
-                "new_instance" => {
+                action @ ("new-instance"
+                | "open-workspace-folder"
+                | "open-workspace-terminal"
+                | "open-workspace-editor-vscode"
+                | "open-workspace-editor-cursor"
+                | "open-workspace-editor-zed"
+                | "open-workspace-editor-vscodium") => {
                     if let Some(window) = app_handle.get_webview_window("main") {
-                        let _ = window.emit("menu:newInstance", ());
+                        if action.starts_with("open-workspace-")
+                            && !window.is_focused().unwrap_or(false)
+                        {
+                            return;
+                        }
+                        let _ = window.emit("menu:action", action);
                     }
                 }
                 "quit" => {
@@ -885,21 +978,59 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     // File menu - create New Instance with accelerator
     let new_instance_item = MenuItem::with_id(
         app,
-        "new_instance",
+        "new-instance",
         "New Instance",
         true,
         Some("CmdOrCtrl+N"),
     )?;
+    let open_folder_item = MenuItem::with_id(
+        app,
+        "open-workspace-folder",
+        "Open Project Folder",
+        true,
+        None::<&str>,
+    )?;
+    let open_terminal_item = MenuItem::with_id(
+        app,
+        "open-workspace-terminal",
+        "Open Terminal Here",
+        true,
+        None::<&str>,
+    )?;
+    let open_editor_menu = SubmenuBuilder::new(app, "Open Project In")
+        .text("open-workspace-editor-vscode", "VS Code")
+        .text("open-workspace-editor-cursor", "Cursor")
+        .text("open-workspace-editor-zed", "Zed")
+        .text("open-workspace-editor-vscodium", "VSCodium")
+        .build()?;
+    open_folder_item.set_enabled(false)?;
+    open_terminal_item.set_enabled(false)?;
+    open_editor_menu.set_enabled(false)?;
+    if let Ok(mut items) = app.state::<AppState>().workspace_menu_items.lock() {
+        *items = Some(WorkspaceMenuItems {
+            folder: open_folder_item.clone(),
+            terminal: open_terminal_item.clone(),
+            editor: open_editor_menu.clone(),
+        });
+    }
 
     let file_menu = if is_mac {
         SubmenuBuilder::new(app, "File")
             .item(&new_instance_item)
+            .separator()
+            .item(&open_folder_item)
+            .item(&open_terminal_item)
+            .item(&open_editor_menu)
             .separator()
             .close_window()
             .build()?
     } else {
         SubmenuBuilder::new(app, "File")
             .item(&new_instance_item)
+            .separator()
+            .item(&open_folder_item)
+            .item(&open_terminal_item)
+            .item(&open_editor_menu)
             .separator()
             .text("quit", "Quit")
             .build()?
@@ -1061,8 +1192,13 @@ fn build_about_metadata(version: &str, include_update_link: bool) -> AboutMetada
 
 #[cfg(test)]
 mod menu_tests {
-    use super::{build_about_metadata, run_update_with_fallback, RELEASES_URL};
+    use super::{
+        build_about_metadata, run_update_with_fallback, should_allow_registered_origin,
+        RELEASES_URL, REMOTE_WINDOW_CONTEXT_SCRIPT,
+    };
+    use serde_json::json;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use url::Url;
 
     #[test]
     fn failed_update_uses_release_fallback() {
@@ -1092,5 +1228,54 @@ mod menu_tests {
 
         assert_eq!(metadata.website, None);
         assert_eq!(metadata.website_label, None);
+    }
+
+    #[test]
+    fn remote_windows_identify_as_remote_tauri_windows() {
+        assert!(REMOTE_WINDOW_CONTEXT_SCRIPT.contains("__CODENOMAD_RUNTIME_HOST__ = 'tauri'"));
+        assert!(REMOTE_WINDOW_CONTEXT_SCRIPT.contains("__CODENOMAD_WINDOW_CONTEXT__ = 'remote'"));
+
+        let capability: serde_json::Value = serde_json::from_str(include_str!(
+            "../capabilities/remote-window-notifications.json"
+        ))
+        .unwrap();
+        assert_eq!(capability["local"], false);
+        assert_eq!(
+            capability["remote"]["urls"],
+            json!(["http://*:*", "https://*:*"])
+        );
+        assert_eq!(capability["windows"], json!(["remote-*"]));
+        assert_eq!(
+            capability["permissions"],
+            json!([
+                "notification:allow-is-permission-granted",
+                "notification:allow-request-permission",
+                "notification:allow-notify"
+            ])
+        );
+
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert!(config["app"]["security"]["capabilities"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("remote-window-notifications")));
+    }
+
+    #[test]
+    fn remote_windows_stay_on_their_registered_http_origin() {
+        let origin = "https://remote.example:9898";
+        assert!(should_allow_registered_origin(
+            Some(origin),
+            &Url::parse("https://remote.example:9898/settings").unwrap()
+        ));
+        assert!(!should_allow_registered_origin(
+            Some(origin),
+            &Url::parse("http://localhost:9898/").unwrap()
+        ));
+        assert!(should_allow_registered_origin(
+            Some(origin),
+            &Url::parse("about:blank").unwrap()
+        ));
     }
 }

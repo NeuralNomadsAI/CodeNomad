@@ -85,6 +85,9 @@ test("question replies and rejects use queued request sessions", async () => {
   addTestInstance("question-replies", client)
   addQuestionToQueue("question-replies", { id: "reply", sessionID: "reply-session", questions: [] })
   addQuestionToQueue("question-replies", { id: "reject", sessionID: "reject-session", questions: [] })
+  const messageStore = messageStoreBus.getOrCreate("question-replies")
+  messageStore.upsertQuestion({ request: { id: "reply", sessionID: "reply-session", questions: [] }, enqueuedAt: 1 })
+  messageStore.upsertQuestion({ request: { id: "reject", sessionID: "reject-session", questions: [] }, enqueuedAt: 2 })
 
   await sendQuestionReply("question-replies", "stale-session", "reply", [["yes"]])
   await sendQuestionReject("question-replies", "stale-session", "reject")
@@ -92,6 +95,7 @@ test("question replies and rejects use queued request sessions", async () => {
   assert.deepEqual(replies, [{ sessionID: "reply-session", requestID: "reply", answers: [["yes"]] }])
   assert.deepEqual(rejects, [{ sessionID: "reject-session", requestID: "reject" }])
   assert.deepEqual(getQuestionQueue("question-replies"), [])
+  assert.equal(messageStore.state.questions.queue.length, 0)
 })
 
 test("pending request sync cannot erase newer SSE mutations", async () => {
@@ -110,6 +114,7 @@ test("pending request sync cannot erase newer SSE mutations", async () => {
     question: { request: { list: () => ++questionCalls === 1
       ? new Promise((resolve) => { resolveQuestions = resolve })
       : Promise.resolve({ location: {} as never, data: [newQuestion] }) } },
+    form: { request: { list: async () => ({ location: {} as never, data: [] }) } },
   } as unknown as OpenCodeClient
   addTestInstance("pending-request-race", client)
   addPermissionToQueue("pending-request-race", { id: "stale-permission", sessionID: "session", action: "edit", resources: [] })
@@ -146,12 +151,18 @@ test("pending request sync uses native global lists with an explicit directory",
         return { location: {} as never, data: [{ id: "question", sessionID: "session", questions: [] }] }
       },
     } },
+    form: { request: {
+      list: async (input: { location?: unknown }) => {
+        locations.push(input.location)
+        return { location: {} as never, data: [] }
+      },
+    } },
   } as unknown as OpenCodeClient
   addTestInstance("native-pending-api", client)
 
   await syncPendingRequests("native-pending-api")
 
-  assert.deepEqual(locations, [{ directory: "/workspace" }, { directory: "/workspace" }])
+  assert.deepEqual(locations, [{ directory: "/workspace" }, { directory: "/workspace" }, { directory: "/workspace" }])
   assert.deepEqual(getPermissionQueue("native-pending-api").map(({ id }) => id), ["permission"])
   assert.deepEqual(getQuestionQueue("native-pending-api").map(({ id }) => id), ["question"])
 })

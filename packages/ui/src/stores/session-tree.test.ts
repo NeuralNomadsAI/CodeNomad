@@ -179,35 +179,17 @@ describe("session tree", () => {
     )
   })
 
-  it("sorts and filters complete families", () => {
+  it("keeps a complete family when a descendant matches", () => {
     const sessions = sessionMap([
-      ["z-root", null, 100],
-      ["matching-child", "z-root", 500],
-      ["sibling", "z-root", 200],
-      ["a-root", null, 300],
+      ["root", null, 100],
+      ["matching-child", "root", 500],
+      ["sibling", "root", 200],
     ])
-    sessions.get("z-root")!.title = "Zulu"
-    sessions.get("z-root")!.location = { directory: "C:\\repo\\feature" }
-    sessions.get("matching-child")!.location = { directory: "C:\\repo\\feature" }
-    sessions.get("sibling")!.location = { directory: "C:\\repo\\feature" }
-    sessions.get("a-root")!.title = "Alpha"
-    sessions.get("a-root")!.location = { directory: "C:\\repo" }
-    const threads = buildSessionThreadsFromMap(sessions, ["z-root", "a-root"])
-    const labels = (directory: string) => directory.endsWith("feature") ? "feature" : "root"
-
-    const matched = projectSessionFamilies(threads, {
-      sort: "name",
+    const matched = projectSessionFamilies(buildSessionThreadsFromMap(sessions, ["root"]), {
+      sort: "activity",
       matchesSession: (item) => item.id === "matching-child",
-      getWorktreeLabel: labels,
+      getWorktreeLabel: () => "root",
     })
-    assert.deepEqual(collectSessionThreadIds(matched), ["z-root", "matching-child", "sibling"])
-
-    const filtered = projectSessionFamilies(threads, {
-      sort: "worktree",
-      worktreeDirectory: "c:/REPO/FEATURE/",
-      getWorktreeLabel: labels,
-    })
-    assert.deepEqual(collectSessionThreadIds(filtered), ["z-root", "matching-child", "sibling"])
-    assert.deepEqual(projectSessionFamilies(threads, { sort: "name", getWorktreeLabel: labels }).map((item) => item.session.id), ["a-root", "z-root"])
+    assert.deepEqual(collectSessionThreadIds(matched), ["root", "matching-child", "sibling"])
   })
 })

@@ -33,19 +33,6 @@ export type NormalizedMessagePart =
 
 export type NativeSessionMessageInfo = SessionMessageInfo
 
-// Server streaming event: append-only delta updates.
-// Emitted over SSE by newer OpenCode builds.
-export interface MessagePartDeltaEvent {
-  type: "message.part.delta"
-  properties: {
-    sessionID: string
-    messageID: string
-    partID: string
-    field: string
-    delta: string
-  }
-}
-
 export interface RenderCache {
   text: string
   html: string
@@ -113,27 +100,6 @@ export interface MessageInfo {
   }) | null
   summary?: boolean
   text?: string
-}
-
-export interface MessageUpdateEvent {
-  type: "message.updated"
-  properties: { info: MessageInfo }
-}
-
-export interface MessagePartUpdatedEvent {
-  type: "message.part.updated"
-  properties: { part: ClientPart; message?: MessageInfo }
-  directory?: string
-}
-
-export interface MessageRemovedEvent {
-  type: "message.removed"
-  properties: { sessionID: string; messageID: string }
-}
-
-export interface MessagePartRemovedEvent {
-  type: "message.part.removed"
-  properties: { sessionID: string; messageID: string; partID: string }
 }
 
 export function isHiddenSyntheticTextPart(part: ClientPart): boolean {

@@ -7,10 +7,9 @@ import { addInstance, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { setConversationModeEnabled } from "./conversation-speech.ts"
 import { sendMessage } from "./session-actions.ts"
-import { handleMessageUpdate, handleSessionError } from "./session-events.ts"
+import { handleNativeSessionEvent, handleSessionError } from "./session-events.ts"
 import { clearInstanceDeletedSessionAuthority, setSessions } from "./session-state.ts"
-
-const tick = () => new Promise<void>((resolve) => setImmediate(resolve))
+import { partHasRenderableText } from "../types/message.ts"
 
 function session(instanceId: string, id: string): Session {
   return {
@@ -39,12 +38,15 @@ function setup(
   sessionId: string,
   prompt: (input: any) => Promise<any>,
   entry = { put: async (_input: any) => undefined, remove: async (_input: any) => undefined },
+  list = async () => ({ data: [] }),
 ) {
   const client = {
     session: {
       prompt,
+      switchModel: async () => undefined,
       instructions: { entry },
     },
+    message: { list },
   } as any
   ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
   addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
@@ -65,6 +67,36 @@ function setup(
 }
 
 describe("optimistic send lifecycle", () => {
+  it("renders the optimistic prompt before any native request resolves", async () => {
+    const instanceId = "send-immediate"
+    const sessionId = "session"
+    let releaseInstruction!: () => void
+    const instruction = new Promise<undefined>((resolve) => { releaseInstruction = () => resolve(undefined) })
+    const cleanup = setup(
+      instanceId,
+      sessionId,
+      async () => undefined,
+      { put: async () => instruction, remove: async () => instruction },
+    )
+
+    try {
+      const sending = sendMessage(instanceId, sessionId, "hello")
+      const store = messageStoreBus.getOrCreate(instanceId)
+      const [messageId] = store.getSessionMessageIds(sessionId)
+      const record = messageId ? store.getMessage(messageId) : undefined
+      const textPart = record?.partIds.map((id) => record.parts[id]?.data).find((part) => part?.type === "text")
+
+      assert.equal(record?.status, "sending")
+      assert.equal(textPart?.text, "hello")
+      assert.equal(textPart ? partHasRenderableText(textPart) : false, true)
+
+      releaseInstruction()
+      await sending
+    } finally {
+      cleanup()
+    }
+  })
+
   it("writes the native session voice instruction before prompting", async () => {
     const instanceId = "send-voice-mode"
     const sessionId = "session"
@@ -130,78 +162,6 @@ describe("optimistic send lifecycle", () => {
     }
   })
 
-  it("keeps same-id SSE confirmation authoritative when the request later rejects", async () => {
-    const instanceId = "send-sse-first"
-    const sessionId = "session"
-    let request: any
-    let rejectPrompt!: (error: Error) => void
-    const prompt = new Promise<any>((_resolve, reject) => {
-      rejectPrompt = reject
-    })
-    const cleanup = setup(instanceId, sessionId, async (input) => {
-      request = input
-      return prompt
-    })
-
-    try {
-      const sending = sendMessage(instanceId, sessionId, "hello")
-      await tick()
-      assert.equal(typeof request.id, "string")
-
-      handleMessageUpdate(instanceId, {
-        type: "message.updated",
-        properties: {
-          info: { id: request.id, sessionID: sessionId, role: "user", time: { created: 1 } },
-        },
-      } as any)
-      handleMessageUpdate(instanceId, {
-        type: "message.part.updated",
-        properties: {
-          part: { id: "server-part", sessionID: sessionId, messageID: request.id, type: "text", text: "hello" },
-        },
-      } as any)
-      rejectPrompt(new Error("response lost"))
-      await assert.rejects(sending)
-
-      const record = messageStoreBus.getOrCreate(instanceId).getMessage(request.id)
-      assert.equal(record?.isEphemeral, false)
-      assert.equal(record?.status, "complete")
-      assert.deepEqual(record?.partIds, ["server-part"])
-      assert.equal((record?.parts["server-part"]?.data as any)?.text, "hello")
-    } finally {
-      cleanup()
-    }
-  })
-
-  it("reconciles exact optimistic parts when rejection arrives before same-id SSE", async () => {
-    const instanceId = "send-rejected-before-sse"
-    const sessionId = "session"
-    let request: any
-    const cleanup = setup(instanceId, sessionId, async (input) => {
-      request = input
-      throw new Error("response lost")
-    })
-
-    try {
-      await assert.rejects(() => sendMessage(instanceId, sessionId, "hello"))
-      handleMessageUpdate(instanceId, {
-        type: "message.updated",
-        properties: { info: { id: request.id, sessionID: sessionId, role: "user", time: { created: 1 } } },
-      } as any)
-      handleMessageUpdate(instanceId, {
-        type: "message.part.updated",
-        properties: {
-          part: { id: "server-part", sessionID: sessionId, messageID: request.id, type: "text", text: "hello" },
-        },
-      } as any)
-
-      const record = messageStoreBus.getOrCreate(instanceId).getMessage(request.id)
-      assert.deepEqual(record?.partIds, ["server-part"])
-    } finally {
-      cleanup()
-    }
-  })
-
   it("retires an accepted send after an asynchronous session error", async () => {
     const instanceId = "send-session-error"
     const sessionId = "session"
@@ -225,6 +185,65 @@ describe("optimistic send lifecycle", () => {
 
       store.reconcileEmptyAuthoritativeSnapshot(sessionId)
       assert.equal(store.getMessage(request.id), undefined)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("refreshes an accepted send on native success without marking it failed", async () => {
+    const instanceId = "send-session-success"
+    const sessionId = "session"
+    let request: any
+    let refreshCalls = 0
+    const cleanup = setup(
+      instanceId,
+      sessionId,
+      async (input) => { request = input; return { id: "pending", sessionID: sessionId } },
+      undefined,
+      async () => { refreshCalls += 1; return { data: [] } },
+    )
+
+    try {
+      await sendMessage(instanceId, sessionId, "hello")
+      const store = messageStoreBus.getOrCreate(instanceId)
+      handleNativeSessionEvent(instanceId, {
+        id: "success",
+        created: 1,
+        type: "session.execution.succeeded",
+        durable: { aggregateID: sessionId, seq: 1, version: 1 },
+        data: { sessionID: sessionId },
+      } as any)
+
+      assert.equal(store.getMessage(request.id)?.status, "sent")
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      assert.equal(refreshCalls, 1)
+      assert.notEqual(store.getMessage(request.id)?.status, "error")
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("marks accepted sends failed when native execution is interrupted", async () => {
+    const instanceId = "send-session-interrupted"
+    const sessionId = "session"
+    let request: any
+    const cleanup = setup(instanceId, sessionId, async (input) => {
+      request = input
+      return { id: "pending", sessionID: sessionId }
+    })
+
+    try {
+      await sendMessage(instanceId, sessionId, "hello")
+      const store = messageStoreBus.getOrCreate(instanceId)
+      handleNativeSessionEvent(instanceId, {
+        id: "interrupted",
+        created: 1,
+        type: "session.execution.interrupted",
+        durable: { aggregateID: sessionId, seq: 1, version: 1 },
+        data: { sessionID: sessionId, reason: "cancelled" },
+      } as any)
+
+      assert.equal(store.getMessage(request.id)?.status, "error")
     } finally {
       cleanup()
     }

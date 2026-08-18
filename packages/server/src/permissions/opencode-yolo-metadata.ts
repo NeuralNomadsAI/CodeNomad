@@ -1,4 +1,4 @@
-import type { OpenCodeClient } from "@opencode-ai/client"
+import type { OpenCodeClient, SessionInfo } from "@opencode-ai/client"
 import type { SettingsService } from "../settings/service"
 import type { WorkspaceManager } from "../workspaces/manager"
 import { createInstanceClient } from "../workspaces/instance-client"
@@ -24,6 +24,11 @@ function sessionState(settings: SettingsService, sessionId: string): PersistedSe
   return record(sessions[sessionId]) as PersistedSessionState
 }
 
+function enabledSessionIds(settings: SettingsService): string[] {
+  const sessions = record(settings.getOwner("state", STATE_OWNER).sessions)
+  return Object.keys(sessions).filter((sessionId) => record(sessions[sessionId]).yoloEnabled === true)
+}
+
 export function createOpencodeYoloPersistence(
   workspaceManager: WorkspaceManager,
   settings: SettingsService,
@@ -38,11 +43,24 @@ export function createOpencodeYoloPersistence(
   const listSessions = async (instanceId: string) => {
     const workspace = workspaceManager.get(instanceId)
     if (!workspace) throw new Error(`Yolo: instance ${instanceId} is not ready`)
-    return (await (await clientFor(instanceId)).session.list({
-      directory: workspace.path,
-      limit: SESSION_LIST_LIMIT,
-    })).data
+    const directory = workspaceManager.getServiceDirectory(instanceId)
+    if (!directory) throw new Error(`Yolo: instance ${instanceId} has no service location`)
+    const client = await clientFor(instanceId)
+    const sessions: SessionInfo[] = []
+    let cursor: string | undefined
+    do {
+      const page = await client.session.list({ directory, limit: SESSION_LIST_LIMIT, cursor })
+      sessions.push(...page.data)
+      cursor = page.cursor.next ?? undefined
+    } while (cursor)
+    return sessions
   }
+  const persistedSession = (session: SessionInfo): PersistedAutoAcceptSession => ({
+    id: session.id,
+    parentId: session.parentID ?? null,
+    fork: session.fork,
+    yoloEnabled: sessionState(settings, session.id).yoloEnabled === true,
+  })
   const updateYolo = (
     sessionId: string,
     enabled: boolean,
@@ -60,13 +78,30 @@ export function createOpencodeYoloPersistence(
 
   return {
     async loadSessions(instanceId): Promise<PersistedAutoAcceptSession[]> {
-      return (await listSessions(instanceId)).map((session) => ({
-        id: session.id,
-        parentId: session.parentID ?? null,
-        revert: session.revert,
-        workspaceId: session.location.workspaceID,
-        yoloEnabled: sessionState(settings, session.id).yoloEnabled === true,
+      const client = await clientFor(instanceId)
+      const sessions = new Map((await listSessions(instanceId)).map((session) => [session.id, session]))
+      await Promise.all(enabledSessionIds(settings).map(async (sessionId) => {
+        if (sessions.has(sessionId)) return
+        try {
+          const session = await client.session.get({ sessionID: sessionId })
+          if (await workspaceManager.ownsDirectory(instanceId, session.location.directory)) sessions.set(session.id, session)
+        } catch {
+          // Stale persisted IDs are harmless and may belong to a stopped workspace.
+        }
       }))
+      const owned = await Promise.all(Array.from(sessions.values()).map(async (session) => (
+        await workspaceManager.ownsDirectory(instanceId, session.location.directory) ? persistedSession(session) : null
+      )))
+      return owned.filter((session): session is PersistedAutoAcceptSession => session !== null)
+    },
+    async loadSession(instanceId, sessionId): Promise<PersistedAutoAcceptSession | null> {
+      try {
+        const session = await (await clientFor(instanceId)).session.get({ sessionID: sessionId })
+        if (!(await workspaceManager.ownsDirectory(instanceId, session.location.directory))) return null
+        return persistedSession(session)
+      } catch {
+        return null
+      }
     },
     persist(_instanceId, rootSessionId, enabled): Promise<void> {
       return updateYolo(rootSessionId, enabled)

@@ -131,7 +131,8 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
             failClosed: true,
           })
           return refreshed.some((worktree) => worktree.slug === worktreeSlug
-            && worktree.registeredDirectory === target.registeredDirectory)
+            && worktree.registeredDirectory === target.registeredDirectory
+            && worktree.head === target.head)
         },
       })
       const response: WorktreeSessionMoveResponse = { ...moved, worktreeSlug }
@@ -185,12 +186,27 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
 
       try {
         const client = await deps.workspaceManager.getSharedServiceClient()
+        const isTargetRegistered = async () => {
+          const refreshed = await strictWorktrees({
+            repoRoot,
+            workspaceFolder: workspace.path,
+            logger: request.log,
+            failClosed: true,
+          })
+          return refreshed.some((worktree) => worktree.slug === slug
+            && worktree.kind === "worktree"
+            && worktree.registeredDirectory === match.registeredDirectory
+            && worktree.head === match.head)
+        }
         await removeProjectWorktree({
           client,
           projectDirectory: workspace.path,
           targetDirectory: match.registeredDirectory ?? match.directory,
           rootDirectory: worktrees.find((worktree) => worktree.kind === "root")!.directory,
           remove: async () => {
+            if (!await isTargetRegistered()) {
+              throw new ProjectSessionError("Worktree changed before deletion", 409)
+            }
             try {
               await removeWorktree({
                 workspaceFolder: workspace.path,
@@ -202,18 +218,7 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
               throw new ProjectSessionError(error instanceof Error ? error.message : "Unable to remove worktree", 409)
             }
           },
-          isTargetRegistered: async () => {
-            const refreshed = await strictWorktrees({
-              repoRoot,
-              workspaceFolder: workspace.path,
-              logger: request.log,
-              failClosed: true,
-            })
-            return refreshed.some((worktree) => worktree.slug === slug
-              && worktree.kind === "worktree"
-              && worktree.registeredDirectory === match.registeredDirectory
-              && worktree.head === match.head)
-          },
+          isTargetRegistered,
         })
         invalidateWorktreeDirectoryCache(workspace.id)
       } finally {

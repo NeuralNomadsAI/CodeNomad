@@ -364,6 +364,13 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     setState("latestTodos", sessionId, undefined)
   }
 
+  function getLatestTodoSnapshot(sessionId: string): LatestTodoSnapshot | undefined {
+    const snapshot = state.latestTodos[sessionId]
+    if (!snapshot) return undefined
+    const messageIds = state.sessions[sessionId]?.messageIds ?? []
+    return messageIds.indexOf(snapshot.messageId) > getLastCompactionMessageIndex(sessionId) ? snapshot : undefined
+  }
+
   function bumpSessionRevision(sessionId: string) {
     if (!sessionId) return
     setState("sessionRevisions", sessionId, (value = 0) => value + 1)
@@ -876,6 +883,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     }
     const map: MessageRecord["parts"] = {}
     const ids: string[] = []
+    const seenIds = new Set<string>()
 
     parts.forEach((part, index) => {
       const id = ensurePartId(messageId, part, index)
@@ -885,7 +893,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         data: cloned,
         revision: 0,
       }
-      ids.push(id)
+      if (!seenIds.has(id)) {
+        seenIds.add(id)
+        ids.push(id)
+      }
     })
 
     return { map, ids }
@@ -962,6 +973,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       (part as any).callId ??
       (part as any).toolCallID ??
       (part as any).toolCallId ??
+      (part as any).id ??
       undefined
     if (!toolCallId) {
       return
@@ -998,6 +1010,26 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     )
   }
 
+  function rebindQuestionForPart(messageId: string, partId: string, part: ClientPart) {
+    if (!messageId || !partId || part.type !== "tool") return
+
+    const toolCallId =
+      (part as any).callID ??
+      (part as any).callId ??
+      (part as any).toolCallID ??
+      (part as any).toolCallId ??
+      (part as any).id ??
+      undefined
+    if (!toolCallId) return
+
+    const detached = Object.values(state.questions.byMessage[messageId] ?? {}).find((entry) => {
+      return entry && entry.partId !== partId && entry.request.tool?.id === toolCallId
+    })
+    if (!detached) return
+
+    upsertQuestion({ ...detached, messageId, partId })
+  }
+
   function applyPartUpdate(input: PartUpdateInput) {
     const message = state.messages[input.messageId]
     if (!message) {
@@ -1030,6 +1062,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     )
 
     rebindPermissionForPart(input.messageId, partId, cloned)
+    rebindQuestionForPart(input.messageId, partId, cloned)
 
     if (isCompletedTodoPart(cloned)) {
       recordLatestTodoSnapshot(message.sessionId, {
@@ -1752,7 +1785,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       getLastAssistantMessageId: getLastAssistantMessageIdValue,
       getLastCompactionMessageIndex,
       getMessage: (messageId: string) => state.messages[messageId],
-      getLatestTodoSnapshot: (sessionId: string) => state.latestTodos[sessionId],
+      getLatestTodoSnapshot,
       clearSession,
       clearScrollSnapshots,
       clearInstance,

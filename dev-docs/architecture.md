@@ -2,7 +2,7 @@
 
 ## Overview
 
-CodeNomad is a SolidJS UI and Fastify server hosted by Electron or Tauri. It integrates directly with native OpenCode V2 through exact dependency `@opencode-ai/client@0.0.0-next-17288`.
+CodeNomad is a SolidJS UI and Fastify server hosted by Electron or Tauri. It integrates with the experimental `@opencode-ai/client` protocol, with server and UI kept on the same latest reviewed `next` release. This is not the current public `@opencode-ai/sdk` contract.
 
 ```text
 Desktop host -> CodeNomad server -> one shared OpenCode service
@@ -15,15 +15,17 @@ There is no `@opencode-ai/sdk` integration and no `packages/opencode-plugin` pac
 
 ## Shared Service And Locations
 
-`packages/server/src/workspaces/opencode-service.ts` wraps native `Service.discover`, `Service.ensure`, `Service.headers` and `Service.stop`. The first workspace ensures one `opencode serve --service`; all workspaces share that endpoint, client and event stream.
+`packages/server/src/workspaces/opencode-service.ts` uses native discovery and headers, but production startup/shutdown does not call `Service.ensure` or `Service.stop` directly. Its custom launcher serializes lifecycle changes with cross-process leases, records the registration and authenticated endpoint, proves daemon and CodeNomad PIDs with process-start identity in the host or WSL namespace, and binds that proof to a launch command/environment hash. Live peer leases can inherit that proof; only the final verified CodeNomad process may request authenticated shutdown and wait for the exact daemon to exit.
+
+The V2 service always uses `~/.local/share/opencode2/opencode.db`. V1 and V2 must use separate databases because their schemas are incompatible.
 
 `packages/server/src/workspaces/manager.ts` treats selected folders as native OpenCode locations:
 
 1. Validate the directory with `client.location.get`.
 2. Store the returned `LocationRef` and publish the logical workspace.
 3. Reuse the shared service for every additional directory.
-4. Evict a location only after its final CodeNomad owner is deleted.
-5. Stop the shared service at CodeNomad shutdown only if CodeNomad started it.
+4. Queue eviction after the final logical owner is deleted.
+5. Flush queued evictions only during proven final shared-service shutdown, then stop only the exact daemon covered by transferable CodeNomad process proof.
 
 Workspaces are not OpenCode processes and do not own ports or PIDs.
 
@@ -36,7 +38,7 @@ CodeNomad control APIs live under `/api/*`. Important routes include:
 - `/api/events` and `/api/client-connections/pong`
 - `/api/storage`, `/api/settings`, `/api/filesystem`, `/api/speech`
 
-Native OpenCode requests use `/workspaces/:id/instance/api/*`. The Fastify proxy adds shared-service authorization and rejects locations/directories outside the selected workspace or its worktrees. Session routes also verify `session.location.directory`.
+Native OpenCode requests use `/workspaces/:id/instance/api/*`. The Fastify proxy exposes an explicit method/path allowlist, adds shared-service authorization, and rejects locations/directories outside the selected workspace or its worktrees. Session routes also verify `session.location.directory`. Upstream additions require an explicit proxy review and are not available automatically.
 
 Yolo state endpoints currently live at `/workspaces/:id/yolo/sessions/:sessionId`; Yolo notifications use `/api/events`.
 
@@ -44,7 +46,9 @@ Yolo state endpoints currently live at `/workspaces/:id/yolo/sessions/:sessionId
 
 `packages/ui/src/lib/sdk-manager.ts` uses `OpenCode.make()` and caches generated Promise clients by instance proxy path. `packages/ui/src/stores/opencode-client.ts` is the root-client authority; native directory/location fields replace old per-worktree SDK clients.
 
-The server holds one `client.event.subscribe()` stream. `InstanceEventBridge` maps native location events to CodeNomad `instance.event` records, and `/api/events` multiplexes them with workspace and Yolo events for the browser.
+The server holds one `client.event.subscribe()` stream. `InstanceEventBridge` maps native location events to CodeNomad `instance.event` records, and `/api/events` multiplexes them with workspace and Yolo events for the browser. The stream is volatile and has no replay guarantee: reconnect must refetch authoritative state.
+
+Current native events include session lifecycle/output events (`session.created`, `session.renamed`, `session.moved`, `session.status`, `session.idle`, `session.execution.*`, `session.compaction.*`, `session.text.*`, `session.reasoning.*`, `session.tool.*`), file invalidation via `filesystem.changed`, and configuration invalidation via `config.updated`.
 
 ## Feature Ownership
 
@@ -53,12 +57,14 @@ The server holds one `client.event.subscribe()` stream. `InstanceEventBridge` ma
 | Sessions, messages, permission/question APIs | OpenCode V2 |
 | Shell mode | `client.session.shell` |
 | Conversation instructions | `client.session.instructions.entry` |
+| PTY management | Location-scoped OpenCode V2 API through the ownership-checking proxy; Status panel UI |
+| PTY output and distinct stop | Unavailable in the current installed declarations; removal is the native stop action for a running PTY |
 | Workspace lifecycle and directory authorization | CodeNomad |
 | Git status/diff/stage/unstage/commit | CodeNomad server |
 | Yolo state, persistence and auto-accept | CodeNomad server |
 | Browser SSE multiplexing | CodeNomad server |
 
-Native Shell and session instructions replace the deleted plugin-backed integrations. Do not restore plugin background-process, voice-mode, channel or packaging paths.
+Native Shell remains separate from PTY management. The Status panel lists location-scoped native PTYs, refreshes on PTY events/reconnect, displays native metadata, and allows title updates and ownership-checked removal. Current installed declarations expose no PTY output/read/stream API or separate stop endpoint, so output display and a distinct stop action are unavailable. `packages/opencode-plugin` and the server plugin/background-process paths remain deleted and must not be restored.
 
 ## Persistence
 

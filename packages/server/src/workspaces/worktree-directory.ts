@@ -1,4 +1,5 @@
 import { realpath } from "fs/promises"
+import path from "node:path"
 import type { LogLike } from "./git-worktrees"
 import { listWorktrees, resolveRepoRoot } from "./git-worktrees"
 
@@ -100,4 +101,23 @@ export async function resolveWorktreeSlugForDirectory(params: {
     logger: params.logger,
   })
   return refreshed.worktrees.find((wt) => wt.normalizedDirectory === target)?.slug ?? null
+}
+
+export async function isPathOwnedByWorktree(params: {
+  workspaceId: string
+  workspacePath: string
+  candidate: string
+  logger?: LogLike
+}): Promise<boolean> {
+  let target: string
+  try {
+    target = await realpath(params.candidate)
+  } catch {
+    return false
+  }
+  const cached = await getCachedWorktrees(params)
+  return cached.worktrees.some((worktree) => {
+    const relative = path.relative(worktree.normalizedDirectory, target)
+    return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  })
 }

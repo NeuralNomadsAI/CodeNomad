@@ -10,25 +10,34 @@ interface ProviderUsagePanelProps {
 }
 
 const REFRESH_INTERVAL_MS = 60_000
+const usageCache = new Map<string, { value: ProviderUsageResponse | null; updatedAt: number }>()
 
 const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
   const { t } = useI18n()
   const source = createMemo(() => {
     const providerId = props.providerId.trim()
     if (!providerId) return null
-    return { providerId, modelId: props.modelId.trim() }
+    const modelId = props.modelId.trim()
+    return { providerId, modelId, key: `${providerId}\0${modelId}` }
   })
-  const [usage, setUsage] = createSignal<ProviderUsageResponse | null>()
+  const initialSource = source()
+  const [usage, setUsage] = createSignal<ProviderUsageResponse | null | undefined>(
+    initialSource ? usageCache.get(initialSource.key)?.value : undefined,
+  )
   let requestId = 0
 
-  const refreshUsage = async (providerId: string, modelId: string, clear: boolean) => {
+  const refreshUsage = async (providerId: string, modelId: string, key: string, clear: boolean) => {
     const currentRequestId = ++requestId
     if (clear) setUsage(undefined)
     try {
       const response = await serverApi.fetchProviderUsage(providerId, modelId)
+      usageCache.set(key, { value: response, updatedAt: Date.now() })
       if (currentRequestId === requestId) setUsage(response)
     } catch {
-      if (currentRequestId === requestId && usage() === undefined) setUsage(null)
+      if (currentRequestId === requestId && usage() === undefined) {
+        usageCache.set(key, { value: null, updatedAt: Date.now() })
+        setUsage(null)
+      }
     }
   }
 
@@ -39,12 +48,16 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
       setUsage(undefined)
       return
     }
-    void refreshUsage(current.providerId, current.modelId, true)
+    const cached = usageCache.get(current.key)
+    setUsage(cached?.value)
+    if (!cached || Date.now() - cached.updatedAt >= REFRESH_INTERVAL_MS) {
+      void refreshUsage(current.providerId, current.modelId, current.key, cached === undefined)
+    }
   })
 
   const refreshTimer = setInterval(() => {
     const current = source()
-    if (current) void refreshUsage(current.providerId, current.modelId, false)
+    if (current) void refreshUsage(current.providerId, current.modelId, current.key, false)
   }, REFRESH_INTERVAL_MS)
   onCleanup(() => {
     requestId += 1

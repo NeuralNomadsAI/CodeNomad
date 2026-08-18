@@ -8,7 +8,7 @@ interface RouteDeps {
 }
 
 function statusCode(error: OpenCodeUpdateError): number {
-  if (error.code === "no_ready_instance") return 409
+  if (error.code === "unsupported_binary") return 409
   if (error.code === "binary_unavailable") return 422
   return 502
 }

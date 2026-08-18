@@ -50,7 +50,6 @@ function createManager(rootDir: string) {
     binaryResolver: { resolveDefault: () => ({ path: process.execPath, label: "Node.js", version: process.version }) },
     eventBus: new EventBus(logger),
     logger,
-    getServerBaseUrl: () => "http://127.0.0.1:3000",
     sharedService,
   } as unknown as ConstructorParameters<typeof WorkspaceManager>[0])
   return manager

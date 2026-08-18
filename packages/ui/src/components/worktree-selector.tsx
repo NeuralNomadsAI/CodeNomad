@@ -18,14 +18,13 @@ import {
 } from "../stores/worktrees"
 import { sessions } from "../stores/sessions"
 import { useI18n } from "../lib/i18n"
-import { isDesktopHost, isLocalWindow, isMobilePlatform } from "../lib/runtime-env"
-import { openNativeWorktreeInFileManager } from "../lib/native/client-state"
+import { canOpenWorkspacePaths, openWorkspacePath } from "../lib/workspace-open"
 
 const log = getLogger("session")
 
 type WorktreeOption =
   | { kind: "action"; key: "__create__"; label: string }
-  | { kind: "worktree"; key: string; slug: string; directory: string; registeredDirectory?: string; raw: WorktreeDescriptor }
+  | { kind: "worktree"; key: string; slug: string; directory: string; raw: WorktreeDescriptor }
 
 type DeleteErrorKind = "localChanges" | "inUse" | "notFound" | "permissionDenied" | "unknown"
 
@@ -45,11 +44,6 @@ function preventSelectPress(event: PointerEvent | MouseEvent) {
 
 function normalizePath(input: string): string {
   return (input ?? "").replace(/\\/g, "/").replace(/\/+$/, "")
-}
-
-function isLocalPath(input: string): boolean {
-  const prefix = input.slice(0, 2).replace(/\\/g, "/")
-  return prefix !== "//"
 }
 
 function relativePath(fromDir: string, toDir: string): string {
@@ -163,7 +157,6 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
       key: wt.slug,
       slug: wt.slug,
       directory: wt.directory,
-      registeredDirectory: wt.registeredDirectory,
       raw: wt,
     }))
     const createOption: WorktreeOption = { kind: "action", key: "__create__", label: t("instanceShell.worktree.create") }
@@ -195,10 +188,6 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
     const list = getWorktrees(props.instanceId)
     return list.find((wt) => wt.slug === "root")?.directory ?? ""
   })
-  const registeredRepoRoot = createMemo(() => {
-    return getWorktrees(props.instanceId).find((wt) => wt.slug === "root")?.registeredDirectory
-  })
-
   const displayPathFor = (directory: string) => {
     const base = repoRoot()
     if (!base) return directory
@@ -215,11 +204,9 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
     }
   }
 
-  const handleOpenInFileManager = async (registeredDirectory: string, targetDirectory: string) => {
-    const rootDirectory = registeredRepoRoot()
-    if (!rootDirectory) return
+  const handleOpenInFileManager = async (worktreeSlug: string) => {
     try {
-      await openNativeWorktreeInFileManager(rootDirectory, registeredDirectory, targetDirectory)
+      await openWorkspacePath({ target: "default", instanceId: props.instanceId, worktreeSlug })
     } catch (error) {
       log.error("Failed to open worktree in file manager", error)
       showToastNotification({ message: t("instanceShell.worktree.openInFileManager.error"), variant: "error" })
@@ -382,7 +369,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                   >
                     {displayPathFor(opt.directory)}
                   </span>
-                  <Show when={isDesktopHost() && !isMobilePlatform() && isLocalWindow() && registeredRepoRoot() && opt.registeredDirectory && isLocalPath(opt.directory)}>
+                  <Show when={canOpenWorkspacePaths()}>
                     <button
                       type="button"
                       class="session-item-close opacity-80 hover:opacity-100 hover:bg-surface-hover"
@@ -390,7 +377,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                       title={t("instanceShell.worktree.openInFileManager.action")}
                       onPointerDown={(event) => {
                         preventSelectPress(event)
-                        void handleOpenInFileManager(opt.registeredDirectory!, opt.directory)
+                        void handleOpenInFileManager(opt.slug)
                         setIsOpen(false)
                       }}
                       onPointerUp={preventSelectPress}
@@ -399,7 +386,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                       onClick={(event) => {
                         preventSelectPress(event)
                         if (event.detail !== 0) return
-                        void handleOpenInFileManager(opt.registeredDirectory!, opt.directory)
+                        void handleOpenInFileManager(opt.slug)
                         setIsOpen(false)
                       }}
                     >

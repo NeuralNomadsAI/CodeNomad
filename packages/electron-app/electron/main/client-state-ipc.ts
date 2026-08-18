@@ -7,7 +7,7 @@ interface IPCRegistrar {
   handle(channel: string, listener: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown): void
 }
 
-export function validateClientStateSender(event: IpcMainInvokeEvent, mainWindow: BrowserWindow | null, allowedOrigins: string[]) {
+function validateSender(event: IpcMainInvokeEvent, mainWindow: BrowserWindow | null, allowedOrigins: string[]) {
   if (
     !mainWindow ||
     mainWindow.isDestroyed() ||
@@ -35,7 +35,7 @@ export function setupClientStateIPC(
 ) {
   const validate = (event: IpcMainInvokeEvent) => {
     const window = getMainWindow()
-    validateClientStateSender(event, window, getAllowedOrigins(window))
+    validateSender(event, window, getAllowedOrigins(window))
   }
   const handle = (
     channel: string,

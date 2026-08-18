@@ -1,8 +1,7 @@
 import path from "path"
+import os from "node:os"
 import { spawnSync } from "child_process"
 import { randomUUID } from "node:crypto"
-import { mkdirSync } from "node:fs"
-import os from "node:os"
 import type { Endpoint } from "@opencode-ai/client/service"
 import type { LocationGetOutput, LocationRef, OpenCodeClient, OpenCodeEvent } from "@opencode-ai/client"
 import { EventBus } from "../events/bus"
@@ -14,17 +13,29 @@ import { clearWorkspaceSearchCache } from "../filesystem/search-cache"
 import { WorkspaceDescriptor, WorkspaceFileResponse, FileSystemEntry } from "../api-types"
 import { Logger } from "../logger"
 import { resolveWorkspaceIdentity } from "./workspace-identity"
-import { buildServiceLaunchSpec, parseWslUncPath } from "./spawn"
+import {
+  buildServiceLaunchSpec,
+  parseWslUncPath,
+  resolveWslHostDirectory,
+  resolveWslServiceDirectory,
+} from "./spawn"
 import { OpenCodeSharedService, type OpenCodeEnsureOptions } from "./opencode-service"
-import { resolveWorktreeSlugForDirectory } from "./worktree-directory"
+import {
+  prepareServiceState,
+  SERVICE_LEASE_DIRECTORY,
+  SERVICE_REGISTRATION_FILE,
+  SERVICE_STATE_ROOT,
+  SERVICE_STOP_LOCK,
+} from "./service-state"
+import { isPathOwnedByWorktree, resolveWorktreeSlugForDirectory } from "./worktree-directory"
 
 const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
+const OPENCODE_DATABASE = path.join(os.homedir(), ".local", "share", "opencode2", "opencode.db")
 const ORDINARY_CREATION_OWNER = ""
 const WORKSPACE_STATE = Symbol("workspaceState")
-const SERVICE_STATE_ROOT = path.join(os.tmpdir(), "codenomad-opencode-v2")
-const SERVICE_REGISTRATION_FILE = path.join(SERVICE_STATE_ROOT, "opencode", "service.json")
 const SERVICE_CONTENDER_FILE = path.join(SERVICE_STATE_ROOT, `contenders-${process.pid}-${randomUUID()}.txt`)
-type ManagerTimeout = ReturnType<typeof setTimeout>
+const SERVICE_LEASE_FILE = path.join(SERVICE_LEASE_DIRECTORY, `process-${process.pid}-${randomUUID()}.json`)
+type ManagerTimeout = number | NodeJS.Timeout
 
 interface SharedService {
   endpoint: (options?: OpenCodeEnsureOptions) => Promise<Endpoint>
@@ -33,7 +44,7 @@ interface SharedService {
   validateLocation: (location: LocationRef, requestOptions?: { signal?: AbortSignal }, ensureOptions?: OpenCodeEnsureOptions) => Promise<LocationGetOutput>
   subscribe: (requestOptions?: { signal?: AbortSignal }, ensureOptions?: OpenCodeEnsureOptions) => Promise<AsyncIterable<OpenCodeEvent>>
   evict: (location: LocationRef, requestOptions?: { signal?: AbortSignal }, ensureOptions?: OpenCodeEnsureOptions) => Promise<void>
-  shutdown: () => Promise<void>
+  shutdown: (options?: { timeoutMs?: number }) => Promise<void>
 }
 
 export function binaryPathsEqual(left: string, right: string, platform = process.platform): boolean {
@@ -56,7 +67,6 @@ interface WorkspaceManagerOptions {
   binaryResolver: BinaryResolver
   eventBus: EventBus
   logger: Logger
-  getServerBaseUrl: () => string
   /** Optional CA bundle path to trust CodeNomad HTTPS certs. */
   nodeExtraCaCertsPath?: string
   sharedService?: SharedService
@@ -65,11 +75,15 @@ interface WorkspaceManagerOptions {
   launchTimeoutMs?: number
   setTimeout?: (callback: () => void, delayMs: number) => ManagerTimeout
   clearTimeout?: (timer: ManagerTimeout) => void
+  platform?: NodeJS.Platform
+  wslServiceDirectoryResolver?: (directory: string, distro: string, timeoutMs: number) => string | null
+  wslHostDirectoryResolver?: (directory: string, distro: string, timeoutMs: number) => string | null
 }
 
 interface WorkspaceRecord extends WorkspaceDescriptor {
   identityKey: string
   location?: LocationRef
+  wslDistro?: string
   ownership: WorkspaceCreationOwnership
   [WORKSPACE_STATE]: WorkspaceState
 }
@@ -129,7 +143,6 @@ export class WorkspaceManager {
   private readonly cancelledCreationRequests = new Set<string>()
   private shuttingDown = false
   private readonly sharedService: SharedService
-  private serviceEndpoint?: Endpoint
   private serviceAuthorization?: string
 
   constructor(private readonly options: WorkspaceManagerOptions) {
@@ -149,11 +162,15 @@ export class WorkspaceManager {
     return this.workspaces.get(id)?.[WORKSPACE_STATE].published ? this.serviceAuthorization : undefined
   }
 
+  getServiceDirectory(id: string): string | undefined {
+    const record = this.workspaces.get(id)
+    return record?.[WORKSPACE_STATE].published ? record.location?.directory ?? record.path : undefined
+  }
+
   async getSharedServiceEndpoint(id: string): Promise<Endpoint | undefined> {
     if (!this.workspaces.get(id)?.[WORKSPACE_STATE].published) return undefined
     try {
       const [endpoint, headers] = await Promise.all([this.sharedService.endpoint(), this.sharedService.headers()])
-      this.serviceEndpoint = endpoint
       this.serviceAuthorization = headers?.authorization
       return endpoint
     } catch (error) {
@@ -179,14 +196,56 @@ export class WorkspaceManager {
   }
 
   async ownsDirectory(id: string, directory: string): Promise<boolean> {
-    const workspace = this.get(id)
-    if (!workspace) return false
+    const record = this.workspaces.get(id)
+    if (!record?.[WORKSPACE_STATE].published) return false
+    if (directory === record.path || directory === record.location?.directory) return true
+    if (await this.ownsHostDirectory(record, directory)) return true
+    if (!record.wslDistro) return false
+    const hostDirectory = this.resolveWslHostDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
+    return Boolean(hostDirectory && await this.ownsHostDirectory(record, hostDirectory))
+  }
+
+  async getServiceDirectoryForPath(id: string, directory: string): Promise<string | undefined> {
+    const record = this.workspaces.get(id)
+    if (!record?.[WORKSPACE_STATE].published || !await this.ownsDirectory(id, directory)) return undefined
+    if (!record.wslDistro) return directory
+    return this.resolveWslServiceDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
+      ?? (path.posix.isAbsolute(directory) ? directory : undefined)
+  }
+
+  async getServicePathForPath(id: string, candidate: string): Promise<string | undefined> {
+    const record = this.workspaces.get(id)
+    if (!record?.[WORKSPACE_STATE].published || !await this.ownsPath(id, candidate)) return undefined
+    if (!record.wslDistro) return candidate
+    return this.resolveWslServiceDirectory(candidate, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
+      ?? (path.posix.isAbsolute(candidate) ? candidate : undefined)
+  }
+
+  private async ownsHostDirectory(record: WorkspaceRecord, directory: string): Promise<boolean> {
     return (await resolveWorktreeSlugForDirectory({
-      workspaceId: id,
-      workspacePath: workspace.path,
+      workspaceId: record.id,
+      workspacePath: record.path,
       directory,
       logger: this.options.logger,
     })) !== null
+  }
+
+  async ownsPath(id: string, candidate: string): Promise<boolean> {
+    const record = this.workspaces.get(id)
+    if (!record?.[WORKSPACE_STATE].published) return false
+    if (await this.ownsHostPath(record, candidate)) return true
+    if (!record.wslDistro) return false
+    const hostPath = this.resolveWslHostDirectory(candidate, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
+    return Boolean(hostPath && await this.ownsHostPath(record, hostPath))
+  }
+
+  private ownsHostPath(record: WorkspaceRecord, candidate: string): Promise<boolean> {
+    return isPathOwnedByWorktree({
+      workspaceId: record.id,
+      workspacePath: record.path,
+      candidate,
+      logger: this.options.logger,
+    })
   }
 
   subscribeToSharedService(signal?: AbortSignal): Promise<AsyncIterable<OpenCodeEvent>> {
@@ -366,6 +425,7 @@ export class WorkspaceManager {
     Object.defineProperties(record, {
       identityKey: { value: identityKey },
       ownership: { value: ownership },
+      wslDistro: { value: undefined, writable: true },
       [WORKSPACE_STATE]: { value: { abortController: new AbortController(), published: false, stoppedPublished: false } },
     })
 
@@ -393,7 +453,10 @@ export class WorkspaceManager {
       }
     }, timeoutMs)
     try {
-      return await this.createResolvedWorkspace(record)
+      const deadline = new Promise<never>((_resolve, reject) => {
+        state.abortController.signal.addEventListener("abort", () => reject(state.abortController.signal.reason), { once: true })
+      })
+      return await Promise.race([this.createResolvedWorkspace(record, timeoutMs), deadline])
     } finally {
       if (timeout) (this.options.clearTimeout ?? clearTimeout)(timeout)
     }
@@ -417,41 +480,52 @@ export class WorkspaceManager {
   }
   private async createResolvedWorkspace(
     record: WorkspaceRecord,
+    timeoutMs: number,
   ): Promise<WorkspaceCreateResult> {
     const state = record[WORKSPACE_STATE]
     const { id, path: workspacePath, binaryId: resolvedBinaryPath } = record
-    const serverConfig = this.options.settings.getOwner("config", "server")
-    const configuredEnvironment = this.readConfiguredEnvironment(serverConfig)
-    if (this.options.nodeExtraCaCertsPath) configuredEnvironment.NODE_EXTRA_CA_CERTS = this.options.nodeExtraCaCertsPath
-    configuredEnvironment.XDG_STATE_HOME = SERVICE_STATE_ROOT
-    configuredEnvironment.CODENOMAD_SERVICE_CONTENDERS = SERVICE_CONTENDER_FILE
-    mkdirSync(SERVICE_STATE_ROOT, { recursive: true })
-    const launch = buildServiceLaunchSpec(resolvedBinaryPath, ["serve", "--service"], {
-      env: { ...process.env, ...configuredEnvironment },
-      propagateEnvKeys: Object.keys(configuredEnvironment),
-      contenderFile: SERVICE_CONTENDER_FILE,
-    })
-    const ensureOptions: OpenCodeEnsureOptions = {
-      file: SERVICE_REGISTRATION_FILE,
-      command: launch.command,
-      environment: {
-        ...configuredEnvironment,
-        ...(launch.env?.WSLENV ? { WSLENV: launch.env.WSLENV } : {}),
-      },
-    }
     try {
+      const serverConfig = this.options.settings.getOwner("config", "server")
+      const configuredEnvironment = this.readConfiguredEnvironment(serverConfig)
+      if (this.options.nodeExtraCaCertsPath) configuredEnvironment.NODE_EXTRA_CA_CERTS = this.options.nodeExtraCaCertsPath
+      configuredEnvironment.XDG_STATE_HOME = SERVICE_STATE_ROOT
+      const serviceEnvironment = { ...process.env, ...configuredEnvironment }
+      // ponytail: fixed V2 storage root until database selection needs to be configurable.
+      serviceEnvironment.OPENCODE_DB = OPENCODE_DATABASE
+      prepareServiceState(SERVICE_CONTENDER_FILE)
+      const launch = buildServiceLaunchSpec(resolvedBinaryPath, ["serve", "--service"], {
+        env: serviceEnvironment,
+        propagateEnvKeys: Object.keys(configuredEnvironment),
+        contenderFile: SERVICE_CONTENDER_FILE,
+        platform: this.options.platform,
+      })
+      const ensureOptions: OpenCodeEnsureOptions = {
+        file: SERVICE_REGISTRATION_FILE,
+        command: launch.command,
+        contenderFile: SERVICE_CONTENDER_FILE,
+        leaseFile: SERVICE_LEASE_FILE,
+        lockDirectory: SERVICE_STOP_LOCK,
+        nativePid: launch.nativePid,
+        wslDistro: launch.wslDistro,
+        environment: launch.env,
+        launcherRecordsPid: launch.launcherRecordsPid,
+        windowsVerbatimArguments: launch.windowsVerbatimArguments,
+        timeoutMs,
+      }
       this.throwIfCancelled(record)
-      record.location = { directory: workspacePath }
-      const [endpoint, headers, location] = await Promise.all([
-        this.sharedService.endpoint(ensureOptions),
+      record.wslDistro = launch.wslDistro
+      const serviceDirectory = launch.wslDistro
+        ? this.requireWslServiceDirectory(workspacePath, launch.wslDistro, timeoutMs)
+        : workspacePath
+      record.location = { directory: serviceDirectory }
+      const [headers, location] = await Promise.all([
         this.sharedService.headers(ensureOptions),
         this.sharedService.validateLocation(
-          { directory: workspacePath },
+          { directory: serviceDirectory },
           { signal: state.abortController.signal },
           ensureOptions,
         ),
       ])
-      this.serviceEndpoint = endpoint
       this.serviceAuthorization = headers?.authorization
       record.location = { directory: location.directory, workspaceID: location.workspaceID }
       this.throwIfCancelled(record)
@@ -573,15 +647,23 @@ export class WorkspaceManager {
   async shutdown() {
     this.shuttingDown = true
     this.options.logger.info("Shutting down all workspaces")
+    const shutdownTimeoutMs = Math.max(1, this.options.shutdownTimeoutMs ?? 10000)
+    const deadlineAt = Date.now() + shutdownTimeoutMs
     const stopTasks = Array.from(this.workspaces.keys(), (id) => this.delete(id))
     const results = stopTasks.length
-      ? await this.withTimeout(Promise.allSettled(stopTasks), this.options.shutdownTimeoutMs ?? 10000, "shutdown")
+      ? await this.withTimeout(Promise.allSettled(stopTasks), shutdownTimeoutMs, "shutdown")
       : []
     const stopFailures = results.flatMap((result) => result.status === "rejected" ? [result.reason] : [])
     if (this.workspaces.size === 0) {
       this.pendingWorkspaceCreations.clear()
       this.cancelledCreationRequests.clear()
-      await this.sharedService.shutdown().catch((error) => stopFailures.push(error))
+      const remaining = deadlineAt - Date.now()
+      if (remaining <= 0) stopFailures.push(new WorkspaceCleanupTimeoutError("shared service shutdown", shutdownTimeoutMs))
+      else await this.withTimeout(
+        this.sharedService.shutdown({ timeoutMs: remaining }),
+        remaining,
+        "shared service shutdown",
+      ).catch((error) => stopFailures.push(error))
     } else if (!stopFailures.length) stopFailures.push(
       new Error(`Workspace cleanup remains incomplete for: ${Array.from(this.workspaces.keys()).join(", ")}`),
     )
@@ -629,6 +711,28 @@ export class WorkspaceManager {
     if (peers.some((candidate) => !candidate[WORKSPACE_STATE].deletePromise)) return
     if (peers.some((candidate) => candidate.id < record.id)) return
     await this.sharedService.evict(record.location)
+  }
+
+  private requireWslServiceDirectory(directory: string, distro: string, timeoutMs = DEFAULT_LAUNCH_TIMEOUT_MS): string {
+    const translated = this.resolveWslServiceDirectory(directory, distro, timeoutMs)
+    if (!translated) {
+      throw new Error(`Unable to translate workspace location for WSL distro "${distro}": ${directory}`)
+    }
+    return translated
+  }
+
+  private resolveWslServiceDirectory(directory: string, distro: string, timeoutMs: number): string | null {
+    if (this.options.wslServiceDirectoryResolver) {
+      return this.options.wslServiceDirectoryResolver(directory, distro, timeoutMs)
+    }
+    return resolveWslServiceDirectory(directory, distro, undefined, timeoutMs)
+  }
+
+  private resolveWslHostDirectory(directory: string, distro: string, timeoutMs: number): string | null {
+    if (this.options.wslHostDirectoryResolver) {
+      return this.options.wslHostDirectoryResolver(directory, distro, timeoutMs)
+    }
+    return resolveWslHostDirectory(directory, distro, undefined, timeoutMs)
   }
 
   private removeRecord(id: string, record: WorkspaceRecord, publishStopped: boolean): void {

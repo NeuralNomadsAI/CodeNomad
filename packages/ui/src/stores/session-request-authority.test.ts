@@ -2,7 +2,6 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { sdkManager } from "../lib/sdk-manager.ts"
-import { serverApi } from "../lib/api-client.ts"
 import type { Session } from "../types/session.ts"
 import { addInstance, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
@@ -10,13 +9,11 @@ import { fetchSessions, loadMessages, removeSessionRuntimeState, searchSessions 
 import {
   clearInstanceDeletedSessionAuthority,
   getSessionSearchResultIds,
-  invalidateSessionMessageLoad,
   loading,
   messagesLoaded,
   sessions,
   setSessions,
 } from "./session-state.ts"
-import { reloadWorktrees } from "./worktrees.ts"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -24,9 +21,9 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
-function session(instanceId: string, id: string, parentId: string | null = null): Session {
+function session(instanceId: string, id: string): Session {
   return {
-    id, instanceId, parentId, title: id, agent: "build", model: { providerId: "provider", modelId: "model" },
+    id, instanceId, parentId: null, title: id, agent: "build", model: { providerId: "provider", modelId: "model" },
     status: "idle", retry: null, idleSince: null, generationRecovery: null, runtimeStatusKnown: true,
     version: "1", projectID: "project", location: { directory: "/work" }, cost: 0,
     tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 1 },
@@ -34,42 +31,28 @@ function session(instanceId: string, id: string, parentId: string | null = null)
 }
 
 function apiSession(id: string, parentID?: string) {
-  return { id, parentID, title: id, projectID: "project", location: { directory: "/work" }, cost: 0,
-    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 1 } }
+  return {
+    id, parentID, title: id, projectID: "project", location: { directory: "/work" }, cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 1 },
+  }
 }
 
-function apiMessage(id: string, _sessionId: string) {
+function apiMessage(id: string) {
   return {
     id, type: "assistant", agent: "build", model: { providerID: "provider", id: "model" },
     time: { created: 1 }, content: [],
   }
 }
 
-async function loadTestWorktree(instanceId: string): Promise<void> {
-  const original = serverApi.fetchWorktrees
-  serverApi.fetchWorktrees = async () => ({
-    worktrees: [{ slug: "branch", directory: "/worktree" }],
-    isGitRepo: true,
-  } as any)
-  try {
-    await reloadWorktrees(instanceId)
-  } finally {
-    serverApi.fetchWorktrees = original
-  }
-}
-
 function setup(instanceId: string) {
-  const client = {
-    location: { get: async () => ({ directory: "/work", project: { id: "project", directory: "/work", canonical: "/work" } }) },
-    session: { active: async () => ({}) },
-  } as any
+  const client = { session: { active: async () => ({}) } } as any
   ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
   addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
   return {
     client,
     cleanup() {
       messageStoreBus.unregisterInstance(instanceId)
-      setSessions((prev) => { const next = new Map(prev); next.delete(instanceId); return next })
+      setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
       clearInstanceDeletedSessionAuthority(instanceId)
       removeInstance(instanceId, { authoritative: false })
       sdkManager.destroyClientsForInstance(instanceId)
@@ -88,11 +71,11 @@ describe("session request authority", () => {
 
     try {
       const request = searchSessions(instanceId, "child")
-      search.resolve({ data: [apiSession("child", "parent")], cursor: {} })
+      search.resolve({ data: [apiSession("child", "parent")] })
       await new Promise<void>((resolve) => setImmediate(resolve))
       removeSessionRuntimeState(instanceId, "child")
       removeSessionRuntimeState(instanceId, "parent")
-      parents.resolve({ data: [apiSession("parent")], cursor: {} })
+      parents.resolve({ data: [apiSession("parent")] })
       await request
 
       assert.equal(sessions().get(instanceId)?.has("child") ?? false, false)
@@ -108,14 +91,13 @@ describe("session request authority", () => {
     const { client, cleanup } = setup(instanceId)
     const response = deferred<any>()
     ;(client as any).message = { list: () => response.promise }
-    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
 
     try {
       const request = loadMessages(instanceId, sessionId)
       removeSessionRuntimeState(instanceId, sessionId)
-      response.resolve({ data: [apiMessage("deleted-message", sessionId)] })
+      response.resolve({ data: [apiMessage("deleted-message")] })
       await request
-
       assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), [])
       assert.equal(messagesLoaded().get(instanceId)?.has(sessionId) ?? false, false)
     } finally {
@@ -123,61 +105,14 @@ describe("session request authority", () => {
     }
   })
 
-  it("does not hydrate messages after cache eviction", async () => {
-    const instanceId = "late-message-eviction", sessionId = "session"
-    const { client, cleanup } = setup(instanceId)
-    const response = deferred<any>()
-    ;(client as any).message = { list: () => response.promise }
-    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
-
-    try {
-      const request = loadMessages(instanceId, sessionId)
-      invalidateSessionMessageLoad(instanceId, sessionId)
-      response.resolve({ data: [apiMessage("evicted-message", sessionId)] })
-      await request
-
-      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), [])
-      assert.equal(messagesLoaded().get(instanceId)?.has(sessionId) ?? false, false)
-    } finally {
-      cleanup()
-    }
-  })
-
-  it("does not reuse message load authority after an instance reopens", async () => {
-    const instanceId = "reopened-message-load", sessionId = "session"
-    const { client, cleanup } = setup(instanceId)
-    const oldResponse = deferred<any>()
-    const newResponse = deferred<any>()
-    let calls = 0
-    ;(client as any).message = { list: () => (++calls === 1 ? oldResponse.promise : newResponse.promise) }
-    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
-
-    try {
-      const oldRequest = loadMessages(instanceId, sessionId)
-      removeInstance(instanceId, { authoritative: false })
-      addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
-      setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
-      const newRequest = loadMessages(instanceId, sessionId, { force: true })
-
-      oldResponse.resolve({ data: [apiMessage("old-message", sessionId)] })
-      await oldRequest
-      newResponse.resolve({ data: [apiMessage("new-message", sessionId)] })
-      await newRequest
-
-      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["new-message"])
-    } finally {
-      cleanup()
-    }
-  })
-
-  it("keeps a newer load authoritative when an older request finishes last", async () => {
+  it("keeps a newer message load when an older request finishes last", async () => {
     const instanceId = "newer-message-load", sessionId = "session"
     const { client, cleanup } = setup(instanceId)
     const oldResponse = deferred<any>()
     const newResponse = deferred<any>()
     let calls = 0
     ;(client as any).message = { list: () => (++calls === 1 ? oldResponse.promise : newResponse.promise) }
-    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
 
     try {
       let invalidateOld = () => {}
@@ -186,9 +121,9 @@ describe("session request authority", () => {
       })
       const newRequest = loadMessages(instanceId, sessionId, { force: true })
       invalidateOld()
-      newResponse.resolve({ data: [apiMessage("new-message", sessionId)] })
+      newResponse.resolve({ data: [apiMessage("new-message")] })
       await newRequest
-      oldResponse.resolve({ data: [apiMessage("old-message", sessionId)] })
+      oldResponse.resolve({ data: [apiMessage("old-message")] })
       await oldRequest
 
       assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["new-message"])
@@ -215,9 +150,9 @@ describe("session request authority", () => {
       })
       const newRequest = fetchSessions(instanceId)
       invalidateOld()
-      newResponse.resolve({ data: [apiSession("new-session")], cursor: {} })
+      newResponse.resolve({ data: [apiSession("new-session")] })
       await newRequest
-      oldResponse.resolve({ data: [apiSession("old-session")], cursor: {} })
+      oldResponse.resolve({ data: [apiSession("old-session")] })
       await oldRequest
 
       assert.equal(sessions().get(instanceId)?.has("new-session"), true)
@@ -227,66 +162,23 @@ describe("session request authority", () => {
     }
   })
 
-  it("reconciles stale runtime status from native active sessions", async () => {
-    const instanceId = "authoritative-idle"
+  it("does not replace messages when a later page fails", async () => {
+    const instanceId = "partial-message-pages", sessionId = "session"
     const { client, cleanup } = setup(instanceId)
-    const working = { ...session(instanceId, "working"), status: "working" as const }
-    const compacting = { ...session(instanceId, "compacting"), status: "compacting" as const }
-    const staleWorking = { ...session(instanceId, "stale-working"), status: "working" as const }
-    await loadTestWorktree(instanceId)
-    setSessions((prev) => new Map(prev).set(instanceId, new Map<string, Session>([
-      [working.id, working],
-      [compacting.id, compacting],
-      [staleWorking.id, staleWorking],
-    ])))
-    const statusOptions: unknown[] = []
-    let messageOptions: unknown
-    ;(client.session as any).list = async () => ({ data: [
-      apiSession("working"),
-      { ...apiSession("compacting"), directory: "/worktree", workspaceID: "workspace-1" },
-      apiSession("stale-working"),
-    ], cursor: {} })
-    ;(client.session as any).active = async () => ({ working: { type: "running" } })
-    ;(client.session as any).status = async (options: unknown) => {
-      statusOptions.push(options)
-      return { data: {} }
-    }
-    ;(client as any).message = { list: async (options: unknown) => {
-      messageOptions = options
-      return { data: [] }
+    let failSecondPage = false
+    ;(client as any).message = { list: async (input: any) => {
+      if (input.cursor && failSecondPage) throw new Error("cursor failed")
+      return input.cursor
+        ? { data: [apiMessage("old-2")], cursor: {} }
+        : { data: [apiMessage("old-1")], cursor: { next: "page-2" } }
     } }
-    ;(client.session as any).get = async ({ sessionID }: { sessionID: string }) => ({ data: apiSession(sessionID) })
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
 
     try {
-      await fetchSessions(instanceId)
-
-      assert.equal(sessions().get(instanceId)?.get("working")?.status, "working")
-      assert.equal(sessions().get(instanceId)?.get("compacting")?.status, "idle")
-      assert.equal(sessions().get(instanceId)?.get("stale-working")?.status, "idle")
-      assert.equal(sessions().get(instanceId)?.get("compacting")?.runtimeStatusKnown, true)
-      assert.deepEqual(statusOptions, [])
-      await loadMessages(instanceId, "compacting", { force: true })
-      assert.deepEqual(messageOptions, { sessionID: "compacting" })
-    } finally {
-      cleanup()
-    }
-  })
-
-  it("accepts native absolute session locations without workspace probing", async () => {
-    const instanceId = "unresolved-worktree-status"
-    const { client, cleanup } = setup(instanceId)
-    const existing = { ...session(instanceId, "worktree-session"), status: "working" as const }
-    await loadTestWorktree(instanceId)
-    setSessions((prev) => new Map(prev).set(instanceId, new Map([[existing.id, existing]])))
-    ;(client.session as any).list = async () => ({ data: [
-      { ...apiSession(existing.id), location: { directory: "/worktree" } },
-    ], cursor: {} })
-    ;(client.session as any).active = async () => ({ [existing.id]: { type: "running" } })
-
-    try {
-      await fetchSessions(instanceId, { strictStatus: true })
-      assert.equal(sessions().get(instanceId)?.get(existing.id)?.status, "working")
-      assert.equal(sessions().get(instanceId)?.get(existing.id)?.location.directory, "/worktree")
+      await loadMessages(instanceId, sessionId)
+      failSecondPage = true
+      await assert.rejects(loadMessages(instanceId, sessionId, { force: true }), /cursor failed/)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["old-1", "old-2"])
     } finally {
       cleanup()
     }

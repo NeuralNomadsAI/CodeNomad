@@ -99,7 +99,7 @@ export function useInstanceSessionContext(options: InstanceSessionContextOptions
     if (!sessionId || sessionId === "info") return null
     const store = messageStore()
     if (!store) return null
-    const snapshot = store.state.latestTodos[sessionId]
+    const snapshot = store.getLatestTodoSnapshot(sessionId)
     return snapshot ?? null
   })
 

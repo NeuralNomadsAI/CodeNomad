@@ -5,7 +5,8 @@ import { sdkManager } from "../lib/sdk-manager.ts"
 import type { Session } from "../types/session.ts"
 import { addInstance, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
-import { handleNativeSessionEvent, handleSessionIdle } from "./session-events.ts"
+import { clearNativeContentDeltaState } from "./native-session-streaming.ts"
+import { handleNativeSessionEvent, handleSessionIdle, handleSessionStatus } from "./session-events.ts"
 import { clearInstanceDeletedSessionAuthority, sessions, setSessions } from "./session-state.ts"
 
 const delay = (duration: number) => new Promise<void>((resolve) => setTimeout(resolve, duration))
@@ -20,25 +21,6 @@ function session(instanceId: string, id: string): Session {
 }
 
 describe("native session event reducer", () => {
-  it("replaces the entire location on session.moved", () => {
-    const instanceId = "native-moved"
-    const current = session(instanceId, "session")
-    current.location = { directory: "/old", extra: "stale" } as any
-    setSessions((prev) => new Map(prev).set(instanceId, new Map([[current.id, current]])))
-
-    try {
-      handleNativeSessionEvent(instanceId, {
-        type: "session.moved",
-        data: { sessionID: current.id, location: { directory: "/new" }, projectID: "new-project", subpath: "apps/web" },
-      })
-      assert.deepEqual(sessions().get(instanceId)?.get(current.id)?.location, { directory: "/new" })
-      assert.equal(sessions().get(instanceId)?.get(current.id)?.projectID, "new-project")
-      assert.equal(sessions().get(instanceId)?.get(current.id)?.subpath, "apps/web")
-    } finally {
-      setSessions((prev) => { const next = new Map(prev); next.delete(instanceId); return next })
-    }
-  })
-
   it("coalesces text and tool events, then refreshes authoritatively on idle", async () => {
     const instanceId = "native-events"
     const sessionId = "session"
@@ -73,11 +55,18 @@ describe("native session event reducer", () => {
     setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
 
     try {
-      handleNativeSessionEvent(instanceId, { type: "session.text.delta", data: { sessionID: sessionId } })
-      handleNativeSessionEvent(instanceId, { type: "session.tool.progress", data: { sessionID: sessionId } })
+      handleNativeSessionEvent(instanceId, {
+        id: "text", created: 1, type: "session.text.delta",
+        data: { sessionID: sessionId, assistantMessageID: "assistant", ordinal: 0, delta: "streaming text" },
+      })
+      const store = messageStoreBus.getOrCreate(instanceId)
+      assert.equal((store.getMessage("assistant")?.parts["assistant-text-native-0"]?.data as any)?.text, "streaming text")
+      handleNativeSessionEvent(instanceId, {
+        id: "tool", created: 2, type: "session.tool.progress",
+        data: { sessionID: sessionId, assistantMessageID: "assistant", id: "tool", metadata: {} },
+      })
       await delay(120)
 
-      const store = messageStoreBus.getOrCreate(instanceId)
       assert.equal(calls, 1)
       assert.equal(sessions().get(instanceId)?.get(sessionId)?.status, "working")
       assert.equal((store.getMessage("assistant")?.parts["assistant-text-0"]?.data as any)?.text, "streaming text")
@@ -92,6 +81,96 @@ describe("native session event reducer", () => {
       assert.equal((store.getMessage("assistant")?.parts["assistant-text-0"]?.data as any)?.text, "completed text")
     } finally {
       messageStoreBus.unregisterInstance(instanceId)
+      setSessions((prev) => { const next = new Map(prev); next.delete(instanceId); return next })
+      clearInstanceDeletedSessionAuthority(instanceId)
+      removeInstance(instanceId, { authoritative: false })
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("refreshes periodically during a continuous fast native stream", async () => {
+    const instanceId = "native-fast-stream"
+    const sessionId = "session"
+    let calls = 0
+    const client = {
+      message: { list: async () => { calls += 1; return { data: [] } } },
+    } as any
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+
+    const eventTypes = ["session.text.delta", "session.reasoning.delta", "session.tool.progress"] as const
+    let eventIndex = 0
+    const stream = setInterval(() => {
+      const type = eventTypes[eventIndex % eventTypes.length]
+      const id = `event-${eventIndex++}`
+      handleNativeSessionEvent(instanceId, {
+        id,
+        created: eventIndex,
+        type,
+        data: type === "session.text.delta"
+          ? { sessionID: sessionId, assistantMessageID: "assistant", ordinal: 0, delta: "text " }
+          : type === "session.reasoning.delta"
+            ? { sessionID: sessionId, assistantMessageID: "assistant", ordinal: 0, delta: "reason " }
+            : { sessionID: sessionId, assistantMessageID: "assistant", id: "tool", metadata: {} },
+      } as any)
+    }, 10)
+
+    try {
+      await delay(260)
+      clearInterval(stream)
+      await delay(120)
+
+      assert.ok(calls >= 2, `expected periodic refreshes, received ${calls}`)
+      assert.ok(calls <= 5, `expected refreshes to stay bounded, received ${calls}`)
+      const streamed = messageStoreBus.getOrCreate(instanceId).getMessage("assistant")
+      assert.match((streamed?.parts["assistant-text-native-0"]?.data as any)?.text ?? "", /text/)
+      assert.match((streamed?.parts["assistant-reasoning-native-0"]?.data as any)?.text ?? "", /reason/)
+    } finally {
+      clearInterval(stream)
+      clearNativeContentDeltaState(instanceId)
+      messageStoreBus.unregisterInstance(instanceId)
+      setSessions((prev) => { const next = new Map(prev); next.delete(instanceId); return next })
+      clearInstanceDeletedSessionAuthority(instanceId)
+      removeInstance(instanceId, { authoritative: false })
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("keeps the newest status while an unknown session is hydrating", async () => {
+    const instanceId = "native-status-race"
+    const sessionId = "unknown"
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const client = {
+      session: {
+        get: async () => {
+          await gate
+          return {
+            id: sessionId, title: sessionId, parentID: null, version: "1", projectID: "project",
+            location: { directory: "/work" }, time: { created: 1, updated: 1 },
+          }
+        },
+      },
+    } as any
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+
+    try {
+      handleNativeSessionEvent(instanceId, {
+        id: "started", created: 1, type: "session.execution.started",
+        durable: { aggregateID: sessionId, seq: 1, version: 1 },
+        data: { sessionID: sessionId }, location: { directory: "/work" },
+      })
+      handleSessionStatus(instanceId, {
+        type: "session.status", data: { sessionID: sessionId, status: { type: "idle" } },
+      } as any)
+      release()
+      await delay(20)
+
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.status, "idle")
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.runtimeStatusKnown, true)
+    } finally {
       setSessions((prev) => { const next = new Map(prev); next.delete(instanceId); return next })
       clearInstanceDeletedSessionAuthority(instanceId)
       removeInstance(instanceId, { authoritative: false })

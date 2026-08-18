@@ -1,10 +1,18 @@
 import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { describe, it } from "node:test"
 
-import { buildServiceLaunchSpec, buildWindowsSpawnSpec, parseWslUncPath, resolveWslWorkingDirectory } from "../spawn"
+import {
+  buildServiceLaunchSpec,
+  buildWindowsSpawnSpec,
+  parseWslUncPath,
+  resolveWslHostDirectory,
+  resolveWslServiceDirectory,
+  resolveWslWorkingDirectory,
+} from "../spawn"
 
 describe("parseWslUncPath", () => {
   it("parses WSL UNC paths into distro and linux path", () => {
@@ -54,10 +62,6 @@ describe("buildWindowsSpawnSpec", () => {
     assert.equal(buildWindowsSpawnSpec("opencode.exe", []).processKind, "windows-direct")
     assert.equal(buildWindowsSpawnSpec("opencode.cmd", []).processKind, "windows-wrapper")
     assert.equal(buildWindowsSpawnSpec("powershell.exe", []).processKind, "windows-wrapper")
-  })
-
-  it("conservatively classifies bare commands as wrappers", () => {
-    assert.equal(buildWindowsSpawnSpec("opencode", []).processKind, "windows-wrapper")
   })
 
   it("resolves a bare cmd shim from a quoted PATH entry and wraps its absolute path", { skip: process.platform !== "win32" }, () => {
@@ -145,11 +149,36 @@ describe("buildWindowsSpawnSpec", () => {
       {
         env: {
           NODE_EXTRA_CA_CERTS: String.raw`C:\certs\root.pem`,
+          OPENCODE_DB: String.raw`C:\state\opencode.db`,
         },
       },
     )
 
-    assert.equal(spec.env?.WSLENV, "NODE_EXTRA_CA_CERTS/p")
+    assert.equal(spec.env?.WSLENV, "NODE_EXTRA_CA_CERTS/p:OPENCODE_DB/p")
+  })
+
+  it("preserves a Linux-native OPENCODE_DB path in WSL", () => {
+    const spec = buildWindowsSpawnSpec(
+      String.raw`\\wsl.localhost\Ubuntu\home\dev\.opencode\bin\opencode`,
+      ["serve"],
+      { env: { OPENCODE_DB: "/home/dev/.local/share/opencode.db", WSLENV: "OPENCODE_DB/lp" } },
+    )
+
+    assert.equal(spec.env?.OPENCODE_DB, "/home/dev/.local/share/opencode.db")
+    assert.equal(spec.env?.WSLENV, "OPENCODE_DB/l")
+  })
+
+  it("marks Windows and UNC OPENCODE_DB paths for WSL translation", () => {
+    for (const database of [String.raw`C:\state\opencode.db`, String.raw`\\server\state\opencode.db`]) {
+      const spec = buildWindowsSpawnSpec(
+        String.raw`\\wsl.localhost\Ubuntu\home\dev\.opencode\bin\opencode`,
+        ["serve"],
+        { env: { OPENCODE_DB: database } },
+      )
+
+      assert.equal(spec.env?.OPENCODE_DB, database)
+      assert.equal(spec.env?.WSLENV, "OPENCODE_DB/p")
+    }
   })
 
   it("propagates requested configured variables into WSL", () => {
@@ -217,6 +246,54 @@ describe("buildWindowsSpawnSpec", () => {
 
 })
 
+describe("resolveWslServiceDirectory", () => {
+  it("converts WSL UNC paths without invoking wslpath", () => {
+    assert.equal(
+      resolveWslServiceDirectory(String.raw`\\wsl.localhost\Ubuntu\home\dev\workspace`, "Ubuntu", () => {
+        throw new Error("wslpath should not run")
+      }),
+      "/home/dev/workspace",
+    )
+  })
+
+  it("uses wslpath for Windows workspace paths", () => {
+    assert.equal(
+      resolveWslServiceDirectory(String.raw`C:\Users\dev\workspace`, "Ubuntu", (folder, distro) => {
+        assert.equal(folder, String.raw`C:\Users\dev\workspace`)
+        assert.equal(distro, "Ubuntu")
+        return "/mnt/c/Users/dev/workspace"
+      }),
+      "/mnt/c/Users/dev/workspace",
+    )
+  })
+
+  it("bounds Windows path translation and returns null on timeout", () => {
+    let timeoutMs = 0
+    const startedAt = Date.now()
+    assert.equal(
+      resolveWslServiceDirectory(String.raw`C:\Users\dev\workspace`, "Ubuntu", (_folder, _distro, timeout) => {
+        timeoutMs = timeout
+        const result = spawnSync(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { timeout })
+        assert.equal((result.error as NodeJS.ErrnoException | undefined)?.code, "ETIMEDOUT")
+        return result.status === 0 ? result.stdout.toString() : undefined
+      }, 25),
+      null,
+    )
+    assert.equal(timeoutMs, 25)
+    assert.ok(Date.now() - startedAt < 1_000)
+  })
+
+  it("maps service paths back to host paths with the same bound", () => {
+    assert.equal(
+      resolveWslHostDirectory("/mnt/c/Users/dev/workspace", "Ubuntu", (folder, distro, timeout) => {
+        assert.deepEqual([folder, distro, timeout], ["/mnt/c/Users/dev/workspace", "Ubuntu", 23])
+        return String.raw`C:\Users\dev\workspace`
+      }, 23),
+      String.raw`C:\Users\dev\workspace`,
+    )
+  })
+})
+
 describe("buildServiceLaunchSpec", () => {
   it("returns direct commands for executables, PowerShell, and WSL", () => {
     assert.deepEqual(
@@ -233,22 +310,23 @@ describe("buildServiceLaunchSpec", () => {
     )
   })
 
-  it("uses a Node trampoline for the verbatim cmd.exe batch command", () => {
+  it("passes through a non-npm cmd wrapper with its required verbatim arguments", () => {
     const launch = buildServiceLaunchSpec(String.raw`C:\Program Files\OpenCode\opencode.cmd`, ["serve", "--service"], {
       platform: "win32",
       env: { ComSpec: "test-cmd.exe" },
     })
 
-    assert.equal(launch.command[0], process.execPath)
-    assert.equal(launch.command[1], "-e")
-    assert.equal(launch.command[3], "test-cmd.exe")
-    assert.deepEqual(JSON.parse(launch.command[4] ?? "[]"), [
+    assert.equal(launch.command[0], "test-cmd.exe")
+    assert.deepEqual(launch.command.slice(1), [
       "/d", "/s", "/c", String.raw`""C:\Program Files\OpenCode\opencode.cmd" serve --service"`,
     ])
-    assert.equal(launch.command[5], "")
+    assert.equal(launch.windowsVerbatimArguments, true)
+    assert.equal(launch.nativePid, false)
+    assert.equal(buildServiceLaunchSpec("custom.bat", ["serve"], { platform: "win32" }).nativePid, false)
+    assert.equal(buildServiceLaunchSpec("custom.ps1", ["serve"], { platform: "win32" }).nativePid, false)
   })
 
-  it("records a direct service contender PID", () => {
+  it("launches a direct service executable without a wrapper", () => {
     const launch = buildServiceLaunchSpec("opencode.exe", ["serve", "--service"], {
       platform: "win32",
       contenderFile: String.raw`C:\Temp\codenomad-contenders.txt`,
@@ -256,8 +334,10 @@ describe("buildServiceLaunchSpec", () => {
 
     assert.equal(launch.command[0], process.execPath)
     assert.equal(launch.command[3], "opencode.exe")
+    assert.deepEqual(JSON.parse(launch.command[4] ?? "[]"), ["serve", "--service"])
     assert.equal(launch.command[5], String.raw`C:\Temp\codenomad-contenders.txt`)
-    assert.equal(launch.command[6], "false")
+    assert.equal(launch.nativePid, true)
+    assert.equal(launch.launcherRecordsPid, true)
   })
 
   it("translates shared Windows state and contender files for WSL", () => {
@@ -273,9 +353,46 @@ describe("buildServiceLaunchSpec", () => {
     )
 
     assert.equal(launch.command[0], "wsl.exe")
-    assert.match(launch.command[6] ?? "", /wslpath -au/)
-    assert.equal(launch.command[8], contenderFile)
+    const wslArgs = launch.command.slice(1)
+    assert.match(wslArgs[5] ?? "", /wslpath -au/)
+    assert.equal(wslArgs[7], contenderFile)
     assert.equal(launch.env?.WSLENV, "XDG_STATE_HOME/p")
+    assert.equal(launch.nativePid, false)
+    assert.equal(launch.wslDistro, "Ubuntu")
+  })
+
+  it("passes configured service variables only to the launched child", () => {
+    const launch = buildServiceLaunchSpec("opencode", ["serve", "--service"], {
+      platform: "linux",
+      env: { ...process.env, XDG_STATE_HOME: "/private/state", SERVICE_ONLY: "yes" },
+      propagateEnvKeys: ["XDG_STATE_HOME", "SERVICE_ONLY"],
+    })
+
+    assert.deepEqual(launch.command, ["opencode", "serve", "--service"])
+    assert.equal(launch.env?.XDG_STATE_HOME, "/private/state")
+    assert.equal(launch.env?.SERVICE_ONLY, "yes")
+  })
+
+  it("resolves the standard Windows npm opencode2 shim to its packaged executable", { skip: process.platform !== "win32" }, () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codenomad-npm-shim-"))
+    const executable = path.join(root, "node_modules", "@opencode-ai", "cli", "bin", "opencode2.exe")
+    mkdirSync(path.dirname(executable), { recursive: true })
+    writeFileSync(executable, "")
+    writeFileSync(path.join(root, "opencode2.cmd"), '@ECHO off\r\n"%~dp0\\node_modules\\@opencode-ai\\cli\\bin\\opencode2.exe" %*\r\n')
+    try {
+      const launch = buildServiceLaunchSpec("opencode2", ["serve", "--service"], {
+        platform: "win32",
+        cwd: root,
+        env: { PATH: root, PATHEXT: ".CMD" },
+        contenderFile: path.join(root, "contenders.txt"),
+      })
+      assert.equal(launch.command[0], process.execPath)
+      assert.equal(launch.command[3]?.toLowerCase(), executable.toLowerCase())
+      assert.equal(launch.nativePid, true)
+      assert.equal(launch.launcherRecordsPid, true)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
 

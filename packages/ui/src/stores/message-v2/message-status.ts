@@ -23,3 +23,11 @@ export function deriveMessageStatus(info: {
   const completed = info.time?.completed
   return typeof completed === "number" && completed > 0 ? "complete" : "streaming"
 }
+
+export function shouldShowGeneratingPlaceholder(
+  hasContent: boolean,
+  role: "user" | "assistant",
+  status: MessageStatus,
+): boolean {
+  return !hasContent && role === "assistant" && status === "streaming"
+}

@@ -43,6 +43,99 @@ describe("message-v2 permission state", () => {
 
 })
 
+describe("message-v2 todo state", () => {
+  it("does not expose a plan from before the latest compaction", () => {
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+    store.hydrateMessages("session-1", [
+      {
+        id: "msg-todo", sessionId: "session-1", role: "assistant", status: "complete",
+        parts: [{ id: "todo", type: "tool", tool: "todowrite", state: { status: "completed", input: { todos: [{ content: "Old task", status: "in_progress" }] } } } as any],
+      },
+      {
+        id: "msg-compaction", sessionId: "session-1", role: "assistant", status: "complete",
+        parts: [{ id: "compaction", type: "compaction" } as any],
+      },
+    ], [
+      { id: "msg-todo", sessionID: "session-1", role: "assistant", time: { created: 1 } } as any,
+      { id: "msg-compaction", sessionID: "session-1", role: "assistant", time: { created: 2 } } as any,
+    ])
+
+    assert.equal(store.getLatestTodoSnapshot("session-1"), undefined)
+  })
+})
+
+describe("message-v2 question attachment", () => {
+  it("rebinds a question when its tool part arrives after question.asked", () => {
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+    store.upsertMessage({ id: "message-1", sessionId: "session-1", role: "assistant", status: "streaming", parts: [] })
+    store.upsertQuestion({
+      request: {
+        id: "question-1",
+        sessionID: "session-1",
+        questions: [{ header: "Confirm", question: "Continue?", options: [] }],
+        tool: { messageID: "message-1", id: "call-1" },
+      },
+      messageId: "message-1",
+      enqueuedAt: 1_000,
+    })
+
+    assert.equal(store.getQuestionState("message-1", "call-1"), null)
+
+    store.applyPartUpdate({
+      messageId: "message-1",
+      part: { id: "part-1", type: "tool", tool: "question", callID: "call-1", state: { status: "running", input: {} } } as any,
+    })
+
+    assert.equal(store.getQuestionState("message-1", "part-1")?.entry.request.id, "question-1")
+    assert.equal(store.state.questions.queue.length, 1)
+  })
+
+  it("uses the native tool part id when no normalized callID is present", () => {
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+    store.upsertMessage({ id: "message-1", sessionId: "session-1", role: "assistant", status: "streaming", parts: [] })
+    store.upsertQuestion({
+      request: {
+        id: "question-1",
+        sessionID: "session-1",
+        questions: [],
+        tool: { messageID: "message-1", id: "part-native" },
+      },
+      messageId: "message-1",
+      enqueuedAt: 1_000,
+    })
+
+    store.applyPartUpdate({
+      messageId: "message-1",
+      part: { id: "part-native", type: "tool", tool: "question", state: { status: "running", input: {} } } as any,
+    })
+
+    assert.equal(store.getQuestionState("message-1", "part-native")?.entry.request.id, "question-1")
+  })
+
+  it("moves a question from a stale optimistic part to the authoritative part", () => {
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+    store.upsertMessage({ id: "message-1", sessionId: "session-1", role: "assistant", status: "streaming", parts: [] })
+    store.upsertQuestion({
+      request: { id: "question-1", sessionID: "session-1", questions: [], tool: { messageID: "message-1", id: "call-1" } },
+      messageId: "message-1",
+      partId: "part-optimistic",
+      enqueuedAt: 1_000,
+    })
+
+    store.applyPartUpdate({
+      messageId: "message-1",
+      part: { id: "part-authoritative", type: "tool", tool: "question", callID: "call-1", state: { status: "running", input: {} } } as any,
+    })
+
+    assert.equal(store.getQuestionState("message-1", "part-optimistic"), null)
+    assert.equal(store.getQuestionState("message-1", "part-authoritative")?.entry.request.id, "question-1")
+  })
+})
+
 describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
   it("keeps an in-flight pending 'sending' message visible when a force reload snapshot doesn't include it yet", () => {
     const store = createInstanceMessageStore("instance-1")
@@ -138,6 +231,26 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
     store.hydrateMessages("session-1", [duplicated, duplicated])
 
     assert.deepEqual(store.getSessionMessageIds("session-1"), ["msg-real-1"])
+  })
+
+  it("dedupes repeated part ids while keeping the newest part payload", () => {
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+
+    store.upsertMessage({
+      id: "msg-1",
+      sessionId: "session-1",
+      role: "assistant",
+      status: "complete",
+      parts: [
+        { id: "part-1", type: "text", text: "stale" } as any,
+        { id: "part-1", type: "text", text: "current" } as any,
+      ],
+    })
+
+    const message = store.getMessage("msg-1")
+    assert.deepEqual(message?.partIds, ["part-1"])
+    assert.equal((message?.parts["part-1"]?.data as any)?.text, "current")
   })
 
   it("drops a definitively failed send on the next authoritative snapshot", () => {

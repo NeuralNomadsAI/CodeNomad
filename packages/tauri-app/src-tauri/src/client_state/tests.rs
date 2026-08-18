@@ -250,14 +250,15 @@ fn migrates_dual_legacy_files_with_disabled_dominance_and_malformed_fallback() {
             &tauri,
             &election,
             &shared,
+            None,
             Some(&electron),
             Arc::new(super::write_atomically),
         )
         .unwrap();
         assert_eq!(state.load().unwrap(), load(true, false, Value::Null));
         assert!(!parse_client_state(&fs::read(&shared).unwrap()).restore_enabled);
-        assert!(!electron.join(CLIENT_STATE_FILENAME).exists());
-        assert!(!tauri.join(CLIENT_STATE_FILENAME).exists());
+        assert!(electron.join(CLIENT_STATE_FILENAME).exists());
+        assert!(tauri.join(CLIENT_STATE_FILENAME).exists());
     }
 
     let root = tempfile::tempdir().unwrap();
@@ -286,11 +287,67 @@ fn migrates_dual_legacy_files_with_disabled_dominance_and_malformed_fallback() {
         &tauri,
         &election,
         &shared,
+        None,
         Some(&electron),
         Arc::new(super::write_atomically),
     )
     .unwrap();
     assert_eq!(state.load().unwrap().snapshot, Value::Null);
+}
+
+#[test]
+fn v1_shared_state_is_copied_once_and_v2_mutations_remain_isolated() {
+    let root = tempfile::tempdir().unwrap();
+    let tauri = root.path().join("tauri");
+    let shared = root.path().join("shared");
+    let legacy_shared = shared.join(CLIENT_STATE_FILENAME);
+    let v2 = shared.join("v2");
+    let election = v2.join("election");
+    let v2_state = v2.join(CLIENT_STATE_FILENAME);
+    fs::create_dir_all(&shared).unwrap();
+    fs::create_dir_all(&tauri).unwrap();
+    let legacy_bytes = br#"{
+  "version": 1, "restoreEnabled": true, "snapshot": { "source": "v1" }, "v1Only": true
+}"#;
+    fs::write(&legacy_shared, legacy_bytes).unwrap();
+    let host_local = br#"{"version":1,"restoreEnabled":true,"snapshot":{"source":"host-local"}}"#;
+    fs::write(tauri.join(CLIENT_STATE_FILENAME), host_local).unwrap();
+
+    let state = ClientState::initialize_at_with_writer_and_election(
+        &tauri,
+        &election,
+        &v2_state,
+        Some(&legacy_shared),
+        None,
+        Arc::new(super::write_atomically),
+    )
+    .unwrap();
+    assert_eq!(fs::read(&v2_state).unwrap(), legacy_bytes);
+    assert_eq!(state.load().unwrap().snapshot, json!({ "source": "v1" }));
+    assert!(state.save_snapshot(json!({ "source": "v2-save" })).unwrap());
+    assert_eq!(fs::read(&legacy_shared).unwrap(), legacy_bytes);
+    assert!(state.set_restore_enabled(false).unwrap());
+    assert_eq!(fs::read(&legacy_shared).unwrap(), legacy_bytes);
+    assert!(state.clear().unwrap());
+    assert_eq!(fs::read(&legacy_shared).unwrap(), legacy_bytes);
+    assert_eq!(
+        fs::read(tauri.join(CLIENT_STATE_FILENAME)).unwrap(),
+        host_local
+    );
+    state.release_locks();
+
+    let restarted = ClientState::initialize_at_with_writer_and_election(
+        &tauri,
+        &election,
+        &v2_state,
+        Some(&legacy_shared),
+        None,
+        Arc::new(super::write_atomically),
+    )
+    .unwrap();
+    assert!(!restarted.load().unwrap().restore_enabled);
+    assert_ne!(fs::read(&v2_state).unwrap(), legacy_bytes);
+    assert_eq!(fs::read(&legacy_shared).unwrap(), legacy_bytes);
 }
 
 #[test]
@@ -316,6 +373,7 @@ fn electron_and_tauri_share_the_complete_envelope_across_handoffs() {
         &tauri,
         &election,
         &shared,
+        None,
         Some(&electron),
         Arc::new(super::write_atomically),
     )

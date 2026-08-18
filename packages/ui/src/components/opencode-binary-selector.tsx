@@ -43,7 +43,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
 
   const lastUsedBinary = () => serverSettings().opencodeBinary
 
-  const customBinaries = createMemo(() => binaries().filter((binary) => binary.path !== "opencode2"))
+  const customBinaries = createMemo(() => binaries().filter((binary) => binary.path !== "opencode" && binary.path !== "opencode2"))
 
   const binaryOptions = createMemo<BinaryOption[]>(() => [{ path: "opencode2", isDefault: true }, ...customBinaries()])
 

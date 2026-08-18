@@ -66,7 +66,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   const sessionNeedsInput = createMemo(() => {
     const currentSession = session()
     if (!currentSession) return false
-    return Boolean(currentSession.pendingPermission || (currentSession as any).pendingQuestion)
+    return Boolean(currentSession.pendingPermission || currentSession.pendingQuestion || currentSession.pendingForm)
   })
 
   const attachments = createMemo(() => getAttachments(props.instanceId, props.sessionId))

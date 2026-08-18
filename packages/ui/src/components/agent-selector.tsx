@@ -2,7 +2,7 @@ import { Select } from "@kobalte/core/select"
 import { Show, createEffect, createMemo } from "solid-js"
 import { agents, fetchAgents, sessions } from "../stores/sessions"
 import { ChevronDown } from "lucide-solid"
-import { getSelectableAgentsForSession, type Agent } from "../types/session"
+import { findAgentById, getSelectableAgentsForSession, type Agent } from "../types/session"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 const log = getLogger("session")
@@ -31,14 +31,7 @@ export default function AgentSelector(props: AgentSelectorProps) {
   const availableAgents = createMemo(() => {
     return getSelectableAgentsForSession(instanceAgents(), props.currentAgent, isChildSession())
   })
-
-  createEffect(() => {
-    const list = availableAgents()
-    if (list.length === 0) return
-    if (!list.some((agent) => agent.name === props.currentAgent)) {
-      void props.onAgentChange(list[0].name)
-    }
-  })
+  const selectedAgent = createMemo(() => findAgentById(availableAgents(), props.currentAgent))
 
   createEffect(() => {
     if (instanceAgents().length === 0) {
@@ -47,18 +40,18 @@ export default function AgentSelector(props: AgentSelectorProps) {
   })
 
   const handleChange = async (value: Agent | null) => {
-    if (value && value.name !== props.currentAgent) {
-      await props.onAgentChange(value.name)
+    if (value && value.id !== props.currentAgent) {
+      await props.onAgentChange(value.id)
     }
   }
 
   return (
     <div class="sidebar-selector">
       <Select
-        value={availableAgents().find((a) => a.name === props.currentAgent)}
+        value={selectedAgent()}
         onChange={handleChange}
         options={availableAgents()}
-        optionValue="name"
+        optionValue="id"
         optionTextValue="name"
         placeholder={t("agentSelector.placeholder")}
         itemComponent={(itemProps) => (
@@ -93,7 +86,7 @@ export default function AgentSelector(props: AgentSelectorProps) {
               {() => (
                 <div class="selector-trigger-label selector-trigger-label--stacked">
                   <span class="selector-trigger-primary selector-trigger-primary--align-left">
-                    {t("agentSelector.trigger.primary", { agent: props.currentAgent || t("agentSelector.none") })}
+                    {t("agentSelector.trigger.primary", { agent: selectedAgent()?.name || t("agentSelector.none") })}
                   </span>
                 </div>
               )}

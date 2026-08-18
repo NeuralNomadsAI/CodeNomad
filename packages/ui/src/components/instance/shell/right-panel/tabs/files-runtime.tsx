@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, lazy, type Accessor, type JSX } from "solid-js"
+import { createEffect, createMemo, createSignal, lazy, onCleanup, type Accessor, type JSX } from "solid-js"
 
 import type { DiffWordWrapMode, RightPanelTab } from "../types"
 import type { FileBrowserEntry } from "./FilesTab"
@@ -10,6 +10,7 @@ import { getWorktrees } from "../../../../../stores/worktrees"
 import { serverApi } from "../../../../../lib/api-client"
 import { showConfirmDialog } from "../../../../../stores/alerts"
 import { showToastNotification } from "../../../../../lib/notifications"
+import { createDebouncedRefresh, filesystemInvalidationVersion } from "../../../../../lib/filesystem-events"
 import { writeClientLayoutValue } from "../../../../../stores/client-state"
 import {
   RIGHT_PANEL_FILES_LIST_OPEN_NONPHONE_KEY,
@@ -267,6 +268,21 @@ export function createFilesTabRuntime(options: FilesTabRuntimeOptions): () => JS
 
   const browserParentPath = createMemo(() => getParentPath(browserPath()))
   const browserScopeKey = createMemo(() => `${options.instanceId}:${options.worktreeSlug()}`)
+  let seenFilesystemInvalidation = filesystemInvalidationVersion(options.instanceId)
+  const filesystemRefresh = createDebouncedRefresh(() => {
+    void loadBrowserEntries(browserPath())
+    const selected = browserSelectedPath()
+    if (selected && !browserSelectedDirty()) void openBrowserFile(selected)
+  })
+
+  createEffect(() => {
+    const version = filesystemInvalidationVersion(options.instanceId)
+    if (version === seenFilesystemInvalidation) return
+    seenFilesystemInvalidation = version
+    if (options.rightPanelTab() === "files") filesystemRefresh.trigger()
+    else setBrowserEntries(null)
+  })
+  onCleanup(() => filesystemRefresh.cancel())
 
   return () => (
     <LazyFilesTab
@@ -284,6 +300,8 @@ export function createFilesTabRuntime(options: FilesTabRuntimeOptions): () => JS
       wordWrapMode={filesWordWrapMode}
       parentPath={browserParentPath}
       scopeKey={browserScopeKey}
+      instanceId={options.instanceId}
+      worktreeSlug={options.worktreeSlug}
       onLoadEntries={(path: string) => void loadBrowserEntries(path)}
       onRequestOpenFile={(path: string) => void handleOpenBrowserFileRequest(path)}
       onRefresh={() => void refreshFilesTab()}

@@ -5,54 +5,46 @@ import { applySessionPage, getDefaultSessionPaginationState } from "./session-pa
 import {
   PROJECT_SESSION_LIST_LIMIT,
   buildProjectSessionListOptions,
-  filterProjectScopedSessions,
-  getAuthoritativelyMissingSessionIds,
+  getUniqueSessionDirectories,
 } from "./session-list-options.ts"
 
 describe("project session list loading", () => {
-  it("builds a project-scoped cursor request", () => {
-    const options = buildProjectSessionListOptions({ project: "project-id", search: "worktree", cursor: "next" })
+  it("builds a native directory request without fake scope params", () => {
+    const options = buildProjectSessionListOptions({ directory: "/tmp/project", search: "worktree" })
 
     assert.deepEqual(options, {
-      project: "project-id",
+      directory: "/tmp/project",
       search: "worktree",
-      cursor: "next",
       limit: PROJECT_SESSION_LIST_LIMIT,
-      order: "asc",
     })
+    assert.equal("scope" in options, false)
     assert.equal("start" in options, false)
+    assert.equal("cursor" in options, false)
   })
 
-  it("filters project-scoped results to the root and known worktree directories", () => {
-    const sessions = [
-      { id: "root", location: { directory: "/repo" } },
-      { id: "worktree", location: { directory: "/repo/.codenomad/worktrees/feature" } },
-      { id: "sibling", location: { directory: "/other" } },
-      { id: "unknown" },
-    ]
+  it("passes native cursors through unchanged", () => {
+    assert.deepEqual(buildProjectSessionListOptions({ directory: "/tmp/project", cursor: "next-page" }), {
+      directory: "/tmp/project",
+      cursor: "next-page",
+      limit: PROJECT_SESSION_LIST_LIMIT,
+    })
+  })
 
+  it("queries each unique logical root and known worktree directory", () => {
     assert.deepEqual(
-      filterProjectScopedSessions(sessions, ["/repo", "/repo/.codenomad/worktrees/feature"]).map((session) => session.id),
-      ["root", "worktree", "unknown"],
+      getUniqueSessionDirectories(["/repo", "/repo", "/repo/.codenomad/worktrees/feature"]),
+      ["/repo", "/repo/.codenomad/worktrees/feature"],
     )
   })
 
-  it("normalizes Windows paths when filtering project-scoped results", () => {
-    const sessions = [
-      { id: "root", location: { directory: String.raw`C:\Repo` } },
-      { id: "worktree", location: { directory: "c:/repo/.codenomad/worktrees/feature/" } },
-      { id: "other", location: { directory: String.raw`C:\Other` } },
-    ]
-
+  it("normalizes Windows paths when deduplicating directories", () => {
     assert.deepEqual(
-      filterProjectScopedSessions(sessions, ["c:/repo/", String.raw`C:\Repo\.codenomad\worktrees\feature`]).map(
-        (session) => session.id,
-      ),
-      ["root", "worktree"],
+      getUniqueSessionDirectories([String.raw`C:\Repo`, "c:/repo/", String.raw`C:\Repo\.codenomad\worktrees\feature`]),
+      [String.raw`C:\Repo`, String.raw`C:\Repo\.codenomad\worktrees\feature`],
     )
   })
 
-  it("marks the projection complete after all API pages are collected", () => {
+  it("marks the loaded session list complete because the API does not paginate", () => {
     const state = applySessionPage(getDefaultSessionPaginationState(), ["root-1", "root-2"], false, true)
 
     assert.deepEqual(state.ids, ["root-1", "root-2"])
@@ -60,7 +52,7 @@ describe("project session list loading", () => {
     assert.equal(state.nextCursor, undefined)
   })
 
-  it("resets stale UI cursor state after a complete project refresh", () => {
+  it("resets stale cursor state when the one-shot list refreshes", () => {
     const previous = applySessionPage(getDefaultSessionPaginationState(), ["old-root"], true, true, "old-cursor")
     const next = applySessionPage(previous, ["new-root"], false, true)
 
@@ -69,15 +61,4 @@ describe("project session list loading", () => {
     assert.equal(next.nextCursor, undefined)
   })
 
-  it("reconciles sessions deleted while disconnected only from a complete refresh", () => {
-    const existing = ["retained", "outside-current-worktree", "deleted-remotely"]
-    const listed = ["retained", "outside-current-worktree"]
-
-    assert.deepEqual(getAuthoritativelyMissingSessionIds(existing, listed, true), ["deleted-remotely"])
-    assert.deepEqual(
-      getAuthoritativelyMissingSessionIds(existing, listed, false),
-      [],
-      "a result capped at the request limit may be truncated",
-    )
-  })
 })

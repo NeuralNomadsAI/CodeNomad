@@ -82,7 +82,13 @@ export class SideCarManager {
 
     this.configs.set(record.id, record)
     this.runtime.set(record.id, { status: "stopped" })
-    this.persistConfigs()
+    try {
+      this.persistConfigs()
+    } catch (error) {
+      this.configs.delete(record.id)
+      this.runtime.delete(record.id)
+      throw error
+    }
     await this.refreshPortSideCar(record.id)
     return this.toSideCar(record)
   }
@@ -98,13 +104,19 @@ export class SideCarManager {
   ): Promise<SideCar> {
     const record = this.requireConfig(id)
 
+    const previous = { ...record }
     record.name = typeof input.name === "string" ? input.name.trim() : record.name
     record.port = typeof input.port === "number" ? input.port : record.port
     record.insecure = typeof input.insecure === "boolean" ? input.insecure : record.insecure
     record.prefixMode = typeof input.prefixMode === "string" ? input.prefixMode : record.prefixMode
     record.updatedAt = new Date().toISOString()
 
-    this.persistConfigs()
+    try {
+      this.persistConfigs()
+    } catch (error) {
+      this.configs.set(id, previous)
+      throw error
+    }
     await this.refreshPortSideCar(id)
     return this.toSideCar(record)
   }
@@ -113,9 +125,16 @@ export class SideCarManager {
     const record = this.configs.get(id)
     if (!record) return false
 
+    const runtime = this.runtime.get(id)
     this.configs.delete(id)
     this.runtime.delete(id)
-    this.persistConfigs()
+    try {
+      this.persistConfigs()
+    } catch (error) {
+      this.configs.set(id, record)
+      if (runtime) this.runtime.set(id, runtime)
+      throw error
+    }
     this.options.eventBus.publish({ type: "sidecar.removed", sidecarId: id })
     return true
   }

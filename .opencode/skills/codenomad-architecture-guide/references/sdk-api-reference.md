@@ -2,20 +2,20 @@
 
 ## Package
 
-CodeNomad pins `@opencode-ai/client@0.0.0-next-17288` exactly in both `packages/server/package.json` and `packages/ui/package.json`.
+CodeNomad keeps the experimental `@opencode-ai/client` protocol aligned in `packages/server/package.json` and `packages/ui/package.json` on the latest reviewed `next` release. Runtime CLI discovery is not exact-version-gated. This is distinct from the current public `@opencode-ai/sdk` documentation.
 
 - Promise client: `import { OpenCode } from "@opencode-ai/client"`
 - Service lifecycle: `import { Service } from "@opencode-ai/client/service"`
 - Client construction: `OpenCode.make({ baseUrl, headers?, fetch? })`
 - Declarations: `node_modules/@opencode-ai/client/dist/promise/`
 
-Do not import `@opencode-ai/sdk`; its V1/V2 wrapper shapes, `{ data, error }` conventions, and `createOpencodeClient()` do not apply.
+Do not import `@opencode-ai/sdk`; its wrapper shapes, `{ data, error }` conventions, and `createOpencodeClient()` do not apply to this pinned experimental protocol build.
 
 ## Used Native APIs
 
 | Area | Calls | CodeNomad caller |
 |---|---|---|
-| Service | `Service.discover/ensure/headers/stop` | `packages/server/src/workspaces/opencode-service.ts` |
+| Service | `Service.discover/headers`; custom launch and authenticated stop | `packages/server/src/workspaces/opencode-service.ts` |
 | Location | `client.location.get`, `client.debug.location.evict` | shared service wrapper |
 | Events | `client.event.subscribe()` | `packages/server/src/workspaces/instance-events.ts` |
 | Sessions | `list/get/create/fork/remove/rename/prompt/command/shell/interrupt` | UI session stores |
@@ -42,3 +42,5 @@ Do not look for these in the OpenCode client:
 - Multiplexed browser SSE at `/api/events`
 
 These use `packages/ui/src/lib/api-client.ts` and server routes.
+
+The instance proxy is method/path allowlisted. Adding an upstream client method does not make its route available through CodeNomad.

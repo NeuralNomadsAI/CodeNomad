@@ -1,14 +1,13 @@
 import type { Instance } from "../../types/instance"
 import { getLogger } from "../../lib/logger"
 import { getInstanceMetadata, mergeInstanceMetadata } from "../../stores/instance-metadata"
-import { extractConfiguredPlugins } from "./plugin-metadata"
 
 const log = getLogger("session")
 const pendingMetadataRequests = new Set<string>()
 
 function hasMetadataLoaded(metadata?: Instance["metadata"]): boolean {
   if (!metadata) return false
-  return "project" in metadata && "mcpStatus" in metadata && "lspStatus" in metadata && "plugins" in metadata
+  return "project" in metadata && "mcpStatus" in metadata && "plugins" in metadata
 }
 
 export async function loadInstanceMetadata(instance: Instance, options?: { force?: boolean }): Promise<void> {
@@ -31,20 +30,22 @@ export async function loadInstanceMetadata(instance: Instance, options?: { force
 
   try {
     const location = { directory: instance.folder }
-    const [projectResult, mcpResult, configResult] = await Promise.allSettled([
+    const [projectResult, projectsResult, mcpResult, pluginResult] = await Promise.allSettled([
       client.project.current({ location }),
+      client.project.list(),
       client.mcp.list({ location }),
-      client.config.get({ location }),
+      client.plugin.list({ location }),
     ])
 
-    const project = projectResult.status === "fulfilled" ? projectResult.value : undefined
-    const config = configResult.status === "fulfilled" ? configResult.value : undefined
-    const plugins = config
-      ? extractConfiguredPlugins(config.flatMap((entry) =>
-          entry.type === "document"
-            ? (entry.info.plugins ?? []).map((plugin) => typeof plugin === "string" ? plugin : plugin.package)
-            : [],
-        ))
+    const currentProject = projectResult.status === "fulfilled" ? projectResult.value : undefined
+    const listedProject = currentProject && projectsResult.status === "fulfilled"
+      ? projectsResult.value.find((project) => project.id === currentProject.id)
+      : undefined
+    const project = currentProject
+      ? { ...currentProject, ...(listedProject?.vcs ? { vcs: listedProject.vcs } : {}) }
+      : undefined
+    const plugins = pluginResult.status === "fulfilled"
+      ? pluginResult.value.data.map((plugin) => plugin.id).filter((id) => !id.startsWith("opencode."))
       : undefined
 
     const updates: Instance["metadata"] = { ...(currentMetadata ?? {}) }
@@ -57,9 +58,7 @@ export async function loadInstanceMetadata(instance: Instance, options?: { force
       updates.mcpStatus = mcpResult.value
     }
 
-    updates.lspStatus = []
-
-    if (configResult.status === "fulfilled") {
+    if (pluginResult.status === "fulfilled") {
       updates.plugins = plugins ?? []
     }
  

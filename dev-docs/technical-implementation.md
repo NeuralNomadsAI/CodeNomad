@@ -2,23 +2,17 @@
 
 ## OpenCode Dependency
 
-Server and UI pin `@opencode-ai/client@0.0.0-next-17288`. Import the generated Promise client from `@opencode-ai/client` and service lifecycle APIs from `@opencode-ai/client/service`.
+Server and UI use the same latest reviewed experimental `@opencode-ai/client` `next` release. Import the generated Promise client from `@opencode-ai/client`. Runtime service discovery does not require an exact CLI version. Every upgrade must review OpenCode release notes, current documentation, installed declarations, and proxy/API parity.
 
 Do not add `@opencode-ai/sdk`, old `{ data, error }` SDK wrappers, `createOpencodeClient()`, or a `packages/opencode-plugin` package. Verify method signatures in `node_modules/@opencode-ai/client/dist/promise/`.
 
 ## Server Integration
 
-`OpenCodeSharedService` is the sole service adapter:
+`OpenCodeSharedService` is the sole service adapter. Production uses `Service.discover` and `Service.headers`, then a custom launcher and authenticated stop request; direct `Service.ensure` and `Service.stop` are not the production lifecycle.
 
-```ts
-const endpoint = await Service.ensure(options)
-const client = OpenCode.make({
-  baseUrl: endpoint.url,
-  headers: Service.headers(endpoint),
-})
-```
+Startup and shutdown are serialized by filesystem leases. Each CodeNomad process proves its own PID/start identity and launch signature; service proof contains the registration contents, endpoint credentials, daemon PID/start identity, and host/WSL namespace. On exit, an owner transfers that proof to an elected live peer and releases its lease; a replacement can also inherit matching proof from a stale peer under the lifecycle lock. The final process stops only after all peers are proven stale/absent and the registration, endpoint, process identity, and launch signature still match; uncertainty retains the lease and leaks safely rather than signaling a PID.
 
-It caches one connection, checks discovery before reuse, invalidates failures, subscribes to one native event stream, and stops only an endpoint it started. `Service.ensure` has no environment option, so the adapter temporarily overlays configured variables only during the shared launch.
+The V2 service database is fixed at `~/.local/share/opencode2/opencode.db`; V1 and V2 schemas must never share a database. The complete environment is part of the launch signature and takes effect on service start/restart, not on an already-running daemon.
 
 Workspace creation passes a native location:
 
@@ -26,7 +20,7 @@ Workspace creation passes a native location:
 await client.location.get({ location: { directory } })
 ```
 
-`WorkspaceManager` records the returned directory/workspace ID and uses `client.debug.location.evict` after the final owner is removed.
+`WorkspaceManager` records the returned directory/workspace ID. After the final logical owner is removed, eviction is queued and is sent only during proven final shared-service shutdown, after cross-process peer and daemon identity checks.
 
 ## UI Integration
 
@@ -40,14 +34,16 @@ await client.session.shell({ sessionID, command })
 await client.session.instructions.entry.put({ sessionID, key, value })
 ```
 
-Shell mode and conversation instructions are upstream features. They do not require a CodeNomad plugin.
+Shell mode and conversation instructions are upstream features and remain separate from native V2 PTYs. None requires a CodeNomad plugin.
+
+Native PTYs are location-scoped and listed in the Status panel. `packages/ui/src/stores/pty-store.ts` refreshes the list on native PTY events and reconnect, exposes native metadata, and supports title updates and removal. The proxy verifies PTY `cwd` ownership before ID-scoped operations. Current installed declarations have no PTY output/read/stream API and no separate stop endpoint: output is not displayed, and removing a running PTY is the only native stop action.
 
 ## Routing And Security
 
 - CodeNomad operations: `packages/ui/src/lib/api-client.ts` -> `/api/*`.
 - OpenCode operations: generated client -> `/workspaces/:id/instance/api/*`.
 - Browser events: `GET /api/events`; heartbeat response: `POST /api/client-connections/pong`.
-- The proxy checks client-provided directories, defaults safe requests to the workspace location, and verifies session ownership before forwarding.
+- The proxy exposes only an explicit method/path allowlist, checks client-provided directories and prompt files, defaults safe requests to the workspace location, and verifies session ownership before forwarding. New OpenCode routes are unavailable until reviewed and allowlisted.
 
 Never trust a browser-supplied worktree path. Resolve workspace/worktree ownership server-side.
 
@@ -59,7 +55,9 @@ Yolo also remains CodeNomad-owned. `AutoAcceptManager` persists policy state, ob
 
 ## Events
 
-`InstanceEventBridge` consumes the one shared `client.event.subscribe()` iterable. It maps location-scoped events to workspace IDs and publishes `instance.event` through the CodeNomad `EventBus`. The UI's `sse-manager.ts` handles the multiplexed stream and reconnects; stores reconcile optimistic state with events or refetches.
+`InstanceEventBridge` consumes the one shared `client.event.subscribe()` iterable. It maps location-scoped events to workspace IDs and publishes `instance.event` through the CodeNomad `EventBus`. This stream is volatile: reconnection does not replay a guaranteed history, so UI stores refetch sessions and pending requests and other consumers must re-read authoritative file/config state.
+
+Use current protocol names. Session events include `session.created`, `session.renamed`, `session.moved`, `session.status`, `session.idle`, `session.execution.*`, `session.compaction.*`, `session.text.*`, `session.reasoning.*`, and `session.tool.*`; PTY refresh events include `pty.created`, `pty.updated`, `pty.exited`, and `pty.deleted`; file and config invalidations are `filesystem.changed` and `config.updated`.
 
 ## Current Structure
 
@@ -79,9 +77,10 @@ packages/ui/src/
   stores/opencode-client.ts root client authority
   stores/session-api.ts     session queries/lifecycle
   stores/session-actions.ts prompt, Shell, instructions
+  stores/pty-store.ts       location-scoped native PTY state/actions
 ```
 
-Deleted plugin, background-process, and per-workspace runtime files are not architectural extension points.
+Deleted `packages/opencode-plugin`, server plugin/background-process, and per-workspace runtime files are not architectural extension points and must not be restored.
 
 ## Validation
 

@@ -7,7 +7,7 @@ import type {
 } from "../../stores/preferences"
 import type { Command } from "../commands"
 import { tGlobal } from "../i18n"
-import { isTauriHost, isWebHost } from "../runtime-env"
+import { isLocalTauriHost, isWebHost } from "../runtime-env"
 
 export type BehaviorSettingKind = "toggle" | "enum"
 
@@ -36,8 +36,8 @@ export type BehaviorSetting = BehaviorToggleSetting | BehaviorEnumSetting
 
 export type BehaviorRegistryActions = {
   preferences: Accessor<Preferences>
-  useTauriNativeEventTransport: Accessor<boolean>
-  setUseTauriNativeEventTransport: (next: boolean) => void
+  useTauriNativeEventTransport?: Accessor<boolean>
+  setUseTauriNativeEventTransport?: (next: boolean) => void
   updatePreferences?: (updates: Partial<Preferences>) => void
   toggleShowThinkingBlocks: () => void
   toggleKeyboardShortcutHints: () => void
@@ -302,16 +302,16 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
         }
       },
     },
-    ...(isTauriHost()
+    ...(isLocalTauriHost() && actions.useTauriNativeEventTransport && actions.setUseTauriNativeEventTransport
       ? [
           {
             kind: "toggle" as const,
             id: "behavior.tauriNativeEventTransport",
             titleKey: "settings.behavior.tauriNativeEventTransport.title",
             subtitleKey: "settings.behavior.tauriNativeEventTransport.subtitle",
-            get: () => actions.useTauriNativeEventTransport(),
+            get: () => actions.useTauriNativeEventTransport!(),
             set: (next: boolean) => {
-              actions.setUseTauriNativeEventTransport(next)
+              actions.setUseTauriNativeEventTransport!(next)
             },
           },
         ]

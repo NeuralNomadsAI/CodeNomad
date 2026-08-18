@@ -27,14 +27,12 @@ export async function listCompleteProjectSessions(
   projectID: string,
 ): Promise<SessionInfo[]> {
   const sessions: SessionInfo[] = []
-  const sessionIds = new Set<string>()
   const cursors = new Set<string>()
   let cursor: string | undefined
   let page = 0
-
   do {
     if (++page > MAX_SESSION_PAGES) throw new ProjectSessionError("Session inventory exceeded the page limit", 502)
-    const response = await client.session.list({ project: projectID, limit: SESSION_PAGE_LIMIT, order: "asc", cursor })
+    const response = await client.session.list({ project: projectID, limit: SESSION_PAGE_LIMIT, cursor })
     if (!response || !Array.isArray(response.data) || !response.cursor || typeof response.cursor !== "object") {
       throw new ProjectSessionError("OpenCode returned an invalid session inventory", 502)
     }
@@ -42,17 +40,11 @@ export async function listCompleteProjectSessions(
       if (!session?.id || session.projectID !== projectID || !session.location?.directory) {
         throw new ProjectSessionError("OpenCode returned a session outside the requested project", 409)
       }
-      if (sessionIds.has(session.id)) {
-        throw new ProjectSessionError(`Session inventory contains duplicate session: ${session.id}`, 409)
-      }
-      sessionIds.add(session.id)
       sessions.push(session)
     }
 
     const next = response.cursor.next || undefined
-    if (next && cursors.has(next)) {
-      throw new ProjectSessionError(`Session inventory repeated cursor: ${next}`, 502)
-    }
+    if (next && cursors.has(next)) throw new ProjectSessionError(`Session inventory repeated cursor: ${next}`, 502)
     if (next) cursors.add(next)
     cursor = next
   } while (cursor)
@@ -114,6 +106,9 @@ export async function moveProjectSessionFamily(params: {
     const family = Array.from(families.entries()).find(([, members]) => members.some(({ id }) => id === params.sessionId))
     if (!family) throw new ProjectSessionError("Session not found in project", 404)
     await assertInactive(context.client, family[1])
+    if (params.validateTarget && !await params.validateTarget()) {
+      throw new ProjectSessionError("Worktree changed before the session move", 409)
+    }
     const target = await resolveProjectLocation(context, params.targetDirectory)
     await moveWithRollback(context, family[1], target)
     return { rootSessionId: family[0], sessionIds: family[1].map(({ id }) => id) }
@@ -142,17 +137,14 @@ export async function removeProjectWorktree(params: {
 
     try {
       if (families.length) {
-        root = await resolveProjectLocation(context, params.rootDirectory)
-        const destination = root
+        const destination = await resolveProjectLocation(context, params.rootDirectory)
+        root = destination
         for (const family of families) await moveMembers(context, family, destination, moved)
         await verifyInventory(context, moved, new Map(moved.map((id) => [id, destination])))
         const refreshed = await listCompleteProjectSessions(context.client, context.project.id)
         if (refreshed.some((session) => directoryContains(params.targetDirectory, session.location.directory))) {
           throw new ProjectSessionError("Sessions remain attached to the worktree after evacuation", 409)
         }
-      }
-      if (!await params.isTargetRegistered()) {
-        throw new ProjectSessionError("Worktree changed before deletion", 409)
       }
       await params.remove()
     } catch (error) {
@@ -167,6 +159,7 @@ export async function removeProjectWorktree(params: {
             500,
           )
         }
+        // A mismatched identity may now be a replacement checkout; never move sessions into it.
         if (registered) await rollback(context, changed, original, error)
       }
       throw asProjectError(error, "Unable to remove worktree")
