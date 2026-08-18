@@ -10,7 +10,7 @@ export const settingsMessages = {
   "instanceServiceStatus.mcp.empty": "MCP サーバーが検出されませんでした。",
   "instanceServiceStatus.mcp.toggleAriaLabel": "{name} MCP サーバーを切り替え",
   "instanceServiceStatus.plugins.loading": "プラグインを読み込み中...",
-  "instanceServiceStatus.plugins.empty": "プラグインが設定されていません。",
+  "instanceServiceStatus.plugins.empty": "有効なプラグインはありません。",
 
   "permissionBanner.pendingRequests.one": "{count} 件の保留中リクエスト",
   "permissionBanner.pendingRequests.other": "{count} 件の保留中リクエスト",

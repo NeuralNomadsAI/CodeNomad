@@ -10,7 +10,7 @@ export const settingsMessages = {
   "instanceServiceStatus.mcp.empty": "לא זוהו שרתי MCP.",
   "instanceServiceStatus.mcp.toggleAriaLabel": "הפעל/כבה שרת MCP {name}",
   "instanceServiceStatus.plugins.loading": "טוען תוספים...",
-  "instanceServiceStatus.plugins.empty": "לא הוגדרו תוספים.",
+  "instanceServiceStatus.plugins.empty": "אין תוספים פעילים.",
 
   "permissionBanner.pendingRequests.one": "{count} בקשה ממתינה",
   "permissionBanner.pendingRequests.other": "{count} בקשות ממתינות",

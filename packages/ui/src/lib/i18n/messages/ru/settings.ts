@@ -10,7 +10,7 @@ export const settingsMessages = {
   "instanceServiceStatus.mcp.empty": "MCP-серверы не обнаружены.",
   "instanceServiceStatus.mcp.toggleAriaLabel": "Переключить MCP-сервер {name}",
   "instanceServiceStatus.plugins.loading": "Загрузка плагинов…",
-  "instanceServiceStatus.plugins.empty": "Плагины не настроены.",
+  "instanceServiceStatus.plugins.empty": "Нет активных плагинов.",
 
   "permissionBanner.pendingRequests.one": "{count} ожидающий запрос",
   "permissionBanner.pendingRequests.other": "{count} ожидающих запросов",

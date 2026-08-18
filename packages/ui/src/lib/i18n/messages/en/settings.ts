@@ -10,7 +10,7 @@ export const settingsMessages = {
   "instanceServiceStatus.mcp.empty": "No MCP servers detected.",
   "instanceServiceStatus.mcp.toggleAriaLabel": "Toggle {name} MCP server",
   "instanceServiceStatus.plugins.loading": "Loading plugins...",
-  "instanceServiceStatus.plugins.empty": "No plugins configured.",
+  "instanceServiceStatus.plugins.empty": "No active plugins.",
 
   "permissionBanner.pendingRequests.one": "{count} pending request",
   "permissionBanner.pendingRequests.other": "{count} pending requests",

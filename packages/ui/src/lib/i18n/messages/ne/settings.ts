@@ -10,7 +10,7 @@ export const settingsMessages = {
   "instanceServiceStatus.mcp.empty": "कुनै MCP सर्भरहरू फेला परेनन्।",
   "instanceServiceStatus.mcp.toggleAriaLabel": "{name} MCP सर्भर टगल गर्नुहोस्",
   "instanceServiceStatus.plugins.loading": "प्लगइनहरू लोड गर्दै...",
-  "instanceServiceStatus.plugins.empty": "कुनै प्लगइनहरू कन्फिगर गरिएको छैन।",
+  "instanceServiceStatus.plugins.empty": "कुनै सक्रिय प्लगइनहरू छैनन्।",
 
   "permissionBanner.pendingRequests.one": "{count} विचाराधीन अनुरोध",
   "permissionBanner.pendingRequests.other": "{count} विचाराधीन अनुरोधहरू",

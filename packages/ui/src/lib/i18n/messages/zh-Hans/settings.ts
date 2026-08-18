@@ -10,7 +10,7 @@ export const settingsMessages = {
   "instanceServiceStatus.mcp.empty": "未检测到 MCP 服务器。",
   "instanceServiceStatus.mcp.toggleAriaLabel": "切换 {name} MCP 服务器",
   "instanceServiceStatus.plugins.loading": "正在加载插件...",
-  "instanceServiceStatus.plugins.empty": "未配置插件。",
+  "instanceServiceStatus.plugins.empty": "没有活动插件。",
 
   "permissionBanner.pendingRequests.one": "{count} 个待处理请求",
   "permissionBanner.pendingRequests.other": "{count} 个待处理请求",
