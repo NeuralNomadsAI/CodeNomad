@@ -71,7 +71,7 @@ describe("workspace routes", () => {
       payload: { requestId: "restore-request" },
     })
     assert.equal(cancelled.statusCode, 204)
-    assert.deepEqual(calls.at(-1), ["cancel", "restore-request"])
+    assert.deepEqual(calls[calls.length - 1], ["cancel", "restore-request"])
 
     await app.close()
   })

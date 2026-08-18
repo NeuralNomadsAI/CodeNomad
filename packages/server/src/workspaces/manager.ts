@@ -35,7 +35,7 @@ const ORDINARY_CREATION_OWNER = ""
 const WORKSPACE_STATE = Symbol("workspaceState")
 const SERVICE_CONTENDER_FILE = path.join(SERVICE_STATE_ROOT, `contenders-${process.pid}-${randomUUID()}.txt`)
 const SERVICE_LEASE_FILE = path.join(SERVICE_LEASE_DIRECTORY, `process-${process.pid}-${randomUUID()}.json`)
-type ManagerTimeout = ReturnType<typeof setTimeout>
+type ManagerTimeout = number | NodeJS.Timeout
 
 interface SharedService {
   endpoint: (options?: OpenCodeEnsureOptions) => Promise<Endpoint>
