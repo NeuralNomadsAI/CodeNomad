@@ -10,6 +10,7 @@ import {
   VirtualScrollController,
   isAtBottom,
   isAutoFollowing,
+  isMiddleButtonScrollIntent,
   isScrollRestoreGenerationCurrent,
   isScrollRestoreMeasurementReady,
   isSnapshotAutoFollowing,
@@ -29,6 +30,12 @@ function metrics(offset: number, scrollHeight = 3000, clientHeight = 600, sentin
 }
 
 describe("virtual follow behavior", () => {
+  it("treats only the middle pointer button as scroll ownership", () => {
+    assert.equal(isMiddleButtonScrollIntent(1), true)
+    assert.equal(isMiddleButtonScrollIntent(0), false)
+    assert.equal(isMiddleButtonScrollIntent(2), false)
+  })
+
   it("waits for Virtua measurements before applying a restored offset", () => {
     assert.equal(isScrollRestoreMeasurementReady({ hasHandle: false, itemCount: 20, scrollSize: 0, viewportSize: 0 }), false)
     assert.equal(isScrollRestoreMeasurementReady({ hasHandle: true, itemCount: 20, scrollSize: 0, viewportSize: 600 }), false)

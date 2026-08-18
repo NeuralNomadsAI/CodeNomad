@@ -6,6 +6,10 @@ export const ANCHOR_RESTORE_STABLE_FRAMES = 10
 export const ANCHOR_RESTORE_REISSUE_INTERVAL_FRAMES = 12
 export const ANCHOR_RESTORE_TOLERANCE_PX = 1
 
+export function isMiddleButtonScrollIntent(button: number): boolean {
+  return button === 1
+}
+
 export function isScrollRestoreMeasurementReady(input: {
   hasHandle: boolean
   itemCount: number
