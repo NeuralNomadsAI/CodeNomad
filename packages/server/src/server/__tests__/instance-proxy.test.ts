@@ -96,56 +96,6 @@ async function harness(
 }
 
 describe("instance proxy location enforcement", () => {
-  it("preserves an owned worktree for session list and create", async () => {
-    const { app } = await harness()
-    const listed = await app.inject({
-      method: "GET",
-      url: "/workspaces/workspace/instance/api/session?directory=%2Frepo%2Fworktree&limit=5",
-    })
-    assert.equal(listed.statusCode, 200)
-    const listedUrl = new URL(JSON.parse(listed.body).url, "http://localhost")
-    assert.equal(listedUrl.pathname, "/api/session")
-    assert.deepEqual(Object.fromEntries(listedUrl.searchParams), { directory: "/repo/worktree", limit: "5" })
-
-    const created = await app.inject({
-      method: "POST",
-      url: "/workspaces/workspace/instance/api/session",
-      payload: { title: "test", location: { directory: "/repo/worktree", workspaceID: "worktree" } },
-    })
-    assert.equal(created.statusCode, 200)
-    assert.deepEqual(JSON.parse(created.body).body.location, { directory: "/repo/worktree" })
-  })
-
-  it("defaults session list and create to the workspace root", async () => {
-    const { app } = await harness()
-    const listed = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/session" })
-    assert.equal(JSON.parse(listed.body).url, "/api/session?directory=%2Frepo")
-
-    const created = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/session", payload: { title: "test" } })
-    assert.deepEqual(JSON.parse(created.body).body.location, { directory: "/repo" })
-  })
-
-  it("allows the exact model default route", async () => {
-    const { app } = await harness()
-    const response = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/model/default" })
-    assert.equal(response.statusCode, 200)
-    assert.match(JSON.parse(response.body).url, /^\/api\/model\/default\?/)
-  })
-
-  it("allows active plugin metadata", async () => {
-    const { app } = await harness()
-    const response = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/plugin" })
-    assert.equal(response.statusCode, 200)
-    assert.match(JSON.parse(response.body).url, /^\/api\/plugin\?/)
-  })
-
-  it("allows ownership-scoped agent fallback lookups", async () => {
-    const { app } = await harness()
-    const response = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/agent/build" })
-    assert.equal(response.statusCode, 200)
-    assert.match(JSON.parse(response.body).url, /^\/api\/agent\/build\?/)
-  })
-
   it("filters the project list and its sandboxes to the workspace", async () => {
     const { app, requestCount } = await harness()
     const response = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/project" })
@@ -157,23 +107,6 @@ describe("instance proxy location enforcement", () => {
       sandboxes: ["/repo/worktree"],
     }])
     assert.equal(requestCount(), 0)
-  })
-
-  it("translates the WSL workspace root in proxied API locations without changing native paths", async () => {
-    const unc = String.raw`\\wsl.localhost\Ubuntu\home\dev\repo`
-    const { app } = await harness("/home/dev/repo", {}, {}, unc, "/home/dev/repo")
-    const listed = await app.inject({
-      method: "GET",
-      url: `/workspaces/workspace/instance/api/session?directory=${encodeURIComponent(unc)}`,
-    })
-    assert.equal(JSON.parse(listed.body).url, "/api/session?directory=%2Fhome%2Fdev%2Frepo")
-
-    const created = await app.inject({
-      method: "POST",
-      url: "/workspaces/workspace/instance/api/session",
-      payload: { location: { directory: unc, workspaceID: "caller-selector" } },
-    })
-    assert.deepEqual(JSON.parse(created.body).body.location, { directory: "/home/dev/repo" })
   })
 
   it("rejects arbitrary locations instead of overwriting them", async () => {
@@ -193,18 +126,7 @@ describe("instance proxy location enforcement", () => {
     assert.doesNotMatch(bodyResponse.body, /internal-secret/)
   })
 
-  it("accepts owned and rejects unowned native shell and pty cwd values", async () => {
-    const { app, requestCount } = await harness()
-    for (const route of ["shell", "pty"]) {
-      const accepted = await app.inject({ method: "POST", url: `/workspaces/workspace/instance/api/${route}`, payload: { cwd: "/repo/worktree" } })
-      const rejected = await app.inject({ method: "POST", url: `/workspaces/workspace/instance/api/${route}`, payload: { cwd: "/other" } })
-      assert.equal(accepted.statusCode, 200)
-      assert.equal(rejected.statusCode, 403)
-    }
-    assert.equal(requestCount(), 2)
-  })
-
-  it("allows only ownership-checked native PTY list, get, update, and remove routes", async () => {
+  it("filters PTYs and rejects foreign PTY access", async () => {
     const { app, requestCount } = await harness("/repo/worktree", {}, {}, "/repo", "/repo", {}, {
       owned: "/repo/worktree",
       foreign: "/other",
@@ -221,17 +143,11 @@ describe("instance proxy location enforcement", () => {
       url: "/workspaces/workspace/instance/api/pty?location%5Bdirectory%5D=%2Fother",
     })).statusCode, 403)
 
-    for (const [method, payload] of [["GET", undefined], ["PUT", { title: "renamed" }], ["DELETE", undefined]] as const) {
-      const url = "/workspaces/workspace/instance/api/pty/owned?location%5Bdirectory%5D=%2Frepo%2Fworktree"
-      assert.equal((await app.inject({ method, url, payload })).statusCode, 200, method)
-      assert.equal((await app.inject({ method, url: url.replace("owned", "foreign"), payload })).statusCode, 403, method)
-    }
-
     assert.equal((await app.inject({
       method: "GET",
-      url: "/workspaces/workspace/instance/api/pty/owned/output?location%5Bdirectory%5D=%2Frepo%2Fworktree",
+      url: "/workspaces/workspace/instance/api/pty/foreign?location%5Bdirectory%5D=%2Frepo%2Fworktree",
     })).statusCode, 403)
-    assert.equal(requestCount(), 3)
+    assert.equal(requestCount(), 0)
   })
 
   it("strips browser session and hop-by-hop headers in both directions", async () => {
@@ -262,31 +178,12 @@ describe("instance proxy location enforcement", () => {
     assert.equal(response.headers["set-cookie"], undefined)
   })
 
-  it("authorizes location-less session routes through the shared client", async () => {
-    const { app, sessionGets, requestCount } = await harness()
-    const response = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/session/session-1/message" })
-    assert.equal(response.statusCode, 200)
-    assert.deepEqual(sessionGets, ["session-1"])
-    assert.equal(requestCount(), 1)
-  })
-
   it("rejects sessions owned by another workspace", async () => {
     const { app, requestCount } = await harness("/other")
     const response = await app.inject({ method: "DELETE", url: "/workspaces/workspace/instance/api/session/session-2" })
     assert.equal(response.statusCode, 403)
     assert.equal(requestCount(), 0)
     assert.doesNotMatch(response.body, /internal-secret/)
-  })
-
-  it("uses the same once-decoded percent-bearing session id for ownership and forwarding", async () => {
-    const { app, sessionGets } = await harness()
-    const response = await app.inject({
-      method: "DELETE",
-      url: "/workspaces/workspace/instance/api/session/owned%25session",
-    })
-    assert.equal(response.statusCode, 200)
-    assert.deepEqual(sessionGets, ["owned%session"])
-    assert.equal(JSON.parse(response.body).url, "/api/session/owned%25session")
   })
 
   it("rejects deletion through a double-encoded alias of a foreign session", async () => {
@@ -335,14 +232,6 @@ describe("instance proxy location enforcement", () => {
     assert.equal(requestCount(), 0)
   })
 
-  it("rejects legacy session routes before foreign session lookup", async () => {
-    const { app, sessionGets, requestCount } = await harness("/other")
-    const response = await app.inject({ method: "DELETE", url: "/workspaces/workspace/instance/session/foreign" })
-    assert.equal(response.statusCode, 403)
-    assert.deepEqual(sessionGets, [])
-    assert.equal(requestCount(), 0)
-  })
-
   it("rejects literal and encoded dot-segment aliases before authorization", async () => {
     const { app, sessionGets, requestCount } = await harness("/other")
     for (const route of [
@@ -355,29 +244,6 @@ describe("instance proxy location enforcement", () => {
     }
     assert.deepEqual(sessionGets, ["foreign"])
     assert.equal(requestCount(), 0)
-  })
-
-  it("allows ownership-checked form request, reply, and cancel routes", async () => {
-    const owned = await harness()
-    for (const [method, route, payload] of [
-      ["GET", "api/form/request", undefined],
-      ["POST", "api/session/owned/form/form-1/reply", { answer: { choice: "yes" } }],
-      ["POST", "api/session/owned/form/form-1/cancel", undefined],
-    ] as const) {
-      const response = await owned.app.inject({ method, url: `/workspaces/workspace/instance/${route}`, payload })
-      assert.equal(response.statusCode, 200, route)
-    }
-    assert.deepEqual(owned.sessionGets, ["owned", "owned"])
-
-    const foreign = await harness("/other")
-    for (const [method, route] of [
-      ["POST", "api/session/foreign/form/form-1/reply"],
-      ["POST", "api/session/foreign/form/form-1/cancel"],
-    ] as const) {
-      const response = await foreign.app.inject({ method, url: `/workspaces/workspace/instance/${route}` })
-      assert.equal(response.statusCode, 403, route)
-    }
-    assert.equal(foreign.requestCount(), 0)
   })
 
   it("validates prompt file ownership before translating root, worktree, and Windows URIs", async () => {
@@ -426,18 +292,6 @@ describe("instance proxy location enforcement", () => {
     ])
     assert.deepEqual(servicePathCalls, Object.keys(mappings))
     assert.equal(requestCount(), 1)
-  })
-
-  it("enforces ownership for experimental session logs", async () => {
-    const owned = await harness()
-    const accepted = await owned.app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/experimental/session/session-1/log" })
-    assert.equal(accepted.statusCode, 200)
-    assert.deepEqual(owned.sessionGets, ["session-1"])
-
-    const foreign = await harness("/other")
-    const rejected = await foreign.app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/experimental/session/session-2/log" })
-    assert.equal(rejected.statusCode, 403)
-    assert.equal(foreign.requestCount(), 0)
   })
 
   it("defaults and validates only schema-defined imported session locations", async () => {

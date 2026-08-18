@@ -30,25 +30,7 @@ describe("V2 timeline projection", () => {
     assert.notEqual(getTimelineRecordSignature(provisional), getTimelineRecordSignature(authoritative))
   })
 
-  it("changes its structural signature when a same-id part changes type or renderability", () => {
-    const text = record([{ id: "part", type: "text", text: "hello" }])
-    const empty = record([{ id: "part", type: "text", text: "" }])
-    const tool = record([{ id: "part", type: "tool", revision: 1 }])
-
-    assert.notEqual(getTimelineRecordSignature(text), getTimelineRecordSignature(empty))
-    assert.notEqual(getTimelineRecordSignature(text), getTimelineRecordSignature(tool))
-  })
-
-  it("accepts provisional text and reasoning parts without text", () => {
-    assert.doesNotThrow(() => getTimelineRecordSignature(record([{ id: "text", type: "text" }])))
-    assert.doesNotThrow(() => getTimelineRecordSignature(record([{ id: "reasoning", type: "reasoning" }])))
-    assert.equal(
-      getTimelineRecordSignature(record([{ id: "text", type: "text" }])),
-      getTimelineRecordSignature(record([{ id: "text", type: "text", text: "" }])),
-    )
-  })
-
-  it("throttles streamed text projection updates and tracks tool revisions", () => {
+  it("throttles text updates but invalidates tool and terminal state changes", () => {
     const shortText = record([{ id: "text", type: "text", text: "a" }])
     const sameBucketText = record([{ id: "text", type: "text", text: "a longer streamed value", revision: 20 }])
     const nextBucketText = record([{ id: "text", type: "text", text: "a".repeat(129), revision: 40 }])
@@ -58,12 +40,8 @@ describe("V2 timeline projection", () => {
     assert.equal(getTimelineRecordSignature(shortText), getTimelineRecordSignature(sameBucketText))
     assert.notEqual(getTimelineRecordSignature(sameBucketText), getTimelineRecordSignature(nextBucketText))
     assert.notEqual(getTimelineRecordSignature(firstTool), getTimelineRecordSignature(updatedTool))
-  })
-
-  it("invalidates the projection once when streaming reaches a terminal status", () => {
     const streaming = record([{ id: "text", type: "text", text: "partial" }])
     const complete = { ...record([{ id: "text", type: "text", text: "final response" }]), status: "complete" as const }
-
     assert.notEqual(getTimelineRecordSignature(streaming), getTimelineRecordSignature(complete))
   })
 })

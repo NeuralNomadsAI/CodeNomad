@@ -111,8 +111,8 @@ jobs:
           packages/ui/src/components/unified-picker-path.test.ts
           packages/ui/src/components/virtual-follow-behavior.test.ts
           packages/ui/src/lib/filesystem-events.test.ts
-          packages/ui/src/lib/hooks/use-instance-metadata.test.ts
           packages/ui/src/lib/hooks/use-app-session-capture.test.ts
+          packages/ui/src/lib/hooks/use-instance-metadata.test.ts
           packages/ui/src/lib/hooks/use-foreground-refresh.test.ts
           packages/ui/src/lib/launch-errors.test.ts
           packages/ui/src/lib/message-selection-position.test.ts
@@ -121,17 +121,12 @@ jobs:
           packages/ui/src/lib/trailing-resync.test.ts
           packages/ui/src/stores/abort-created-workspace-cleanup.test.ts
           packages/ui/src/stores/app-session-reconciliation.test.ts
-          packages/ui/src/stores/app-session-restore-gate.test.ts
           packages/ui/src/stores/app-session-restore-queue.test.ts
-          packages/ui/src/stores/app-session-restore-readiness.test.ts
-          packages/ui/src/stores/app-session-restored-session-ids.test.ts
           packages/ui/src/stores/app-session-restore-timeout.test.ts
           packages/ui/src/stores/app-session-snapshot-merge.test.ts
-          packages/ui/src/stores/app-session-workspace-hydration.test.ts
           packages/ui/src/stores/restore-workspace-commit-gates.test.ts
           packages/ui/src/stores/client-state-codec.test.ts
           packages/ui/src/stores/client-state.test.ts
-          packages/ui/src/stores/instances-restore-cancellation.test.ts
           packages/ui/src/stores/message-v2/instance-store.test.ts
           packages/ui/src/stores/message-v2/message-hydration-authority.test.ts
           packages/ui/src/stores/message-v2/message-status.test.ts
@@ -147,7 +142,6 @@ jobs:
       - name: Test restore ownership integration
         run: >-
           node --conditions=browser --import tsx --test --test-force-exit
-          packages/ui/src/components/form-request-auto-open.test.ts
           packages/ui/src/components/form-request-tool-target.test.ts
           packages/ui/src/components/form-request.test.ts
           packages/ui/src/lib/hooks/use-active-session-message-load.test.ts

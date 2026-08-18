@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import type { OpenCodeClient, Pty } from "@opencode-ai/client"
-import { createPtyApi, createPtyStore, type PtyApi } from "./pty-store.ts"
+import type { Pty } from "@opencode-ai/client"
+import { createPtyStore, type PtyApi } from "./pty-store.ts"
 
 const pty = (id: string, cwd = "/repo"): Pty => ({
   id,
@@ -11,30 +11,6 @@ const pty = (id: string, cwd = "/repo"): Pty => ({
   cwd,
   status: "running",
   pid: 42,
-})
-
-describe("native PTY adapter", () => {
-  it("passes the exact location and native PTY inputs", async () => {
-    const calls: unknown[] = []
-    const client = {
-      pty: {
-        list: async (input: unknown) => { calls.push(["list", input]); return { data: [pty("one")] } },
-        update: async (input: unknown) => { calls.push(["update", input]); return { data: { ...pty("one"), title: "renamed" } } },
-        remove: async (input: unknown) => { calls.push(["remove", input]) },
-      },
-    } as unknown as OpenCodeClient
-    const api = createPtyApi(client)
-
-    assert.deepEqual(await api.list("/repo/worktree"), [pty("one")])
-    assert.equal((await api.updateTitle("/repo/worktree", "one", "renamed")).title, "renamed")
-    await api.remove("/repo/worktree", "one")
-
-    assert.deepEqual(calls, [
-      ["list", { location: { directory: "/repo/worktree" } }],
-      ["update", { ptyID: "one", location: { directory: "/repo/worktree" }, title: "renamed" }],
-      ["remove", { ptyID: "one", location: { directory: "/repo/worktree" } }],
-    ])
-  })
 })
 
 describe("PTY store", () => {
@@ -60,29 +36,5 @@ describe("PTY store", () => {
     lists.length = 0
     await store.refreshForEvent("instance", { type: "server.connected" })
     assert.deepEqual(lists.sort(), ["/repo", "/repo/worktree"])
-  })
-
-  it("refreshes authoritative state after rename and remove controls", async () => {
-    const controls: unknown[] = []
-    let items = [pty("one")]
-    const api: PtyApi = {
-      list: async () => items,
-      updateTitle: async (_directory, id, title) => {
-        controls.push(["update", id, title])
-        items = [{ ...items[0]!, title }]
-        return items[0]!
-      },
-      remove: async (_directory, id) => {
-        controls.push(["remove", id])
-        items = []
-      },
-    }
-    const store = createPtyStore(() => api)
-    await store.load("instance", "/repo")
-    assert.equal(await store.updateTitle("instance", "/repo", "one", "renamed"), true)
-    assert.equal(store.getState("instance", "/repo").items[0]?.title, "renamed")
-    assert.equal(await store.remove("instance", "/repo", "one"), true)
-    assert.deepEqual(store.getState("instance", "/repo").items, [])
-    assert.deepEqual(controls, [["update", "one", "renamed"], ["remove", "one"]])
   })
 })

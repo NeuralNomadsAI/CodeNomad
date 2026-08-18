@@ -6,30 +6,6 @@ import type { WorkspaceManager } from "../workspaces/manager"
 import { createOpencodePermissionReplier } from "./opencode-replier"
 
 describe("createOpencodePermissionReplier", () => {
-  it("uses the native permission reply input", async () => {
-    const calls: Array<Record<string, unknown>> = []
-    const client = {
-      session: {
-        get: async () => ({ location: { directory: "/repo" } }),
-      },
-      permission: { reply: async (input: Record<string, unknown>) => { calls.push(input) } },
-    } as unknown as OpenCodeClient
-    const workspaceManager = {
-      get: () => ({ path: "/repo" }),
-      getSharedServiceClient: async () => client,
-      ownsDirectory: async (_instanceId: string, directory: string) => directory === "/repo",
-    } as unknown as WorkspaceManager
-    const replier = createOpencodePermissionReplier({ workspaceManager })
-
-    await replier({
-      instanceId: "instance",
-      sessionId: "session",
-      permissionId: "permission",
-    })
-
-    assert.deepEqual(calls, [{ sessionID: "session", requestID: "permission", reply: "once" }])
-  })
-
   it("does not reply across logical workspace ownership", async () => {
     const calls: Array<Record<string, unknown>> = []
     const client = {

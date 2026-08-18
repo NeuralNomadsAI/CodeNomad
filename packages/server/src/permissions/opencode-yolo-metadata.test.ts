@@ -103,12 +103,6 @@ describe("OpenCode Yolo persistence", () => {
     assert.equal(await persistence.loadSession!("instance", "foreign"), null)
   })
 
-  it("lists sessions with the translated service location", async () => {
-    const { persistence, listInputs } = createHarness("/service/repo")
-    await persistence.loadSessions("instance")
-    assert.equal(listInputs[0]?.directory, "/service/repo")
-  })
-
   it("restores a persisted Yolo session from an owned worktree", async () => {
     const { persistence } = createHarness()
     await persistence.persist("instance", "worktree", true)

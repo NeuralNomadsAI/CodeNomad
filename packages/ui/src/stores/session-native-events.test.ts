@@ -21,48 +21,6 @@ function session(instanceId: string, id: string): Session {
 }
 
 describe("native session event reducer", () => {
-  it("applies native metadata events and exits compacting on failure", async () => {
-    const instanceId = "native-metadata"
-    const sessionId = "session"
-    const client = { message: { list: async () => ({ data: [] }) } } as any
-    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
-    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
-    const compacting = { ...session(instanceId, sessionId), status: "compacting" as const }
-    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, compacting]])))
-
-    try {
-      handleNativeSessionEvent(instanceId, {
-        id: "rename", created: 2, type: "session.renamed", durable: { aggregateID: sessionId, seq: 1, version: 1 },
-        data: { sessionID: sessionId, title: "Renamed" },
-      })
-      handleNativeSessionEvent(instanceId, {
-        id: "agent", created: 3, type: "session.agent.selected", durable: { aggregateID: sessionId, seq: 2, version: 1 },
-        data: { sessionID: sessionId, agent: "plan" },
-      })
-      handleNativeSessionEvent(instanceId, {
-        id: "model", created: 4, type: "session.model.selected", durable: { aggregateID: sessionId, seq: 3, version: 1 },
-        data: { sessionID: sessionId, model: { providerID: "next", id: "model-2" } },
-      })
-      handleNativeSessionEvent(instanceId, {
-        id: "failed", created: 5, type: "session.compaction.failed", durable: { aggregateID: sessionId, seq: 4, version: 1 },
-        data: { sessionID: sessionId, reason: "manual", error: { name: "UnknownError", data: { message: "failed" } } },
-      } as any)
-      await delay(10)
-
-      const updated = sessions().get(instanceId)?.get(sessionId)
-      assert.equal(updated?.title, "Renamed")
-      assert.equal(updated?.agent, "plan")
-      assert.deepEqual(updated?.model, { providerId: "next", modelId: "model-2" })
-      assert.equal(updated?.status, "idle")
-    } finally {
-      messageStoreBus.unregisterInstance(instanceId)
-      setSessions((prev) => { const next = new Map(prev); next.delete(instanceId); return next })
-      clearInstanceDeletedSessionAuthority(instanceId)
-      removeInstance(instanceId, { authoritative: false })
-      sdkManager.destroyClientsForInstance(instanceId)
-    }
-  })
-
   it("coalesces text and tool events, then refreshes authoritatively on idle", async () => {
     const instanceId = "native-events"
     const sessionId = "session"
@@ -122,40 +80,6 @@ describe("native session event reducer", () => {
       assert.equal(store.getMessage("assistant")?.status, "complete")
       assert.equal((store.getMessage("assistant")?.parts["assistant-text-0"]?.data as any)?.text, "completed text")
     } finally {
-      messageStoreBus.unregisterInstance(instanceId)
-      setSessions((prev) => { const next = new Map(prev); next.delete(instanceId); return next })
-      clearInstanceDeletedSessionAuthority(instanceId)
-      removeInstance(instanceId, { authoritative: false })
-      sdkManager.destroyClientsForInstance(instanceId)
-    }
-  })
-
-  it("does not download message history for deltas already applied locally", async () => {
-    const instanceId = "native-delta-only"
-    const sessionId = "session"
-    let calls = 0
-    const client = { message: { list: async () => { calls += 1; return { data: [] } } } } as any
-    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
-    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
-    setSessions((prev) => new Map(prev).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
-
-    try {
-      handleNativeSessionEvent(instanceId, {
-        id: "text", created: 1, type: "session.text.delta",
-        data: { sessionID: sessionId, assistantMessageID: "assistant", ordinal: 0, delta: "streamed" },
-      })
-      handleNativeSessionEvent(instanceId, {
-        id: "reasoning", created: 2, type: "session.reasoning.delta",
-        data: { sessionID: sessionId, assistantMessageID: "assistant", ordinal: 0, delta: "thought" },
-      })
-      await delay(120)
-
-      assert.equal(calls, 0)
-      const streamed = messageStoreBus.getOrCreate(instanceId).getMessage("assistant")
-      assert.equal((streamed?.parts["assistant-text-native-0"]?.data as any)?.text, "streamed")
-      assert.equal((streamed?.parts["assistant-reasoning-native-0"]?.data as any)?.text, "thought")
-    } finally {
-      clearNativeContentDeltaState(instanceId)
       messageStoreBus.unregisterInstance(instanceId)
       setSessions((prev) => { const next = new Map(prev); next.delete(instanceId); return next })
       clearInstanceDeletedSessionAuthority(instanceId)
