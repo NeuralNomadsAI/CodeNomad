@@ -266,6 +266,16 @@ describe("virtual follow behavior", () => {
     assert.deepEqual(result, { type: "retry", reissueIndex: true })
   })
 
+  it("waits for a paginated anchor before falling back at the strict frame bound", () => {
+    const stabilizer = new AnchorRestoreStabilizer()
+    let result
+    for (let frame = 1; frame < ANCHOR_RESTORE_MAX_FRAMES; frame += 1) {
+      result = stabilizer.nextFrame({ targetExists: false, mounted: false })
+    }
+    assert.deepEqual(result, { type: "retry", reissueIndex: false })
+    assert.deepEqual(stabilizer.nextFrame({ targetExists: false, mounted: false }), { type: "fallback" })
+  })
+
   it("resets stable frame counting after an anchor offset correction", () => {
     const stabilizer = new AnchorRestoreStabilizer()
     for (let frame = 0; frame < ANCHOR_RESTORE_STABLE_FRAMES - 2; frame += 1) {

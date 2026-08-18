@@ -492,6 +492,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     }
 
     let measurementFrames = 0
+    const anchorAvailability = new AnchorRestoreStabilizer()
     const apply = () => {
       if (!isCurrent()) return
       const handle = virtuaHandle()
@@ -525,6 +526,11 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
             scrollToAnchorIndex(snapshot.anchorKey!)
           }
           retryAnchorRestore(snapshot, stabilizer, isCurrent, finish)
+          return
+        }
+        const availability = anchorAvailability.nextFrame({ targetExists: false, mounted: false })
+        if (availability.type === "retry") {
+          requestAnimationFrame(apply)
           return
         }
       }

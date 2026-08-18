@@ -1,7 +1,7 @@
 export type FollowMode = { type: "following" } | { type: "escaped" }
 
 export const BOTTOM_FOLLOW_EPSILON_PX = 48
-export const ANCHOR_RESTORE_MAX_FRAMES = 150
+export const ANCHOR_RESTORE_MAX_FRAMES = 300
 export const ANCHOR_RESTORE_STABLE_FRAMES = 10
 export const ANCHOR_RESTORE_REISSUE_INTERVAL_FRAMES = 12
 export const ANCHOR_RESTORE_TOLERANCE_PX = 1
@@ -58,7 +58,12 @@ export class AnchorRestoreStabilizer {
 
   nextFrame(input: { targetExists: boolean; mounted: boolean; delta?: number }): AnchorRestoreFrameResult {
     this.elapsedFrames += 1
-    if (!input.targetExists) return { type: "fallback" }
+    if (!input.targetExists) {
+      this.stableFrames = 0
+      return this.elapsedFrames >= ANCHOR_RESTORE_MAX_FRAMES
+        ? { type: "fallback" }
+        : { type: "retry", reissueIndex: false }
+    }
 
     if (input.mounted && typeof input.delta === "number") {
       if (Math.abs(input.delta) > ANCHOR_RESTORE_TOLERANCE_PX) {
