@@ -1,4 +1,4 @@
-import type { LocationGetInput } from "@opencode-ai/client"
+import type { LocationGetInput, LocationRef } from "@opencode-ai/client"
 
 export type RequestLocation = NonNullable<LocationGetInput["location"]>
 
@@ -8,6 +8,13 @@ type RequestLocationWorktree = {
 
 export function createRequestLocation(directory?: string): RequestLocation {
   return directory ? { directory } : {}
+}
+
+export function toRequestLocation(location: LocationRef): RequestLocation {
+  return {
+    directory: location.directory,
+    ...(location.workspaceID ? { workspace: location.workspaceID } : {}),
+  }
 }
 
 export function buildV2RequestLocations(

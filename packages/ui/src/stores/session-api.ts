@@ -73,6 +73,7 @@ import {
 } from "./session-list-options"
 import { mergeFetchedSessionRuntimeState, resolveAuthoritativeGenerationRecovery } from "./session-generation-recovery"
 import { fetchCommands } from "./commands"
+import { toRequestLocation } from "./request-locations"
 
 const log = getLogger("api")
 const sessionListRequestIds = new Map<string, number>()
@@ -800,11 +801,12 @@ async function fetchAgents(instanceId: string, location = getActiveCatalogLocati
 
   try {
     log.info(`[HTTP] GET /agent.list for instance ${instanceId}`)
-    const response = await rootClient.agent.list({ location })
+    const requestLocation = toRequestLocation(location)
+    const response = await rootClient.agent.list({ location: requestLocation })
     const agentsById = new Map((response.data ?? []).map((agent) => [agent.id, agent]))
     await Promise.all(["build", "plan"].filter((id) => !agentsById.has(id)).map(async (id) => {
       try {
-        const result = await rootClient.agent.get({ agentID: id, location })
+        const result = await rootClient.agent.get({ agentID: id, location: requestLocation })
         agentsById.set(result.data.id, result.data)
       } catch (error) {
         log.warn("Failed to fetch built-in agent", { instanceId, agentId: id, error })
@@ -849,7 +851,7 @@ async function fetchProviders(instanceId: string, location = getActiveCatalogLoc
 
   try {
     log.info(`[HTTP] GET /provider.list for instance ${instanceId}`)
-    const request = { location }
+    const request = { location: toRequestLocation(location) }
     const [response, models, defaultModel] = await Promise.all([
       rootClient.provider.list(request),
       rootClient.model.list(request),

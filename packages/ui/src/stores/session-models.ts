@@ -4,6 +4,7 @@ import { uiState, getAgentModelPreference } from "./preferences"
 import { instances } from "./instances"
 import { getRootClient } from "./opencode-client"
 import { resolveAgentId } from "../types/session"
+import { toRequestLocation } from "./request-locations"
 
 const DEFAULT_MODEL_OUTPUT_LIMIT = 32_000
 
@@ -92,7 +93,9 @@ async function getDefaultModel(
   if (!instanceProviders.some((provider) => provider.models.length > 0)) {
     const instance = instances().get(instanceId)
     if (instance?.client) {
-      const response = await getRootClient(instanceId).model.default({ location: getActiveCatalogLocation(instanceId) }).catch(() => null)
+      const response = await getRootClient(instanceId).model.default({
+        location: toRequestLocation(getActiveCatalogLocation(instanceId)),
+      }).catch(() => null)
       if (response?.data) {
         return { providerId: response.data.providerID, modelId: response.data.id }
       }

@@ -482,7 +482,7 @@ describe("session request authority", () => {
 
       assert.deepEqual(locations, [
         ["agent", { directory: "/work" }], ["provider", { directory: "/work" }], ["model", { directory: "/work" }], ["default", { directory: "/work" }], ["command", { directory: "/work" }],
-        ["agent", { directory: "/worktree", workspaceID: "workspace-1" }], ["provider", { directory: "/worktree", workspaceID: "workspace-1" }], ["model", { directory: "/worktree", workspaceID: "workspace-1" }], ["default", { directory: "/worktree", workspaceID: "workspace-1" }], ["command", { directory: "/worktree", workspaceID: "workspace-1" }],
+        ["agent", { directory: "/worktree", workspace: "workspace-1" }], ["provider", { directory: "/worktree", workspace: "workspace-1" }], ["model", { directory: "/worktree", workspace: "workspace-1" }], ["default", { directory: "/worktree", workspace: "workspace-1" }], ["command", { directory: "/worktree", workspace: "workspace-1" }],
       ])
       assert.deepEqual(getCommands(instanceId), [])
     } finally {
