@@ -1,7 +1,6 @@
 import type { Instance } from "../../types/instance"
 import { getLogger } from "../../lib/logger"
 import { getInstanceMetadata, mergeInstanceMetadata } from "../../stores/instance-metadata"
-import { extractConfiguredPlugins } from "./plugin-metadata"
 
 const log = getLogger("session")
 const pendingMetadataRequests = new Set<string>()
@@ -31,11 +30,11 @@ export async function loadInstanceMetadata(instance: Instance, options?: { force
 
   try {
     const location = { directory: instance.folder }
-    const [projectResult, projectsResult, mcpResult, configResult] = await Promise.allSettled([
+    const [projectResult, projectsResult, mcpResult, pluginResult] = await Promise.allSettled([
       client.project.current({ location }),
       client.project.list(),
       client.mcp.list({ location }),
-      client.config.get({ location }),
+      client.plugin.list({ location }),
     ])
 
     const currentProject = projectResult.status === "fulfilled" ? projectResult.value : undefined
@@ -45,13 +44,8 @@ export async function loadInstanceMetadata(instance: Instance, options?: { force
     const project = currentProject
       ? { ...currentProject, ...(listedProject?.vcs ? { vcs: listedProject.vcs } : {}) }
       : undefined
-    const config = configResult.status === "fulfilled" ? configResult.value : undefined
-    const plugins = config
-      ? extractConfiguredPlugins(config.flatMap((entry) =>
-          entry.type === "document"
-            ? (entry.info.plugins ?? []).map((plugin) => typeof plugin === "string" ? plugin : plugin.package)
-            : [],
-        ))
+    const plugins = pluginResult.status === "fulfilled"
+      ? pluginResult.value.data.map((plugin) => plugin.id).filter((id) => !id.startsWith("opencode."))
       : undefined
 
     const updates: Instance["metadata"] = { ...(currentMetadata ?? {}) }
@@ -64,7 +58,7 @@ export async function loadInstanceMetadata(instance: Instance, options?: { force
       updates.mcpStatus = mcpResult.value
     }
 
-    if (configResult.status === "fulfilled") {
+    if (pluginResult.status === "fulfilled") {
       updates.plugins = plugins ?? []
     }
  

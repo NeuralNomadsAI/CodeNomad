@@ -43,6 +43,28 @@ describe("message-v2 permission state", () => {
 
 })
 
+describe("message-v2 todo state", () => {
+  it("does not expose a plan from before the latest compaction", () => {
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+    store.hydrateMessages("session-1", [
+      {
+        id: "msg-todo", sessionId: "session-1", role: "assistant", status: "complete",
+        parts: [{ id: "todo", type: "tool", tool: "todowrite", state: { status: "completed", input: { todos: [{ content: "Old task", status: "in_progress" }] } } } as any],
+      },
+      {
+        id: "msg-compaction", sessionId: "session-1", role: "assistant", status: "complete",
+        parts: [{ id: "compaction", type: "compaction" } as any],
+      },
+    ], [
+      { id: "msg-todo", sessionID: "session-1", role: "assistant", time: { created: 1 } } as any,
+      { id: "msg-compaction", sessionID: "session-1", role: "assistant", time: { created: 2 } } as any,
+    ])
+
+    assert.equal(store.getLatestTodoSnapshot("session-1"), undefined)
+  })
+})
+
 describe("message-v2 question attachment", () => {
   it("rebinds a question when its tool part arrives after question.asked", () => {
     const store = createInstanceMessageStore("instance-1")

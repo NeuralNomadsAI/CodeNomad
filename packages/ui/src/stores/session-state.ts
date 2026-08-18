@@ -1022,13 +1022,6 @@ function setActiveSessionFromList(instanceId: string, sessionId: string): void {
   })
 }
 
-function isSessionBusy(instanceId: string, sessionId: string): boolean {
-  const instanceSessions = sessions().get(instanceId)
-  if (!instanceSessions) return false
-  if (!instanceSessions.has(sessionId)) return false
-  return true
-}
-
 function isSessionMessagesLoading(instanceId: string, sessionId: string): boolean {
   return Boolean(loading().loadingMessages.get(instanceId)?.has(sessionId))
 }
@@ -1284,7 +1277,6 @@ export {
   getSessionAncestorIds,
   ensureSessionAncestorsExpanded,
   setActiveSessionFromList,
-  isSessionBusy,
   isSessionMessagesLoading,
   getSessionMessagesLoadError,
   getSessionInfo,

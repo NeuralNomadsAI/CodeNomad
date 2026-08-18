@@ -364,6 +364,13 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     setState("latestTodos", sessionId, undefined)
   }
 
+  function getLatestTodoSnapshot(sessionId: string): LatestTodoSnapshot | undefined {
+    const snapshot = state.latestTodos[sessionId]
+    if (!snapshot) return undefined
+    const messageIds = state.sessions[sessionId]?.messageIds ?? []
+    return messageIds.indexOf(snapshot.messageId) > getLastCompactionMessageIndex(sessionId) ? snapshot : undefined
+  }
+
   function bumpSessionRevision(sessionId: string) {
     if (!sessionId) return
     setState("sessionRevisions", sessionId, (value = 0) => value + 1)
@@ -1778,7 +1785,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       getLastAssistantMessageId: getLastAssistantMessageIdValue,
       getLastCompactionMessageIndex,
       getMessage: (messageId: string) => state.messages[messageId],
-      getLatestTodoSnapshot: (sessionId: string) => state.latestTodos[sessionId],
+      getLatestTodoSnapshot,
       clearSession,
       clearScrollSnapshots,
       clearInstance,

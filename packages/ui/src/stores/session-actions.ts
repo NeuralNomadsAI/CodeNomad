@@ -5,7 +5,8 @@ import { instances } from "./instances"
 import { getRootClient } from "./opencode-client"
 
 import { addRecentModelPreference, getModelThinkingSelection, setAgentModelPreference } from "./preferences"
-import { beginSessionGenerationAdmission, providers, sessions, withSession } from "./session-state"
+import { beginSessionGenerationAdmission, getDescendantSessions, providers, sessions, withSession } from "./session-state"
+import { isSessionBusy } from "./session-status"
 import { getDefaultModel, isModelValid } from "./session-models"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { messageStoreBus } from "./message-v2/bus"
@@ -352,8 +353,12 @@ async function abortSession(instanceId: string, sessionId: string): Promise<void
   log.info("abortSession", { instanceId, sessionId })
 
   try {
-    log.info("session.interrupt", { instanceId, sessionId })
-    await client.session.interrupt({ sessionID: sessionId })
+    const descendantIds = getDescendantSessions(instanceId, sessionId)
+      .filter((session) => isSessionBusy(instanceId, session.id))
+      .map((session) => session.id)
+    const sessionIds = [...descendantIds, sessionId]
+    log.info("session.interrupt", { instanceId, sessionIds })
+    await Promise.all(sessionIds.map((targetSessionId) => client.session.interrupt({ sessionID: targetSessionId })))
     log.info("abortSession complete", { instanceId, sessionId })
   } catch (error) {
     log.error("Failed to abort session", error)

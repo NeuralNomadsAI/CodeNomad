@@ -5,7 +5,7 @@ import { serverApi } from "../lib/api-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import type { Session } from "../types/session.ts"
 import { addInstance, removeInstance } from "./instances.ts"
-import { executeCustomCommand, runShellCommand, sendMessage, updateSessionAgent, updateSessionModel } from "./session-actions.ts"
+import { abortSession, executeCustomCommand, runShellCommand, sendMessage, updateSessionAgent, updateSessionModel } from "./session-actions.ts"
 import { setConversationModeEnabled } from "./conversation-speech.ts"
 import { getModelThinkingSelection, setModelThinkingSelection } from "./preferences"
 import { sessions, setProviders, setSessions } from "./session-state.ts"
@@ -130,6 +130,24 @@ describe("voice instruction sync", () => {
 
     assert.deepEqual(calls, ["put:start", "put:end", "remove", "command"])
     assert.equal(calls.filter((call) => call === "remove").length, 1)
+  })
+})
+
+describe("session interruption", () => {
+  it("interrupts the selected session and its active descendants", async () => {
+    const interrupted: string[] = []
+    seed({ session: { interrupt: async ({ sessionID }: { sessionID: string }) => { interrupted.push(sessionID) } } })
+    const root = sessions().get(instanceId)!.get(sessionId)!
+    setSessions(new Map([[instanceId, new Map([
+      [sessionId, root],
+      ["child-working", { ...root, id: "child-working", parentId: sessionId, status: "working" }],
+      ["grandchild-working", { ...root, id: "grandchild-working", parentId: "child-working", status: "compacting" }],
+      ["child-idle", { ...root, id: "child-idle", parentId: sessionId, status: "idle" }],
+    ])]]))
+
+    await abortSession(instanceId, sessionId)
+
+    assert.deepEqual(interrupted.sort(), ["child-working", "grandchild-working", sessionId].sort())
   })
 })
 

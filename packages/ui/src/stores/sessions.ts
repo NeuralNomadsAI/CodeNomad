@@ -43,7 +43,6 @@ import {
   getThreadTotals,
   getSessions,
   getVisibleSessionIds,
-  isSessionBusy,
   isSessionMessagesLoading,
   isSessionExpanded,
   loading,
@@ -68,6 +67,7 @@ import {
   clearInstanceDeletedSessionAuthority,
   clearInstanceSessionExpansionState,
 } from "./session-state"
+import { isSessionBusy } from "./session-status"
 
 import { getDefaultModel } from "./session-models"
 import { handleWorktreeReady } from "./worktrees"
