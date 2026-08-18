@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process"
 import { fetch } from "undici"
 import type { OpenCodeUpdateResponse, OpenCodeUpdateStatus } from "../api-types"
 import type { SettingsService } from "../settings/service"
@@ -6,7 +7,8 @@ import type { WorkspaceManager } from "../workspaces/manager"
 import { probeBinaryVersion } from "../workspaces/spawn"
 import { compareVersionStrings, stripTagPrefix } from "../releases/release-monitor"
 
-const OPENCODE_LATEST_URL = "https://registry.npmjs.org/opencode-ai/latest"
+const OPENCODE_LATEST_URL = "https://registry.npmjs.org/@opencode-ai%2fcli/beta"
+const OPENCODE_PACKAGE_NAME = "@opencode-ai/cli"
 const LATEST_VERSION_CACHE_MS = 5 * 60_000
 const inFlightUpgrades = new Map<string, Promise<OpenCodeUpdateResponse>>()
 
@@ -15,8 +17,8 @@ type UpgradeResult = { success: true; version: string } | { success: false; erro
 export interface OpenCodeUpdateServiceDeps {
   resolveBinary: () => ResolvedBinary
   probeBinary: typeof probeBinaryVersion
-  findReadyInstanceId: (binaryPath: string) => string | undefined
-  upgradeInstance: (instanceId: string, target: string) => Promise<UpgradeResult>
+  canUpgradeBinary: (binary: ResolvedBinary) => boolean
+  upgradeBinary: (binary: ResolvedBinary, target: string) => Promise<UpgradeResult>
   fetchLatestVersion: () => Promise<string>
   now?: () => number
 }
@@ -25,7 +27,7 @@ export class OpenCodeUpdateError extends Error {
   constructor(
     readonly code:
       | "binary_unavailable"
-      | "no_ready_instance"
+      | "unsupported_binary"
       | "update_check_failed"
       | "upgrade_failed"
       | "upgrade_verification_failed",
@@ -57,14 +59,14 @@ export class OpenCodeUpdateService {
         checkError: "update_check_failed",
       }
     }
-    const updateAvailable = compareVersionStrings(latestVersion, currentVersion) > 0
-    const readyInstanceId = this.deps.findReadyInstanceId(binary.path)
+    const updateAvailable = compareOpenCodeVersionStrings(latestVersion, currentVersion) > 0
+    const canUpgrade = this.deps.canUpgradeBinary(binary)
 
     return {
       currentVersion,
       latestVersion,
       updateAvailable,
-      canUpgrade: updateAvailable && Boolean(readyInstanceId),
+      canUpgrade: updateAvailable && canUpgrade,
     }
   }
 
@@ -84,25 +86,24 @@ export class OpenCodeUpdateService {
     const currentVersion = this.readCurrentVersion(binary.path)
     const latestVersion = await this.readLatestVersion()
 
-    if (compareVersionStrings(latestVersion, currentVersion) <= 0) {
+    if (compareOpenCodeVersionStrings(latestVersion, currentVersion) <= 0) {
       return { success: true, version: currentVersion }
     }
 
-    const instanceId = this.deps.findReadyInstanceId(binary.path)
-    if (!instanceId) {
+    if (!this.deps.canUpgradeBinary(binary)) {
       throw new OpenCodeUpdateError(
-        "no_ready_instance",
-        "No running OpenCode instance uses the configured binary",
+        "unsupported_binary",
+        "Automatic updates are only available for the managed opencode2 command",
       )
     }
 
     try {
-      const result = await this.deps.upgradeInstance(instanceId, latestVersion)
+      const result = await this.deps.upgradeBinary(binary, latestVersion)
       if (!result.success) {
         throw new OpenCodeUpdateError("upgrade_failed", result.error)
       }
       const installedVersion = this.readCurrentVersion(binary.path)
-      if (compareVersionStrings(installedVersion, latestVersion) !== 0) {
+      if (compareOpenCodeVersionStrings(installedVersion, latestVersion) !== 0) {
         throw new OpenCodeUpdateError(
           "upgrade_verification_failed",
           `OpenCode reported ${result.version}, but the configured binary is still ${installedVersion}`,
@@ -167,6 +168,76 @@ export async function fetchLatestOpenCodeVersion(): Promise<string> {
   return payload.version
 }
 
+export type OpenCodePackageManager = "npm" | "pnpm" | "bun" | "yarn"
+
+export function compareOpenCodeVersionStrings(left: string, right: string): number {
+  const leftBeta = stripTagPrefix(left)?.match(/^0\.0\.0-beta-(\d+)$/)
+  const rightBeta = stripTagPrefix(right)?.match(/^0\.0\.0-beta-(\d+)$/)
+  if (leftBeta && rightBeta) return Number(leftBeta[1]) - Number(rightBeta[1])
+  return compareVersionStrings(left, right)
+}
+
+export function detectOpenCodePackageManager(
+  binaryPath: string,
+  env: NodeJS.ProcessEnv = process.env,
+): OpenCodePackageManager {
+  const pathSource = binaryPath.toLowerCase()
+  const launchSource = `${env.npm_config_user_agent ?? ""}\n${env.npm_execpath ?? ""}`.toLowerCase()
+  if (pathSource.includes("pnpm")) return "pnpm"
+  if (/[\\/]\.bun[\\/]/.test(pathSource)) return "bun"
+  if (pathSource.includes("yarn")) return "yarn"
+  if (/[\\/]npm[\\/]/.test(pathSource)) return "npm"
+  if (launchSource.includes("pnpm")) return "pnpm"
+  if (/(^|[\s/])bun(?:$|[\s/])/.test(launchSource)) return "bun"
+  if (launchSource.includes("yarn")) return "yarn"
+  return "npm"
+}
+
+export function buildOpenCodeUpgradeCommand(
+  version: string,
+  packageManager: OpenCodePackageManager,
+): { command: string; args: string[] } {
+  const packageSpec = `${OPENCODE_PACKAGE_NAME}@${version}`
+  if (packageManager === "pnpm") {
+    return { command: "pnpm", args: ["add", "-g", `--allow-build=${OPENCODE_PACKAGE_NAME}`, packageSpec] }
+  }
+  if (packageManager === "bun") {
+    return { command: "bun", args: ["install", "-g", "--trust", packageSpec] }
+  }
+  if (packageManager === "yarn") {
+    return { command: "yarn", args: ["global", "add", packageSpec] }
+  }
+  return { command: "npm", args: ["install", "-g", packageSpec] }
+}
+
+export function installOpenCodeCli(
+  binary: ResolvedBinary,
+  version: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<UpgradeResult> {
+  const upgrade = buildOpenCodeUpgradeCommand(version, detectOpenCodePackageManager(binary.path, env))
+  return new Promise((resolve) => {
+    const child = spawn(upgrade.command, upgrade.args, {
+      env,
+      shell: process.platform === "win32",
+      stdio: "ignore",
+      windowsHide: true,
+    })
+    child.once("error", (error) => resolve({ success: false, error: error.message }))
+    child.once("exit", (code, signal) => {
+      if (signal) {
+        resolve({ success: false, error: `OpenCode update stopped by signal ${signal}` })
+        return
+      }
+      if (code !== 0) {
+        resolve({ success: false, error: `OpenCode update exited with code ${code ?? "unknown"}` })
+        return
+      }
+      resolve({ success: true, version })
+    })
+  })
+}
+
 export function createOpenCodeUpdateService(
   settings: SettingsService,
   workspaceManager: WorkspaceManager,
@@ -178,9 +249,8 @@ export function createOpenCodeUpdateService(
       return { ...binary, path: workspaceManager.resolveBinaryPath(binary.path) }
     },
     probeBinary: probeBinaryVersion,
-    // The native V2 client has no self-upgrade operation.
-    findReadyInstanceId: () => undefined,
+    canUpgradeBinary: () => binaryResolver.resolveDefault().path === "opencode2",
     fetchLatestVersion: fetchLatestOpenCodeVersion,
-    upgradeInstance: async () => ({ success: false, error: "OpenCode V2 does not expose self-upgrade" }),
+    upgradeBinary: installOpenCodeCli,
   })
 }
