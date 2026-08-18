@@ -32,6 +32,7 @@ import { getRootClient } from "./opencode-client"
 import { buildV2RequestLocations } from "./request-locations"
 import { fetchCommands, clearCommands } from "./commands"
 import { getInstanceRefreshTargets, type InstanceRefreshTarget } from "./instance-invalidation"
+import { ConnectionResyncGate } from "./connection-resync-gate"
 import { serverSettings } from "./preferences"
 import {
   reconcileSessionPendingState,
@@ -271,6 +272,7 @@ const connectionResyncs = new TrailingResyncCoordinator(
     log.warn("Failed to resync sessions after instance connection", { instanceId, error })
   },
 )
+const connectionResyncGate = new ConnectionResyncGate()
 
 function resyncConnectedInstance(instanceId: string): void {
   void connectionResyncs.request(instanceId)
@@ -313,11 +315,13 @@ function refreshVolatileInstanceState(
 }
 
 serverEvents.on("instance.eventStatus", (event) => {
-  if (event.type !== "instance.eventStatus" || event.status !== "connected") return
+  if (event.type !== "instance.eventStatus") return
+  const shouldResync = connectionResyncGate.observe(event.instanceId, event.status, event.reason)
+  if (event.status !== "connected") return
   if (disconnectedInstance()?.id === event.instanceId) {
     setDisconnectedInstance(null)
   }
-  resyncConnectedInstance(event.instanceId)
+  if (shouldResync) resyncConnectedInstance(event.instanceId)
 })
 
 function createRestoreCreationRequestId(): string {
@@ -1064,6 +1068,7 @@ function updateInstance(id: string, updates: Partial<Instance>) {
 }
 
 function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
+  connectionResyncGate.clear(id)
   const removedInstance = instances().get(id)
   const removedOccurrence = removedInstance
     ? Array.from(instances().values())
