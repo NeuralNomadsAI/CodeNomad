@@ -132,6 +132,13 @@ describe("instance proxy location enforcement", () => {
     assert.match(JSON.parse(response.body).url, /^\/api\/model\/default\?/)
   })
 
+  it("allows active plugin metadata", async () => {
+    const { app } = await harness()
+    const response = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/plugin" })
+    assert.equal(response.statusCode, 200)
+    assert.match(JSON.parse(response.body).url, /^\/api\/plugin\?/)
+  })
+
   it("allows ownership-scoped agent fallback lookups", async () => {
     const { app } = await harness()
     const response = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/agent/build" })

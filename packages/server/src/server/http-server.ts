@@ -895,7 +895,7 @@ function hasDotSegment(value: string): boolean {
 function isAllowedInstanceApiRoute(method: string, pathname: string): boolean {
   const route = pathname.replace(/\/+$/, "")
   const allowed: Array<[string, RegExp]> = [
-    ["GET", /^\/api\/(?:agent|command|config|integration|mcp|model|provider)$/],
+    ["GET", /^\/api\/(?:agent|command|config|integration|mcp|model|plugin|provider)$/],
     ["GET", /^\/api\/agent\/[^/]+$/],
     ["GET", /^\/api\/model\/default$/],
     ["GET", /^\/api\/(?:permission|question)\/request$/],
