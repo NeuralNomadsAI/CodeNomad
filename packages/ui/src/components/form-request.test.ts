@@ -5,6 +5,7 @@ import {
   getFormFieldDefaultValue,
   getFormStringInputType,
   normalizeFormStringValue,
+  shouldRenderFormOptionsInline,
 } from "./form-request.tsx"
 import { isFormFieldVisible, isHttpFormUrl } from "../lib/form-schema.ts"
 
@@ -40,5 +41,11 @@ describe("form request protocol mapping", () => {
     assert.equal(isHttpFormUrl("https://example.com/form"), true)
     assert.equal(isHttpFormUrl("javascript:alert(1)"), false)
     assert.equal(isHttpFormUrl("file:///tmp/form"), false)
+  })
+
+  it("uses visible choices for short option lists and menus for long lists", () => {
+    assert.equal(shouldRenderFormOptionsInline([{ value: "one" }, { value: "two" }]), true)
+    assert.equal(shouldRenderFormOptionsInline(Array.from({ length: 5 })), false)
+    assert.equal(shouldRenderFormOptionsInline([]), false)
   })
 })

@@ -37,6 +37,10 @@ export function normalizeFormStringValue(
   return Number.isNaN(date.getTime()) ? undefined : date.toISOString()
 }
 
+export function shouldRenderFormOptionsInline(options: readonly unknown[] | undefined): boolean {
+  return Boolean(options?.length && options.length <= 4)
+}
+
 const FormRequest: Component<FormRequestProps> = (props) => {
   const { t } = useI18n()
   const [values, setValues] = createSignal<Record<string, FormValue | undefined>>(
@@ -57,7 +61,9 @@ const FormRequest: Component<FormRequestProps> = (props) => {
     if (!form.reportValidity()) return
     const invalidCollection = visibleFields().find((field) => {
       const value = values()[field.key]
-      if (field.type === "external" || field.type === "string" || field.type === "number" || field.type === "integer") return false
+      if (field.type === "external") return false
+      if (field.type === "string") return field.required && (typeof value !== "string" || value.length === 0)
+      if (field.type === "number" || field.type === "integer") return field.required && typeof value !== "number"
       if (field.type === "boolean") return field.required && value === undefined
       const count = Array.isArray(value) ? value.length : 0
       return (field.required && count === 0) || count < (field.minItems ?? 0) || count > (field.maxItems ?? Infinity)
@@ -101,53 +107,102 @@ const FormRequest: Component<FormRequestProps> = (props) => {
           const label = () => field.title || field.key
           const stringField = field as Extract<FormField, { type: "string" }>
           const numberField = field as Extract<FormField, { type: "number" | "integer" }>
+          const stringOptions = () => stringField.options ?? []
+          const selectedString = () => String(values()[field.key] ?? "")
+          const customString = () => stringOptions().some((option) => option.value === selectedString()) ? "" : selectedString()
           return (
             <div class="form-request-field">
-              <Show when={field.type === "external"} fallback={
+              <Show when={
+                field.type === "external"
+                || field.type === "multiselect"
+                || (field.type === "string" && shouldRenderFormOptionsInline(stringField.options))
+              } fallback={
                 <label class="form-request-label" for={`form-${props.form.id}-${field.key}`}>
                   {label()}
                   <Show when={"required" in field && field.required}> <span class="form-request-required" aria-hidden="true">*</span></Show>
                 </label>
               }>
-                <span class="form-request-label">{label()}</span>
+                <span class="form-request-label">
+                  {label()}
+                  <Show when={"required" in field && field.required}> <span class="form-request-required" aria-hidden="true">*</span></Show>
+                </span>
               </Show>
               <Show when={field.description}>
                 <p id={descriptionId} class="form-request-description">{field.description}</p>
               </Show>
               <Show when={field.type === "string"}>
-                  <Show when={stringField.options?.length && !stringField.custom} fallback={
+                <Show when={shouldRenderFormOptionsInline(stringField.options)} fallback={
+                  <>
+                    <Show when={stringField.options?.length && !stringField.custom} fallback={
+                      <input
+                        id={`form-${props.form.id}-${field.key}`}
+                        class="form-request-input"
+                        type={getFormStringInputType(stringField.format)}
+                        value={formatFormStringInputValue(stringField.format, String(values()[field.key] ?? ""))}
+                        required={stringField.required}
+                        minLength={stringField.minLength}
+                        maxLength={stringField.maxLength}
+                        pattern={stringField.pattern}
+                        placeholder={stringField.placeholder}
+                        list={stringField.options?.length ? `form-${props.form.id}-${field.key}-options` : undefined}
+                        aria-describedby={field.description ? descriptionId : undefined}
+                        onInput={(event) => update(field.key, normalizeFormStringValue(stringField.format, event.currentTarget.value))}
+                      />
+                    }>
+                      <select
+                        id={`form-${props.form.id}-${field.key}`}
+                        class="form-request-input"
+                        required={stringField.required}
+                        value={String(values()[field.key] ?? "")}
+                        aria-describedby={field.description ? descriptionId : undefined}
+                        onChange={(event) => update(field.key, event.currentTarget.value)}
+                      >
+                        <option value="">{t("formRequest.selectPlaceholder")}</option>
+                        <For each={stringField.options}>{(option) => <option value={option.value}>{option.label}</option>}</For>
+                      </select>
+                    </Show>
+                    <Show when={stringField.custom && stringField.options?.length}>
+                      <datalist id={`form-${props.form.id}-${field.key}-options`}>
+                        <For each={stringField.options}>{(option) => <option value={option.value}>{option.label}</option>}</For>
+                      </datalist>
+                    </Show>
+                  </>
+                }>
+                  <fieldset class="form-request-options" aria-describedby={field.description ? descriptionId : undefined}>
+                    <legend class="sr-only">{label()}</legend>
+                    <For each={stringOptions()}>{(option) => {
+                      const checked = () => selectedString() === option.value
+                      return (
+                        <label class="form-request-choice" data-selected={checked() ? "true" : undefined}>
+                          <input
+                            class="form-request-choice-control"
+                            type="radio"
+                            name={`form-${props.form.id}-${field.key}`}
+                            checked={checked()}
+                            onChange={() => update(field.key, option.value)}
+                          />
+                          <span class="form-request-choice-copy">
+                            <span class="form-request-choice-label">{option.label}</span>
+                            <Show when={option.description}>
+                              <span class="form-request-choice-description">{option.description}</span>
+                            </Show>
+                          </span>
+                        </label>
+                      )
+                    }}</For>
+                  </fieldset>
+                  <Show when={stringField.custom}>
                     <input
                       id={`form-${props.form.id}-${field.key}`}
                       class="form-request-input"
-                      type={getFormStringInputType(stringField.format)}
-                      value={formatFormStringInputValue(stringField.format, String(values()[field.key] ?? ""))}
-                      required={stringField.required}
-                      minLength={stringField.minLength}
-                      maxLength={stringField.maxLength}
-                      pattern={stringField.pattern}
-                      placeholder={stringField.placeholder}
-                      list={stringField.options?.length ? `form-${props.form.id}-${field.key}-options` : undefined}
+                      type="text"
+                      value={customString()}
+                      placeholder={t("toolCall.question.custom.placeholder")}
                       aria-describedby={field.description ? descriptionId : undefined}
-                      onInput={(event) => update(field.key, normalizeFormStringValue(stringField.format, event.currentTarget.value))}
+                      onInput={(event) => update(field.key, event.currentTarget.value || undefined)}
                     />
-                  }>
-                    <select
-                      id={`form-${props.form.id}-${field.key}`}
-                      class="form-request-input"
-                      required={stringField.required}
-                      value={String(values()[field.key] ?? "")}
-                      aria-describedby={field.description ? descriptionId : undefined}
-                      onChange={(event) => update(field.key, event.currentTarget.value)}
-                    >
-                      <option value="">{t("formRequest.selectPlaceholder")}</option>
-                      <For each={stringField.options}>{(option) => <option value={option.value}>{option.label}</option>}</For>
-                    </select>
                   </Show>
-                  <Show when={stringField.custom && stringField.options?.length}>
-                    <datalist id={`form-${props.form.id}-${field.key}-options`}>
-                      <For each={stringField.options}>{(option) => <option value={option.value}>{option.label}</option>}</For>
-                    </datalist>
-                  </Show>
+                </Show>
               </Show>
               <Show when={field.type === "number" || field.type === "integer"}>
                 <input
@@ -177,10 +232,13 @@ const FormRequest: Component<FormRequestProps> = (props) => {
                 <fieldset class="form-request-options" aria-describedby={field.description ? descriptionId : undefined}>
                   <legend class="sr-only">{label()}</legend>
                   <For each={field.type === "multiselect" ? field.options : []}>{(option) => (
-                    <label class="form-request-option">
+                    <label
+                      class="form-request-choice"
+                      data-selected={Array.isArray(values()[field.key]) && (values()[field.key] as string[]).includes(option.value) ? "true" : undefined}
+                    >
                       <input
                         type="checkbox"
-                        class="form-request-checkbox"
+                        class="form-request-choice-control"
                         checked={Array.isArray(values()[field.key]) && (values()[field.key] as string[]).includes(option.value)}
                         onChange={(event) => {
                           const current = Array.isArray(values()[field.key]) ? values()[field.key] as string[] : []
@@ -189,7 +247,12 @@ const FormRequest: Component<FormRequestProps> = (props) => {
                             : current.filter((value) => value !== option.value))
                         }}
                       />
-                      <span>{option.label}</span>
+                      <span class="form-request-choice-copy">
+                        <span class="form-request-choice-label">{option.label}</span>
+                        <Show when={option.description}>
+                          <span class="form-request-choice-description">{option.description}</span>
+                        </Show>
+                      </span>
                     </label>
                   )}</For>
                 </fieldset>

@@ -10,6 +10,7 @@
 @import "./components/remote-access.css";
 @import "./components/permission-notification.css";
 @import "./components/form-request.css";
+@import "./components/form-request-options.css";
 @import "./components/toast-history.css";
 @import "./components/settings-screen.css";
 @import "./components/settings-info.css";

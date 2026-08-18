@@ -82,25 +82,6 @@
   accent-color: var(--accent-primary);
 }
 
-.form-request-options {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-.form-request-option {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  color: var(--text-primary);
-  font-size: var(--font-size-sm);
-  min-width: 0;
-  cursor: pointer;
-}
-
 .form-request-link {
   color: var(--accent-primary);
   font-size: var(--font-size-sm);
