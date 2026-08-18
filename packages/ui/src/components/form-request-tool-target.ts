@@ -100,3 +100,7 @@ export function shouldRenderFormInFallback(
 ): boolean {
   return !store || !resolveInlineFormToolTarget(form, store, activeSessionId)
 }
+
+export function shouldRenderLegacyQuestionBlock(form: FormInfo | undefined): boolean {
+  return form === undefined
+}

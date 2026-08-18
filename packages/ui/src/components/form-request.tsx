@@ -106,7 +106,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
               <Show when={field.type === "external"} fallback={
                 <label class="form-request-label" for={`form-${props.form.id}-${field.key}`}>
                   {label()}
-                  <Show when={"required" in field && field.required}> <span aria-hidden="true">*</span></Show>
+                  <Show when={"required" in field && field.required}> <span class="form-request-required" aria-hidden="true">*</span></Show>
                 </label>
               }>
                 <span class="form-request-label">{label()}</span>
@@ -166,6 +166,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
               <Show when={field.type === "boolean"}>
                 <input
                   id={`form-${props.form.id}-${field.key}`}
+                  class="form-request-checkbox"
                   type="checkbox"
                   checked={values()[field.key] === true}
                   aria-describedby={field.description ? descriptionId : undefined}
@@ -179,6 +180,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
                     <label class="form-request-option">
                       <input
                         type="checkbox"
+                        class="form-request-checkbox"
                         checked={Array.isArray(values()[field.key]) && (values()[field.key] as string[]).includes(option.value)}
                         onChange={(event) => {
                           const current = Array.isArray(values()[field.key]) ? values()[field.key] as string[] : []

@@ -1,6 +1,11 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { resolveFormToolTarget, resolveInlineFormToolTarget, shouldRenderFormInFallback } from "./form-request-tool-target.ts"
+import {
+  resolveFormToolTarget,
+  resolveInlineFormToolTarget,
+  shouldRenderFormInFallback,
+  shouldRenderLegacyQuestionBlock,
+} from "./form-request-tool-target.ts"
 
 function store(messages: Record<string, any>, ids = Object.keys(messages)) {
   return {
@@ -38,6 +43,13 @@ describe("form request tool target", () => {
   it("leaves global forms unscoped", () => {
     const form = { id: "global", sessionID: "session", title: "Global", fields: [] } as any
     assert.equal(resolveFormToolTarget(form, store({})), null)
+  })
+
+  it("lets a native form replace the legacy question block for its tool call", () => {
+    const form = { id: "form-question", sessionID: "session", title: "Questions", fields: [] } as any
+
+    assert.equal(shouldRenderLegacyQuestionBlock(form), false)
+    assert.equal(shouldRenderLegacyQuestionBlock(undefined), true)
   })
 
   it("uses floating fallback when the resolved tool belongs to another session", () => {

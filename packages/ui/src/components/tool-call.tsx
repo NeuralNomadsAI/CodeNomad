@@ -17,7 +17,7 @@ import { resolveToolExpansionDefault, resolveToolVisibility } from "./tool-call/
 import { QuestionToolBlock } from "./tool-call/question-block"
 import { PermissionToolBlock } from "./tool-call/permission-block"
 import FormRequest from "./form-request"
-import { resolveFormToolTarget } from "./form-request-tool-target"
+import { resolveFormToolTarget, shouldRenderLegacyQuestionBlock } from "./form-request-tool-target"
 import { createAnsiContentRenderer } from "./tool-call/ansi-render"
 import { createDiffContentRenderer } from "./tool-call/diff-render"
 import { createMarkdownContentRenderer } from "./tool-call/markdown-render"
@@ -499,19 +499,21 @@ function ToolCallDetails(props: {
   )
 
   const renderQuestionBlock = () => (
-    <QuestionToolBlock
-      toolName={props.toolName}
-      toolState={props.toolState}
-      toolCallId={props.toolCallIdentifier}
-      request={questionDetails}
-      active={props.isQuestionActive}
-      submitting={questionSubmitting}
-      error={questionError}
-      draftAnswers={questionDraftAnswers}
-      setDraftAnswers={setQuestionDraftAnswers}
-      onSubmit={() => void handleQuestionSubmit()}
-      onDismiss={() => void handleQuestionDismiss()}
-    />
+    <Show when={shouldRenderLegacyQuestionBlock(props.pendingForm())}>
+      <QuestionToolBlock
+        toolName={props.toolName}
+        toolState={props.toolState}
+        toolCallId={props.toolCallIdentifier}
+        request={questionDetails}
+        active={props.isQuestionActive}
+        submitting={questionSubmitting}
+        error={questionError}
+        draftAnswers={questionDraftAnswers}
+        setDraftAnswers={setQuestionDraftAnswers}
+        onSubmit={() => void handleQuestionSubmit()}
+        onDismiss={() => void handleQuestionDismiss()}
+      />
+    </Show>
   )
 
   const renderFormBlock = () => (
