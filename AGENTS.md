@@ -49,6 +49,13 @@ Behavior for agents:
 - Use the `edit` tool for modifying existing files; prefer it over other editing methods.
 - Use the `write` tool only when creating new files from scratch.
 
+## V2 Runtime Handoff
+- Treat `codenomad-v2-slots/build-{A|B}/release` as build staging and `codenomad-v2-slots/{A|B}` as the runnable deployment slots. Launch the deployed slot recorded by its `deployment.json`.
+- For a first V2 launch, start the deployed executable from PowerShell with the dedicated WebView2 profile, CDP port, Rust backtraces, and Node source maps described in `MIGRATION_V2.md`.
+- To replace a running V2 instance, submit `codenomad-v2-handoff-request.json` to `codenomad-v2-handoff.ps1` through an interactive Windows scheduled task. The task must be owned by the logged-in user so it runs outside the CodeNomad process tree while retaining desktop access.
+- Set `waitForPid` to the top-level CodeNomad window process, `executable` to the deployed target slot, and `fallbackExecutable` to the previously validated slot.
+- Consider the handoff complete after `codenomad-v2-handoff-result.json` reports `status: "started"`. Then verify that the reported PID is running from the requested slot and that the executable hash matches that slot's `deployment.json` before reporting success.
+
 ## Commit Message Guidelines
 - When creating commits, use detailed commit messages: a concise conventional-style subject followed by body paragraphs that explain the user-visible behavior change, the implementation approach, important edge cases or platform considerations, and the validation or test coverage added.
 - Prefer messages that explain why the change exists and how regressions are prevented, not just a list of touched files.

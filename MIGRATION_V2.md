@@ -84,16 +84,62 @@ The final validation should include:
 
 ### Required Parallel UI Smoke
 
-CodeNomad V1 is the working environment and must remain open and untouched. V2 always uses `~/.local/share/opencode2/opencode.db`; launch the V2 build beside V1 from PowerShell with a dedicated CDP port and WebView profile:
+CodeNomad V1 is the working environment and must remain open and untouched. V2 always uses `~/.local/share/opencode2/opencode.db`. Build into `codenomad-v2-slots/build-{A|B}/release`, copy the validated output into the corresponding `codenomad-v2-slots/{A|B}` deployment slot, and record its source, hash, slot, and deployment time in `deployment.json`.
+
+For a first V2 launch, start the deployed slot beside V1 from PowerShell with a dedicated CDP port, WebView profile, Rust backtraces, and Node source maps:
 
 ```powershell
-Start-Process `
-  -FilePath 'D:\CodeNomad-worktrees\opencode-v2-foundation\packages\tauri-app\target\release\codenomad-tauri.exe' `
-  -Environment @{
+$slot = "$env:TEMP\opencode\codenomad-v2-slots\A"
+$environment = @{
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9223'
-    WEBVIEW2_USER_DATA_FOLDER = "$env:TEMP\codenomad-webview-v2"
-  }
+    WEBVIEW2_USER_DATA_FOLDER = "$env:TEMP\opencode\codenomad-v2-debug"
+    RUST_BACKTRACE = '1'
+    NODE_OPTIONS = '--enable-source-maps'
+}
+Start-Process -FilePath "$slot\codenomad-tauri.exe" -WorkingDirectory $slot -Environment $environment
 ```
+
+To replace an active V2 instance, write the target slot, validated fallback slot, top-level CodeNomad window PID, and a unique request ID to `$env:TEMP\opencode\codenomad-v2-handoff-request.json`. Run `$env:TEMP\opencode\codenomad-v2-handoff.ps1` through an interactive Windows scheduled task owned by the logged-in user. This gives the handoff an external lifetime and desktop access while it closes the active process, applies the environment above, and starts the target slot:
+
+```powershell
+$root = "$env:TEMP\opencode"
+$targetSlot = Join-Path $root 'codenomad-v2-slots\A'
+$fallbackSlot = Join-Path $root 'codenomad-v2-slots\B'
+$requestPath = Join-Path $root 'codenomad-v2-handoff-request.json'
+$handoffPath = Join-Path $root 'codenomad-v2-handoff.ps1'
+$taskName = 'CodeNomad-V2-Handoff'
+$windowProcess = Get-CimInstance Win32_Process |
+  Where-Object {
+    $_.Name -eq 'codenomad-tauri.exe' -and
+    $_.ExecutablePath -like "$root\codenomad-v2-slots\?\codenomad-tauri.exe" -and
+    $_.CommandLine -notmatch 'internal-cli-launcher'
+  } |
+  Select-Object -First 1
+
+@{
+  mode = 'launch'
+  requestId = [guid]::NewGuid().ToString('N')
+  executable = Join-Path $targetSlot 'codenomad-tauri.exe'
+  fallbackExecutable = Join-Path $fallbackSlot 'codenomad-tauri.exe'
+  waitForPid = $windowProcess.ProcessId
+  closeOldProcess = $true
+  clientStateSeedPath = $null
+  clientStateSeedSha256 = $null
+} | ConvertTo-Json | Set-Content -LiteralPath $requestPath -Encoding utf8
+
+$action = New-ScheduledTaskAction -Execute (Get-Command pwsh).Source -Argument (
+  "-NoProfile -ExecutionPolicy Bypass -File `"$handoffPath`" -RequestPath `"$requestPath`""
+)
+$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(5)
+$principal = New-ScheduledTaskPrincipal `
+  -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) `
+  -LogonType Interactive `
+  -RunLevel Limited
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null
+Start-ScheduledTask -TaskName $taskName
+```
+
+Read `$env:TEMP\opencode\codenomad-v2-handoff-result.json` after reconnection. A successful handoff has `status: "started"`; verify its PID runs from the requested slot and compare the executable hash with that slot's `deployment.json` before recording the smoke build as active. Remove the completed one-shot task with `Unregister-ScheduledTask -TaskName 'CodeNomad-V2-Handoff' -Confirm:$false`.
 
 The smoke is complete only after all of these actions succeed in the visible V2 UI:
 
