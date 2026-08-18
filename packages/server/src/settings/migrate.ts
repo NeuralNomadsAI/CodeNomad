@@ -101,7 +101,7 @@ function mapLegacyToOwnerDocs(legacyConfig: unknown, legacyState: unknown): { co
     // Server-owned stable keys
     const envVars = preferences.environmentVariables
     if (isPlainObject(envVars)) {
-      serverConfig.environmentVariables = omitKeys(envVars, new Set(["OPENCODE_DB"]))
+      serverConfig.environmentVariables = { ...envVars }
     }
     const listeningMode = preferences.listeningMode
     if (typeof listeningMode === "string") {

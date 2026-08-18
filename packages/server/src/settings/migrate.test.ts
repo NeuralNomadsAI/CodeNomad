@@ -12,7 +12,7 @@ const roots: string[] = []
 afterEach(() => roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true })))
 
 describe("settings migration", () => {
-  it("drops OPENCODE_DB while preserving unrelated environment variables", () => {
+  it("preserves all configured environment variables", () => {
     const root = mkdtempSync(path.join(tmpdir(), "codenomad-migrate-"))
     roots.push(root)
     const location = resolveConfigLocation(path.join(root, "config.json"))
@@ -24,6 +24,6 @@ describe("settings migration", () => {
     migrateSettingsLayout(location, logger)
 
     const migrated = parseYaml(readFileSync(location.configYamlPath, "utf8"))
-    assert.deepEqual(migrated.server.environmentVariables, { KEEP_ME: "yes" })
+    assert.deepEqual(migrated.server.environmentVariables, { OPENCODE_DB: "/legacy/opencode.db", KEEP_ME: "yes" })
   })
 })
