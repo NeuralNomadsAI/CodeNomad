@@ -10,6 +10,35 @@ export function isMiddleButtonScrollIntent(button: number): boolean {
   return button === 1
 }
 
+export function getPrimaryPointerDragDirection(previousY: number, nextY: number, buttons: number): ScrollDirection {
+  if ((buttons & 1) === 0 || previousY === nextY) return null
+  return nextY < previousY ? "up" : "down"
+}
+
+export type KeyboardScrollIntent =
+  | { type: "top" }
+  | { type: "bottom" }
+  | { type: "direction"; direction: "up" | "down" }
+
+export function getKeyboardScrollIntent(input: {
+  key: string
+  shiftKey: boolean
+  interactive: boolean
+  textEditing: boolean
+}): KeyboardScrollIntent | null {
+  if (input.textEditing) return null
+  if (input.key === "End") return { type: "bottom" }
+  if (input.key === "Home") return { type: "top" }
+  if (input.interactive && input.key !== "PageUp" && input.key !== "PageDown") return null
+  if (input.key === "ArrowUp" || input.key === "PageUp" || (input.shiftKey && (input.key === " " || input.key === "Spacebar"))) {
+    return { type: "direction", direction: "up" }
+  }
+  if (input.key === "ArrowDown" || input.key === "PageDown" || input.key === " " || input.key === "Spacebar") {
+    return { type: "direction", direction: "down" }
+  }
+  return null
+}
+
 export function isScrollRestoreMeasurementReady(input: {
   hasHandle: boolean
   itemCount: number
@@ -356,7 +385,7 @@ export class VirtualScrollController {
     }
 
     if (!hasFreshIntent) {
-      if (!programmatic && this.isAutoFollowing() && !atBottom && !this.state.restoring) {
+      if (this.isAutoFollowing() && !atBottom && !this.state.restoring) {
         return this.result({ type: "scroll-bottom", immediate: true })
       }
       return this.result(noFollowEffect)
@@ -369,7 +398,9 @@ export class VirtualScrollController {
 
     // Explicit bottom commands enter follow mode through jumpBottom. A
     // measured programmatic move alone must never rejoin an escaped viewport.
-    if (programmatic && this.state.mode.type === "escaped") return this.result(noFollowEffect)
+    if (programmatic && this.state.mode.type === "escaped" && this.state.userIntentDirection !== "down") {
+      return this.result(noFollowEffect)
+    }
 
     const next = transitionFollowMode(this.state.mode, { type: "user-scroll", direction, atBottom })
     this.state.mode = next.mode

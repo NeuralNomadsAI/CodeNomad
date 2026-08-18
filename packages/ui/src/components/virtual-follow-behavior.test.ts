@@ -6,6 +6,8 @@ import {
   ANCHOR_RESTORE_STABLE_FRAMES,
   AnchorRestoreStabilizer,
   BOTTOM_FOLLOW_EPSILON_PX,
+  getKeyboardScrollIntent,
+  getPrimaryPointerDragDirection,
   ScrollRestoreTokenGuard,
   VirtualScrollController,
   isAtBottom,
@@ -34,6 +36,22 @@ describe("virtual follow behavior", () => {
     assert.equal(isMiddleButtonScrollIntent(1), true)
     assert.equal(isMiddleButtonScrollIntent(0), false)
     assert.equal(isMiddleButtonScrollIntent(2), false)
+  })
+
+  it("classifies primary selection drags without treating hover as scroll ownership", () => {
+    assert.equal(getPrimaryPointerDragDirection(200, 150, 1), "up")
+    assert.equal(getPrimaryPointerDragDirection(150, 200, 1), "down")
+    assert.equal(getPrimaryPointerDragDirection(200, 150, 0), null)
+  })
+
+  it("keeps page navigation available from non-editing interactive descendants", () => {
+    assert.deepEqual(getKeyboardScrollIntent({ key: "PageUp", shiftKey: false, interactive: true, textEditing: false }), {
+      type: "direction",
+      direction: "up",
+    })
+    assert.deepEqual(getKeyboardScrollIntent({ key: "Home", shiftKey: false, interactive: true, textEditing: false }), { type: "top" })
+    assert.equal(getKeyboardScrollIntent({ key: "PageUp", shiftKey: false, interactive: true, textEditing: true }), null)
+    assert.equal(getKeyboardScrollIntent({ key: " ", shiftKey: false, interactive: true, textEditing: false }), null)
   })
 
   it("waits for Virtua measurements before applying a restored offset", () => {
@@ -169,14 +187,24 @@ describe("virtual follow behavior", () => {
     assert.deepEqual(result.state.mode, { type: "escaped" })
   })
 
-  it("does not escape for owned programmatic upward movement", () => {
+  it("repins an off-bottom correction during the programmatic window", () => {
     const controller = new VirtualScrollController(true)
     controller.recordProgrammaticOffset(2400, true)
 
     const result = controller.observeViewport(metrics(2200), 100, true)
 
     assert.deepEqual(result.state.mode, { type: "following" })
-    assert.deepEqual(result.effect, { type: "none" })
+    assert.deepEqual(result.effect, { type: "scroll-bottom", immediate: true })
+  })
+
+  it("lets fresh downward intent rejoin at bottom during a programmatic window", () => {
+    const controller = new VirtualScrollController(false)
+    controller.recordProgrammaticOffset(2200, false)
+    controller.setUserIntent("down", 700)
+
+    const result = controller.observeViewport(metrics(2400), 100, true)
+
+    assert.deepEqual(result.state.mode, { type: "following" })
   })
 
   it("repins after an unowned virtualizer measurement correction", () => {

@@ -1,6 +1,6 @@
 import { Show, createEffect, createMemo, createSignal, type Accessor, type JSX, on, onCleanup } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
-import { AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, getFollowSnapshotState, isAtBottom, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, ScrollRestoreTokenGuard, selectTopViewportAnchor, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
+import { AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottom, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, ScrollRestoreTokenGuard, selectTopViewportAnchor, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
 
 const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
 const EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES = 2
@@ -11,6 +11,7 @@ const PROGRAMMATIC_SCROLL_WINDOW_MS = 120
 const SCROLL_RESTORE_MEASUREMENT_MAX_FRAMES = 90
 const SCROLL_INTENT_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Spacebar"])
 const INTERACTIVE_KEY_TARGET_SELECTOR = "button, a, input, textarea, select, [contenteditable='true'], [role='button'], [role='textbox']"
+const TEXT_EDITING_KEY_TARGET_SELECTOR = "input, textarea, select, [contenteditable='true'], [role='textbox']"
 
 export interface VirtualExplicitBottomPinIntent {
   token: string | number
@@ -178,8 +179,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   function markUserScrollIntent(direction: "up" | "down" | null) {
     cancelActiveScrollRestore()
     scrollController.setUserIntent(direction, performance.now() + USER_SCROLL_INTENT_WINDOW_MS)
+    if (hasActiveExplicitBottomPin() || explicitBottomPinIntent()) cancelExplicitBottomPinFromUser()
     if (direction === "up") {
-      if (hasActiveExplicitBottomPin() || explicitBottomPinIntent()) cancelExplicitBottomPinFromUser()
       dispatchFollowEvent({ type: "user-scroll", direction: "up", atBottom: isActuallyAtBottom() })
     } else if (direction === "down" && isActuallyAtBottom()) {
       dispatchFollowEvent({ type: "user-scroll", direction: "down", atBottom: true })
@@ -609,14 +610,27 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     detachScrollIntentListeners = undefined
     if (!element) return
     const handleWheelIntent = (event: WheelEvent) => markUserScrollIntent(event.deltaY < 0 ? "up" : event.deltaY > 0 ? "down" : null)
+    let lastPrimaryPointerY: number | null = null
     const handlePointerIntent = (event: PointerEvent) => {
       if ((event.target as HTMLElement | null)?.closest(INTERACTIVE_KEY_TARGET_SELECTOR)) return
       if (isMiddleButtonScrollIntent(event.button)) {
         markUserScrollIntent("up")
         return
       }
+      if (event.button === 0) lastPrimaryPointerY = event.clientY
       if (event.target !== element) return
       markUserScrollIntent(null)
+    }
+    const handlePointerMove = (event: PointerEvent) => {
+      const previousY = lastPrimaryPointerY
+      if (previousY === null) return
+      lastPrimaryPointerY = event.clientY
+      const direction = getPrimaryPointerDragDirection(previousY, event.clientY, event.buttons)
+      if (direction) markUserScrollIntent(direction)
+      if ((event.buttons & 1) === 0) lastPrimaryPointerY = null
+    }
+    const handlePointerEnd = () => {
+      lastPrimaryPointerY = null
     }
     let lastTouchY: number | null = null
     const handleTouchStart = (event: TouchEvent) => {
@@ -639,24 +653,31 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const handleKeyIntent = (event: KeyboardEvent) => {
       if (!isActive()) return
       if (!SCROLL_INTENT_KEYS.has(event.key)) return
-      if ((event.target as HTMLElement | null)?.closest(INTERACTIVE_KEY_TARGET_SELECTOR)) return
-      if (event.key === "End") {
+      const target = event.target as HTMLElement | null
+      const intent = getKeyboardScrollIntent({
+        key: event.key,
+        shiftKey: event.shiftKey,
+        interactive: Boolean(target?.closest(INTERACTIVE_KEY_TARGET_SELECTOR)),
+        textEditing: Boolean(target?.closest(TEXT_EDITING_KEY_TARGET_SELECTOR)),
+      })
+      if (!intent) return
+      if (intent.type === "bottom") {
         event.preventDefault()
         scrollToBottom(true)
         return
       }
-      if (event.key === "Home") {
+      if (intent.type === "top") {
         event.preventDefault()
         scrollToTop(true)
         return
       }
-      const direction = event.key === "ArrowUp" || event.key === "PageUp" || event.key === "Home" || (event.shiftKey && (event.key === " " || event.key === "Spacebar"))
-        ? "up"
-        : "down"
-      markUserScrollIntent(direction)
+      markUserScrollIntent(intent.direction)
     }
     element.addEventListener("wheel", handleWheelIntent, { passive: true })
     element.addEventListener("pointerdown", handlePointerIntent)
+    element.addEventListener("pointermove", handlePointerMove)
+    element.addEventListener("pointerup", handlePointerEnd)
+    element.addEventListener("pointercancel", handlePointerEnd)
     element.addEventListener("touchstart", handleTouchStart, { passive: true })
     element.addEventListener("touchmove", handleTouchMove, { passive: true })
     element.addEventListener("touchend", handleTouchEnd, { passive: true })
@@ -665,6 +686,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     detachScrollIntentListeners = () => {
       element.removeEventListener("wheel", handleWheelIntent)
       element.removeEventListener("pointerdown", handlePointerIntent)
+      element.removeEventListener("pointermove", handlePointerMove)
+      element.removeEventListener("pointerup", handlePointerEnd)
+      element.removeEventListener("pointercancel", handlePointerEnd)
       element.removeEventListener("touchstart", handleTouchStart)
       element.removeEventListener("touchmove", handleTouchMove)
       element.removeEventListener("touchend", handleTouchEnd)
