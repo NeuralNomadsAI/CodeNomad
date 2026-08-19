@@ -45,7 +45,7 @@ The migration removes the V1 compatibility layer rather than maintaining both in
 - Avoid logging unredacted secret-bearing proxy request bodies.
 - Expose only an explicit method/path allowlist through the OpenCode proxy. New upstream APIs require an intentional proxy and ownership review; future OpenCode functionality is not automatic.
 - Share a consistent service registration location between Windows and WSL.
-- Probe the selected `opencode2` CLI and discover/ensure only the exact version pinned by `packages/server/package.json`. Each dependency upgrade must review OpenCode release notes, current documentation, installed client declarations, and proxy/API parity.
+- Keep server and UI on the same reviewed client release. The selected `opencode2` CLI is updated independently and validated through service health and API compatibility rather than an exact version gate.
 - Wrap native `Service.ensure`/`Service.stop` with CodeNomad's ownership checks. A lifecycle lease records the registration, authenticated endpoint, daemon PID plus process-start identity and host/WSL namespace, and a hash of the launch command/environment. Proof can transfer between live CodeNomad processes through peer leases; the final host process calls `Service.stop` only after proving there are no live peers and every recorded identity still matches. WSL uses the authenticated native health stop endpoint and never allows the client's Windows `process.kill` fallback to target a Linux PID.
 - Queue location eviction when its final logical owner is removed, then perform it only during proven final shared-service shutdown so another CodeNomad process cannot lose active upstream state.
 - Force the V2 service database to `~/.local/share/opencode2/opencode.db`. V1 and V2 must never point at the same database because their schemas are incompatible.
@@ -53,7 +53,7 @@ The migration removes the V1 compatibility layer rather than maintaining both in
 
 ## Current Status
 
-- Server, UI, and the selected `opencode2` CLI are exact-version-gated to `0.0.0-beta-17595`.
+- Server and UI are pinned to `0.0.0-beta-17595`; the selected `opencode2` CLI is not exact-version-gated.
 - The updater advertises and installs only that pinned startup-compatible version; both repository lockfiles resolve the same client, protocol, and schema release.
 - Shared-service shutdown delegates host daemons to native `Service.stop` after CodeNomad proves ownership and excludes live peer leases; WSL uses native authenticated health stop.
 - The UI uses native Forms instead of the removed Question API and `@opencode-ai/client/solid` `createData` for live message, tool, permission, and form reduction. Live projections merge into REST-loaded history instead of replacing it.

@@ -111,7 +111,7 @@ Then open a pull request on GitHub targeting the `dev` branch.
 
 ### OpenCode V2 Boundaries
 
-- Server, UI, and the selected `opencode2` CLI must use the exact `@opencode-ai/client` version pinned by the server package. Startup probes and rejects mismatched CLIs. Review OpenCode release notes, current documentation, and installed declarations on every upgrade; this is not the public `@opencode-ai/sdk` contract.
+- Server and UI must use the same reviewed `@opencode-ai/client` version. The selected `opencode2` CLI is updated independently and validated through service health and API compatibility; startup must not reject it solely for a different version string. Review OpenCode release notes, current documentation, and installed declarations on every upgrade; this is not the public `@opencode-ai/sdk` contract.
 - Upgrade references: [OpenCode releases](https://github.com/anomalyco/opencode/releases), [OpenCode documentation](https://opencode.ai/docs/), and `node_modules/@opencode-ai/client/dist/promise/`.
 - `packages/server/src/workspaces/opencode-service.ts` owns a custom lease-locked discovery, launch, process-proof, and authenticated-stop lifecycle. Production does not call `Service.ensure` or `Service.stop` directly. Workspaces are native OpenCode locations/directories, not separate server processes.
 - V2 always uses `~/.local/share/opencode2/opencode.db`. Never reuse the V1 database for V2.

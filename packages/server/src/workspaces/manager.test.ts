@@ -8,7 +8,6 @@ import {
   WorkspaceLaunchCancelledError,
   WorkspaceManager,
   WorkspaceShutdownError,
-  EXPECTED_OPENCODE_VERSION,
 } from "./manager"
 import type { OpenCodeEnsureOptions } from "./opencode-service"
 import path from "node:path"
@@ -88,24 +87,18 @@ function createHarness(service = new ControlledSharedService(), overrides: Recor
     eventBus,
     logger: pino({ level: "silent" }),
     sharedService: service,
-    probeBinaryVersion: () => ({ valid: true, version: EXPECTED_OPENCODE_VERSION }),
     ...overrides,
   })
   return { manager, service, stopped }
 }
 
 describe("workspace manager shared service lifecycle", () => {
-  it("rejects a mismatched CLI before service startup and passes the exact client version", async () => {
+  it("starts the selected CLI without constraining it to the client package version", async () => {
     const service = new ControlledSharedService()
-    const mismatch = createHarness(service, {
-      probeBinaryVersion: () => ({ valid: true, version: "0.0.0-wrong" }),
-    })
-    await assert.rejects(mismatch.manager.create(process.cwd()), new RegExp(`expected ${EXPECTED_OPENCODE_VERSION}.*0\\.0\\.0-wrong`))
-    assert.equal(service.validationCalls.length, 0)
-
-    const matching = createHarness(service)
-    await matching.manager.create(process.cwd())
-    assert.equal(service.validationCalls[0]?.options?.version, EXPECTED_OPENCODE_VERSION)
+    const { manager } = createHarness(service)
+    await manager.create(process.cwd())
+    assert.equal(service.validationCalls.length, 1)
+    assert.equal(service.validationCalls[0]?.options?.version, undefined)
   })
 
   it("uses bounded WSL mappings for root and real git worktree ownership", async () => {

@@ -164,7 +164,7 @@ dev-docs/             Development documentation
 
 ## Current OpenCode Baseline
 
-- Experimental protocol client: server, UI, and the runtime `opencode2` CLI use the exact version pinned in the server package; every upgrade reviews release notes, current documentation, installed declarations, and proxy/API parity
+- Experimental protocol client: server and UI use the same reviewed version; the runtime `opencode2` CLI is independently updated and checked through service/API compatibility, not an exact version gate
 - Service: one shared endpoint managed by CodeNomad's lease-locked process-proof lifecycle
 - Workspaces: native locations/directories
 - Database: V2 always uses `~/.local/share/opencode2/opencode.db`, separate from V1
