@@ -180,6 +180,7 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
     const formsForFallback = formQueue().filter((form) => shouldRenderFormInFallback(
       form,
       activeSessionId().get(props.instanceId),
+      messageStoreBus.getOrCreate(props.instanceId),
     ))
     const forms = formsForFallback.map((form, index) => ({
       kind: "form" as const,

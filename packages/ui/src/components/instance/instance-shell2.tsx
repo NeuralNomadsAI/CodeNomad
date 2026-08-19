@@ -28,6 +28,7 @@ import PermissionNotificationBanner from "../permission-notification-banner"
 import PermissionApprovalModal from "../permission-approval-modal"
 import { getFormRequestAutoOpenId } from "../form-request-auto-open"
 import { shouldRenderFormInFallback } from "../form-request-tool-target"
+import { messageStoreBus } from "../../stores/message-v2/bus"
 import SessionView from "../session/session-view"
 import MessageSection from "../message-section"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
@@ -149,7 +150,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const form = active?.kind === "form"
       ? getFormQueue(props.instance.id).find((entry) => entry.id === active.id)
       : undefined
-    if (form && !shouldRenderFormInFallback(form, activeSessionIdForInstance())) {
+    if (form && !shouldRenderFormInFallback(form, activeSessionIdForInstance(), messageStoreBus.getOrCreate(props.instance.id))) {
       lastAutoOpenedFormId = form.id
       return
     }

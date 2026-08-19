@@ -57,13 +57,17 @@ export async function evacuateWorktreeSessions(params: {
   if (!project) throw new Error("Unable to resolve the OpenCode project before deleting worktree")
   const sessions = await inventorySessions(params.client, project.id)
   const affected = sessions.filter((session) => normalizeDirectory(session.location.directory) === target)
-  const active = await params.client.session.active()
-  const blockers = affected.filter((session) => Object.prototype.hasOwnProperty.call(active, session.id))
-  if (blockers.length) throw new Error(`Active sessions block worktree deletion: ${blockers.map((session) => session.id).join(", ")}`)
+  const assertInactive = async () => {
+    const active = await params.client.session.active()
+    const blockers = affected.filter((session) => Object.prototype.hasOwnProperty.call(active, session.id))
+    if (blockers.length) throw new Error(`Active sessions block worktree deletion: ${blockers.map((session) => session.id).join(", ")}`)
+  }
+  await assertInactive()
 
   const moved: SessionInfo[] = []
   try {
     for (const session of affected) {
+      await assertInactive()
       const original = { ...session, location: { ...session.location } }
       await params.client.session.move({ sessionID: session.id, directory: params.rootDirectory })
       moved.push(original)
@@ -71,6 +75,7 @@ export async function evacuateWorktreeSessions(params: {
     await waitForInventory(params.client, project.id, (current) => (
       current.every((session) => normalizeDirectory(session.location.directory) !== target)
     ))
+    await assertInactive()
     await params.remove()
   } catch (error) {
     const rollbackErrors: unknown[] = []

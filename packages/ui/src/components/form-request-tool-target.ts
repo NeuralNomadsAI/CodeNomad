@@ -61,11 +61,6 @@ function inferredToolName(form: FormInfo): string | undefined {
   return undefined
 }
 
-function expectsInlineFormTarget(form: FormInfo): boolean {
-  const reference = explicitToolReference(form)
-  return Boolean(reference.messageId && reference.callId) || Boolean(inferredToolName(form))
-}
-
 export function resolveFormToolTarget(form: FormInfo, store: MessageStoreReader): FormToolTarget | null {
   const reference = explicitToolReference(form)
   if (reference.messageId && reference.callId) {
@@ -92,6 +87,7 @@ export function resolveFormToolTarget(form: FormInfo, store: MessageStoreReader)
 export function shouldRenderFormInFallback(
   form: FormInfo,
   activeSessionId: string | null | undefined,
+  store: MessageStoreReader,
 ): boolean {
-  return form.sessionID !== activeSessionId || !expectsInlineFormTarget(form)
+  return form.sessionID !== activeSessionId || !resolveFormToolTarget(form, store)
 }
