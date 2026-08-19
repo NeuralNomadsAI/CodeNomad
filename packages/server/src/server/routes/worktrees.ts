@@ -183,7 +183,6 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
       } catch (error) {
         throw new ProjectSessionError(error instanceof Error ? error.message : "Unable to reserve worktree deletion", 409)
       }
-
       try {
         const client = await deps.workspaceManager.getSharedServiceClient()
         const isTargetRegistered = async () => {

@@ -180,6 +180,7 @@ describe("session request authority", () => {
       failSecondPage = true
       await assert.rejects(loadMessages(instanceId, sessionId, { force: true }), /cursor failed/)
       assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["old-1", "old-2"])
+      assert.equal(messagesLoaded().get(instanceId)?.has(sessionId), true)
     } finally {
       cleanup()
     }
@@ -195,7 +196,7 @@ describe("session request authority", () => {
     ;(client.session as any).list = async (input: any) => {
       requests.push(input)
       if (input.cursor === "root-page-2") return { data: [apiSession("later")], cursor: {} }
-      if (input.parentID === "root" && !input.cursor) return { data: [apiSession("child", "root")], cursor: { next: "child-page-2" } }
+      if (input.parentID === "root" && !input.cursor) return { data: [{ ...apiSession("child", "root"), subpath: "other-worktree" }], cursor: { next: "child-page-2" } }
       if (input.parentID === "child") return { data: [apiSession("grandchild", "child")], cursor: {} }
       if (input.parentID) return { data: [], cursor: {} }
       return { data: [apiSession("root")], cursor: { next: "root-page-2" } }
@@ -206,6 +207,7 @@ describe("session request authority", () => {
       assert.equal(sessions().get(instanceId)?.has("grandchild"), true)
       assert.equal(requests[0].project, "project")
       assert.equal("directory" in requests[0], false)
+      assert.equal(requests.find((request) => request.parentID === "child")?.subpath, undefined)
 
       active = { later: {} }
       await loadMoreSessions(instanceId)
