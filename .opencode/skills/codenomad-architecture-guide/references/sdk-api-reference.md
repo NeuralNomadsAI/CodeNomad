@@ -2,7 +2,7 @@
 
 ## Package
 
-CodeNomad keeps the experimental `@opencode-ai/client` protocol aligned in `packages/server/package.json` and `packages/ui/package.json`. Runtime startup probes the selected CLI and requires that exact server dependency version. This is distinct from the current public `@opencode-ai/sdk` documentation.
+CodeNomad keeps the experimental `@opencode-ai/client` protocol aligned in `packages/server/package.json` and `packages/ui/package.json`. The runtime CLI is independently updated and startup validates service health and API compatibility without requiring that exact dependency version. This is distinct from the current public `@opencode-ai/sdk` documentation.
 
 - Promise client: `import { OpenCode } from "@opencode-ai/client"`
 - Service lifecycle: `import { Service } from "@opencode-ai/client/service"`

@@ -6,7 +6,7 @@ import { afterEach, describe, it } from "node:test"
 import pino from "pino"
 
 import { EventBus } from "../../events/bus"
-import { EXPECTED_OPENCODE_VERSION, WorkspaceManager } from "../manager"
+import { WorkspaceManager } from "../manager"
 import { normalizeWorkspaceIdentityPath, resolveWorkspaceIdentity } from "../workspace-identity"
 
 const temporaryDirectories: string[] = []
@@ -51,7 +51,6 @@ function createManager(rootDir: string) {
     eventBus: new EventBus(logger),
     logger,
     sharedService,
-    probeBinaryVersion: () => ({ valid: true, version: EXPECTED_OPENCODE_VERSION }),
   } as unknown as ConstructorParameters<typeof WorkspaceManager>[0])
   return manager
 }

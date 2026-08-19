@@ -2,7 +2,7 @@
 
 ## Contract
 
-- Keep server, UI, and the selected runtime CLI on the exact experimental `@opencode-ai/client` version pinned by the server package. Review OpenCode release notes, current documentation, installed declarations, and proxy/API parity on every upgrade.
+- Keep server and UI on the same reviewed experimental `@opencode-ai/client` release. Update the runtime CLI independently and validate service health and API compatibility instead of enforcing the client's exact version string. Review OpenCode release notes, current documentation, installed declarations, and proxy/API parity on every upgrade.
 - The package root is the generated zero-Effect Promise client. Use installed declarations, not current public `@opencode-ai/sdk` examples.
 - Native routes are `/api/*`; CodeNomad exposes them only through the authorized `/workspaces/:id/instance` proxy.
 - That proxy is an explicit method/path allowlist. Future upstream APIs are not exposed automatically.
