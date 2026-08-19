@@ -95,4 +95,41 @@ describe("OpenCode data projection", () => {
       destroyOpenCodeData(instanceId)
     }
   })
+
+  it("replaces the optimistic prompt part with its native projection", () => {
+    const instanceId = "opencode-data-optimistic-prompt"
+    const sessionId = "session"
+    const messageId = "message"
+    const store = messageStoreBus.getOrCreate(instanceId)
+    try {
+      store.upsertMessage({
+        id: messageId,
+        sessionId,
+        role: "user",
+        status: "sending",
+        isEphemeral: true,
+        parts: [{ id: "optimistic-text", type: "text", text: "ping", messageID: messageId, sessionID: sessionId } as any],
+      })
+      store.markSendPending(messageId)
+      const data = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "inbox-event",
+        type: "session.inbox.enqueued",
+        created: 1,
+        durable: { aggregateID: sessionId, seq: 1, version: 1 },
+        data: {
+          sessionID: sessionId,
+          inboxID: messageId,
+          item: { type: "user", payload: { text: "ping" }, delivery: "queue" },
+        },
+      } as any)
+      projectOpenCodeMessages(instanceId, sessionId, data)
+
+      const message = store.getMessage(messageId)
+      assert.deepEqual(message?.partIds, [`${messageId}-text`])
+      assert.equal((message?.parts[`${messageId}-text`]?.data as any)?.text, "ping")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
 })
