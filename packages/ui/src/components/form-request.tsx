@@ -143,7 +143,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
                         class="form-request-input"
                         type={getFormStringInputType(stringField.format)}
                         value={formatFormStringInputValue(stringField.format, String(values()[field.key] ?? ""))}
-                        required={stringField.required}
+                        required={stringField.required && !customString()}
                         minLength={stringField.minLength}
                         maxLength={stringField.maxLength}
                         pattern={stringField.pattern}

@@ -155,7 +155,7 @@ export default function MessageSection(props: MessageSectionProps) {
     if (!messageId) return -1
     return messageIndexById().get(messageId) ?? -1
   })
- 
+
   const timelineSegmentCache = new Map<string, { revision: number; status: string; locale: string; signature: string; segments: TimelineSegment[] }>()
   const timelineSegments = createMemo(() => {
     sessionRevision()
