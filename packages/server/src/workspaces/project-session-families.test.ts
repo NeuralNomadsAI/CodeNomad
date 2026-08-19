@@ -158,6 +158,36 @@ describe("project session families", () => {
     assert.equal(harness.sessions.get("root")?.location.directory, WORKTREE)
   })
 
+  it("rolls back from session state when inventory visibility is stale", async () => {
+    const harness = clientHarness([session("root"), session("child", "root")], {
+      failMove: (id, call) => id === "child" && call === 2,
+    })
+    const stale = [session("root"), session("child", "root")]
+    ;(harness.client.session.list as any) = async () => ({ data: structuredClone(stale), cursor: {} })
+    await assert.rejects(() => moveProjectSessionFamily({
+      client: harness.client,
+      projectDirectory: ROOT,
+      sessionId: "root",
+      targetDirectory: WORKTREE,
+    }), /move failed/)
+    assert.equal(harness.sessions.get("root")?.location.directory, ROOT)
+  })
+
+  it("treats WSL service directories as case-sensitive POSIX paths", async () => {
+    const harness = clientHarness([session("upper", undefined, "/home/dev/Foo")])
+    let removed = false
+    await removeProjectWorktree({
+      client: harness.client,
+      projectDirectory: ROOT,
+      targetDirectory: "/home/dev/foo",
+      rootDirectory: ROOT,
+      remove: async () => { removed = true },
+      isTargetRegistered: async () => true,
+    })
+    assert.equal(removed, true)
+    assert.deepEqual(harness.moveCalls, [])
+  })
+
   it("evacuates a complete family before removing its worktree", async () => {
     const harness = clientHarness([session("root", undefined, WORKTREE), session("child", "root", WORKTREE)])
     let removed = false

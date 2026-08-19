@@ -196,7 +196,7 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
         const targetHostDirectory = match.registeredDirectory ?? match.directory
         const rootHostDirectory = worktrees.find((worktree) => worktree.kind === "root")!.directory
         const [targetDirectory, rootDirectory] = await Promise.all([
-          deps.workspaceManager.getServiceDirectoryForPath(workspace.id, targetHostDirectory),
+          deps.workspaceManager.getServiceDirectoryForPath(workspace.id, match.directory),
           deps.workspaceManager.getServiceDirectoryForPath(workspace.id, rootHostDirectory),
         ])
         if (!projectDirectory || !targetDirectory || !rootDirectory) {

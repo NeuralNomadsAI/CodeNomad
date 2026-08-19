@@ -260,29 +260,21 @@ async function refreshChangedSessionIds(
   candidates: string[],
   transactionLocation: LocationRef,
 ): Promise<string[]> {
-  try {
-    const refreshed = new Map((await listCompleteProjectSessions(context.client, context.project.id)).map((session) => [session.id, session]))
-    return candidates.filter((id) => {
-      const session = refreshed.get(id)
-      return Boolean(session && sameLocation(session.location, transactionLocation))
-    })
-  } catch {
-    const changed: string[] = []
-    for (const id of candidates) {
-      try {
-        const session = await context.client.session.get({ sessionID: id })
-        if (session.id !== id || session.projectID !== context.project.id) {
-          throw new ProjectSessionError(`OpenCode returned the wrong session while determining rollback state: ${id}`, 502)
-        }
-        if (sameLocation(session.location, transactionLocation)) {
-          changed.push(id)
-        }
-      } catch (error) {
-        throw new ProjectSessionError(`Unable to determine rollback state for ${id}: ${errorMessage(error)}`, 500)
+  const changed: string[] = []
+  for (const id of candidates) {
+    try {
+      const session = await context.client.session.get({ sessionID: id })
+      if (session.id !== id || session.projectID !== context.project.id) {
+        throw new ProjectSessionError(`OpenCode returned the wrong session while determining rollback state: ${id}`, 502)
       }
+      if (sameLocation(session.location, transactionLocation)) {
+        changed.push(id)
+      }
+    } catch (error) {
+      throw new ProjectSessionError(`Unable to determine rollback state for ${id}: ${errorMessage(error)}`, 500)
     }
-    return changed
   }
+  return changed
 }
 
 async function rollback(
@@ -355,14 +347,20 @@ function ancestryDepth(session: SessionInfo, byId: Map<string, SessionInfo>): nu
 }
 
 function sameDirectory(left: string, right: string): boolean {
-  const leftPath = path.resolve(left)
-  const rightPath = path.resolve(right)
-  return process.platform === "win32" ? leftPath.toLowerCase() === rightPath.toLowerCase() : leftPath === rightPath
+  if (isWindowsPath(left) !== isWindowsPath(right)) return false
+  if (!isWindowsPath(left)) return path.posix.resolve(left) === path.posix.resolve(right)
+  return path.win32.resolve(left).toLowerCase() === path.win32.resolve(right).toLowerCase()
 }
 
 function directoryContains(parent: string, child: string): boolean {
-  const relative = path.relative(parent, child)
-  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  if (isWindowsPath(parent) !== isWindowsPath(child)) return false
+  const paths = isWindowsPath(parent) ? path.win32 : path.posix
+  const relative = paths.relative(parent, child)
+  return relative === "" || (relative !== ".." && !relative.startsWith(`..${paths.sep}`) && !paths.isAbsolute(relative))
+}
+
+function isWindowsPath(value: string): boolean {
+  return /^[a-z]:[\\/]/i.test(value) || value.startsWith("\\\\")
 }
 
 function asProjectError(error: unknown, fallback: string): ProjectSessionError {

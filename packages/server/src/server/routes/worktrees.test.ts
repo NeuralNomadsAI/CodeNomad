@@ -15,11 +15,16 @@ it("reserves the physical worktree and rejects a HEAD change immediately before 
   const temp = mkdtempSync(path.join(tmpdir(), "codenomad-worktree-route-"))
   const repo = path.join(temp, "repo")
   const linked = path.join(temp, "feature-worktree")
+  const workspacePath = path.join(repo, "apps", "web")
+  const linkedWorkspacePath = path.join(linked, "apps", "web")
   const app = Fastify({ logger: false })
 
   try {
     mkdirSync(repo, { recursive: true })
     execFileSync("git", ["init", "-b", "main", repo], { stdio: "ignore" })
+    mkdirSync(workspacePath, { recursive: true })
+    writeFileSync(path.join(workspacePath, "README.md"), "nested workspace\n")
+    execFileSync("git", ["-C", repo, "add", "."], { stdio: "ignore" })
     execFileSync("git", ["-C", repo, "-c", "user.name=CodeNomad", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "init"], { stdio: "ignore" })
     execFileSync("git", ["-C", repo, "worktree", "add", "-b", "feature", linked], { stdio: "ignore" })
 
@@ -29,15 +34,15 @@ it("reserves the physical worktree and rejects a HEAD change immediately before 
       cost: 0,
       tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
       time: { created: 1, updated: 1 },
-      location: { directory: linked, workspaceID: "native-feature" },
+      location: { directory: linkedWorkspacePath, workspaceID: "native-feature" },
     }
     let lists = 0
     const client = {
       location: {
         get: async ({ location }: { location?: { directory?: string } }) => ({
-          directory: location?.directory ?? repo,
-          workspaceID: path.resolve(location?.directory ?? repo) === path.resolve(linked) ? "native-feature" : undefined,
-          project: { id: "project", directory: repo, canonical: repo },
+          directory: location?.directory ?? workspacePath,
+          workspaceID: path.resolve(location?.directory ?? workspacePath) === path.resolve(linkedWorkspacePath) ? "native-feature" : undefined,
+          project: { id: "project", directory: workspacePath, canonical: workspacePath },
         }),
       },
       session: {
@@ -59,7 +64,7 @@ it("reserves the physical worktree and rejects a HEAD change immediately before 
     const manager = {
       get: () => ({
         id: "workspace",
-        path: repo,
+        path: workspacePath,
         status: "ready",
         proxyPath: "/workspaces/workspace/instance",
         binaryId: "opencode",
@@ -72,8 +77,11 @@ it("reserves the physical worktree and rejects a HEAD change immediately before 
         return () => { released = true }
       },
       getSharedServiceClient: async () => client,
-      getServiceDirectory: () => repo,
-      getServiceDirectoryForPath: async (_id: string, directory: string) => directory,
+      getServiceDirectory: () => workspacePath,
+      getServiceDirectoryForPath: async (_id: string, directory: string) => {
+        assert.notEqual(path.resolve(directory), path.resolve(linked), "OpenCode must receive the mirrored workspace path")
+        return directory
+      },
     } as unknown as WorkspaceManager
     registerWorktreeRoutes(app, { workspaceManager: manager })
 
@@ -82,7 +90,7 @@ it("reserves the physical worktree and rejects a HEAD change immediately before 
     assert.equal(response.statusCode, 409)
     assert.equal(path.resolve(reserved), path.resolve(linked))
     assert.equal(released, true)
-    assert.equal(path.resolve(current.location.directory), path.resolve(repo))
+    assert.equal(path.resolve(current.location.directory), path.resolve(workspacePath))
     const inventory = execFileSync("git", ["-C", repo, "worktree", "list", "--porcelain"], { encoding: "utf8" })
     assert.ok(inventory.replace(/\\/g, "/").includes(linked.replace(/\\/g, "/")))
   } finally {
