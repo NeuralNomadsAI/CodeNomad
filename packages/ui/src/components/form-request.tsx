@@ -156,7 +156,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
                       <select
                         id={`form-${props.form.id}-${field.key}`}
                         class="form-request-input"
-                        required={stringField.required}
+                        required={stringField.required && !customString()}
                         value={String(values()[field.key] ?? "")}
                         aria-describedby={field.description ? descriptionId : undefined}
                         onChange={(event) => update(field.key, event.currentTarget.value)}
