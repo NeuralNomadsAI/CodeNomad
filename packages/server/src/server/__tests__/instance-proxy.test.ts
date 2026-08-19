@@ -9,6 +9,8 @@ import { redactSecrets, registerInstanceProxyRoutes, type InstanceProxyWorkspace
 const apps: FastifyInstance[] = []
 afterEach(async () => Promise.all(apps.splice(0).map((app) => app.close())))
 
+const cursor = (value: object) => Buffer.from(JSON.stringify(value)).toString("base64url")
+
 function logger(): Logger {
   const value = { debug() {}, trace() {}, error() {}, isLevelEnabled() { return false } }
   return value as unknown as Logger
@@ -126,6 +128,50 @@ describe("instance proxy location enforcement", () => {
     assert.doesNotMatch(bodyResponse.body, /internal-secret/)
   })
 
+  it("authorizes project-only session lists without adding a directory", async () => {
+    const { app } = await harness()
+    const response = await app.inject({
+      method: "GET",
+      url: "/workspaces/workspace/instance/api/session?project=owned-project",
+    })
+    assert.equal(response.statusCode, 200)
+    assert.equal(JSON.parse(response.body).url, "/api/session?project=owned-project")
+
+    const foreign = await app.inject({
+      method: "GET",
+      url: "/workspaces/workspace/instance/api/session?project=foreign-project",
+    })
+    assert.equal(foreign.statusCode, 403)
+  })
+
+  it("uses the cursor scope and rejects malformed or forged session-list cursors", async () => {
+    const { app, requestCount } = await harness()
+    const ownedCursor = cursor({ directory: "/repo/worktree", anchor: { id: "session-1", time: 1, direction: "next" } })
+    const response = await app.inject({
+      method: "GET",
+      url: `/workspaces/workspace/instance/api/session?cursor=${ownedCursor}&directory=%2Fother`,
+    })
+    assert.equal(response.statusCode, 200)
+    const upstreamUrl = JSON.parse(response.body).url as string
+    assert.match(upstreamUrl, new RegExp(`cursor=${ownedCursor}`))
+    assert.doesNotMatch(upstreamUrl, /directory=/)
+
+    const forgedCursor = cursor({ directory: "/other", anchor: { id: "session-1", time: 1, direction: "next" } })
+    assert.equal((await app.inject({
+      method: "GET",
+      url: `/workspaces/workspace/instance/api/session?cursor=${forgedCursor}&directory=%2Frepo`,
+    })).statusCode, 403)
+    assert.equal((await app.inject({
+      method: "GET",
+      url: "/workspaces/workspace/instance/api/session?cursor=not-json",
+    })).statusCode, 400)
+    assert.equal((await app.inject({
+      method: "GET",
+      url: `/workspaces/workspace/instance/api/session?cursor=${cursor({ directory: "/repo" })}`,
+    })).statusCode, 400)
+    assert.equal(requestCount(), 1)
+  })
+
   it("filters PTYs and rejects foreign PTY access", async () => {
     const { app, requestCount } = await harness("/repo/worktree", {}, {}, "/repo", "/repo", {}, {
       owned: "/repo/worktree",
@@ -184,6 +230,27 @@ describe("instance proxy location enforcement", () => {
     assert.equal(response.statusCode, 403)
     assert.equal(requestCount(), 0)
     assert.doesNotMatch(response.body, /internal-secret/)
+  })
+
+  it("permits only native global Forms actions without session hydration", async () => {
+    const { app, sessionGets, requestCount } = await harness("/other")
+    for (const action of ["reply", "cancel"]) {
+      const response = await app.inject({
+        method: "POST",
+        url: `/workspaces/workspace/instance/api/session/global/form/form-1/${action}`,
+        payload: action === "reply" ? { answers: {} } : {},
+      })
+      assert.equal(response.statusCode, 200)
+    }
+    assert.deepEqual(sessionGets, [])
+    assert.equal(requestCount(), 2)
+
+    assert.equal((await app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/session/global/prompt",
+      payload: { text: "no" },
+    })).statusCode, 403)
+    assert.deepEqual(sessionGets, ["global"])
   })
 
   it("rejects deletion through a double-encoded alias of a foreign session", async () => {

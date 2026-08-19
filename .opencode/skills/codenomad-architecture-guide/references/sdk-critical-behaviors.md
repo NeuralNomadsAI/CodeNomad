@@ -16,7 +16,7 @@
 
 ## Shared Lifecycle
 
-- There is one shared service, client and upstream event subscription. Production uses CodeNomad's custom lease-locked launcher and authenticated stop, not direct `Service.ensure`/`Service.stop`.
+- There is one shared service, client and upstream event subscription. CodeNomad keeps lease and process-identity proof around lifecycle operations, delegates proven host shutdown to native `Service.stop`, and uses native authenticated health stop for WSL.
 - A workspace stop removes location ownership; it does not stop a dedicated OpenCode process.
 - Transferable proof records registration/credentials, daemon PID and process-start identity, host/WSL namespace, and launch signature. Shutdown stops only after no live peer remains and the proof still identifies the exact daemon.
 - V2 forces `OPENCODE_DB` to `~/.local/share/opencode2/opencode.db`; V1/V2 schemas must not share a database.

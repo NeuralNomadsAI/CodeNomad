@@ -308,7 +308,7 @@ export class OpenCodeSharedService {
       const stopped = await this.withDeadline(
         this.dependencies.requestStop
           ? this.dependencies.requestStop(owned.info, owned.endpoint, remaining)
-          : this.requestStop(owned),
+          : this.requestStop(owned, remaining),
         remaining,
         "OpenCode service stop",
       )
@@ -1191,7 +1191,18 @@ export class OpenCodeSharedService {
     }
   }
 
-  private requestStop = async (owned: OwnedService): Promise<boolean> => {
+  private requestStop = async (owned: OwnedService, timeoutMs: number): Promise<boolean> => {
+    if (owned.processIdentity?.namespace.kind === "wsl") {
+      if (!owned.info.id) return false
+      const client = this.dependencies.makeClient({
+        baseUrl: owned.endpoint.url,
+        headers: this.dependencies.headers(owned.endpoint),
+      })
+      return (await client.health.stop(
+        { instanceID: owned.info.id },
+        { signal: AbortSignal.timeout(timeoutMs) },
+      )).accepted
+    }
     await (this.dependencies.stop ?? Service.stop)(owned.stopOptions)
     return true
   }

@@ -17,7 +17,7 @@ The migration removes the V1 compatibility layer rather than maintaining both in
 - Use browser `EventSource` as the single desktop and web event transport; the duplicate Rust-native Tauri transport was removed.
 - Treat the native event stream as volatile. Reconnect has no replay guarantee, so clients must reconcile authoritative session and pending-request state after reconnect; file/config consumers must also refetch rather than assume every `filesystem.changed` or `config.updated` event was observed.
 - Route events from owned Git worktrees to their corresponding logical CodeNomad workspace.
-- Query native sessions for every known root and worktree directory instead of relying on an unsupported project-scope parameter.
+- Query native sessions by validated project scope, then traverse every descendant depth with native cursors.
 - Resolve locationless session events through native session ownership so prompt status and output reach the correct logical workspace.
 
 ## Removed Legacy Components
@@ -46,7 +46,7 @@ The migration removes the V1 compatibility layer rather than maintaining both in
 - Expose only an explicit method/path allowlist through the OpenCode proxy. New upstream APIs require an intentional proxy and ownership review; future OpenCode functionality is not automatic.
 - Share a consistent service registration location between Windows and WSL.
 - Probe the selected `opencode2` CLI and discover/ensure only the exact version pinned by `packages/server/package.json`. Each dependency upgrade must review OpenCode release notes, current documentation, installed client declarations, and proxy/API parity.
-- Wrap native `Service.ensure`/`Service.stop` with CodeNomad's ownership checks. A lifecycle lease records the registration, authenticated endpoint, daemon PID plus process-start identity and host/WSL namespace, and a hash of the launch command/environment. Proof can transfer between live CodeNomad processes through peer leases; the final process calls `Service.stop` only after proving there are no live peers and every recorded identity still matches.
+- Wrap native `Service.ensure`/`Service.stop` with CodeNomad's ownership checks. A lifecycle lease records the registration, authenticated endpoint, daemon PID plus process-start identity and host/WSL namespace, and a hash of the launch command/environment. Proof can transfer between live CodeNomad processes through peer leases; the final host process calls `Service.stop` only after proving there are no live peers and every recorded identity still matches. WSL uses the authenticated native health stop endpoint and never allows the client's Windows `process.kill` fallback to target a Linux PID.
 - Queue location eviction when its final logical owner is removed, then perform it only during proven final shared-service shutdown so another CodeNomad process cannot lose active upstream state.
 - Force the V2 service database to `~/.local/share/opencode2/opencode.db`. V1 and V2 must never point at the same database because their schemas are incompatible.
 - Isolate V2 restore state under `~/.codenomad/client-state/v2` and copy V1 state non-destructively on first launch, preserving downgrade history.
@@ -54,13 +54,15 @@ The migration removes the V1 compatibility layer rather than maintaining both in
 ## Current Status
 
 - Server, UI, and the selected `opencode2` CLI are exact-version-gated to `0.0.0-beta-17595`.
-- Shared-service shutdown delegates to native `Service.stop` after CodeNomad proves ownership and excludes live peer leases.
-- The UI uses native Forms instead of the removed Question API and `@opencode-ai/client/solid` `createData` for live message, tool, permission, and form reduction.
-- Session inventory uses native project/subpath/parent/order cursor pagination; internal OpenCode stream generations trigger authoritative UI reconciliation even when browser SSE remains connected.
-- A worktree is not deleted if session evacuation fails, and one canonical folder maps to one logical workspace instead of creating non-isolated duplicates.
+- The updater advertises and installs only that pinned startup-compatible version; both repository lockfiles resolve the same client, protocol, and schema release.
+- Shared-service shutdown delegates host daemons to native `Service.stop` after CodeNomad proves ownership and excludes live peer leases; WSL uses native authenticated health stop.
+- The UI uses native Forms instead of the removed Question API and `@opencode-ai/client/solid` `createData` for live message, tool, permission, and form reduction. Live projections merge into REST-loaded history instead of replacing it.
+- Session inventory uses native project/subpath/parent/order cursor pagination across all descendant depths; later pages receive native active status, and internal OpenCode stream generations trigger authoritative UI reconciliation even when browser SSE remains connected.
+- The proxy validates the decoded scope of native session cursors before forwarding them and supports native global Form reply/cancel routes without treating `global` as a session ID.
+- Before deleting a worktree, the server inventories the complete native project, evacuates affected session families with verification and rollback, and fails closed for direct API callers. One canonical folder maps to one logical workspace instead of creating non-isolated duplicates.
 - The current working tree retains the isolated V2 database, deferred location eviction, and proxy path/location ownership validation.
 - Current installed client declarations provide native PTY list/get/create/title-or-size update/remove and lifecycle events, but no output/read/stream API and no separate stop API. Removing a running PTY is therefore the only native stop action, and PTY output is not displayed.
-- Local validation passes server/UI/Electron typechecks, the CI UI partitions, Electron native tests, server tests (with three platform skips), UI/server/Electron builds, Tauri `cargo check --locked`, and `git diff --check`.
+- Local validation passes server/UI/Electron typechecks, the CI UI partitions, Electron native tests, server tests (with three platform skips), standalone server lockfile dry-run installation, UI/server/Electron builds, Tauri `cargo check --locked`, and `git diff --check`.
 
 ## Remaining Work
 

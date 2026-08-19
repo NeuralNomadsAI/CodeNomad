@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import { messageStoreBus } from "./message-v2/bus.ts"
+import { seedSessionMessagesV2 } from "./message-v2/bridge.ts"
+import { normalizeSessionMessage } from "./message-v2/normalizers.ts"
 import { applyOpenCodeDataEvent, destroyOpenCodeData, projectOpenCodeMessages } from "./opencode-data.ts"
 
 describe("OpenCode data projection", () => {
@@ -34,6 +36,63 @@ describe("OpenCode data projection", () => {
     } finally {
       destroyOpenCodeData(instanceId)
       if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+
+  it("merges the first live event into REST-loaded history", () => {
+    const instanceId = "opencode-data-rest-history"
+    const sessionId = "session"
+    const infos = new Map()
+    const history = Array.from({ length: 100 }, (_, index) => {
+      const item = {
+        id: `history-${index}`,
+        type: "assistant",
+        agent: "build",
+        model: { providerID: "provider", id: "model" },
+        time: { created: index + 1, completed: index + 1 },
+        content: [],
+      } as any
+      const normalized = normalizeSessionMessage(sessionId, item)
+      infos.set(normalized.info.id, normalized.info)
+      return normalized.message
+    })
+
+    try {
+      seedSessionMessagesV2(instanceId, { id: sessionId }, history, infos)
+      const data = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "live", type: "session.step.started", created: 101,
+        data: {
+          sessionID: sessionId,
+          assistantMessageID: "live",
+          agent: "build",
+          model: { providerID: "provider", id: "model" },
+        },
+      } as any)
+      projectOpenCodeMessages(instanceId, sessionId, data)
+
+      const ids = messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId)
+      assert.equal(ids.length, 101)
+      assert.equal(ids.includes("history-0"), true)
+      assert.equal(ids.includes("live"), true)
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+
+  it("drops stale live state before a reconnect generation", () => {
+    const instanceId = "opencode-data-reconnect"
+    const event = (id: string) => ({
+      id, type: "session.step.started", created: 1,
+      data: { sessionID: "session", assistantMessageID: id, agent: "build", model: { providerID: "provider", id: "model" } },
+    } as any)
+    try {
+      applyOpenCodeDataEvent(instanceId, "/work", event("old"))
+      destroyOpenCodeData(instanceId)
+      const data = applyOpenCodeDataEvent(instanceId, "/work", event("new"))
+      assert.deepEqual(data.session.message.list("session").map((message) => message.id), ["new"])
+    } finally {
+      destroyOpenCodeData(instanceId)
     }
   })
 })

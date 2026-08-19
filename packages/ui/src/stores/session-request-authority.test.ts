@@ -5,7 +5,8 @@ import { sdkManager } from "../lib/sdk-manager.ts"
 import type { Session } from "../types/session.ts"
 import { addInstance, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
-import { fetchSessions, loadMessages, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
+import { fetchSessions, loadMessages, loadMoreSessions, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
+import { setInstanceMetadata } from "./instance-metadata.ts"
 import {
   clearInstanceDeletedSessionAuthority,
   getSessionSearchResultIds,
@@ -179,6 +180,37 @@ describe("session request authority", () => {
       failSecondPage = true
       await assert.rejects(loadMessages(instanceId, sessionId, { force: true }), /cursor failed/)
       assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["old-1", "old-2"])
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("loads every descendant depth by project and applies active state to later pages", async () => {
+    const instanceId = "project-descendants"
+    const { client, cleanup } = setup(instanceId)
+    const requests: any[] = []
+    let active: Record<string, unknown> = {}
+    setInstanceMetadata(instanceId, { project: { id: "project", directory: "/work", canonical: "/work" } as any })
+    ;(client.session as any).active = async () => active
+    ;(client.session as any).list = async (input: any) => {
+      requests.push(input)
+      if (input.cursor === "root-page-2") return { data: [apiSession("later")], cursor: {} }
+      if (input.parentID === "root" && !input.cursor) return { data: [apiSession("child", "root")], cursor: { next: "child-page-2" } }
+      if (input.parentID === "child") return { data: [apiSession("grandchild", "child")], cursor: {} }
+      if (input.parentID) return { data: [], cursor: {} }
+      return { data: [apiSession("root")], cursor: { next: "root-page-2" } }
+    }
+
+    try {
+      await fetchSessions(instanceId)
+      assert.equal(sessions().get(instanceId)?.has("grandchild"), true)
+      assert.equal(requests[0].project, "project")
+      assert.equal("directory" in requests[0], false)
+
+      active = { later: {} }
+      await loadMoreSessions(instanceId)
+      assert.equal(sessions().get(instanceId)?.get("later")?.status, "working")
+      assert.equal(sessions().get(instanceId)?.get("later")?.runtimeStatusKnown, true)
     } finally {
       cleanup()
     }

@@ -2,7 +2,7 @@
 
 ## Shared Service
 
-`WorkspaceManager` owns one `OpenCodeSharedService`. Production discovers an existing endpoint or launches one with CodeNomad's own detached launcher; it does not call direct `Service.ensure`/`Service.stop`. The wrapper creates one server-side Promise client, performs health checks, and invalidates failed connections.
+`WorkspaceManager` owns one `OpenCodeSharedService`. Production discovers an existing endpoint or launches one with CodeNomad's detached launcher. The wrapper creates one server-side Promise client, performs health checks, invalidates failed connections, and calls native `Service.stop` for a proven host daemon. WSL uses native authenticated health stop so no Windows PID fallback can run.
 
 Lifecycle leases serialize processes and carry transferable proof: registration and endpoint credentials, daemon PID/process-start identity, host/WSL namespace, and launch signature. A peer can inherit proof, but only the final verified process may send the authenticated stop and wait for that daemon to exit.
 

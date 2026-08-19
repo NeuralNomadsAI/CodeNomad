@@ -94,7 +94,7 @@ dev-docs/             Development documentation
 
 ### 2. Shared Service Management
 
-- CodeNomad server discovers or launches one service through its hardened lifecycle; production does not call `Service.ensure`/`Service.stop` directly
+- CodeNomad server discovers or launches one service through its hardened lifecycle; proven host shutdown delegates to native `Service.stop`, while WSL uses native authenticated health stop
 - Workspace folders become validated native locations
 - UI traffic stays behind the CodeNomad proxy
 - Shutdown transfers proof to a live peer or stops only the exact proven daemon when no peer remains

@@ -1,14 +1,16 @@
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { it } from "node:test"
+import { describe, it } from "node:test"
 import type { OpenCodeClient, SessionInfo } from "@opencode-ai/client"
 import Fastify from "fastify"
+import type { WorkspaceDescriptor } from "../../api-types"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import { registerWorktreeRoutes } from "./worktrees"
 
+describe("worktree routes", () => {
 it("reserves the physical worktree and rejects a HEAD change immediately before deletion", async () => {
   const temp = mkdtempSync(path.join(tmpdir(), "codenomad-worktree-route-"))
   const repo = path.join(temp, "repo")
@@ -85,4 +87,52 @@ it("reserves the physical worktree and rejects a HEAD change immediately before 
     await app.close()
     rmSync(temp, { recursive: true, force: true })
   }
+})
+
+it("fails a direct delete call closed when session evacuation fails", async () => {
+    const temp = mkdtempSync(path.join(tmpdir(), "codenomad-delete-worktree-"))
+    const target = path.join(temp, "doomed")
+    const app = Fastify({ logger: false })
+    try {
+      execFileSync("git", ["init", "--initial-branch=main", temp])
+      writeFileSync(path.join(temp, "README.md"), "test\n")
+      execFileSync("git", ["-C", temp, "add", "README.md"])
+      execFileSync("git", ["-C", temp, "-c", "user.name=CodeNomad Test", "-c", "user.email=test@codenomad.local", "commit", "-m", "test"])
+      execFileSync("git", ["-C", temp, "worktree", "add", "-b", "doomed", target])
+
+      const workspace = { id: "workspace", path: temp, status: "ready" } as WorkspaceDescriptor
+      const nativeSession = { id: "unloaded", projectID: "project", location: { directory: target }, cost: 0, tokens: {}, time: { created: 1, updated: 1 } } as SessionInfo
+      const client = {
+        location: {
+          get: async ({ location }: { location?: { directory?: string } }) => ({
+            directory: location?.directory ?? temp,
+            project: { id: "project", canonical: temp, directory: temp },
+          }),
+        },
+        session: {
+          list: async () => ({ data: [nativeSession], cursor: {} }),
+          active: async () => ({}),
+          move: async (input: { directory: string }) => {
+            if (input.directory === temp) throw new Error("native move failed")
+          },
+          get: async () => nativeSession,
+        },
+      } as unknown as OpenCodeClient
+      const manager = {
+        get: () => workspace,
+        getSharedServiceClient: async () => client,
+        reserveWorktreeDeletion: async () => () => undefined,
+      } as unknown as WorkspaceManager
+      registerWorktreeRoutes(app, { workspaceManager: manager })
+
+      const response = await app.inject({ method: "DELETE", url: "/api/workspaces/workspace/worktrees/doomed" })
+
+      assert.equal(response.statusCode, 502)
+      assert.match(response.json().error, /native move failed/)
+      assert.match(execFileSync("git", ["-C", temp, "worktree", "list", "--porcelain"], { encoding: "utf8" }), /doomed/)
+    } finally {
+      await app.close()
+      rmSync(temp, { recursive: true, force: true })
+    }
+})
 })
