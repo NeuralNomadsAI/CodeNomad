@@ -255,9 +255,11 @@ async function sendMessage(
       if (session.model.providerId && session.model.modelId) {
         await client.session.switchModel({ sessionID: sessionId, model: getNativeModel(instanceId, session.model) })
       }
-      await client.session.prompt({ sessionID: sessionId, ...requestBody })
+      const result = await client.session.prompt({ sessionID: sessionId, ...requestBody })
+      const confirmedId = result?.id || messageId
+      if (confirmedId !== messageId) store.replaceMessageId({ oldId: messageId, newId: confirmedId })
       admission.complete()
-      store.acceptSend(messageId)
+      store.acceptSend(confirmedId)
     } catch (error) {
       admission.rollback()
       throw error

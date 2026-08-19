@@ -133,8 +133,10 @@ describe("optimistic send lifecycle", () => {
       await sendMessage(instanceId, sessionId, "hello")
       const store = messageStoreBus.getOrCreate(instanceId)
       assert.equal(typeof request.id, "string")
-      assert.equal(store.getMessage(request.id)?.status, "sent")
-      assert.equal(store.getMessage(request.id)?.isEphemeral, false)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["pending"])
+      assert.equal(store.getMessage(request.id), undefined)
+      assert.equal(store.getMessage("pending")?.status, "sent")
+      assert.equal(store.getMessage("pending")?.isEphemeral, false)
     } finally {
       cleanup()
     }
@@ -181,10 +183,10 @@ describe("optimistic send lifecycle", () => {
         durable: { aggregateID: sessionId, seq: 1, version: 1 },
         data: { sessionID: sessionId, error: { type: "generation", message: "generation failed" } },
       } as any)
-      assert.equal(store.getMessage(request.id)?.status, "error")
+      assert.equal(store.getMessage("pending")?.status, "error")
 
       store.reconcileEmptyAuthoritativeSnapshot(sessionId)
-      assert.equal(store.getMessage(request.id), undefined)
+      assert.equal(store.getMessage("pending"), undefined)
     } finally {
       cleanup()
     }
@@ -214,10 +216,10 @@ describe("optimistic send lifecycle", () => {
         data: { sessionID: sessionId },
       } as any)
 
-      assert.equal(store.getMessage(request.id)?.status, "sent")
+      assert.equal(store.getMessage("pending")?.status, "sent")
       await new Promise<void>((resolve) => setImmediate(resolve))
       assert.equal(refreshCalls, 0)
-      assert.notEqual(store.getMessage(request.id)?.status, "error")
+      assert.notEqual(store.getMessage("pending")?.status, "error")
     } finally {
       cleanup()
     }
@@ -243,7 +245,7 @@ describe("optimistic send lifecycle", () => {
         data: { sessionID: sessionId, reason: "cancelled" },
       } as any)
 
-      assert.equal(store.getMessage(request.id)?.status, "error")
+      assert.equal(store.getMessage("pending")?.status, "error")
     } finally {
       cleanup()
     }

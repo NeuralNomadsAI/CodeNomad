@@ -1218,11 +1218,9 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     }
 
     setState("messages", options.newId, cloned)
-    setState("messages", (prev) => {
-      const next = { ...prev }
-      delete next[options.oldId]
-      return next
-    })
+    setState("messages", produce((draft) => {
+      delete draft[options.oldId]
+    }))
 
     const affectedSessions = new Set<string>()
 
