@@ -8,7 +8,7 @@ Do not add `@opencode-ai/sdk`, old `{ data, error }` SDK wrappers, `createOpenco
 
 ## Server Integration
 
-`OpenCodeSharedService` is the sole service adapter. Production uses `Service.discover` and `Service.headers`, then a custom launcher and authenticated stop request; direct `Service.ensure` and `Service.stop` are not the production lifecycle.
+`OpenCodeSharedService` is the sole service adapter. Production uses `Service.discover` and `Service.headers`, then a custom launcher with lease and process-identity proof. Proven host shutdown delegates to native `Service.stop`; WSL uses native authenticated health stop to avoid the client's Windows PID fallback.
 
 Startup and shutdown are serialized by filesystem leases. Each CodeNomad process proves its own PID/start identity and launch signature; service proof contains the registration contents, endpoint credentials, daemon PID/start identity, and host/WSL namespace. On exit, an owner transfers that proof to an elected live peer and releases its lease; a replacement can also inherit matching proof from a stale peer under the lifecycle lock. The final process stops only after all peers are proven stale/absent and the registration, endpoint, process identity, and launch signature still match; uncertainty retains the lease and leaks safely rather than signaling a PID.
 

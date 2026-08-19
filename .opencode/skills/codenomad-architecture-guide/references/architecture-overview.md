@@ -10,7 +10,7 @@ Electron/Tauri -> CodeNomad Fastify server -> one shared OpenCode service
                   SolidJS UI <- /api/events <- event bridge
 ```
 
-The server uses `packages/server/src/workspaces/opencode-service.ts` for a custom lease-locked discovery, launcher, process-proof, and authenticated-stop lifecycle; production does not call `Service.ensure` or `Service.stop` directly. Transferable lease proof binds the registration and endpoint credentials to the daemon PID/process-start identity, host or WSL namespace, and launch signature. `WorkspaceManager` validates each selected directory with `client.location.get()` and stores its `LocationRef`; a workspace is a logical location owner, not an OpenCode child process.
+The server uses `packages/server/src/workspaces/opencode-service.ts` for a lease-locked discovery, launcher, process-proof, and authenticated-stop lifecycle. Transferable lease proof binds the registration and endpoint credentials to the daemon PID/process-start identity, host or WSL namespace, and launch signature. Proven host shutdown delegates to native `Service.stop`; WSL uses native authenticated health stop to avoid the client's cross-namespace PID fallback. `WorkspaceManager` validates each selected directory with `client.location.get()` and stores its `LocationRef`; a workspace is a logical location owner, not an OpenCode child process.
 
 ## Boundaries
 

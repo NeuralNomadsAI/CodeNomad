@@ -611,6 +611,14 @@ async function proxyWorkspaceRequest(args: {
     reply.send(ownedProjects.filter((project): project is NonNullable<typeof project> => project !== null))
     return
   }
+  const sessionListHasScope = request.method === "GET"
+    && pathname.replace(/\/+$/, "") === "/api/session"
+    && (targetUrl.searchParams.has("cursor") || targetUrl.searchParams.has("project"))
+  const sessionListScope = await authorizeSessionList(targetUrl, request.method, workspaceManager, workspaceId)
+  if (sessionListScope !== "allowed") {
+    reply.code(sessionListScope === "invalid" ? 400 : 403).send({ error: "Session list does not belong to workspace" })
+    return
+  }
   const serviceDirectory = workspaceManager.getServiceDirectory?.(workspaceId) ?? workspace.path
   const imported = prepareSessionImport(
     pathname,
@@ -683,7 +691,7 @@ async function proxyWorkspaceRequest(args: {
   }
 
   const sessionId = getSessionRouteId(pathname)
-  if (sessionId) {
+  if (sessionId && !isGlobalFormAction(pathname, request.method)) {
     let session
     try {
       session = await (await workspaceManager.getSharedServiceClient()).session.get({ sessionID: sessionId })
@@ -700,7 +708,7 @@ async function proxyWorkspaceRequest(args: {
     }
   }
 
-  const body = applyDefaultWorkspaceLocation(targetUrl, promptBody, request.method, serviceDirectory, requestLocations.directories.length > 0, Boolean(sessionId))
+  const body = applyDefaultWorkspaceLocation(targetUrl, promptBody, request.method, serviceDirectory, requestLocations.directories.length > 0 || sessionListHasScope, Boolean(sessionId))
   const instanceAuthHeader = workspaceManager.getInstanceAuthorizationHeader(workspaceId)
 
   logger.debug({ workspaceId, method: request.method, targetUrl: targetUrl.toString() }, "Proxying request to instance")
@@ -856,6 +864,82 @@ function getSessionRouteId(pathname: string): string | null {
   const match = pathname.match(/^\/api\/(?:experimental\/)?session\/([^/]+)(?:\/|$)/)
   if (!match || match[1] === "active" || match[1] === "import") return null
   return match[1]
+}
+
+function isGlobalFormAction(pathname: string, method: string): boolean {
+  return method === "POST" && /^\/api\/session\/global\/form\/[^/]+\/(?:reply|cancel)\/?$/.test(pathname)
+}
+
+async function authorizeSessionList(
+  targetUrl: URL,
+  method: string,
+  manager: InstanceProxyWorkspaceManager,
+  workspaceId: string,
+): Promise<"allowed" | "invalid" | "foreign"> {
+  if (method !== "GET" || targetUrl.pathname.replace(/\/+$/, "") !== "/api/session") return "allowed"
+  const cursors = targetUrl.searchParams.getAll("cursor")
+  if (cursors.length > 1) return "invalid"
+  if (cursors.length === 1) {
+    const scope = decodeSessionListCursor(cursors[0])
+    if (!scope) return "invalid"
+    for (const key of ["directory", "location[directory]", "project", "subpath"]) targetUrl.searchParams.delete(key)
+    return ownsSessionListScope(manager, workspaceId, scope)
+  }
+
+  const projects = targetUrl.searchParams.getAll("project")
+  const subpaths = targetUrl.searchParams.getAll("subpath")
+  if (projects.length > 1 || subpaths.length > 1 || (subpaths.length && !projects.length)) return "invalid"
+  if (!projects.length) return "allowed"
+  const project = projects[0]
+  const subpath = subpaths[0]
+  if (!project || (subpath !== undefined && !isSafeRelativePath(subpath))) return "invalid"
+  return ownsSessionListScope(manager, workspaceId, { project, subpath })
+}
+
+function decodeSessionListCursor(cursor: string): { directory: string } | { project: string; subpath?: string } | null {
+  if (!cursor || !/^[A-Za-z0-9_-]+$/.test(cursor)) return null
+  try {
+    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Record<string, unknown>
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null
+    const anchor = value.anchor as Record<string, unknown> | undefined
+    if (!anchor || typeof anchor !== "object" || Array.isArray(anchor)
+      || typeof anchor.id !== "string" || !anchor.id
+      || typeof anchor.time !== "number" || !Number.isFinite(anchor.time)
+      || (anchor.direction !== "previous" && anchor.direction !== "next")) return null
+    if (value.workspace !== undefined && typeof value.workspace !== "string") return null
+    if (value.search !== undefined && typeof value.search !== "string") return null
+    if (value.order !== undefined && value.order !== "asc" && value.order !== "desc") return null
+    if (typeof value.directory === "string" && value.directory.trim() && value.project === undefined && value.subpath === undefined) {
+      return { directory: value.directory }
+    }
+    if (typeof value.project === "string" && value.project.trim() && value.directory === undefined) {
+      if (value.subpath === undefined) return { project: value.project }
+      if (typeof value.subpath === "string" && isSafeRelativePath(value.subpath)) return { project: value.project, subpath: value.subpath }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+function isSafeRelativePath(value: string): boolean {
+  return value === "" || (!path.posix.isAbsolute(value) && !path.win32.isAbsolute(value) && !value.split(/[\\/]/).includes(".."))
+}
+
+async function ownsSessionListScope(
+  manager: InstanceProxyWorkspaceManager,
+  workspaceId: string,
+  scope: { directory: string } | { project: string; subpath?: string },
+): Promise<"allowed" | "foreign"> {
+  if ("directory" in scope) return await manager.ownsDirectory(workspaceId, scope.directory) ? "allowed" : "foreign"
+  const project = (await (await manager.getSharedServiceClient()).project.list()).find((candidate) => candidate.id === scope.project)
+  if (!project) return "foreign"
+  const directory = scope.subpath === undefined
+    ? project.canonical
+    : /^[A-Za-z]:[\\/]|^\\\\/.test(project.canonical)
+      ? path.win32.resolve(project.canonical, scope.subpath)
+      : path.posix.resolve(project.canonical, scope.subpath)
+  return await manager.ownsDirectory(workspaceId, directory) ? "allowed" : "foreign"
 }
 
 function getPtyRouteId(pathname: string): string | null {

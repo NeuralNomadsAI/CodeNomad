@@ -10,6 +10,8 @@ import {
 } from "../../workspaces/git-worktrees"
 import type { WorktreeListResponse } from "../../api-types"
 import { ensureCodenomadGitExclude } from "../../workspaces/worktree-map"
+import { createInstanceClient } from "../../workspaces/instance-client"
+import { evacuateWorktreeSessions } from "../../workspaces/worktree-session-evacuation"
 
 interface RouteDeps {
   workspaceManager: WorkspaceManager
@@ -111,6 +113,21 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
         reply.code(404)
         return { error: "Worktree not found" }
       }
+
+      const [client, targetDirectory] = await Promise.all([
+        createInstanceClient(deps.workspaceManager, workspace.id),
+        deps.workspaceManager.getServiceDirectoryForPath(workspace.id, match.directory),
+      ])
+      const projectDirectory = deps.workspaceManager.getServiceDirectory(workspace.id)
+      if (!client || !projectDirectory || !targetDirectory) {
+        throw new Error("Unable to inventory sessions before deleting worktree")
+      }
+      await evacuateWorktreeSessions({
+        client,
+        projectDirectory,
+        targetDirectory,
+        rootDirectory: projectDirectory,
+      })
 
       await removeWorktree({ workspaceFolder: workspace.path, directory: match.directory, force, logger: request.log })
 

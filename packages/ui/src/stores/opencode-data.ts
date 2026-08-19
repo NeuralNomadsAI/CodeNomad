@@ -1,10 +1,10 @@
 import type { OpenCodeEvent } from "@opencode-ai/client"
 import { createData, type Data } from "@opencode-ai/client/solid"
 import { createRoot } from "solid-js"
-import type { MessageInfo } from "../types/message"
 import { getRootClient } from "./opencode-client"
-import { seedSessionMessagesV2 } from "./message-v2/bridge"
+import { applyPartUpdateV2, upsertMessageInfoV2 } from "./message-v2/bridge"
 import { normalizeSessionMessage } from "./message-v2/normalizers"
+import { sseManager } from "../lib/sse-manager"
 
 const entries = new Map<string, { data: Data; emit: (event: OpenCodeEvent) => void; dispose: () => void }>()
 
@@ -26,7 +26,14 @@ function ensureData(instanceId: string, directory: string) {
       },
     }
     return {
-      data: createData({ api: () => getRootClient(instanceId), directory, event: event as any }),
+      data: createData({
+        api: () => getRootClient(instanceId),
+        directory,
+        event: event as any,
+        connection: {
+          status: () => sseManager.getStatuses().get(instanceId) === "connected" ? "connected" : "reconnecting",
+        },
+      }),
       emit(details: OpenCodeEvent) {
         for (const listener of listeners) listener({ name: details.type, details })
       },
@@ -38,6 +45,7 @@ function ensureData(instanceId: string, directory: string) {
 }
 
 export function applyOpenCodeDataEvent(instanceId: string, directory: string, event: OpenCodeEvent): Data {
+  if (event.type === "server.connected") destroyOpenCodeData(instanceId)
   const entry = ensureData(instanceId, directory)
   entry.emit(event)
   return entry.data
@@ -46,13 +54,16 @@ export function applyOpenCodeDataEvent(instanceId: string, directory: string, ev
 export function projectOpenCodeMessages(instanceId: string, sessionId: string, data: Data): void {
   const source = data.session.message.list(sessionId)
   if (!source.length) return
-  const infos = new Map<string, MessageInfo>()
-  const messages = source.map((item) => {
+  for (const item of source) {
     const normalized = normalizeSessionMessage(sessionId, item)
-    infos.set(normalized.info.id, normalized.info)
-    return normalized.message
-  })
-  seedSessionMessagesV2(instanceId, { id: sessionId }, messages, infos)
+    const status = normalized.message.status
+    upsertMessageInfoV2(instanceId, normalized.info, {
+      status: status === "sending" || status === "sent" || status === "streaming" || status === "error"
+        ? status
+        : "complete",
+    })
+    for (const part of normalized.message.parts) applyPartUpdateV2(instanceId, part)
+  }
 }
 
 export function destroyOpenCodeData(instanceId: string): void {

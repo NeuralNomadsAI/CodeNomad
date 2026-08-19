@@ -4,7 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import { describe, it } from "node:test"
 import { createHash } from "node:crypto"
-import type { OpenCodeClient } from "@opencode-ai/client"
+import { OpenCode, type OpenCodeClient } from "@opencode-ai/client"
 import type { Endpoint, Info } from "@opencode-ai/client/service"
 
 import { OpenCodeSharedService, type OpenCodeEnsureOptions } from "./opencode-service"
@@ -387,14 +387,13 @@ describe("OpenCodeSharedService", () => {
     const service = new OpenCodeSharedService({
       discover: async () => endpoint,
       ensure: async (options) => { options?.onStart?.("missing"); return endpoint },
-      stop: async () => { sdkStops += 1 },
       headers: () => undefined,
       isProcessAlive: () => true,
       getProcessIdentity: async (pid, _timeoutMs, namespace = { kind: "host" }) => processIdentity(pid, undefined, namespace),
       probeProcessIdentity: async (pid, _timeoutMs, namespace) => wslPidExists
         ? { status: "found", identity: processIdentity(pid, undefined, namespace) }
         : { status: "missing" },
-      makeClient: () => ({} as OpenCodeClient),
+      makeClient: () => ({ health: { stop: async () => { sdkStops += 1; return { accepted: true } } } }) as unknown as OpenCodeClient,
     })
     try {
       await service.endpoint({ ...state.options("owner", true), nativePid: false, wslDistro: "Ubuntu" })
@@ -408,6 +407,55 @@ describe("OpenCodeSharedService", () => {
       await service.shutdown({ timeoutMs: 100 })
       await assert.rejects(access(state.lease("owner")))
     } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+      await rm(state.root, { recursive: true, force: true })
+    }
+  })
+
+  it("never lets an unsupported WSL health stop fall back to a host PID signal", async () => {
+    const state = await serviceState("codenomad-service-wsl-no-host-signal-")
+    const originalKill = process.kill
+    const signals: Array<{ pid: number; signal?: NodeJS.Signals | number }> = []
+    let healthStops = 0
+    const server = (await import("node:http")).createServer((request, response) => {
+      response.setHeader("content-type", "application/json")
+      if (request.method === "GET" && request.url === "/api/health") {
+        response.end(JSON.stringify({ healthy: true, version: "test", pid: state.info.pid }))
+        return
+      }
+      if (request.method === "POST") healthStops += 1
+      response.statusCode = 404
+      response.end(JSON.stringify({ error: "unsupported" }))
+    })
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+    const address = server.address()
+    assert.ok(address && typeof address === "object")
+    state.info.url = `http://127.0.0.1:${address.port}`
+    await writeFile(state.file, JSON.stringify(state.info))
+    const endpoint = { url: state.info.url, auth: { type: "basic" as const, username: "opencode", password: state.info.password } }
+    const service = new OpenCodeSharedService({
+      discover: async () => endpoint,
+      ensure: async (options) => { options?.onStart?.("missing"); return endpoint },
+      headers: () => undefined,
+      getProcessIdentity: async (pid, _timeoutMs, namespace = { kind: "host" }) => processIdentity(pid, undefined, namespace),
+      probeProcessIdentity: async (pid, _timeoutMs, namespace) => ({
+        status: "found",
+        identity: processIdentity(pid, undefined, namespace),
+      }),
+      makeClient: OpenCode.make,
+    })
+    process.kill = ((pid: number, signal?: NodeJS.Signals | number) => {
+      signals.push({ pid, signal })
+      return true
+    }) as typeof process.kill
+    try {
+      await service.endpoint({ ...state.options("owner", true), nativePid: false, wslDistro: "Ubuntu" })
+      await assert.rejects(service.shutdown({ timeoutMs: 500 }))
+      assert.equal(healthStops, 1)
+      assert.deepEqual(signals, [])
+      assert.equal(JSON.parse(await readFile(state.lease("owner"), "utf8")).state, "stopping")
+    } finally {
+      process.kill = originalKill
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
       await rm(state.root, { recursive: true, force: true })
     }

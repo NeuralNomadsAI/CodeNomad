@@ -3,6 +3,7 @@ import test from "node:test"
 import {
   OpenCodeUpdateError,
   OpenCodeUpdateService,
+  TARGET_OPENCODE_VERSION,
   buildOpenCodeUpgradeCommand,
   compareOpenCodeVersionStrings,
   detectOpenCodePackageManager,
@@ -10,12 +11,11 @@ import {
 } from "./service"
 
 function createDeps(overrides: Partial<OpenCodeUpdateServiceDeps> = {}): OpenCodeUpdateServiceDeps {
-  let currentVersion = "1.0.0"
+  let currentVersion = "0.0.0-beta-1"
   return {
     resolveBinary: () => ({ path: "opencode", label: "OpenCode" }),
     probeBinary: () => ({ valid: true, version: currentVersion }),
     canUpgradeBinary: () => true,
-    fetchLatestVersion: async () => "1.1.0",
     upgradeBinary: async (_binary, target) => {
       currentVersion = target
       return { success: true, version: target }
@@ -24,55 +24,31 @@ function createDeps(overrides: Partial<OpenCodeUpdateServiceDeps> = {}): OpenCod
   }
 }
 
-test("reports an available update and caches the latest version", async () => {
-  let checks = 0
-  const service = new OpenCodeUpdateService(createDeps({
-    fetchLatestVersion: async () => {
-      checks += 1
-      return "1.1.0"
-    },
-  }))
+test("reports only the startup-compatible pinned version", async () => {
+  const service = new OpenCodeUpdateService(createDeps())
 
   assert.deepEqual(await service.getStatus(), {
-    currentVersion: "1.0.0",
-    latestVersion: "1.1.0",
+    currentVersion: "0.0.0-beta-1",
+    latestVersion: TARGET_OPENCODE_VERSION,
     updateAvailable: true,
     canUpgrade: true,
   })
-  await service.getStatus()
-  assert.equal(checks, 1)
 })
 
 test("keeps the update visible for a custom binary", async () => {
   const service = new OpenCodeUpdateService(createDeps({ canUpgradeBinary: () => false }))
 
   assert.deepEqual(await service.getStatus(), {
-    currentVersion: "1.0.0",
-    latestVersion: "1.1.0",
+    currentVersion: "0.0.0-beta-1",
+    latestVersion: TARGET_OPENCODE_VERSION,
     updateAvailable: true,
     canUpgrade: false,
   })
 })
 
-test("preserves the installed version when the registry check fails", async () => {
-  const service = new OpenCodeUpdateService(createDeps({
-    fetchLatestVersion: async () => {
-      throw new Error("registry unavailable")
-    },
-  }))
-
-  assert.deepEqual(await service.getStatus(), {
-    currentVersion: "1.0.0",
-    latestVersion: null,
-    updateAvailable: null,
-    canUpgrade: false,
-    checkError: "update_check_failed",
-  })
-})
-
 test("upgrades the managed OpenCode binary to the advertised version", async () => {
   const calls: Array<{ path: string; target: string }> = []
-  let currentVersion = "1.0.0"
+  let currentVersion = "0.0.0-beta-1"
   const service = new OpenCodeUpdateService(createDeps({
     probeBinary: () => ({ valid: true, version: currentVersion }),
     upgradeBinary: async (binary, target) => {
@@ -82,13 +58,13 @@ test("upgrades the managed OpenCode binary to the advertised version", async () 
     },
   }))
 
-  assert.deepEqual(await service.upgrade(), { success: true, version: "1.1.0" })
-  assert.deepEqual(calls, [{ path: "opencode", target: "1.1.0" }])
+  assert.deepEqual(await service.upgrade(), { success: true, version: TARGET_OPENCODE_VERSION })
+  assert.deepEqual(calls, [{ path: "opencode", target: TARGET_OPENCODE_VERSION }])
 })
 
 test("rejects success when the configured binary was not updated", async () => {
   const service = new OpenCodeUpdateService(createDeps({
-    probeBinary: () => ({ valid: true, version: "1.0.0" }),
+    probeBinary: () => ({ valid: true, version: "0.0.0-beta-1" }),
     upgradeBinary: async (_binary, target) => ({ success: true, version: target }),
   }))
 
@@ -99,7 +75,7 @@ test("rejects success when the configured binary was not updated", async () => {
 })
 
 test("joins concurrent upgrades for the same binary", async () => {
-  let currentVersion = "1.0.0"
+  let currentVersion = "0.0.0-beta-1"
   let upgrades = 0
   let finishUpgrade: (() => void) | undefined
   const gate = new Promise<void>((resolve) => {
@@ -120,8 +96,8 @@ test("joins concurrent upgrades for the same binary", async () => {
   finishUpgrade?.()
 
   assert.deepEqual(await Promise.all([first, second]), [
-    { success: true, version: "1.1.0" },
-    { success: true, version: "1.1.0" },
+    { success: true, version: TARGET_OPENCODE_VERSION },
+    { success: true, version: TARGET_OPENCODE_VERSION },
   ])
   assert.equal(upgrades, 1)
 })

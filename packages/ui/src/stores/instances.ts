@@ -10,6 +10,7 @@ import type { WorkspaceDescriptor, WorkspaceEventPayload, WorkspaceLogEntry } fr
 import { ensureInstanceConfigLoaded } from "./instance-config"
 import {
   fetchSessions,
+  loadMessages,
   fetchAgents,
   fetchProviders,
   getActiveCatalogLocation,
@@ -34,6 +35,7 @@ import { ConnectionResyncGate } from "./connection-resync-gate"
 import { serverSettings } from "./preferences"
 import {
   reconcileSessionPendingState,
+  messagesLoaded,
   sessions,
   setSessionPendingForm,
   setSessionPendingPermission,
@@ -41,7 +43,7 @@ import {
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
 import { applyOpenCodeDataEvent, destroyOpenCodeData, projectOpenCodeMessages } from "./opencode-data"
-import { upsertPermissionV2, removePermissionV2 } from "./message-v2/bridge"
+import { upsertPermissionV2, removePermissionV2, removeMessageV2 } from "./message-v2/bridge"
 import {
   clearRepliedPermissions,
   hasRepliedPermission,
@@ -258,6 +260,8 @@ const connectionResyncs = new TrailingResyncCoordinator(
       syncPendingRequests(instanceId),
       refreshVolatileInstanceState(instanceId),
     ])
+    await Promise.all(Array.from(messagesLoaded().get(instanceId) ?? [], (sessionId) =>
+      loadMessages(instanceId, sessionId, { force: true })))
     reconcilePendingSessionIndicators(instanceId)
   },
   (instanceId, error) => {
@@ -308,6 +312,7 @@ function refreshVolatileInstanceState(
 
 serverEvents.on("instance.eventStatus", (event) => {
   if (event.type !== "instance.eventStatus") return
+  if (event.status === "connecting") destroyOpenCodeData(event.instanceId)
   const shouldResync = connectionResyncGate.observe(event.instanceId, event.status, event.reason)
   if (event.status !== "connected") return
   if (disconnectedInstance()?.id === event.instanceId) {
@@ -1704,27 +1709,29 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
       ? event.data.form.sessionID
       : undefined
   if (sessionId && event.type.startsWith("session.")) projectOpenCodeMessages(instanceId, sessionId, data)
+  if (sessionId && event.type === "session.inbox.cancelled") {
+    removeMessageV2(instanceId, event.data.inboxID, sessionId)
+  }
+  if (sessionId && event.type === "session.revert.committed") {
+    for (const messageId of messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId)) {
+      if (messageId >= event.data.to) removeMessageV2(instanceId, messageId, sessionId)
+    }
+  }
   if (sessionId && (event.type === "permission.asked" || event.type === "permission.replied")) {
     const remote = (data.session.permission.list(sessionId) ?? []).filter((permission) => !hasRepliedPermission(instanceId, permission.id))
-    const ids = new Set(remote.map((permission) => permission.id))
-    for (const permission of getPermissionQueue(instanceId)) {
-      if (permission.sessionID === sessionId && !ids.has(permission.id)) {
-        removePermissionFromQueue(instanceId, permission.id)
-        removePermissionV2(instanceId, permission.id)
-      }
-    }
     for (const permission of remote) {
       const queued = addPermissionToQueue(instanceId, permission) ?? permission
       upsertPermissionV2(instanceId, queued)
     }
+    if (event.type === "permission.replied") {
+      removePermissionFromQueue(instanceId, event.data.requestID)
+      removePermissionV2(instanceId, event.data.requestID)
+    }
   }
   if (sessionId && event.type.startsWith("form.")) {
     const remote = data.session.form.list(sessionId) ?? []
-    const ids = new Set(remote.map((form) => form.id))
-    for (const form of getFormQueue(instanceId)) {
-      if (form.sessionID === sessionId && !ids.has(form.id)) removePendingForm(instanceId, form.id)
-    }
     for (const form of remote) addPendingForm(instanceId, form)
+    if (event.type === "form.replied" || event.type === "form.cancelled") removePendingForm(instanceId, event.data.id)
   }
   const targets = getInstanceRefreshTargets(event.type)
   if (targets.length) void refreshVolatileInstanceState(instanceId, targets)

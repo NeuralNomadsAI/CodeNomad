@@ -82,6 +82,7 @@ const catalogRefreshes = new Map<string, { key: string; promise: Promise<void> }
 const agentRequestIds = new Map<string, number>()
 const providerRequestIds = new Map<string, number>()
 const sessionPageRequests = new Map<string, Promise<void>>()
+const MAX_DESCENDANT_SESSION_REQUESTS = 1_000
 let nextSessionListRequestId = 0
 
 function catalogLocationKey(location: LocationRef): string {
@@ -180,27 +181,38 @@ async function fetchV2Sessions(instanceId: string, options: V2SessionListOptions
   const client = getRootClient(instanceId)
   const project = options.project ?? getInstanceMetadata(instanceId)?.project?.id
   const listOptions = { ...options, project, order: options.order ?? "desc" as const }
+  if (project) delete listOptions.directory
   const response = await client.session.list(buildProjectSessionListOptions(listOptions))
   const sessionsById = new Map(response.data.map((session) => [session.id, session]))
 
   if (options.parentID === null && !options.search) {
-    await Promise.all(response.data.map(async (root) => {
+    const pending = response.data.map((session) => session.id)
+    const visited = new Set<string>()
+    let requests = 0
+    while (pending.length) {
+      const parentID = pending.shift()!
+      if (visited.has(parentID)) continue
+      visited.add(parentID)
       let cursor: string | undefined
       const seenCursors = new Set<string>()
       do {
+        if (++requests > MAX_DESCENDANT_SESSION_REQUESTS) throw new Error("Descendant session traversal limit exceeded")
         const children = await client.session.list(buildProjectSessionListOptions({
-          project: project ?? root.projectID,
-          subpath: root.subpath,
-          parentID: root.id,
+          project: project ?? sessionsById.get(parentID)?.projectID,
+          subpath: sessionsById.get(parentID)?.subpath,
+          parentID,
           order: "asc",
           cursor,
         }))
-        for (const child of children.data) sessionsById.set(child.id, child)
+        for (const child of children.data) {
+          sessionsById.set(child.id, child)
+          if (!visited.has(child.id)) pending.push(child.id)
+        }
         cursor = children.cursor?.next ?? undefined
         if (cursor && seenCursors.has(cursor)) throw new Error(`Repeated child session cursor: ${cursor}`)
         if (cursor) seenCursors.add(cursor)
       } while (cursor)
-    }))
+    }
   }
 
   return {
@@ -212,6 +224,29 @@ async function fetchV2Sessions(instanceId: string, options: V2SessionListOptions
 
 function getV2SessionItems(response: ProjectSessionListResponse): SDKSession[] {
   return response.data
+}
+
+function withActiveSessionState(
+  instanceId: string,
+  apiSession: SDKSession,
+  existingSession: Session | undefined,
+  activeSessions: Record<string, unknown> | null,
+): Session {
+  const existingStatus = existingSession?.status
+  const active = activeSessions && Object.prototype.hasOwnProperty.call(activeSessions, apiSession.id)
+  const status = activeSessions === null
+    ? existingStatus ?? "idle"
+    : active && existingStatus === "compacting" ? "compacting" : active ? "working" : "idle"
+  return {
+    ...toClientSessionV2(instanceId, apiSession, existingSession),
+    status,
+    retry: activeSessions === null ? existingSession?.retry ?? null : null,
+    idleSince: getIdleSinceForStatusTransition(existingStatus, status, existingSession?.idleSince),
+    runtimeStatusKnown: activeSessions === null ? existingSession?.runtimeStatusKnown ?? false : true,
+    generationRecovery: activeSessions === null
+      ? existingSession?.generationRecovery ?? null
+      : resolveAuthoritativeGenerationRecovery(existingSession?.generationRecovery, status),
+  }
 }
 
 async function hydrateRestoredSessionChain(
@@ -326,24 +361,7 @@ async function fetchSessions(instanceId: string, options?: {
 
     for (const apiSession of getV2SessionItems(response)) {
       const existingSession = existingSessions?.get(apiSession.id)
-      const existingStatus = existingSession?.status
-      const active = activeSessions && Object.prototype.hasOwnProperty.call(activeSessions, apiSession.id)
-      const status = activeSessions === null
-        ? existingStatus ?? "idle"
-        : active && existingStatus === "compacting" ? "compacting" : active ? "working" : "idle"
-      const runtimeStatusKnown = activeSessions === null ? existingSession?.runtimeStatusKnown ?? false : true
-      sessionMap.set(apiSession.id, {
-        ...toClientSessionV2(instanceId, apiSession, existingSession),
-        status,
-        retry: activeSessions === null ? existingSession?.retry ?? null : null,
-        idleSince: getIdleSinceForStatusTransition(existingStatus, status, existingSession?.idleSince),
-        runtimeStatusKnown,
-        generationRecovery: activeSessions === null
-          ? existingSession?.generationRecovery ?? null
-          : runtimeStatusKnown
-          ? resolveAuthoritativeGenerationRecovery(existingSession?.generationRecovery, status)
-          : existingSession?.generationRecovery ?? null,
-      })
+      sessionMap.set(apiSession.id, withActiveSessionState(instanceId, apiSession, existingSession, activeSessions))
     }
 
     setSessions((prev) => {
@@ -442,19 +460,25 @@ async function loadNextSessionPage(instanceId: string): Promise<void> {
   if (!cursor) return
   const instance = instances().get(instanceId)
   if (!instance?.client) throw new Error("Instance not ready")
-  const response = await fetchV2Sessions(instanceId, {
-    directory: instance.folder,
-    parentID: null,
-    order: "desc",
-    cursor,
-  })
+  const [response, activeSessions] = await Promise.all([
+    fetchV2Sessions(instanceId, { directory: instance.folder, parentID: null, order: "desc", cursor }),
+    getRootClient(instanceId).session.active().catch((error) => {
+      log.warn("Failed to refresh active sessions", { instanceId, error })
+      return null
+    }),
+  ])
   if (getSessionNextCursor(instanceId) !== cursor) return
   const deleted = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
   setSessions((previous) => {
     const next = new Map(previous)
     const current = new Map(next.get(instanceId) ?? [])
     for (const item of response.data) {
-      if (!deleted.has(item.id)) current.set(item.id, toClientSessionV2(instanceId, item, current.get(item.id)))
+      if (!deleted.has(item.id)) {
+        const existing = current.get(item.id)
+        const fetched = withActiveSessionState(instanceId, item, existing, activeSessions)
+        const merged = mergeFetchedSessionRuntimeState(fetched, existing, existing, false)
+        if (merged) current.set(item.id, merged)
+      }
     }
     next.set(instanceId, current)
     return next
