@@ -9,7 +9,7 @@ import { connect as connectTls, type TLSSocket } from "tls"
 import { fetch, type Headers } from "undici"
 import type { Logger } from "../logger"
 import { WorkspaceManager } from "../workspaces/manager"
-import { isPtyNotFoundError, isSessionNotFoundError, type OpenCodeClient } from "@opencode-ai/client"
+import { isPtyNotFoundError, isSessionNotFoundError, isShellNotFoundError, type OpenCodeClient } from "@opencode-ai/client"
 
 import type { SettingsService } from "../settings/service"
 import { FileSystemBrowser } from "../filesystem/browser"
@@ -665,9 +665,9 @@ async function proxyWorkspaceRequest(args: {
   const promptBody = replacePromptFileUris(serviceBody, translatedPromptPaths)
 
   const requestedDirectory = requestLocations.directories[0]
-  const ptyLocation = { directory: requestedDirectory ? translatedDirectories.get(requestedDirectory) ?? serviceDirectory : serviceDirectory }
+  const runtimeLocation = { directory: requestedDirectory ? translatedDirectories.get(requestedDirectory) ?? serviceDirectory : serviceDirectory }
   if (pathname.replace(/\/+$/, "") === "/api/pty" && request.method === "GET") {
-    const result = await (await workspaceManager.getSharedServiceClient()).pty.list({ location: ptyLocation })
+    const result = await (await workspaceManager.getSharedServiceClient()).pty.list({ location: runtimeLocation })
     const ownership = await Promise.all(result.data.map((pty) => workspaceManager.ownsDirectory(workspaceId, pty.cwd)))
     reply.send({ ...result, data: result.data.filter((_, index) => ownership[index]) })
     return
@@ -676,7 +676,7 @@ async function proxyWorkspaceRequest(args: {
   const ptyId = getPtyRouteId(pathname)
   if (ptyId) {
     try {
-      const pty = await (await workspaceManager.getSharedServiceClient()).pty.get({ ptyID: ptyId, location: ptyLocation })
+      const pty = await (await workspaceManager.getSharedServiceClient()).pty.get({ ptyID: ptyId, location: runtimeLocation })
       if (!(await workspaceManager.ownsDirectory(workspaceId, pty.data.cwd))) {
         reply.code(403).send({ error: "PTY does not belong to workspace" })
         return
@@ -684,6 +684,30 @@ async function proxyWorkspaceRequest(args: {
     } catch (error) {
       if (isPtyNotFoundError(error)) {
         reply.code(404).send({ error: "PTY not found" })
+        return
+      }
+      throw error
+    }
+  }
+
+  if (pathname.replace(/\/+$/, "") === "/api/shell" && request.method === "GET") {
+    const result = await (await workspaceManager.getSharedServiceClient()).shell.list({ location: runtimeLocation })
+    const ownership = await Promise.all(result.data.map((shell) => workspaceManager.ownsDirectory(workspaceId, shell.cwd)))
+    reply.send({ ...result, data: result.data.filter((_, index) => ownership[index]) })
+    return
+  }
+
+  const shellId = getShellRouteId(pathname)
+  if (shellId) {
+    try {
+      const shell = await (await workspaceManager.getSharedServiceClient()).shell.get({ id: shellId, location: runtimeLocation })
+      if (!(await workspaceManager.ownsDirectory(workspaceId, shell.data.cwd))) {
+        reply.code(403).send({ error: "Shell does not belong to workspace" })
+        return
+      }
+    } catch (error) {
+      if (isShellNotFoundError(error)) {
+        reply.code(404).send({ error: "Shell not found" })
         return
       }
       throw error
@@ -943,7 +967,11 @@ async function ownsSessionListScope(
 }
 
 function getPtyRouteId(pathname: string): string | null {
-  return pathname.match(/^\/api\/pty\/([^/]+)$/)?.[1] ?? null
+  return pathname.replace(/\/+$/, "").match(/^\/api\/pty\/([^/]+)$/)?.[1] ?? null
+}
+
+function getShellRouteId(pathname: string): string | null {
+  return pathname.replace(/\/+$/, "").match(/^\/api\/shell\/([^/]+)(?:\/output|\/timeout)?$/)?.[1] ?? null
 }
 
 function buildInstanceTargetUrl(endpoint: string, pathSuffix: string | undefined): URL | null {
@@ -977,7 +1005,7 @@ function hasDotSegment(value: string): boolean {
 function isAllowedInstanceApiRoute(method: string, pathname: string): boolean {
   const route = pathname.replace(/\/+$/, "")
   const allowed: Array<[string, RegExp]> = [
-    ["GET", /^\/api\/(?:agent|command|config|integration|mcp|model|plugin|provider)$/],
+    ["GET", /^\/api\/(?:agent|command|config|integration|location|mcp|model|plugin|provider)$/],
     ["GET", /^\/api\/agent\/[^/]+$/],
     ["GET", /^\/api\/model\/default$/],
     ["GET", /^\/api\/(?:permission|question)\/request$/],
@@ -986,10 +1014,12 @@ function isAllowedInstanceApiRoute(method: string, pathname: string): boolean {
     ["GET", /^\/api\/project$/],
     ["GET", /^\/api\/vcs\/status$/],
     ["GET", /^\/api\/fs\/(?:list|read\/.+)$/],
-    ["GET", /^\/api\/pty(?:\/[^/]+)?$/],
+    ["GET", /^\/api\/(?:pty|shell)(?:\/[^/]+(?:\/output)?)?$/],
     ["POST", /^\/api\/(?:pty|shell)$/],
     ["PUT", /^\/api\/pty\/[^/]+$/],
     ["DELETE", /^\/api\/pty\/[^/]+$/],
+    ["DELETE", /^\/api\/shell\/[^/]+$/],
+    ["PATCH", /^\/api\/shell\/[^/]+\/timeout$/],
     ["POST", /^\/api\/mcp\/[^/]+\/(?:connect|disconnect)$/],
     ["DELETE", /^\/api\/credential\/[^/]+$/],
     ["POST", /^\/api\/integration\/[^/]+\/connect\/(?:key|oauth|command)$/],

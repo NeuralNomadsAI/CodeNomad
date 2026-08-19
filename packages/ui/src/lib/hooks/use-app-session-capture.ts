@@ -181,8 +181,8 @@ export function useAppSessionCapture() {
   }
   const nativeUnlisteners: Array<() => void> = []
   let nativeDisposed = false
-  const register = <T,>(event: string, acknowledge: (payload: T) => void | Promise<void>) => listen<T>(event, ({ payload }) => {
-    void flush(true).then(() => acknowledge(payload)).catch((error) => log.error(`Failed to handle ${event}`, error))
+  const register = <T,>(event: string, acknowledge: (payload: T) => void | Promise<void>, nativeShutdown: boolean) => listen<T>(event, ({ payload }) => {
+    void flush(nativeShutdown).then(() => acknowledge(payload)).catch((error) => log.error(`Failed to handle ${event}`, error))
   }).then((unlisten) => {
     if (nativeDisposed) unlisten()
     else nativeUnlisteners.push(unlisten)
@@ -190,9 +190,9 @@ export function useAppSessionCapture() {
   const ready = isTauriHost() && isLocalWindow()
     ? Promise.all([
         register<{ generation: number }>("client-state:flush-requested",
-          ({ generation }) => acknowledgeNativeClientStateRendererFlush(generation)),
+          ({ generation }) => acknowledgeNativeClientStateRendererFlush(generation), true),
         register<{ generation: number }>("client-state:navigation-flush-requested",
-          ({ generation }) => acknowledgeNativeClientStateNavigationFlush(generation)),
+          ({ generation }) => acknowledgeNativeClientStateNavigationFlush(generation), false),
       ]).then(() => undefined)
     : Promise.resolve()
   const markScrollAuthority = (instanceId: string, sessionId: string) => {

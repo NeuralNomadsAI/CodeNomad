@@ -35,10 +35,12 @@ import { ConnectionResyncGate } from "./connection-resync-gate"
 import { serverSettings } from "./preferences"
 import {
   reconcileSessionPendingState,
+  activeSessionId,
   messagesLoaded,
   sessions,
   setSessionPendingForm,
   setSessionPendingPermission,
+  invalidateSessionMessageLoad,
 } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
@@ -260,8 +262,10 @@ const connectionResyncs = new TrailingResyncCoordinator(
       syncPendingRequests(instanceId),
       refreshVolatileInstanceState(instanceId),
     ])
-    await Promise.all(Array.from(messagesLoaded().get(instanceId) ?? [], (sessionId) =>
-      loadMessages(instanceId, sessionId, { force: true })))
+    const loadedMessages = messagesLoaded().get(instanceId) ?? new Set<string>()
+    for (const sessionId of loadedMessages) invalidateSessionMessageLoad(instanceId, sessionId)
+    const activeId = activeSessionId().get(instanceId)
+    if (activeId && loadedMessages.has(activeId)) await loadMessages(instanceId, activeId, { force: true })
     reconcilePendingSessionIndicators(instanceId)
   },
   (instanceId, error) => {
@@ -650,13 +654,18 @@ function startInstanceSessionHydration(instanceId: string, force = false): {
   const worktreeHydration = force
     ? reloadWorktrees(instanceId)
     : ensureWorktreesLoaded(instanceId)
-  const sessions = worktreeHydration.then(async () => {
+  const workspaceMetadata = worktreeHydration.then(async () => {
+    const instance = instances().get(instanceId)
+    if (instance?.client) await loadInstanceMetadata(instance, { force }).catch((error) => {
+      log.warn("Failed to load project metadata before session hydration", { instanceId, error })
+    })
+  })
+  const sessions = workspaceMetadata.then(async () => {
     resetSessionPagination(instanceId)
     await fetchSessions(instanceId).catch((error) => {
       log.error("Failed to hydrate sessions", { instanceId, error })
     })
   })
-  const workspaceMetadata = worktreeHydration
   return { sessions, workspaceMetadata }
 }
 

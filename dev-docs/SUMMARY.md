@@ -170,7 +170,8 @@ dev-docs/             Development documentation
 - Database: V2 always uses `~/.local/share/opencode2/opencode.db`, separate from V1
 - Events: volatile native stream with authoritative reconnect reconciliation
 - Proxy: explicit method/path allowlist; upstream additions are not automatic
-- Shell and instructions: native session APIs, separate from PTY management
-- PTYs: location-scoped native entries in Status, refreshed on PTY events/reconnect with metadata, title updates, and ownership-checked removal; current installed declarations have no output/read/stream or separate stop API, so output and distinct stop are unavailable and removal stops a running PTY
+- Shell mode and instructions: native session APIs, separate from background Shell and PTY management
+- Background Shells: location-scoped native `shell.*` entries in Status, refreshed on Shell events/reconnect with metadata and ownership-checked removal; output uses native cursor pagination
+- PTYs: separate native interactive terminals, not background-process records
 - Legacy plugin/background processes: `packages/opencode-plugin` and server plugin/background-process paths remain deleted
 - Git mutations and Yolo: CodeNomad-owned

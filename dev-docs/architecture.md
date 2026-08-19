@@ -57,14 +57,14 @@ Current native events include session lifecycle/output events (`session.created`
 | Sessions, messages, permission/question APIs | OpenCode V2 |
 | Shell mode | `client.session.shell` |
 | Conversation instructions | `client.session.instructions.entry` |
-| PTY management | Location-scoped OpenCode V2 API through the ownership-checking proxy; Status panel UI |
-| PTY output and distinct stop | Unavailable in the current installed declarations; removal is the native stop action for a running PTY |
+| Background Shell management | Location-scoped OpenCode V2 `shell.*` API through the ownership-checking proxy; Status panel UI |
+| Interactive PTY management | Separate OpenCode V2 `pty.*` API |
 | Workspace lifecycle and directory authorization | CodeNomad |
 | Git status/diff/stage/unstage/commit | CodeNomad server |
 | Yolo state, persistence and auto-accept | CodeNomad server |
 | Browser SSE multiplexing | CodeNomad server |
 
-Native Shell remains separate from PTY management. The Status panel lists location-scoped native PTYs, refreshes on PTY events/reconnect, displays native metadata, and allows title updates and ownership-checked removal. Current installed declarations expose no PTY output/read/stream API or separate stop endpoint, so output display and a distinct stop action are unavailable. `packages/opencode-plugin` and the server plugin/background-process paths remain deleted and must not be restored.
+Session Shell remains separate from background Shell and PTY management. The Status panel lists location-scoped native background Shells, refreshes on Shell events/reconnect, displays native metadata, and allows ownership-checked removal. Output requests preserve native cursor pagination. Interactive PTYs remain separate. `packages/opencode-plugin` and the server plugin/background-process paths remain deleted and must not be restored.
 
 ## Persistence
 

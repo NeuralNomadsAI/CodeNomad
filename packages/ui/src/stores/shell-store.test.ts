@@ -1,0 +1,30 @@
+import assert from "node:assert/strict"
+import { describe, it } from "node:test"
+import type { ShellInfo } from "@opencode-ai/client"
+import { createShellStore, type ShellApi } from "./shell-store.ts"
+
+const shell = (id: string, cwd = "/repo"): ShellInfo => ({
+  id, command: "npm run dev", cwd, shell: "sh", file: "/tmp/output", status: "running", pid: 42, metadata: {}, time: { started: 1 },
+})
+
+describe("shell store", () => {
+  it("keeps state location-scoped and refreshes on shell events and reconnect", async () => {
+    const lists: string[] = []
+    const api: ShellApi = {
+      list: async (directory) => { lists.push(directory); return [shell(directory, directory)] },
+      remove: async () => {},
+    }
+    const store = createShellStore(() => api)
+    await store.load("instance", "/repo")
+    await store.load("instance", "/repo/worktree")
+    lists.length = 0
+
+    await store.refreshForEvent("instance", { type: "pty.created", location: { directory: "/repo" } })
+    assert.deepEqual(lists, [])
+    await store.refreshForEvent("instance", { type: "shell.created", data: { info: { cwd: "/repo" } } })
+    assert.deepEqual(lists, ["/repo"])
+    lists.length = 0
+    await store.refreshForEvent("instance", { type: "server.connected" })
+    assert.deepEqual(lists.sort(), ["/repo", "/repo/worktree"])
+  })
+})

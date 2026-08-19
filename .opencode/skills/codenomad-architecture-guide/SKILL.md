@@ -20,7 +20,7 @@ description: |
 - There is no `packages/opencode-plugin/`. Do not restore plugin tools, plugin routes, or plugin packaging.
 - The server owns one shared OpenCode service through `OpenCodeSharedService` and its lease-locked discovery, launcher, process-proof, and authenticated-stop lifecycle. Proven host shutdown delegates to native `Service.stop`; WSL uses native authenticated health stop to avoid the client's cross-namespace PID fallback. Workspaces are native OpenCode `Location`/directory scopes, not separate OpenCode processes.
 - The UI uses generated Promise clients from `OpenCode.make()` through the CodeNomad proxy.
-- OpenCode owns session APIs, native Shell (`client.session.shell`), session instructions (`client.session.instructions.entry`), and location-scoped native PTYs. Shell remains separate. The Status panel lists PTYs, refreshes on PTY events/reconnect, displays native metadata, and supports title updates and ownership-checked removal. Current installed declarations have no PTY output/read/stream or separate stop API, so output and distinct stop are unavailable; removal is the native stop action for a running PTY.
+- OpenCode owns session APIs, session Shell (`client.session.shell`), session instructions (`client.session.instructions.entry`), location-scoped background Shells, and interactive PTYs. The Status panel lists `client.shell.*` records, refreshes on Shell events/reconnect, displays native metadata, and supports ownership-checked removal. Interactive `client.pty.*` terminals remain separate.
 - CodeNomad owns workspace lifecycle, directory authorization, Git status/diff/stage/unstage/commit, Yolo persistence/auto-replies, and `/api/events`.
 - V2 service startup forces `OPENCODE_DB` to `~/.local/share/opencode2/opencode.db`; never share the V1 database with V2.
 
@@ -61,7 +61,7 @@ description: |
 | Public `@opencode-ai/sdk` examples | Installed experimental `@opencode-ai/client` declarations |
 | One `opencode serve` per workspace | One CodeNomad-managed shared service |
 | Per-worktree clients/processes | Root proxy client plus native location/directory inputs |
-| Reintroducing `packages/opencode-plugin` or server plugin/background-process paths | Separate native Shell/instructions and native PTY management |
+| Reintroducing `packages/opencode-plugin` or server plugin/background-process paths | Native session Shell/instructions, background `shell.*`, and separate interactive `pty.*` management |
 | OpenCode APIs for stage/commit/Yolo policy | CodeNomad routes and managers |
 | Hardcoded UI strings | `t()` / `tGlobal()` and every locale |
 

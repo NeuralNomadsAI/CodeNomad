@@ -56,8 +56,10 @@ export function projectOpenCodeMessages(instanceId: string, sessionId: string, d
   const source = data.session.message.list(sessionId)
   if (!source.length) return
   const store = messageStoreBus.getOrCreate(instanceId)
+  const projectedIds: string[] = []
   for (const item of source) {
     const normalized = normalizeSessionMessage(sessionId, item)
+    projectedIds.push(normalized.info.id)
     if (normalized.info.role === "user" && normalized.message.parts.length) {
       store.confirmServerMessage(normalized.info.id, { clearOptimisticParts: true })
     }
@@ -69,6 +71,11 @@ export function projectOpenCodeMessages(instanceId: string, sessionId: string, d
     })
     for (const part of normalized.message.parts) applyPartUpdateV2(instanceId, part)
   }
+  const projected = new Set(projectedIds)
+  store.addOrUpdateSession({
+    id: sessionId,
+    messageIds: [...store.getSessionMessageIds(sessionId).filter((id) => !projected.has(id)), ...projectedIds],
+  })
 }
 
 export function destroyOpenCodeData(instanceId: string): void {

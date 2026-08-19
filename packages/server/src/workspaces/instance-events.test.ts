@@ -172,22 +172,26 @@ describe("InstanceEventBridge", () => {
     const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
     try {
       bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
-      await waitFor(() => received.length === 4)
+      await waitFor(() => received.length === 6)
       assert.equal(received[0].instanceId, "a")
       assert.deepEqual(received[0].event.location, { directory: "/repo-a" })
       assert.deepEqual(received[0].event.data, { id: "p1" })
       assert.equal(received[0].event.properties, undefined)
       assert.equal(received[1].event.data.sessionID, "session-1")
       assert.equal(received[1].event.properties, undefined)
-      assert.equal(received[2].instanceId, "a")
-      assert.deepEqual(received[2].event.data, {
+      assert.deepEqual(received.slice(2, 4).map((event) => [event.instanceId, event.event.type]), [
+        ["a", "server.connected"],
+        ["b", "server.connected"],
+      ])
+      assert.equal(received[4].instanceId, "a")
+      assert.deepEqual(received[4].event.data, {
         sessionID: "session-2",
         assistantMessageID: "message-1",
         ordinal: 0,
         delta: "hello",
       })
-      assert.equal(received[3].instanceId, "a")
-      assert.equal(received[3].event.data.delta, " again")
+      assert.equal(received[5].instanceId, "a")
+      assert.equal(received[5].event.data.delta, " again")
       assert.equal(ownerLookups.get("/repo-a/.worktrees/feature"), 2)
     } finally {
       bridge.shutdown()
@@ -275,6 +279,29 @@ describe("InstanceEventBridge", () => {
       await waitFor(() => received.length === 3)
       assert.deepEqual(received.map((event) => event.instanceId), ["b", "b", "b"])
       assert.deepEqual(received.map((event) => event.event.type), ["pty.created", "pty.exited", "pty.deleted"])
+    } finally {
+      bridge.shutdown()
+    }
+  })
+
+  it("routes locationless shell events by cwd without broadcasting ownership", async () => {
+    const events = [
+      { type: "shell.created", data: { info: { id: "shell-1", command: "npm run dev", cwd: "/repo-b", shell: "sh", file: "/tmp/output", status: "running", metadata: {}, time: { started: 1 } } } },
+      { type: "shell.exited", data: { id: "shell-1", status: "exited", exit: 0 } },
+      { type: "shell.deleted", data: { id: "shell-1" } },
+    ] as OpenCodeEvent[]
+    const workspaces = [{ id: "a", path: "/repo-a" }, { id: "b", path: "/repo-b" }]
+    const { manager } = locationlessManager(events, {}, workspaces)
+    const bus = new EventBus()
+    const received: any[] = []
+    bus.on("instance.event", (event) => received.push(event))
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
+      await waitFor(() => received.length === 3)
+      assert.deepEqual(received.map((event) => event.instanceId), ["b", "b", "b"])
+      assert.deepEqual(received.map((event) => event.event.type), ["shell.created", "shell.exited", "shell.deleted"])
     } finally {
       bridge.shutdown()
     }

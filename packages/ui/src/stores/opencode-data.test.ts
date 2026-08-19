@@ -132,4 +132,27 @@ describe("OpenCode data projection", () => {
       if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
     }
   })
+
+  it("projects native inbox delivery order", () => {
+    const instanceId = "opencode-data-delivery-order"
+    const sessionId = "session"
+    const apply = (event: any) => {
+      const data = applyOpenCodeDataEvent(instanceId, "/work", event)
+      projectOpenCodeMessages(instanceId, sessionId, data)
+    }
+    try {
+      apply({ id: "queued", type: "session.inbox.enqueued", created: 1, data: {
+        sessionID: sessionId, inboxID: "queued", item: { type: "user", payload: { text: "queued" }, delivery: "queue" },
+      } })
+      apply({ id: "other", type: "session.inbox.enqueued", created: 2, data: {
+        sessionID: sessionId, inboxID: "other", item: { type: "user", payload: { text: "other" }, delivery: "queue" },
+      } })
+      apply({ id: "delivered", type: "session.inbox.delivered", created: 3, data: { sessionID: sessionId, inboxID: "queued" } })
+
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["other", "queued"])
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
 })

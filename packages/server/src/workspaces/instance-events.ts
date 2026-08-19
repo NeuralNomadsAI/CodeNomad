@@ -19,6 +19,7 @@ const GLOBAL_EVENT_TYPES = new Set([
   "mcp.resources.changed",
   "mcp.status.changed",
   "models-dev.refreshed",
+  "server.connected",
 ])
 
 interface InstanceEventBridgeOptions {
@@ -35,6 +36,7 @@ export class InstanceEventBridge {
   private readonly directoryOwners = new Map<string, { expiresAt: number; owners: Promise<string[]> }>()
   private readonly sessionDirectories = new Map<string, { expiresAt: number; directory: Promise<string | undefined> }>()
   private readonly ptyDirectories = new Map<string, string>()
+  private readonly shellDirectories = new Map<string, string>()
   private readonly onWorkspaceStarted = (event: { workspace: { id: string } }) => {
     this.clearLocationCaches()
     if (!this.task) this.task = this.run()
@@ -96,11 +98,14 @@ export class InstanceEventBridge {
   private async publishEvent(event: OpenCodeEvent) {
     const sessionId = this.sessionId(event)
     const ptyId = this.ptyId(event)
+    const shellId = this.shellId(event)
     if (event.type === "session.moved" && sessionId) this.sessionDirectories.delete(sessionId)
 
     const directory = event.location?.directory
       ?? this.ptyInfoDirectory(event)
       ?? (ptyId ? this.ptyDirectories.get(ptyId) : undefined)
+      ?? this.shellInfoDirectory(event)
+      ?? (shellId ? this.shellDirectories.get(shellId) : undefined)
       ?? (sessionId ? await this.resolveSessionDirectory(sessionId) : undefined)
     if (!directory) {
       if (GLOBAL_EVENT_TYPES.has(event.type)) {
@@ -122,11 +127,13 @@ export class InstanceEventBridge {
       })
     }
     if (ptyId) this.ptyDirectories.set(ptyId, directory)
+    if (shellId) this.shellDirectories.set(shellId, directory)
 
     const instanceIds = await this.resolveDirectoryOwners(directory)
     if (instanceIds.length === 0) {
       if (event.type === "session.deleted" && sessionId) this.sessionDirectories.delete(sessionId)
       if (event.type === "pty.deleted" && ptyId) this.ptyDirectories.delete(ptyId)
+      if (event.type === "shell.deleted" && shellId) this.shellDirectories.delete(shellId)
       return
     }
 
@@ -135,6 +142,7 @@ export class InstanceEventBridge {
     }
     if (event.type === "session.deleted" && sessionId) this.sessionDirectories.delete(sessionId)
     if (event.type === "pty.deleted" && ptyId) this.ptyDirectories.delete(ptyId)
+    if (event.type === "shell.deleted" && shellId) this.shellDirectories.delete(shellId)
   }
 
   private sessionId(event: OpenCodeEvent): string | undefined {
@@ -152,6 +160,19 @@ export class InstanceEventBridge {
 
   private ptyInfoDirectory(event: OpenCodeEvent): string | undefined {
     if (event.type !== "pty.created" && event.type !== "pty.updated") return undefined
+    const cwd = (event.data as { info?: { cwd?: unknown } }).info?.cwd
+    return typeof cwd === "string" && cwd ? cwd : undefined
+  }
+
+  private shellId(event: OpenCodeEvent): string | undefined {
+    if (!event.type.startsWith("shell.")) return undefined
+    const data = event.data as { id?: unknown; info?: { id?: unknown } }
+    const id = data.id ?? data.info?.id
+    return typeof id === "string" && id ? id : undefined
+  }
+
+  private shellInfoDirectory(event: OpenCodeEvent): string | undefined {
+    if (event.type !== "shell.created") return undefined
     const cwd = (event.data as { info?: { cwd?: unknown } }).info?.cwd
     return typeof cwd === "string" && cwd ? cwd : undefined
   }
@@ -200,6 +221,7 @@ export class InstanceEventBridge {
     this.directoryOwners.clear()
     this.sessionDirectories.clear()
     this.ptyDirectories.clear()
+    this.shellDirectories.clear()
   }
 
   private updateStatus(status: InstanceStreamStatus, reason?: string) {
