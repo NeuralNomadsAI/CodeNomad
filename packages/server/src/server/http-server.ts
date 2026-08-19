@@ -708,7 +708,7 @@ async function proxyWorkspaceRequest(args: {
     }
   }
 
-  const body = applyDefaultWorkspaceLocation(targetUrl, promptBody, request.method, serviceDirectory, requestLocations.directories.length > 0 || sessionListHasScope, Boolean(sessionId))
+  const body = applyDefaultWorkspaceLocation(targetUrl, promptBody, request.method, serviceDirectory, requestLocations.directories.length > 0 || sessionListHasScope, Boolean(sessionId) && !isGlobalFormAction(pathname, request.method))
   const instanceAuthHeader = workspaceManager.getInstanceAuthorizationHeader(workspaceId)
 
   logger.debug({ workspaceId, method: request.method, targetUrl: targetUrl.toString() }, "Proxying request to instance")

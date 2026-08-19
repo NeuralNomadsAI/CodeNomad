@@ -30,17 +30,16 @@ async function inventorySessions(client: OpenCodeClient, project: string): Promi
   throw new Error("Session inventory exceeded its page limit")
 }
 
-function familyRoot(session: SessionInfo, sessions: Map<string, SessionInfo>): SessionInfo {
-  const seen = new Set([session.id])
-  let current = session
-  while (current.parentID) {
-    if (seen.has(current.parentID)) throw new Error(`Invalid session ancestry for ${session.id}`)
-    seen.add(current.parentID)
-    const parent = sessions.get(current.parentID)
-    if (!parent) throw new Error(`Session inventory is missing ancestor ${current.parentID}`)
-    current = parent
+async function waitForInventory(
+  client: OpenCodeClient,
+  project: string,
+  predicate: (sessions: SessionInfo[]) => boolean,
+): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate(await inventorySessions(client, project))) return
+    await new Promise((resolve) => setTimeout(resolve, 50))
   }
-  return current
+  throw new Error("Timed out waiting for session moves")
 }
 
 export async function evacuateWorktreeSessions(params: {
@@ -48,6 +47,7 @@ export async function evacuateWorktreeSessions(params: {
   projectDirectory: string
   targetDirectory: string
   rootDirectory: string
+  remove: () => Promise<void>
 }): Promise<void> {
   const target = normalizeDirectory(params.targetDirectory)
   const project = (await params.client.project.list()).find((candidate) => (
@@ -56,33 +56,44 @@ export async function evacuateWorktreeSessions(params: {
   ))
   if (!project) throw new Error("Unable to resolve the OpenCode project before deleting worktree")
   const sessions = await inventorySessions(params.client, project.id)
-  const byId = new Map(sessions.map((session) => [session.id, session]))
-  const roots = new Map<string, SessionInfo>()
-
-  for (const session of sessions) {
-    if (normalizeDirectory(session.location.directory) !== target) continue
-    const root = familyRoot(session, byId)
-    roots.set(root.id, root)
-  }
+  const affected = sessions.filter((session) => normalizeDirectory(session.location.directory) === target)
+  const active = await params.client.session.active()
+  const blockers = affected.filter((session) => Object.prototype.hasOwnProperty.call(active, session.id))
+  if (blockers.length) throw new Error(`Active sessions block worktree deletion: ${blockers.map((session) => session.id).join(", ")}`)
 
   const moved: SessionInfo[] = []
   try {
-    for (const root of roots.values()) {
-      moved.push(root)
-      await params.client.session.move({ sessionID: root.id, directory: params.rootDirectory })
+    for (const session of affected) {
+      const original = { ...session, location: { ...session.location } }
+      await params.client.session.move({ sessionID: session.id, directory: params.rootDirectory })
+      moved.push(original)
     }
-
-    const remaining = (await inventorySessions(params.client, project.id))
-      .filter((session) => normalizeDirectory(session.location.directory) === target)
-    if (remaining.length) throw new Error(`Worktree still contains ${remaining.length} session(s) after evacuation`)
+    await waitForInventory(params.client, project.id, (current) => (
+      current.every((session) => normalizeDirectory(session.location.directory) !== target)
+    ))
+    await params.remove()
   } catch (error) {
     const rollbackErrors: unknown[] = []
-    for (const root of moved.reverse()) {
+    for (const session of moved.reverse()) {
       try {
-        await params.client.session.move({ sessionID: root.id, directory: root.location.directory })
+        await params.client.session.move({
+          sessionID: session.id,
+          directory: session.location.directory,
+          workspaceID: session.location.workspaceID,
+        })
       } catch (rollbackError) {
         rollbackErrors.push(rollbackError)
       }
+    }
+    try {
+      const expected = new Set(moved.map((session) => session.id))
+      await waitForInventory(params.client, project.id, (current) => {
+        const restored = current.filter((session) => expected.has(session.id))
+        return restored.length === expected.size
+          && restored.every((session) => normalizeDirectory(session.location.directory) === target)
+      })
+    } catch (rollbackError) {
+      rollbackErrors.push(rollbackError)
     }
     if (rollbackErrors.length) {
       throw new AggregateError([error, ...rollbackErrors], "Session evacuation failed and could not be rolled back")

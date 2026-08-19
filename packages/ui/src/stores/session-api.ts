@@ -82,7 +82,7 @@ const catalogRefreshes = new Map<string, { key: string; promise: Promise<void> }
 const agentRequestIds = new Map<string, number>()
 const providerRequestIds = new Map<string, number>()
 const sessionPageRequests = new Map<string, Promise<void>>()
-const MAX_DESCENDANT_SESSION_REQUESTS = 1_000
+const MAX_DESCENDANT_SESSION_REQUESTS = 1_000_000
 let nextSessionListRequestId = 0
 
 function catalogLocationKey(location: LocationRef): string {
@@ -199,7 +199,6 @@ async function fetchV2Sessions(instanceId: string, options: V2SessionListOptions
         if (++requests > MAX_DESCENDANT_SESSION_REQUESTS) throw new Error("Descendant session traversal limit exceeded")
         const children = await client.session.list(buildProjectSessionListOptions({
           project: project ?? sessionsById.get(parentID)?.projectID,
-          subpath: sessionsById.get(parentID)?.subpath,
           parentID,
           order: "asc",
           cursor,
@@ -951,17 +950,6 @@ async function loadMessages(
 ): Promise<void> {
   const force = options?.force ?? false
   const skipChildren = options?.skipChildren ?? false
-
-  if (force) {
-    setMessagesLoaded((prev) => {
-      const next = new Map(prev)
-      const loadedSet = next.get(instanceId)
-      if (loadedSet) {
-        loadedSet.delete(sessionId)
-      }
-      return next
-    })
-  }
 
   const alreadyLoaded = messagesLoaded().get(instanceId)?.has(sessionId)
   if (alreadyLoaded && !force) {

@@ -30,6 +30,7 @@ describe("worktree routes", () => {
         },
         session: {
           list: async () => ({ data: [nativeSession], cursor: {} }),
+          active: async () => ({}),
           move: async (input: { directory: string }) => {
             if (input.directory === temp) throw new Error("native move failed")
           },

@@ -127,9 +127,8 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
         projectDirectory,
         targetDirectory,
         rootDirectory: projectDirectory,
+        remove: () => removeWorktree({ workspaceFolder: workspace.path, directory: match.directory, force, logger: request.log }),
       })
-
-      await removeWorktree({ workspaceFolder: workspace.path, directory: match.directory, force, logger: request.log })
 
       reply.code(204)
     } catch (error) {

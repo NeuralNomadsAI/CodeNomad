@@ -241,6 +241,7 @@ describe("instance proxy location enforcement", () => {
         payload: action === "reply" ? { answers: {} } : {},
       })
       assert.equal(response.statusCode, 200)
+      assert.equal(JSON.parse(response.body).url, `/api/session/global/form/form-1/${action}?location%5Bdirectory%5D=%2Frepo`)
     }
     assert.deepEqual(sessionGets, [])
     assert.equal(requestCount(), 2)
