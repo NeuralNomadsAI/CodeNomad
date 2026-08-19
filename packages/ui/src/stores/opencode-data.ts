@@ -5,6 +5,7 @@ import { getRootClient } from "./opencode-client"
 import { applyPartUpdateV2, upsertMessageInfoV2 } from "./message-v2/bridge"
 import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { sseManager } from "../lib/sse-manager"
+import { messageStoreBus } from "./message-v2/bus"
 
 const entries = new Map<string, { data: Data; emit: (event: OpenCodeEvent) => void; dispose: () => void }>()
 
@@ -54,8 +55,12 @@ export function applyOpenCodeDataEvent(instanceId: string, directory: string, ev
 export function projectOpenCodeMessages(instanceId: string, sessionId: string, data: Data): void {
   const source = data.session.message.list(sessionId)
   if (!source.length) return
+  const store = messageStoreBus.getOrCreate(instanceId)
   for (const item of source) {
     const normalized = normalizeSessionMessage(sessionId, item)
+    if (normalized.info.role === "user" && normalized.message.parts.length) {
+      store.confirmServerMessage(normalized.info.id, { clearOptimisticParts: true })
+    }
     const status = normalized.message.status
     upsertMessageInfoV2(instanceId, normalized.info, {
       status: status === "sending" || status === "sent" || status === "streaming" || status === "error"
