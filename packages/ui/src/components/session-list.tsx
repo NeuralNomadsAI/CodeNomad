@@ -197,7 +197,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     const worktrees = getWorktrees(props.instanceId)
     const getWorktreeLabel = (directory: string) => {
       const normalized = normalizeSessionDirectory(directory)
-      const worktree = worktrees.find((candidate) => normalizeSessionDirectory(candidate.directory) === normalized)
+      const worktree = worktrees.find((candidate) => normalizeSessionDirectory(candidate.serviceDirectory ?? candidate.directory) === normalized)
       return worktree?.kind === "root" ? t("sessionList.worktree.workspace") : worktree?.slug ?? directory
     }
     return projectSessionFamilies(searchThreads, {
@@ -846,7 +846,7 @@ const SessionList: Component<SessionListProps> = (props) => {
             >
               <option value="">{t("sessionList.worktreeFilter.all")}</option>
               {getWorktrees(props.instanceId).map((worktree) => (
-                <option value={worktree.directory}>{worktree.kind === "root" ? t("sessionList.worktree.workspace") : worktree.slug}</option>
+                <option value={worktree.serviceDirectory ?? worktree.directory}>{worktree.kind === "root" ? t("sessionList.worktree.workspace") : worktree.slug}</option>
               ))}
             </select>
           </div>

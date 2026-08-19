@@ -3,6 +3,8 @@ import type { LocationGetOutput, LocationRef, OpenCodeClient, SessionInfo } from
 
 const SESSION_PAGE_LIMIT = 500
 const MAX_SESSION_PAGES = 1000
+const MOVE_VERIFY_ATTEMPTS = 100
+const MOVE_VERIFY_DELAY_MS = 50
 const projectLocks = new Map<string, Promise<void>>()
 
 export class ProjectSessionError extends Error {
@@ -43,7 +45,11 @@ export async function listCompleteProjectSessions(
       sessions.push(session)
     }
 
-    const next = response.cursor.next || undefined
+    const rawNext = response.cursor.next
+    if (rawNext !== undefined && (typeof rawNext !== "string" || !rawNext.trim())) {
+      throw new ProjectSessionError("OpenCode returned an invalid session inventory cursor", 502)
+    }
+    const next = rawNext
     if (next && cursors.has(next)) throw new ProjectSessionError(`Session inventory repeated cursor: ${next}`, 502)
     if (next) cursors.add(next)
     cursor = next
@@ -146,6 +152,7 @@ export async function removeProjectWorktree(params: {
           throw new ProjectSessionError("Sessions remain attached to the worktree after evacuation", 409)
         }
       }
+      await assertInactive(context.client, families.flat())
       await params.remove()
     } catch (error) {
       const changed = root ? await refreshChangedSessionIds(context, moved, root) : []
@@ -237,17 +244,14 @@ async function moveMembers(
   moved: string[],
 ): Promise<void> {
   for (const session of members) {
+    await assertInactive(context.client, [session])
     moved.push(session.id)
     await context.client.session.move({
       sessionID: session.id,
       directory: target.directory,
       workspaceID: target.workspaceID,
     })
-    const current = await context.client.session.get({ sessionID: session.id })
-    if (current.id !== session.id || current.projectID !== context.project.id) {
-      throw new ProjectSessionError(`OpenCode returned the wrong session after move: ${session.id}`, 502)
-    }
-    assertLocation(current, target, `Session move verification failed: ${session.id}`)
+    await waitForSessionLocation(context, session.id, target, `Session move verification failed: ${session.id}`)
   }
 }
 
@@ -291,11 +295,7 @@ async function rollback(
     for (const sessionId of [...moved].reverse()) {
       const location = original.get(sessionId)!
       await context.client.session.move({ sessionID: sessionId, directory: location.directory, workspaceID: location.workspaceID })
-      const session = await context.client.session.get({ sessionID: sessionId })
-      if (session.id !== sessionId || session.projectID !== context.project.id) {
-        throw new ProjectSessionError(`OpenCode returned the wrong session after rollback: ${sessionId}`, 502)
-      }
-      assertLocation(session, location, `Session rollback verification failed: ${sessionId}`)
+      await waitForSessionLocation(context, sessionId, location, `Session rollback verification failed: ${sessionId}`)
     }
     await verifyInventory(context, moved, original)
   } catch (rollbackError) {
@@ -311,20 +311,33 @@ async function verifyInventory(
   sessionIds: string[],
   expected: Map<string, LocationRef>,
 ): Promise<SessionInfo[]> {
-  const sessions = await listCompleteProjectSessions(context.client, context.project.id)
-  const refreshed = new Map(sessions.map((session) => [session.id, session]))
-  for (const sessionId of sessionIds) {
-    const session = refreshed.get(sessionId)
-    if (!session) throw new ProjectSessionError(`Session disappeared during verification: ${sessionId}`, 409)
-    assertLocation(session, expected.get(sessionId)!, `Session inventory verification failed: ${sessionId}`)
+  for (let attempt = 0; attempt < MOVE_VERIFY_ATTEMPTS; attempt += 1) {
+    const sessions = await listCompleteProjectSessions(context.client, context.project.id)
+    const refreshed = new Map(sessions.map((session) => [session.id, session]))
+    if (sessionIds.every((sessionId) => {
+      const session = refreshed.get(sessionId)
+      return Boolean(session && sameLocation(session.location, expected.get(sessionId)!))
+    })) return sessions
+    await new Promise((resolve) => setTimeout(resolve, MOVE_VERIFY_DELAY_MS))
   }
-  return sessions
+  throw new ProjectSessionError("Timed out waiting for session inventory verification", 409)
 }
 
-function assertLocation(session: SessionInfo, expected: LocationRef, message: string): void {
-  if (!sameLocation(session.location, expected)) {
-    throw new ProjectSessionError(message, 409)
+async function waitForSessionLocation(
+  context: ProjectContext,
+  sessionId: string,
+  expected: LocationRef,
+  message: string,
+): Promise<SessionInfo> {
+  for (let attempt = 0; attempt < MOVE_VERIFY_ATTEMPTS; attempt += 1) {
+    const session = await context.client.session.get({ sessionID: sessionId })
+    if (session.id !== sessionId || session.projectID !== context.project.id) {
+      throw new ProjectSessionError(`OpenCode returned the wrong session after move: ${sessionId}`, 502)
+    }
+    if (sameLocation(session.location, expected)) return session
+    await new Promise((resolve) => setTimeout(resolve, MOVE_VERIFY_DELAY_MS))
   }
+  throw new ProjectSessionError(message, 409)
 }
 
 function sameLocation(left: LocationRef, right: LocationRef): boolean {

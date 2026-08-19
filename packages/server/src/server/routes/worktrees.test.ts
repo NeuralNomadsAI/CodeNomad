@@ -72,6 +72,8 @@ it("reserves the physical worktree and rejects a HEAD change immediately before 
         return () => { released = true }
       },
       getSharedServiceClient: async () => client,
+      getServiceDirectory: () => repo,
+      getServiceDirectoryForPath: async (_id: string, directory: string) => directory,
     } as unknown as WorkspaceManager
     registerWorktreeRoutes(app, { workspaceManager: manager })
 
@@ -121,6 +123,8 @@ it("fails a direct delete call closed when session evacuation fails", async () =
       const manager = {
         get: () => workspace,
         getSharedServiceClient: async () => client,
+        getServiceDirectory: () => temp,
+        getServiceDirectoryForPath: async (_id: string, directory: string) => directory,
         reserveWorktreeDeletion: async () => () => undefined,
       } as unknown as WorkspaceManager
       registerWorktreeRoutes(app, { workspaceManager: manager })

@@ -43,7 +43,11 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
     }
 
     const { repoRoot, isGitRepo } = await resolveRepoRoot(workspace.path, request.log)
-    const worktrees = await listWorktrees({ repoRoot, workspaceFolder: workspace.path, logger: request.log })
+    const listed = await listWorktrees({ repoRoot, workspaceFolder: workspace.path, logger: request.log })
+    const worktrees = await Promise.all(listed.map(async (worktree) => ({
+      ...worktree,
+      serviceDirectory: await deps.workspaceManager.getServiceDirectoryForPath(workspace.id, worktree.directory),
+    })))
     const response: WorktreeListResponse = { worktrees, isGitRepo }
     return response
   })
@@ -118,11 +122,14 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
       })
       const target = worktrees.find((worktree) => worktree.slug === worktreeSlug)
       if (!target) throw new ProjectSessionError("Worktree not found", 404)
+      const projectDirectory = deps.workspaceManager.getServiceDirectory(workspace.id)
+      const targetDirectory = await deps.workspaceManager.getServiceDirectoryForPath(workspace.id, target.directory)
+      if (!projectDirectory || !targetDirectory) throw new ProjectSessionError("Unable to resolve OpenCode worktree paths", 409)
       const moved = await moveProjectSessionFamily({
         client: await deps.workspaceManager.getSharedServiceClient(),
-        projectDirectory: workspace.path,
+        projectDirectory,
         sessionId: request.params.sessionId,
-        targetDirectory: target.directory,
+        targetDirectory,
         validateTarget: async () => {
           const refreshed = await strictWorktrees({
             repoRoot,
@@ -185,6 +192,16 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
       }
       try {
         const client = await deps.workspaceManager.getSharedServiceClient()
+        const projectDirectory = deps.workspaceManager.getServiceDirectory(workspace.id)
+        const targetHostDirectory = match.registeredDirectory ?? match.directory
+        const rootHostDirectory = worktrees.find((worktree) => worktree.kind === "root")!.directory
+        const [targetDirectory, rootDirectory] = await Promise.all([
+          deps.workspaceManager.getServiceDirectoryForPath(workspace.id, targetHostDirectory),
+          deps.workspaceManager.getServiceDirectoryForPath(workspace.id, rootHostDirectory),
+        ])
+        if (!projectDirectory || !targetDirectory || !rootDirectory) {
+          throw new ProjectSessionError("Unable to resolve OpenCode worktree paths", 409)
+        }
         const isTargetRegistered = async () => {
           const refreshed = await strictWorktrees({
             repoRoot,
@@ -199,9 +216,9 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
         }
         await removeProjectWorktree({
           client,
-          projectDirectory: workspace.path,
-          targetDirectory: match.registeredDirectory ?? match.directory,
-          rootDirectory: worktrees.find((worktree) => worktree.kind === "root")!.directory,
+          projectDirectory,
+          targetDirectory,
+          rootDirectory,
           remove: async () => {
             if (!await isTargetRegistered()) {
               throw new ProjectSessionError("Worktree changed before deletion", 409)
@@ -209,7 +226,7 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
             try {
               await removeWorktree({
                 workspaceFolder: workspace.path,
-                directory: match.registeredDirectory ?? match.directory,
+                directory: targetHostDirectory,
                 force,
                 logger: request.log,
               })

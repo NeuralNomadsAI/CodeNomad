@@ -93,6 +93,8 @@ export interface WorktreeDescriptor {
   slug: string
   /** Absolute directory path on the server host. */
   directory: string
+  /** Equivalent path in the OpenCode service namespace (notably WSL). */
+  serviceDirectory?: string
   /** Exact path registered in Git's worktree inventory. */
   registeredDirectory?: string
   kind: WorktreeKind

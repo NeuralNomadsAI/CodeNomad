@@ -177,7 +177,7 @@ function normalizeDirectory(directory: string): string {
 function getWorktreeSlugForParentSession(instanceId: string, parentSessionId: string): string {
   const directory = sessions().get(instanceId)?.get(parentSessionId)?.location.directory
   const locationSlug = directory && getWorktrees(instanceId)
-    .find((worktree) => normalizeDirectory(worktree.directory) === normalizeDirectory(directory))?.slug
+    .find((worktree) => normalizeDirectory(worktree.serviceDirectory ?? worktree.directory) === normalizeDirectory(directory))?.slug
   if (locationSlug) return normalizeWorktreeSlug(instanceId, locationSlug)
 
   return "root"
