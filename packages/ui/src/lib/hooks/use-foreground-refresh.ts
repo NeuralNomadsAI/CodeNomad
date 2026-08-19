@@ -41,18 +41,9 @@ export function useForegroundRefresh(options: ForegroundRefreshOptions): void {
       }
       controller.handle(status)
     })
-    const streamGenerations = new Map<string, number>()
-    const unsubscribeGeneration = serverEvents.on("instance.eventStatus", (event) => {
-      if (event.type !== "instance.eventStatus" || event.status !== "connected") return
-      const previous = streamGenerations.get(event.instanceId)
-      streamGenerations.set(event.instanceId, event.generation)
-      if (previous !== undefined && previous !== event.generation) controller.invalidate()
-    })
-
     onCleanup(() => {
       controller.dispose()
       unsubscribe()
-      unsubscribeGeneration()
     })
   })
 }

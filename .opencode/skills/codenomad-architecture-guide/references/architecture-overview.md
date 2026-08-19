@@ -16,12 +16,12 @@ The server uses `packages/server/src/workspaces/opencode-service.ts` for a lease
 
 | Owner | Responsibilities | Main paths |
 |---|---|---|
-| OpenCode V2 | Sessions, messages, permissions/questions, files, native Shell/instructions, location-scoped PTYs | latest reviewed experimental `@opencode-ai/client` `next` protocol |
+| OpenCode V2 | Sessions, messages, permissions/questions, files, session Shell/instructions, background Shells, interactive PTYs | latest reviewed experimental `@opencode-ai/client` `next` protocol |
 | CodeNomad server | Shared service lifecycle, locations, proxy authorization, Git mutations, Yolo, auth, storage, speech, SSE multiplexing | `packages/server/src/` |
 | CodeNomad UI | Generated Promise clients, state reconciliation, interaction and rendering | `packages/ui/src/` |
 | Desktop hosts | Start CodeNomad and provide native OS integration | `packages/electron-app/`, `packages/tauri-app/` |
 
-Native Shell remains separate from PTY management. The Status panel lists location-scoped PTYs, refreshes on PTY events/reconnect, displays native metadata, and supports title updates and ownership-checked removal. Current installed declarations have no PTY output/read/stream or separate stop endpoint; output display and a distinct stop action are unavailable, and removal is the native stop action for a running PTY. `packages/opencode-plugin/` and the server plugin/background-process integration remain deleted and must not be restored or used as extension points.
+Session Shell remains separate from background Shell and PTY management. The Status panel lists location-scoped `shell.*` records, refreshes on Shell events/reconnect, displays native metadata, and supports ownership-checked removal. Output preserves native cursor pagination; interactive `pty.*` terminals remain separate. `packages/opencode-plugin/` and the server plugin/background-process integration remain deleted and must not be restored or used as extension points.
 
 ## HTTP And Events
 

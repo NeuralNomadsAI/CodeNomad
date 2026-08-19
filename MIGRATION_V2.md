@@ -24,7 +24,7 @@ The migration removes the V1 compatibility layer rather than maintaining both in
 
 - Remove the custom `packages/opencode-plugin` package.
 - Remove V1 plugin communication channels and per-workspace runtime management.
-- Replace interactive shell-mode requests with native V2 Shell and expose native V2 PTYs in the Status panel.
+- Replace shell-mode requests with native `session.shell` and expose native background `shell.*` processes in the Status panel; keep interactive `pty.*` terminals separate.
 - Replace per-workspace OpenCode binary selection with one global `opencode2` binary.
 - Migrate the persisted V1 default command `opencode` to `opencode2` during workspace launch.
 - Remove message and part deletion controls because V2 currently has no equivalent API.
@@ -39,7 +39,7 @@ The migration removes the V1 compatibility layer rather than maintaining both in
 
 ## Security and Service Lifecycle
 
-- Restrict proxied Shell and PTY working directories to workspace-owned roots and Git worktrees; PTY controls also verify the native PTY `cwd` before forwarding ID-scoped requests.
+- Restrict proxied Shell and PTY working directories to workspace-owned roots and Git worktrees; ID-scoped controls verify the native `cwd` before forwarding requests.
 - Remove CodeNomad authentication cookies before forwarding requests to OpenCode.
 - Prevent OpenCode `Set-Cookie` headers from being relayed to the browser.
 - Avoid logging unredacted secret-bearing proxy request bodies.
@@ -61,7 +61,7 @@ The migration removes the V1 compatibility layer rather than maintaining both in
 - The proxy validates the decoded scope of native session cursors before forwarding them and supports native global Form reply/cancel routes without treating `global` as a session ID.
 - Before deleting a worktree, the server inventories the complete native project, evacuates affected session families with verification and rollback, and fails closed for direct API callers. One canonical folder maps to one logical workspace instead of creating non-isolated duplicates.
 - The current working tree retains the isolated V2 database, deferred location eviction, and proxy path/location ownership validation.
-- Current installed client declarations provide native PTY list/get/create/title-or-size update/remove and lifecycle events, but no output/read/stream API and no separate stop API. Removing a running PTY is therefore the only native stop action, and PTY output is not displayed.
+- Current installed client declarations provide background Shell list/get/create/output/timeout/remove and lifecycle events. Shell output pagination keeps the native cursor authoritative. Interactive PTY APIs remain separate and are not used by the background-process panel.
 - Local validation passes server/UI/Electron typechecks, the CI UI partitions, Electron native tests, server tests (with three platform skips), standalone server lockfile dry-run installation, UI/server/Electron builds, Tauri `cargo check --locked`, and `git diff --check`.
 
 ## Remaining Work
@@ -146,9 +146,9 @@ The smoke is complete only after all of these actions succeed in the visible V2 
 3. Open an existing session from the session list; direct API session creation is not a substitute.
 4. Send a prompt from the composer and receive its visible assistant response.
 5. Reload the V2 window and confirm the workspace and session list recover. While V1 owns cross-host restore, reopen the existing V2 session from the list and confirm its messages and pending state recover correctly.
-6. Exercise one PTY create/list/remove cycle through the workspace proxy, then close only the V2 process after collecting its logs. PTY creation is not currently exposed in the visible UI.
+6. Exercise one background Shell create/list/output/remove cycle through the workspace proxy, then close only the V2 process after collecting its logs. Shell creation is not currently exposed in the visible UI.
 
-Do not count direct HTTP/CDP calls as validation for workspace, session, prompt, response, or reload behavior. CDP may inspect the V2 DOM and operate visible controls, but it must follow the same controls and state transitions as a user. The PTY protocol check is the sole exception until the UI exposes creation.
+Do not count direct HTTP/CDP calls as validation for workspace, session, prompt, response, or reload behavior. CDP may inspect the V2 DOM and operate visible controls, but it must follow the same controls and state transitions as a user. The background Shell protocol check is the sole exception until the UI exposes creation.
 
 ## Review Notes
 

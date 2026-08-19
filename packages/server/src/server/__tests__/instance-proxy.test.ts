@@ -24,6 +24,7 @@ async function harness(
   serviceDirectory = workspacePath,
   pathMappings: Record<string, string> = {},
   ptyDirectories: Record<string, string | Error> = {},
+  shellDirectories: Record<string, string | Error> = {},
 ) {
   const upstream = Fastify()
   apps.push(upstream)
@@ -68,6 +69,19 @@ async function harness(
         const cwd = ptyDirectories[ptyID] ?? sessionDirectory
         if (cwd instanceof Error) throw cwd
         return { data: { id: ptyID, title: ptyID, command: "npm", args: ["run", "dev"], cwd, status: "running", pid: 42 } }
+      },
+    },
+    shell: {
+      list: async () => ({
+        location: { directory: serviceDirectory, project: { id: "project", directory: serviceDirectory, canonical: serviceDirectory } },
+        data: Object.entries(shellDirectories).filter((entry): entry is [string, string] => typeof entry[1] === "string").map(([id, cwd]) => ({
+          id, command: "npm run dev", cwd, shell: "sh", file: "/tmp/output", status: "running" as const, pid: 42, metadata: {}, time: { started: 1 },
+        })),
+      }),
+      get: async ({ id }: { id: string }) => {
+        const cwd = shellDirectories[id] ?? sessionDirectory
+        if (cwd instanceof Error) throw cwd
+        return { data: { id, command: "npm run dev", cwd, shell: "sh", file: "/tmp/output", status: "running", pid: 42, metadata: {}, time: { started: 1 } } }
       },
     },
   } as OpenCodeClient
@@ -126,6 +140,13 @@ describe("instance proxy location enforcement", () => {
     assert.equal(queryResponse.statusCode, 403)
     assert.equal(requestCount(), 0)
     assert.doesNotMatch(bodyResponse.body, /internal-secret/)
+  })
+
+  it("allows the scoped native location bootstrap", async () => {
+    const { app } = await harness()
+    const response = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/location" })
+    assert.equal(response.statusCode, 200)
+    assert.match(JSON.parse(response.body).url, /\/api\/location\?location%5Bdirectory%5D=%2Frepo/)
   })
 
   it("authorizes project-only session lists without adding a directory", async () => {
@@ -191,7 +212,7 @@ describe("instance proxy location enforcement", () => {
 
     assert.equal((await app.inject({
       method: "GET",
-      url: "/workspaces/workspace/instance/api/pty/foreign?location%5Bdirectory%5D=%2Frepo%2Fworktree",
+      url: "/workspaces/workspace/instance/api/pty/foreign/?location%5Bdirectory%5D=%2Frepo%2Fworktree",
     })).statusCode, 403)
     assert.equal(requestCount(), 0)
   })
@@ -230,6 +251,27 @@ describe("instance proxy location enforcement", () => {
     assert.equal(response.statusCode, 403)
     assert.equal(requestCount(), 0)
     assert.doesNotMatch(response.body, /internal-secret/)
+  })
+
+  it("lists owned shells and rejects foreign shell access", async () => {
+    const { app, requestCount } = await harness("/repo/worktree", {}, {}, "/repo", "/repo", {}, {}, {
+      owned: "/repo/worktree",
+      foreign: "/other",
+    })
+
+    const listed = await app.inject({
+      method: "GET",
+      url: "/workspaces/workspace/instance/api/shell?location%5Bdirectory%5D=%2Frepo%2Fworktree",
+    })
+    assert.equal(listed.statusCode, 200)
+    assert.deepEqual(JSON.parse(listed.body).data.map((shell: { id: string }) => shell.id), ["owned"])
+    for (const [method, path] of [["DELETE", "foreign/"], ["GET", "foreign/output/"]] as const) {
+      assert.equal((await app.inject({
+        method,
+        url: `/workspaces/workspace/instance/api/shell/${path}?location%5Bdirectory%5D=%2Frepo%2Fworktree`,
+      })).statusCode, 403)
+    }
+    assert.equal(requestCount(), 0)
   })
 
   it("permits only native global Forms actions without session hydration", async () => {

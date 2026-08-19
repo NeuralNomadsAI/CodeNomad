@@ -117,8 +117,8 @@ Then open a pull request on GitHub targeting the `dev` branch.
 - V2 always uses `~/.local/share/opencode2/opencode.db`. Never reuse the V1 database for V2.
 - OpenCode session calls use `/workspaces/:id/instance/api/*`; CodeNomad control routes and multiplexed events use `/api/*` and `/api/events`.
 - The proxy is method/path allowlisted, so new upstream functionality is not exposed automatically.
-- Native Shell (`client.session.shell`) and prompt instructions (`client.session.instructions.entry`) remain separate from native V2 PTY management.
-- Native PTYs are location-scoped and listed in the Status panel. The UI refreshes them on PTY events and reconnect, displays native metadata, and supports title updates and ownership-checked removal. Current installed declarations have no PTY output/read/stream API or separate stop endpoint, so removal is the native stop action for a running PTY. `packages/opencode-plugin` and the server plugin/background-process paths remain deleted and must not be restored.
+- Shell mode (`client.session.shell`) and prompt instructions (`client.session.instructions.entry`) remain separate from background shells and interactive PTYs.
+- Location-scoped background shells use `client.shell.*` and are listed in the Status panel. The UI refreshes them on Shell events and reconnect, displays native metadata, and supports ownership-checked removal. `client.pty.*` remains reserved for interactive terminals. `packages/opencode-plugin` and the server plugin/background-process paths remain deleted and must not be restored.
 - Native events are volatile. Reconnect handlers must refetch authoritative state instead of assuming missed events will replay.
 - Git mutations and Yolo policy remain CodeNomad-owned server boundaries.
 
