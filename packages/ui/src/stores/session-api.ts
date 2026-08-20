@@ -19,7 +19,6 @@ import {
   cancelSessionGenerationAdmissions,
   markSessionDeletedAuthoritative,
   getAuthoritativelyDeletedSessionIdsForInstance,
-  getDescendantSessions,
   isBlankSession,
   messagesLoaded,
   getSessionMessagesLoadError,
@@ -81,10 +80,14 @@ const catalogLocations = new Map<string, string>()
 const catalogRefreshes = new Map<string, { key: string; promise: Promise<void> }>()
 const agentRequestIds = new Map<string, number>()
 const providerRequestIds = new Map<string, number>()
+const agentRefreshes = new Map<string, { promise: Promise<boolean>; pending: boolean; cancelled: boolean }>()
+const providerRefreshes = new Map<string, { promise: Promise<boolean>; pending: boolean; cancelled: boolean }>()
 const sessionPageRequests = new Map<string, Promise<void>>()
 const messageNextCursors = new Map<string, string>()
 const messagePageRequests = new Map<string, Promise<void>>()
 let nextSessionListRequestId = 0
+let nextAgentRequestId = 0
+let nextProviderRequestId = 0
 
 function messagePageKey(instanceId: string, sessionId: string): string {
   return `${instanceId}\0${sessionId}`
@@ -141,9 +144,23 @@ function clearSessionListRequestState(instanceId: string): void {
 function clearSessionCatalogState(instanceId: string): void {
   catalogLocations.delete(instanceId)
   catalogRefreshes.delete(instanceId)
-  agentRequestIds.delete(instanceId)
-  providerRequestIds.delete(instanceId)
   const prefix = `${instanceId}\0`
+  for (const key of agentRequestIds.keys()) {
+    if (key.startsWith(prefix)) agentRequestIds.delete(key)
+  }
+  for (const key of providerRequestIds.keys()) {
+    if (key.startsWith(prefix)) providerRequestIds.delete(key)
+  }
+  for (const key of agentRefreshes.keys()) {
+    if (!key.startsWith(prefix)) continue
+    agentRefreshes.get(key)!.cancelled = true
+    agentRefreshes.delete(key)
+  }
+  for (const key of providerRefreshes.keys()) {
+    if (!key.startsWith(prefix)) continue
+    providerRefreshes.get(key)!.cancelled = true
+    providerRefreshes.delete(key)
+  }
   for (const key of messageNextCursors.keys()) {
     if (key.startsWith(prefix)) messageNextCursors.delete(key)
   }
@@ -392,6 +409,7 @@ async function fetchSessions(instanceId: string, options?: {
     }
 
     setSessionPage(instanceId, rootIds, Boolean(response.nextCursor), options?.reset ?? true, response.nextCursor)
+    for (const rootId of rootIds) updateThreadTotalsForParent(instanceId, rootId)
 
     reconcilePendingSessionIndicators(instanceId)
 
@@ -470,6 +488,7 @@ async function loadNextSessionPage(instanceId: string): Promise<void> {
     if (root && !roots.includes(root.id)) roots.push(root.id)
   }
   setSessionPage(instanceId, roots, Boolean(response.nextCursor), false, response.nextCursor)
+  for (const rootId of roots) updateThreadTotalsForParent(instanceId, rootId)
 }
 
 async function searchSessions(instanceId: string, query: string): Promise<void> {
@@ -829,15 +848,38 @@ function removeSessionRuntimeState(instanceId: string, sessionId: string, author
   }
 }
 
-async function fetchAgents(instanceId: string, location = getActiveCatalogLocation(instanceId)): Promise<boolean> {
+function fetchAgents(instanceId: string, location = getActiveCatalogLocation(instanceId), refresh = false): Promise<boolean> {
+  const key = `${instanceId}\0${catalogLocationKey(location)}`
+  const existing = agentRefreshes.get(key)
+  if (existing) {
+    if (refresh) existing.pending = true
+    return existing.promise
+  }
+  const state = { promise: Promise.resolve(false), pending: false, cancelled: false }
+  state.promise = (async () => {
+    let result: boolean
+    do {
+      state.pending = false
+      result = await loadAgents(instanceId, location)
+    } while (state.pending && !state.cancelled)
+    return result
+  })().finally(() => {
+    if (agentRefreshes.get(key) === state) agentRefreshes.delete(key)
+  })
+  agentRefreshes.set(key, state)
+  return state.promise
+}
+
+async function loadAgents(instanceId: string, location: LocationRef): Promise<boolean> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
   }
 
   const rootClient = getRootClient(instanceId)
-  const requestId = (agentRequestIds.get(instanceId) ?? 0) + 1
-  agentRequestIds.set(instanceId, requestId)
+  const requestKey = `${instanceId}\0${catalogLocationKey(location)}`
+  const requestId = ++nextAgentRequestId
+  agentRequestIds.set(requestKey, requestId)
 
   try {
     log.info(`[HTTP] GET /agent.list for instance ${instanceId}`)
@@ -866,7 +908,7 @@ async function fetchAgents(instanceId: string, location = getActiveCatalogLocati
         : undefined,
     }))
 
-    if (agentRequestIds.get(instanceId) !== requestId || catalogLocationKey(getActiveCatalogLocation(instanceId)) !== catalogLocationKey(location)) return false
+    if (agentRequestIds.get(requestKey) !== requestId || catalogLocationKey(getActiveCatalogLocation(instanceId)) !== catalogLocationKey(location)) return false
     setAgents((prev) => {
       const next = new Map(prev)
       next.set(instanceId, agentList)
@@ -879,15 +921,38 @@ async function fetchAgents(instanceId: string, location = getActiveCatalogLocati
   }
 }
 
-async function fetchProviders(instanceId: string, location = getActiveCatalogLocation(instanceId)): Promise<boolean> {
+function fetchProviders(instanceId: string, location = getActiveCatalogLocation(instanceId), refresh = false): Promise<boolean> {
+  const key = `${instanceId}\0${catalogLocationKey(location)}`
+  const existing = providerRefreshes.get(key)
+  if (existing) {
+    if (refresh) existing.pending = true
+    return existing.promise
+  }
+  const state = { promise: Promise.resolve(false), pending: false, cancelled: false }
+  state.promise = (async () => {
+    let result: boolean
+    do {
+      state.pending = false
+      result = await loadProviders(instanceId, location)
+    } while (state.pending && !state.cancelled)
+    return result
+  })().finally(() => {
+    if (providerRefreshes.get(key) === state) providerRefreshes.delete(key)
+  })
+  providerRefreshes.set(key, state)
+  return state.promise
+}
+
+async function loadProviders(instanceId: string, location: LocationRef): Promise<boolean> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
   }
 
   const rootClient = getRootClient(instanceId)
-  const requestId = (providerRequestIds.get(instanceId) ?? 0) + 1
-  providerRequestIds.set(instanceId, requestId)
+  const requestKey = `${instanceId}\0${catalogLocationKey(location)}`
+  const requestId = ++nextProviderRequestId
+  providerRequestIds.set(requestKey, requestId)
 
   try {
     log.info(`[HTTP] GET /provider.list for instance ${instanceId}`)
@@ -915,7 +980,7 @@ async function fetchProviders(instanceId: string, location = getActiveCatalogLoc
       })),
     }))
 
-    if (providerRequestIds.get(instanceId) !== requestId || catalogLocationKey(getActiveCatalogLocation(instanceId)) !== catalogLocationKey(location)) return false
+    if (providerRequestIds.get(requestKey) !== requestId || catalogLocationKey(getActiveCatalogLocation(instanceId)) !== catalogLocationKey(location)) return false
     setProviders((prev) => {
       const next = new Map(prev)
       next.set(instanceId, providerList)
@@ -933,13 +998,11 @@ async function loadMessages(
   sessionId: string,
   options?: {
     force?: boolean
-    skipChildren?: boolean
     registerInvalidation?: (invalidate: () => void) => void
     signal?: AbortSignal
   },
 ): Promise<void> {
   const force = options?.force ?? false
-  const skipChildren = options?.skipChildren ?? false
 
   const alreadyLoaded = messagesLoaded().get(instanceId)?.has(sessionId)
   if (alreadyLoaded && !force) {
@@ -1134,7 +1197,6 @@ async function loadMessages(
     if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return
     return loadMessages(instanceId, sessionId, {
       force: true,
-      skipChildren,
       registerInvalidation: options?.registerInvalidation,
       signal: options?.signal,
     })
@@ -1144,19 +1206,6 @@ async function loadMessages(
     || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch)
     || !sessions().get(instanceId)?.has(sessionId)) return
   updateSessionInfo(instanceId, sessionId)
-
-  if (!skipChildren && session.parentId === null) {
-    for (const child of getDescendantSessions(instanceId, sessionId)) {
-      void loadMessages(instanceId, child.id, { skipChildren: true }).catch((error) =>
-        log.error("Failed to load child session messages", {
-          instanceId,
-          sessionId: child.id,
-          parentSessionId: sessionId,
-          error,
-        }),
-      )
-    }
-  }
 }
 
 async function loadMoreMessages(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<void> {

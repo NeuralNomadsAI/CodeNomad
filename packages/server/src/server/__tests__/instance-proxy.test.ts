@@ -33,6 +33,9 @@ async function harness(
   upstream.all("/*", async (request, reply) => {
     requests++
     reply.header("set-cookie", "upstream_session=secret; Path=/")
+    reply.header("www-authenticate", 'Basic realm="OpenCode"')
+    reply.header("proxy-authenticate", 'Basic realm="OpenCode proxy"')
+    if (request.headers["x-test-challenge"] === "1") reply.code(401)
     return { url: request.raw.url, body: request.body, headers: request.headers }
   })
   await upstream.listen({ host: "127.0.0.1", port: 0 })
@@ -246,6 +249,17 @@ describe("instance proxy location enforcement", () => {
     assert.equal(headers["x-opencode-routing-test"], undefined)
     assert.equal(headers["x-remove-me"], undefined)
     assert.equal(response.headers["set-cookie"], undefined)
+    assert.equal(response.headers["www-authenticate"], undefined)
+    assert.equal(response.headers["proxy-authenticate"], undefined)
+
+    const challenge = await app.inject({
+      method: "GET",
+      url: "/workspaces/workspace/instance/api/session",
+      headers: { "x-test-challenge": "1" },
+    })
+    assert.equal(challenge.statusCode, 401)
+    assert.equal(challenge.headers["www-authenticate"], undefined)
+    assert.equal(challenge.headers["proxy-authenticate"], undefined)
   })
 
   it("rejects sessions owned by another workspace", async () => {

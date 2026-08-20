@@ -56,7 +56,7 @@ test("provider refresh updates shared and modal catalogs without disposing activ
   const refresh = source.slice(start, end)
 
   assert.ok(start >= 0 && end > start)
-  assert.match(refresh, /await fetchProviders\(instanceId\)/)
+  assert.match(refresh, /await fetchProviders\(instanceId, getActiveCatalogLocation\(instanceId\), true\)/)
   assert.match(refresh, /await loadProviderData\(authClient\)/)
   assert.doesNotMatch(refresh, /global\.dispose/)
 })

@@ -349,7 +349,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
 
   async function refreshAfterAuth(authClient: OpenCodeClient, instanceId: string, operationVersion: number) {
     if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
-    await fetchProviders(instanceId).catch(() => undefined)
+    await fetchProviders(instanceId, getActiveCatalogLocation(instanceId), true).catch(() => undefined)
     if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
     await loadProviderData(authClient).catch(() => undefined)
   }
@@ -359,7 +359,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     const instanceId = props.instanceId
     if (!authClient) return
     setLoading(true)
-    await fetchProviders(instanceId).catch(() => undefined)
+    await fetchProviders(instanceId, getActiveCatalogLocation(instanceId), true).catch(() => undefined)
     if (client() !== authClient || props.instanceId !== instanceId) return
     await loadProviderData(authClient)
   }

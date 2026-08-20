@@ -301,8 +301,9 @@ function refreshVolatileInstanceState(
       state.pending.clear()
       if (current.has("filesystem")) invalidateFilesystemCaches(instanceId)
       const requests: Promise<unknown>[] = []
-      if (current.has("agents")) requests.push(fetchAgents(instanceId))
-      if (current.has("providers")) requests.push(fetchProviders(instanceId))
+      const location = getActiveCatalogLocation(instanceId)
+      if (current.has("agents")) requests.push(fetchAgents(instanceId, location, true))
+      if (current.has("providers")) requests.push(fetchProviders(instanceId, location, true))
       if (current.has("commands")) requests.push(fetchCommands(instanceId, client, getActiveCatalogLocation(instanceId)))
       if (current.has("metadata")) requests.push(loadInstanceMetadata(instance, { force: true }))
       await Promise.all(requests)

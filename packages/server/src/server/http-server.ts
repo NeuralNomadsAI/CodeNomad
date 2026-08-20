@@ -781,7 +781,7 @@ async function proxyWorkspaceRequest(args: {
 
       return outgoingHeaders
     },
-    rewriteHeaders: stripInstanceProxyResponseCookies,
+    rewriteHeaders: sanitizeInstanceProxyResponseHeaders,
     onError: (proxyReply, { error }) => {
       logger.error({ err: error, workspaceId, targetUrl: targetUrl.toString() }, "Failed to proxy workspace request")
       if (!proxyReply.sent) {
@@ -861,8 +861,9 @@ function sanitizeInstanceProxyRequestHeaders(
   return result
 }
 
-function stripInstanceProxyResponseCookies(headers: Record<string, string | string[] | undefined>) {
-  return Object.fromEntries(Object.entries(headers).filter(([key]) => !["set-cookie", "set-cookie2"].includes(key.toLowerCase())))
+function sanitizeInstanceProxyResponseHeaders(headers: Record<string, string | string[] | undefined>) {
+  const blocked = new Set(["proxy-authenticate", "set-cookie", "set-cookie2", "www-authenticate"])
+  return Object.fromEntries(Object.entries(headers).filter(([key]) => !blocked.has(key.toLowerCase())))
 }
 
 export function redactSecrets(value: unknown): unknown {

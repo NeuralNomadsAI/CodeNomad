@@ -4,13 +4,14 @@ import { toRequestLocation } from "./request-locations"
 
 const [commandMap, setCommandMap] = createSignal<Map<string, CommandInfo[]>>(new Map())
 const commandRequestIds = new Map<string, number>()
+let nextCommandRequestId = 0
 
 export async function fetchCommands(
   instanceId: string,
   client: OpenCodeClient,
   location?: LocationRef,
 ): Promise<boolean> {
-  const requestId = (commandRequestIds.get(instanceId) ?? 0) + 1
+  const requestId = ++nextCommandRequestId
   commandRequestIds.set(instanceId, requestId)
   let commands: CommandInfo[]
   try {
