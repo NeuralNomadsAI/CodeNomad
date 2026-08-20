@@ -890,7 +890,7 @@ const SessionList: Component<SessionListProps> = (props) => {
             )}
           </Show>
 
-          <Show when={!sessionListError() && isFetchingSessions() && visibleProjection().ids.length === 0}>
+          <Show when={!sessionListError() && (hasMore() || isFetchingSessions()) && visibleProjection().ids.length === 0}>
             <div class="flex items-center justify-center p-4 text-xs text-muted" role="status">
               <span class="animate-pulse">{t("sessionList.loading.initial")}</span>
             </div>
@@ -930,15 +930,11 @@ const SessionList: Component<SessionListProps> = (props) => {
                </Virtualizer>
              </Show>
              <Show when={hasMore() || isFetchingSessions()}>
-               <div
-                 ref={(el) => setSentinelEl(el)}
-                 class="session-list-sentinel flex items-center justify-center py-3 text-text-weak text-xs"
-                 data-session-sentinel
-               >
-                 <Show when={isFetchingSessions()}>
-                   <span class="animate-pulse">{t("sessionList.loading.more")}</span>
-                 </Show>
-               </div>
+                <div
+                  ref={(el) => setSentinelEl(el)}
+                  class="session-list-sentinel flex items-center justify-center py-3 text-text-weak text-xs"
+                  data-session-sentinel
+                />
              </Show>
            </div>
          </Show>
