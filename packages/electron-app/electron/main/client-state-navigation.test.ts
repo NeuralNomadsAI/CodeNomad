@@ -87,3 +87,20 @@ test("queued navigation preserves order and distinct generations", async () => {
   await Promise.all([first, second])
   assert.deepEqual(calls, ["start-1", "end-1", "run-2"])
 })
+
+test("queued navigation exposes whether work was invalidated before it mutates navigation state", async () => {
+  const calls: string[] = []
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const navigation = controller(window(), { isPrimary: true })
+  const first = navigation.navigate(async (_window, generation) => {
+    await gate
+    if (navigation.isCurrent(generation)) calls.push("stale")
+  })
+  const second = navigation.navigate((_window, generation) => {
+    if (navigation.isCurrent(generation)) calls.push("current")
+  })
+  release()
+  await Promise.all([first, second])
+  assert.deepEqual(calls, ["current"])
+})

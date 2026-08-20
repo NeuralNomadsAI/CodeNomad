@@ -9,6 +9,7 @@ export type { ClientSnapshotV1, RestorableSessionState, RestorableSidecarTabStat
 export type { ClientSnapshotV2 }
 const SAVE_DEBOUNCE_MS = 250
 const FLUSH_MAX_ATTEMPTS = 3
+const MAX_V1_SNAPSHOT_BYTES = 1024 * 1024
 const MAX_LAYOUT_ENTRIES = 64
 const MAX_LAYOUT_KEY_LENGTH = 256
 const MAX_LAYOUT_VALUE_LENGTH = 4096
@@ -98,8 +99,13 @@ function enqueuePendingSave(): Promise<void> {
   const saveAttempt = writeQueue.then(async () => {
     try {
       const partitioned = partitionProtocolVersion === 1 ? await encodeClientSnapshotV2(normalizedSnapshot) : null
-      // ponytail: bounded V1 avoids truncation at the native cap; add a denser graph if V1 stops fitting.
-      const accepted = partitioned && canCommitClientSnapshotV2(partitioned)
+      if (partitioned && !canCommitClientSnapshotV2(partitioned)) {
+        throw new Error("Client snapshot exceeds the native partition count limit")
+      }
+      if (!partitioned && new TextEncoder().encode(JSON.stringify(normalizedSnapshot)).byteLength > MAX_V1_SNAPSHOT_BYTES) {
+        throw new Error("Client snapshot exceeds the V1 1 MiB limit and partition persistence is unavailable")
+      }
+      const accepted = partitioned
         ? await commitNativeClientStatePartitions({
           protocolVersion: 1,
           snapshot: partitioned.root,

@@ -27,8 +27,12 @@ interface Dependencies {
 
 export class MultiwindowLifecycle {
   private shutdown: Promise<void> | null = null
+  private sessionEnd: Promise<void> | null = null
+  private sessionEndPreparation: Promise<void> | null = null
+  private sessionEndPreparationPending = false
   private release: Promise<void> | null = null
   private exitAllowed = false
+  private readonly sessionEndWindows = new WeakSet<BrowserWindow>()
 
   constructor(private readonly dependencies: Dependencies) {}
 
@@ -57,14 +61,14 @@ export class MultiwindowLifecycle {
       })
     })
 
-    if (this.dependencies.isWindows ?? process.platform === "win32") {
-      record.window.on("query-session-end", (event) => {
-        if (this.exitAllowed) return
-        event.preventDefault()
-        this.startSessionEnd()
-      })
-      record.window.on("session-end", () => this.startSessionEnd())
-    }
+    this.attachSessionEnd(record.window)
+  }
+
+  attachSessionEnd(window: BrowserWindow): void {
+    if (!(this.dependencies.isWindows ?? process.platform === "win32") || this.sessionEndWindows.has(window)) return
+    this.sessionEndWindows.add(window)
+    window.on("query-session-end", () => this.prepareSessionEnd())
+    window.on("session-end", () => this.startSessionEnd())
   }
 
   registerAppEvents(): void {
@@ -77,10 +81,10 @@ export class MultiwindowLifecycle {
     this.dependencies.app.on("window-all-closed", () => this.dependencies.app.quit())
   }
 
-  private startShutdown(): Promise<void> {
+  private startShutdown(preparedFlush?: Promise<void>): Promise<void> {
     if (this.shutdown) return this.shutdown
     this.shutdown = (async () => {
-      await Promise.all(this.dependencies.getLocalWindows().map((record) => this.flushWindow(record)))
+      await (preparedFlush ?? this.flushLocalWindows())
       await this.run("aggregate state flush", () => this.dependencies.clientStateManager.flush())
       await this.dependencies.cliManager.shutdown()
       await this.releasePrimary()
@@ -88,11 +92,26 @@ export class MultiwindowLifecycle {
     return this.shutdown
   }
 
+  private flushLocalWindows(): Promise<void> {
+    return Promise.all(this.dependencies.getLocalWindows().map((record) => this.flushWindow(record))).then(() => undefined)
+  }
+
+  private prepareSessionEnd(): void {
+    if (this.exitAllowed || this.sessionEnd || this.shutdown || this.sessionEndPreparationPending) return
+    this.sessionEndPreparationPending = true
+    const preparation = this.flushLocalWindows()
+    this.sessionEndPreparation = preparation
+    void preparation.finally(() => {
+      if (this.sessionEndPreparation === preparation) this.sessionEndPreparationPending = false
+    })
+  }
+
   private startSessionEnd(): void {
-    if (this.exitAllowed) return
+    if (this.exitAllowed || this.sessionEnd) return
     const timeoutMs = this.dependencies.sessionEndCleanupTimeoutMs ?? 5_000
-    void Promise.race([
-      this.startShutdown(),
+    const cleanup = this.shutdown ?? this.startShutdown(this.sessionEndPreparation ?? this.flushLocalWindows())
+    this.sessionEnd = Promise.race([
+      cleanup,
       new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
     ]).catch((error) => {
       console.warn("[client-state] OS session-end shutdown failed; exiting at the fail-open boundary", error)

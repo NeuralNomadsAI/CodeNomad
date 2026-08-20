@@ -21,6 +21,8 @@ import { getMessageSelectionActionPosition } from "../lib/message-selection-posi
 import { buildSessionSearchMatches } from "../lib/session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
 import { resolveThinkingExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
+import { MESSAGE_HISTORY_TOP_THRESHOLD_PX, shouldLoadOlderMessages } from "./message-history-pagination"
+import { getLogger } from "../lib/logger"
 
 const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 const QUOTE_SELECTION_MAX_LENGTH = 2000
@@ -28,6 +30,7 @@ const STREAMING_TEXT_HOLD_TOP_THRESHOLD_PX = 8
 const SEARCH_DEBOUNCE_MS = 250
 const SEARCH_MIN_CHARS = 3
 const OPEN_SESSION_SEARCH_EVENT = "codenomad:open-session-search"
+const log = getLogger("session")
 
 export interface MessageSectionProps {
   instanceId: string
@@ -43,6 +46,8 @@ export interface MessageSectionProps {
   forceCompactStatusLayout?: boolean
   onQuoteSelection?: (text: string, mode: "quote" | "code") => void
   onReloadMessages?: () => void
+  hasMoreMessages?: boolean
+  onLoadMoreMessages?: () => Promise<void>
   isActive?: boolean
   sessionStreamingActive?: boolean
   explicitBottomPinIntent?: VirtualExplicitBottomPinIntent | null
@@ -242,6 +247,8 @@ export default function MessageSection(props: MessageSectionProps) {
   let restoringScrollSnapshot = false
   let restoredWithoutSnapshot = false
   let scrollRestoreGeneration = 0
+  let loadingOlderMessages = false
+  let olderMessageLoadFailed = false
 
   function getLastGoodScrollSnapshot(sessionId: string) {
     return lastGoodScrollSnapshots.get(sessionId) ?? store().getScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE)
@@ -258,6 +265,8 @@ export default function MessageSection(props: MessageSectionProps) {
         scrollRestoreGeneration += 1
         restoringScrollSnapshot = false
         restoredWithoutSnapshot = false
+        loadingOlderMessages = false
+        olderMessageLoadFailed = false
         setDidRestoreScroll(false)
         const snapshot = store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE)
         if (snapshot) setLastGoodScrollSnapshot(props.sessionId, snapshot)
@@ -587,6 +596,52 @@ export default function MessageSection(props: MessageSectionProps) {
     listApi()?.notifyContentRendered()
   }
 
+  async function maybeLoadOlderMessages() {
+    const api = listApi()
+    const snapshot = api?.captureScrollSnapshot()
+    if (!api || !snapshot || !props.onLoadMoreMessages) return
+    if (!shouldLoadOlderMessages({
+      active: isActive(),
+      failed: olderMessageLoadFailed,
+      hasMore: Boolean(props.hasMoreMessages),
+      loading: Boolean(props.loading) || loadingOlderMessages,
+      messageCount: visibleMessageIds().length,
+      scrollTop: snapshot.scrollTop,
+    })) return
+
+    const sessionId = props.sessionId
+    const firstMessageId = visibleMessageIds()[0]
+    const anchorSnapshot = snapshot.atBottom && firstMessageId
+      ? { ...snapshot, atBottom: false, anchorKey: firstMessageId, anchorOffset: 0, followModeType: "escaped" as const }
+      : snapshot
+    loadingOlderMessages = true
+    try {
+      await props.onLoadMoreMessages()
+      if (props.sessionId !== sessionId || listApi() !== api) return
+      await new Promise<void>((resolve) => api.restoreScrollSnapshot(anchorSnapshot, {
+        behavior: "auto",
+        fallback: resolve,
+        onApplied: resolve,
+        onCancelled: resolve,
+      }))
+    } catch (error) {
+      olderMessageLoadFailed = true
+      log.error("Failed to load older messages", { instanceId: props.instanceId, sessionId, error })
+    } finally {
+      loadingOlderMessages = false
+    }
+
+    if (!olderMessageLoadFailed) void maybeLoadOlderMessages()
+  }
+
+  createEffect(() => {
+    if (!didRestoreScroll()) return
+    props.loading
+    props.hasMoreMessages
+    visibleMessageIds().length
+    void maybeLoadOlderMessages()
+  })
+
   createEffect(() => {
     if (!props.onQuoteSelection) {
       clearQuoteSelection()
@@ -758,6 +813,9 @@ export default function MessageSection(props: MessageSectionProps) {
           onScroll={() => {
             clearQuoteSelection()
             persistMessageScrollSnapshot()
+            const scrollTop = listApi()?.captureScrollSnapshot()?.scrollTop
+            if (typeof scrollTop === "number" && scrollTop > MESSAGE_HISTORY_TOP_THRESHOLD_PX) olderMessageLoadFailed = false
+            void maybeLoadOlderMessages()
           }}
           onMouseUp={() => handleStreamMouseUp()}
           onActiveKeyChange={(messageId) => {

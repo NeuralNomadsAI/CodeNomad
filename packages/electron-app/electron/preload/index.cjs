@@ -22,12 +22,14 @@ const windowId = resolveWindowId()
 
 const localElectronAPI = {
   onCliStatus: (callback) => {
-    ipcRenderer.on("cli:status", (_, data) => callback(data))
-    return () => ipcRenderer.removeAllListeners("cli:status")
+    const handler = (_, data) => callback(data)
+    ipcRenderer.on("cli:status", handler)
+    return () => ipcRenderer.removeListener("cli:status", handler)
   },
   onCliError: (callback) => {
-    ipcRenderer.on("cli:error", (_, data) => callback(data))
-    return () => ipcRenderer.removeAllListeners("cli:error")
+    const handler = (_, data) => callback(data)
+    ipcRenderer.on("cli:error", handler)
+    return () => ipcRenderer.removeListener("cli:error", handler)
   },
   getCliStatus: () => ipcRenderer.invoke("cli:getStatus"),
   restartCli: () => ipcRenderer.invoke("cli:restart"),

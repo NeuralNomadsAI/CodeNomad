@@ -4,6 +4,8 @@ import { messageStoreBus } from "./message-v2/bus.ts"
 import { seedSessionMessagesV2 } from "./message-v2/bridge.ts"
 import { normalizeSessionMessage } from "./message-v2/normalizers.ts"
 import { applyOpenCodeDataEvent, destroyOpenCodeData, projectOpenCodeMessages } from "./opencode-data.ts"
+import { getRootClient } from "./opencode-client.ts"
+import { sdkManager } from "../lib/sdk-manager.ts"
 
 describe("OpenCode data projection", () => {
   it("uses createData to reduce messages, permissions, and forms", () => {
@@ -93,6 +95,32 @@ describe("OpenCode data projection", () => {
       assert.deepEqual(data.session.message.list("session").map((message) => message.id), ["new"])
     } finally {
       destroyOpenCodeData(instanceId)
+    }
+  })
+
+  it("preserves the data controller across server.connected", () => {
+    const instanceId = "opencode-data-server-connected"
+    const client = getRootClient(instanceId)
+    ;(client.session as any).active = async () => ({})
+    ;(client.location as any).get = async () => ({ directory: "/work" })
+    ;(client.vcs as any).get = async () => ({ location: { directory: "/work" }, data: { branch: "main" } })
+    ;(client.project as any).list = async () => []
+    try {
+      const before = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "permission",
+        type: "permission.asked",
+        created: 1,
+        data: { id: "permission", sessionID: "session", action: "read", resources: ["*"] },
+      } as any)
+      const after = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "connected", type: "server.connected", created: 2, data: {},
+      } as any)
+
+      assert.strictEqual(after, before)
+      assert.equal(after.session.permission.list("session")?.[0]?.id, "permission")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
     }
   })
 

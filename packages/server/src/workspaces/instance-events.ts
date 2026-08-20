@@ -80,6 +80,9 @@ export class InstanceEventBridge {
         for await (const event of events) {
           if (this.controller.signal.aborted) return
           if (!confirmed) {
+            if (event.type !== "server.connected") {
+              throw new Error(`Shared OpenCode event stream started with ${event.type}, expected server.connected`)
+            }
             confirmed = true
             this.updateStatus("connected")
           }

@@ -266,6 +266,35 @@ describe("secondary hosts", () => {
 })
 
 describe("partitioned client state", () => {
+  it("restores a degraded graph and permits a repairing write", async () => {
+    const persisted = {
+      version: 1 as const, revision: 3, savedAt: 4, layout: { [layoutKey]: "390" },
+      session: { activeTabIndex: 0, tabs: [{
+        kind: "workspace" as const, folder: "/work", activeSessionId: "active",
+        drafts: { active: "keep", stale: "drop" }, attachments: {}, scrollSnapshots: {},
+        unseenIdleSince: {}, generationRecovery: {},
+      }] },
+    }
+    const encoded = await encodeClientSnapshotV2(persisted)
+    const manifest = JSON.parse(encoded.partitions[encoded.root.sessionPartition]!)
+    const workspace = JSON.parse(encoded.partitions[manifest.session.tabs[0].workspacePartition]!)
+    const staleDocument = workspace.sessions.stale.documentPartition
+    const commits: any[] = []
+    const state = await boot({
+      loadClientState: async () => loadResult(encoded.root, true, 1),
+      loadClientStatePartition: async (_token, key) => key === staleDocument ? null : encoded.partitions[key] ?? null,
+      commitClientStatePartitions: async (_token, value) => { commits.push(value); return true },
+    })
+
+    const restored = state.loadedRestorableSession()?.tabs[0]
+    assert.equal(restored?.kind === "workspace" ? restored.drafts.active : undefined, "keep")
+    assert.equal(restored?.kind === "workspace" ? restored.drafts.stale : undefined, undefined)
+    assert.equal(state.readClientLayoutValue(layoutKey), "390")
+    state.updateRestorableSession(session("repaired"))
+    await state.flushClientState()
+    assert.equal(commits.length, 1)
+  })
+
   it("commits one atomic graph without a monolithic save or automatic load rewrite", async () => {
     const encoded = await encodeClientSnapshotV2(snapshot("restored", { [layoutKey]: "380" }))
     const commits: any[] = []; let monolithicSaves = 0
@@ -306,6 +335,33 @@ describe("partitioned client state", () => {
     assert.equal(commits, 0)
     assert.equal(saved[0].version, 1)
     assert.equal(saved[0].session.tabs[0].sidecarId, "fallback")
+  })
+
+  it("keeps an oversized V1 draft attachment dirty instead of truncating or overwriting it", async () => {
+    let nativeSaves = 0
+    const state = await boot({
+      loadClientState: async () => loadResult(null),
+      saveClientState: async () => { nativeSaves += 1; return true },
+    })
+    const data = Buffer.alloc(1024 * 1024, 7).toString("base64")
+    state.updateRestorableSession({ tabs: [{
+      kind: "workspace", folder: "/work", activeSessionId: "active",
+      drafts: { active: "Review [Image #1]" },
+      attachments: { active: [{
+        id: "large", type: "file", display: "[Image #1]", url: "", filename: "large.bin",
+        mediaType: "application/octet-stream",
+        source: { type: "file", path: "large.bin", mime: "application/octet-stream", data },
+      }] },
+      scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},
+    }], activeTabIndex: 0 })
+
+    await assert.rejects(state.flushClientState(), /V1 1 MiB limit/)
+    await assert.rejects(state.flushClientState(), /V1 1 MiB limit/)
+    const restored = state.loadedRestorableSession()?.tabs[0]
+    const source = restored?.kind === "workspace" ? restored.attachments.active?.[0]?.source : undefined
+    assert.equal(nativeSaves, 0)
+    assert.equal(restored?.kind === "workspace" ? restored.drafts.active : undefined, "Review [Image #1]")
+    assert.equal(source?.type === "file" ? source.data : undefined, data)
   })
 
   it("migrates a loaded V1 snapshot on the next real partition-capable save", async () => {

@@ -6,8 +6,8 @@ import { hasErrorCode } from "./client-state-process"
 export const CLIENT_STATE_PARTITION_PROTOCOL_VERSION = 1
 export const CLIENT_STATE_PARTITION_ENVELOPE_VERSION = 2
 export const MAX_CLIENT_STATE_ROOT_BYTES = 1024 * 1024
+export const MAX_CLIENT_STATE_PARTITION_COMMIT_BYTES = 256 * 1024 * 1024
 const MAX_PARTITION_BYTES = 1024 * 1024
-const MAX_COMMIT_BYTES = 8 * 1024 * 1024
 const MAX_PARTITION_KEYS = 4096
 const PARTITION_KEY = /^[0-9a-f]{64}$/
 const PARTITION_DIRECTORY = "partitions"
@@ -87,7 +87,7 @@ export function validateClientStatePartitionCommit(value: unknown): ValidatedCli
     const size = Buffer.byteLength(content, "utf8")
     if (size > MAX_PARTITION_BYTES) throw new RangeError("Client state partition exceeds the 1 MiB limit")
     commitBytes += size
-    if (commitBytes > MAX_COMMIT_BYTES) throw new RangeError("Client state partition commit exceeds the 8 MiB limit")
+    if (commitBytes > MAX_CLIENT_STATE_PARTITION_COMMIT_BYTES) throw new RangeError("Client state partition commit exceeds the 256 MiB limit")
     if (digest(content) !== key) throw new TypeError("Client state partition digest mismatch")
   }
   return { snapshot: normalizedSnapshot, partitions, partitionKeys: rootPartitionKeys }

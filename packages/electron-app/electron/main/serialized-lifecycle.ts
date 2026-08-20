@@ -8,8 +8,9 @@ export class SerializedLifecycle {
     return queued
   }
 
-  stop<T>(operation: () => Promise<T>): Promise<T> {
+  stop<T>(operation: () => Promise<T>, interrupt?: () => void): Promise<T> {
     this.stopped = true
+    interrupt?.()
     return this.enqueue(async () => {
       try {
         return await operation()

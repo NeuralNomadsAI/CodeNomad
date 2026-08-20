@@ -144,10 +144,9 @@ describe("client state codec", () => {
     assert.ok(Buffer.byteLength(JSON.stringify(roundTripped), "utf8") < 1024 * 1024)
   })
 
-  it("drops unsupported attachments but retains oversized path-backed files and exact mentions", () => {
+  it("drops unsupported attachments without altering drafts and retains large path-backed data", () => {
     const mention = "@./reports/exact report.txt"
     const oversizedData = new Uint8Array(64 * 1024 + 1)
-    oversizedData.subarray = () => { throw new Error("oversized data must not be Base64 encoded") }
     const large = file("./reports/exact report.txt", {
       id: "large", display: "@exact report.txt", url: "file:///work/reports/exact%20report.txt",
       filename: "exact report.txt", source: { type: "file", path: "./reports/exact report.txt", mime: "text/plain", data: oversizedData },
@@ -157,9 +156,10 @@ describe("client state codec", () => {
       drafts: { session1: `Review ${mention}; remove @unsupported` }, attachments: { session1: [large, unsupported] },
     })
     assert.equal(tab.attachments.session1?.length, 1)
-    assert.deepEqual(tab.attachments.session1?.[0]?.source,
-      { type: "file", path: "./reports/exact report.txt", mime: "text/plain" })
-    assert.equal(tab.drafts.session1, `Review ${mention}; remove `)
+    const source = tab.attachments.session1?.[0]?.source
+    assert.equal(source?.type, "file")
+    assert.equal(source?.type === "file" ? source.data?.length : 0, 87384)
+    assert.equal(tab.drafts.session1, `Review ${mention}; remove @unsupported`)
   })
 
   it("reserves structural and active-session identity before optional strings", () => {
@@ -305,7 +305,7 @@ describe("client state codec", () => {
     assert.deepEqual(normalized, { tabs: [{ kind: "sidecar", sidecarId: "valid-late-tab" }], activeTabIndex: 0 })
   })
 
-  it("removes every picker mention for attachments beyond the per-session limit", () => {
+  it("retains attachments and picker mentions beyond the former per-session limit", () => {
     const cases = [
       ["relative file", "./dir/f8", "f8", "@f8",
         ["@./dir/f8", "@f8"], ["@./dir/f80", "@f80"], "text/plain"],
@@ -326,12 +326,12 @@ describe("client state codec", () => {
         attachments: { session: [...keep, file(path, { id: "drop", filename, display,
           mediaType: mime, source: { type: "file", path, mime } })] },
       })
-      assert.equal(tab.attachments.session?.length, 8, label)
-      assert.equal(tab.drafts.session, `remove  then  keep ${collisions.join(" and ")} and @other`, label)
+      assert.equal(tab.attachments.session?.length, 9, label)
+      assert.equal(tab.drafts.session, `remove ${tokens.join(" then ")} keep ${collisions.join(" and ")} and @other`, label)
     }
   })
 
-  it("removes loose dropped placeholders without touching ordinary bracket text", () => {
+  it("keeps large attachment placeholders and never edits drafts for an unsupported attachment", () => {
     const input = [
       "[Image #9]", "[ Image # 9 ]", "[iMaGe # 9]", "Image #9",
       "[Image #90]", "[Image #9 notes]",
@@ -345,12 +345,11 @@ describe("client state codec", () => {
       attachment({ type: "archive" }, { id: "ordinary", type: "archive", display: "[ordinary bracket text]" }),
     ]
     const tab = normalizeWorkspace({ drafts: { session1: input }, attachments: { session1: dropped } })
-    assert.deepEqual({ ...tab.attachments }, {})
-    assert.equal(tab.drafts.session1,
-      "|||Image #9|[Image #90]|[Image #9 notes]||||pasted #4|[pasted #40]|[pasted notes]|[ordinary bracket text]")
+    assert.deepEqual(tab.attachments.session1?.map(({ id }) => id), ["image", "paste"])
+    assert.equal(tab.drafts.session1, input)
   })
 
-  it("keeps a maximal normalized attachment snapshot below the native 1 MiB limit", () => {
+  it("retains attachment data beyond the former global budget", () => {
     const normalized = session(...Array.from({ length: 32 }, (_, index) => workspace({
       folder: `/work/${index}`, drafts: { session: `[Image #${index + 1}]` },
       attachments: { session: [file(`file-${index}.bin`, { id: `file-${index}`, display: `[Image #${index + 1}]`,
@@ -358,6 +357,6 @@ describe("client state codec", () => {
           mime: "application/octet-stream", data: new Uint8Array(64 * 1024) } })] },
     })))
     assert.ok(normalized)
-    assert.ok(Buffer.byteLength(JSON.stringify(normalized), "utf8") < 1024 * 1024)
+    assert.equal(normalized.tabs.filter((tab) => tab.kind === "workspace" && tab.attachments.session?.length).length, 32)
   })
 })

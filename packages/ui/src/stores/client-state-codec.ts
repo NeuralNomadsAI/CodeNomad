@@ -1,6 +1,5 @@
 import type { ScrollSnapshot } from "./message-v2/types"
-import { createAttachmentCodecBudget, normalizeRestorableAttachmentRecord,
-  type AttachmentCodecBudget, type RestorableAttachment } from "./client-state-attachments-codec"
+import { normalizeRestorableAttachmentRecord, type RestorableAttachment } from "./client-state-attachments-codec"
 import type { PersistedGenerationRecovery } from "./session-generation-recovery"
 
 export interface RestorableWorkspaceTabState {
@@ -26,10 +25,10 @@ const MAX_LAYOUT_VALUE = 4096, MAX_DRAFT = 32 * 1024, MAX_ANCHOR_KEY = 1024
 const MAX_STRINGS = 96 * 1024, MAX_SCROLLS = 256
 const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
 
-interface StringBudget { remaining: number; scrollSnapshotsRemaining: number; attachments: AttachmentCodecBudget }
+interface StringBudget { remaining: number; scrollSnapshotsRemaining: number }
 
 function createBudget(): StringBudget {
-  return { remaining: MAX_STRINGS, scrollSnapshotsRemaining: MAX_SCROLLS, attachments: createAttachmentCodecBudget() }
+  return { remaining: MAX_STRINGS, scrollSnapshotsRemaining: MAX_SCROLLS }
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -151,7 +150,7 @@ function normalizeWorkspaceTab(
   const remainingAttachments = Object.fromEntries(Object.entries(value.attachments ?? {})
     .filter(([id]) => !identity.prioritySessionIds.includes(id)))
   const attachmentResult = normalizeRestorableAttachmentRecord(
-    remainingAttachments, drafts, budget.attachments,
+    remainingAttachments, drafts,
   )
   if (!attachmentResult) return null
 
@@ -227,7 +226,6 @@ function reservePriorityDrafts(identity: WorkspaceIdentity, budget: StringBudget
   const result = normalizeRestorableAttachmentRecord(
     priorityAttachments,
     identity.priorityDrafts,
-    budget.attachments,
     identity.prioritySessionIds,
   )
   if (!result) return

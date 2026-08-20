@@ -24,6 +24,10 @@ export class ClientStateNavigationController {
     return request
   }
 
+  isCurrent(generation: number): boolean {
+    return generation === this.generation
+  }
+
   private async performNavigation(
     operation: (window: BrowserWindow, generation: number) => void | Promise<void>,
     generation: number,

@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tauri::{webview::cookie::Cookie, AppHandle, Emitter, Manager, Url};
+use tauri::{webview::cookie::Cookie, AppHandle, Manager, Url};
 
 #[cfg(windows)]
 use std::os::windows::io::AsRawHandle;
@@ -754,6 +754,17 @@ impl Default for CliStatus {
     }
 }
 
+fn cli_exit_error(status: &CliStatus, exit: &std::process::ExitStatus) -> String {
+    if status.state == CliState::Ready {
+        format!("CLI exited unexpectedly after readiness: {exit}")
+    } else {
+        status
+            .error
+            .clone()
+            .unwrap_or_else(|| format!("CLI exited early: {exit}"))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CliProcessManager {
     status: Arc<Mutex<CliStatus>>,
@@ -1186,18 +1197,14 @@ impl CliProcessManager {
                     manager.with_current_generation(generation, || {
                         *manager.local_access.lock() = None;
                         let mut status = manager.status.lock();
-                        if status.state != CliState::Ready {
-                            status.state = CliState::Error;
-                            if status.error.is_none() {
-                                status.error = Some(format!("CLI exited early: {code}"));
-                            }
-                            let _ = app.emit(
-                                "cli:error",
-                                json!({"message": status.error.clone().unwrap_or_default()}),
-                            );
-                        } else {
-                            status.state = CliState::Stopped;
-                        }
+                        let message = cli_exit_error(&status, &code);
+                        status.state = CliState::Error;
+                        status.error = Some(message.clone());
+                        crate::local_windows::emit_all(
+                            &app,
+                            "cli:error",
+                            json!({"message": message}),
+                        );
                         Self::emit_status(&app, &status);
                     });
                     return;
@@ -1783,6 +1790,64 @@ mod tests {
             })
             .is_some());
         assert_eq!(manager.status().state, CliState::Ready);
+    }
+
+    #[test]
+    fn generation_invalidated_exit_cannot_replace_requested_stop_status() {
+        let manager = CliProcessManager::new();
+        let generation = manager.advance_generation();
+        manager.status.lock().state = CliState::Ready;
+
+        manager.advance_generation();
+        manager.reset_stopped_status();
+
+        assert!(manager
+            .with_current_generation(generation, || {
+                manager.status.lock().state = CliState::Error;
+            })
+            .is_none());
+        assert_eq!(manager.status().state, CliState::Stopped);
+    }
+
+    #[test]
+    fn unexpected_ready_exit_is_an_error_with_the_platform_status() {
+        let status = if cfg!(windows) {
+            Command::new("cmd.exe")
+                .args(["/C", "exit", "23"])
+                .status()
+                .unwrap()
+        } else {
+            Command::new("sh").args(["-c", "exit 23"]).status().unwrap()
+        };
+
+        let message = cli_exit_error(
+            &CliStatus {
+                state: CliState::Ready,
+                ..CliStatus::default()
+            },
+            &status,
+        );
+        assert!(
+            message.contains("unexpectedly after readiness"),
+            "{message}"
+        );
+        assert!(message.contains("23"), "{message}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unexpected_ready_exit_preserves_the_signal() {
+        use std::os::unix::process::ExitStatusExt;
+
+        let status = std::process::ExitStatus::from_raw(9);
+        let message = cli_exit_error(
+            &CliStatus {
+                state: CliState::Ready,
+                ..CliStatus::default()
+            },
+            &status,
+        );
+        assert!(message.contains("signal: 9"), "{message}");
     }
 
     #[test]

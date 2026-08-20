@@ -20,4 +20,9 @@ describe("connection resync gate", () => {
     gate.clear("instance")
     assert.equal(gate.observe("instance", "connected"), false)
   })
+
+  it("does not claim browser transport reconnect authority", () => {
+    const gate = new ConnectionResyncGate()
+    assert.equal("observeTransport" in gate, false)
+  })
 })

@@ -1,4 +1,5 @@
 use super::commands::is_allowed_client_state_origin;
+use super::partitions::MAX_COMMIT_BYTES;
 use super::process::{PRIMARY_LOCK_FILENAME, RUNNING_MARKER_PREFIX, RUNNING_MARKER_SUFFIX};
 use super::window::{
     clamp_window_bounds, normalize_native_zoom_level, DisplayArea, NativeWindowState, WindowBounds,
@@ -1160,6 +1161,7 @@ fn invalid_v3_is_frozen_until_explicit_clear() {
 
 #[test]
 fn partition_protocol_and_hashes_are_validated() {
+    assert_eq!(MAX_COMMIT_BYTES, 256 * 1024 * 1024);
     let directory = tempfile::tempdir().unwrap();
     let state = ClientState::initialize_at(directory.path()).unwrap();
     enable_restore(&state);
@@ -1180,14 +1182,14 @@ fn partition_protocol_and_hashes_are_validated() {
 
     let mut partitions = serde_json::Map::new();
     let mut partition_keys = Vec::new();
-    for index in 0..8 {
+    for index in 0..9 {
         let content = format!("{index}{}", "x".repeat(1024 * 1024 - 1));
         let key = partition_key(&content);
         partitions.insert(key.clone(), Value::String(content));
         partition_keys.push(key);
     }
     partition_keys.sort();
-    let error = state
+    assert!(state
         .commit_partitions_guarded(
             partition_commit(json!({
                 "protocolVersion": 1, "snapshot": partition_root(&partition_keys, json!({})),
@@ -1195,8 +1197,7 @@ fn partition_protocol_and_hashes_are_validated() {
             })),
             || true,
         )
-        .unwrap_err();
-    assert!(error.contains("8 MiB"));
+        .unwrap());
 }
 
 #[test]

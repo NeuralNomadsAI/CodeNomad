@@ -3,7 +3,7 @@ import http from "node:http"
 import https from "node:https"
 import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { dirname, join } from "node:path"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import { ClientStateManager } from "./client-state"
 import { setupClientStateIPC } from "./client-state-ipc"
 import { ClientStateNavigationController } from "./client-state-navigation"
@@ -12,9 +12,10 @@ import { LocalWindowRegistry, type LocalWindowRecord } from "./local-window-regi
 import { clearWorkspaceMenuWindow, createApplicationMenu, setWorkspaceMenuEnabled } from "./menu"
 import { resolveFocusedLocalTarget, resolveWindowTarget } from "./menu-target"
 import { MultiwindowLifecycle } from "./multiwindow-lifecycle"
+import { decideNavigation, requireHttpUrl } from "./navigation-security"
 import { configureMediaPermissionHandlers, isAllowedRendererOrigin } from "./permissions"
 import { CliProcessManager } from "./process-manager"
-import { RemoteWindowRegistry } from "./remote-window-registry"
+import { navigateReusedRemoteWindow, RemoteWindowRegistry } from "./remote-window-registry"
 import { resolveConfiguredRendererOrigins } from "./renderer-origin"
 import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, parseLaunchIntent, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance, type LaunchIntent } from "./startup"
 import { clampWindowBounds, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, installWindowZoomInput, restoreWindowState, WindowStateTracker } from "./window-state"
@@ -95,13 +96,21 @@ function runPrimary(firstIntent: LaunchIntent) {
     const candidates = [join(app.getAppPath(), "dist/renderer/loading.html"), join(process.resourcesPath, "dist/renderer/loading.html"), join(mainDirname, "../dist/renderer/loading.html")]
     return { file: candidates.find(existsSync) ?? candidates[0] }
   }
+  const getLoadingUrl = () => {
+    const target = loadingTarget()
+    return target.url ?? pathToFileURL(target.file!).toString()
+  }
   const loadLoading = async (record: LocalWindowRecord, force = false) => {
     if (record.window.isDestroyed() || (record.loading && !force)) return
     record.loading = true
-    record.backendUrl = null
-    remoteOrigins.delete(record.window.id)
     const target = loadingTarget()
-    await record.navigation.navigate((window) => target.url ? window.loadURL(target.url) : window.loadFile(target.file!)).catch((error) => {
+    await record.navigation.navigate(async (window, generation) => {
+      if (!record.navigation.isCurrent(generation)) return
+      await (target.url ? window.loadURL(target.url) : window.loadFile(target.file!))
+      if (!record.navigation.isCurrent(generation)) return
+      record.backendUrl = null
+      remoteOrigins.delete(record.window.id)
+    }).catch((error) => {
       if (!isIgnorableNavigationError(error)) console.error("[cli] failed to load loading screen", error)
     })
   }
@@ -109,14 +118,21 @@ function runPrimary(firstIntent: LaunchIntent) {
     if (record.window.isDestroyed() || (!record.loading && record.backendUrl === url)) return
     let origin: string
     try { origin = new URL(url).origin } catch { return }
-    const previous = remoteOrigins.get(record.window.id)
-    remoteOrigins.set(record.window.id, new Set([...(previous ?? []), origin]))
-    await record.navigation.navigate((window) => window.loadURL(url)).then(() => {
+    await record.navigation.navigate(async (window, generation) => {
+      if (!record.navigation.isCurrent(generation)) return
+      const previous = remoteOrigins.get(record.window.id)
+      remoteOrigins.set(record.window.id, new Set([...(previous ?? []), origin]))
+      try { await window.loadURL(url) } catch (error) {
+        if (record.navigation.isCurrent(generation)) {
+          if (previous) remoteOrigins.set(record.window.id, previous); else remoteOrigins.delete(record.window.id)
+        }
+        throw error
+      }
+      if (!record.navigation.isCurrent(generation)) return
       record.loading = false
       record.backendUrl = url
       remoteOrigins.set(record.window.id, new Set([origin]))
-    }, (error) => {
-      if (previous) remoteOrigins.set(record.window.id, previous); else remoteOrigins.delete(record.window.id)
+    }).catch((error) => {
       if (!isIgnorableNavigationError(error)) console.error("[cli] failed to load backend", error)
     })
   }
@@ -154,7 +170,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     bindClientState(window)
     lifecycle.attach(record)
     installWindowZoomInput(window, (level) => tracker ? tracker.setZoomLevel(level) : window.webContents.setZoomLevel(level))
-    setupNavigationGuards(window, navigation, getAllowedOrigins)
+    setupNavigationGuards(window, navigation, getAllowedOrigins, getLoadingUrl)
     window.webContents.on("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => {
       if (isMainFrame) setWorkspaceMenuEnabled(window, false)
     })
@@ -228,7 +244,7 @@ function runPrimary(firstIntent: LaunchIntent) {
       bootstrap.reset()
       backendUrl = null
       backendTargetUrl = null
-      for (const record of registry.all()) void loadLoading(record)
+      for (const record of registry.all()) void loadLoading(record, true)
     }
   })
   cli.on("error", (error) => registry.fanout("cli:error", { message: error.message }))
@@ -267,17 +283,14 @@ function runPrimary(firstIntent: LaunchIntent) {
     return candidates.find(existsSync) ?? candidates[0]
   }
   async function openRemoteWindow(payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean }) {
-    const base = new URL(payload.baseUrl)
-    const target = new URL(payload.entryUrl ?? payload.baseUrl)
+    const base = requireHttpUrl(payload.baseUrl, "baseUrl")
+    const target = requireHttpUrl(payload.entryUrl ?? payload.baseUrl, "entryUrl")
     const title = `${payload.name} - ${payload.baseUrl}`
     const existing = remoteWindows.reuse(payload.id, payload.proxySessionId)
     if (existing) {
       const allowedOrigins = new Set([base.origin, target.origin])
-      remoteOrigins.set(existing.id, allowedOrigins)
-      if (payload.skipTlsVerify) insecureOrigins.set(existing.webContents.id, allowedOrigins)
-      else insecureOrigins.delete(existing.webContents.id)
       existing.setTitle(title)
-      await existing.loadURL(target.toString())
+      await navigateReusedRemoteWindow(existing, target, allowedOrigins, remoteOrigins, insecureOrigins, payload.skipTlsVerify)
       return
     }
     const remoteSession = session.fromPartition(resolveRemoteSessionPartition(payload.id, payload.proxySessionId))
@@ -294,34 +307,46 @@ function runPrimary(firstIntent: LaunchIntent) {
       .flatMap((candidate) => [...(remoteOrigins.get(candidate.id) ?? [])]), remoteSession)
     window.setTitle(title)
     window.webContents.on("page-title-updated", (event) => { event.preventDefault(); window.setTitle(title) })
-    setupNavigationGuards(window, undefined, getAllowedOrigins)
+    setupNavigationGuards(window, undefined, getAllowedOrigins, getLoadingUrl)
+    lifecycle.attachSessionEnd(window)
     window.on("closed", () => { remoteOrigins.delete(window.id); insecureOrigins.delete(window.webContents.id) })
     try { await window.loadURL(target.toString()) } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`<h1>${escapeHtml(payload.name)}</h1><p>${escapeHtml(message)}</p>`)}`)
+      console.warn("[electron] failed to load remote window; showing loading screen", error)
+      remoteOrigins.delete(window.id)
+      insecureOrigins.delete(window.webContents.id)
+      const loading = loadingTarget()
+      await (loading.url ? window.loadURL(loading.url) : window.loadFile(loading.file!))
     }
   }
 }
 
-function setupNavigationGuards(window: BrowserWindow, navigation: ClientStateNavigationController | undefined, allowedOrigins: (window: BrowserWindow) => string[]) {
+function setupNavigationGuards(
+  window: BrowserWindow,
+  navigation: ClientStateNavigationController | undefined,
+  allowedOrigins: (window: BrowserWindow) => string[],
+  loadingUrl: () => string,
+) {
   const external = (url: string) => shell.openExternal(url).catch((error) => console.error("[cli] failed to open external URL", url, error))
-  const shouldOpenExternally = (url: string) => {
-    try { const parsed = new URL(url); return !["http:", "https:", "file:"].includes(parsed.protocol) || (parsed.protocol !== "file:" && !allowedOrigins(window).includes(parsed.origin)) } catch { return false }
-  }
-  window.webContents.setWindowOpenHandler(({ url }) => shouldOpenExternally(url) ? (external(url), { action: "deny" }) : { action: "allow" })
+  const decide = (url: string) => decideNavigation(url, allowedOrigins(window), loadingUrl())
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (decide(url) === "external") void external(url)
+    return { action: "deny" }
+  })
   window.webContents.on("will-navigate", (event, url) => {
-    if (shouldOpenExternally(url)) { event.preventDefault(); void external(url) }
+    const decision = decide(url)
+    if (decision !== "allow") { event.preventDefault(); if (decision === "external") void external(url) }
     else if (navigation) { event.preventDefault(); void navigation.navigate((target) => target.loadURL(url)) }
   })
-  window.webContents.on("will-redirect", (event, url) => { if (shouldOpenExternally(url)) { event.preventDefault(); void external(url) } })
+  window.webContents.on("will-redirect", (event, url) => {
+    const decision = decide(url)
+    if (decision !== "allow") { event.preventDefault(); if (decision === "external") void external(url) }
+  })
 }
 
 function isIgnorableNavigationError(error: unknown): boolean {
   const text = error instanceof Error ? `${(error as Error & { code?: string }).code ?? ""} ${error.message}` : String(error)
   return text.includes("ERR_ABORTED") || text.includes("ERR_FAILED")
 }
-
-function escapeHtml(value: string): string { return value.replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[char]!) }
 
 async function exchangeBootstrapToken(baseUrl: string, token: string, cli: CliProcessManager): Promise<boolean> {
   const target = new URL("/api/auth/token", baseUrl)

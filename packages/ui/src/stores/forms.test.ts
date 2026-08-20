@@ -1,6 +1,18 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { activeInterruption, addPendingForm, removePendingForm } from "./instances.ts"
+import {
+  activeInterruption,
+  addInstance,
+  addPendingForm,
+  removeInstance,
+  removePendingForm,
+  sendFormCancel,
+  sendFormReply,
+  syncPendingRequests,
+} from "./instances.ts"
+import { formRequestOptions, getFormQueue } from "./forms.ts"
+import { getRootClient } from "./opencode-client.ts"
+import { sdkManager } from "../lib/sdk-manager.ts"
 import { sessions, setSessions } from "./session-state.ts"
 
 const form = {
@@ -30,6 +42,103 @@ describe("form interruption lifecycle", () => {
     } finally {
       removePendingForm(instanceId, form.id)
       setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
+    }
+  })
+
+  it("keeps global form locations for response routing while session forms stay unchanged", () => {
+    const instanceId = "global-form-location"
+    const globalForm = {
+      ...form,
+      id: "global-form",
+      sessionID: "global",
+      location: { directory: "/worktree", workspaceID: "workspace-1" },
+    }
+
+    try {
+      addPendingForm(instanceId, globalForm)
+      assert.deepEqual(getFormQueue(instanceId)[0]?.location, globalForm.location)
+      assert.deepEqual(formRequestOptions(globalForm), {
+        headers: {
+          "x-opencode-directory": "%2Fworktree",
+          "x-opencode-workspace": "workspace-1",
+        },
+      })
+      assert.equal(formRequestOptions(form), undefined)
+    } finally {
+      removePendingForm(instanceId, globalForm.id)
+    }
+  })
+
+  it("percent-encodes Unicode and percent signs in global form directories", () => {
+    assert.deepEqual(formRequestOptions({
+      ...form,
+      sessionID: "global",
+      location: { directory: "/工作/100% ready" },
+    }), {
+      headers: {
+        "x-opencode-directory": "%2F%E5%B7%A5%E4%BD%9C%2F100%25%20ready",
+      },
+    })
+  })
+
+  it("sends global replies and cancellations with their location request options", async () => {
+    const instanceId = "global-form-response-location"
+    const globalForm = {
+      ...form,
+      id: "global-response-form",
+      sessionID: "global",
+      location: { directory: "/worktree", workspaceID: "workspace-1" },
+    }
+    const calls: unknown[][] = []
+    const client = getRootClient(instanceId)
+    ;(client.form as any).reply = async (...args: unknown[]) => { calls.push(args) }
+    ;(client.form as any).cancel = async (...args: unknown[]) => { calls.push(args) }
+
+    try {
+      addPendingForm(instanceId, globalForm)
+      await sendFormReply(instanceId, globalForm.id, { channel: "stable" })
+      addPendingForm(instanceId, globalForm)
+      await sendFormCancel(instanceId, globalForm.id)
+
+      assert.deepEqual(calls, [
+        [
+          { sessionID: "global", formID: globalForm.id, answer: { channel: "stable" } },
+          formRequestOptions(globalForm),
+        ],
+        [
+          { sessionID: "global", formID: globalForm.id },
+          formRequestOptions(globalForm),
+        ],
+      ])
+    } finally {
+      removePendingForm(instanceId, globalForm.id)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("attaches list response locations only to global forms", async () => {
+    const instanceId = "global-form-list-location"
+    const location = { directory: "/worktree", workspaceID: "workspace-1" }
+    const client = {
+      permission: { request: { list: async () => ({ location, data: [] }) } },
+      form: { request: { list: async () => ({
+        location,
+        data: [
+          { ...form, id: "global-list-form", sessionID: "global" },
+          { ...form, id: "session-list-form" },
+        ],
+      }) } },
+    }
+    addInstance({ id: instanceId, folder: "/worktree", status: "ready", client } as any)
+
+    try {
+      await syncPendingRequests(instanceId)
+      assert.deepEqual(getFormQueue(instanceId).map((entry) => [entry.id, entry.location]), [
+        ["global-list-form", location],
+        ["session-list-form", undefined],
+      ])
+    } finally {
+      removeInstance(instanceId)
     }
   })
 })

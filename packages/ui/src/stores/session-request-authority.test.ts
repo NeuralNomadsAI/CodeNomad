@@ -5,7 +5,7 @@ import { sdkManager } from "../lib/sdk-manager.ts"
 import type { Session } from "../types/session.ts"
 import { addInstance, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
-import { fetchSessions, loadMessages, loadMoreSessions, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
+import { fetchSessions, hasMoreMessages, loadMessages, loadMoreMessages, loadMoreSessions, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
 import { setInstanceMetadata } from "./instance-metadata.ts"
 import {
   clearInstanceDeletedSessionAuthority,
@@ -68,7 +68,8 @@ describe("session request authority", () => {
     const search = deferred<any>()
     const parents = deferred<any>()
     let calls = 0
-    ;(client.session as any).list = () => (++calls === 1 ? search.promise : parents.promise)
+    ;(client.session as any).list = () => { calls += 1; return search.promise }
+    ;(client.session as any).get = () => parents.promise
 
     try {
       const request = searchSessions(instanceId, "child")
@@ -76,12 +77,13 @@ describe("session request authority", () => {
       await new Promise<void>((resolve) => setImmediate(resolve))
       removeSessionRuntimeState(instanceId, "child")
       removeSessionRuntimeState(instanceId, "parent")
-      parents.resolve({ data: [apiSession("parent")] })
+      parents.resolve(apiSession("parent"))
       await request
 
       assert.equal(sessions().get(instanceId)?.has("child") ?? false, false)
       assert.equal(sessions().get(instanceId)?.has("parent") ?? false, false)
       assert.deepEqual(getSessionSearchResultIds(instanceId), [])
+      assert.equal(calls, 1)
     } finally {
       cleanup()
     }
@@ -163,54 +165,80 @@ describe("session request authority", () => {
     }
   })
 
-  it("does not replace messages when a later page fails", async () => {
+  it("shows the latest message page and preserves it when cursor load-more fails", async () => {
     const instanceId = "partial-message-pages", sessionId = "session"
     const { client, cleanup } = setup(instanceId)
     let failSecondPage = false
+    let pendingSecondPage: ReturnType<typeof deferred<any>> | undefined
+    const requests: any[] = []
     ;(client as any).message = { list: async (input: any) => {
+      requests.push(input)
       if (input.cursor && failSecondPage) throw new Error("cursor failed")
+      if (input.cursor && pendingSecondPage) return pendingSecondPage.promise
       return input.cursor
-        ? { data: [apiMessage("old-2")], cursor: {} }
-        : { data: [apiMessage("old-1")], cursor: { next: "page-2" } }
+        ? { data: [apiMessage("old-2"), apiMessage("old-1")], cursor: {} }
+        : { data: [apiMessage("new-2"), apiMessage("new-1")], cursor: { next: "page-2" } }
     } }
     setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
 
     try {
       await loadMessages(instanceId, sessionId)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["new-1", "new-2"])
+      assert.deepEqual(requests, [{ sessionID: sessionId, limit: 200, order: "desc" }])
+      assert.equal(hasMoreMessages(instanceId, sessionId), true)
       failSecondPage = true
-      await assert.rejects(loadMessages(instanceId, sessionId, { force: true }), /cursor failed/)
-      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["old-1", "old-2"])
+      await assert.rejects(loadMoreMessages(instanceId, sessionId), /cursor failed/)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["new-1", "new-2"])
       assert.equal(messagesLoaded().get(instanceId)?.has(sessionId), true)
+
+      failSecondPage = false
+      pendingSecondPage = deferred<any>()
+      const firstLoadMore = loadMoreMessages(instanceId, sessionId)
+      const concurrentLoadMore = loadMoreMessages(instanceId, sessionId)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      assert.equal(loading().loadingMessages.get(instanceId)?.has(sessionId) ?? false, false)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["new-1", "new-2"])
+      assert.equal(requests.filter((request: any) => request.cursor === "page-2").length, 2)
+      pendingSecondPage.resolve({ data: [apiMessage("old-2"), apiMessage("old-1")], cursor: {} })
+      await Promise.all([firstLoadMore, concurrentLoadMore])
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["old-1", "old-2", "new-1", "new-2"])
+      assert.equal((requests.at(-1) as any)?.cursor, "page-2")
+      assert.equal(hasMoreMessages(instanceId, sessionId), false)
     } finally {
       cleanup()
     }
   })
 
-  it("loads every descendant depth by project and applies active state to later pages", async () => {
+  it("loads paginated project sessions without per-parent requests", async () => {
     const instanceId = "project-descendants"
     const { client, cleanup } = setup(instanceId)
     const requests: any[] = []
-    let active: Record<string, unknown> = {}
+    const active: Record<string, unknown> = { later: {} }
     setInstanceMetadata(instanceId, { project: { id: "project", directory: "/work", canonical: "/work" } as any })
     ;(client.session as any).active = async () => active
     ;(client.session as any).list = async (input: any) => {
       requests.push(input)
-      if (input.cursor === "root-page-2") return { data: [apiSession("later")], cursor: {} }
-      if (input.parentID === "root" && !input.cursor) return { data: [{ ...apiSession("child", "root"), subpath: "other-worktree" }], cursor: { next: "child-page-2" } }
-      if (input.parentID === "child") return { data: [apiSession("grandchild", "child")], cursor: {} }
-      if (input.parentID) return { data: [], cursor: {} }
-      return { data: [apiSession("root")], cursor: { next: "root-page-2" } }
+      if (input.cursor === "page-2") {
+        return { data: [apiSession("later"), apiSession("grandchild", "child")], cursor: {} }
+      }
+      return {
+        data: [apiSession("root"), { ...apiSession("child", "root"), subpath: "other-worktree" }],
+        cursor: { next: "page-2" },
+      }
     }
 
     try {
       await fetchSessions(instanceId)
-      assert.equal(sessions().get(instanceId)?.has("grandchild"), true)
+      assert.equal(sessions().get(instanceId)?.has("grandchild"), false)
       assert.equal(requests[0].project, "project")
       assert.equal("directory" in requests[0], false)
-      assert.equal(requests.find((request) => request.parentID === "child")?.subpath, undefined)
+      assert.equal(requests.every((request) => !("parentID" in request)), true)
+      assert.equal(requests.length, 1)
 
-      active = { later: {} }
       await loadMoreSessions(instanceId)
+      assert.equal(requests.length, 2)
+      assert.equal(requests[1].cursor, "page-2")
+      assert.equal(sessions().get(instanceId)?.has("grandchild"), true)
       assert.equal(sessions().get(instanceId)?.get("later")?.status, "working")
       assert.equal(sessions().get(instanceId)?.get("later")?.runtimeStatusKnown, true)
     } finally {

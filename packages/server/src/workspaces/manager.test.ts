@@ -23,9 +23,12 @@ function deferred<T>() {
 class ControlledSharedService {
   readonly validationStarted = deferred<void>()
   validationGate?: ReturnType<typeof deferred<void>>
+  ignoreValidationAbort = false
   afterValidation?: () => void
   validationCalls: Array<{ location: LocationRef; options?: OpenCodeSharedServiceOptions }> = []
   shutdownCalls = 0
+  shutdownGate?: ReturnType<typeof deferred<void>>
+  shutdownTimeouts: number[] = []
   evictionCalls: Array<{ location: LocationRef; options?: OpenCodeSharedServiceOptions; signal?: AbortSignal }> = []
 
   async endpoint() {
@@ -44,14 +47,17 @@ class ControlledSharedService {
     this.validationCalls.push({ location, options })
     this.validationStarted.resolve()
     if (this.validationGate) {
-      await Promise.race([
-        this.validationGate.promise,
-        new Promise<never>((_resolve, reject) => {
-          const cancel = () => reject(requestOptions?.signal?.reason)
-          requestOptions?.signal?.addEventListener("abort", cancel, { once: true })
-          if (requestOptions?.signal?.aborted) cancel()
-        }),
-      ])
+      if (this.ignoreValidationAbort) await this.validationGate.promise
+      else {
+        await Promise.race([
+          this.validationGate.promise,
+          new Promise<never>((_resolve, reject) => {
+            const cancel = () => reject(requestOptions?.signal?.reason)
+            requestOptions?.signal?.addEventListener("abort", cancel, { once: true })
+            if (requestOptions?.signal?.aborted) cancel()
+          }),
+        ])
+      }
     }
     this.afterValidation?.()
     return {
@@ -69,7 +75,11 @@ class ControlledSharedService {
     return { async *[Symbol.asyncIterator]() {} }
   }
 
-  async shutdown() { this.shutdownCalls += 1 }
+  async shutdown(options?: { timeoutMs?: number }) {
+    this.shutdownCalls += 1
+    if (options?.timeoutMs !== undefined) this.shutdownTimeouts.push(options.timeoutMs)
+    await this.shutdownGate?.promise
+  }
 }
 
 function createHarness(service = new ControlledSharedService(), overrides: Record<string, unknown> = {}) {
@@ -85,7 +95,7 @@ function createHarness(service = new ControlledSharedService(), overrides: Recor
     sharedService: service,
     ...overrides,
   })
-  return { manager, service, stopped }
+  return { manager, service, stopped, eventBus }
 }
 
 describe("workspace manager shared service lifecycle", () => {
@@ -253,14 +263,103 @@ describe("workspace manager shared service lifecycle", () => {
     assert.equal(harness.manager.list().length, 1)
   })
 
-  it("shuts down only the local adapter after deleting workspaces", async () => {
+  it("shuts down local workspaces without evicting their OpenCode locations", async () => {
     const harness = createHarness()
     await harness.manager.create(process.cwd())
 
     await harness.manager.shutdown()
 
     assert.deepEqual(harness.manager.list(), [])
+    assert.equal(harness.service.evictionCalls.length, 0)
     assert.equal(harness.service.shutdownCalls, 1)
+    assert.deepEqual(harness.stopped.length, 1)
+  })
+
+  it("cancels and removes an in-flight creation without evicting its location", async () => {
+    const harness = createHarness()
+    harness.service.validationGate = deferred<void>()
+    const creation = harness.manager.create(process.cwd())
+    await harness.service.validationStarted.promise
+
+    await harness.manager.shutdown()
+    await assert.rejects(creation, WorkspaceLaunchCancelledError)
+
+    assert.deepEqual(harness.manager.list(), [])
+    assert.equal((harness.manager as any).workspaces.size, 0)
+    assert.equal((harness.manager as any).pendingWorkspaceCreations.size, 0)
+    assert.equal(harness.service.evictionCalls.length, 0)
+    assert.equal(harness.service.shutdownCalls, 1)
+  })
+
+  it("waits for the underlying launch to settle before completing shutdown", async () => {
+    const harness = createHarness()
+    harness.service.validationGate = deferred<void>()
+    harness.service.ignoreValidationAbort = true
+    const lifecycleEvents: string[] = []
+    harness.eventBus.on("workspace.created", () => lifecycleEvents.push("created"))
+    harness.eventBus.on("workspace.started", () => lifecycleEvents.push("started"))
+    const creation = harness.manager.create(process.cwd())
+    const creationFailure = assert.rejects(creation, WorkspaceLaunchCancelledError)
+    await harness.service.validationStarted.promise
+    const record = [...(harness.manager as any).workspaces.values()][0]
+    let shutdownSettled = false
+
+    const shutdown = harness.manager.shutdown().then(() => { shutdownSettled = true })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(shutdownSettled, false)
+    harness.service.validationGate.resolve()
+    await shutdown
+    await creationFailure
+
+    assert.deepEqual(record.location, { directory: process.cwd() })
+    assert.equal(record[Object.getOwnPropertySymbols(record)[0]].locationOwned, false)
+    assert.deepEqual(lifecycleEvents, [])
+    assert.equal(harness.service.evictionCalls.length, 0)
+    assert.equal((harness.manager as any).workspaces.size, 0)
+  })
+
+  it("prevents a launch completing after bounded shutdown from mutating its removed record", async () => {
+    const service = new ControlledSharedService()
+    service.validationGate = deferred<void>()
+    service.ignoreValidationAbort = true
+    const validationFinished = deferred<void>()
+    service.afterValidation = validationFinished.resolve
+    const harness = createHarness(service, { shutdownTimeoutMs: 20 })
+    const lifecycleEvents: string[] = []
+    harness.eventBus.on("workspace.created", () => lifecycleEvents.push("created"))
+    harness.eventBus.on("workspace.started", () => lifecycleEvents.push("started"))
+    const creation = harness.manager.create(process.cwd())
+    const creationFailure = assert.rejects(creation, WorkspaceLaunchCancelledError)
+    await service.validationStarted.promise
+    const record = [...(harness.manager as any).workspaces.values()][0]
+
+    await assert.rejects(harness.manager.shutdown(), /Failed to stop 1 workspace during shutdown/)
+    assert.equal((harness.manager as any).workspaces.size, 0)
+    service.validationGate.resolve()
+    await validationFinished.promise
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    await creationFailure
+
+    assert.deepEqual(record.location, { directory: process.cwd() })
+    assert.equal(record[Object.getOwnPropertySymbols(record)[0]].locationOwned, false)
+    assert.deepEqual(lifecycleEvents, [])
+    assert.equal(service.evictionCalls.length, 0)
+  })
+
+  it("bounds local adapter shutdown after removing workspace records", async () => {
+    const service = new ControlledSharedService()
+    service.shutdownGate = deferred<void>()
+    const { manager } = createHarness(service, { shutdownTimeoutMs: 20 })
+    await manager.create(process.cwd())
+    const startedAt = Date.now()
+
+    await assert.rejects(manager.shutdown(), /Failed to stop 1 workspace during shutdown/)
+
+    assert.ok(Date.now() - startedAt < 1000)
+    assert.deepEqual(manager.list(), [])
+    assert.equal(service.evictionCalls.length, 0)
+    assert.equal(service.shutdownCalls, 1)
+    assert.ok((service.shutdownTimeouts[0] ?? 0) > 0)
   })
 
 })

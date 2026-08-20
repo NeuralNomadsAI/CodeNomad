@@ -8,7 +8,7 @@ import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import { getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances, waitForInstanceWorkspaceMetadataHydration } from "../../stores/instances"
-import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession } from "../../stores/sessions"
+import { hasMoreMessages, loadMessages, loadMoreMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession } from "../../stores/sessions"
 import { canMarkSessionIdleSeen } from "./session-idle-attention"
 import { clearSessionIdleFade, IDLE_STATUS_VISIBILITY_MS, getSessionStatus, isSessionBusy as getSessionBusyStatus, markSessionIdleFadeStarted } from "../../stores/session-status"
 import { showAlertDialog } from "../../stores/alerts"
@@ -526,6 +526,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
                   loading={messagesLoading()}
                   loadError={messagesLoadError()}
                   onReloadMessages={handleReloadMessages}
+                  hasMoreMessages={hasMoreMessages(props.instanceId, activeSession.id)}
+                  onLoadMoreMessages={() => loadMoreMessages(props.instanceId, activeSession.id)}
                   sessionStreamingActive={sessionStreamingActive()}
                   explicitBottomPinIntent={activeSubmitBottomPinIntent()}
                   onExplicitBottomPinCancelled={() => setSubmitBottomPinIntent(null)}

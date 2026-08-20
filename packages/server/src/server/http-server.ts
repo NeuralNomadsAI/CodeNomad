@@ -620,6 +620,26 @@ async function proxyWorkspaceRequest(args: {
     return
   }
   const serviceDirectory = workspaceManager.getServiceDirectory?.(workspaceId) ?? workspace.path
+  let globalFormDirectory: string | undefined
+  if (isGlobalFormAction(pathname, request.method)) {
+    const header = request.headers["x-opencode-directory"]
+    if (Array.isArray(header)) {
+      reply.code(400).send({ error: "Invalid Form location" })
+      return
+    }
+    if (header !== undefined) {
+      try {
+        globalFormDirectory = decodeURIComponent(header)
+      } catch {
+        reply.code(400).send({ error: "Invalid Form location" })
+        return
+      }
+      if (!globalFormDirectory.trim()) {
+        reply.code(400).send({ error: "Invalid Form location" })
+        return
+      }
+    }
+  }
   const imported = prepareSessionImport(
     pathname,
     request.method,
@@ -627,6 +647,7 @@ async function proxyWorkspaceRequest(args: {
     serviceDirectory,
   )
   const requestLocations = readRequestDirectories(targetUrl, imported.body)
+  if (globalFormDirectory) requestLocations.directories.push(globalFormDirectory)
   requestLocations.directories.push(...imported.directories)
   requestLocations.invalid ||= imported.invalid
   readNativeCwd(targetUrl, imported.body, requestLocations)
@@ -741,6 +762,9 @@ async function proxyWorkspaceRequest(args: {
     ...(body !== request.body ? { body } : {}),
     rewriteRequestHeaders: (_originalRequest, headers) => {
       const outgoingHeaders = sanitizeInstanceProxyRequestHeaders(headers, instanceAuthHeader)
+      if (globalFormDirectory) {
+        outgoingHeaders["x-opencode-directory"] = encodeURIComponent(translatedDirectories.get(globalFormDirectory)!)
+      }
 
       if (logger.isLevelEnabled("trace")) {
         logger.trace(

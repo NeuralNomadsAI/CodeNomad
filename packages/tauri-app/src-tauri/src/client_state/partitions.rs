@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 pub(super) const PROTOCOL_VERSION: u64 = 1;
 pub(super) const MAX_ROOT_BYTES: usize = 1024 * 1024;
 const MAX_PARTITION_BYTES: usize = 1024 * 1024;
-const MAX_COMMIT_BYTES: usize = 8 * 1024 * 1024;
+pub(super) const MAX_COMMIT_BYTES: usize = 256 * 1024 * 1024;
 const MAX_PARTITION_KEYS: usize = 4096;
 const PARTITION_DIRECTORY: &str = "partitions";
 
@@ -122,10 +122,10 @@ impl PartitionCommit {
                 return Err("Client state partition exceeds the 1 MiB limit".to_string());
             }
             commit_size = commit_size.checked_add(content.len()).ok_or_else(|| {
-                "Client state partition commit exceeds the 8 MiB limit".to_string()
+                "Client state partition commit exceeds the 256 MiB limit".to_string()
             })?;
             if commit_size > MAX_COMMIT_BYTES {
-                return Err("Client state partition commit exceeds the 8 MiB limit".to_string());
+                return Err("Client state partition commit exceeds the 256 MiB limit".to_string());
             }
             if hex_digest(content.as_bytes()) != *key {
                 return Err("Client state partition digest mismatch".to_string());

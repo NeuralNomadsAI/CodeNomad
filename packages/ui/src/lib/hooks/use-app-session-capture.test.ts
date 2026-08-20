@@ -10,16 +10,17 @@ it("preserves settled tabs during native shutdown", () => {
 })
 
 it("makes native shutdown terminal for reactive captures", () => {
-  assert.match(capture, /if \(nativeShutdown\) nativeShutdownStarted = true/)
-  assert.match(capture, /if \(!enabled\(\) \|\| disposed \|\| nativeShutdownStarted\) return/)
+  assert.match(capture, /if \(nativeShutdown\) nativeShutdownGeneration = nativeShutdownGenerationRequest/)
+  assert.match(capture, /if \(!enabled\(\) \|\| disposed \|\| nativeShutdownGeneration !== null\) return/)
 })
 
 it("keeps navigation flushes nonterminal", () => {
-  assert.match(capture, /flush\(nativeShutdown\)/)
+  assert.match(capture, /flush\(nativeShutdown \? payload\.generation : undefined\)/)
   assert.match(capture, /"client-state:flush-requested",[\s\S]*?, true\)/)
   assert.match(capture, /"client-state:navigation-flush-requested",[\s\S]*?, false\)/)
 })
 
 it("resumes capture only after native shutdown cancellation", () => {
-  assert.match(capture, /listen\("client-state:flush-cancelled"[\s\S]*nativeShutdownStarted = false[\s\S]*schedule\(\)/)
+  assert.match(capture, /listen<\{ generation: number \}>\("client-state:flush-cancelled"/)
+  assert.match(capture, /if \(nativeShutdownGeneration !== payload\.generation\) return[\s\S]*nativeShutdownGeneration = null[\s\S]*schedule\(\)/)
 })

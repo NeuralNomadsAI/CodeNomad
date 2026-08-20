@@ -72,13 +72,16 @@ test("late old-window detach preserves replacement tracker during shutdown", asy
   assert.deepEqual(h.calls, ["hide", "renderer", "replacement-native", "stop", "release"])
 })
 
-test("Windows session end vetoes termination until cleanup exits explicitly", async () => {
+test("Windows session end starts cleanup without vetoing termination", async () => {
   const h = harness()
   let prevented = false
   h.windows.get("query-session-end")?.({ preventDefault: () => { prevented = true } })
+  await (h.lifecycle as any).sessionEndPreparation
+  assert.equal(prevented, false)
+  assert.deepEqual(h.calls, ["renderer", "native"])
+  assert.equal(h.exits(), 0)
   h.windows.get("session-end")?.()
   await (h.lifecycle as any).sessionEnd; await tick()
-  assert.equal(prevented, true)
   assert.deepEqual(h.calls, ["renderer", "native", "stop", "release"])
   assert.equal(h.exits(), 1)
 })
@@ -88,8 +91,9 @@ test("session end force-exits after the bounded window when an ordinary shutdown
   let prevented = false
   h.appEvents.get("before-quit")?.({ preventDefault: () => {} })
   h.windows.get("query-session-end")?.({ preventDefault: () => { prevented = true } })
+  h.windows.get("session-end")?.()
   await delay(25)
-  assert.equal(prevented, true)
+  assert.equal(prevented, false)
   assert.deepEqual(h.calls, ["hide", "renderer", "release"])
   assert.equal(h.exits(), 1)
 })
@@ -120,6 +124,7 @@ test("Windows session-end rejection fails open at the bounded deadline", async (
   const h = harness({ stop: async () => { throw new Error("unconfirmed") }, sessionEndCleanupTimeoutMs: 10 })
   h.appEvents.get("before-quit")?.({ preventDefault: () => {} })
   h.windows.get("query-session-end")?.({ preventDefault: () => {} })
+  h.windows.get("session-end")?.()
   await delay(25)
   assert.equal(h.exits(), 1)
   assert.deepEqual(h.calls, ["hide", "renderer", "native", "stop", "release"])
@@ -133,6 +138,7 @@ test("Windows fail-open bounds a hanging primary release before app.exit", async
     sessionEndReleaseTimeoutMs: 10,
   })
   h.windows.get("query-session-end")?.({ preventDefault: () => {} })
+  h.windows.get("session-end")?.()
 
   await delay(25)
   assert.deepEqual(h.calls, ["renderer", "release"])

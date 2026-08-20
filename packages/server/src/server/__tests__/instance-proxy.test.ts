@@ -25,6 +25,7 @@ async function harness(
   pathMappings: Record<string, string> = {},
   ptyDirectories: Record<string, string | Error> = {},
   shellDirectories: Record<string, string | Error> = {},
+  directoryMappings: Record<string, string> = {},
 ) {
   const upstream = Fastify()
   apps.push(upstream)
@@ -38,7 +39,7 @@ async function harness(
   const address = upstream.server.address()
   assert.ok(address && typeof address === "object")
 
-  const owned = new Set([workspacePath, serviceDirectory, "/repo", "/repo/worktree"])
+  const owned = new Set([workspacePath, serviceDirectory, "/repo", "/repo/worktree", ...Object.keys(directoryMappings)])
   const sessionGets: string[] = []
   const pathOwnershipChecks: string[] = []
   const servicePathCalls: string[] = []
@@ -90,7 +91,9 @@ async function harness(
     getSharedServiceEndpoint: async () => ({ url: `http://127.0.0.1:${address.port}` }),
     getInstanceAuthorizationHeader: () => "Basic internal-secret",
     getServiceDirectory: () => serviceDirectory,
-    getServiceDirectoryForPath: async (_id, directory) => directory === workspacePath ? serviceDirectory : owned.has(directory) ? directory : undefined,
+    getServiceDirectoryForPath: async (_id, directory) => directory === workspacePath
+      ? serviceDirectory
+      : owned.has(directory) ? directoryMappings[directory] ?? directory : undefined,
     getServicePathForPath: async (_id, candidate) => {
       assert.ok(pathOwnershipChecks.includes(candidate), "prompt path must be ownership-checked before translation")
       servicePathCalls.push(candidate)
@@ -294,6 +297,74 @@ describe("instance proxy location enforcement", () => {
       payload: { text: "no" },
     })).statusCode, 403)
     assert.deepEqual(sessionGets, ["global"])
+  })
+
+  it("forwards a validated global Form root location instead of browser routing headers", async () => {
+    const { app } = await harness("/repo/worktree", {}, {}, "/repo", "/srv/repo")
+    const response = await app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/session/global/form/form-1/reply",
+      headers: {
+        "x-opencode-directory": encodeURIComponent("/repo"),
+        "x-opencode-workspace": "untrusted-workspace",
+      },
+      payload: { answers: {} },
+    })
+
+    assert.equal(response.statusCode, 200)
+    const upstream = JSON.parse(response.body)
+    assert.equal(upstream.headers["x-opencode-directory"], encodeURIComponent("/srv/repo"))
+    assert.equal(upstream.headers["x-opencode-workspace"], undefined)
+  })
+
+  it("translates and forwards a validated global Form worktree location", async () => {
+    const { app } = await harness(
+      "/repo/worktree", {}, {}, "/repo", "/srv/repo", {}, {}, {},
+      { "/repo/worktree": "/srv/worktree" },
+    )
+    const response = await app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/session/global/form/form-1/cancel",
+      headers: { "x-opencode-directory": encodeURIComponent("/repo/worktree") },
+      payload: {},
+    })
+
+    assert.equal(response.statusCode, 200)
+    assert.equal(JSON.parse(response.body).headers["x-opencode-directory"], encodeURIComponent("/srv/worktree"))
+  })
+
+  it("rejects a foreign global Form location before proxying", async () => {
+    const { app, requestCount } = await harness()
+    const response = await app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/session/global/form/form-1/reply",
+      headers: { "x-opencode-directory": encodeURIComponent("/other") },
+      payload: { answers: {} },
+    })
+
+    assert.equal(response.statusCode, 403)
+    assert.equal((await app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/session/global/form/form-1/reply",
+      headers: { "x-opencode-directory": "%ZZ" },
+      payload: { answers: {} },
+    })).statusCode, 400)
+    assert.equal(requestCount(), 0)
+  })
+
+  it("decodes, translates, and re-encodes Unicode global Form locations", async () => {
+    const directory = "/工作/100% ready"
+    const serviceDirectory = "/服务/工作 100%"
+    const { app } = await harness(directory, {}, {}, directory, serviceDirectory)
+    const response = await app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/session/global/form/form-1/reply",
+      headers: { "x-opencode-directory": encodeURIComponent(directory) },
+      payload: { answers: {} },
+    })
+
+    assert.equal(response.statusCode, 200)
+    assert.equal(JSON.parse(response.body).headers["x-opencode-directory"], encodeURIComponent(serviceDirectory))
   })
 
   it("rejects deletion through a double-encoded alias of a foreign session", async () => {

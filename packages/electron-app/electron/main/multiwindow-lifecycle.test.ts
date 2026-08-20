@@ -93,22 +93,49 @@ test("final close retains its record and shutdown stops/releases once", async ()
   assert.equal(calls.filter((call) => call === "release").length, 1)
 })
 
-test("Windows session end exits even when CLI shutdown rejects after the query was vetoed", async () => {
+test("Windows query preflush leaves the app alive until session end is confirmed", async () => {
   const calls: string[] = []
   const first = windowRecord("one", calls)
   const lifecycle = new MultiwindowLifecycle({
     app: { on: () => {}, quit: () => {}, exit: () => calls.push("exit") } as never,
-    clientStateManager: { isPrimary: true, flush: async () => {}, drainAndReleasePrimary: async () => calls.push("release") } as never,
-    cliManager: { shutdown: async () => { throw new Error("CLI failed") } } as never,
+    clientStateManager: { isPrimary: true, flush: async () => calls.push("aggregate"), drainAndReleasePrimary: async () => calls.push("release") } as never,
+    cliManager: { shutdown: async () => calls.push("stop") } as never,
     getLocalWindows: () => [first], getAllWindows: () => [first.window], removeWindowState: async () => {},
     getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true, isWindows: true, sessionEndCleanupTimeoutMs: 20,
   })
   lifecycle.attach(first)
   let vetoed = false
   first.events.get("query-session-end")?.({ preventDefault: () => { vetoed = true } })
-  await tick(); await tick()
-  assert.equal(vetoed, true)
-  assert.deepEqual(calls.filter((call) => call === "exit"), ["exit"])
+  await (lifecycle as any).sessionEndPreparation
+  assert.equal(vetoed, false)
+  assert.deepEqual(calls, ["renderer:one", "native:one"])
+
+  first.events.get("session-end")?.()
+  await (lifecycle as any).sessionEnd
+  assert.deepEqual(calls, ["renderer:one", "native:one", "aggregate", "stop", "release", "exit"])
+})
+
+test("remote windows receive session-end cleanup without local close semantics", async () => {
+  const calls: string[] = []
+  const events = new Map<string, Function>()
+  const remote = { on: (name: string, handler: Function) => events.set(name, handler), isDestroyed: () => false }
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: () => {}, exit: () => calls.push("exit") } as never,
+    clientStateManager: { isPrimary: true, flush: async () => calls.push("aggregate"), drainAndReleasePrimary: async () => calls.push("release") } as never,
+    cliManager: { shutdown: async () => calls.push("stop") } as never,
+    getLocalWindows: () => [], getAllWindows: () => [remote as never], removeWindowState: async () => calls.push("remove"),
+    getAllowedRendererOrigins: () => [], isTrustedRendererOrigin: () => false, isWindows: true,
+  })
+
+  lifecycle.attachSessionEnd(remote as never)
+  let vetoed = false
+  events.get("query-session-end")?.({ preventDefault: () => { vetoed = true } })
+  await (lifecycle as any).sessionEndPreparation
+  assert.equal(vetoed, false)
+  assert.deepEqual(calls, [])
+  events.get("session-end")?.()
+  await (lifecycle as any).sessionEnd
+  assert.deepEqual(calls, ["aggregate", "stop", "release", "exit"])
 })
 
 test("normal quit reports a failed CLI shutdown without allowing exit", async () => {

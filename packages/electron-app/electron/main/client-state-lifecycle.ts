@@ -21,6 +21,8 @@ interface ClientStateLifecycleDependencies {
 export class ClientStateLifecycle {
   private shutdown: Promise<void> | null = null
   private sessionEnd: Promise<void> | null = null
+  private sessionEndPreparation: Promise<void> | null = null
+  private sessionEndPreparationPending = false
   private exitAllowed = false
   private trackedMainWindow: BrowserWindow | null = null
   private windowStateTracker: WindowStateTracker | null = null
@@ -62,10 +64,8 @@ export class ClientStateLifecycle {
     })
 
     if (this.dependencies.isWindows ?? process.platform === "win32") {
-      window.on("query-session-end", (event) => {
-        if (this.exitAllowed) return
-        event.preventDefault()
-        this.promoteToSessionEnd(window)
+      window.on("query-session-end", () => {
+        this.prepareSessionEnd(window)
       })
       window.on("session-end", () => this.promoteToSessionEnd(window))
     }
@@ -96,11 +96,10 @@ export class ClientStateLifecycle {
     await this.runStage("native main-window close flush", () => this.flushNative())
   }
 
-  private startShutdown(window: BrowserWindow | null): Promise<void> {
+  private startShutdown(window: BrowserWindow | null, preparedFlush?: Promise<void>): Promise<void> {
     if (this.shutdown) return this.shutdown
     const stages = (async () => {
-      await this.runStage("renderer shutdown flush", () => this.flushRenderer(window))
-      await this.runStage("native shutdown flush", () => this.flushNative())
+      await (preparedFlush ?? this.flushForShutdown(window))
       await this.dependencies.cliManager.shutdown()
       await this.releasePrimary()
     })()
@@ -109,6 +108,21 @@ export class ClientStateLifecycle {
       throw error
     })
     return this.shutdown
+  }
+
+  private async flushForShutdown(window: BrowserWindow | null): Promise<void> {
+    await this.runStage("renderer shutdown flush", () => this.flushRenderer(window))
+    await this.runStage("native shutdown flush", () => this.flushNative())
+  }
+
+  private prepareSessionEnd(window: BrowserWindow): void {
+    if (this.exitAllowed || this.sessionEnd || this.shutdown || this.sessionEndPreparationPending) return
+    this.sessionEndPreparationPending = true
+    const preparation = this.flushForShutdown(window)
+    this.sessionEndPreparation = preparation
+    void preparation.finally(() => {
+      if (this.sessionEndPreparation === preparation) this.sessionEndPreparationPending = false
+    })
   }
 
   private hideWindows(): void {
@@ -131,7 +145,7 @@ export class ClientStateLifecycle {
 
   private promoteToSessionEnd(window: BrowserWindow): void {
     if (this.exitAllowed || this.sessionEnd) return
-    const cleanup = this.startShutdown(window)
+    const cleanup = this.shutdown ?? this.startShutdown(window, this.sessionEndPreparation ?? this.flushForShutdown(window))
     this.sessionEnd = new Promise<void>((resolve) => {
       const timeoutMs = this.dependencies.sessionEndCleanupTimeoutMs ?? 5_000
       const releaseTimeoutMs = Math.min(timeoutMs, this.dependencies.sessionEndReleaseTimeoutMs ?? 250)

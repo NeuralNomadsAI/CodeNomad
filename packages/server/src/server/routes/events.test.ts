@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
+import cors from "@fastify/cors"
 import Fastify from "fastify"
 import type { EventBus } from "../../events/bus"
 import type { Logger } from "../../logger"
@@ -7,8 +8,9 @@ import { registerEventRoutes } from "./events"
 
 const logger = { debug() {}, trace() {}, isLevelEnabled() { return false } } as unknown as Logger
 
-function harness(options: { limit?: number; timeout?: number } = {}) {
+function harness(options: { limit?: number; timeout?: number; corsOrigin?: false | string } = {}) {
   const app = Fastify()
+  if (options.corsOrigin !== undefined) app.register(cors, { origin: options.corsOrigin, credentials: true })
   let listener: ((event: any) => void) | undefined
   let closeClient: (() => void) | undefined
   let raw: NodeJS.EventEmitter | undefined
@@ -67,6 +69,43 @@ async function waitFor(check: () => boolean): Promise<void> {
 }
 
 describe("SSE backpressure", () => {
+  it("does not override the central CORS policy", async () => {
+    const test = harness({ corsOrigin: false })
+    try {
+      const response = test.app.inject({
+        method: "GET",
+        url: "/api/events?clientId=client&connectionId=connection",
+        headers: { origin: "https://untrusted.example" },
+      })
+      await waitFor(test.ready)
+      test.close()
+      const result = await response
+      assert.equal(result.headers["access-control-allow-origin"], undefined)
+      assert.equal(result.headers["access-control-allow-credentials"], undefined)
+    } finally {
+      await test.app.close()
+    }
+  })
+
+  it("preserves headers from an allowed central CORS policy", async () => {
+    const origin = "https://trusted.example"
+    const test = harness({ corsOrigin: origin })
+    try {
+      const response = test.app.inject({
+        method: "GET",
+        url: "/api/events?clientId=client&connectionId=connection",
+        headers: { origin },
+      })
+      await waitFor(test.ready)
+      test.close()
+      const result = await response
+      assert.equal(result.headers["access-control-allow-origin"], origin)
+      assert.equal(result.headers["access-control-allow-credentials"], "true")
+    } finally {
+      await test.app.close()
+    }
+  })
+
   it("queues after write(false), flushes on drain, and remains connected", async () => {
     const test = harness()
     try {

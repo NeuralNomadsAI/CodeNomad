@@ -1056,12 +1056,11 @@ pub fn release(app: &AppHandle) {
     }
 }
 
-pub fn flush_and_release_without_window_capture(app: &AppHandle) {
+pub fn flush_without_window_capture(app: &AppHandle) {
     if let Some(state) = app.try_state::<ClientState>() {
         if let Err(err) = state.flush() {
             eprintln!("[client-state] failed to flush state: {err}");
         }
-        state.release_locks();
     }
 }
 

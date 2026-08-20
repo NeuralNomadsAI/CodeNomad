@@ -32,6 +32,10 @@ function waitFor(check: () => boolean): Promise<void> {
   })
 }
 
+function serverConnected(): OpenCodeEvent {
+  return { type: "server.connected", data: {} } as OpenCodeEvent
+}
+
 function locationlessManager(
   events: OpenCodeEvent[],
   sessionLocations: Record<string, string | Error>,
@@ -53,6 +57,7 @@ function locationlessManager(
       } },
     }),
     subscribeToSharedService: async (signal?: AbortSignal) => (async function* () {
+      yield serverConnected()
       yield* events
       await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }))
     })(),
@@ -68,7 +73,7 @@ describe("InstanceEventBridge", () => {
       ownsDirectory: async () => true,
       subscribeToSharedService: async (signal?: AbortSignal) => (async function* () {
         await gate.promise
-        yield { type: "permission.asked", location: { directory: "/repo-a" }, data: { id: "p1" } } as OpenCodeEvent
+        yield serverConnected()
         await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }))
       })(),
     } as unknown as WorkspaceManager
@@ -87,6 +92,41 @@ describe("InstanceEventBridge", () => {
     }
   })
 
+  it("rejects a stream whose first event is not server.connected and reconnects", async () => {
+    let subscriptions = 0
+    const manager = {
+      list: () => [{ id: "a", path: "/repo-a" }],
+      ownsDirectory: async () => true,
+      subscribeToSharedService: async (signal?: AbortSignal) => {
+        subscriptions += 1
+        return (async function* () {
+          if (subscriptions === 1) {
+            yield { type: "permission.asked", location: { directory: "/repo-a" }, data: { id: "p1" } } as OpenCodeEvent
+            return
+          }
+          yield serverConnected()
+          await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }))
+        })()
+      },
+    } as unknown as WorkspaceManager
+    const bus = new EventBus()
+    const statuses: Array<{ status: string; reason?: string }> = []
+    const received: OpenCodeEvent[] = []
+    bus.on("instance.eventStatus", (event) => statuses.push(event))
+    bus.on("instance.event", (event) => received.push(event.event))
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
+      await waitFor(() => statuses.some((event) => event.status === "error"))
+      assert.match(statuses.find((event) => event.status === "error")?.reason ?? "", /expected server\.connected/)
+      assert.deepEqual(received, [])
+      await waitFor(() => statuses.some((event) => event.status === "connected"))
+      assert.equal(subscriptions, 2)
+    } finally {
+      bridge.shutdown()
+    }
+  })
+
   it("clears routing caches before reconnecting", async () => {
     let subscriptions = 0
     let ownershipChecks = 0
@@ -98,6 +138,7 @@ describe("InstanceEventBridge", () => {
         subscriptions += 1
         const current = subscriptions
         return (async function* () {
+          yield serverConnected()
           yield event
           if (current > 1) await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }))
         })()
@@ -105,7 +146,9 @@ describe("InstanceEventBridge", () => {
     } as unknown as WorkspaceManager
     const bus = new EventBus()
     const received: unknown[] = []
-    bus.on("instance.event", (value) => received.push(value))
+    bus.on("instance.event", (value) => {
+      if (value.event.type !== "server.connected") received.push(value)
+    })
     const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
     try {
       bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
@@ -117,6 +160,7 @@ describe("InstanceEventBridge", () => {
   })
   it("routes root and owned worktree events to the logical workspace and caches ownership", async () => {
     const events = [
+      { id: "0", created: 0, type: "server.connected", data: {} },
       { id: "1", created: 1, type: "permission.asked", location: { directory: "/repo-a" }, data: { id: "p1" } },
       {
         id: "2",
@@ -133,7 +177,6 @@ describe("InstanceEventBridge", () => {
         },
       },
       { id: "3", created: 3, type: "permission.asked", location: { directory: "/other" }, data: { id: "p2" } },
-      { id: "4", created: 4, type: "server.connected", data: {} },
       {
         id: "5",
         created: 5,
@@ -173,16 +216,16 @@ describe("InstanceEventBridge", () => {
     try {
       bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
       await waitFor(() => received.length === 6)
-      assert.equal(received[0].instanceId, "a")
-      assert.deepEqual(received[0].event.location, { directory: "/repo-a" })
-      assert.deepEqual(received[0].event.data, { id: "p1" })
-      assert.equal(received[0].event.properties, undefined)
-      assert.equal(received[1].event.data.sessionID, "session-1")
-      assert.equal(received[1].event.properties, undefined)
-      assert.deepEqual(received.slice(2, 4).map((event) => [event.instanceId, event.event.type]), [
+      assert.deepEqual(received.slice(0, 2).map((event) => [event.instanceId, event.event.type]), [
         ["a", "server.connected"],
         ["b", "server.connected"],
       ])
+      assert.equal(received[2].instanceId, "a")
+      assert.deepEqual(received[2].event.location, { directory: "/repo-a" })
+      assert.deepEqual(received[2].event.data, { id: "p1" })
+      assert.equal(received[2].event.properties, undefined)
+      assert.equal(received[3].event.data.sessionID, "session-1")
+      assert.equal(received[3].event.properties, undefined)
       assert.equal(received[4].instanceId, "a")
       assert.deepEqual(received[4].event.data, {
         sessionID: "session-2",
@@ -203,13 +246,16 @@ describe("InstanceEventBridge", () => {
       list: () => [{ id: "first", path: "/repo" }, { id: "second", path: "/repo" }],
       ownsDirectory: async (_workspaceId: string, directory: string) => directory === "/repo",
       subscribeToSharedService: async (signal?: AbortSignal) => (async function* () {
+        yield serverConnected()
         yield { id: "1", created: 1, type: "permission.asked", location: { directory: "/repo" }, data: { id: "p1" } } as OpenCodeEvent
         await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }))
       })(),
     } as unknown as WorkspaceManager
     const bus = new EventBus()
     const received: string[] = []
-    bus.on("instance.event", (event) => received.push(event.instanceId))
+    bus.on("instance.event", (event) => {
+      if (event.event.type !== "server.connected") received.push(event.instanceId)
+    })
 
     const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
     try {
@@ -231,7 +277,9 @@ describe("InstanceEventBridge", () => {
     const { manager, sessionGets } = locationlessManager(events, { known: "/repo-a" })
     const bus = new EventBus()
     const received: any[] = []
-    bus.on("instance.event", (event) => received.push(event))
+    bus.on("instance.event", (event) => {
+      if (event.event.type !== "server.connected") received.push(event)
+    })
     const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
 
     try {
@@ -249,7 +297,9 @@ describe("InstanceEventBridge", () => {
     const { manager, sessionGets } = locationlessManager(events, { unknown: new Error("not found") })
     const bus = new EventBus()
     const received: any[] = []
-    bus.on("instance.event", (event) => received.push(event))
+    bus.on("instance.event", (event) => {
+      if (event.event.type !== "server.connected") received.push(event)
+    })
     const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
 
     try {
@@ -271,7 +321,9 @@ describe("InstanceEventBridge", () => {
     const { manager } = locationlessManager(events, {}, workspaces)
     const bus = new EventBus()
     const received: any[] = []
-    bus.on("instance.event", (event) => received.push(event))
+    bus.on("instance.event", (event) => {
+      if (event.event.type !== "server.connected") received.push(event)
+    })
     const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
 
     try {
@@ -294,7 +346,9 @@ describe("InstanceEventBridge", () => {
     const { manager } = locationlessManager(events, {}, workspaces)
     const bus = new EventBus()
     const received: any[] = []
-    bus.on("instance.event", (event) => received.push(event))
+    bus.on("instance.event", (event) => {
+      if (event.event.type !== "server.connected") received.push(event)
+    })
     const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
 
     try {
@@ -313,7 +367,9 @@ describe("InstanceEventBridge", () => {
     const { manager, sessionGets } = locationlessManager(events, { deleted: new Error("not found") }, workspaces)
     const bus = new EventBus()
     const received: any[] = []
-    bus.on("instance.event", (event) => received.push(event))
+    bus.on("instance.event", (event) => {
+      if (event.event.type !== "server.connected") received.push(event)
+    })
     const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
 
     try {
@@ -336,7 +392,9 @@ describe("InstanceEventBridge", () => {
     const { manager } = locationlessManager(events, { foreign: "/repo-b" }, workspaces)
     const bus = new EventBus()
     const received: any[] = []
-    bus.on("instance.event", (event) => received.push(event))
+    bus.on("instance.event", (event) => {
+      if (event.event.type !== "server.connected") received.push(event)
+    })
     const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
 
     try {
@@ -357,7 +415,9 @@ describe("InstanceEventBridge", () => {
     const { manager, sessionGets } = locationlessManager(events, { owned: "/repo-b" }, workspaces)
     const bus = new EventBus()
     const received: any[] = []
-    bus.on("instance.event", (event) => received.push(event))
+    bus.on("instance.event", (event) => {
+      if (event.event.type !== "server.connected") received.push(event)
+    })
     const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
     try {
       bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
@@ -388,7 +448,9 @@ describe("InstanceEventBridge", () => {
     const { manager, sessionGets } = locationlessManager(events, {}, workspaces)
     const bus = new EventBus()
     const received: any[] = []
-    bus.on("instance.event", (event) => received.push(event))
+    bus.on("instance.event", (event) => {
+      if (event.event.type !== "server.connected") received.push(event)
+    })
     const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
     try {
       bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })

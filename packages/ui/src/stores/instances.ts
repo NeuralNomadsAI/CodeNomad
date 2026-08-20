@@ -71,9 +71,10 @@ import {
   addFormToQueue,
   clearFormQueue as clearStoredFormQueue,
   getFormQueue,
+  formRequestOptions,
   removeFormFromQueue,
   type FormAnswer,
-  type FormInfo,
+  type FormWithLocation,
 } from "./forms"
 import { invalidateFilesystemCaches } from "../lib/filesystem-events"
 import { detachInstanceTabMembership, requestInstanceTabClose } from "./app-tab-membership"
@@ -181,7 +182,7 @@ class InterruptionRegistry<T extends { id: string }> {
 }
 
 const permissionRegistry = new InterruptionRegistry<PermissionRequest>()
-const formRegistry = new InterruptionRegistry<FormInfo>()
+const formRegistry = new InterruptionRegistry<FormWithLocation>()
 
 type InterruptionKind = "permission" | "form"
 
@@ -257,7 +258,7 @@ const connectionResyncs = new TrailingResyncCoordinator(
     const instance = instances().get(instanceId)
     if (!instance?.client || instance.status !== "ready") return
     await Promise.all([
-      fetchSessions(instanceId, { reset: false }),
+      fetchSessions(instanceId, { reset: true }),
       syncPendingRequests(instanceId),
       refreshVolatileInstanceState(instanceId),
     ])
@@ -315,7 +316,6 @@ function refreshVolatileInstanceState(
 
 serverEvents.on("instance.eventStatus", (event) => {
   if (event.type !== "instance.eventStatus") return
-  if (event.status === "connecting") destroyOpenCodeData(event.instanceId)
   const shouldResync = connectionResyncGate.observe(event.instanceId, event.status, event.reason)
   if (event.status !== "connected") return
   if (disconnectedInstance()?.id === event.instanceId) {
@@ -415,6 +415,7 @@ function attachClient(descriptor: WorkspaceDescriptor) {
 
   if (instance.client) {
     sdkManager.destroyClientsForInstance(descriptor.id)
+    destroyOpenCodeData(descriptor.id)
   }
 
   const client = sdkManager.createClient(descriptor.id, nextProxyPath)
@@ -434,9 +435,6 @@ function attachClient(descriptor: WorkspaceDescriptor) {
     workspaceMetadataHydration: sessionHydration.workspaceMetadata,
   })
   initialHydrations.set(descriptor.id, hydration)
-  if (sseManager.getStatuses().get(descriptor.id) === "connected") {
-    resyncConnectedInstance(descriptor.id)
-  }
   void hydration.catch((error) => {
     log.error("Failed to hydrate instance data", error)
   })
@@ -554,10 +552,12 @@ async function syncPendingForms(
   const mutationEpoch = pendingFormMutationEpochs.get(instanceId) ?? 0
 
   try {
-    const remote: FormInfo[] = []
+    const remote: FormWithLocation[] = []
     for (const location of buildV2RequestLocations(instance.folder, getWorktrees(instanceId))) {
       const response = await instance.client.form.request.list({ location })
-      remote.push(...response.data)
+      remote.push(...response.data.map((form) => form.sessionID === "global"
+        ? { ...form, location: response.location }
+        : form))
     }
     if (!isCurrent() || (pendingFormMutationEpochs.get(instanceId) ?? 0) !== mutationEpoch) {
       if (propagateErrors) throw pendingRequestSyncSuperseded
@@ -1627,17 +1627,20 @@ async function sendFormReply(instanceId: string, formId: string, answer: FormAns
   const form = getFormQueue(instanceId).find((item) => item.id === formId)
   if (!form) throw new Error(`Form request not found: ${formId}`)
   bumpEpoch(pendingFormMutationEpochs, instanceId)
-  await getRootClient(instanceId).form.reply({ sessionID: form.sessionID, formID: form.id, answer })
+  await getRootClient(instanceId).form.reply(
+    { sessionID: form.sessionID, formID: form.id, answer },
+    formRequestOptions(form),
+  )
   removePendingForm(instanceId, form.id)
 }
 
-let pendingFormAddedHandler: ((instanceId: string, form: FormInfo) => void) | undefined
+let pendingFormAddedHandler: ((instanceId: string, form: FormWithLocation) => void) | undefined
 
-function setPendingFormAddedHandler(handler: (instanceId: string, form: FormInfo) => void): void {
+function setPendingFormAddedHandler(handler: (instanceId: string, form: FormWithLocation) => void): void {
   pendingFormAddedHandler = handler
 }
 
-function addPendingForm(instanceId: string, form: FormInfo): FormInfo | undefined {
+function addPendingForm(instanceId: string, form: FormWithLocation): FormWithLocation | undefined {
   bumpEpoch(pendingFormMutationEpochs, instanceId)
   const previous = getFormQueue(instanceId).find((item) => item.id === form.id)
   addFormToQueue(instanceId, form)
@@ -1665,7 +1668,7 @@ function removePendingForm(instanceId: string, formId: string): void {
   recomputeActiveInterruption(instanceId)
 }
 
-function replacePendingForms(instanceId: string, forms: readonly FormInfo[]): void {
+function replacePendingForms(instanceId: string, forms: readonly FormWithLocation[]): void {
   const ids = new Set(forms.map((form) => form.id))
   for (const form of getFormQueue(instanceId)) {
     if (!ids.has(form.id)) removePendingForm(instanceId, form.id)
@@ -1686,7 +1689,10 @@ async function sendFormCancel(instanceId: string, formId: string): Promise<void>
   const form = getFormQueue(instanceId).find((item) => item.id === formId)
   if (!form) throw new Error(`Form request not found: ${formId}`)
   bumpEpoch(pendingFormMutationEpochs, instanceId)
-  await getRootClient(instanceId).form.cancel({ sessionID: form.sessionID, formID: form.id })
+  await getRootClient(instanceId).form.cancel(
+    { sessionID: form.sessionID, formID: form.id },
+    formRequestOptions(form),
+  )
   removePendingForm(instanceId, form.id)
 }
 
@@ -1720,7 +1726,7 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
     }
   }
   if (sessionId && event.type.startsWith("form.")) {
-    const remote = data.session.form.list(sessionId) ?? []
+    const remote = data.session.form.list(sessionId, sessionId === "global" ? event.location : undefined) ?? []
     for (const form of remote) addPendingForm(instanceId, form)
     if (event.type === "form.replied" || event.type === "form.cancelled") removePendingForm(instanceId, event.data.id)
   }

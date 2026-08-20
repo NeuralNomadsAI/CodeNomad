@@ -35,3 +35,30 @@ export class RemoteWindowRegistry {
     })
   }
 }
+
+export async function navigateReusedRemoteWindow(
+  window: BrowserWindow,
+  target: URL,
+  nextOrigins: ReadonlySet<string>,
+  trustedOrigins: Map<number, Set<string>>,
+  insecureOrigins: Map<number, Set<string>>,
+  skipTlsVerify: boolean,
+): Promise<void> {
+  const committedOrigins = new Set(nextOrigins)
+  const previousTrusted = trustedOrigins.get(window.id)
+  const previousInsecure = insecureOrigins.get(window.webContents.id)
+  trustedOrigins.set(window.id, new Set([...(previousTrusted ?? []), ...committedOrigins]))
+  if (skipTlsVerify) insecureOrigins.set(window.webContents.id, new Set([...(previousInsecure ?? []), ...committedOrigins]))
+
+  try { await window.loadURL(target.toString()) } catch (error) {
+    if (previousTrusted) trustedOrigins.set(window.id, previousTrusted)
+    else trustedOrigins.delete(window.id)
+    if (previousInsecure) insecureOrigins.set(window.webContents.id, previousInsecure)
+    else insecureOrigins.delete(window.webContents.id)
+    throw error
+  }
+
+  trustedOrigins.set(window.id, committedOrigins)
+  if (skipTlsVerify) insecureOrigins.set(window.webContents.id, committedOrigins)
+  else insecureOrigins.delete(window.webContents.id)
+}

@@ -82,8 +82,13 @@ const catalogRefreshes = new Map<string, { key: string; promise: Promise<void> }
 const agentRequestIds = new Map<string, number>()
 const providerRequestIds = new Map<string, number>()
 const sessionPageRequests = new Map<string, Promise<void>>()
-const MAX_DESCENDANT_SESSION_REQUESTS = 1_000_000
+const messageNextCursors = new Map<string, string>()
+const messagePageRequests = new Map<string, Promise<void>>()
 let nextSessionListRequestId = 0
+
+function messagePageKey(instanceId: string, sessionId: string): string {
+  return `${instanceId}\0${sessionId}`
+}
 
 function catalogLocationKey(location: LocationRef): string {
   return `${location.directory}\0${location.workspaceID ?? ""}`
@@ -138,6 +143,13 @@ function clearSessionCatalogState(instanceId: string): void {
   catalogRefreshes.delete(instanceId)
   agentRequestIds.delete(instanceId)
   providerRequestIds.delete(instanceId)
+  const prefix = `${instanceId}\0`
+  for (const key of messageNextCursors.keys()) {
+    if (key.startsWith(prefix)) messageNextCursors.delete(key)
+  }
+  for (const key of messagePageRequests.keys()) {
+    if (key.startsWith(prefix)) messagePageRequests.delete(key)
+  }
 }
 
 type V2SessionListOptions = {
@@ -177,45 +189,27 @@ function hasMissingParentChain(session: SDKSession, loaded: Map<string, SDKSessi
   return false
 }
 
-async function fetchV2Sessions(instanceId: string, options: V2SessionListOptions): Promise<ProjectSessionListResponse> {
+async function fetchV2Sessions(
+  instanceId: string,
+  options: V2SessionListOptions,
+  signal?: AbortSignal,
+): Promise<ProjectSessionListResponse> {
   const client = getRootClient(instanceId)
   const project = options.project ?? getInstanceMetadata(instanceId)?.project?.id
   const listOptions = { ...options, project, order: options.order ?? "desc" as const }
   if (project) delete listOptions.directory
-  const response = await client.session.list(buildProjectSessionListOptions(listOptions))
-  const sessionsById = new Map(response.data.map((session) => [session.id, session]))
 
   if (options.parentID === null && !options.search) {
-    const pending = response.data.map((session) => session.id)
-    const visited = new Set<string>()
-    let requests = 0
-    while (pending.length) {
-      const parentID = pending.shift()!
-      if (visited.has(parentID)) continue
-      visited.add(parentID)
-      let cursor: string | undefined
-      const seenCursors = new Set<string>()
-      do {
-        if (++requests > MAX_DESCENDANT_SESSION_REQUESTS) throw new Error("Descendant session traversal limit exceeded")
-        const children = await client.session.list(buildProjectSessionListOptions({
-          project: project ?? sessionsById.get(parentID)?.projectID,
-          parentID,
-          order: "asc",
-          cursor,
-        }))
-        for (const child of children.data) {
-          sessionsById.set(child.id, child)
-          if (!visited.has(child.id)) pending.push(child.id)
-        }
-        cursor = children.cursor?.next ?? undefined
-        if (cursor && seenCursors.has(cursor)) throw new Error(`Repeated child session cursor: ${cursor}`)
-        if (cursor) seenCursors.add(cursor)
-      } while (cursor)
-    }
+    delete listOptions.parentID
   }
 
+  const response = await client.session.list(
+    buildProjectSessionListOptions(listOptions),
+    signal ? { signal } : undefined,
+  )
+
   return {
-    data: Array.from(sessionsById.values()),
+    data: response.data,
     complete: !response.cursor?.next,
     nextCursor: response.cursor?.next ?? undefined,
   }
@@ -267,7 +261,7 @@ async function hydrateRestoredSessionChain(
     if (!session) {
       try {
         signal?.throwIfAborted()
-        const apiSession = await client.session.get({ sessionID: sessionId })
+        const apiSession = await client.session.get({ sessionID: sessionId }, signal ? { signal } : undefined)
         signal?.throwIfAborted()
         setSessions((prev) => {
           if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId) || signal?.aborted) return prev
@@ -289,38 +283,22 @@ async function hydrateRestoredSessionChain(
   }
 }
 
-async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: SDKSession[], directory?: string): Promise<void> {
+async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: SDKSession[], signal?: AbortSignal): Promise<void> {
   const currentSessions = sessions().get(instanceId) ?? new Map<string, Session>()
   const loaded = new Map<string, SDKSession | Session>(currentSessions)
   for (const session of apiSessions) loaded.set(session.id, session)
 
-  if (!apiSessions.some((session) => hasMissingParentChain(session, loaded))) return
-
-  const page = await fetchV2Sessions(instanceId, { directory })
-  const items = getV2SessionItems(page)
-  if (items.length === 0) return
-
-  setSessions((prev) => {
-    const next = new Map(prev)
-    const instanceSessions = new Map(next.get(instanceId) ?? new Map())
-    const deletedSessionIds = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
-
-    for (const apiSession of items) {
-      if (deletedSessionIds.has(apiSession.id)) continue
-      const existingSession = instanceSessions.get(apiSession.id)
-      instanceSessions.set(apiSession.id, toClientSessionV2(instanceId, apiSession, existingSession))
-      loaded.set(apiSession.id, apiSession)
-    }
-
-    next.set(instanceId, instanceSessions)
-    return next
-  })
+  const missingChains = apiSessions
+    .filter((session) => hasMissingParentChain(session, loaded))
+    .map((session) => session.parentID)
+  if (missingChains.length > 0) await hydrateRestoredSessionChain(instanceId, missingChains, signal)
 }
 
 async function fetchSessions(instanceId: string, options?: {
   reset?: boolean
   strictStatus?: boolean
   registerInvalidation?: (invalidate: () => void) => void
+  signal?: AbortSignal
 }): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
@@ -345,8 +323,8 @@ async function fetchSessions(instanceId: string, options?: {
 
     log.info("session.list", { instanceId, limit: PROJECT_SESSION_LIST_LIMIT, directory: sessionListOptions.directory })
     const [response, activeSessions] = await Promise.all([
-      fetchV2Sessions(instanceId, sessionListOptions),
-      getRootClient(instanceId).session.active().catch((error) => {
+      fetchV2Sessions(instanceId, sessionListOptions, options?.signal),
+      getRootClient(instanceId).session.active(options?.signal ? { signal: options.signal } : undefined).catch((error) => {
         log.warn("Failed to refresh active sessions", { instanceId, error })
         return null
       }),
@@ -381,6 +359,8 @@ async function fetchSessions(instanceId: string, options?: {
       next.set(instanceId, instanceSessions)
       return next
     })
+    await ensureV2ParentChainsLoaded(instanceId, apiSessions, options?.signal)
+    if (!isLatestSessionListRequest(instanceId, requestId)) return
 
     if (response.complete) {
       const fetchedIds = new Set(apiSessions.map((session) => session.id))
@@ -482,7 +462,13 @@ async function loadNextSessionPage(instanceId: string): Promise<void> {
     next.set(instanceId, current)
     return next
   })
+  await ensureV2ParentChainsLoaded(instanceId, response.data)
+  if (getSessionNextCursor(instanceId) !== cursor) return
   const roots = response.data.filter((item) => !item.parentID).map((item) => item.id)
+  for (const item of response.data) {
+    const root = getSessionRoot(instanceId, item.id)
+    if (root && !roots.includes(root.id)) roots.push(root.id)
+  }
   setSessionPage(instanceId, roots, Boolean(response.nextCursor), false, response.nextCursor)
 }
 
@@ -526,7 +512,7 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
       next.set(instanceId, instanceSessions)
       return next
     })
-    await ensureV2ParentChainsLoaded(instanceId, searchResults, instance.folder)
+    await ensureV2ParentChainsLoaded(instanceId, searchResults)
 
     if (!isLatestSessionSearch(instanceId, trimmedQuery, requestId)) return
 
@@ -809,6 +795,9 @@ function removeSessionRuntimeState(instanceId: string, sessionId: string, author
   removeSessionListId(instanceId, sessionId)
 
   // Drop normalized message state and caches for this session.
+  const pageKey = messagePageKey(instanceId, sessionId)
+  messageNextCursors.delete(pageKey)
+  messagePageRequests.delete(pageKey)
   messageStoreBus.getOrCreate(instanceId).clearSession(sessionId)
   clearCacheForSession(instanceId, sessionId)
 
@@ -946,6 +935,7 @@ async function loadMessages(
     force?: boolean
     skipChildren?: boolean
     registerInvalidation?: (invalidate: () => void) => void
+    signal?: AbortSignal
   },
 ): Promise<void> {
   const force = options?.force ?? false
@@ -997,20 +987,12 @@ async function loadMessages(
 
   try {
     log.info(`[HTTP] GET /session.${"messages"} for instance ${instanceId}`, { sessionId })
-    const apiMessages: SessionMessagesResponse["data"] = []
-    let cursor: string | undefined
-    const seenCursors = new Set<string>()
-    do {
-      const response: SessionMessagesResponse = await client.message.list({
-        sessionID: sessionId,
-        limit: 200,
-        ...(cursor ? { cursor } : { order: "asc" }),
-      })
-      apiMessages.push(...response.data)
-      cursor = response.cursor?.next ?? undefined
-      if (cursor && seenCursors.has(cursor)) throw new Error(`Repeated message cursor: ${cursor}`)
-      if (cursor) seenCursors.add(cursor)
-    } while (cursor)
+    const response: SessionMessagesResponse = await client.message.list({
+      sessionID: sessionId,
+      limit: 200,
+      order: "desc",
+    }, options?.signal ? { signal: options.signal } : undefined)
+    const apiMessages = [...response.data].reverse()
 
     if (!instances().has(instanceId)
       || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch)
@@ -1045,6 +1027,9 @@ async function loadMessages(
           next.set(instanceId, loadedSet)
           return next
         })
+        const nextCursor = response.cursor?.next ?? undefined
+        if (nextCursor) messageNextCursors.set(messagePageKey(instanceId, sessionId), nextCursor)
+        else messageNextCursors.delete(messagePageKey(instanceId, sessionId))
       }
     } else {
       const seenMessageIds = new Set<string>()
@@ -1118,6 +1103,9 @@ async function loadMessages(
           next.set(instanceId, loadedSet)
           return next
         })
+        const nextCursor = response.cursor?.next ?? undefined
+        if (nextCursor) messageNextCursors.set(messagePageKey(instanceId, sessionId), nextCursor)
+        else messageNextCursors.delete(messagePageKey(instanceId, sessionId))
         reconcilePendingPermissionsV2(instanceId, sessionId)
       }
     }
@@ -1148,6 +1136,7 @@ async function loadMessages(
       force: true,
       skipChildren,
       registerInvalidation: options?.registerInvalidation,
+      signal: options?.signal,
     })
   }
 
@@ -1170,6 +1159,89 @@ async function loadMessages(
   }
 }
 
+async function loadMoreMessages(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<void> {
+  const key = messagePageKey(instanceId, sessionId)
+  const pending = messagePageRequests.get(key)
+  if (pending) return pending
+  const request = loadNextMessagePage(instanceId, sessionId, signal).finally(() => messagePageRequests.delete(key))
+  messagePageRequests.set(key, request)
+  return request
+}
+
+function hasMoreMessages(instanceId: string, sessionId: string): boolean {
+  return messageNextCursors.has(messagePageKey(instanceId, sessionId))
+}
+
+async function loadNextMessagePage(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<void> {
+  const key = messagePageKey(instanceId, sessionId)
+  const cursor = messageNextCursors.get(key)
+  if (!cursor) return
+  const instance = instances().get(instanceId)
+  const session = sessions().get(instanceId)?.get(sessionId)
+  if (!instance?.client) throw new Error("Instance not ready")
+  if (!session) throw new Error("Session not found")
+
+  const loadEpoch = advanceMessageLoadEpoch(instanceId, sessionId)
+
+  const response = await getRootClient(instanceId).message.list({
+    sessionID: sessionId,
+    limit: 200,
+    order: "desc",
+    cursor,
+  }, signal ? { signal } : undefined)
+  if (!instances().has(instanceId)
+    || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch)
+    || !sessions().get(instanceId)?.has(sessionId)
+    || messageNextCursors.get(key) !== cursor) return
+
+  const store = messageStoreBus.getOrCreate(instanceId)
+  const existingIds = store.getSessionMessageIds(sessionId)
+  const existing = new Set(existingIds)
+  const olderIds: string[] = []
+  for (const apiMessage of [...response.data].reverse()) {
+    const normalized = normalizeSessionMessage(sessionId, apiMessage)
+    if (existing.has(normalized.message.id)) continue
+    existing.add(normalized.message.id)
+    olderIds.push(normalized.message.id)
+    store.upsertMessage({
+      id: normalized.message.id,
+      sessionId,
+      role: normalized.message.type,
+      status: normalized.message.status,
+      createdAt: normalized.message.timestamp,
+      updatedAt: normalized.message.timestamp,
+      parts: normalized.message.parts,
+      isEphemeral: normalized.message.status === "sending"
+        || (normalized.message.type === "assistant" && normalized.message.status === "streaming"),
+    })
+    store.setMessageInfo(normalized.info.id, normalized.info)
+  }
+  if (olderIds.length > 0) {
+    store.addOrUpdateSession({
+      id: sessionId,
+      title: session.title,
+      parentId: session.parentId,
+      revert: session.revert,
+      messageIds: [...olderIds, ...existingIds],
+    })
+    store.rebuildUsage(sessionId, store.getSessionMessageIds(sessionId)
+      .map((id) => store.getMessageInfo(id))
+      .filter((info): info is NonNullable<typeof info> => Boolean(info)))
+  }
+  const nextCursor = response.cursor?.next ?? undefined
+  if (nextCursor) messageNextCursors.set(key, nextCursor)
+  else messageNextCursors.delete(key)
+  setMessagesLoaded((prev) => {
+    const next = new Map(prev)
+    const loadedSet = next.get(instanceId) || new Set()
+    loadedSet.add(sessionId)
+    next.set(instanceId, loadedSet)
+    return next
+  })
+  reconcilePendingPermissionsV2(instanceId, sessionId)
+  updateSessionInfo(instanceId, sessionId)
+}
+
 export {
   createSession,
   deleteSession,
@@ -1185,6 +1257,8 @@ export {
   searchSessions,
   forkSession,
   loadMessages,
+  loadMoreMessages,
+  hasMoreMessages,
   clearSessionListRequestState,
   clearSessionCatalogState,
 }

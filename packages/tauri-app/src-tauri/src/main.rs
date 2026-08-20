@@ -214,6 +214,14 @@ struct RemoteWindowPayload {
     skip_tls_verify: bool,
 }
 
+fn require_http_url(value: &str, name: &str) -> Result<Url, String> {
+    let url = Url::parse(value).map_err(|error| error.to_string())?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(format!("{name} must use HTTP or HTTPS"));
+    }
+    Ok(url)
+}
+
 fn schedule_remote_proxy_session_cleanup(app: AppHandle, session_id: String) {
     tauri::async_runtime::spawn(async move {
         if let Err(err) = cleanup_remote_proxy_session(&app, &session_id).await {
@@ -407,11 +415,12 @@ async fn open_remote_window_impl(
     app: AppHandle,
     payload: RemoteWindowPayload,
 ) -> Result<(), String> {
+    require_http_url(&payload.base_url, "baseUrl")?;
     let entry_url = payload
         .entry_url
         .as_deref()
         .unwrap_or(payload.base_url.as_str());
-    let parsed = Url::parse(entry_url).map_err(|err| err.to_string())?;
+    let parsed = require_http_url(entry_url, "entryUrl")?;
     let label = format!("remote-{}", payload.id);
     let title = format!("{} - {}", payload.name, payload.base_url);
     let requested_profile = RemoteProfileIdentity::new(payload.proxy_session_id.as_deref());
@@ -681,7 +690,8 @@ async fn open_remote_window(
             .entry_url
             .as_deref()
             .unwrap_or(payload.base_url.as_str());
-        let parsed = Url::parse(entry_url).map_err(|err| err.to_string())?;
+        require_http_url(&payload.base_url, "baseUrl")?;
+        let parsed = require_http_url(entry_url, "entryUrl")?;
         if payload.proxy_session_id.is_some() && parsed.scheme() == "https" {
             let local_cert = cert_manager::ensure_local_cert().map_err(|err| {
                 format!(
@@ -1557,7 +1567,7 @@ fn build_about_metadata(version: &str, include_update_link: bool) -> AboutMetada
 #[cfg(test)]
 mod menu_tests {
     use super::{
-        build_about_metadata, is_allowed_local_origin, run_update_with_fallback,
+        build_about_metadata, is_allowed_local_origin, require_http_url, run_update_with_fallback,
         should_allow_registered_origin, should_recreate_remote_window, RemoteProfileIdentity,
         WakeLockState, RELEASES_URL, REMOTE_WINDOW_CONTEXT_SCRIPT,
     };
@@ -1669,6 +1679,31 @@ mod menu_tests {
             Some(origin),
             &Url::parse("about:blank").unwrap()
         ));
+    }
+
+    #[test]
+    fn remote_window_urls_require_http_or_https() {
+        assert_eq!(
+            require_http_url("http://localhost:3000/app", "baseUrl")
+                .unwrap()
+                .scheme(),
+            "http"
+        );
+        assert_eq!(
+            require_http_url("https://example.com/app", "entryUrl")
+                .unwrap()
+                .scheme(),
+            "https"
+        );
+        for value in [
+            "file:///tmp/app",
+            "data:text/html,hi",
+            "javascript:alert(1)",
+        ] {
+            assert!(require_http_url(value, "baseUrl")
+                .unwrap_err()
+                .contains("must use HTTP or HTTPS"));
+        }
     }
 
     #[test]

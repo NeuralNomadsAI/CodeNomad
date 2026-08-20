@@ -7,6 +7,7 @@ import { join } from "node:path"
 import test from "node:test"
 import { ClientStateManager, type ClientStateWriter } from "./client-state"
 import { deterministicLegacyWindowId, parseClientState } from "./client-state-envelope"
+import { MAX_CLIENT_STATE_PARTITION_COMMIT_BYTES } from "./client-state-partitions"
 
 test("legacy migration UUIDs are deterministic from exact envelope bytes", () => {
   const vectors = [
@@ -537,6 +538,7 @@ test("invalid V3 remains byte-frozen until explicit clear", async (t) => {
 })
 
 test("partition commits validate protocol and hashes", async (t) => {
+  assert.equal(MAX_CLIENT_STATE_PARTITION_COMMIT_BYTES, 256 * 1024 * 1024)
   const manager = harness(t, { version: 1, restoreEnabled: true }).create()
   const content = "partition"
   const key = partitionKey(content)
@@ -561,16 +563,16 @@ test("partition commits validate protocol and hashes", async (t) => {
 
   const partitions: Record<string, string> = {}
   const partitionKeys: string[] = []
-  for (let index = 0; index < 8; index++) {
+  for (let index = 0; index < 9; index++) {
     const value = `${index}${"x".repeat(1024 * 1024 - 1)}`
     const valueKey = partitionKey(value)
     partitions[valueKey] = value
     partitionKeys.push(valueKey)
   }
   partitionKeys.sort()
-  assert.throws(() => manager.commitClientStatePartitions({
+  assert.equal(await manager.commitClientStatePartitions({
     protocolVersion: 1, snapshot: partitionRoot(partitionKeys), partitions, partitionKeys,
-  }), /exceeds the 8 MiB limit/)
+  }), true)
 })
 
 test("partition commit/read preserves the old root on failure and clear sweeps", async (t) => {

@@ -4,6 +4,7 @@ import { requestMicrophoneAccess } from "./permissions"
 import type { CliProcessManager } from "./process-manager"
 import { openWorkspaceTarget, type WorkspaceEditor, type WorkspaceOpenTarget } from "./workspace-open"
 import { setWorkspaceMenuEnabled } from "./menu"
+import { requireHttpUrl } from "./navigation-security"
 
 interface LocalSender {
   id: string
@@ -171,6 +172,8 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
       || typeof payload.skipTlsVerify !== "boolean") {
       throw new Error("Invalid remote window request")
     }
+    requireHttpUrl(payload.baseUrl, "baseUrl")
+    if (payload.entryUrl !== undefined) requireHttpUrl(payload.entryUrl, "entryUrl")
     await dependencies.openRemoteWindow(payload)
     return { ok: true }
   })
