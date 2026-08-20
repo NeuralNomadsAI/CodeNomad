@@ -1,6 +1,7 @@
 import path from "path"
 import { spawnSync } from "child_process"
 import { randomUUID } from "node:crypto"
+import { realpath } from "node:fs/promises"
 import type { Endpoint } from "@opencode-ai/client/service"
 import type { LocationGetOutput, LocationRef, OpenCodeClient, OpenCodeEvent } from "@opencode-ai/client"
 import { EventBus } from "../events/bus"
@@ -11,7 +12,6 @@ import { searchWorkspaceFiles, WorkspaceFileSearchOptions } from "../filesystem/
 import { clearWorkspaceSearchCache } from "../filesystem/search-cache"
 import { WorkspaceDescriptor, WorkspaceFileResponse, FileSystemEntry } from "../api-types"
 import { Logger } from "../logger"
-import { resolveWorkspacePath } from "./workspace-identity"
 import {
   buildServiceLaunchSpec,
   parseWslUncPath,
@@ -310,8 +310,9 @@ export class WorkspaceManager {
     const launchTimeoutMs = Math.max(1, this.options.launchTimeoutMs ?? DEFAULT_LAUNCH_TIMEOUT_MS)
     const launchDeadlineAt = Date.now() + launchTimeoutMs
     try {
+      const submittedPath = path.isAbsolute(folder) ? path.normalize(folder) : path.resolve(this.options.rootDir, folder)
       const workspacePath = await this.withLaunchDeadline(
-        resolveWorkspacePath(folder, this.options.rootDir),
+        realpath(submittedPath).then((resolved) => path.normalize(resolved), () => submittedPath),
         undefined,
         launchDeadlineAt,
         launchTimeoutMs,

@@ -7,7 +7,6 @@ import pino from "pino"
 
 import { EventBus } from "../../events/bus"
 import { WorkspaceManager } from "../manager"
-import { resolveWorkspacePath } from "../workspace-identity"
 
 const temporaryDirectories: string[] = []
 
@@ -51,24 +50,13 @@ function createManager(rootDir: string) {
 }
 
 describe("workspace identity", () => {
-  it("canonicalizes aliases and falls back to an absolute missing path", async () => {
-    const { root, target, link } = await createLinkedWorkspace()
-    const [targetResult, linkResult, missing] = await Promise.all([
-      resolveWorkspacePath(target, root),
-      resolveWorkspacePath(link, root),
-      resolveWorkspacePath("missing", root),
-    ])
-
-    assert.equal(linkResult, targetResult)
-    assert.equal(missing, path.resolve(root, "missing"))
-  })
-
   it("creates separate workspaces for canonical aliases", async () => {
     const { root, target, link } = await createLinkedWorkspace()
     const manager = createManager(root)
     const [first, second] = await Promise.all([manager.create(target), manager.create(link)])
 
     assert.notEqual(first.workspace.id, second.workspace.id)
+    assert.equal(first.workspace.path, second.workspace.path)
     assert.equal(first.created && second.created, true)
     assert.equal(manager.list().length, 2)
   })
