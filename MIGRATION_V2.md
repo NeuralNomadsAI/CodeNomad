@@ -2,166 +2,140 @@
 
 ## Summary
 
-This branch migrates CodeNomad from the OpenCode V1 SDK and custom plugin architecture to the native OpenCode V2 client and shared service model.
+This branch replaces CodeNomad's OpenCode V1 SDK, custom plugin, and per-workspace runtime architecture with the experimental native OpenCode V2 client and one shared OpenCode service. It intentionally provides no V1 runtime fallback.
 
-The migration removes the V1 compatibility layer rather than maintaining both integrations. It substantially reduces custom runtime code and aligns CodeNomad with OpenCode's supported V2 APIs.
+The work grew beyond an SDK swap. It also introduces location-based ownership, native Forms and Shell resources, project-wide session pagination, reconnect reconciliation, bounded virtualized timelines, multi-window desktop state, and a content-addressed restore format.
 
-## Main Changes
+Server and UI pin `@opencode-ai/client` to `0.0.0-beta-17595`. The selected `opencode2` CLI is managed independently: CodeNomad's updater targets the reviewed client-compatible release, but startup accepts another compatible CLI after authenticated health and API validation instead of enforcing an exact version.
 
-- Replace `@opencode-ai/sdk` with the experimental `@opencode-ai/client` protocol. Server and UI track the latest reviewed `next` release together; this contract is distinct from the current public `@opencode-ai/sdk` documentation.
-- Use one shared OpenCode V2 service instead of one runtime per workspace.
-- Represent CodeNomad workspaces as logical instances associated with absolute directories.
-- Use native `Location` and `SessionInfo.location` data to associate sessions, files, events, and Git worktrees.
-- Migrate sessions, messages, streaming events, permissions, questions, files, VCS, commands, MCP, providers, models, and agents to native V2 APIs.
-- Handle native session lifecycle and output events, including `session.created`, `session.renamed`, `session.moved`, `session.status`, `session.idle`, `session.execution.*`, `session.compaction.*`, `session.text.*`, `session.reasoning.*`, and `session.tool.*`.
-- Use browser `EventSource` as the single desktop and web event transport; the duplicate Rust-native Tauri transport was removed.
-- Treat the native event stream as volatile. Reconnect has no replay guarantee, so clients must reconcile authoritative session and pending-request state after reconnect; file/config consumers must also refetch rather than assume every `filesystem.changed` or `config.updated` event was observed.
-- Route events from owned Git worktrees to their corresponding logical CodeNomad workspace.
-- Query native sessions by validated project scope, then traverse every descendant depth with native cursors.
-- Resolve locationless session events through native session ownership so prompt status and output reach the correct logical workspace.
-- Run one native process and one CodeNomad backend per channel/config profile. The native singleton focuses the most-recent window on a second launch unless `--new-window` is supplied; each process may host multiple UUID-backed windows.
-- Keep OpenCode sessions/messages in the shared global service while tabs, drafts, view state, and restore membership remain local to each window.
-- Store desktop restore state in a V3 per-window envelope whose snapshots use the V2 content-addressed partition graph. Native hosts prepare immutable partitions before atomically publishing the root, fence writes and migrations on current ownership, and collect only unreferenced partitions after publication.
+## Native V2 Adoption
 
-## Removed Legacy Components
+- Use native locations and `SessionInfo.location` as the authority for workspace, session, file, event, Shell, PTY, and Git worktree ownership.
+- Use native APIs for projects, sessions, messages, prompts, commands, models, agents, providers, MCP, permissions, Forms, files, VCS, instructions, Shells, and PTYs.
+- Use native session lifecycle and output events, including `session.created`, `session.renamed`, `session.moved`, `session.status`, `session.idle`, `session.execution.*`, `session.compaction.*`, `session.text.*`, `session.reasoning.*`, and `session.tool.*`.
+- Use `@opencode-ai/client/solid` `createData` for live message, tool, permission, and Form projection while preserving REST-loaded history and optimistic local sends.
+- Replace the legacy Question request lifecycle with native Forms. Question tool output rendering and reviewed upstream compatibility routes remain where applicable.
+- Replace shell-mode prompts with native `session.shell`.
+- Replace CodeNomad background processes with native `shell.*` resources. The Status UI lists and removes Shells; create/output/timeout routes remain available through the ownership-checked proxy. Interactive `pty.*` terminals remain separate.
+- Store voice-mode instructions with `session.instructions.entry` and synchronize them before prompts, commands, and session Shell calls.
 
-- Remove the custom `packages/opencode-plugin` package.
-- Remove V1 plugin communication channels and per-workspace runtime management.
-- Replace shell-mode requests with native `session.shell` and expose native background `shell.*` processes in the Status panel; keep interactive `pty.*` terminals separate.
-- Replace per-workspace OpenCode binary selection with one global `opencode2` binary.
-- Migrate the persisted V1 default command `opencode` to `opencode2` during workspace launch.
-- Remove message and part deletion controls because V2 currently has no equivalent API.
-- Keep Git mutation operations on the CodeNomad server where V2 does not yet provide sufficient parity.
+## Shared Service Model
 
-## Provider Authentication and Voice Mode
+- Replace one OpenCode runtime per workspace with one externally owned global service in the selected host or WSL environment.
+- Discover or start it through the selected CLI's official `service status`, `service start`, and `service get password` commands.
+- Accept only bounded, authenticated loopback health endpoints and pin one service identity while connected.
+- Use OpenCode's standard service registration, state, and database. CodeNomad owns no private daemon port, database, registration, or PID.
+- Pass configured startup environment variables and `NODE_EXTRA_CA_CERTS` only when starting a missing service. Strip legacy `OPENCODE_DB` and `XDG_STATE_HOME` overrides rather than taking ownership of OpenCode storage.
+- Never stop the global daemon during CodeNomad shutdown. Backend shutdown clears only CodeNomad's cached connection and logical workspace state.
+- Run the Linux CLI inside the selected WSL distribution and require Windows localhost forwarding. No cross-namespace PID fallback or process signaling remains.
 
-- Support native V2 API-key, OAuth, interactive form, and command-based provider authentication.
-- Display required provider fields and submit answers in the native V2 format.
-- Store voice-mode instructions through `session.instructions.entry`.
-- Synchronize voice instructions before prompts, slash commands, and shell requests.
+## Workspace, Location, and Tab Model
 
-## Security and Service Lifecycle
+- A CodeNomad workspace is now a logical UUID-backed instance over a native OpenCode location, not an OpenCode process.
+- A normal folder launch always creates a new logical instance and tab, even when the same or canonically equivalent directory is already open.
+- The explicit **Open** action selects an existing instance instead of creating another one.
+- Duplicate-folder instances share the same daemon and native location but keep independent logical IDs, tabs, selection, drafts, and view state.
+- The workspace catalog is shared by the backend. Tab membership, order, active selection, SideCars, drafts, attachments, and view state are local to each native window.
+- Closing a tab or window detaches only local UI state. **Stop Workspace** deletes the selected logical instance and evicts the native location only after its final logical owner is removed.
+- Restore matches duplicate-folder tabs by normalized-path occurrence rather than collapsing them into one instance.
+- Owned Git worktrees are resolved server-side and participate in the same location, request, and event-routing rules as the root directory.
 
-- Restrict proxied Shell and PTY working directories to workspace-owned roots and Git worktrees; ID-scoped controls verify the native `cwd` before forwarding requests.
-- Remove CodeNomad authentication cookies before forwarding requests to OpenCode.
-- Prevent OpenCode `Set-Cookie` headers from being relayed to the browser.
-- Avoid logging unredacted secret-bearing proxy request bodies.
-- Expose only an explicit method/path allowlist through the OpenCode proxy. New upstream APIs require an intentional proxy and ownership review; future OpenCode functionality is not automatic.
-- Connect to one externally owned global daemon using OpenCode's standard service registration, state, and database in the selected host or WSL environment; CodeNomad owns no private port, database, registration, or daemon PID.
-- Keep server and UI on the same reviewed client release. The selected `opencode2` CLI is updated independently and validated through service health and API compatibility rather than an exact version gate.
-- Use the selected host or WSL CLI's official `service status`, `service start`, and `service get password` commands, then require bounded authenticated loopback health validation.
-- WSL support requires Windows localhost forwarding and uses the Linux CLI lifecycle inside the selected distribution; CodeNomad performs no cross-namespace PID operations.
-- Explicit **Stop Workspace** evicts that location and its resources through the global service without stopping the daemon. Ordinary tab/window close only detaches local UI state and never evicts a location.
-- Never stop the global service during CodeNomad backend shutdown; clear only in-memory connection state.
-- Keep service registration, state, and database paths at OpenCode's platform defaults.
-- A missing global daemon receives configured `server.environmentVariables` and the current `NODE_EXTRA_CA_CERTS` on `service start` only. An already-running daemon is unaffected; legacy `OPENCODE_DB` and `XDG_STATE_HOME` settings are ignored rather than taking storage ownership.
-- Isolate V2 restore state under `~/.codenomad/client-state/v2` and copy V1 state non-destructively on first launch, preserving downgrade history.
-- Sandbox native SideCar/browser previews without `allow-same-origin`; DOM comment inspection remains available only in the web client.
+## Sessions, Streaming, and Reconciliation
 
-## Current Status
+- Query a complete project-scoped session inventory across root and worktree subpaths without one request per parent.
+- Follow native `cursor.next` values for session and message pagination. The proxy decodes session cursors only to validate embedded directory/project scope, strips competing selectors, and forwards the original cursor unchanged.
+- Hydrate only missing ancestor chains with `session.get` and fetch active status for later session pages.
+- Load message history lazily in native pages, prepend older pages without duplicate IDs, and reject delayed REST responses that would overwrite newer event state.
+- Route location-scoped events to every owning logical workspace and resolve locationless session, permission, Form, Shell, and PTY events through native ownership.
+- Use one upstream event subscription and browser `EventSource` for web, Electron, and Tauri.
+- Treat events as volatile projections, not durable history. Internal stream generations and browser reconnects trigger targeted authoritative refreshes for workspaces, sessions, active state, pending permissions/Forms, loaded messages, catalogs, and invalidated file/config state.
+- Preserve the Solid projection controller across reconnects and merge live records into REST history rather than clearing usable state.
 
-- Server and UI are pinned to `0.0.0-beta-17595`; the selected `opencode2` CLI is not exact-version-gated.
-- The updater advertises and installs only that pinned startup-compatible version; both repository lockfiles resolve the same client, protocol, and schema release.
-- Shared-service shutdown clears only local connection state and never stops host or WSL daemons.
-- Stable, dev, and non-default config profiles have isolated native singleton, backend, browser storage, and client-state scopes. Each scope supports multiple UUID windows; OpenCode sessions/messages remain global while tabs, drafts, and views are per-window.
-- Client-state V3 stores one record per window over the V2 content-addressed partition graph with atomic root publication, ownership fencing, migration guards, and post-commit conservative garbage collection.
-- The UI uses native Forms instead of the removed Question API and `@opencode-ai/client/solid` `createData` for live message, tool, permission, and form reduction. Live projections merge into REST-loaded history instead of replacing it.
-- Session inventory uses native project/subpath/parent/order cursor pagination across all descendant depths; later pages receive native active status, and internal OpenCode stream generations trigger authoritative UI reconciliation even when browser SSE remains connected.
-- The proxy validates the decoded scope of native session cursors before forwarding them and supports native global Form reply/cancel routes without treating `global` as a session ID.
-- Before deleting a worktree, the server inventories the complete native project, evacuates affected session families with verification and rollback, and fails closed for direct API callers. One canonical folder maps to one logical workspace instead of creating non-isolated duplicates.
-- The current working tree retains proxy path/location ownership validation while leaving global service storage and lifecycle ownership to OpenCode.
-- Current installed client declarations provide background Shell list/get/create/output/timeout/remove and lifecycle events. Shell output pagination keeps the native cursor authoritative. Interactive PTY APIs remain separate and are not used by the background-process panel.
-- This documentation pass ran stale-architecture greps and `git diff --check`; it did not run or claim the pending build matrix or real-service smoke test.
+## UI and Memory Optimizations
 
-## Remaining Work
+- Virtualize session lists and message timelines with `virtua` to bound mounted DOM for large histories.
+- Preserve user-controlled scroll position, bottom-follow intent, oversized streaming hold points, and anchor-based restore across live updates.
+- Keep native cursors authoritative; do not infer completion from page length.
+- Bound instance logs and validate restore-state counts, IDs, paths, snapshots, string budgets, partition sizes, and graph sizes.
+- Reconcile only affected resources after native events or reconnects instead of periodically reloading full message history.
+- Keep optimistic prompts visible before native admission and replace temporary parts with authoritative native parts without duplicating output.
 
-- Run the complete test and build matrix after the fixes.
-- Run the real-service smoke test before marking the PR ready for review.
+## Forms, Permissions, and Providers
+
+- Merge pending permissions and Forms into one ordered interruption UI while preserving their separate native reply/cancel APIs.
+- Reconcile pending requests from every owned root/worktree location after reconnect and remove stale local requests only from authoritative results.
+- Carry location for global Forms through the proxy without inventing a synthetic session.
+- Support native provider API-key, OAuth, command, and interactive Form authentication, including dynamic required fields and custom choices.
+- Keep Yolo policy server-owned: persist enabled session families, inherit policy across descendants, deduplicate duplicate-instance delivery by permission ID, retry within a fixed bound, and synchronize state to every window.
+
+## Worktree Safety
+
+Before deleting a Git worktree, CodeNomad now:
+
+1. Resolves the native project and inventories every session with native cursors.
+2. Selects sessions whose native location belongs to the worktree.
+3. Refuses deletion while affected sessions are active.
+4. Moves affected sessions to the root location.
+5. Re-inventories until the moves are authoritative.
+6. Removes the Git worktree inside the same rollback boundary.
+7. Restores moved sessions if verification or deletion fails.
+
+Git status, diff, stage, unstage, commit, worktree creation, and worktree removal remain CodeNomad server operations where V2 does not provide equivalent transactional behavior.
+
+## Proxy and Security Boundaries
+
+- Expose only reviewed method/path pairs; new upstream APIs are unavailable until explicitly allowlisted.
+- Verify workspace ownership for native locations, sessions, projects, cursors, Shell/PTY CWDs, imported session locations, and prompt file URIs before forwarding.
+- Reject encoded path traversal, foreign locations/projects, forged cursors, and browser-supplied workspace selectors.
+- Translate host/WSL paths only after ownership validation.
+- Strip CodeNomad cookies, browser authorization, forwarding headers, and incoming `x-opencode-*` headers; inject shared-service authentication server-side.
+- Block upstream cookies and authentication challenges and avoid logging unredacted secret-bearing request bodies.
+- Sandbox native SideCar/browser previews without `allow-same-origin`; native hosts do not inspect embedded cross-origin DOM.
+
+## Desktop and Restore Restructuring
+
+- Run one native singleton and one CodeNomad backend per channel/config profile. Stable, development, and non-default config identities use isolated singleton, browser-storage, backend, and client-state scopes.
+- Focus the most-recent local window on a second launch unless `--new-window` is supplied.
+- Give each Electron or Tauri window a UUID and independent tab/restore record while sharing the backend and global OpenCode data.
+- Persist one record per window in a V3 envelope over a V2 content-addressed partition graph.
+- Split workspace/session documents and chunk attachments so unrelated state does not rewrite one monolithic snapshot.
+- Validate hashes, canonical JSON, allowed fields, graph references, and size/count limits. A corrupt leaf can be discarded while valid sibling state survives.
+- Prepare immutable partitions before atomically publishing the root; serialize and fence writes against ownership loss, renderer-token mismatch, shutdown, and migration races.
+- Coordinate Electron/Tauri ownership with participant markers, process-start identity, stale-owner recovery, and verified release.
+- Copy legacy Electron/Tauri client state non-destructively on first migration and refuse to overwrite unsupported future formats.
+- Store the stable/default cross-host state under `~/.codenomad/client-state/v2`; development and non-default profiles use derived profile-specific locations.
+- Restore every persisted UUID window, exact active tab/session selection, drafts, attachments, expansion, scroll/follow state, idle markers, interrupted generations, bounds, and zoom.
+- Fence late workspace creation and cleanup so cancelled restore requests cannot leak or delete the wrong logical instance.
+
+## Removed Legacy Architecture
+
+The migration deletes rather than maintains these superseded systems:
+
+- The complete `packages/opencode-plugin` package, its packaging script, desktop resources, setup hooks, environment plumbing, and plugin README.
+- Plugin POST/SSE channels, handlers, voice synchronization routes, and the custom plugin-to-CodeNomad event bridge.
+- Per-workspace OpenCode runtime processes, loopback servers, clients, authentication, binary selection, launch cleanup, process identity, process-tree signaling, and runtime tests.
+- The `.codenomad/worktreeMap.json` mapping layer and UI-side OpenCode workspace/worktree-client matching.
+- The custom background-process manager, persistence, HTTP routes, UI store, and output dialog.
+- Legacy Question queues, request event handling, state, components, and tests, replaced by native Forms.
+- The V1 message/delta buffer and periodic full-history event reload strategy, replaced by native events plus authoritative reconciliation.
+- The duplicate Rust-native Tauri SSE transport, including batching, coalescing, cookie forwarding, pong handling, reconnect code, commands, managed state, and tests.
+- The desktop native-event adapter made unnecessary by the shared browser `EventSource` path.
+- Message/part deletion controls and compatibility companions for operations not offered by the pinned V2 protocol.
+- The server and UI dependency on `@opencode-ai/sdk` and the runtime V1 compatibility path.
 
 ## Validation
 
-The final validation should include:
+At `DEV-v2@8fe238f5`:
 
-- Server and UI typechecks.
-- Server and UI test suites.
-- Server and UI production builds.
-- Electron native tests and typecheck when its local dependencies are available.
-- `git diff --check`.
-- A real OpenCode V2 startup, session, event, Shell, and shutdown smoke test.
+- GitHub PR checks pass for the repository test job, Windows Tauri tests, Electron builds on Linux/macOS/Windows, and Tauri builds on supported Linux/macOS/Windows targets. Linux ARM64 Tauri is intentionally skipped by the workflow.
+- The latest workspace/tab fixes pass the complete server suite (about 265 tests), targeted tab/restore tests, server and UI typechecks, 18 focused UI tests, and the production UI build.
+- Earlier migration gates also passed Electron native tests, Tauri tests/checks, production desktop builds, and packaged Windows singleton/multi-window smoke coverage.
+- `git diff --check` passes.
 
-### Required Parallel UI Smoke
-
-CodeNomad V1 is the working environment and must remain open and untouched. The OpenCode global daemon keeps its standard state and database; CodeNomad does not provide a private V2 database override. Build into `codenomad-v2-slots/build-{A|B}/release`, copy the validated output into the corresponding `codenomad-v2-slots/{A|B}` deployment slot, and record its source, hash, slot, and deployment time in `deployment.json`.
-
-For a first V2 launch, start the deployed slot beside V1 from PowerShell with a dedicated CDP port, WebView profile, Rust backtraces, and Node source maps:
-
-```powershell
-$slot = "$env:TEMP\opencode\codenomad-v2-slots\A"
-$environment = @{
-    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9223'
-    WEBVIEW2_USER_DATA_FOLDER = "$env:TEMP\opencode\codenomad-v2-debug"
-    RUST_BACKTRACE = '1'
-    NODE_OPTIONS = '--enable-source-maps'
-}
-Start-Process -FilePath "$slot\codenomad-tauri.exe" -WorkingDirectory $slot -Environment $environment
-```
-
-To replace an active V2 instance, write the target slot, validated fallback slot, top-level CodeNomad window PID, and a unique request ID to `$env:TEMP\opencode\codenomad-v2-handoff-request.json`. Run `$env:TEMP\opencode\codenomad-v2-handoff.ps1` through an interactive Windows scheduled task owned by the logged-in user. This gives the handoff an external lifetime and desktop access while it closes the active process, applies the environment above, and starts the target slot:
-
-```powershell
-$root = "$env:TEMP\opencode"
-$targetSlot = Join-Path $root 'codenomad-v2-slots\A'
-$fallbackSlot = Join-Path $root 'codenomad-v2-slots\B'
-$requestPath = Join-Path $root 'codenomad-v2-handoff-request.json'
-$handoffPath = Join-Path $root 'codenomad-v2-handoff.ps1'
-$taskName = 'CodeNomad-V2-Handoff'
-$windowProcess = Get-CimInstance Win32_Process |
-  Where-Object {
-    $_.Name -eq 'codenomad-tauri.exe' -and
-    $_.ExecutablePath -like "$root\codenomad-v2-slots\?\codenomad-tauri.exe" -and
-    $_.CommandLine -notmatch 'internal-cli-launcher'
-  } |
-  Select-Object -First 1
-
-@{
-  mode = 'launch'
-  requestId = [guid]::NewGuid().ToString('N')
-  executable = Join-Path $targetSlot 'codenomad-tauri.exe'
-  fallbackExecutable = Join-Path $fallbackSlot 'codenomad-tauri.exe'
-  waitForPid = $windowProcess.ProcessId
-  closeOldProcess = $true
-  clientStateSeedPath = $null
-  clientStateSeedSha256 = $null
-} | ConvertTo-Json | Set-Content -LiteralPath $requestPath -Encoding utf8
-
-$action = New-ScheduledTaskAction -Execute (Get-Command pwsh).Source -Argument (
-  "-NoProfile -ExecutionPolicy Bypass -File `"$handoffPath`" -RequestPath `"$requestPath`""
-)
-$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(5)
-$principal = New-ScheduledTaskPrincipal `
-  -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) `
-  -LogonType Interactive `
-  -RunLevel Limited
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null
-Start-ScheduledTask -TaskName $taskName
-```
-
-Read `$env:TEMP\opencode\codenomad-v2-handoff-result.json` after reconnection. A successful handoff has `status: "started"`; verify its PID runs from the requested slot and compare the executable hash with that slot's `deployment.json` before recording the smoke build as active. Remove the completed one-shot task with `Unregister-ScheduledTask -TaskName 'CodeNomad-V2-Handoff' -Confirm:$false`.
-
-The smoke is complete only after all of these actions succeed in the visible V2 UI:
-
-1. Confirm the selected `opencode2` binary reports the latest version reviewed for this branch.
-2. Open `D:\CodeNomad` from Recent Folders or the folder picker.
-3. Open an existing session from the session list; direct API session creation is not a substitute.
-4. Send a prompt from the composer and receive its visible assistant response.
-5. Reload the V2 window and confirm the workspace and session list recover. While V1 owns cross-host restore, reopen the existing V2 session from the list and confirm its messages and pending state recover correctly.
-6. Exercise one background Shell create/list/output/remove cycle through the workspace proxy, then close only the V2 process after collecting its logs. Shell creation is not currently exposed in the visible UI.
-
-Do not count direct HTTP/CDP calls as validation for workspace, session, prompt, response, or reload behavior. CDP may inspect the V2 DOM and operate visible controls, but it must follow the same controls and state transitions as a user. The background Shell protocol check is the sole exception until the UI exposes creation.
+The remaining release gate is a final interactive smoke against the selected real OpenCode service: open a folder, open an existing session, send and receive a prompt, reload and restore it, exercise the background Shell proxy lifecycle, and verify that V1 and V2 can remain open without client-state interference.
 
 ## Review Notes
 
-- The OpenCode V2 protocol client is experimental and may change. Review its release notes, current documentation, and installed declarations on every upgrade; public `@opencode-ai/sdk` examples are not authoritative for this build.
-- Upgrade references: [OpenCode releases](https://github.com/anomalyco/opencode/releases), [OpenCode documentation](https://opencode.ai/docs/), and the installed `node_modules/@opencode-ai/client/dist/promise/` declarations.
-- This branch intentionally provides no OpenCode V1 fallback.
-- The branch should remain a Draft Pull Request until gatekeeper review, the validation matrix, and the real-service smoke test are complete.
+- The generated V2 client remains experimental. Review its installed declarations and release notes on every dependency upgrade; public `@opencode-ai/sdk` examples are not authoritative for this branch.
+- Upgrade references: [OpenCode releases](https://github.com/anomalyco/opencode/releases), [OpenCode documentation](https://opencode.ai/docs/), and `node_modules/@opencode-ai/client/dist/promise/`.
+- This branch intentionally has no OpenCode V1 fallback or private OpenCode database.
