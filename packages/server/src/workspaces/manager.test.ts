@@ -206,18 +206,19 @@ describe("workspace manager shared service lifecycle", () => {
     const record = [...(manager as any).workspaces.values()][0]
     assert.equal(record.wslDistro, "Ubuntu")
   })
-  it("shares one in-flight logical location creation", async () => {
+  it("creates separate workspaces for the same in-flight location", async () => {
     const harness = createHarness()
     harness.service.validationGate = deferred<void>()
     const first = harness.manager.create(process.cwd())
     await harness.service.validationStarted.promise
     const second = harness.manager.create(process.cwd())
+    while (harness.service.validationCalls.length < 2) await new Promise((resolve) => setImmediate(resolve))
     harness.service.validationGate.resolve()
 
-    const [leader, follower] = await Promise.all([first, second])
-    assert.equal(leader.workspace.id, follower.workspace.id)
-    assert.equal(Number(leader.created) + Number(follower.created), 1)
-    assert.equal(harness.service.validationCalls.length, 1)
+    const [left, right] = await Promise.all([first, second])
+    assert.notEqual(left.workspace.id, right.workspace.id)
+    assert.equal(left.created && right.created, true)
+    assert.equal(harness.service.validationCalls.length, 2)
   })
 
   it("cancels validation and cleans its logical location", async () => {
@@ -251,16 +252,18 @@ describe("workspace manager shared service lifecycle", () => {
     assert.equal(harness.service.shutdownCalls, 0)
   })
 
-  it("does not evict a reused workspace that remains owned", async () => {
+  it("evicts a shared location only after its last workspace is deleted", async () => {
     const harness = createHarness()
-    const retained = await harness.manager.create(process.cwd())
-    const reused = await harness.manager.create(process.cwd(), undefined, { requestId: "restore" })
+    const first = await harness.manager.create(process.cwd())
+    const second = await harness.manager.create(process.cwd())
 
-    assert.equal(reused.workspace.id, retained.workspace.id)
-    assert.equal(reused.created, false)
-    await harness.manager.cancelCreationRequest("restore")
+    assert.notEqual(first.workspace.id, second.workspace.id)
+    await harness.manager.delete(first.workspace.id)
     assert.equal(harness.service.evictionCalls.length, 0)
     assert.equal(harness.manager.list().length, 1)
+    await harness.manager.delete(second.workspace.id)
+    assert.equal(harness.service.evictionCalls.length, 1)
+    assert.equal(harness.manager.list().length, 0)
   })
 
   it("shuts down local workspaces without evicting their OpenCode locations", async () => {
@@ -286,7 +289,6 @@ describe("workspace manager shared service lifecycle", () => {
 
     assert.deepEqual(harness.manager.list(), [])
     assert.equal((harness.manager as any).workspaces.size, 0)
-    assert.equal((harness.manager as any).pendingWorkspaceCreations.size, 0)
     assert.equal(harness.service.evictionCalls.length, 0)
     assert.equal(harness.service.shutdownCalls, 1)
   })
