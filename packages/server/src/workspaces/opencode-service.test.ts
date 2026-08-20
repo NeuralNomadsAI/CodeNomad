@@ -85,6 +85,20 @@ describe("OpenCodeSharedService", () => {
     }))), /must be loopback/)
   })
 
+  it("normalizes wildcard lifecycle endpoints", async () => {
+    let baseUrl = ""
+    const service = createService({
+      makeClient: (options) => {
+        baseUrl = options.baseUrl
+        return {} as OpenCodeClient
+      },
+    })
+    const wildcard = { ...endpoint, url: "http://0.0.0.0:4321" }
+
+    assert.equal((await service.endpoint(lifecycleOptions("host:wildcard", lifecycleFor(wildcard)))).url, "http://127.0.0.1:4321/")
+    assert.equal(baseUrl, "http://127.0.0.1:4321/")
+  })
+
   it("formats auth, validates locations, and evicts through the official debug API", async () => {
     let clientHeaders: HeadersInit | undefined
     let evicted: unknown

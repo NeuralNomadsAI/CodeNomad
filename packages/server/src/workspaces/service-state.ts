@@ -5,6 +5,7 @@ export function assertLoopbackServiceUrl(value: string): URL {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error(`Unsupported OpenCode service protocol: ${url.protocol}`)
   }
+  if (url.hostname === "0.0.0.0") url.hostname = "127.0.0.1"
   const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase()
   const ipVersion = isIP(hostname)
   const loopback = hostname === "localhost"

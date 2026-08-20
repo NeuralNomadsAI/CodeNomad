@@ -150,7 +150,9 @@ export class OpenCodeSharedService {
   }
 
   private createConnection(endpoint: Endpoint, generation: number): ServiceConnection {
-    assertLoopbackServiceUrl(endpoint.url)
+    const wildcard = new URL(endpoint.url).hostname === "0.0.0.0"
+    const url = assertLoopbackServiceUrl(endpoint.url)
+    if (wildcard) endpoint = { ...endpoint, url: url.toString() }
     const connection = {
       endpoint,
       client: this.dependencies.makeClient({

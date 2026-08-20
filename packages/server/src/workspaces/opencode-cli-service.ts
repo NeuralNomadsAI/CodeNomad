@@ -62,8 +62,8 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
     return this.endpoint(url, deadlineAt)
   }
 
-  private async endpoint(url: string, deadlineAt: number): Promise<Endpoint> {
-    this.assertServiceUrl(url)
+  private async endpoint(value: string, deadlineAt: number): Promise<Endpoint> {
+    const url = this.assertServiceUrl(value)
     const password = this.singleLine(
       await this.run(["service", "get", "password"], false, deadlineAt),
       "password",
@@ -153,9 +153,11 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
     }
   }
 
-  private assertServiceUrl(value: string): void {
+  private assertServiceUrl(value: string): string {
     let url: URL
+    let wildcard = false
     try {
+      wildcard = new URL(value).hostname === "0.0.0.0"
       url = assertLoopbackServiceUrl(value)
     } catch {
       throw new Error(`${this.options.label} OpenCode service returned an invalid loopback URL`)
@@ -163,6 +165,7 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
     if (/[^\S\r\n]|[\x00-\x1f\x7f]/.test(value) || url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
       throw new Error(`${this.options.label} OpenCode service returned an invalid loopback URL`)
     }
+    return wildcard ? url.toString() : value
   }
 
   private singleLine(value: string, label: string): string {

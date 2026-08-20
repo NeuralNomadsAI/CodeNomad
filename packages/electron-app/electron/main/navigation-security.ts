@@ -21,5 +21,5 @@ export function decideNavigation(
   if (url.protocol === "http:" || url.protocol === "https:") {
     return allowedOrigins.includes(url.origin) ? "allow" : "external"
   }
-  return url.protocol === "file:" || url.protocol === "data:" || url.protocol === "javascript:" ? "deny" : "external"
+  return url.protocol === "mailto:" ? "external" : "deny"
 }

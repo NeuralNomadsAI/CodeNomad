@@ -13,11 +13,6 @@
     "withGlobalTauri": true,
     "windows": [],
     "security": {
-      "assetProtocol": {
-        "scope": [
-          "**"
-        ]
-      },
       "capabilities": [
         "main-window-native-dialogs",
         "remote-window-notifications"

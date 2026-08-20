@@ -13,7 +13,7 @@ describe("instance metadata", () => {
         list: async () => [{ id: "other", canonical: "/other", vcs: "hg" }, { id: "project-1", canonical: "/repo", vcs: "git" }],
       },
       mcp: { list: async () => ({ location: { directory: "/repo", project: { id: "project-1", directory: "/repo", canonical: "/repo" } }, data: [] }) },
-      plugin: { list: async () => ({ location: { directory: "/repo", project: { id: "project-1", directory: "/repo", canonical: "/repo" } }, data: [{ id: "opencode.plan" }, { id: "ponytail" }] }) },
+      plugin: { list: async () => ({ location: { directory: "/repo", project: { id: "project-1", directory: "/repo", canonical: "/repo" } }, data: [{ id: "opencode.plan" }, { id: "ponytail" }, { status: "failed", error: "broken" }] }) },
     }
 
     try {

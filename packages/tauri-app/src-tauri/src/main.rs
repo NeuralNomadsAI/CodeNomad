@@ -379,18 +379,24 @@ fn should_allow_registered_origin(registered_origin: Option<&str>, url: &Url) ->
     should_allow_internal(url)
 }
 
+fn should_open_external_url(url: &Url) -> bool {
+    matches!(url.scheme(), "http" | "https" | "mailto")
+}
+
 fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
     let window_label = webview.label().to_string();
     if should_allow_window_origin(&webview.app_handle(), &window_label, url) {
         return true;
     }
 
-    if let Err(err) = webview
-        .app_handle()
-        .opener()
-        .open_url(url.as_str(), None::<&str>)
-    {
-        eprintln!("[tauri] failed to open external link {}: {}", url, err);
+    if should_open_external_url(url) {
+        if let Err(err) = webview
+            .app_handle()
+            .opener()
+            .open_url(url.as_str(), None::<&str>)
+        {
+            eprintln!("[tauri] failed to open external link {}: {}", url, err);
+        }
     }
     false
 }
@@ -1568,8 +1574,8 @@ fn build_about_metadata(version: &str, include_update_link: bool) -> AboutMetada
 mod menu_tests {
     use super::{
         build_about_metadata, is_allowed_local_origin, require_http_url, run_update_with_fallback,
-        should_allow_registered_origin, should_recreate_remote_window, RemoteProfileIdentity,
-        WakeLockState, RELEASES_URL, REMOTE_WINDOW_CONTEXT_SCRIPT,
+        should_allow_registered_origin, should_open_external_url, should_recreate_remote_window,
+        RemoteProfileIdentity, WakeLockState, RELEASES_URL, REMOTE_WINDOW_CONTEXT_SCRIPT,
     };
     use serde_json::json;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -1703,6 +1709,24 @@ mod menu_tests {
             assert!(require_http_url(value, "baseUrl")
                 .unwrap_err()
                 .contains("must use HTTP or HTTPS"));
+        }
+    }
+
+    #[test]
+    fn external_navigation_allows_only_web_and_mail_urls() {
+        for value in [
+            "https://example.com",
+            "http://example.com",
+            "mailto:hello@example.com",
+        ] {
+            assert!(should_open_external_url(&Url::parse(value).unwrap()));
+        }
+        for value in [
+            "vscode://file/C:/workspace",
+            "ms-settings:privacy",
+            "unknown:target",
+        ] {
+            assert!(!should_open_external_url(&Url::parse(value).unwrap()));
         }
     }
 

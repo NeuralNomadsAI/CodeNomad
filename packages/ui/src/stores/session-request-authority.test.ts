@@ -175,6 +175,7 @@ describe("session request authority", () => {
     const requests: any[] = []
     ;(client as any).message = { list: async (input: any) => {
       requests.push(input)
+      if (input.cursor && input.order !== undefined) throw new Error("cursor cannot be combined with order")
       if (input.cursor && failSecondPage) throw new Error("cursor failed")
       if (input.cursor && pendingSecondPage) return pendingSecondPage.promise
       return input.cursor
@@ -204,7 +205,7 @@ describe("session request authority", () => {
       pendingSecondPage.resolve({ data: [apiMessage("old-2"), apiMessage("old-1")], cursor: {} })
       await Promise.all([firstLoadMore, concurrentLoadMore])
       assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["old-1", "old-2", "new-1", "new-2"])
-      assert.equal((requests.at(-1) as any)?.cursor, "page-2")
+      assert.deepEqual(requests.at(-1), { sessionID: sessionId, limit: 200, cursor: "page-2" })
       assert.equal(hasMoreMessages(instanceId, sessionId), false)
     } finally {
       cleanup()
@@ -241,7 +242,10 @@ describe("session request authority", () => {
     const calls = { provider: 0, model: 0, default: 0 }
     ;(client as any).provider = { list: async () => { calls.provider += 1; await response.promise; return { data: [{ id: "provider", name: "Provider" }] } } }
     ;(client as any).model = {
-      list: async () => { calls.model += 1; await response.promise; return { data: [{ id: "model", providerID: "provider", name: "Model", cost: [{}], limit: {}, variants: [] }] } },
+      list: async () => { calls.model += 1; await response.promise; return { data: [
+        { id: "model", providerID: "provider", name: "Model", cost: [{}], limit: {}, variants: [] },
+        { id: "retired", providerID: "provider", name: "Retired", status: "deprecated", cost: [{}], limit: {}, variants: [] },
+      ] } },
       default: async () => { calls.default += 1; await response.promise; return { data: { id: "model", providerID: "provider", name: "Model", cost: [{}], limit: {}, variants: [] } } },
     }
 
@@ -251,7 +255,7 @@ describe("session request authority", () => {
       assert.deepEqual(calls, { provider: 1, model: 1, default: 1 })
       response.resolve()
       assert.deepEqual(await Promise.all([first, second]), [true, true])
-      assert.equal(providers().get(instanceId)?.[0]?.models[0]?.id, "model")
+      assert.deepEqual(providers().get(instanceId)?.[0]?.models.map((model) => model.id), ["model"])
     } finally {
       cleanup()
     }

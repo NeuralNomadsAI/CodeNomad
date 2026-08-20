@@ -45,7 +45,7 @@ export async function loadInstanceMetadata(instance: Instance, options?: { force
       ? { ...currentProject, ...(listedProject?.vcs ? { vcs: listedProject.vcs } : {}) }
       : undefined
     const plugins = pluginResult.status === "fulfilled"
-      ? pluginResult.value.data.map((plugin) => plugin.id).filter((id) => !id.startsWith("opencode."))
+      ? pluginResult.value.data.flatMap((plugin) => typeof plugin.id === "string" && !plugin.id.startsWith("opencode.") ? [plugin.id] : [])
       : undefined
 
     const updates: Instance["metadata"] = { ...(currentMetadata ?? {}) }

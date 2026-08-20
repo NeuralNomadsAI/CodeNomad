@@ -970,7 +970,7 @@ async function loadProviders(instanceId: string, location: LocationRef): Promise
       id: providerId,
       name: providersById.get(providerId)?.name ?? providerId,
       defaultModelId: defaultModel.data?.providerID === providerId ? defaultModel.data.id : undefined,
-      models: Array.from(modelsById.values()).filter((model) => model.providerID === providerId).sort((a, b) => a.id.localeCompare(b.id)).map((model) => ({
+      models: Array.from(modelsById.values()).filter((model) => model.providerID === providerId && model.status !== "deprecated").sort((a, b) => a.id.localeCompare(b.id)).map((model) => ({
         id: model.id,
         name: model.name,
         providerId,
@@ -1235,7 +1235,6 @@ async function loadNextMessagePage(instanceId: string, sessionId: string, signal
   const response = await getRootClient(instanceId).message.list({
     sessionID: sessionId,
     limit: 200,
-    order: "desc",
     cursor,
   }, signal ? { signal } : undefined)
   if (!instances().has(instanceId)

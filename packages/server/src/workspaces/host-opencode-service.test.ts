@@ -51,6 +51,23 @@ describe("HostOpenCodeService", () => {
     await assert.rejects(malformed.discover(), /multiline/)
   })
 
+  it("connects to wildcard services through loopback", async () => {
+    let healthUrl = ""
+    const service = createService([], {}, {
+      execFile: async (_file, args) => ({
+        stdout: args.at(-1) === "password" ? "password\n" : "http://0.0.0.0:4321\n",
+        stderr: "",
+      }),
+      fetch: async (input) => {
+        healthUrl = String(input)
+        return Response.json({ healthy: true, version: "2.0.0", pid: 1 })
+      },
+    })
+
+    assert.equal((await service.discover())?.url, "http://127.0.0.1:4321/")
+    assert.equal(healthUrl, "http://127.0.0.1:4321/api/health")
+  })
+
   it("redacts startup environment values from failures and hashes identity", async () => {
     const secret = "DO_NOT_LEAK"
     const service = createService([], { TOKEN: secret }, {
