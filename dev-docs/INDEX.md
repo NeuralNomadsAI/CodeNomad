@@ -16,6 +16,10 @@ Executive summary of the entire project - **start here!**
 
 **MVP development philosophy** - Focus on functionality, NOT performance ⚡
 
+### [DESKTOP_V2_COMPARISON.md](../DESKTOP_V2_COMPARISON.md)
+
+Incremental comparison with official OpenCode Desktop V2, including parity, closed defects, remaining correctness work, runtime upgrade scope, and optional feature gaps.
+
 ---
 
 ## Specification Documents

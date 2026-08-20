@@ -8,6 +8,8 @@ The work grew beyond an SDK swap. It also introduces location-based ownership, n
 
 Server and UI pin `@opencode-ai/client` to `0.0.0-beta-17595`. The selected `opencode2` CLI is managed independently: CodeNomad's updater targets the reviewed client-compatible release, but startup accepts another compatible CLI after authenticated health and API validation instead of enforcing an exact version.
 
+The incremental comparison with official OpenCode Desktop V2, including closed findings and remaining gaps, is recorded in [`DESKTOP_V2_COMPARISON.md`](DESKTOP_V2_COMPARISON.md).
+
 ## Native V2 Adoption
 
 - Use native locations and `SessionInfo.location` as the authority for workspace, session, file, event, Shell, PTY, and Git worktree ownership.
