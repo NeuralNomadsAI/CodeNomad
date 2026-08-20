@@ -13,10 +13,6 @@ function resolveWindowId() {
   return arg ? arg.slice(prefix.length) : null
 }
 
-function resolveRuntimeHost(windowContext) {
-  return "electron"
-}
-
 const windowContext = resolveWindowContext()
 const windowId = resolveWindowId()
 
@@ -83,4 +79,4 @@ contextBridge.exposeInMainWorld(
 )
 contextBridge.exposeInMainWorld("__CODENOMAD_WINDOW_CONTEXT__", windowContext)
 contextBridge.exposeInMainWorld("__CODENOMAD_WINDOW_ID__", windowContext === "local" ? windowId : null)
-contextBridge.exposeInMainWorld("__CODENOMAD_RUNTIME_HOST__", resolveRuntimeHost(windowContext))
+contextBridge.exposeInMainWorld("__CODENOMAD_RUNTIME_HOST__", "electron")

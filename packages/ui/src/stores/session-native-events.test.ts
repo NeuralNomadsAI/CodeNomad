@@ -2,21 +2,11 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { sdkManager } from "../lib/sdk-manager.ts"
-import type { Session } from "../types/session.ts"
 import { addInstance, removeInstance } from "./instances.ts"
 import { handleNativeSessionEvent, handleSessionStatus } from "./session-events.ts"
 import { clearInstanceDeletedSessionAuthority, sessions, setSessions } from "./session-state.ts"
 
 const delay = (duration: number) => new Promise<void>((resolve) => setTimeout(resolve, duration))
-
-function session(instanceId: string, id: string): Session {
-  return {
-    id, instanceId, parentId: null, title: id, agent: "build", model: { providerId: "provider", modelId: "model" },
-    status: "idle", retry: null, idleSince: null, generationRecovery: null, runtimeStatusKnown: true,
-    version: "1", projectID: "project", location: { directory: "/work" }, cost: 0,
-    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 1 },
-  }
-}
 
 describe("native session event reducer", () => {
   it("keeps the newest status while an unknown session is hydrating", async () => {

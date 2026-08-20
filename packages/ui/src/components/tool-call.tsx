@@ -6,7 +6,7 @@ import { useTheme } from "../lib/theme"
 import { useGlobalCache } from "../lib/hooks/use-global-cache"
 import { useConfig } from "../stores/preferences"
 import { activeInterruption, sendFormCancel, sendFormReply, sendPermissionResponse } from "../stores/instances"
-import { getFormQueue, type FormInfo } from "../stores/forms"
+import { getFormQueue } from "../stores/forms"
 import { copyToClipboard } from "../lib/clipboard"
 import type { PermissionRequest } from "../types/permission"
 import { getPermissionSessionId } from "../types/permission"
@@ -23,9 +23,6 @@ import { extractDiagnostics, diagnosticFileName } from "./tool-call/diagnostics"
 import { renderDiagnosticsSection } from "./tool-call/diagnostics-section"
 import type {
   DiffPayload,
-  DiffRenderOptions,
-  MarkdownRenderOptions,
-  AnsiRenderOptions,
   ToolCallPart,
   ToolOutputChrome,
   ToolRendererContext,
@@ -34,10 +31,8 @@ import type {
 import {
   buildToolSpeechText,
   ensureMarkdownContent,
-  getRelativePath,
   getToolName,
   isToolStateCompleted,
-  isToolStateError,
   isToolStateRunning,
   getDefaultToolAction,
   readToolStatePayload,

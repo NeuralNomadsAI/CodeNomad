@@ -389,12 +389,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     await openSessionPreview(sessionId, normalized)
   }
 
-  function handleShowPreview() {
-    const sessionId = activeSessionIdForInstance()
-    if (!sessionId || sessionId === "info") return
-    showSessionPreview(sessionId)
-  }
-
   function handlePreviewButtonClick() {
     const sessionId = activeSessionIdForInstance()
     if (!sessionId || sessionId === "info") return

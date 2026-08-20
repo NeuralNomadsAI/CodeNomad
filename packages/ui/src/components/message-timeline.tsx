@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, on, untrack, type Component, type Accessor } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, on, type Component, type Accessor } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 import { Portal } from "solid-js/web"
 import MessagePreview from "./message-preview"
@@ -821,7 +821,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
           when={renderVirtualizedTimeline()}
           fallback={(
             <For each={props.segments}>
-              {(segment, segIndex) => {
+              {(segment) => {
                 onCleanup(() => buttonRefs.delete(segment.id))
                 const isActive = () => props.activeSegmentId === segment.id
                 const isSelected = () => props.selectedIds?.().has(segment.id)
@@ -879,14 +879,10 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                           anchorOffset = stableBtn.offsetTop - scrollContainerRef.scrollTop
                         }
 
-                        const isMultiSelectActive = (props.selectedIds?.().size ?? 0) > 0
-
                         if (event.shiftKey) {
                           props.onSelectRange?.(segment.id)
                         } else if (event.ctrlKey || event.metaKey) {
                           props.onToggleSelection?.(segment.id)
-                        } else if (isMultiSelectActive) {
-                          props.onSegmentClick?.(segment)
                         } else {
                           props.onSegmentClick?.(segment)
                         }
@@ -916,8 +912,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
           )}
         >
           <Virtualizer ref={setVirtualizerHandle} data={props.segments} scrollRef={scrollElement()} bufferSize={TIMELINE_VIRTUALIZER_BUFFER_PX}>
-            {(segment, index) => {
-              const segIndex = () => index()
+            {(segment) => {
             const isActive = () => props.activeSegmentId === segment.id
             const isSelected = () => props.selectedIds?.().has(segment.id)
             const isSearchMatch = () => props.searchMatchedSegmentIds?.().has(segment.id) ?? false
@@ -975,15 +970,11 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                        anchorOffset = stableBtn.offsetTop - scrollContainerRef.scrollTop
                      }
 
-                     const isMultiSelectActive = (props.selectedIds?.().size ?? 0) > 0
-
-                     if (event.shiftKey) {
-                       props.onSelectRange?.(segment.id)
-                     } else if (event.ctrlKey || event.metaKey) {
-                       props.onToggleSelection?.(segment.id)
-                     } else if (isMultiSelectActive) {
-                       props.onSegmentClick?.(segment)
-                     } else {
+                      if (event.shiftKey) {
+                        props.onSelectRange?.(segment.id)
+                      } else if (event.ctrlKey || event.metaKey) {
+                        props.onToggleSelection?.(segment.id)
+                      } else {
                        props.onSegmentClick?.(segment)
                      }
 

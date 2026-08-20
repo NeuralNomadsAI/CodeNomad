@@ -7,34 +7,16 @@ export const WINDOWS_POWERSHELL_EXTENSIONS = new Set([".ps1"])
 
 const VERSION_REGEX = /([0-9]+\.[0-9]+\.[0-9A-Za-z.-]+)/
 const WSL_UNC_PATH_REGEX = /^\\\\wsl(?:\.localhost|\$)\\([^\\/]+)(?:[\\/](.*))?$/i
-const WINDOWS_DIRECT_EXTENSIONS = new Set([".com", ".exe"])
 const DEFAULT_WINDOWS_PATHEXT = ".COM;.EXE;.BAT;.CMD"
-const WINDOWS_SHELL_NAMES = new Set([
-  "bash",
-  "bash.exe",
-  "cmd",
-  "cmd.exe",
-  "command.com",
-  "powershell",
-  "powershell.exe",
-  "pwsh",
-  "pwsh.exe",
-  "sh",
-  "sh.exe",
-])
-
-export type SpawnProcessKind = "posix" | "windows-direct" | "windows-wrapper" | "wsl"
 
 export interface SpawnSpec {
   command: string
   args: string[]
-  processKind: SpawnProcessKind
   options: {
     windowsVerbatimArguments?: boolean
   }
   cwd?: string
   env?: NodeJS.ProcessEnv
-  wsl?: { distro: string }
 }
 
 export type ServiceLaunchSpec =
@@ -104,7 +86,6 @@ export function buildWindowsSpawnSpec(binaryPath: string, args: string[], option
     return {
       command: comspec,
       args: ["/d", "/s", "/c", commandLine],
-      processKind: "windows-wrapper",
       options: { windowsVerbatimArguments: true },
       cwd: options.cwd,
       env: options.env,
@@ -116,7 +97,6 @@ export function buildWindowsSpawnSpec(binaryPath: string, args: string[], option
     return {
       command: "powershell.exe",
       args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", resolvedBinaryPath, ...args],
-      processKind: "windows-wrapper",
       options: {},
       cwd: options.cwd,
       env: options.env,
@@ -126,7 +106,6 @@ export function buildWindowsSpawnSpec(binaryPath: string, args: string[], option
   return {
     command: resolvedBinaryPath,
     args,
-    processKind: classifyWindowsCommand(resolvedBinaryPath),
     options: {},
     cwd: options.cwd,
     env: options.env,
@@ -138,7 +117,6 @@ export function buildSpawnSpec(binaryPath: string, args: string[], options: Buil
     return {
       command: binaryPath,
       args,
-      processKind: "posix",
       options: {},
       cwd: options.cwd,
       env: options.env,
@@ -288,26 +266,9 @@ function buildWslSpawnSpec(wslPath: WslPath, args: string[], options: BuildSpawn
   return {
     command: "wsl.exe",
     args: wslArgs,
-    processKind: "wsl",
     options: {},
     env: options.env,
-    wsl: { distro: wslPath.distro },
   }
-}
-
-function classifyWindowsCommand(binaryPath: string): SpawnProcessKind {
-  const commandName = path.win32.basename(binaryPath).toLowerCase()
-  if (WINDOWS_SHELL_NAMES.has(commandName)) {
-    return "windows-wrapper"
-  }
-
-  const extension = path.win32.extname(binaryPath).toLowerCase()
-  if (extension) {
-    return WINDOWS_DIRECT_EXTENSIONS.has(extension) ? "windows-direct" : "windows-wrapper"
-  }
-
-  // Bare commands can resolve to npm/script shims, so classify them as wrappers.
-  return "windows-wrapper"
 }
 
 function resolveBareWindowsCommand(binaryPath: string, options: BuildSpawnSpecOptions): string | null {

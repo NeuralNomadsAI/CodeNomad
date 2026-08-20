@@ -58,12 +58,6 @@ describe("resolveWslWorkingDirectory", () => {
 })
 
 describe("buildWindowsSpawnSpec", () => {
-  it("classifies native executables separately from script and shell wrappers", () => {
-    assert.equal(buildWindowsSpawnSpec("opencode.exe", []).processKind, "windows-direct")
-    assert.equal(buildWindowsSpawnSpec("opencode.cmd", []).processKind, "windows-wrapper")
-    assert.equal(buildWindowsSpawnSpec("powershell.exe", []).processKind, "windows-wrapper")
-  })
-
   it("resolves a bare cmd shim from a quoted PATH entry and wraps its absolute path", { skip: process.platform !== "win32" }, () => {
     const root = mkdtempSync(path.join(tmpdir(), "codenomad-spawn-"))
     const cwd = path.join(root, "workspace")
@@ -80,7 +74,6 @@ describe("buildWindowsSpawnSpec", () => {
       })
 
       assert.equal(spec.command, "test-cmd.exe")
-      assert.equal(spec.processKind, "windows-wrapper")
       assert.equal(spec.options.windowsVerbatimArguments, true)
       assert.match(spec.args[3] ?? "", new RegExp(escapeRegex(path.win32.resolve(shim)), "i"))
     } finally {
@@ -100,7 +93,6 @@ describe("buildWindowsSpawnSpec", () => {
       })
 
       assert.equal(spec.command.toLowerCase(), path.win32.resolve(root, "opencode.exe").toLowerCase())
-      assert.equal(spec.processKind, "windows-direct")
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
@@ -114,7 +106,6 @@ describe("buildWindowsSpawnSpec", () => {
 
     assert.equal(spec.command, "missing-opencode")
     assert.deepEqual(spec.args, ["serve"])
-    assert.equal(spec.processKind, "windows-wrapper")
     assert.equal(spec.options.windowsVerbatimArguments, undefined)
   })
 

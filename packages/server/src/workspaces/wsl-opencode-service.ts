@@ -34,10 +34,8 @@ export class WslOpenCodeService extends OpenCodeCliService {
           options.binary,
           ...args,
         ],
-        processKind: "wsl",
         options: {},
         ...(start ? { env: daemonProcessEnvironment() } : {}),
-        wsl: { distro: options.distro },
       }),
       unreachableMessage: (url) => `Cannot reach the WSL OpenCode service from Windows at ${url}. `
         + "Enable WSL localhost forwarding or configure a Windows opencode2 binary.",

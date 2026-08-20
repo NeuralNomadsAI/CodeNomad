@@ -95,7 +95,6 @@ interface WorkspaceRecord extends WorkspaceDescriptor {
 
 interface WorkspaceState {
   abortController: AbortController
-  creation?: Promise<WorkspaceCreateResult>
   settlement?: Promise<void>
   deletePromise?: Promise<WorkspaceDescriptor | undefined>
   published: boolean
@@ -380,12 +379,11 @@ export class WorkspaceManager {
   private startCreation(record: WorkspaceRecord, options: WorkspaceCreateOptions,
     launchDeadlineAt: number, launchTimeoutMs: number): Promise<WorkspaceCreateResult> {
     const launch = this.createResolvedWorkspace(record, Math.max(1, launchDeadlineAt - Date.now()))
-    const creation = this.createWithDeadline(record, options, launchDeadlineAt, launchTimeoutMs, launch)
-    record[WORKSPACE_STATE].creation = creation
+    const creation = this.createWithDeadline(record, launchDeadlineAt, launchTimeoutMs, launch)
     record[WORKSPACE_STATE].settlement = launch.then(() => undefined, () => undefined)
     return creation
   }
-  private async createWithDeadline(record: WorkspaceRecord, options: WorkspaceCreateOptions,
+  private async createWithDeadline(record: WorkspaceRecord,
     launchDeadlineAt: number, launchTimeoutMs: number,
     launch: Promise<WorkspaceCreateResult>): Promise<WorkspaceCreateResult> {
     const timeoutMs = Math.max(1, launchDeadlineAt - Date.now())

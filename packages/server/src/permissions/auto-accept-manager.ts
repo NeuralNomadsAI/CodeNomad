@@ -46,11 +46,6 @@ export interface AutoAcceptPersistence {
   persist(instanceId: string, rootSessionId: string, enabled: boolean): Promise<void>
 }
 
-const PERMISSION_ASK_TYPES = new Set(["permission.asked"])
-const PERMISSION_REPLIED_TYPES = new Set(["permission.replied"])
-const SESSION_UPSERT_TYPES = new Set(["session.created"])
-const SESSION_REMOVE_TYPES = new Set(["session.deleted"])
-
 export class AutoAcceptManager {
   private static readonly MAX_REPLY_ATTEMPTS = 3
   private readonly store = new AutoAcceptStore()
@@ -237,7 +232,7 @@ export class AutoAcceptManager {
   handleInstanceEvent(instanceId: string, event: InstanceStreamPayload): void {
     if (!event || typeof event.type !== "string") return
 
-    if (SESSION_UPSERT_TYPES.has(event.type)) {
+    if (event.type === "session.created") {
       this.ingestSession(instanceId, event.data)
       return
     }
@@ -245,7 +240,7 @@ export class AutoAcceptManager {
       this.ingestSessionForked(instanceId, event.data)
       return
     }
-    if (SESSION_REMOVE_TYPES.has(event.type)) {
+    if (event.type === "session.deleted") {
       const data = event.data as SessionProperties | undefined
       const id = readString(data?.sessionID) ?? readString(data?.id)
       if (id) {
@@ -254,11 +249,11 @@ export class AutoAcceptManager {
       }
       return
     }
-    if (PERMISSION_REPLIED_TYPES.has(event.type)) {
+    if (event.type === "permission.replied") {
       this.handlePermissionReplied(instanceId, event.data)
       return
     }
-    if (PERMISSION_ASK_TYPES.has(event.type)) {
+    if (event.type === "permission.asked") {
       this.handlePermissionRequest(instanceId, event.data)
     }
   }

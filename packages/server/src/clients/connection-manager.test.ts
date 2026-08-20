@@ -14,7 +14,7 @@ describe("ClientConnectionManager", () => {
     manager.register({ clientId: "client", connectionId: "window", close() { replacementCloses += 1 } })
 
     oldUnregister()
-    assert.equal(manager.isConnected({ clientId: "client", connectionId: "window" }), true)
+    assert.equal(manager.pong({ clientId: "client", connectionId: "window" }), true)
     assert.equal(replacementCloses, 0)
     manager.shutdown()
   })
@@ -24,8 +24,8 @@ describe("ClientConnectionManager", () => {
     manager.register({ clientId: "client:window", connectionId: "one", close() {} })
     manager.register({ clientId: "client", connectionId: "window:one", close() {} })
 
-    assert.equal(manager.isConnected({ clientId: "client:window", connectionId: "one" }), true)
-    assert.equal(manager.isConnected({ clientId: "client", connectionId: "window:one" }), true)
+    assert.equal(manager.pong({ clientId: "client:window", connectionId: "one" }), true)
+    assert.equal(manager.pong({ clientId: "client", connectionId: "window:one" }), true)
     manager.shutdown()
   })
 })
