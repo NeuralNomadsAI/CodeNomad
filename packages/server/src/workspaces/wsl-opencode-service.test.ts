@@ -182,7 +182,7 @@ describe("WslOpenCodeService", () => {
     })
     const failed = harness({}, {
       execFile: async (_file, args) => {
-        if (args.at(-1) === "status") return { stdout: `${url}\n`, stderr: "" }
+        if (args[args.length - 1] === "status") return { stdout: `${url}\n`, stderr: "" }
         throw failure
       },
     })
@@ -194,7 +194,7 @@ describe("WslOpenCodeService", () => {
 
     const nonzero = harness({}, {
       execFile: async (_file, args) => {
-        if (args.at(-1) === "status") return { stdout: `${url}\n`, stderr: "" }
+        if (args[args.length - 1] === "status") return { stdout: `${url}\n`, stderr: "" }
         throw Object.assign(new Error(secret), { code: 7, stdout: secret, stderr: secret })
       },
     })
@@ -205,7 +205,7 @@ describe("WslOpenCodeService", () => {
     })
 
     const timeout = harness({}, {
-      execFile: async (_file, args) => args.at(-1) === "status"
+      execFile: async (_file, args) => args[args.length - 1] === "status"
         ? { stdout: `${url}\n`, stderr: "" }
         : new Promise(() => {}),
     }, 15)
@@ -221,7 +221,7 @@ describe("WslOpenCodeService", () => {
     const shared = harness({}, {
       execFile: async (_file, args, options) => {
         commandTimeouts.push(options.timeout)
-        if (args.at(-1) === "status") {
+        if (args[args.length - 1] === "status") {
           await new Promise((resolve) => setTimeout(resolve, 20))
           return { stdout: `${url}\n`, stderr: "" }
         }
@@ -278,7 +278,7 @@ function harness(
   const dependencies: WslOpenCodeServiceDependencies = {
     execFile: async (file, args, options) => {
       calls.push({ file, args, options })
-      const operation = args.at(-1)
+      const operation = args[args.length - 1]
       const key = operation === "status" || operation === "start" ? operation : "password"
       return { stdout: output[key] ?? "", stderr: "" }
     },

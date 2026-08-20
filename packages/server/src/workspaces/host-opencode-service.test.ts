@@ -39,7 +39,7 @@ describe("HostOpenCodeService", () => {
       },
       execFile: async (file, args, options) => {
         calls.push({ file, args, options })
-        return { stdout: args.at(-1) === "password" ? "password\n" : `${url}\n`, stderr: "" }
+        return { stdout: args[args.length - 1] === "password" ? "password\n" : `${url}\n`, stderr: "" }
       },
     })
     await service.discover()
@@ -55,7 +55,7 @@ describe("HostOpenCodeService", () => {
     const secret = "DO_NOT_LEAK"
     const service = createService([], { TOKEN: secret }, {
       execFile: async (_file, args) => {
-        if (args.at(-1) === "status") return { stdout: "stopped\n", stderr: "" }
+        if (args[args.length - 1] === "status") return { stdout: "stopped\n", stderr: "" }
         throw Object.assign(new Error(secret), { code: 7, stdout: secret, stderr: secret })
       },
     })
