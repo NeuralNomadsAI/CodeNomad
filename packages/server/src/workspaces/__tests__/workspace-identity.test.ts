@@ -41,8 +41,9 @@ function createManager(rootDir: string) {
       directory,
       project: { id: directory, directory, canonical: directory },
     }),
+    evictLocation: async () => undefined,
     subscribe: async () => ({ async *[Symbol.asyncIterator]() {} }),
-    evict: async () => undefined,
+    shutdown: async () => undefined,
   }
   const manager = new WorkspaceManager({
     rootDir,

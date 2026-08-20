@@ -72,6 +72,8 @@ npx @neuralnomads/codenomad-dev --password <your-password> --launch
 
 SideCars let you open local web tools inside CodeNomad as tabs.
 
+Native desktop previews are sandboxed without same-origin access. DOM comment inspection is available only in the web client.
+
 <details>
 <summary><strong>Configuration</strong></summary>
 

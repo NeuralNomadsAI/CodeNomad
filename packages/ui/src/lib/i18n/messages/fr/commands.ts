@@ -31,6 +31,9 @@ export const commandMessages = {
   "commands.closeInstance.label": "Fermer l'onglet",
   "commands.closeInstance.description": "Fermer l'onglet de premier niveau actuel",
   "commands.closeInstance.keywords": "arrêter, quitter, fermer, onglet",
+  "commands.stopInstance.label": "Arrêter l'espace de travail",
+  "commands.stopInstance.description": "Arrêter l'espace de travail partagé pour toutes les fenêtres",
+  "commands.stopInstance.keywords": "arrêter, espace de travail, serveur, partagé",
 
   "commands.nextInstance.label": "Onglet suivant",
   "commands.nextInstance.description": "Passer à l'onglet de premier niveau suivant",

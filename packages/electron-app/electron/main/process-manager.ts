@@ -219,10 +219,12 @@ export class CliProcessManager extends EventEmitter {
     const stderr = child.stderr as NodeJS.ReadableStream | undefined
 
     stdout?.on("data", (data: Buffer) => {
+      if (this.child !== child) return
       this.handleStream(data.toString(), "stdout")
     })
 
     stderr?.on("data", (data: Buffer) => {
+      if (this.child !== child) return
       this.handleStream(data.toString(), "stderr")
     })
 

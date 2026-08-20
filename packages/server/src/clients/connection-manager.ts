@@ -67,7 +67,7 @@ export class ClientConnectionManager {
     this.connections.set(key, connection)
     this.logger.debug({ clientId: input.clientId, connectionId: input.connectionId }, "Client connected")
     this.notify({ type: "connected", connection })
-    return () => this.disconnect(key, "closed")
+    return () => this.disconnect(key, "closed", true, connection)
   }
 
   pong(input: ClientConnectionRef): boolean {
@@ -95,9 +95,9 @@ export class ClientConnectionManager {
     }
   }
 
-  private disconnect(key: string, reason: string, invokeClose = true): void {
+  private disconnect(key: string, reason: string, invokeClose = true, expected?: RegisteredConnection): void {
     const connection = this.connections.get(key)
-    if (!connection) return
+    if (!connection || (expected && connection !== expected)) return
     this.connections.delete(key)
     this.logger.debug({ clientId: connection.clientId, connectionId: connection.connectionId, reason }, "Client disconnected")
 
@@ -124,5 +124,5 @@ export class ClientConnectionManager {
 }
 
 function getConnectionKey(input: ClientConnectionRef): string {
-  return `${input.clientId}:${input.connectionId}`
+  return JSON.stringify([input.clientId, input.connectionId])
 }

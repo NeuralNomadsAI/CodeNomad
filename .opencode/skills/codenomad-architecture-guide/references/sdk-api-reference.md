@@ -5,7 +5,7 @@
 CodeNomad keeps the experimental `@opencode-ai/client` protocol aligned in `packages/server/package.json` and `packages/ui/package.json`. The runtime CLI is independently updated and startup validates service health and API compatibility without requiring that exact dependency version. This is distinct from the current public `@opencode-ai/sdk` documentation.
 
 - Promise client: `import { OpenCode } from "@opencode-ai/client"`
-- Service lifecycle: `import { Service } from "@opencode-ai/client/service"`
+- Service authentication headers: `import { Service } from "@opencode-ai/client/service"`
 - Client construction: `OpenCode.make({ baseUrl, headers?, fetch? })`
 - Declarations: `node_modules/@opencode-ai/client/dist/promise/`
 
@@ -15,7 +15,7 @@ Do not import `@opencode-ai/sdk`; its wrapper shapes, `{ data, error }` conventi
 
 | Area | Calls | CodeNomad caller |
 |---|---|---|
-| Service | `Service.discover/headers`; custom launch and authenticated stop | `packages/server/src/workspaces/opencode-service.ts` |
+| Service | CLI `service status/start/get password`; `Service.headers` for authenticated health/API calls | `packages/server/src/workspaces/{host,wsl,opencode-cli,opencode}-service.ts` |
 | Location | `client.location.get`, `client.debug.location.evict` | shared service wrapper |
 | Events | `client.event.subscribe()` | `packages/server/src/workspaces/instance-events.ts` |
 | Sessions | `list/get/create/fork/remove/rename/prompt/command/shell/interrupt` | UI session stores |

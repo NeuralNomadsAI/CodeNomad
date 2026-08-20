@@ -31,6 +31,9 @@ export const commandMessages = {
   "commands.closeInstance.label": "Cerrar pestaña",
   "commands.closeInstance.description": "Cerrar la pestaña superior actual",
   "commands.closeInstance.keywords": "detener, salir, cerrar, pestaña",
+  "commands.stopInstance.label": "Detener espacio de trabajo",
+  "commands.stopInstance.description": "Detener el espacio de trabajo compartido para todas las ventanas",
+  "commands.stopInstance.keywords": "detener, espacio de trabajo, servidor, compartido",
 
   "commands.nextInstance.label": "Siguiente pestaña",
   "commands.nextInstance.description": "Cambiar a la siguiente pestaña superior",

@@ -20,8 +20,9 @@
 
 ## Prerequisites
 
-- **OpenCode V2**: Install a compatible `opencode2` CLI. Server and UI pin the generated client together, while startup validates the independently updated CLI through service health and API behavior rather than its version string.
-- **OpenCode database**: V2 uses `~/.local/share/opencode2/opencode.db`, separate from the incompatible V1 database.
+- **OpenCode V2**: Install a compatible `opencode2` CLI. CodeNomad uses the CLI's official `service status`, `service start`, and `service get password` lifecycle to connect to OpenCode's externally owned global daemon, then validates service health and API behavior rather than an exact CLI version string.
+- **OpenCode data**: The global daemon owns its platform-default storage, database, and service registration. Configured startup environment applies only when CodeNomad starts a missing daemon; an existing daemon is unchanged.
+- **Windows to WSL**: A configured WSL UNC binary uses Linux `service status`, `service start`, and `service get password`; Windows must have WSL localhost forwarding enabled to reach its loopback service.
 - Node.js 18+ and npm (for running or building from source).
 - A workspace folder on disk you want to serve.
 - Optional: a Chromium-based browser if you want `--launch` to open the UI automatically.
@@ -99,7 +100,6 @@ You can configure the server using flags or environment variables:
 | `--ui-no-update` | `CLI_UI_NO_UPDATE` | Disable remote UI updates |
 | `--ui-auto-update <enabled>` | `CLI_UI_AUTO_UPDATE` | Enable remote UI updates (`true`) |
 | `--ui-manifest-url <url>` | `CLI_UI_MANIFEST_URL` | Remote UI manifest URL |
-| - | `OPENCODE_DB` | Required OpenCode V2 database path. CodeNomad provides no default; do not reuse a V1 database. |
 
 ### Dev Releases (Advanced)
 
@@ -221,11 +221,12 @@ When running as a server CodeNomad can also be installed as a PWA from any suppo
 - **Mutable server state**: `~/.config/codenomad/state.yaml`
 - **Legacy migration input**: `~/.config/codenomad/config.json` is migrated to the YAML files above.
 - **CodeNomad instance data**: `~/.config/codenomad/instances/`
-- **OpenCode V2 sessions and messages**: the user-selected `OPENCODE_DB`; CodeNomad does not choose a default path.
-- **Shared-service coordination state**: `~/.codenomad/state/opencode-v2/`
+- **OpenCode V2 sessions, messages, and service registration**: OpenCode's platform-default global locations.
 - **Desktop restore state**: `~/.codenomad/client-state/v2/`
 
-Changing the OpenCode binary or its environment, including `OPENCODE_DB`, takes effect when the shared service next starts or restarts. It does not reconfigure an already-running service.
+CodeNomad owns no private OpenCode port, database, service registration, or daemon PID. Configured allowed `server.environmentVariables` and the current `NODE_EXTRA_CA_CERTS` apply only when CodeNomad starts a missing daemon. Existing daemons are unchanged; legacy `OPENCODE_DB` and `XDG_STATE_HOME` ownership variables are ignored. WSL lifecycle commands run inside Linux and never inspect or signal Linux PIDs from Windows.
+
+Explicit **Stop Workspace** evicts that location and its resources from the global service without stopping the daemon. Closing a UI tab or native window only detaches local state and never evicts. Backend shutdown clears only CodeNomad's in-memory connection state and never stops the global service.
 
 ### Event Delivery
 

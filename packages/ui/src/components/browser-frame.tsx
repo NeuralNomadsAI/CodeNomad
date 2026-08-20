@@ -1,5 +1,7 @@
 import { ArrowLeft, ArrowRight, ChevronDown, Expand, MessageSquarePlus, Monitor, RefreshCw, RotateCw, Smartphone, Tablet } from "lucide-solid"
 import { Show, createEffect, createMemo, createSignal, onCleanup, type Component } from "solid-js"
+import { runtimeEnv } from "../lib/runtime-env"
+import { getBrowserFramePolicy } from "./browser-frame-security"
 
 export interface BrowserFrameElementTarget {
   pagePath: string
@@ -89,6 +91,7 @@ function getElementSelector(element: Element): string {
 }
 
 export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
+  const framePolicy = getBrowserFramePolicy(runtimeEnv)
   const [frameSrc, setFrameSrc] = createSignal(props.initialUrl)
   const [pathInput, setPathInput] = createSignal("/")
   const [viewportPreset, setViewportPreset] = createSignal<BrowserViewportPreset>("responsive")
@@ -98,7 +101,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   let frameWrapRef: HTMLDivElement | undefined
   let cleanupFrameListeners: (() => void) | null = null
 
-  const canComment = createMemo(() => Boolean(props.onToggleCommentMode && props.onCommentTarget))
+  const canComment = createMemo(() => framePolicy.canInspectDom && Boolean(props.onToggleCommentMode && props.onCommentTarget))
   const viewport = createMemo(() => VIEWPORT_PRESETS[viewportPreset()])
   const isResponsiveViewport = createMemo(() => viewportPreset() === "responsive")
   const selectedViewportOption = createMemo(() => VIEWPORT_OPTIONS.find((option) => option.id === viewportPreset()) ?? VIEWPORT_OPTIONS[0])
@@ -161,7 +164,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     cleanupFrameListeners = null
     setHighlight(null)
 
-    if (!props.commentMode || !iframeRef?.contentDocument || !iframeRef.contentWindow || !frameWrapRef) return
+    if (!framePolicy.canInspectDom || !props.commentMode || !iframeRef?.contentDocument || !iframeRef.contentWindow || !frameWrapRef) return
     const doc = iframeRef.contentDocument
     const frameWindow = iframeRef.contentWindow
 
@@ -357,6 +360,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
               margin: viewport().width ? "0 auto" : "0",
             }}
             referrerPolicy="same-origin"
+            sandbox={framePolicy.sandbox}
             onLoad={syncPathInputFromFrame}
           />
         </div>

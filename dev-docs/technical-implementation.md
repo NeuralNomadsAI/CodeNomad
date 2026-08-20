@@ -8,11 +8,9 @@ Do not add `@opencode-ai/sdk`, old `{ data, error }` SDK wrappers, `createOpenco
 
 ## Server Integration
 
-`OpenCodeSharedService` is the sole service adapter. Production uses `Service.discover` and `Service.headers`, then a custom launcher with lease and process-identity proof. Proven host shutdown delegates to native `Service.stop`; WSL uses native authenticated health stop to avoid the client's Windows PID fallback.
+`OpenCodeSharedService` is the sole service adapter. Host and WSL paths both execute the selected CLI's official `service status`, `service start`, and `service get password` commands, validate the authenticated loopback endpoint, pin its identity while active, and never stop the externally owned global daemon on backend shutdown.
 
-Startup and shutdown are serialized by filesystem leases. Each CodeNomad process proves its own PID/start identity and launch signature; service proof contains the registration contents, endpoint credentials, daemon PID/start identity, and host/WSL namespace. On exit, an owner transfers that proof to an elected live peer and releases its lease; a replacement can also inherit matching proof from a stale peer under the lifecycle lock. The final process stops only after all peers are proven stale/absent and the registration, endpoint, process identity, and launch signature still match; uncertainty retains the lease and leaks safely rather than signaling a PID.
-
-The V2 service database is fixed at `~/.local/share/opencode2/opencode.db`; V1 and V2 schemas must never share a database. The complete environment is part of the launch signature and takes effect on service start/restart, not on an already-running daemon.
+OpenCode owns the daemon's standard state, database, and registration; CodeNomad has no private port, database, registration, or daemon PID. Allowed configured environment variables and the current `NODE_EXTRA_CA_CERTS` are passed only to `service start` for a missing daemon. Existing daemons are unchanged, and `OPENCODE_DB`/`XDG_STATE_HOME` are ignored. WSL requires Windows localhost forwarding and runs this lifecycle inside Linux without Windows PID operations.
 
 Workspace creation passes a native location:
 
@@ -20,7 +18,13 @@ Workspace creation passes a native location:
 await client.location.get({ location: { directory } })
 ```
 
-`WorkspaceManager` records the returned directory/workspace ID. After the final logical owner is removed, eviction is queued and is sent only during proven final shared-service shutdown, after cross-process peer and daemon identity checks.
+`WorkspaceManager` records the returned directory/workspace ID. Explicit **Stop Workspace** evicts that location/resources and removes the logical workspace without stopping the global daemon. Ordinary tab/window close only detaches local UI state and does not call the delete/eviction path.
+
+## Native Windows And Restore State
+
+Each channel/config profile has one native singleton process and one backend. A second launch focuses the MRU window unless `--new-window` requests another UUID window; stable, dev, and non-default config profiles use isolated native/browser/client-state scopes.
+
+OpenCode sessions/messages are shared service data. Each window separately persists tab membership, drafts, view state, and native bounds in the client-state V3 envelope. Snapshot V2 is a SHA-256 content-addressed partition graph. Electron and Tauri prepare immutable partitions, fence migration/root replacement on current ownership and renderer authority, atomically publish the envelope, then conservatively sweep partitions no window references.
 
 ## UI Integration
 
@@ -46,6 +50,8 @@ Native background Shells are location-scoped and listed in the Status panel. `pa
 - The proxy exposes only an explicit method/path allowlist, checks client-provided directories and prompt files, defaults safe requests to the workspace location, and verifies session ownership before forwarding. New OpenCode routes are unavailable until reviewed and allowlisted.
 
 Never trust a browser-supplied worktree path. Resolve workspace/worktree ownership server-side.
+
+Native SideCar/browser preview iframes are sandboxed without `allow-same-origin`; DOM comment inspection is therefore web-only.
 
 ## CodeNomad-Owned Mutations
 

@@ -113,14 +113,19 @@ Then open a pull request on GitHub targeting the `dev` branch.
 
 - Server and UI must use the same reviewed `@opencode-ai/client` version. The selected `opencode2` CLI is updated independently and validated through service health and API compatibility; startup must not reject it solely for a different version string. Review OpenCode release notes, current documentation, and installed declarations on every upgrade; this is not the public `@opencode-ai/sdk` contract.
 - Upgrade references: [OpenCode releases](https://github.com/anomalyco/opencode/releases), [OpenCode documentation](https://opencode.ai/docs/), and `node_modules/@opencode-ai/client/dist/promise/`.
-- `packages/server/src/workspaces/opencode-service.ts` owns a custom lease-locked discovery, launch, process-proof, and authenticated-stop lifecycle. Production does not call `Service.ensure` or `Service.stop` directly. Workspaces are native OpenCode locations/directories, not separate server processes.
-- V2 always uses `~/.local/share/opencode2/opencode.db`. Never reuse the V1 database for V2.
+- `packages/server/src/workspaces/opencode-service.ts` uses the selected host or WSL CLI's official `service status`, `service start`, and `service get password` lifecycle to connect to one externally owned global daemon. CodeNomad owns no private port, database, registration, or daemon PID and never stops the daemon on backend shutdown.
+- WSL requires Windows localhost forwarding and runs the Linux CLI lifecycle inside the distribution; never inspect or signal Linux PIDs from Windows.
+- OpenCode owns the global daemon's standard state and database. Configured allowed environment variables apply only when CodeNomad starts a missing daemon; an existing daemon is unchanged, and legacy `OPENCODE_DB`/`XDG_STATE_HOME` ownership settings are ignored.
+- Explicit **Stop Workspace** evicts the native location/resources. Closing a tab or window only detaches that local UI and must never delete or evict the workspace.
 - OpenCode session calls use `/workspaces/:id/instance/api/*`; CodeNomad control routes and multiplexed events use `/api/*` and `/api/events`.
 - The proxy is method/path allowlisted, so new upstream functionality is not exposed automatically.
 - Shell mode (`client.session.shell`) and prompt instructions (`client.session.instructions.entry`) remain separate from background shells and interactive PTYs.
 - Location-scoped background shells use `client.shell.*` and are listed in the Status panel. The UI refreshes them on Shell events and reconnect, displays native metadata, and supports ownership-checked removal. `client.pty.*` remains reserved for interactive terminals. `packages/opencode-plugin` and the server plugin/background-process paths remain deleted and must not be restored.
 - Native events are volatile. Reconnect handlers must refetch authoritative state instead of assuming missed events will replay.
 - Git mutations and Yolo policy remain CodeNomad-owned server boundaries.
+- Native desktop identity is channel plus config profile: one singleton process/backend per profile, multiple UUID windows, focus on second launch by default, and `--new-window` for another window. Stable, dev, and non-default profiles isolate native/browser/client state; OpenCode sessions/messages stay shared while tabs, drafts, and views are per-window.
+- Desktop restore uses a V3 per-window envelope over the V2 content-addressed partition graph. Preserve atomic publication/migration, ownership write fencing, and post-commit conservative garbage collection in both Electron and Tauri.
+- Native SideCar/browser previews are sandboxed without same-origin access, so DOM comment inspection is web-only.
 
 ### Key UI Files
 

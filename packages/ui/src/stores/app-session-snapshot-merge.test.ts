@@ -123,4 +123,22 @@ describe("app session snapshot merge", () => {
     })
     assert.equal(mergeRestorableSessionState(empty(), preservation).tabs.length, 0)
   })
+
+  it("keeps an explicitly removed workspace removed through a later unavailable capture", () => {
+    const preservation = createRestorableSessionPreservation(session([
+      workspace("/work", 0, { drafts: { session: "do not restore" } }),
+    ]))
+    recordRestoredTab(preservation, 0, "instance:work")
+    const binding = { runtimeTabId: "instance:work", folder: "/work", occurrence: 0 }
+
+    markPreservedWorkspaceRemoved(preservation, binding)
+    markPreservedWorkspaceUnavailable(
+      preservation,
+      binding,
+      workspace("/work", 0, { drafts: { session: "captured after removal" } }),
+    )
+
+    assert.equal(preservation.results[0]?.status, "removed")
+    assert.deepEqual(mergeRestorableSessionState(empty(), preservation), empty())
+  })
 })

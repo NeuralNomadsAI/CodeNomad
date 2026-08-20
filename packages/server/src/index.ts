@@ -360,8 +360,6 @@ async function main() {
     logger: logger.child({ component: "tls" }),
   })
 
-  const nodeExtraCaCertsPath = !options.http ? tlsResolution?.caCertPath : undefined
-
   const settings = new SettingsService(configLocation, eventBus, configLogger)
   const binaryResolver = new BinaryResolver(settings)
   const workspaceManager = new WorkspaceManager({
@@ -370,7 +368,6 @@ async function main() {
     binaryResolver,
     eventBus,
     logger: workspaceLogger,
-    nodeExtraCaCertsPath,
   })
   const fileSystemBrowser = new FileSystemBrowser({
     rootDir: options.rootDir,

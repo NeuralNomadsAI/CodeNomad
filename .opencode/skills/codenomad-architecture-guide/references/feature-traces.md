@@ -4,10 +4,10 @@
 
 1. UI posts a folder to `/api/workspaces`.
 2. `WorkspaceManager` resolves the binary launch spec and calls the single `OpenCodeSharedService`.
-3. The CodeNomad adapter discovers or launches one shared `opencode serve --service` endpoint under a lifecycle lock and records transferable registration, endpoint, launch-signature, PID, process-start, and namespace proof.
+3. The adapter runs the selected host or WSL CLI's official `service status`, `service start`, and `service get password` lifecycle and validates the authenticated loopback endpoint. WSL requires Windows localhost forwarding and stays inside the Linux namespace.
 4. `client.location.get` validates the directory and returns native location/workspace identity.
 5. CodeNomad publishes workspace events on `/api/events` and exposes `/workspaces/:id/instance` as the authorized native API proxy.
-6. Final-owner deletion queues location eviction. Proven final shared-service shutdown flushes queued evictions and sends an authenticated stop only if no live CodeNomad peer remains and the exact daemon identity still matches.
+6. Explicit Stop Workspace evicts the location/resources and removes the logical workspace. Ordinary tab/window close only detaches local UI; backend shutdown clears connection state. Neither close nor shutdown stops the daemon.
 
 ## Prompt, Shell, Instructions, And PTYs
 

@@ -31,6 +31,9 @@ export const commandMessages = {
   "commands.closeInstance.label": "סגור לשונית",
   "commands.closeInstance.description": "סגור את הלשונית העליונה הנוכחית",
   "commands.closeInstance.keywords": "עצור, סגור, לשונית",
+  "commands.stopInstance.label": "עצור סביבת עבודה",
+  "commands.stopInstance.description": "עצור את סביבת העבודה המשותפת בכל החלונות",
+  "commands.stopInstance.keywords": "עצור, סביבת עבודה, שרת, משותף",
 
   "commands.nextInstance.label": "הלשונית הבאה",
   "commands.nextInstance.description": "עבור ללשונית העליונה הבאה",

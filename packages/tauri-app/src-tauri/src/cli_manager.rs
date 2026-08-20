@@ -405,7 +405,11 @@ fn navigate_main(manager: &CliProcessManager, generation: u64, app: &AppHandle, 
     if !manager.is_current_generation(generation) {
         return;
     }
-    if app.webview_windows().contains_key("main") {
+    if !app
+        .state::<crate::local_windows::LocalWindows>()
+        .records()
+        .is_empty()
+    {
         let final_url = augment_launch_url(url);
         let mut display = final_url.clone();
         if let Some(hash_index) = display.find('#') {
@@ -415,29 +419,41 @@ fn navigate_main(manager: &CliProcessManager, generation: u64, app: &AppHandle, 
         if let Ok(parsed) = Url::parse(&final_url) {
             let current = manager.clone();
             let navigate = manager.clone();
-            crate::client_state::before_main_window_navigation_if(
-                app,
-                crate::client_state::NavigationKind::Cli,
-                Some(parsed.clone()),
-                move || current.is_current_generation(generation),
-                move |app| {
-                    navigate
-                        .with_current_generation(generation, || {
-                            let window = app.get_webview_window("main").ok_or_else(|| {
-                                "main window not found for CLI navigation".to_string()
-                            })?;
-                            window.navigate(parsed).map_err(|err| {
-                                format!("failed to navigate main window to CLI URL: {err}")
+            app.state::<crate::local_windows::LocalWindows>()
+                .set_backend_target(Some(final_url));
+            for record in app.state::<crate::local_windows::LocalWindows>().records() {
+                let current = current.clone();
+                let navigate = navigate.clone();
+                let parsed = parsed.clone();
+                let label = record.label.clone();
+                let target_label = label.clone();
+                crate::client_state::before_window_navigation_if(
+                    app,
+                    label,
+                    crate::client_state::NavigationKind::Cli,
+                    Some(parsed.clone()),
+                    move || current.is_current_generation(generation),
+                    move |app| {
+                        navigate
+                            .with_current_generation(generation, || {
+                                app.get_webview_window(&target_label)
+                                    .ok_or_else(|| {
+                                        "local window not found for CLI navigation".to_string()
+                                    })?
+                                    .navigate(parsed)
+                                    .map_err(|err| {
+                                        format!("failed to navigate local window to CLI URL: {err}")
+                                    })
                             })
-                        })
-                        .unwrap_or_else(|| Err("discarded stale CLI navigation".to_string()))
-                },
-            );
+                            .unwrap_or_else(|| Err("discarded stale CLI navigation".to_string()))
+                    },
+                );
+            }
         } else {
             log_line("failed to parse URL for navigation");
         }
     } else {
-        log_line("main window not found for navigation");
+        log_line("local window not found for navigation");
     }
 }
 
@@ -562,8 +578,10 @@ fn set_session_cookie(
         .same_site(tauri::webview::cookie::SameSite::Lax)
         .build();
 
-    if let Some(win) = app.webview_windows().get("main") {
-        win.set_cookie(cookie)?;
+    for record in app.state::<crate::local_windows::LocalWindows>().records() {
+        if let Some(win) = app.get_webview_window(&record.label) {
+            win.set_cookie(cookie.clone())?;
+        }
     }
 
     Ok(())
@@ -877,8 +895,8 @@ impl CliProcessManager {
             status.error = Some(message.clone());
             let snapshot = status.clone();
             drop(status);
-            let _ = app.emit("cli:error", json!({"message": message}));
-            let _ = app.emit("cli:status", snapshot);
+            crate::local_windows::emit_all(app, "cli:error", json!({"message": message}));
+            crate::local_windows::emit_all(app, "cli:status", snapshot);
         });
     }
 
@@ -1104,8 +1122,8 @@ impl CliProcessManager {
                 status.error = Some(message.clone());
                 let snapshot = status.clone();
                 drop(status);
-                let _ = app.emit("cli:error", json!({"message": message}));
-                let _ = app.emit("cli:status", snapshot);
+                crate::local_windows::emit_all(&app, "cli:error", json!({"message": message}));
+                crate::local_windows::emit_all(&app, "cli:status", snapshot);
             });
         }
 
@@ -1340,13 +1358,16 @@ impl CliProcessManager {
         }
         manager.with_current_generation(generation, || {
             let status = manager.status.lock().clone();
-            let _ = app.emit("cli:ready", status.clone());
+            crate::local_windows::emit_all(app, "cli:ready", status.clone());
             Self::emit_status(app, &status);
         });
     }
 
     fn emit_status(app: &AppHandle, status: &CliStatus) {
-        let _ = app.emit("cli:status", status.clone());
+        if status.state != CliState::Ready {
+            crate::local_windows::show_loading_all(app);
+        }
+        crate::local_windows::emit_all(app, "cli:status", status.clone());
     }
 }
 

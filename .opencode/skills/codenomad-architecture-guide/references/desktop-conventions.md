@@ -6,6 +6,14 @@ CodeNomad supports two desktop platforms:
 - **Electron** (primary, mature)
 - **Tauri** (emerging, Rust-based)
 
+## Process, Window, And State Model
+
+- Identity scope is update channel plus config profile. Each scope has one native singleton process and one CodeNomad backend; stable, dev, and non-default config profiles isolate native/browser/client state.
+- A second launch focuses the MRU window unless `--new-window` requests another UUID-backed local window.
+- OpenCode sessions/messages stay in the shared global daemon. Tabs, drafts, views, restore membership, and native bounds are per-window.
+- Client-state V3 is a per-window envelope over the V2 SHA-256 content-addressed partition graph. Prepare immutable partitions, fence migration and writes on current ownership/renderer authority, atomically publish the root, then conservatively remove only partitions unreferenced by all windows.
+- Native SideCar/browser previews are sandboxed without `allow-same-origin`; DOM comment inspection is web-only.
+
 ## Electron
 
 ### Directory Structure

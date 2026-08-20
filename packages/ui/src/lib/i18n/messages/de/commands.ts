@@ -31,6 +31,9 @@ export const commandMessages = {
   "commands.closeInstance.label": "Tab schließen",
   "commands.closeInstance.description": "Den aktuellen obersten Tab schließen",
   "commands.closeInstance.keywords": "stoppen, beenden, schließen, tab",
+  "commands.stopInstance.label": "Arbeitsbereich stoppen",
+  "commands.stopInstance.description": "Den gemeinsamen Arbeitsbereich für alle Fenster stoppen",
+  "commands.stopInstance.keywords": "stoppen, arbeitsbereich, server, gemeinsam",
 
   "commands.nextInstance.label": "Nächster Tab",
   "commands.nextInstance.description": "Zum nächsten obersten Tab wechseln",

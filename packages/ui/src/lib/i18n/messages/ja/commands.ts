@@ -31,6 +31,9 @@ export const commandMessages = {
   "commands.closeInstance.label": "タブを閉じる",
   "commands.closeInstance.description": "現在のトップレベルタブを閉じる",
   "commands.closeInstance.keywords": "閉じる, タブ, stop, quit, close",
+  "commands.stopInstance.label": "ワークスペースを停止",
+  "commands.stopInstance.description": "すべてのウィンドウで共有ワークスペースを停止する",
+  "commands.stopInstance.keywords": "停止, ワークスペース, サーバー, 共有",
 
   "commands.nextInstance.label": "次のタブ",
   "commands.nextInstance.description": "次のトップレベルタブへ切り替え",

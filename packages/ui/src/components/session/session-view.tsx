@@ -1,4 +1,4 @@
-import { Show, createMemo, createEffect, createSignal, on, type Component } from "solid-js"
+import { Show, createMemo, createEffect, createSignal, on, onCleanup, onMount, type Component } from "solid-js"
 import type { Session } from "../../types/session"
 import type { Attachment } from "../../types/attachment"
 import type { ClientPart } from "../../types/message"
@@ -9,6 +9,7 @@ import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import { getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances, waitForInstanceWorkspaceMetadataHydration } from "../../stores/instances"
 import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession } from "../../stores/sessions"
+import { canMarkSessionIdleSeen } from "./session-idle-attention"
 import { clearSessionIdleFade, IDLE_STATUS_VISIBILITY_MS, getSessionStatus, isSessionBusy as getSessionBusyStatus, markSessionIdleFadeStarted } from "../../stores/session-status"
 import { showAlertDialog } from "../../stores/alerts"
 import { getLogger } from "../../lib/logger"
@@ -47,6 +48,24 @@ interface SessionViewProps {
 }
 
 export const SessionView: Component<SessionViewProps> = (props) => {
+  const [documentAttentionActive, setDocumentAttentionActive] = createSignal(false)
+
+  onMount(() => {
+    const updateDocumentAttention = () => setDocumentAttentionActive(canMarkSessionIdleSeen({
+      active: true,
+      visibilityState: document.visibilityState,
+      focused: document.hasFocus(),
+    }))
+    updateDocumentAttention()
+    window.addEventListener("focus", updateDocumentAttention)
+    window.addEventListener("blur", updateDocumentAttention)
+    document.addEventListener("visibilitychange", updateDocumentAttention)
+    onCleanup(() => {
+      window.removeEventListener("focus", updateDocumentAttention)
+      window.removeEventListener("blur", updateDocumentAttention)
+      document.removeEventListener("visibilitychange", updateDocumentAttention)
+    })
+  })
   const { t } = useI18n()
   const { preferences } = useConfig()
   const session = () => props.activeSessions.get(props.sessionId)
@@ -216,7 +235,11 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
   createEffect(() => {
     const currentSession = session()
-    if (!props.isActive || !currentSession) return
+    if (!currentSession || !canMarkSessionIdleSeen({
+      active: props.isActive === true && documentAttentionActive(),
+      visibilityState: document.visibilityState,
+      focused: document.hasFocus(),
+    })) return
 
     const seenIdleEntries = getSeenIdleEntries(currentSession, preferences().keepUnseenSubagentIdleStatus)
     for (const entry of seenIdleEntries) {

@@ -31,6 +31,9 @@ export const commandMessages = {
   "commands.closeInstance.label": "ट्याब बन्द गर्नुहोस्",
   "commands.closeInstance.description": "हालको शीर्ष-स्तरको ट्याब बन्द गर्नुहोस्",
   "commands.closeInstance.keywords": "रोक्नुहोस्, बन्द गर्नुहोस्, ट्याब",
+  "commands.stopInstance.label": "कार्यस्थान रोक्नुहोस्",
+  "commands.stopInstance.description": "सबै विन्डोका लागि साझा कार्यस्थान रोक्नुहोस्",
+  "commands.stopInstance.keywords": "रोक्नुहोस्, कार्यस्थान, सर्भर, साझा",
 
   "commands.nextInstance.label": "अर्को ट्याब",
   "commands.nextInstance.description": "अर्को शीर्ष-स्तरको ट्याबमा जानुहोस्",

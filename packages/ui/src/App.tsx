@@ -5,6 +5,7 @@ import useMediaQuery from "@suid/material/useMediaQuery"
 import { Minimize2 } from "lucide-solid"
 import AlertDialog from "./components/alert-dialog"
 import FolderSelectionView from "./components/folder-selection-view"
+import { useDesktopFolderLaunch } from "./lib/hooks/use-electron-folder-launch"
 import { showConfirmDialog } from "./stores/alerts"
 import InstanceTabs from "./components/instance-tabs"
 import InstanceDisconnectedModal from "./components/instance-disconnected-modal"
@@ -73,6 +74,7 @@ import {
   activeAppTab,
   activeAppTabId,
   appTabs,
+  closeInstanceTab,
   ensureActiveAppTab,
   getAdjacentAppTabId,
   getAppTabById,
@@ -404,9 +406,9 @@ const App: Component = () => {
     return recent?.projectName?.trim() || getPathBasename(folderPath)
   }
 
-  async function handleSelectFolder(folderPath: string) {
+  async function handleSelectFolder(folderPath: string): Promise<boolean> {
     if (!folderPath) {
-      return
+      return false
     }
 
     const selectedBinary = serverSettings().opencodeBinary || "opencode2"
@@ -421,7 +423,7 @@ const App: Component = () => {
         selectInstanceTab(result.instanceId)
         setShowFolderSelection(false)
         log.info("Selected reused instance", { instanceId: result.instanceId, folderPath })
-        return
+        return true
       }
 
       selectInstanceTab(result.instanceId)
@@ -431,6 +433,7 @@ const App: Component = () => {
         instanceId: result.instanceId,
         port: instances().get(result.instanceId)?.port,
       })
+      return true
     } catch (error) {
       const message = formatLaunchErrorMessage(
         error,
@@ -440,10 +443,13 @@ const App: Component = () => {
       const missingBinary = isMissingBinaryMessage(message)
       showLaunchError({ source: "create", message, binaryPath: selectedBinary, missingBinary })
       log.error("Failed to create instance", error)
+      return false
     } finally {
       setIsSelectingFolder(false)
     }
   }
+
+  useDesktopFolderLaunch(handleSelectFolder)
 
   function handleSelectExistingInstance(instanceId: string, recentPath: string) {
     const instance = instances().get(instanceId)
@@ -489,14 +495,16 @@ const App: Component = () => {
   }
 
   async function handleDisconnectedInstanceClose() {
+    const instanceId = disconnectedInstance()?.id
     try {
       await acknowledgeDisconnectedInstance()
+      if (instanceId) closeInstanceTab(instanceId)
     } catch (error) {
       log.error("Failed to finalize disconnected instance", error)
     }
   }
 
-  async function handleCloseInstance(instanceId: string) {
+  async function handleStopInstance(instanceId: string) {
     const confirmed = await showConfirmDialog(
       t("app.stopInstance.confirmMessage"),
       {
@@ -509,7 +517,7 @@ const App: Component = () => {
 
     if (!confirmed) return
 
-    stopInstance(instanceId)
+    await stopInstance(instanceId)
   }
 
   async function handleNewSession(instanceId: string) {
@@ -549,7 +557,7 @@ const App: Component = () => {
     const fallbackTabId = activeAppTabId() === tabId ? getAdjacentAppTabId(tabId) : activeAppTabId()
 
     if (tab.kind === "instance") {
-      await handleCloseInstance(tab.instance.id)
+      closeInstanceTab(tab.instance.id)
     } else {
       closeSidecarTab(tab.sidecarTab.token)
     }
@@ -590,7 +598,7 @@ const App: Component = () => {
     setToolInputsVisibility,
     handleNewInstanceRequest,
     handleCloseActiveTab: () => handleCloseAppTab(activeAppTabId() ?? ""),
-    handleCloseInstance,
+    handleStopInstance,
     handleNewSession,
     handleCloseSession,
     getActiveInstance: activeInstance,
@@ -601,7 +609,6 @@ const App: Component = () => {
     setEscapeInDebounce,
     handleNewInstanceRequest,
     handleCloseActiveTab: () => handleCloseAppTab(activeAppTabId() ?? ""),
-    handleCloseInstance,
     handleNewSession,
     handleCloseSession,
     showFolderSelection,

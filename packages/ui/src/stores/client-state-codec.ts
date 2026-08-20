@@ -298,5 +298,5 @@ export function decodeClientSnapshot(value: unknown): ClientSnapshotV1 | null {
 }
 
 export function isFutureClientSnapshot(value: unknown): boolean {
-  return isRecord(value) && typeof value.version === "number" && Number.isInteger(value.version) && value.version > 1
+  return isRecord(value) && typeof value.version === "number" && Number.isInteger(value.version) && value.version > 2
 }

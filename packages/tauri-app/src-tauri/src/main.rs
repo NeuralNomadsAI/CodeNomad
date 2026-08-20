@@ -4,8 +4,11 @@
 mod cert_manager;
 mod cli_manager;
 mod client_state;
+mod identity;
+mod launch;
 #[cfg(target_os = "linux")]
 mod linux_tls;
+mod local_windows;
 mod managed_node;
 mod shutdown;
 mod windows_update;
@@ -15,9 +18,11 @@ use cli_manager::{CliProcessManager, CliStatus};
 use keepawake::KeepAwake;
 use serde::Deserialize;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 #[cfg(any(windows, test))]
 use std::future::Future;
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::menu::{
@@ -45,23 +50,55 @@ use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 
 const ZOOM_STEP: f64 = 0.1;
 const RELEASES_URL: &str = "https://github.com/NeuralNomadsAI/CodeNomad/releases/latest";
-const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_WINDOW_CONTEXT__ = 'local';";
 const REMOTE_WINDOW_CONTEXT_SCRIPT: &str =
     "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'remote';";
 
-#[cfg(windows)]
-const WINDOWS_APP_USER_MODEL_ID: &str = "ai.neuralnomads.codenomad.client";
-
 pub struct AppState {
     pub manager: CliProcessManager,
-    pub wake_lock: Mutex<Option<KeepAwake>>,
+    pub wake_lock: Mutex<WakeLockState>,
     pub remote_origins: Mutex<HashMap<String, String>>,
-    pub remote_proxy_sessions: Mutex<HashMap<String, String>>,
+    remote_profiles: Mutex<HashMap<String, RemoteProfileIdentity>>,
     pub remote_skip_tls_verify: Mutex<HashMap<String, bool>>,
     pub remote_tls_handlers: Mutex<HashSet<String>>,
     pub remote_titles: Mutex<HashMap<String, String>>,
+    pub remote_zoom_levels: Mutex<HashMap<String, f64>>,
     pub workspace_menu_items: Mutex<Option<WorkspaceMenuItems>>,
-    pub workspace_menu_requested_enabled: Mutex<bool>,
+    pub webview_data_directory: std::path::PathBuf,
+    pub scoped_profile: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RemoteProfileIdentity {
+    Direct,
+    Proxy(String),
+}
+
+impl RemoteProfileIdentity {
+    fn new(proxy_session_id: Option<&str>) -> Self {
+        proxy_session_id
+            .map(|value| Self::Proxy(value.to_string()))
+            .unwrap_or(Self::Direct)
+    }
+
+    fn proxy_session_id(&self) -> Option<&str> {
+        match self {
+            Self::Direct => None,
+            Self::Proxy(value) => Some(value),
+        }
+    }
+}
+
+fn should_recreate_remote_window(
+    existing: Option<&RemoteProfileIdentity>,
+    requested: &RemoteProfileIdentity,
+) -> bool {
+    existing != Some(requested)
+}
+
+#[derive(Default)]
+pub struct WakeLockState {
+    labels: HashSet<String>,
+    handle: Option<KeepAwake>,
 }
 
 pub struct WorkspaceMenuItems {
@@ -72,23 +109,68 @@ pub struct WorkspaceMenuItems {
 
 fn update_workspace_menu_state(app: &AppHandle) {
     let state = app.state::<AppState>();
-    let requested = state
-        .workspace_menu_requested_enabled
-        .lock()
-        .map(|value| *value)
-        .unwrap_or(false);
-    let focused = app
-        .get_webview_window("main")
-        .and_then(|window| window.is_focused().ok())
-        .unwrap_or(false);
+    let enabled = local_windows::focused_window(app)
+        .filter(|window| identity::local_window_id(window.label()).is_ok())
+        .is_some_and(|window| {
+            app.state::<local_windows::LocalWindows>()
+                .workspace_menu_enabled(window.label())
+        });
     if let Ok(items) = state.workspace_menu_items.lock() {
         if let Some(items) = items.as_ref() {
-            let enabled = requested && focused;
             let _ = items.folder.set_enabled(enabled);
             let _ = items.terminal.set_enabled(enabled);
             let _ = items.editor.set_enabled(enabled);
         }
     };
+}
+
+fn is_asset_renderer_origin(url: &Url) -> bool {
+    match url.scheme() {
+        "tauri" | "asset" => url.host_str() == Some("localhost") && url.port().is_none(),
+        "http" | "https" => url.host_str() == Some("tauri.localhost") && url.port().is_none(),
+        _ => false,
+    }
+}
+
+fn is_dev_renderer_origin(url: &Url) -> bool {
+    cfg!(debug_assertions)
+        && url.scheme() == "http"
+        && matches!(url.host_str(), Some("127.0.0.1" | "localhost"))
+        && url.port() == Some(1420)
+}
+
+fn same_origin(url: &Url, expected: Option<&str>) -> bool {
+    expected
+        .and_then(|value| Url::parse(value).ok())
+        .is_some_and(|expected| url.origin() == expected.origin())
+}
+
+fn is_allowed_local_origin(url: &Url, managed_backend: Option<&str>) -> bool {
+    is_asset_renderer_origin(url)
+        || is_dev_renderer_origin(url)
+        || same_origin(url, managed_backend)
+}
+
+pub(crate) fn require_local_app_window(
+    window: &tauri::WebviewWindow,
+    state: &AppState,
+) -> Result<Url, String> {
+    identity::local_window_id(window.label())?;
+    let current = window.url().map_err(|error| error.to_string())?;
+    let status = state.manager.status();
+    if is_allowed_local_origin(&current, status.url.as_deref()) {
+        Ok(current)
+    } else {
+        Err("Native application commands require a trusted local renderer origin".into())
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn profile_identifier(identity: &str) -> [u8; 16] {
+    let digest = Sha256::digest(identity.as_bytes());
+    let mut identifier = [0_u8; 16];
+    identifier.copy_from_slice(&digest[..16]);
+    identifier
 }
 
 #[tauri::command]
@@ -98,14 +180,10 @@ fn set_workspace_menu_enabled(
     state: tauri::State<'_, AppState>,
     enabled: bool,
 ) -> Result<(), String> {
-    if window.label() != "main" {
-        return Err("Workspace menu updates are limited to the local main window".into());
-    }
+    require_local_app_window(&window, &state)?;
     if !enabled {
-        *state
-            .workspace_menu_requested_enabled
-            .lock()
-            .map_err(|error| error.to_string())? = false;
+        app.state::<local_windows::LocalWindows>()
+            .set_workspace_menu_enabled(window.label(), false)?;
         update_workspace_menu_state(&app);
         return Ok(());
     }
@@ -118,10 +196,8 @@ fn set_workspace_menu_enabled(
     if current.origin() != expected.origin() {
         return Err("Workspace menu updates require the local CodeNomad origin".into());
     }
-    *state
-        .workspace_menu_requested_enabled
-        .lock()
-        .map_err(|error| error.to_string())? = enabled;
+    app.state::<local_windows::LocalWindows>()
+        .set_workspace_menu_enabled(window.label(), enabled)?;
     update_workspace_menu_state(&app);
     Ok(())
 }
@@ -194,12 +270,21 @@ struct WakeLockConfig {
 }
 
 #[tauri::command]
-fn cli_get_status(state: tauri::State<AppState>) -> CliStatus {
-    state.manager.status()
+fn cli_get_status(
+    window: tauri::WebviewWindow,
+    state: tauri::State<AppState>,
+) -> Result<CliStatus, String> {
+    require_local_app_window(&window, &state)?;
+    Ok(state.manager.status())
 }
 
 #[tauri::command]
-fn cli_restart(app: AppHandle, state: tauri::State<AppState>) -> Result<CliStatus, String> {
+fn cli_restart(
+    window: tauri::WebviewWindow,
+    app: AppHandle,
+    state: tauri::State<AppState>,
+) -> Result<CliStatus, String> {
+    require_local_app_window(&window, &state)?;
     let dev_mode = is_dev_mode();
     state.manager.stop().map_err(|e| e.to_string())?;
     state
@@ -211,9 +296,11 @@ fn cli_restart(app: AppHandle, state: tauri::State<AppState>) -> Result<CliStatu
 
 #[tauri::command]
 fn wake_lock_start(
+    window: tauri::WebviewWindow,
     state: tauri::State<AppState>,
     config: Option<WakeLockConfig>,
 ) -> Result<(), String> {
+    require_local_app_window(&window, &state)?;
     let config = config.unwrap_or(WakeLockConfig {
         display: false,
         idle: true,
@@ -229,16 +316,25 @@ fn wake_lock_start(
         .app_name("CodeNomad")
         .app_reverse_domain("ai.neuralnomads.codenomad.client");
 
-    let wake_lock = builder.create().map_err(|err| err.to_string())?;
     let mut state_lock = state.wake_lock.lock().map_err(|err| err.to_string())?;
-    *state_lock = Some(wake_lock);
+    state_lock.labels.insert(window.label().to_string());
+    if state_lock.handle.is_none() {
+        state_lock.handle = Some(builder.create().map_err(|err| err.to_string())?);
+    }
     Ok(())
 }
 
 #[tauri::command]
-fn wake_lock_stop(state: tauri::State<AppState>) -> Result<(), String> {
+fn wake_lock_stop(
+    window: tauri::WebviewWindow,
+    state: tauri::State<AppState>,
+) -> Result<(), String> {
+    require_local_app_window(&window, &state)?;
     let mut state_lock = state.wake_lock.lock().map_err(|err| err.to_string())?;
-    state_lock.take();
+    state_lock.labels.remove(window.label());
+    if state_lock.labels.is_empty() {
+        state_lock.handle.take();
+    }
     Ok(())
 }
 
@@ -247,17 +343,7 @@ fn is_dev_mode() -> bool {
 }
 
 fn should_allow_internal(url: &Url) -> bool {
-    match url.scheme() {
-        "tauri" | "asset" | "file" | "about" => true,
-        // On Windows/WebView2, Tauri serves the app assets from `tauri.localhost`.
-        // This must be treated as an internal origin or the navigation guard will
-        // redirect it to the system browser and the app will appear blank.
-        "http" | "https" => matches!(
-            url.host_str(),
-            Some("127.0.0.1" | "localhost" | "tauri.localhost")
-        ),
-        _ => false,
-    }
+    is_asset_renderer_origin(url) || is_dev_renderer_origin(url) || url.as_str() == "about:blank"
 }
 
 fn should_allow_window_origin<R: Runtime>(
@@ -266,6 +352,10 @@ fn should_allow_window_origin<R: Runtime>(
     url: &Url,
 ) -> bool {
     let state = app_handle.state::<AppState>();
+    if identity::local_window_id(window_label).is_ok() {
+        let status = state.manager.status();
+        return is_allowed_local_origin(url, status.url.as_deref());
+    }
     let Ok(allowed) = state.remote_origins.lock() else {
         return false;
     };
@@ -274,9 +364,9 @@ fn should_allow_window_origin<R: Runtime>(
 
 fn should_allow_registered_origin(registered_origin: Option<&str>, url: &Url) -> bool {
     if let Some(origin) = registered_origin {
-        if matches!(url.scheme(), "http" | "https") {
-            return origin == url.origin().ascii_serialization();
-        }
+        return (matches!(url.scheme(), "http" | "https")
+            && origin == url.origin().ascii_serialization())
+            || url.as_str() == "about:blank";
     }
     should_allow_internal(url)
 }
@@ -324,57 +414,86 @@ async fn open_remote_window_impl(
     let parsed = Url::parse(entry_url).map_err(|err| err.to_string())?;
     let label = format!("remote-{}", payload.id);
     let title = format!("{} - {}", payload.name, payload.base_url);
+    let requested_profile = RemoteProfileIdentity::new(payload.proxy_session_id.as_deref());
 
     let window_url = parsed.clone();
 
     let allow_linux_tls_certificate = parsed.scheme() == "https"
         && (payload.proxy_session_id.is_some() || payload.skip_tls_verify);
 
-    app.state::<AppState>()
-        .remote_origins
-        .lock()
-        .map_err(|err| err.to_string())?
-        .insert(label.clone(), window_url.origin().ascii_serialization());
-    app.state::<AppState>()
-        .remote_skip_tls_verify
-        .lock()
-        .map_err(|err| err.to_string())?
-        .insert(label.clone(), allow_linux_tls_certificate);
-    app.state::<AppState>()
-        .remote_titles
-        .lock()
-        .map_err(|err| err.to_string())?
-        .insert(label.clone(), title.clone());
-
-    let replaced_session = {
-        let state = app.state::<AppState>();
-        let mut sessions = state
-            .remote_proxy_sessions
-            .lock()
-            .map_err(|err| err.to_string())?;
-        match payload.proxy_session_id.clone() {
-            Some(session_id) => sessions.insert(label.clone(), session_id),
-            None => sessions.remove(&label),
-        }
-    };
-
-    if let Some(previous) = replaced_session {
-        if payload.proxy_session_id.as_deref() != Some(previous.as_str()) {
-            schedule_remote_proxy_session_cleanup(app.clone(), previous);
-        }
-    }
+    let mut previous_profile = None;
 
     if let Some(existing) = app.get_webview_window(&label) {
-        #[cfg(target_os = "linux")]
-        linux_tls::ensure_remote_window_tls_handler(&existing, &app, &label)?;
+        previous_profile = app
+            .state::<AppState>()
+            .remote_profiles
+            .lock()
+            .map_err(|err| err.to_string())?
+            .get(&label)
+            .cloned();
+        if should_recreate_remote_window(previous_profile.as_ref(), &requested_profile) {
+            app.state::<AppState>()
+                .remote_profiles
+                .lock()
+                .map_err(|err| err.to_string())?
+                .insert(label.clone(), requested_profile.clone());
+            if let Err(error) = existing.destroy() {
+                let state = app.state::<AppState>();
+                let mut profiles = state
+                    .remote_profiles
+                    .lock()
+                    .map_err(|err| err.to_string())?;
+                if let Some(previous) = previous_profile.as_ref() {
+                    profiles.insert(label.clone(), previous.clone());
+                } else {
+                    profiles.remove(&label);
+                }
+                return Err(error.to_string());
+            }
+        } else {
+            set_remote_window_metadata(
+                &app,
+                &label,
+                &window_url,
+                &title,
+                allow_linux_tls_certificate,
+            )?;
+            #[cfg(target_os = "linux")]
+            linux_tls::ensure_remote_window_tls_handler(&existing, &app, &label)?;
+            let _ = existing.set_title(&title);
+            let _ = existing.navigate(window_url.clone());
+            apply_remote_window_title(&app, &label);
+            let _ = existing.show();
+            let _ = existing.unminimize();
+            let _ = existing.set_focus();
+            return Ok(());
+        }
+    } else {
+        app.state::<AppState>()
+            .remote_profiles
+            .lock()
+            .map_err(|err| err.to_string())?
+            .insert(label.clone(), requested_profile.clone());
+    }
 
-        let _ = existing.set_title(&title);
-        let _ = existing.navigate(window_url.clone());
-        apply_remote_window_title(&app, &label);
-        let _ = existing.show();
-        let _ = existing.unminimize();
-        let _ = existing.set_focus();
-        return Ok(());
+    if let Err(error) = set_remote_window_metadata(
+        &app,
+        &label,
+        &window_url,
+        &title,
+        allow_linux_tls_certificate,
+    ) {
+        clear_remote_window_metadata(&app, &label, &requested_profile);
+        if let Some(session_id) = requested_profile.proxy_session_id() {
+            schedule_remote_proxy_session_cleanup(app.clone(), session_id.to_string());
+        }
+        if let Some(session_id) = previous_profile
+            .as_ref()
+            .and_then(RemoteProfileIdentity::proxy_session_id)
+        {
+            schedule_remote_proxy_session_cleanup(app.clone(), session_id.to_string());
+        }
+        return Err(error);
     }
 
     #[cfg(target_os = "linux")]
@@ -388,17 +507,56 @@ async fn open_remote_window_impl(
     #[cfg(not(target_os = "linux"))]
     let initial_url = window_url.clone();
 
-    let window = WebviewWindowBuilder::new(
+    let profile_key = match requested_profile.proxy_session_id() {
+        Some(session_id) => format!("{}\0{session_id}", payload.id),
+        None => payload.id.clone(),
+    };
+    let profile_hash = Sha256::digest(profile_key.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let data_directory = app
+        .state::<AppState>()
+        .webview_data_directory
+        .join("remote")
+        .join(profile_hash);
+    let builder = WebviewWindowBuilder::new(
         &app,
         label.clone(),
         WebviewUrl::External(initial_url.clone()),
     )
+    .data_directory(data_directory)
+    .incognito(requested_profile.proxy_session_id().is_some())
     .initialization_script(REMOTE_WINDOW_CONTEXT_SCRIPT)
     .title(title)
     .inner_size(1400.0, 900.0)
-    .min_inner_size(800.0, 600.0)
-    .build()
-    .map_err(|err| err.to_string())?;
+    .min_inner_size(800.0, 600.0);
+    #[cfg(target_os = "macos")]
+    let builder = builder.data_store_identifier(profile_identifier(&profile_key));
+    let window = match builder.build() {
+        Ok(window) => window,
+        Err(error) => {
+            clear_remote_window_metadata(&app, &label, &requested_profile);
+            if let Some(session_id) = requested_profile.proxy_session_id() {
+                schedule_remote_proxy_session_cleanup(app.clone(), session_id.to_string());
+            }
+            if let Some(session_id) = previous_profile
+                .as_ref()
+                .and_then(RemoteProfileIdentity::proxy_session_id)
+            {
+                schedule_remote_proxy_session_cleanup(app.clone(), session_id.to_string());
+            }
+            return Err(error.to_string());
+        }
+    };
+
+    if let Some(session_id) = previous_profile
+        .as_ref()
+        .filter(|profile| *profile != &requested_profile)
+        .and_then(RemoteProfileIdentity::proxy_session_id)
+    {
+        schedule_remote_proxy_session_cleanup(app.clone(), session_id.to_string());
+    }
 
     #[cfg(windows)]
     shutdown::schedule_windows_session_end_handler(&window)?;
@@ -413,27 +571,18 @@ async fn open_remote_window_impl(
 
     let app_handle = app.clone();
     let label_for_cleanup = label.clone();
+    let profile_for_cleanup = requested_profile.clone();
     window.on_window_event(move |event| {
         if matches!(event, WindowEvent::Focused(_)) {
             update_workspace_menu_state(&app_handle);
         }
         if let WindowEvent::Destroyed = event {
-            if let Ok(mut origins) = app_handle.state::<AppState>().remote_origins.lock() {
-                origins.remove(&label_for_cleanup);
+            if !clear_remote_window_metadata(&app_handle, &label_for_cleanup, &profile_for_cleanup)
+            {
+                return;
             }
-            if let Ok(mut sessions) = app_handle.state::<AppState>().remote_proxy_sessions.lock() {
-                if let Some(session_id) = sessions.remove(&label_for_cleanup) {
-                    schedule_remote_proxy_session_cleanup(app_handle.clone(), session_id);
-                }
-            }
-            if let Ok(mut values) = app_handle.state::<AppState>().remote_skip_tls_verify.lock() {
-                values.remove(&label_for_cleanup);
-            }
-            if let Ok(mut handlers) = app_handle.state::<AppState>().remote_tls_handlers.lock() {
-                handlers.remove(&label_for_cleanup);
-            }
-            if let Ok(mut titles) = app_handle.state::<AppState>().remote_titles.lock() {
-                titles.remove(&label_for_cleanup);
+            if let Some(session_id) = profile_for_cleanup.proxy_session_id() {
+                schedule_remote_proxy_session_cleanup(app_handle.clone(), session_id.to_string());
             }
         }
     });
@@ -441,8 +590,67 @@ async fn open_remote_window_impl(
     Ok(())
 }
 
+fn set_remote_window_metadata(
+    app: &AppHandle,
+    label: &str,
+    url: &Url,
+    title: &str,
+    allow_linux_tls_certificate: bool,
+) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    state
+        .remote_origins
+        .lock()
+        .map_err(|err| err.to_string())?
+        .insert(label.to_string(), url.origin().ascii_serialization());
+    state
+        .remote_skip_tls_verify
+        .lock()
+        .map_err(|err| err.to_string())?
+        .insert(label.to_string(), allow_linux_tls_certificate);
+    state
+        .remote_titles
+        .lock()
+        .map_err(|err| err.to_string())?
+        .insert(label.to_string(), title.to_string());
+    Ok(())
+}
+
+fn clear_remote_window_metadata(
+    app: &AppHandle,
+    label: &str,
+    profile: &RemoteProfileIdentity,
+) -> bool {
+    let state = app.state::<AppState>();
+    let Ok(mut profiles) = state.remote_profiles.lock() else {
+        return false;
+    };
+    if profiles.get(label) != Some(profile) {
+        return false;
+    }
+    profiles.remove(label);
+    drop(profiles);
+    if let Ok(mut values) = state.remote_origins.lock() {
+        values.remove(label);
+    }
+    if let Ok(mut values) = state.remote_skip_tls_verify.lock() {
+        values.remove(label);
+    }
+    if let Ok(mut values) = state.remote_tls_handlers.lock() {
+        values.remove(label);
+    }
+    if let Ok(mut values) = state.remote_titles.lock() {
+        values.remove(label);
+    }
+    true
+}
+
 #[tauri::command]
-fn needs_local_certificate_install() -> Result<bool, String> {
+fn needs_local_certificate_install(
+    window: tauri::WebviewWindow,
+    state: tauri::State<AppState>,
+) -> Result<bool, String> {
+    require_local_app_window(&window, &state)?;
     #[cfg(not(target_os = "linux"))]
     {
         let local_cert = cert_manager::ensure_local_cert().map_err(|err| {
@@ -460,7 +668,13 @@ fn needs_local_certificate_install() -> Result<bool, String> {
 }
 
 #[tauri::command]
-async fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Result<(), String> {
+async fn open_remote_window(
+    window: tauri::WebviewWindow,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    payload: RemoteWindowPayload,
+) -> Result<(), String> {
+    require_local_app_window(&window, &state)?;
     #[cfg(not(target_os = "linux"))]
     {
         let entry_url = payload
@@ -518,31 +732,49 @@ fn emit_folder_drop_event(
     }
 }
 
-fn reload_main_window(app_handle: &AppHandle) {
-    client_state::before_main_window_navigation(
+fn reload_target_window(app_handle: &AppHandle) {
+    let Some(window) = local_windows::targeted_window(app_handle) else {
+        return;
+    };
+    let label = window.label().to_string();
+    if identity::local_window_id(&label).is_err() {
+        let _ = window.reload();
+        return;
+    }
+    let target_label = label.clone();
+    client_state::before_window_navigation(
         app_handle,
+        label,
         client_state::NavigationKind::Reload,
         None,
-        |app| {
-            let window = app
-                .get_webview_window("main")
-                .ok_or_else(|| "main window not found for reload".to_string())?;
-            window
+        move |app| {
+            app.get_webview_window(&target_label)
+                .ok_or_else(|| "local window not found for reload".to_string())?
                 .reload()
-                .map_err(|err| format!("failed to reload main window: {err}"))
+                .map_err(|err| format!("failed to reload local window: {err}"))
         },
     );
 }
 
-fn force_reload_main_window(app_handle: &AppHandle) {
-    client_state::before_main_window_navigation(
+fn force_reload_target_window(app_handle: &AppHandle) {
+    let Some(window) = local_windows::targeted_window(app_handle) else {
+        return;
+    };
+    let label = window.label().to_string();
+    if identity::local_window_id(&label).is_err() {
+        let _ = window.reload();
+        return;
+    }
+    let target_label = label.clone();
+    client_state::before_window_navigation(
         app_handle,
+        label,
         client_state::NavigationKind::ForceReload,
         None,
-        |app| {
+        move |app| {
             let window = app
-                .get_webview_window("main")
-                .ok_or_else(|| "main window not found for force reload".to_string())?;
+                .get_webview_window(&target_label)
+                .ok_or_else(|| "local window not found for force reload".to_string())?;
             if let Ok(mut url) = window.url() {
                 if should_allow_internal(&url) {
                     let reload_token = SystemTime::now()
@@ -580,7 +812,7 @@ fn force_reload_main_window(app_handle: &AppHandle) {
 }
 
 fn toggle_fullscreen_window(app_handle: &AppHandle) {
-    if let Some(window) = app_handle.get_webview_window("main") {
+    if let Some(window) = local_windows::targeted_window(app_handle) {
         let next_fullscreen = !window.is_fullscreen().unwrap_or(false);
         let _ = window.set_fullscreen(next_fullscreen);
         if cfg!(not(target_os = "macos")) {
@@ -593,6 +825,32 @@ fn toggle_fullscreen_window(app_handle: &AppHandle) {
     }
 }
 
+fn set_target_zoom(app: &AppHandle, window: &tauri::WebviewWindow, zoom: f64) {
+    if identity::local_window_id(window.label()).is_ok() {
+        client_state::set_local_window_zoom(app, window.label(), zoom);
+        return;
+    }
+    let zoom = zoom.clamp(0.25, 5.0);
+    if window.set_zoom(zoom).is_ok() {
+        if let Ok(mut levels) = app.state::<AppState>().remote_zoom_levels.lock() {
+            levels.insert(window.label().to_string(), zoom);
+        }
+    }
+}
+
+fn target_zoom(app: &AppHandle, window: &tauri::WebviewWindow) -> f64 {
+    if identity::local_window_id(window.label()).is_ok() {
+        client_state::local_window_zoom(app, window.label())
+    } else {
+        app.state::<AppState>()
+            .remote_zoom_levels
+            .lock()
+            .ok()
+            .and_then(|levels| levels.get(window.label()).copied())
+            .unwrap_or(client_state::DEFAULT_ZOOM_LEVEL)
+    }
+}
+
 fn fullscreen_shortcut() -> Option<Shortcut> {
     if cfg!(target_os = "macos") {
         None
@@ -601,9 +859,23 @@ fn fullscreen_shortcut() -> Option<Shortcut> {
     }
 }
 
+fn update_fullscreen_shortcut(app: &AppHandle) {
+    let Some(shortcut) = fullscreen_shortcut() else {
+        return;
+    };
+    let local_focused = app.webview_windows().into_values().any(|window| {
+        identity::local_window_id(window.label()).is_ok() && window.is_focused().unwrap_or(false)
+    });
+    if local_focused {
+        let _ = app.global_shortcut().register(shortcut);
+    } else {
+        let _ = app.global_shortcut().unregister(shortcut);
+    }
+}
+
 #[cfg(windows)]
-fn set_windows_app_user_model_id() {
-    let app_id: Vec<u16> = OsStr::new(WINDOWS_APP_USER_MODEL_ID)
+fn set_windows_app_user_model_id(identifier: &str) {
+    let app_id: Vec<u16> = OsStr::new(identifier)
         .encode_wide()
         .chain(iter::once(0))
         .collect();
@@ -615,19 +887,25 @@ fn set_windows_app_user_model_id() {
 }
 
 #[cfg(not(windows))]
-fn set_windows_app_user_model_id() {}
+fn set_windows_app_user_model_id(_identifier: &str) {}
 
 #[cfg(windows)]
-fn isolate_windows_webview_profile() {
+fn isolate_windows_webview_profile(scope: &identity::IdentityScope) {
     if std::env::var_os("WEBVIEW2_USER_DATA_FOLDER").is_some() {
         return;
     }
-    if let Some(root) = dirs::data_local_dir() {
-        std::env::set_var(
-            "WEBVIEW2_USER_DATA_FOLDER",
-            root.join("ai.neuralnomads.codenomad.client-v2"),
-        );
-    }
+    std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &scope.webview_data_directory);
+}
+
+fn schedule_launch_drain(app: AppHandle, queue: Arc<launch::LaunchQueue>) {
+    let dispatch = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        for intent in queue.drain() {
+            if let Err(error) = local_windows::handle_intent(&dispatch, intent) {
+                eprintln!("[tauri-startup] launch intent failed: {error}");
+            }
+        }
+    });
 }
 
 fn main() {
@@ -637,14 +915,49 @@ fn main() {
     }
 
     let _ = rustls::crypto::ring::default_provider().install_default();
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let home = dirs::home_dir().unwrap_or_else(|| cwd.clone());
+    let local_data = dirs::data_local_dir().unwrap_or_else(|| home.clone());
+    let scope = identity::resolve_scope(
+        std::env::var("CODENOMAD_UPDATE_CHANNEL").ok().as_deref(),
+        std::env::var("CLI_CONFIG").ok().as_deref(),
+        env!("CARGO_PKG_VERSION"),
+        !is_dev_mode(),
+        &cwd,
+        &home,
+        &local_data,
+    );
     #[cfg(windows)]
-    isolate_windows_webview_profile();
+    isolate_windows_webview_profile(&scope);
+
+    let launch_queue = Arc::new(launch::LaunchQueue::default());
+    launch_queue.enqueue(launch::parse_launch_intent(
+        &std::env::args().skip(1).collect::<Vec<_>>(),
+        &cwd,
+    ));
+    let singleton_queue = Arc::clone(&launch_queue);
+    let single_instance = tauri_plugin_single_instance::init(move |app, args, callback_cwd| {
+        let cwd = std::path::PathBuf::from(callback_cwd);
+        let arguments = args.into_iter().skip(1).collect::<Vec<_>>();
+        #[cfg(windows)]
+        let intent = launch::parse_windows_forwarded_launch_intent(&arguments, &cwd);
+        #[cfg(not(windows))]
+        let intent = launch::parse_launch_intent(&arguments, &cwd);
+        singleton_queue.enqueue(intent);
+        schedule_launch_drain(app.clone(), Arc::clone(&singleton_queue));
+    });
 
     let navigation_guard: TauriPlugin<Wry, ()> = PluginBuilder::new("external-link-guard")
         .on_navigation(|webview, url| intercept_navigation(webview, url))
         .build();
 
+    let mut context = tauri::generate_context!();
+    context.config_mut().identifier = scope.identifier.clone();
+    let setup_scope = scope.clone();
+    let setup_queue = Arc::clone(&launch_queue);
+
     tauri::Builder::default()
+        .plugin(single_instance)
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(
@@ -662,27 +975,42 @@ fn main() {
         )
         .plugin(tauri_plugin_notification::init())
         .plugin(navigation_guard)
+        .manage(local_windows::LocalWindows::default())
         .manage(AppState {
             manager: CliProcessManager::new(),
-            wake_lock: Mutex::new(None),
+            wake_lock: Mutex::new(WakeLockState::default()),
             remote_origins: Mutex::new(HashMap::new()),
-            remote_proxy_sessions: Mutex::new(HashMap::new()),
+            remote_profiles: Mutex::new(HashMap::new()),
             remote_skip_tls_verify: Mutex::new(HashMap::new()),
             remote_tls_handlers: Mutex::new(HashSet::new()),
             remote_titles: Mutex::new(HashMap::new()),
+            remote_zoom_levels: Mutex::new(HashMap::new()),
             workspace_menu_items: Mutex::new(None),
-            workspace_menu_requested_enabled: Mutex::new(false),
+            webview_data_directory: setup_scope.webview_data_directory.clone(),
+            scoped_profile: setup_scope.scoped,
         })
         .on_page_load(|webview, payload| {
-            if webview.label() == "main" && payload.event() == PageLoadEvent::Started {
-                if let Ok(mut enabled) = webview
-                    .app_handle()
-                    .state::<AppState>()
-                    .workspace_menu_requested_enabled
-                    .lock()
-                {
-                    *enabled = false;
+            if identity::local_window_id(webview.label()).is_ok()
+                && payload.event() == PageLoadEvent::Started
+            {
+                let app = webview.app_handle();
+                let managed_backend = app.state::<AppState>().manager.status().url;
+                if is_allowed_local_origin(payload.url(), managed_backend.as_deref()) {
+                    if let (Ok(window_id), Some(state)) = (
+                        identity::local_window_id(webview.label()),
+                        app.try_state::<client_state::ClientState>(),
+                    ) {
+                        if let Err(error) =
+                            state.stage_renderer_page_load(&window_id, payload.url())
+                        {
+                            eprintln!("[client-state] failed to stage renderer page load: {error}");
+                        }
+                    }
                 }
+                let _ = webview
+                    .app_handle()
+                    .state::<local_windows::LocalWindows>()
+                    .set_workspace_menu_enabled(webview.label(), false);
                 update_workspace_menu_state(&webview.app_handle());
             }
             if matches!(
@@ -692,51 +1020,30 @@ fn main() {
                 apply_remote_window_title(&webview.app_handle(), webview.label());
             }
         })
-        .setup(|app| {
-            set_windows_app_user_model_id();
-            let client_state = client_state::ClientState::initialize(&app.handle());
+        .setup(move |app| {
+            set_windows_app_user_model_id(&setup_scope.identifier);
+            let client_state = client_state::ClientState::initialize(
+                &app.handle(),
+                setup_scope.client_state_directory.as_deref(),
+            );
             app.manage(client_state);
             app.manage(shutdown::ShutdownCoordinator::default());
             build_menu(&app.handle())?;
-            client_state::setup_main_window(&app.handle())
+            local_windows::restore_windows(&app.handle())
                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
-            if let Some(window) = app.get_webview_window("main") {
-                #[cfg(windows)]
-                shutdown::schedule_windows_session_end_handler(&window)
-                    .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
-                let _ = window.eval(LOCAL_WINDOW_CONTEXT_SCRIPT);
-                let app_handle = app.handle().clone();
-                window.on_window_event(move |event| {
-                    if matches!(event, WindowEvent::Focused(_)) {
-                        update_workspace_menu_state(&app_handle);
-                    }
-                });
-            }
-            if let Some(shortcut) = fullscreen_shortcut() {
-                let shortcut_manager = app.handle().global_shortcut();
-                let _ = shortcut_manager.register(shortcut.clone());
-
-                if let Some(window) = app.get_webview_window("main") {
-                    let app_handle = app.handle().clone();
-                    window.on_window_event(move |event| {
-                        if let WindowEvent::Focused(focused) = event {
-                            let shortcut_manager = app_handle.global_shortcut();
-                            if *focused {
-                                let _ = shortcut_manager.register(shortcut.clone());
-                            } else {
-                                let _ = shortcut_manager.unregister(shortcut.clone());
-                            }
-                        }
-                    });
-                }
-            }
+            schedule_launch_drain(app.handle().clone(), Arc::clone(&setup_queue));
+            update_fullscreen_shortcut(&app.handle());
 
             let dev_mode = is_dev_mode();
             let app_handle = app.handle().clone();
             let manager = app.state::<AppState>().manager.clone();
             std::thread::spawn(move || {
                 if let Err(err) = manager.start(app_handle.clone(), dev_mode) {
-                    let _ = app_handle.emit("cli:error", json!({"message": err.to_string()}));
+                    local_windows::emit_all(
+                        &app_handle,
+                        "cli:error",
+                        json!({"message": err.to_string()}),
+                    );
                 }
             });
             Ok(())
@@ -751,10 +1058,15 @@ fn main() {
             client_state::client_state_claim_access,
             client_state::client_state_load,
             client_state::client_state_save,
+            client_state::client_state_commit_partitions,
+            client_state::client_state_load_partition,
             client_state::client_state_set_restore_enabled,
             client_state::client_state_clear,
             client_state::client_state_renderer_flushed,
             client_state::client_state_navigation_flushed,
+            local_windows::desktop_launch_ready,
+            local_windows::desktop_launch_next_folder,
+            local_windows::desktop_launch_acknowledge_folder,
             windows_update::install_stable_update,
             workspace_open::open_workspace_target,
             set_workspace_menu_enabled
@@ -769,28 +1081,28 @@ fn main() {
                 | "open-workspace-editor-cursor"
                 | "open-workspace-editor-zed"
                 | "open-workspace-editor-vscodium") => {
-                    if let Some(window) = app_handle.get_webview_window("main") {
-                        if action.starts_with("open-workspace-")
-                            && !window.is_focused().unwrap_or(false)
-                        {
-                            return;
-                        }
+                    if let Some(window) = local_windows::focused_local_window(app_handle) {
                         let _ = window.emit("menu:action", action);
                     }
                 }
+                "new-window" => {
+                    if let Err(error) = local_windows::create_new_window(app_handle) {
+                        eprintln!("[tauri] failed to create local window: {error}");
+                    }
+                }
                 "quit" => {
-                    app_handle.exit(0);
+                    shutdown::request(app_handle.clone());
                 }
 
                 // View menu
                 "reload" => {
-                    reload_main_window(app_handle);
+                    reload_target_window(app_handle);
                 }
                 "force_reload" => {
-                    force_reload_main_window(app_handle);
+                    force_reload_target_window(app_handle);
                 }
                 "toggle_devtools" => {
-                    if let Some(window) = app_handle.get_webview_window("main") {
+                    if let Some(window) = local_windows::targeted_window(app_handle) {
                         if window.is_devtools_open() {
                             window.close_devtools();
                         } else {
@@ -799,18 +1111,21 @@ fn main() {
                     }
                 }
                 "reset_zoom" => {
-                    client_state::set_main_window_zoom(
-                        app_handle,
-                        client_state::DEFAULT_ZOOM_LEVEL,
-                    );
+                    if let Some(window) = local_windows::targeted_window(app_handle) {
+                        set_target_zoom(app_handle, &window, client_state::DEFAULT_ZOOM_LEVEL);
+                    }
                 }
                 "zoom_in" => {
-                    let zoom_level = client_state::main_window_zoom(app_handle);
-                    client_state::set_main_window_zoom(app_handle, zoom_level + ZOOM_STEP);
+                    if let Some(window) = local_windows::targeted_window(app_handle) {
+                        let zoom = target_zoom(app_handle, &window);
+                        set_target_zoom(app_handle, &window, zoom + ZOOM_STEP);
+                    }
                 }
                 "zoom_out" => {
-                    let zoom_level = client_state::main_window_zoom(app_handle);
-                    client_state::set_main_window_zoom(app_handle, zoom_level - ZOOM_STEP);
+                    if let Some(window) = local_windows::targeted_window(app_handle) {
+                        let zoom = target_zoom(app_handle, &window);
+                        set_target_zoom(app_handle, &window, zoom - ZOOM_STEP);
+                    }
                 }
 
                 "toggle_fullscreen" => {
@@ -819,17 +1134,17 @@ fn main() {
 
                 // Window menu
                 "minimize" => {
-                    if let Some(window) = app_handle.get_webview_window("main") {
+                    if let Some(window) = local_windows::targeted_window(app_handle) {
                         let _ = window.minimize();
                     }
                 }
                 "zoom" => {
-                    if let Some(window) = app_handle.get_webview_window("main") {
+                    if let Some(window) = local_windows::targeted_window(app_handle) {
                         let _ = window.maximize();
                     }
                 }
                 "close_window" => {
-                    if let Some(window) = app_handle.get_webview_window("main") {
+                    if let Some(window) = local_windows::targeted_window(app_handle) {
                         let _ = window.close();
                     }
                 }
@@ -839,7 +1154,7 @@ fn main() {
                     {
                         let app_handle = app_handle.clone();
                         tauri::async_runtime::spawn(run_update_with_fallback(
-                            windows_update::install_stable_update(),
+                            windows_update::install_stable_update_impl(),
                             move || open_releases_page(&app_handle),
                         ));
                     }
@@ -849,7 +1164,7 @@ fn main() {
                 }
                 // App menu (macOS)
                 "hide" => {
-                    if let Some(window) = app_handle.get_webview_window("main") {
+                    if let Some(window) = local_windows::targeted_window(app_handle) {
                         let _ = window.hide();
                     }
                 }
@@ -867,7 +1182,7 @@ fn main() {
                 }
             }
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application")
         .run(|app_handle, event| match event {
             tauri::RunEvent::ExitRequested { api, .. } => {
@@ -900,36 +1215,62 @@ fn main() {
             }
             tauri::RunEvent::WindowEvent {
                 label,
+                event: tauri::WindowEvent::Focused(focused),
+                ..
+            } => {
+                if focused && identity::local_window_id(&label).is_ok() {
+                    app_handle
+                        .state::<local_windows::LocalWindows>()
+                        .mark_focused(&app_handle, &label);
+                }
+                update_workspace_menu_state(&app_handle);
+                update_fullscreen_shortcut(&app_handle);
+            }
+            tauri::RunEvent::WindowEvent {
+                label,
                 event: tauri::WindowEvent::CloseRequested { api, .. },
                 ..
             } => {
-                if label == "main" {
-                    if shutdown::main_window_close_allowed(&app_handle) {
-                        return;
-                    }
-                    let final_window = app_handle.webview_windows().len() == 1;
-                    if shutdown::exit_allowed(&app_handle) {
-                        return;
-                    }
-                    api.prevent_close();
-                    if final_window {
-                        shutdown::request(app_handle.clone());
-                    } else {
-                        shutdown::request_main_window_close(app_handle.clone());
-                    }
+                if shutdown::exit_allowed(&app_handle) {
                     return;
                 }
-                // Let windows close normally. App shutdown is handled only after the
-                // last window is actually gone so remote windows can outlive `main`.
+                let final_window = app_handle.webview_windows().len() == 1;
+                if final_window {
+                    api.prevent_close();
+                    shutdown::request(app_handle.clone());
+                    return;
+                }
+                if identity::local_window_id(&label).is_ok()
+                    && !shutdown::local_window_close_allowed(&app_handle, &label)
+                {
+                    api.prevent_close();
+                    shutdown::request_local_window_close(app_handle.clone(), label);
+                }
             }
             tauri::RunEvent::WindowEvent {
                 label,
                 event: tauri::WindowEvent::Destroyed,
                 ..
             } => {
-                if label == "main" {
-                    shutdown::main_window_destroyed(app_handle.clone());
+                if let Ok(window_id) = identity::local_window_id(&label) {
+                    app_handle
+                        .state::<local_windows::LocalWindows>()
+                        .remove_runtime(&label);
+                    if let Some(state) = app_handle.try_state::<client_state::ClientState>() {
+                        state.unregister_window(&window_id);
+                    }
                 }
+                if let Ok(mut wake) = app_handle.state::<AppState>().wake_lock.lock() {
+                    wake.labels.remove(&label);
+                    if wake.labels.is_empty() {
+                        wake.handle.take();
+                    }
+                }
+                if let Ok(mut zoom) = app_handle.state::<AppState>().remote_zoom_levels.lock() {
+                    zoom.remove(&label);
+                }
+                update_workspace_menu_state(&app_handle);
+                update_fullscreen_shortcut(&app_handle);
                 if !app_handle.webview_windows().is_empty() {
                     return;
                 }
@@ -937,6 +1278,18 @@ fn main() {
                 // Stop the CLI only when the final window is gone and the app is
                 // truly exiting.
                 shutdown::request(app_handle.clone());
+            }
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => {
+                let reopened = app_handle
+                    .state::<local_windows::LocalWindows>()
+                    .mru_label()
+                    .is_some_and(|label| local_windows::focus(app_handle, &label));
+                if !reopened {
+                    if let Err(error) = local_windows::create_new_window(app_handle) {
+                        eprintln!("[tauri] failed to create local window on reopen: {error}");
+                    }
+                }
             }
             _ => {}
         });
@@ -975,7 +1328,13 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
         submenus.push(app_menu);
     }
 
-    // File menu - create New Instance with accelerator
+    let new_window_item = MenuItem::with_id(
+        app,
+        "new-window",
+        "New Window",
+        true,
+        Some("CmdOrCtrl+Shift+N"),
+    )?;
     let new_instance_item = MenuItem::with_id(
         app,
         "new-instance",
@@ -1016,8 +1375,6 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
 
     let file_menu = if is_mac {
         SubmenuBuilder::new(app, "File")
-            .item(&new_instance_item)
-            .separator()
             .item(&open_folder_item)
             .item(&open_terminal_item)
             .item(&open_editor_menu)
@@ -1026,8 +1383,6 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
             .build()?
     } else {
         SubmenuBuilder::new(app, "File")
-            .item(&new_instance_item)
-            .separator()
             .item(&open_folder_item)
             .item(&open_terminal_item)
             .item(&open_editor_menu)
@@ -1120,6 +1475,9 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     // Window menu
     let window_menu = if is_linux {
         SubmenuBuilder::new(app, "Window")
+            .item(&new_window_item)
+            .item(&new_instance_item)
+            .separator()
             .text("minimize", "Minimize")
             .text("zoom", "Zoom")
             .separator()
@@ -1127,11 +1485,17 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
             .build()?
     } else if is_mac {
         SubmenuBuilder::new(app, "Window")
+            .item(&new_window_item)
+            .item(&new_instance_item)
+            .separator()
             .minimize()
             .maximize()
             .build()?
     } else {
         SubmenuBuilder::new(app, "Window")
+            .item(&new_window_item)
+            .item(&new_instance_item)
+            .separator()
             .minimize()
             .maximize()
             .separator()
@@ -1193,8 +1557,9 @@ fn build_about_metadata(version: &str, include_update_link: bool) -> AboutMetada
 #[cfg(test)]
 mod menu_tests {
     use super::{
-        build_about_metadata, run_update_with_fallback, should_allow_registered_origin,
-        RELEASES_URL, REMOTE_WINDOW_CONTEXT_SCRIPT,
+        build_about_metadata, is_allowed_local_origin, run_update_with_fallback,
+        should_allow_registered_origin, should_recreate_remote_window, RemoteProfileIdentity,
+        WakeLockState, RELEASES_URL, REMOTE_WINDOW_CONTEXT_SCRIPT,
     };
     use serde_json::json;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -1260,6 +1625,33 @@ mod menu_tests {
             .as_array()
             .unwrap()
             .contains(&json!("remote-window-notifications")));
+        assert_eq!(config["app"]["windows"], json!([]));
+        let local: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/main-window.json")).unwrap();
+        assert_eq!(local["windows"], json!(["local-*"]));
+        assert!(local["permissions"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("allow-cli-restart")));
+        assert!(!capability["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|permission| permission
+                .as_str()
+                .is_some_and(|value| value.starts_with("allow-cli"))));
+    }
+
+    #[test]
+    fn wake_lock_request_labels_are_reference_counted() {
+        let mut state = WakeLockState::default();
+        state.labels.insert("local-a".into());
+        state.labels.insert("local-b".into());
+        state.labels.remove("local-a");
+        assert_eq!(
+            state.labels,
+            std::collections::HashSet::from(["local-b".to_string()])
+        );
     }
 
     #[test]
@@ -1276,6 +1668,36 @@ mod menu_tests {
         assert!(should_allow_registered_origin(
             Some(origin),
             &Url::parse("about:blank").unwrap()
+        ));
+    }
+
+    #[test]
+    fn remote_window_reuse_requires_exact_profile_identity() {
+        let direct = RemoteProfileIdentity::Direct;
+        let proxy_a = RemoteProfileIdentity::Proxy("a".into());
+        let proxy_b = RemoteProfileIdentity::Proxy("b".into());
+        assert!(!should_recreate_remote_window(Some(&direct), &direct));
+        assert!(!should_recreate_remote_window(Some(&proxy_a), &proxy_a));
+        assert!(should_recreate_remote_window(Some(&direct), &proxy_a));
+        assert!(should_recreate_remote_window(Some(&proxy_a), &direct));
+        assert!(should_recreate_remote_window(Some(&proxy_a), &proxy_b));
+        assert!(should_recreate_remote_window(None, &direct));
+    }
+
+    #[test]
+    fn local_navigation_rejects_remote_and_unrelated_loopback_origins() {
+        let managed = "http://127.0.0.1:43123";
+        assert!(is_allowed_local_origin(
+            &Url::parse("http://127.0.0.1:43123/workspace").unwrap(),
+            Some(managed),
+        ));
+        assert!(!is_allowed_local_origin(
+            &Url::parse("http://127.0.0.1:43124/workspace").unwrap(),
+            Some(managed),
+        ));
+        assert!(!is_allowed_local_origin(
+            &Url::parse("https://remote.example/workspace").unwrap(),
+            Some(managed),
         ));
     }
 }

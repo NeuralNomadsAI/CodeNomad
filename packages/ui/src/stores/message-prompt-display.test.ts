@@ -14,12 +14,14 @@ import {
 
 class MemoryStorage {
   private entries = new Map<string, string>()
+  failWrites = false
 
   getItem(key: string): string | null {
     return this.entries.has(key) ? this.entries.get(key)! : null
   }
 
   setItem(key: string, value: string): void {
+    if (this.failWrites) throw new Error("write failed")
     this.entries.set(key, value)
   }
 
@@ -33,6 +35,7 @@ class MemoryStorage {
 }
 
 type WindowWithMemoryStorage = {
+  __CODENOMAD_WINDOW_ID__?: string
   localStorage: {
     getItem(key: string): string | null
     setItem(key: string, value: string): void
@@ -185,6 +188,74 @@ describe("message prompt display overrides", () => {
     assert.equal(getPromptDisplayOverride("reopened", "session-b", "msg-2"), undefined)
     assert.deepEqual(getPromptDisplayOverride("reopened", "session-c", "msg-3"), metadata)
 
+    delete (globalThis as unknown as { window?: unknown }).window
+  })
+
+  it("keeps native window storage maps independent", () => {
+    const storage = new MemoryStorage()
+    const metadataA: PromptDisplayMetadata = { segments: [{ kind: "inline", length: 1 }] }
+    const metadataB: PromptDisplayMetadata = { segments: [{ kind: "pasted", length: 2 }] }
+
+    ;(globalThis as unknown as { window?: WindowWithMemoryStorage }).window = {
+      localStorage: storage,
+      __CODENOMAD_WINDOW_ID__: "window-a",
+    }
+    resetPromptDisplayOverrideStateForTests()
+    setPromptDisplayOverride("instance", "session", "message", metadataA)
+
+    ;(globalThis as unknown as { window?: WindowWithMemoryStorage }).window = {
+      localStorage: storage,
+      __CODENOMAD_WINDOW_ID__: "window-b",
+    }
+    resetPromptDisplayOverrideStateForTests()
+    setPromptDisplayOverride("instance", "session", "message", metadataB)
+    assert.deepEqual(getPromptDisplayOverride("instance", "session", "message"), metadataB)
+
+    ;(globalThis as unknown as { window?: WindowWithMemoryStorage }).window = {
+      localStorage: storage,
+      __CODENOMAD_WINDOW_ID__: "window-a",
+    }
+    resetPromptDisplayOverrideStateForTests()
+    assert.deepEqual(getPromptDisplayOverride("instance", "session", "message"), metadataA)
+    assert.notEqual(storage.getItem("codenomad:prompt-display:v3:window-a"), storage.getItem("codenomad:prompt-display:v3:window-b"))
+    delete (globalThis as unknown as { window?: unknown }).window
+  })
+
+  it("migrates unsuffixed v3 into an absent native window key exactly once", () => {
+    const storage = new MemoryStorage()
+    const metadata: PromptDisplayMetadata = { segments: [{ kind: "inline", length: 3 }] }
+    storage.setItem("codenomad:prompt-display:v3", JSON.stringify({ "session:message": metadata }))
+    ;(globalThis as unknown as { window?: WindowWithMemoryStorage }).window = {
+      localStorage: storage,
+      __CODENOMAD_WINDOW_ID__: "window-a",
+    }
+    resetPromptDisplayOverrideStateForTests()
+
+    assert.deepEqual(getPromptDisplayOverride("instance", "session", "message"), metadata)
+    assert.equal(storage.getItem("codenomad:prompt-display:v3"), null)
+    assert.equal(storage.getItem("codenomad:prompt-display:v3:window-a") !== null, true)
+
+    storage.setItem("codenomad:prompt-display:v3", JSON.stringify({ "other:message": metadata }))
+    resetPromptDisplayOverrideStateForTests()
+    assert.equal(getPromptDisplayOverride("instance", "other", "message"), undefined)
+    assert.equal(storage.getItem("codenomad:prompt-display:v3") !== null, true)
+    delete (globalThis as unknown as { window?: unknown }).window
+  })
+
+  it("keeps unsuffixed v3 when scoped migration persistence fails", () => {
+    const storage = new MemoryStorage()
+    const metadata: PromptDisplayMetadata = { segments: [{ kind: "pasted", length: 5 }] }
+    storage.setItem("codenomad:prompt-display:v3", JSON.stringify({ "session:message": metadata }))
+    storage.failWrites = true
+    ;(globalThis as unknown as { window?: WindowWithMemoryStorage }).window = {
+      localStorage: storage,
+      __CODENOMAD_WINDOW_ID__: "window-a",
+    }
+    resetPromptDisplayOverrideStateForTests()
+
+    assert.deepEqual(getPromptDisplayOverride("instance", "session", "message"), metadata)
+    assert.equal(storage.getItem("codenomad:prompt-display:v3") !== null, true)
+    assert.equal(storage.getItem("codenomad:prompt-display:v3:window-a"), null)
     delete (globalThis as unknown as { window?: unknown }).window
   })
 })

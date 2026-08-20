@@ -76,7 +76,8 @@ describe("client state codec", () => {
       ["non-record layout", snapshot({ layout: [] }), null],
     ]
     for (const [label, value, expected] of cases) assert.equal(decodeClientSnapshot(value), expected, label)
-    assert.equal(isFutureClientSnapshot({ version: 2 }), true, "future envelope")
+    assert.equal(isFutureClientSnapshot({ version: 3 }), true, "future envelope")
+    assert.equal(isFutureClientSnapshot({ version: 2 }), false, "partitioned envelope")
     assert.equal(isFutureClientSnapshot({ version: 1 }), false, "current envelope")
     assert.equal(normalizeRestorableSession({ tabs: [{ kind: "workspace" }], activeTabIndex: 0 }), null)
     assert.equal(normalizeWorkspace({}).expandedSessionIds, undefined)

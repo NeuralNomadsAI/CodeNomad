@@ -31,6 +31,9 @@ export const commandMessages = {
   "commands.closeInstance.label": "关闭标签页",
   "commands.closeInstance.description": "关闭当前顶层标签页",
   "commands.closeInstance.keywords": "stop, quit, close, 停止, 退出, 关闭, 标签",
+  "commands.stopInstance.label": "停止工作区",
+  "commands.stopInstance.description": "为所有窗口停止共享工作区",
+  "commands.stopInstance.keywords": "停止, 工作区, 服务器, 共享",
 
   "commands.nextInstance.label": "下一个标签页",
   "commands.nextInstance.description": "切换到下一个顶层标签页",

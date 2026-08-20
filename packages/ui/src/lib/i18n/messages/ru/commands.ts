@@ -31,6 +31,9 @@ export const commandMessages = {
   "commands.closeInstance.label": "Закрыть вкладку",
   "commands.closeInstance.description": "Закрыть текущую верхнеуровневую вкладку",
   "commands.closeInstance.keywords": "остановить, выйти, закрыть, вкладка",
+  "commands.stopInstance.label": "Остановить рабочее пространство",
+  "commands.stopInstance.description": "Остановить общее рабочее пространство во всех окнах",
+  "commands.stopInstance.keywords": "остановить, рабочее пространство, сервер, общее",
 
   "commands.nextInstance.label": "Следующая вкладка",
   "commands.nextInstance.description": "Переключиться на следующую верхнеуровневую вкладку",

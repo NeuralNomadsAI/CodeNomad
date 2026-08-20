@@ -13,6 +13,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
 base64 = "0.22"
+sha2 = "0.10"
 rustls = { version = "0.23", features = ["ring"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 regex = "1"
@@ -30,6 +31,7 @@ tauri-plugin-global-shortcut = "2"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 tauri-plugin-notification = "2"
+tauri-plugin-single-instance = "2"
 
 [target.'cfg(windows)'.dependencies]
 webview2-com = "=0.38.2"

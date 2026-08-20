@@ -10,7 +10,11 @@ Electron/Tauri -> CodeNomad Fastify server -> one shared OpenCode service
                   SolidJS UI <- /api/events <- event bridge
 ```
 
-The server uses `packages/server/src/workspaces/opencode-service.ts` for a lease-locked discovery, launcher, process-proof, and authenticated-stop lifecycle. Transferable lease proof binds the registration and endpoint credentials to the daemon PID/process-start identity, host or WSL namespace, and launch signature. Proven host shutdown delegates to native `Service.stop`; WSL uses native authenticated health stop to avoid the client's cross-namespace PID fallback. `WorkspaceManager` validates each selected directory with `client.location.get()` and stores its `LocationRef`; a workspace is a logical location owner, not an OpenCode child process.
+The server uses `packages/server/src/workspaces/opencode-service.ts` and the selected host or WSL CLI's official `service status`, `service start`, and `service get password` lifecycle to connect to one externally owned global daemon. It owns no private port/database/registration/PID and never stops the daemon on backend shutdown. WSL requires Windows localhost forwarding and performs no cross-namespace PID operations. `WorkspaceManager` validates each selected directory with `client.location.get()` and stores its `LocationRef`; explicit Stop Workspace evicts that location, while tab/window close only detaches local UI.
+
+Native desktop identity is channel plus config profile: one singleton process/backend per profile, multiple UUID windows, MRU focus on second launch, and `--new-window` for another window. Stable/dev/non-default profiles isolate native/browser/client state. OpenCode sessions/messages remain shared; tabs, drafts, views, and restore membership are per-window.
+
+Client-state V3 is a per-window envelope over the V2 content-addressed partition graph. Electron and Tauri prepare immutable partitions before atomically publishing the root, fence migration and writes on current ownership, and collect only unreferenced partitions after publication. Native SideCar/browser previews omit same-origin sandbox permission, making DOM comment inspection web-only.
 
 ## Boundaries
 
@@ -36,7 +40,7 @@ Session Shell remains separate from background Shell and PTY management. The Sta
 
 OpenCode location/workspace identity is upstream state. CodeNomad persists only its own preferences and policy metadata, including Yolo state.
 
-OpenCode V2 forces `OPENCODE_DB` to `~/.local/share/opencode2/opencode.db`; V1 and V2 databases must remain separate.
+OpenCode owns the global daemon's standard state and database. Allowed configured environment variables apply only when CodeNomad starts a missing daemon; an existing daemon is unchanged, and legacy `OPENCODE_DB`/`XDG_STATE_HOME` ownership variables are ignored.
 
 ## Entry Points
 

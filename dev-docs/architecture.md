@@ -15,19 +15,26 @@ There is no `@opencode-ai/sdk` integration and no `packages/opencode-plugin` pac
 
 ## Shared Service And Locations
 
-`packages/server/src/workspaces/opencode-service.ts` uses native discovery and headers while retaining a custom launcher that serializes lifecycle changes with cross-process leases, records the registration and authenticated endpoint, proves daemon and CodeNomad PIDs with process-start identity in the host or WSL namespace, and binds that proof to a launch command/environment hash. Live peer leases can inherit that proof; only the final verified CodeNomad process may call `Service.stop`. WSL daemons use the same authenticated graceful-stop request instead because the published fallback signals PIDs in the caller's namespace.
+`packages/server/src/workspaces/opencode-service.ts` runs the selected host or WSL CLI's official `service status`, `service start`, and `service get password` lifecycle, validates the authenticated loopback endpoint, and pins that identity while active. It connects to one externally owned global daemon and never stops it on backend shutdown. CodeNomad owns no private daemon port, database, registration, or PID.
 
-The V2 service always uses `~/.local/share/opencode2/opencode.db`. V1 and V2 must use separate databases because their schemas are incompatible.
+OpenCode owns the daemon's standard state and database. Configured allowed environment variables and `NODE_EXTRA_CA_CERTS` apply only if CodeNomad starts a missing daemon; an existing daemon is unchanged, and legacy `OPENCODE_DB`/`XDG_STATE_HOME` ownership settings are ignored. WSL support requires Windows localhost forwarding and executes the Linux CLI lifecycle inside the selected distribution without cross-namespace PID operations.
 
 `packages/server/src/workspaces/manager.ts` treats selected folders as native OpenCode locations:
 
 1. Validate the directory with `client.location.get`.
 2. Store the returned `LocationRef` and publish the logical workspace.
 3. Reuse the shared service for every additional directory.
-4. Queue eviction after the final logical owner is deleted.
-5. Flush queued evictions only during proven final shared-service shutdown, then stop only the exact daemon covered by transferable CodeNomad process proof.
+4. On explicit **Stop Workspace**, evict the location and its resources from the global service, then remove CodeNomad's logical workspace.
 
-Workspaces are not OpenCode processes and do not own ports or PIDs.
+Workspaces are not OpenCode processes and do not own ports or PIDs. Closing an ordinary tab or native window only detaches local UI state and never evicts the location.
+
+## Native Profiles, Windows, And Client State
+
+Electron and Tauri run one native singleton process and one CodeNomad backend per channel/config profile. A second launch focuses the most-recent window by default; `--new-window` creates another UUID-backed window. Stable, dev, and non-default config profiles isolate singleton identity, backend/browser storage, and client state.
+
+OpenCode sessions and messages remain shared through the global daemon. Window membership, tabs, drafts, view state, and native bounds are local to each UUID window. Client-state V3 is a per-window envelope over the V2 content-addressed partition graph: immutable partitions are prepared before atomic root publication, writes and migrations are fenced by current ownership, and garbage collection runs after publication while retaining every partition referenced by any window.
+
+Native SideCar/browser previews use a sandbox without `allow-same-origin`, so they cannot inspect the embedded DOM. DOM comment inspection is available only in the web client.
 
 ## API Boundaries
 

@@ -15,6 +15,16 @@ test("normalizes persisted window state", () => {
   )
 })
 
+test("mixed-DPI monitor selection compares intersections in physical coordinates", () => {
+  assert.deepEqual(clampWindowBounds(
+    { x: 1000, y: 500, width: 700, height: 600 },
+    [
+      { x: 0, y: 0, width: 1920, height: 1080, scaleFactor: 1 },
+      { x: 960, y: 0, width: 1280, height: 720, scaleFactor: 2 },
+    ],
+  ), { x: 1000, y: 120, width: 800, height: 600 })
+})
+
 test("normalizes unsafe zoom factors", () => {
   assert.equal(normalizeZoomFactor(Number.POSITIVE_INFINITY), 1)
   assert.equal(normalizeZoomFactor(0.01), 0.25)

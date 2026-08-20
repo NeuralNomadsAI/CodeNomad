@@ -26,6 +26,14 @@ declare global {
     isPrimary: boolean
     restoreEnabled: boolean
     snapshot: unknown | null
+    partitionProtocolVersion?: 1
+  }
+
+  interface ClientStatePartitionCommit {
+    protocolVersion: 1
+    snapshot: unknown
+    partitions: Record<string, string>
+    partitionKeys: string[]
   }
 
   interface ElectronAPI {
@@ -43,6 +51,10 @@ declare global {
       editor?: "vscode" | "cursor" | "zed" | "vscodium"
     }) => Promise<{ ok: true }>
     setWorkspaceMenuEnabled?: (enabled: boolean) => Promise<{ ok: true }>
+    newWindow?: () => Promise<{ ok: true }>
+    nextPendingFolder?: () => Promise<string | null>
+    acknowledgePendingFolder?: (folder: string, opened: boolean) => Promise<{ ok: true }>
+    onPendingFolders?: (callback: () => void) => () => void
     onMenuAction?: (callback: (action: string) => void) => () => void
     getPathForFile?: (file: File) => string | null
     requestMicrophoneAccess?: () => Promise<{ granted: boolean }>
@@ -50,6 +62,8 @@ declare global {
     claimClientStateAccess?: (accessToken: string) => Promise<boolean>
     loadClientState?: (accessToken: string) => Promise<ElectronClientStateLoadResult>
     saveClientState?: (accessToken: string, snapshot: unknown) => Promise<boolean>
+    commitClientStatePartitions?: (accessToken: string, payload: ClientStatePartitionCommit) => Promise<boolean>
+    loadClientStatePartition?: (accessToken: string, key: string) => Promise<string | null>
     setClientStateRestoreEnabled?: (accessToken: string, enabled: boolean) => Promise<boolean>
     clearClientState?: (accessToken: string) => Promise<boolean>
 
@@ -81,6 +95,9 @@ declare global {
     core?: {
       invoke: <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>
     }
+    event?: {
+      listen: (event: string, handler: (event: { payload: unknown }) => void) => Promise<() => void>
+    }
   }
 
   interface Window {
@@ -88,6 +105,7 @@ declare global {
       __CODENOMAD_EVENTS_URL__?: string
        __CODENOMAD_RUNTIME_HOST__?: "electron" | "tauri" | "web"
        __CODENOMAD_WINDOW_CONTEXT__?: "local" | "remote"
+       readonly __CODENOMAD_WINDOW_ID__?: string | null
        __CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__?: () => Promise<void>
        electronAPI?: ElectronAPI
       __TAURI__?: TauriBridge

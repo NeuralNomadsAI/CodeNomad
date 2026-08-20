@@ -94,10 +94,11 @@ dev-docs/             Development documentation
 
 ### 2. Shared Service Management
 
-- CodeNomad server discovers or launches one service through its hardened lifecycle; proven host shutdown delegates to native `Service.stop`, while WSL uses native authenticated health stop
+- CodeNomad uses the official host or WSL CLI lifecycle to connect to one externally owned global service
 - Workspace folders become validated native locations
 - UI traffic stays behind the CodeNomad proxy
-- Shutdown transfers proof to a live peer or stops only the exact proven daemon when no peer remains
+- Shutdown clears only CodeNomad's in-memory connection state and never stops the daemon
+- Explicit Stop Workspace evicts its location; tab/window close only detaches local UI
 
 ### 3. One Shared Service, Location-Scoped Clients
 
@@ -165,9 +166,11 @@ dev-docs/             Development documentation
 ## Current OpenCode Baseline
 
 - Experimental protocol client: server and UI use the same reviewed version; the runtime `opencode2` CLI is independently updated and checked through service/API compatibility, not an exact version gate
-- Service: one shared endpoint managed by CodeNomad's lease-locked process-proof lifecycle
+- Service: one externally owned global endpoint with a CodeNomad-pinned host or WSL identity
 - Workspaces: native locations/directories
-- Database: V2 always uses `~/.local/share/opencode2/opencode.db`, separate from V1
+- Database: OpenCode's global default; configured startup environment applies only when CodeNomad starts a missing daemon
+- Desktop: one singleton process/backend per channel/config profile, multiple UUID windows, and isolated stable/dev/non-default native state
+- Restore: V3 per-window envelope over a V2 content-addressed partition graph; OpenCode sessions/messages are shared while tabs/drafts/views are local
 - Events: volatile native stream with authoritative reconnect reconciliation
 - Proxy: explicit method/path allowlist; upstream additions are not automatic
 - Shell mode and instructions: native session APIs, separate from background Shell and PTY management

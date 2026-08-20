@@ -18,11 +18,13 @@ description: |
 - The only OpenCode client dependency is the experimental `@opencode-ai/client` protocol. Server and UI stay on the same reviewed release; the selected runtime CLI is independently updated and validated through service/API compatibility rather than an exact version gate. Current public `@opencode-ai/sdk` docs describe a different contract.
 - Do not use `@opencode-ai/sdk`, `@opencode-ai/sdk/v2/client`, or `createOpencodeClient()`; follow installed `@opencode-ai/client` declarations.
 - There is no `packages/opencode-plugin/`. Do not restore plugin tools, plugin routes, or plugin packaging.
-- The server owns one shared OpenCode service through `OpenCodeSharedService` and its lease-locked discovery, launcher, process-proof, and authenticated-stop lifecycle. Proven host shutdown delegates to native `Service.stop`; WSL uses native authenticated health stop to avoid the client's cross-namespace PID fallback. Workspaces are native OpenCode `Location`/directory scopes, not separate OpenCode processes.
+- The server uses the selected host or WSL CLI's official `service status`, `service start`, and `service get password` lifecycle to connect to one externally owned global OpenCode daemon. It owns no private port/database/registration/PID and never stops the daemon on backend shutdown. WSL requires Windows localhost forwarding and uses no cross-namespace PID operations.
 - The UI uses generated Promise clients from `OpenCode.make()` through the CodeNomad proxy.
 - OpenCode owns session APIs, session Shell (`client.session.shell`), session instructions (`client.session.instructions.entry`), location-scoped background Shells, and interactive PTYs. The Status panel lists `client.shell.*` records, refreshes on Shell events/reconnect, displays native metadata, and supports ownership-checked removal. Interactive `client.pty.*` terminals remain separate.
-- CodeNomad owns workspace lifecycle, directory authorization, Git status/diff/stage/unstage/commit, Yolo persistence/auto-replies, and `/api/events`.
-- V2 service startup forces `OPENCODE_DB` to `~/.local/share/opencode2/opencode.db`; never share the V1 database with V2.
+- CodeNomad owns explicit Stop Workspace eviction, directory authorization, Git status/diff/stage/unstage/commit, Yolo persistence/auto-replies, and `/api/events`. Tab/window close only detaches local UI and never evicts.
+- OpenCode owns the global daemon's standard state and database. Allowed configured environment variables apply only to `service start` for a missing daemon; an existing daemon is unchanged, and `OPENCODE_DB`/`XDG_STATE_HOME` ownership settings are ignored.
+- Native desktop identity is channel plus config profile: one singleton process/backend per profile, multiple UUID windows, second-launch focus by default, and `--new-window` for another window. Stable/dev/non-default profiles isolate native state; OpenCode sessions/messages are shared while tabs/drafts/views are per-window.
+- Client-state V3 is a per-window envelope over the V2 content-addressed partition graph with atomic publication/migration, ownership-fenced writes, and conservative post-commit GC. Native SideCar/browser previews are sandboxed without same-origin access; DOM comment inspection is web-only.
 
 ## Package Map
 
@@ -59,7 +61,7 @@ description: |
 | Avoid | Use |
 |---|---|
 | Public `@opencode-ai/sdk` examples | Installed experimental `@opencode-ai/client` declarations |
-| One `opencode serve` per workspace | One CodeNomad-managed shared service |
+| One `opencode serve` per workspace | One externally owned global daemon through the official CLI lifecycle |
 | Per-worktree clients/processes | Root proxy client plus native location/directory inputs |
 | Reintroducing `packages/opencode-plugin` or server plugin/background-process paths | Native session Shell/instructions, background `shell.*`, and separate interactive `pty.*` management |
 | OpenCode APIs for stage/commit/Yolo policy | CodeNomad routes and managers |

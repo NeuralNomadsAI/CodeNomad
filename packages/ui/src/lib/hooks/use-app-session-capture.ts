@@ -193,6 +193,13 @@ export function useAppSessionCapture() {
           ({ generation }) => acknowledgeNativeClientStateRendererFlush(generation), true),
         register<{ generation: number }>("client-state:navigation-flush-requested",
           ({ generation }) => acknowledgeNativeClientStateNavigationFlush(generation), false),
+        listen("client-state:flush-cancelled", () => {
+          nativeShutdownStarted = false
+          schedule()
+        }).then((unlisten) => {
+          if (nativeDisposed) unlisten()
+          else nativeUnlisteners.push(unlisten)
+        }),
       ]).then(() => undefined)
     : Promise.resolve()
   const markScrollAuthority = (instanceId: string, sessionId: string) => {

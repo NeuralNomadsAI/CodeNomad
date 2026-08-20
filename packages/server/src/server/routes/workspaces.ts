@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyReply } from "fastify"
 import { z } from "zod"
 import { WorkspaceManager } from "../../workspaces/manager"
-import { getWorktreeGitDiff, getWorktreeGitStatus } from "../../workspaces/git-status"
+import { getWorktreeGitDiff, getWorktreeGitStatus, invalidateWorktreeGitStatus } from "../../workspaces/git-status"
 import { commitWorktreeChanges, isGitMutationError, stageWorktreePaths, unstageWorktreePaths } from "../../workspaces/git-mutations"
 import { cloneGitRepository, isGitCloneError } from "../../workspaces/git-clone"
 import { isGitAvailable, resolveRepoRoot } from "../../workspaces/git-worktrees"
@@ -243,6 +243,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
       if (!directory) return
 
       await stageWorktreePaths({ workspaceFolder: directory, paths: body.paths })
+      await invalidateWorktreeGitStatus(directory)
       return { ok: true as const }
     } catch (error) {
       return handleWorkspaceError(error, reply)
@@ -259,6 +260,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
       if (!directory) return
 
       await unstageWorktreePaths({ workspaceFolder: directory, paths: body.paths })
+      await invalidateWorktreeGitStatus(directory)
       return { ok: true as const }
     } catch (error) {
       return handleWorkspaceError(error, reply)
@@ -275,6 +277,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
       if (!directory) return
 
       const result = await commitWorktreeChanges({ workspaceFolder: directory, message: body.message })
+      await invalidateWorktreeGitStatus(directory)
       return { ok: true as const, ...result }
     } catch (error) {
       return handleWorkspaceError(error, reply)

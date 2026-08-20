@@ -12,14 +12,14 @@
 - A CodeNomad workspace must validate through `client.location.get` before becoming ready.
 - Directory-bearing proxy input is untrusted and must resolve to the workspace root or one of its Git worktrees.
 - Session ID alone is insufficient: the proxy fetches the session and verifies `session.location.directory`.
-- Queue eviction after the final logical owner is deleted; flush it only during proven final shared-service shutdown.
+- Explicit Stop Workspace evicts the native location/resources and removes CodeNomad's logical workspace. Ordinary tab/window close only detaches local UI and never evicts.
 
 ## Shared Lifecycle
 
-- There is one shared service, client and upstream event subscription. CodeNomad keeps lease and process-identity proof around lifecycle operations, delegates proven host shutdown to native `Service.stop`, and uses native authenticated health stop for WSL.
-- A workspace stop removes location ownership; it does not stop a dedicated OpenCode process.
-- Transferable proof records registration/credentials, daemon PID and process-start identity, host/WSL namespace, and launch signature. Shutdown stops only after no live peer remains and the proof still identifies the exact daemon.
-- V2 forces `OPENCODE_DB` to `~/.local/share/opencode2/opencode.db`; V1/V2 schemas must not share a database.
+- There is one externally owned global service, one server client and one upstream event subscription. CodeNomad uses official host/WSL CLI status/start/password commands, owns no private service state or PID, and never stops the daemon on backend shutdown.
+- WSL requires Windows localhost forwarding, executes lifecycle commands inside Linux, and never uses cross-namespace PID operations.
+- A workspace stop evicts its location; it does not stop a dedicated process or the global daemon.
+- OpenCode owns standard state/database. Allowed configured environment variables apply only when starting a missing daemon; existing daemons are unchanged, and `OPENCODE_DB`/`XDG_STATE_HOME` are ignored.
 - The native event stream is volatile. Reconnect must reconcile authoritative state; use current `session.*`, `filesystem.changed`, and `config.updated` names rather than obsolete event aliases.
 
 ## Ownership Matrix
@@ -29,7 +29,7 @@
 | Session/message/Shell/instructions | OpenCode native API; session Shell remains separate from background Shell and PTY management |
 | Background Shell list/metadata/output/remove | Location-scoped OpenCode native API through CodeNomad ownership checks; Status UI refreshes on Shell events/reconnect |
 | Interactive PTYs | Separate native `pty.*` API |
-| Service discovery/start/stop | CodeNomad hardened adapter using selected OpenCode primitives |
+| Service status/start/password | CodeNomad adapter using the selected host or WSL CLI; daemon stop remains external |
 | Workspace and directory authorization | CodeNomad |
 | Git status/diff and mutations | CodeNomad |
 | Yolo policy/persistence/auto-reply | CodeNomad |

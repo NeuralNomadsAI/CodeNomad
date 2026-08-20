@@ -19,3 +19,7 @@ it("keeps navigation flushes nonterminal", () => {
   assert.match(capture, /"client-state:flush-requested",[\s\S]*?, true\)/)
   assert.match(capture, /"client-state:navigation-flush-requested",[\s\S]*?, false\)/)
 })
+
+it("resumes capture only after native shutdown cancellation", () => {
+  assert.match(capture, /listen\("client-state:flush-cancelled"[\s\S]*nativeShutdownStarted = false[\s\S]*schedule\(\)/)
+})

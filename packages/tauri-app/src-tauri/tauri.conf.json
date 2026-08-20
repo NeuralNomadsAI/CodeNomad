@@ -11,25 +11,7 @@
   "app": {
     "enableGTKAppId": true,
     "withGlobalTauri": true,
-    "windows": [
-      {
-        "label": "main",
-        "title": "CodeNomad",
-        "url": "loading.html",
-        "width": 1400,
-        "height": 900,
-        "minWidth": 800,
-        "minHeight": 600,
-        "center": true,
-        "resizable": true,
-        "fullscreen": false,
-        "decorations": true,
-        "theme": "Dark",
-        "backgroundColor": "#1a1a1a",
-        "zoomHotkeysEnabled": true,
-        "visible": false
-      }
-    ],
+    "windows": [],
     "security": {
       "assetProtocol": {
         "scope": [

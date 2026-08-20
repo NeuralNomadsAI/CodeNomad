@@ -1,4 +1,5 @@
-use crate::{client_state, AppState};
+use crate::{client_state, local_windows::LocalWindows, AppState};
+use std::collections::{HashMap, HashSet};
 #[cfg(windows)]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -9,21 +10,26 @@ use tauri::{AppHandle, Emitter, Manager};
 
 const RENDERER_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
 const SHUTDOWN_STOP_ATTEMPTS: usize = 2;
+const FLUSH_CANCELLED_EVENT: &str = "client-state:flush-cancelled";
 #[cfg(windows)]
 const WINDOWS_SESSION_END_TIMEOUT: Duration = Duration::from_secs(5);
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) enum ShutdownPhase {
-    #[default]
-    Idle,
-    WaitingForShutdownRenderer,
-    CleanupInProgress,
-    CleanupBlocked,
-    ExitAllowed,
-    WaitingForMainWindowRenderer,
-    FlushingMainWindow,
-    FlushingMainWindowForShutdown,
-    MainWindowCloseAllowed,
+#[derive(Clone, Debug)]
+struct PendingClose {
+    window_id: String,
+    generation: u64,
+    persisted: bool,
+}
+
+#[derive(Default)]
+struct ShutdownState {
+    next_generation: u64,
+    local_closes: HashMap<String, PendingClose>,
+    close_allowed: HashSet<String>,
+    global_pending: HashMap<String, u64>,
+    shutdown_started: bool,
+    cleanup_started: bool,
+    exit_allowed: bool,
 }
 
 #[derive(Default)]
@@ -33,45 +39,142 @@ pub(crate) struct ShutdownCoordinator {
     windows_session_end_started: AtomicBool,
 }
 
-#[derive(Default)]
-struct ShutdownState {
-    phase: ShutdownPhase,
-    flush_generation: u64,
-    active_flush_generation: Option<u64>,
-}
-
 impl ShutdownCoordinator {
-    fn apply(&self, event: ShutdownEvent) -> (ShutdownAction, Option<u64>) {
-        let mut state = self.state.lock().unwrap_or_else(|err| err.into_inner());
-        if let Some(generation) = event.renderer_generation() {
-            if state.active_flush_generation != Some(generation) {
-                return (ShutdownAction::None, None);
-            }
+    fn begin_local_close(&self, label: String, window_id: String, persisted: bool) -> Option<u64> {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.shutdown_started
+            || state.local_closes.contains_key(&label)
+            || state.close_allowed.contains(&label)
+        {
+            return None;
         }
-        let (next, action) = transition(state.phase, event);
-        state.phase = next;
-        if action == ShutdownAction::RequestRendererFlush {
-            state.flush_generation += 1;
-            state.active_flush_generation = Some(state.flush_generation);
-        } else if !matches!(
-            next,
-            ShutdownPhase::WaitingForShutdownRenderer | ShutdownPhase::WaitingForMainWindowRenderer
-        ) {
-            state.active_flush_generation = None;
-        }
-        (action, state.active_flush_generation)
+        state.next_generation += 1;
+        let generation = state.next_generation;
+        state.local_closes.insert(
+            label,
+            PendingClose {
+                window_id,
+                generation,
+                persisted,
+            },
+        );
+        Some(generation)
     }
 
-    fn phase(&self) -> ShutdownPhase {
+    fn acknowledge_local(
+        &self,
+        label: &str,
+        window_id: &str,
+        generation: u64,
+    ) -> Option<PendingClose> {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let pending = state.local_closes.get(label)?;
+        if pending.window_id != window_id || pending.generation != generation {
+            return None;
+        }
+        state.local_closes.remove(label)
+    }
+
+    fn begin_shutdown(
+        &self,
+        labels: impl IntoIterator<Item = String>,
+    ) -> Option<Vec<(String, u64)>> {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.shutdown_started {
+            return None;
+        }
+        state.shutdown_started = true;
+        state.local_closes.clear();
+        let mut requests = Vec::new();
+        for label in labels {
+            state.next_generation += 1;
+            let generation = state.next_generation;
+            state.global_pending.insert(label.clone(), generation);
+            requests.push((label, generation));
+        }
+        Some(requests)
+    }
+
+    fn acknowledge_global(&self, label: &str, generation: u64) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.global_pending.get(label).copied() != Some(generation) {
+            return false;
+        }
+        state.global_pending.remove(label);
+        state.global_pending.is_empty()
+    }
+
+    fn begin_cleanup(&self, deadline_reached: bool) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if !state.shutdown_started
+            || state.cleanup_started
+            || (!deadline_reached && !state.global_pending.is_empty())
+        {
+            return false;
+        }
+        state.global_pending.clear();
+        state.cleanup_started = true;
+        true
+    }
+
+    fn cleanup_failed(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.cleanup_started = false;
+        state.shutdown_started = false;
+        state.global_pending.clear();
+        state.close_allowed.clear();
+    }
+
+    fn commit_local_close(&self, label: &str) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.shutdown_started {
+            return false;
+        }
+        state.close_allowed.insert(label.to_string());
+        true
+    }
+
+    fn rollback_local_close(&self, label: &str) {
         self.state
             .lock()
-            .unwrap_or_else(|err| err.into_inner())
-            .phase
+            .unwrap_or_else(|error| error.into_inner())
+            .close_allowed
+            .remove(label);
     }
 
-    fn with_navigation<T>(&self, operation: impl FnOnce() -> T) -> Option<T> {
-        let state = self.state.lock().unwrap_or_else(|err| err.into_inner());
-        (state.phase == ShutdownPhase::Idle).then(operation)
+    fn close_allowed(&self, label: &str) -> bool {
+        self.state
+            .lock()
+            .map(|state| state.close_allowed.contains(label))
+            .unwrap_or(false)
+    }
+
+    fn exit_allowed(&self) -> bool {
+        self.state
+            .lock()
+            .map(|state| state.exit_allowed)
+            .unwrap_or(false)
+    }
+
+    fn allow_exit(&self) {
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .exit_allowed = true;
+    }
+
+    fn navigation_allowed(&self) -> bool {
+        self.state
+            .lock()
+            .map(|state| !state.shutdown_started)
+            .unwrap_or(false)
+    }
+
+    fn shutdown_started(&self) -> bool {
+        self.state
+            .lock()
+            .map(|state| state.shutdown_started)
+            .unwrap_or(true)
     }
 
     #[cfg(windows)]
@@ -80,143 +183,165 @@ impl ShutdownCoordinator {
             .windows_session_end_started
             .swap(true, Ordering::SeqCst)
     }
+}
 
-    #[cfg(windows)]
-    fn complete_windows_session_end(&self) {
-        let mut state = self.state.lock().unwrap_or_else(|err| err.into_inner());
-        state.phase = ShutdownPhase::ExitAllowed;
-        state.active_flush_generation = None;
+fn emit_flush(app: &AppHandle, label: &str, generation: u64) -> bool {
+    app.get_webview_window(label).is_some_and(|window| {
+        window
+            .emit(
+                "client-state:flush-requested",
+                client_state::RendererFlushRequest { generation },
+            )
+            .is_ok()
+    })
+}
+
+fn emit_flush_cancelled(app: &AppHandle, label: &str) {
+    if let Some(window) = app.get_webview_window(label) {
+        let _ = window.emit(FLUSH_CANCELLED_EVENT, ());
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ShutdownEvent {
-    BeginShutdown,
-    BeginMainWindowClose,
-    RendererFlushed(u64),
-    RendererUnavailable,
-    RendererTimeout(u64),
-    MainWindowFlushed,
-    MainWindowCloseFailed,
-    MainWindowDestroyed,
-    CleanupFinished,
-    CleanupFailed,
-}
-
-impl ShutdownEvent {
-    fn renderer_generation(self) -> Option<u64> {
-        match self {
-            Self::RendererFlushed(generation) | Self::RendererTimeout(generation) => {
-                Some(generation)
-            }
-            _ => None,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ShutdownAction {
-    None,
-    RequestRendererFlush,
-    FlushMainWindow,
-    CloseMainWindow,
-    StartCleanup,
-}
-
-fn transition(phase: ShutdownPhase, event: ShutdownEvent) -> (ShutdownPhase, ShutdownAction) {
-    use ShutdownAction::*;
-    use ShutdownEvent::*;
-    use ShutdownPhase::*;
-
-    match (phase, event) {
-        (Idle, BeginShutdown) => (WaitingForShutdownRenderer, RequestRendererFlush),
-        (
-            WaitingForShutdownRenderer,
-            RendererFlushed(_) | RendererUnavailable | RendererTimeout(_) | MainWindowDestroyed,
-        ) => (CleanupInProgress, StartCleanup),
-        (Idle, BeginMainWindowClose) => (WaitingForMainWindowRenderer, RequestRendererFlush),
-        (WaitingForMainWindowRenderer, RendererFlushed(_) | RendererTimeout(_)) => {
-            (FlushingMainWindow, FlushMainWindow)
-        }
-        (WaitingForMainWindowRenderer, RendererUnavailable | MainWindowDestroyed) => (Idle, None),
-        (WaitingForMainWindowRenderer, BeginShutdown) => (WaitingForShutdownRenderer, None),
-        (FlushingMainWindow, BeginShutdown) => (FlushingMainWindowForShutdown, None),
-        (FlushingMainWindow, MainWindowFlushed) => (MainWindowCloseAllowed, CloseMainWindow),
-        (FlushingMainWindow, MainWindowDestroyed) => (Idle, None),
-        (FlushingMainWindowForShutdown, MainWindowFlushed | MainWindowDestroyed) => {
-            (CleanupInProgress, StartCleanup)
-        }
-        (MainWindowCloseAllowed, MainWindowDestroyed | MainWindowCloseFailed) => (Idle, None),
-        (MainWindowCloseAllowed, BeginShutdown) => (CleanupInProgress, StartCleanup),
-        (CleanupInProgress, CleanupFinished) => (ExitAllowed, None),
-        (CleanupInProgress, CleanupFailed) => (CleanupBlocked, None),
-        (CleanupBlocked, BeginShutdown) => (CleanupInProgress, StartCleanup),
-        _ => (phase, None),
-    }
-}
-
-fn apply_event(app: AppHandle, event: ShutdownEvent) {
-    let (action, generation) = app.state::<ShutdownCoordinator>().apply(event);
-
-    match action {
-        ShutdownAction::RequestRendererFlush => request_renderer_flush(app, generation.unwrap()),
-        ShutdownAction::FlushMainWindow => flush_main_window(app),
-        ShutdownAction::CloseMainWindow => close_main_window(app),
-        ShutdownAction::StartCleanup => start_cleanup(app),
-        ShutdownAction::None => {}
-    }
-}
-
-fn request_renderer_flush(app: AppHandle, generation: u64) {
-    let Some(window) = app.get_webview_window("main") else {
-        apply_event(app, ShutdownEvent::RendererUnavailable);
+pub(crate) fn request_local_window_close(app: AppHandle, label: String) {
+    let Some(record) = app.state::<LocalWindows>().record(&label) else {
         return;
     };
-    if let Err(err) = window.emit(
-        "client-state:flush-requested",
-        client_state::RendererFlushRequest { generation },
-    ) {
-        eprintln!("[client-state] failed to request renderer shutdown flush: {err}");
+    let Some(generation) = app.state::<ShutdownCoordinator>().begin_local_close(
+        label.clone(),
+        record.id.clone(),
+        record.persisted,
+    ) else {
+        return;
+    };
+    if !emit_flush(&app, &label, generation) {
+        finish_local_close(app, label, record.id, generation);
+        return;
     }
     std::thread::spawn(move || {
         std::thread::sleep(RENDERER_FLUSH_TIMEOUT);
-        apply_event(app, ShutdownEvent::RendererTimeout(generation));
+        finish_local_close(app, label, record.id, generation);
     });
 }
 
-fn flush_main_window(app: AppHandle) {
-    std::thread::spawn(move || {
-        client_state::capture_and_flush_main_window(&app);
-        apply_event(app, ShutdownEvent::MainWindowFlushed);
-    });
-}
-
-fn close_main_window(app: AppHandle) {
-    let Some(window) = app.get_webview_window("main") else {
-        apply_event(app, ShutdownEvent::MainWindowDestroyed);
+fn finish_local_close(app: AppHandle, label: String, window_id: String, generation: u64) {
+    let Some(pending) = app
+        .state::<ShutdownCoordinator>()
+        .acknowledge_local(&label, &window_id, generation)
+    else {
         return;
     };
-    if let Err(err) = window.close() {
-        eprintln!("[client-state] failed to close main window after state flush: {err}");
-        apply_event(app, ShutdownEvent::MainWindowCloseFailed);
-    }
-}
-
-fn start_cleanup(app: AppHandle) {
     std::thread::spawn(move || {
-        let result = cleanup(&app, true);
-        match result {
-            Ok(()) => {
-                apply_event(app.clone(), ShutdownEvent::CleanupFinished);
-                app.exit(0);
-            }
-            Err(err) => {
-                eprintln!(
-                    "[tauri] shutdown cleanup remains unconfirmed after {SHUTDOWN_STOP_ATTEMPTS} attempts: {err}; keeping the app alive for a later quit retry"
-                );
-                apply_event(app, ShutdownEvent::CleanupFailed);
+        client_state::capture_and_flush_window(&app, &label);
+        if !app
+            .state::<ShutdownCoordinator>()
+            .commit_local_close(&label)
+        {
+            return;
+        }
+        if pending.persisted {
+            if let Some(state) = app.try_state::<client_state::ClientState>() {
+                if let Err(error) = state.remove_window(&pending.window_id) {
+                    eprintln!("[client-state] failed to remove closed window: {error}");
+                    app.state::<ShutdownCoordinator>()
+                        .rollback_local_close(&label);
+                    emit_flush_cancelled(&app, &label);
+                    return;
+                }
             }
         }
+        let close_app = app.clone();
+        let close_label = label.clone();
+        if app
+            .run_on_main_thread(move || {
+                if let Some(window) = close_app.get_webview_window(&close_label) {
+                    if window.close().is_err() {
+                        close_app
+                            .state::<ShutdownCoordinator>()
+                            .rollback_local_close(&close_label);
+                        emit_flush_cancelled(&close_app, &close_label);
+                    }
+                }
+            })
+            .is_err()
+        {
+            app.state::<ShutdownCoordinator>()
+                .rollback_local_close(&label);
+            emit_flush_cancelled(&app, &label);
+        }
+    });
+}
+
+pub(crate) fn request(app: AppHandle) {
+    let labels = app
+        .state::<LocalWindows>()
+        .records()
+        .into_iter()
+        .map(|record| record.label)
+        .collect::<Vec<_>>();
+    let Some(requests) = app.state::<ShutdownCoordinator>().begin_shutdown(labels) else {
+        start_cleanup(app, false);
+        return;
+    };
+    for (label, generation) in &requests {
+        if !emit_flush(&app, label, *generation) {
+            app.state::<ShutdownCoordinator>()
+                .acknowledge_global(label, *generation);
+        }
+    }
+    if requests.is_empty()
+        || requests.iter().all(|(label, generation)| {
+            app.state::<ShutdownCoordinator>()
+                .state
+                .lock()
+                .ok()
+                .is_some_and(|state| state.global_pending.get(label) != Some(generation))
+        })
+    {
+        start_cleanup(app, false);
+        return;
+    }
+    std::thread::spawn(move || {
+        std::thread::sleep(RENDERER_FLUSH_TIMEOUT);
+        start_cleanup(app, true);
+    });
+}
+
+pub(crate) fn renderer_flushed(app: AppHandle, label: String, window_id: String, generation: u64) {
+    if app
+        .state::<ShutdownCoordinator>()
+        .acknowledge_global(&label, generation)
+    {
+        start_cleanup(app, false);
+        return;
+    }
+    finish_local_close(app, label, window_id, generation);
+}
+
+fn start_cleanup(app: AppHandle, deadline_reached: bool) {
+    if !app
+        .state::<ShutdownCoordinator>()
+        .begin_cleanup(deadline_reached)
+    {
+        return;
+    }
+    std::thread::spawn(move || {
+        client_state::capture_and_flush_all_windows(&app);
+        let result = if let Some(state) = app.try_state::<AppState>() {
+            retry_bounded(SHUTDOWN_STOP_ATTEMPTS, || {
+                state.manager.stop().map_err(|error| error.to_string())
+            })
+        } else {
+            Ok(())
+        };
+        if let Err(error) = result {
+            eprintln!("[tauri] shutdown cleanup remains unconfirmed: {error}");
+            app.state::<ShutdownCoordinator>().cleanup_failed();
+            crate::local_windows::emit_all(&app, FLUSH_CANCELLED_EVENT, ());
+            return;
+        }
+        client_state::release(&app);
+        app.state::<ShutdownCoordinator>().allow_exit();
+        app.exit(0);
     });
 }
 
@@ -228,32 +353,28 @@ fn retry_bounded<E>(
     for attempt in 1..=attempts {
         match operation() {
             Ok(()) => return Ok(()),
-            Err(err) if attempt == attempts => return Err(err),
+            Err(error) if attempt == attempts => return Err(error),
             Err(_) => {}
         }
     }
     unreachable!()
 }
 
-fn cleanup(app: &AppHandle, capture_window: bool) -> Result<(), String> {
-    if capture_window {
-        client_state::capture_and_flush_main_window(app);
-    } else {
-        client_state::flush_and_release_without_window_capture(app);
-    }
-    if let Some(state) = app.try_state::<AppState>() {
-        retry_bounded(SHUTDOWN_STOP_ATTEMPTS, || {
-            state.manager.stop().map_err(|err| err.to_string())
-        })?;
-    }
-    if capture_window {
-        client_state::release(app);
-    }
-    Ok(())
+pub(crate) fn with_navigation_authority<T>(
+    app: &AppHandle,
+    operation: impl FnOnce() -> T,
+) -> Option<T> {
+    app.state::<ShutdownCoordinator>()
+        .navigation_allowed()
+        .then(operation)
 }
 
-pub(crate) fn request(app: AppHandle) {
-    apply_event(app, ShutdownEvent::BeginShutdown);
+pub(crate) fn local_window_close_allowed(app: &AppHandle, label: &str) -> bool {
+    app.state::<ShutdownCoordinator>().close_allowed(label)
+}
+
+pub(crate) fn exit_allowed(app: &AppHandle) -> bool {
+    app.state::<ShutdownCoordinator>().exit_allowed()
 }
 
 #[cfg(windows)]
@@ -264,69 +385,42 @@ pub(crate) fn request_windows_session_end(app: AppHandle) {
     {
         return;
     }
-
+    if app.state::<ShutdownCoordinator>().shutdown_started() {
+        let deadline = std::time::Instant::now() + WINDOWS_SESSION_END_TIMEOUT;
+        while !exit_allowed(&app) && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        return;
+    }
+    let _ = app
+        .state::<ShutdownCoordinator>()
+        .begin_shutdown(std::iter::empty());
     let (finished_tx, finished_rx) = std::sync::mpsc::sync_channel(1);
     let cleanup_app = app.clone();
     std::thread::spawn(move || {
-        // WM_ENDSESSION runs on the window thread. Do not request renderer flushes or
-        // native window state here: either can marshal back to the blocked thread. The
-        // bounded fallback therefore persists only state already captured in memory.
-        let result = cleanup(&cleanup_app, false);
-        if let Err(err) = &result {
-            eprintln!("[tauri] Windows session-end cleanup failed: {err}");
-        }
-        cleanup_app
-            .state::<ShutdownCoordinator>()
-            .complete_windows_session_end();
+        client_state::flush_and_release_without_window_capture(&cleanup_app);
+        let result = {
+            cleanup_app
+                .try_state::<AppState>()
+                .map(|state| {
+                    retry_bounded(SHUTDOWN_STOP_ATTEMPTS, || {
+                        state.manager.stop().map_err(|error| error.to_string())
+                    })
+                })
+                .unwrap_or(Ok(()))
+        };
+        cleanup_app.state::<ShutdownCoordinator>().allow_exit();
         let _ = finished_tx.send(result);
     });
-    match finished_rx.recv_timeout(WINDOWS_SESSION_END_TIMEOUT) {
-        Ok(Ok(())) => {}
-        Ok(Err(_)) => {}
-        Err(_) => eprintln!(
-            "[tauri] Windows session-end cleanup exceeded {:?}; returning control to Windows",
+    if finished_rx
+        .recv_timeout(WINDOWS_SESSION_END_TIMEOUT)
+        .is_err()
+    {
+        eprintln!(
+            "[tauri] Windows session-end cleanup exceeded {:?}",
             WINDOWS_SESSION_END_TIMEOUT
-        ),
+        );
     }
-}
-
-pub(crate) fn request_main_window_close(app: AppHandle) {
-    apply_event(app, ShutdownEvent::BeginMainWindowClose);
-}
-
-pub(crate) fn renderer_flushed(app: AppHandle, generation: u64) {
-    apply_event(app, ShutdownEvent::RendererFlushed(generation));
-}
-
-pub(crate) fn main_window_destroyed(app: AppHandle) {
-    apply_event(app, ShutdownEvent::MainWindowDestroyed);
-}
-
-fn phase(app: &AppHandle) -> ShutdownPhase {
-    app.state::<ShutdownCoordinator>().phase()
-}
-
-pub(crate) fn with_navigation_authority<T>(
-    app: &AppHandle,
-    operation: impl FnOnce() -> T,
-) -> Option<T> {
-    app.state::<ShutdownCoordinator>()
-        .with_navigation(operation)
-}
-
-pub(crate) fn main_window_close_allowed(app: &AppHandle) -> bool {
-    phase(app) == ShutdownPhase::MainWindowCloseAllowed
-}
-
-pub(crate) fn exit_allowed(app: &AppHandle) -> bool {
-    phase(app) == ShutdownPhase::ExitAllowed
-}
-
-#[cfg(windows)]
-fn is_confirmed_windows_session_end(message: u32, wparam: usize) -> bool {
-    use windows_sys::Win32::UI::WindowsAndMessaging::WM_ENDSESSION;
-
-    message == WM_ENDSESSION && wparam != 0
 }
 
 #[cfg(windows)]
@@ -344,8 +438,9 @@ unsafe extern "system" fn windows_session_end_proc(
     reference_data: usize,
 ) -> windows_sys::Win32::Foundation::LRESULT {
     use windows_sys::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass};
-    use windows_sys::Win32::UI::WindowsAndMessaging::{WM_NCDESTROY, WM_QUERYENDSESSION};
-
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        WM_ENDSESSION, WM_NCDESTROY, WM_QUERYENDSESSION,
+    };
     if message == WM_NCDESTROY {
         RemoveWindowSubclass(hwnd, Some(windows_session_end_proc), subclass_id);
         let result = DefSubclassProc(hwnd, message, wparam, lparam);
@@ -354,26 +449,22 @@ unsafe extern "system" fn windows_session_end_proc(
         ));
         return result;
     }
-
     if message == WM_QUERYENDSESSION {
         return 1;
     }
-
-    if is_confirmed_windows_session_end(message, wparam) {
+    if message == WM_ENDSESSION && wparam != 0 {
         let context = &*(reference_data as *const WindowsSessionEndContext);
         request_windows_session_end(context.app.clone());
         return 0;
     }
-
     DefSubclassProc(hwnd, message, wparam, lparam)
 }
 
 #[cfg(windows)]
 pub(crate) fn install_windows_session_end_handler(window: &WebviewWindow) -> Result<(), String> {
     use windows_sys::Win32::UI::Shell::SetWindowSubclass;
-
     const SUBCLASS_ID: usize = 0x434E_5345;
-    let hwnd = window.hwnd().map_err(|err| err.to_string())?;
+    let hwnd = window.hwnd().map_err(|error| error.to_string())?;
     let context = Box::into_raw(Box::new(WindowsSessionEndContext {
         app: window.app_handle().clone(),
     }));
@@ -397,214 +488,13 @@ pub(crate) fn schedule_windows_session_end_handler(window: &WebviewWindow) -> Re
     let window = window.clone();
     let app = window.app_handle().clone();
     app.run_on_main_thread(move || {
-        if let Err(err) = install_windows_session_end_handler(&window) {
-            eprintln!("[client-state] failed to install Windows session-end handler: {err}");
+        if let Err(error) = install_windows_session_end_handler(&window) {
+            eprintln!("[client-state] failed to install Windows session-end handler: {error}");
         }
     })
-    .map_err(|err| err.to_string())
+    .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::{mpsc, Arc};
-
-    #[test]
-    fn close_only_flushes_and_closes_without_cleanup() {
-        let waiting = transition(ShutdownPhase::Idle, ShutdownEvent::BeginMainWindowClose);
-        assert_eq!(
-            waiting,
-            (
-                ShutdownPhase::WaitingForMainWindowRenderer,
-                ShutdownAction::RequestRendererFlush
-            )
-        );
-        let flushing = transition(waiting.0, ShutdownEvent::RendererFlushed(1));
-        assert_eq!(
-            flushing,
-            (
-                ShutdownPhase::FlushingMainWindow,
-                ShutdownAction::FlushMainWindow
-            )
-        );
-        assert_eq!(
-            transition(flushing.0, ShutdownEvent::MainWindowFlushed),
-            (
-                ShutdownPhase::MainWindowCloseAllowed,
-                ShutdownAction::CloseMainWindow
-            )
-        );
-    }
-
-    #[test]
-    fn shutdown_promotes_each_close_only_phase() {
-        for (phase, event, expected) in [
-            (
-                ShutdownPhase::WaitingForMainWindowRenderer,
-                ShutdownEvent::BeginShutdown,
-                (
-                    ShutdownPhase::WaitingForShutdownRenderer,
-                    ShutdownAction::None,
-                ),
-            ),
-            (
-                ShutdownPhase::FlushingMainWindow,
-                ShutdownEvent::BeginShutdown,
-                (
-                    ShutdownPhase::FlushingMainWindowForShutdown,
-                    ShutdownAction::None,
-                ),
-            ),
-            (
-                ShutdownPhase::FlushingMainWindowForShutdown,
-                ShutdownEvent::MainWindowFlushed,
-                (
-                    ShutdownPhase::CleanupInProgress,
-                    ShutdownAction::StartCleanup,
-                ),
-            ),
-            (
-                ShutdownPhase::MainWindowCloseAllowed,
-                ShutdownEvent::BeginShutdown,
-                (
-                    ShutdownPhase::CleanupInProgress,
-                    ShutdownAction::StartCleanup,
-                ),
-            ),
-        ] {
-            assert_eq!(transition(phase, event), expected);
-        }
-    }
-
-    #[test]
-    fn stale_renderer_completion_cannot_advance_a_later_close() {
-        let coordinator = ShutdownCoordinator::default();
-        let (_, first) = coordinator.apply(ShutdownEvent::BeginMainWindowClose);
-        assert_eq!(first, Some(1));
-        coordinator.apply(ShutdownEvent::RendererFlushed(1));
-        coordinator.apply(ShutdownEvent::MainWindowFlushed);
-        coordinator.apply(ShutdownEvent::MainWindowDestroyed);
-        let (_, second) = coordinator.apply(ShutdownEvent::BeginMainWindowClose);
-        assert_eq!(second, Some(2));
-        for stale in [
-            ShutdownEvent::RendererFlushed(1),
-            ShutdownEvent::RendererTimeout(1),
-        ] {
-            assert_eq!(coordinator.apply(stale), (ShutdownAction::None, None));
-            assert_eq!(
-                coordinator.phase(),
-                ShutdownPhase::WaitingForMainWindowRenderer
-            );
-        }
-        assert_eq!(
-            coordinator.apply(ShutdownEvent::RendererTimeout(2)).0,
-            ShutdownAction::FlushMainWindow
-        );
-    }
-
-    #[test]
-    fn cleanup_completion_permanently_allows_exit() {
-        let completed = transition(
-            ShutdownPhase::CleanupInProgress,
-            ShutdownEvent::CleanupFinished,
-        );
-        assert_eq!(
-            completed,
-            (ShutdownPhase::ExitAllowed, ShutdownAction::None)
-        );
-        assert_eq!(
-            transition(completed.0, ShutdownEvent::BeginShutdown),
-            (ShutdownPhase::ExitAllowed, ShutdownAction::None)
-        );
-    }
-
-    #[test]
-    fn failed_cleanup_stays_alive_and_accepts_a_later_retry() {
-        assert_eq!(
-            transition(
-                ShutdownPhase::CleanupInProgress,
-                ShutdownEvent::CleanupFailed
-            ),
-            (ShutdownPhase::CleanupBlocked, ShutdownAction::None)
-        );
-        assert_eq!(
-            transition(ShutdownPhase::CleanupBlocked, ShutdownEvent::BeginShutdown),
-            (
-                ShutdownPhase::CleanupInProgress,
-                ShutdownAction::StartCleanup
-            )
-        );
-    }
-
-    #[test]
-    fn shutdown_stop_retries_are_bounded() {
-        let mut attempts = 0;
-        retry_bounded(SHUTDOWN_STOP_ATTEMPTS, || {
-            attempts += 1;
-            (attempts == SHUTDOWN_STOP_ATTEMPTS).then_some(()).ok_or(())
-        })
-        .unwrap();
-        assert_eq!(attempts, SHUTDOWN_STOP_ATTEMPTS);
-
-        let mut failures = 0;
-        assert!(retry_bounded(SHUTDOWN_STOP_ATTEMPTS, || {
-            failures += 1;
-            Err::<(), _>("unconfirmed")
-        })
-        .is_err());
-        assert_eq!(failures, SHUTDOWN_STOP_ATTEMPTS);
-    }
-
-    #[test]
-    fn shutdown_waits_for_the_final_navigation_invocation() {
-        let coordinator = Arc::new(ShutdownCoordinator::default());
-        let navigating = Arc::clone(&coordinator);
-        let (started_tx, started_rx) = mpsc::channel();
-        let (release_tx, release_rx) = mpsc::channel();
-        let navigation = std::thread::spawn(move || {
-            navigating.with_navigation(|| {
-                started_tx.send(()).unwrap();
-                release_rx.recv().unwrap();
-            })
-        });
-        started_rx.recv().unwrap();
-        let shutting_down = Arc::clone(&coordinator);
-        let (finished_tx, finished_rx) = mpsc::channel();
-        let shutdown = std::thread::spawn(move || {
-            shutting_down.apply(ShutdownEvent::BeginShutdown);
-            finished_tx.send(()).unwrap();
-        });
-        assert!(finished_rx.recv_timeout(Duration::from_millis(20)).is_err());
-        release_tx.send(()).unwrap();
-        navigation.join().unwrap();
-        finished_rx.recv_timeout(Duration::from_secs(1)).unwrap();
-        shutdown.join().unwrap();
-        assert_eq!(
-            coordinator.phase(),
-            ShutdownPhase::WaitingForShutdownRenderer
-        );
-        assert!(coordinator.with_navigation(|| ()).is_none());
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn windows_session_end_is_bounded_and_starts_once() {
-        let coordinator = ShutdownCoordinator::default();
-        assert!(coordinator.begin_windows_session_end());
-        assert!(!coordinator.begin_windows_session_end());
-        assert!(WINDOWS_SESSION_END_TIMEOUT <= Duration::from_secs(5));
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn only_confirmed_end_session_starts_shutdown() {
-        use windows_sys::Win32::UI::WindowsAndMessaging::{
-            WM_CLOSE, WM_ENDSESSION, WM_QUERYENDSESSION,
-        };
-
-        assert!(!is_confirmed_windows_session_end(WM_QUERYENDSESSION, 0));
-        assert!(is_confirmed_windows_session_end(WM_ENDSESSION, 1));
-        assert!(!is_confirmed_windows_session_end(WM_ENDSESSION, 0));
-        assert!(!is_confirmed_windows_session_end(WM_CLOSE, 0));
-    }
-}
+#[path = "shutdown_tests.rs"]
+mod tests;

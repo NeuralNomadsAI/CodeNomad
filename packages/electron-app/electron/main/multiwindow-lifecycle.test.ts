@@ -1,0 +1,131 @@
+import assert from "node:assert/strict"
+import test from "node:test"
+import { MultiwindowLifecycle, type LifecycleWindow } from "./multiwindow-lifecycle"
+
+const tick = () => new Promise((resolve) => setImmediate(resolve))
+function windowRecord(id: string, calls: string[]): LifecycleWindow & { events: Map<string, Function> } {
+  const events = new Map<string, Function>()
+  const window = {
+    on: (name: string, handler: Function) => events.set(name, handler), isDestroyed: () => false,
+    hide: () => calls.push(`hide:${id}`), close: () => { calls.push(`close:${id}`); events.get("close")?.({ preventDefault: () => assert.fail() }) },
+    webContents: { isDestroyed: () => false, getURL: () => "http://localhost/app", executeJavaScript: async () => calls.push(`renderer:${id}`) },
+  }
+  return { id, window: window as never, tracker: { flush: async () => calls.push(`native:${id}`) } as never, events }
+}
+
+test("closing one local window removes only its V3 record and leaves backend running", async () => {
+  const calls: string[] = []
+  const first = windowRecord("one", calls)
+  const second = windowRecord("two", calls)
+  const local = [first, second]
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: () => {}, quit: () => calls.push("quit"), exit: () => calls.push("exit") } as never,
+    clientStateManager: { isPrimary: true } as never, cliManager: { shutdown: async () => calls.push("stop") } as never,
+    getLocalWindows: () => local, getAllWindows: () => local.map((record) => record.window),
+    removeWindowState: async (id) => calls.push(`remove:${id}`), getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+  })
+  lifecycle.attach(first)
+  first.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
+  await tick()
+  assert.deepEqual(calls, ["prevent", "renderer:one", "native:one", "remove:one", "close:one"])
+})
+
+test("closing the sole local window while a remote remains removes its V3 record", async () => {
+  const calls: string[] = []
+  const local = windowRecord("local", calls)
+  const remote = { isDestroyed: () => false }
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: () => {}, quit: () => calls.push("quit"), exit: () => calls.push("exit") } as never,
+    clientStateManager: { isPrimary: true } as never, cliManager: { shutdown: async () => calls.push("stop") } as never,
+    getLocalWindows: () => [local], getAllWindows: () => [local.window, remote as never],
+    removeWindowState: async (id) => calls.push(`remove:${id}`), getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+  })
+  lifecycle.attach(local)
+  local.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
+  await tick()
+  assert.deepEqual(calls, ["prevent", "renderer:local", "native:local", "remove:local", "close:local"])
+})
+
+test("global shutdown asks all renderers concurrently before aggregate persistence", async () => {
+  const calls: string[] = []
+  const events = new Map<string, Function>()
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const first = windowRecord("one", calls)
+  const second = windowRecord("two", calls)
+  first.window.webContents.executeJavaScript = async () => { calls.push("renderer:one"); await gate }
+  second.window.webContents.executeJavaScript = async () => { calls.push("renderer:two") }
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: (name: string, handler: Function) => events.set(name, handler), quit: () => {}, exit: () => calls.push("exit") } as never,
+    clientStateManager: { isPrimary: true, flush: async () => calls.push("aggregate"), drainAndReleasePrimary: async () => calls.push("release") } as never,
+    cliManager: { shutdown: async () => calls.push("stop") } as never, getLocalWindows: () => [first, second], getAllWindows: () => [first.window, second.window],
+    removeWindowState: async () => {}, getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+  })
+  lifecycle.registerAppEvents()
+  events.get("before-quit")?.({ preventDefault: () => {} })
+  await tick()
+  assert.deepEqual(calls.filter((call) => call.startsWith("renderer:")), ["renderer:one", "renderer:two"])
+  assert.equal(calls.includes("aggregate"), false)
+  release()
+  await tick(); await tick()
+  assert.ok(calls.indexOf("aggregate") > calls.indexOf("native:two"))
+})
+
+test("final close retains its record and shutdown stops/releases once", async () => {
+  const calls: string[] = []
+  const events = new Map<string, Function>()
+  const first = windowRecord("one", calls)
+  const app = { on: (name: string, handler: Function) => events.set(name, handler), quit: () => calls.push("quit"), exit: () => calls.push("exit") }
+  const lifecycle = new MultiwindowLifecycle({
+    app: app as never,
+    clientStateManager: { isPrimary: true, flush: async () => calls.push("aggregate"), drainAndReleasePrimary: async () => calls.push("release") } as never,
+    cliManager: { shutdown: async () => calls.push("stop") } as never, getLocalWindows: () => [first], getAllWindows: () => [first.window],
+    removeWindowState: async () => calls.push("remove"), getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+  })
+  lifecycle.attach(first); lifecycle.registerAppEvents()
+  first.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
+  assert.deepEqual(calls, ["prevent", "hide:one", "quit"])
+  events.get("before-quit")?.({ preventDefault: () => calls.push("prevent-quit") })
+  events.get("before-quit")?.({ preventDefault: () => calls.push("prevent-quit") })
+  await tick(); await tick()
+  assert.equal(calls.includes("remove"), false)
+  assert.equal(calls.filter((call) => call === "stop").length, 1)
+  assert.equal(calls.filter((call) => call === "release").length, 1)
+})
+
+test("Windows session end exits even when CLI shutdown rejects after the query was vetoed", async () => {
+  const calls: string[] = []
+  const first = windowRecord("one", calls)
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: () => {}, quit: () => {}, exit: () => calls.push("exit") } as never,
+    clientStateManager: { isPrimary: true, flush: async () => {}, drainAndReleasePrimary: async () => calls.push("release") } as never,
+    cliManager: { shutdown: async () => { throw new Error("CLI failed") } } as never,
+    getLocalWindows: () => [first], getAllWindows: () => [first.window], removeWindowState: async () => {},
+    getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true, isWindows: true, sessionEndCleanupTimeoutMs: 20,
+  })
+  lifecycle.attach(first)
+  let vetoed = false
+  first.events.get("query-session-end")?.({ preventDefault: () => { vetoed = true } })
+  await tick(); await tick()
+  assert.equal(vetoed, true)
+  assert.deepEqual(calls.filter((call) => call === "exit"), ["exit"])
+})
+
+test("normal quit reports a failed CLI shutdown without allowing exit", async () => {
+  const calls: string[] = []
+  const events = new Map<string, Function>()
+  const first = windowRecord("one", calls)
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: (name: string, handler: Function) => events.set(name, handler), quit: () => {}, exit: () => calls.push("exit") } as never,
+    clientStateManager: { isPrimary: true, flush: async () => {}, drainAndReleasePrimary: async () => calls.push("release") } as never,
+    cliManager: { shutdown: async () => { throw new Error("CLI failed") } } as never,
+    getLocalWindows: () => [first], getAllWindows: () => [first.window], removeWindowState: async () => {},
+    getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+  })
+  lifecycle.registerAppEvents()
+  events.get("before-quit")?.({ preventDefault: () => calls.push("prevent") })
+  await tick(); await tick()
+  assert.equal(calls.includes("prevent"), true)
+  assert.equal(calls.includes("exit"), false)
+  assert.equal(calls.includes("release"), false)
+})

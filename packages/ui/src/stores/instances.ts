@@ -64,7 +64,6 @@ import { clearCacheForInstance } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { clearInstanceMetadata } from "./instance-metadata"
 import { showWorkspaceLaunchError } from "./launch-errors"
-import { activeSidecarToken } from "./sidecars"
 import { showToastNotification } from "../lib/notifications"
 import { tGlobal } from "../lib/i18n"
 import { loadInstanceMetadata } from "../lib/hooks/use-instance-metadata"
@@ -77,7 +76,7 @@ import {
   type FormInfo,
 } from "./forms"
 import { invalidateFilesystemCaches } from "../lib/filesystem-events"
-import { appSessionRestoreGateActive } from "./app-session-restore-gate"
+import { detachInstanceTabMembership, requestInstanceTabClose } from "./app-tab-membership"
 import { waitForLatestWorkspaceLoadResult } from "./workspace-load-readiness"
 import { clearInstanceAttachments } from "./attachments"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
@@ -381,22 +380,6 @@ function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectN
   }
 }
 
-function ensureActiveInstanceSelected(): void {
-  if (appSessionRestoreGateActive()) return
-  if (activeSidecarToken()) return
-
-  const current = activeInstanceId()
-  const instanceMap = instances()
-  if (current && instanceMap.has(current)) return
-
-  for (const [id, instance] of instanceMap.entries()) {
-    if (instance.status === "ready") {
-      setActiveInstanceId(id)
-      return
-    }
-  }
-}
-
 function upsertWorkspace(descriptor: WorkspaceDescriptor, projectName?: string) {
   const mapped = workspaceDescriptorToInstance(descriptor, projectName)
   if (instances().has(descriptor.id)) {
@@ -407,9 +390,6 @@ function upsertWorkspace(descriptor: WorkspaceDescriptor, projectName?: string) 
 
   if (descriptor.status === "ready") {
     attachClient(descriptor)
-    // If no tab is currently selected (common after UI refresh),
-    // auto-select the first ready instance.
-    ensureActiveInstanceSelected()
     settleInstanceReadyWaiters(descriptor.id)
   } else if (descriptor.status === "error" || descriptor.status === "stopped") {
     settleInstanceReadyWaiters(
@@ -811,7 +791,6 @@ async function refreshWorkspaceList(): Promise<void> {
       releaseInstanceResources(instanceId)
       removeInstance(instanceId, { authoritative: false })
     }
-    ensureActiveInstanceSelected()
   } finally {
     workspaceListReconciliationFence.complete(requestFence)
   }
@@ -911,6 +890,7 @@ function handleWorkspaceEvent(event: WorkspaceEventPayload) {
       clearSyncedYoloSessionsForInstance(event.workspace.id)
       break
     case "workspace.stopped":
+      requestInstanceTabClose(event.workspaceId)
       restoreCreatedWorkspaceCleanup.release(event.workspaceId)
       releaseInstanceResources(event.workspaceId)
       removeInstance(event.workspaceId, { authoritative: event.reason === "deleted" })
@@ -1027,6 +1007,7 @@ function updateInstance(id: string, updates: Partial<Instance>) {
 }
 
 function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
+  detachInstanceTabMembership(id)
   connectionResyncGate.clear(id)
   const removedInstance = instances().get(id)
   const removedOccurrence = removedInstance
@@ -1166,7 +1147,6 @@ async function createInstance(
   folder: string,
   projectName?: string,
   options?: {
-    activate?: boolean
     signal?: AbortSignal
     shouldCreateCommit?: () => boolean
     onBeforeCreateCommit?: (instanceId: string) => void
@@ -1249,7 +1229,6 @@ async function createInstance(
       options?.onBeforeCreateCommit?.(workspace.id)
       upsertWorkspace(committedWorkspace, reused ? undefined : projectName)
       options?.onCreateCommit?.(workspace.id)
-      if (!reused && (options?.activate ?? true)) setActiveInstanceId(workspace.id)
     }
     if (discarded) {
       if (workspace.requestId) await disposeRestoreWorkspaceResponse(workspace)
@@ -1315,28 +1294,31 @@ function updateProjectNameForFolder(folder: string, projectName: string): void {
   }
 }
 
-function stopInstance(id: string) {
+const stopInstanceRequests = new Map<string, Promise<void>>()
+
+function stopInstance(id: string): Promise<void> {
   const instance = instances().get(id)
-  if (!instance) return
+  if (!instance) return Promise.resolve()
+  const pending = stopInstanceRequests.get(id)
+  if (pending) return pending
 
-  workspaceListReconciliationFence.markMutation(id)
-  releaseInstanceResources(id)
-  removeInstance(id)
-
-  if (restoreCreatedWorkspaceCleanup.owns(id)) {
-    void restoreCreatedWorkspaceCleanup.discardTracked(id, { retainTombstone: true })
-      .then(() => serverApi.deleteWorkspace(id))
-      .catch((error) => log.error("Failed to stop restore-tracked workspace", error))
-    return
-  }
-
-  void serverApi.deleteWorkspace(id).catch((error) => {
-    log.error("Failed to stop workspace", error)
-    showToastNotification({
-      message: tGlobal("app.stopInstance.toast.error"),
-      variant: "error",
+  const request = serverApi.deleteWorkspace(id)
+    .catch((error) => {
+      log.error("Failed to stop workspace", error)
+      try {
+        showToastNotification({
+          message: tGlobal("app.stopInstance.toast.error"),
+          variant: "error",
+        })
+      } finally {
+        throw error
+      }
     })
-  })
+    .finally(() => {
+      stopInstanceRequests.delete(id)
+    })
+  stopInstanceRequests.set(id, request)
+  return request
 }
 
 function getActiveInstance(): Instance | null {
@@ -1791,13 +1773,7 @@ async function acknowledgeDisconnectedInstance(): Promise<void> {
     return
   }
 
-  try {
-    stopInstance(pending.id)
-  } catch (error) {
-    log.error("Failed to stop disconnected instance", error)
-  } finally {
-    setDisconnectedInstance(null)
-  }
+  setDisconnectedInstance(null)
 }
 
 export {

@@ -19,6 +19,9 @@ The migration removes the V1 compatibility layer rather than maintaining both in
 - Route events from owned Git worktrees to their corresponding logical CodeNomad workspace.
 - Query native sessions by validated project scope, then traverse every descendant depth with native cursors.
 - Resolve locationless session events through native session ownership so prompt status and output reach the correct logical workspace.
+- Run one native process and one CodeNomad backend per channel/config profile. The native singleton focuses the most-recent window on a second launch unless `--new-window` is supplied; each process may host multiple UUID-backed windows.
+- Keep OpenCode sessions/messages in the shared global service while tabs, drafts, view state, and restore membership remain local to each window.
+- Store desktop restore state in a V3 per-window envelope whose snapshots use the V2 content-addressed partition graph. Native hosts prepare immutable partitions before atomically publishing the root, fence writes and migrations on current ownership, and collect only unreferenced partitions after publication.
 
 ## Removed Legacy Components
 
@@ -44,25 +47,31 @@ The migration removes the V1 compatibility layer rather than maintaining both in
 - Prevent OpenCode `Set-Cookie` headers from being relayed to the browser.
 - Avoid logging unredacted secret-bearing proxy request bodies.
 - Expose only an explicit method/path allowlist through the OpenCode proxy. New upstream APIs require an intentional proxy and ownership review; future OpenCode functionality is not automatic.
-- Share a consistent service registration location between Windows and WSL.
+- Connect to one externally owned global daemon using OpenCode's standard service registration, state, and database in the selected host or WSL environment; CodeNomad owns no private port, database, registration, or daemon PID.
 - Keep server and UI on the same reviewed client release. The selected `opencode2` CLI is updated independently and validated through service health and API compatibility rather than an exact version gate.
-- Wrap native `Service.ensure`/`Service.stop` with CodeNomad's ownership checks. A lifecycle lease records the registration, authenticated endpoint, daemon PID plus process-start identity and host/WSL namespace, and a hash of the launch command/environment. Proof can transfer between live CodeNomad processes through peer leases; the final host process calls `Service.stop` only after proving there are no live peers and every recorded identity still matches. WSL uses the authenticated native health stop endpoint and never allows the client's Windows `process.kill` fallback to target a Linux PID.
-- Queue location eviction when its final logical owner is removed, then perform it only during proven final shared-service shutdown so another CodeNomad process cannot lose active upstream state.
-- Force the V2 service database to `~/.local/share/opencode2/opencode.db`. V1 and V2 must never point at the same database because their schemas are incompatible.
+- Use the selected host or WSL CLI's official `service status`, `service start`, and `service get password` commands, then require bounded authenticated loopback health validation.
+- WSL support requires Windows localhost forwarding and uses the Linux CLI lifecycle inside the selected distribution; CodeNomad performs no cross-namespace PID operations.
+- Explicit **Stop Workspace** evicts that location and its resources through the global service without stopping the daemon. Ordinary tab/window close only detaches local UI state and never evicts a location.
+- Never stop the global service during CodeNomad backend shutdown; clear only in-memory connection state.
+- Keep service registration, state, and database paths at OpenCode's platform defaults.
+- A missing global daemon receives configured `server.environmentVariables` and the current `NODE_EXTRA_CA_CERTS` on `service start` only. An already-running daemon is unaffected; legacy `OPENCODE_DB` and `XDG_STATE_HOME` settings are ignored rather than taking storage ownership.
 - Isolate V2 restore state under `~/.codenomad/client-state/v2` and copy V1 state non-destructively on first launch, preserving downgrade history.
+- Sandbox native SideCar/browser previews without `allow-same-origin`; DOM comment inspection remains available only in the web client.
 
 ## Current Status
 
 - Server and UI are pinned to `0.0.0-beta-17595`; the selected `opencode2` CLI is not exact-version-gated.
 - The updater advertises and installs only that pinned startup-compatible version; both repository lockfiles resolve the same client, protocol, and schema release.
-- Shared-service shutdown delegates host daemons to native `Service.stop` after CodeNomad proves ownership and excludes live peer leases; WSL uses native authenticated health stop.
+- Shared-service shutdown clears only local connection state and never stops host or WSL daemons.
+- Stable, dev, and non-default config profiles have isolated native singleton, backend, browser storage, and client-state scopes. Each scope supports multiple UUID windows; OpenCode sessions/messages remain global while tabs, drafts, and views are per-window.
+- Client-state V3 stores one record per window over the V2 content-addressed partition graph with atomic root publication, ownership fencing, migration guards, and post-commit conservative garbage collection.
 - The UI uses native Forms instead of the removed Question API and `@opencode-ai/client/solid` `createData` for live message, tool, permission, and form reduction. Live projections merge into REST-loaded history instead of replacing it.
 - Session inventory uses native project/subpath/parent/order cursor pagination across all descendant depths; later pages receive native active status, and internal OpenCode stream generations trigger authoritative UI reconciliation even when browser SSE remains connected.
 - The proxy validates the decoded scope of native session cursors before forwarding them and supports native global Form reply/cancel routes without treating `global` as a session ID.
 - Before deleting a worktree, the server inventories the complete native project, evacuates affected session families with verification and rollback, and fails closed for direct API callers. One canonical folder maps to one logical workspace instead of creating non-isolated duplicates.
-- The current working tree retains the isolated V2 database, deferred location eviction, and proxy path/location ownership validation.
+- The current working tree retains proxy path/location ownership validation while leaving global service storage and lifecycle ownership to OpenCode.
 - Current installed client declarations provide background Shell list/get/create/output/timeout/remove and lifecycle events. Shell output pagination keeps the native cursor authoritative. Interactive PTY APIs remain separate and are not used by the background-process panel.
-- Local validation passes server/UI/Electron typechecks, the CI UI partitions, Electron native tests, server tests (with three platform skips), standalone server lockfile dry-run installation, UI/server/Electron builds, Tauri `cargo check --locked`, and `git diff --check`.
+- This documentation pass ran stale-architecture greps and `git diff --check`; it did not run or claim the pending build matrix or real-service smoke test.
 
 ## Remaining Work
 
@@ -82,7 +91,7 @@ The final validation should include:
 
 ### Required Parallel UI Smoke
 
-CodeNomad V1 is the working environment and must remain open and untouched. V2 always uses `~/.local/share/opencode2/opencode.db`. Build into `codenomad-v2-slots/build-{A|B}/release`, copy the validated output into the corresponding `codenomad-v2-slots/{A|B}` deployment slot, and record its source, hash, slot, and deployment time in `deployment.json`.
+CodeNomad V1 is the working environment and must remain open and untouched. The OpenCode global daemon keeps its standard state and database; CodeNomad does not provide a private V2 database override. Build into `codenomad-v2-slots/build-{A|B}/release`, copy the validated output into the corresponding `codenomad-v2-slots/{A|B}` deployment slot, and record its source, hash, slot, and deployment time in `deployment.json`.
 
 For a first V2 launch, start the deployed slot beside V1 from PowerShell with a dedicated CDP port, WebView profile, Rust backtraces, and Node source maps:
 

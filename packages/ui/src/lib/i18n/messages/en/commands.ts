@@ -31,6 +31,9 @@ export const commandMessages = {
   "commands.closeInstance.label": "Close Tab",
   "commands.closeInstance.description": "Close the current top-level tab",
   "commands.closeInstance.keywords": "stop, quit, close, tab",
+  "commands.stopInstance.label": "Stop Workspace",
+  "commands.stopInstance.description": "Stop the shared workspace for every window",
+  "commands.stopInstance.keywords": "stop, workspace, server, shared",
 
   "commands.nextInstance.label": "Next Tab",
   "commands.nextInstance.description": "Cycle to the next top-level tab",

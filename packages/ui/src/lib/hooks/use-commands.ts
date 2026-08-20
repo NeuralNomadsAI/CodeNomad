@@ -50,7 +50,7 @@ export interface UseCommandsOptions {
   setToolInputsVisibility: (mode: ToolInputsVisibilityPreference) => void
   handleNewInstanceRequest: () => void
   handleCloseActiveTab: () => Promise<void>
-  handleCloseInstance: (instanceId: string) => Promise<void>
+  handleStopInstance: (instanceId: string) => Promise<void>
   handleNewSession: (instanceId: string) => Promise<void>
   handleCloseSession: (instanceId: string, sessionId: string) => Promise<void>
   getActiveInstance: () => Instance | null
@@ -130,6 +130,19 @@ export function useCommands(options: UseCommandsOptions) {
       shortcut: { key: "W", meta: true },
       action: async () => {
         await options.handleCloseActiveTab()
+      },
+    })
+
+    commandRegistry.register({
+      id: "stop-instance",
+      label: () => tGlobal("commands.stopInstance.label"),
+      description: () => tGlobal("commands.stopInstance.description"),
+      category: "Instance",
+      keywords: () => splitKeywords("commands.stopInstance.keywords"),
+      disabled: () => !activeInstance(),
+      action: async () => {
+        const instance = activeInstance()
+        if (instance) await options.handleStopInstance(instance.id)
       },
     })
 
