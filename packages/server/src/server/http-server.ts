@@ -674,6 +674,7 @@ async function proxyWorkspaceRequest(args: {
     }
     translatedDirectories.set(directory, translated)
   }
+  const mutationDirectories = new Set(translatedDirectories.values())
   if (request.method !== "GET" && request.method !== "HEAD"
     && [...translatedDirectories.values()].some((directory) => worktreeDeletionFence.isBlocked(directory))) {
     reply.code(409).send({ error: "Worktree deletion is in progress" })
@@ -767,14 +768,27 @@ async function proxyWorkspaceRequest(args: {
       reply.code(409).send({ error: "Worktree deletion is in progress" })
       return
     }
+    mutationDirectories.add(session.location.directory)
   }
 
   const body = applyDefaultWorkspaceLocation(targetUrl, promptBody, request.method, serviceDirectory, requestLocations.directories.length > 0 || sessionListHasScope, Boolean(sessionId) && !isGlobalFormAction(pathname, request.method))
   const instanceAuthHeader = workspaceManager.getInstanceAuthorizationHeader(workspaceId)
+  const releaseMutation = request.method === "GET" || request.method === "HEAD"
+    ? undefined
+    : worktreeDeletionFence.enter([...mutationDirectories])
+  if (request.method !== "GET" && request.method !== "HEAD" && !releaseMutation) {
+    reply.code(409).send({ error: "Worktree deletion is in progress" })
+    return
+  }
+  if (releaseMutation) {
+    reply.raw.once("finish", releaseMutation)
+    reply.raw.once("close", releaseMutation)
+  }
 
   logger.debug({ workspaceId, method: request.method, targetUrl: targetUrl.toString() }, "Proxying request to instance")
 
-  return reply.from(targetUrl.toString(), {
+  try {
+    return reply.from(targetUrl.toString(), {
     ...(body !== request.body ? { body } : {}),
     rewriteRequestHeaders: (_originalRequest, headers) => {
       const outgoingHeaders = sanitizeInstanceProxyRequestHeaders(headers, instanceAuthHeader)
@@ -804,7 +818,11 @@ async function proxyWorkspaceRequest(args: {
         proxyReply.code(502).send({ error: "Workspace instance proxy failed" })
       }
     },
-  })
+    })
+  } catch (error) {
+    releaseMutation?.()
+    throw error
+  }
 }
 
 function appendIncomingQuery(targetUrl: URL, incomingUrl: string): URL {

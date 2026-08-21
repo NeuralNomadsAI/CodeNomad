@@ -29,6 +29,21 @@ describe("evacuateWorktreeSessions", () => {
     assert.equal(fence.isBlocked("/repo/worktree"), false)
   })
 
+  it("waits for admitted mutations before deleting and rejects later admission", async () => {
+    const fence = new WorktreeDeletionFence()
+    const releaseMutation = fence.enter(["/repo/worktree"])
+    assert.ok(releaseMutation)
+    const calls: string[] = []
+    const deletion = fence.run("/repo/worktree", ["/repo/worktree"], async () => { calls.push("delete") })
+
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.deepEqual(calls, [])
+    assert.equal(fence.enter(["/repo/worktree"]), undefined)
+    releaseMutation()
+    await deletion
+    assert.deepEqual(calls, ["delete"])
+  })
+
   it("finds later-page sessions and waits for their asynchronous moves", async () => {
     const moves: Array<{ sessionID: string; directory: string }> = []
     const lists: unknown[] = []
