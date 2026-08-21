@@ -806,6 +806,7 @@ pub struct CliProcessManager {
     lifecycle: Arc<Mutex<()>>,
     generation_authority: Arc<Mutex<()>>,
     generation: Arc<AtomicU64>,
+    accepting_spawns: Arc<AtomicBool>,
 }
 
 impl CliProcessManager {
@@ -820,11 +821,13 @@ impl CliProcessManager {
             lifecycle: Arc::new(Mutex::new(())),
             generation_authority: Arc::new(Mutex::new(())),
             generation: Arc::new(AtomicU64::new(0)),
+            accepting_spawns: Arc::new(AtomicBool::new(true)),
         }
     }
 
     pub fn start(&self, app: AppHandle, dev: bool) -> anyhow::Result<()> {
         let _lifecycle = self.lifecycle.lock();
+        self.accepting_spawns.store(true, Ordering::SeqCst);
         let generation = self.advance_generation();
         *self.bootstrap_token.lock() = None;
         *self.local_access.lock() = None;
@@ -852,11 +855,12 @@ impl CliProcessManager {
     }
 
     pub fn stop(&self) -> anyhow::Result<()> {
+        self.accepting_spawns.store(false, Ordering::SeqCst);
         let generation = self.advance_generation();
         *self.bootstrap_token.lock() = None;
         *self.local_access.lock() = None;
         let _lifecycle = self.lifecycle.lock();
-        if !self.is_current_generation(generation) {
+        if !self.generation_matches(generation) {
             return Err(anyhow::anyhow!("CLI stop was superseded"));
         }
         self.stop_tracked_child(None)?;
@@ -865,20 +869,33 @@ impl CliProcessManager {
     }
 
     pub(crate) fn stop_until(&self, deadline: Instant) -> anyhow::Result<()> {
+        self.accepting_spawns.store(false, Ordering::SeqCst);
         let Some(generation) = self.advance_generation_until(deadline) else {
             return Err(anyhow::anyhow!(
                 "timed out waiting for CLI generation authority"
             ));
         };
-        *self.bootstrap_token.lock() = None;
-        *self.local_access.lock() = None;
+        let Some(mut bootstrap_token) = self.bootstrap_token.try_lock_until(deadline) else {
+            return Err(anyhow::anyhow!(
+                "timed out waiting for CLI bootstrap token authority"
+            ));
+        };
+        *bootstrap_token = None;
+        drop(bootstrap_token);
+        let Some(mut local_access) = self.local_access.try_lock_until(deadline) else {
+            return Err(anyhow::anyhow!(
+                "timed out waiting for CLI local access authority"
+            ));
+        };
+        *local_access = None;
+        drop(local_access);
         let Some(_lifecycle) = self.lifecycle.try_lock_until(deadline) else {
             return Err(anyhow::anyhow!("timed out waiting for CLI lifecycle lock"));
         };
         if Instant::now() >= deadline {
             return Err(anyhow::anyhow!("CLI stop deadline elapsed"));
         }
-        if !self.is_current_generation(generation) {
+        if !self.generation_matches(generation) {
             return Err(anyhow::anyhow!("CLI stop was superseded"));
         }
         self.stop_tracked_child(Some(deadline))?;
@@ -900,6 +917,10 @@ impl CliProcessManager {
     }
 
     fn is_current_generation(&self, generation: u64) -> bool {
+        self.accepting_spawns.load(Ordering::SeqCst) && self.generation_matches(generation)
+    }
+
+    fn generation_matches(&self, generation: u64) -> bool {
         self.generation.load(Ordering::SeqCst) == generation
     }
 
@@ -961,6 +982,38 @@ impl CliProcessManager {
             return Err(err);
         }
         Ok(())
+    }
+
+    fn register_spawned_child(
+        &self,
+        generation: u64,
+        mut child: Child,
+        #[cfg(windows)] job: WindowsJobObject,
+    ) -> Option<(
+        Option<BufReader<std::process::ChildStdout>>,
+        Option<BufReader<std::process::ChildStderr>>,
+    )> {
+        let authority = self.generation_authority.lock();
+        if !self.is_current_generation(generation) {
+            drop(authority);
+            discard_unregistered_child(
+                &mut child,
+                #[cfg(windows)]
+                &job,
+            );
+            return None;
+        }
+        let pid = child.id();
+        let stdout = child.stdout.take().map(BufReader::new);
+        let stderr = child.stderr.take().map(BufReader::new);
+        debug_assert!(self.child.lock().is_none());
+        self.status.lock().pid = Some(pid);
+        *self.child.lock() = Some(child);
+        #[cfg(windows)]
+        {
+            *self.job.lock() = Some(job);
+        }
+        Some((stdout, stderr))
     }
 
     fn reset_stopped_status(&self) {
@@ -1145,27 +1198,15 @@ impl CliProcessManager {
             }
         }
 
-        let authority = manager.generation_authority.lock();
-        if !manager.is_current_generation(generation) {
-            drop(authority);
-            discard_unregistered_child(
-                &mut child,
-                #[cfg(windows)]
-                &job,
-            );
+        let Some((stdout, stderr)) = manager.register_spawned_child(
+            generation,
+            child,
+            #[cfg(windows)]
+            job,
+        ) else {
             return Ok(());
-        }
-        let stdout = child.stdout.take().map(BufReader::new);
-        let stderr = child.stderr.take().map(BufReader::new);
-        debug_assert!(manager.child.lock().is_none());
-        manager.status.lock().pid = Some(pid);
-        *manager.child.lock() = Some(child);
-        #[cfg(windows)]
-        {
-            *manager.job.lock() = Some(job);
-        }
+        };
         Self::emit_status(&app, &manager.status.lock());
-        drop(authority);
         drop(lifecycle);
 
         let ready = Arc::new(AtomicBool::new(false));
@@ -2009,7 +2050,8 @@ mod tests {
         let error = manager.stop_until(Instant::now()).unwrap_err().to_string();
 
         assert!(error.contains("timed out waiting for CLI generation authority"));
-        assert!(manager.is_current_generation(generation));
+        assert!(!manager.is_current_generation(generation));
+        assert!(manager.generation_matches(generation));
         assert!(manager.child.lock().is_none());
     }
 
@@ -2024,6 +2066,72 @@ mod tests {
             .to_string();
 
         assert!(error.contains("timed out waiting for CLI generation authority"));
+    }
+
+    #[test]
+    fn stop_bootstrap_token_wait_honors_the_absolute_deadline() {
+        let manager = CliProcessManager::new();
+        let _token = manager.bootstrap_token.lock();
+
+        let error = manager
+            .stop_until(Instant::now() + Duration::from_millis(20))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("timed out waiting for CLI bootstrap token authority"));
+    }
+
+    #[test]
+    fn stop_local_access_wait_honors_the_absolute_deadline() {
+        let manager = CliProcessManager::new();
+        let _access = manager.local_access.lock();
+
+        let error = manager
+            .stop_until(Instant::now() + Duration::from_millis(20))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("timed out waiting for CLI local access authority"));
+    }
+
+    #[test]
+    fn production_spawn_registration_is_rejected_after_timed_stop_returns() {
+        let manager = CliProcessManager::new();
+        let generation = manager.advance_generation();
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("cmd.exe");
+            command.args(["/C", "ping", "-n", "30", "127.0.0.1"]);
+            command
+        };
+        #[cfg(unix)]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 30"]);
+            configure_posix_process_group(&mut command);
+            command
+        };
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        configure_spawn(&mut command);
+        let child = command.spawn().unwrap();
+        #[cfg(windows)]
+        let job = WindowsJobObject::create()
+            .and_then(|job| {
+                job.assign_child(&child)?;
+                Ok(job)
+            })
+            .unwrap();
+
+        assert!(manager.stop_until(Instant::now()).is_err());
+        let registered = manager.register_spawned_child(
+            generation,
+            child,
+            #[cfg(windows)]
+            job,
+        );
+
+        assert!(registered.is_none());
+        assert!(manager.child.lock().is_none());
     }
 
     #[test]

@@ -2076,10 +2076,38 @@ mod menu_tests {
         for value in [
             "vscode://file/C:/workspace",
             "ms-settings:privacy",
+            "tel:+15551234567",
             "unknown:target",
         ] {
             assert!(!should_open_external_url(&Url::parse(value).unwrap()));
         }
+    }
+
+    #[test]
+    fn renderer_opener_permission_excludes_tel_and_unscoped_access() {
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/main-window.json")).unwrap();
+        let opener = capability["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|permission| permission["identifier"] == "opener:allow-open-url")
+            .unwrap();
+
+        assert_eq!(
+            opener["allow"],
+            json!([
+                { "url": "http://*" },
+                { "url": "https://*" },
+                { "url": "mailto:*" }
+            ])
+        );
+        assert!(!capability["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|permission| permission == "opener:allow-default-urls"
+                || permission == "opener:allow-open-url"));
     }
 
     #[test]

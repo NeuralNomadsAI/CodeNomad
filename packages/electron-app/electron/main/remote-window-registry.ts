@@ -7,8 +7,20 @@ interface RemoteWindowRecord {
 
 export class RemoteWindowRegistry {
   private readonly records = new Map<string, RemoteWindowRecord>()
+  private readonly operations = new Map<string, Promise<void>>()
 
   constructor(private readonly cleanupProxySession: (sessionId: string) => void) {}
+
+  serialize<T>(profileId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.operations.get(profileId) ?? Promise.resolve()
+    const result = previous.catch(() => {}).then(operation)
+    const tail = result.then(() => {}, () => {})
+    this.operations.set(profileId, tail)
+    void tail.then(() => {
+      if (this.operations.get(profileId) === tail) this.operations.delete(profileId)
+    })
+    return result
+  }
 
   reuse(profileId: string, proxySessionId?: string): BrowserWindow | undefined {
     const record = this.records.get(profileId)

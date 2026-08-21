@@ -17,6 +17,7 @@ import { configureMediaPermissionHandlers, isAllowedRendererOrigin } from "./per
 import { CliProcessManager } from "./process-manager"
 import { navigateRemoteWindow, RemoteWindowRegistry } from "./remote-window-registry"
 import { resolveConfiguredRendererOrigins } from "./renderer-origin"
+import { SerializedLifecycle } from "./serialized-lifecycle"
 import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, parseLaunchIntent, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance, type LaunchIntent } from "./startup"
 import { clampWindowBounds, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, installWindowZoomInput, restoreWindowState, WindowStateTracker } from "./window-state"
 
@@ -65,6 +66,7 @@ function runPrimary(firstIntent: LaunchIntent) {
   const registry = new LocalWindowRegistry(async (id) => { await clientState.setActiveWindow(id) })
   const remoteOrigins = new Map<number, Set<string>>()
   const insecureOrigins = new Map<number, Set<string>>()
+  const navigationLifecycle = new SerializedLifecycle()
   let backendUrl: string | null = null
   let backendTargetUrl: string | null = null
   const remoteWindows = new RemoteWindowRegistry((sessionId) => {
@@ -85,6 +87,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     getLocalWindows: () => registry.all(), getAllWindows: () => BrowserWindow.getAllWindows(),
     removeWindowState: (id) => clientState.removeWindow(id), getAllowedRendererOrigins: getAllowedOrigins,
     isTrustedRendererOrigin: isAllowedRendererOrigin,
+    navigationLifecycle,
   })
   const bindClientState = setupClientStateIPC(ipcMain, clientState, (sender) => registry.resolve(sender), getAllowedOrigins)
 
@@ -162,6 +165,7 @@ function runPrimary(firstIntent: LaunchIntent) {
       clientStateManager: persisted ? clientState : { isPrimary: false },
       isTrustedOrigin: (url) => isAllowedRendererOrigin(url, getAllowedOrigins(window)),
       reportFlushError: (error) => console.warn("[client-state] renderer pre-navigation flush failed", error),
+      lifecycle: navigationLifecycle,
     })
     const tracker = persisted && clientState.isPrimary ? new WindowStateTracker(window, clientState, saved, windowId) : null
     if (persisted && clientState.isPrimary) restoreWindowState(window, saved, bounds)
@@ -283,36 +287,38 @@ function runPrimary(firstIntent: LaunchIntent) {
     return candidates.find(existsSync) ?? candidates[0]
   }
   async function openRemoteWindow(payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean }) {
-    const base = requireHttpUrl(payload.baseUrl, "baseUrl")
-    const target = requireHttpUrl(payload.entryUrl ?? payload.baseUrl, "entryUrl")
-    const title = `${payload.name} - ${payload.baseUrl}`
-    const existing = remoteWindows.reuse(payload.id, payload.proxySessionId)
-    if (existing) {
+    return remoteWindows.serialize(payload.id, async () => {
+      const base = requireHttpUrl(payload.baseUrl, "baseUrl")
+      const target = requireHttpUrl(payload.entryUrl ?? payload.baseUrl, "entryUrl")
+      const title = `${payload.name} - ${payload.baseUrl}`
+      const existing = remoteWindows.reuse(payload.id, payload.proxySessionId)
+      if (existing) {
+        const allowedOrigins = new Set([base.origin, target.origin])
+        existing.setTitle(title)
+        await navigateRemoteWindow(existing, target, allowedOrigins, remoteOrigins, insecureOrigins, payload.skipTlsVerify)
+        return
+      }
+      const remoteSession = session.fromPartition(resolveRemoteSessionPartition(payload.id, payload.proxySessionId))
+      const window = new BrowserWindow({
+        width: 1400, height: 900, minWidth: 800, minHeight: 600, backgroundColor: "#1a1a1a", icon: getIconPath(), title,
+        webPreferences: { session: remoteSession, preload: getPreloadPath(), contextIsolation: true, nodeIntegration: false, spellcheck: !isMac, additionalArguments: ["--codenomad-window-context=remote"] },
+      })
       const allowedOrigins = new Set([base.origin, target.origin])
-      existing.setTitle(title)
-      await navigateRemoteWindow(existing, target, allowedOrigins, remoteOrigins, insecureOrigins, payload.skipTlsVerify)
-      return
-    }
-    const remoteSession = session.fromPartition(resolveRemoteSessionPartition(payload.id, payload.proxySessionId))
-    const window = new BrowserWindow({
-      width: 1400, height: 900, minWidth: 800, minHeight: 600, backgroundColor: "#1a1a1a", icon: getIconPath(), title,
-      webPreferences: { session: remoteSession, preload: getPreloadPath(), contextIsolation: true, nodeIntegration: false, spellcheck: !isMac, additionalArguments: ["--codenomad-window-context=remote"] },
+      remoteWindows.register(payload.id, window, payload.proxySessionId)
+      if (isMac) configureMediaPermissionHandlers(() => BrowserWindow.getAllWindows()
+        .filter((candidate) => candidate.webContents.session === remoteSession)
+        .flatMap((candidate) => [...(remoteOrigins.get(candidate.id) ?? [])]), remoteSession)
+      window.setTitle(title)
+      window.webContents.on("page-title-updated", (event) => { event.preventDefault(); window.setTitle(title) })
+      setupNavigationGuards(window, undefined, getAllowedOrigins, getLoadingUrl)
+      lifecycle.attachRemote(window)
+      window.on("closed", () => { remoteOrigins.delete(window.id); insecureOrigins.delete(window.webContents.id) })
+      try { await navigateRemoteWindow(window, target, allowedOrigins, remoteOrigins, insecureOrigins, payload.skipTlsVerify) } catch (error) {
+        console.warn("[electron] failed to load remote window; showing loading screen", error)
+        const loading = loadingTarget()
+        await (loading.url ? window.loadURL(loading.url) : window.loadFile(loading.file!))
+      }
     })
-    const allowedOrigins = new Set([base.origin, target.origin])
-    remoteWindows.register(payload.id, window, payload.proxySessionId)
-    if (isMac) configureMediaPermissionHandlers(() => BrowserWindow.getAllWindows()
-      .filter((candidate) => candidate.webContents.session === remoteSession)
-      .flatMap((candidate) => [...(remoteOrigins.get(candidate.id) ?? [])]), remoteSession)
-    window.setTitle(title)
-    window.webContents.on("page-title-updated", (event) => { event.preventDefault(); window.setTitle(title) })
-    setupNavigationGuards(window, undefined, getAllowedOrigins, getLoadingUrl)
-    lifecycle.attachRemote(window)
-    window.on("closed", () => { remoteOrigins.delete(window.id); insecureOrigins.delete(window.webContents.id) })
-    try { await navigateRemoteWindow(window, target, allowedOrigins, remoteOrigins, insecureOrigins, payload.skipTlsVerify) } catch (error) {
-      console.warn("[electron] failed to load remote window; showing loading screen", error)
-      const loading = loadingTarget()
-      await (loading.url ? window.loadURL(loading.url) : window.loadFile(loading.file!))
-    }
   }
 }
 

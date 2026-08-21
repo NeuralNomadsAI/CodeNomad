@@ -118,3 +118,22 @@ test("stale remote navigation success cannot replace authority restored by a new
   assert.deepEqual([...trusted.get(1)!], ["https://old.example"])
   assert.deepEqual([...insecure.get(2)!], ["https://old.example"])
 })
+
+test("overlapping remote opens wait for the prior loadURL fallback for the same profile", async () => {
+  const registry = new RemoteWindowRegistry(() => {})
+  const calls: string[] = []
+  let releaseFallback!: () => void
+  const fallback = new Promise<void>((resolve) => { releaseFallback = resolve })
+  const first = registry.serialize("profile", async () => {
+    calls.push("first-loadURL")
+    try { throw new Error("load failed") } catch { calls.push("first-fallback"); await fallback }
+    calls.push("first-done")
+  })
+  const second = registry.serialize("profile", async () => { calls.push("second-loadURL") })
+
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(calls, ["first-loadURL", "first-fallback"])
+  releaseFallback()
+  await Promise.all([first, second])
+  assert.deepEqual(calls, ["first-loadURL", "first-fallback", "first-done", "second-loadURL"])
+})

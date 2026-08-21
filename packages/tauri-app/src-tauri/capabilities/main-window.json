@@ -10,8 +10,14 @@
     "core:default",
     "core:menu:default",
     "dialog:allow-open",
-    "opener:allow-default-urls",
-    "opener:allow-open-url",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "http://*" },
+        { "url": "https://*" },
+        { "url": "mailto:*" }
+      ]
+    },
     "notification:allow-is-permission-granted",
     "notification:allow-request-permission",
     "notification:allow-notify",
