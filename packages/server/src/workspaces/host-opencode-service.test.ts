@@ -55,7 +55,7 @@ describe("HostOpenCodeService", () => {
     let healthUrl = ""
     const service = createService([], {}, {
       execFile: async (_file, args) => ({
-        stdout: args.at(-1) === "password" ? "password\n" : "http://0.0.0.0:4321\n",
+        stdout: args[args.length - 1] === "password" ? "password\n" : "http://0.0.0.0:4321\n",
         stderr: "",
       }),
       fetch: async (input) => {
