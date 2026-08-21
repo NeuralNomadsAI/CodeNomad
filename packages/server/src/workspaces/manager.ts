@@ -33,14 +33,15 @@ import { WslOpenCodeService } from "./wsl-opencode-service"
 import { isPathOwnedByWorktree, resolveWorktreeSlugForDirectory } from "./worktree-directory"
 
 const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
+const MAX_ACTIVE_WORKSPACE_CREATIONS = 32
 const WORKSPACE_STATE = Symbol("workspaceState")
 type ManagerTimeout = number | NodeJS.Timeout
 
 interface SharedService {
   endpoint: (options?: OpenCodeSharedServiceOptions) => Promise<Endpoint>
   client: (options?: OpenCodeSharedServiceOptions) => Promise<OpenCodeClient>
-  headers: (options?: OpenCodeSharedServiceOptions) => Promise<{ authorization: string } | undefined>
-  validateLocation: (location: LocationRef, requestOptions?: { signal?: AbortSignal }, serviceOptions?: OpenCodeSharedServiceOptions) => Promise<LocationGetOutput>
+  headers: (options?: OpenCodeSharedServiceOptions, requestOptions?: { deadlineAt?: number }) => Promise<{ authorization: string } | undefined>
+  validateLocation: (location: LocationRef, requestOptions?: { signal?: AbortSignal; deadlineAt?: number }, serviceOptions?: OpenCodeSharedServiceOptions) => Promise<LocationGetOutput>
   evictLocation: (location: LocationRef, requestOptions?: { signal?: AbortSignal }, serviceOptions?: OpenCodeSharedServiceOptions) => Promise<void>
   subscribe: (requestOptions?: { signal?: AbortSignal }, serviceOptions?: OpenCodeSharedServiceOptions) => Promise<AsyncIterable<OpenCodeEvent>>
   shutdown: (options?: { timeoutMs?: number }) => Promise<void>
@@ -97,6 +98,7 @@ interface WorkspaceRecord extends WorkspaceDescriptor {
 interface WorkspaceState {
   abortController: AbortController
   settlement?: Promise<void>
+  cleanupSettlement?: Promise<WorkspaceDescriptor>
   deletePromise?: Promise<WorkspaceDescriptor | undefined>
   published: boolean
   stoppedPublished: boolean
@@ -149,6 +151,7 @@ export class WorkspaceManager {
   private readonly activeLocationCreations = new Set<Promise<void>>()
   private locationEvictions: Promise<void> = Promise.resolve()
   private pendingLocationEvictions = 0
+  private activeWorkspaceCreations = 0
   private shuttingDown = false
   private readonly sharedService: SharedService
   private serviceAuthorization?: string
@@ -200,6 +203,11 @@ export class WorkspaceManager {
     if (!record.wslDistro) return false
     const hostDirectory = this.resolveWslHostDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
     return Boolean(hostDirectory && await this.ownsHostDirectory(record, hostDirectory))
+  }
+
+  ownsLocationWorkspace(id: string, workspaceID: string): boolean {
+    const record = this.workspaces.get(id)
+    return Boolean(record?.[WORKSPACE_STATE].published && record.location?.workspaceID === workspaceID)
   }
 
   async getServiceDirectoryForPath(id: string, directory: string): Promise<string | undefined> {
@@ -310,6 +318,11 @@ export class WorkspaceManager {
     name?: string,
     options: WorkspaceCreateOptions = {},
   ): Promise<WorkspaceCreateResult> {
+    if (this.activeWorkspaceCreations >= MAX_ACTIVE_WORKSPACE_CREATIONS) {
+      throw new Error("Too many workspace creations are already in progress")
+    }
+    this.activeWorkspaceCreations += 1
+    let settlementTracked = false
     const launchTimeoutMs = Math.max(1, this.options.launchTimeoutMs ?? DEFAULT_LAUNCH_TIMEOUT_MS)
     const launchDeadlineAt = this.now() + launchTimeoutMs
     try {
@@ -328,8 +341,11 @@ export class WorkspaceManager {
       }
       const record = this.reserveWorkspace(workspacePath, name, options, launchDeadlineAt)
       const creation = this.startCreation(record, options, launchDeadlineAt, launchTimeoutMs)
+      settlementTracked = true
+      void record[WORKSPACE_STATE].settlement!.then(() => { this.activeWorkspaceCreations -= 1 })
       return this.finishCreation(await creation, options.requestId, record)
     } finally {
+      if (!settlementTracked) this.activeWorkspaceCreations -= 1
       if (options.requestId) this.cancelledCreationRequests.delete(options.requestId)
     }
   }
@@ -430,6 +446,7 @@ export class WorkspaceManager {
   ): Promise<WorkspaceCreateResult> {
     const state = record[WORKSPACE_STATE]
     const { id, path: workspacePath, binaryId: resolvedBinaryPath } = record
+    let cancelledLocation: LocationRef | undefined
     try {
       const launch = buildServiceLaunchSpec(resolvedBinaryPath, {
         platform: this.options.platform,
@@ -462,14 +479,20 @@ export class WorkspaceManager {
       return await this.withLocationCreation(async () => {
         this.throwIfCancelled(record)
         const [headersResult, locationResult] = await Promise.allSettled([
-          this.sharedService.headers(serviceOptions),
+          this.sharedService.headers(serviceOptions, { deadlineAt: launchDeadlineAt }),
           this.sharedService.validateLocation(
             { directory: serviceDirectory },
-            { signal: state.abortController.signal },
+            { signal: state.abortController.signal, deadlineAt: launchDeadlineAt },
             serviceOptions,
           ),
         ])
-        if (this.shuttingDown) this.throwIfCancelled(record)
+        if (state.abortController.signal.aborted && locationResult.status === "fulfilled") {
+          cancelledLocation = {
+            directory: locationResult.value.directory,
+            workspaceID: locationResult.value.workspaceID,
+          }
+        }
+        this.throwIfCancelled(record)
         if (locationResult.status === "fulfilled") {
           record.location = { directory: locationResult.value.directory, workspaceID: locationResult.value.workspaceID }
           state.locationOwned = true
@@ -490,15 +513,18 @@ export class WorkspaceManager {
       })
     } catch (error) {
       const launchFailure = state.abortController.signal.aborted ? state.abortController.signal.reason : error
-      if (state.locationOwned && !this.shuttingDown) {
-        await this.evictRecordLocation(record).catch((evictionError) => {
+      if ((state.locationOwned || cancelledLocation) && !this.shuttingDown) {
+        const eviction = cancelledLocation
+          ? this.evictCancelledLocation(record, cancelledLocation)
+          : this.evictRecordLocation(record)
+        await eviction.catch((evictionError) => {
           this.options.logger.warn(
             { workspaceId: id, err: evictionError },
             "Failed to evict an OpenCode location after workspace launch failure",
           )
         })
       }
-      if (!state.deletePromise && !state.locationOwned) {
+      if (!state.deletePromise && (!state.published || !state.locationOwned)) {
         this.removeRecord(id, record, state.published)
       }
       this.options.logger.error({ workspaceId: id, err: launchFailure }, "Workspace failed to start")
@@ -576,7 +602,7 @@ export class WorkspaceManager {
     }
     const settlements = records.map(([, record]) => {
       const state = record[WORKSPACE_STATE]
-      return state.deletePromise ?? state.settlement ?? Promise.resolve()
+      return state.cleanupSettlement ?? state.deletePromise ?? state.settlement ?? Promise.resolve()
     })
     const stopFailures: unknown[] = []
     if (settlements.length) {
@@ -625,12 +651,17 @@ export class WorkspaceManager {
 
   private async cleanupDeletedWorkspace(id: string, record: WorkspaceRecord): Promise<WorkspaceDescriptor> {
     const timeoutMs = Math.max(1, this.options.launchSettlementTimeoutMs ?? 5000)
-    const cleanup = (async () => {
-      await record[WORKSPACE_STATE].settlement!
+    const state = record[WORKSPACE_STATE]
+    const cleanup = state.cleanupSettlement ?? (async () => {
+      await state.settlement!
       await this.evictRecordLocation(record)
       this.removeRecord(id, record, true)
       return record
     })()
+    state.cleanupSettlement = cleanup
+    void cleanup.catch(() => {
+      if (state.cleanupSettlement === cleanup) state.cleanupSettlement = undefined
+    })
     return this.withTimeout(cleanup, timeoutMs, `${id} cleanup`)
   }
 
@@ -655,6 +686,19 @@ export class WorkspaceManager {
       for (const candidate of this.workspaces.values()) {
         if (candidate.location?.directory === directory) candidate[WORKSPACE_STATE].locationOwned = false
       }
+    })
+  }
+
+  private async evictCancelledLocation(record: WorkspaceRecord, location: LocationRef): Promise<void> {
+    await this.withLocationEviction(async () => {
+      if (this.shuttingDown) return
+      const shared = Array.from(this.workspaces.values()).some((candidate) => (
+        candidate !== record
+        && candidate[WORKSPACE_STATE].locationOwned
+        && !candidate[WORKSPACE_STATE].abortController.signal.aborted
+        && candidate.location?.directory === location.directory
+      ))
+      if (!shared) await this.sharedService.evictLocation(location, undefined, record[WORKSPACE_STATE].serviceOptions)
     })
   }
 
