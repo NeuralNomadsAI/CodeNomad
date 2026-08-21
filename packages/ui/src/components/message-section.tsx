@@ -486,6 +486,7 @@ export default function MessageSection(props: MessageSectionProps) {
             hasMore: () => Boolean(props.hasMoreMessages),
             isCurrent: isCurrentRestore,
             loadMore: props.onLoadMoreMessages,
+            getCursor: () => props.getMessageHistoryCursor?.(),
           })
         } catch (error) {
           if (!isCurrentRestore()) return

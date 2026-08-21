@@ -2,6 +2,7 @@ import { createSignal } from "solid-js"
 import type { InstanceMetadata } from "../types/instance"
 
 const [metadataMap, setMetadataMap] = createSignal<Map<string, InstanceMetadata | undefined>>(new Map())
+const metadataGenerations = new Map<string, number>()
 
 function getInstanceMetadata(instanceId: string): InstanceMetadata | undefined {
   return metadataMap().get(instanceId)
@@ -29,7 +30,12 @@ function mergeInstanceMetadata(instanceId: string, updates: InstanceMetadata): v
 }
 
 function clearInstanceMetadata(instanceId: string): void {
+  metadataGenerations.set(instanceId, (metadataGenerations.get(instanceId) ?? 0) + 1)
   setInstanceMetadata(instanceId, undefined)
 }
 
-export { metadataMap, getInstanceMetadata, setInstanceMetadata, mergeInstanceMetadata, clearInstanceMetadata }
+function getInstanceMetadataGeneration(instanceId: string): number {
+  return metadataGenerations.get(instanceId) ?? 0
+}
+
+export { metadataMap, getInstanceMetadata, setInstanceMetadata, mergeInstanceMetadata, clearInstanceMetadata, getInstanceMetadataGeneration }

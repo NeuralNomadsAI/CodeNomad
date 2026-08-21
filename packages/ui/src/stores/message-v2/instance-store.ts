@@ -211,6 +211,7 @@ export interface InstanceMessageStore {
   addOrUpdateSession: (input: SessionUpsertInput) => void
   hydrateMessages: (sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>, options?: { preserveOmitted?: boolean }) => void
   reconcileEmptyAuthoritativeSnapshot: (sessionId: string) => void
+  reconcileAuthoritativeMessageIds: (sessionId: string, authoritativeIds: ReadonlySet<string>, baselineRevisions: ReadonlyMap<string, number>) => void
   markSendPending: (messageId: string) => void
   acceptSend: (messageId: string) => void
   confirmServerMessage: (messageId: string, options?: { clearOptimisticParts?: boolean }) => void
@@ -690,6 +691,40 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
       bumpSessionRevision(sessionId)
     })
+  }
+
+  function reconcileAuthoritativeMessageIds(
+    sessionId: string,
+    authoritativeIds: ReadonlySet<string>,
+    baselineRevisions: ReadonlyMap<string, number>,
+  ) {
+    const retainedIds = (state.sessions[sessionId]?.messageIds ?? [])
+      .filter((id) => !baselineRevisions.has(id)
+        || authoritativeIds.has(id)
+        || state.messages[id]?.revision !== baselineRevisions.get(id))
+    if (retainedIds.length === 0) {
+      reconcileEmptyAuthoritativeSnapshot(sessionId)
+      return
+    }
+    hydrateMessages(
+      sessionId,
+      retainedIds.flatMap((id) => {
+        const record = state.messages[id]
+        if (!record) return []
+        return [{
+          id: record.id,
+          sessionId: record.sessionId,
+          role: record.role,
+          status: record.status,
+          createdAt: record.createdAt,
+          updatedAt: record.updatedAt,
+          isEphemeral: record.isEphemeral,
+          parts: record.partIds.flatMap((partId) => record.parts[partId]?.data ?? []),
+          bumpRevision: false,
+        }]
+      }),
+      retainedIds.flatMap((id) => messageInfoCache.get(id) ?? []),
+    )
   }
 
   // Register an optimistic user send while promptAsync is unresolved.
@@ -1594,6 +1629,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
      addOrUpdateSession,
       hydrateMessages,
       reconcileEmptyAuthoritativeSnapshot,
+      reconcileAuthoritativeMessageIds,
       markSendPending,
       acceptSend,
       confirmServerMessage,

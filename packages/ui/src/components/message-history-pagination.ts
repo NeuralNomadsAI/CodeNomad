@@ -15,8 +15,9 @@ export async function loadPagesUntilAnchor(options: {
   hasMore: () => boolean
   isCurrent: () => boolean
   loadMore: () => Promise<void>
+  getCursor?: () => string | undefined
   maxPages?: number
-}): Promise<"found" | "exhausted" | "cancelled" | "limit"> {
+}): Promise<"found" | "exhausted" | "cancelled"> {
   if (!options.isCurrent()) return "cancelled"
   if (options.hasAnchor()) return "found"
 
@@ -24,12 +25,17 @@ export async function loadPagesUntilAnchor(options: {
   for (let page = 0; page < maxPages; page += 1) {
     if (!options.isCurrent()) return "cancelled"
     if (!options.hasMore()) return "exhausted"
+    const cursor = options.getCursor?.()
     await options.loadMore()
     if (!options.isCurrent()) return "cancelled"
     if (options.hasAnchor()) return "found"
+    if (options.hasMore() && options.getCursor && options.getCursor() === cursor) {
+      throw new Error("Message history cursor did not advance")
+    }
   }
 
-  return options.hasMore() ? "limit" : "exhausted"
+  if (options.hasMore()) throw new Error("Message history anchor page limit reached")
+  return "exhausted"
 }
 
 export async function loadCompleteMessageHistory<T>(options: {
@@ -42,7 +48,7 @@ export async function loadCompleteMessageHistory<T>(options: {
   while (options.isCurrent()) {
     const cursor = options.getCursor()
     if (!cursor) return options.complete()
-    if (seenCursors.has(cursor)) return null
+    if (seenCursors.has(cursor)) throw new Error("Message history cursor did not advance")
     seenCursors.add(cursor)
     await options.loadMore()
   }

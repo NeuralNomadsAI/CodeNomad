@@ -3,11 +3,12 @@ import { describe, it } from "node:test"
 
 import { sdkManager } from "../lib/sdk-manager.ts"
 import type { Session } from "../types/session.ts"
-import { addInstance, refreshVolatileInstanceState, removeInstance, updateInstance } from "./instances.ts"
+import { addInstance, instances, refreshVolatileInstanceState, removeInstance, updateInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { getCommands } from "./commands.ts"
-import { fetchAgents, fetchProviders, fetchSessions, hasMoreMessages, loadMessages, loadMoreMessages, loadMoreSessions, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
-import { setInstanceMetadata } from "./instance-metadata.ts"
+import { fetchAgents, fetchProviders, fetchSessions, hasMoreMessages, hydrateRestoredSessionChain, loadMessages, loadMoreMessages, loadMoreSessions, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
+import { getInstanceMetadata, setInstanceMetadata } from "./instance-metadata.ts"
+import { loadInstanceMetadata } from "../lib/hooks/use-instance-metadata.ts"
 import {
   clearInstanceDeletedSessionAuthority,
   agents,
@@ -215,20 +216,24 @@ describe("session request authority", () => {
     }
   })
 
-  it("preserves a loaded 400-message transcript and metadata across a partial 200-message refresh", async () => {
+  it("prunes a partial forced refresh only when its authoritative cursor chain exhausts", async () => {
     const instanceId = "partial-message-refresh", sessionId = "session"
     const { client, cleanup } = setup(instanceId)
     let refresh = false
-    let continuation = true
+    let failRefresh = false
     const history = Array.from({ length: 400 }, (_, index) => ({
       ...apiMessage(`message-${400 - index}`),
       time: { created: 400 - index, completed: 400 - index },
       tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
       cost: 1,
     }))
-    ;(client as any).message = { list: async () => refresh
-      ? { data: history.slice(0, 200), cursor: continuation ? { next: "older-page" } : {} }
-      : { data: history, cursor: {} } }
+    ;(client as any).message = { list: async (input: any) => !refresh
+      ? { data: history, cursor: {} }
+      : input.cursor
+        ? { data: history.slice(200, 250), cursor: {} }
+        : failRefresh
+          ? Promise.reject(new Error("replacement refresh failed"))
+        : { data: history.slice(0, 200), cursor: { next: "older-page" } } }
     setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
 
     try {
@@ -243,14 +248,40 @@ describe("session request authority", () => {
       assert.equal(store.getSessionUsage(sessionId)?.totalCost, 400)
       assert.equal(hasMoreMessages(instanceId, sessionId), true)
 
-      continuation = false
-      await loadMessages(instanceId, sessionId, { force: true })
-      assert.equal(store.getSessionMessageIds(sessionId).length, 200)
+      failRefresh = true
+      await assert.rejects(loadMessages(instanceId, sessionId, { force: true }), /replacement refresh failed/)
+      failRefresh = false
+      await loadMoreMessages(instanceId, sessionId)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), Array.from({ length: 250 }, (_, index) => `message-${index + 151}`))
       assert.equal(store.getMessageInfo("message-1"), undefined)
-      assert.equal(store.getSessionUsage(sessionId)?.totalCost, 200)
+      assert.equal(store.getSessionUsage(sessionId)?.totalCost, 250)
       assert.equal(hasMoreMessages(instanceId, sessionId), false)
     } finally {
       cleanup()
+    }
+  })
+
+  it("hydrates normally after a non-authoritative remove reuses an instance and session id", async () => {
+    const instanceId = "reused-loaded-session", sessionId = "session"
+    const old = setup(instanceId)
+    ;(old.client as any).message = { list: async () => ({ data: [apiMessage("old-message")], cursor: {} }) }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    await loadMessages(instanceId, sessionId)
+    old.cleanup()
+
+    const current = setup(instanceId)
+    let calls = 0
+    ;(current.client as any).message = { list: async () => {
+      calls += 1
+      return { data: [apiMessage("new-message")], cursor: {} }
+    } }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    try {
+      await loadMessages(instanceId, sessionId)
+      assert.equal(calls, 1)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["new-message"])
+    } finally {
+      current.cleanup()
     }
   })
 
@@ -468,6 +499,45 @@ describe("session request authority", () => {
     }
   })
 
+  it("invalidates loaded metadata when updateInstance replaces the live client", async () => {
+    const instanceId = "metadata-live-client-replacement"
+    const { client: oldClient, cleanup } = setup(instanceId)
+    const oldGate = deferred<void>()
+    const wait = async <T>(value: T) => { await oldGate.promise; return value }
+    ;(oldClient as any).project = {
+      current: () => wait({ id: "old", directory: "/old", canonical: "/old" }),
+      list: () => wait([]),
+    }
+    ;(oldClient as any).mcp = { list: () => wait({ data: [] }) }
+    ;(oldClient as any).plugin = { list: () => wait({ data: [] }) }
+    setInstanceMetadata(instanceId, { project: { id: "cached" } as any, mcpStatus: {} as any, plugins: [] })
+    const oldRequest = loadInstanceMetadata(instances().get(instanceId)!, { force: true })
+
+    const newClient = {
+      session: { active: async () => ({}) },
+      project: {
+        current: async () => ({ id: "new", directory: "/new", canonical: "/new" }),
+        list: async () => [],
+      },
+      mcp: { list: async () => ({ data: [] }) },
+      plugin: { list: async () => ({ data: [] }) },
+    } as any
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, newClient)
+    updateInstance(instanceId, { client: newClient })
+
+    try {
+      await loadInstanceMetadata(instances().get(instanceId)!)
+      assert.equal(getInstanceMetadata(instanceId)?.project?.id, "new")
+      oldGate.resolve()
+      await oldRequest
+      assert.equal(getInstanceMetadata(instanceId)?.project?.id, "new")
+    } finally {
+      oldGate.resolve()
+      await oldRequest
+      cleanup()
+    }
+  })
+
   it("accepts an in-flight catalog when returning to its location", async () => {
     const instanceId = "provider-location-return"
     const { client, cleanup } = setup(instanceId)
@@ -496,37 +566,112 @@ describe("session request authority", () => {
     }
   })
 
-  it("keeps the initial root filter and uses only the native cursor for continuation", async () => {
+  it("loads root, child, and grandchild from a flat project inventory with cursor-only continuations", async () => {
     const instanceId = "project-descendants"
     const { client, cleanup } = setup(instanceId)
     const requests: any[] = []
-    const active: Record<string, unknown> = { later: {} }
+    const active: Record<string, unknown> = { later: {}, grandchild: {} }
     setInstanceMetadata(instanceId, { project: { id: "project", directory: "/work", canonical: "/work" } as any })
     ;(client.session as any).active = async () => active
     ;(client.session as any).list = async (input: any) => {
       requests.push(input)
-      if (input.cursor === "page-2") {
+      if (input.cursor === "root-page-2") {
         return { data: [apiSession("later")], cursor: {} }
       }
-      return {
+      if (input.cursor === "inventory-page-2") {
+        return { data: [apiSession("grandchild", "child")], cursor: {} }
+      }
+      if (input.parentID === null) return {
         data: [apiSession("root")],
-        cursor: { next: "page-2" },
+        cursor: { next: "root-page-2" },
+      }
+      return {
+        data: [apiSession("root"), apiSession("child", "root")],
+        cursor: { next: "inventory-page-2" },
       }
     }
 
     try {
       await fetchSessions(instanceId)
-      assert.equal(sessions().get(instanceId)?.has("grandchild"), false)
+      assert.equal(sessions().get(instanceId)?.has("root"), true)
+      assert.equal(sessions().get(instanceId)?.has("child"), true)
+      assert.equal(sessions().get(instanceId)?.has("grandchild"), true)
       assert.equal(requests[0].project, "project")
       assert.equal("directory" in requests[0], false)
       assert.equal(requests[0].parentID, null)
-      assert.equal(requests.length, 1)
+      assert.equal(requests.some((request) => typeof request.parentID === "string"), false)
+      assert.deepEqual(requests[2], { cursor: "inventory-page-2", limit: 200 })
 
       await loadMoreSessions(instanceId)
-      assert.equal(requests.length, 2)
-      assert.deepEqual(requests[1], { cursor: "page-2", limit: 200 })
+      assert.deepEqual(requests[3], { cursor: "root-page-2", limit: 200 })
+      assert.equal(requests.filter((request) => request.cursor).every((request) => Object.keys(request).sort().join(",") === "cursor,limit"), true)
+      assert.equal(requests.length, 4)
       assert.equal(sessions().get(instanceId)?.get("later")?.status, "working")
       assert.equal(sessions().get(instanceId)?.get("later")?.runtimeStatusKnown, true)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("publishes the root page before the complete project inventory settles", async () => {
+    const instanceId = "project-roots-first"
+    const { client, cleanup } = setup(instanceId)
+    const inventory = deferred<any>()
+    const inventoryStarted = deferred<void>()
+    setInstanceMetadata(instanceId, { project: { id: "project", directory: "/work", canonical: "/work" } as any })
+    ;(client.session as any).list = (input: any) => {
+      if (input.parentID === null) return Promise.resolve({ data: [apiSession("new"), apiSession("older")], cursor: {} })
+      inventoryStarted.resolve()
+      return inventory.promise
+    }
+
+    try {
+      const request = fetchSessions(instanceId)
+      await inventoryStarted.promise
+      assert.deepEqual(getSessionListIds(instanceId), ["new", "older"])
+      assert.equal(sessions().get(instanceId)?.has("older"), true)
+      inventory.resolve({ data: [apiSession("new"), apiSession("older")], cursor: {} })
+      await request
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("hydrates independent restored session branches in parallel by ancestry level", async () => {
+    const instanceId = "parallel-restore"
+    const { client, cleanup } = setup(instanceId)
+    const children = deferred<void>()
+    const started: string[] = []
+    ;(client.session as any).get = async ({ sessionID }: { sessionID: string }) => {
+      started.push(sessionID)
+      if (sessionID !== "parent") await children.promise
+      return apiSession(sessionID, sessionID === "parent" ? undefined : "parent")
+    }
+
+    try {
+      const hydration = hydrateRestoredSessionChain(instanceId, ["first", "second"])
+      await Promise.resolve()
+      assert.deepEqual(started, ["first", "second"])
+      children.resolve()
+      await hydration
+      assert.deepEqual(started, ["first", "second", "parent"])
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("keeps a successful root page when project inventory enrichment fails", async () => {
+    const instanceId = "project-inventory-failure"
+    const { client, cleanup } = setup(instanceId)
+    setInstanceMetadata(instanceId, { project: { id: "project", directory: "/work", canonical: "/work" } as any })
+    ;(client.session as any).list = (input: any) => input.parentID === null
+      ? Promise.resolve({ data: [apiSession("root")], cursor: {} })
+      : Promise.reject(new Error("inventory failed"))
+
+    try {
+      await fetchSessions(instanceId)
+      assert.deepEqual(getSessionListIds(instanceId), ["root"])
+      assert.equal(sessions().get(instanceId)?.has("root"), true)
     } finally {
       cleanup()
     }
@@ -609,6 +754,8 @@ describe("session request authority", () => {
     const grandchild = { ...session(instanceId, "grandchild"), parentId: "child" }
     const missingChild = { ...session(instanceId, "missing-child"), parentId: "missing-root" }
     const missingGrandchild = { ...session(instanceId, "missing-grandchild"), parentId: "missing-child" }
+    const orphan = { ...session(instanceId, "orphan"), parentId: "disconnected" }
+    const orphanGrandchild = { ...session(instanceId, "orphan-grandchild"), parentId: "orphan" }
     setSessions((previous) => new Map(previous).set(instanceId, new Map([
       ["root", session(instanceId, "root")],
       ["missing-root", session(instanceId, "missing-root")],
@@ -616,6 +763,8 @@ describe("session request authority", () => {
       ["grandchild", grandchild],
       ["missing-child", missingChild],
       ["missing-grandchild", missingGrandchild],
+      ["orphan", orphan],
+      ["orphan-grandchild", orphanGrandchild],
     ])))
 
     try {
@@ -623,6 +772,8 @@ describe("session request authority", () => {
       assert.equal(sessions().get(instanceId)?.has("missing-root"), false)
       assert.equal(sessions().get(instanceId)?.has("missing-child"), false)
       assert.equal(sessions().get(instanceId)?.has("missing-grandchild"), false)
+      assert.equal(sessions().get(instanceId)?.has("orphan"), false)
+      assert.equal(sessions().get(instanceId)?.has("orphan-grandchild"), false)
       assert.equal(sessions().get(instanceId)?.has("child"), true)
       assert.equal(sessions().get(instanceId)?.has("grandchild"), true)
     } finally {

@@ -25,4 +25,34 @@ describe("instance metadata", () => {
       clearInstanceMetadata(instanceId)
     }
   })
+
+  it("lets a replacement client load immediately and rejects the old commit", async () => {
+    const instanceId = "metadata-client-replacement"
+    let resolveOld!: () => void
+    let resolveNew!: () => void
+    const oldGate = new Promise<void>((resolve) => { resolveOld = resolve })
+    const newGate = new Promise<void>((resolve) => { resolveNew = resolve })
+    const client = (label: string, gate: Promise<void>) => ({
+      project: {
+        current: async () => { await gate; return { id: label, directory: `/${label}`, canonical: `/${label}` } },
+        list: async () => { await gate; return [] },
+      },
+      mcp: { list: async () => { await gate; return { data: [label] } } },
+      plugin: { list: async () => { await gate; return { data: [{ id: label }] } } },
+    })
+
+    try {
+      const oldRequest = loadInstanceMetadata({ id: instanceId, folder: "/old", client: client("old", oldGate) } as any)
+      clearInstanceMetadata(instanceId)
+      const newRequest = loadInstanceMetadata({ id: instanceId, folder: "/new", client: client("new", newGate) } as any)
+      resolveNew()
+      await newRequest
+      assert.equal(getInstanceMetadata(instanceId)?.project?.id, "new")
+      resolveOld()
+      await oldRequest
+      assert.equal(getInstanceMetadata(instanceId)?.project?.id, "new")
+    } finally {
+      clearInstanceMetadata(instanceId)
+    }
+  })
 })

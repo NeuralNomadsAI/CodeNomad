@@ -66,7 +66,7 @@ import { clearInstanceMetadata } from "./instance-metadata"
 import { showWorkspaceLaunchError } from "./launch-errors"
 import { showToastNotification } from "../lib/notifications"
 import { tGlobal } from "../lib/i18n"
-import { loadInstanceMetadata } from "../lib/hooks/use-instance-metadata"
+import { loadInstanceMetadata, loadInstanceProjectMetadata } from "../lib/hooks/use-instance-metadata"
 import {
   addFormToQueue,
   clearFormQueue as clearStoredFormQueue,
@@ -637,10 +637,14 @@ function startInstanceSessionHydration(instanceId: string, force = false): {
     : ensureWorktreesLoaded(instanceId)
   const workspaceMetadata = worktreeHydration.then(async () => {
     const instance = instances().get(instanceId)
-    if (instance?.client) await loadInstanceMetadata(instance, { force }).catch((error) => {
+    if (instance?.client) await loadInstanceProjectMetadata(instance, { force }).catch((error) => {
       log.warn("Failed to load project metadata before session hydration", { instanceId, error })
     })
   })
+  void worktreeHydration.then(async () => {
+    const instance = instances().get(instanceId)
+    if (instance?.client) await loadInstanceMetadata(instance, { force })
+  }).catch((error) => log.warn("Failed to load supplemental instance metadata", { instanceId, error }))
   const sessions = workspaceMetadata.then(async () => {
     resetSessionPagination(instanceId)
     await fetchSessions(instanceId).catch((error) => {
@@ -1001,6 +1005,7 @@ function updateInstance(id: string, updates: Partial<Instance>) {
     clearSessionListRequestState(id)
     clearSessionCatalogState(id)
     clearCommands(id)
+    clearInstanceMetadata(id)
     volatileInstanceRefreshes.delete(id)
     for (const sessionId of sessions().get(id)?.keys() ?? []) invalidateSessionMessageLoad(id, sessionId)
   }

@@ -84,12 +84,23 @@ describe("message history pagination", () => {
     assert.equal(await loadPagesUntilAnchor(options), "found")
 
     attempts = 0
-    assert.equal(await loadPagesUntilAnchor({
+    await assert.rejects(loadPagesUntilAnchor({
       ...options,
       hasAnchor: () => false,
       loadMore: async () => { attempts += 1 },
-    }), "limit")
+    }), /page limit/)
     assert.equal(attempts, 1)
+  })
+
+  it("makes repeated anchor cursors retryable", async () => {
+    let cursor = "same-page"
+    await assert.rejects(loadPagesUntilAnchor({
+      hasAnchor: () => false,
+      hasMore: () => true,
+      isCurrent: () => true,
+      getCursor: () => cursor,
+      loadMore: async () => { cursor = "same-page" },
+    }), /cursor did not advance/)
   })
 
   it("loads native history pages before computing conversation search results", async () => {
@@ -144,6 +155,16 @@ describe("message history pagination", () => {
 
     await assert.rejects(loadCompleteMessageHistory(options), /page failed/)
     assert.deepEqual(await loadCompleteMessageHistory(options), [query])
+  })
+
+  it("reports a repeated conversation-search cursor as a retryable failure", async () => {
+    let cursor: string | undefined = "older-page"
+    await assert.rejects(loadCompleteMessageHistory({
+      getCursor: () => cursor,
+      loadMore: async () => { cursor = "older-page" },
+      isCurrent: () => true,
+      complete: () => ["unreachable"],
+    }), /cursor did not advance/)
   })
 
   it("stops ordinary pagination on a repeated cursor or no message progress", async () => {
