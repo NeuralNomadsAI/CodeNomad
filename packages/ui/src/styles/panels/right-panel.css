@@ -722,6 +722,21 @@
   background-color: var(--surface-secondary);
 }
 
+.status-process-card {
+  @apply border px-3 py-3 transition-colors duration-150;
+  border-color: var(--border-base);
+  background-color: var(--surface-base);
+}
+
+.status-process-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+.status-process-actions {
+  @apply mt-3 grid grid-cols-2 gap-2;
+}
+
 /* Accordion improvements for right panel */
 .right-panel-accordion {
   @apply flex flex-col;

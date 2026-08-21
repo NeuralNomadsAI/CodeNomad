@@ -1,4 +1,5 @@
-import { For, Show, createEffect, createMemo, on, type Accessor, type Component } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, on, type Accessor, type Component } from "solid-js"
+import type { ShellInfo } from "@opencode-ai/client"
 import type { ToolState } from "../../../../../types/tool-state"
 import {
   DragDropProvider,
@@ -12,7 +13,7 @@ import { Accordion } from "@kobalte/core"
 import { Tooltip } from "@kobalte/core/tooltip"
 import Switch from "@suid/material/Switch"
 
-import { ChevronDown, GripVertical, Info, Trash2, XOctagon } from "lucide-solid"
+import { ChevronDown, GripVertical, Info, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
 
 import type { Instance } from "../../../../../types/instance"
 import type { Session } from "../../../../../types/session"
@@ -27,6 +28,8 @@ import { applyRightPanelItemCustomization, type RightPanelCustomization, type Ri
 import { createCoreStatusSectionManifest } from "../core-plugin"
 import { shellStore } from "../../../../../stores/shells"
 import { showConfirmDialog } from "../../../../../stores/alerts"
+import { showToastNotification } from "../../../../../lib/notifications"
+import { ShellOutputDialog } from "../../../../shell-output-dialog"
 
 interface StatusTabProps {
   t: (key: string, vars?: Record<string, any>) => string
@@ -84,6 +87,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
   const isSectionExpanded = (id: string) => props.expandedItems().includes(id)
   const shellDirectory = createMemo(() => props.activeSession()?.location.directory ?? props.instance.folder)
   const shellState = createMemo(() => shellStore.getState(props.instanceId, shellDirectory()))
+  const [outputShell, setOutputShell] = createSignal<ShellInfo | null>(null)
 
   createEffect(on(
     () => [props.instanceId, shellDirectory()] as const,
@@ -146,7 +150,9 @@ const StatusTab: Component<StatusTabProps> = (props) => {
           : "instanceShell.backgroundProcesses.actions.remove"),
       },
     )
-    if (confirmed) await shellStore.remove(props.instanceId, shellDirectory(), shellId)
+    if (confirmed && !await shellStore.remove(props.instanceId, shellDirectory(), shellId)) {
+      showToastNotification({ message: props.t("instanceShell.backgroundProcesses.error"), variant: "error" })
+    }
   }
 
   const renderBackgroundProcesses = () => (
@@ -167,29 +173,11 @@ const StatusTab: Component<StatusTabProps> = (props) => {
               {(shell) => {
                 const running = () => shell.status === "running"
                 return (
-                  <article class="border border-base bg-surface-secondary px-3 py-2">
+                  <article class="status-process-card">
                     <div class="flex items-start justify-between gap-2">
                       <div class="min-w-0 flex-1">
                         <h4 class="truncate text-xs font-medium text-primary" title={shell.command}>{shell.command}</h4>
                         <code class="mt-1 block truncate text-xs text-secondary" title={shell.shell}>{shell.shell}</code>
-                      </div>
-                      <div class="flex shrink-0 gap-1">
-                        <button
-                          type="button"
-                          class="button-tertiary inline-flex items-center justify-center p-1"
-                          disabled={shellState().loading}
-                          onClick={() => void removeShell(shell.id, shell.command, running())}
-                          aria-label={props.t(running()
-                            ? "instanceShell.backgroundProcesses.actions.stopRemove"
-                            : "instanceShell.backgroundProcesses.actions.remove")}
-                          title={props.t(running()
-                            ? "instanceShell.backgroundProcesses.actions.stopRemove"
-                            : "instanceShell.backgroundProcesses.actions.remove")}
-                        >
-                          <Show when={running()} fallback={<Trash2 class="h-3.5 w-3.5" aria-hidden="true" />}>
-                            <XOctagon class="h-3.5 w-3.5" aria-hidden="true" />
-                          </Show>
-                        </button>
                       </div>
                     </div>
                     <div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-tertiary">
@@ -202,6 +190,29 @@ const StatusTab: Component<StatusTabProps> = (props) => {
                       </Show>
                     </div>
                     <div class="mt-1 truncate text-xs text-tertiary" title={shell.cwd}>{shell.cwd}</div>
+                    <div class="status-process-actions">
+                      <button
+                        type="button"
+                        class="button-tertiary inline-flex w-full items-center justify-center gap-1 p-1"
+                        onClick={() => setOutputShell(shell)}
+                      >
+                        <TerminalSquare class="h-3.5 w-3.5" aria-hidden="true" />
+                        {props.t("instanceShell.backgroundProcesses.actions.output")}
+                      </button>
+                      <button
+                        type="button"
+                        class="button-tertiary inline-flex w-full items-center justify-center gap-1 p-1"
+                        disabled={shellState().loading}
+                        onClick={() => void removeShell(shell.id, shell.command, running())}
+                      >
+                        <Show when={running()} fallback={<Trash2 class="h-3.5 w-3.5" aria-hidden="true" />}>
+                          <XOctagon class="h-3.5 w-3.5" aria-hidden="true" />
+                        </Show>
+                        {props.t(running()
+                          ? "instanceShell.backgroundProcesses.actions.stopRemove"
+                          : "instanceShell.backgroundProcesses.actions.remove")}
+                      </button>
+                    </div>
                   </article>
                 )
               }}
@@ -288,6 +299,13 @@ const StatusTab: Component<StatusTabProps> = (props) => {
           </DragDropSensors>
         </DragDropProvider>
       </Accordion.Root>
+      <ShellOutputDialog
+        open={Boolean(outputShell())}
+        instanceId={props.instanceId}
+        directory={shellDirectory()}
+        shell={outputShell()}
+        onClose={() => setOutputShell(null)}
+      />
     </div>
   )
 }

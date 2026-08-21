@@ -20,6 +20,7 @@ import { copyToClipboard } from "../lib/clipboard"
 import SpeechActionButton from "./speech-action-button"
 import type { VisibilityPreference } from "../stores/preferences"
 import type { ToolState, ToolStateCompleted, ToolStateError, ToolStateRunning } from "../types/tool-state"
+import { parseReasoningSummary } from "../lib/reasoning-summary"
 
 const USER_BORDER_COLOR = "var(--message-user-border)"
 const ASSISTANT_BORDER_COLOR = "var(--message-assistant-border)"
@@ -1204,16 +1205,9 @@ function ReasoningCard(props: ReasoningCardProps) {
     return ""
   }
 
-  const extractedTitle = () => {
-    const firstLine = reasoningText()
-      .split(/\r?\n/)
-      .map((line: string) => line.trim())
-      .find((line: string) => line.length > 0)
-    if (!firstLine) return ""
-
-    const match = firstLine.match(/^\*\*([^*]+)\*\*/)
-    return match?.[1]?.trim() ?? ""
-  }
+  const reasoningSummary = createMemo(() => parseReasoningSummary(reasoningText()))
+  const reasoningBody = () => reasoningSummary().body
+  const extractedTitle = () => reasoningSummary().title ?? ""
 
   const thoughtDurationTitle = () => {
     const duration = props.durationMs
@@ -1252,7 +1246,9 @@ function ReasoningCard(props: ReasoningCardProps) {
     return parts.join("\n")
   }
 
-  const toggle = () => setExpanded((prev) => !prev)
+  const toggle = () => {
+    if (reasoningBody()) setExpanded((prev) => !prev)
+  }
 
   const speech = useSpeech({
     id: () => `${props.instanceId}:${props.sessionId}:${props.messageId}:${(props.part as any)?.id ?? "reasoning"}`,
@@ -1301,10 +1297,13 @@ function ReasoningCard(props: ReasoningCardProps) {
           type="button"
           class="message-reasoning-toggle"
           onClick={toggle}
-          aria-expanded={expanded()}
+          disabled={!reasoningBody()}
+          aria-expanded={Boolean(reasoningBody() && expanded())}
           aria-label={expanded() ? t("messageBlock.reasoning.collapseAriaLabel") : t("messageBlock.reasoning.expandAriaLabel")}
         >
-          <span class="message-reasoning-disclosure" aria-hidden="true">{expanded() ? "▼" : "▶"}</span>
+          <Show when={reasoningBody()}>
+            <span class="message-reasoning-disclosure" aria-hidden="true">{expanded() ? "▼" : "▶"}</span>
+          </Show>
           <span class="message-reasoning-label">
             <span class="message-reasoning-type">{t("messageBlock.reasoning.thinkingLabel")}</span>
             <span class="message-reasoning-title" title={reasoningMetaTooltip() || undefined}>
@@ -1357,11 +1356,11 @@ function ReasoningCard(props: ReasoningCardProps) {
         </div>
       </div>
 
-      <Show when={expanded()}>
+      <Show when={reasoningBody() && expanded()}>
         <div class="message-reasoning-expanded">
           <div class="message-reasoning-body">
             <ReasoningStreamOutput
-              text={reasoningText}
+              text={reasoningBody}
               scrollTopSnapshot={scrollTopSnapshot}
               setScrollTopSnapshot={setScrollTopSnapshot}
               onContentRendered={props.onContentRendered}

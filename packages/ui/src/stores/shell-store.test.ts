@@ -13,6 +13,7 @@ describe("shell store", () => {
     const api: ShellApi = {
       list: async (directory) => { lists.push(directory); return [shell(directory, directory)] },
       remove: async () => {},
+      output: async () => ({ output: "", cursor: 0, size: 0, truncated: false }),
     }
     const store = createShellStore(() => api)
     await store.load("instance", "/repo")
@@ -26,5 +27,19 @@ describe("shell store", () => {
     lists.length = 0
     await store.refreshForEvent("instance", { type: "server.connected" })
     assert.deepEqual(lists.sort(), ["/repo", "/repo/worktree"])
+  })
+
+  it("keeps loaded shells visible when removal fails", async () => {
+    const api: ShellApi = {
+      list: async () => [shell("shell")],
+      remove: async () => { throw new Error("failed") },
+      output: async () => ({ output: "", cursor: 0, size: 0, truncated: false }),
+    }
+    const store = createShellStore(() => api)
+    await store.load("instance", "/repo")
+
+    assert.equal(await store.remove("instance", "/repo", "shell"), false)
+    assert.equal(store.getState("instance", "/repo").failed, false)
+    assert.equal(store.getState("instance", "/repo").items.length, 1)
   })
 })

@@ -4,6 +4,7 @@ import type { OpenCodeClient, ShellInfo } from "@opencode-ai/client"
 export interface ShellApi {
   list(directory: string): Promise<ShellInfo[]>
   remove(directory: string, shellId: string): Promise<void>
+  output(directory: string, shellId: string, cursor?: number): Promise<{ output: string; cursor: number; size: number; truncated: boolean }>
 }
 
 export interface ShellState {
@@ -26,6 +27,12 @@ export function createShellApi(client: OpenCodeClient): ShellApi {
   return {
     list: async (directory) => (await client.shell.list({ location: location(directory) })).data,
     remove: (directory, shellId) => client.shell.remove({ id: shellId, location: location(directory) }),
+    output: async (directory, shellId, cursor = 0) => (await client.shell.output({
+      id: shellId,
+      location: location(directory),
+      cursor,
+      limit: 1024 * 1024,
+    })).data,
   }
 }
 
@@ -65,14 +72,13 @@ export function createShellStore(apiForInstance: (instanceId: string) => ShellAp
       await apiForInstance(instanceId).remove(directory, shellId)
       await load(instanceId, directory)
       return true
-    } catch {
-      setState(key(instanceId, directory), { ...getState(instanceId, directory), failed: true })
-      return false
-    }
+    } catch { return false }
   }
 
+  const output = (instanceId: string, directory: string, shellId: string, cursor?: number) =>
+    apiForInstance(instanceId).output(directory, shellId, cursor)
   const getState = (instanceId: string, directory: string): ShellState => states().get(key(instanceId, directory)) ?? EMPTY_STATE
-  return { getState, load, refreshForEvent, remove }
+  return { getState, load, refreshForEvent, remove, output }
 }
 
 function sameDirectory(left: string, right: string): boolean {
