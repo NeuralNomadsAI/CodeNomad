@@ -3,6 +3,7 @@ import type { OpenCodeClient, SessionInfo } from "@opencode-ai/client"
 const PAGE_SIZE = 200
 const MAX_PAGES = 10_000
 const MAX_SESSIONS = 1_000_000
+const MUTATION_DRAIN_TIMEOUT_MS = 30_000
 
 function normalizeDirectory(directory: string): string {
   const normalized = directory.trim().replace(/\\/g, "/").replace(/\/+$/, "") || "/"
@@ -14,6 +15,8 @@ export class WorktreeDeletionFence {
   private readonly blocked = new Map<string, number>()
   private readonly active = new Map<string, number>()
   private readonly idleWaiters = new Map<string, Set<() => void>>()
+
+  constructor(private readonly mutationDrainTimeoutMs = MUTATION_DRAIN_TIMEOUT_MS) {}
 
   isBlocked(directory: string): boolean {
     return this.blocked.has(normalizeDirectory(directory))
@@ -64,10 +67,19 @@ export class WorktreeDeletionFence {
 
   private waitForIdle(directory: string): Promise<void> {
     if (!this.active.has(directory)) return Promise.resolve()
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const waiters = this.idleWaiters.get(directory) ?? new Set()
-      waiters.add(resolve)
+      const done = () => {
+        clearTimeout(timer)
+        resolve()
+      }
+      waiters.add(done)
       this.idleWaiters.set(directory, waiters)
+      const timer = setTimeout(() => {
+        waiters.delete(done)
+        if (!waiters.size) this.idleWaiters.delete(directory)
+        reject(new Error("Timed out waiting for worktree mutations to finish"))
+      }, this.mutationDrainTimeoutMs)
     })
   }
 }
@@ -96,10 +108,10 @@ async function inventorySessions(client: OpenCodeClient, project: string): Promi
 async function waitForInventory(
   client: OpenCodeClient,
   project: string,
-  predicate: (sessions: SessionInfo[]) => boolean,
+  predicate: (sessions: SessionInfo[]) => boolean | Promise<boolean>,
 ): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (predicate(await inventorySessions(client, project))) return
+    if (await predicate(await inventorySessions(client, project))) return
     await new Promise((resolve) => setTimeout(resolve, 50))
   }
   throw new Error("Timed out waiting for session moves")
@@ -110,16 +122,28 @@ export async function evacuateWorktreeSessions(params: {
   projectDirectory: string
   targetDirectory: string
   rootDirectory: string
+  resolveDirectory?: (directory: string) => Promise<string | undefined>
   remove: () => Promise<void>
 }): Promise<void> {
-  const target = normalizeDirectory(params.targetDirectory)
-  const project = (await params.client.project.list()).find((candidate) => (
-    normalizeDirectory(candidate.canonical) === normalizeDirectory(params.projectDirectory)
-    || candidate.sandboxes.some((directory) => normalizeDirectory(directory) === target)
-  ))
+  const identity = async (directory: string) => normalizeDirectory(
+    await params.resolveDirectory?.(directory) ?? directory,
+  )
+  const target = await identity(params.targetDirectory)
+  const matchesTarget = async (directory: string) => await identity(directory) === target
+  const projects = await params.client.project.list()
+  let project: (typeof projects)[number] | undefined
+  for (const candidate of projects) {
+    if (normalizeDirectory(candidate.canonical) === normalizeDirectory(params.projectDirectory)
+      || (await Promise.all(candidate.sandboxes.map(matchesTarget))).some(Boolean)) {
+      project = candidate
+      break
+    }
+  }
   if (!project) throw new Error("Unable to resolve the OpenCode project before deleting worktree")
   const sessions = await inventorySessions(params.client, project.id)
-  const affected = sessions.filter((session) => normalizeDirectory(session.location.directory) === target)
+  const affected = (await Promise.all(sessions.map(async (session) => (
+    await matchesTarget(session.location.directory) ? session : undefined
+  )))).filter((session): session is SessionInfo => Boolean(session))
   const assertInactive = async (candidates = affected) => {
     const active = await params.client.session.active()
     const blockers = candidates.filter((session) => Object.prototype.hasOwnProperty.call(active, session.id))
@@ -135,11 +159,13 @@ export async function evacuateWorktreeSessions(params: {
       await params.client.session.move({ sessionID: session.id, directory: params.rootDirectory })
       moved.push(original)
     }
-    await waitForInventory(params.client, project.id, (current) => (
-      current.every((session) => normalizeDirectory(session.location.directory) !== target)
+    await waitForInventory(params.client, project.id, async (current) => (
+      !(await Promise.all(current.map((session) => matchesTarget(session.location.directory)))).some(Boolean)
     ))
-    const finalAffected = (await inventorySessions(params.client, project.id))
-      .filter((session) => normalizeDirectory(session.location.directory) === target)
+    const finalInventory = await inventorySessions(params.client, project.id)
+    const finalAffected = (await Promise.all(finalInventory.map(async (session) => (
+      await matchesTarget(session.location.directory) ? session : undefined
+    )))).filter((session): session is SessionInfo => Boolean(session))
     await assertInactive(finalAffected)
     if (finalAffected.length) throw new Error("Sessions appeared in the worktree during deletion")
     await params.remove()
@@ -158,10 +184,10 @@ export async function evacuateWorktreeSessions(params: {
     }
     try {
       const expected = new Set(moved.map((session) => session.id))
-      await waitForInventory(params.client, project.id, (current) => {
+      await waitForInventory(params.client, project.id, async (current) => {
         const restored = current.filter((session) => expected.has(session.id))
         return restored.length === expected.size
-          && restored.every((session) => normalizeDirectory(session.location.directory) === target)
+          && (await Promise.all(restored.map((session) => matchesTarget(session.location.directory)))).every(Boolean)
       })
     } catch (rollbackError) {
       rollbackErrors.push(rollbackError)

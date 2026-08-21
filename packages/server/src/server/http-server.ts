@@ -780,44 +780,44 @@ async function proxyWorkspaceRequest(args: {
     reply.code(409).send({ error: "Worktree deletion is in progress" })
     return
   }
-  if (releaseMutation) {
-    reply.raw.once("finish", releaseMutation)
-    reply.raw.once("close", releaseMutation)
-  }
-
   logger.debug({ workspaceId, method: request.method, targetUrl: targetUrl.toString() }, "Proxying request to instance")
 
   try {
     return reply.from(targetUrl.toString(), {
-    ...(body !== request.body ? { body } : {}),
-    rewriteRequestHeaders: (_originalRequest, headers) => {
-      const outgoingHeaders = sanitizeInstanceProxyRequestHeaders(headers, instanceAuthHeader)
-      if (globalFormDirectory) {
-        outgoingHeaders["x-opencode-directory"] = encodeURIComponent(translatedDirectories.get(globalFormDirectory)!)
-      }
+      ...(body !== request.body ? { body } : {}),
+      rewriteRequestHeaders: (_originalRequest, headers) => {
+        const outgoingHeaders = sanitizeInstanceProxyRequestHeaders(headers, instanceAuthHeader)
+        if (globalFormDirectory) {
+          outgoingHeaders["x-opencode-directory"] = encodeURIComponent(translatedDirectories.get(globalFormDirectory)!)
+        }
 
-      if (logger.isLevelEnabled("trace")) {
-        logger.trace(
-          {
-            workspaceId,
-            method: request.method,
-            targetUrl: targetUrl.toString(),
-            contentType: request.headers["content-type"],
-            headers: redactSecrets(outgoingHeaders),
-          },
-          "Proxy -> OpenCode request",
-        )
-      }
+        if (logger.isLevelEnabled("trace")) {
+          logger.trace(
+            {
+              workspaceId,
+              method: request.method,
+              targetUrl: targetUrl.toString(),
+              contentType: request.headers["content-type"],
+              headers: redactSecrets(outgoingHeaders),
+            },
+            "Proxy -> OpenCode request",
+          )
+        }
 
-      return outgoingHeaders
-    },
-    rewriteHeaders: sanitizeInstanceProxyResponseHeaders,
-    onError: (proxyReply, { error }) => {
-      logger.error({ err: error, workspaceId, targetUrl: targetUrl.toString() }, "Failed to proxy workspace request")
-      if (!proxyReply.sent) {
-        proxyReply.code(502).send({ error: "Workspace instance proxy failed" })
-      }
-    },
+        return outgoingHeaders
+      },
+      rewriteHeaders: sanitizeInstanceProxyResponseHeaders,
+      onResponse: (_proxyRequest, proxyReply, upstreamResponse) => {
+        releaseMutation?.()
+        proxyReply.send(upstreamResponse)
+      },
+      onError: (proxyReply, { error }) => {
+        releaseMutation?.()
+        logger.error({ err: error, workspaceId, targetUrl: targetUrl.toString() }, "Failed to proxy workspace request")
+        if (!proxyReply.sent) {
+          proxyReply.code(502).send({ error: "Workspace instance proxy failed" })
+        }
+      },
     })
   } catch (error) {
     releaseMutation?.()

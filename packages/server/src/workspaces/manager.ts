@@ -30,7 +30,7 @@ import {
   type OpenCodeSharedServiceOptions,
 } from "./opencode-service"
 import { WslOpenCodeService } from "./wsl-opencode-service"
-import { isPathOwnedByWorktree, resolveWorktreeSlugForDirectory } from "./worktree-directory"
+import { isPathOwnedByWorktree, resolveWorktreeDirectory, resolveWorktreeSlugForDirectory } from "./worktree-directory"
 
 const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
 const MAX_ACTIVE_WORKSPACE_CREATIONS = 32
@@ -212,10 +212,27 @@ export class WorkspaceManager {
 
   async getServiceDirectoryForPath(id: string, directory: string): Promise<string | undefined> {
     const record = this.workspaces.get(id)
-    if (!record?.[WORKSPACE_STATE].published || !await this.ownsDirectory(id, directory)) return undefined
-    if (!record.wslDistro) return directory
-    return this.resolveWslServiceDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
-      ?? (path.posix.isAbsolute(directory) ? directory : undefined)
+    if (!record?.[WORKSPACE_STATE].published) return undefined
+    const hostDirectory = record.wslDistro
+      ? this.resolveWslHostDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
+      : directory
+    if (!hostDirectory) return undefined
+    const slug = await resolveWorktreeSlugForDirectory({
+      workspaceId: record.id,
+      workspacePath: record.path,
+      directory: hostDirectory,
+      logger: this.options.logger,
+    })
+    if (!slug) return undefined
+    const canonicalHostDirectory = await resolveWorktreeDirectory({
+      workspaceId: record.id,
+      workspacePath: record.path,
+      worktreeSlug: slug,
+      logger: this.options.logger,
+    })
+    if (!canonicalHostDirectory) return undefined
+    if (!record.wslDistro) return canonicalHostDirectory
+    return this.resolveWslServiceDirectory(canonicalHostDirectory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS) ?? undefined
   }
 
   async getServicePathForPath(id: string, candidate: string): Promise<string | undefined> {

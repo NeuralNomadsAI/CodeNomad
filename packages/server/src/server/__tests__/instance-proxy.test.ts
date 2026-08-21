@@ -31,8 +31,15 @@ async function harness(
   const upstream = Fastify()
   apps.push(upstream)
   let requests = 0
+  let releaseDelayedUpstream: (() => void) | undefined
+  let markDelayedUpstreamStarted!: () => void
+  const delayedUpstreamStarted = new Promise<void>((resolve) => { markDelayedUpstreamStarted = resolve })
   upstream.all("/*", async (request, reply) => {
     requests++
+    if (request.headers["x-test-delay-upstream"] === "1") {
+      markDelayedUpstreamStarted()
+      await new Promise<void>((resolve) => { releaseDelayedUpstream = resolve })
+    }
     reply.header("set-cookie", "upstream_session=secret; Path=/")
     reply.header("www-authenticate", 'Basic realm="OpenCode"')
     reply.header("proxy-authenticate", 'Basic realm="OpenCode proxy"')
@@ -117,7 +124,15 @@ async function harness(
   await app.register(replyFrom)
   registerInstanceProxyRoutes(app, { workspaceManager: manager, logger: logger(), worktreeDeletionFence })
   await app.ready()
-  return { app, servicePathCalls, sessionGets, worktreeDeletionFence, requestCount: () => requests }
+  return {
+    app,
+    servicePathCalls,
+    sessionGets,
+    worktreeDeletionFence,
+    requestCount: () => requests,
+    delayedUpstreamStarted,
+    releaseDelayedUpstream: () => releaseDelayedUpstream?.(),
+  }
 }
 
 describe("instance proxy location enforcement", () => {
@@ -162,6 +177,47 @@ describe("instance proxy location enforcement", () => {
       method: "POST",
       url: "/workspaces/workspace/instance/api/session",
       payload: { location: { directory: "/repo/worktree" } },
+    })
+
+    assert.equal(response.statusCode, 409)
+    assert.equal(requestCount(), 0)
+    release()
+    await deletion
+  })
+
+  it("holds mutation admission until the upstream response arrives", async () => {
+    const { app, worktreeDeletionFence, delayedUpstreamStarted, releaseDelayedUpstream } = await harness()
+    const mutation = app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/session",
+      headers: { "x-test-delay-upstream": "1" },
+      payload: { location: { directory: "/repo/worktree" } },
+    })
+    await delayedUpstreamStarted
+    let deleted = false
+    const deletion = worktreeDeletionFence.run("/repo/worktree", ["/repo/worktree"], async () => { deleted = true })
+
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(deleted, false)
+    releaseDelayedUpstream()
+    assert.equal((await mutation).statusCode, 200)
+    await deletion
+    assert.equal(deleted, true)
+  })
+
+  it("blocks lexical aliases after translation to the canonical worktree", async () => {
+    const { app, worktreeDeletionFence, requestCount } = await harness(
+      "/repo/worktree", {}, {}, "/repo", "/repo", {}, {}, {}, { "/repo/worktree/.": "/repo/worktree" },
+    )
+    let release!: () => void
+    const deletion = worktreeDeletionFence.run("/repo/worktree", ["/repo/worktree"], () => (
+      new Promise<void>((resolve) => { release = resolve })
+    ))
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/session",
+      payload: { location: { directory: "/repo/worktree/." } },
     })
 
     assert.equal(response.statusCode, 409)
