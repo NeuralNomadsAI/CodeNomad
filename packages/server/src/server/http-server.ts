@@ -367,6 +367,7 @@ export interface InstanceProxyWorkspaceManager {
   getInstanceAuthorizationHeader(id: string): string | undefined
   getServiceDirectory?(id: string): string | undefined
   getServiceDirectoryForPath?(id: string, directory: string): Promise<string | undefined>
+  getWorktreeIdentityForPath(id: string, directory: string): Promise<string | undefined>
   getServicePathForPath?(id: string, candidate: string): Promise<string | undefined>
   getSharedServiceClient(): Promise<OpenCodeClient>
   ownsLocationWorkspace(id: string, workspaceID: string): boolean
@@ -674,11 +675,16 @@ async function proxyWorkspaceRequest(args: {
     }
     translatedDirectories.set(directory, translated)
   }
-  const mutationDirectories = new Set(translatedDirectories.values())
-  if (request.method !== "GET" && request.method !== "HEAD"
-    && [...translatedDirectories.values()].some((directory) => worktreeDeletionFence.isBlocked(directory))) {
-    reply.code(409).send({ error: "Worktree deletion is in progress" })
-    return
+  const mutationIdentities = new Set<string>()
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    for (const directory of requestLocations.directories) {
+      const identity = await workspaceManager.getWorktreeIdentityForPath(workspaceId, directory)
+      if (!identity) {
+        reply.code(403).send({ error: "Location does not belong to workspace" })
+        return
+      }
+      mutationIdentities.add(identity)
+    }
   }
   const serviceBody = replaceRequestDirectories(targetUrl, imported.body, translatedDirectories, pathname, request.method)
   if (promptFiles.invalid || !(await allPathsOwned(workspaceManager, workspaceId, promptFiles.paths))) {
@@ -764,18 +770,19 @@ async function proxyWorkspaceRequest(args: {
       reply.code(403).send({ error: "Session does not belong to workspace" })
       return
     }
-    if (request.method !== "GET" && request.method !== "HEAD" && worktreeDeletionFence.isBlocked(session.location.directory)) {
-      reply.code(409).send({ error: "Worktree deletion is in progress" })
+    const sessionWorktree = await workspaceManager.getWorktreeIdentityForPath(workspaceId, session.location.directory)
+    if (!sessionWorktree) {
+      reply.code(403).send({ error: "Session does not belong to workspace" })
       return
     }
-    mutationDirectories.add(session.location.directory)
+    mutationIdentities.add(sessionWorktree)
   }
 
   const body = applyDefaultWorkspaceLocation(targetUrl, promptBody, request.method, serviceDirectory, requestLocations.directories.length > 0 || sessionListHasScope, Boolean(sessionId) && !isGlobalFormAction(pathname, request.method))
   const instanceAuthHeader = workspaceManager.getInstanceAuthorizationHeader(workspaceId)
   const releaseMutation = request.method === "GET" || request.method === "HEAD"
     ? undefined
-    : worktreeDeletionFence.enter([...mutationDirectories])
+    : worktreeDeletionFence.enter([...mutationIdentities])
   if (request.method !== "GET" && request.method !== "HEAD" && !releaseMutation) {
     reply.code(409).send({ error: "Worktree deletion is in progress" })
     return
@@ -808,8 +815,15 @@ async function proxyWorkspaceRequest(args: {
       },
       rewriteHeaders: sanitizeInstanceProxyResponseHeaders,
       onResponse: (_proxyRequest, proxyReply, upstreamResponse) => {
-        releaseMutation?.()
-        proxyReply.send(upstreamResponse)
+        const upstream = upstreamResponse as typeof upstreamResponse & { readableEnded?: boolean; destroyed?: boolean }
+        const release = () => releaseMutation?.()
+        if (upstream.readableEnded || upstream.destroyed) release()
+        else {
+          upstream.once("end", release)
+          upstream.once("close", release)
+          upstream.once("error", release)
+        }
+        proxyReply.send(upstream)
       },
       onError: (proxyReply, { error }) => {
         releaseMutation?.()

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { afterEach, describe, it } from "node:test"
+import { Readable } from "node:stream"
 import Fastify, { type FastifyInstance } from "fastify"
 import replyFrom from "@fastify/reply-from"
 import type { OpenCodeClient, SessionInfo } from "@opencode-ai/client"
@@ -36,6 +37,22 @@ async function harness(
   const delayedUpstreamStarted = new Promise<void>((resolve) => { markDelayedUpstreamStarted = resolve })
   upstream.all("/*", async (request, reply) => {
     requests++
+    if (request.headers["x-test-delay-upstream-body"] === "1") {
+      let started = false
+      const stream = new Readable({
+        read() {
+          if (started) return
+          started = true
+          this.push('{"started":')
+          markDelayedUpstreamStarted()
+          releaseDelayedUpstream = () => {
+            this.push("true}")
+            this.push(null)
+          }
+        },
+      })
+      return reply.type("application/json").send(stream)
+    }
     if (request.headers["x-test-delay-upstream"] === "1") {
       markDelayedUpstreamStarted()
       await new Promise<void>((resolve) => { releaseDelayedUpstream = resolve })
@@ -105,6 +122,11 @@ async function harness(
     getServiceDirectoryForPath: async (_id, directory) => directory === workspacePath
       ? serviceDirectory
       : owned.has(directory) ? directoryMappings[directory] ?? directory : undefined,
+    getWorktreeIdentityForPath: async (_id, directory) => {
+      const canonical = directory === workspacePath ? serviceDirectory : directoryMappings[directory] ?? directory
+      if (!owned.has(directory)) return undefined
+      return canonical.includes("/worktree") ? "workspace:worktree" : "workspace:root"
+    },
     getServicePathForPath: async (_id, candidate) => {
       assert.ok(pathOwnershipChecks.includes(candidate), "prompt path must be ownership-checked before translation")
       servicePathCalls.push(candidate)
@@ -169,7 +191,7 @@ describe("instance proxy location enforcement", () => {
   it("rejects session admission while a worktree deletion is pending", async () => {
     const { app, worktreeDeletionFence, requestCount } = await harness()
     let release!: () => void
-    const deletion = worktreeDeletionFence.run("/repo/worktree", ["/repo/worktree"], () => (
+    const deletion = worktreeDeletionFence.run("workspace:worktree", ["workspace:worktree"], () => (
       new Promise<void>((resolve) => { release = resolve })
     ))
 
@@ -195,7 +217,27 @@ describe("instance proxy location enforcement", () => {
     })
     await delayedUpstreamStarted
     let deleted = false
-    const deletion = worktreeDeletionFence.run("/repo/worktree", ["/repo/worktree"], async () => { deleted = true })
+    const deletion = worktreeDeletionFence.run("workspace:worktree", ["workspace:worktree"], async () => { deleted = true })
+
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(deleted, false)
+    releaseDelayedUpstream()
+    assert.equal((await mutation).statusCode, 200)
+    await deletion
+    assert.equal(deleted, true)
+  })
+
+  it("holds mutation admission until the upstream response body ends", async () => {
+    const { app, worktreeDeletionFence, delayedUpstreamStarted, releaseDelayedUpstream } = await harness()
+    const mutation = app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/session",
+      headers: { "x-test-delay-upstream-body": "1" },
+      payload: { location: { directory: "/repo/worktree" } },
+    })
+    await delayedUpstreamStarted
+    let deleted = false
+    const deletion = worktreeDeletionFence.run("workspace:worktree", ["workspace:worktree"], async () => { deleted = true })
 
     await new Promise((resolve) => setImmediate(resolve))
     assert.equal(deleted, false)
@@ -210,7 +252,7 @@ describe("instance proxy location enforcement", () => {
       "/repo/worktree", {}, {}, "/repo", "/repo", {}, {}, {}, { "/repo/worktree/.": "/repo/worktree" },
     )
     let release!: () => void
-    const deletion = worktreeDeletionFence.run("/repo/worktree", ["/repo/worktree"], () => (
+    const deletion = worktreeDeletionFence.run("workspace:worktree", ["workspace:worktree"], () => (
       new Promise<void>((resolve) => { release = resolve })
     ))
 
@@ -218,6 +260,47 @@ describe("instance proxy location enforcement", () => {
       method: "POST",
       url: "/workspaces/workspace/instance/api/session",
       payload: { location: { directory: "/repo/worktree/." } },
+    })
+
+    assert.equal(response.statusCode, 409)
+    assert.equal(requestCount(), 0)
+    release()
+    await deletion
+  })
+
+  it("blocks existing-session mutations through their canonical directory", async () => {
+    const { app, worktreeDeletionFence, requestCount } = await harness(
+      "/repo/worktree", {}, { session: "/repo/worktree/." }, "/repo", "/repo", {}, {}, {}, { "/repo/worktree/.": "/repo/worktree" },
+    )
+    let release!: () => void
+    const deletion = worktreeDeletionFence.run("workspace:worktree", ["workspace:worktree"], () => (
+      new Promise<void>((resolve) => { release = resolve })
+    ))
+
+    const response = await app.inject({
+      method: "DELETE",
+      url: "/workspaces/workspace/instance/api/session/session",
+    })
+
+    assert.equal(response.statusCode, 409)
+    assert.equal(requestCount(), 0)
+    release()
+    await deletion
+  })
+
+  it("blocks mutations in nested directories of the deleting worktree", async () => {
+    const { app, worktreeDeletionFence, requestCount } = await harness(
+      "/repo/worktree", {}, {}, "/repo", "/repo", {}, {}, {}, { "/repo/worktree/nested": "/repo/worktree/nested" },
+    )
+    let release!: () => void
+    const deletion = worktreeDeletionFence.run("workspace:worktree", ["workspace:worktree"], () => (
+      new Promise<void>((resolve) => { release = resolve })
+    ))
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/session",
+      payload: { location: { directory: "/repo/worktree/nested" } },
     })
 
     assert.equal(response.statusCode, 409)

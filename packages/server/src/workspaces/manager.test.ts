@@ -7,6 +7,8 @@ import { EventBus } from "../events/bus"
 import {
   WorkspaceLaunchCancelledError,
   WorkspaceManager,
+  canonicalWorktreeIdentity,
+  isWindowsHostPath,
 } from "./manager"
 import { startupEnvironmentHash } from "./host-opencode-service"
 import type { OpenCodeServiceLifecycle, OpenCodeSharedServiceOptions } from "./opencode-service"
@@ -114,6 +116,22 @@ function createHarness(service = new ControlledSharedService(), overrides: Recor
 }
 
 describe("workspace manager shared service lifecycle", () => {
+  it("distinguishes WSL service paths from Windows host paths", () => {
+    assert.equal(isWindowsHostPath("/mnt/d/repo"), false)
+    assert.equal(isWindowsHostPath("D:\\repo"), true)
+    assert.equal(isWindowsHostPath("\\\\wsl.localhost\\Ubuntu\\repo"), true)
+    assert.equal(isWindowsHostPath("//wsl.localhost/Ubuntu/repo"), true)
+    assert.equal(canonicalWorktreeIdentity("D:\\Repo", "win32"), canonicalWorktreeIdentity("d:\\repo", "win32"))
+    assert.notEqual(
+      canonicalWorktreeIdentity("\\\\wsl.localhost\\Ubuntu\\repo\\Foo", "win32"),
+      canonicalWorktreeIdentity("\\\\wsl.localhost\\Ubuntu\\repo\\foo", "win32"),
+    )
+    assert.equal(
+      canonicalWorktreeIdentity("\\\\WSL.LOCALHOST\\ubuntu\\repo\\Foo", "win32"),
+      canonicalWorktreeIdentity("\\\\wsl.localhost\\Ubuntu\\repo\\Foo", "win32"),
+    )
+  })
+
   it("pins a bounded host CLI lifecycle with binary, platform, and startup environment identity", async () => {
     const service = new ControlledSharedService()
     let factoryCall: unknown[] | undefined

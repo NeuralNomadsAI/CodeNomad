@@ -30,7 +30,7 @@ import {
   type OpenCodeSharedServiceOptions,
 } from "./opencode-service"
 import { WslOpenCodeService } from "./wsl-opencode-service"
-import { isPathOwnedByWorktree, resolveWorktreeDirectory, resolveWorktreeSlugForDirectory } from "./worktree-directory"
+import { isPathOwnedByWorktree, normalizeWslUncPath, resolveOwnedWorktreePath } from "./worktree-directory"
 
 const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
 const MAX_ACTIVE_WORKSPACE_CREATIONS = 32
@@ -87,6 +87,17 @@ interface WorkspaceManagerOptions {
     timeoutMs: number,
     startupEnvironment: NodeJS.ProcessEnv,
   ) => OpenCodeServiceLifecycle
+}
+
+export function isWindowsHostPath(directory: string): boolean {
+  return /^[A-Za-z]:[\\/]|^(?:\\\\|\/\/)/.test(directory)
+}
+
+export function canonicalWorktreeIdentity(directory: string, platform = process.platform): string {
+  const wsl = normalizeWslUncPath(directory)
+  if (wsl) return wsl
+  const identity = path.normalize(directory)
+  return platform === "win32" ? identity.toLowerCase() : identity
 }
 
 interface WorkspaceRecord extends WorkspaceDescriptor {
@@ -213,26 +224,18 @@ export class WorkspaceManager {
   async getServiceDirectoryForPath(id: string, directory: string): Promise<string | undefined> {
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) return undefined
-    const hostDirectory = record.wslDistro
-      ? this.resolveWslHostDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
-      : directory
-    if (!hostDirectory) return undefined
-    const slug = await resolveWorktreeSlugForDirectory({
-      workspaceId: record.id,
-      workspacePath: record.path,
-      directory: hostDirectory,
-      logger: this.options.logger,
-    })
-    if (!slug) return undefined
-    const canonicalHostDirectory = await resolveWorktreeDirectory({
-      workspaceId: record.id,
-      workspacePath: record.path,
-      worktreeSlug: slug,
-      logger: this.options.logger,
-    })
-    if (!canonicalHostDirectory) return undefined
-    if (!record.wslDistro) return canonicalHostDirectory
-    return this.resolveWslServiceDirectory(canonicalHostDirectory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS) ?? undefined
+    const owned = await this.resolveOwnedWorktree(record, directory)
+    if (!owned) return undefined
+    if (!record.wslDistro) return owned.directory
+    return this.resolveWslServiceDirectory(owned.directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS) ?? undefined
+  }
+
+  async getWorktreeIdentityForPath(id: string, directory: string): Promise<string | undefined> {
+    const record = this.workspaces.get(id)
+    if (!record?.[WORKSPACE_STATE].published) return undefined
+    const owned = await this.resolveOwnedWorktree(record, directory)
+    if (!owned) return undefined
+    return canonicalWorktreeIdentity(owned.worktreeDirectory)
   }
 
   async getServicePathForPath(id: string, candidate: string): Promise<string | undefined> {
@@ -244,12 +247,27 @@ export class WorkspaceManager {
   }
 
   private async ownsHostDirectory(record: WorkspaceRecord, directory: string): Promise<boolean> {
-    return (await resolveWorktreeSlugForDirectory({
+    return (await resolveOwnedWorktreePath({
       workspaceId: record.id,
       workspacePath: record.path,
       directory,
       logger: this.options.logger,
     })) !== null
+  }
+
+  private async resolveOwnedWorktree(record: WorkspaceRecord, directory: string) {
+    const hostDirectory = record.wslDistro
+      ? isWindowsHostPath(directory)
+        ? directory
+        : this.resolveWslHostDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
+      : directory
+    if (!hostDirectory) return null
+    return resolveOwnedWorktreePath({
+      workspaceId: record.id,
+      workspacePath: record.path,
+      directory: hostDirectory,
+      logger: this.options.logger,
+    })
   }
 
   async ownsPath(id: string, candidate: string): Promise<boolean> {

@@ -123,13 +123,15 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
       if (!client || !projectDirectory || !targetDirectory) {
         throw new Error("Unable to inventory sessions before deleting worktree")
       }
-      await deps.worktreeDeletionFence.run(match.directory, [match.directory, targetDirectory], () => (
+      const worktreeIdentity = await deps.workspaceManager.getWorktreeIdentityForPath(workspace.id, match.directory)
+      if (!worktreeIdentity) throw new Error("Unable to identify worktree before deletion")
+      await deps.worktreeDeletionFence.run(worktreeIdentity, [worktreeIdentity], () => (
         evacuateWorktreeSessions({
           client,
           projectDirectory,
           targetDirectory,
           rootDirectory: projectDirectory,
-          resolveDirectory: (directory) => deps.workspaceManager.getServiceDirectoryForPath(workspace.id, directory),
+          resolveDirectoryIdentity: (directory) => deps.workspaceManager.getWorktreeIdentityForPath(workspace.id, directory),
           remove: () => removeWorktree({ workspaceFolder: workspace.path, directory: match.directory, force, logger: request.log }),
         })
       ))

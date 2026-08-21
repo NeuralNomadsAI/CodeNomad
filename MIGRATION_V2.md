@@ -23,6 +23,7 @@ The incremental comparison with official OpenCode Desktop V2, including closed f
 
 ## Shared Service Model
 
+- OpenCode V2 explicitly confirms that the intended architecture is [one shared process for all workspaces and clients](https://github.com/anomalyco/opencode/issues/43898#issuecomment-5372607267); workload slowdowns must be profiled and fixed within that topology rather than worked around with private servers.
 - Replace one OpenCode runtime per workspace with one externally owned global service in the selected host or WSL environment.
 - Discover or start it through the selected CLI's official `service status`, `service start`, and `service get password` commands.
 - Accept only bounded, authenticated loopback health endpoints and pin one service identity while connected.

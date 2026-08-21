@@ -115,7 +115,32 @@ describe("evacuateWorktreeSessions", () => {
       projectDirectory: "/repo",
       targetDirectory: "/repo/worktree",
       rootDirectory: "/repo",
-      resolveDirectory: async (directory) => directory === "/repo/alias" ? "/repo/worktree" : directory,
+      resolveDirectoryIdentity: async (directory) => directory === "/repo/alias" ? "/repo/worktree" : directory,
+      remove: async () => { removed = true },
+    })
+
+    assert.equal(current.location.directory, "/repo")
+    assert.equal(removed, true)
+  })
+
+  it("evacuates sessions nested under the target worktree identity", async () => {
+    let current = session("nested", "/repo/worktree/nested")
+    let removed = false
+    const client = {
+      project: { list: async () => [{ id: "project", canonical: "/repo", sandboxes: ["/repo/worktree"], time: { created: 1, updated: 1 } }] },
+      session: {
+        list: async () => ({ data: [current], cursor: {} }),
+        active: async () => ({}),
+        move: async (input: { directory: string }) => { current = { ...current, location: { directory: input.directory } } },
+      },
+    } as unknown as OpenCodeClient
+
+    await evacuateWorktreeSessions({
+      client,
+      projectDirectory: "/repo",
+      targetDirectory: "/repo/worktree",
+      rootDirectory: "/repo",
+      resolveDirectoryIdentity: async (directory) => directory.startsWith("/repo/worktree") ? "workspace:worktree" : "workspace:root",
       remove: async () => { removed = true },
     })
 

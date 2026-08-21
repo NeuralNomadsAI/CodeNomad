@@ -42,6 +42,7 @@ describe("worktree routes", () => {
         getSharedServiceClient: async () => client,
         getServiceDirectory: () => temp,
         getServiceDirectoryForPath: async (_id: string, directory: string) => directory,
+        getWorktreeIdentityForPath: async () => "workspace:doomed",
       } as unknown as WorkspaceManager
       registerWorktreeRoutes(app, { workspaceManager: manager, worktreeDeletionFence: new WorktreeDeletionFence() })
 

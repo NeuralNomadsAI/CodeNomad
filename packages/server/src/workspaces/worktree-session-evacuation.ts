@@ -1,4 +1,5 @@
 import type { OpenCodeClient, SessionInfo } from "@opencode-ai/client"
+import { normalizeWslUncPath } from "./worktree-directory"
 
 const PAGE_SIZE = 200
 const MAX_PAGES = 10_000
@@ -6,6 +7,8 @@ const MAX_SESSIONS = 1_000_000
 const MUTATION_DRAIN_TIMEOUT_MS = 30_000
 
 function normalizeDirectory(directory: string): string {
+  const wsl = normalizeWslUncPath(directory)
+  if (wsl) return wsl
   const normalized = directory.trim().replace(/\\/g, "/").replace(/\/+$/, "") || "/"
   return /^[A-Za-z]:\//.test(normalized) || normalized.startsWith("//") ? normalized.toLowerCase() : normalized
 }
@@ -122,11 +125,11 @@ export async function evacuateWorktreeSessions(params: {
   projectDirectory: string
   targetDirectory: string
   rootDirectory: string
-  resolveDirectory?: (directory: string) => Promise<string | undefined>
+  resolveDirectoryIdentity?: (directory: string) => Promise<string | undefined>
   remove: () => Promise<void>
 }): Promise<void> {
   const identity = async (directory: string) => normalizeDirectory(
-    await params.resolveDirectory?.(directory) ?? directory,
+    await params.resolveDirectoryIdentity?.(directory) ?? directory,
   )
   const target = await identity(params.targetDirectory)
   const matchesTarget = async (directory: string) => await identity(directory) === target
