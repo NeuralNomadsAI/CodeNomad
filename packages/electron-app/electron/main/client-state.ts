@@ -444,16 +444,26 @@ export class ClientStateManager {
 
   drainAndReleasePrimary(): Promise<void> {
     if (this.drainAndReleasePromise) {
-      return this.isPrimary ? this.drainAndReleasePromise : Promise.resolve()
+      return this.drainAndReleasePromise
     }
 
     this.frozen = true
     // The primary locks stay held until the queued root publication and GC have both drained.
-    this.drainAndReleasePromise = this.writeQueue.finally(() => {
-      this.primary = false
-      this.releaseOwnedProcessFiles()
+    const drain = this.writeQueue.then(
+      () => {
+        this.primary = false
+        this.releaseOwnedProcessFiles()
+      },
+      (error) => {
+        this.frozen = false
+        throw error
+      },
+    )
+    this.drainAndReleasePromise = drain
+    void drain.catch(() => {
+      if (this.drainAndReleasePromise === drain) this.drainAndReleasePromise = undefined
     })
-    return this.drainAndReleasePromise
+    return drain
   }
 
   private readState(): ParsedClientState {
