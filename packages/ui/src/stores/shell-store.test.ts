@@ -15,6 +15,13 @@ describe("shell store", () => {
     assert.equal(result.truncated, true)
   })
 
+  it("does not retain split Unicode or ANSI control sequences", () => {
+    const unicode = appendShellOutput("😀", "a".repeat(4 * 1024 * 1024 - 1))
+    assert.equal(unicode.output.startsWith("\ude00"), false)
+    const ansi = appendShellOutput("\u001b[31m", "a".repeat(4 * 1024 * 1024 - 4))
+    assert.equal(ansi.output.startsWith("[31m"), false)
+  })
+
   it("keeps state location-scoped and refreshes on shell events and reconnect", async () => {
     const lists: string[] = []
     const api: ShellApi = {

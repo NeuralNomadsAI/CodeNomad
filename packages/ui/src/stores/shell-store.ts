@@ -5,7 +5,20 @@ const MAX_SHELL_OUTPUT_DISPLAY_CHARS = 4 * 1024 * 1024
 
 export function appendShellOutput(current: string, chunk: string): { output: string; truncated: boolean } {
   const output = current + chunk
-  return { output: output.slice(-MAX_SHELL_OUTPUT_DISPLAY_CHARS), truncated: output.length > MAX_SHELL_OUTPUT_DISPLAY_CHARS }
+  if (output.length <= MAX_SHELL_OUTPUT_DISPLAY_CHARS) return { output, truncated: false }
+
+  let start = output.length - MAX_SHELL_OUTPUT_DISPLAY_CHARS
+  if (output.charCodeAt(start) >= 0xdc00 && output.charCodeAt(start) <= 0xdfff) start += 1
+  const escape = output.lastIndexOf("\u001b", start)
+  if (escape >= 0 && escape > output.lastIndexOf("\n", start) && output[escape + 1] === "[") {
+    for (let index = escape + 2; index < output.length; index += 1) {
+      const code = output.charCodeAt(index)
+      if (code < 0x40 || code > 0x7e) continue
+      if (index >= start) start = index + 1
+      break
+    }
+  }
+  return { output: output.slice(start), truncated: true }
 }
 
 export interface ShellApi {
