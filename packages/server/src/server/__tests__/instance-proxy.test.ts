@@ -5,6 +5,7 @@ import replyFrom from "@fastify/reply-from"
 import type { OpenCodeClient, SessionInfo } from "@opencode-ai/client"
 import type { Logger } from "../../logger"
 import { redactSecrets, registerInstanceProxyRoutes, type InstanceProxyWorkspaceManager } from "../http-server"
+import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 
 const apps: FastifyInstance[] = []
 afterEach(async () => Promise.all(apps.splice(0).map((app) => app.close())))
@@ -111,11 +112,12 @@ async function harness(
     },
   }
   const app = Fastify()
+  const worktreeDeletionFence = new WorktreeDeletionFence()
   apps.push(app)
   await app.register(replyFrom)
-  registerInstanceProxyRoutes(app, { workspaceManager: manager, logger: logger() })
+  registerInstanceProxyRoutes(app, { workspaceManager: manager, logger: logger(), worktreeDeletionFence })
   await app.ready()
-  return { app, servicePathCalls, sessionGets, requestCount: () => requests }
+  return { app, servicePathCalls, sessionGets, worktreeDeletionFence, requestCount: () => requests }
 }
 
 describe("instance proxy location enforcement", () => {
@@ -147,6 +149,25 @@ describe("instance proxy location enforcement", () => {
     assert.equal(queryResponse.statusCode, 403)
     assert.equal(requestCount(), 0)
     assert.doesNotMatch(bodyResponse.body, /internal-secret/)
+  })
+
+  it("rejects session admission while a worktree deletion is pending", async () => {
+    const { app, worktreeDeletionFence, requestCount } = await harness()
+    let release!: () => void
+    const deletion = worktreeDeletionFence.run("/repo/worktree", ["/repo/worktree"], () => (
+      new Promise<void>((resolve) => { release = resolve })
+    ))
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/session",
+      payload: { location: { directory: "/repo/worktree" } },
+    })
+
+    assert.equal(response.statusCode, 409)
+    assert.equal(requestCount(), 0)
+    release()
+    await deletion
   })
 
   it("allows the scoped native location bootstrap", async () => {

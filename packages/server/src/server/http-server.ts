@@ -42,6 +42,7 @@ import type { SideCarManager } from "../sidecars/manager"
 import type { PreviewManager } from "../previews/manager"
 import type { RemoteProxySessionManager } from "./remote-proxy"
 import { createOpenCodeUpdateService } from "../opencode-update/service"
+import { WorktreeDeletionFence } from "../workspaces/worktree-session-evacuation"
 
 interface HttpServerDeps {
   bindHost: string
@@ -272,7 +273,8 @@ export function createHttpServer(deps: HttpServerDeps) {
     logger: sseLogger,
     connectionManager: deps.clientConnectionManager,
   })
-  registerWorktreeRoutes(app, { workspaceManager: deps.workspaceManager })
+  const worktreeDeletionFence = new WorktreeDeletionFence()
+  registerWorktreeRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerStorageRoutes(app, {
     instanceStore: deps.instanceStore,
     eventBus: deps.eventBus,
@@ -297,7 +299,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     logger: proxyLogger,
   })
   registerYoloRoutes(app, { yoloManager: deps.yoloManager })
-  registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger })
+  registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, worktreeDeletionFence })
 
 
   if (deps.uiDevServerUrl) {
@@ -375,6 +377,7 @@ export interface InstanceProxyWorkspaceManager {
 interface InstanceProxyDeps {
   workspaceManager: InstanceProxyWorkspaceManager
   logger: Logger
+  worktreeDeletionFence: WorktreeDeletionFence
 }
 
 interface SideCarProxyDeps {
@@ -521,6 +524,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         request,
         reply,
         workspaceManager: deps.workspaceManager,
+        worktreeDeletionFence: deps.worktreeDeletionFence,
         pathSuffix: "",
         logger: deps.logger,
       })
@@ -534,6 +538,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         request,
         reply,
         workspaceManager: deps.workspaceManager,
+        worktreeDeletionFence: deps.worktreeDeletionFence,
         pathSuffix: request.params["*"] ?? "",
         logger: deps.logger,
       })
@@ -548,10 +553,11 @@ async function proxyWorkspaceRequest(args: {
   request: FastifyRequest
   reply: FastifyReply
   workspaceManager: InstanceProxyWorkspaceManager
+  worktreeDeletionFence: WorktreeDeletionFence
   logger: Logger
   pathSuffix?: string
 }) {
-  const { request, reply, workspaceManager, logger } = args
+  const { request, reply, workspaceManager, logger, worktreeDeletionFence } = args
   const workspaceId = (request.params as { id: string }).id
   const workspace = workspaceManager.get(workspaceId)
 
@@ -668,6 +674,11 @@ async function proxyWorkspaceRequest(args: {
     }
     translatedDirectories.set(directory, translated)
   }
+  if (request.method !== "GET" && request.method !== "HEAD"
+    && [...translatedDirectories.values()].some((directory) => worktreeDeletionFence.isBlocked(directory))) {
+    reply.code(409).send({ error: "Worktree deletion is in progress" })
+    return
+  }
   const serviceBody = replaceRequestDirectories(targetUrl, imported.body, translatedDirectories, pathname, request.method)
   if (promptFiles.invalid || !(await allPathsOwned(workspaceManager, workspaceId, promptFiles.paths))) {
     reply.code(promptFiles.invalid ? 400 : 403).send({ error: "Prompt file does not belong to workspace" })
@@ -750,6 +761,10 @@ async function proxyWorkspaceRequest(args: {
     }
     if (!(await workspaceManager.ownsDirectory(workspaceId, session.location.directory))) {
       reply.code(403).send({ error: "Session does not belong to workspace" })
+      return
+    }
+    if (request.method !== "GET" && request.method !== "HEAD" && worktreeDeletionFence.isBlocked(session.location.directory)) {
+      reply.code(409).send({ error: "Worktree deletion is in progress" })
       return
     }
   }

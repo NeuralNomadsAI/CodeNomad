@@ -1,13 +1,34 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import type { OpenCodeClient, SessionInfo } from "@opencode-ai/client"
-import { evacuateWorktreeSessions } from "./worktree-session-evacuation"
+import { evacuateWorktreeSessions, WorktreeDeletionFence } from "./worktree-session-evacuation"
 
 function session(id: string, directory: string, parentID?: string): SessionInfo {
   return { id, parentID, projectID: "project", location: { directory }, cost: 0, tokens: {}, time: { created: 1, updated: 1 } } as SessionInfo
 }
 
 describe("evacuateWorktreeSessions", () => {
+  it("serializes deletion attempts for the same worktree", async () => {
+    const fence = new WorktreeDeletionFence()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const calls: string[] = []
+    const first = fence.run("/repo/worktree", ["/repo/worktree"], async () => {
+      calls.push("first:start")
+      await gate
+      calls.push("first:end")
+    })
+    const second = fence.run("/repo/worktree", ["/repo/worktree"], async () => { calls.push("second") })
+
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.deepEqual(calls, ["first:start"])
+    assert.equal(fence.isBlocked("/repo/worktree/"), true)
+    release()
+    await Promise.all([first, second])
+    assert.deepEqual(calls, ["first:start", "first:end", "second"])
+    assert.equal(fence.isBlocked("/repo/worktree"), false)
+  })
+
   it("finds later-page sessions and waits for their asynchronous moves", async () => {
     const moves: Array<{ sessionID: string; directory: string }> = []
     const lists: unknown[] = []

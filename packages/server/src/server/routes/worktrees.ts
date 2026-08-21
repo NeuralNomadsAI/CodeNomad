@@ -11,10 +11,11 @@ import {
 import type { WorktreeListResponse } from "../../api-types"
 import { ensureCodenomadGitExclude } from "../../workspaces/worktree-map"
 import { createInstanceClient } from "../../workspaces/instance-client"
-import { evacuateWorktreeSessions } from "../../workspaces/worktree-session-evacuation"
+import { evacuateWorktreeSessions, type WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 
 interface RouteDeps {
   workspaceManager: WorkspaceManager
+  worktreeDeletionFence: WorktreeDeletionFence
 }
 
 const WorktreeCreateSchema = z.object({
@@ -122,13 +123,15 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
       if (!client || !projectDirectory || !targetDirectory) {
         throw new Error("Unable to inventory sessions before deleting worktree")
       }
-      await evacuateWorktreeSessions({
-        client,
-        projectDirectory,
-        targetDirectory,
-        rootDirectory: projectDirectory,
-        remove: () => removeWorktree({ workspaceFolder: workspace.path, directory: match.directory, force, logger: request.log }),
-      })
+      await deps.worktreeDeletionFence.run(match.directory, [match.directory, targetDirectory], () => (
+        evacuateWorktreeSessions({
+          client,
+          projectDirectory,
+          targetDirectory,
+          rootDirectory: projectDirectory,
+          remove: () => removeWorktree({ workspaceFolder: workspace.path, directory: match.directory, force, logger: request.log }),
+        })
+      ))
 
       reply.code(204)
     } catch (error) {

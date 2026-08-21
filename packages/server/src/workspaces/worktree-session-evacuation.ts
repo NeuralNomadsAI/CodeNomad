@@ -9,6 +9,33 @@ function normalizeDirectory(directory: string): string {
   return /^[A-Za-z]:\//.test(normalized) || normalized.startsWith("//") ? normalized.toLowerCase() : normalized
 }
 
+export class WorktreeDeletionFence {
+  private readonly queues = new Map<string, Promise<unknown>>()
+  private readonly blocked = new Map<string, number>()
+
+  isBlocked(directory: string): boolean {
+    return this.blocked.has(normalizeDirectory(directory))
+  }
+
+  run<T>(key: string, directories: string[], operation: () => Promise<T>): Promise<T> {
+    const normalizedKey = normalizeDirectory(key)
+    const blocked = [...new Set(directories.map(normalizeDirectory))]
+    for (const directory of blocked) this.blocked.set(directory, (this.blocked.get(directory) ?? 0) + 1)
+
+    const previous = this.queues.get(normalizedKey) ?? Promise.resolve()
+    const current = previous.catch(() => {}).then(operation)
+    this.queues.set(normalizedKey, current)
+    return current.finally(() => {
+      for (const directory of blocked) {
+        const count = this.blocked.get(directory) ?? 0
+        if (count > 1) this.blocked.set(directory, count - 1)
+        else this.blocked.delete(directory)
+      }
+      if (this.queues.get(normalizedKey) === current) this.queues.delete(normalizedKey)
+    })
+  }
+}
+
 async function inventorySessions(client: OpenCodeClient, project: string): Promise<SessionInfo[]> {
   const sessions = new Map<string, SessionInfo>()
   const cursors = new Set<string>()

@@ -9,6 +9,7 @@ import type { OpenCodeClient, SessionInfo } from "@opencode-ai/client"
 import type { WorkspaceDescriptor } from "../../api-types"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import { registerWorktreeRoutes } from "./worktrees"
+import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 
 describe("worktree routes", () => {
   it("fails a direct delete call closed when session evacuation fails", async () => {
@@ -42,7 +43,7 @@ describe("worktree routes", () => {
         getServiceDirectory: () => temp,
         getServiceDirectoryForPath: async (_id: string, directory: string) => directory,
       } as unknown as WorkspaceManager
-      registerWorktreeRoutes(app, { workspaceManager: manager })
+      registerWorktreeRoutes(app, { workspaceManager: manager, worktreeDeletionFence: new WorktreeDeletionFence() })
 
       const response = await app.inject({ method: "DELETE", url: "/api/workspaces/workspace/worktrees/doomed" })
 
