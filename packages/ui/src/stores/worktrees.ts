@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js"
 import type { WorktreeDescriptor } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
-import { getSessionRoot, sessions, withSession } from "./session-state"
+import { getSessionRoot, sessions, setSessions, withSession } from "./session-state"
 import { getLogger } from "../lib/logger"
 import type { WorktreeReadyEvent } from "../lib/sse-manager"
 import { getRootClient } from "./opencode-client"
@@ -127,22 +127,24 @@ async function deleteWorktree(instanceId: string, slug: string, options?: { forc
   if (!trimmed || trimmed === "root") {
     throw new Error("Invalid worktree")
   }
-  await moveSessionsFromDeletedWorktree(instanceId, trimmed)
+  const worktrees = getWorktrees(instanceId)
+  const rootDirectory = worktrees.find((worktree) => worktree.slug === "root")?.directory
+  const targetDirectory = worktrees.find((worktree) => worktree.slug === trimmed)?.directory
   await serverApi.deleteWorktree(instanceId, trimmed, options)
-}
-
-async function moveSessionsFromDeletedWorktree(instanceId: string, slug: string): Promise<void> {
-  const instanceSessions = sessions().get(instanceId)
-  if (!instanceSessions) return
-
-  const parentSessionIds = Array.from(instanceSessions.values())
-    .filter((session) => !session.parentId)
-    .filter((session) => getWorktreeSlugForParentSession(instanceId, session.id) === slug)
-    .map((session) => session.id)
-
-  for (const parentSessionId of parentSessionIds) {
-    await setWorktreeSlugForParentSession(instanceId, parentSessionId, "root")
-  }
+  if (!rootDirectory || !targetDirectory) return
+  setSessions((previous) => {
+    const instanceSessions = previous.get(instanceId)
+    if (!instanceSessions) return previous
+    const target = normalizeDirectory(targetDirectory)
+    const updated = new Map(instanceSessions)
+    let changed = false
+    for (const [sessionId, session] of instanceSessions) {
+      if (normalizeDirectory(session.location.directory) !== target) continue
+      updated.set(sessionId, { ...session, location: { directory: rootDirectory } })
+      changed = true
+    }
+    return changed ? new Map(previous).set(instanceId, updated) : previous
+  })
 }
 
 function getWorktrees(instanceId: string): WorktreeDescriptor[] {

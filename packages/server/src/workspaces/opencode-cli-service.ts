@@ -49,15 +49,13 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
     this.dependencies = { execFile: executeFile, fetch: globalThis.fetch, ...dependencies }
   }
 
-  async discover(): Promise<Endpoint | undefined> {
-    const deadlineAt = Date.now() + this.timeoutMs
+  async discover(deadlineAt = Date.now() + this.timeoutMs): Promise<Endpoint | undefined> {
     const status = this.singleLine(await this.run(["service", "status"], false, deadlineAt), "status")
     if (status === "stopped") return undefined
     return this.endpoint(status, deadlineAt)
   }
 
-  async ensure(): Promise<Endpoint> {
-    const deadlineAt = Date.now() + this.timeoutMs
+  async ensure(deadlineAt = Date.now() + this.timeoutMs): Promise<Endpoint> {
     const url = this.singleLine(await this.run(["service", "start"], true, deadlineAt), "start")
     return this.endpoint(url, deadlineAt)
   }

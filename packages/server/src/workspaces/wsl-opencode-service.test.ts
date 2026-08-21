@@ -248,6 +248,27 @@ describe("WslOpenCodeService", () => {
     })
   })
 
+  it("shares an absolute deadline across discover and ensure", async () => {
+    const commandTimeouts: number[] = []
+    const test = harness({}, {
+      execFile: async (_file, args, options) => {
+        commandTimeouts.push(options.timeout)
+        if (args[args.length - 1] === "status") {
+          await new Promise((resolve) => setTimeout(resolve, 20))
+          return { stdout: "stopped\n", stderr: "" }
+        }
+        return { stdout: args[args.length - 1] === "start" ? `${url}\n` : "secret\n", stderr: "" }
+      },
+    }, 200)
+    const deadlineAt = Date.now() + 200
+
+    assert.equal(await test.service.discover(deadlineAt), undefined)
+    await test.service.ensure(deadlineAt)
+
+    assert.ok((commandTimeouts[1] ?? 200) < (commandTimeouts[0] ?? 0))
+    assert.ok((commandTimeouts[2] ?? 200) <= (commandTimeouts[1] ?? 0))
+  })
+
   it("uses only status, start, and password service commands", async () => {
     const test = harness({ status: `${url}\n`, start: `${url}\n`, password: "secret\n" })
     await test.service.discover()

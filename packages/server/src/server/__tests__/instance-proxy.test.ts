@@ -103,6 +103,7 @@ async function harness(
       return pathMappings[candidate] ?? candidate
     },
     getSharedServiceClient: async () => client,
+    ownsLocationWorkspace: (_id, workspaceID) => workspaceID === "owned-location",
     ownsDirectory: async (_id, directory) => owned.has(directory),
     ownsPath: async (_id, candidate) => {
       pathOwnershipChecks.push(candidate)
@@ -155,6 +156,23 @@ describe("instance proxy location enforcement", () => {
     assert.match(JSON.parse(response.body).url, /\/api\/location\?location%5Bdirectory%5D=%2Frepo/)
   })
 
+  it("allows owned native VCS reads and rejects foreign locations", async () => {
+    const { app, requestCount } = await harness()
+    const owned = await app.inject({
+      method: "GET",
+      url: "/workspaces/workspace/instance/api/vcs?location%5Bdirectory%5D=%2Frepo%2Fworktree",
+    })
+    const foreign = await app.inject({
+      method: "GET",
+      url: "/workspaces/workspace/instance/api/vcs?location%5Bdirectory%5D=%2Fother",
+    })
+
+    assert.equal(owned.statusCode, 200)
+    assert.equal(JSON.parse(owned.body).url, "/api/vcs?location%5Bdirectory%5D=%2Frepo%2Fworktree")
+    assert.equal(foreign.statusCode, 403)
+    assert.equal(requestCount(), 1)
+  })
+
   it("authorizes project-only session lists without adding a directory", async () => {
     const { app } = await harness()
     const response = await app.inject({
@@ -196,7 +214,15 @@ describe("instance proxy location enforcement", () => {
       method: "GET",
       url: `/workspaces/workspace/instance/api/session?cursor=${cursor({ directory: "/repo" })}`,
     })).statusCode, 400)
-    assert.equal(requestCount(), 1)
+    assert.equal((await app.inject({
+      method: "GET",
+      url: `/workspaces/workspace/instance/api/session?cursor=${cursor({ workspace: "foreign-location", directory: "/repo", anchor: { id: "session-1", time: 1, direction: "next" } })}`,
+    })).statusCode, 403)
+    assert.equal((await app.inject({
+      method: "GET",
+      url: `/workspaces/workspace/instance/api/session?cursor=${cursor({ workspace: "owned-location", anchor: { id: "session-1", time: 1, direction: "next" } })}`,
+    })).statusCode, 200)
+    assert.equal(requestCount(), 2)
   })
 
   it("filters PTYs and rejects foreign PTY access", async () => {

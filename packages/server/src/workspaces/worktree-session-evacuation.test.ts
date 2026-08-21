@@ -70,4 +70,30 @@ describe("evacuateWorktreeSessions", () => {
     assert.deepEqual(moves, ["/repo", "/repo/worktree"])
     assert.equal(current.location.directory, "/repo/worktree")
   })
+
+  it("re-inventories active sessions immediately before removal", async () => {
+    const current = session("session", "/repo/worktree")
+    const intruder = session("intruder", "/repo/worktree")
+    let listCalls = 0
+    let removed = false
+    const client = {
+      project: { list: async () => [{ id: "project", canonical: "/repo", sandboxes: ["/repo/worktree"], time: { created: 1, updated: 1 } }] },
+      session: {
+        list: async () => {
+          listCalls += 1
+          return { data: listCalls >= 3 ? [current, intruder] : [current], cursor: {} }
+        },
+        active: async () => ({ intruder: { type: "running" } }),
+        move: async ({ directory }: { directory: string }) => { current.location = { directory } },
+      },
+    } as unknown as OpenCodeClient
+
+    await assert.rejects(evacuateWorktreeSessions({
+      client, projectDirectory: "/repo", targetDirectory: "/repo/worktree", rootDirectory: "/repo",
+      remove: async () => { removed = true },
+    }), /Active sessions block worktree deletion: intruder/)
+
+    assert.equal(removed, false)
+    assert.equal(current.location.directory, "/repo/worktree")
+  })
 })

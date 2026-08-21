@@ -367,6 +367,7 @@ export interface InstanceProxyWorkspaceManager {
   getServiceDirectoryForPath?(id: string, directory: string): Promise<string | undefined>
   getServicePathForPath?(id: string, candidate: string): Promise<string | undefined>
   getSharedServiceClient(): Promise<OpenCodeClient>
+  ownsLocationWorkspace(id: string, workspaceID: string): boolean
   ownsDirectory(id: string, directory: string): Promise<boolean>
   ownsPath(id: string, candidate: string): Promise<boolean>
 }
@@ -945,7 +946,14 @@ async function authorizeSessionList(
   return ownsSessionListScope(manager, workspaceId, { project, subpath })
 }
 
-function decodeSessionListCursor(cursor: string): { directory: string } | { project: string; subpath?: string } | null {
+type SessionListScope = {
+  workspace?: string
+  directory?: string
+  project?: string
+  subpath?: string
+}
+
+function decodeSessionListCursor(cursor: string): SessionListScope | null {
   if (!cursor || !/^[A-Za-z0-9_-]+$/.test(cursor)) return null
   try {
     const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Record<string, unknown>
@@ -955,15 +963,22 @@ function decodeSessionListCursor(cursor: string): { directory: string } | { proj
       || typeof anchor.id !== "string" || !anchor.id
       || typeof anchor.time !== "number" || !Number.isFinite(anchor.time)
       || (anchor.direction !== "previous" && anchor.direction !== "next")) return null
-    if (value.workspace !== undefined && typeof value.workspace !== "string") return null
+    if (value.workspace !== undefined && (typeof value.workspace !== "string" || !value.workspace.trim())) return null
     if (value.search !== undefined && typeof value.search !== "string") return null
     if (value.order !== undefined && value.order !== "asc" && value.order !== "desc") return null
     if (typeof value.directory === "string" && value.directory.trim() && value.project === undefined && value.subpath === undefined) {
-      return { directory: value.directory }
+      return { ...(typeof value.workspace === "string" ? { workspace: value.workspace } : {}), directory: value.directory }
     }
     if (typeof value.project === "string" && value.project.trim() && value.directory === undefined) {
-      if (value.subpath === undefined) return { project: value.project }
-      if (typeof value.subpath === "string" && isSafeRelativePath(value.subpath)) return { project: value.project, subpath: value.subpath }
+      if (value.subpath === undefined) {
+        return { ...(typeof value.workspace === "string" ? { workspace: value.workspace } : {}), project: value.project }
+      }
+      if (typeof value.subpath === "string" && isSafeRelativePath(value.subpath)) {
+        return { ...(typeof value.workspace === "string" ? { workspace: value.workspace } : {}), project: value.project, subpath: value.subpath }
+      }
+    }
+    if (typeof value.workspace === "string" && value.directory === undefined && value.project === undefined && value.subpath === undefined) {
+      return { workspace: value.workspace }
     }
     return null
   } catch {
@@ -978,9 +993,11 @@ function isSafeRelativePath(value: string): boolean {
 async function ownsSessionListScope(
   manager: InstanceProxyWorkspaceManager,
   workspaceId: string,
-  scope: { directory: string } | { project: string; subpath?: string },
+  scope: SessionListScope,
 ): Promise<"allowed" | "foreign"> {
-  if ("directory" in scope) return await manager.ownsDirectory(workspaceId, scope.directory) ? "allowed" : "foreign"
+  if (scope.workspace && !manager.ownsLocationWorkspace(workspaceId, scope.workspace)) return "foreign"
+  if (scope.directory) return await manager.ownsDirectory(workspaceId, scope.directory) ? "allowed" : "foreign"
+  if (!scope.project) return scope.workspace ? "allowed" : "foreign"
   const project = (await (await manager.getSharedServiceClient()).project.list()).find((candidate) => candidate.id === scope.project)
   if (!project) return "foreign"
   const directory = scope.subpath === undefined
@@ -1037,7 +1054,7 @@ function isAllowedInstanceApiRoute(method: string, pathname: string): boolean {
     ["GET", /^\/api\/form\/request$/],
     ["GET", /^\/api\/project\/current$/],
     ["GET", /^\/api\/project$/],
-    ["GET", /^\/api\/vcs\/status$/],
+    ["GET", /^\/api\/vcs(?:\/status)?$/],
     ["GET", /^\/api\/fs\/(?:list|read\/.+)$/],
     ["GET", /^\/api\/(?:pty|shell)(?:\/[^/]+(?:\/output)?)?$/],
     ["POST", /^\/api\/(?:pty|shell)$/],

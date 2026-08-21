@@ -34,6 +34,19 @@ describe("OpenCodeSharedService", () => {
     assert.equal(discoveries, 2)
   })
 
+  it("uses one caller deadline for discovery and startup", async () => {
+    const deadlines: Array<number | undefined> = []
+    const lifecycle: OpenCodeServiceLifecycle = {
+      discover: async (deadlineAt) => { deadlines.push(deadlineAt); return undefined },
+      ensure: async (deadlineAt) => { deadlines.push(deadlineAt); return endpoint },
+    }
+    const service = createService()
+
+    await service.endpoint(lifecycleOptions("host:deadline", lifecycle), { deadlineAt: 12345 })
+
+    assert.deepEqual(deadlines, [12345, 12345])
+  })
+
   it("requires configuration before discovery and rejects identity changes", async () => {
     const service = createService()
     await assert.rejects(service.endpoint(), /has not been configured/)

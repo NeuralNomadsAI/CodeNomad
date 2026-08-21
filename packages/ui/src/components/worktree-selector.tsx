@@ -548,10 +548,6 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                        await deleteWorktree(props.instanceId, target.slug, { force: forceDelete() })
                        await reloadWorktrees(props.instanceId)
 
-                      if (currentSlug() === target.slug) {
-                        await setWorktreeSlugForParentSession(props.instanceId, parentId(), "root")
-                      }
-
                       closeDeleteDialog()
                       showToastNotification({ message: `Deleted worktree ${target.slug}`, variant: "success" })
                     })()

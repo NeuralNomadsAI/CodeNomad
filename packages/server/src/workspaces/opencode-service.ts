@@ -8,11 +8,11 @@ import {
 import { Service, type Endpoint } from "@opencode-ai/client/service"
 import { assertLoopbackServiceUrl } from "./service-state"
 
-type RequestOptions = { signal?: AbortSignal }
+type RequestOptions = { signal?: AbortSignal; deadlineAt?: number }
 
 export interface OpenCodeServiceLifecycle {
-  discover: () => Promise<Endpoint | undefined>
-  ensure: () => Promise<Endpoint>
+  discover: (deadlineAt?: number) => Promise<Endpoint | undefined>
+  ensure: (deadlineAt?: number) => Promise<Endpoint>
 }
 
 export type OpenCodeSharedServiceOptions = {
@@ -45,16 +45,16 @@ export class OpenCodeSharedService {
     makeClient: OpenCode.make,
   }) {}
 
-  endpoint(options?: OpenCodeSharedServiceOptions): Promise<Endpoint> {
-    return this.connect(options).then(({ endpoint }) => endpoint)
+  endpoint(options?: OpenCodeSharedServiceOptions, requestOptions?: RequestOptions): Promise<Endpoint> {
+    return this.connect(options, requestOptions?.deadlineAt).then(({ endpoint }) => endpoint)
   }
 
-  client(options?: OpenCodeSharedServiceOptions): Promise<OpenCodeClient> {
-    return this.connect(options).then(({ client }) => client)
+  client(options?: OpenCodeSharedServiceOptions, requestOptions?: RequestOptions): Promise<OpenCodeClient> {
+    return this.connect(options, requestOptions?.deadlineAt).then(({ client }) => client)
   }
 
-  async headers(options?: OpenCodeSharedServiceOptions): Promise<ReturnType<typeof Service.headers>> {
-    return this.dependencies.headers(await this.endpoint(options))
+  async headers(options?: OpenCodeSharedServiceOptions, requestOptions?: RequestOptions): Promise<ReturnType<typeof Service.headers>> {
+    return this.dependencies.headers(await this.endpoint(options, requestOptions))
   }
 
   async validateLocation(
@@ -64,7 +64,7 @@ export class OpenCodeSharedService {
   ): Promise<LocationGetOutput> {
     const result = await this.withClient(serviceOptions, (client) => client.location.get({
       location: { directory: location.directory },
-    }, requestOptions))
+    }, requestOptions?.signal ? { signal: requestOptions.signal } : undefined), requestOptions)
     if (
       !result
       || typeof result.directory !== "string"
@@ -90,14 +90,15 @@ export class OpenCodeSharedService {
         directory: location.directory,
         ...(location.workspaceID ? { workspace: location.workspaceID } : {}),
       },
-    }, requestOptions))
+    }, requestOptions?.signal ? { signal: requestOptions.signal } : undefined), requestOptions)
   }
 
   async subscribe(requestOptions?: RequestOptions, serviceOptions?: OpenCodeSharedServiceOptions): Promise<AsyncIterable<OpenCodeEvent>> {
     let connection: ServiceConnection | undefined
     try {
-      connection = await this.connect(serviceOptions)
-      return this.invalidateAfterStream(connection.client.event.subscribe(requestOptions), connection)
+      connection = await this.connect(serviceOptions, requestOptions?.deadlineAt)
+      const nativeRequestOptions = requestOptions?.signal ? { signal: requestOptions.signal } : undefined
+      return this.invalidateAfterStream(connection.client.event.subscribe(nativeRequestOptions), connection)
     } catch (error) {
       if (connection) this.invalidateConnection(connection)
       throw error
@@ -112,23 +113,23 @@ export class OpenCodeSharedService {
     this.hasValidatedConnection = false
   }
 
-  private connect(options?: OpenCodeSharedServiceOptions): Promise<ServiceConnection> {
+  private connect(options?: OpenCodeSharedServiceOptions, deadlineAt?: number): Promise<ServiceConnection> {
     try {
       this.pinServiceOptions(options)
     } catch (error) {
       return Promise.reject(error)
     }
-    if (!this.connected) return this.connection ?? this.startConnection()
+    if (!this.connected) return this.connection ?? this.startConnection(deadlineAt)
     if (this.healthCheck) return this.healthCheck
 
     const current = this.connected
-    const check = this.lifecycle().discover().then((endpoint) => {
+    const check = this.lifecycle().discover(deadlineAt).then((endpoint) => {
       if (endpoint && this.sameEndpoint(endpoint, current.endpoint)) return current
       this.invalidateConnection(current)
-      return endpoint ? this.createConnection(endpoint, this.generation) : this.startConnection()
+      return endpoint ? this.createConnection(endpoint, this.generation) : this.startConnection(deadlineAt)
     }, () => {
       this.invalidateConnection(current)
-      return this.startConnection()
+      return this.startConnection(deadlineAt)
     })
     const healthCheck = check.finally(() => {
       if (this.healthCheck === healthCheck) this.healthCheck = undefined
@@ -137,11 +138,11 @@ export class OpenCodeSharedService {
     return healthCheck
   }
 
-  private startConnection(): Promise<ServiceConnection> {
+  private startConnection(deadlineAt?: number): Promise<ServiceConnection> {
     const generation = this.generation
     const lifecycle = this.lifecycle()
-    const startup = lifecycle.discover()
-      .then((endpoint) => endpoint ?? lifecycle.ensure())
+    const startup = lifecycle.discover(deadlineAt)
+      .then((endpoint) => endpoint ?? lifecycle.ensure(deadlineAt))
       .then((endpoint) => this.createConnection(endpoint, generation))
     const connection = startup.catch((error) => {
       if (this.connection === connection) {
@@ -179,10 +180,11 @@ export class OpenCodeSharedService {
   private async withClient<T>(
     options: OpenCodeSharedServiceOptions | undefined,
     run: (client: OpenCodeClient) => Promise<T>,
+    requestOptions?: RequestOptions,
   ): Promise<T> {
     let connection: ServiceConnection | undefined
     try {
-      connection = await this.connect(options)
+      connection = await this.connect(options, requestOptions?.deadlineAt)
       return await run(connection.client)
     } catch (error) {
       if (connection) this.invalidateConnection(connection)
