@@ -9,14 +9,42 @@ export function appendShellOutput(current: string, chunk: string): { output: str
 
   let start = output.length - MAX_SHELL_OUTPUT_DISPLAY_CHARS
   if (output.charCodeAt(start) >= 0xdc00 && output.charCodeAt(start) <= 0xdfff) start += 1
+  if (output[start] === "\u001b" && output[start + 1] === "\\") start += 2
+  else if (output[start] === "\\" && output[start - 1] === "\u001b") start += 1
   const escape = output.lastIndexOf("\u001b", start)
-  if (escape >= 0 && escape > output.lastIndexOf("\n", start) && output[escape + 1] === "[") {
-    for (let index = escape + 2; index < output.length; index += 1) {
-      const code = output.charCodeAt(index)
-      if (code < 0x40 || code > 0x7e) continue
-      if (index >= start) start = index + 1
-      break
+  if (escape >= 0) {
+    let end = -1
+    let controlSequence = false
+    if (output[escape + 1] === "[") {
+      controlSequence = true
+      for (let index = escape + 2; index < output.length; index += 1) {
+        const code = output.charCodeAt(index)
+        if (code === 0x18 || code === 0x1a) {
+          end = index + 1
+          break
+        }
+        if (code >= 0x40 && code <= 0x7e) {
+          end = index + 1
+          break
+        }
+      }
+    } else if (output[escape + 1] === "]") {
+      controlSequence = true
+      const bell = output.indexOf("\u0007", escape + 2)
+      const stringTerminator = output.indexOf("\u001b\\", escape + 2)
+      const cancel = output.slice(escape + 2).search(/[\u0018\u001a]/)
+      const terminators = [bell < 0 ? Infinity : bell + 1, stringTerminator < 0 ? Infinity : stringTerminator + 2, cancel < 0 ? Infinity : escape + 3 + cancel]
+      end = Math.min(...terminators)
+      if (!Number.isFinite(end)) end = -1
+    } else if (["P", "X", "^", "_"].includes(output[escape + 1] ?? "")) {
+      controlSequence = true
+      const stringTerminator = output.indexOf("\u001b\\", escape + 2)
+      const cancel = output.slice(escape + 2).search(/[\u0018\u001a]/)
+      end = Math.min(stringTerminator < 0 ? Infinity : stringTerminator + 2, cancel < 0 ? Infinity : escape + 3 + cancel)
+      if (!Number.isFinite(end)) end = -1
     }
+    if (controlSequence && end >= start) start = end
+    else if (controlSequence && end < 0 && escape < start) start = output.length
   }
   return { output: output.slice(start), truncated: true }
 }
