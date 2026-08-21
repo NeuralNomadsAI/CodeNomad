@@ -390,13 +390,16 @@ fn cli_restart(
     state: tauri::State<AppState>,
 ) -> Result<CliStatus, String> {
     require_local_app_window(&window, &state)?;
-    let dev_mode = is_dev_mode();
-    state.manager.stop().map_err(|e| e.to_string())?;
-    state
-        .manager
-        .start(app, dev_mode)
-        .map_err(|e| e.to_string())?;
-    Ok(state.manager.status())
+    shutdown::with_navigation_authority(&app, || {
+        let dev_mode = is_dev_mode();
+        state.manager.stop().map_err(|e| e.to_string())?;
+        state
+            .manager
+            .start(app.clone(), dev_mode)
+            .map_err(|e| e.to_string())?;
+        Ok(state.manager.status())
+    })
+    .unwrap_or_else(|| Err("Application shutdown is in progress".to_string()))
 }
 
 #[tauri::command]
