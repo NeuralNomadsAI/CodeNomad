@@ -321,7 +321,10 @@ test("failed primary release is retried by the next shutdown attempt", async () 
         if (releases === 1) throw new Error("release failed")
       },
     } as never,
-    cliManager: { shutdown: async () => {} } as never,
+    cliManager: {
+      shutdown: async () => { calls.push("stop") },
+      recoverAfterFailedShutdown: async () => { calls.push("recover") },
+    } as never,
     getLocalWindows: () => [first], getAllWindows: () => [first.window], removeWindowState: async () => true,
     getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
   })
@@ -331,9 +334,14 @@ test("failed primary release is retried by the next shutdown attempt", async () 
   await tick(); await tick()
   assert.equal(releases, 1)
   assert.equal(calls.includes("exit"), false)
+  assert.deepEqual(calls, ["hide:one", "renderer:one", "native:one", "stop", "recover", "show:one"])
 
   events.get("before-quit")?.({ preventDefault: () => {} })
   await tick(); await tick()
   assert.equal(releases, 2)
   assert.equal(calls.filter((call) => call === "exit").length, 1)
+  assert.deepEqual(calls, [
+    "hide:one", "renderer:one", "native:one", "stop", "recover", "show:one",
+    "hide:one", "renderer:one", "native:one", "stop", "exit",
+  ])
 })

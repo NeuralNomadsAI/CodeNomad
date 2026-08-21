@@ -104,7 +104,14 @@ export class MultiwindowLifecycle {
       await (preparedFlush ?? this.flushLocalWindows())
       await this.run("aggregate state flush", () => this.dependencies.clientStateManager.flush())
       await this.dependencies.cliManager.shutdown()
-      await this.releasePrimary()
+      try {
+        await this.releasePrimary()
+      } catch (error) {
+        await this.run("CLI recovery", () => this.dependencies.cliManager.recoverAfterFailedShutdown({
+          dev: process.env.NODE_ENV === "development",
+        }))
+        throw error
+      }
     }
     const shutdown = this.dependencies.navigationLifecycle?.stop(cleanup) ?? cleanup()
     this.shutdown = shutdown

@@ -20,4 +20,9 @@ export class SerializedLifecycle {
       }
     })
   }
+
+  resume<T>(operation: () => Promise<T>): Promise<T> {
+    this.stopped = false
+    return this.enqueue(operation)
+  }
 }

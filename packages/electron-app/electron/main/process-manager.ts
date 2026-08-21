@@ -171,6 +171,10 @@ export class CliProcessManager extends EventEmitter {
     })
   }
 
+  recoverAfterFailedShutdown(options: StartOptions): Promise<CliStatus> {
+    return this.lifecycle.resume(() => this.startNow(options))
+  }
+
   private async startNow(options: StartOptions): Promise<CliStatus> {
     if (this.lifecycle.stopped) throw new Error("CLI process manager is shutting down")
     if (this.child) {
