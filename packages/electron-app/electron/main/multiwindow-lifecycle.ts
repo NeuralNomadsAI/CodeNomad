@@ -2,6 +2,7 @@ import type { App, BrowserWindow } from "electron"
 import type { ClientStateManager } from "./client-state"
 import type { CliProcessManager } from "./process-manager"
 import { flushRendererClientStateBeforeShutdown } from "./renderer-client-state-flush"
+import type { SerializedLifecycle } from "./serialized-lifecycle"
 import type { WindowStateTracker } from "./window-state"
 
 export interface LifecycleWindow {
@@ -23,6 +24,7 @@ interface Dependencies {
   rendererFlushTimeoutMs?: number
   sessionEndCleanupTimeoutMs?: number
   isWindows?: boolean
+  navigationLifecycle?: SerializedLifecycle
 }
 
 export class MultiwindowLifecycle {
@@ -98,12 +100,13 @@ export class MultiwindowLifecycle {
 
   private startShutdown(preparedFlush?: Promise<void>): Promise<void> {
     if (this.shutdown) return this.shutdown
-    const shutdown = (async () => {
+    const cleanup = async () => {
       await (preparedFlush ?? this.flushLocalWindows())
       await this.run("aggregate state flush", () => this.dependencies.clientStateManager.flush())
       await this.dependencies.cliManager.shutdown()
       await this.releasePrimary()
-    })()
+    }
+    const shutdown = this.dependencies.navigationLifecycle?.stop(cleanup) ?? cleanup()
     this.shutdown = shutdown
     void shutdown.catch(() => {
       if (this.shutdown === shutdown) this.shutdown = null
@@ -138,20 +141,23 @@ export class MultiwindowLifecycle {
   }
 
   private async flushWindow(record: LifecycleWindow): Promise<void> {
-    await this.run("renderer window flush", async () => {
-      await flushRendererClientStateBeforeShutdown(
-        record.window,
-        this.dependencies.clientStateManager.isPrimary,
-        (url) => this.dependencies.isTrustedRendererOrigin(url, this.dependencies.getAllowedRendererOrigins(record.window)),
-        this.dependencies.rendererFlushTimeoutMs,
-      )
-    })
+    await flushRendererClientStateBeforeShutdown(
+      record.window,
+      this.dependencies.clientStateManager.isPrimary,
+      (url) => this.dependencies.isTrustedRendererOrigin(url, this.dependencies.getAllowedRendererOrigins(record.window)),
+      this.dependencies.rendererFlushTimeoutMs,
+    )
     if (record.tracker) await this.run("native window flush", () => record.tracker!.flush())
   }
 
   private releasePrimary(): Promise<void> {
-    this.release ??= this.run("primary release", () => this.dependencies.clientStateManager.drainAndReleasePrimary())
-    return this.release
+    if (this.release) return this.release
+    const release = this.dependencies.clientStateManager.drainAndReleasePrimary()
+    this.release = release
+    void release.catch(() => {
+      if (this.release === release) this.release = null
+    })
+    return release
   }
 
   private async run(name: string, operation: () => Promise<unknown>): Promise<void> {
