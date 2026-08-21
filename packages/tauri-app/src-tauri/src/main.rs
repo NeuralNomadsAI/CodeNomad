@@ -25,7 +25,7 @@ use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::async_runtime::Mutex as AsyncMutex;
 use tauri::menu::{
     AboutMetadata, MenuBuilder, MenuItem, PredefinedMenuItem, Submenu, SubmenuBuilder,
@@ -392,7 +392,10 @@ fn cli_restart(
     require_local_app_window(&window, &state)?;
     shutdown::with_navigation_authority(&app, || {
         let dev_mode = is_dev_mode();
-        state.manager.stop().map_err(|e| e.to_string())?;
+        state
+            .manager
+            .stop_until(Instant::now() + Duration::from_secs(2))
+            .map_err(|e| e.to_string())?;
         state
             .manager
             .start(app.clone(), dev_mode)
