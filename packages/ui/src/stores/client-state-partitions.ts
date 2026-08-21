@@ -5,6 +5,7 @@ import type { RestorableAttachment } from "./client-state-attachments-codec"
 const MAX_PARTITION_BYTES = 1024 * 1024
 const MAX_ROOT_BYTES = 1024 * 1024
 const MAX_NATIVE_PARTITIONS = 4096
+const MAX_NATIVE_COMMIT_BYTES = 256 * 1024 * 1024
 const MAX_SESSION_ID = 512
 const BLOB_CHUNK_CHARACTERS = 768 * 1024
 const MAX_BLOB_CHUNKS = 256
@@ -208,8 +209,22 @@ export async function encodeClientSnapshotV2(snapshot: ClientSnapshotV1): Promis
   }
 }
 
-export const canCommitClientSnapshotV2 = (encoded: EncodedClientSnapshotV2): boolean =>
-  encoded.partitionKeys.length <= MAX_NATIVE_PARTITIONS
+export function canCommitClientSnapshotV2(encoded: EncodedClientSnapshotV2): boolean {
+  if (encoded.partitionKeys.length > MAX_NATIVE_PARTITIONS) return false
+  const root = JSON.stringify(encoded.root)
+  if (root.length > MAX_ROOT_BYTES) return false
+  let commitBytes = encoder.encode(root).byteLength
+  if (commitBytes > MAX_ROOT_BYTES) return false
+  for (const key in encoded.partitions) {
+    if (!hasOwn(encoded.partitions, key)) continue
+    const partition = encoded.partitions[key]!
+    if (partition.length > MAX_PARTITION_BYTES || partition.length > MAX_NATIVE_COMMIT_BYTES - commitBytes) return false
+    const partitionBytes = encoder.encode(partition).byteLength
+    if (partitionBytes > MAX_PARTITION_BYTES || partitionBytes > MAX_NATIVE_COMMIT_BYTES - commitBytes) return false
+    commitBytes += partitionBytes
+  }
+  return true
+}
 
 function decodeRoot(value: unknown): { root: ClientSnapshotV1; partitionKey: string; partitionKeys: string[] } | null {
   if (!isRecord(value) || value.version !== 2 || typeof value.sessionPartition !== "string"

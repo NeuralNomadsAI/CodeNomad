@@ -36,7 +36,10 @@
 
 - Workspace/location manager: `packages/server/src/workspaces/manager.ts`
 - Shared service: `packages/server/src/workspaces/opencode-service.ts`
-- Launch adapter: `packages/server/src/workspaces/spawn.ts`
+- CLI lifecycle: `packages/server/src/workspaces/opencode-cli-service.ts`
+- Host lifecycle: `packages/server/src/workspaces/host-opencode-service.ts`
+- WSL lifecycle: `packages/server/src/workspaces/wsl-opencode-service.ts`
+- Spawn/path helpers: `packages/server/src/workspaces/spawn.ts`
 - OpenCode event bridge: `packages/server/src/workspaces/instance-events.ts`
 - Instance proxy: `packages/server/src/server/http-server.ts`
 - CodeNomad SSE: `packages/server/src/server/routes/events.ts`

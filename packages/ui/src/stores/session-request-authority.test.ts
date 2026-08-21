@@ -3,17 +3,20 @@ import { describe, it } from "node:test"
 
 import { sdkManager } from "../lib/sdk-manager.ts"
 import type { Session } from "../types/session.ts"
-import { addInstance, removeInstance } from "./instances.ts"
+import { addInstance, refreshVolatileInstanceState, removeInstance, updateInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
-import { fetchProviders, fetchSessions, hasMoreMessages, loadMessages, loadMoreMessages, loadMoreSessions, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
+import { getCommands } from "./commands.ts"
+import { fetchAgents, fetchProviders, fetchSessions, hasMoreMessages, loadMessages, loadMoreMessages, loadMoreSessions, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
 import { setInstanceMetadata } from "./instance-metadata.ts"
 import {
   clearInstanceDeletedSessionAuthority,
+  agents,
+  getSessionListIds,
   getSessionSearchResultIds,
-  getThreadTotals,
   loading,
   messagesLoaded,
   providers,
+  prependSessionListId,
   sessions,
   setSessions,
 } from "./session-state.ts"
@@ -212,6 +215,81 @@ describe("session request authority", () => {
     }
   })
 
+  it("preserves a loaded 400-message transcript and metadata across a partial 200-message refresh", async () => {
+    const instanceId = "partial-message-refresh", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    let refresh = false
+    let continuation = true
+    const history = Array.from({ length: 400 }, (_, index) => ({
+      ...apiMessage(`message-${400 - index}`),
+      time: { created: 400 - index, completed: 400 - index },
+      tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+      cost: 1,
+    }))
+    ;(client as any).message = { list: async () => refresh
+      ? { data: history.slice(0, 200), cursor: continuation ? { next: "older-page" } : {} }
+      : { data: history, cursor: {} } }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+
+    try {
+      await loadMessages(instanceId, sessionId)
+      const store = messageStoreBus.getOrCreate(instanceId)
+      const oldestInfo = store.getMessageInfo("message-1")
+      assert.equal(store.getSessionMessageIds(sessionId).length, 400)
+      refresh = true
+      await loadMessages(instanceId, sessionId, { force: true })
+      assert.deepEqual(store.getSessionMessageIds(sessionId), Array.from({ length: 400 }, (_, index) => `message-${index + 1}`))
+      assert.strictEqual(store.getMessageInfo("message-1"), oldestInfo)
+      assert.equal(store.getSessionUsage(sessionId)?.totalCost, 400)
+      assert.equal(hasMoreMessages(instanceId, sessionId), true)
+
+      continuation = false
+      await loadMessages(instanceId, sessionId, { force: true })
+      assert.equal(store.getSessionMessageIds(sessionId).length, 200)
+      assert.equal(store.getMessageInfo("message-1"), undefined)
+      assert.equal(store.getSessionUsage(sessionId)?.totalCost, 200)
+      assert.equal(hasMoreMessages(instanceId, sessionId), false)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("keeps a reused instance message-page request registered when the old request settles", async () => {
+    const instanceId = "reused-message-page", sessionId = "session"
+    const old = setup(instanceId)
+    const oldPage = deferred<any>()
+    ;(old.client as any).message = { list: (input: any) => input.cursor
+      ? oldPage.promise
+      : Promise.resolve({ data: [apiMessage("old-new")], cursor: { next: "old-page" } }) }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    await loadMessages(instanceId, sessionId)
+    const oldRequest = loadMoreMessages(instanceId, sessionId)
+    old.cleanup()
+
+    const current = setup(instanceId)
+    const currentPage = deferred<any>()
+    let currentPageCalls = 0
+    ;(current.client as any).message = { list: (input: any) => {
+      if (!input.cursor) return Promise.resolve({ data: [apiMessage("current-new")], cursor: { next: "current-page" } })
+      currentPageCalls += 1
+      return currentPage.promise
+    } }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+
+    try {
+      await loadMessages(instanceId, sessionId, { force: true })
+      const currentRequest = loadMoreMessages(instanceId, sessionId)
+      oldPage.resolve({ data: [], cursor: {} })
+      await oldRequest
+      const concurrentRequest = loadMoreMessages(instanceId, sessionId)
+      assert.equal(currentPageCalls, 1)
+      currentPage.resolve({ data: [], cursor: {} })
+      await Promise.all([currentRequest, concurrentRequest])
+    } finally {
+      current.cleanup()
+    }
+  })
+
   it("loads only the selected session transcript", async () => {
     const instanceId = "selected-transcript", sessionId = "root"
     const { client, cleanup } = setup(instanceId)
@@ -333,6 +411,63 @@ describe("session request authority", () => {
     }
   })
 
+  it("rejects every old-client response when a live instance replaces its client", async () => {
+    const instanceId = "replaced-live-client", sessionId = "session"
+    const { client: oldClient, cleanup } = setup(instanceId)
+    const sessionResponse = deferred<any>()
+    const messageResponse = deferred<any>()
+    const agentResponse = deferred<any>()
+    const commandResponse = deferred<any>()
+    const providerGate = deferred<void>()
+    ;(oldClient.session as any).list = () => sessionResponse.promise
+    ;(oldClient as any).message = { list: () => messageResponse.promise }
+    ;(oldClient as any).agent = {
+      list: () => agentResponse.promise,
+      get: ({ agentID }: any) => Promise.resolve({ data: { id: agentID, name: agentID, mode: "primary" } }),
+    }
+    ;(oldClient as any).command = { list: () => commandResponse.promise }
+    ;(oldClient as any).provider = { list: async () => { await providerGate.promise; return { data: [{ id: "old-provider", name: "Old" }] } } }
+    ;(oldClient as any).model = {
+      list: async () => { await providerGate.promise; return { data: [] } },
+      default: async () => { await providerGate.promise; return { data: null } },
+    }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    const oldSessionRequest = fetchSessions(instanceId)
+    const oldMessageRequest = loadMessages(instanceId, sessionId)
+    const oldAgentRequest = fetchAgents(instanceId)
+    const oldProviderRequest = fetchProviders(instanceId)
+    const oldVolatileRefresh = refreshVolatileInstanceState(instanceId, ["commands"])
+
+    const newClient = {
+      session: { active: async () => ({}) },
+      command: { list: async () => ({ data: [{ name: "current-command" }] }) },
+    } as any
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, newClient)
+    updateInstance(instanceId, { client: newClient })
+    await refreshVolatileInstanceState(instanceId, ["commands"])
+    sessionResponse.resolve({ data: [apiSession("stale-session")], cursor: {} })
+    messageResponse.resolve({ data: [apiMessage("stale-message")], cursor: {} })
+    agentResponse.resolve({ data: [
+      { id: "build", name: "Build", mode: "primary" },
+      { id: "plan", name: "Plan", mode: "primary" },
+      { id: "old-agent", name: "Old", mode: "primary" },
+    ] })
+    commandResponse.resolve({ data: [{ name: "stale-command" }] })
+    providerGate.resolve()
+
+    try {
+      assert.deepEqual(await Promise.all([oldAgentRequest, oldProviderRequest]), [false, false])
+      await Promise.all([oldSessionRequest, oldMessageRequest, oldVolatileRefresh])
+      assert.equal(sessions().get(instanceId)?.has("stale-session"), false)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), [])
+      assert.equal(agents().get(instanceId)?.some(({ id }) => id === "old-agent") ?? false, false)
+      assert.equal(providers().get(instanceId)?.some(({ id }) => id === "old-provider") ?? false, false)
+      assert.deepEqual(getCommands(instanceId).map(({ name }) => name), ["current-command"])
+    } finally {
+      cleanup()
+    }
+  })
+
   it("accepts an in-flight catalog when returning to its location", async () => {
     const instanceId = "provider-location-return"
     const { client, cleanup } = setup(instanceId)
@@ -361,7 +496,7 @@ describe("session request authority", () => {
     }
   })
 
-  it("loads paginated project sessions without per-parent requests", async () => {
+  it("keeps the initial root filter and uses only the native cursor for continuation", async () => {
     const instanceId = "project-descendants"
     const { client, cleanup } = setup(instanceId)
     const requests: any[] = []
@@ -371,15 +506,10 @@ describe("session request authority", () => {
     ;(client.session as any).list = async (input: any) => {
       requests.push(input)
       if (input.cursor === "page-2") {
-        return { data: [apiSession("later"), apiSession("grandchild", "child")], cursor: {} }
+        return { data: [apiSession("later")], cursor: {} }
       }
       return {
-        data: [apiSession("root"), {
-          ...apiSession("child", "root"),
-          cost: 0.2,
-          tokens: { input: 300, output: 100, reasoning: 50, cache: { read: 0, write: 0 } },
-          subpath: "other-worktree",
-        }],
+        data: [apiSession("root")],
         cursor: { next: "page-2" },
       }
     }
@@ -389,18 +519,112 @@ describe("session request authority", () => {
       assert.equal(sessions().get(instanceId)?.has("grandchild"), false)
       assert.equal(requests[0].project, "project")
       assert.equal("directory" in requests[0], false)
-      assert.equal(requests.every((request) => !("parentID" in request)), true)
+      assert.equal(requests[0].parentID, null)
       assert.equal(requests.length, 1)
-      assert.deepEqual(getThreadTotals(instanceId, "root"), {
-        cost: 0.2, inputTokens: 300, outputTokens: 100, reasoningTokens: 50,
-      })
 
       await loadMoreSessions(instanceId)
       assert.equal(requests.length, 2)
-      assert.equal(requests[1].cursor, "page-2")
-      assert.equal(sessions().get(instanceId)?.has("grandchild"), true)
+      assert.deepEqual(requests[1], { cursor: "page-2", limit: 200 })
       assert.equal(sessions().get(instanceId)?.get("later")?.status, "working")
       assert.equal(sessions().get(instanceId)?.get("later")?.runtimeStatusKnown, true)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("rejects an old session continuation after an instance id is reused", async () => {
+    const instanceId = "reused-session-page"
+    const old = setup(instanceId)
+    const oldPage = deferred<any>()
+    ;(old.client.session as any).list = (input: any) => input.cursor
+      ? oldPage.promise
+      : Promise.resolve({ data: [apiSession("old-root")], cursor: { next: "shared-page" } })
+    await fetchSessions(instanceId)
+    const oldRequest = loadMoreSessions(instanceId)
+    old.cleanup()
+
+    const current = setup(instanceId)
+    const currentPage = deferred<any>()
+    let currentPageCalls = 0
+    ;(current.client.session as any).list = (input: any) => {
+      if (!input.cursor) return Promise.resolve({ data: [apiSession("current-root")], cursor: { next: "shared-page" } })
+      currentPageCalls += 1
+      return currentPage.promise
+    }
+
+    try {
+      await fetchSessions(instanceId)
+      const currentRequest = loadMoreSessions(instanceId)
+      oldPage.resolve({ data: [apiSession("stale-page")], cursor: {} })
+      await oldRequest
+      const concurrentRequest = loadMoreSessions(instanceId)
+      assert.equal(currentPageCalls, 1)
+      assert.equal(sessions().get(instanceId)?.has("stale-page"), false)
+      currentPage.resolve({ data: [apiSession("current-page")], cursor: {} })
+      await Promise.all([currentRequest, concurrentRequest])
+      assert.equal(sessions().get(instanceId)?.has("current-page"), true)
+    } finally {
+      current.cleanup()
+    }
+  })
+
+  it("preserves roots added while a complete catalog request is in flight", async () => {
+    const instanceId = "session-catalog-concurrent-root"
+    const { client, cleanup } = setup(instanceId)
+    const response = deferred<any>()
+    ;(client.session as any).list = () => response.promise
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([
+      ["existing", session(instanceId, "existing")],
+      ["missing", session(instanceId, "missing")],
+    ])))
+    prependSessionListId(instanceId, "missing")
+    prependSessionListId(instanceId, "existing")
+
+    try {
+      const request = fetchSessions(instanceId)
+      setSessions((previous) => {
+        const next = new Map(previous)
+        const current = new Map(next.get(instanceId))
+        current.set("late", session(instanceId, "late"))
+        next.set(instanceId, current)
+        return next
+      })
+      prependSessionListId(instanceId, "late")
+      response.resolve({ data: [apiSession("existing")], cursor: {} })
+      await request
+      assert.deepEqual(getSessionListIds(instanceId), ["late", "existing"])
+      assert.equal(sessions().get(instanceId)?.has("late"), true)
+      assert.equal(sessions().get(instanceId)?.has("missing"), false)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("prunes missing roots without deleting restored child chains", async () => {
+    const instanceId = "root-pruning"
+    const { client, cleanup } = setup(instanceId)
+    setInstanceMetadata(instanceId, { project: { id: "project", directory: "/work", canonical: "/work" } as any })
+    ;(client.session as any).list = async () => ({ data: [apiSession("root")], cursor: {} })
+    const child = { ...session(instanceId, "child"), parentId: "root" }
+    const grandchild = { ...session(instanceId, "grandchild"), parentId: "child" }
+    const missingChild = { ...session(instanceId, "missing-child"), parentId: "missing-root" }
+    const missingGrandchild = { ...session(instanceId, "missing-grandchild"), parentId: "missing-child" }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([
+      ["root", session(instanceId, "root")],
+      ["missing-root", session(instanceId, "missing-root")],
+      ["child", child],
+      ["grandchild", grandchild],
+      ["missing-child", missingChild],
+      ["missing-grandchild", missingGrandchild],
+    ])))
+
+    try {
+      await fetchSessions(instanceId)
+      assert.equal(sessions().get(instanceId)?.has("missing-root"), false)
+      assert.equal(sessions().get(instanceId)?.has("missing-child"), false)
+      assert.equal(sessions().get(instanceId)?.has("missing-grandchild"), false)
+      assert.equal(sessions().get(instanceId)?.has("child"), true)
+      assert.equal(sessions().get(instanceId)?.has("grandchild"), true)
     } finally {
       cleanup()
     }

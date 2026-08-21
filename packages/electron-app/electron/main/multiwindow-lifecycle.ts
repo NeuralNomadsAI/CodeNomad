@@ -17,7 +17,7 @@ interface Dependencies {
   cliManager: CliProcessManager
   getLocalWindows(): LifecycleWindow[]
   getAllWindows(): BrowserWindow[]
-  removeWindowState(id: string): Promise<unknown>
+  removeWindowState(id: string): Promise<boolean>
   getAllowedRendererOrigins(window: BrowserWindow): string[]
   isTrustedRendererOrigin(url: string, allowedOrigins: string[]): boolean
   rendererFlushTimeoutMs?: number
@@ -46,13 +46,15 @@ export class MultiwindowLifecycle {
       const otherLocal = this.dependencies.getLocalWindows().some((candidate) => candidate.id !== record.id && !candidate.window.isDestroyed())
       const otherWindow = this.dependencies.getAllWindows().some((candidate) => candidate !== record.window && !candidate.isDestroyed())
       if (!otherLocal && !otherWindow) {
-        record.window.hide()
         this.dependencies.app.quit()
         return
       }
       closing = true
       void this.flushWindow(record).then(async () => {
-        if (record.persisted !== false) await this.run("remove closed window state", () => this.dependencies.removeWindowState(record.id))
+        if (record.persisted !== false && !await this.dependencies.removeWindowState(record.id)) {
+          closing = false
+          return
+        }
         approved = true
         record.window.close()
       }).catch((error) => {
@@ -62,6 +64,15 @@ export class MultiwindowLifecycle {
     })
 
     this.attachSessionEnd(record.window)
+  }
+
+  attachRemote(window: BrowserWindow): void {
+    window.on("close", (event) => {
+      if (this.exitAllowed || this.dependencies.getAllWindows().some((candidate) => candidate !== window && !candidate.isDestroyed())) return
+      event.preventDefault()
+      if (!this.shutdown) this.dependencies.app.quit()
+    })
+    this.attachSessionEnd(window)
   }
 
   attachSessionEnd(window: BrowserWindow): void {
@@ -75,21 +86,29 @@ export class MultiwindowLifecycle {
     this.dependencies.app.on("before-quit", (event) => {
       if (this.exitAllowed) return
       event.preventDefault()
-      for (const window of this.dependencies.getAllWindows()) if (!window.isDestroyed()) window.hide()
-      void this.startShutdown().then(() => this.exit(), (error) => console.warn("[client-state] shutdown remains pending", error))
+      const visibleWindows = this.dependencies.getAllWindows().filter((window) => !window.isDestroyed() && window.isVisible())
+      for (const window of visibleWindows) window.hide()
+      void this.startShutdown().then(() => this.exit(), (error) => {
+        for (const window of visibleWindows) if (!window.isDestroyed()) window.show()
+        console.warn("[client-state] shutdown remains pending", error)
+      })
     })
     this.dependencies.app.on("window-all-closed", () => this.dependencies.app.quit())
   }
 
   private startShutdown(preparedFlush?: Promise<void>): Promise<void> {
     if (this.shutdown) return this.shutdown
-    this.shutdown = (async () => {
+    const shutdown = (async () => {
       await (preparedFlush ?? this.flushLocalWindows())
       await this.run("aggregate state flush", () => this.dependencies.clientStateManager.flush())
       await this.dependencies.cliManager.shutdown()
       await this.releasePrimary()
     })()
-    return this.shutdown
+    this.shutdown = shutdown
+    void shutdown.catch(() => {
+      if (this.shutdown === shutdown) this.shutdown = null
+    })
+    return shutdown
   }
 
   private flushLocalWindows(): Promise<void> {

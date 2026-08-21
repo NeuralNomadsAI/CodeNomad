@@ -127,17 +127,12 @@ The migration deletes rather than maintains these superseded systems:
 
 ## Validation
 
-At `DEV-v2@8fe238f5`:
+Historical migration checkpoints recorded passing repository CI, focused server/UI suites and typechecks, production desktop builds, native Electron/Tauri tests, and packaged Windows singleton/multi-window smoke coverage. These results describe completed checkpoints, not the current dirty worktree.
 
-- GitHub PR checks pass for the repository test job, Windows Tauri tests, Electron builds on Linux/macOS/Windows, and Tauri builds on supported Linux/macOS/Windows targets. Linux ARM64 Tauri is intentionally skipped by the workflow.
-- The latest workspace/tab fixes pass the complete server suite (about 265 tests), targeted tab/restore tests, server and UI typechecks, 18 focused UI tests, and the production UI build.
-- Earlier migration gates also passed Electron native tests, Tauri tests/checks, production desktop builds, and packaged Windows singleton/multi-window smoke coverage.
-- `git diff --check` passes.
-
-The remaining release gate is a final interactive smoke against the selected real OpenCode service: open a folder, open an existing session, send and receive a prompt, reload and restore it, exercise the background Shell proxy lifecycle, and verify that V1 and V2 can remain open without client-state interference.
+The remaining migration smoke gate is an interactive run against the selected real OpenCode service: open a folder, open an existing session, send and receive a prompt, reload and restore it, and exercise the native background Shell proxy lifecycle. See [`DESKTOP_V2_COMPARISON.md`](DESKTOP_V2_COMPARISON.md) for all other release, correctness, runtime-upgrade, and optional feature work.
 
 ## Review Notes
 
 - The generated V2 client remains experimental. Review its installed declarations and release notes on every dependency upgrade; public `@opencode-ai/sdk` examples are not authoritative for this branch.
-- Upgrade references: [OpenCode releases](https://github.com/anomalyco/opencode/releases), [OpenCode documentation](https://opencode.ai/docs/), and `node_modules/@opencode-ai/client/dist/promise/`.
+- Upgrade references: [OpenCode releases](https://github.com/anomalyco/opencode/releases), [OpenCode V2 documentation](https://opencode.ai/v2/docs/), and `node_modules/@opencode-ai/client/dist/promise/`.
 - This branch intentionally has no OpenCode V1 fallback or private OpenCode database.

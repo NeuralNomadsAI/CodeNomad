@@ -273,6 +273,12 @@ fn wait_for_termination(
     }
 }
 
+fn termination_timeout(default: Duration, deadline: Option<Instant>) -> Duration {
+    deadline
+        .map(|deadline| default.min(deadline.saturating_duration_since(Instant::now())))
+        .unwrap_or(default)
+}
+
 #[derive(Debug)]
 struct TerminationTimeout;
 
@@ -306,6 +312,7 @@ fn process_group_is_gone(pid: u32) -> anyhow::Result<bool> {
 fn stop_child(
     child: &mut Child,
     #[cfg(windows)] job: Option<&WindowsJobObject>,
+    deadline: Option<Instant>,
 ) -> anyhow::Result<()> {
     let pid = child.id();
     #[cfg(windows)]
@@ -313,7 +320,7 @@ fn stop_child(
         if child.try_wait()?.is_none() {
             let _ = child.kill();
             let _ = wait_for_termination(
-                Duration::from_secs(CLI_FORCE_CONFIRM_GRACE_SECS),
+                termination_timeout(Duration::from_secs(CLI_FORCE_CONFIRM_GRACE_SECS), deadline),
                 Duration::from_millis(25),
                 || Ok(child.try_wait()?.is_some()),
             );
@@ -346,18 +353,22 @@ fn stop_child(
             None => log_line(&format!("CLI control channel is unavailable pid={pid}")),
         }
     }
-    let graceful = wait_for_termination(graceful_timeout, Duration::from_millis(50), || {
-        let child_exited = child.try_wait()?.is_some();
-        #[cfg(unix)]
-        return Ok(child_exited && process_group_is_gone(pid)?);
-        #[cfg(windows)]
-        return Ok(windows_containment_confirmed(
-            child_exited,
-            job.map(WindowsJobObject::active_processes).transpose()?,
-        ));
-        #[cfg(not(any(unix, windows)))]
-        Ok(child_exited)
-    });
+    let graceful = wait_for_termination(
+        termination_timeout(graceful_timeout, deadline),
+        Duration::from_millis(50),
+        || {
+            let child_exited = child.try_wait()?.is_some();
+            #[cfg(unix)]
+            return Ok(child_exited && process_group_is_gone(pid)?);
+            #[cfg(windows)]
+            return Ok(windows_containment_confirmed(
+                child_exited,
+                job.map(WindowsJobObject::active_processes).transpose()?,
+            ));
+            #[cfg(not(any(unix, windows)))]
+            Ok(child_exited)
+        },
+    );
     match graceful {
         Ok(()) => return Ok(()),
         Err(err) if !err.is::<TerminationTimeout>() => {
@@ -383,7 +394,7 @@ fn stop_child(
     child.kill()?;
 
     wait_for_termination(
-        Duration::from_secs(CLI_FORCE_CONFIRM_GRACE_SECS),
+        termination_timeout(Duration::from_secs(CLI_FORCE_CONFIRM_GRACE_SECS), deadline),
         Duration::from_millis(25),
         || {
             let child_exited = child.try_wait()?.is_some();
@@ -399,6 +410,25 @@ fn stop_child(
         },
     )
     .map_err(|err| anyhow::anyhow!("CLI pid={pid} termination was not confirmed: {err}"))
+}
+
+fn discard_unregistered_child(child: &mut Child, #[cfg(windows)] job: &WindowsJobObject) {
+    #[cfg(unix)]
+    let pid = child.id();
+    #[cfg(unix)]
+    unsafe {
+        if libc::kill(-(pid as i32), libc::SIGKILL) != 0 {
+            let _ = child.kill();
+        }
+    }
+    #[cfg(windows)]
+    {
+        let _ = job.terminate();
+        let _ = child.kill();
+    }
+    #[cfg(not(any(unix, windows)))]
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 fn navigate_main(manager: &CliProcessManager, generation: u64, app: &AppHandle, url: &str) {
@@ -774,6 +804,7 @@ pub struct CliProcessManager {
     bootstrap_token: Arc<Mutex<Option<String>>>,
     local_access: Arc<Mutex<Option<LocalCliAccess>>>,
     lifecycle: Arc<Mutex<()>>,
+    generation_authority: Arc<Mutex<()>>,
     generation: Arc<AtomicU64>,
 }
 
@@ -787,6 +818,7 @@ impl CliProcessManager {
             bootstrap_token: Arc::new(Mutex::new(None)),
             local_access: Arc::new(Mutex::new(None)),
             lifecycle: Arc::new(Mutex::new(())),
+            generation_authority: Arc::new(Mutex::new(())),
             generation: Arc::new(AtomicU64::new(0)),
         }
     }
@@ -797,7 +829,7 @@ impl CliProcessManager {
         *self.bootstrap_token.lock() = None;
         *self.local_access.lock() = None;
         log_line(&format!("start requested (dev={dev})"));
-        self.stop_tracked_child()?;
+        self.stop_tracked_child(None)?;
         {
             let mut status = self.status.lock();
             status.state = CliState::Starting;
@@ -820,17 +852,51 @@ impl CliProcessManager {
     }
 
     pub fn stop(&self) -> anyhow::Result<()> {
-        let _lifecycle = self.lifecycle.lock();
-        self.advance_generation();
+        let generation = self.advance_generation();
         *self.bootstrap_token.lock() = None;
         *self.local_access.lock() = None;
-        self.stop_tracked_child()?;
+        let _lifecycle = self.lifecycle.lock();
+        if !self.is_current_generation(generation) {
+            return Err(anyhow::anyhow!("CLI stop was superseded"));
+        }
+        self.stop_tracked_child(None)?;
+        self.reset_stopped_status();
+        Ok(())
+    }
+
+    pub(crate) fn stop_until(&self, deadline: Instant) -> anyhow::Result<()> {
+        let Some(generation) = self.advance_generation_until(deadline) else {
+            return Err(anyhow::anyhow!(
+                "timed out waiting for CLI generation authority"
+            ));
+        };
+        *self.bootstrap_token.lock() = None;
+        *self.local_access.lock() = None;
+        let Some(_lifecycle) = self.lifecycle.try_lock_until(deadline) else {
+            return Err(anyhow::anyhow!("timed out waiting for CLI lifecycle lock"));
+        };
+        if Instant::now() >= deadline {
+            return Err(anyhow::anyhow!("CLI stop deadline elapsed"));
+        }
+        if !self.is_current_generation(generation) {
+            return Err(anyhow::anyhow!("CLI stop was superseded"));
+        }
+        self.stop_tracked_child(Some(deadline))?;
         self.reset_stopped_status();
         Ok(())
     }
 
     fn advance_generation(&self) -> u64 {
+        let _authority = self.generation_authority.lock();
         self.generation.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    fn advance_generation_until(&self, deadline: Instant) -> Option<u64> {
+        if Instant::now() >= deadline {
+            return None;
+        }
+        let _authority = self.generation_authority.try_lock_until(deadline)?;
+        (Instant::now() < deadline).then(|| self.generation.fetch_add(1, Ordering::SeqCst) + 1)
     }
 
     fn is_current_generation(&self, generation: u64) -> bool {
@@ -842,22 +908,30 @@ impl CliProcessManager {
         generation: u64,
         operation: impl FnOnce() -> T,
     ) -> Option<T> {
-        let _lifecycle = self.lock_current_generation(generation)?;
-        Some(operation())
+        let _lifecycle = self.lifecycle.lock();
+        let _authority = self.generation_authority.lock();
+        self.is_current_generation(generation).then(operation)
     }
 
     fn lock_current_generation(&self, generation: u64) -> Option<parking_lot::MutexGuard<'_, ()>> {
         let lifecycle = self.lifecycle.lock();
-        self.is_current_generation(generation).then_some(lifecycle)
+        let current = {
+            let _authority = self.generation_authority.lock();
+            self.is_current_generation(generation)
+        };
+        current.then_some(lifecycle)
     }
 
-    fn stop_tracked_child(&self) -> anyhow::Result<()> {
+    fn stop_tracked_child(&self, deadline: Option<Instant>) -> anyhow::Result<()> {
         let Some(mut child) = self.child.lock().take() else {
             #[cfg(windows)]
             if let Some(job) = self.job.lock().take() {
                 let result = job.terminate().and_then(|()| {
                     wait_for_termination(
-                        Duration::from_secs(CLI_FORCE_CONFIRM_GRACE_SECS),
+                        termination_timeout(
+                            Duration::from_secs(CLI_FORCE_CONFIRM_GRACE_SECS),
+                            deadline,
+                        ),
                         Duration::from_millis(25),
                         || Ok(job.active_processes()? == 0),
                     )
@@ -876,6 +950,7 @@ impl CliProcessManager {
             &mut child,
             #[cfg(windows)]
             job.as_ref(),
+            deadline,
         );
         if let Err(err) = result {
             *self.child.lock() = Some(child);
@@ -1045,6 +1120,13 @@ impl CliProcessManager {
         };
         #[cfg(windows)]
         {
+            let authority = manager.generation_authority.lock();
+            if !manager.is_current_generation(generation) {
+                drop(authority);
+                discard_unregistered_child(&mut child, &job);
+                return Ok(());
+            }
+            drop(authority);
             let gate_result = child
                 .stdin
                 .as_mut()
@@ -1063,6 +1145,16 @@ impl CliProcessManager {
             }
         }
 
+        let authority = manager.generation_authority.lock();
+        if !manager.is_current_generation(generation) {
+            drop(authority);
+            discard_unregistered_child(
+                &mut child,
+                #[cfg(windows)]
+                &job,
+            );
+            return Ok(());
+        }
         let stdout = child.stdout.take().map(BufReader::new);
         let stderr = child.stderr.take().map(BufReader::new);
         debug_assert!(manager.child.lock().is_none());
@@ -1073,6 +1165,7 @@ impl CliProcessManager {
             *manager.job.lock() = Some(job);
         }
         Self::emit_status(&app, &manager.status.lock());
+        drop(authority);
         drop(lifecycle);
 
         let ready = Arc::new(AtomicBool::new(false));
@@ -1123,7 +1216,7 @@ impl CliProcessManager {
                 }
                 manager.advance_generation();
                 log_line("timeout waiting for CLI readiness");
-                let stop_error = manager.stop_tracked_child().err();
+                let stop_error = manager.stop_tracked_child(None).err();
                 let message = stop_error.map_or_else(
                     || "CLI did not start in time".to_string(),
                     |err| format!("CLI did not start in time; cleanup failed: {err}"),
@@ -1879,7 +1972,7 @@ mod tests {
     }
 
     #[test]
-    fn stop_waits_for_an_authorized_spawn_section() {
+    fn stop_invalidates_before_waiting_for_an_authorized_spawn_section() {
         let manager = CliProcessManager::new();
         let generation = manager.advance_generation();
         let worker_manager = manager.clone();
@@ -1905,6 +1998,49 @@ mod tests {
         stopped_rx.recv_timeout(Duration::from_secs(1)).unwrap();
         stopping.join().unwrap();
         assert!(!manager.is_current_generation(generation));
+    }
+
+    #[test]
+    fn stop_rejects_an_expired_absolute_deadline_before_locking() {
+        let manager = CliProcessManager::new();
+        let generation = manager.advance_generation();
+        let _lifecycle = manager.lifecycle.lock();
+
+        let error = manager.stop_until(Instant::now()).unwrap_err().to_string();
+
+        assert!(error.contains("timed out waiting for CLI generation authority"));
+        assert!(manager.is_current_generation(generation));
+        assert!(manager.child.lock().is_none());
+    }
+
+    #[test]
+    fn stop_generation_authority_wait_honors_the_absolute_deadline() {
+        let manager = CliProcessManager::new();
+        let _authority = manager.generation_authority.lock();
+
+        let error = manager
+            .stop_until(Instant::now() + Duration::from_millis(20))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("timed out waiting for CLI generation authority"));
+    }
+
+    #[test]
+    fn termination_waits_are_clipped_to_the_remaining_absolute_deadline() {
+        let deadline = Instant::now() + Duration::from_millis(20);
+        let timeout = termination_timeout(Duration::from_secs(30), Some(deadline));
+        assert!(timeout <= Duration::from_millis(20));
+
+        std::thread::sleep(Duration::from_millis(20));
+        assert_eq!(
+            termination_timeout(Duration::from_secs(30), Some(deadline)),
+            Duration::ZERO
+        );
+        assert_eq!(
+            termination_timeout(Duration::from_secs(30), None),
+            Duration::from_secs(30)
+        );
     }
 
     #[cfg(windows)]
@@ -1953,7 +2089,7 @@ mod tests {
         let mut child = command.spawn().unwrap();
         child.wait().unwrap();
 
-        let error = stop_child(&mut child, None).unwrap_err().to_string();
+        let error = stop_child(&mut child, None, None).unwrap_err().to_string();
         assert!(error.contains("cannot be confirmed without a Windows job"));
     }
 

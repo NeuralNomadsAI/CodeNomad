@@ -98,7 +98,7 @@ describe("OpenCode data projection", () => {
     }
   })
 
-  it("preserves the data controller across server.connected", () => {
+  it("drops stale live projection after server.connected without clearing REST state", () => {
     const instanceId = "opencode-data-server-connected"
     const client = getRootClient(instanceId)
     ;(client.session as any).active = async () => ({})
@@ -107,19 +107,42 @@ describe("OpenCode data projection", () => {
     ;(client.project as any).list = async () => []
     try {
       const before = applyOpenCodeDataEvent(instanceId, "/work", {
-        id: "permission",
-        type: "permission.asked",
+        id: "old",
+        type: "session.step.started",
         created: 1,
-        data: { id: "permission", sessionID: "session", action: "read", resources: ["*"] },
+        data: {
+          sessionID: "session", assistantMessageID: "old", agent: "build",
+          model: { providerID: "provider", id: "model" },
+        },
       } as any)
+      projectOpenCodeMessages(instanceId, "session", before)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds("session"), ["old"])
+
       const after = applyOpenCodeDataEvent(instanceId, "/work", {
         id: "connected", type: "server.connected", created: 2, data: {},
       } as any)
+      assert.notStrictEqual(after, before)
+      assert.deepEqual(after.session.message.list("session"), [])
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds("session"), ["old"])
 
-      assert.strictEqual(after, before)
-      assert.equal(after.session.permission.list("session")?.[0]?.id, "permission")
+      const rest = normalizeSessionMessage("session", {
+        id: "rest", type: "assistant", agent: "build", model: { providerID: "provider", id: "model" },
+        time: { created: 2, completed: 2 }, content: [],
+      } as any)
+      seedSessionMessagesV2(instanceId, { id: "session" }, [rest.message], new Map([[rest.info.id, rest.info]]))
+
+      const live = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "new", type: "session.step.started", created: 3,
+        data: {
+          sessionID: "session", assistantMessageID: "new", agent: "build",
+          model: { providerID: "provider", id: "model" },
+        },
+      } as any)
+      projectOpenCodeMessages(instanceId, "session", live)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds("session"), ["rest", "new"])
     } finally {
       destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
       sdkManager.destroyClientsForInstance(instanceId)
     }
   })

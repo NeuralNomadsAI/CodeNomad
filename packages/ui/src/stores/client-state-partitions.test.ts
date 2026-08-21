@@ -135,6 +135,18 @@ it("uses the native graph cap without truncating the encoded key list", async ()
   assert.equal(canCommitClientSnapshotV2({ ...encoded, partitionKeys: Array(4097).fill("key") }), false)
 })
 
+it("enforces the aggregate native commit budget using UTF-8 bytes", async () => {
+  const encoded = await encodeClientSnapshotV2(sidecarSnapshot)
+  const oneMiBUtf8 = "\u00e9".repeat(512 * 1024)
+  const partitions = Object.fromEntries(Array.from({ length: 256 }, (_, index) => [`key-${index}`, oneMiBUtf8]))
+
+  const last = partitions["key-255"]!
+  delete partitions["key-255"]
+  assert.equal(canCommitClientSnapshotV2({ ...encoded, partitions }), true)
+  partitions["key-255"] = last
+  assert.equal(canCommitClientSnapshotV2({ ...encoded, partitions }), false)
+})
+
 it("drops only a missing or corrupt inactive session leaf", async () => {
   const snapshot = graphSnapshot()
   const inactive = snapshot.session!.tabs[1] as RestorableWorkspaceTabState

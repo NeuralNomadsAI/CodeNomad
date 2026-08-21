@@ -15,7 +15,7 @@ import { MultiwindowLifecycle } from "./multiwindow-lifecycle"
 import { decideNavigation, requireHttpUrl } from "./navigation-security"
 import { configureMediaPermissionHandlers, isAllowedRendererOrigin } from "./permissions"
 import { CliProcessManager } from "./process-manager"
-import { navigateReusedRemoteWindow, RemoteWindowRegistry } from "./remote-window-registry"
+import { navigateRemoteWindow, RemoteWindowRegistry } from "./remote-window-registry"
 import { resolveConfiguredRendererOrigins } from "./renderer-origin"
 import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, parseLaunchIntent, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance, type LaunchIntent } from "./startup"
 import { clampWindowBounds, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, installWindowZoomInput, restoreWindowState, WindowStateTracker } from "./window-state"
@@ -290,7 +290,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     if (existing) {
       const allowedOrigins = new Set([base.origin, target.origin])
       existing.setTitle(title)
-      await navigateReusedRemoteWindow(existing, target, allowedOrigins, remoteOrigins, insecureOrigins, payload.skipTlsVerify)
+      await navigateRemoteWindow(existing, target, allowedOrigins, remoteOrigins, insecureOrigins, payload.skipTlsVerify)
       return
     }
     const remoteSession = session.fromPartition(resolveRemoteSessionPartition(payload.id, payload.proxySessionId))
@@ -299,8 +299,6 @@ function runPrimary(firstIntent: LaunchIntent) {
       webPreferences: { session: remoteSession, preload: getPreloadPath(), contextIsolation: true, nodeIntegration: false, spellcheck: !isMac, additionalArguments: ["--codenomad-window-context=remote"] },
     })
     const allowedOrigins = new Set([base.origin, target.origin])
-    remoteOrigins.set(window.id, allowedOrigins)
-    if (payload.skipTlsVerify) insecureOrigins.set(window.webContents.id, allowedOrigins)
     remoteWindows.register(payload.id, window, payload.proxySessionId)
     if (isMac) configureMediaPermissionHandlers(() => BrowserWindow.getAllWindows()
       .filter((candidate) => candidate.webContents.session === remoteSession)
@@ -308,12 +306,10 @@ function runPrimary(firstIntent: LaunchIntent) {
     window.setTitle(title)
     window.webContents.on("page-title-updated", (event) => { event.preventDefault(); window.setTitle(title) })
     setupNavigationGuards(window, undefined, getAllowedOrigins, getLoadingUrl)
-    lifecycle.attachSessionEnd(window)
+    lifecycle.attachRemote(window)
     window.on("closed", () => { remoteOrigins.delete(window.id); insecureOrigins.delete(window.webContents.id) })
-    try { await window.loadURL(target.toString()) } catch (error) {
+    try { await navigateRemoteWindow(window, target, allowedOrigins, remoteOrigins, insecureOrigins, payload.skipTlsVerify) } catch (error) {
       console.warn("[electron] failed to load remote window; showing loading screen", error)
-      remoteOrigins.delete(window.id)
-      insecureOrigins.delete(window.webContents.id)
       const loading = loadingTarget()
       await (loading.url ? window.loadURL(loading.url) : window.loadFile(loading.file!))
     }

@@ -70,6 +70,7 @@ interface WorkspaceManagerOptions {
   shutdownTimeoutMs?: number
   launchSettlementTimeoutMs?: number
   launchTimeoutMs?: number
+  now?: () => number
   setTimeout?: (callback: () => void, delayMs: number) => ManagerTimeout
   clearTimeout?: (timer: ManagerTimeout) => void
   platform?: NodeJS.Platform
@@ -145,6 +146,9 @@ type CreationRequestState = "active" | "cancelled" | "released"
 export class WorkspaceManager {
   private readonly workspaces = new Map<string, WorkspaceRecord>()
   private readonly cancelledCreationRequests = new Set<string>()
+  private readonly activeLocationCreations = new Set<Promise<void>>()
+  private locationEvictions: Promise<void> = Promise.resolve()
+  private pendingLocationEvictions = 0
   private shuttingDown = false
   private readonly sharedService: SharedService
   private serviceAuthorization?: string
@@ -307,7 +311,7 @@ export class WorkspaceManager {
     options: WorkspaceCreateOptions = {},
   ): Promise<WorkspaceCreateResult> {
     const launchTimeoutMs = Math.max(1, this.options.launchTimeoutMs ?? DEFAULT_LAUNCH_TIMEOUT_MS)
-    const launchDeadlineAt = Date.now() + launchTimeoutMs
+    const launchDeadlineAt = this.now() + launchTimeoutMs
     try {
       const submittedPath = path.isAbsolute(folder) ? path.normalize(folder) : path.resolve(this.options.rootDir, folder)
       const workspacePath = await this.withLaunchDeadline(
@@ -337,7 +341,7 @@ export class WorkspaceManager {
   ): WorkspaceRecord {
     const id = randomUUID()
     const binary = this.options.binaryResolver.resolveDefault()
-    const resolvedBinaryPath = this.resolveBinaryPath(binary.path, Math.max(1, launchDeadlineAt - Date.now()))
+    const resolvedBinaryPath = this.resolveBinaryPath(binary.path, Math.max(1, launchDeadlineAt - this.now()))
     clearWorkspaceSearchCache(workspacePath)
 
     this.options.logger.info({ workspaceId: id, folder: workspacePath, binary: resolvedBinaryPath }, "Creating workspace")
@@ -378,7 +382,7 @@ export class WorkspaceManager {
   }
   private startCreation(record: WorkspaceRecord, options: WorkspaceCreateOptions,
     launchDeadlineAt: number, launchTimeoutMs: number): Promise<WorkspaceCreateResult> {
-    const launch = this.createResolvedWorkspace(record, Math.max(1, launchDeadlineAt - Date.now()))
+    const launch = this.createResolvedWorkspace(record, launchDeadlineAt)
     const creation = this.createWithDeadline(record, launchDeadlineAt, launchTimeoutMs, launch)
     record[WORKSPACE_STATE].settlement = launch.then(() => undefined, () => undefined)
     return creation
@@ -386,7 +390,7 @@ export class WorkspaceManager {
   private async createWithDeadline(record: WorkspaceRecord,
     launchDeadlineAt: number, launchTimeoutMs: number,
     launch: Promise<WorkspaceCreateResult>): Promise<WorkspaceCreateResult> {
-    const timeoutMs = Math.max(1, launchDeadlineAt - Date.now())
+    const timeoutMs = Math.max(1, launchDeadlineAt - this.now())
     const state = record[WORKSPACE_STATE]
     let timeout: ManagerTimeout | null = (this.options.setTimeout ?? setTimeout)(() => {
       timeout = null
@@ -406,7 +410,7 @@ export class WorkspaceManager {
 
   private async withLaunchDeadline<T>(operation: Promise<T>, workspaceId: string | undefined,
     deadlineAt: number, launchTimeoutMs: number): Promise<T> {
-    const timeoutMs = Math.max(1, deadlineAt - Date.now())
+    const timeoutMs = Math.max(1, deadlineAt - this.now())
     let timeout: ManagerTimeout | null = null
     const deadline = new Promise<never>((_resolve, reject) => {
       timeout = (this.options.setTimeout ?? setTimeout)(() => {
@@ -422,7 +426,7 @@ export class WorkspaceManager {
   }
   private async createResolvedWorkspace(
     record: WorkspaceRecord,
-    timeoutMs: number,
+    launchDeadlineAt: number,
   ): Promise<WorkspaceCreateResult> {
     const state = record[WORKSPACE_STATE]
     const { id, path: workspacePath, binaryId: resolvedBinaryPath } = record
@@ -430,7 +434,10 @@ export class WorkspaceManager {
       const launch = buildServiceLaunchSpec(resolvedBinaryPath, {
         platform: this.options.platform,
       })
-      const startupEnvironment = this.serviceStartupEnvironment()
+      const timeoutMs = Math.max(1, launchDeadlineAt - this.now())
+      const startupEnvironment = launch.kind === "wsl"
+        ? this.wslStartupEnvironment(this.serviceStartupEnvironment(), launch.distro, launchDeadlineAt)
+        : this.serviceStartupEnvironment()
       const serviceOptions: OpenCodeSharedServiceOptions = {
         kind: "lifecycle",
         identity: launch.kind === "host"
@@ -449,35 +456,42 @@ export class WorkspaceManager {
       this.throwIfCancelled(record)
       record.wslDistro = launch.kind === "wsl" ? launch.distro : undefined
       const serviceDirectory = launch.kind === "wsl"
-        ? this.requireWslServiceDirectory(workspacePath, launch.distro, timeoutMs)
+        ? this.requireWslServiceDirectory(workspacePath, launch.distro, launchDeadlineAt - this.now())
         : workspacePath
       record.location = { directory: serviceDirectory }
-      const [headers, location] = await Promise.all([
-        this.sharedService.headers(serviceOptions),
-        this.sharedService.validateLocation(
-          { directory: serviceDirectory },
-          { signal: state.abortController.signal },
-          serviceOptions,
-        ),
-      ])
-      if (this.shuttingDown) this.throwIfCancelled(record)
-      this.serviceAuthorization = headers?.authorization
-      record.location = { directory: location.directory, workspaceID: location.workspaceID }
-      state.locationOwned = true
-      this.throwIfCancelled(record)
-      state.published = true
-      this.options.eventBus.publish({ type: "workspace.created", workspace: record })
-      this.throwIfCancelled(record)
+      return await this.withLocationCreation(async () => {
+        this.throwIfCancelled(record)
+        const [headersResult, locationResult] = await Promise.allSettled([
+          this.sharedService.headers(serviceOptions),
+          this.sharedService.validateLocation(
+            { directory: serviceDirectory },
+            { signal: state.abortController.signal },
+            serviceOptions,
+          ),
+        ])
+        if (this.shuttingDown) this.throwIfCancelled(record)
+        if (locationResult.status === "fulfilled") {
+          record.location = { directory: locationResult.value.directory, workspaceID: locationResult.value.workspaceID }
+          state.locationOwned = true
+        }
+        if (headersResult.status === "rejected") throw headersResult.reason
+        if (locationResult.status === "rejected") throw locationResult.reason
+        this.serviceAuthorization = headersResult.value?.authorization
+        this.throwIfCancelled(record)
+        state.published = true
+        this.options.eventBus.publish({ type: "workspace.created", workspace: record })
+        this.throwIfCancelled(record)
 
-      record.status = "ready"
-      record.updatedAt = new Date().toISOString()
-      this.options.eventBus.publish({ type: "workspace.started", workspace: record })
-      this.options.logger.info({ workspaceId: id, location: record.location }, "Workspace ready")
-      return { workspace: record, created: true }
+        record.status = "ready"
+        record.updatedAt = new Date().toISOString()
+        this.options.eventBus.publish({ type: "workspace.started", workspace: record })
+        this.options.logger.info({ workspaceId: id, location: record.location }, "Workspace ready")
+        return { workspace: record, created: true }
+      })
     } catch (error) {
       const launchFailure = state.abortController.signal.aborted ? state.abortController.signal.reason : error
       if (state.locationOwned && !this.shuttingDown) {
-        await this.evictRecordLocation(record, timeoutMs).catch((evictionError) => {
+        await this.evictRecordLocation(record).catch((evictionError) => {
           this.options.logger.warn(
             { workspaceId: id, err: evictionError },
             "Failed to evict an OpenCode location after workspace launch failure",
@@ -554,7 +568,7 @@ export class WorkspaceManager {
     this.shuttingDown = true
     this.options.logger.info("Shutting down all workspaces")
     const shutdownTimeoutMs = Math.max(1, this.options.shutdownTimeoutMs ?? 10000)
-    const deadlineAt = Date.now() + shutdownTimeoutMs
+    const deadlineAt = this.now() + shutdownTimeoutMs
     const records = Array.from(this.workspaces.entries())
     for (const [id, record] of records) {
       const state = record[WORKSPACE_STATE]
@@ -574,7 +588,7 @@ export class WorkspaceManager {
     }
     for (const [id, record] of records) this.removeRecord(id, record, true, "stopped")
     this.cancelledCreationRequests.clear()
-    const remaining = Math.max(1, deadlineAt - Date.now())
+    const remaining = Math.max(1, deadlineAt - this.now())
     await this.withTimeout(
       this.sharedService.shutdown({ timeoutMs: remaining }),
       remaining,
@@ -611,38 +625,65 @@ export class WorkspaceManager {
 
   private async cleanupDeletedWorkspace(id: string, record: WorkspaceRecord): Promise<WorkspaceDescriptor> {
     const timeoutMs = Math.max(1, this.options.launchSettlementTimeoutMs ?? 5000)
-    await this.withTimeout(record[WORKSPACE_STATE].settlement!, timeoutMs, `${id} launch cancellation`)
-    await this.evictRecordLocation(record, timeoutMs)
-    this.removeRecord(id, record, true)
-    return record
+    const cleanup = (async () => {
+      await record[WORKSPACE_STATE].settlement!
+      await this.evictRecordLocation(record)
+      this.removeRecord(id, record, true)
+      return record
+    })()
+    return this.withTimeout(cleanup, timeoutMs, `${id} cleanup`)
   }
 
-  private async evictRecordLocation(record: WorkspaceRecord, timeoutMs: number): Promise<void> {
+  private async evictRecordLocation(record: WorkspaceRecord): Promise<void> {
     const state = record[WORKSPACE_STATE]
     if (!state.locationOwned || !record.location) return
-    const shared = Array.from(this.workspaces.values()).some((candidate) => (
-      candidate !== record
-      && !candidate[WORKSPACE_STATE].abortController.signal.aborted
-      && candidate.location?.directory === record.location?.directory
-    ))
-    if (shared) {
-      state.locationOwned = false
-      return
+    await this.withLocationEviction(async () => {
+      if (this.shuttingDown) return
+      if (!state.locationOwned || !record.location) return
+      const directory = record.location.directory
+      const shared = Array.from(this.workspaces.values()).some((candidate) => (
+        candidate !== record
+        && candidate[WORKSPACE_STATE].locationOwned
+        && !candidate[WORKSPACE_STATE].abortController.signal.aborted
+        && candidate.location?.directory === directory
+      ))
+      if (shared) {
+        state.locationOwned = false
+        return
+      }
+      await this.sharedService.evictLocation(record.location, undefined, state.serviceOptions)
+      for (const candidate of this.workspaces.values()) {
+        if (candidate.location?.directory === directory) candidate[WORKSPACE_STATE].locationOwned = false
+      }
+    })
+  }
+
+  private async withLocationCreation<T>(operation: () => Promise<T>): Promise<T> {
+    while (this.pendingLocationEvictions) await this.locationEvictions
+    let release!: () => void
+    const active = new Promise<void>((resolve) => { release = resolve })
+    this.activeLocationCreations.add(active)
+    try {
+      return await operation()
+    } finally {
+      this.activeLocationCreations.delete(active)
+      release()
     }
-    await this.withTimeout(
-      this.sharedService.evictLocation(
-        record.location,
-        { signal: AbortSignal.timeout(timeoutMs) },
-        state.serviceOptions,
-      ),
-      timeoutMs,
-      `${record.id} location eviction`,
-    )
-    state.locationOwned = false
+  }
+
+  private withLocationEviction<T>(operation: () => Promise<T>): Promise<T> {
+    this.pendingLocationEvictions += 1
+    const run = this.locationEvictions.then(async () => {
+      await Promise.all(this.activeLocationCreations)
+      return operation()
+    })
+    const settled = run.finally(() => { this.pendingLocationEvictions -= 1 })
+    this.locationEvictions = settled.then(() => undefined, () => undefined)
+    return settled
   }
 
   private requireWslServiceDirectory(directory: string, distro: string, timeoutMs = DEFAULT_LAUNCH_TIMEOUT_MS): string {
-    const translated = this.resolveWslServiceDirectory(directory, distro, timeoutMs)
+    const translated = timeoutMs > 0 ? this.resolveWslServiceDirectory(directory, distro, timeoutMs) : null
     if (!translated) {
       throw new Error(`Unable to translate workspace location for WSL distro "${distro}": ${directory}`)
     }
@@ -722,6 +763,34 @@ export class WorkspaceManager {
       environment.NODE_EXTRA_CA_CERTS = process.env.NODE_EXTRA_CA_CERTS
     }
     return environment
+  }
+
+  private wslStartupEnvironment(environment: NodeJS.ProcessEnv, distro: string, deadlineAt: number): NodeJS.ProcessEnv {
+    let caKey: string | undefined
+    let caValue: string | undefined
+    for (const [key, value] of Object.entries(environment)) {
+      if (key.toUpperCase() !== "NODE_EXTRA_CA_CERTS") continue
+      if (caKey === undefined || key === "NODE_EXTRA_CA_CERTS") {
+        caKey = key
+        caValue = value
+      }
+      delete environment[key]
+    }
+    if (caKey === undefined) return environment
+    if (caValue && !path.posix.isAbsolute(caValue) && path.win32.isAbsolute(caValue)) {
+      const remaining = deadlineAt - this.now()
+      const translated = remaining > 0 ? this.resolveWslServiceDirectory(caValue, distro, remaining) : null
+      if (!translated) {
+        throw new Error(`Unable to translate NODE_EXTRA_CA_CERTS for WSL distro "${distro}": ${caValue}`)
+      }
+      caValue = translated
+    }
+    environment.NODE_EXTRA_CA_CERTS = caValue
+    return environment
+  }
+
+  private now(): number {
+    return (this.options.now ?? Date.now)()
   }
 
   private removeRecord(

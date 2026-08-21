@@ -20,7 +20,7 @@ description: |
 - There is no `packages/opencode-plugin/`. Do not restore plugin tools, plugin routes, or plugin packaging.
 - The server uses the selected host or WSL CLI's official `service status`, `service start`, and `service get password` lifecycle to connect to one externally owned global OpenCode daemon. It owns no private port/database/registration/PID and never stops the daemon on backend shutdown. WSL requires Windows localhost forwarding and uses no cross-namespace PID operations.
 - The UI uses generated Promise clients from `OpenCode.make()` through the CodeNomad proxy.
-- OpenCode owns session APIs, session Shell (`client.session.shell`), session instructions (`client.session.instructions.entry`), location-scoped background Shells, and interactive PTYs. The Status panel lists `client.shell.*` records, refreshes on Shell events/reconnect, displays native metadata, and supports ownership-checked removal. Interactive `client.pty.*` terminals remain separate.
+- OpenCode owns session APIs, native Forms, session Shell (`client.session.shell`), session instructions (`client.session.instructions.entry`), location-scoped background Shells, and interactive PTYs. Question request/reply/reject routes are compatibility-only; new interruption flows use `client.form.*`. The Status panel lists `client.shell.*` records, refreshes on Shell events/reconnect, displays native metadata, and supports ownership-checked removal. Interactive `client.pty.*` terminals remain separate.
 - CodeNomad owns explicit Stop Workspace eviction, directory authorization, Git status/diff/stage/unstage/commit, Yolo persistence/auto-replies, and `/api/events`. Tab/window close only detaches local UI and never evicts.
 - OpenCode owns the global daemon's standard state and database. Allowed configured environment variables apply only to `service start` for a missing daemon; an existing daemon is unchanged, and `OPENCODE_DB`/`XDG_STATE_HOME` ownership settings are ignored.
 - Native desktop identity is channel plus config profile: one singleton process/backend per profile, multiple UUID windows, second-launch focus by default, and `--new-window` for another window. Stable/dev/non-default profiles isolate native state; OpenCode sessions/messages are shared while tabs/drafts/views are per-window.
@@ -45,6 +45,7 @@ description: |
 - Native session calls: `packages/ui/src/stores/session-api.ts`, `session-actions.ts`
 - Git mutations: `packages/server/src/workspaces/git-mutations.ts`
 - Yolo: `packages/server/src/permissions/`, `packages/server/src/server/routes/yolo.ts`
+- Desktop hosts: `packages/electron-app/electron/main/`, `packages/electron-app/electron/preload/index.cjs`, `packages/tauri-app/src-tauri/src/`
 
 ## Rules
 
@@ -55,6 +56,7 @@ description: |
 - Treat the instance proxy allowlist as an integration boundary. Upstream routes are not exposed automatically.
 - Keep Git mutations and Yolo in CodeNomad. They are policy/security boundaries, not upstream client features.
 - Check `packages/server/src/api-types.ts` and UI consumers together when changing CodeNomad events or responses.
+- Desktop behavior must remain at strict Electron/Tauri parity in the same change; use the shared native abstraction and test both hosts.
 
 ## Anti-Patterns
 

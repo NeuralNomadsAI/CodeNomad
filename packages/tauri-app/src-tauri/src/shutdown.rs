@@ -1,5 +1,5 @@
 use crate::{client_state, local_windows::LocalWindows, AppState};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 #[cfg(windows)]
@@ -12,7 +12,7 @@ const FLUSH_CANCELLED_EVENT: &str = "client-state:flush-cancelled";
 #[cfg(windows)]
 const WINDOWS_SESSION_END_TIMEOUT: Duration = Duration::from_secs(5);
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct PendingClose {
     window_id: String,
     generation: u64,
@@ -30,7 +30,7 @@ struct WindowsSessionEndPreparation {
 struct ShutdownState {
     next_generation: u64,
     local_closes: HashMap<String, PendingClose>,
-    close_allowed: HashSet<String>,
+    committed_local_closes: HashMap<String, PendingClose>,
     global_pending: HashMap<String, u64>,
     global_requests: HashMap<String, u64>,
     shutdown_started: bool,
@@ -58,7 +58,7 @@ impl ShutdownCoordinator {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if state.shutdown_started
             || state.local_closes.contains_key(&label)
-            || state.close_allowed.contains(&label)
+            || state.committed_local_closes.contains_key(&label)
         {
             return None;
         }
@@ -99,6 +99,7 @@ impl ShutdownCoordinator {
         }
         state.shutdown_started = true;
         state.local_closes.clear();
+        state.committed_local_closes.clear();
         state.global_requests.clear();
         let mut requests = Vec::new();
         for label in labels {
@@ -143,7 +144,7 @@ impl ShutdownCoordinator {
         state.cleanup_started = false;
         state.shutdown_started = false;
         state.global_pending.clear();
-        state.close_allowed.clear();
+        state.committed_local_closes.clear();
         #[cfg(windows)]
         {
             state.windows_session_end_generation = None;
@@ -155,12 +156,12 @@ impl ShutdownCoordinator {
         cancellations
     }
 
-    fn commit_local_close(&self, label: &str) -> bool {
+    fn commit_local_close(&self, label: String, pending: PendingClose) -> bool {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if state.shutdown_started {
             return false;
         }
-        state.close_allowed.insert(label.to_string());
+        state.committed_local_closes.insert(label, pending);
         true
     }
 
@@ -168,15 +169,12 @@ impl ShutdownCoordinator {
         self.state
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .close_allowed
+            .committed_local_closes
             .remove(label);
     }
 
-    fn close_allowed(&self, label: &str) -> bool {
-        self.state
-            .lock()
-            .map(|state| state.close_allowed.contains(label))
-            .unwrap_or(false)
+    fn take_committed_local_close(&self, label: &str) -> Option<PendingClose> {
+        self.state.lock().ok()?.committed_local_closes.remove(label)
     }
 
     fn exit_allowed(&self) -> bool {
@@ -193,11 +191,12 @@ impl ShutdownCoordinator {
             .exit_allowed = true;
     }
 
-    fn navigation_allowed(&self) -> bool {
-        self.state
-            .lock()
-            .map(|state| !state.shutdown_started)
-            .unwrap_or(false)
+    fn with_navigation_authority<T>(&self, operation: impl FnOnce() -> T) -> Option<T> {
+        let state = self.state.lock().ok()?;
+        if state.shutdown_started {
+            return None;
+        }
+        Some(operation())
     }
 
     fn shutdown_started(&self) -> bool {
@@ -239,6 +238,7 @@ impl ShutdownCoordinator {
         state.windows_native_flush_complete = false;
         state.shutdown_started = true;
         state.local_closes.clear();
+        state.committed_local_closes.clear();
         state.global_requests.clear();
         let mut requests = Vec::new();
         for label in labels {
@@ -406,32 +406,22 @@ fn finish_local_close(app: AppHandle, label: String, window_id: String, generati
         client_state::capture_and_flush_window(&app, &label);
         if !app
             .state::<ShutdownCoordinator>()
-            .commit_local_close(&label)
+            .commit_local_close(label.clone(), pending)
         {
             return;
-        }
-        if pending.persisted {
-            if let Some(state) = app.try_state::<client_state::ClientState>() {
-                if let Err(error) = state.remove_window(&pending.window_id) {
-                    eprintln!("[client-state] failed to remove closed window: {error}");
-                    app.state::<ShutdownCoordinator>()
-                        .rollback_local_close(&label);
-                    emit_flush_cancelled(&app, &label, generation);
-                    return;
-                }
-            }
         }
         let close_app = app.clone();
         let close_label = label.clone();
         if app
             .run_on_main_thread(move || {
-                if let Some(window) = close_app.get_webview_window(&close_label) {
-                    if window.close().is_err() {
-                        close_app
-                            .state::<ShutdownCoordinator>()
-                            .rollback_local_close(&close_label);
-                        emit_flush_cancelled(&close_app, &close_label, generation);
-                    }
+                let dispatched = close_app
+                    .get_webview_window(&close_label)
+                    .is_some_and(|window| window.close().is_ok());
+                if !dispatched {
+                    close_app
+                        .state::<ShutdownCoordinator>()
+                        .rollback_local_close(&close_label);
+                    emit_flush_cancelled(&close_app, &close_label, generation);
                 }
             })
             .is_err()
@@ -537,12 +527,30 @@ pub(crate) fn with_navigation_authority<T>(
     operation: impl FnOnce() -> T,
 ) -> Option<T> {
     app.state::<ShutdownCoordinator>()
-        .navigation_allowed()
-        .then(operation)
+        .with_navigation_authority(operation)
 }
 
-pub(crate) fn local_window_close_allowed(app: &AppHandle, label: &str) -> bool {
-    app.state::<ShutdownCoordinator>().close_allowed(label)
+pub(crate) fn consume_local_window_close(app: &AppHandle, label: &str) -> Option<bool> {
+    let pending = app
+        .state::<ShutdownCoordinator>()
+        .take_committed_local_close(label)?;
+    if !pending.persisted {
+        return Some(true);
+    }
+    let result = app
+        .try_state::<client_state::ClientState>()
+        .ok_or_else(|| "client state is unavailable".to_string())
+        .and_then(|state| match state.remove_window(&pending.window_id) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err("persistent window state was not removed".to_string()),
+            Err(error) => Err(error),
+        });
+    if let Err(error) = result {
+        eprintln!("[client-state] failed to remove closed window: {error}");
+        emit_flush_cancelled(app, label, pending.generation);
+        return Some(false);
+    }
+    Some(true)
 }
 
 pub(crate) fn exit_allowed(app: &AppHandle) -> bool {
@@ -653,7 +661,10 @@ pub(crate) fn request_windows_session_end(app: AppHandle) {
                 .try_state::<AppState>()
                 .map(|state| {
                     retry_bounded(SHUTDOWN_STOP_ATTEMPTS, || {
-                        state.manager.stop().map_err(|error| error.to_string())
+                        state
+                            .manager
+                            .stop_until(session_deadline)
+                            .map_err(|error| error.to_string())
                     })
                 })
                 .unwrap_or(Ok(()))

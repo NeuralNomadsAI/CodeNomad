@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::Arc;
 
 #[test]
 fn close_generations_are_label_isolated_and_stale_ack_is_ignored() {
@@ -36,7 +37,7 @@ fn final_shutdown_and_cleanup_start_once() {
     assert!(!coordinator.begin_cleanup(false));
     coordinator.cleanup_failed();
     assert!(!coordinator.shutdown_started());
-    assert!(coordinator.navigation_allowed());
+    assert!(coordinator.with_navigation_authority(|| ()).is_some());
     assert!(coordinator.begin_shutdown(std::iter::empty()).is_some());
     assert!(coordinator.begin_cleanup(false));
 }
@@ -55,11 +56,88 @@ fn global_shutdown_wins_an_uncommitted_local_close() {
     let generation = coordinator
         .begin_local_close("local-a".into(), "a".into(), true)
         .unwrap();
-    assert!(coordinator
+    let pending = coordinator
         .acknowledge_local("local-a", "a", generation)
-        .is_some());
+        .unwrap();
     coordinator.begin_shutdown(["local-a".to_string()]).unwrap();
-    assert!(!coordinator.commit_local_close("local-a"));
+    assert!(!coordinator.commit_local_close("local-a".into(), pending));
+}
+
+#[test]
+fn committed_local_close_retains_exact_authority_until_consumed() {
+    let coordinator = ShutdownCoordinator::default();
+    let generation = coordinator
+        .begin_local_close("local-a".into(), "window-a".into(), true)
+        .unwrap();
+    let pending = coordinator
+        .acknowledge_local("local-a", "window-a", generation)
+        .unwrap();
+
+    assert!(coordinator.commit_local_close("local-a".into(), pending.clone()));
+    assert_eq!(
+        coordinator.take_committed_local_close("local-a"),
+        Some(pending)
+    );
+    assert!(coordinator.take_committed_local_close("local-a").is_none());
+}
+
+#[test]
+fn local_close_dispatch_rollback_reopens_close_authority() {
+    let coordinator = ShutdownCoordinator::default();
+    let generation = coordinator
+        .begin_local_close("local-a".into(), "window-a".into(), true)
+        .unwrap();
+    let pending = coordinator
+        .acknowledge_local("local-a", "window-a", generation)
+        .unwrap();
+    assert!(coordinator.commit_local_close("local-a".into(), pending));
+
+    coordinator.rollback_local_close("local-a");
+
+    assert!(coordinator.take_committed_local_close("local-a").is_none());
+    assert!(coordinator
+        .begin_local_close("local-a".into(), "window-a".into(), true)
+        .is_some());
+}
+
+#[test]
+fn navigation_authority_blocks_shutdown_start_until_dispatch_returns() {
+    let coordinator = Arc::new(ShutdownCoordinator::default());
+    let guarded = Arc::clone(&coordinator);
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let navigation = std::thread::spawn(move || {
+        guarded.with_navigation_authority(|| {
+            entered_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        })
+    });
+    entered_rx.recv().unwrap();
+
+    let shutting_down = Arc::clone(&coordinator);
+    let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel();
+    let shutdown = std::thread::spawn(move || {
+        let started = shutting_down.begin_shutdown(std::iter::empty()).is_some();
+        shutdown_tx.send(started).unwrap();
+    });
+    assert!(shutdown_rx.recv_timeout(Duration::from_millis(20)).is_err());
+
+    release_tx.send(()).unwrap();
+    assert!(navigation.join().unwrap().is_some());
+    assert!(shutdown_rx.recv_timeout(Duration::from_secs(1)).unwrap());
+    shutdown.join().unwrap();
+}
+
+#[test]
+fn shutdown_start_rejects_navigation_dispatch() {
+    let coordinator = ShutdownCoordinator::default();
+    coordinator.begin_shutdown(std::iter::empty()).unwrap();
+    let dispatched = std::sync::atomic::AtomicBool::new(false);
+
+    assert!(coordinator
+        .with_navigation_authority(|| dispatched.store(true, std::sync::atomic::Ordering::SeqCst))
+        .is_none());
+    assert!(!dispatched.load(std::sync::atomic::Ordering::SeqCst));
 }
 
 #[test]
@@ -121,7 +199,7 @@ fn cancelled_windows_session_end_reopens_renderer_persistence() {
 
     assert_eq!(coordinator.cancel_windows_session_end().len(), 1);
     assert!(!coordinator.shutdown_started());
-    assert!(coordinator.navigation_allowed());
+    assert!(coordinator.with_navigation_authority(|| ()).is_some());
     assert!(coordinator.begin_shutdown(std::iter::empty()).is_some());
 }
 

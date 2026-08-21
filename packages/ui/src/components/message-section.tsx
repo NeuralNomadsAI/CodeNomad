@@ -21,7 +21,7 @@ import { getMessageSelectionActionPosition } from "../lib/message-selection-posi
 import { buildSessionSearchMatches } from "../lib/session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
 import { resolveThinkingExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
-import { MESSAGE_HISTORY_TOP_THRESHOLD_PX, shouldLoadOlderMessages } from "./message-history-pagination"
+import { hasMessageSearchAuthority, isMessageHistoryRestoreCurrent, loadCompleteMessageHistory, loadMessageHistoryPage, loadPagesUntilAnchor, MESSAGE_HISTORY_TOP_THRESHOLD_PX, shouldLoadOlderMessages } from "./message-history-pagination"
 import { getLogger } from "../lib/logger"
 
 const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
@@ -48,6 +48,7 @@ export interface MessageSectionProps {
   onReloadMessages?: () => void
   hasMoreMessages?: boolean
   onLoadMoreMessages?: () => Promise<void>
+  getMessageHistoryCursor?: () => string | undefined
   isActive?: boolean
   sessionStreamingActive?: boolean
   explicitBottomPinIntent?: VirtualExplicitBottomPinIntent | null
@@ -125,6 +126,8 @@ export default function MessageSection(props: MessageSectionProps) {
   const [debouncedSearchQuery, setDebouncedSearchQuery] = createSignal("")
   const [searchedQuery, setSearchedQuery] = createSignal("")
   const [isSearchPending, setIsSearchPending] = createSignal(false)
+  const [failedSearchQuery, setFailedSearchQuery] = createSignal("")
+  const [searchRetryGeneration, setSearchRetryGeneration] = createSignal(0)
   const [searchMatches, setSearchMatches] = createSignal<SessionSearchMatch[]>([])
   const [activeSearchIndex, setActiveSearchIndex] = createSignal(0)
   let searchInputRef: HTMLInputElement | undefined
@@ -140,20 +143,24 @@ export default function MessageSection(props: MessageSectionProps) {
 
   const lastAssistantMessageId = createMemo(() => store().getLastAssistantMessageId(props.sessionId))
 
+  const currentSearchMatches = createMemo(() => hasMessageSearchAuthority(searchQuery(), searchedQuery()) ? searchMatches() : [])
+  const authoritativeSearchQuery = createMemo(() => hasMessageSearchAuthority(searchQuery(), searchedQuery()) ? debouncedSearchQuery() : "")
+
   const activeSearchMatch = createMemo(() => {
-    const matches = searchMatches()
+    const matches = currentSearchMatches()
     if (matches.length === 0) return null
     const index = Math.min(Math.max(activeSearchIndex(), 0), matches.length - 1)
     return matches[index] ?? null
   })
 
-  const searchResultMessageIds = createMemo(() => new Set(searchMatches().map((match) => match.messageId)))
+  const searchResultMessageIds = createMemo(() => new Set(currentSearchMatches().map((match) => match.messageId)))
 
   const trimmedSearchQuery = createMemo(() => searchQuery().trim())
   const isSearchSettled = createMemo(() => {
     const query = trimmedSearchQuery()
-    return query.length >= SEARCH_MIN_CHARS && !isSearchPending() && searchedQuery().trim() === query
+    return query.length >= SEARCH_MIN_CHARS && !isSearchPending() && hasMessageSearchAuthority(query, searchedQuery())
   })
+  const searchFailed = createMemo(() => hasMessageSearchAuthority(trimmedSearchQuery(), failedSearchQuery()))
 
   const lastAssistantIndex = createMemo(() => {
     const messageId = lastAssistantMessageId()
@@ -204,7 +211,7 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   const searchMatchedTimelineSegmentIds = createMemo(() => {
-    const matches = searchMatches()
+    const matches = currentSearchMatches()
     if (matches.length === 0) return new Set<string>()
     const result = new Set<string>()
     for (const segment of timelineSegments()) {
@@ -248,7 +255,19 @@ export default function MessageSection(props: MessageSectionProps) {
   let restoredWithoutSnapshot = false
   let scrollRestoreGeneration = 0
   let loadingOlderMessages = false
-  let olderMessageLoadFailed = false
+  let retryAnchorRestore: (() => void) | null = null
+  const [olderMessageLoadFailed, setOlderMessageLoadFailed] = createSignal(false)
+
+  function registerListApi(api: VirtualFollowListApi) {
+    if (listApi() !== api) {
+      scrollRestoreGeneration += 1
+      restoringScrollSnapshot = false
+      setDidRestoreScroll(false)
+      loadingOlderMessages = false
+      retryAnchorRestore = null
+    }
+    setListApi(api)
+  }
 
   function getLastGoodScrollSnapshot(sessionId: string) {
     return lastGoodScrollSnapshots.get(sessionId) ?? store().getScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE)
@@ -266,7 +285,8 @@ export default function MessageSection(props: MessageSectionProps) {
         restoringScrollSnapshot = false
         restoredWithoutSnapshot = false
         loadingOlderMessages = false
-        olderMessageLoadFailed = false
+        retryAnchorRestore = null
+        setOlderMessageLoadFailed(false)
         setDidRestoreScroll(false)
         const snapshot = store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE)
         if (snapshot) setLastGoodScrollSnapshot(props.sessionId, snapshot)
@@ -284,6 +304,10 @@ export default function MessageSection(props: MessageSectionProps) {
           }
           return
         }
+        scrollRestoreGeneration += 1
+        restoringScrollSnapshot = false
+        loadingOlderMessages = false
+        retryAnchorRestore = null
         persistMessageScrollSnapshot({ requireActive: false })
       },
     ),
@@ -426,6 +450,7 @@ export default function MessageSection(props: MessageSectionProps) {
     if (!isActive()) return
     if (props.loading) return
     if (visibleMessageIds().length === 0) return
+    if (restoringScrollSnapshot) return
 
     const snapshot = initialScrollSnapshot()
     if (didRestoreScroll() && (!restoredWithoutSnapshot || !snapshot)) return
@@ -440,40 +465,69 @@ export default function MessageSection(props: MessageSectionProps) {
     restoredWithoutSnapshot = false
     const restoreSessionId = props.sessionId
     const restoreGeneration = ++scrollRestoreGeneration
-    const isCurrentRestore = () => isScrollRestoreGenerationCurrent(
-      restoreSessionId,
-      restoreGeneration,
-      props.sessionId,
-      scrollRestoreGeneration,
+    const isCurrentRestore = () => isMessageHistoryRestoreCurrent(
+      isActive(),
+      api,
+      listApi(),
+      isScrollRestoreGenerationCurrent(
+        restoreSessionId,
+        restoreGeneration,
+        props.sessionId,
+        scrollRestoreGeneration,
+      ),
     )
     restoringScrollSnapshot = true
-    api.restoreScrollSnapshot(snapshot, {
-      behavior: "auto",
-      fallback: () => {
-        if (!isCurrentRestore()) return
-        api.setAutoScroll(true)
-        api.scrollToBottom({ immediate: true })
-        restoringScrollSnapshot = false
-        setDidRestoreScroll(true)
-      },
-      onApplied: () => {
-        if (!isCurrentRestore()) return
-        restoringScrollSnapshot = false
-        setLastGoodScrollSnapshot(restoreSessionId, snapshot)
-        setDidRestoreScroll(true)
-      },
-      onCancelled: () => {
-        if (!isCurrentRestore()) return
-        restoringScrollSnapshot = false
-        setDidRestoreScroll(true)
-      },
-    })
+    const restore = async () => {
+      setOlderMessageLoadFailed(false)
+      if (!snapshot.atBottom && snapshot.anchorKey && !visibleMessageIds().includes(snapshot.anchorKey) && props.onLoadMoreMessages) {
+        try {
+          await loadPagesUntilAnchor({
+            hasAnchor: () => visibleMessageIds().includes(snapshot.anchorKey!),
+            hasMore: () => Boolean(props.hasMoreMessages),
+            isCurrent: isCurrentRestore,
+            loadMore: props.onLoadMoreMessages,
+          })
+        } catch (error) {
+          if (!isCurrentRestore()) return
+          retryAnchorRestore = () => void restore()
+          setOlderMessageLoadFailed(true)
+          log.error("Failed to load older messages while restoring scroll", { instanceId: props.instanceId, sessionId: restoreSessionId, error })
+          return
+        }
+      }
+      if (!isCurrentRestore()) return
+      retryAnchorRestore = null
+
+      api.restoreScrollSnapshot(snapshot, {
+        behavior: "auto",
+        fallback: () => {
+          if (!isCurrentRestore()) return
+          api.setAutoScroll(true)
+          api.scrollToBottom({ immediate: true })
+          restoringScrollSnapshot = false
+          setDidRestoreScroll(true)
+        },
+        onApplied: () => {
+          if (!isCurrentRestore()) return
+          restoringScrollSnapshot = false
+          setLastGoodScrollSnapshot(restoreSessionId, snapshot)
+          setDidRestoreScroll(true)
+        },
+        onCancelled: () => {
+          if (!isCurrentRestore()) return
+          restoringScrollSnapshot = false
+          setDidRestoreScroll(true)
+        },
+      })
+    }
+    void restore()
   })
 
   onCleanup(() => {
     const allowCapture = !restoringScrollSnapshot
     scrollRestoreGeneration += 1
     restoringScrollSnapshot = false
+    retryAnchorRestore = null
     persistMessageScrollSnapshot({ allowCapture, requireActive: false })
   })
 
@@ -492,12 +546,13 @@ export default function MessageSection(props: MessageSectionProps) {
     setDebouncedSearchQuery("")
     setSearchedQuery("")
     setIsSearchPending(false)
+    setFailedSearchQuery("")
     setSearchMatches([])
     setActiveSearchIndex(0)
   }
 
   function moveSearchMatch(direction: 1 | -1) {
-    const count = searchMatches().length
+    const count = currentSearchMatches().length
     if (count === 0) return
     setActiveSearchIndex((index) => (index + direction + count) % count)
   }
@@ -602,7 +657,7 @@ export default function MessageSection(props: MessageSectionProps) {
     if (!api || !snapshot || !props.onLoadMoreMessages) return
     if (!shouldLoadOlderMessages({
       active: isActive(),
-      failed: olderMessageLoadFailed,
+      failed: olderMessageLoadFailed(),
       hasMore: Boolean(props.hasMoreMessages),
       loading: Boolean(props.loading) || loadingOlderMessages,
       messageCount: visibleMessageIds().length,
@@ -610,14 +665,26 @@ export default function MessageSection(props: MessageSectionProps) {
     })) return
 
     const sessionId = props.sessionId
+    const loadGeneration = scrollRestoreGeneration
+    const isCurrentLoad = () => isMessageHistoryRestoreCurrent(
+      isActive(),
+      api,
+      listApi(),
+      isScrollRestoreGenerationCurrent(sessionId, loadGeneration, props.sessionId, scrollRestoreGeneration),
+    )
     const firstMessageId = visibleMessageIds()[0]
     const anchorSnapshot = snapshot.atBottom && firstMessageId
       ? { ...snapshot, atBottom: false, anchorKey: firstMessageId, anchorOffset: 0, followModeType: "escaped" as const }
       : snapshot
     loadingOlderMessages = true
+    let progressed = false
     try {
-      await props.onLoadMoreMessages()
-      if (props.sessionId !== sessionId || listApi() !== api) return
+      progressed = await loadMessageHistoryPage({
+        getCursor: () => props.getMessageHistoryCursor?.(),
+        getMessageCount: () => visibleMessageIds().length,
+        loadMore: props.onLoadMoreMessages,
+      })
+      if (!isCurrentLoad()) return
       await new Promise<void>((resolve) => api.restoreScrollSnapshot(anchorSnapshot, {
         behavior: "auto",
         fallback: resolve,
@@ -625,13 +692,15 @@ export default function MessageSection(props: MessageSectionProps) {
         onCancelled: resolve,
       }))
     } catch (error) {
-      olderMessageLoadFailed = true
-      log.error("Failed to load older messages", { instanceId: props.instanceId, sessionId, error })
+      if (isCurrentLoad()) {
+        setOlderMessageLoadFailed(true)
+        log.error("Failed to load older messages", { instanceId: props.instanceId, sessionId, error })
+      }
     } finally {
-      loadingOlderMessages = false
+      if (isCurrentLoad()) loadingOlderMessages = false
     }
 
-    if (!olderMessageLoadFailed) void maybeLoadOlderMessages()
+    if (isCurrentLoad() && progressed && !olderMessageLoadFailed()) void maybeLoadOlderMessages()
   }
 
   createEffect(() => {
@@ -655,6 +724,7 @@ export default function MessageSection(props: MessageSectionProps) {
       setActiveSearchIndex(0)
       setSearchedQuery("")
       setIsSearchPending(false)
+      setFailedSearchQuery("")
       setSearchMatches([])
       return
     }
@@ -665,15 +735,63 @@ export default function MessageSection(props: MessageSectionProps) {
     onCleanup(() => window.clearTimeout(timeout))
   })
 
+  let searchGeneration = 0
   createEffect(() => {
-    sessionRevision()
     const query = debouncedSearchQuery()
     const includeThinking = Boolean(preferences().showThinkingBlocks)
-    if (query.trim().length < SEARCH_MIN_CHARS) {
+    searchRetryGeneration()
+    if (!isActive() || query.trim().length < SEARCH_MIN_CHARS) {
+      setIsSearchPending(false)
       return
     }
 
     setIsSearchPending(true)
+    setSearchedQuery("")
+    setFailedSearchQuery("")
+    const instanceId = props.instanceId
+    const sessionId = props.sessionId
+    const generation = ++searchGeneration
+    let frame: number | undefined
+    const isCurrentSearch = () => generation === searchGeneration
+      && isActive()
+      && props.instanceId === instanceId
+      && props.sessionId === sessionId
+      && debouncedSearchQuery() === query
+    void loadCompleteMessageHistory({
+      getCursor: () => props.getMessageHistoryCursor?.(),
+      loadMore: props.onLoadMoreMessages ?? (() => Promise.resolve()),
+      isCurrent: isCurrentSearch,
+      complete: () => buildSessionSearchMatches({ store: store(), sessionId, query, includeThinking }),
+    }).then((matches) => {
+      if (!matches) {
+        if (isCurrentSearch()) setIsSearchPending(false)
+        return
+      }
+      if (!isCurrentSearch()) return
+      frame = requestAnimationFrame(() => {
+        if (!isCurrentSearch()) return
+        setSearchMatches(matches)
+        setSearchedQuery(query)
+        setActiveSearchIndex(0)
+        setIsSearchPending(false)
+      })
+    }).catch((error) => {
+      if (!isCurrentSearch()) return
+      setIsSearchPending(false)
+      setFailedSearchQuery(query)
+      log.error("Failed to load message history for search", { instanceId, sessionId, error })
+    })
+    onCleanup(() => {
+      if (generation === searchGeneration) searchGeneration += 1
+      if (frame !== undefined) cancelAnimationFrame(frame)
+    })
+  })
+
+  createEffect(() => {
+    sessionRevision()
+    const query = debouncedSearchQuery()
+    const includeThinking = Boolean(preferences().showThinkingBlocks)
+    if (query.trim().length < SEARCH_MIN_CHARS || isSearchPending() || searchedQuery() !== query) return
     const frame = requestAnimationFrame(() => {
       const matches = buildSessionSearchMatches({
         store: store(),
@@ -682,15 +800,12 @@ export default function MessageSection(props: MessageSectionProps) {
         includeThinking,
       })
       setSearchMatches(matches)
-      setSearchedQuery(query)
-      setActiveSearchIndex(0)
-      setIsSearchPending(false)
     })
     onCleanup(() => cancelAnimationFrame(frame))
   })
 
   createEffect(() => {
-    const count = searchMatches().length
+    const count = currentSearchMatches().length
     if (count === 0) {
       if (activeSearchIndex() !== 0) setActiveSearchIndex(0)
       return
@@ -814,7 +929,9 @@ export default function MessageSection(props: MessageSectionProps) {
             clearQuoteSelection()
             persistMessageScrollSnapshot()
             const scrollTop = listApi()?.captureScrollSnapshot()?.scrollTop
-            if (typeof scrollTop === "number" && scrollTop > MESSAGE_HISTORY_TOP_THRESHOLD_PX) olderMessageLoadFailed = false
+            if (!retryAnchorRestore && typeof scrollTop === "number" && scrollTop > MESSAGE_HISTORY_TOP_THRESHOLD_PX) {
+              setOlderMessageLoadFailed(false)
+            }
             void maybeLoadOlderMessages()
           }}
           onMouseUp={() => handleStreamMouseUp()}
@@ -835,7 +952,7 @@ export default function MessageSection(props: MessageSectionProps) {
           }}
           scrollToTopAriaLabel={() => t("messageSection.scroll.toFirstAriaLabel")}
           scrollToBottomAriaLabel={() => t("messageSection.scroll.toLatestAriaLabel")}
-          registerApi={(api) => setListApi(api)}
+          registerApi={registerListApi}
           registerState={(state) => setListState(state)}
           renderControls={(state, api) => (
             <div
@@ -908,6 +1025,23 @@ export default function MessageSection(props: MessageSectionProps) {
           )}
           renderBeforeItems={() => (
             <>
+              <Show when={olderMessageLoadFailed()}>
+                <div class="flex justify-center py-2">
+                  <button
+                    type="button"
+                    class="button-tertiary"
+                    onClick={() => {
+                      setOlderMessageLoadFailed(false)
+                      const retry = retryAnchorRestore
+                      if (retry) retry()
+                      else void maybeLoadOlderMessages()
+                    }}
+                  >
+                    {t("messageSection.loadError.reload")}
+                  </button>
+                </div>
+              </Show>
+
               <Show when={!props.loading && !props.loadError && visibleMessageIds().length === 0}>
                 <Show
                   when={emptyStateVariant() === "no-session"}
@@ -981,7 +1115,7 @@ export default function MessageSection(props: MessageSectionProps) {
               onRevert={props.onRevert}
               onFork={props.onFork}
               onContentRendered={handleContentRendered}
-              searchQuery={debouncedSearchQuery}
+              searchQuery={authoritativeSearchQuery}
               searchResultMessageIds={searchResultMessageIds}
               activeSearchMatch={activeSearchMatch}
             />
@@ -1002,6 +1136,8 @@ export default function MessageSection(props: MessageSectionProps) {
                         value={searchQuery()}
                         placeholder={t("messageSection.search.placeholder")}
                         onInput={(event) => {
+                          setSearchedQuery("")
+                          setFailedSearchQuery("")
                           setSearchQuery(event.currentTarget.value)
                         }}
                         onKeyDown={(event) => {
@@ -1023,18 +1159,20 @@ export default function MessageSection(props: MessageSectionProps) {
                             ? t("messageSection.search.count.minChars", { count: String(SEARCH_MIN_CHARS) })
                           : isSearchPending()
                             ? t("messageSection.search.count.searching")
-                          : searchMatches().length === 0
+                          : searchFailed()
+                            ? t("messageSection.search.failed")
+                          : currentSearchMatches().length === 0
                             ? t("messageSection.search.count.none")
                             : t("messageSection.search.count.matches", {
                                 current: String(activeSearchIndex() + 1),
-                                total: String(searchMatches().length),
+                                total: String(currentSearchMatches().length),
                               })}
                       </span>
                       <button
                         type="button"
                         class="message-search-button"
                         onClick={() => moveSearchMatch(-1)}
-                        disabled={searchMatches().length === 0}
+                        disabled={currentSearchMatches().length === 0}
                         aria-label={t("messageSection.search.previousAriaLabel")}
                         title={t("messageSection.search.previousAriaLabel")}
                       >
@@ -1044,7 +1182,7 @@ export default function MessageSection(props: MessageSectionProps) {
                         type="button"
                         class="message-search-button"
                         onClick={() => moveSearchMatch(1)}
-                        disabled={searchMatches().length === 0}
+                        disabled={currentSearchMatches().length === 0}
                         aria-label={t("messageSection.search.nextAriaLabel")}
                         title={t("messageSection.search.nextAriaLabel")}
                       >
@@ -1064,7 +1202,19 @@ export default function MessageSection(props: MessageSectionProps) {
                   <Show when={trimmedSearchQuery().length >= SEARCH_MIN_CHARS && isSearchPending()}>
                     <div class="modal-empty-state message-search-empty">{t("messageSection.search.searching")}</div>
                   </Show>
-                  <Show when={isSearchSettled() && searchMatches().length === 0}>
+                  <Show when={searchFailed()}>
+                    <div class="modal-empty-state message-search-empty">
+                      <span>{t("messageSection.search.failed")}</span>
+                      <button
+                        type="button"
+                        class="button-tertiary"
+                        onClick={() => setSearchRetryGeneration((generation) => generation + 1)}
+                      >
+                        {t("messageSection.search.retry")}
+                      </button>
+                    </div>
+                  </Show>
+                  <Show when={isSearchSettled() && currentSearchMatches().length === 0}>
                     <div class="modal-empty-state message-search-empty">{t("messageSection.search.noVisibleMatches")}</div>
                   </Show>
                 </div>

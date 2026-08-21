@@ -15,7 +15,7 @@ export class RemoteWindowRegistry {
     if (!record || record.window.isDestroyed()) return undefined
     if (record.proxySessionId !== proxySessionId) {
       this.records.delete(profileId)
-      record.window.close()
+      record.window.destroy()
       if (record.proxySessionId) this.cleanupProxySession(record.proxySessionId)
       return undefined
     }
@@ -36,7 +36,15 @@ export class RemoteWindowRegistry {
   }
 }
 
-export async function navigateReusedRemoteWindow(
+interface RemoteNavigationAuthority {
+  generation: number
+  trustedOrigins: Set<string>
+  insecureOrigins: Set<string>
+}
+
+const navigationAuthorities = new WeakMap<BrowserWindow, RemoteNavigationAuthority>()
+
+export async function navigateRemoteWindow(
   window: BrowserWindow,
   target: URL,
   nextOrigins: ReadonlySet<string>,
@@ -44,21 +52,36 @@ export async function navigateReusedRemoteWindow(
   insecureOrigins: Map<number, Set<string>>,
   skipTlsVerify: boolean,
 ): Promise<void> {
+  let authority = navigationAuthorities.get(window)
+  if (!authority) {
+    authority = {
+      generation: 0,
+      trustedOrigins: new Set(trustedOrigins.get(window.id)),
+      insecureOrigins: new Set(insecureOrigins.get(window.webContents.id)),
+    }
+    navigationAuthorities.set(window, authority)
+  }
+  const generation = ++authority.generation
   const committedOrigins = new Set(nextOrigins)
-  const previousTrusted = trustedOrigins.get(window.id)
-  const previousInsecure = insecureOrigins.get(window.webContents.id)
-  trustedOrigins.set(window.id, new Set([...(previousTrusted ?? []), ...committedOrigins]))
-  if (skipTlsVerify) insecureOrigins.set(window.webContents.id, new Set([...(previousInsecure ?? []), ...committedOrigins]))
+  trustedOrigins.set(window.id, new Set([...authority.trustedOrigins, ...committedOrigins]))
+  const provisionalInsecure = new Set(authority.insecureOrigins)
+  if (skipTlsVerify) for (const origin of committedOrigins) provisionalInsecure.add(origin)
+  if (provisionalInsecure.size) insecureOrigins.set(window.webContents.id, provisionalInsecure)
+  else insecureOrigins.delete(window.webContents.id)
 
   try { await window.loadURL(target.toString()) } catch (error) {
-    if (previousTrusted) trustedOrigins.set(window.id, previousTrusted)
+    if (authority.generation !== generation) return
+    if (authority.trustedOrigins.size) trustedOrigins.set(window.id, new Set(authority.trustedOrigins))
     else trustedOrigins.delete(window.id)
-    if (previousInsecure) insecureOrigins.set(window.webContents.id, previousInsecure)
+    if (authority.insecureOrigins.size) insecureOrigins.set(window.webContents.id, new Set(authority.insecureOrigins))
     else insecureOrigins.delete(window.webContents.id)
     throw error
   }
 
+  if (authority.generation !== generation) return
+  authority.trustedOrigins = committedOrigins
+  authority.insecureOrigins = skipTlsVerify ? new Set(committedOrigins) : new Set()
   trustedOrigins.set(window.id, committedOrigins)
-  if (skipTlsVerify) insecureOrigins.set(window.webContents.id, committedOrigins)
+  if (authority.insecureOrigins.size) insecureOrigins.set(window.webContents.id, new Set(authority.insecureOrigins))
   else insecureOrigins.delete(window.webContents.id)
 }

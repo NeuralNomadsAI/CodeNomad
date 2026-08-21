@@ -7,7 +7,8 @@ function windowRecord(id: string, calls: string[]): LifecycleWindow & { events: 
   const events = new Map<string, Function>()
   const window = {
     on: (name: string, handler: Function) => events.set(name, handler), isDestroyed: () => false,
-    hide: () => calls.push(`hide:${id}`), close: () => { calls.push(`close:${id}`); events.get("close")?.({ preventDefault: () => assert.fail() }) },
+    isVisible: () => !calls.includes(`hide:${id}`) || calls.lastIndexOf(`show:${id}`) > calls.lastIndexOf(`hide:${id}`),
+    hide: () => calls.push(`hide:${id}`), show: () => calls.push(`show:${id}`), close: () => { calls.push(`close:${id}`); events.get("close")?.({ preventDefault: () => assert.fail() }) },
     webContents: { isDestroyed: () => false, getURL: () => "http://localhost/app", executeJavaScript: async () => calls.push(`renderer:${id}`) },
   }
   return { id, window: window as never, tracker: { flush: async () => calls.push(`native:${id}`) } as never, events }
@@ -22,7 +23,7 @@ test("closing one local window removes only its V3 record and leaves backend run
     app: { on: () => {}, quit: () => calls.push("quit"), exit: () => calls.push("exit") } as never,
     clientStateManager: { isPrimary: true } as never, cliManager: { shutdown: async () => calls.push("stop") } as never,
     getLocalWindows: () => local, getAllWindows: () => local.map((record) => record.window),
-    removeWindowState: async (id) => calls.push(`remove:${id}`), getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+    removeWindowState: async (id) => { calls.push(`remove:${id}`); return true }, getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
   })
   lifecycle.attach(first)
   first.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
@@ -38,12 +39,44 @@ test("closing the sole local window while a remote remains removes its V3 record
     app: { on: () => {}, quit: () => calls.push("quit"), exit: () => calls.push("exit") } as never,
     clientStateManager: { isPrimary: true } as never, cliManager: { shutdown: async () => calls.push("stop") } as never,
     getLocalWindows: () => [local], getAllWindows: () => [local.window, remote as never],
-    removeWindowState: async (id) => calls.push(`remove:${id}`), getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+    removeWindowState: async (id) => { calls.push(`remove:${id}`); return true }, getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
   })
   lifecycle.attach(local)
   local.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
   await tick()
   assert.deepEqual(calls, ["prevent", "renderer:local", "native:local", "remove:local", "close:local"])
+})
+
+test("persisted local close waits for confirmed removal and remains retryable", async () => {
+  const calls: string[] = []
+  const first = windowRecord("one", calls)
+  const second = windowRecord("two", calls)
+  let removals = 0
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: () => {}, quit: () => calls.push("quit"), exit: () => calls.push("exit") } as never,
+    clientStateManager: { isPrimary: true } as never, cliManager: { shutdown: async () => calls.push("stop") } as never,
+    getLocalWindows: () => [first, second], getAllWindows: () => [first.window, second.window],
+    removeWindowState: async () => {
+      removals += 1
+      calls.push(`remove:${removals}`)
+      if (removals === 2) throw new Error("remove failed")
+      return removals === 3
+    },
+    getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+  })
+  lifecycle.attach(first)
+
+  first.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
+  await tick()
+  assert.equal(calls.includes("close:one"), false)
+  first.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
+  await tick()
+  assert.equal(calls.includes("close:one"), false)
+  first.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
+  await tick()
+
+  assert.equal(removals, 3)
+  assert.equal(calls.filter((call) => call === "close:one").length, 1)
 })
 
 test("global shutdown asks all renderers concurrently before aggregate persistence", async () => {
@@ -59,7 +92,7 @@ test("global shutdown asks all renderers concurrently before aggregate persisten
     app: { on: (name: string, handler: Function) => events.set(name, handler), quit: () => {}, exit: () => calls.push("exit") } as never,
     clientStateManager: { isPrimary: true, flush: async () => calls.push("aggregate"), drainAndReleasePrimary: async () => calls.push("release") } as never,
     cliManager: { shutdown: async () => calls.push("stop") } as never, getLocalWindows: () => [first, second], getAllWindows: () => [first.window, second.window],
-    removeWindowState: async () => {}, getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+    removeWindowState: async () => true, getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
   })
   lifecycle.registerAppEvents()
   events.get("before-quit")?.({ preventDefault: () => {} })
@@ -80,11 +113,11 @@ test("final close retains its record and shutdown stops/releases once", async ()
     app: app as never,
     clientStateManager: { isPrimary: true, flush: async () => calls.push("aggregate"), drainAndReleasePrimary: async () => calls.push("release") } as never,
     cliManager: { shutdown: async () => calls.push("stop") } as never, getLocalWindows: () => [first], getAllWindows: () => [first.window],
-    removeWindowState: async () => calls.push("remove"), getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+    removeWindowState: async () => { calls.push("remove"); return true }, getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
   })
   lifecycle.attach(first); lifecycle.registerAppEvents()
   first.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
-  assert.deepEqual(calls, ["prevent", "hide:one", "quit"])
+  assert.deepEqual(calls, ["prevent", "quit"])
   events.get("before-quit")?.({ preventDefault: () => calls.push("prevent-quit") })
   events.get("before-quit")?.({ preventDefault: () => calls.push("prevent-quit") })
   await tick(); await tick()
@@ -100,7 +133,7 @@ test("Windows query preflush leaves the app alive until session end is confirmed
     app: { on: () => {}, quit: () => {}, exit: () => calls.push("exit") } as never,
     clientStateManager: { isPrimary: true, flush: async () => calls.push("aggregate"), drainAndReleasePrimary: async () => calls.push("release") } as never,
     cliManager: { shutdown: async () => calls.push("stop") } as never,
-    getLocalWindows: () => [first], getAllWindows: () => [first.window], removeWindowState: async () => {},
+    getLocalWindows: () => [first], getAllWindows: () => [first.window], removeWindowState: async () => true,
     getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true, isWindows: true, sessionEndCleanupTimeoutMs: 20,
   })
   lifecycle.attach(first)
@@ -123,7 +156,7 @@ test("remote windows receive session-end cleanup without local close semantics",
     app: { on: () => {}, exit: () => calls.push("exit") } as never,
     clientStateManager: { isPrimary: true, flush: async () => calls.push("aggregate"), drainAndReleasePrimary: async () => calls.push("release") } as never,
     cliManager: { shutdown: async () => calls.push("stop") } as never,
-    getLocalWindows: () => [], getAllWindows: () => [remote as never], removeWindowState: async () => calls.push("remove"),
+    getLocalWindows: () => [], getAllWindows: () => [remote as never], removeWindowState: async () => { calls.push("remove"); return true },
     getAllowedRendererOrigins: () => [], isTrustedRendererOrigin: () => false, isWindows: true,
   })
 
@@ -146,7 +179,7 @@ test("normal quit reports a failed CLI shutdown without allowing exit", async ()
     app: { on: (name: string, handler: Function) => events.set(name, handler), quit: () => {}, exit: () => calls.push("exit") } as never,
     clientStateManager: { isPrimary: true, flush: async () => {}, drainAndReleasePrimary: async () => calls.push("release") } as never,
     cliManager: { shutdown: async () => { throw new Error("CLI failed") } } as never,
-    getLocalWindows: () => [first], getAllWindows: () => [first.window], removeWindowState: async () => {},
+    getLocalWindows: () => [first], getAllWindows: () => [first.window], removeWindowState: async () => true,
     getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
   })
   lifecycle.registerAppEvents()
@@ -155,4 +188,74 @@ test("normal quit reports a failed CLI shutdown without allowing exit", async ()
   assert.equal(calls.includes("prevent"), true)
   assert.equal(calls.includes("exit"), false)
   assert.equal(calls.includes("release"), false)
+  assert.ok(calls.indexOf("show:one") > calls.indexOf("hide:one"))
+})
+
+test("final close restores its window after failed shutdown and allows one deduped retry", async () => {
+  const calls: string[] = []
+  const events = new Map<string, Function>()
+  const first = windowRecord("one", calls)
+  let attempts = 0
+  let rejectFirst!: (error: Error) => void
+  let resolveSecond!: () => void
+  const firstAttempt = new Promise<void>((_resolve, reject) => { rejectFirst = reject })
+  const secondAttempt = new Promise<void>((resolve) => { resolveSecond = resolve })
+  const app = {
+    on: (name: string, handler: Function) => events.set(name, handler),
+    quit: () => {
+      calls.push(`quit-visible:${first.window.isVisible()}`)
+      events.get("before-quit")?.({ preventDefault: () => calls.push("prevent-quit") })
+    },
+    exit: () => calls.push("exit"),
+  }
+  const lifecycle = new MultiwindowLifecycle({
+    app: app as never,
+    clientStateManager: { isPrimary: true, flush: async () => calls.push("aggregate"), drainAndReleasePrimary: async () => calls.push("release") } as never,
+    cliManager: { shutdown: () => { attempts += 1; calls.push(`stop:${attempts}`); return attempts === 1 ? firstAttempt : secondAttempt } } as never,
+    getLocalWindows: () => [first], getAllWindows: () => [first.window], removeWindowState: async () => true,
+    getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+  })
+  lifecycle.attach(first); lifecycle.registerAppEvents()
+
+  first.events.get("close")?.({ preventDefault: () => calls.push("prevent-close") })
+  first.events.get("close")?.({ preventDefault: () => calls.push("prevent-close") })
+  await tick()
+  assert.equal(attempts, 1)
+  assert.equal(calls.filter((call) => call === "quit-visible:true").length, 1)
+  rejectFirst(new Error("CLI failed"))
+  await tick()
+  assert.ok(calls.indexOf("show:one") > calls.indexOf("hide:one"))
+
+  first.events.get("close")?.({ preventDefault: () => calls.push("prevent-close") })
+  first.events.get("close")?.({ preventDefault: () => calls.push("prevent-close") })
+  await tick()
+  assert.equal(attempts, 2)
+  assert.equal(calls.filter((call) => call === "hide:one").length, 2)
+  resolveSecond()
+  await tick(); await tick()
+  assert.equal(calls.filter((call) => call === "release").length, 1)
+  assert.equal(calls.filter((call) => call === "exit").length, 1)
+})
+
+test("final remote close stays restorable by routing through app shutdown", async () => {
+  const calls: string[] = []
+  const events = new Map<string, Function>()
+  const remote = windowRecord("remote", calls)
+  const app = {
+    on: (name: string, handler: Function) => events.set(name, handler),
+    quit: () => { calls.push("quit"); events.get("before-quit")?.({ preventDefault: () => calls.push("prevent-quit") }) },
+    exit: () => calls.push("exit"),
+  }
+  const lifecycle = new MultiwindowLifecycle({
+    app: app as never,
+    clientStateManager: { isPrimary: true, flush: async () => calls.push("aggregate"), drainAndReleasePrimary: async () => calls.push("release") } as never,
+    cliManager: { shutdown: async () => { calls.push("stop"); throw new Error("CLI failed") } } as never,
+    getLocalWindows: () => [], getAllWindows: () => [remote.window], removeWindowState: async () => true,
+    getAllowedRendererOrigins: () => [], isTrustedRendererOrigin: () => false,
+  })
+  lifecycle.attachRemote(remote.window); lifecycle.registerAppEvents()
+
+  remote.events.get("close")?.({ preventDefault: () => calls.push("prevent-close") })
+  await tick(); await tick()
+  assert.deepEqual(calls, ["prevent-close", "quit", "prevent-quit", "hide:remote", "aggregate", "stop", "show:remote"])
 })

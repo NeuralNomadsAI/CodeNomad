@@ -1143,6 +1143,48 @@ fn v3_records_isolate_tokens_partitions_clear_and_removal() {
 }
 
 #[test]
+fn failed_window_removal_preserves_renderer_zoom_and_partitions() {
+    let (directory, state, fail) = failing_state(false);
+    enable_restore(&state);
+    let window_id = state.active_window_id().unwrap();
+    let renderer_url = Url::parse("http://127.0.0.1:43123/workspace").unwrap();
+    state
+        .renderer_access
+        .claim_for(&window_id, "renderer-token", &renderer_url)
+        .unwrap();
+    state
+        .zoom_levels
+        .lock()
+        .unwrap()
+        .insert(window_id.clone(), 1.5);
+    let content = "retained partition";
+    let key = partition_key(content);
+    assert!(state
+        .commit_partitions_guarded_for(
+            &window_id,
+            partition_commit(json!({
+                "protocolVersion": 1,
+                "snapshot": partition_root(std::slice::from_ref(&key), json!({})),
+                "partitions": { key.clone(): content },
+                "partitionKeys": [key.clone()]
+            })),
+            || true,
+        )
+        .unwrap());
+    fail.store(true, Ordering::SeqCst);
+
+    assert!(state.remove_window(&window_id).is_err());
+
+    assert!(state.window_ids().contains(&window_id));
+    state
+        .renderer_access
+        .validate_for(&window_id, "renderer-token", &renderer_url)
+        .unwrap();
+    assert_eq!(state.zoom_levels.lock().unwrap()[&window_id], 1.5);
+    assert!(directory.path().join("partitions").join(key).exists());
+}
+
+#[test]
 fn invalid_v3_is_frozen_until_explicit_clear() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join(CLIENT_STATE_FILENAME);

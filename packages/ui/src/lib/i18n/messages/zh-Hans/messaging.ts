@@ -40,6 +40,8 @@ export const messagingMessages = {
   "messageSection.search.nextAriaLabel": "下一个匹配项",
   "messageSection.search.closeAriaLabel": "关闭搜索",
   "messageSection.search.searching": "正在搜索...",
+  "messageSection.search.failed": "搜索失败",
+  "messageSection.search.retry": "重试",
   "messageSection.search.noVisibleMatches": "没有可见匹配项",
 
   "messageTimeline.ariaLabel": "消息时间线",

@@ -40,6 +40,8 @@ export const messagingMessages = {
   "messageSection.search.nextAriaLabel": "Следующее совпадение",
   "messageSection.search.closeAriaLabel": "Закрыть поиск",
   "messageSection.search.searching": "Поиск...",
+  "messageSection.search.failed": "Ошибка поиска",
+  "messageSection.search.retry": "Повторить",
   "messageSection.search.noVisibleMatches": "Нет видимых совпадений",
 
   "messageTimeline.ariaLabel": "Таймлайн сообщений",

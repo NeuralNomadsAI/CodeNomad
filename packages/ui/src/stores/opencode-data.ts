@@ -46,6 +46,7 @@ function ensureData(instanceId: string, directory: string) {
 }
 
 export function applyOpenCodeDataEvent(instanceId: string, directory: string, event: OpenCodeEvent): Data {
+  if (event.type === "server.connected") destroyOpenCodeData(instanceId)
   const entry = ensureData(instanceId, directory)
   entry.emit(event)
   return entry.data

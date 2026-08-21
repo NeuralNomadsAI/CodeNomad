@@ -40,6 +40,8 @@ export const messagingMessages = {
   "messageSection.search.nextAriaLabel": "次の一致",
   "messageSection.search.closeAriaLabel": "検索を閉じる",
   "messageSection.search.searching": "検索中...",
+  "messageSection.search.failed": "検索に失敗しました",
+  "messageSection.search.retry": "再試行",
   "messageSection.search.noVisibleMatches": "表示中の一致はありません",
 
   "messageTimeline.ariaLabel": "メッセージタイムライン",

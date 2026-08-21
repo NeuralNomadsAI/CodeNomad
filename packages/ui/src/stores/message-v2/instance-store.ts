@@ -209,7 +209,7 @@ export interface InstanceMessageStore {
   state: InstanceMessageState
   setState: SetStoreFunction<InstanceMessageState>
   addOrUpdateSession: (input: SessionUpsertInput) => void
-  hydrateMessages: (sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>) => void
+  hydrateMessages: (sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>, options?: { preserveOmitted?: boolean }) => void
   reconcileEmptyAuthoritativeSnapshot: (sessionId: string) => void
   markSendPending: (messageId: string) => void
   acceptSend: (messageId: string) => void
@@ -485,7 +485,12 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   // client) and cross-attach its metadata. Sends the server has not yet
   // echoed are preserved via `pendingSendIds` instead (see hydrateMessages).
 
-  function hydrateMessages(sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>) {
+  function hydrateMessages(
+    sessionId: string,
+    inputs: MessageUpsertInput[],
+    infos?: Iterable<MessageInfo>,
+    options?: { preserveOmitted?: boolean },
+  ) {
     if (!Array.isArray(inputs) || inputs.length === 0) return
 
     ensureSessionEntry(sessionId)
@@ -527,7 +532,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       }
     }
 
-    const incomingIds = pendingOptimisticIds.length > 0 ? [...serverIds, ...pendingOptimisticIds] : serverIds
+    const preservedIds = options?.preserveOmitted ? omittedIds : []
+    const incomingIds = [...preservedIds, ...serverIds, ...pendingOptimisticIds]
 
     const normalizedRecords: Record<string, MessageRecord> = {}
     const now = Date.now()
@@ -561,7 +567,15 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     })
 
     const infoList = infos ? Array.from(infos) : undefined
-    const usageState = infoList ? rebuildUsageStateFromInfos(infoList) : state.usage[sessionId]
+    const usageInfos = options?.preserveOmitted && infoList
+      ? new Map([
+          ...Array.from(messageInfoCache.values())
+            .filter((info) => info.sessionID === sessionId)
+            .map((info) => [info.id as string, info] as const),
+          ...infoList.map((info) => [info.id as string, info] as const),
+        ]).values()
+      : infoList
+    const usageState = usageInfos ? rebuildUsageStateFromInfos(usageInfos) : state.usage[sessionId]
 
     const nextMessages: Record<string, MessageRecord> = { ...state.messages }
     const nextMessageInfoVersion: Record<string, number> = { ...state.messageInfoVersion }
@@ -576,7 +590,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     // The snapshot is authoritative: remove every omitted record except a
     // request that is still awaiting same-ID persistence confirmation.
-    if (omittedIds.length > 0) {
+    if (!options?.preserveOmitted && omittedIds.length > 0) {
       omittedIds.forEach((id) => {
         messageInfoCache.delete(id)
         forgetPendingSend(id)
@@ -620,7 +634,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       setState("permissions", "byMessage", () => nextPermissionsByMessage)
 
       // Solid store object updates merge, so omitted keys are deleted explicitly.
-      if (omittedIds.length > 0) {
+      if (!options?.preserveOmitted && omittedIds.length > 0) {
         setState(
           "messages",
           produce((draft) => {
@@ -670,8 +684,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       recomputeLastAssistantMessageId(sessionId, incomingIds)
 
       clearLatestTodoSnapshot(sessionId)
-      Object.values(normalizedRecords).forEach((record) => {
-        maybeUpdateLatestTodoFromRecord(record)
+      incomingIds.forEach((messageId) => {
+        maybeUpdateLatestTodoFromRecord(nextMessages[messageId])
       })
 
       bumpSessionRevision(sessionId)

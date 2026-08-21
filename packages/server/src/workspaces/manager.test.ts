@@ -8,6 +8,7 @@ import {
   WorkspaceLaunchCancelledError,
   WorkspaceManager,
 } from "./manager"
+import { startupEnvironmentHash } from "./host-opencode-service"
 import type { OpenCodeServiceLifecycle, OpenCodeSharedServiceOptions } from "./opencode-service"
 
 function deferred<T>() {
@@ -25,11 +26,14 @@ class ControlledSharedService {
   validationGate?: ReturnType<typeof deferred<void>>
   ignoreValidationAbort = false
   afterValidation?: () => void
+  headerFailures = 0
   validationCalls: Array<{ location: LocationRef; options?: OpenCodeSharedServiceOptions }> = []
   shutdownCalls = 0
   shutdownGate?: ReturnType<typeof deferred<void>>
   shutdownTimeouts: number[] = []
   evictionCalls: Array<{ location: LocationRef; options?: OpenCodeSharedServiceOptions; signal?: AbortSignal }> = []
+  readonly evictionStarted = deferred<void>()
+  evictionGate?: ReturnType<typeof deferred<void>>
 
   async endpoint() {
     return { url: "http://127.0.0.1:4321", auth: { type: "basic" as const, username: "user", password: "pass" } }
@@ -40,6 +44,10 @@ class ControlledSharedService {
   }
 
   async headers() {
+    if (this.headerFailures > 0) {
+      this.headerFailures -= 1
+      throw new Error("header lookup failed")
+    }
     return { authorization: "Basic token" }
   }
 
@@ -69,6 +77,8 @@ class ControlledSharedService {
 
   async evictLocation(location: LocationRef, requestOptions?: { signal?: AbortSignal }, options?: OpenCodeSharedServiceOptions) {
     this.evictionCalls.push({ location, options, signal: requestOptions?.signal })
+    this.evictionStarted.resolve()
+    await this.evictionGate?.promise
   }
 
   async subscribe(): Promise<AsyncIterable<OpenCodeEvent>> {
@@ -206,6 +216,128 @@ describe("workspace manager shared service lifecycle", () => {
     const record = [...(manager as any).workspaces.values()][0]
     assert.equal(record.wslDistro, "Ubuntu")
   })
+
+  it("translates a case-insensitive Windows CA path before WSL identity and lifecycle construction", async () => {
+    const previousCa = process.env.NODE_EXTRA_CA_CERTS
+    delete process.env.NODE_EXTRA_CA_CERTS
+    const caPath = String.raw`C:\certs\ca.pem`
+    const environment = { node_extra_ca_certs: caPath, Node_Extra_CA_Certs: caPath }
+    let lifecycleEnvironment: NodeJS.ProcessEnv | undefined
+    let now = 1_000
+    const translations: Array<{ directory: string; timeoutMs: number }> = []
+    try {
+      const { manager, service } = createHarness(new ControlledSharedService(), {
+        platform: "win32",
+        launchTimeoutMs: 100,
+        now: () => now,
+        settings: { getOwner: () => ({ environmentVariables: environment }) },
+        binaryResolver: {
+          resolveDefault: () => ({ path: String.raw`\\wsl.localhost\Ubuntu\home\dev\opencode`, label: "OpenCode V2" }),
+        },
+        wslServiceDirectoryResolver: (directory: string, _distro: string, timeoutMs: number) => {
+          translations.push({ directory, timeoutMs })
+          if (directory === caPath) {
+            now += 40
+            return "/mnt/c/certs/ca.pem"
+          }
+          return "/mnt/d/workspace"
+        },
+        wslServiceLifecycleFactory: (_spec: unknown, _timeoutMs: unknown, startupEnvironment: NodeJS.ProcessEnv) => {
+          lifecycleEnvironment = startupEnvironment
+          return { discover: async () => undefined, ensure: async () => ({ url: "http://127.0.0.1:4321" }) }
+        },
+      })
+
+      await manager.create(process.cwd())
+
+      const effectiveEnvironment = { NODE_EXTRA_CA_CERTS: "/mnt/c/certs/ca.pem" }
+      assert.deepEqual(lifecycleEnvironment, effectiveEnvironment)
+      assert.deepEqual(translations, [
+        { directory: caPath, timeoutMs: 100 },
+        { directory: process.cwd(), timeoutMs: 60 },
+      ])
+      assert.equal(
+        service.validationCalls[0]?.options?.identity,
+        `wsl:ubuntu:/home/dev/opencode:env:${startupEnvironmentHash(effectiveEnvironment, "linux")}`,
+      )
+    } finally {
+      if (previousCa === undefined) delete process.env.NODE_EXTRA_CA_CERTS
+      else process.env.NODE_EXTRA_CA_CERTS = previousCa
+    }
+  })
+
+  it("does not translate the WSL workspace after the shared path deadline expires", async () => {
+    const previousCa = process.env.NODE_EXTRA_CA_CERTS
+    delete process.env.NODE_EXTRA_CA_CERTS
+    const caPath = String.raw`C:\certs\ca.pem`
+    let now = 1_000
+    const translations: Array<{ directory: string; timeoutMs: number }> = []
+    try {
+      const { manager, service } = createHarness(new ControlledSharedService(), {
+        platform: "win32",
+        launchTimeoutMs: 100,
+        now: () => now,
+        settings: { getOwner: () => ({ environmentVariables: { node_extra_ca_certs: caPath } }) },
+        binaryResolver: {
+          resolveDefault: () => ({ path: String.raw`\\wsl.localhost\Ubuntu\home\dev\opencode`, label: "OpenCode V2" }),
+        },
+        wslServiceDirectoryResolver: (directory: string, _distro: string, timeoutMs: number) => {
+          translations.push({ directory, timeoutMs })
+          now += 100
+          return "/mnt/c/certs/ca.pem"
+        },
+      })
+
+      await assert.rejects(
+        manager.create(process.cwd()),
+        /Unable to translate workspace location for WSL distro "Ubuntu"/,
+      )
+      assert.deepEqual(translations, [{ directory: caPath, timeoutMs: 100 }])
+      assert.equal(service.validationCalls.length, 0)
+    } finally {
+      if (previousCa === undefined) delete process.env.NODE_EXTRA_CA_CERTS
+      else process.env.NODE_EXTRA_CA_CERTS = previousCa
+    }
+  })
+
+  it("preserves POSIX WSL CA paths and reports Windows CA translation failures", async () => {
+    const previousCa = process.env.NODE_EXTRA_CA_CERTS
+    delete process.env.NODE_EXTRA_CA_CERTS
+    try {
+      let lifecycleEnvironment: NodeJS.ProcessEnv | undefined
+      const common = {
+        platform: "win32",
+        binaryResolver: {
+          resolveDefault: () => ({ path: String.raw`\\wsl.localhost\Ubuntu\home\dev\opencode`, label: "OpenCode V2" }),
+        },
+      }
+      const preserved = createHarness(new ControlledSharedService(), {
+        ...common,
+        settings: { getOwner: () => ({ environmentVariables: { Node_Extra_CA_Certs: "/etc/ssl/custom.pem" } }) },
+        wslServiceDirectoryResolver: () => "/mnt/d/workspace",
+        wslServiceLifecycleFactory: (_spec: unknown, _timeoutMs: unknown, environment: NodeJS.ProcessEnv) => {
+          lifecycleEnvironment = environment
+          return { discover: async () => undefined, ensure: async () => ({ url: "http://127.0.0.1:4321" }) }
+        },
+      })
+      await preserved.manager.create(process.cwd())
+      assert.deepEqual(lifecycleEnvironment, { NODE_EXTRA_CA_CERTS: "/etc/ssl/custom.pem" })
+
+      const failed = createHarness(new ControlledSharedService(), {
+        ...common,
+        settings: { getOwner: () => ({ environmentVariables: { NODE_EXTRA_CA_CERTS: String.raw`C:\missing\ca.pem` } }) },
+        wslServiceDirectoryResolver: () => null,
+      })
+      await assert.rejects(
+        failed.manager.create(process.cwd()),
+        /Unable to translate NODE_EXTRA_CA_CERTS for WSL distro "Ubuntu": C:\\missing\\ca\.pem/,
+      )
+      assert.equal(failed.service.validationCalls.length, 0)
+    } finally {
+      if (previousCa === undefined) delete process.env.NODE_EXTRA_CA_CERTS
+      else process.env.NODE_EXTRA_CA_CERTS = previousCa
+    }
+  })
   it("creates separate workspaces for the same in-flight location", async () => {
     const harness = createHarness()
     harness.service.validationGate = deferred<void>()
@@ -236,7 +368,7 @@ describe("workspace manager shared service lifecycle", () => {
     assert.deepEqual(harness.manager.list(), [])
     assert.equal(harness.service.evictionCalls.length, 1)
     assert.equal(harness.service.evictionCalls[0]?.location.workspaceID, "location-1")
-    assert.equal(harness.service.evictionCalls[0]?.signal?.aborted, false)
+    assert.equal(harness.service.evictionCalls[0]?.signal, undefined)
   })
 
   it("evicts a ready location on explicit final deletion without stopping the daemon", async () => {
@@ -264,6 +396,132 @@ describe("workspace manager shared service lifecycle", () => {
     await harness.manager.delete(second.workspace.id)
     assert.equal(harness.service.evictionCalls.length, 1)
     assert.equal(harness.manager.list().length, 0)
+  })
+
+  it("finishes a blocked final eviction before validating a new owner", async () => {
+    const harness = createHarness()
+    const first = await harness.manager.create(process.cwd())
+    harness.service.evictionGate = deferred<void>()
+    const deletion = harness.manager.delete(first.workspace.id)
+    await harness.service.evictionStarted.promise
+
+    const creation = harness.manager.create(process.cwd())
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(harness.service.validationCalls.length, 1)
+
+    harness.service.evictionGate.resolve()
+    await deletion
+    const second = await creation
+    assert.equal(harness.service.evictionCalls.length, 1)
+    assert.deepEqual(harness.manager.list().map(({ id }) => id), [second.workspace.id])
+  })
+
+  it("keeps a timed-out eviction between the old and new owner", async () => {
+    const harness = createHarness(new ControlledSharedService(), { launchSettlementTimeoutMs: 20 })
+    const first = await harness.manager.create(process.cwd())
+    harness.service.evictionGate = deferred<void>()
+    const deletion = assert.rejects(harness.manager.delete(first.workspace.id), /cleanup did not finish/)
+    await harness.service.evictionStarted.promise
+    await deletion
+
+    const creation = harness.manager.create(process.cwd())
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(harness.service.validationCalls.length, 1)
+
+    harness.service.evictionGate.resolve()
+    const second = await creation
+    assert.equal(harness.service.evictionCalls.length, 1)
+    assert.deepEqual(harness.manager.list().map(({ id }) => id), [second.workspace.id])
+  })
+
+  it("evicts once when duplicate workspaces are deleted concurrently", async () => {
+    const harness = createHarness()
+    const first = await harness.manager.create(process.cwd())
+    const second = await harness.manager.create(process.cwd())
+    harness.service.evictionGate = deferred<void>()
+
+    const deletions = Promise.all([
+      harness.manager.delete(first.workspace.id),
+      harness.manager.delete(second.workspace.id),
+    ])
+    await harness.service.evictionStarted.promise
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(harness.service.evictionCalls.length, 1)
+
+    harness.service.evictionGate.resolve()
+    await deletions
+    assert.equal(harness.service.evictionCalls.length, 1)
+    assert.deepEqual(harness.manager.list(), [])
+  })
+
+  it("does not launch an eviction queued before shutdown", async () => {
+    const harness = createHarness()
+    const first = await harness.manager.create(process.cwd())
+    harness.service.validationGate = deferred<void>()
+    const creation = harness.manager.create(process.cwd())
+    const creationFailure = assert.rejects(creation, WorkspaceLaunchCancelledError)
+    while (harness.service.validationCalls.length < 2) await new Promise((resolve) => setImmediate(resolve))
+
+    const deletion = harness.manager.delete(first.workspace.id)
+    while ((harness.manager as any).pendingLocationEvictions < 1) {
+      await new Promise((resolve) => setImmediate(resolve))
+    }
+    await harness.manager.shutdown()
+    await creationFailure
+    await deletion
+
+    assert.equal(harness.service.evictionCalls.length, 0)
+    assert.equal(harness.service.shutdownCalls, 1)
+  })
+
+  it("bounds deletion while an aborted creation ignores cancellation", async () => {
+    const harness = createHarness(new ControlledSharedService(), { launchSettlementTimeoutMs: 20 })
+    harness.service.validationGate = deferred<void>()
+    harness.service.ignoreValidationAbort = true
+    const creation = harness.manager.create(process.cwd())
+    const creationFailure = assert.rejects(creation, WorkspaceLaunchCancelledError)
+    await harness.service.validationStarted.promise
+    const record = [...(harness.manager as any).workspaces.values()][0]
+    const startedAt = Date.now()
+
+    await assert.rejects(harness.manager.delete(record.id), /cleanup did not finish/)
+    assert.ok(Date.now() - startedAt < 1000)
+
+    harness.service.validationGate.resolve()
+    await creationFailure
+    while ((harness.manager as any).workspaces.size) await new Promise((resolve) => setImmediate(resolve))
+  })
+
+  it("tracks validation until it settles when the header request fails first", async () => {
+    const harness = createHarness()
+    const ready = await harness.manager.create(process.cwd())
+    harness.service.validationGate = deferred<void>()
+    harness.service.headerFailures = 1
+    const creation = harness.manager.create(process.cwd())
+    const creationFailure = assert.rejects(creation, /header lookup failed/)
+    while (harness.service.validationCalls.length < 2) await new Promise((resolve) => setImmediate(resolve))
+
+    const deletion = harness.manager.delete(ready.workspace.id)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(harness.service.evictionCalls.length, 0)
+
+    harness.service.validationGate.resolve()
+    await creationFailure
+    await deletion
+    assert.equal(harness.service.evictionCalls.length, 1)
+  })
+
+  it("evicts an isolated validated location when header lookup fails", async () => {
+    const harness = createHarness()
+    harness.service.headerFailures = 1
+
+    await assert.rejects(harness.manager.create(process.cwd()), /header lookup failed/)
+
+    assert.deepEqual(harness.service.evictionCalls.map(({ location }) => location), [{
+      directory: process.cwd(),
+      workspaceID: "location-1",
+    }])
+    assert.equal((harness.manager as any).workspaces.size, 0)
   })
 
   it("shuts down local workspaces without evicting their OpenCode locations", async () => {

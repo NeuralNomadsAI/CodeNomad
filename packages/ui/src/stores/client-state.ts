@@ -100,7 +100,7 @@ function enqueuePendingSave(): Promise<void> {
     try {
       const partitioned = partitionProtocolVersion === 1 ? await encodeClientSnapshotV2(normalizedSnapshot) : null
       if (partitioned && !canCommitClientSnapshotV2(partitioned)) {
-        throw new Error("Client snapshot exceeds the native partition count limit")
+        throw new Error("Client snapshot exceeds the native partition count or size limits")
       }
       if (!partitioned && new TextEncoder().encode(JSON.stringify(normalizedSnapshot)).byteLength > MAX_V1_SNAPSHOT_BYTES) {
         throw new Error("Client snapshot exceeds the V1 1 MiB limit and partition persistence is unavailable")

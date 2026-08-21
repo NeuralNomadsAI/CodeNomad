@@ -40,6 +40,8 @@ export const messagingMessages = {
   "messageSection.search.nextAriaLabel": "Siguiente coincidencia",
   "messageSection.search.closeAriaLabel": "Cerrar búsqueda",
   "messageSection.search.searching": "Buscando...",
+  "messageSection.search.failed": "La búsqueda falló",
+  "messageSection.search.retry": "Reintentar",
   "messageSection.search.noVisibleMatches": "No hay coincidencias visibles",
 
   "messageTimeline.ariaLabel": "Línea de tiempo de mensajes",

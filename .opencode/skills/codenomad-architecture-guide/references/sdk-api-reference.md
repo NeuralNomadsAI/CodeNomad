@@ -15,15 +15,17 @@ Do not import `@opencode-ai/sdk`; its wrapper shapes, `{ data, error }` conventi
 
 | Area | Calls | CodeNomad caller |
 |---|---|---|
-| Service | CLI `service status/start/get password`; `Service.headers` for authenticated health/API calls | `packages/server/src/workspaces/{host,wsl,opencode-cli,opencode}-service.ts` |
+| Service | CLI `service status/start/get password`; `Service.headers` for authenticated health/API calls | `packages/server/src/workspaces/opencode-service.ts`, `packages/server/src/workspaces/opencode-cli-service.ts`, `packages/server/src/workspaces/host-opencode-service.ts`, `packages/server/src/workspaces/wsl-opencode-service.ts` |
 | Location | `client.location.get`, `client.debug.location.evict` | shared service wrapper |
 | Events | `client.event.subscribe()` | `packages/server/src/workspaces/instance-events.ts` |
 | Sessions | `list/get/create/fork/remove/rename/prompt/command/shell/interrupt` | UI session stores |
 | Instructions | `client.session.instructions.entry.put/remove` | conversation-mode prompt setup |
 | Permissions | `permission.request.list`, `permission.reply` | UI and server Yolo replier |
-| Questions | `question.request.list` and reply/reject APIs | UI interruption flow |
+| Forms | `client.form.request.list`, `client.form.reply`, `client.form.cancel` | `packages/ui/src/stores/instances.ts`, `forms.ts` |
 
 Native methods return decoded Promise values. Follow the installed declarations and existing callers; do not wrap calls in stale SDK response-unwrapping helpers.
+
+Native Forms own pending interruption state. The allowlisted Question request/reply/reject routes are compatibility-only. The Question tool renderer may display compatible output, but no Question queue/state architecture should return.
 
 ## Routing
 

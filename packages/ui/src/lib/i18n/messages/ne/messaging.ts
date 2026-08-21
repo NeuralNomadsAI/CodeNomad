@@ -40,6 +40,8 @@ export const messagingMessages = {
   "messageSection.search.nextAriaLabel": "अर्को परिणाम",
   "messageSection.search.closeAriaLabel": "खोज बन्द गर्नुहोस्",
   "messageSection.search.searching": "खोज्दै...",
+  "messageSection.search.failed": "खोज असफल भयो",
+  "messageSection.search.retry": "पुन: प्रयास गर्नुहोस्",
   "messageSection.search.noVisibleMatches": "कुनै देखिने परिणामहरू छैनन्",
   "messageTimeline.ariaLabel": "सन्देश टाइमलाइन",
   "messageTimeline.segment.user.label": "तपाईं",

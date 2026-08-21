@@ -42,6 +42,44 @@ describe("OpenCodeSharedService", () => {
       service.endpoint(lifecycleOptions("host:second", lifecycleFor(endpoint))),
       /identity cannot change/,
     )
+    await service.shutdown()
+    assert.equal(await service.endpoint(lifecycleOptions("host:second", lifecycleFor(endpoint))), endpoint)
+  })
+
+  it("releases an initial failed discovery or startup identity", async () => {
+    for (const failure of ["discover", "ensure"] as const) {
+      const service = createService()
+      const lifecycle: OpenCodeServiceLifecycle = {
+        discover: async () => {
+          if (failure === "discover") throw new Error("discovery failed")
+          return undefined
+        },
+        ensure: async () => { throw new Error("startup failed") },
+      }
+
+      await assert.rejects(service.endpoint(lifecycleOptions(`host:${failure}`, lifecycle)), /failed/)
+      assert.equal(await service.endpoint(lifecycleOptions("host:retry", lifecycleFor(endpoint))), endpoint)
+    }
+  })
+
+  it("retains its identity after a successful connection and transient reconnect failure", async () => {
+    let discoveries = 0
+    const service = createService()
+    const options = lifecycleOptions("host:pinned", {
+      discover: async () => {
+        discoveries += 1
+        if (discoveries === 1) return endpoint
+        throw new Error("service unavailable")
+      },
+      ensure: async () => endpoint,
+    })
+
+    await service.endpoint(options)
+    await assert.rejects(service.endpoint(), /service unavailable/)
+    await assert.rejects(
+      service.endpoint(lifecycleOptions("host:replacement", lifecycleFor(endpoint))),
+      /identity cannot change/,
+    )
   })
 
   it("keeps the first lifecycle object for equivalent identities", async () => {

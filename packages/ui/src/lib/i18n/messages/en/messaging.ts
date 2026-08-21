@@ -40,6 +40,8 @@ export const messagingMessages = {
   "messageSection.search.nextAriaLabel": "Next match",
   "messageSection.search.closeAriaLabel": "Close search",
   "messageSection.search.searching": "Searching...",
+  "messageSection.search.failed": "Search failed",
+  "messageSection.search.retry": "Retry",
   "messageSection.search.noVisibleMatches": "No visible matches",
   "messageTimeline.ariaLabel": "Message timeline",
   "messageTimeline.segment.user.label": "You",

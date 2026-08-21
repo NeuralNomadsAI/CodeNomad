@@ -37,6 +37,7 @@ export class OpenCodeSharedService {
   private healthCheck?: Promise<ServiceConnection>
   private serviceOptions?: OpenCodeSharedServiceOptions
   private serviceIdentity?: string
+  private hasValidatedConnection = false
   private generation = 0
 
   constructor(private readonly dependencies: OpenCodeSharedServiceDependencies = {
@@ -108,6 +109,7 @@ export class OpenCodeSharedService {
     this.clear()
     this.serviceOptions = undefined
     this.serviceIdentity = undefined
+    this.hasValidatedConnection = false
   }
 
   private connect(options?: OpenCodeSharedServiceOptions): Promise<ServiceConnection> {
@@ -142,7 +144,13 @@ export class OpenCodeSharedService {
       .then((endpoint) => endpoint ?? lifecycle.ensure())
       .then((endpoint) => this.createConnection(endpoint, generation))
     const connection = startup.catch((error) => {
-      if (this.connection === connection) this.clear()
+      if (this.connection === connection) {
+        this.clear()
+        if (!this.hasValidatedConnection) {
+          this.serviceOptions = undefined
+          this.serviceIdentity = undefined
+        }
+      }
       throw error
     })
     this.connection = connection
@@ -161,6 +169,7 @@ export class OpenCodeSharedService {
       }),
     }
     if (generation === this.generation) {
+      this.hasValidatedConnection = true
       this.connected = connection
       this.connection = Promise.resolve(connection)
     }

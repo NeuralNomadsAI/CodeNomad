@@ -996,6 +996,14 @@ function addInstance(instance: Instance) {
 }
 
 function updateInstance(id: string, updates: Partial<Instance>) {
+  const existing = instances().get(id)
+  if (updates.client !== undefined && existing?.client && updates.client !== existing.client) {
+    clearSessionListRequestState(id)
+    clearSessionCatalogState(id)
+    clearCommands(id)
+    volatileInstanceRefreshes.delete(id)
+    for (const sessionId of sessions().get(id)?.keys() ?? []) invalidateSessionMessageLoad(id, sessionId)
+  }
   setInstances((prev) => {
     const next = new Map(prev)
     const instance = next.get(id)
@@ -1008,8 +1016,6 @@ function updateInstance(id: string, updates: Partial<Instance>) {
 }
 
 function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
-  detachInstanceTabMembership(id)
-  connectionResyncGate.clear(id)
   const removedInstance = instances().get(id)
   const removedOccurrence = removedInstance
     ? Array.from(instances().values())
@@ -1024,6 +1030,8 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
       occurrence: removedOccurrence,
     })
   }
+  detachInstanceTabMembership(id)
+  connectionResyncGate.clear(id)
   let nextActiveId: string | null = null
 
   setInstances((prev) => {

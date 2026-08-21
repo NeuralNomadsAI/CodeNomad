@@ -40,6 +40,8 @@ export const messagingMessages = {
   "messageSection.search.nextAriaLabel": "התאמה הבאה",
   "messageSection.search.closeAriaLabel": "סגור חיפוש",
   "messageSection.search.searching": "מחפש...",
+  "messageSection.search.failed": "החיפוש נכשל",
+  "messageSection.search.retry": "נסה שוב",
   "messageSection.search.noVisibleMatches": "אין התאמות גלויות",
   "messageTimeline.ariaLabel": "ציר זמן הודעות",
   "messageTimeline.segment.user.label": "אתה",

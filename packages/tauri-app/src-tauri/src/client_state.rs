@@ -758,6 +758,7 @@ impl ClientState {
         if !self.is_primary() {
             return Ok(false);
         }
+        let mut zoom_levels = self.zoom_levels.lock().map_err(|err| err.to_string())?;
         let previous = {
             let mut state = self.state.lock().map_err(|err| err.to_string())?;
             if state.unsupported_future_envelope {
@@ -774,10 +775,7 @@ impl ClientState {
             return Err(err);
         }
         self.renderer_access.remove(window_id);
-        self.zoom_levels
-            .lock()
-            .map_err(|err| err.to_string())?
-            .remove(window_id);
+        zoom_levels.remove(window_id);
         self.collect_partitions(&|| true);
         Ok(true)
     }

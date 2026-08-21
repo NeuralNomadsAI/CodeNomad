@@ -22,6 +22,15 @@ import type { RestorableSessionState, RestorableWorkspaceTabState } from "./clie
 import { onInstanceLifecycleAuthority } from "./instance-lifecycle-authority.ts"
 import { addInstance, instances, removeInstance, stopInstance, updateInstance } from "./instances.ts"
 import { serverEvents } from "../lib/server-events.ts"
+import { createTextAttachment } from "../types/attachment.ts"
+import { getAttachments, hydrateSessionAttachments } from "./attachments.ts"
+import {
+  activeSessionId,
+  getSessionDraftPrompt,
+  setActiveSession,
+  setSessionDraftPrompt,
+  setSessions,
+} from "./session-state.ts"
 
 function instance(id: string): Instance {
   return {
@@ -108,6 +117,43 @@ describe("renderer-local workspace tabs", () => {
     } finally {
       removeInstance(first.id, { authoritative: false })
       removeInstance(second.id, { authoritative: false })
+    }
+  })
+
+  it("publishes unavailable while the tab and unsaved session state are still capturable", () => {
+    const workspace = instance("unavailable-capture-order")
+    const sessionId = "draft-session"
+    const attachment = createTextAttachment("latest attachment", "pasted #1", "paste.txt")
+    let captured: unknown
+    addInstance(workspace)
+    selectInstanceTab(workspace.id)
+    setSessions((previous) => new Map(previous).set(workspace.id, new Map([[sessionId, {
+      id: sessionId, instanceId: workspace.id, parentId: null, title: "Draft", status: "idle",
+    } as any]])))
+    setActiveSession(workspace.id, sessionId)
+    setSessionDraftPrompt(workspace.id, sessionId, "latest draft")
+    hydrateSessionAttachments(workspace.id, sessionId, [attachment])
+    const stopListening = onInstanceLifecycleAuthority((event) => {
+      if (event.type !== "unavailable" || event.instanceId !== workspace.id) return
+      captured = {
+        tabPresent: appTabs().some((tab) => tab.id === `instance:${workspace.id}`),
+        draft: getSessionDraftPrompt(workspace.id, sessionId),
+        attachments: getAttachments(workspace.id, sessionId),
+        selection: activeSessionId().get(workspace.id),
+      }
+    })
+
+    try {
+      removeInstance(workspace.id, { authoritative: false })
+      assert.deepEqual(captured, {
+        tabPresent: true,
+        draft: "latest draft",
+        attachments: [attachment],
+        selection: sessionId,
+      })
+    } finally {
+      stopListening()
+      removeInstance(workspace.id, { authoritative: false })
     }
   })
 
