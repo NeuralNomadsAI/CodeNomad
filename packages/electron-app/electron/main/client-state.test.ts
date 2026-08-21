@@ -304,6 +304,15 @@ test("drain freezes mutations and waits for admitted writes", async (t) => {
   assert.deepEqual(persistedRecord(h.statePath).snapshot, { admitted: true })
 })
 
+test("a failed drain is complete after its release finally runs", async (t) => {
+  const h = harness(t, { version: 1, restoreEnabled: true })
+  const manager = h.create(async () => { throw new Error("write failed") })
+  await assert.rejects(manager.saveClientState({ admitted: true }), /write failed/)
+  await assert.rejects(manager.drainAndReleasePrimary(), /write failed/)
+  assert.equal(manager.isPrimary, false)
+  await manager.drainAndReleasePrimary()
+})
+
 test("a non-primary manager does not claim that a new V3 window was persisted", async (t) => {
   const h = harness(t, { version: 1, restoreEnabled: true })
   const primary = h.create()

@@ -444,7 +444,7 @@ export class ClientStateManager {
 
   drainAndReleasePrimary(): Promise<void> {
     if (this.drainAndReleasePromise) {
-      return this.drainAndReleasePromise
+      return this.isPrimary ? this.drainAndReleasePromise : Promise.resolve()
     }
 
     this.frozen = true
