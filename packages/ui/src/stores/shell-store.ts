@@ -1,6 +1,13 @@
 import { createSignal, untrack } from "solid-js"
 import type { OpenCodeClient, ShellInfo } from "@opencode-ai/client"
 
+const MAX_SHELL_OUTPUT_DISPLAY_CHARS = 4 * 1024 * 1024
+
+export function appendShellOutput(current: string, chunk: string): { output: string; truncated: boolean } {
+  const output = current + chunk
+  return { output: output.slice(-MAX_SHELL_OUTPUT_DISPLAY_CHARS), truncated: output.length > MAX_SHELL_OUTPUT_DISPLAY_CHARS }
+}
+
 export interface ShellApi {
   list(directory: string): Promise<ShellInfo[]>
   remove(directory: string, shellId: string): Promise<void>

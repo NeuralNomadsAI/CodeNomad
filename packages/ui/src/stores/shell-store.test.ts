@@ -1,13 +1,20 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import type { ShellInfo } from "@opencode-ai/client"
-import { createShellStore, type ShellApi } from "./shell-store.ts"
+import { appendShellOutput, createShellStore, type ShellApi } from "./shell-store.ts"
 
 const shell = (id: string, cwd = "/repo"): ShellInfo => ({
   id, command: "npm run dev", cwd, shell: "sh", file: "/tmp/output", status: "running", pid: 42, metadata: {}, time: { started: 1 },
 })
 
 describe("shell store", () => {
+  it("bounds retained shell output to its newest four MiB", () => {
+    const result = appendShellOutput("a".repeat(4 * 1024 * 1024), "tail")
+    assert.equal(result.output.length, 4 * 1024 * 1024)
+    assert.equal(result.output.endsWith("tail"), true)
+    assert.equal(result.truncated, true)
+  })
+
   it("keeps state location-scoped and refreshes on shell events and reconnect", async () => {
     const lists: string[] = []
     const api: ShellApi = {

@@ -4,6 +4,7 @@ import type { ShellInfo } from "@opencode-ai/client"
 
 import { createAnsiStreamRenderer, hasAnsi } from "../lib/ansi"
 import { useI18n } from "../lib/i18n"
+import { appendShellOutput } from "../stores/shell-store"
 import { shellStore } from "../stores/shells"
 
 interface ShellOutputDialogProps {
@@ -42,11 +43,16 @@ export function ShellOutputDialog(props: ShellOutputDialogProps) {
       try {
         const result = await shellStore.output(props.instanceId, directory, shell.id, cursor)
         if (!active) return
-        raw += result.output
         cursor = result.cursor
-        setOutput(raw)
-        setTruncated(result.truncated)
-        render()
+        if (result.output) {
+          const next = appendShellOutput(raw, result.output)
+          raw = next.output
+          setOutput(raw)
+          setTruncated((current) => current || result.truncated || next.truncated)
+          render()
+        } else if (result.truncated) {
+          setTruncated(true)
+        }
       } catch {
         if (!active) return
         setOutput(t("backgroundProcessOutputDialog.loadErrorFallback"))
