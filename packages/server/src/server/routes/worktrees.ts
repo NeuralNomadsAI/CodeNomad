@@ -8,6 +8,7 @@ import {
   createManagedWorktree,
   removeWorktree,
 } from "../../workspaces/git-worktrees"
+import { invalidateWorktreeCache } from "../../workspaces/worktree-directory"
 import type { WorktreeListResponse } from "../../api-types"
 import { ensureCodenomadGitExclude } from "../../workspaces/worktree-map"
 import { createInstanceClient } from "../../workspaces/instance-client"
@@ -76,6 +77,7 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
         slug,
         logger: request.log,
       })
+      invalidateWorktreeCache(workspace.id)
 
       reply.code(201)
       return created
@@ -135,6 +137,7 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
           remove: () => removeWorktree({ workspaceFolder: workspace.path, directory: match.directory, force, logger: request.log }),
         })
       ))
+      invalidateWorktreeCache(workspace.id)
 
       reply.code(204)
     } catch (error) {

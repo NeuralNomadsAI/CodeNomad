@@ -364,6 +364,7 @@ export function createHttpServer(deps: HttpServerDeps) {
 export interface InstanceProxyWorkspaceManager {
   get(id: string): ReturnType<WorkspaceManager["get"]>
   getSharedServiceEndpoint(id: string): ReturnType<WorkspaceManager["getSharedServiceEndpoint"]>
+  invalidateSharedServiceConnection?(): void
   getInstanceAuthorizationHeader(id: string): string | undefined
   getServiceDirectory?(id: string): string | undefined
   getServiceDirectoryForPath?(id: string, directory: string): Promise<string | undefined>
@@ -567,28 +568,34 @@ async function proxyWorkspaceRequest(args: {
     return
   }
 
+  const rawInstancePath = (request.raw.url ?? "").split("?", 1)[0]?.match(/\/instance(?:\/(.*))?$/)?.[1] ?? ""
+  if (/\\|%2f|%5c/i.test(rawInstancePath) || hasDotSegment(rawInstancePath)) {
+    reply.code(400).send({ error: "Invalid workspace instance path" })
+    return
+  }
+  const routeUrl = buildInstanceTargetUrl("http://127.0.0.1", args.pathSuffix)
+  if (!routeUrl) {
+    reply.code(400).send({ error: "Invalid workspace instance path" })
+    return
+  }
+  const pathname = decodeURIComponent(routeUrl.pathname)
+  if (!isAllowedInstanceApiRoute(request.method, pathname)) {
+    reply.code(403).send({ error: "OpenCode route is not available through a workspace" })
+    return
+  }
+
   const endpoint = await workspaceManager.getSharedServiceEndpoint(workspaceId)
   if (!endpoint) {
     reply.code(502).send({ error: "OpenCode service is not ready" })
     return
   }
 
-  const rawInstancePath = (request.raw.url ?? "").split("?", 1)[0]?.match(/\/instance(?:\/(.*))?$/)?.[1] ?? ""
-  if (/\\|%2f|%5c/i.test(rawInstancePath) || hasDotSegment(rawInstancePath)) {
-    reply.code(400).send({ error: "Invalid workspace instance path" })
-    return
-  }
   const targetUrl = buildInstanceTargetUrl(endpoint.url, args.pathSuffix)
   if (!targetUrl) {
     reply.code(400).send({ error: "Invalid workspace instance path" })
     return
   }
   appendIncomingQuery(targetUrl, request.raw.url ?? "")
-  const pathname = decodeURIComponent(targetUrl.pathname)
-  if (!isAllowedInstanceApiRoute(request.method, pathname)) {
-    reply.code(403).send({ error: "OpenCode route is not available through a workspace" })
-    return
-  }
   if (pathname.replace(/\/+$/, "") === "/api/session/active") {
     if (request.method !== "GET") {
       reply.code(405).send({ error: "Method not allowed" })
@@ -815,6 +822,9 @@ async function proxyWorkspaceRequest(args: {
       },
       rewriteHeaders: sanitizeInstanceProxyResponseHeaders,
       onResponse: (_proxyRequest, proxyReply, upstreamResponse) => {
+        if (proxyReply.statusCode === 401) {
+          workspaceManager.invalidateSharedServiceConnection?.()
+        }
         const upstream = upstreamResponse as typeof upstreamResponse & { readableEnded?: boolean; destroyed?: boolean }
         const release = () => releaseMutation?.()
         if (upstream.readableEnded || upstream.destroyed) release()
@@ -826,6 +836,7 @@ async function proxyWorkspaceRequest(args: {
         proxyReply.send(upstream)
       },
       onError: (proxyReply, { error }) => {
+        workspaceManager.invalidateSharedServiceConnection?.()
         releaseMutation?.()
         logger.error({ err: error, workspaceId, targetUrl: targetUrl.toString() }, "Failed to proxy workspace request")
         if (!proxyReply.sent) {

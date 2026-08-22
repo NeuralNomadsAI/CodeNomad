@@ -9,6 +9,7 @@ import { Service, type Endpoint } from "@opencode-ai/client/service"
 import { assertLoopbackServiceUrl } from "./service-state"
 
 type RequestOptions = { signal?: AbortSignal; deadlineAt?: number }
+const CONNECTION_RECHECK_INTERVAL_MS = 30_000
 
 export interface OpenCodeServiceLifecycle {
   discover: (deadlineAt?: number) => Promise<Endpoint | undefined>
@@ -29,6 +30,7 @@ interface ServiceConnection {
 export interface OpenCodeSharedServiceDependencies {
   headers: typeof Service.headers
   makeClient: typeof OpenCode.make
+  now?: () => number
 }
 
 export class OpenCodeSharedService {
@@ -38,12 +40,16 @@ export class OpenCodeSharedService {
   private serviceOptions?: OpenCodeSharedServiceOptions
   private serviceIdentity?: string
   private hasValidatedConnection = false
+  private readonly now: () => number
+  private connectionValidatedAt?: number
   private generation = 0
 
   constructor(private readonly dependencies: OpenCodeSharedServiceDependencies = {
     headers: Service.headers,
     makeClient: OpenCode.make,
-  }) {}
+  }) {
+    this.now = dependencies.now ?? Date.now
+  }
 
   endpoint(options?: OpenCodeSharedServiceOptions, requestOptions?: RequestOptions): Promise<Endpoint> {
     return this.connect(options, requestOptions?.deadlineAt).then(({ endpoint }) => endpoint)
@@ -113,6 +119,11 @@ export class OpenCodeSharedService {
     this.hasValidatedConnection = false
   }
 
+  invalidate(): void {
+    this.generation += 1
+    this.clear()
+  }
+
   private connect(options?: OpenCodeSharedServiceOptions, deadlineAt?: number): Promise<ServiceConnection> {
     try {
       this.pinServiceOptions(options)
@@ -123,8 +134,17 @@ export class OpenCodeSharedService {
     if (this.healthCheck) return this.healthCheck
 
     const current = this.connected
+    if (
+      this.connectionValidatedAt !== undefined
+      && this.now() - this.connectionValidatedAt < CONNECTION_RECHECK_INTERVAL_MS
+    ) {
+      return Promise.resolve(current)
+    }
     const check = this.lifecycle().discover(deadlineAt).then((endpoint) => {
-      if (endpoint && this.sameEndpoint(endpoint, current.endpoint)) return current
+      if (endpoint && this.sameEndpoint(endpoint, current.endpoint)) {
+        this.connectionValidatedAt = this.now()
+        return current
+      }
       this.invalidateConnection(current)
       return endpoint ? this.createConnection(endpoint, this.generation) : this.startConnection(deadlineAt)
     }, () => {
@@ -173,6 +193,7 @@ export class OpenCodeSharedService {
       this.hasValidatedConnection = true
       this.connected = connection
       this.connection = Promise.resolve(connection)
+      this.connectionValidatedAt = this.now()
     }
     return connection
   }
@@ -208,6 +229,7 @@ export class OpenCodeSharedService {
     this.connection = undefined
     this.connected = undefined
     this.healthCheck = undefined
+    this.connectionValidatedAt = undefined
   }
 
   private sameEndpoint(left: Endpoint, right: Endpoint): boolean {

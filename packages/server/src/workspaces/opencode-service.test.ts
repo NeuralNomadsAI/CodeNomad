@@ -31,7 +31,30 @@ describe("OpenCodeSharedService", () => {
     assert.equal(starts, 1)
     assert.equal(discoveries, 1)
     assert.equal(await service.endpoint(), endpoint)
+    assert.equal(discoveries, 1)
+  })
+
+  it("rechecks cached connections after the validation interval and supports invalidation", async () => {
+    let now = 1_000
+    let discoveries = 0
+    const service = createService({ now: () => now })
+    const lifecycle = {
+      discover: async () => { discoveries += 1; return endpoint },
+      ensure: async () => endpoint,
+    }
+    const options = lifecycleOptions("host:cached", lifecycle)
+
+    await service.endpoint(options)
+    await service.endpoint()
+    assert.equal(discoveries, 1)
+
+    now += 30_000
+    await service.endpoint()
     assert.equal(discoveries, 2)
+
+    service.invalidate()
+    await service.endpoint()
+    assert.equal(discoveries, 3)
   })
 
   it("uses one caller deadline for discovery and startup", async () => {
@@ -76,8 +99,9 @@ describe("OpenCodeSharedService", () => {
   })
 
   it("retains its identity after a successful connection and transient reconnect failure", async () => {
+    let now = 1_000
     let discoveries = 0
-    const service = createService()
+    const service = createService({ now: () => now })
     const options = lifecycleOptions("host:pinned", {
       discover: async () => {
         discoveries += 1
@@ -88,6 +112,7 @@ describe("OpenCodeSharedService", () => {
     })
 
     await service.endpoint(options)
+    now += 30_000
     await assert.rejects(service.endpoint(), /service unavailable/)
     await assert.rejects(
       service.endpoint(lifecycleOptions("host:replacement", lifecycleFor(endpoint))),
@@ -107,7 +132,7 @@ describe("OpenCodeSharedService", () => {
       discover: async () => { replacementCalls += 1; return endpoint },
       ensure: async () => endpoint,
     }))
-    assert.equal(firstCalls, 2)
+    assert.equal(firstCalls, 1)
     assert.equal(replacementCalls, 0)
   })
 

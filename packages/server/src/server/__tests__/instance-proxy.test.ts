@@ -71,6 +71,7 @@ async function harness(
   const sessionGets: string[] = []
   const pathOwnershipChecks: string[] = []
   const servicePathCalls: string[] = []
+  let invalidations = 0
   const client = {
     project: {
       list: async () => [
@@ -117,6 +118,7 @@ async function harness(
   const manager: InstanceProxyWorkspaceManager = {
     get: () => ({ id: "workspace", path: workspacePath }) as never,
     getSharedServiceEndpoint: async () => ({ url: `http://127.0.0.1:${address.port}` }),
+    invalidateSharedServiceConnection: () => { invalidations += 1 },
     getInstanceAuthorizationHeader: () => "Basic internal-secret",
     getServiceDirectory: () => serviceDirectory,
     getServiceDirectoryForPath: async (_id, directory) => directory === workspacePath
@@ -154,6 +156,7 @@ async function harness(
     requestCount: () => requests,
     delayedUpstreamStarted,
     releaseDelayedUpstream: () => releaseDelayedUpstream?.(),
+    invalidationCount: () => invalidations,
   }
 }
 
@@ -410,7 +413,7 @@ describe("instance proxy location enforcement", () => {
   })
 
   it("strips browser session and hop-by-hop headers in both directions", async () => {
-    const { app } = await harness()
+    const { app, invalidationCount } = await harness()
     const response = await app.inject({
       method: "GET",
       url: "/workspaces/workspace/instance/api/session",
@@ -444,6 +447,7 @@ describe("instance proxy location enforcement", () => {
       headers: { "x-test-challenge": "1" },
     })
     assert.equal(challenge.statusCode, 401)
+    assert.equal(invalidationCount(), 1)
     assert.equal(challenge.headers["www-authenticate"], undefined)
     assert.equal(challenge.headers["proxy-authenticate"], undefined)
   })

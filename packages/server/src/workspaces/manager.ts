@@ -44,6 +44,7 @@ interface SharedService {
   validateLocation: (location: LocationRef, requestOptions?: { signal?: AbortSignal; deadlineAt?: number }, serviceOptions?: OpenCodeSharedServiceOptions) => Promise<LocationGetOutput>
   evictLocation: (location: LocationRef, requestOptions?: { signal?: AbortSignal }, serviceOptions?: OpenCodeSharedServiceOptions) => Promise<void>
   subscribe: (requestOptions?: { signal?: AbortSignal }, serviceOptions?: OpenCodeSharedServiceOptions) => Promise<AsyncIterable<OpenCodeEvent>>
+  invalidate?: () => void
   shutdown: (options?: { timeoutMs?: number }) => Promise<void>
 }
 
@@ -204,6 +205,10 @@ export class WorkspaceManager {
 
   getSharedServiceClient(): Promise<OpenCodeClient> {
     return this.sharedService.client()
+  }
+
+  invalidateSharedServiceConnection(): void {
+    this.sharedService.invalidate?.()
   }
 
   async ownsDirectory(id: string, directory: string): Promise<boolean> {
