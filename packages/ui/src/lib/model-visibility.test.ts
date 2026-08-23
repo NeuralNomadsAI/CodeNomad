@@ -64,6 +64,8 @@ test("provider refresh updates shared and modal catalogs without disposing activ
 test("model picker wires collection-safe selection and an accessible current-model label", () => {
   const source = fs.readFileSync(new URL("../components/model-selector.tsx", import.meta.url), "utf8")
   assert.match(source, /value=\{comboboxValue\(\)\}/)
+  assert.match(source, /<input[\s\S]*value=\{inputValue\(\)\}[\s\S]*onInput=\{handleSearchInput\}/)
+  assert.doesNotMatch(source, /<Combobox\.Input[\s\S]{0,400}onInput=\{handleSearchInput\}/)
   assert.equal(source.match(/aria-label=\{currentModelAccessibleLabel\(\)\}/g)?.length, 2)
   assert.match(source, /id: `\$\{current\.providerId\}\/\$\{current\.id\}`/)
 })

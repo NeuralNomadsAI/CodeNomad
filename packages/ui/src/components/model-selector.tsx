@@ -51,9 +51,6 @@ export default function ModelSelector(props: ModelSelectorProps) {
   const [manualAll, setManualAll] = createSignal(false)
   const [explicitFavorites, setExplicitFavorites] = createSignal(false)
   const [autoFavoritesEligibleAtOpen, setAutoFavoritesEligibleAtOpen] = createSignal(false)
-  const [searchDirty, setSearchDirty] = createSignal(false)
-  const [initialQuery, setInitialQuery] = createSignal("")
-  const [initialQueryReady, setInitialQueryReady] = createSignal(false)
   const [inputValue, setInputValue] = createSignal("")
   const [providersModalOpen, setProvidersModalOpen] = createSignal(false)
   let triggerRef!: HTMLButtonElement
@@ -142,11 +139,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
     return `${current.providerId}/${current.modelId}`
   })
 
-  const searchActive = createMemo(() => {
-    if (!searchDirty()) return false
-    const next = inputValue().trim()
-    return next.length > 0
-  })
+  const searchActive = createMemo(() => inputValue().trim().length > 0)
 
   const favoritesOnlyEnabled = createMemo(() => {
     if (searchActive()) return false
@@ -221,21 +214,9 @@ export default function ModelSelector(props: ModelSelectorProps) {
       setManualAll(false)
       setExplicitFavorites(false)
       setAutoFavoritesEligibleAtOpen(hasFavorites() && currentModelIsFavorite())
-      setSearchDirty(false)
-      setInitialQuery("")
       setInputValue("")
-      setInitialQueryReady(false)
-      setTimeout(() => {
-        const seeded = searchInputRef?.value ?? ""
-        setInitialQuery(seeded)
-        setInputValue(seeded)
-        setInitialQueryReady(true)
-        searchInputRef?.focus()
-        searchInputRef?.select()
-      }, 100)
+      setTimeout(() => searchInputRef?.focus(), 100)
     } else {
-      setInitialQueryReady(false)
-      setSearchDirty(false)
       setAutoFavoritesEligibleAtOpen(false)
     }
   })
@@ -263,13 +244,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
   })
 
   const handleSearchInput = (event: InputEvent & { currentTarget: HTMLInputElement }) => {
-    const next = event.currentTarget.value
-    setInputValue(next)
-    if (!initialQueryReady()) return
-    if (searchDirty()) return
-    if (next !== initialQuery()) {
-      setSearchDirty(true)
-    }
+    setInputValue(event.currentTarget.value)
   }
 
   const preventListboxPress = (event: PointerEvent | MouseEvent) => {
@@ -424,11 +399,33 @@ export default function ModelSelector(props: ModelSelectorProps) {
           <Combobox.Content class="selector-popover">
             <div class="selector-search-container">
               <div class="selector-input-group">
-                <Combobox.Input
+                <input
                   ref={searchInputRef}
                   class="selector-search-input flex-1 min-w-0"
+                  type="text"
+                  value={inputValue()}
                   placeholder={t("modelSelector.placeholder.search")}
+                  aria-label={t("modelSelector.placeholder.search")}
+                  autocomplete="off"
+                  autocorrect="off"
+                  spellcheck={false}
                   onInput={handleSearchInput}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      event.preventDefault()
+                      setIsOpen(false)
+                      return
+                    }
+                    if (event.key !== "Enter") return
+                    event.preventDefault()
+                    const first = pickerOptions().find((option): option is FlatModel =>
+                      !isProviderHeaderOption(option) && !option.unavailable,
+                    )
+                    if (first) {
+                      void handleChange(first)
+                      setIsOpen(false)
+                    }
+                  }}
                 />
                 <button
                   type="button"
