@@ -170,6 +170,7 @@ class SSEManager {
 
   private updateConnectionStatus(instanceId: string, status: ConnectionStatus): void {
     setConnectionStatus((prev) => {
+      if (prev.get(instanceId) === status) return prev
       const next = new Map(prev)
       next.set(instanceId, status)
       return next

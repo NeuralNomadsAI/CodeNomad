@@ -1034,8 +1034,7 @@ function getVisibleSessionIds(instanceId: string): string[] {
 function setActiveSessionFromList(instanceId: string, sessionId: string): void {
   const session = sessions().get(instanceId)?.get(sessionId)
   if (!session) return
-  const root = getSessionRoot(instanceId, sessionId)
-  if (!root) return
+  const root = getSessionRoot(instanceId, sessionId) ?? session
   ensureSessionAncestorsExpanded(instanceId, sessionId)
 
   batch(() => {

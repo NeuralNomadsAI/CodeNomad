@@ -45,6 +45,20 @@ describe("native session message normalization", () => {
     assert.equal(result.message.status, "complete")
   })
 
+  it("maps assistant messages that omit model metadata", () => {
+    const result = normalizeSessionMessage("session", {
+      id: "assistant",
+      type: "assistant",
+      agent: "build",
+      time: { created: 2 },
+      content: [],
+    } as unknown as SessionMessageInfo)
+
+    assert.equal(result.info.role, "assistant")
+    assert.equal(result.info.providerID, undefined)
+    assert.equal(result.info.modelID, undefined)
+  })
+
   it("normalizes native streaming tool input to the renderer pending state", () => {
     const source: SessionMessageInfo = {
       id: "assistant",

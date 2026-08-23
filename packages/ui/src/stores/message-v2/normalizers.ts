@@ -121,9 +121,9 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
       ? {
           mode: assistant.agent,
           agent: assistant.agent,
-          providerID: assistant.model.providerID,
-          modelID: assistant.model.id,
-          variant: assistant.model.variant,
+          providerID: assistant.model?.providerID,
+          modelID: assistant.model?.id,
+          variant: assistant.model?.variant,
           cost: assistant.cost,
           tokens: assistant.tokens,
           error: assistant.error ? structuredError(assistant.error) : undefined,

@@ -276,10 +276,8 @@ const StatusTab: Component<StatusTabProps> = (props) => {
 
   return (
     <div class="status-tab-container">
-      <Show when={props.activeSession()}>
-        {(activeSession) => (
-          <ContextUsagePanel instanceId={props.instanceId} sessionId={activeSession().id} class="status-tab-context-panel" />
-        )}
+      <Show when={props.activeSession()?.id}>
+        <ContextUsagePanel instanceId={props.instanceId} sessionId={props.activeSession()!.id} class="status-tab-context-panel" />
       </Show>
 
       <Accordion.Root

@@ -281,7 +281,7 @@ export default function MessageItem(props: MessageItemProps) {
   }
 
   const speech = useSpeech({
-    id: () => `${props.instanceId}:${props.sessionId}:${props.record.id}`,
+    id: () => `${props.instanceId}:${props.sessionId}:${props.record?.id ?? ""}`,
     text: getRawContent,
   })
 

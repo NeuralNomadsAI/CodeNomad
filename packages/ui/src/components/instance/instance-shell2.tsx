@@ -1272,24 +1272,26 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                         data-session-active={isActive() ? "true" : "false"}
                         aria-hidden={!isActive()}
                       >
-                        <SessionView
-                          sessionId={sessionId}
-                          activeSessions={activeSessions()}
-                          instanceId={props.instance.id}
-                          instanceFolder={props.instance.folder}
-                          escapeInDebounce={props.escapeInDebounce}
-                          isPhoneLayout={isPhoneLayout()}
-                          compactPromptLayout={compactPromptLayout()}
-                          focusConversationOnActivate={focusConversationSessionId() === sessionId}
-                          onConversationFocusHandled={() => {
-                            if (focusConversationSessionId() === sessionId) setFocusConversationSessionId(null)
-                          }}
-                          registerSessionPromptApi={registerSessionPromptApi}
-                          showSidebarToggle={showEmbeddedSidebarToggle()}
-                          onSidebarToggle={() => setLeftOpen(true)}
-                          forceCompactStatusLayout={showEmbeddedSidebarToggle()}
-                          isActive={isActive()}
-                        />
+                        <Show when={isActive()}>
+                          <SessionView
+                            sessionId={sessionId}
+                            activeSessions={activeSessions()}
+                            instanceId={props.instance.id}
+                            instanceFolder={props.instance.folder}
+                            escapeInDebounce={props.escapeInDebounce}
+                            isPhoneLayout={isPhoneLayout()}
+                            compactPromptLayout={compactPromptLayout()}
+                            focusConversationOnActivate={focusConversationSessionId() === sessionId}
+                            onConversationFocusHandled={() => {
+                              if (focusConversationSessionId() === sessionId) setFocusConversationSessionId(null)
+                            }}
+                            registerSessionPromptApi={registerSessionPromptApi}
+                            showSidebarToggle={showEmbeddedSidebarToggle()}
+                            onSidebarToggle={() => setLeftOpen(true)}
+                            forceCompactStatusLayout={showEmbeddedSidebarToggle()}
+                            isActive
+                          />
+                        </Show>
                       </div>
                     )
                   }}

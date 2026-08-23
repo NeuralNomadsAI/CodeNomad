@@ -360,24 +360,22 @@ function MessageContentItem(props: MessageContentItemProps) {
     return true
   })
 
+  const current = record()
+  if (!current) return null
   return (
-    <Show when={record()}>
-      {(resolvedRecord) => (
-        <MessageItem
-          record={resolvedRecord()}
-          messageInfo={messageInfo()}
-          parts={visibleParts()}
-          instanceId={props.instanceId}
-          sessionId={props.sessionId}
-          contentStartPartId={props.startPartId}
-          isQueued={isQueued()}
-          showAgentMeta={showAgentMeta()}
-          onRevert={props.onRevert}
-          onFork={props.onFork}
-          onContentRendered={props.onContentRendered}
-        />
-      )}
-    </Show>
+    <MessageItem
+      record={current}
+      messageInfo={messageInfo()}
+      parts={visibleParts()}
+      instanceId={props.instanceId}
+      sessionId={props.sessionId}
+      contentStartPartId={props.startPartId}
+      isQueued={isQueued()}
+      showAgentMeta={showAgentMeta()}
+      onRevert={props.onRevert}
+      onFork={props.onFork}
+      onContentRendered={props.onContentRendered}
+    />
   )
 }
 
@@ -444,26 +442,24 @@ function ToolCallItem(props: ToolCallItemProps) {
     return items
   }
 
+  const currentTool = toolPart()
+  if (!currentTool) return null
   return (
-    <Show when={toolPart()}>
-      {(resolvedToolPart) => (
-        <div>
-          <Suspense fallback={<ToolCallFallback />}>
-            <LazyToolCall
-              toolCall={resolvedToolPart()}
-              toolCallId={props.partId}
-              messageId={props.messageId}
-              messageVersion={messageVersion()}
-              partVersion={partVersion()}
-              instanceId={props.instanceId}
-              sessionId={props.sessionId}
-              onContentRendered={props.onContentRendered}
-              headerMenuItems={actionMenuItems}
-            />
-          </Suspense>
-        </div>
-      )}
-    </Show>
+    <div>
+      <Suspense fallback={<ToolCallFallback />}>
+        <LazyToolCall
+          toolCall={currentTool}
+          toolCallId={props.partId}
+          messageId={props.messageId}
+          messageVersion={messageVersion()}
+          partVersion={partVersion()}
+          instanceId={props.instanceId}
+          sessionId={props.sessionId}
+          onContentRendered={props.onContentRendered}
+          headerMenuItems={actionMenuItems}
+        />
+      </Suspense>
+    </div>
   )
 }
 
@@ -751,20 +747,19 @@ export default function MessageBlock(props: MessageBlockProps) {
     )
   }
 
+  const currentBlock = block()
+  if (!currentBlock || !currentBlock.items.some(isDisplayItemVisible)) return null
   return (
-    <Show when={block()}>
-      {(resolvedBlock) => (
-        <Show when={resolvedBlock().items.some(isDisplayItemVisible)}>
         <div
           ref={(el) => {
             blockRef = el
           }}
           class="message-stream-block"
-          data-message-id={resolvedBlock().record.id}
+          data-message-id={currentBlock.record.id}
           data-search-result={isSearchResult() ? "true" : undefined}
           data-search-active={isActiveSearchResult() ? "true" : undefined}
         >
-          <Index each={resolvedBlock().items}>
+          <Index each={currentBlock.items}>
             {(item, index) => (
               <Switch>
                 <Match when={item().type === "content"}>
@@ -852,9 +847,6 @@ export default function MessageBlock(props: MessageBlockProps) {
             )}
           </Index>
         </div>
-        </Show>
-      )}
-    </Show>
   )
 }
 

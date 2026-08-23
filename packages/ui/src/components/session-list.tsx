@@ -912,18 +912,16 @@ const SessionList: Component<SessionListProps> = (props) => {
                  {(sessionId, index) => {
                    const row = createMemo(() => visibleProjection().rowsById.get(sessionId))
                    return (
-                     <Show when={row()}>
-                       {(current) => (
-                         <SessionRow
-                           session={current().thread.session}
-                           depth={current().depth}
-                           hasChildren={current().hasChildren}
-                           expanded={current().expanded}
-                           onToggleExpand={() => toggleSessionExpanded(props.instanceId, sessionId)}
-                           isLastChild={current().isLastChild}
-                           isLastRow={index() === visibleProjection().ids.length - 1 && !hasMore() && !isFetchingSessions()}
-                         />
-                       )}
+                     <Show when={Boolean(row())}>
+                       <SessionRow
+                         session={row()!.thread.session}
+                         depth={row()!.depth}
+                         hasChildren={row()!.hasChildren}
+                         expanded={row()!.expanded}
+                         onToggleExpand={() => toggleSessionExpanded(props.instanceId, sessionId)}
+                         isLastChild={row()!.isLastChild}
+                         isLastRow={index() === visibleProjection().ids.length - 1 && !hasMore() && !isFetchingSessions()}
+                       />
                      </Show>
                    )
                  }}

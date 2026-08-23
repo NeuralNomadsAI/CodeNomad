@@ -151,7 +151,7 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
 
         <div class="session-sidebar-separator" />
         <Show
-          when={props.activeSession()}
+          when={props.activeSession()?.id}
           fallback={
             <Show when={props.draftAgent && props.draftModel && props.onDraftAgentChange && props.onDraftModelChange}>
               <div class="session-sidebar-controls px-4 py-4 border-t border-base flex flex-col gap-3">
@@ -186,39 +186,43 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
             </Show>
           }
         >
-          {(activeSession) => (
-            <div class="session-sidebar-controls px-4 py-4 border-t border-base flex flex-col gap-3">
-              <WorktreeSelector instanceId={props.instanceId} sessionId={activeSession().id} />
+          <div class="session-sidebar-controls px-4 py-4 border-t border-base flex flex-col gap-3">
+            <WorktreeSelector instanceId={props.instanceId} sessionId={props.activeSessionId() ?? ""} />
 
-              <AgentSelector
-                instanceId={props.instanceId}
-                sessionId={activeSession().id}
-                currentAgent={activeSession().agent}
-                onAgentChange={(agent) => props.onSidebarAgentChange(activeSession().id, agent)}
-              />
+            <AgentSelector
+              instanceId={props.instanceId}
+              sessionId={props.activeSessionId() ?? ""}
+              currentAgent={props.activeSession()?.agent ?? ""}
+              onAgentChange={(agent) => {
+                const sessionId = props.activeSessionId()
+                return sessionId ? props.onSidebarAgentChange(sessionId, agent) : Promise.resolve()
+              }}
+            />
 
-              <ModelSelector
-                instanceId={props.instanceId}
-                sessionId={activeSession().id}
-                currentModel={activeSession().model}
-                onModelChange={(model) => props.onSidebarModelChange(activeSession().id, model)}
-              />
+            <ModelSelector
+              instanceId={props.instanceId}
+              sessionId={props.activeSessionId() ?? ""}
+              currentModel={props.activeSession()?.model ?? { providerId: "", modelId: "" }}
+              onModelChange={(model) => {
+                const sessionId = props.activeSessionId()
+                return sessionId ? props.onSidebarModelChange(sessionId, model) : Promise.resolve()
+              }}
+            />
 
-              <ThinkingSelector instanceId={props.instanceId} currentModel={activeSession().model} />
+            <ThinkingSelector instanceId={props.instanceId} currentModel={props.activeSession()?.model ?? { providerId: "", modelId: "" }} />
 
-              <KeyboardHint
-                class="session-sidebar-selector-hints"
-                ariaHidden={true}
-                shortcuts={[
-                  keyboardRegistry.get("open-agent-selector"),
-                  keyboardRegistry.get("focus-model"),
-                  keyboardRegistry.get("focus-variant"),
-                ].filter((shortcut): shortcut is KeyboardShortcut => Boolean(shortcut))}
-                separator=" "
-                showDescription={false}
-              />
-            </div>
-          )}
+            <KeyboardHint
+              class="session-sidebar-selector-hints"
+              ariaHidden={true}
+              shortcuts={[
+                keyboardRegistry.get("open-agent-selector"),
+                keyboardRegistry.get("focus-model"),
+                keyboardRegistry.get("focus-variant"),
+              ].filter((shortcut): shortcut is KeyboardShortcut => Boolean(shortcut))}
+              separator=" "
+              showDescription={false}
+            />
+          </div>
         </Show>
       </div>
     </div>
