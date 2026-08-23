@@ -27,7 +27,14 @@ const workspace = (occurrence: number, draft: string): RestorableWorkspaceTabSta
   },
   attachments: { "session-1": [attachment(`attachment-${occurrence}`)] },
   scrollSnapshots: {
-    "session-1": { scrollTop: occurrence * 100, atBottom: occurrence === 0, updatedAt: occurrence + 10 },
+    "session-1": {
+      scrollTop: occurrence * 100,
+      atBottom: occurrence === 0,
+      updatedAt: occurrence + 10,
+      windowIsLatest: occurrence === 0,
+      windowCursor: occurrence === 0 ? undefined : "c1",
+      newerCursors: occurrence === 0 ? undefined : [null],
+    },
   },
   unseenIdleSince: { "session-1": occurrence + 20 },
   generationRecovery: { "session-1": occurrence === 0 ? "working" : "interrupted" },
@@ -104,10 +111,13 @@ it("round trips the complete graph without matching duplicate workspaces or sess
   assert.equal(firstShell.folder, secondShell.folder)
   assert.equal(Object.prototype.hasOwnProperty.call(firstShell, "drafts"), false)
   assert.equal(Object.prototype.hasOwnProperty.call(secondShell, "drafts"), false)
-  assert.equal(
-    canonicalJson(await decodeClientSnapshotV2(encoded.root, 1, loader(encoded))),
-    canonicalJson(snapshot),
-  )
+  const decoded = await decodeClientSnapshotV2(encoded.root, 1, loader(encoded))
+  const firstWorkspaceDecoded = decoded?.session?.tabs[0]
+  assert.equal(firstWorkspaceDecoded?.kind, "workspace")
+  if (firstWorkspaceDecoded?.kind === "workspace") {
+    assert.equal(firstWorkspaceDecoded.scrollSnapshots["session-1"]?.windowIsLatest, true)
+  }
+  assert.equal(canonicalJson(decoded), canonicalJson(snapshot))
 })
 
 it("produces stable deduplicated hashes and complete sorted partition keys", async () => {

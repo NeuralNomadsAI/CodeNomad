@@ -22,7 +22,7 @@ export interface ClientSnapshotV1 {
 const MAX_TABS = 32, MAX_LAYOUT_ENTRIES = 64, MAX_DRAFTS = 24, MAX_SCROLLS_PER_TAB = 96
 const MAX_IDLE_MARKERS = 256, MAX_RECOVERY = 256, MAX_EXPANDED = 256, MAX_KEY = 256, MAX_PATH = 4096, MAX_ID = 512
 const MAX_LAYOUT_VALUE = 4096, MAX_DRAFT = 32 * 1024, MAX_ANCHOR_KEY = 1024
-const MAX_STRINGS = 96 * 1024, MAX_SCROLLS = 256
+const MAX_STRINGS = 96 * 1024, MAX_SCROLLS = 256, MAX_NEWER_CURSORS = 32, MAX_WINDOW_CURSOR = 1024
 const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
 
 interface StringBudget { remaining: number; scrollSnapshotsRemaining: number }
@@ -100,6 +100,22 @@ function normalizeScrollSnapshot(value: unknown, budget: StringBudget): ScrollSn
   if (anchorKey !== undefined) result.anchorKey = anchorKey
   if (anchorOffset !== undefined) result.anchorOffset = anchorOffset
   if (value.followModeType === "following" || value.followModeType === "escaped") result.followModeType = value.followModeType
+  if (typeof value.windowIsLatest === "boolean") result.windowIsLatest = value.windowIsLatest
+  const windowCursor = value.windowCursor === undefined ? undefined : takeString(value.windowCursor, MAX_WINDOW_CURSOR, budget)
+  if (windowCursor !== undefined) result.windowCursor = windowCursor
+  if (Array.isArray(value.newerCursors)) {
+    const newerCursors: Array<string | null> = []
+    for (const entry of value.newerCursors.slice(-MAX_NEWER_CURSORS)) {
+      if (entry === null || entry === "") {
+        newerCursors.push(null)
+        continue
+      }
+      const cursor = takeString(entry, MAX_WINDOW_CURSOR, budget)
+      if (cursor === undefined) continue
+      newerCursors.push(cursor)
+    }
+    if (newerCursors.length > 0) result.newerCursors = newerCursors
+  }
   return result
 }
 

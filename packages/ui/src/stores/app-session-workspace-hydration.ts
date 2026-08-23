@@ -52,10 +52,6 @@ export async function hydrateRestoredWorkspaceState(
   await hydrateRestoredSessionChain(instanceId, getRestoredSessionIds([
     Object.keys(snapshot.drafts),
     Object.keys(snapshot.attachments),
-    Object.keys(snapshot.scrollSnapshots),
-    Object.keys(snapshot.unseenIdleSince),
-    Object.keys(snapshot.generationRecovery),
-    snapshot.expandedSessionIds ?? [],
   ]), signal)
   if (signal.aborted) throw getAbortReason(signal)
   if (!isCurrentBinding()) return null

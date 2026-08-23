@@ -192,6 +192,22 @@ describe("client state codec", () => {
     assert.equal(decodeClientSnapshot({ ...legacy, version: 2 }), null)
   })
 
+  it("round trips message-window metadata including the latest sentinel", () => {
+    const decoded = decodeClientSnapshot(snapshot({ session: { activeTabIndex: 0, tabs: [workspace({
+      scrollSnapshots: {
+        history: {
+          scrollTop: 10, atBottom: false, updatedAt: 2, windowIsLatest: false, windowCursor: "c2", newerCursors: [null, "c1"],
+        },
+      },
+    })] } }))
+    const tab = decoded?.session?.tabs[0]
+    assert.equal(tab?.kind, "workspace")
+    if (tab?.kind !== "workspace") return
+    assert.deepEqual(tab.scrollSnapshots.history, {
+      scrollTop: 10, atBottom: false, updatedAt: 2, windowIsLatest: false, windowCursor: "c2", newerCursors: [null, "c1"],
+    })
+  })
+
   for (const [label, activeSessionId] of [
     ["active session", "active-session"],
     ["active no-session prompt", "__no_session_draft__"],

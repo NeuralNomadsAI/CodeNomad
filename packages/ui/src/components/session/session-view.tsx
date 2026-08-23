@@ -8,7 +8,7 @@ import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import { getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances, waitForInstanceWorkspaceMetadataHydration } from "../../stores/instances"
-import { getMessageNextCursor, hasMoreMessages, loadMessages, loadMoreMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession } from "../../stores/sessions"
+import { getMessageNextCursor, hasMoreMessages, isLatestMessageWindow, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadNewerMessageWindow, loadOldestMessageWindow, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession } from "../../stores/sessions"
 import { canMarkSessionIdleSeen } from "./session-idle-attention"
 import { clearSessionIdleFade, IDLE_STATUS_VISIBILITY_MS, getSessionStatus, isSessionBusy as getSessionBusyStatus, markSessionIdleFadeStarted } from "../../stores/session-status"
 import { showAlertDialog } from "../../stores/alerts"
@@ -382,6 +382,9 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   }
 
   async function handleSendMessage(prompt: string, attachments: Attachment[]) {
+    if (!isLatestMessageWindow(props.instanceId, props.sessionId)) {
+      await loadLatestMessageWindow(props.instanceId, props.sessionId)
+    }
     const messageCount = messageStore().getSessionMessageIds(props.sessionId).length
     const submittedExchangeTargetCount = getSubmitBottomPinTargetCount(messageCount, sessionStreamingActive())
     const initialPinIntent = forceSubmittedExchangeToBottom(submittedExchangeTargetCount, { createdMessageCount: messageCount })
@@ -525,6 +528,9 @@ export const SessionView: Component<SessionViewProps> = (props) => {
               hasMoreMessages={hasMoreMessages(props.instanceId, props.sessionId)}
               getMessageHistoryCursor={() => getMessageNextCursor(props.instanceId, props.sessionId)}
               onLoadMoreMessages={() => loadMoreMessages(props.instanceId, props.sessionId)}
+              onLoadNewerMessages={() => loadNewerMessageWindow(props.instanceId, props.sessionId)}
+              onLoadLatestMessages={() => loadLatestMessageWindow(props.instanceId, props.sessionId)}
+              onLoadOldestMessages={() => loadOldestMessageWindow(props.instanceId, props.sessionId)}
               sessionStreamingActive={sessionStreamingActive()}
               explicitBottomPinIntent={activeSubmitBottomPinIntent()}
               onExplicitBottomPinCancelled={() => setSubmitBottomPinIntent(null)}

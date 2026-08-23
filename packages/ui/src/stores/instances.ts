@@ -24,7 +24,6 @@ import {
 } from "./sessions"
 import {
   ensureWorktreesLoaded,
-  getWorktrees,
   reloadWorktrees,
 } from "./worktrees"
 import { getRootClient } from "./opencode-client"
@@ -45,6 +44,7 @@ import {
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
 import { applyOpenCodeDataEvent, destroyOpenCodeData, projectOpenCodeMessages } from "./opencode-data"
+import { isLatestWindow } from "./message-v2/message-window"
 import { upsertPermissionV2, removePermissionV2, removeMessageV2 } from "./message-v2/bridge"
 import {
   clearRepliedPermissions,
@@ -1763,7 +1763,10 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
     : event.type === "form.created"
       ? event.data.form.sessionID
       : undefined
-  if (sessionId && event.type.startsWith("session.")) projectOpenCodeMessages(instanceId, sessionId, data)
+  if (sessionId && event.type.startsWith("session.") && (
+    activeSessionId().get(instanceId) === sessionId
+    && isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId))
+  )) projectOpenCodeMessages(instanceId, sessionId, data)
   if (sessionId && event.type === "session.inbox.cancelled") {
     removeMessageV2(instanceId, event.data.inboxID, sessionId)
   }

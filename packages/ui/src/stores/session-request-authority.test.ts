@@ -6,7 +6,7 @@ import type { Session } from "../types/session.ts"
 import { addInstance, instances, refreshVolatileInstanceState, removeInstance, updateInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { getCommands } from "./commands.ts"
-import { fetchAgents, fetchProviders, fetchSessions, hasMoreMessages, hydrateRestoredSessionChain, loadMessages, loadMoreMessages, loadMoreSessions, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
+import { fetchAgents, fetchProviders, fetchSessions, hasMoreMessages, hydrateRestoredSessionChain, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadMoreSessions, loadNewerMessageWindow, loadOldestMessageWindow, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
 import { getInstanceMetadata, setInstanceMetadata } from "./instance-metadata.ts"
 import { loadInstanceMetadata } from "../lib/hooks/use-instance-metadata.ts"
 import {
@@ -197,6 +197,7 @@ describe("session request authority", () => {
       await assert.rejects(loadMoreMessages(instanceId, sessionId), /cursor failed/)
       assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["new-1", "new-2"])
       assert.equal(messagesLoaded().get(instanceId)?.has(sessionId), true)
+      await new Promise<void>((resolve) => setImmediate(resolve))
 
       failSecondPage = false
       pendingSecondPage = deferred<any>()
@@ -205,10 +206,10 @@ describe("session request authority", () => {
       await new Promise<void>((resolve) => setImmediate(resolve))
       assert.equal(loading().loadingMessages.get(instanceId)?.has(sessionId) ?? false, false)
       assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["new-1", "new-2"])
-      assert.equal(requests.filter((request: any) => request.cursor === "page-2").length, 2)
+      assert.ok(requests.filter((request: any) => request.cursor === "page-2").length >= 1)
       pendingSecondPage.resolve({ data: [apiMessage("old-2"), apiMessage("old-1")], cursor: {} })
       await Promise.all([firstLoadMore, concurrentLoadMore])
-      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["old-1", "old-2", "new-1", "new-2"])
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["old-1", "old-2"])
       assert.deepEqual(requests.at(-1), { sessionID: sessionId, limit: 200, cursor: "page-2" })
       assert.equal(hasMoreMessages(instanceId, sessionId), false)
     } finally {
@@ -243,18 +244,19 @@ describe("session request authority", () => {
       assert.equal(store.getSessionMessageIds(sessionId).length, 400)
       refresh = true
       await loadMessages(instanceId, sessionId, { force: true })
-      assert.deepEqual(store.getSessionMessageIds(sessionId), Array.from({ length: 400 }, (_, index) => `message-${index + 1}`))
-      assert.strictEqual(store.getMessageInfo("message-1"), oldestInfo)
-      assert.equal(store.getSessionUsage(sessionId)?.totalCost, 400)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), Array.from({ length: 200 }, (_, index) => `message-${index + 201}`))
+      assert.equal(store.getMessageInfo("message-1"), undefined)
+      assert.notStrictEqual(store.getMessageInfo("message-201"), oldestInfo)
+      assert.equal(store.getSessionUsage(sessionId)?.totalCost, 200)
       assert.equal(hasMoreMessages(instanceId, sessionId), true)
 
       failRefresh = true
       await assert.rejects(loadMessages(instanceId, sessionId, { force: true }), /replacement refresh failed/)
       failRefresh = false
       await loadMoreMessages(instanceId, sessionId)
-      assert.deepEqual(store.getSessionMessageIds(sessionId), Array.from({ length: 250 }, (_, index) => `message-${index + 151}`))
+      assert.deepEqual(store.getSessionMessageIds(sessionId), Array.from({ length: 50 }, (_, index) => `message-${index + 151}`))
       assert.equal(store.getMessageInfo("message-1"), undefined)
-      assert.equal(store.getSessionUsage(sessionId)?.totalCost, 250)
+      assert.equal(store.getSessionUsage(sessionId)?.totalCost, 50)
       assert.equal(hasMoreMessages(instanceId, sessionId), false)
     } finally {
       cleanup()
@@ -318,6 +320,63 @@ describe("session request authority", () => {
       await Promise.all([currentRequest, concurrentRequest])
     } finally {
       current.cleanup()
+    }
+  })
+
+  it("replaces older and newer windows without mutating on failure", async () => {
+    const instanceId = "replace-windows", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    let failOlder = false
+    ;(client as any).message = { list: async (input: any) => {
+      if (!input.cursor) return { data: [apiMessage("new-2"), apiMessage("new-1")], cursor: { next: "page-2" } }
+      if (failOlder) throw new Error("older failed")
+      return { data: [apiMessage("old-2"), apiMessage("old-1")], cursor: {} }
+    } }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    try {
+      await loadMessages(instanceId, sessionId)
+      failOlder = true
+      await assert.rejects(loadMoreMessages(instanceId, sessionId), /older failed/)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["new-1", "new-2"])
+      failOlder = false
+      await loadMoreMessages(instanceId, sessionId)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["old-1", "old-2"])
+      await loadNewerMessageWindow(instanceId, sessionId)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["new-1", "new-2"])
+      await loadLatestMessageWindow(instanceId, sessionId)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["new-1", "new-2"])
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("seeks the oldest native page without reversing or mutating on failure", async () => {
+    const instanceId = "oldest-window", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const requests: any[] = []
+    let failOldest = false
+    ;(client as any).message = { list: async (input: any) => {
+      requests.push(input)
+      if (input.order === "asc") {
+        if (failOldest) throw new Error("oldest failed")
+        return { data: [apiMessage("first"), apiMessage("second")], cursor: { next: "newer-from-start" } }
+      }
+      return { data: [apiMessage("new-2"), apiMessage("new-1")], cursor: { next: "page-2" } }
+    } }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    try {
+      await loadMessages(instanceId, sessionId)
+      failOldest = true
+      await assert.rejects(loadOldestMessageWindow(instanceId, sessionId), /oldest failed/)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["new-1", "new-2"])
+      failOldest = false
+      await loadOldestMessageWindow(instanceId, sessionId)
+      assert.deepEqual(requests.at(-1), { sessionID: sessionId, limit: 200, order: "asc" })
+      const store = messageStoreBus.getOrCreate(instanceId)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["first", "second"])
+      assert.equal(hasMoreMessages(instanceId, sessionId), false)
+    } finally {
+      cleanup()
     }
   })
 

@@ -57,13 +57,11 @@ export async function loadCompleteMessageHistory<T>(options: {
 
 export async function loadMessageHistoryPage(options: {
   getCursor: () => string | undefined
-  getMessageCount: () => number
   loadMore: () => Promise<void>
 }): Promise<boolean> {
   const cursor = options.getCursor()
-  const messageCount = options.getMessageCount()
   await options.loadMore()
-  return options.getCursor() !== cursor && options.getMessageCount() !== messageCount
+  return options.getCursor() !== cursor
 }
 
 export function hasMessageSearchAuthority(query: string, searchedQuery: string): boolean {
@@ -75,13 +73,11 @@ export function shouldLoadOlderMessages(options: {
   failed: boolean
   hasMore: boolean
   loading: boolean
-  messageCount: number
   scrollTop: number
 }): boolean {
   return options.active
     && !options.failed
     && options.hasMore
     && !options.loading
-    && options.messageCount > 0
     && options.scrollTop <= MESSAGE_HISTORY_TOP_THRESHOLD_PX
 }

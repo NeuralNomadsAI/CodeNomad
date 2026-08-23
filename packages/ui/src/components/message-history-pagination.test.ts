@@ -9,7 +9,6 @@ describe("message history pagination", () => {
     failed: false,
     hasMore: true,
     loading: false,
-    messageCount: 2,
     scrollTop: MESSAGE_HISTORY_TOP_THRESHOLD_PX,
   }
 
@@ -18,12 +17,11 @@ describe("message history pagination", () => {
     assert.equal(shouldLoadOlderMessages({ ...ready, scrollTop: MESSAGE_HISTORY_TOP_THRESHOLD_PX + 1 }), false)
   })
 
-  it("guards inactive, exhausted, concurrent, failed, and empty loads", () => {
+  it("guards inactive, exhausted, concurrent, and failed loads", () => {
     assert.equal(shouldLoadOlderMessages({ ...ready, active: false }), false)
     assert.equal(shouldLoadOlderMessages({ ...ready, hasMore: false }), false)
     assert.equal(shouldLoadOlderMessages({ ...ready, loading: true }), false)
     assert.equal(shouldLoadOlderMessages({ ...ready, failed: true }), false)
-    assert.equal(shouldLoadOlderMessages({ ...ready, messageCount: 0 }), false)
   })
 
   it("follows native page authority until the anchor appears", async () => {
@@ -167,22 +165,18 @@ describe("message history pagination", () => {
     }), /cursor did not advance/)
   })
 
-  it("stops ordinary pagination on a repeated cursor or no message progress", async () => {
+  it("stops ordinary pagination on a repeated cursor and accepts opaque cursor progress", async () => {
     let cursor: string | undefined = "older-page"
-    let messageCount = 2
-    const load = (nextCursor: string | undefined, nextCount: number) => loadMessageHistoryPage({
+    const load = (nextCursor: string | undefined) => loadMessageHistoryPage({
       getCursor: () => cursor,
-      getMessageCount: () => messageCount,
       loadMore: async () => {
         cursor = nextCursor
-        messageCount = nextCount
       },
     })
 
-    assert.equal(await load("older-page", 2), false)
-    assert.equal(await load("older-page", 3), false)
-    assert.equal(await load("oldest-page", 3), false)
-    assert.equal(await load("final-page", 4), true)
+    assert.equal(await load("older-page"), false)
+    assert.equal(await load("oldest-page"), true)
+    assert.equal(await load(undefined), true)
   })
 
   it("only grants search-result authority to the searched query", () => {

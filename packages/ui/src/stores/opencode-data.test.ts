@@ -4,6 +4,7 @@ import { messageStoreBus } from "./message-v2/bus.ts"
 import { seedSessionMessagesV2 } from "./message-v2/bridge.ts"
 import { normalizeSessionMessage } from "./message-v2/normalizers.ts"
 import { applyOpenCodeDataEvent, destroyOpenCodeData, projectOpenCodeMessages } from "./opencode-data.ts"
+import { emptyLatestWindow } from "./message-v2/message-window.ts"
 import { getRootClient } from "./opencode-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
 
@@ -76,6 +77,32 @@ describe("OpenCode data projection", () => {
       assert.equal(ids.length, 101)
       assert.equal(ids.includes("history-0"), true)
       assert.equal(ids.includes("live"), true)
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+
+  it("does not revise unchanged historical messages during repeated projection", () => {
+    const instanceId = "opencode-data-unchanged"
+    const sessionId = "session"
+    try {
+      const data = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "live", type: "session.step.started", created: 1,
+        data: {
+          sessionID: sessionId,
+          assistantMessageID: "assistant",
+          agent: "build",
+          model: { providerID: "provider", id: "model" },
+        },
+      } as any)
+      projectOpenCodeMessages(instanceId, sessionId, data)
+      const store = messageStoreBus.getOrCreate(instanceId)
+      const revision = store.getMessage("assistant")?.revision
+
+      projectOpenCodeMessages(instanceId, sessionId, data)
+
+      assert.equal(store.getMessage("assistant")?.revision, revision)
     } finally {
       destroyOpenCodeData(instanceId)
       if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
@@ -178,6 +205,32 @@ describe("OpenCode data projection", () => {
       const message = store.getMessage(messageId)
       assert.deepEqual(message?.partIds, [`${messageId}-text`])
       assert.equal((message?.parts[`${messageId}-text`]?.data as any)?.text, "ping")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+
+  it("does not project live events into a historical window", () => {
+    const instanceId = "opencode-data-history-window"
+    const sessionId = "session"
+    const store = messageStoreBus.getOrCreate(instanceId)
+    try {
+      const rest = normalizeSessionMessage(sessionId, {
+        id: "old", type: "assistant", agent: "build", model: { providerID: "provider", id: "model" },
+        time: { created: 1, completed: 1 }, content: [],
+      } as any)
+      seedSessionMessagesV2(instanceId, { id: sessionId }, [rest.message], new Map([[rest.info.id, rest.info]]))
+      store.setMessageWindow(sessionId, { kind: "history", resumeCursor: "c1", newerCursors: [null] })
+      const data = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "live", type: "session.step.started", created: 2,
+        data: { sessionID: sessionId, assistantMessageID: "live", agent: "build", model: { providerID: "provider", id: "model" } },
+      } as any)
+      if (!store.getMessageWindow(sessionId) || store.getMessageWindow(sessionId)?.kind === "latest") projectOpenCodeMessages(instanceId, sessionId, data)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["old"])
+      store.setMessageWindow(sessionId, emptyLatestWindow())
+      projectOpenCodeMessages(instanceId, sessionId, data)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["old", "live"])
     } finally {
       destroyOpenCodeData(instanceId)
       if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)

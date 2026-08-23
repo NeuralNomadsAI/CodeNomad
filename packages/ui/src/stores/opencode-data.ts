@@ -2,10 +2,9 @@ import type { OpenCodeEvent } from "@opencode-ai/client"
 import { createData, type Data } from "@opencode-ai/client/solid"
 import { createRoot } from "solid-js"
 import { getRootClient } from "./opencode-client"
-import { applyPartUpdateV2, upsertMessageInfoV2 } from "./message-v2/bridge"
+import { seedSessionMessagesV2 } from "./message-v2/bridge"
 import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { sseManager } from "../lib/sse-manager"
-import { messageStoreBus } from "./message-v2/bus"
 
 const entries = new Map<string, { data: Data; emit: (event: OpenCodeEvent) => void; dispose: () => void }>()
 
@@ -55,27 +54,15 @@ export function applyOpenCodeDataEvent(instanceId: string, directory: string, ev
 export function projectOpenCodeMessages(instanceId: string, sessionId: string, data: Data): void {
   const source = data.session.message.list(sessionId)
   if (!source.length) return
-  const store = messageStoreBus.getOrCreate(instanceId)
-  const projectedIds: string[] = []
-  for (const item of source) {
-    const normalized = normalizeSessionMessage(sessionId, item)
-    projectedIds.push(normalized.info.id)
-    if (normalized.info.role === "user" && normalized.message.parts.length) {
-      store.confirmServerMessage(normalized.info.id, { clearOptimisticParts: true })
-    }
-    const status = normalized.message.status
-    upsertMessageInfoV2(instanceId, normalized.info, {
-      status: status === "sending" || status === "sent" || status === "streaming" || status === "error"
-        ? status
-        : "complete",
-    })
-    for (const part of normalized.message.parts) applyPartUpdateV2(instanceId, part)
-  }
-  const projected = new Set(projectedIds)
-  store.addOrUpdateSession({
-    id: sessionId,
-    messageIds: [...store.getSessionMessageIds(sessionId).filter((id) => !projected.has(id)), ...projectedIds],
-  })
+  const normalized = source.map((item) => normalizeSessionMessage(sessionId, item))
+  seedSessionMessagesV2(
+    instanceId,
+    { id: sessionId },
+    normalized.map((item) => item.message),
+    new Map(normalized.map((item) => [item.info.id, item.info])),
+    undefined,
+    true,
+  )
 }
 
 export function destroyOpenCodeData(instanceId: string): void {

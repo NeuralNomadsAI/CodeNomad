@@ -21,7 +21,8 @@ import { getMessageSelectionActionPosition } from "../lib/message-selection-posi
 import { buildSessionSearchMatches } from "../lib/session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
 import { resolveThinkingExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
-import { hasMessageSearchAuthority, isMessageHistoryRestoreCurrent, loadCompleteMessageHistory, loadMessageHistoryPage, loadPagesUntilAnchor, MESSAGE_HISTORY_TOP_THRESHOLD_PX, shouldLoadOlderMessages } from "./message-history-pagination"
+import { hasMessageSearchAuthority, isMessageHistoryRestoreCurrent, loadPagesUntilAnchor } from "./message-history-pagination"
+import { isLatestWindow, toWindowSnapshot } from "../stores/message-v2/message-window"
 import { getLogger } from "../lib/logger"
 
 const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
@@ -48,6 +49,9 @@ export interface MessageSectionProps {
   onReloadMessages?: () => void
   hasMoreMessages?: boolean
   onLoadMoreMessages?: () => Promise<void>
+  onLoadNewerMessages?: () => Promise<void>
+  onLoadLatestMessages?: () => Promise<void>
+  onLoadOldestMessages?: () => Promise<void>
   getMessageHistoryCursor?: () => string | undefined
   isActive?: boolean
   sessionStreamingActive?: boolean
@@ -77,7 +81,7 @@ export default function MessageSection(props: MessageSectionProps) {
       }
 
       if (record.role !== "assistant") {
-        return false
+        return true
       }
 
       const info = resolvedStore.getMessageInfo(messageId)
@@ -254,7 +258,7 @@ export default function MessageSection(props: MessageSectionProps) {
   let restoringScrollSnapshot = false
   let restoredWithoutSnapshot = false
   let scrollRestoreGeneration = 0
-  let loadingOlderMessages = false
+  let pagingWindow = false
   let retryAnchorRestore: (() => void) | null = null
   const [olderMessageLoadFailed, setOlderMessageLoadFailed] = createSignal(false)
 
@@ -263,7 +267,7 @@ export default function MessageSection(props: MessageSectionProps) {
       scrollRestoreGeneration += 1
       restoringScrollSnapshot = false
       setDidRestoreScroll(false)
-      loadingOlderMessages = false
+      pagingWindow = false
       retryAnchorRestore = null
     }
     setListApi(api)
@@ -284,7 +288,7 @@ export default function MessageSection(props: MessageSectionProps) {
         scrollRestoreGeneration += 1
         restoringScrollSnapshot = false
         restoredWithoutSnapshot = false
-        loadingOlderMessages = false
+        pagingWindow = false
         retryAnchorRestore = null
         setOlderMessageLoadFailed(false)
         setDidRestoreScroll(false)
@@ -306,7 +310,7 @@ export default function MessageSection(props: MessageSectionProps) {
         }
         scrollRestoreGeneration += 1
         restoringScrollSnapshot = false
-        loadingOlderMessages = false
+        pagingWindow = false
         retryAnchorRestore = null
         persistMessageScrollSnapshot({ requireActive: false })
       },
@@ -332,7 +336,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const allowCapture = options?.allowCapture ?? true
     const canCapture = canCaptureScrollSnapshot({ requireActive: options?.requireActive })
     if (allowCapture && canCapture) {
-      const snapshot = listApi()?.captureScrollSnapshot()
+      const snapshot = overlayWindowOnSnapshot(listApi()?.captureScrollSnapshot())
       if (snapshot) {
         setLastGoodScrollSnapshot(sessionId, snapshot)
         store().setScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE, snapshot)
@@ -652,65 +656,66 @@ export default function MessageSection(props: MessageSectionProps) {
     listApi()?.notifyContentRendered()
   }
 
-  async function maybeLoadOlderMessages() {
-    const api = listApi()
-    const snapshot = api?.captureScrollSnapshot()
-    if (!api || !snapshot || !props.onLoadMoreMessages) return
-    if (!shouldLoadOlderMessages({
-      active: isActive(),
-      failed: olderMessageLoadFailed(),
-      hasMore: Boolean(props.hasMoreMessages),
-      loading: Boolean(props.loading) || loadingOlderMessages,
-      messageCount: visibleMessageIds().length,
-      scrollTop: snapshot.scrollTop,
-    })) return
+  function overlayWindowOnSnapshot(snapshot: VirtualFollowScrollSnapshot | undefined) {
+    if (!snapshot) return snapshot
+    return { ...snapshot, ...toWindowSnapshot(store().getMessageWindow(props.sessionId) ?? { kind: "latest", newerCursors: [] }) }
+  }
 
+  function waitTwoFrames() {
+    return new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+  }
+
+  async function pageWindow(
+    direction: "older" | "newer" | "latest" | "oldest",
+    after: (api: VirtualFollowListApi) => void,
+  ) {
+    const api = listApi()
+    if (!api || !isActive() || pagingWindow) return
+    const load = direction === "older"
+      ? props.onLoadMoreMessages
+      : direction === "newer"
+        ? props.onLoadNewerMessages
+        : direction === "oldest"
+          ? props.onLoadOldestMessages
+          : props.onLoadLatestMessages
+    if (!load) {
+      if (direction === "oldest") after(api)
+      return
+    }
+    if (direction === "older" && !props.hasMoreMessages) return
+    if (direction === "oldest" && !props.hasMoreMessages) {
+      after(api)
+      return
+    }
+    if (direction === "newer" && isLatestWindow(store().getMessageWindow(props.sessionId))) return
     const sessionId = props.sessionId
-    const loadGeneration = scrollRestoreGeneration
-    const isCurrentLoad = () => isMessageHistoryRestoreCurrent(
+    const generation = scrollRestoreGeneration
+    const isCurrent = () => isMessageHistoryRestoreCurrent(
       isActive(),
       api,
       listApi(),
-      isScrollRestoreGenerationCurrent(sessionId, loadGeneration, props.sessionId, scrollRestoreGeneration),
+      isScrollRestoreGenerationCurrent(sessionId, generation, props.sessionId, scrollRestoreGeneration),
     )
-    const firstMessageId = visibleMessageIds()[0]
-    const anchorSnapshot = snapshot.atBottom && firstMessageId
-      ? { ...snapshot, atBottom: false, anchorKey: firstMessageId, anchorOffset: 0, followModeType: "escaped" as const }
-      : snapshot
-    loadingOlderMessages = true
-    let progressed = false
+    pagingWindow = true
     try {
-      progressed = await loadMessageHistoryPage({
-        getCursor: () => props.getMessageHistoryCursor?.(),
-        getMessageCount: () => visibleMessageIds().length,
-        loadMore: props.onLoadMoreMessages,
-      })
-      if (!isCurrentLoad()) return
-      await new Promise<void>((resolve) => api.restoreScrollSnapshot(anchorSnapshot, {
-        behavior: "auto",
-        fallback: resolve,
-        onApplied: resolve,
-        onCancelled: resolve,
-      }))
+      if (!isCurrent()) return
+      await load()
+      if (!isCurrent()) return
+      api.setAutoScroll(direction === "latest")
+      api.notifyContentRendered()
+      await waitTwoFrames()
+      if (!isCurrent()) return
+      after(api)
+      api.notifyContentRendered()
     } catch (error) {
-      if (isCurrentLoad()) {
+      if (isCurrent()) {
         setOlderMessageLoadFailed(true)
-        log.error("Failed to load older messages", { instanceId: props.instanceId, sessionId, error })
+        log.error("Failed to page message window", { instanceId: props.instanceId, sessionId, direction, error })
       }
     } finally {
-      if (isCurrentLoad()) loadingOlderMessages = false
+      if (isCurrent()) pagingWindow = false
     }
-
-    if (isCurrentLoad() && progressed && !olderMessageLoadFailed()) void maybeLoadOlderMessages()
   }
-
-  createEffect(() => {
-    if (!didRestoreScroll()) return
-    props.loading
-    props.hasMoreMessages
-    visibleMessageIds().length
-    void maybeLoadOlderMessages()
-  })
 
   createEffect(() => {
     if (!props.onQuoteSelection) {
@@ -758,12 +763,7 @@ export default function MessageSection(props: MessageSectionProps) {
       && props.instanceId === instanceId
       && props.sessionId === sessionId
       && debouncedSearchQuery() === query
-    void loadCompleteMessageHistory({
-      getCursor: () => props.getMessageHistoryCursor?.(),
-      loadMore: props.onLoadMoreMessages ?? (() => Promise.resolve()),
-      isCurrent: isCurrentSearch,
-      complete: () => buildSessionSearchMatches({ store: store(), sessionId, query, includeThinking }),
-    }).then((matches) => {
+    Promise.resolve(buildSessionSearchMatches({ store: store(), sessionId, query, includeThinking })).then((matches) => {
       if (!matches) {
         if (isCurrentSearch()) setIsSearchPending(false)
         return
@@ -929,12 +929,11 @@ export default function MessageSection(props: MessageSectionProps) {
           onScroll={() => {
             clearQuoteSelection()
             persistMessageScrollSnapshot()
-            const scrollTop = listApi()?.captureScrollSnapshot()?.scrollTop
-            if (!retryAnchorRestore && typeof scrollTop === "number" && scrollTop > MESSAGE_HISTORY_TOP_THRESHOLD_PX) {
-              setOlderMessageLoadFailed(false)
-            }
-            void maybeLoadOlderMessages()
           }}
+          onUserReachedTop={() => { void pageWindow("older", (api) => api.scrollToBottom({ immediate: true })) }}
+          onUserReachedBottom={() => { void pageWindow("newer", (api) => api.scrollToTop({ immediate: true })) }}
+          onJumpTop={() => { void pageWindow("oldest", (api) => api.scrollToTop({ immediate: true })) }}
+          onJumpBottom={() => { void pageWindow("latest", (api) => api.scrollToBottom({ immediate: true })) }}
           onMouseUp={() => handleStreamMouseUp()}
           onActiveKeyChange={(messageId) => {
             if (!messageId) return
@@ -1001,7 +1000,9 @@ export default function MessageSection(props: MessageSectionProps) {
                   <button
                     type="button"
                     class="message-scroll-button"
-                    onPointerUp={(event) => runScrollControlAction(event, () => api.scrollToTop())}
+                    onPointerUp={(event) => runScrollControlAction(event, () => {
+                      void pageWindow("oldest", (next) => next.scrollToTop({ immediate: true }))
+                    })}
                     aria-label={t("messageSection.scroll.toFirstAriaLabel")}
                   >
                     <span class="message-scroll-icon" aria-hidden="true">
@@ -1013,7 +1014,9 @@ export default function MessageSection(props: MessageSectionProps) {
                   <button
                     type="button"
                     class="message-scroll-button"
-                    onPointerUp={(event) => runScrollControlAction(event, () => api.scrollToBottom())}
+                    onPointerUp={(event) => runScrollControlAction(event, () => {
+                      void pageWindow("latest", (next) => next.scrollToBottom({ immediate: true }))
+                    })}
                     aria-label={t("messageSection.scroll.toLatestAriaLabel")}
                   >
                     <span class="message-scroll-icon" aria-hidden="true">
@@ -1035,7 +1038,7 @@ export default function MessageSection(props: MessageSectionProps) {
                       setOlderMessageLoadFailed(false)
                       const retry = retryAnchorRestore
                       if (retry) retry()
-                      else void maybeLoadOlderMessages()
+                      else void pageWindow("older", (api) => api.scrollToBottom({ immediate: true }))
                     }}
                   >
                     {t("messageSection.loadError.reload")}
@@ -1043,7 +1046,7 @@ export default function MessageSection(props: MessageSectionProps) {
                 </div>
               </Show>
 
-              <Show when={!props.loading && !props.loadError && visibleMessageIds().length === 0}>
+              <Show when={!props.loading && !props.loadError && !props.hasMoreMessages && visibleMessageIds().length === 0}>
                 <Show
                   when={emptyStateVariant() === "no-session"}
                   fallback={
@@ -1089,15 +1092,13 @@ export default function MessageSection(props: MessageSectionProps) {
                 </div>
               </Show>
 
-              <Show when={!props.loading && props.loadError}>
-                {(loadError) => (
-                  <LoadErrorState
-                    title={t("messageSection.loadError.title")}
-                    error={loadError()}
-                    retryLabel={t("messageSection.loadError.reload")}
-                    onRetry={() => props.onReloadMessages?.()}
-                  />
-                )}
+              <Show when={!props.loading && Boolean(props.loadError)}>
+                <LoadErrorState
+                  title={t("messageSection.loadError.title")}
+                  error={props.loadError!}
+                  retryLabel={t("messageSection.loadError.reload")}
+                  onRetry={() => props.onReloadMessages?.()}
+                />
               </Show>
             </>
           )}
@@ -1221,9 +1222,8 @@ export default function MessageSection(props: MessageSectionProps) {
                 </div>
               </Show>
 
-              <Show when={quoteSelection()}>
-                {(selection) => (
-                  <div class="message-quote-popover" style={{ top: `${selection().top}px`, left: `${selection().left}px` }}>
+              <Show when={Boolean(quoteSelection())}>
+                <div class="message-quote-popover" style={{ top: `${quoteSelection()!.top}px`, left: `${quoteSelection()!.left}px` }}>
                     <div class="message-quote-button-group">
                       <button type="button" class="message-quote-button" onClick={() => handleQuoteSelectionRequest("quote")}>
                         {t("messageSection.quote.addAsQuote")}
@@ -1236,7 +1236,6 @@ export default function MessageSection(props: MessageSectionProps) {
                       </button>
                     </div>
                   </div>
-                )}
               </Show>
             </>
           )}

@@ -85,6 +85,11 @@ export interface VirtualFollowListProps<T> {
   onScrollElementChange?: (element: HTMLDivElement | undefined) => void
   onShellElementChange?: (element: HTMLDivElement | undefined) => void
   onScroll?: () => void
+  onJumpTop?: () => void
+  onJumpBottom?: () => void
+  onUserReachedTop?: () => void
+  onUserReachedBottom?: () => void
+  onScrollIntent?: (direction: "up" | "down" | null) => void
   onExplicitBottomPinCancelled?: () => void
   onMouseUp?: (event: MouseEvent) => void
   onClick?: (event: MouseEvent) => void
@@ -177,6 +182,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function markUserScrollIntent(direction: "up" | "down" | null) {
+    props.onScrollIntent?.(direction)
     cancelActiveScrollRestore()
     scrollController.setUserIntent(direction, performance.now() + USER_SCROLL_INTENT_WINDOW_MS)
     if (hasActiveExplicitBottomPin() || explicitBottomPinIntent()) cancelExplicitBottomPinFromUser()
@@ -299,7 +305,19 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
     const now = performance.now()
     const programmatic = hasProgrammaticScrollIntent()
+    const previousOffset = scrollController.snapshot().lastObservedOffset
+    const scrolledUp = offset < previousOffset - 1
+    const scrolledDown = offset > previousOffset + 1
     const result = scrollController.observeViewport(metrics, now, programmatic)
+    const restoring = result.state.restoring
+    const intent = result.state.userIntentDirection
+    const hasFreshIntent = now <= result.state.userIntentUntil
+    if (!programmatic && !restoring && atTop && (scrolledUp || (hasFreshIntent && intent === "up"))) {
+      props.onUserReachedTop?.()
+    }
+    if (!programmatic && !restoring && atBottom && (scrolledDown || (hasFreshIntent && intent === "down"))) {
+      props.onUserReachedBottom?.()
+    }
     syncControllerResult(result)
   }
 
@@ -663,12 +681,12 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       if (!intent) return
       if (intent.type === "bottom") {
         event.preventDefault()
-        scrollToBottom(true)
+        jumpToBottom(true)
         return
       }
       if (intent.type === "top") {
         event.preventDefault()
-        scrollToTop(true)
+        jumpToTop(true)
         return
       }
       markUserScrollIntent(intent.direction)
@@ -706,6 +724,16 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     cancelActiveScrollRestore()
     if (hasActiveExplicitBottomPin() || explicitBottomPinIntent()) cancelExplicitBottomPinFromUser()
     dispatchFollowEvent({ type: "jump-top", immediate })
+  }
+
+  function jumpToTop(immediate = true) {
+    scrollToTop(immediate)
+    props.onJumpTop?.()
+  }
+
+  function jumpToBottom(immediate = true) {
+    scrollToBottom(immediate)
+    props.onJumpBottom?.()
   }
 
   function scrollToKey(key: string, opts?: { block?: ScrollLogicalPosition }) {
@@ -795,7 +823,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     }}>
       <div
         class="message-stream"
-        tabIndex={-1}
+        tabIndex={0}
         ref={el => {
           setScrollElement(el)
           props.onScrollElementChange?.(el)
@@ -804,7 +832,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         onMouseUp={props.onMouseUp}
         onClick={props.onClick}
       >
-        <Show when={props.renderBeforeItems}>{props.renderBeforeItems!()}</Show>
+        {props.renderBeforeItems?.()}
         <Virtualizer
           ref={setVirtuaHandle}
           scrollRef={scrollElement()}
@@ -819,23 +847,23 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         </Virtualizer>
       </div>
 
-      <Show when={props.renderOverlay}>
+      <Show when={Boolean(props.renderOverlay)}>
         <div class="virtual-follow-list-overlay">{props.renderOverlay!()}</div>
       </Show>
 
-      <Show when={props.renderControls}>
+      <Show when={Boolean(props.renderControls)}>
         <div class="virtual-follow-list-controls-container">{props.renderControls!(state, api)}</div>
       </Show>
 
       <Show when={!props.renderControls && (showScrollTopButton() || showScrollBottomButton()) && props.scrollToTopAriaLabel && props.scrollToBottomAriaLabel}>
         <div class="message-scroll-button-wrapper">
           <Show when={showScrollTopButton()}>
-            <button type="button" class="message-scroll-button" onClick={() => scrollToTop()} aria-label={props.scrollToTopAriaLabel!()}>
+            <button type="button" class="message-scroll-button" onClick={() => jumpToTop()} aria-label={props.scrollToTopAriaLabel!()}>
               <span class="message-scroll-icon" aria-hidden="true">↑</span>
             </button>
           </Show>
           <Show when={showScrollBottomButton()}>
-            <button type="button" class="message-scroll-button" onClick={() => scrollToBottom(true)} aria-label={props.scrollToBottomAriaLabel!()}>
+            <button type="button" class="message-scroll-button" onClick={() => jumpToBottom(true)} aria-label={props.scrollToBottomAriaLabel!()}>
               <span class="message-scroll-icon" aria-hidden="true">↓</span>
             </button>
           </Show>

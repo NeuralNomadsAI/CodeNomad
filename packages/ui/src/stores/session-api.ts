@@ -59,6 +59,16 @@ import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { seedSessionMessagesV2, reconcilePendingPermissionsV2 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
+import {
+  emptyLatestWindow,
+  isLatestWindow,
+  planNewerWindow,
+  planOlderWindow,
+  toWindowSnapshot,
+  windowFromSnapshot,
+  withOlderCursor,
+  type MessageWindowState,
+} from "./message-v2/message-window"
 import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
@@ -84,12 +94,8 @@ const providerRefreshes = new Map<string, { promise: Promise<boolean>; pending: 
 const sessionPageRequests = new Map<string, Promise<void>>()
 const messageNextCursors = new Map<string, string>()
 const messagePageRequests = new Map<string, Promise<void>>()
-const messageRefreshChains = new Map<string, {
-  client: NonNullable<Instance["client"]>
-  loadEpoch: number
-  authoritativeIds: Set<string>
-  baselineRevisions: Map<string, number>
-}>()
+const MESSAGE_STREAM_SCOPE = "message-stream"
+type MessageWindowIntent = "open" | "older" | "newer" | "latest" | "oldest"
 let nextSessionListRequestId = 0
 let nextAgentRequestId = 0
 let nextProviderRequestId = 0
@@ -172,9 +178,6 @@ function clearSessionCatalogState(instanceId: string): void {
   }
   for (const key of messagePageRequests.keys()) {
     if (key.startsWith(prefix)) messagePageRequests.delete(key)
-  }
-  for (const key of messageRefreshChains.keys()) {
-    if (key.startsWith(prefix)) messageRefreshChains.delete(key)
   }
 }
 
@@ -1136,70 +1139,117 @@ async function loadProviders(instanceId: string, location: LocationRef): Promise
   }
 }
 
+function currentMessageWindow(instanceId: string, sessionId: string): MessageWindowState {
+  const store = messageStoreBus.getOrCreate(instanceId)
+  return store.getMessageWindow(sessionId) ?? windowFromSnapshot(store.getScrollSnapshot(sessionId, MESSAGE_STREAM_SCOPE))
+}
+
+function planMessageWindowLoad(
+  current: MessageWindowState,
+  intent: MessageWindowIntent,
+): { cursor?: string; order?: "asc" | "desc"; next: MessageWindowState } | null {
+  if (intent === "older") return planOlderWindow(current)
+  if (intent === "newer") return planNewerWindow(current)
+  if (intent === "latest") return { next: emptyLatestWindow() }
+  if (intent === "oldest") {
+    if (!current.olderCursor) return null
+    return { order: "asc", next: { kind: "history", newerCursors: [null] } }
+  }
+  return {
+    cursor: current.kind === "history" ? current.resumeCursor : undefined,
+    next: current.kind === "history" ? { ...current } : emptyLatestWindow(),
+  }
+}
+
+function commitMessageWindow(
+  instanceId: string,
+  sessionId: string,
+  window: MessageWindowState,
+) {
+  const store = messageStoreBus.getOrCreate(instanceId)
+  store.setMessageWindow(sessionId, window)
+  const existing = store.getScrollSnapshot(sessionId, MESSAGE_STREAM_SCOPE)
+  store.setScrollSnapshot(sessionId, MESSAGE_STREAM_SCOPE, {
+    scrollTop: existing?.scrollTop ?? 0,
+    atBottom: existing?.atBottom ?? window.kind === "latest",
+    scrollRatio: existing?.scrollRatio,
+    maxScrollTop: existing?.maxScrollTop,
+    anchorKey: existing?.anchorKey,
+    anchorOffset: existing?.anchorOffset,
+    followModeType: existing?.followModeType,
+    ...toWindowSnapshot(window),
+  })
+  const key = messagePageKey(instanceId, sessionId)
+  if (window.olderCursor) messageNextCursors.set(key, window.olderCursor)
+  else messageNextCursors.delete(key)
+}
+
+function markSessionMessagesLoaded(instanceId: string, sessionId: string) {
+  setMessagesLoaded((prev) => {
+    const next = new Map(prev)
+    const loadedSet = next.get(instanceId) || new Set()
+    loadedSet.add(sessionId)
+    next.set(instanceId, loadedSet)
+    return next
+  })
+}
+
 async function loadMessages(
   instanceId: string,
   sessionId: string,
   options?: {
     force?: boolean
+    intent?: MessageWindowIntent
     registerInvalidation?: (invalidate: () => void) => void
     signal?: AbortSignal
   },
 ): Promise<void> {
   const force = options?.force ?? false
+  const intent = options?.intent ?? "open"
+  const store = messageStoreBus.getOrCreate(instanceId)
+  const storedWindow = store.getMessageWindow(sessionId)
+  const currentWindow = storedWindow ?? windowFromSnapshot(store.getScrollSnapshot(sessionId, MESSAGE_STREAM_SCOPE))
+  const planned = planMessageWindowLoad(currentWindow, intent)
+  if (!planned) return
 
   const alreadyLoaded = messagesLoaded().get(instanceId)?.has(sessionId)
-  if (alreadyLoaded && !force) {
-    return
-  }
+  if (alreadyLoaded && !force) return
 
   const previousError = getSessionMessagesLoadError(instanceId, sessionId)
-  if (previousError && !force) {
-    return
-  }
+  if (previousError && !force) return
 
   const isLoading = loading().loadingMessages.get(instanceId)?.has(sessionId)
-  if (isLoading && !force) {
-    return
-  }
+  if (isLoading && !force) return
 
   const instance = instances().get(instanceId)
-  if (!instance || !instance.client) {
-    throw new Error("Instance not ready")
-  }
+  if (!instance || !instance.client) throw new Error("Instance not ready")
 
   const instanceClient = instance.client
   const client = getRootClient(instanceId)
+  const session = sessions().get(instanceId)?.get(sessionId)
+  if (!session) throw new Error("Session not found")
 
-  const instanceSessions = sessions().get(instanceId)
-  const session = instanceSessions?.get(sessionId)
-  if (!session) {
-    throw new Error("Session not found")
-  }
-
-  const key = messagePageKey(instanceId, sessionId)
-  const store = messageStoreBus.getOrCreate(instanceId)
-  const baselineRevisions = new Map(store.getSessionMessageIds(sessionId).flatMap((id) => {
-    const record = store.getMessage(id)
-    return record ? [[id, record.revision] as const] : []
-  }))
   const loadEpoch = advanceMessageLoadEpoch(instanceId, sessionId)
-  const isCurrent = () => instances().get(instanceId)?.client === instanceClient
+  const isCurrentLoad = () => instances().get(instanceId)?.client === instanceClient
     && isCurrentMessageLoad(instanceId, sessionId, loadEpoch)
     && sessions().get(instanceId)?.has(sessionId)
+  const isCurrent = () => isCurrentLoad() && store.getMessageWindow(sessionId) === storedWindow
   options?.registerInvalidation?.(() => {
     if (isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) invalidateSessionMessageLoad(instanceId, sessionId)
   })
   const messageRevision = store.getSessionRevision(sessionId)
   let retryAfterRevisionConflict = false
-  let snapshotCommitted = false
+  const showLoading = intent === "open" || intent === "latest"
 
-  setLoading((prev) => {
-    const next = { ...prev }
-    const loadingSet = next.loadingMessages.get(instanceId) || new Set()
-    loadingSet.add(sessionId)
-    next.loadingMessages.set(instanceId, loadingSet)
-    return next
-  })
+  if (showLoading) {
+    setLoading((prev) => {
+      const next = { ...prev }
+      const loadingSet = next.loadingMessages.get(instanceId) || new Set()
+      loadingSet.add(sessionId)
+      next.loadingMessages.set(instanceId, loadingSet)
+      return next
+    })
+  }
   setSessionMessagesLoadError(instanceId, sessionId, null)
 
   try {
@@ -1207,43 +1257,32 @@ async function loadMessages(
     const response: SessionMessagesResponse = await client.message.list({
       sessionID: sessionId,
       limit: 200,
-      order: "desc",
+      ...(planned.cursor ? { cursor: planned.cursor } : { order: planned.order ?? "desc" }),
     }, options?.signal ? { signal: options.signal } : undefined)
-    const apiMessages = [...response.data].reverse()
-
-    if (!isCurrent()) return
-
-    if (!Array.isArray(apiMessages)) {
-      return
+    const nextCursor = response.cursor?.next ?? undefined
+    if (planned.cursor && nextCursor === planned.cursor) {
+      throw new Error("Repeated message cursor")
     }
+    if (!isCurrent()) return
 
     const latestSession = sessions().get(instanceId)?.get(sessionId)
     if (latestSession?.runtimeStatusKnown && latestSession.status === "idle") {
-      messageStoreBus.getOrCreate(instanceId).retirePendingSends(sessionId)
+      store.retirePendingSends(sessionId)
     }
 
-    setSessionMessagesLoadError(instanceId, sessionId, null)
-
+    const nextWindow = intent === "oldest"
+      ? { ...planned.next, olderCursor: undefined }
+      : withOlderCursor(planned.next, nextCursor)
+    const apiMessages = planned.order === "asc" ? [...response.data] : [...response.data].reverse()
     if (apiMessages.length === 0) {
-      if (messageStoreBus.getOrCreate(instanceId).getSessionRevision(sessionId) !== messageRevision) {
+      if (intent === "open" && planned.cursor) {
+        retryAfterRevisionConflict = true
+      } else if (store.getSessionRevision(sessionId) !== messageRevision) {
         retryAfterRevisionConflict = true
       } else {
-        // An empty terminal page is authoritative. A page with a continuation
-        // is only an empty latest window and cannot delete older local history.
-        if (!response.cursor?.next) {
-          store.reconcileEmptyAuthoritativeSnapshot(sessionId)
-        }
-        snapshotCommitted = true
-        setMessagesLoaded((prev) => {
-          const next = new Map(prev)
-          const loadedSet = next.get(instanceId) || new Set()
-          loadedSet.add(sessionId)
-          next.set(instanceId, loadedSet)
-          return next
-        })
-        const nextCursor = response.cursor?.next ?? undefined
-        if (nextCursor) messageNextCursors.set(messagePageKey(instanceId, sessionId), nextCursor)
-        else messageNextCursors.delete(messagePageKey(instanceId, sessionId))
+        store.reconcileEmptyAuthoritativeSnapshot(sessionId)
+        commitMessageWindow(instanceId, sessionId, nextWindow)
+        markSessionMessagesLoaded(instanceId, sessionId)
       }
     } else {
       const seenMessageIds = new Set<string>()
@@ -1264,17 +1303,13 @@ async function loadMessages(
       let agentName = ""
       let providerID = ""
       let modelID = ""
-
       for (let i = authoritativeApiMessages.length - 1; i >= 0; i--) {
-        const apiMessage = authoritativeApiMessages[i]
-        const info = messagesInfo.get(apiMessage.id)
-
-        if (info?.role === "assistant") {
-          agentName = info.mode || info.agent || ""
-          providerID = info.providerID || ""
-          modelID = info.modelID || ""
-          if (agentName && providerID && modelID) break
-        }
+        const info = messagesInfo.get(authoritativeApiMessages[i].id)
+        if (info?.role !== "assistant") continue
+        agentName = info.mode || info.agent || ""
+        providerID = info.providerID || ""
+        modelID = info.modelID || ""
+        if (agentName && providerID && modelID) break
       }
 
       if (!agentName && !providerID && !modelID) {
@@ -1305,57 +1340,24 @@ async function loadMessages(
         id: sessionId, title: session?.title, parentId: session?.parentId ?? null, revert: session?.revert,
       }
       if (!isCurrent()) return
-      if (!seedSessionMessagesV2(
-        instanceId,
-        sessionForV2,
-        messages,
-        messagesInfo,
-        messageRevision,
-        Boolean(response.cursor?.next),
-      )) {
+      const expectedRevision = intent === "open" ? messageRevision : undefined
+      if (!seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, expectedRevision, false)) {
         retryAfterRevisionConflict = true
       } else {
-        snapshotCommitted = true
-        setMessagesLoaded((prev) => {
-          const next = new Map(prev)
-          const loadedSet = next.get(instanceId) || new Set()
-          loadedSet.add(sessionId)
-          next.set(instanceId, loadedSet)
-          return next
-        })
-        const nextCursor = response.cursor?.next ?? undefined
-        if (nextCursor) messageNextCursors.set(messagePageKey(instanceId, sessionId), nextCursor)
-        else messageNextCursors.delete(messagePageKey(instanceId, sessionId))
+        commitMessageWindow(instanceId, sessionId, nextWindow)
+        markSessionMessagesLoaded(instanceId, sessionId)
         reconcilePendingPermissionsV2(instanceId, sessionId)
       }
     }
-
-    if (snapshotCommitted && isCurrent()) {
-      const nextCursor = response.cursor?.next ?? undefined
-      if (nextCursor) {
-        messageNextCursors.set(key, nextCursor)
-        messageRefreshChains.set(key, {
-          client: instanceClient,
-          loadEpoch,
-          authoritativeIds: new Set(response.data.map((message) => message.id)),
-          baselineRevisions,
-        })
-      } else {
-        messageNextCursors.delete(key)
-        messageRefreshChains.delete(key)
-      }
-    }
-  
-
-
   } catch (error) {
     log.error("Failed to load messages:", error)
-    if (isCurrent()) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (isCurrent() && !message.includes("Stale read from")) {
       setSessionMessagesLoadError(instanceId, sessionId, getOpencodeErrorMessage(error, tGlobal("messageSection.loadError.detail")))
     }
     throw error
   } finally {
-    if (isCurrent()) {
+    if (showLoading && isCurrentLoad()) {
       setLoading((prev) => {
         const next = { ...prev }
         const loadingSet = next.loadingMessages.get(instanceId)
@@ -1370,6 +1372,7 @@ async function loadMessages(
     if (!isCurrent()) return
     return loadMessages(instanceId, sessionId, {
       force: true,
+      intent: intent === "open" && planned.cursor ? "latest" : intent,
       registerInvalidation: options?.registerInvalidation,
       signal: options?.signal,
     })
@@ -1379,105 +1382,57 @@ async function loadMessages(
   updateSessionInfo(instanceId, sessionId)
 }
 
-async function loadMoreMessages(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<void> {
-  const key = messagePageKey(instanceId, sessionId)
+function enqueueMessageWindowLoad(
+  instanceId: string,
+  sessionId: string,
+  intent: Exclude<MessageWindowIntent, "open">,
+  signal?: AbortSignal,
+): Promise<void> {
+  const key = `${messagePageKey(instanceId, sessionId)}\0${intent}`
   const pending = messagePageRequests.get(key)
   if (pending) return pending
-  const request = loadNextMessagePage(instanceId, sessionId, signal).finally(() => {
-    if (messagePageRequests.get(key) === request) messagePageRequests.delete(key)
-  })
+  let request!: Promise<void>
+  request = loadMessages(instanceId, sessionId, { force: true, intent, signal }).then(
+    () => { if (messagePageRequests.get(key) === request) messagePageRequests.delete(key) },
+    (error) => {
+      if (messagePageRequests.get(key) === request) messagePageRequests.delete(key)
+      throw error
+    },
+  )
   messagePageRequests.set(key, request)
   return request
 }
 
+function loadMoreMessages(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<void> {
+  return enqueueMessageWindowLoad(instanceId, sessionId, "older", signal)
+}
+
+function loadOlderMessageWindow(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<void> {
+  return enqueueMessageWindowLoad(instanceId, sessionId, "older", signal)
+}
+
+function loadNewerMessageWindow(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<void> {
+  return enqueueMessageWindowLoad(instanceId, sessionId, "newer", signal)
+}
+
+function loadLatestMessageWindow(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<void> {
+  return enqueueMessageWindowLoad(instanceId, sessionId, "latest", signal)
+}
+
+function loadOldestMessageWindow(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<void> {
+  return enqueueMessageWindowLoad(instanceId, sessionId, "oldest", signal)
+}
+
 function hasMoreMessages(instanceId: string, sessionId: string): boolean {
-  return messageNextCursors.has(messagePageKey(instanceId, sessionId))
+  return Boolean(currentMessageWindow(instanceId, sessionId).olderCursor)
 }
 
 function getMessageNextCursor(instanceId: string, sessionId: string): string | undefined {
-  return messageNextCursors.get(messagePageKey(instanceId, sessionId))
+  return currentMessageWindow(instanceId, sessionId).olderCursor
 }
 
-async function loadNextMessagePage(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<void> {
-  const key = messagePageKey(instanceId, sessionId)
-  const cursor = messageNextCursors.get(key)
-  if (!cursor) return
-  const instance = instances().get(instanceId)
-  const session = sessions().get(instanceId)?.get(sessionId)
-  if (!instance?.client) throw new Error("Instance not ready")
-  if (!session) throw new Error("Session not found")
-
-  const instanceClient = instance.client
-  const refreshChain = messageRefreshChains.get(key)
-  const loadEpoch = advanceMessageLoadEpoch(instanceId, sessionId)
-  if (refreshChain) refreshChain.loadEpoch = loadEpoch
-
-  const response = await getRootClient(instanceId).message.list({
-    sessionID: sessionId,
-    limit: 200,
-    cursor,
-  }, signal ? { signal } : undefined)
-  if (instances().get(instanceId)?.client !== instanceClient
-    || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch)
-    || !sessions().get(instanceId)?.has(sessionId)
-    || messageNextCursors.get(key) !== cursor
-    || (refreshChain && (messageRefreshChains.get(key) !== refreshChain
-      || refreshChain.client !== instanceClient
-      || refreshChain.loadEpoch !== loadEpoch))) return
-
-  const store = messageStoreBus.getOrCreate(instanceId)
-  const existingIds = store.getSessionMessageIds(sessionId)
-  const existing = new Set(existingIds)
-  const olderIds: string[] = []
-  for (const apiMessage of [...response.data].reverse()) {
-    const normalized = normalizeSessionMessage(sessionId, apiMessage)
-    refreshChain?.authoritativeIds.add(normalized.message.id)
-    if (existing.has(normalized.message.id)) continue
-    existing.add(normalized.message.id)
-    olderIds.push(normalized.message.id)
-    store.upsertMessage({
-      id: normalized.message.id,
-      sessionId,
-      role: normalized.message.type,
-      status: normalized.message.status,
-      createdAt: normalized.message.timestamp,
-      updatedAt: normalized.message.timestamp,
-      parts: normalized.message.parts,
-      isEphemeral: normalized.message.status === "sending"
-        || (normalized.message.type === "assistant" && normalized.message.status === "streaming"),
-    })
-    store.setMessageInfo(normalized.info.id, normalized.info)
-  }
-  if (olderIds.length > 0) {
-    store.addOrUpdateSession({
-      id: sessionId,
-      title: session.title,
-      parentId: session.parentId,
-      revert: session.revert,
-      messageIds: [...olderIds, ...existingIds],
-    })
-    store.rebuildUsage(sessionId, store.getSessionMessageIds(sessionId)
-      .map((id) => store.getMessageInfo(id))
-      .filter((info): info is NonNullable<typeof info> => Boolean(info)))
-  }
-  const nextCursor = response.cursor?.next ?? undefined
-  if (nextCursor) messageNextCursors.set(key, nextCursor)
-  else {
-    messageNextCursors.delete(key)
-    if (refreshChain && messageRefreshChains.get(key) === refreshChain) {
-      store.reconcileAuthoritativeMessageIds(sessionId, refreshChain.authoritativeIds, refreshChain.baselineRevisions)
-      messageRefreshChains.delete(key)
-    }
-  }
-  setMessagesLoaded((prev) => {
-    const next = new Map(prev)
-    const loadedSet = next.get(instanceId) || new Set()
-    loadedSet.add(sessionId)
-    next.set(instanceId, loadedSet)
-    return next
-  })
-  reconcilePendingPermissionsV2(instanceId, sessionId)
-  updateSessionInfo(instanceId, sessionId)
+function isLatestMessageWindow(instanceId: string, sessionId: string): boolean {
+  return isLatestWindow(currentMessageWindow(instanceId, sessionId))
 }
 
 export {
@@ -1496,8 +1451,13 @@ export {
   forkSession,
   loadMessages,
   loadMoreMessages,
+  loadOlderMessageWindow,
+  loadNewerMessageWindow,
+  loadLatestMessageWindow,
+  loadOldestMessageWindow,
   hasMoreMessages,
   getMessageNextCursor,
+  isLatestMessageWindow,
   clearSessionListRequestState,
   clearSessionCatalogState,
 }

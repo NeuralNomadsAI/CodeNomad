@@ -227,8 +227,13 @@ export function resolveAutoPinHoldElement(
   return resolved === undefined ? itemWrapper : resolved
 }
 
-export function isSnapshotAutoFollowing(snapshot: { atBottom: boolean; followModeType?: FollowMode["type"] } | null | undefined) {
+export function isSnapshotAutoFollowing(snapshot: {
+  atBottom: boolean
+  followModeType?: FollowMode["type"]
+  windowIsLatest?: boolean
+} | null | undefined) {
   if (!snapshot) return true
+  if (snapshot.windowIsLatest === false) return false
   return snapshot.atBottom && snapshot.followModeType !== "escaped"
 }
 

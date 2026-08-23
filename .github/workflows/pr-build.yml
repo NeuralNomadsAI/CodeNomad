@@ -105,6 +105,7 @@ jobs:
         run: >-
           node --import tsx --test
           packages/ui/src/components/browser-frame-security.test.ts
+          packages/ui/src/components/message-history-pagination.test.ts
           packages/ui/src/components/message-timeline-v2.test.ts
           packages/ui/src/components/provider-auth/provider-options.test.ts
           packages/ui/src/components/session/session-bottom-pin-intent.test.ts
@@ -137,6 +138,7 @@ jobs:
           packages/ui/src/stores/message-v2/instance-store.test.ts
           packages/ui/src/stores/message-v2/message-hydration-authority.test.ts
           packages/ui/src/stores/message-v2/message-status.test.ts
+          packages/ui/src/stores/message-v2/message-window.test.ts
           packages/ui/src/stores/message-v2/normalizers.test.ts
           packages/ui/src/stores/shell-store.test.ts
           packages/ui/src/stores/session-generation-recovery.test.ts

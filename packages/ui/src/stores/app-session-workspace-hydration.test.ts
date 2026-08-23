@@ -47,9 +47,10 @@ it("restores the selected draft before inactive session hydration settles", asyn
       activeSessionId: "active",
       drafts: { active: "active draft", inactive: "inactive draft" },
       attachments: {},
-      scrollSnapshots: {},
-      unseenIdleSince: {},
-      generationRecovery: {},
+      scrollSnapshots: { stale: { scrollTop: 10, maxScrollTop: 50, atBottom: false, updatedAt: 1 } },
+      unseenIdleSince: { stale: 1 },
+      generationRecovery: { stale: "interrupted" },
+      expandedSessionIds: ["stale"],
     }, controller.signal, () => true).then((value) => { settled = true; return value })
 
     await new Promise<void>((resolve) => setImmediate(resolve))
@@ -58,7 +59,7 @@ it("restores the selected draft before inactive session hydration settles", asyn
     assert.equal(getSessionDraftPrompt(instanceId, "inactive"), "")
 
     inactive.resolve(apiSession("inactive"))
-    assert.deepEqual(await hydration, new Set())
+    assert.deepEqual(await hydration, new Set(["stale"]))
     assert.equal(getSessionDraftPrompt(instanceId, "inactive"), "inactive draft")
     assert.equal(signals.length, 2)
     assert.equal(signals.every((signal) => signal === controller.signal), true)

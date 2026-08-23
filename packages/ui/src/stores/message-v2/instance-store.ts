@@ -29,6 +29,7 @@ import type {
   SessionUsageState,
   UsageEntry,
 } from "./types"
+import type { MessageWindowState } from "./message-window"
 
 const storeLog = getLogger("session")
 
@@ -245,6 +246,8 @@ export interface InstanceMessageStore {
   setScrollSnapshot: (sessionId: string, scope: string, snapshot: Omit<ScrollSnapshot, "updatedAt">) => void
   restoreScrollSnapshot: (sessionId: string, scope: string, snapshot: ScrollSnapshot) => void
   getScrollSnapshot: (sessionId: string, scope: string) => ScrollSnapshot | undefined
+  setMessageWindow: (sessionId: string, window: MessageWindowState) => void
+  getMessageWindow: (sessionId: string) => MessageWindowState | undefined
   getSessionRevision: (sessionId: string) => number
   getSessionMessageIds: (sessionId: string) => string[]
   getLastAssistantMessageId: (sessionId: string) => string | undefined
@@ -1514,6 +1517,15 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return state.scrollState[key]
   }
 
+  function setMessageWindow(sessionId: string, window: MessageWindowState) {
+    ensureSessionEntry(sessionId)
+    setState("sessions", sessionId, "messageWindow", window)
+  }
+
+  function getMessageWindow(sessionId: string) {
+    return state.sessions[sessionId]?.messageWindow
+  }
+
   function clearSession(sessionId: string, options?: { preserveScroll?: boolean; notify?: boolean }) {
     if (!sessionId) return
 
@@ -1657,6 +1669,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       setScrollSnapshot,
       restoreScrollSnapshot,
       getScrollSnapshot,
+      setMessageWindow,
+      getMessageWindow,
       getSessionRevision: getSessionRevisionValue,
       getSessionMessageIds: (sessionId: string) => state.sessions[sessionId]?.messageIds ?? [],
       getLastAssistantMessageId: getLastAssistantMessageIdValue,
