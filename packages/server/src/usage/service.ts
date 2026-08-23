@@ -4,10 +4,11 @@ import { googleProviders } from "./providers/google"
 import { miniMaxProviders } from "./providers/minimax"
 import { oauthProviders } from "./providers/oauth"
 import { specialProviders } from "./providers/special"
+import { xaiProviders } from "./providers/xai"
 import type { ProviderResult, UsageProvider } from "./types"
 
 const CACHE_TTL_MS = 60_000
-const providers = [...oauthProviders, ...apiKeyProviders, ...miniMaxProviders, ...googleProviders, ...specialProviders]
+const providers = [...oauthProviders, ...apiKeyProviders, ...miniMaxProviders, ...googleProviders, ...specialProviders, ...xaiProviders]
 const registry = new Map<string, UsageProvider>()
 
 for (const provider of providers) {
@@ -47,7 +48,7 @@ async function fetchProvider(provider: UsageProvider): Promise<ProviderResult> {
   const inFlight = pending.get(provider.id)
   if (inFlight) return inFlight
   const request = provider.fetchQuota().then((result) => {
-    cache.set(provider.id, { result, expiresAt: Date.now() + CACHE_TTL_MS })
+    if (result.ok) cache.set(provider.id, { result, expiresAt: Date.now() + CACHE_TTL_MS })
     return result
   }).finally(() => pending.delete(provider.id))
   pending.set(provider.id, request)

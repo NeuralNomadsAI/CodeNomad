@@ -7,6 +7,7 @@ import type { ProviderResult } from "./types"
 const providerIds = [
   "codex",
   "github-copilot",
+  "xai",
   "google",
   "kimi-for-coding",
   "nano-gpt",
@@ -30,6 +31,7 @@ test("registers every supported usage provider", () => {
 test("maps OpenCode provider aliases to their usage provider", () => {
   assert.equal(resolveUsageProvider("openai")?.id, "codex")
   assert.equal(resolveUsageProvider("copilot")?.id, "github-copilot")
+  assert.equal(resolveUsageProvider("grok")?.id, "xai")
   assert.equal(resolveUsageProvider("gemini")?.id, "google")
   assert.equal(resolveUsageProvider("opencode")?.id, "opencode-go")
 })

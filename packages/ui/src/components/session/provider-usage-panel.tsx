@@ -76,6 +76,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
       daily: "daily",
       monthly: "monthly",
       credits: "credits",
+      credits_balance: "credits",
       billing_cycle: "billingCycle",
       session: "session",
       premium: "premium",

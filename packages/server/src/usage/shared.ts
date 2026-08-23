@@ -21,16 +21,34 @@ function authFileCandidates(): string[] {
   return Array.from(new Set(candidates.filter((candidate): candidate is string => Boolean(candidate))))
 }
 
-export function readOpenCodeAuth(): AuthFile {
-  for (const candidate of authFileCandidates()) {
+function readAuthCandidate(): { auth: AuthFile; file: string } | null {
+  for (const file of authFileCandidates()) {
     try {
-      const parsed: unknown = JSON.parse(fs.readFileSync(candidate, "utf8"))
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as AuthFile
+      const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"))
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return { auth: parsed as AuthFile, file }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") continue
     }
   }
-  return {}
+  return null
+}
+
+export function readOpenCodeAuth(): AuthFile {
+  return readAuthCandidate()?.auth ?? {}
+}
+
+export function writeOpenCodeAuthEntry(providerId: string, entry: AuthEntry): void {
+  const current = readAuthCandidate()
+  const file = current?.file ?? authFileCandidates()[0]
+  if (!file) throw new Error("OpenCode auth file is unavailable")
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 })
+  const temporary = `${file}.${process.pid}.${Date.now()}.tmp`
+  try {
+    fs.writeFileSync(temporary, JSON.stringify({ ...(current?.auth ?? {}), [providerId]: entry }, null, 2), { mode: 0o600 })
+    fs.renameSync(temporary, file)
+  } finally {
+    try { fs.rmSync(temporary, { force: true }) } catch { /* best effort */ }
+  }
 }
 
 export function getAuthEntry(aliases: readonly string[]): AuthEntry | null {
@@ -55,6 +73,25 @@ export function getCredential(aliases: readonly string[], fields: readonly strin
     if (value) return value
   }
   return null
+}
+
+export function decodeJwtClaims(token: string): Record<string, any> | null {
+  try {
+    const payload = token.split(".")[1]
+    return payload ? JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) : null
+  } catch {
+    return null
+  }
+}
+
+export function oauthTokenNeedsRefresh(entry: AuthEntry, skewMs = 120_000): boolean {
+  const access = getString(entry.access)
+  if (!access) return true
+  const deadline = Date.now() + skewMs
+  const storedExpiry = Number(entry.expires)
+  if (Number.isFinite(storedExpiry) && storedExpiry <= deadline) return true
+  const jwtExpiry = Number(decodeJwtClaims(access)?.exp) * 1000
+  return Number.isFinite(jwtExpiry) && jwtExpiry <= deadline
 }
 
 export function asObject(value: unknown): Record<string, any> | null {
