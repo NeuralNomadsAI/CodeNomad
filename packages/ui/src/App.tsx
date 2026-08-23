@@ -45,6 +45,7 @@ import {
   disconnectedInstance,
   acknowledgeDisconnectedInstance,
   reconcilePendingSessionIndicators,
+  reconcilePendingRequestLiveness,
   refreshVolatileInstanceState,
   syncPendingRequests,
 } from "./stores/instances"
@@ -269,7 +270,15 @@ const App: Component = () => {
     updateInstanceTabBarHeight()
     const handleResize = () => updateInstanceTabBarHeight()
     window.addEventListener("resize", handleResize)
-    onCleanup(() => window.removeEventListener("resize", handleResize))
+    const livenessTimer = window.setInterval(() => {
+      for (const instance of instances().values()) {
+        if (instance.status === "ready" && instance.client) void reconcilePendingRequestLiveness(instance.id)
+      }
+    }, 30_000)
+    onCleanup(() => {
+      window.removeEventListener("resize", handleResize)
+      window.clearInterval(livenessTimer)
+    })
   })
 
   createEffect(() => {

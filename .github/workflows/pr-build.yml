@@ -132,6 +132,7 @@ jobs:
           packages/ui/src/stores/client-state-codec.test.ts
           packages/ui/src/stores/client-state-partitions.test.ts
           packages/ui/src/stores/client-state.test.ts
+          packages/ui/src/stores/form-settlements.test.ts
           packages/ui/src/stores/message-prompt-display.test.ts
           packages/ui/src/stores/message-v2/instance-store.test.ts
           packages/ui/src/stores/message-v2/message-hydration-authority.test.ts

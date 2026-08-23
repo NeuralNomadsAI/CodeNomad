@@ -52,6 +52,7 @@ import {
   markPermissionReplied,
   pruneRepliedPermissions,
 } from "./permission-replies"
+import { clearSettledForms, hasSettledForm, markFormSettled, pruneSettledForms } from "./form-settlements"
 import {
   clearPermissionAutoAcceptForInstance,
   isPermissionAutoAcceptEnabled,
@@ -494,6 +495,14 @@ function releaseInstanceResources(instanceId: string) {
   sseManager.seedStatus(instanceId, "disconnected")
 }
 
+function getPendingRequestLocations(instanceId: string, rootDirectory?: string) {
+  return buildV2RequestLocations(rootDirectory, [
+    getActiveCatalogLocation(instanceId),
+    ...Array.from(sessions().get(instanceId)?.values() ?? []).map((session) => session.location),
+    ...getFormQueue(instanceId).flatMap((form) => form.location ? [form.location] : []),
+  ])
+}
+
 async function syncPendingPermissions(
   instanceId: string,
   propagateErrors = false,
@@ -506,7 +515,7 @@ async function syncPendingPermissions(
   try {
     const syncStartedAt = Date.now()
     const remote: PermissionRequest[] = []
-    for (const location of buildV2RequestLocations(instance.folder, getWorktrees(instanceId))) {
+    for (const location of getPendingRequestLocations(instanceId, instance.folder)) {
       const response = await instance.client.permission.request.list({ location })
       log.info("permission.request.list", { instanceId, location, resolvedLocation: response.location })
       remote.push(...response.data)
@@ -553,8 +562,9 @@ async function syncPendingForms(
   const mutationEpoch = pendingFormMutationEpochs.get(instanceId) ?? 0
 
   try {
+    const syncStartedAt = Date.now()
     const remote: FormWithLocation[] = []
-    for (const location of buildV2RequestLocations(instance.folder, getWorktrees(instanceId))) {
+    for (const location of getPendingRequestLocations(instanceId, instance.folder)) {
       const response = await instance.client.form.request.list({ location })
       remote.push(...response.data.map((form) => form.sessionID === "global"
         ? { ...form, location: response.location }
@@ -564,7 +574,9 @@ async function syncPendingForms(
       if (propagateErrors) throw pendingRequestSyncSuperseded
       return
     }
-    replacePendingForms(instanceId, remote)
+    const remotePendingIds = new Set(remote.map((form) => form.id))
+    pruneSettledForms(instanceId, remotePendingIds, syncStartedAt)
+    replacePendingForms(instanceId, remote.filter((form) => !hasSettledForm(instanceId, form.id)))
     reconcilePendingSessionIndicators(instanceId)
   } catch (error) {
     log.warn("Failed to sync pending forms", { instanceId, error })
@@ -626,6 +638,24 @@ function syncPendingRequests(
     pendingRequestSyncs.delete(instanceId)
   })
   return promise
+}
+
+function schedulePendingRequestReconciliation(instanceId: string): void {
+  const current = pendingRequestSyncs.get(instanceId)
+  if (current) current.token.cancelled = true
+  pendingRequestSyncs.delete(instanceId)
+  invalidatePendingRequestSync(instanceId)
+  void syncPendingRequests(instanceId).catch((error) => {
+    log.warn("Failed to reconcile pending requests after an ambiguous mutation", { instanceId, error })
+  })
+}
+
+async function reconcilePendingRequestLiveness(instanceId: string): Promise<void> {
+  const instanceSessions = sessions().get(instanceId)
+  const hasRunningSession = Array.from(instanceSessions?.values() ?? []).some((session) => session.status === "working" || session.status === "compacting")
+  if (!hasRunningSession && getPermissionQueue(instanceId).length === 0 && getFormQueue(instanceId).length === 0) return
+  await Promise.all([fetchSessions(instanceId, { reset: true }), syncPendingRequests(instanceId)])
+  reconcilePendingSessionIndicators(instanceId)
 }
 
 function startInstanceSessionHydration(instanceId: string, force = false): {
@@ -1066,6 +1096,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   clearCommands(id)
   clearPermissionQueue(id)
   clearRepliedPermissions(id)
+  clearSettledForms(id)
   clearPendingFormQueue(id)
   clearInstanceMetadata(id)
   clearPermissionAutoAcceptForInstance(id)
@@ -1633,6 +1664,7 @@ async function sendPermissionResponse(
     removePermissionV2(instanceId, requestId)
   } catch (error) {
     log.error("Failed to send permission response", error)
+    schedulePendingRequestReconciliation(instanceId)
     throw error
   }
 }
@@ -1641,11 +1673,17 @@ async function sendFormReply(instanceId: string, formId: string, answer: FormAns
   const form = getFormQueue(instanceId).find((item) => item.id === formId)
   if (!form) throw new Error(`Form request not found: ${formId}`)
   bumpEpoch(pendingFormMutationEpochs, instanceId)
-  await getRootClient(instanceId).form.reply(
-    { sessionID: form.sessionID, formID: form.id, answer },
-    formRequestOptions(form),
-  )
-  removePendingForm(instanceId, form.id)
+  try {
+    await getRootClient(instanceId).form.reply(
+      { sessionID: form.sessionID, formID: form.id, answer },
+      formRequestOptions(form),
+    )
+    markFormSettled(instanceId, form.id)
+    removePendingForm(instanceId, form.id)
+  } catch (error) {
+    schedulePendingRequestReconciliation(instanceId)
+    throw error
+  }
 }
 
 let pendingFormAddedHandler: ((instanceId: string, form: FormWithLocation) => void) | undefined
@@ -1703,11 +1741,17 @@ async function sendFormCancel(instanceId: string, formId: string): Promise<void>
   const form = getFormQueue(instanceId).find((item) => item.id === formId)
   if (!form) throw new Error(`Form request not found: ${formId}`)
   bumpEpoch(pendingFormMutationEpochs, instanceId)
-  await getRootClient(instanceId).form.cancel(
-    { sessionID: form.sessionID, formID: form.id },
-    formRequestOptions(form),
-  )
-  removePendingForm(instanceId, form.id)
+  try {
+    await getRootClient(instanceId).form.cancel(
+      { sessionID: form.sessionID, formID: form.id },
+      formRequestOptions(form),
+    )
+    markFormSettled(instanceId, form.id)
+    removePendingForm(instanceId, form.id)
+  } catch (error) {
+    schedulePendingRequestReconciliation(instanceId)
+    throw error
+  }
 }
 
 function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNullable<typeof sseManager.onInvalidation>>[1]): void {
@@ -1741,8 +1785,13 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
   }
   if (sessionId && event.type.startsWith("form.")) {
     const remote = data.session.form.list(sessionId, sessionId === "global" ? event.location : undefined) ?? []
-    for (const form of remote) addPendingForm(instanceId, form)
-    if (event.type === "form.replied" || event.type === "form.cancelled") removePendingForm(instanceId, event.data.id)
+    for (const form of remote) {
+      if (!hasSettledForm(instanceId, form.id)) addPendingForm(instanceId, form)
+    }
+    if (event.type === "form.replied" || event.type === "form.cancelled") {
+      markFormSettled(instanceId, event.data.id)
+      removePendingForm(instanceId, event.data.id)
+    }
   }
   const targets = getInstanceRefreshTargets(event.type)
   if (targets.length) void refreshVolatileInstanceState(instanceId, targets)
@@ -1847,6 +1896,7 @@ export {
   acknowledgeDisconnectedInstance,
   disposeInstance,
   reconcilePendingSessionIndicators,
+  reconcilePendingRequestLiveness,
   syncPendingRequests,
   invalidatePendingRequestSync,
   refreshVolatileInstanceState,

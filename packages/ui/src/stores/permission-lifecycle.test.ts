@@ -13,6 +13,7 @@ import {
   updateInstance,
 } from "./instances"
 import { messageStoreBus } from "./message-v2/bus"
+import { setSessions } from "./session-state"
 
 const instanceIds: string[] = []
 const originalCreateClient = sdkManager.createClient
@@ -111,9 +112,19 @@ test("pending request sync uses native global lists with an explicit directory",
     } },
   } as unknown as OpenCodeClient
   addTestInstance("native-pending-api", client)
+  setSessions((previous) => {
+    const next = new Map(previous)
+    next.set("native-pending-api", new Map([["session", {
+      id: "session", location: { directory: "/worktree" },
+    } as any]]))
+    return next
+  })
 
   await syncPendingRequests("native-pending-api")
 
-  assert.deepEqual(locations, [{ directory: "/workspace" }, { directory: "/workspace" }])
+  assert.deepEqual(locations, [
+    { directory: "/workspace" }, { directory: "/workspace" },
+    { directory: "/worktree" }, { directory: "/worktree" },
+  ])
   assert.deepEqual(getPermissionQueue("native-pending-api").map(({ id }) => id), ["permission"])
 })
