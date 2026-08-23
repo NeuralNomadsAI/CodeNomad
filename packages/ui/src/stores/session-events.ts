@@ -8,7 +8,7 @@ import type {
   SessionRevertCleared,
   SessionRevertCommitted,
   SessionRevertStaged,
-  SessionStatus2,
+  SessionStatusUpdated,
   TuiToastShow,
 } from "@opencode-ai/client"
 import { getLogger } from "../lib/logger"
@@ -461,7 +461,7 @@ function handleSessionIdle(instanceId: string, event: SessionIdle): void {
   log.info(`[SSE] Session idle: ${sessionId}`)
 }
 
-function handleSessionStatus(instanceId: string, event: SessionStatus2): void {
+function handleSessionStatus(instanceId: string, event: SessionStatusUpdated): void {
   const sessionId = event.data.sessionID
   if (!sessionId) return
 

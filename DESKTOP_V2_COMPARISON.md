@@ -6,7 +6,7 @@ This review compares:
 
 - CodeNomad `DEV-v2` at `f03a17a4`, plus the fixes recorded below.
 - Official OpenCode Desktop V2 from `anomalyco/opencode` branch `upstream/v2` at `cc15c2a488` (2026-08-20).
-- CodeNomad's pinned `@opencode-ai/client` and managed CLI line, `0.0.0-beta-17595`, whose approximate OpenCode source baseline is `ea1ff90e42`.
+- CodeNomad's `@opencode-ai/client` and managed CLI both follow the latest published beta channel.
 
 The official reference is `packages/desktop` for the Electron host, `packages/app` for the shared UI, and the V2 client, protocol, schema, server, and core packages for wire behavior. The old `upstream/opencode-2-0` branch and the intermediate `desktop-v2-*` branches are historical, not the current Desktop V2 reference.
 
@@ -107,13 +107,11 @@ The reviewed Windows release artifacts are not Authenticode-signed, and the macO
 
 This is distribution hardening rather than V2 API parity. Release jobs should fail unless Windows signatures, macOS identity, and notarization validate against the expected publisher.
 
-## Runtime Upgrade
+## Beta Channel Policy
 
-**Priority:** High, but separate from this compatibility patch.
+CodeNomad always installs `@opencode-ai/client` from npm's beta channel rather than targeting a particular beta build. The managed updater resolves the CLI beta channel for status checks and installs that channel directly; startup still accepts another API-compatible CLI after authenticated validation.
 
-CodeNomad remains pinned to `0.0.0-beta-17595`. Current `upstream/v2` includes later runtime fixes that settle unexpected typed plugin/tool failures instead of leaving calls pending and preserve Unicode boundaries during compaction truncation.
-
-The client and managed CLI target should move together only after generated type, proxy route, event, plugin inventory, Forms, session, and real workspace smoke tests pass. The plugin ID guard in this review removes one known upgrade blocker. The current pin remains functional and startup still accepts another API-compatible CLI after authenticated validation.
+Generated types, proxy routes, events, plugin inventory, Forms, sessions, and real workspace behavior must be checked whenever the beta channel advances.
 
 ## Optional Feature Gaps
 

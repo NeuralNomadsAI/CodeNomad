@@ -6,7 +6,7 @@ This branch replaces CodeNomad's OpenCode V1 SDK, custom plugin, and per-workspa
 
 The work grew beyond an SDK swap. It also introduces location-based ownership, native Forms and Shell resources, project-wide session pagination, reconnect reconciliation, bounded virtualized timelines, multi-window desktop state, and a content-addressed restore format.
 
-Server and UI pin `@opencode-ai/client` to `0.0.0-beta-17595`. The selected `opencode2` CLI is managed independently: CodeNomad's updater targets the reviewed client-compatible release, but startup accepts another compatible CLI after authenticated health and API validation instead of enforcing an exact version.
+Server and UI follow the latest published `@opencode-ai/client` beta channel. The selected `opencode2` CLI is managed independently: CodeNomad's updater resolves and installs the latest published CLI beta, while startup accepts another compatible CLI after authenticated health and API validation instead of enforcing an exact version.
 
 The incremental comparison with official OpenCode Desktop V2, including closed findings and remaining gaps, is recorded in [`DESKTOP_V2_COMPARISON.md`](DESKTOP_V2_COMPARISON.md).
 
@@ -123,7 +123,7 @@ The migration deletes rather than maintains these superseded systems:
 - The V1 message/delta buffer and periodic full-history event reload strategy, replaced by native events plus authoritative reconciliation.
 - The duplicate Rust-native Tauri SSE transport, including batching, coalescing, cookie forwarding, pong handling, reconnect code, commands, managed state, and tests.
 - The desktop native-event adapter made unnecessary by the shared browser `EventSource` path.
-- Message/part deletion controls and compatibility companions for operations not offered by the pinned V2 protocol.
+- Message/part deletion controls and compatibility companions for operations not offered by the V2 beta protocol.
 - The server and UI dependency on `@opencode-ai/sdk` and the runtime V1 compatibility path.
 
 ## Validation
@@ -134,6 +134,6 @@ The remaining migration smoke gate is an interactive run against the selected re
 
 ## Review Notes
 
-- The generated V2 client remains experimental. Review its installed declarations and release notes on every dependency upgrade; public `@opencode-ai/sdk` examples are not authoritative for this branch.
+- The generated V2 client remains experimental. Review its installed declarations and release notes whenever the beta channel advances; public `@opencode-ai/sdk` examples are not authoritative for this branch.
 - Upgrade references: [OpenCode releases](https://github.com/anomalyco/opencode/releases), [OpenCode V2 documentation](https://opencode.ai/v2/docs/), and `node_modules/@opencode-ai/client/dist/promise/`.
 - This branch intentionally has no OpenCode V1 fallback or private OpenCode database.

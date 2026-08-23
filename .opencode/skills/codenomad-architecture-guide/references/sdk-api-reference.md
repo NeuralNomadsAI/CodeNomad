@@ -2,14 +2,14 @@
 
 ## Package
 
-CodeNomad keeps the experimental `@opencode-ai/client` protocol aligned in `packages/server/package.json` and `packages/ui/package.json`. The runtime CLI is independently updated and startup validates service health and API compatibility without requiring that exact dependency version. This is distinct from the current public `@opencode-ai/sdk` documentation.
+CodeNomad keeps the experimental `@opencode-ai/client` protocol aligned on the latest published beta channel in `packages/server/package.json` and `packages/ui/package.json`. The runtime CLI is independently updated and startup validates service health and API compatibility. This is distinct from the current public `@opencode-ai/sdk` documentation.
 
 - Promise client: `import { OpenCode } from "@opencode-ai/client"`
 - Service authentication headers: `import { Service } from "@opencode-ai/client/service"`
 - Client construction: `OpenCode.make({ baseUrl, headers?, fetch? })`
 - Declarations: `node_modules/@opencode-ai/client/dist/promise/`
 
-Do not import `@opencode-ai/sdk`; its wrapper shapes, `{ data, error }` conventions, and `createOpencodeClient()` do not apply to this pinned experimental protocol build.
+Do not import `@opencode-ai/sdk`; its wrapper shapes, `{ data, error }` conventions, and `createOpencodeClient()` do not apply to the experimental beta protocol.
 
 ## Used Native APIs
 
