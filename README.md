@@ -120,6 +120,28 @@ Add SideCar as:
 
 </details>
 
+<details>
+<summary><strong>Build Remote Agent (phone spectator)</strong></summary>
+
+Pair a phone running [Build Remote Agent](https://grokbuildremote.com/) to this machine. Protocol `gbr/1`. The phone spectates (and can veto); CodeNomad stays the cockpit. Independent product; not affiliated with xAI or SpaceX.
+
+```bash
+curl -fsSL https://grokbuildremote.com/install.sh | bash
+gbr-agent version    # need v0.6.0+
+gbr-agent pair && gbr-agent run
+```
+
+Add SideCar as:
+
+- **Name**: `Build Remote Agent`
+- **Port**: `http://127.0.0.1:8788`
+- **Base path**: `/sidecars/gbr`
+- **Prefix mode**: `Strip prefix`
+
+Bot API after `gbr-agent run`: `http://127.0.0.1:8788/health` and `/v1/sessions`. MCP stdio: `gbr-mcp` from [GrokBuildRemote-Agents](https://github.com/LinespottingOrg/GrokBuildRemote-Agents). Never put mailbox keys in git.
+
+</details>
+
 ---
 
 ## Requirements
