@@ -7,6 +7,7 @@ import type { ProviderResult } from "./types"
 const providerIds = [
   "codex",
   "github-copilot",
+  "github-copilot-addon",
   "xai",
   "google",
   "kimi-for-coding",
@@ -20,6 +21,11 @@ const providerIds = [
   "wafer",
   "opencode-go",
   "cursor",
+  "command-code",
+  "crof",
+  "deepseek",
+  "neuralwatt",
+  "claude",
 ]
 
 test("registers every supported usage provider", () => {
@@ -36,9 +42,9 @@ test("maps OpenCode provider aliases to their usage provider", () => {
   assert.equal(resolveUsageProvider("opencode")?.id, "opencode-go")
 })
 
-test("does not use Claude subscription OAuth credentials", () => {
-  assert.equal(resolveUsageProvider("anthropic"), null)
-  assert.equal(resolveUsageProvider("claude"), null)
+test("exposes Claude via the OpenChamber OAuth plugin", () => {
+  assert.equal(resolveUsageProvider("claude")?.id, "claude")
+  assert.equal(resolveUsageProvider("anthropic")?.id, "claude")
 })
 
 test("selects model-specific windows by normalized model id", () => {
