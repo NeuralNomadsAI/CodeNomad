@@ -403,7 +403,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
           <div class="selector-trigger-label selector-trigger-label--stacked flex-1 min-w-0">
             <Combobox.Input
               ref={searchInputRef}
-              class="selector-search-input selector-trigger-primary selector-trigger-primary--align-left flex-1 min-w-0"
+              class="selector-trigger-primary selector-trigger-primary--align-left flex-1 min-w-0"
               data-model-selector
               value={inputValue()}
               placeholder={currentModelLabel()}
