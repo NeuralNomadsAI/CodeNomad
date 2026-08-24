@@ -184,4 +184,4 @@ jobs:
 
       - name: Test Tauri crate on Windows
         working-directory: packages/tauri-app/src-tauri
-        run: cargo test --locked
+        run: cargo test --locked -- --test-threads=1
