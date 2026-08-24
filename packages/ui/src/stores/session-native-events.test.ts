@@ -10,7 +10,7 @@ import { clearInstanceDeletedSessionAuthority, sessions, setActiveSession, setSe
 const delay = (duration: number) => new Promise<void>((resolve) => setTimeout(resolve, duration))
 
 describe("native session event reducer", () => {
-  it("routes each compaction delta through the SDK reducer exactly once", () => {
+  it("keeps compaction deltas in the reducer without projecting each one", () => {
     const instanceId = "native-compaction-delta"
     const sessionId = "session"
     const client = { session: { active: async () => ({}) } } as any
@@ -30,11 +30,30 @@ describe("native session event reducer", () => {
         data: { sessionID: sessionId, inputID: "compact", reason: "manual", recent: "" },
       } as any)
       handleInstanceInvalidation(instanceId, {
-        id: "delta", type: "session.compaction.delta", created: 2,
-        data: { sessionID: sessionId, text: "chunk" },
+        id: "delta-1", type: "session.compaction.delta", created: 2,
+        data: { sessionID: sessionId, text: "first" },
+      } as any)
+      handleInstanceInvalidation(instanceId, {
+        id: "delta-2", type: "session.compaction.delta", created: 3,
+        data: { sessionID: sessionId, text: "second" },
       } as any)
 
-      assert.equal((messageStoreBus.getOrCreate(instanceId).getMessage("compact")?.parts.compact?.data as any)?.text, "chunk")
+      const store = messageStoreBus.getOrCreate(instanceId)
+      assert.equal((store.getMessage("compact")?.parts.compact?.data as any)?.text, "")
+
+      handleInstanceInvalidation(instanceId, {
+        id: "usage", type: "session.usage.updated", created: 4,
+        data: { sessionID: sessionId, cost: 0, tokens: {} },
+      } as any)
+      assert.equal((store.getMessage("compact")?.parts.compact?.data as any)?.text, "firstsecond")
+
+      handleInstanceInvalidation(instanceId, {
+        id: "ended", type: "session.compaction.ended", created: 5,
+        data: { sessionID: sessionId, reason: "manual", text: "final", recent: "" },
+      } as any)
+
+      assert.equal((store.getMessage("compact")?.parts.compact?.data as any)?.text, "final")
+      assert.equal(store.getMessage("compact")?.status, "complete")
     } finally {
       messageStoreBus.unregisterInstance(instanceId)
       setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })

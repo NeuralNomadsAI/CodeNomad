@@ -1921,6 +1921,7 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
       ? event.data.form.sessionID
       : undefined
   const projectMessages = (data: ReturnType<typeof applyOpenCodeDataEvent>, preserveOmitted = true, force = false) => {
+    if (event.type === "session.compaction.delta" && !force) return
     if (sessionId && (force || event.type.startsWith("session.")) && (
       activeSessionId().get(instanceId) === sessionId
       && isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId))
