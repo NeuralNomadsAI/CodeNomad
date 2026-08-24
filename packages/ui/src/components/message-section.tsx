@@ -1,4 +1,4 @@
-import { Show, createEffect, createMemo, createSignal, onCleanup, on, untrack } from "solid-js"
+import { Show, batch, createEffect, createMemo, createSignal, onCleanup, on, untrack } from "solid-js"
 import { ArrowUpDown, ChevronDown, ChevronUp, Pause, Search, X } from "lucide-solid"
 import Kbd from "./kbd"
 import BrandedEmptyState from "./branded-empty-state"
@@ -21,9 +21,11 @@ import { getMessageSelectionActionPosition } from "../lib/message-selection-posi
 import { buildSessionSearchMatches } from "../lib/session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
 import { resolveThinkingExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
-import { hasMessageSearchAuthority, isMessageHistoryRestoreCurrent, loadPagesUntilAnchor } from "./message-history-pagination"
+import { createSearchLocatorAuthority, hasMessageSearchAuthority, isMessageHistoryRestoreCurrent, loadCompleteMessageHistory, loadPagesUntilAnchor, MESSAGE_HISTORY_TRAVERSAL_PAGE_LIMIT, reconcileResidentSearchMatches } from "./message-history-pagination"
 import { isLatestWindow, toWindowSnapshot } from "../stores/message-v2/message-window"
 import { getLogger } from "../lib/logger"
+import { beginMessageHistoryTraversal, invalidateMessageHistoryTraversal } from "../stores/session-api"
+import { getOpenCodeInstanceGeneration, getOpenCodeMutationRevision } from "../stores/opencode-data"
 
 const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 const QUOTE_SELECTION_MAX_LENGTH = 2000
@@ -134,6 +136,8 @@ export default function MessageSection(props: MessageSectionProps) {
   const [searchRetryGeneration, setSearchRetryGeneration] = createSignal(0)
   const [searchMatches, setSearchMatches] = createSignal<SessionSearchMatch[]>([])
   const [activeSearchIndex, setActiveSearchIndex] = createSignal(0)
+  const searchLocatorAuthority = createSearchLocatorAuthority()
+  let searchGeneration = 0
   let searchInputRef: HTMLInputElement | undefined
 
   const messageIndexById = createMemo(() => {
@@ -546,6 +550,9 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   function closeSearch() {
+    invalidateMessageHistoryTraversal(props.instanceId, props.sessionId)
+    searchLocatorAuthority.reset()
+    searchGeneration += 1
     setIsSearchOpen(false)
     setSearchQuery("")
     setDebouncedSearchQuery("")
@@ -555,6 +562,19 @@ export default function MessageSection(props: MessageSectionProps) {
     setSearchMatches([])
     setActiveSearchIndex(0)
   }
+
+  function updateSearchQuery(query: string) {
+    if (query === searchQuery()) return
+    invalidateMessageHistoryTraversal(props.instanceId, props.sessionId)
+    searchLocatorAuthority.reset()
+    searchGeneration += 1
+    setSearchQuery(query)
+  }
+
+  onCleanup(() => {
+    searchLocatorAuthority.reset()
+    invalidateMessageHistoryTraversal(props.instanceId, props.sessionId)
+  })
 
   function moveSearchMatch(direction: 1 | -1) {
     const count = currentSearchMatches().length
@@ -717,6 +737,11 @@ export default function MessageSection(props: MessageSectionProps) {
     }
   }
 
+  function messageWindowPageKey() {
+    const window = store().getMessageWindow(props.sessionId)
+    return `${window?.kind ?? "latest"}:${window?.resumeCursor ?? ""}:${window?.newerCursors.join("\0") ?? ""}`
+  }
+
   createEffect(() => {
     if (!props.onQuoteSelection) {
       clearQuoteSelection()
@@ -741,10 +766,11 @@ export default function MessageSection(props: MessageSectionProps) {
     onCleanup(() => window.clearTimeout(timeout))
   })
 
-  let searchGeneration = 0
   createEffect(() => {
     const query = debouncedSearchQuery()
     const includeThinking = Boolean(preferences().showThinkingBlocks)
+    const mutationRevision = getOpenCodeMutationRevision(props.instanceId, props.sessionId)
+    const instanceGeneration = getOpenCodeInstanceGeneration(props.instanceId)
     searchRetryGeneration()
     if (!isActive() || query.trim().length < SEARCH_MIN_CHARS) {
       setIsSearchPending(false)
@@ -757,13 +783,24 @@ export default function MessageSection(props: MessageSectionProps) {
     const instanceId = props.instanceId
     const sessionId = props.sessionId
     const generation = ++searchGeneration
+    const endTraversal = beginMessageHistoryTraversal(instanceId, sessionId)
     let frame: number | undefined
     const isCurrentSearch = () => generation === searchGeneration
       && isActive()
+      && isSearchOpen()
       && props.instanceId === instanceId
       && props.sessionId === sessionId
+      && getOpenCodeInstanceGeneration(instanceId) === instanceGeneration
+      && getOpenCodeMutationRevision(instanceId, sessionId) === mutationRevision
       && debouncedSearchQuery() === query
-    Promise.resolve(buildSessionSearchMatches({ store: store(), sessionId, query, includeThinking })).then((matches) => {
+    void loadCompleteMessageHistory({
+      getPageKey: messageWindowPageKey,
+      isCurrent: isCurrentSearch,
+      isLatest: () => isLatestWindow(store().getMessageWindow(sessionId)),
+      loadOldest: props.onLoadOldestMessages ?? (() => Promise.resolve()),
+      loadNewer: props.onLoadNewerMessages ?? (() => Promise.resolve()),
+      visit: () => buildSessionSearchMatches({ store: store(), sessionId, query, includeThinking }),
+    }).then((matches) => {
       if (!matches) {
         if (isCurrentSearch()) setIsSearchPending(false)
         return
@@ -771,10 +808,12 @@ export default function MessageSection(props: MessageSectionProps) {
       if (!isCurrentSearch()) return
       frame = requestAnimationFrame(() => {
         if (!isCurrentSearch()) return
-        setSearchMatches(matches)
-        setSearchedQuery(query)
-        setActiveSearchIndex(0)
-        setIsSearchPending(false)
+        batch(() => {
+          setSearchMatches(matches)
+          setSearchedQuery(query)
+          setActiveSearchIndex(0)
+          setIsSearchPending(false)
+        })
       })
     }).catch((error) => {
       if (!isCurrentSearch()) return
@@ -783,6 +822,7 @@ export default function MessageSection(props: MessageSectionProps) {
       log.error("Failed to load message history for search", { instanceId, sessionId, error })
     })
     onCleanup(() => {
+      endTraversal()
       if (generation === searchGeneration) searchGeneration += 1
       if (frame !== undefined) cancelAnimationFrame(frame)
     })
@@ -790,17 +830,27 @@ export default function MessageSection(props: MessageSectionProps) {
 
   createEffect(() => {
     sessionRevision()
-    const query = debouncedSearchQuery()
+    const query = searchedQuery()
+    if (isSearchPending() || !hasMessageSearchAuthority(searchQuery(), query)) return
     const includeThinking = Boolean(preferences().showThinkingBlocks)
-    if (query.trim().length < SEARCH_MIN_CHARS || isSearchPending() || searchedQuery() !== query) return
+    const currentResidentIds = messageIds()
+    const currentMatches = buildSessionSearchMatches({ store: store(), sessionId: props.sessionId, query, includeThinking })
     const frame = requestAnimationFrame(() => {
-      const matches = buildSessionSearchMatches({
-        store: store(),
-        sessionId: props.sessionId,
-        query,
-        includeThinking,
+      if (isSearchPending() || !hasMessageSearchAuthority(searchQuery(), query)) return
+      const activeId = activeSearchMatch()?.id
+      const next = reconcileResidentSearchMatches({
+        previous: searchMatches(),
+        currentResidentIds,
+        currentMatches,
       })
-      setSearchMatches(matches)
+      const activeIndex = activeId ? next.findIndex((match) => match.id === activeId) : -1
+      const nextActiveIndex = activeIndex >= 0
+        ? activeIndex
+        : Math.min(activeSearchIndex(), Math.max(0, next.length - 1))
+      batch(() => {
+        setSearchMatches(next)
+        setActiveSearchIndex(nextActiveIndex)
+      })
     })
     onCleanup(() => cancelAnimationFrame(frame))
   })
@@ -816,13 +866,38 @@ export default function MessageSection(props: MessageSectionProps) {
     }
   })
 
-  let lastScrolledSearchMatchId: string | null = null
   createEffect(() => {
     const match = activeSearchMatch()
     if (!match || !isSearchOpen()) return
-    if (match.id === lastScrolledSearchMatchId) return
-    lastScrolledSearchMatchId = match.id
-    listApi()?.scrollToKey(match.messageId, { block: "start" })
+    const locatorAuthority = searchLocatorAuthority.claim(match.id)
+    if (!locatorAuthority) return
+    const locate = async () => {
+      const endTraversal = beginMessageHistoryTraversal(props.instanceId, props.sessionId)
+      try {
+      if (!messageIds().includes(match.messageId)) {
+        await props.onLoadOldestMessages?.()
+        await loadPagesUntilAnchor({
+          hasAnchor: () => messageIds().includes(match.messageId),
+          hasMore: () => !isLatestWindow(store().getMessageWindow(props.sessionId)),
+          isCurrent: () => searchLocatorAuthority.isCurrent(locatorAuthority)
+            && activeSearchMatch()?.id === match.id
+            && isSearchOpen(),
+          loadMore: props.onLoadNewerMessages ?? (() => Promise.resolve()),
+          getCursor: messageWindowPageKey,
+          maxPages: MESSAGE_HISTORY_TRAVERSAL_PAGE_LIMIT,
+        })
+      }
+      if (searchLocatorAuthority.isCurrent(locatorAuthority) && activeSearchMatch()?.id === match.id) {
+        listApi()?.scrollToKey(match.messageId, { block: "start" })
+      }
+      } finally {
+        endTraversal()
+        searchLocatorAuthority.reset(locatorAuthority)
+      }
+    }
+    void locate().catch((error) => {
+      if (activeSearchMatch()?.id === match.id) log.error("Failed to locate message search result", { instanceId: props.instanceId, sessionId: props.sessionId, error })
+    })
   })
 
 
@@ -1140,7 +1215,7 @@ export default function MessageSection(props: MessageSectionProps) {
                         onInput={(event) => {
                           setSearchedQuery("")
                           setFailedSearchQuery("")
-                          setSearchQuery(event.currentTarget.value)
+                          updateSearchQuery(event.currentTarget.value)
                         }}
                         onKeyDown={(event) => {
                           if (event.key === "Enter") {

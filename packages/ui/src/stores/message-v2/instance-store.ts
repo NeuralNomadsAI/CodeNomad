@@ -1153,35 +1153,23 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         setState("sessions", sessionId, "messageIds", (ids = []) => ids.filter((id) => id !== messageId))
       })
 
-      setState("messages", (prev) => {
-        if (!prev[messageId]) return prev
-        const next = { ...prev }
-        delete next[messageId]
-        return next
-      })
+      setState("messages", produce((draft) => {
+        delete draft[messageId]
+      }))
 
-      setState("messageInfoVersion", (prev) => {
-        if (!(messageId in prev)) return prev
-        const next = { ...prev }
-        delete next[messageId]
-        return next
-      })
+      setState("messageInfoVersion", produce((draft) => {
+        delete draft[messageId]
+      }))
 
       messageInfoCache.delete(messageId)
 
-      setState("pendingParts", (prev) => {
-        if (!prev[messageId]) return prev
-        const next = { ...prev }
-        delete next[messageId]
-        return next
-      })
+      setState("pendingParts", produce((draft) => {
+        delete draft[messageId]
+      }))
 
-      setState("permissions", "byMessage", (prev) => {
-        if (!prev[messageId]) return prev
-        const next = { ...prev }
-        delete next[messageId]
-        return next
-      })
+      setState("permissions", "byMessage", produce((draft) => {
+        delete draft[messageId]
+      }))
 
       sessionIds.forEach((sessionId) => {
         withUsageState(sessionId, (draft) => removeUsageEntry(draft, messageId))

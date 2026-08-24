@@ -6,7 +6,7 @@ This review compares:
 
 - CodeNomad `DEV-v2` at `f03a17a4`, plus the fixes recorded below.
 - Official OpenCode Desktop V2 from `anomalyco/opencode` branch `upstream/v2` at `cc15c2a488` (2026-08-20).
-- CodeNomad's `@opencode-ai/client` and managed CLI both follow the latest published beta channel.
+- CodeNomad pins one reviewed `@opencode-ai/client` beta build; the managed CLI updater resolves the latest beta and installs that concrete version.
 
 The official reference is `packages/desktop` for the Electron host, `packages/app` for the shared UI, and the V2 client, protocol, schema, server, and core packages for wire behavior. The old `upstream/opencode-2-0` branch and the intermediate `desktop-v2-*` branches are historical, not the current Desktop V2 reference.
 
@@ -109,7 +109,7 @@ This is distribution hardening rather than V2 API parity. Release jobs should fa
 
 ## Beta Channel Policy
 
-CodeNomad always installs `@opencode-ai/client` from npm's beta channel rather than targeting a particular beta build. The managed updater resolves the CLI beta channel for status checks and installs that channel directly; startup still accepts another API-compatible CLI after authenticated validation.
+CodeNomad pins the same reviewed `@opencode-ai/client` beta build in server and UI. The integrity-pinned root workspace lock is authoritative for CI and desktop server packaging; Electron selects npm optional dependencies for the requested OS/CPU target, while Tauri requires a completed root `npm ci --workspaces --include=optional` and never repairs dependencies during prebuild. The managed updater resolves the CLI beta channel for status checks, installs the concrete advertised version, and requires exact post-install version equality; startup still accepts another API-compatible CLI after authenticated validation.
 
 Generated types, proxy routes, events, plugin inventory, Forms, sessions, and real workspace behavior must be checked whenever the beta channel advances.
 

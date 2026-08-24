@@ -14,6 +14,7 @@ import { formRequestOptions, getFormQueue } from "./forms.ts"
 import { getRootClient } from "./opencode-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import { sessions, setSessions } from "./session-state.ts"
+import { hasSettledForm, markFormSettled } from "./form-settlements.ts"
 
 const form = {
   id: "form-1",
@@ -138,6 +139,49 @@ describe("form interruption lifecycle", () => {
         ["session-list-form", undefined],
       ])
     } finally {
+      removeInstance(instanceId)
+    }
+  })
+
+  it("removes a stale form after its session disappears", async () => {
+    const instanceId = "deleted-form-session"
+    const location = { directory: "/worktree" }
+    const client = {
+      permission: { request: { list: async () => ({ location, data: [] }) } },
+      form: { request: { list: async () => ({ location, data: [] }) } },
+    }
+    addInstance({ id: instanceId, folder: "/worktree", status: "ready", client } as any)
+
+    try {
+      addPendingForm(instanceId, form, location.directory)
+      await syncPendingRequests(instanceId)
+      assert.deepEqual(getFormQueue(instanceId), [])
+    } finally {
+      removeInstance(instanceId)
+    }
+  })
+
+  it("preserves form settlement tombstones when one location scan fails", async () => {
+    const instanceId = "partial-form-scan"
+    const worktreeLocation = { directory: "/worktree" }
+    const client = {
+      permission: { request: { list: async ({ location }: { location: unknown }) => ({ location, data: [] }) } },
+      form: { request: { list: async ({ location }: { location: { directory?: string } }) => {
+        if (location.directory === "/workspace") throw new Error("root unavailable")
+        return { location: worktreeLocation, data: [] }
+      } } },
+    }
+    addInstance({ id: instanceId, folder: "/workspace", status: "ready", client } as any)
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([["session", {
+      id: "session", location: worktreeLocation,
+    } as any]])))
+    markFormSettled(instanceId, "answered")
+
+    try {
+      await assert.rejects(syncPendingRequests(instanceId))
+      assert.equal(hasSettledForm(instanceId, "answered"), true)
+    } finally {
+      setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
       removeInstance(instanceId)
     }
   })

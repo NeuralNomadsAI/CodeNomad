@@ -272,7 +272,9 @@ const App: Component = () => {
     window.addEventListener("resize", handleResize)
     const livenessTimer = window.setInterval(() => {
       for (const instance of instances().values()) {
-        if (instance.status === "ready" && instance.client) void reconcilePendingRequestLiveness(instance.id)
+        if (instance.status === "ready" && instance.client) void reconcilePendingRequestLiveness(instance.id).catch((error) => {
+          log.warn("Failed to reconcile pending request liveness", { instanceId: instance.id, error })
+        })
       }
     }, 30_000)
     onCleanup(() => {
@@ -315,14 +317,22 @@ const App: Component = () => {
           let invalidateSessions = () => {}
           let invalidatePendingRequests = () => {}
           return withForegroundRefreshTimeout(
-            Promise.all([
-              fetchSessions(id, {
-                strictStatus: true,
-                registerInvalidation: (invalidate) => { invalidateSessions = invalidate },
-              }),
-              syncPendingRequests(id, (invalidate) => { invalidatePendingRequests = invalidate }),
-              refreshVolatileInstanceState(id),
-            ]),
+            (async () => {
+              let sessionError: unknown
+              try {
+                await fetchSessions(id, {
+                  strictStatus: true,
+                  registerInvalidation: (invalidate) => { invalidateSessions = invalidate },
+                })
+              } catch (error) {
+                sessionError = error
+              }
+              await Promise.all([
+                syncPendingRequests(id, (invalidate) => { invalidatePendingRequests = invalidate }),
+                refreshVolatileInstanceState(id),
+              ])
+              if (sessionError) throw sessionError
+            })(),
             `Foreground refresh for ${id}`,
             () => {
               invalidateSessions()

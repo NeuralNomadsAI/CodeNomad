@@ -50,14 +50,14 @@ function createManager(rootDir: string) {
 }
 
 describe("workspace identity", () => {
-  it("creates separate workspaces for canonical aliases", async () => {
+  it("reuses one workspace for canonical aliases outside the configured root", async () => {
     const { root, target, link } = await createLinkedWorkspace()
     const manager = createManager(root)
     const [first, second] = await Promise.all([manager.create(target), manager.create(link)])
 
-    assert.notEqual(first.workspace.id, second.workspace.id)
+    assert.equal(first.workspace.id, second.workspace.id)
     assert.equal(first.workspace.path, second.workspace.path)
-    assert.equal(first.created && second.created, true)
-    assert.equal(manager.list().length, 2)
+    assert.equal(Number(first.created) + Number(second.created), 1)
+    assert.equal(manager.list().length, 1)
   })
 })

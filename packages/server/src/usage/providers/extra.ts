@@ -2,10 +2,11 @@ import type { ProviderUsage, UsageProvider } from "../types"
 import {
   asObject,
   fetchJson,
-  getAuthEntry,
   getCredential,
+  getOAuthEntry,
   getString,
   notConfigured,
+  oauthTokenNeedsRefresh,
   result,
   safeFetch,
   toNumber,
@@ -102,13 +103,14 @@ const crof: UsageProvider = {
         headers: { Authorization: `Bearer ${key}`, "Accept-Encoding": "identity" },
       })
       const credits = toNumber(payload?.credits)
+      if (credits === null) throw new Error("CrofAI usage response contained no quota data")
       return {
         windows: {
           credits: toUsageWindow({
             usedPercent: null,
             windowSeconds: null,
             resetAt: null,
-            valueLabel: credits !== null ? `$${formatMoney(credits)}` : null,
+            valueLabel: `$${formatMoney(credits)}`,
           }),
         },
       }
@@ -178,7 +180,6 @@ const neuralwatt: UsageProvider = {
       const subscription = payload?.subscription ?? null
       const inOverage = Boolean(subscription?.in_overage)
       const allowance = payload?.key?.allowance ?? null
-      const keyName = payload?.key?.name ?? null
       const creditsRemaining = toNumber(payload?.balance?.credits_remaining_usd)
       const windows: Record<string, ReturnType<typeof toUsageWindow>> = {}
       if (subscription) {
@@ -213,14 +214,12 @@ const neuralwatt: UsageProvider = {
               ? "monthly"
               : period
             : "billing_cycle"
-        const labelName = typeof keyName === "string" && keyName.trim() ? keyName.trim() : null
         const resetAt = toTimestamp(allowance.reset_at)
         const windowSeconds = period ? neuralwattWindowSeconds(period) : null
         windows[periodKey] = toUsageWindow({
           usedPercent,
           windowSeconds,
           resetAt,
-          ...(labelName ? { valueLabel: labelName } : {}),
         })
       } else if (creditsRemaining !== null) {
         windows.credits_balance = toUsageWindow({
@@ -239,6 +238,7 @@ const neuralwatt: UsageProvider = {
 // --- claude ---
 const CLAUDE_DEFAULT_COOLDOWN_MS = 5 * 60 * 1000
 const CLAUDE_MAX_COOLDOWN_MS = 60 * 60 * 1000
+const CLAUDE_REAUTH_ERROR = "Claude session expired. Reconnect the Anthropic integration in OpenCode."
 let claudeCredentialFingerprint: string | null = null
 let claudeCachedUsage: ProviderUsage | null = null
 let claudeCooldownUntil = 0
@@ -267,6 +267,7 @@ function buildClaudeUsage(payload: Record<string, unknown>): ProviderUsage {
     if (!limit) continue
     const usedPercent = toNumber(limit.percent)
     const resetAt = toTimestamp(limit.resets_at)
+    if (usedPercent === null) continue
     if (limit.kind === "session") {
       windows["5h"] = toUsageWindow({ usedPercent, windowSeconds: 5 * 60 * 60, resetAt })
     } else if (limit.kind === "weekly_all") {
@@ -281,14 +282,14 @@ function buildClaudeUsage(payload: Record<string, unknown>): ProviderUsage {
   if (!limits.length) {
     const fiveHour = asObject(payload.five_hour)
     const sevenDay = asObject(payload.seven_day)
-    if (fiveHour) {
+    if (fiveHour && toNumber(fiveHour.utilization) !== null) {
       windows["5h"] = toUsageWindow({
         usedPercent: toNumber(fiveHour.utilization),
         windowSeconds: 5 * 60 * 60,
         resetAt: toTimestamp(fiveHour.resets_at),
       })
     }
-    if (sevenDay) {
+    if (sevenDay && toNumber(sevenDay.utilization) !== null) {
       windows["7d"] = toUsageWindow({
         usedPercent: toNumber(sevenDay.utilization),
         windowSeconds: 7 * 24 * 60 * 60,
@@ -307,13 +308,17 @@ function buildClaudeUsage(payload: Record<string, unknown>): ProviderUsage {
     const prefix = currency === "USD" || !currency ? "$" : `${currency} `
     const used = usedMinor === null ? null : usedMinor / 10 ** exponent
     const limit = limitMinor === null ? null : limitMinor / 10 ** (toNumber(limitMoney?.exponent) ?? 2)
-    windows.extra_usage = toUsageWindow({
-      usedPercent: toNumber(spend.percent),
-      windowSeconds: null,
-      resetAt: null,
-      valueLabel: used === null ? null : `${prefix}${formatMoney(used)}${limit === null ? "" : ` / ${prefix}${formatMoney(limit)}`}`,
-    })
+    const usedPercent = toNumber(spend.percent)
+    if (usedPercent !== null || used !== null) {
+      windows.extra_usage = toUsageWindow({
+        usedPercent,
+        windowSeconds: null,
+        resetAt: null,
+        valueLabel: used === null ? null : `${prefix}${formatMoney(used)}${limit === null ? "" : ` / ${prefix}${formatMoney(limit)}`}`,
+      })
+    }
   }
+  if (!Object.keys(windows).length && !Object.keys(models).length) throw new Error("Claude usage response contained no quota data")
   return Object.keys(models).length ? { windows, models } : { windows }
 }
 
@@ -323,7 +328,7 @@ const claude: UsageProvider = {
   name: "Claude",
   aliases: claudeAliases,
   async fetchQuota() {
-    const entry = asObject(getAuthEntry(claudeAliases))
+    const entry = getOAuthEntry(claudeAliases)
     const accessToken = getString(entry?.access) ?? getString(entry?.token)
     if (!accessToken) return notConfigured(this.id, this.name)
     const refreshToken = getString(entry?.refresh) ?? ""
@@ -332,6 +337,9 @@ const claude: UsageProvider = {
       claudeCredentialFingerprint = fingerprint
       claudeCachedUsage = null
       claudeCooldownUntil = 0
+    }
+    if (entry?.type === "oauth" && oauthTokenNeedsRefresh(entry)) {
+      return result(this.id, this.name, { ok: false, configured: true, error: CLAUDE_REAUTH_ERROR })
     }
     if (Date.now() < claudeCooldownUntil) {
       const cached = buildClaudeRateLimitResult()
@@ -353,7 +361,7 @@ const claude: UsageProvider = {
           : result(this.id, this.name, { ok: false, configured: true, error: "Rate limited. Retrying soon." })
       }
       if (response.status === 401 || response.status === 403) {
-        return result(this.id, this.name, { ok: false, configured: true, error: "Claude session expired. Open Claude Code to sign in again." })
+        return result(this.id, this.name, { ok: false, configured: true, error: CLAUDE_REAUTH_ERROR })
       }
       if (!response.ok) return result(this.id, this.name, { ok: false, configured: true, error: `API error: ${response.status}` })
       const payload = (await response.json()) as Record<string, unknown>
@@ -366,48 +374,4 @@ const claude: UsageProvider = {
   },
 }
 
-// --- github-copilot-addon ---
-function buildCopilotWindows(payload: Record<string, unknown>): Record<string, ReturnType<typeof toUsageWindow>> {
-  const quota = asObject(payload.quota_snapshots) ?? {}
-  const resetAt = toTimestamp(payload.quota_reset_date)
-  const windows: Record<string, ReturnType<typeof toUsageWindow>> = {}
-  const addWindow = (label: string, snapshot?: Record<string, unknown>) => {
-    if (!snapshot) return
-    const entitlement = toNumber(snapshot.entitlement)
-    const remaining = toNumber(snapshot.remaining)
-    const usedPercent =
-      entitlement && remaining !== null ? Math.max(0, Math.min(100, 100 - (remaining / entitlement) * 100)) : null
-    const valueLabel =
-      entitlement !== null && remaining !== null ? `${remaining.toFixed(0)} / ${entitlement.toFixed(0)} left` : null
-    windows[label] = toUsageWindow({ usedPercent, windowSeconds: null, resetAt, valueLabel })
-  }
-  addWindow("chat", asObject(quota.chat) ?? undefined)
-  addWindow("completions", asObject(quota.completions) ?? undefined)
-  addWindow("premium", asObject(quota.premium_interactions) ?? undefined)
-  return windows
-}
-
-const copilotAddon: UsageProvider = {
-  id: "github-copilot-addon",
-  name: "GitHub Copilot Add-on",
-  aliases: ["github-copilot-addon"],
-  async fetchQuota() {
-    const token = getCredential(["github-copilot", "copilot"], ["access", "token"])
-    if (!token) return notConfigured(this.id, this.name)
-    return safeFetch(this.id, this.name, async () => {
-      const payload: any = await fetchJson("https://api.github.com/copilot_internal/user", {
-        headers: {
-          Authorization: `token ${token}`,
-          Accept: "application/json",
-          "Editor-Version": "vscode/1.96.2",
-          "X-Github-Api-Version": "2025-04-01",
-        },
-      })
-      const windows = buildCopilotWindows(payload as Record<string, unknown>)
-      const premium = windows.premium ? { premium: windows.premium } : windows
-      return { windows: premium }
-    })
-  },
-}
-
-export const extraProviders: UsageProvider[] = [commandCode, crof, deepseek, neuralwatt, claude, copilotAddon]
+export const extraProviders: UsageProvider[] = [commandCode, crof, deepseek, neuralwatt, claude]

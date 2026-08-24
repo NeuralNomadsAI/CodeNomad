@@ -236,12 +236,10 @@ The stream is volatile and has no replay guarantee. After reconnecting, clients 
 
 ### Provider Plan Usage
 
-The Status panel automatically displays quota information for the provider used by the active session. CodeNomad reads existing OpenCode credentials and never returns provider secrets through its API.
+The Status panel automatically displays quota information for the provider used by the active session. CodeNomad reads existing OpenCode and Codex CLI credential files but never modifies them or returns provider secrets through its API. Expired externally owned OAuth sessions must be refreshed by OpenCode or Codex CLI; CodeNomad does not exchange their refresh tokens, so refresh-token rotation cannot be lost.
 
 Some optional usage integrations require credentials that OpenCode does not expose. They can be enabled without UI configuration through these environment variables:
 
-- Google token refresh: `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`
-- Antigravity token refresh: `ANTIGRAVITY_OAUTH_CLIENT_ID` and `ANTIGRAVITY_OAUTH_CLIENT_SECRET`
-- Cursor: `CURSOR_ACCESS_TOKEN` or `CURSOR_TOKEN`, with optional `CURSOR_REFRESH_TOKEN`
+- Cursor access token: `CURSOR_ACCESS_TOKEN` or `CURSOR_TOKEN`
 - Ollama Cloud: `OLLAMA_CLOUD_COOKIE`
 - OpenCode Go: `OPENCODE_GO_WORKSPACE_ID` and `OPENCODE_GO_AUTH_COOKIE`

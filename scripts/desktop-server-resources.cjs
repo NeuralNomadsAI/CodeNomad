@@ -1,7 +1,119 @@
 const fs = require("fs")
+const os = require("os")
 const path = require("path")
+const { spawnSync } = require("child_process")
 
 const excludedDistRoots = new Set(["codenomad-server", "opencode-config", "opencode-config-template", "opencode-config.js"])
+const npmTargets = {
+  "darwin-x64": { os: "darwin", cpu: "x64" },
+  "darwin-arm64": { os: "darwin", cpu: "arm64" },
+  "linux-x64": { os: "linux", cpu: "x64" },
+  "linux-arm64": { os: "linux", cpu: "arm64" },
+  "win32-x64": { os: "win32", cpu: "x64" },
+  "win32-arm64": { os: "win32", cpu: "arm64" },
+}
+
+function resolveNpmTarget(target = process.env.CODENOMAD_NODE_TARGET || `${process.platform}-${process.arch}`) {
+  const npmTarget = npmTargets[target]
+  if (!npmTarget) throw new Error(`Unsupported desktop packaging target: ${target}`)
+  return { target, ...npmTarget }
+}
+
+function resolveLockDependency(packages, ownerPath, dependency) {
+  let current = ownerPath
+  while (true) {
+    const candidate = current ? `${current}/node_modules/${dependency}` : `node_modules/${dependency}`
+    if (packages[candidate]) return candidate
+    const nested = current.lastIndexOf("/node_modules/")
+    if (nested >= 0) current = current.slice(0, nested)
+    else if (current.startsWith("node_modules/")) current = ""
+    else {
+      const parent = current.lastIndexOf("/")
+      current = parent >= 0 ? current.slice(0, parent) : ""
+    }
+    if (!current) {
+      const rootCandidate = `node_modules/${dependency}`
+      return packages[rootCandidate] ? rootCandidate : null
+    }
+  }
+}
+
+function validateServerProductionLock(lock) {
+  const packages = lock && lock.packages
+  if (!packages || !packages["packages/server"]) throw new Error("Root package-lock.json does not contain packages/server")
+  const pending = ["packages/server"]
+  const visited = new Set()
+  while (pending.length) {
+    const packagePath = pending.pop()
+    if (!packagePath || visited.has(packagePath)) continue
+    visited.add(packagePath)
+    const pkg = packages[packagePath]
+    if (!pkg) throw new Error(`Root package-lock.json is missing ${packagePath}`)
+    if (packagePath !== "packages/server" && (!pkg.version || !pkg.resolved || !pkg.integrity)) {
+      throw new Error(`Root package-lock.json does not integrity-pin ${packagePath}`)
+    }
+    const dependencies = { ...pkg.dependencies, ...pkg.optionalDependencies }
+    for (const dependency of Object.keys(dependencies)) {
+      const resolved = resolveLockDependency(packages, packagePath, dependency)
+      if (!resolved) throw new Error(`Root package-lock.json cannot resolve ${dependency} from ${packagePath}`)
+      pending.push(resolved)
+    }
+  }
+  return visited
+}
+
+function stagePackagedServer(options) {
+  const { workspaceRoot, serverRoot, log = () => {}, env = process.env } = options
+  const npmTarget = resolveNpmTarget(options.target || env.CODENOMAD_NODE_TARGET)
+  const lockPath = path.join(workspaceRoot, "package-lock.json")
+  validateServerProductionLock(JSON.parse(fs.readFileSync(lockPath, "utf8")))
+
+  const stagingRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-server-"))
+  const stagedServerRoot = path.join(stagingRoot, "packages", "server")
+  try {
+    fs.mkdirSync(stagedServerRoot, { recursive: true })
+    fs.copyFileSync(path.join(workspaceRoot, "package.json"), path.join(stagingRoot, "package.json"))
+    fs.copyFileSync(lockPath, path.join(stagingRoot, "package-lock.json"))
+    fs.copyFileSync(path.join(serverRoot, "package.json"), path.join(stagedServerRoot, "package.json"))
+
+    log(`installing production server dependencies from the workspace lock for ${npmTarget.target}`)
+    const npmArgs = [
+      "ci",
+      "--workspace",
+      "@neuralnomads/codenomad",
+      "--include-workspace-root=false",
+      "--omit=dev",
+      "--ignore-scripts",
+      `--os=${npmTarget.os}`,
+      `--cpu=${npmTarget.cpu}`,
+      "--fund=false",
+      "--audit=false",
+    ]
+    const npmCli = env.npm_execpath && env.npm_node_execpath
+      ? [env.npm_node_execpath, [env.npm_execpath, ...npmArgs]]
+      : process.platform === "win32"
+        ? [env.ComSpec || "cmd.exe", ["/d", "/s", "/c", "npm", ...npmArgs]]
+        : ["npm", npmArgs]
+    const result = spawnSync(npmCli[0], npmCli[1], { cwd: stagingRoot, stdio: "inherit", env })
+    if (result.error) throw result.error
+    if (result.status !== 0) throw new Error(`npm ci exited with code ${result.status ?? 1}`)
+
+    const rootModules = path.join(stagingRoot, "node_modules")
+    const serverModules = path.join(stagedServerRoot, "node_modules")
+    const serverOverrides = path.join(stagingRoot, "server-node-modules")
+    if (fs.existsSync(serverModules)) fs.renameSync(serverModules, serverOverrides)
+    fs.rmSync(path.join(rootModules, "@neuralnomads", "codenomad"), { recursive: true, force: true })
+    fs.cpSync(rootModules, serverModules, { recursive: true, dereference: true })
+    if (fs.existsSync(serverOverrides)) fs.cpSync(serverOverrides, serverModules, { recursive: true, dereference: true })
+    for (const artifact of ["public", "dist"]) {
+      fs.cpSync(path.join(serverRoot, artifact), path.join(stagedServerRoot, artifact), { recursive: true })
+    }
+    return { stagingRoot, stagedServerRoot, target: npmTarget.target }
+  } catch (error) {
+    fs.rmSync(stagingRoot, { recursive: true, force: true })
+    throw error
+  }
+}
 
 function copyPackagedServerResources(options) {
   const { serverRoot, serverDest, log = () => {} } = options
@@ -209,4 +321,7 @@ function pruneKnownServerDependencies(root, log) {
 
 module.exports = {
   copyPackagedServerResources,
+  resolveNpmTarget,
+  stagePackagedServer,
+  validateServerProductionLock,
 }

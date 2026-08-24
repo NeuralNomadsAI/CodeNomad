@@ -267,6 +267,75 @@ describe("InstanceEventBridge", () => {
     }
   })
 
+  it("keeps valid owners when another ownership lookup rejects and retries the lookup", async () => {
+    let failedOwnerChecks = 0
+    const manager = {
+      list: () => [{ id: "failed", path: "/repo-a" }, { id: "owner", path: "/repo-b" }],
+      ownsDirectory: async (workspaceId: string) => {
+        if (workspaceId === "failed" && ++failedOwnerChecks === 1) throw new Error("temporary lookup failure")
+        return true
+      },
+      subscribeToSharedService: async (signal?: AbortSignal) => (async function* () {
+        yield serverConnected()
+        yield { type: "permission.asked", location: { directory: "/repo-b" }, data: { id: "p1" } } as OpenCodeEvent
+        await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }))
+      })(),
+    } as unknown as WorkspaceManager
+    const bus = new EventBus()
+    const received: string[] = []
+    bus.on("instance.event", (event) => {
+      if (event.event.type !== "server.connected") received.push(event.instanceId)
+    })
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
+      await waitFor(() => received.length === 2)
+      assert.deepEqual(received, ["failed", "owner"])
+      assert.equal(failedOwnerChecks, 2)
+    } finally {
+      bridge.shutdown()
+    }
+  })
+
+  it("does not publish to an owner stopped during an ownership retry", async () => {
+    const retry = deferred<boolean>()
+    let checks = 0
+    let workspaces = [{ id: "owner", path: "/repo" }, { id: "flaky", path: "/other" }]
+    const manager = {
+      list: () => workspaces,
+      ownsDirectory: async (workspaceId: string) => {
+        if (workspaceId === "owner") return true
+        if (++checks === 1) throw new Error("temporary lookup failure")
+        return retry.promise
+      },
+      subscribeToSharedService: async (signal?: AbortSignal) => (async function* () {
+        yield serverConnected()
+        yield { type: "permission.asked", location: { directory: "/repo" }, data: { id: "p1" } } as OpenCodeEvent
+        yield { type: "catalog.updated", data: {} } as OpenCodeEvent
+        await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }))
+      })(),
+    } as unknown as WorkspaceManager
+    const bus = new EventBus()
+    const received: any[] = []
+    bus.on("instance.event", (event) => {
+      if (event.event.type !== "server.connected") received.push(event)
+    })
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+
+    try {
+      bus.publish({ type: "workspace.started", workspace: workspaces[0] as any })
+      await waitFor(() => checks === 2)
+      workspaces = [workspaces[1]]
+      retry.resolve(false)
+      await waitFor(() => received.length === 1)
+      assert.equal(received[0].event.type, "catalog.updated")
+      assert.equal(received[0].instanceId, "flaky")
+    } finally {
+      bridge.shutdown()
+    }
+  })
+
   it("routes known locationless session events and invalidates the cache after deletion", async () => {
     const events = [
       { type: "session.text.delta", data: { sessionID: "known", delta: "one" } },
@@ -292,8 +361,40 @@ describe("InstanceEventBridge", () => {
     }
   })
 
+  it("retries a transient locationless session lookup failure", async () => {
+    const events = [
+      { type: "permission.asked", data: { id: "p1", sessionID: "retry" } },
+    ] as OpenCodeEvent[]
+    let attempts = 0
+    const sessionLocations: Record<string, string | Error> = {}
+    Object.defineProperty(sessionLocations, "retry", {
+      get: () => ++attempts === 1 ? new Error("temporary session failure") : "/repo-a",
+    })
+    const { manager, sessionGets } = locationlessManager(events, sessionLocations)
+    const bus = new EventBus()
+    const received: any[] = []
+    bus.on("instance.event", (event) => {
+      if (event.event.type !== "server.connected") received.push(event)
+    })
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
+      await waitFor(() => received.length === 1)
+      assert.equal(sessionGets(), 2)
+      assert.equal(received[0].instanceId, "a")
+      assert.equal(received[0].event.data.id, "p1")
+    } finally {
+      bridge.shutdown()
+    }
+  })
+
   it("drops an unknown locationless session event", async () => {
-    const events = [{ type: "session.status", data: { sessionID: "unknown", status: { type: "idle" } } }] as OpenCodeEvent[]
+    const events = [
+      { type: "session.status", data: { sessionID: "unknown", status: { type: "idle" } } },
+      { type: "permission.asked", data: { id: "unknown", sessionID: "unknown" } },
+      { type: "catalog.updated", data: {} },
+    ] as OpenCodeEvent[]
     const { manager, sessionGets } = locationlessManager(events, { unknown: new Error("not found") })
     const bus = new EventBus()
     const received: any[] = []
@@ -304,9 +405,52 @@ describe("InstanceEventBridge", () => {
 
     try {
       bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
-      await waitFor(() => sessionGets() === 1)
-      assert.deepEqual(received, [])
+      await waitFor(() => received.length === 1)
+      assert.equal(sessionGets(), 2)
+      assert.equal(received[0].event.type, "catalog.updated")
     } finally {
+      bridge.shutdown()
+    }
+  })
+
+  it("starts a failed session lookup cache TTL after the retry settles", async () => {
+    const originalNow = Date.now
+    let now = 0
+    let sessionGets = 0
+    Date.now = () => now
+    const manager = {
+      list: () => [{ id: "a", path: "/repo-a" }],
+      ownsDirectory: async () => false,
+      getSharedServiceClient: async () => ({
+        session: { get: async () => {
+          sessionGets++
+          if (sessionGets === 2) now = 3_000
+          throw new Error("temporary lookup failure")
+        } },
+      }),
+      subscribeToSharedService: async (signal?: AbortSignal) => (async function* () {
+        yield serverConnected()
+        yield { type: "permission.asked", data: { id: "p1", sessionID: "missing" } } as OpenCodeEvent
+        now = 3_001
+        yield { type: "permission.asked", data: { id: "p2", sessionID: "missing" } } as OpenCodeEvent
+        yield { type: "catalog.updated", data: {} } as OpenCodeEvent
+        await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }))
+      })(),
+    } as unknown as WorkspaceManager
+    const bus = new EventBus()
+    const received: any[] = []
+    bus.on("instance.event", (event) => {
+      if (event.event.type !== "server.connected") received.push(event)
+    })
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
+      await waitFor(() => received.length === 1)
+      assert.equal(sessionGets, 2)
+      assert.equal(received[0].event.type, "catalog.updated")
+    } finally {
+      Date.now = originalNow
       bridge.shutdown()
     }
   })
@@ -364,7 +508,8 @@ describe("InstanceEventBridge", () => {
   it("broadcasts an unresolvable locationless deletion", async () => {
     const events = [{ type: "session.deleted", data: { sessionID: "deleted" } }] as OpenCodeEvent[]
     const workspaces = [{ id: "a", path: "/repo-a" }, { id: "b", path: "/repo-b" }]
-    const { manager, sessionGets } = locationlessManager(events, { deleted: new Error("not found") }, workspaces)
+    const notFound = Object.assign(new Error("not found"), { _tag: "SessionNotFoundError" })
+    const { manager, sessionGets } = locationlessManager(events, { deleted: notFound }, workspaces)
     const bus = new EventBus()
     const received: any[] = []
     bus.on("instance.event", (event) => {

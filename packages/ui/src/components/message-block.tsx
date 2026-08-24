@@ -21,6 +21,8 @@ import SpeechActionButton from "./speech-action-button"
 import type { VisibilityPreference } from "../stores/preferences"
 import type { ToolState, ToolStateCompleted, ToolStateError, ToolStateRunning } from "../types/tool-state"
 import { parseReasoningSummary } from "../lib/reasoning-summary"
+import { getFormQueue } from "../stores/forms"
+import { resolveFormToolTarget } from "./form-request-tool-target"
 
 const USER_BORDER_COLOR = "var(--message-user-border)"
 const ASSISTANT_BORDER_COLOR = "var(--message-assistant-border)"
@@ -360,22 +362,22 @@ function MessageContentItem(props: MessageContentItemProps) {
     return true
   })
 
-  const current = record()
-  if (!current) return null
   return (
-    <MessageItem
-      record={current}
-      messageInfo={messageInfo()}
-      parts={visibleParts()}
-      instanceId={props.instanceId}
-      sessionId={props.sessionId}
-      contentStartPartId={props.startPartId}
-      isQueued={isQueued()}
-      showAgentMeta={showAgentMeta()}
-      onRevert={props.onRevert}
-      onFork={props.onFork}
-      onContentRendered={props.onContentRendered}
-    />
+    <Show when={Boolean(record())}>
+      <MessageItem
+        record={record()!}
+        messageInfo={messageInfo()}
+        parts={visibleParts()}
+        instanceId={props.instanceId}
+        sessionId={props.sessionId}
+        contentStartPartId={props.startPartId}
+        isQueued={isQueued()}
+        showAgentMeta={showAgentMeta()}
+        onRevert={props.onRevert}
+        onFork={props.onFork}
+        onContentRendered={props.onContentRendered}
+      />
+    </Show>
   )
 }
 
@@ -442,24 +444,24 @@ function ToolCallItem(props: ToolCallItemProps) {
     return items
   }
 
-  const currentTool = toolPart()
-  if (!currentTool) return null
   return (
-    <div>
-      <Suspense fallback={<ToolCallFallback />}>
-        <LazyToolCall
-          toolCall={currentTool}
-          toolCallId={props.partId}
-          messageId={props.messageId}
-          messageVersion={messageVersion()}
-          partVersion={partVersion()}
-          instanceId={props.instanceId}
-          sessionId={props.sessionId}
-          onContentRendered={props.onContentRendered}
-          headerMenuItems={actionMenuItems}
-        />
-      </Suspense>
-    </div>
+    <Show when={Boolean(toolPart())}>
+      <div>
+        <Suspense fallback={<ToolCallFallback />}>
+          <LazyToolCall
+            toolCall={toolPart()!}
+            toolCallId={props.partId}
+            messageId={props.messageId}
+            messageVersion={messageVersion()}
+            partVersion={partVersion()}
+            instanceId={props.instanceId}
+            sessionId={props.sessionId}
+            onContentRendered={props.onContentRendered}
+            headerMenuItems={actionMenuItems}
+          />
+        </Suspense>
+      </div>
+    </Show>
   )
 }
 
@@ -524,7 +526,7 @@ export default function MessageBlock(props: MessageBlockProps) {
   const record = createMemo(() => props.store().getMessage(props.messageId))
   const messageInfo = createMemo(() => props.store().getMessageInfo(props.messageId))
   const sessionCache = getSessionRenderCache(props.instanceId, props.sessionId)
-  let blockRef: HTMLDivElement | undefined
+  const [blockRef, setBlockRef] = createSignal<HTMLDivElement>()
   const isSearchResult = () => Boolean(props.searchResultMessageIds?.().has(props.messageId))
   const activeSearchMatch = () => props.activeSearchMatch?.() ?? null
   const isActiveSearchResult = () => activeSearchMatch()?.messageId === props.messageId
@@ -535,13 +537,11 @@ export default function MessageBlock(props: MessageBlockProps) {
     const active = activeSearchMatch()
     const relevantActiveMatch = active?.messageId === props.messageId ? active : null
     const shouldScrollActive = Boolean(relevantActiveMatch && relevantActiveMatch.id !== lastInlineScrolledSearchMatchId)
-    if (shouldScrollActive && relevantActiveMatch) {
-      lastInlineScrolledSearchMatchId = relevantActiveMatch.id
-    }
     const current = record()
     if (current) void current.revision
-    const element = blockRef
+    const element = blockRef()
     if (!element) return
+    if (shouldScrollActive && relevantActiveMatch) lastInlineScrolledSearchMatchId = relevantActiveMatch.id
 
     const frame = requestAnimationFrame(() => applySearchMarks(element, query, relevantActiveMatch, shouldScrollActive))
     onCleanup(() => {
@@ -741,26 +741,36 @@ export default function MessageBlock(props: MessageBlockProps) {
     if (item.type !== "tool") return true
     const part = props.store().getMessage(item.messageId)?.parts[item.partId]?.data
     if (part?.type !== "tool" || props.toolVisibility(part.tool || "") !== "hidden") return true
-    return Boolean(
+    if (
       part.pendingPermission?.active ||
-      props.store().getPermissionState(item.messageId, item.partId)?.active,
-    )
+      props.store().getPermissionState(item.messageId, item.partId)?.active
+    ) return true
+    return pendingFormToolTargets().has(`${item.messageId}:${item.partId}`)
   }
 
-  const currentBlock = block()
-  if (!currentBlock || !currentBlock.items.some(isDisplayItemVisible)) return null
+  const pendingFormToolTargets = createMemo(() => new Set(getFormQueue(props.instanceId)
+    .filter((form) => form.sessionID === props.sessionId)
+    .flatMap((form) => {
+      const target = resolveFormToolTarget(form, props.store())
+      return target ? [`${target.messageId}:${target.partId}`] : []
+    })))
+  const visibleItemKeys = createMemo(() => new Set((block()?.items ?? [])
+    .filter(isDisplayItemVisible)
+    .map((item) => item.key)))
   return (
-        <div
-          ref={(el) => {
-            blockRef = el
-          }}
-          class="message-stream-block"
-          data-message-id={currentBlock.record.id}
-          data-search-result={isSearchResult() ? "true" : undefined}
-          data-search-active={isActiveSearchResult() ? "true" : undefined}
-        >
-          <Index each={currentBlock.items}>
-            {(item, index) => (
+    <Show when={visibleItemKeys().size > 0}>
+      <div
+        ref={(element) => {
+          setBlockRef(element)
+          onCleanup(() => setBlockRef(undefined))
+        }}
+        class="message-stream-block"
+        data-message-id={block()!.record.id}
+        data-search-result={isSearchResult() ? "true" : undefined}
+        data-search-active={isActiveSearchResult() ? "true" : undefined}
+      >
+        <Index each={block()!.items}>
+          {(item, index) => (
               <Switch>
                 <Match when={item().type === "content"}>
                   <MessageContentItem
@@ -777,23 +787,22 @@ export default function MessageBlock(props: MessageBlockProps) {
                   />
                 </Match>
                 <Match when={item().type === "tool"}>
-                  {(() => {
-                    const toolItem = item() as ToolDisplayItem
-                    return (
-                      <Show when={isDisplayItemVisible(toolItem)}>
-                      <div class="tool-call-message" data-key={toolItem.key} data-part-id={toolItem.partId}>
-                          <ToolCallItem
-                            instanceId={props.instanceId}
-                            sessionId={props.sessionId}
-                            store={props.store}
-                            messageId={toolItem.messageId}
-                            partId={toolItem.partId}
-                          onContentRendered={props.onContentRendered}
-                        />
-                      </div>
-                      </Show>
-                    )
-                  })()}
+                  <Show when={visibleItemKeys().has((item() as ToolDisplayItem).key)}>
+                    <div
+                      class="tool-call-message"
+                      data-key={(item() as ToolDisplayItem).key}
+                      data-part-id={(item() as ToolDisplayItem).partId}
+                    >
+                      <ToolCallItem
+                        instanceId={props.instanceId}
+                        sessionId={props.sessionId}
+                        store={props.store}
+                        messageId={(item() as ToolDisplayItem).messageId}
+                        partId={(item() as ToolDisplayItem).partId}
+                        onContentRendered={props.onContentRendered}
+                      />
+                    </div>
+                  </Show>
                 </Match>
                 <Match when={item().type === "step-start"}>
                   <StepCard
@@ -844,9 +853,10 @@ export default function MessageBlock(props: MessageBlockProps) {
                   />
                 </Match>
               </Switch>
-            )}
-          </Index>
-        </div>
+          )}
+        </Index>
+      </div>
+    </Show>
   )
 }
 

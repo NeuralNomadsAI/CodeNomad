@@ -98,6 +98,9 @@ jobs:
       - name: Typecheck desktop clients
         run: npm run typecheck
 
+      - name: Test desktop packaging invariants
+        run: node --test scripts/desktop-server-resources.test.cjs
+
       - name: Test Electron client state
         run: npm run test:native --workspace @neuralnomads/codenomad-electron-app
 

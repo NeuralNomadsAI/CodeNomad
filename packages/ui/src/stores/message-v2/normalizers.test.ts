@@ -154,5 +154,12 @@ describe("native session message normalization", () => {
       type: "ProviderError", message: "rate limited", status: 429,
       name: "ProviderError", data: { message: "rate limited" },
     })
+
+    const aborted = normalizeSessionMessage("session", {
+      id: "assistant-aborted", type: "assistant", agent: "build", model: { providerID: "p", id: "m" },
+      content: [], error: { type: "aborted", message: "Step interrupted" }, time: { created: 1 },
+    })
+    assert.equal(aborted.info.error?.name, "MessageAbortedError")
+    assert.equal(aborted.message.parts.length, 1)
   })
 })

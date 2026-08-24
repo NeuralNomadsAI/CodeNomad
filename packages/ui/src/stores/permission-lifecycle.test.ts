@@ -8,6 +8,10 @@ import {
   addPermissionToQueue,
   clearPermissionQueue,
   getPermissionQueue,
+  hasRepliedPermission,
+  markPermissionReplied,
+  reconcilePendingRequestLiveness,
+  removeInstance,
   sendPermissionResponse,
   syncPendingRequests,
   updateInstance,
@@ -34,6 +38,7 @@ function addTestInstance(id: string, client: OpenCodeClient): void {
 afterEach(() => {
   for (const instanceId of instanceIds.splice(0)) {
     clearPermissionQueue(instanceId)
+    setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
     messageStoreBus.unregisterInstance(instanceId)
     sdkManager.destroyClientsForInstance(instanceId)
   }
@@ -80,6 +85,9 @@ test("pending request sync cannot erase newer SSE mutations", async () => {
     form: { request: { list: async () => ({ location: {} as never, data: [] }) } },
   } as unknown as OpenCodeClient
   addTestInstance("pending-request-race", client)
+  setSessions((previous) => new Map(previous).set("pending-request-race", new Map([["session", {
+    id: "session", location: { directory: "/workspace" },
+  } as any]])))
   addPermissionToQueue("pending-request-race", { id: "stale-permission", sessionID: "session", action: "edit", resources: [] })
 
   const sync = syncPendingRequests("pending-request-race")
@@ -123,8 +131,104 @@ test("pending request sync uses native global lists with an explicit directory",
   await syncPendingRequests("native-pending-api")
 
   assert.deepEqual(locations, [
-    { directory: "/workspace" }, { directory: "/workspace" },
-    { directory: "/worktree" }, { directory: "/worktree" },
+    { directory: "/workspace" }, { directory: "/worktree" },
+    { directory: "/workspace" }, { directory: "/worktree" },
   ])
   assert.deepEqual(getPermissionQueue("native-pending-api").map(({ id }) => id), ["permission"])
+})
+
+test("liveness recovers a missed permission with an idle session and empty queue", async () => {
+  const client = {
+    permission: { request: {
+      list: async ({ location }: { location: { directory?: string } }) => {
+        return { location, data: location.directory === "/workspace" ? [{
+          id: "missed", sessionID: "session", action: "edit", resources: ["*"], metadata: {},
+        }] : [] }
+      },
+    } },
+    form: { request: { list: async ({ location }: { location: unknown }) => ({ location, data: [] }) } },
+  } as unknown as OpenCodeClient
+  addTestInstance("missed-permission", client)
+
+  await reconcilePendingRequestLiveness("missed-permission")
+
+  assert.deepEqual(getPermissionQueue("missed-permission").map(({ id }) => id), ["missed"])
+})
+
+test("pending sync removes a stale permission after its session disappears", async () => {
+  const client = {
+    permission: { request: { list: async ({ location }: { location: unknown }) => ({ location, data: [] }) } },
+    form: { request: { list: async ({ location }: { location: unknown }) => ({ location, data: [] }) } },
+  } as unknown as OpenCodeClient
+  addTestInstance("deleted-permission-session", client)
+  addPermissionToQueue("deleted-permission-session", {
+    id: "stale", sessionID: "deleted", action: "edit", resources: ["*"], metadata: {},
+  }, "/workspace")
+
+  await syncPendingRequests("deleted-permission-session")
+
+  assert.deepEqual(getPermissionQueue("deleted-permission-session"), [])
+})
+
+test("partial pending scans preserve permission reply tombstones", async () => {
+  const location = { directory: "/worktree" }
+  const client = {
+    permission: { request: { list: async ({ location: requested }: { location: { directory?: string } }) => {
+      if (requested.directory === "/workspace") throw new Error("root unavailable")
+      return { location, data: [] }
+    } } },
+    form: { request: { list: async ({ location: requested }: { location: unknown }) => ({ location: requested, data: [] }) } },
+  } as unknown as OpenCodeClient
+  addTestInstance("partial-permission-scan", client)
+  setSessions((previous) => new Map(previous).set("partial-permission-scan", new Map([["session", {
+    id: "session", location,
+  } as any]])))
+  markPermissionReplied("partial-permission-scan", "answered")
+
+  await assert.rejects(syncPendingRequests("partial-permission-scan"))
+
+  assert.equal(hasRepliedPermission("partial-permission-scan", "answered"), true)
+})
+
+test("pending authority normalizes Windows directory keys", async () => {
+  const location = { directory: "c:/repo" }
+  const client = {
+    permission: { request: { list: async () => ({ location, data: [] }) } },
+    form: { request: { list: async () => ({ location, data: [] }) } },
+  } as unknown as OpenCodeClient
+  addTestInstance("normalized-permission-location", client)
+  addPermissionToQueue("normalized-permission-location", {
+    id: "stale", sessionID: "deleted", action: "edit", resources: ["*"], metadata: {},
+  }, "C:\\Repo\\")
+
+  await syncPendingRequests("normalized-permission-location")
+
+  assert.deepEqual(getPermissionQueue("normalized-permission-location"), [])
+})
+
+test("cancelling a bounded pending scan does not launch queued locations", async () => {
+  let calls = 0
+  const list = (_input: unknown, options?: { signal?: AbortSignal }) => new Promise<never>((_resolve, reject) => {
+    calls++
+    options?.signal?.addEventListener("abort", () => reject(options.signal?.reason), { once: true })
+  })
+  const client = {
+    permission: { request: { list } },
+    form: { request: { list } },
+  } as unknown as OpenCodeClient
+  const instanceId = "cancelled-bounded-scan"
+  addTestInstance(instanceId, client)
+  setSessions((previous) => new Map(previous).set(instanceId, new Map(Array.from({ length: 10 }, (_, index) => [
+    `session-${index}`,
+    { id: `session-${index}`, location: { directory: `/workspace-${index}` } } as any,
+  ]))))
+
+  const sync = syncPendingRequests(instanceId)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.equal(calls, 8)
+  removeInstance(instanceId)
+  await sync
+  await new Promise<void>((resolve) => setImmediate(resolve))
+
+  assert.equal(calls, 8)
 })

@@ -1,5 +1,25 @@
 export const MESSAGE_HISTORY_TOP_THRESHOLD_PX = 320
 export const MESSAGE_HISTORY_ANCHOR_PAGE_LIMIT = 50
+export const MESSAGE_HISTORY_TRAVERSAL_PAGE_LIMIT = 1000
+
+export function createSearchLocatorAuthority() {
+  let current: { id: string; generation: number } | null = null
+  let generation = 0
+  return {
+    claim(id: string) {
+      if (current?.id === id) return null
+      current = { id, generation: ++generation }
+      return current
+    },
+    isCurrent(token: { id: string; generation: number }) {
+      return current?.id === token.id && current.generation === token.generation
+    },
+    reset(expected?: { id: string; generation: number }) {
+      if (expected && (current?.id !== expected.id || current.generation !== expected.generation)) return
+      current = null
+    },
+  }
+}
 
 export function isMessageHistoryRestoreCurrent<T>(
   active: boolean,
@@ -21,7 +41,9 @@ export async function loadPagesUntilAnchor(options: {
   if (!options.isCurrent()) return "cancelled"
   if (options.hasAnchor()) return "found"
 
-  const maxPages = options.maxPages ?? MESSAGE_HISTORY_ANCHOR_PAGE_LIMIT
+  const maxPages = Number.isFinite(options.maxPages)
+    ? Math.max(1, Math.floor(options.maxPages!))
+    : MESSAGE_HISTORY_ANCHOR_PAGE_LIMIT
   for (let page = 0; page < maxPages; page += 1) {
     if (!options.isCurrent()) return "cancelled"
     if (!options.hasMore()) return "exhausted"
@@ -39,20 +61,32 @@ export async function loadPagesUntilAnchor(options: {
 }
 
 export async function loadCompleteMessageHistory<T>(options: {
-  getCursor: () => string | undefined
+  getPageKey: () => string
   isCurrent: () => boolean
-  loadMore: () => Promise<void>
-  complete: () => T
-}): Promise<T | null> {
+  isLatest: () => boolean
+  loadOldest: () => Promise<void>
+  loadNewer: () => Promise<void>
+  visit: () => T[]
+  maxPages?: number
+}): Promise<T[] | null> {
   const seenCursors = new Set<string>()
-  while (options.isCurrent()) {
-    const cursor = options.getCursor()
-    if (!cursor) return options.complete()
+  const results: T[] = []
+  const maxPages = Number.isFinite(options.maxPages)
+    ? Math.max(1, Math.floor(options.maxPages!))
+    : MESSAGE_HISTORY_TRAVERSAL_PAGE_LIMIT
+  if (!options.isCurrent()) return null
+  await options.loadOldest()
+  for (let page = 0; page < maxPages; page += 1) {
+    if (!options.isCurrent()) return null
+    const cursor = options.getPageKey()
     if (seenCursors.has(cursor)) throw new Error("Message history cursor did not advance")
     seenCursors.add(cursor)
-    await options.loadMore()
+    results.push(...options.visit())
+    if (options.isLatest()) return results
+    await options.loadNewer()
   }
-  return null
+  if (!options.isCurrent()) return null
+  throw new Error("Message history traversal page limit reached")
 }
 
 export async function loadMessageHistoryPage(options: {
@@ -66,6 +100,55 @@ export async function loadMessageHistoryPage(options: {
 
 export function hasMessageSearchAuthority(query: string, searchedQuery: string): boolean {
   return query.trim().length > 0 && searchedQuery.trim() === query.trim()
+}
+
+export function reconcileResidentSearchMatches<T extends { messageId: string }>(options: {
+  previous: T[]
+  currentResidentIds: readonly string[]
+  currentMatches: T[]
+}): T[] {
+  const residentIds = new Set(options.currentResidentIds)
+  const replacements = new Map<string, T[]>()
+  for (const match of options.currentMatches) {
+    const matches = replacements.get(match.messageId)
+    if (matches) matches.push(match)
+    else replacements.set(match.messageId, [match])
+  }
+
+  const replaced = new Set<string>()
+  const result: T[] = []
+  for (const match of options.previous) {
+    if (!residentIds.has(match.messageId)) {
+      result.push(match)
+      continue
+    }
+    if (replaced.has(match.messageId)) continue
+    replaced.add(match.messageId)
+    result.push(...(replacements.get(match.messageId) ?? []))
+  }
+
+  for (let residentIndex = 0; residentIndex < options.currentResidentIds.length; residentIndex += 1) {
+    const messageId = options.currentResidentIds[residentIndex]
+    if (replaced.has(messageId)) continue
+    const matches = replacements.get(messageId)
+    if (!matches?.length) continue
+    const previousResidentIds = new Set(options.currentResidentIds.slice(0, residentIndex))
+    const nextResidentIds = new Set(options.currentResidentIds.slice(residentIndex + 1))
+    let previousIndex = -1
+    for (let index = result.length - 1; index >= 0; index -= 1) {
+      if (!previousResidentIds.has(result[index].messageId)) continue
+      previousIndex = index
+      break
+    }
+    const nextIndex = result.findIndex((match) => nextResidentIds.has(match.messageId))
+    const insertion = previousIndex >= 0
+      ? previousIndex + 1
+      : nextIndex >= 0
+        ? nextIndex
+        : result.findIndex((match) => match.messageId > messageId)
+    result.splice(insertion < 0 ? result.length : insertion, 0, ...matches)
+  }
+  return result
 }
 
 export function shouldLoadOlderMessages(options: {

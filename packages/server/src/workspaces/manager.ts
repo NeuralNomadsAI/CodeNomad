@@ -30,7 +30,7 @@ import {
   type OpenCodeSharedServiceOptions,
 } from "./opencode-service"
 import { WslOpenCodeService } from "./wsl-opencode-service"
-import { isPathOwnedByWorktree, normalizeWslUncPath, resolveOwnedWorktreePath } from "./worktree-directory"
+import { isPathOwnedByWorktree, resolveOwnedWorktreePath } from "./worktree-directory"
 
 const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
 const MAX_ACTIVE_WORKSPACE_CREATIONS = 32
@@ -95,8 +95,8 @@ export function isWindowsHostPath(directory: string): boolean {
 }
 
 export function canonicalWorktreeIdentity(directory: string, platform = process.platform): string {
-  const wsl = normalizeWslUncPath(directory)
-  if (wsl) return wsl
+  const wsl = parseWslUncPath(directory)
+  if (wsl) return `wsl:${wsl.distro.toLowerCase()}:${wsl.linuxPath}`
   const identity = path.normalize(directory)
   return platform === "win32" ? identity.toLowerCase() : identity
 }
@@ -109,14 +109,16 @@ interface WorkspaceRecord extends WorkspaceDescriptor {
 
 interface WorkspaceState {
   abortController: AbortController
+  creation?: Promise<WorkspaceCreateResult>
   settlement?: Promise<void>
   cleanupSettlement?: Promise<WorkspaceDescriptor>
   deletePromise?: Promise<WorkspaceDescriptor | undefined>
   published: boolean
   stoppedPublished: boolean
   locationOwned: boolean
-  creationRequestId?: string
-  creationRequestState?: CreationRequestState
+  creationClaims: Map<string, CreationRequestState>
+  anonymousCreationFollowers: number
+  creationRetained: boolean
   serviceOptions?: OpenCodeSharedServiceOptions
 }
 export class WorkspaceLaunchCancelledError extends Error {
@@ -156,10 +158,12 @@ export interface WorkspaceCreateResult {
 export interface WorkspaceCreateOptions {
   requestId?: string
 }
-type CreationRequestState = "active" | "cancelled" | "released"
+type CreationRequestState = "owner" | "follower" | "cancelled" | "released"
 export class WorkspaceManager {
   private readonly workspaces = new Map<string, WorkspaceRecord>()
+  private readonly workspacesByPath = new Map<string, WorkspaceRecord>()
   private readonly cancelledCreationRequests = new Set<string>()
+  private readonly pendingCreationRequests = new Set<string>()
   private readonly activeLocationCreations = new Set<Promise<void>>()
   private locationEvictions: Promise<void> = Promise.resolve()
   private pendingLocationEvictions = 0
@@ -358,10 +362,8 @@ export class WorkspaceManager {
     name?: string,
     options: WorkspaceCreateOptions = {},
   ): Promise<WorkspaceCreateResult> {
-    if (this.activeWorkspaceCreations >= MAX_ACTIVE_WORKSPACE_CREATIONS) {
-      throw new Error("Too many workspace creations are already in progress")
-    }
-    this.activeWorkspaceCreations += 1
+    if (options.requestId) this.beginCreationRequest(options.requestId)
+    let creationCounted = false
     let settlementTracked = false
     const launchTimeoutMs = Math.max(1, this.options.launchTimeoutMs ?? DEFAULT_LAUNCH_TIMEOUT_MS)
     const launchDeadlineAt = this.now() + launchTimeoutMs
@@ -379,14 +381,29 @@ export class WorkspaceManager {
       if (this.shuttingDown) {
         throw new Error("Workspace manager is shutting down")
       }
+      const reusable = this.findReusableWorkspace(workspacePath)
+      if (reusable) {
+        this.claimFollower(reusable, options.requestId)
+        try {
+          return await this.reuseWorkspace(reusable, options, launchDeadlineAt, launchTimeoutMs)
+        } catch (error) {
+          await this.rollbackFollower(reusable, options.requestId)
+          throw error
+        }
+      }
+      if (this.activeWorkspaceCreations >= MAX_ACTIVE_WORKSPACE_CREATIONS) {
+        throw new Error("Too many workspace creations are already in progress")
+      }
+      this.activeWorkspaceCreations += 1
+      creationCounted = true
       const record = this.reserveWorkspace(workspacePath, name, options, launchDeadlineAt)
-      const creation = this.startCreation(record, options, launchDeadlineAt, launchTimeoutMs)
+      const creation = this.startCreation(record, launchDeadlineAt, launchTimeoutMs)
       settlementTracked = true
       void record[WORKSPACE_STATE].settlement!.then(() => { this.activeWorkspaceCreations -= 1 })
-      return this.finishCreation(await creation, options.requestId, record)
+      return this.finishCreation(await creation, options.requestId, record, true)
     } finally {
-      if (!settlementTracked) this.activeWorkspaceCreations -= 1
-      if (options.requestId) this.cancelledCreationRequests.delete(options.requestId)
+      if (creationCounted && !settlementTracked) this.activeWorkspaceCreations -= 1
+      if (options.requestId) this.finishCreationRequest(options.requestId)
     }
   }
   private reserveWorkspace(
@@ -425,23 +442,47 @@ export class WorkspaceManager {
         published: false,
         stoppedPublished: false,
         locationOwned: false,
-        creationRequestId: options.requestId,
-        creationRequestState: options.requestId ? "active" : undefined,
+        creationClaims: new Map(options.requestId ? [[options.requestId, "owner"]] : []),
+        anonymousCreationFollowers: 0,
+        creationRetained: options.requestId === undefined,
       } },
     })
 
     this.workspaces.set(id, record)
-    if (options.requestId && this.cancelledCreationRequests.has(options.requestId)) {
-      record[WORKSPACE_STATE].abortController.abort(new WorkspaceLaunchCancelledError(id))
-    }
+    this.workspacesByPath.set(canonicalWorktreeIdentity(workspacePath, this.options.platform), record)
     return record
   }
-  private startCreation(record: WorkspaceRecord, options: WorkspaceCreateOptions,
+  private startCreation(record: WorkspaceRecord,
     launchDeadlineAt: number, launchTimeoutMs: number): Promise<WorkspaceCreateResult> {
     const launch = this.createResolvedWorkspace(record, launchDeadlineAt)
     const creation = this.createWithDeadline(record, launchDeadlineAt, launchTimeoutMs, launch)
+    record[WORKSPACE_STATE].creation = creation
     record[WORKSPACE_STATE].settlement = launch.then(() => undefined, () => undefined)
     return creation
+  }
+  private findReusableWorkspace(workspacePath: string): WorkspaceRecord | undefined {
+    const record = this.workspacesByPath.get(canonicalWorktreeIdentity(workspacePath, this.options.platform))
+    if (!record || this.workspaces.get(record.id) !== record) return undefined
+    const state = record[WORKSPACE_STATE]
+    return state.creation && !state.abortController.signal.aborted && !state.deletePromise ? record : undefined
+  }
+  private async reuseWorkspace(
+    record: WorkspaceRecord,
+    options: WorkspaceCreateOptions,
+    launchDeadlineAt: number,
+    launchTimeoutMs: number,
+  ): Promise<WorkspaceCreateResult> {
+    const state = record[WORKSPACE_STATE]
+    await this.withLaunchDeadline(state.creation!, record.id, launchDeadlineAt, launchTimeoutMs)
+    if (options.requestId && this.cancelledCreationRequests.has(options.requestId)) {
+      throw new Error(`Workspace creation request ${options.requestId} was cancelled`)
+    }
+    state.abortController.signal.throwIfAborted()
+    if (this.shuttingDown || this.workspaces.get(record.id) !== record || !state.published) {
+      throw new Error("Workspace is no longer available")
+    }
+    this.retainFollower(record, options.requestId)
+    return { workspace: { ...record, requestId: undefined }, created: false }
   }
   private async createWithDeadline(record: WorkspaceRecord,
     launchDeadlineAt: number, launchTimeoutMs: number,
@@ -594,40 +635,104 @@ export class WorkspaceManager {
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) return false
     const state = record[WORKSPACE_STATE]
-    if (state.creationRequestId !== requestId) return false
-    if (state.creationRequestState === "released") return true
-    if (state.creationRequestState !== "active") return false
-    state.creationRequestState = "released"
-    record.requestId = undefined
+    const claim = state.creationClaims.get(requestId)
+    if (claim === "released") return true
+    if (claim !== "owner") return false
+    state.creationClaims.set(requestId, "released")
+    state.creationRetained = true
+    this.refreshCreationRequestId(record)
     return true
   }
 
   async cancelCreationRequest(requestId: string): Promise<void> {
+    const deletions: Promise<WorkspaceDescriptor | undefined>[] = []
+    let releasedClaimFound = false
     for (const [workspaceId, record] of this.workspaces) {
       const state = record[WORKSPACE_STATE]
-      if (state.creationRequestId !== requestId) continue
-      if (state.creationRequestState === "released") return
-      state.creationRequestState = "cancelled"
-      record.requestId = undefined
-      await this.delete(workspaceId)
-      return
+      const claim = state.creationClaims.get(requestId)
+      if (claim === undefined) continue
+      if (claim === "released") {
+        releasedClaimFound = true
+        continue
+      }
+      if (claim === "follower") state.creationClaims.delete(requestId)
+      else state.creationClaims.set(requestId, "cancelled")
+      this.refreshCreationRequestId(record)
+      if (!state.creationRetained && !this.hasActiveCreationClaims(state)) {
+        deletions.push(this.delete(workspaceId))
+      }
     }
-    this.cancelledCreationRequests.add(requestId)
+    if (!releasedClaimFound && this.pendingCreationRequests.has(requestId)) {
+      this.cancelledCreationRequests.add(requestId)
+    }
+    await Promise.all(deletions)
   }
 
   private finishCreation(
     result: WorkspaceCreateResult,
     requestId: string | undefined,
     record: WorkspaceRecord,
+    created: boolean,
   ): WorkspaceCreateResult {
-    const requestState = record[WORKSPACE_STATE].creationRequestState
-    if (requestId && requestState === "cancelled") {
+    const requestState = requestId ? record[WORKSPACE_STATE].creationClaims.get(requestId) : undefined
+    if (requestId && (requestState === "cancelled" || this.cancelledCreationRequests.has(requestId))) {
       throw new Error(`Workspace creation request ${requestId} was cancelled`)
     }
+    const ownsCreation = requestId !== undefined && requestState === "owner"
     return {
-      workspace: requestId ? { ...result.workspace, requestId } : result.workspace,
-      created: result.created && requestState !== "released",
+      workspace: { ...result.workspace, requestId: ownsCreation ? requestId : undefined },
+      created: created && result.created && (requestId === undefined || ownsCreation),
     }
+  }
+
+  private claimFollower(record: WorkspaceRecord, requestId: string | undefined): void {
+    const state = record[WORKSPACE_STATE]
+    if (requestId === undefined) state.anonymousCreationFollowers += 1
+    else state.creationClaims.set(requestId, "follower")
+  }
+
+  private retainFollower(record: WorkspaceRecord, requestId: string | undefined): void {
+    const state = record[WORKSPACE_STATE]
+    if (requestId === undefined) state.anonymousCreationFollowers -= 1
+    else state.creationClaims.delete(requestId)
+    state.creationRetained = true
+    for (const [claimId, claim] of state.creationClaims) {
+      if (claim === "cancelled") state.creationClaims.delete(claimId)
+    }
+    this.refreshCreationRequestId(record)
+  }
+
+  private async rollbackFollower(record: WorkspaceRecord, requestId: string | undefined): Promise<void> {
+    if (this.workspaces.get(record.id) !== record) return
+    const state = record[WORKSPACE_STATE]
+    if (requestId === undefined) state.anonymousCreationFollowers -= 1
+    else if (state.creationClaims.get(requestId) !== "owner") state.creationClaims.delete(requestId)
+    this.refreshCreationRequestId(record)
+    if (!state.creationRetained && !this.hasActiveCreationClaims(state)) await this.delete(record.id)
+  }
+
+  private refreshCreationRequestId(record: WorkspaceRecord): void {
+    record.requestId = Array.from(record[WORKSPACE_STATE].creationClaims)
+      .find(([, claim]) => claim === "owner")?.[0]
+  }
+
+  private hasActiveCreationClaims(state: WorkspaceState): boolean {
+    return state.anonymousCreationFollowers > 0
+      || Array.from(state.creationClaims.values()).some((claim) => claim === "owner" || claim === "follower")
+  }
+
+  private beginCreationRequest(requestId: string): void {
+    const claimed = Array.from(this.workspaces.values())
+      .some((record) => record[WORKSPACE_STATE].creationClaims.has(requestId))
+    if (this.pendingCreationRequests.has(requestId) || claimed) {
+      throw new Error(`Workspace creation request ${requestId} is already in use`)
+    }
+    this.pendingCreationRequests.add(requestId)
+  }
+
+  private finishCreationRequest(requestId: string): void {
+    this.pendingCreationRequests.delete(requestId)
+    this.cancelledCreationRequests.delete(requestId)
   }
 
   async shutdown() {
@@ -654,6 +759,7 @@ export class WorkspaceManager {
     }
     for (const [id, record] of records) this.removeRecord(id, record, true, "stopped")
     this.cancelledCreationRequests.clear()
+    this.pendingCreationRequests.clear()
     const remaining = Math.max(1, deadlineAt - this.now())
     await this.withTimeout(
       this.sharedService.shutdown({ timeoutMs: remaining }),
@@ -885,6 +991,8 @@ export class WorkspaceManager {
   ): void {
     if (this.workspaces.get(id) !== record) return
     this.workspaces.delete(id)
+    const identity = canonicalWorktreeIdentity(record.path, this.options.platform)
+    if (this.workspacesByPath.get(identity) === record) this.workspacesByPath.delete(identity)
     clearWorkspaceSearchCache(record.path)
     if (publishStopped) this.publishStopped(record, reason)
   }

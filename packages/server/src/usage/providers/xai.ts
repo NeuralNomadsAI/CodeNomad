@@ -1,9 +1,7 @@
-import { getAuthEntry, getString, notConfigured, oauthTokenNeedsRefresh, result, toUsageWindow, writeOpenCodeAuthEntry } from "../shared"
-import type { AuthEntry, UsageProvider } from "../types"
+import { getOAuthEntry, getString, notConfigured, oauthTokenNeedsRefresh, result, toUsageWindow } from "../shared"
+import type { UsageProvider } from "../types"
 
 const USAGE_URL = "https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig"
-const TOKEN_URL = "https://auth.x.ai/oauth2/token"
-const CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"
 const REQUEST_TIMEOUT_MS = 15_000
 const EMPTY_GRPC_WEB_BODY = new Uint8Array([0, 0, 0, 0, 0])
 const USAGE_PERCENT_PATHS = [[1], [1, 1]]
@@ -12,46 +10,6 @@ type ScanState = { index: number; order: number }
 type Fixed32Field = { path: number[]; value: number; order: number }
 type VarintField = { path: number[]; value: bigint }
 type ProtobufScan = { fixed32Fields: Fixed32Field[]; varintFields: VarintField[] }
-
-let refreshPromise: Promise<AuthEntry> | null = null
-
-async function refreshXaiOauth(entry: AuthEntry): Promise<AuthEntry> {
-  if (!refreshPromise) {
-    refreshPromise = (async () => {
-      const refreshToken = getString(entry.refresh)
-      if (!refreshToken) throw new Error("xAI OAuth entry has no usable refresh token")
-      const response = await fetch(TOKEN_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ client_id: CLIENT_ID, refresh_token: refreshToken, grant_type: "refresh_token" }),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      })
-      if (!response.ok) throw new Error(`xAI OAuth refresh failed with HTTP ${response.status}`)
-      const payload = await response.json() as Record<string, unknown>
-      const access = getString(payload.access_token)
-      if (!access) throw new Error("xAI OAuth refresh returned no access token")
-      const expiresIn = Number(payload.expires_in ?? 3600)
-      if (!Number.isFinite(expiresIn)) throw new Error("xAI OAuth refresh returned an invalid expiry")
-      const refreshed: AuthEntry = {
-        ...entry,
-        type: "oauth",
-        access,
-        refresh: getString(payload.refresh_token) ?? refreshToken,
-        expires: Date.now() + expiresIn * 1000,
-      }
-      writeOpenCodeAuthEntry("xai", refreshed)
-      return refreshed
-    })().finally(() => { refreshPromise = null })
-  }
-  return refreshPromise
-}
-
-async function ensureFreshAccess(entry: AuthEntry): Promise<string> {
-  const fresh = oauthTokenNeedsRefresh(entry) ? await refreshXaiOauth(entry) : entry
-  const access = getString(fresh.access)
-  if (!access) throw new Error("xAI OAuth entry has no usable access token")
-  return access
-}
 
 function readVarint(bytes: Uint8Array, state: ScanState): bigint | null {
   let value = 0n
@@ -239,10 +197,13 @@ const xai: UsageProvider = {
   name: "xAI",
   aliases: ["xai", "grok"],
   async fetchQuota() {
-    const entry = getAuthEntry(this.aliases)
-    if (!entry || entry.type !== "oauth") return notConfigured(this.id, this.name)
+    const entry = getOAuthEntry(this.aliases)
+    if (!entry) return notConfigured(this.id, this.name)
     try {
-      const usage = await fetchUsage(await ensureFreshAccess(entry))
+      if (oauthTokenNeedsRefresh(entry)) throw new Error("xAI session expired. Reconnect it in OpenCode.")
+      const access = getString(entry.access) ?? getString(entry.token)
+      if (!access) throw new Error("xAI OAuth entry has no usable access token")
+      const usage = await fetchUsage(access)
       return result(this.id, this.name, {
         ok: true,
         configured: true,

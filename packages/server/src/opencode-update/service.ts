@@ -8,7 +8,7 @@ import { probeBinaryVersion } from "../workspaces/spawn"
 import { compareVersionStrings, stripTagPrefix } from "../releases/release-monitor"
 
 const OPENCODE_PACKAGE_NAME = "@opencode-ai/cli"
-const OPENCODE_REGISTRY_URL = `https://registry.npmjs.org/${encodeURIComponent(OPENCODE_PACKAGE_NAME)}`
+const OPENCODE_REGISTRY_URL = "https://registry.npmjs.org/-/package/%40opencode-ai%2Fcli/dist-tags"
 export const TARGET_OPENCODE_CHANNEL = "beta"
 const inFlightUpgrades = new Map<string, Promise<OpenCodeUpdateResponse>>()
 
@@ -83,15 +83,15 @@ export class OpenCodeUpdateService {
     }
 
     try {
-      const result = await this.deps.upgradeBinary(binary, TARGET_OPENCODE_CHANNEL)
+      const result = await this.deps.upgradeBinary(binary, latestVersion)
       if (!result.success) {
         throw new OpenCodeUpdateError("upgrade_failed", result.error)
       }
       const installedVersion = this.readCurrentVersion(binary.path)
-      if (compareOpenCodeVersionStrings(installedVersion, latestVersion) < 0) {
+      if (installedVersion !== latestVersion) {
         throw new OpenCodeUpdateError(
           "upgrade_verification_failed",
-          `OpenCode reported ${result.version}, but the configured binary is still ${installedVersion}`,
+          `OpenCode reported ${result.version}, but the configured binary is ${installedVersion} instead of ${latestVersion}`,
         )
       }
       return { success: true, version: installedVersion }
@@ -200,15 +200,20 @@ export function installOpenCodeCli(
   })
 }
 
-async function resolveLatestOpenCodeVersion(): Promise<string> {
-  const response = await fetch(OPENCODE_REGISTRY_URL, {
+type RegistryFetch = (
+  url: string,
+  init: Parameters<typeof fetch>[1],
+) => Promise<Pick<Awaited<ReturnType<typeof fetch>>, "ok" | "status" | "json">>
+
+export async function resolveLatestOpenCodeVersion(fetchRegistry: RegistryFetch = fetch): Promise<string> {
+  const response = await fetchRegistry(OPENCODE_REGISTRY_URL, {
     headers: { Accept: "application/json" },
     signal: AbortSignal.timeout(10_000),
   })
   if (!response.ok) throw new Error(`OpenCode registry responded with ${response.status}`)
 
-  const metadata = (await response.json()) as { "dist-tags"?: Record<string, unknown> }
-  const version = metadata["dist-tags"]?.[TARGET_OPENCODE_CHANNEL]
+  const metadata = (await response.json()) as Record<string, unknown>
+  const version = metadata[TARGET_OPENCODE_CHANNEL]
   if (typeof version !== "string" || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
     throw new Error(`The ${TARGET_OPENCODE_CHANNEL} channel did not resolve to a valid version`)
   }

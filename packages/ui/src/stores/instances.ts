@@ -24,10 +24,12 @@ import {
 } from "./sessions"
 import {
   ensureWorktreesLoaded,
+  getWorktrees,
   reloadWorktrees,
 } from "./worktrees"
 import { getRootClient } from "./opencode-client"
-import { buildV2RequestLocations } from "./request-locations"
+import { buildV2RequestLocations, type RequestLocation } from "./request-locations"
+import { normalizeWorkspacePath } from "./app-session-reconciliation"
 import { fetchCommands, clearCommands } from "./commands"
 import { getInstanceRefreshTargets, type InstanceRefreshTarget } from "./instance-invalidation"
 import { ConnectionResyncGate } from "./connection-resync-gate"
@@ -135,6 +137,34 @@ const [logStreamingState, setLogStreamingState] = createSignal<Map<string, boole
 // Interruption queues per instance
 const [permissionQueues, setPermissionQueues] = createSignal<Map<string, PermissionRequest[]>>(new Map())
 const [activePermissionId, setActivePermissionId] = createSignal<Map<string, string | null>>(new Map())
+const permissionRequestLocations = new Map<string, Map<string, string>>()
+const formRequestLocations = new Map<string, Map<string, string>>()
+
+type RequestAuthorityLocation = RequestLocation | { directory: string; workspaceID?: string }
+
+function requestLocationKey(location?: RequestAuthorityLocation | string): string | undefined {
+  if (!location) return undefined
+  if (typeof location === "string") return `${normalizeWorkspacePath(location)}\0`
+  if (!location.directory) return undefined
+  const workspace = (location as { workspace?: string }).workspace
+    ?? (location as { workspaceID?: string }).workspaceID
+  return `${normalizeWorkspacePath(location.directory)}\0${workspace ?? ""}`
+}
+
+function rememberRequestLocation(registry: Map<string, Map<string, string>>, instanceId: string, requestId: string, location?: RequestAuthorityLocation | string): void {
+  const key = requestLocationKey(location)
+  if (!key) return
+  const entries = registry.get(instanceId) ?? new Map<string, string>()
+  entries.set(requestId, key)
+  registry.set(instanceId, entries)
+}
+
+function forgetRequestLocation(registry: Map<string, Map<string, string>>, instanceId: string, requestId: string): void {
+  const entries = registry.get(instanceId)
+  if (!entries) return
+  entries.delete(requestId)
+  if (!entries.size) registry.delete(instanceId)
+}
 
 class InterruptionRegistry<T extends { id: string }> {
   private readonly enqueuedAt = new Map<string, number>()
@@ -219,8 +249,51 @@ const pendingRequestSyncs = new Map<string, {
   token: { cancelled: boolean }
   promise: Promise<void>
 }>()
+const pendingRequestLiveness = new Map<string, Promise<void>>()
+const pendingRequestControllers = new Map<string, Set<AbortController>>()
 const pendingRequestSyncSuperseded = new Error("Pending request sync was superseded")
 let nextPendingRequestSyncGeneration = 0
+
+async function withPendingRequestTimeout<T>(instanceId: string, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController()
+  const controllers = pendingRequestControllers.get(instanceId) ?? new Set<AbortController>()
+  controllers.add(controller)
+  pendingRequestControllers.set(instanceId, controllers)
+  const timeout = setTimeout(() => controller.abort(), 10_000)
+  try {
+    return await run(controller.signal)
+  } finally {
+    clearTimeout(timeout)
+    controllers.delete(controller)
+    if (!controllers.size && pendingRequestControllers.get(instanceId) === controllers) {
+      pendingRequestControllers.delete(instanceId)
+    }
+  }
+}
+
+function abortPendingRequestWork(instanceId: string): void {
+  for (const controller of pendingRequestControllers.get(instanceId) ?? []) controller.abort()
+}
+
+async function allSettledBounded<T, R>(
+  items: readonly T[],
+  isCurrent: () => boolean,
+  run: (item: T) => Promise<R>,
+): Promise<PromiseSettledResult<R>[]> {
+  const results = new Array<PromiseSettledResult<R> | undefined>(items.length)
+  let next = 0
+  await Promise.all(Array.from({ length: Math.min(4, items.length) }, async () => {
+    while (isCurrent() && next < items.length) {
+      const index = next++
+      try {
+        results[index] = { status: "fulfilled", value: await run(items[index]) }
+      } catch (reason) {
+        results[index] = { status: "rejected", reason }
+      }
+    }
+  }))
+  return results.filter((result): result is PromiseSettledResult<R> => result !== undefined)
+}
 
 function bumpEpoch(epochs: Map<string, number>, instanceId: string): void {
   epochs.set(instanceId, (epochs.get(instanceId) ?? 0) + 1)
@@ -258,11 +331,14 @@ const connectionResyncs = new TrailingResyncCoordinator(
     await waitForSettledPrerequisite(initialHydrations.get(instanceId))
     const instance = instances().get(instanceId)
     if (!instance?.client || instance.status !== "ready") return
-    await Promise.all([
-      fetchSessions(instanceId, { reset: true }),
-      syncPendingRequests(instanceId),
-      refreshVolatileInstanceState(instanceId),
-    ])
+    let sessionError: unknown
+    try {
+      await fetchSessions(instanceId, { reset: true })
+    } catch (error) {
+      sessionError = error
+    }
+    await Promise.all([syncPendingRequests(instanceId), refreshVolatileInstanceState(instanceId)])
+    if (sessionError) throw sessionError
     const loadedMessages = messagesLoaded().get(instanceId) ?? new Set<string>()
     for (const sessionId of loadedMessages) invalidateSessionMessageLoad(instanceId, sessionId)
     const activeId = activeSessionId().get(instanceId)
@@ -498,6 +574,7 @@ function releaseInstanceResources(instanceId: string) {
 function getPendingRequestLocations(instanceId: string, rootDirectory?: string) {
   return buildV2RequestLocations(rootDirectory, [
     getActiveCatalogLocation(instanceId),
+    ...getWorktrees(instanceId),
     ...Array.from(sessions().get(instanceId)?.values() ?? []).map((session) => session.location),
     ...getFormQueue(instanceId).flatMap((form) => form.location ? [form.location] : []),
   ])
@@ -514,38 +591,64 @@ async function syncPendingPermissions(
 
   try {
     const syncStartedAt = Date.now()
-    const remote: PermissionRequest[] = []
-    for (const location of getPendingRequestLocations(instanceId, instance.folder)) {
-      const response = await instance.client.permission.request.list({ location })
+    const remote: Array<{ request: PermissionRequest; location: RequestAuthorityLocation; key: string }> = []
+    const locations = getPendingRequestLocations(instanceId, instance.folder)
+    const scannedLocations = new Set<string>()
+    const results = await allSettledBounded(locations, isCurrent, async (location) => {
+      const response = await withPendingRequestTimeout(instanceId, (signal) => (
+        instance.client!.permission.request.list({ location }, { signal })
+      ))
+      return { location, response }
+    })
+    const failures: unknown[] = []
+    for (const result of results) {
+      if (result.status === "rejected") {
+        failures.push(result.reason)
+        continue
+      }
+      const { location, response } = result.value
       log.info("permission.request.list", { instanceId, location, resolvedLocation: response.location })
-      remote.push(...response.data)
+      const authority = {
+        directory: response.location.directory || location.directory,
+        workspaceID: response.location.workspaceID ?? location.workspace,
+      }
+      const key = requestLocationKey(authority)
+      if (!key) continue
+      scannedLocations.add(key)
+      remote.push(...response.data.map((request) => ({ request, location: authority, key })))
     }
 
-    const remotePendingIds = new Set(remote.map((request) => request.id))
+    const remotePendingIds = new Set(remote.map(({ request }) => request.id))
     if (!isCurrent() || (pendingPermissionMutationEpochs.get(instanceId) ?? 0) !== mutationEpoch) {
       if (propagateErrors) throw pendingRequestSyncSuperseded
       return
     }
-    pruneRepliedPermissions(instanceId, remotePendingIds, syncStartedAt)
+    if (!failures.length) pruneRepliedPermissions(instanceId, remotePendingIds, syncStartedAt)
 
-    const pendingRemote = remote.filter((request) => !hasRepliedPermission(instanceId, request.id))
-    const remoteIds = new Set(pendingRemote.map((request) => request.id))
+    const pendingRemote = remote.filter(({ request }) => !hasRepliedPermission(instanceId, request.id))
+    const remoteIds = new Set(pendingRemote.map(({ request }) => request.id))
     const local = getPermissionQueue(instanceId)
 
     // Remove any stale local permissions missing from server.
     for (const entry of local) {
-      if (!remoteIds.has(entry.id)) {
+      const key = permissionRequestLocations.get(instanceId)?.get(entry.id)
+        ?? requestLocationKey(sessions().get(instanceId)?.get(getPermissionSessionId(entry) ?? "")?.location)
+      if (!remoteIds.has(entry.id) && key && scannedLocations.has(key)) {
         removePermissionFromQueue(instanceId, entry.id)
         removePermissionV2(instanceId, entry.id)
       }
     }
 
     // Upsert all server-side pending permissions.
-    for (const permission of pendingRemote) {
-      const queuedPermission = addPermissionToQueue(instanceId, permission) ?? permission
+    for (const { request, location } of pendingRemote) {
+      const queuedPermission = addPermissionToQueue(instanceId, request, location) ?? request
       upsertPermissionV2(instanceId, queuedPermission)
     }
     reconcilePendingSessionIndicators(instanceId)
+    if (failures.length) {
+      log.warn("Pending permission scan was partial", { instanceId, failedLocations: failures.length })
+      if (propagateErrors) throw failures[0]
+    }
   } catch (error) {
     log.warn("Failed to sync pending permissions", { instanceId, error })
     if (propagateErrors) throw error
@@ -563,21 +666,55 @@ async function syncPendingForms(
 
   try {
     const syncStartedAt = Date.now()
-    const remote: FormWithLocation[] = []
-    for (const location of getPendingRequestLocations(instanceId, instance.folder)) {
-      const response = await instance.client.form.request.list({ location })
-      remote.push(...response.data.map((form) => form.sessionID === "global"
-        ? { ...form, location: response.location }
-        : form))
+    const remote: Array<{ form: FormWithLocation; location: RequestAuthorityLocation; key: string }> = []
+    const locations = getPendingRequestLocations(instanceId, instance.folder)
+    const scannedLocations = new Set<string>()
+    const results = await allSettledBounded(locations, isCurrent, async (location) => {
+      const response = await withPendingRequestTimeout(instanceId, (signal) => (
+        instance.client!.form.request.list({ location }, { signal })
+      ))
+      return { location, response }
+    })
+    const failures: unknown[] = []
+    for (const result of results) {
+      if (result.status === "rejected") {
+        failures.push(result.reason)
+        continue
+      }
+      const { location, response } = result.value
+      const authority = {
+        directory: response.location.directory || location.directory,
+        workspaceID: response.location.workspaceID ?? location.workspace,
+      }
+      const key = requestLocationKey(authority)
+      if (!key) continue
+      scannedLocations.add(key)
+      remote.push(...response.data.map((form) => ({
+        form: form.sessionID === "global" ? { ...form, location: response.location } : form,
+        location: authority,
+        key,
+      })))
     }
     if (!isCurrent() || (pendingFormMutationEpochs.get(instanceId) ?? 0) !== mutationEpoch) {
       if (propagateErrors) throw pendingRequestSyncSuperseded
       return
     }
-    const remotePendingIds = new Set(remote.map((form) => form.id))
-    pruneSettledForms(instanceId, remotePendingIds, syncStartedAt)
-    replacePendingForms(instanceId, remote.filter((form) => !hasSettledForm(instanceId, form.id)))
+    const remotePendingIds = new Set(remote.map(({ form }) => form.id))
+    if (!failures.length) pruneSettledForms(instanceId, remotePendingIds, syncStartedAt)
+    const pendingRemote = remote.filter(({ form }) => !hasSettledForm(instanceId, form.id))
+    const remoteIds = new Set(pendingRemote.map(({ form }) => form.id))
+    for (const form of getFormQueue(instanceId)) {
+      const key = formRequestLocations.get(instanceId)?.get(form.id)
+        ?? requestLocationKey(form.location)
+        ?? requestLocationKey(sessions().get(instanceId)?.get(form.sessionID)?.location)
+      if (!remoteIds.has(form.id) && key && scannedLocations.has(key)) removePendingForm(instanceId, form.id)
+    }
+    for (const { form, location } of pendingRemote) addPendingForm(instanceId, form, location)
     reconcilePendingSessionIndicators(instanceId)
+    if (failures.length) {
+      log.warn("Pending form scan was partial", { instanceId, failedLocations: failures.length })
+      if (propagateErrors) throw failures[0]
+    }
   } catch (error) {
     log.warn("Failed to sync pending forms", { instanceId, error })
     if (propagateErrors) throw error
@@ -621,6 +758,7 @@ function syncPendingRequests(
     registerInvalidation?.(() => {
       if (pendingRequestSyncs.get(instanceId)?.token !== existing.token) return
       existing.token.cancelled = true
+      abortPendingRequestWork(instanceId)
       invalidatePendingRequestSync(instanceId)
       pendingRequestSyncs.delete(instanceId)
     })
@@ -634,6 +772,7 @@ function syncPendingRequests(
   registerInvalidation?.(() => {
     if (pendingRequestSyncs.get(instanceId)?.token !== token) return
     token.cancelled = true
+    abortPendingRequestWork(instanceId)
     invalidatePendingRequestSync(instanceId)
     pendingRequestSyncs.delete(instanceId)
   })
@@ -643,6 +782,7 @@ function syncPendingRequests(
 function schedulePendingRequestReconciliation(instanceId: string): void {
   const current = pendingRequestSyncs.get(instanceId)
   if (current) current.token.cancelled = true
+  abortPendingRequestWork(instanceId)
   pendingRequestSyncs.delete(instanceId)
   invalidatePendingRequestSync(instanceId)
   void syncPendingRequests(instanceId).catch((error) => {
@@ -650,12 +790,30 @@ function schedulePendingRequestReconciliation(instanceId: string): void {
   })
 }
 
-async function reconcilePendingRequestLiveness(instanceId: string): Promise<void> {
+async function runPendingRequestLiveness(instanceId: string): Promise<void> {
   const instanceSessions = sessions().get(instanceId)
   const hasRunningSession = Array.from(instanceSessions?.values() ?? []).some((session) => session.status === "working" || session.status === "compacting")
-  if (!hasRunningSession && getPermissionQueue(instanceId).length === 0 && getFormQueue(instanceId).length === 0) return
-  await Promise.all([fetchSessions(instanceId, { reset: true }), syncPendingRequests(instanceId)])
+  let sessionError: unknown
+  if (hasRunningSession || getPermissionQueue(instanceId).length || getFormQueue(instanceId).length) {
+    try {
+      await withPendingRequestTimeout(instanceId, (signal) => fetchSessions(instanceId, { reset: true, signal }))
+    } catch (error) {
+      sessionError = error
+    }
+  }
+  await syncPendingRequests(instanceId)
   reconcilePendingSessionIndicators(instanceId)
+  if (sessionError) throw sessionError
+}
+
+function reconcilePendingRequestLiveness(instanceId: string): Promise<void> {
+  const existing = pendingRequestLiveness.get(instanceId)
+  if (existing) return existing
+  const promise = runPendingRequestLiveness(instanceId).finally(() => {
+    if (pendingRequestLiveness.get(instanceId) === promise) pendingRequestLiveness.delete(instanceId)
+  })
+  pendingRequestLiveness.set(instanceId, promise)
+  return promise
 }
 
 function startInstanceSessionHydration(instanceId: string, force = false): {
@@ -1105,6 +1263,8 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   initialSessionHydrations.delete(id)
   initialWorkspaceMetadataHydrations.delete(id)
   invalidatePendingRequestSync(id)
+  abortPendingRequestWork(id)
+  pendingRequestLiveness.delete(id)
   pendingRequestSyncGenerations.delete(id)
   settleInstanceReadyWaiters(id, new Error(`Workspace ${id} was removed before it became ready`))
 
@@ -1468,8 +1628,9 @@ function recomputeActiveInterruption(instanceId: string): void {
   setActiveInterruptionForInstance(instanceId, computeActiveInterruption(instanceId))
 }
 
-function addPermissionToQueue(instanceId: string, permission: PermissionRequest): PermissionRequest | undefined {
+function addPermissionToQueue(instanceId: string, permission: PermissionRequest, location?: RequestAuthorityLocation | string): PermissionRequest | undefined {
   bumpEpoch(pendingPermissionMutationEpochs, instanceId)
+  rememberRequestLocation(permissionRequestLocations, instanceId, permission.id, location)
   let inserted = false
   let updated = false
   let previousPermission: PermissionRequest | undefined
@@ -1522,6 +1683,7 @@ function addPermissionToQueue(instanceId: string, permission: PermissionRequest)
 
 function removePermissionFromQueue(instanceId: string, permissionId: string): void {
   bumpEpoch(pendingPermissionMutationEpochs, instanceId)
+  forgetRequestLocation(permissionRequestLocations, instanceId, permissionId)
   let removedPermission: PermissionRequest | null = null
 
   setPermissionQueues((prev) => {
@@ -1615,6 +1777,7 @@ function clearSyncedYoloSessionsForInstance(instanceId: string): void {
 
 function clearPermissionQueue(instanceId: string): void {
   bumpEpoch(pendingPermissionMutationEpochs, instanceId)
+  permissionRequestLocations.delete(instanceId)
   permissionRegistry.clear(instanceId, getPermissionQueue(instanceId), (sessionId) => {
     setSessionPendingPermission(instanceId, sessionId, false)
   })
@@ -1692,8 +1855,9 @@ function setPendingFormAddedHandler(handler: (instanceId: string, form: FormWith
   pendingFormAddedHandler = handler
 }
 
-function addPendingForm(instanceId: string, form: FormWithLocation): FormWithLocation | undefined {
+function addPendingForm(instanceId: string, form: FormWithLocation, location?: RequestAuthorityLocation | string): FormWithLocation | undefined {
   bumpEpoch(pendingFormMutationEpochs, instanceId)
+  rememberRequestLocation(formRequestLocations, instanceId, form.id, location ?? form.location)
   const previous = getFormQueue(instanceId).find((item) => item.id === form.id)
   addFormToQueue(instanceId, form)
   formRegistry.ensureEnqueuedAt(form)
@@ -1710,6 +1874,7 @@ function addPendingForm(instanceId: string, form: FormWithLocation): FormWithLoc
 
 function removePendingForm(instanceId: string, formId: string): void {
   bumpEpoch(pendingFormMutationEpochs, instanceId)
+  forgetRequestLocation(formRequestLocations, instanceId, formId)
   const form = getFormQueue(instanceId).find((item) => item.id === formId)
   removeFormFromQueue(instanceId, formId)
   formRegistry.remove(instanceId, formId)
@@ -1720,16 +1885,9 @@ function removePendingForm(instanceId: string, formId: string): void {
   recomputeActiveInterruption(instanceId)
 }
 
-function replacePendingForms(instanceId: string, forms: readonly FormWithLocation[]): void {
-  const ids = new Set(forms.map((form) => form.id))
-  for (const form of getFormQueue(instanceId)) {
-    if (!ids.has(form.id)) removePendingForm(instanceId, form.id)
-  }
-  for (const form of forms) addPendingForm(instanceId, form)
-}
-
 function clearPendingFormQueue(instanceId: string): void {
   bumpEpoch(pendingFormMutationEpochs, instanceId)
+  formRequestLocations.delete(instanceId)
   formRegistry.clear(instanceId, getFormQueue(instanceId), (sessionId) => {
     setSessionPendingForm(instanceId, sessionId, false)
   })
@@ -1757,28 +1915,41 @@ async function sendFormCancel(instanceId: string, formId: string): Promise<void>
 function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNullable<typeof sseManager.onInvalidation>>[1]): void {
   const instance = instances().get(instanceId)
   if (!instance?.client) return
-  const data = applyOpenCodeDataEvent(instanceId, instance.folder, event)
   const sessionId = "sessionID" in event.data && typeof event.data.sessionID === "string"
     ? event.data.sessionID
     : event.type === "form.created"
       ? event.data.form.sessionID
       : undefined
-  if (sessionId && event.type.startsWith("session.") && (
-    activeSessionId().get(instanceId) === sessionId
-    && isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId))
-  )) projectOpenCodeMessages(instanceId, sessionId, data)
-  if (sessionId && event.type === "session.inbox.cancelled") {
-    removeMessageV2(instanceId, event.data.inboxID, sessionId)
+  const projectMessages = (data: ReturnType<typeof applyOpenCodeDataEvent>, preserveOmitted = true, force = false) => {
+    if (sessionId && (force || event.type.startsWith("session.")) && (
+      activeSessionId().get(instanceId) === sessionId
+      && isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId))
+    )) projectOpenCodeMessages(instanceId, sessionId, data, preserveOmitted)
   }
-  if (sessionId && event.type === "session.revert.committed") {
-    for (const messageId of messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId)) {
-      if (messageId >= event.data.to) removeMessageV2(instanceId, messageId, sessionId)
+  const project = (data: ReturnType<typeof applyOpenCodeDataEvent>, preserveOmitted = true) => {
+    projectMessages(data, preserveOmitted)
+    if (sessionId && event.type === "session.inbox.cancelled") {
+      removeMessageV2(instanceId, event.data.inboxID, sessionId)
+    }
+    if (sessionId && event.type === "session.revert.committed") {
+      for (const messageId of messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId)) {
+        if (messageId >= event.data.to) removeMessageV2(instanceId, messageId, sessionId)
+      }
     }
   }
+  const data = applyOpenCodeDataEvent(instanceId, instance.folder, event, project, (next) => {
+    projectMessages(next, false, true)
+    schedulePendingRequestReconciliation(instanceId)
+  })
+  project(data)
   if (sessionId && (event.type === "permission.asked" || event.type === "permission.replied")) {
-    const remote = (data.session.permission.list(sessionId) ?? []).filter((permission) => !hasRepliedPermission(instanceId, permission.id))
+    const current = data.session.permission.list(sessionId) ?? []
+    const remote = (event.type === "permission.asked"
+      ? [event.data, ...current.filter((permission) => permission.id !== event.data.id)]
+      : current).filter((permission) => !hasRepliedPermission(instanceId, permission.id))
+    const location = event.location ?? sessions().get(instanceId)?.get(sessionId)?.location
     for (const permission of remote) {
-      const queued = addPermissionToQueue(instanceId, permission) ?? permission
+      const queued = addPermissionToQueue(instanceId, permission, location) ?? permission
       upsertPermissionV2(instanceId, queued)
     }
     if (event.type === "permission.replied") {
@@ -1787,9 +1958,13 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
     }
   }
   if (sessionId && event.type.startsWith("form.")) {
-    const remote = data.session.form.list(sessionId, sessionId === "global" ? event.location : undefined) ?? []
+    const current = data.session.form.list(sessionId, sessionId === "global" ? event.location : undefined) ?? []
+    const remote = event.type === "form.created"
+      ? [event.data.form, ...current.filter((form) => form.id !== event.data.form.id)]
+      : current
+    const location = event.location ?? sessions().get(instanceId)?.get(sessionId)?.location
     for (const form of remote) {
-      if (!hasSettledForm(instanceId, form.id)) addPendingForm(instanceId, form)
+      if (!hasSettledForm(instanceId, form.id)) addPendingForm(instanceId, form, location)
     }
     if (event.type === "form.replied" || event.type === "form.cancelled") {
       markFormSettled(instanceId, event.data.id)

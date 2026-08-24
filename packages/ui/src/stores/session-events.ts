@@ -44,7 +44,7 @@ import { ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForI
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { tGlobal } from "../lib/i18n"
 
-import { fetchSessions, removeSessionRuntimeState } from "./session-api"
+import { fetchSessions, loadMessages, removeSessionRuntimeState } from "./session-api"
 import { getRootClient } from "./opencode-client"
 import { getWorktrees } from "./worktrees"
 import {
@@ -107,8 +107,14 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
       ensureSessionStatus(instanceId, event.data.sessionID, "compacting", event.location?.directory)
       return
     case "session.compaction.failed":
-    case "session.execution.interrupted":
       setTerminalNativeSessionStatus(instanceId, event.data.sessionID, true, event.location?.directory)
+      return
+    case "session.execution.interrupted":
+      withSession(instanceId, event.data.sessionID, (session) => { session.generationRecovery = "interrupted" })
+      setTerminalNativeSessionStatus(instanceId, event.data.sessionID, true, event.location?.directory)
+      void loadMessages(instanceId, event.data.sessionID, { force: true }).catch((error) => {
+        log.warn("Failed to refresh interrupted session messages", { instanceId, sessionId: event.data.sessionID, error })
+      })
       return
     case "session.execution.succeeded":
       setTerminalNativeSessionStatus(instanceId, event.data.sessionID, false, event.location?.directory)

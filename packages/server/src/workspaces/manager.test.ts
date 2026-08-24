@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import path from "node:path"
 import { describe, it } from "node:test"
 import type { LocationRef, OpenCodeClient, OpenCodeEvent } from "@opencode-ai/client"
 import pino from "pino"
@@ -28,6 +29,7 @@ class ControlledSharedService {
   validationGate?: ReturnType<typeof deferred<void>>
   ignoreValidationAbort = false
   afterValidation?: () => void
+  validationDirectory?: string
   headerFailures = 0
   validationCalls: Array<{ location: LocationRef; options?: OpenCodeSharedServiceOptions }> = []
   shutdownCalls = 0
@@ -71,10 +73,11 @@ class ControlledSharedService {
       }
     }
     this.afterValidation?.()
+    const directory = this.validationDirectory ?? location.directory
     return {
-      directory: location.directory,
+      directory,
       workspaceID: location.workspaceID ?? "location-1",
-      project: { id: "project-1", directory: location.directory, canonical: location.directory },
+      project: { id: "project-1", directory, canonical: directory },
     }
   }
 
@@ -129,6 +132,14 @@ describe("workspace manager shared service lifecycle", () => {
     assert.equal(
       canonicalWorktreeIdentity("\\\\WSL.LOCALHOST\\ubuntu\\repo\\Foo", "win32"),
       canonicalWorktreeIdentity("\\\\wsl.localhost\\Ubuntu\\repo\\Foo", "win32"),
+    )
+    assert.equal(
+      canonicalWorktreeIdentity("\\\\WSL$\\UBUNTU\\repo\\Foo", "win32"),
+      canonicalWorktreeIdentity("\\\\wsl.localhost\\Ubuntu\\repo\\Foo", "win32"),
+    )
+    assert.notEqual(
+      canonicalWorktreeIdentity("\\\\wsl$\\Ubuntu\\repo\\Foo", "win32"),
+      canonicalWorktreeIdentity("\\\\wsl.localhost\\Ubuntu\\repo\\foo", "win32"),
     )
   })
 
@@ -361,30 +372,199 @@ describe("workspace manager shared service lifecycle", () => {
       else process.env.NODE_EXTRA_CA_CERTS = previousCa
     }
   })
-  it("creates separate workspaces for the same in-flight location", async () => {
+  it("reuses one workspace for concurrent and sequential creates of the same path", async () => {
     const harness = createHarness()
     harness.service.validationGate = deferred<void>()
-    const first = harness.manager.create(process.cwd())
+    const first = harness.manager.create(process.cwd(), undefined, { requestId: "owner-request" })
     await harness.service.validationStarted.promise
-    const second = harness.manager.create(process.cwd())
-    while (harness.service.validationCalls.length < 2) await new Promise((resolve) => setImmediate(resolve))
+    const second = harness.manager.create(process.cwd(), undefined, { requestId: "reuse-request" })
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(harness.service.validationCalls.length, 1)
     harness.service.validationGate.resolve()
 
     const [left, right] = await Promise.all([first, second])
-    assert.notEqual(left.workspace.id, right.workspace.id)
-    assert.equal(left.created && right.created, true)
-    assert.equal(harness.service.validationCalls.length, 2)
+    const third = await harness.manager.create(process.cwd(), undefined, { requestId: "later-request" })
+    assert.equal(left.workspace.id, right.workspace.id)
+    assert.equal(left.workspace.id, third.workspace.id)
+    assert.equal(left.created, true)
+    assert.equal(right.created, false)
+    assert.equal(third.created, false)
+    assert.equal(left.workspace.requestId, "owner-request")
+    assert.equal(right.workspace.requestId, undefined)
+    assert.equal(third.workspace.requestId, undefined)
+    assert.equal(harness.service.validationCalls.length, 1)
   })
 
-  it("bounds concurrent workspace creations", async () => {
+  it("retains an in-flight creation when its owner is cancelled before a follower succeeds", async () => {
     const harness = createHarness()
     harness.service.validationGate = deferred<void>()
-    const creations = Array.from({ length: 32 }, () => harness.manager.create(process.cwd()))
+    const owner = harness.manager.create(process.cwd(), undefined, { requestId: "owner-request" })
+    const ownerFailure = assert.rejects(owner, /owner-request was cancelled/)
+    await harness.service.validationStarted.promise
+    const follower = harness.manager.create(process.cwd(), undefined, { requestId: "follower-request" })
+    const record = [...(harness.manager as any).workspaces.values()][0]
+    const state = record[Object.getOwnPropertySymbols(record)[0]]
+    while (state.creationClaims.size < 2) {
+      await new Promise((resolve) => setImmediate(resolve))
+    }
+
+    await harness.manager.cancelCreationRequest("owner-request")
+    harness.service.validationGate.resolve()
+
+    await ownerFailure
+    const reused = await follower
+    assert.equal(reused.created, false)
+    assert.equal(reused.workspace.requestId, undefined)
+    assert.deepEqual(harness.manager.list().map(({ id }) => id), [reused.workspace.id])
+
+    await harness.manager.cancelCreationRequest("follower-request")
+    assert.deepEqual(harness.manager.list().map(({ id }) => id), [reused.workspace.id])
+    assert.equal(harness.service.evictionCalls.length, 0)
+  })
+
+  it("returns ownership only to the reserving request", async () => {
+    const harness = createHarness()
+    const owner = await harness.manager.create(process.cwd(), undefined, { requestId: "owner-request" })
+    const follower = await harness.manager.create(process.cwd(), undefined, { requestId: "follower-request" })
+
+    assert.equal(owner.workspace.requestId, "owner-request")
+    assert.equal(follower.workspace.requestId, undefined)
+    await harness.manager.cancelCreationRequest("owner-request")
+    assert.equal(harness.manager.get(owner.workspace.id)?.id, follower.workspace.id)
+    await harness.manager.cancelCreationRequest("follower-request")
+
+    assert.deepEqual(harness.manager.list().map(({ id }) => id), [owner.workspace.id])
+    assert.equal(harness.service.evictionCalls.length, 0)
+  })
+
+  it("keeps a released workspace after a successful reused response", async () => {
+    const harness = createHarness()
+    const owner = await harness.manager.create(process.cwd(), undefined, { requestId: "owner-request" })
+    await harness.manager.create(process.cwd(), undefined, { requestId: "follower-request" })
+
+    assert.equal(harness.manager.releaseCreationRequest(owner.workspace.id, "owner-request"), true)
+    await harness.manager.cancelCreationRequest("follower-request")
+
+    assert.equal(harness.manager.get(owner.workspace.id)?.id, owner.workspace.id)
+    assert.equal(harness.service.evictionCalls.length, 0)
+  })
+
+  it("rejects a duplicate request id while pending and while its claim survives", async () => {
+    const harness = createHarness()
+    harness.service.validationGate = deferred<void>()
+    const owner = harness.manager.create(process.cwd(), undefined, { requestId: "duplicate-request" })
+    await harness.service.validationStarted.promise
+
+    await assert.rejects(
+      harness.manager.create(path.join(process.cwd(), "other-path"), undefined, { requestId: "duplicate-request" }),
+      /already in use/,
+    )
+    harness.service.validationGate.resolve()
+    const created = await owner
+    await assert.rejects(
+      harness.manager.create(path.join(process.cwd(), "other-path"), undefined, { requestId: "duplicate-request" }),
+      /already in use/,
+    )
+
+    assert.equal((harness.manager as any).pendingCreationRequests.size, 0)
+    assert.equal((harness.manager as any).cancelledCreationRequests.size, 0)
+    assert.equal(harness.manager.get(created.workspace.id)?.id, created.workspace.id)
+  })
+
+  it("does not retain a cancellation marker after a late follower cancellation", async () => {
+    const harness = createHarness()
+    const owner = await harness.manager.create(process.cwd())
+    const follower = await harness.manager.create(process.cwd(), undefined, { requestId: "follower-request" })
+
+    await harness.manager.cancelCreationRequest("follower-request")
+
+    assert.equal(follower.workspace.requestId, undefined)
+    assert.equal(harness.manager.get(owner.workspace.id)?.id, owner.workspace.id)
+    assert.equal((harness.manager as any).cancelledCreationRequests.size, 0)
+  })
+
+  it("rolls back a cancelled follower without aborting its owner", async () => {
+    const harness = createHarness()
+    harness.service.validationGate = deferred<void>()
+    const owner = harness.manager.create(process.cwd(), undefined, { requestId: "owner-request" })
+    await harness.service.validationStarted.promise
+    const follower = harness.manager.create(process.cwd(), undefined, { requestId: "follower-request" })
+    const followerFailure = assert.rejects(follower, /follower-request was cancelled/)
+    const record = [...(harness.manager as any).workspaces.values()][0]
+    const state = record[Object.getOwnPropertySymbols(record)[0]]
+    while (state.creationClaims.get("follower-request") !== "follower") {
+      await new Promise((resolve) => setImmediate(resolve))
+    }
+
+    await harness.manager.cancelCreationRequest("follower-request")
+    assert.equal(state.creationClaims.has("follower-request"), false)
+    harness.service.validationGate.resolve()
+
+    const created = await owner
+    await followerFailure
+    assert.equal(harness.manager.get(created.workspace.id)?.id, created.workspace.id)
+    assert.equal((harness.manager as any).cancelledCreationRequests.size, 0)
+  })
+
+  it("rolls back a follower claim when its own deadline expires", async () => {
+    const timers = new Map<number, () => void>()
+    let nextTimer = 0
+    const harness = createHarness(new ControlledSharedService(), {
+      launchTimeoutMs: 100,
+      setTimeout: (callback: () => void) => {
+        const timer = ++nextTimer
+        timers.set(timer, callback)
+        return timer
+      },
+      clearTimeout: (timer: number) => { timers.delete(timer) },
+    })
+    harness.service.validationGate = deferred<void>()
+    const owner = harness.manager.create(process.cwd(), undefined, { requestId: "owner-request" })
+    await harness.service.validationStarted.promise
+    const follower = harness.manager.create(process.cwd(), undefined, { requestId: "follower-request" })
+    const followerFailure = assert.rejects(follower, /did not finish launching/)
+    const record = [...(harness.manager as any).workspaces.values()][0]
+    const state = record[Object.getOwnPropertySymbols(record)[0]]
+    while (state.creationClaims.get("follower-request") !== "follower" || timers.size < 2) {
+      await new Promise((resolve) => setImmediate(resolve))
+    }
+
+    timers.get(Math.max(...timers.keys()))?.()
+    await followerFailure
+
+    assert.deepEqual(Array.from(state.creationClaims.keys()), ["owner-request"])
+    assert.equal(state.creationRetained, false)
+    harness.service.validationGate.resolve()
+    await owner
+  })
+
+  it("does not count same-path followers against the creation limit", async () => {
+    const harness = createHarness()
+    harness.service.validationGate = deferred<void>()
+    const owner = harness.manager.create(process.cwd())
+    await harness.service.validationStarted.promise
+    const followers = Array.from({ length: 64 }, (_, index) => harness.manager.create(
+      process.cwd(), undefined, { requestId: `follower-${index}` },
+    ))
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(harness.service.validationCalls.length, 1)
+
+    harness.service.validationGate.resolve()
+    const results = await Promise.all([owner, ...followers])
+    assert.equal(new Set(results.map(({ workspace }) => workspace.id)).size, 1)
+  })
+
+  it("bounds distinct concurrent workspace creations while allowing their followers", async () => {
+    const harness = createHarness()
+    harness.service.validationGate = deferred<void>()
+    const creations = Array.from({ length: 32 }, (_, index) => harness.manager.create(path.join(process.cwd(), `bounded-${index}`)))
     while (harness.service.validationCalls.length < 32) await new Promise((resolve) => setImmediate(resolve))
 
+    const follower = harness.manager.create(path.join(process.cwd(), "bounded-0"))
     await assert.rejects(harness.manager.create(process.cwd()), /Too many workspace creations/)
     harness.service.validationGate.resolve()
-    await Promise.all(creations)
+    const [owners, reused] = await Promise.all([Promise.all(creations), follower])
+    assert.equal(reused.workspace.id, owners[0]?.workspace.id)
   })
 
   it("cancels validation and cleans its logical location", async () => {
@@ -421,7 +601,8 @@ describe("workspace manager shared service lifecycle", () => {
   it("evicts a shared location only after its last workspace is deleted", async () => {
     const harness = createHarness()
     const first = await harness.manager.create(process.cwd())
-    const second = await harness.manager.create(process.cwd())
+    harness.service.validationDirectory = process.cwd()
+    const second = await harness.manager.create(path.join(process.cwd(), "shared-location-alias"))
 
     assert.notEqual(first.workspace.id, second.workspace.id)
     await harness.manager.delete(first.workspace.id)
@@ -471,7 +652,8 @@ describe("workspace manager shared service lifecycle", () => {
   it("evicts once when duplicate workspaces are deleted concurrently", async () => {
     const harness = createHarness()
     const first = await harness.manager.create(process.cwd())
-    const second = await harness.manager.create(process.cwd())
+    harness.service.validationDirectory = process.cwd()
+    const second = await harness.manager.create(path.join(process.cwd(), "shared-location-alias"))
     harness.service.evictionGate = deferred<void>()
 
     const deletions = Promise.all([
@@ -504,7 +686,7 @@ describe("workspace manager shared service lifecycle", () => {
     const harness = createHarness()
     const first = await harness.manager.create(process.cwd())
     harness.service.validationGate = deferred<void>()
-    const creation = harness.manager.create(process.cwd())
+    const creation = harness.manager.create(path.join(process.cwd(), "shutdown-creation"))
     const creationFailure = assert.rejects(creation, WorkspaceLaunchCancelledError)
     while (harness.service.validationCalls.length < 2) await new Promise((resolve) => setImmediate(resolve))
 
@@ -563,8 +745,9 @@ describe("workspace manager shared service lifecycle", () => {
     const harness = createHarness()
     const ready = await harness.manager.create(process.cwd())
     harness.service.validationGate = deferred<void>()
+    harness.service.validationDirectory = process.cwd()
     harness.service.headerFailures = 1
-    const creation = harness.manager.create(process.cwd())
+    const creation = harness.manager.create(path.join(process.cwd(), "header-failure"))
     const creationFailure = assert.rejects(creation, /header lookup failed/)
     while (harness.service.validationCalls.length < 2) await new Promise((resolve) => setImmediate(resolve))
 

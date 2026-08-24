@@ -1,4 +1,4 @@
-import type { OpenCodeEvent } from "@opencode-ai/client"
+import { isSessionNotFoundError, type OpenCodeEvent } from "@opencode-ai/client"
 import { EventBus } from "../events/bus"
 import { Logger } from "../logger"
 import { WorkspaceManager } from "./manager"
@@ -191,14 +191,20 @@ export class InstanceEventBridge {
     const cached = this.sessionDirectories.get(sessionId)
     if (cached && cached.expiresAt > now) return cached.directory
 
-    const directory = this.options.workspaceManager.getSharedServiceClient()
+    const resolve = () => this.options.workspaceManager.getSharedServiceClient()
       .then((client) => client.session.get({ sessionID: sessionId }))
       .then((session) => session.location.directory)
-      .catch((error) => {
-        this.options.logger.warn({ err: error, sessionId }, "Failed to resolve instance event session location")
+    const directory = resolve().catch((error) => {
+      if (isSessionNotFoundError(error)) return undefined
+      return resolve().catch((retryError) => {
+        this.options.logger.warn({ err: retryError, sessionId }, "Failed to resolve instance event session location")
         return undefined
       })
-    this.sessionDirectories.set(sessionId, { expiresAt: now + SESSION_DIRECTORY_CACHE_MS, directory })
+    })
+    const entry = { expiresAt: Number.POSITIVE_INFINITY, directory }
+    this.sessionDirectories.set(sessionId, entry)
+    const settle = () => { entry.expiresAt = Date.now() + SESSION_DIRECTORY_CACHE_MS }
+    void directory.then(settle, settle)
     return directory
   }
 
@@ -208,15 +214,31 @@ export class InstanceEventBridge {
     if (cached && cached.expiresAt > now) return cached.owners
 
     const workspaces = this.options.workspaceManager.list()
-    const owners = Promise.all(workspaces.map((workspace) => (
+    const owners = Promise.allSettled(workspaces.map((workspace) => (
       this.options.workspaceManager.ownsDirectory(workspace.id, directory)
     )))
-      .then((ownership) => workspaces.filter((_, index) => ownership[index]).map((workspace) => workspace.id))
-      .catch((error) => {
-        this.options.logger.warn({ err: error, directory }, "Failed to resolve instance event directory owner")
-        return []
+      .then(async (ownership) => {
+        if (ownership.some((result) => result.status === "rejected")) {
+          ownership = await Promise.allSettled(ownership.map((result, index) => (
+            result.status === "fulfilled"
+              ? Promise.resolve(result.value)
+              : this.options.workspaceManager.ownsDirectory(workspaces[index].id, directory)
+          )))
+        }
+        const failed = ownership.find((result) => result.status === "rejected")
+        if (failed) {
+          this.options.logger.warn({ err: failed.reason, directory }, "Failed to resolve instance event directory owner")
+        }
+        const currentIds = new Set(this.options.workspaceManager.list().map((workspace) => workspace.id))
+        return ownership.flatMap((result, index) => {
+          const id = workspaces[index].id
+          return result.status === "fulfilled" && result.value && currentIds.has(id) ? [id] : []
+        })
       })
-    this.directoryOwners.set(directory, { expiresAt: now + DIRECTORY_OWNER_CACHE_MS, owners })
+    const entry = { expiresAt: Number.POSITIVE_INFINITY, owners }
+    this.directoryOwners.set(directory, entry)
+    const settle = () => { entry.expiresAt = Date.now() + DIRECTORY_OWNER_CACHE_MS }
+    void owners.then(settle, settle)
     return owners
   }
 

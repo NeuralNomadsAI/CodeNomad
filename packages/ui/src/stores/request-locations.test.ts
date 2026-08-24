@@ -50,4 +50,15 @@ describe("buildV2RequestLocations", () => {
       { directory: "/repo-feature" },
     ])
   })
+
+  it("keeps workspace scopes that share a directory", () => {
+    assert.deepEqual(buildV2RequestLocations("/repo", [
+      { directory: "/repo", workspaceID: "one" },
+      { directory: "/repo", workspaceID: "two" },
+    ]), [
+      { directory: "/repo" },
+      { directory: "/repo", workspace: "one" },
+      { directory: "/repo", workspace: "two" },
+    ])
+  })
 })

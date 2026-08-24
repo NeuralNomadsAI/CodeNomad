@@ -8,9 +8,11 @@ import type { AuthEntry, AuthFile, ProviderResult, ProviderUsage } from "./types
 const REQUEST_TIMEOUT_MS = 15_000
 
 function authFileCandidates(): string[] {
+  if (process.env.OPENCODE_AUTH_FILE !== undefined) {
+    return process.env.OPENCODE_AUTH_FILE ? [process.env.OPENCODE_AUTH_FILE] : []
+  }
   const home = os.homedir()
   const candidates = [
-    process.env.OPENCODE_AUTH_FILE,
     process.env.OPENCODE_DATA_DIR ? path.join(process.env.OPENCODE_DATA_DIR, "auth.json") : undefined,
     process.env.XDG_DATA_HOME ? path.join(process.env.XDG_DATA_HOME, "opencode", "auth.json") : undefined,
     path.join(home, ".local", "share", "opencode", "auth.json"),
@@ -21,34 +23,25 @@ function authFileCandidates(): string[] {
   return Array.from(new Set(candidates.filter((candidate): candidate is string => Boolean(candidate))))
 }
 
+function readAuthFile(file: string): AuthFile | null {
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"))
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as AuthFile : null
+  } catch {
+    return null
+  }
+}
+
 function readAuthCandidate(): { auth: AuthFile; file: string } | null {
   for (const file of authFileCandidates()) {
-    try {
-      const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"))
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return { auth: parsed as AuthFile, file }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") continue
-    }
+    const auth = readAuthFile(file)
+    if (auth) return { auth, file }
   }
   return null
 }
 
 export function readOpenCodeAuth(): AuthFile {
   return readAuthCandidate()?.auth ?? {}
-}
-
-export function writeOpenCodeAuthEntry(providerId: string, entry: AuthEntry): void {
-  const current = readAuthCandidate()
-  const file = current?.file ?? authFileCandidates()[0]
-  if (!file) throw new Error("OpenCode auth file is unavailable")
-  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 })
-  const temporary = `${file}.${process.pid}.${Date.now()}.tmp`
-  try {
-    fs.writeFileSync(temporary, JSON.stringify({ ...(current?.auth ?? {}), [providerId]: entry }, null, 2), { mode: 0o600 })
-    fs.renameSync(temporary, file)
-  } finally {
-    try { fs.rmSync(temporary, { force: true }) } catch { /* best effort */ }
-  }
 }
 
 export function getAuthEntry(aliases: readonly string[]): AuthEntry | null {
@@ -61,16 +54,34 @@ export function getAuthEntry(aliases: readonly string[]): AuthEntry | null {
   return null
 }
 
+export function getOAuthEntry(aliases: readonly string[]): AuthEntry | null {
+  const auth = readOpenCodeAuth()
+  for (const alias of aliases) {
+    const value = auth[alias]
+    if (value && typeof value === "object" && !Array.isArray(value) && (value as AuthEntry).type === "oauth") {
+      const entry = value as AuthEntry
+      if (getString(entry.access) || getString(entry.token)) return entry
+    }
+  }
+  return null
+}
+
 export function getString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null
 }
 
 export function getCredential(aliases: readonly string[], fields: readonly string[]): string | null {
-  const entry = getAuthEntry(aliases)
-  if (!entry) return null
-  for (const field of fields) {
-    const value = getString(entry[field])
-    if (value) return value
+  const auth = readOpenCodeAuth()
+  for (const alias of aliases) {
+    const raw = auth[alias]
+    const entry = typeof raw === "string" && raw.trim()
+      ? { token: raw.trim() }
+      : raw && typeof raw === "object" && !Array.isArray(raw) ? raw as AuthEntry : null
+    if (!entry) continue
+    for (const field of fields) {
+      const value = getString(entry[field])
+      if (value) return value
+    }
   }
   return null
 }
@@ -85,7 +96,7 @@ export function decodeJwtClaims(token: string): Record<string, any> | null {
 }
 
 export function oauthTokenNeedsRefresh(entry: AuthEntry, skewMs = 120_000): boolean {
-  const access = getString(entry.access)
+  const access = getString(entry.access) ?? getString(entry.token)
   if (!access) return true
   const deadline = Date.now() + skewMs
   const storedExpiry = Number(entry.expires)

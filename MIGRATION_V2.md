@@ -6,7 +6,7 @@ This branch replaces CodeNomad's OpenCode V1 SDK, custom plugin, and per-workspa
 
 The work grew beyond an SDK swap. It also introduces location-based ownership, native Forms and Shell resources, project-wide session pagination, reconnect reconciliation, bounded virtualized timelines, multi-window desktop state, and a content-addressed restore format.
 
-Server and UI follow the latest published `@opencode-ai/client` beta channel. The selected `opencode2` CLI is managed independently: CodeNomad's updater resolves and installs the latest published CLI beta, while startup accepts another compatible CLI after authenticated health and API validation instead of enforcing an exact version.
+Server and UI pin the same reviewed `@opencode-ai/client` beta build. The selected `opencode2` CLI is managed independently: CodeNomad's updater resolves the latest published CLI beta and installs that concrete version, while startup accepts another compatible CLI after authenticated health and API validation instead of enforcing an exact version.
 
 The incremental comparison with official OpenCode Desktop V2, including closed findings and remaining gaps, is recorded in [`DESKTOP_V2_COMPARISON.md`](DESKTOP_V2_COMPARISON.md).
 

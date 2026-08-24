@@ -6,13 +6,15 @@ import type { Session } from "../types/session.ts"
 import { addInstance, instances, refreshVolatileInstanceState, removeInstance, updateInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { getCommands } from "./commands.ts"
-import { fetchAgents, fetchProviders, fetchSessions, hasMoreMessages, hydrateRestoredSessionChain, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadMoreSessions, loadNewerMessageWindow, loadOldestMessageWindow, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
+import { beginMessageHistoryTraversal, fetchAgents, fetchProviders, fetchSessions, hasMoreMessages, hydrateRestoredSessionChain, invalidateMessageHistoryTraversal, isLatestMessageWindow, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadMoreSessions, loadNewerMessageWindow, loadOldestMessageWindow, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
 import { getInstanceMetadata, setInstanceMetadata } from "./instance-metadata.ts"
 import { loadInstanceMetadata } from "../lib/hooks/use-instance-metadata.ts"
+import { applyOpenCodeDataEvent, destroyOpenCodeData, getOpenCodeMessageRevision } from "./opencode-data.ts"
 import {
   clearInstanceDeletedSessionAuthority,
   agents,
   getSessionListIds,
+  getSessionMessagesLoadError,
   getSessionSearchResultIds,
   loading,
   messagesLoaded,
@@ -137,6 +139,28 @@ describe("session request authority", () => {
 
       assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["new-message"])
       assert.equal(loading().loadingMessages.get(instanceId)?.has(sessionId) ?? false, false)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("rejects a zero-revision message response after reconnect advances instance generation", async () => {
+    const instanceId = "zero-revision-reconnect", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const response = deferred<any>()
+    ;(client as any).message = { list: () => response.promise }
+    ;(client as any).location = { get: async () => ({ directory: "/work" }) }
+    ;(client as any).vcs = { get: async () => ({ location: { directory: "/work" }, data: {} }) }
+    ;(client as any).project = { list: async () => [] }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    try {
+      assert.equal(getOpenCodeMessageRevision(instanceId, sessionId), 0)
+      const request = loadMessages(instanceId, sessionId)
+      applyOpenCodeDataEvent(instanceId, "/work", { id: "connected", type: "server.connected", created: 2, data: {} } as any)
+      response.resolve({ data: [apiMessage("stale")], cursor: {} })
+      await request
+
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), [])
     } finally {
       cleanup()
     }
@@ -350,6 +374,376 @@ describe("session request authority", () => {
     }
   })
 
+  it("retries a latest-window response raced by a native message event", async () => {
+    const instanceId = "latest-window-race", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const staleLatest = deferred<any>()
+    let calls = 0
+    ;(client as any).message = { list: (input: any) => {
+      calls += 1
+      if (calls === 1) return Promise.resolve({ data: [apiMessage("latest")], cursor: { next: "older" } })
+      if (input.cursor === "older") return Promise.resolve({ data: [apiMessage("old")], cursor: {} })
+      if (calls === 3) return staleLatest.promise
+      return Promise.resolve({ data: [apiMessage("fresh")], cursor: {} })
+    } }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    try {
+      await loadMessages(instanceId, sessionId)
+      await loadMoreMessages(instanceId, sessionId)
+      const request = loadLatestMessageWindow(instanceId, sessionId)
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "live",
+        type: "session.step.started",
+        created: 2,
+        data: {
+          sessionID: sessionId,
+          assistantMessageID: "fresh",
+          agent: "build",
+          model: { providerID: "provider", id: "model" },
+        },
+      } as any)
+      staleLatest.resolve({ data: [apiMessage("stale")], cursor: {} })
+      await request
+
+      assert.equal(calls, 4)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["fresh"])
+    } finally {
+      destroyOpenCodeData(instanceId)
+      cleanup()
+    }
+  })
+
+  it("ignores permission and form races but retries a message delta", async () => {
+    const instanceId = "latest-window-data-race", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    let calls = 0
+    ;(client as any).message = { list: async () => {
+      calls += 1
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: `permission-${calls}`, type: "permission.asked", created: calls,
+        data: { id: `permission-${calls}`, sessionID: sessionId, action: "read", resources: ["*"] },
+      } as any)
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: `form-${calls}`, type: "form.created", created: calls, location: { directory: "/work" },
+        data: { form: { id: `form-${calls}`, sessionID: sessionId, title: "Input", fields: [] } },
+      } as any)
+      if (calls === 1) {
+        applyOpenCodeDataEvent(instanceId, "/work", {
+          id: "delta", type: "session.text.delta", created: calls,
+          data: { sessionID: sessionId, assistantMessageID: "assistant", ordinal: 0, delta: "live" },
+        } as any)
+      }
+      return { data: [apiMessage(`message-${calls}`)], cursor: {} }
+    } }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    messageStoreBus.getOrCreate(instanceId).setMessageWindow(sessionId, { kind: "history", resumeCursor: "history", newerCursors: [] })
+    try {
+      await loadLatestMessageWindow(instanceId, sessionId)
+
+      assert.equal(calls, 2)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["message-2"])
+    } finally {
+      destroyOpenCodeData(instanceId)
+      cleanup()
+    }
+  })
+
+  it("retries a message page raced by a skill activation", async () => {
+    const instanceId = "latest-window-skill-race", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    let calls = 0
+    ;(client as any).message = { list: async () => {
+      calls += 1
+      if (calls === 1) {
+        applyOpenCodeDataEvent(instanceId, "/work", {
+          id: "skill", type: "session.skill.activated", created: 1,
+          data: { sessionID: sessionId, id: "skill-message", name: "Skill", text: "Activated" },
+        } as any)
+      }
+      return { data: [apiMessage(`message-${calls}`)], cursor: {} }
+    } }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    messageStoreBus.getOrCreate(instanceId).setMessageWindow(sessionId, { kind: "history", resumeCursor: "history", newerCursors: [] })
+    try {
+      await loadLatestMessageWindow(instanceId, sessionId)
+
+      assert.equal(calls, 2)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["message-2"])
+    } finally {
+      destroyOpenCodeData(instanceId)
+      cleanup()
+    }
+  })
+
+  it("bounds latest-window retries while native events keep streaming", async () => {
+    const instanceId = "latest-window-continuous-race", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    let calls = 0
+    ;(client as any).message = { list: async () => {
+      calls += 1
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: `live-${calls}`,
+        type: "session.step.started",
+        created: calls,
+        data: {
+          sessionID: sessionId,
+          assistantMessageID: `live-${calls}`,
+          agent: "build",
+          model: { providerID: "provider", id: "model" },
+        },
+      } as any)
+      return { data: [apiMessage(`stale-${calls}`)], cursor: {} }
+    } }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    messageStoreBus.getOrCreate(instanceId).setMessageWindow(sessionId, { kind: "history", resumeCursor: "history", newerCursors: [] })
+    try {
+      await assert.rejects(loadLatestMessageWindow(instanceId, sessionId))
+      assert.equal(calls, 4)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), [])
+      assert.equal(isLatestMessageWindow(instanceId, sessionId), false)
+      assert.ok(getSessionMessagesLoadError(instanceId, sessionId))
+    } finally {
+      destroyOpenCodeData(instanceId)
+      cleanup()
+    }
+  })
+
+  it("rejects a history page that loses traversal authority while in flight", async () => {
+    const instanceId = "stale-history-traversal", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const oldest = deferred<any>()
+    ;(client as any).message = { list: (input: any) => input.order === "asc"
+      ? oldest.promise
+      : Promise.resolve({ data: [apiMessage("latest")], cursor: { next: "older" } }) }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    try {
+      await loadMessages(instanceId, sessionId)
+      const endTraversal = beginMessageHistoryTraversal(instanceId, sessionId)
+      const request = loadOldestMessageWindow(instanceId, sessionId)
+      endTraversal()
+      oldest.resolve({ data: [apiMessage("stale-oldest")], cursor: { next: "newer" } })
+      await request
+
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["latest"])
+      assert.equal(isLatestMessageWindow(instanceId, sessionId), true)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("search close invalidates a replacement locator while its oldest page is pending", async () => {
+    const instanceId = "closed-replacement-locator", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const oldest = deferred<any>()
+    ;(client as any).message = { list: (input: any) => input.order === "asc"
+      ? oldest.promise
+      : Promise.resolve({ data: [apiMessage("latest")], cursor: { next: "older" } }) }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    try {
+      await loadMessages(instanceId, sessionId)
+      const endSearchTraversal = beginMessageHistoryTraversal(instanceId, sessionId)
+      beginMessageHistoryTraversal(instanceId, sessionId)
+      endSearchTraversal()
+      const locator = loadOldestMessageWindow(instanceId, sessionId)
+
+      invalidateMessageHistoryTraversal(instanceId, sessionId)
+      oldest.resolve({ data: [apiMessage("stale-locator")], cursor: { next: "newer" } })
+      await locator
+
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["latest"])
+      assert.equal(isLatestMessageWindow(instanceId, sessionId), true)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("component disposal invalidates whichever locator owns a pending page", async () => {
+    const instanceId = "disposed-current-locator", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const oldest = deferred<any>()
+    ;(client as any).message = { list: (input: any) => input.order === "asc"
+      ? oldest.promise
+      : Promise.resolve({ data: [apiMessage("latest")], cursor: { next: "older" } }) }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    try {
+      await loadMessages(instanceId, sessionId)
+      const endOlderOwner = beginMessageHistoryTraversal(instanceId, sessionId)
+      beginMessageHistoryTraversal(instanceId, sessionId)
+      endOlderOwner()
+      const locator = loadOldestMessageWindow(instanceId, sessionId)
+
+      invalidateMessageHistoryTraversal(instanceId, sessionId)
+      oldest.resolve({ data: [apiMessage("disposed-stale")], cursor: { next: "newer" } })
+      await locator
+
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["latest"])
+      assert.equal(isLatestMessageWindow(instanceId, sessionId), true)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("raw query supersede invalidates a pending locator before debounce", async () => {
+    const instanceId = "raw-query-supersede", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const oldest = deferred<any>()
+    ;(client as any).message = { list: (input: any) => input.order === "asc"
+      ? oldest.promise
+      : Promise.resolve({ data: [apiMessage("latest")], cursor: { next: "older" } }) }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    try {
+      await loadMessages(instanceId, sessionId)
+      beginMessageHistoryTraversal(instanceId, sessionId)
+      const locator = loadOldestMessageWindow(instanceId, sessionId)
+
+      invalidateMessageHistoryTraversal(instanceId, sessionId)
+      oldest.resolve({ data: [apiMessage("stale-query")], cursor: { next: "newer" } })
+      await locator
+
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["latest"])
+      assert.equal(isLatestMessageWindow(instanceId, sessionId), true)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("accepts a native page started after revert, including later messages", async () => {
+    const instanceId = "bounded-revert-authority", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    ;(client as any).message = { list: async () => ({ data: [apiMessage("m300")], cursor: {} }) }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    const step = (id: string, created: number) => {
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id, type: "session.step.started", created,
+        data: { sessionID: sessionId, assistantMessageID: id, agent: "build", model: { providerID: "provider", id: "model" } },
+      } as any)
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: `${id}-end`, type: "session.step.ended", created: created + 1,
+        data: { sessionID: sessionId, assistantMessageID: id, finish: "stop" },
+      } as any)
+    }
+    try {
+      step("m100", 1)
+      step("m200", 3)
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "revert", type: "session.revert.committed", created: 5,
+        data: { sessionID: sessionId, to: "m200" },
+      } as any)
+      step("m300", 6)
+
+      await loadMessages(instanceId, sessionId)
+
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["m300"])
+    } finally {
+      destroyOpenCodeData(instanceId)
+      cleanup()
+    }
+  })
+
+  it("rejects stale history pages after cancellation or revert and accepts a later native page", async () => {
+    for (const mutation of ["cancel", "revert"] as const) {
+      const instanceId = `stale-${mutation}-page`, sessionId = "session"
+      const { client, cleanup } = setup(instanceId)
+      const stale = deferred<any>()
+      let oldestCalls = 0
+      ;(client as any).message = { list: (input: any) => {
+        if (input.order === "asc") {
+          oldestCalls += 1
+          return oldestCalls === 1
+            ? stale.promise
+            : Promise.resolve({ data: [apiMessage(`native-${mutation}`)], cursor: { next: "newer" } })
+        }
+        return Promise.resolve({ data: [apiMessage("latest")], cursor: { next: "older" } })
+      } }
+      setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+      try {
+        await loadMessages(instanceId, sessionId)
+        const request = loadOldestMessageWindow(instanceId, sessionId)
+        applyOpenCodeDataEvent(instanceId, "/work", mutation === "cancel"
+          ? { id: "mutation", type: "session.inbox.cancelled", created: 2, data: { sessionID: sessionId, inboxID: "latest" } } as any
+          : { id: "mutation", type: "session.revert.committed", created: 2, data: { sessionID: sessionId, to: "latest" } } as any)
+        stale.resolve({ data: [apiMessage(`stale-${mutation}`)], cursor: { next: "newer" } })
+        await request
+
+        assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["latest"])
+        await loadOldestMessageWindow(instanceId, sessionId)
+        assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), [`native-${mutation}`])
+      } finally {
+        destroyOpenCodeData(instanceId)
+        cleanup()
+      }
+    }
+  })
+
+  it("rejects a stale page after more than 200 cancellations without tombstones", async () => {
+    const instanceId = "many-cancellation-fence", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const stale = deferred<any>()
+    let oldestCalls = 0
+    ;(client as any).message = { list: (input: any) => {
+      if (input.order !== "asc") return Promise.resolve({ data: [apiMessage("latest")], cursor: { next: "older" } })
+      oldestCalls += 1
+      return oldestCalls === 1 ? stale.promise : Promise.resolve({ data: [apiMessage("authoritative")], cursor: {} })
+    } }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    try {
+      await loadMessages(instanceId, sessionId)
+      const request = loadOldestMessageWindow(instanceId, sessionId)
+      for (let index = 0; index < 250; index += 1) {
+        applyOpenCodeDataEvent(instanceId, "/work", {
+          id: `cancel-${index}`, type: "session.inbox.cancelled", created: index + 2,
+          data: { sessionID: sessionId, inboxID: `inbox-${index}` },
+        } as any)
+      }
+      stale.resolve({ data: [apiMessage("stale")], cursor: {} })
+      await request
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["latest"])
+
+      await loadOldestMessageWindow(instanceId, sessionId)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["authoritative"])
+    } finally {
+      destroyOpenCodeData(instanceId)
+      cleanup()
+    }
+  })
+
+  it("fences a newer-page response when revert occurs from an old history window", async () => {
+    const instanceId = "old-history-revert-fence", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const staleNewer = deferred<any>()
+    let newerCalls = 0
+    ;(client as any).message = { list: (input: any) => {
+      if (input.order === "asc") return Promise.resolve({ data: [apiMessage("old")], cursor: { next: "newer" } })
+      if (input.cursor === "newer") {
+        newerCalls += 1
+        return newerCalls === 1
+          ? staleNewer.promise
+          : Promise.resolve({ data: [apiMessage("survivor")], cursor: {} })
+      }
+      return Promise.resolve({ data: [apiMessage("removed")], cursor: { next: "older" } })
+    } }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    try {
+      await loadMessages(instanceId, sessionId)
+      await loadOldestMessageWindow(instanceId, sessionId)
+      const request = loadNewerMessageWindow(instanceId, sessionId)
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "revert", type: "session.revert.committed", created: 2,
+        data: { sessionID: sessionId, to: "removed" },
+      } as any)
+      staleNewer.resolve({ data: [apiMessage("removed")], cursor: {} })
+      await request
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["old"])
+
+      await loadNewerMessageWindow(instanceId, sessionId)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["survivor"])
+      assert.equal(isLatestMessageWindow(instanceId, sessionId), true)
+    } finally {
+      destroyOpenCodeData(instanceId)
+      cleanup()
+    }
+  })
+
   it("seeks the oldest native page without reversing or mutating on failure", async () => {
     const instanceId = "oldest-window", sessionId = "session"
     const { client, cleanup } = setup(instanceId)
@@ -361,6 +755,8 @@ describe("session request authority", () => {
         if (failOldest) throw new Error("oldest failed")
         return { data: [apiMessage("first"), apiMessage("second")], cursor: { next: "newer-from-start" } }
       }
+      if (input.cursor === "newer-from-start") return { data: [apiMessage("middle-1"), apiMessage("middle-2")], cursor: { next: "newer-middle" } }
+      if (input.cursor === "newer-middle") return { data: [apiMessage("recent")], cursor: {} }
       return { data: [apiMessage("new-2"), apiMessage("new-1")], cursor: { next: "page-2" } }
     } }
     setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
@@ -375,6 +771,39 @@ describe("session request authority", () => {
       const store = messageStoreBus.getOrCreate(instanceId)
       assert.deepEqual(store.getSessionMessageIds(sessionId), ["first", "second"])
       assert.equal(hasMoreMessages(instanceId, sessionId), false)
+      await loadNewerMessageWindow(instanceId, sessionId)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["middle-1", "middle-2"])
+      await loadNewerMessageWindow(instanceId, sessionId)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["recent"])
+      assert.equal(isLatestMessageWindow(instanceId, sessionId), true)
+      assert.equal(requests.filter((request) => request.order === "desc").length, 1)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["recent"])
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("reaches every newer page after backward cursor memory is capped", async () => {
+    const instanceId = "bounded-complete-newer-path", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const latestPage = 40
+    ;(client as any).message = { list: async (input: any) => {
+      if (!input.cursor) return { data: [apiMessage(`page-${latestPage}`)], cursor: { next: `c${latestPage - 1}` } }
+      const page = Number(input.cursor.slice(1))
+      return { data: [apiMessage(`page-${page}`)], cursor: page > 0 ? { next: `c${page - 1}` } : {} }
+    } }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    try {
+      await loadMessages(instanceId, sessionId)
+      for (let page = latestPage - 1; page >= 0; page -= 1) await loadMoreMessages(instanceId, sessionId)
+
+      const visited: string[] = []
+      while (!isLatestMessageWindow(instanceId, sessionId)) {
+        await loadNewerMessageWindow(instanceId, sessionId)
+        visited.push(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId)[0]!)
+        assert.ok(visited.length <= latestPage)
+      }
+      assert.deepEqual(visited, Array.from({ length: latestPage }, (_, index) => `page-${index + 1}`))
     } finally {
       cleanup()
     }
@@ -667,6 +1096,33 @@ describe("session request authority", () => {
       assert.equal(requests.length, 4)
       assert.equal(sessions().get(instanceId)?.get("later")?.status, "working")
       assert.equal(sessions().get(instanceId)?.get("later")?.runtimeStatusKnown, true)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("keeps the global project scoped to the workspace directory", async () => {
+    const instanceId = "global-project-directory"
+    const { client, cleanup } = setup(instanceId)
+    const requests: any[] = []
+    setInstanceMetadata(instanceId, { project: { id: "global", directory: "/", canonical: "/" } as any })
+    ;(client.session as any).list = async (input: any) => {
+      requests.push(input)
+      if (input.cursor) return { data: [], cursor: {} }
+      if (input.search) return { data: [], cursor: {} }
+      return { data: [], cursor: { next: input.parentID === null ? "root-next" : "inventory-next" } }
+    }
+
+    try {
+      await fetchSessions(instanceId)
+      await loadMoreSessions(instanceId)
+      await searchSessions(instanceId, "needle")
+
+      assert.equal(requests.length, 5)
+      assert.equal(requests.filter((request) => !request.cursor).every((request) => request.directory === "/work"), true)
+      assert.equal(requests.every((request) => !("project" in request)), true)
+      assert.equal(requests.filter((request) => request.cursor)
+        .every((request) => Object.keys(request).sort().join(",") === "cursor,limit"), true)
     } finally {
       cleanup()
     }

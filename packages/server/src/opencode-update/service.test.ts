@@ -7,6 +7,7 @@ import {
   buildOpenCodeUpgradeCommand,
   compareOpenCodeVersionStrings,
   detectOpenCodePackageManager,
+  resolveLatestOpenCodeVersion,
   type OpenCodeUpdateServiceDeps,
 } from "./service"
 
@@ -63,7 +64,7 @@ test("upgrades the managed OpenCode binary to the advertised version", async () 
   }))
 
   assert.deepEqual(await service.upgrade(), { success: true, version: latestVersion })
-  assert.deepEqual(calls, [{ path: "opencode", target: TARGET_OPENCODE_CHANNEL }])
+  assert.deepEqual(calls, [{ path: "opencode", target: latestVersion }])
 })
 
 test("rejects success when the configured binary was not updated", async () => {
@@ -78,7 +79,7 @@ test("rejects success when the configured binary was not updated", async () => {
   )
 })
 
-test("accepts a newer beta published while the update command is running", async () => {
+test("rejects a different beta installed while the update command is running", async () => {
   let currentVersion = "0.0.0-beta-1"
   const service = new OpenCodeUpdateService(createDeps({
     probeBinary: () => ({ valid: true, version: currentVersion }),
@@ -88,7 +89,10 @@ test("accepts a newer beta published while the update command is running", async
     },
   }))
 
-  assert.deepEqual(await service.upgrade(), { success: true, version: "0.0.0-beta-3" })
+  await assert.rejects(
+    () => service.upgrade(),
+    (error: unknown) => error instanceof OpenCodeUpdateError && error.code === "upgrade_verification_failed",
+  )
 })
 
 test("joins concurrent upgrades for the same binary", async () => {
@@ -140,6 +144,23 @@ test("reports registry failures as update check failures", async () => {
   await assert.rejects(
     () => service.getStatus(),
     (error: unknown) => error instanceof OpenCodeUpdateError && error.code === "update_check_failed",
+  )
+})
+
+test("resolves the concrete beta from the registry dist-tags response", async () => {
+  const version = await resolveLatestOpenCodeVersion(async (url, init) => {
+    assert.equal(url, "https://registry.npmjs.org/-/package/%40opencode-ai%2Fcli/dist-tags")
+    assert.deepEqual(init?.headers, { Accept: "application/json" })
+    return new Response(JSON.stringify({ latest: "1.0.0", beta: "0.0.0-beta-17963" }))
+  })
+
+  assert.equal(version, "0.0.0-beta-17963")
+})
+
+test("rejects malformed registry dist-tags data", async () => {
+  await assert.rejects(
+    () => resolveLatestOpenCodeVersion(async () => new Response(JSON.stringify({ "dist-tags": { beta: "beta" } }))),
+    /did not resolve to a valid version/,
   )
 })
 
