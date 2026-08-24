@@ -18,7 +18,7 @@ The incremental comparison with official OpenCode Desktop V2, including closed f
 - Use `@opencode-ai/client/solid` `createData` for live message, tool, permission, and Form projection while preserving REST-loaded history and optimistic local sends.
 - Replace the legacy Question request lifecycle with native Forms. Question tool output rendering and reviewed upstream compatibility routes remain where applicable.
 - Replace shell-mode prompts with native `session.shell`.
-- Replace CodeNomad background processes with native `shell.*` resources. The Status UI lists and removes Shells; create/output/timeout routes remain available through the ownership-checked proxy. Interactive `pty.*` terminals remain separate.
+- Replace CodeNomad background processes with native `shell.*` resources. The Status UI lists, displays bounded output for, and removes Shells; create/output/timeout routes remain available through the ownership-checked proxy. Interactive `pty.*` terminals remain separate.
 - Store voice-mode instructions with `session.instructions.entry` and synchronize them before prompts, commands, and session Shell calls.
 
 ## Shared Service Model
@@ -45,10 +45,10 @@ The incremental comparison with official OpenCode Desktop V2, including closed f
 
 ## Sessions, Streaming, and Reconciliation
 
-- Query a complete project-scoped session inventory across root and worktree subpaths without one request per parent.
+- Query a complete project-scoped session inventory across root and worktree subpaths without one request per parent; native `global` projects remain scoped to the selected workspace directory.
 - Follow native `cursor.next` values for session and message pagination. The proxy decodes session cursors only to validate embedded directory/project scope, strips competing selectors, and forwards the original cursor unchanged.
 - Hydrate only missing ancestor chains with `session.get` and fetch active status for later session pages.
-- Load message history lazily in native pages, prepend older pages without duplicate IDs, and reject delayed REST responses that would overwrite newer event state.
+- Load message history lazily into a replace-in-place 200-message resident window. Older, newer, oldest, and latest navigation swaps authoritative pages without accumulating the transcript, while delayed REST responses cannot overwrite newer event state.
 - Route location-scoped events to every owning logical workspace and resolve locationless session, permission, Form, Shell, and PTY events through native ownership.
 - Use one upstream event subscription and browser `EventSource` for web, Electron, and Tauri.
 - Treat events as volatile projections, not durable history. Internal stream generations and browser reconnects trigger targeted authoritative refreshes for workspaces, sessions, active state, pending permissions/Forms, loaded messages, catalogs, and invalidated file/config state.
@@ -62,26 +62,31 @@ The incremental comparison with official OpenCode Desktop V2, including closed f
 - Bound instance logs and validate restore-state counts, IDs, paths, snapshots, string budgets, partition sizes, and graph sizes.
 - Reconcile only affected resources after native events or reconnects instead of periodically reloading full message history.
 - Keep optimistic prompts visible before native admission and replace temporary parts with authoritative native parts without duplicating output.
+- Reduce every native compaction delta in order while keeping intermediate chunks off the renderer path; project accumulated content at the next boundary and refresh immediately when compaction starts, ends, or fails.
 
 ## Forms, Permissions, and Providers
 
 - Merge pending permissions and Forms into one ordered interruption UI while preserving their separate native reply/cancel APIs.
-- Reconcile pending requests from every owned root/worktree location after reconnect and remove stale local requests only from authoritative results.
+- Reconcile pending requests from the root, active catalog, known session, worktree, and queued Form locations after reconnect and during bounded liveness checks while sessions or prompts are active.
+- Treat successful permission and Form replies or cancellations as local authority so stale events and partial scans cannot resurrect settled interruptions; failed mutations trigger authoritative reconciliation.
 - Carry location for global Forms through the proxy without inventing a synthetic session.
 - Support native provider API-key, OAuth, command, and interactive Form authentication, including dynamic required fields and custom choices.
+- Expose read-only quota usage for the supported provider registry, including xAI, Claude, Command Code, CrofAI, DeepSeek, and NeuralWatt, without returning, refreshing, or mutating provider credentials.
 - Keep Yolo policy server-owned: persist enabled session families, inherit policy across descendants, deduplicate duplicate-instance delivery by permission ID, retry within a fixed bound, and synchronize state to every window.
 
 ## Worktree Safety
 
 Before deleting a Git worktree, CodeNomad now:
 
-1. Resolves the native project and inventories every session with native cursors.
-2. Selects sessions whose native location belongs to the worktree.
-3. Refuses deletion while affected sessions are active.
-4. Moves affected sessions to the root location.
-5. Re-inventories until the moves are authoritative.
-6. Removes the Git worktree inside the same rollback boundary.
-7. Restores moved sessions if verification or deletion fails.
+1. Resolves and fences the canonical physical worktree identity across nested paths, aliases, junctions, symlinks, and WSL paths.
+2. Rejects new session mutations and drains already admitted mutations through their upstream response, failing closed if the bounded drain cannot complete.
+3. Resolves the native project and inventories every session with native cursors.
+4. Selects sessions whose native location belongs to the worktree.
+5. Refuses deletion while affected sessions are active.
+6. Moves affected sessions to the root location.
+7. Re-inventories until the moves are authoritative.
+8. Removes the Git worktree inside the same rollback boundary.
+9. Restores moved sessions if verification or deletion fails.
 
 Git status, diff, stage, unstage, commit, worktree creation, and worktree removal remain CodeNomad server operations where V2 does not provide equivalent transactional behavior.
 
@@ -109,6 +114,7 @@ Git status, diff, stage, unstage, commit, worktree creation, and worktree remova
 - Store the stable/default cross-host state under `~/.codenomad/client-state/v2`; development and non-default profiles use derived profile-specific locations.
 - Restore every persisted UUID window, exact active tab/session selection, drafts, attachments, expansion, scroll/follow state, idle markers, interrupted generations, bounds, and zoom.
 - Fence late workspace creation and cleanup so cancelled restore requests cannot leak or delete the wrong logical instance.
+- Build Electron and Tauri server resources reproducibly from the integrity-pinned root workspace lock for the requested OS/CPU target; no independent server lockfile or prebuild dependency repair remains.
 
 ## Removed Legacy Architecture
 
@@ -118,7 +124,7 @@ The migration deletes rather than maintains these superseded systems:
 - Plugin POST/SSE channels, handlers, voice synchronization routes, and the custom plugin-to-CodeNomad event bridge.
 - Per-workspace OpenCode runtime processes, loopback servers, clients, authentication, binary selection, launch cleanup, process identity, process-tree signaling, and runtime tests.
 - The `.codenomad/worktreeMap.json` mapping layer and UI-side OpenCode workspace/worktree-client matching.
-- The custom background-process manager, persistence, HTTP routes, UI store, and output dialog.
+- The custom background-process manager, persistence, HTTP routes, and UI store; native Shell listing, bounded output display, and removal replace them.
 - Legacy Question queues, request event handling, state, components, and tests, replaced by native Forms.
 - The V1 message/delta buffer and periodic full-history event reload strategy, replaced by native events plus authoritative reconciliation.
 - The duplicate Rust-native Tauri SSE transport, including batching, coalescing, cookie forwarding, pong handling, reconnect code, commands, managed state, and tests.
@@ -126,14 +132,8 @@ The migration deletes rather than maintains these superseded systems:
 - Message/part deletion controls and compatibility companions for operations not offered by the V2 beta protocol.
 - The server and UI dependency on `@opencode-ai/sdk` and the runtime V1 compatibility path.
 
-## Validation
-
-Historical migration checkpoints recorded passing repository CI, focused server/UI suites and typechecks, production desktop builds, native Electron/Tauri tests, and packaged Windows singleton/multi-window smoke coverage. These results describe completed checkpoints, not the current dirty worktree.
-
-The remaining migration smoke gate is an interactive run against the selected real OpenCode service: open a folder, open an existing session, send and receive a prompt, reload and restore it, and exercise the native background Shell proxy lifecycle. See [`DESKTOP_V2_COMPARISON.md`](DESKTOP_V2_COMPARISON.md) for all other release, correctness, runtime-upgrade, and optional feature work.
-
 ## Review Notes
 
-- The generated V2 client remains experimental. Review its installed declarations and release notes whenever the beta channel advances; public `@opencode-ai/sdk` examples are not authoritative for this branch.
+- The generated V2 client remains experimental. Review its installed declarations and release notes whenever the pinned client advances; public `@opencode-ai/sdk` examples are not authoritative for this branch.
 - Upgrade references: [OpenCode releases](https://github.com/anomalyco/opencode/releases), [OpenCode V2 documentation](https://opencode.ai/v2/docs/), and `node_modules/@opencode-ai/client/dist/promise/`.
 - This branch intentionally has no OpenCode V1 fallback or private OpenCode database.

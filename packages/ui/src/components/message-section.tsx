@@ -21,7 +21,7 @@ import { getMessageSelectionActionPosition } from "../lib/message-selection-posi
 import { buildSessionSearchMatches } from "../lib/session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
 import { resolveThinkingExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
-import { createSearchLocatorAuthority, hasMessageSearchAuthority, isMessageHistoryRestoreCurrent, loadCompleteMessageHistory, loadPagesUntilAnchor, MESSAGE_HISTORY_TRAVERSAL_PAGE_LIMIT, reconcileResidentSearchMatches } from "./message-history-pagination"
+import { createSearchLocatorAuthority, getMessageWindowPageKey, hasMessageSearchAuthority, isMessageHistoryRestoreCurrent, loadCompleteMessageHistory, loadPagesUntilAnchor, MESSAGE_HISTORY_TRAVERSAL_PAGE_LIMIT, reconcileResidentSearchMatches } from "./message-history-pagination"
 import { isLatestWindow, toWindowSnapshot } from "../stores/message-v2/message-window"
 import { getLogger } from "../lib/logger"
 import { beginMessageHistoryTraversal, invalidateMessageHistoryTraversal } from "../stores/session-api"
@@ -738,8 +738,7 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   function messageWindowPageKey() {
-    const window = store().getMessageWindow(props.sessionId)
-    return `${window?.kind ?? "latest"}:${window?.resumeCursor ?? ""}:${window?.newerCursors.join("\0") ?? ""}`
+    return getMessageWindowPageKey(store().getMessageWindow(props.sessionId))
   }
 
   createEffect(() => {
@@ -991,6 +990,7 @@ export default function MessageSection(props: MessageSectionProps) {
           initialScrollToBottom={() => false}
           initialAutoScroll={initialAutoScroll}
           resetKey={() => props.sessionId}
+          measurementResetKey={messageWindowPageKey}
           followToken={followToken}
           explicitBottomPinIntent={() => props.explicitBottomPinIntent ?? null}
           onExplicitBottomPinCancelled={props.onExplicitBottomPinCancelled}

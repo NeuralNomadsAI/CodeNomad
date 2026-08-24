@@ -13,6 +13,7 @@ import { applyOpenCodeDataEvent, destroyOpenCodeData, getOpenCodeMessageRevision
 import {
   clearInstanceDeletedSessionAuthority,
   agents,
+  getSessionListError,
   getSessionListIds,
   getSessionMessagesLoadError,
   getSessionSearchResultIds,
@@ -190,6 +191,34 @@ describe("session request authority", () => {
 
       assert.equal(sessions().get(instanceId)?.has("new-session"), true)
       assert.equal(sessions().get(instanceId)?.has("old-session"), false)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("keeps the session list usable when a background refresh is aborted", async () => {
+    const instanceId = "aborted-session-list"
+    const { client, cleanup } = setup(instanceId)
+    const controller = new AbortController()
+    let calls = 0
+    ;(client.session as any).list = (_input: unknown, options?: { signal?: AbortSignal }) => {
+      calls += 1
+      if (calls === 1) return Promise.resolve({ data: [apiSession("root")], cursor: {} })
+      return new Promise((_resolve, reject) => {
+        options?.signal?.addEventListener("abort", () => reject(new Error("signal is aborted without reason")), { once: true })
+      })
+    }
+    setInstanceMetadata(instanceId, { project: { id: "project", directory: "/work", canonical: "/work" } as any })
+
+    try {
+      const request = fetchSessions(instanceId, { reset: true, signal: controller.signal })
+      while (calls < 2) await new Promise<void>((resolve) => setImmediate(resolve))
+      assert.deepEqual(getSessionListIds(instanceId), ["root"])
+      controller.abort()
+      await assert.rejects(request, /signal is aborted without reason/)
+
+      assert.equal(getSessionListError(instanceId), undefined)
+      assert.deepEqual(getSessionListIds(instanceId), ["root"])
     } finally {
       cleanup()
     }

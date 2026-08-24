@@ -3,7 +3,7 @@ import fs from "node:fs"
 import { describe, it } from "node:test"
 import { batch, createRoot, createSignal } from "solid-js"
 
-import { createSearchLocatorAuthority, hasMessageSearchAuthority, isMessageHistoryRestoreCurrent, loadCompleteMessageHistory, loadMessageHistoryPage, loadPagesUntilAnchor, MESSAGE_HISTORY_TOP_THRESHOLD_PX, reconcileResidentSearchMatches, shouldLoadOlderMessages } from "./message-history-pagination.ts"
+import { createSearchLocatorAuthority, getMessageWindowPageKey, hasMessageSearchAuthority, isMessageHistoryRestoreCurrent, loadCompleteMessageHistory, loadMessageHistoryPage, loadPagesUntilAnchor, MESSAGE_HISTORY_TOP_THRESHOLD_PX, reconcileResidentSearchMatches, shouldLoadOlderMessages } from "./message-history-pagination.ts"
 
 describe("message history pagination", () => {
   const ready = {
@@ -87,6 +87,16 @@ describe("message history pagination", () => {
     assert.equal(isMessageHistoryRestoreCurrent(false, capturedList, capturedList, true), false)
     assert.equal(isMessageHistoryRestoreCurrent(true, capturedList, {}, true), false)
     assert.equal(isMessageHistoryRestoreCurrent(true, capturedList, capturedList, false), false)
+  })
+
+  it("resets virtual measurements only when the resident page changes", () => {
+    const latest = { kind: "latest", newerCursors: [] }
+    const older = { kind: "history", resumeCursor: "older", newerCursors: ["newer"] }
+    const next = { kind: "history", resumeCursor: "newer", newerCursors: [null] }
+
+    assert.equal(getMessageWindowPageKey(latest), getMessageWindowPageKey({ ...latest }))
+    assert.notEqual(getMessageWindowPageKey(latest), getMessageWindowPageKey(older))
+    assert.notEqual(getMessageWindowPageKey(older), getMessageWindowPageKey(next))
   })
 
   it("uses a finite ceiling and leaves failed pages retryable", async () => {

@@ -109,7 +109,6 @@ interface WorkspaceRecord extends WorkspaceDescriptor {
 
 interface WorkspaceState {
   abortController: AbortController
-  creation?: Promise<WorkspaceCreateResult>
   settlement?: Promise<void>
   cleanupSettlement?: Promise<WorkspaceDescriptor>
   deletePromise?: Promise<WorkspaceDescriptor | undefined>
@@ -117,7 +116,6 @@ interface WorkspaceState {
   stoppedPublished: boolean
   locationOwned: boolean
   creationClaims: Map<string, CreationRequestState>
-  anonymousCreationFollowers: number
   creationRetained: boolean
   serviceOptions?: OpenCodeSharedServiceOptions
 }
@@ -158,10 +156,9 @@ export interface WorkspaceCreateResult {
 export interface WorkspaceCreateOptions {
   requestId?: string
 }
-type CreationRequestState = "owner" | "follower" | "cancelled" | "released"
+type CreationRequestState = "owner" | "cancelled" | "released"
 export class WorkspaceManager {
   private readonly workspaces = new Map<string, WorkspaceRecord>()
-  private readonly workspacesByPath = new Map<string, WorkspaceRecord>()
   private readonly cancelledCreationRequests = new Set<string>()
   private readonly pendingCreationRequests = new Set<string>()
   private readonly activeLocationCreations = new Set<Promise<void>>()
@@ -381,16 +378,6 @@ export class WorkspaceManager {
       if (this.shuttingDown) {
         throw new Error("Workspace manager is shutting down")
       }
-      const reusable = this.findReusableWorkspace(workspacePath)
-      if (reusable) {
-        this.claimFollower(reusable, options.requestId)
-        try {
-          return await this.reuseWorkspace(reusable, options, launchDeadlineAt, launchTimeoutMs)
-        } catch (error) {
-          await this.rollbackFollower(reusable, options.requestId)
-          throw error
-        }
-      }
       if (this.activeWorkspaceCreations >= MAX_ACTIVE_WORKSPACE_CREATIONS) {
         throw new Error("Too many workspace creations are already in progress")
       }
@@ -400,7 +387,7 @@ export class WorkspaceManager {
       const creation = this.startCreation(record, launchDeadlineAt, launchTimeoutMs)
       settlementTracked = true
       void record[WORKSPACE_STATE].settlement!.then(() => { this.activeWorkspaceCreations -= 1 })
-      return this.finishCreation(await creation, options.requestId, record, true)
+      return this.finishCreation(await creation, options.requestId, record)
     } finally {
       if (creationCounted && !settlementTracked) this.activeWorkspaceCreations -= 1
       if (options.requestId) this.finishCreationRequest(options.requestId)
@@ -443,46 +430,19 @@ export class WorkspaceManager {
         stoppedPublished: false,
         locationOwned: false,
         creationClaims: new Map(options.requestId ? [[options.requestId, "owner"]] : []),
-        anonymousCreationFollowers: 0,
         creationRetained: options.requestId === undefined,
       } },
     })
 
     this.workspaces.set(id, record)
-    this.workspacesByPath.set(canonicalWorktreeIdentity(workspacePath, this.options.platform), record)
     return record
   }
   private startCreation(record: WorkspaceRecord,
     launchDeadlineAt: number, launchTimeoutMs: number): Promise<WorkspaceCreateResult> {
     const launch = this.createResolvedWorkspace(record, launchDeadlineAt)
     const creation = this.createWithDeadline(record, launchDeadlineAt, launchTimeoutMs, launch)
-    record[WORKSPACE_STATE].creation = creation
     record[WORKSPACE_STATE].settlement = launch.then(() => undefined, () => undefined)
     return creation
-  }
-  private findReusableWorkspace(workspacePath: string): WorkspaceRecord | undefined {
-    const record = this.workspacesByPath.get(canonicalWorktreeIdentity(workspacePath, this.options.platform))
-    if (!record || this.workspaces.get(record.id) !== record) return undefined
-    const state = record[WORKSPACE_STATE]
-    return state.creation && !state.abortController.signal.aborted && !state.deletePromise ? record : undefined
-  }
-  private async reuseWorkspace(
-    record: WorkspaceRecord,
-    options: WorkspaceCreateOptions,
-    launchDeadlineAt: number,
-    launchTimeoutMs: number,
-  ): Promise<WorkspaceCreateResult> {
-    const state = record[WORKSPACE_STATE]
-    await this.withLaunchDeadline(state.creation!, record.id, launchDeadlineAt, launchTimeoutMs)
-    if (options.requestId && this.cancelledCreationRequests.has(options.requestId)) {
-      throw new Error(`Workspace creation request ${options.requestId} was cancelled`)
-    }
-    state.abortController.signal.throwIfAborted()
-    if (this.shuttingDown || this.workspaces.get(record.id) !== record || !state.published) {
-      throw new Error("Workspace is no longer available")
-    }
-    this.retainFollower(record, options.requestId)
-    return { workspace: { ...record, requestId: undefined }, created: false }
   }
   private async createWithDeadline(record: WorkspaceRecord,
     launchDeadlineAt: number, launchTimeoutMs: number,
@@ -655,8 +615,7 @@ export class WorkspaceManager {
         releasedClaimFound = true
         continue
       }
-      if (claim === "follower") state.creationClaims.delete(requestId)
-      else state.creationClaims.set(requestId, "cancelled")
+      state.creationClaims.set(requestId, "cancelled")
       this.refreshCreationRequestId(record)
       if (!state.creationRetained && !this.hasActiveCreationClaims(state)) {
         deletions.push(this.delete(workspaceId))
@@ -672,7 +631,6 @@ export class WorkspaceManager {
     result: WorkspaceCreateResult,
     requestId: string | undefined,
     record: WorkspaceRecord,
-    created: boolean,
   ): WorkspaceCreateResult {
     const requestState = requestId ? record[WORKSPACE_STATE].creationClaims.get(requestId) : undefined
     if (requestId && (requestState === "cancelled" || this.cancelledCreationRequests.has(requestId))) {
@@ -681,34 +639,8 @@ export class WorkspaceManager {
     const ownsCreation = requestId !== undefined && requestState === "owner"
     return {
       workspace: { ...result.workspace, requestId: ownsCreation ? requestId : undefined },
-      created: created && result.created && (requestId === undefined || ownsCreation),
+      created: result.created && (requestId === undefined || ownsCreation),
     }
-  }
-
-  private claimFollower(record: WorkspaceRecord, requestId: string | undefined): void {
-    const state = record[WORKSPACE_STATE]
-    if (requestId === undefined) state.anonymousCreationFollowers += 1
-    else state.creationClaims.set(requestId, "follower")
-  }
-
-  private retainFollower(record: WorkspaceRecord, requestId: string | undefined): void {
-    const state = record[WORKSPACE_STATE]
-    if (requestId === undefined) state.anonymousCreationFollowers -= 1
-    else state.creationClaims.delete(requestId)
-    state.creationRetained = true
-    for (const [claimId, claim] of state.creationClaims) {
-      if (claim === "cancelled") state.creationClaims.delete(claimId)
-    }
-    this.refreshCreationRequestId(record)
-  }
-
-  private async rollbackFollower(record: WorkspaceRecord, requestId: string | undefined): Promise<void> {
-    if (this.workspaces.get(record.id) !== record) return
-    const state = record[WORKSPACE_STATE]
-    if (requestId === undefined) state.anonymousCreationFollowers -= 1
-    else if (state.creationClaims.get(requestId) !== "owner") state.creationClaims.delete(requestId)
-    this.refreshCreationRequestId(record)
-    if (!state.creationRetained && !this.hasActiveCreationClaims(state)) await this.delete(record.id)
   }
 
   private refreshCreationRequestId(record: WorkspaceRecord): void {
@@ -717,8 +649,7 @@ export class WorkspaceManager {
   }
 
   private hasActiveCreationClaims(state: WorkspaceState): boolean {
-    return state.anonymousCreationFollowers > 0
-      || Array.from(state.creationClaims.values()).some((claim) => claim === "owner" || claim === "follower")
+    return Array.from(state.creationClaims.values()).some((claim) => claim === "owner")
   }
 
   private beginCreationRequest(requestId: string): void {
@@ -817,20 +748,23 @@ export class WorkspaceManager {
     await this.withLocationEviction(async () => {
       if (this.shuttingDown) return
       if (!state.locationOwned || !record.location) return
-      const directory = record.location.directory
+      const location = record.location
       const shared = Array.from(this.workspaces.values()).some((candidate) => (
         candidate !== record
         && candidate[WORKSPACE_STATE].locationOwned
         && !candidate[WORKSPACE_STATE].abortController.signal.aborted
-        && candidate.location?.directory === directory
+        && candidate.location
+        && this.locationsEqual(record, location, candidate, candidate.location)
       ))
       if (shared) {
         state.locationOwned = false
         return
       }
-      await this.sharedService.evictLocation(record.location, undefined, state.serviceOptions)
+      await this.sharedService.evictLocation(location, undefined, state.serviceOptions)
       for (const candidate of this.workspaces.values()) {
-        if (candidate.location?.directory === directory) candidate[WORKSPACE_STATE].locationOwned = false
+        if (candidate.location && this.locationsEqual(record, location, candidate, candidate.location)) {
+          candidate[WORKSPACE_STATE].locationOwned = false
+        }
       }
     })
   }
@@ -842,10 +776,23 @@ export class WorkspaceManager {
         candidate !== record
         && candidate[WORKSPACE_STATE].locationOwned
         && !candidate[WORKSPACE_STATE].abortController.signal.aborted
-        && candidate.location?.directory === location.directory
+        && candidate.location
+        && this.locationsEqual(record, location, candidate, candidate.location)
       ))
       if (!shared) await this.sharedService.evictLocation(location, undefined, record[WORKSPACE_STATE].serviceOptions)
     })
+  }
+
+  private locationsEqual(
+    leftRecord: WorkspaceRecord,
+    left: LocationRef,
+    rightRecord: WorkspaceRecord,
+    right: LocationRef,
+  ): boolean {
+    if (leftRecord[WORKSPACE_STATE].serviceOptions?.identity !== rightRecord[WORKSPACE_STATE].serviceOptions?.identity) {
+      return false
+    }
+    return left.directory === right.directory && left.workspaceID === right.workspaceID
   }
 
   private async withLocationCreation<T>(operation: () => Promise<T>): Promise<T> {
@@ -991,8 +938,6 @@ export class WorkspaceManager {
   ): void {
     if (this.workspaces.get(id) !== record) return
     this.workspaces.delete(id)
-    const identity = canonicalWorktreeIdentity(record.path, this.options.platform)
-    if (this.workspacesByPath.get(identity) === record) this.workspacesByPath.delete(identity)
     clearWorkspaceSearchCache(record.path)
     if (publishStopped) this.publishStopped(record, reason)
   }

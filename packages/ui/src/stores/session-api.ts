@@ -607,8 +607,9 @@ async function fetchSessions(instanceId: string, options?: {
       return next
     })
   } catch (error) {
-    log.error("Failed to fetch sessions:", error)
-    if (isLatestSessionListRequest(instanceId, requestId)) {
+    const aborted = options?.signal?.aborted === true
+    if (!aborted) log.error("Failed to fetch sessions:", error)
+    if (!aborted && isLatestSessionListRequest(instanceId, requestId)) {
       setSessionListError(instanceId, getOpencodeErrorMessage(error, tGlobal("sessionList.loadError.detail")))
     }
     throw error

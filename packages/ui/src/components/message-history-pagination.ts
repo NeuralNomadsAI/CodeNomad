@@ -2,6 +2,14 @@ export const MESSAGE_HISTORY_TOP_THRESHOLD_PX = 320
 export const MESSAGE_HISTORY_ANCHOR_PAGE_LIMIT = 50
 export const MESSAGE_HISTORY_TRAVERSAL_PAGE_LIMIT = 1000
 
+export function getMessageWindowPageKey(window?: {
+  kind?: string
+  resumeCursor?: string
+  newerCursors?: Array<string | null>
+}): string {
+  return `${window?.kind ?? "latest"}:${window?.resumeCursor ?? ""}:${window?.newerCursors?.join("\0") ?? ""}`
+}
+
 export function createSearchLocatorAuthority() {
   let current: { id: string; generation: number } | null = null
   let generation = 0

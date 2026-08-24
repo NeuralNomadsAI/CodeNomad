@@ -114,7 +114,7 @@ describe("workspace routes", () => {
     await app.close()
   })
 
-  it("marks the non-owner response reused for concurrent restore requests", async () => {
+  it("marks a non-owned creation response as reused", async () => {
     const app = Fastify({ logger: false })
     let finishCreation!: () => void
     const creation = new Promise<void>((resolve) => { finishCreation = resolve })

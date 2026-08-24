@@ -72,6 +72,7 @@ export interface VirtualFollowListProps<T> {
   initialScrollToBottom?: Accessor<boolean>
   initialAutoScroll?: Accessor<boolean>
   resetKey?: Accessor<string | number>
+  measurementResetKey?: Accessor<string | number>
   followToken?: Accessor<string | number>
   explicitBottomPinIntent?: Accessor<VirtualExplicitBottomPinIntent | null>
   autoPinHoldTargetKey?: Accessor<string | null>
@@ -117,6 +118,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const holdTargetKey = () => props.autoPinHoldTargetKey?.() ?? null
   const externalSuspendAutoPinToBottom = () => props.suspendAutoPinToBottom?.() ?? false
   const explicitBottomPinIntent = () => props.explicitBottomPinIntent?.() ?? null
+  const measurementAuthority = createMemo(() => ({ key: props.measurementResetKey?.() ?? "default" }))
   const holdTargetTopThresholdPx = () => props.autoPinHoldTopThresholdPx ?? DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX
   const autoScroll = createMemo(() => isAutoFollowing(followMode()))
   const scrollButtonsCount = createMemo(() => (showScrollTopButton() ? 1 : 0) + (showScrollBottomButton() ? 1 : 0))
@@ -799,6 +801,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     itemElements.clear()
   }))
 
+  createEffect(on(() => props.measurementResetKey?.(), () => {
+    itemElements.clear()
+  }, { defer: true }))
+
   createEffect(on(isActive, (active) => {
     if (!active) return
     if (pendingInitialScroll && props.items().length > 0) {
@@ -833,18 +839,22 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         onClick={props.onClick}
       >
         {props.renderBeforeItems?.()}
-        <Virtualizer
-          ref={setVirtuaHandle}
-          scrollRef={scrollElement()}
-          data={props.items()}
-          bufferSize={props.overscanPx ?? 400}
-          onScroll={handleScroll}
-        >
-          {(item, index) => {
-            const key = props.getKey(item, index())
-            return <div id={getAnchorIdForKey(key)} data-virtual-follow-key={key} ref={(element) => registerItemElement(key, element)}>{props.renderItem(item, index())}</div>
-          }}
-        </Virtualizer>
+        <Show keyed when={measurementAuthority()}>
+          {(_authority) => (
+            <Virtualizer
+              ref={setVirtuaHandle}
+              scrollRef={scrollElement()}
+              data={props.items()}
+              bufferSize={props.overscanPx ?? 400}
+              onScroll={handleScroll}
+            >
+              {(item, index) => {
+                const key = props.getKey(item, index())
+                return <div id={getAnchorIdForKey(key)} data-virtual-follow-key={key} ref={(element) => registerItemElement(key, element)}>{props.renderItem(item, index())}</div>
+              }}
+            </Virtualizer>
+          )}
+        </Show>
       </div>
 
       <Show when={Boolean(props.renderOverlay)}>

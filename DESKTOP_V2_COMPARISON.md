@@ -16,7 +16,7 @@ This is an incremental review. It does not repeat issues already closed by CodeN
 
 CodeNomad implements the important V2 architecture rather than emulating the V1 desktop model. It uses the native client contract, locations, shared service, sessions, messages, Forms, permissions, providers, Shells, worktrees, and event stream. Its multi-window and cross-host restore implementation is broader than the official Electron-only desktop implementation.
 
-The comparison found five concrete CodeNomad defects and one obsolete configuration block. All six are fixed in the commits accompanying this document. The remaining differences are either an SDK/runtime upgrade, a scoped workflow defect, release hardening, or optional Desktop features. None requires restoring V1 code or replacing native V2 cursors.
+The comparison found five concrete CodeNomad defects and one obsolete configuration block. All six are fixed in the commits accompanying this document. The remaining differences are scoped workflow defects, release hardening, or optional Desktop features. None requires restoring V1 code or replacing native V2 cursors.
 
 ## Closed Findings
 
@@ -70,12 +70,12 @@ The review reconfirmed these areas and found no current incompatibility:
 
 - Shared authenticated OpenCode service discovery and one daemon per host or WSL environment.
 - Multiple logical CodeNomad workspaces over one native location, including duplicate-folder instances.
-- Project-wide session inventory, native session and message cursors, lazy history, and ancestor hydration.
+- Project-wide session inventory with directory scoping for native `global` projects, native session and message cursors, replace-in-place resident history windows, and ancestor hydration.
 - Optimistic prompt admission with client-minted identity and authoritative event reconciliation.
 - Native Forms, permissions, provider authentication, commands, agents, variants, attachments, and instructions.
 - One upstream event stream with reconnect generation fencing and targeted authoritative refresh.
-- Native background Shell listing/removal and ownership-checked Shell/PTY proxy routes.
-- Root/worktree location ownership, session evacuation before worktree deletion, and WSL translation.
+- Native background Shell listing, bounded output, removal, and ownership-checked Shell/PTY proxy routes.
+- Root/worktree location ownership, physical-identity mutation fencing and session evacuation before worktree deletion, and WSL translation.
 - Independent multi-window tabs and content-addressed restore state across Electron and Tauri.
 - Strict proxy route allowlisting, traversal protection, selector stripping, authentication isolation, and location ownership checks.
 
@@ -136,14 +136,3 @@ The same change removes dead migration-era code without changing persistence, re
 - Assigned-but-unread test request captures.
 
 The implementation and tests finish at 109 added and 282 deleted lines, a net reduction of 173 lines.
-
-## Validation
-
-- Electron native suite: 158 passed.
-- Tauri Rust suite: 104 passed.
-- Focused server suites: 62 passed, plus 18 spawn tests after final cleanup.
-- Focused UI suites: 22 passed, plus 2 filesystem tests after final cleanup.
-- UI, Electron, and server TypeScript typechecks passed.
-- UI production build passed.
-- `cargo fmt --check` and `git diff --check` passed.
-- Final independent diff review found no production correctness or security finding.
