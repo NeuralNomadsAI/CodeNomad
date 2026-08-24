@@ -1,15 +1,28 @@
 import { createSignal } from "solid-js"
-import type { PermissionReply, PermissionRequest } from "../types/permission"
-import { getPermissionSessionId } from "../types/permission"
-import { getLogger } from "../lib/logger"
 
-const STORAGE_KEY = "codenomad:permission-auto-accept:v1"
+/**
+ * UI-side mirror of the server-owned Yolo (permission auto-accept) state.
+ *
+ * The server is authoritative: it holds the toggle state, resolves
+ * family-root inheritance, and performs the actual `"once"` replies. This
+ * module only keeps a runtime (NON-persisted) projection so the UI can render
+ * the badge / switch synchronously.
+ *
+ * State is populated from:
+ *   - local toggles (optimistic, then confirmed via REST)
+ *   - `yolo.stateChanged` SSE events (wired in the app bootstrap, see
+ *     `stores/instances.ts`, so toggles from other clients reflect)
+ *
+ * `resolvePermissionAutoAcceptFamilyRoot` is retained as a display aid so the
+ * badge correctly lights up for child/sub-sessions of an enabled family root,
+ * preserving the previous inheritance UX exactly. The server performs the same
+ * resolution independently when deciding whether to auto-reply.
+ *
+ * NOTE: intentionally pure — no SSE/REST side effects at module load, so it
+ * stays unit-testable.
+ */
 
-const log = getLogger("api")
-
-type AutoAcceptResponder = (instanceId: string, sessionId: string, requestId: string, reply: PermissionReply) => Promise<void>
-type PendingPermissionChecker = (instanceId: string, requestId: string) => boolean
-type PermissionAutoAcceptSession = {
+export type PermissionAutoAcceptSession = {
   id: string
   parentId?: string | null
   revert?: unknown
@@ -45,112 +58,44 @@ function makeKey(instanceId: string, sessionId: string) {
   return `${instanceId}:${resolveFamilyRoot(instanceId, sessionId)}`
 }
 
-function readInitialState() {
-  if (typeof window === "undefined" || !window.localStorage) {
-    return new Map<string, boolean>()
-  }
-
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
-    if (!raw) return new Map<string, boolean>()
-    const parsed = JSON.parse(raw) as Record<string, boolean>
-    return new Map(Object.entries(parsed).filter((entry): entry is [string, boolean] => entry[1] === true))
-  } catch {
-    return new Map<string, boolean>()
-  }
-}
-
-function persist(next: Map<string, boolean>) {
-  if (typeof window === "undefined" || !window.localStorage) {
-    return
-  }
-
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(Object.fromEntries(next)))
-  } catch {
-    // ignore persistence failures
-  }
-}
-
-const [autoAcceptState, setAutoAcceptState] = createSignal(readInitialState())
-
-const inFlight = new Set<string>()
+const [autoAcceptState, setAutoAcceptState] = createSignal<Map<string, boolean>>(new Map())
 
 export function isPermissionAutoAcceptEnabled(instanceId: string, sessionId: string) {
   return autoAcceptState().get(makeKey(instanceId, sessionId)) ?? false
 }
 
 export function setPermissionAutoAcceptEnabled(instanceId: string, sessionId: string, enabled: boolean) {
-  const key = makeKey(instanceId, sessionId)
   setAutoAcceptState((prev) => {
+    const key = makeKey(instanceId, sessionId)
+    if (prev.get(key) === enabled) return prev
     const next = new Map(prev)
     if (enabled) {
       next.set(key, true)
     } else {
       next.delete(key)
     }
-    persist(next)
     return next
   })
-  if (!enabled) {
-    clearAutoAcceptSession(instanceId, sessionId)
-  }
 }
 
 export function togglePermissionAutoAccept(instanceId: string, sessionId: string) {
-  setPermissionAutoAcceptEnabled(instanceId, sessionId, !isPermissionAutoAcceptEnabled(instanceId, sessionId))
+  const next = !isPermissionAutoAcceptEnabled(instanceId, sessionId)
+  setPermissionAutoAcceptEnabled(instanceId, sessionId, next)
+  return next
 }
 
-function makeRequestKey(instanceId: string, sessionId: string, requestId: string) {
-  return `${makeKey(instanceId, sessionId)}:${requestId}`
-}
-
-export function clearAutoAcceptPermission(instanceId: string, sessionId: string, requestId: string) {
-  const requestKey = makeRequestKey(instanceId, sessionId, requestId)
-  inFlight.delete(requestKey)
-}
-
-export function clearAutoAcceptSession(instanceId: string, sessionId: string) {
-  const prefix = `${makeKey(instanceId, sessionId)}:`
-  for (const requestKey of Array.from(inFlight)) {
-    if (requestKey.startsWith(prefix)) {
-      inFlight.delete(requestKey)
+/** Remove all Yolo state entries for an instance (workspace stop / removal). */
+export function clearPermissionAutoAcceptForInstance(instanceId: string) {
+  setAutoAcceptState((prev) => {
+    const prefix = `${instanceId}:`
+    let changed = false
+    const next = new Map(prev)
+    for (const key of Array.from(next.keys())) {
+      if (key.startsWith(prefix)) {
+        next.delete(key)
+        changed = true
+      }
     }
-  }
-}
-
-export function drainAutoAcceptPermission(
-  instanceId: string,
-  permission: PermissionRequest,
-  responder: AutoAcceptResponder,
-  isPending: PendingPermissionChecker,
-) {
-  const sessionId = getPermissionSessionId(permission)
-  if (!sessionId || !permission?.id) return
-  if (!isPermissionAutoAcceptEnabled(instanceId, sessionId)) return
-  if (!isPending(instanceId, permission.id)) return
-
-  const requestKey = makeRequestKey(instanceId, sessionId, permission.id)
-  if (inFlight.has(requestKey)) return
-
-  inFlight.add(requestKey)
-
-  void responder(instanceId, sessionId, permission.id, "once")
-    .catch((error) => {
-      log.error("Failed to auto-accept permission", error)
-    })
-    .finally(() => {
-      inFlight.delete(requestKey)
-    })
-}
-
-export function drainAutoAcceptPermissions(
-  instanceId: string,
-  permissions: PermissionRequest[],
-  responder: AutoAcceptResponder,
-  isPending: PendingPermissionChecker,
-) {
-  for (const permission of permissions) {
-    drainAutoAcceptPermission(instanceId, permission, responder, isPending)
-  }
+    return changed ? next : prev
+  })
 }

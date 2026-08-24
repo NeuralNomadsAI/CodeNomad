@@ -16,6 +16,8 @@ export type WorkspaceStatus = "starting" | "ready" | "stopped" | "error"
 
 export interface WorkspaceDescriptor {
   id: string
+  /** Correlates creation events with the client request that initiated them. */
+  requestId?: string
   /** Absolute path on the server host. */
   path: string
   name?: string
@@ -38,6 +40,9 @@ export interface WorkspaceDescriptor {
 export interface WorkspaceCreateRequest {
   path: string
   name?: string
+  binaryPath?: string
+  requestId?: string
+  forceNew?: boolean
 }
 
 export interface WorkspaceCloneRequest {
@@ -50,13 +55,36 @@ export interface WorkspaceCloneResponse {
   path: string
 }
 
-export type WorkspaceCreateResponse = WorkspaceDescriptor
+export type WorkspaceCreateResponse = WorkspaceDescriptor & {
+  /** True when an active workspace with the same canonical path was returned. */
+  reused?: true
+}
 export type WorkspaceListResponse = WorkspaceDescriptor[]
 export type WorkspaceDetailResponse = WorkspaceDescriptor
 
 export interface WorkspaceDeleteResponse {
   id: string
   status: WorkspaceStatus
+}
+
+export interface ProviderUsageWindow {
+  usedPercent: number | null
+  remainingPercent: number | null
+  windowSeconds: number | null
+  resetAt: number | null
+  valueLabel?: string
+}
+
+export interface ProviderUsageResponse {
+  requestedProviderId: string
+  providerId: string | null
+  providerName: string
+  modelId?: string
+  supported: boolean
+  configured: boolean
+  ok: boolean
+  windows: Record<string, ProviderUsageWindow>
+  fetchedAt: number
 }
 
 export type WorktreeKind = "root" | "worktree"
@@ -328,6 +356,19 @@ export interface BinaryValidationResult {
   error?: string
 }
 
+export interface OpenCodeUpdateStatus {
+  currentVersion: string
+  latestVersion: string | null
+  updateAvailable: boolean | null
+  canUpgrade: boolean
+  checkError?: "update_check_failed"
+}
+
+export interface OpenCodeUpdateResponse {
+  success: boolean
+  version: string
+}
+
 export interface SpeechSegment {
   startMs: number
   endMs: number
@@ -347,6 +388,11 @@ export interface SpeechCapabilitiesResponse {
   ttsVoice: string
   ttsFormats: string[]
   streamingTtsFormats: string[]
+  separateProviders?: boolean
+  sttConfigured?: boolean
+  ttsConfigured?: boolean
+  sttBaseUrl?: string
+  ttsBaseUrl?: string
 }
 
 export interface SpeechTranscriptionResponse {
@@ -363,6 +409,14 @@ export interface SpeechSynthesisResponse {
 
 export interface VoiceModeStateResponse {
   enabled: boolean
+}
+
+export interface YoloStateResponse {
+  enabled: boolean
+}
+
+export interface SessionMetadataResponse {
+  metadata: Record<string, unknown>
 }
 
 export interface RemoteServerProfile {
@@ -414,12 +468,14 @@ export type WorkspaceEventType =
   | "instance.dataChanged"
   | "instance.event"
   | "instance.eventStatus"
+  | "yolo.stateChanged"
+  | "yolo.autoAccepted"
 
 export type WorkspaceEventPayload =
   | { type: "workspace.created"; workspace: WorkspaceDescriptor }
   | { type: "workspace.started"; workspace: WorkspaceDescriptor }
   | { type: "workspace.error"; workspace: WorkspaceDescriptor }
-  | { type: "workspace.stopped"; workspaceId: string }
+  | { type: "workspace.stopped"; workspaceId: string; reason?: "deleted" | "stopped" }
   | { type: "workspace.log"; entry: WorkspaceLogEntry }
   | { type: "sidecar.updated"; sidecar: SideCar }
   | { type: "sidecar.removed"; sidecarId: string }
@@ -428,6 +484,8 @@ export type WorkspaceEventPayload =
   | { type: "instance.dataChanged"; instanceId: string; data: InstanceData }
   | { type: "instance.event"; instanceId: string; event: InstanceStreamEvent }
   | { type: "instance.eventStatus"; instanceId: string; status: InstanceStreamStatus; reason?: string }
+  | { type: "yolo.stateChanged"; instanceId: string; sessionId: string; enabled: boolean }
+  | { type: "yolo.autoAccepted"; instanceId: string; sessionId: string; permissionId: string }
 
 export interface NetworkAddress {
   ip: string

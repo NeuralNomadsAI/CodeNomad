@@ -1,12 +1,13 @@
 export const appMessages = {
   "app.launchError.title": "无法启动 OpenCode",
-  "app.launchError.description": "我们无法启动所选的 OpenCode 可执行文件。请查看下面的错误输出，或在 OpenCode 设置中选择其他可执行文件。",
+  "app.launchError.description": "OpenCode 无法启动此工作区。请查看下面的错误输出或检查 OpenCode 设置。",
   "app.launchError.binaryPathLabel": "可执行文件路径",
   "app.launchError.errorOutputLabel": "错误输出",
   "app.launchError.openAdvancedSettings": "打开 OpenCode 设置",
   "app.launchError.close": "关闭",
   "app.launchError.closeTitle": "关闭 (Esc)",
   "app.launchError.fallbackMessage": "启动工作区失败",
+  "app.launchError.invalidConfig": "OpenCode 配置无效",
 
   "app.stopInstance.confirmMessage": "停止 OpenCode 实例？这将停止服务器。",
   "app.stopInstance.title": "停止实例",

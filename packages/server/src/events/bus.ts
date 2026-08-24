@@ -3,11 +3,22 @@ import { WorkspaceEventPayload } from "../api-types"
 import { Logger } from "../logger"
 
 export class EventBus extends EventEmitter {
+  private readonly instanceStatuses = new Map<string, Extract<WorkspaceEventPayload, { type: "instance.eventStatus" }>>()
+
   constructor(private readonly logger?: Logger) {
     super()
   }
 
   publish(event: WorkspaceEventPayload): boolean {
+    if (event.type === "instance.eventStatus") {
+      const terminal = event.status === "disconnected"
+        && (event.reason === "workspace stopped" || event.reason === "workspace error")
+      if (terminal) {
+        this.instanceStatuses.delete(event.instanceId)
+      } else {
+        this.instanceStatuses.set(event.instanceId, event)
+      }
+    }
     if (event.type !== "instance.event" && event.type !== "instance.eventStatus") {
       this.logger?.debug({ type: event.type }, "Publishing workspace event")
       if (this.logger?.isLevelEnabled("trace")) {
@@ -31,6 +42,9 @@ export class EventBus extends EventEmitter {
     this.on("instance.dataChanged", handler)
     this.on("instance.event", handler)
     this.on("instance.eventStatus", handler)
+    this.on("yolo.stateChanged", handler)
+    this.on("yolo.autoAccepted", handler)
+    for (const status of this.instanceStatuses.values()) listener(status)
     return () => {
       this.off("workspace.created", handler)
       this.off("workspace.started", handler)
@@ -44,6 +58,8 @@ export class EventBus extends EventEmitter {
       this.off("instance.dataChanged", handler)
       this.off("instance.event", handler)
       this.off("instance.eventStatus", handler)
+      this.off("yolo.stateChanged", handler)
+      this.off("yolo.autoAccepted", handler)
     }
   }
 }

@@ -1,5 +1,6 @@
 import fs from "fs"
 import path from "path"
+import { randomUUID } from "node:crypto"
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml"
 import type { Logger } from "../logger"
 import { applyMergePatch, isPlainObject } from "./merge-patch"
@@ -18,6 +19,25 @@ function normalizeDoc(input: unknown): SettingsDoc {
   return input
 }
 
+function resolveWriteDestination(filePath: string): string {
+  let current = path.resolve(filePath)
+  const seen = new Set<string>()
+
+  while (true) {
+    let stat: fs.Stats
+    try {
+      stat = fs.lstatSync(current)
+    } catch (error: any) {
+      if (error?.code === "ENOENT") return current
+      throw error
+    }
+    if (!stat.isSymbolicLink()) return current
+    if (seen.has(current)) throw new Error(`Circular settings symlink: ${filePath}`)
+    seen.add(current)
+    current = path.resolve(path.dirname(current), fs.readlinkSync(current))
+  }
+}
+
 export class YamlDocStore {
   private cache: SettingsDoc = {}
   private loaded = false
@@ -25,6 +45,7 @@ export class YamlDocStore {
   constructor(
     private readonly filePath: string,
     private readonly logger: Logger,
+    private readonly options: { throwOnPersistError?: boolean } = {},
   ) {}
 
   load(): SettingsDoc {
@@ -58,9 +79,17 @@ export class YamlDocStore {
 
   replace(next: unknown): SettingsDoc {
     const normalized = normalizeDoc(next)
+    const previousCache = this.cache
+    const previousLoaded = this.loaded
     this.cache = normalized
     this.loaded = true
-    this.persist()
+    try {
+      this.persist()
+    } catch (error) {
+      this.cache = previousCache
+      this.loaded = previousLoaded
+      throw error
+    }
     return this.cache
   }
 
@@ -99,12 +128,27 @@ export class YamlDocStore {
   }
 
   private persist() {
+    let tempPath: string | undefined
     try {
-      fs.mkdirSync(path.dirname(this.filePath), { recursive: true })
+      const destination = resolveWriteDestination(this.filePath)
+      fs.mkdirSync(path.dirname(destination), { recursive: true })
       const yaml = stringifyYaml(this.cache as any)
-      fs.writeFileSync(this.filePath, ensureTrailingNewline(yaml), "utf-8")
+      const mode = fs.existsSync(destination) ? fs.statSync(destination).mode & 0o777 : 0o600
+      tempPath = `${destination}.${process.pid}.${randomUUID()}.tmp`
+      fs.writeFileSync(tempPath, ensureTrailingNewline(yaml), { encoding: "utf-8", mode })
+      if (process.platform !== "win32") fs.chmodSync(tempPath, mode)
+      fs.renameSync(tempPath, destination)
     } catch (error) {
       this.logger.warn({ err: error, filePath: this.filePath }, "Failed to persist YAML doc")
+      if (this.options.throwOnPersistError) throw error
+    } finally {
+      if (tempPath) {
+        try {
+          fs.rmSync(tempPath, { force: true })
+        } catch (error) {
+          this.logger.warn({ err: error, tempPath }, "Failed to remove temporary YAML doc")
+        }
+      }
     }
   }
 }

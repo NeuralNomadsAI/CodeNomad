@@ -32,6 +32,10 @@ import { ClientConnectionManager } from "./clients/connection-manager"
 import { PluginChannelManager } from "./plugins/channel"
 import { VoiceModeManager } from "./plugins/voice-mode"
 import { runCliUpgrade } from "./cli-upgrade"
+import { createServerShutdownHandler, orchestrateServerShutdown, type ServerShutdownTrigger } from "./shutdown"
+import { AutoAcceptManager } from "./permissions/auto-accept-manager"
+import { createOpencodePermissionReplier } from "./permissions/opencode-replier"
+import { createOpencodeYoloPersistence } from "./permissions/opencode-yolo-metadata"
 
 const require = createRequire(import.meta.url)
 
@@ -73,6 +77,46 @@ const DEFAULT_HOST = "127.0.0.1"
 const DEFAULT_CONFIG_PATH = "~/.config/codenomad/config.json"
 const DEFAULT_HTTPS_PORT = 9898
 const DEFAULT_HTTP_PORT = 9899
+export const STDIN_SHUTDOWN_COMMAND = "codenomad:shutdown"
+
+interface ShutdownSignalSource {
+  on: (signal: "SIGINT" | "SIGTERM", listener: () => void) => unknown
+}
+
+export function installShutdownSignalHandlers(
+  source: ShutdownSignalSource,
+  shutdown: (signal: ServerShutdownTrigger) => Promise<void>,
+): void {
+  source.on("SIGINT", () => void shutdown("SIGINT"))
+  source.on("SIGTERM", () => void shutdown("SIGTERM"))
+}
+
+interface ShutdownStdinSource {
+  on(event: "data", listener: (chunk: Buffer | string) => void): unknown
+  off?(event: "data", listener: (chunk: Buffer | string) => void): unknown
+  destroy?(): unknown
+}
+
+export function installShutdownStdinHandler(
+  source: ShutdownStdinSource,
+  shutdown: (signal: ServerShutdownTrigger) => Promise<void>,
+): void {
+  let buffer = ""
+  let requested = false
+  const onData = (chunk: Buffer | string) => {
+    if (requested) return
+    buffer += chunk.toString()
+    const lines = buffer.split(/\r?\n/)
+    buffer = lines.pop() ?? ""
+    if (!lines.some((line) => line.trim() === STDIN_SHUTDOWN_COMMAND)) return
+
+    requested = true
+    source.off?.("data", onData)
+    source.destroy?.()
+    void shutdown("stdin")
+  }
+  source.on("data", onData)
+}
 
 function parseCliOptions(argv: string[]): CliOptions {
   const program = new Command()
@@ -234,8 +278,8 @@ function resolveHost(input: string | undefined): string {
   return trimmed
 }
 
-function programHasArg(argv: string[], flag: string): boolean {
-  return argv.includes(flag)
+export function programHasArg(argv: string[], flag: string): boolean {
+  return argv.some((argument) => argument === flag || argument.startsWith(`${flag}=`))
 }
 
 async function main() {
@@ -343,6 +387,15 @@ async function main() {
     logger: logger.child({ component: "sidecars" }),
   })
   const previewManager = new PreviewManager()
+  const yoloLogger = logger.child({ component: "yolo" })
+  const sessionMetadataPersistence = createOpencodeYoloPersistence(workspaceManager)
+  const yoloManager = new AutoAcceptManager({
+    eventBus,
+    logger: yoloLogger,
+    replier: createOpencodePermissionReplier({ workspaceManager, logger: yoloLogger }),
+    persistence: sessionMetadataPersistence,
+  })
+  yoloManager.start()
   const instanceEventBridge = new InstanceEventBridge({
     workspaceManager,
     eventBus,
@@ -444,6 +497,8 @@ async function main() {
         pluginChannel,
         voiceModeManager,
         remoteProxySessionManager,
+        yoloManager,
+        sessionMetadataPersistence,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: uiResolution.uiDevServerUrl,
         logger,
@@ -471,6 +526,8 @@ async function main() {
         pluginChannel,
         voiceModeManager,
         remoteProxySessionManager,
+        yoloManager,
+        sessionMetadataPersistence,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: undefined,
         logger,
@@ -555,68 +612,46 @@ async function main() {
     await launchInBrowser(serverMeta.localUrl, logger.child({ component: "launcher" }))
   }
 
-  let shuttingDown = false
+  const shutdown = createServerShutdownHandler({
+    logger,
+    holdAfterFailure: () => new Promise<void>(() => { setInterval(() => undefined, 60_000) }),
+    setExitCode: (code) => {
+      process.stdin.destroy()
+      process.exitCode = code
+    },
+    shutdown: () =>
+      orchestrateServerShutdown(
+        {
+          stopInstanceEventBridge: () => instanceEventBridge.shutdown(),
+          stopSidecars: () => sidecarManager.shutdown(),
+          stopClientConnections: () => clientConnectionManager.shutdown(),
+          stopRemoteProxySessions: () => remoteProxySessionManager.shutdown(),
+          stopWorkspaces: () => workspaceManager.shutdown(),
+          stopHttpServers: async () => {
+            yoloManager.stop()
+            const results = await Promise.allSettled(servers.map((srv) => srv.stop()))
+            const failures = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []))
+            if (failures.length > 0) {
+              const error = new Error("One or more HTTP servers failed to stop") as Error & { failures: unknown[] }
+              error.failures = failures
+              throw error
+            }
+            logger.info("HTTP server(s) stopped")
+          },
+          stopReleaseMonitor: () => devReleaseMonitor?.stop(),
+        },
+        logger,
+      ),
+  })
 
-  const shutdown = async () => {
-    if (shuttingDown) {
-      logger.info("Shutdown already in progress, ignoring signal")
-      return
-    }
-    shuttingDown = true
-    logger.info("Received shutdown signal, stopping workspaces and server")
-
-    const shutdownWorkspaces = (async () => {
-      try {
-        instanceEventBridge.shutdown()
-      } catch (error) {
-        logger.warn({ err: error }, "Instance event bridge shutdown failed")
-      }
-
-      try {
-        await sidecarManager.shutdown()
-      } catch (error) {
-        logger.error({ err: error }, "SideCar manager shutdown failed")
-      }
-
-      try {
-        clientConnectionManager.shutdown()
-      } catch (error) {
-        logger.warn({ err: error }, "Client connection manager shutdown failed")
-      }
-
-      try {
-        await workspaceManager.shutdown()
-        logger.info("Workspace manager shutdown complete")
-      } catch (error) {
-        logger.error({ err: error }, "Workspace manager shutdown failed")
-      }
-    })()
-
-    const shutdownHttp = (async () => {
-      try {
-        await Promise.allSettled(servers.map((srv) => srv.stop()))
-        logger.info("HTTP server(s) stopped")
-      } catch (error) {
-        logger.error({ err: error }, "Failed to stop HTTP server")
-      }
-    })()
-
-    await Promise.allSettled([shutdownWorkspaces, shutdownHttp])
-
-    // no-op: remote UI manifest replaces GitHub release monitor
-
-    devReleaseMonitor?.stop()
-
-    logger.info("Exiting process")
-    process.exit(0)
-  }
-
-  process.on("SIGINT", shutdown)
-  process.on("SIGTERM", shutdown)
+  installShutdownSignalHandlers(process, shutdown)
+  installShutdownStdinHandler(process.stdin, shutdown)
 }
 
-main().catch((error) => {
-  const logger = createLogger({ component: "app" })
-  logger.error({ err: error }, "CLI server crashed")
-  process.exit(1)
-})
+if (path.resolve(process.argv[1] ?? "") === __filename) {
+  main().catch((error) => {
+    const logger = createLogger({ component: "app" })
+    logger.error({ err: error }, "CLI server crashed")
+    process.exit(1)
+  })
+}

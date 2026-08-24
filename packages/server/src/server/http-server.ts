@@ -22,15 +22,20 @@ import { registerEventRoutes } from "./routes/events"
 import { registerStorageRoutes } from "./routes/storage"
 import { registerPluginRoutes } from "./routes/plugin"
 import { registerBackgroundProcessRoutes } from "./routes/background-processes"
+import { registerYoloRoutes } from "./routes/yolo"
 import { registerWorktreeRoutes } from "./routes/worktrees"
 import { registerSpeechRoutes } from "./routes/speech"
+import { registerOpenCodeUpdateRoutes } from "./routes/opencode-update"
 import { registerRemoteServerRoutes } from "./routes/remote-servers"
 import { registerRemoteProxyRoutes } from "./routes/remote-proxy"
 import { registerSideCarRoutes } from "./routes/sidecars"
 import { registerPreviewRoutes } from "./routes/previews"
+import { registerUsageRoutes } from "./routes/usage"
 import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import { BackgroundProcessManager } from "../background-processes/manager"
+import type { AutoAcceptManager } from "../permissions/auto-accept-manager"
+import type { OpencodeYoloPersistence } from "../permissions/opencode-yolo-metadata"
 import type { AuthManager } from "../auth/manager"
 import { registerAuthRoutes } from "./routes/auth"
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth"
@@ -41,6 +46,7 @@ import { VoiceModeManager } from "../plugins/voice-mode"
 import type { SideCarManager } from "../sidecars/manager"
 import type { PreviewManager } from "../previews/manager"
 import type { RemoteProxySessionManager } from "./remote-proxy"
+import { createOpenCodeUpdateService } from "../opencode-update/service"
 
 interface HttpServerDeps {
   bindHost: string
@@ -63,6 +69,8 @@ interface HttpServerDeps {
   pluginChannel: PluginChannelManager
   voiceModeManager: VoiceModeManager
   remoteProxySessionManager: RemoteProxySessionManager
+  yoloManager: AutoAcceptManager
+  sessionMetadataPersistence: OpencodeYoloPersistence
   uiStaticDir: string
   uiDevServerUrl?: string
   logger: Logger
@@ -72,6 +80,12 @@ interface HttpServerStartResult {
   port: number
   url: string
   displayHost: string
+}
+
+export function shouldRetryPreferredPort(error: unknown, autoPortRequested: boolean, platform = process.platform): boolean {
+  if (!autoPortRequested) return false
+  const code = (error as NodeJS.ErrnoException | undefined)?.code
+  return code === "EADDRINUSE" || (platform === "win32" && code === "EACCES")
 }
 
 export function createHttpServer(deps: HttpServerDeps) {
@@ -269,6 +283,10 @@ export function createHttpServer(deps: HttpServerDeps) {
 
   registerWorkspaceRoutes(app, { workspaceManager: deps.workspaceManager })
   registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger })
+  registerOpenCodeUpdateRoutes(app, {
+    service: createOpenCodeUpdateService(deps.settings, deps.workspaceManager),
+    logger: apiLogger,
+  })
   registerFilesystemRoutes(app, { fileSystemBrowser: deps.fileSystemBrowser })
   registerConfigFileRoutes(app)
   registerMetaRoutes(app, { serverMeta: deps.serverMeta })
@@ -278,7 +296,10 @@ export function createHttpServer(deps: HttpServerDeps) {
     logger: sseLogger,
     connectionManager: deps.clientConnectionManager,
   })
-  registerWorktreeRoutes(app, { workspaceManager: deps.workspaceManager })
+  registerWorktreeRoutes(app, {
+    workspaceManager: deps.workspaceManager,
+    sessionMetadataPersistence: deps.sessionMetadataPersistence,
+  })
   registerStorageRoutes(app, {
     instanceStore: deps.instanceStore,
     eventBus: deps.eventBus,
@@ -289,6 +310,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerSpeechRoutes(app, { speechService: deps.speechService })
   registerSideCarRoutes(app, { sidecarManager: deps.sidecarManager })
   registerPreviewRoutes(app, { previewManager: deps.previewManager })
+  registerUsageRoutes(app)
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger })
   registerPreviewProxyRoutes(app, { previewManager: deps.previewManager, logger: proxyLogger })
   setupSideCarWebSocketProxy(app, {
@@ -309,6 +331,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     voiceModeManager: deps.voiceModeManager,
   })
   registerBackgroundProcessRoutes(app, { backgroundProcessManager })
+  registerYoloRoutes(app, { yoloManager: deps.yoloManager })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger })
 
 
@@ -329,18 +352,12 @@ export function createHttpServer(deps: HttpServerDeps) {
       const autoPortRequested = deps.bindPort === 0
       const primaryPort = autoPortRequested ? deps.defaultPort : deps.bindPort
 
-      const shouldRetryWithEphemeral = (error: unknown) => {
-        if (!autoPortRequested) return false
-        const err = error as NodeJS.ErrnoException | undefined
-        return Boolean(err && err.code === "EADDRINUSE")
-      }
-
       let listenResult
 
       try {
         listenResult = await attemptListen(primaryPort)
       } catch (error) {
-        if (!shouldRetryWithEphemeral(error)) {
+        if (!shouldRetryPreferredPort(error, autoPortRequested)) {
           throw error
         }
         deps.logger.warn({ err: error, port: primaryPort }, "Preferred port unavailable, retrying on ephemeral port")

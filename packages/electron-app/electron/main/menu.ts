@@ -1,7 +1,34 @@
-import { Menu, BrowserWindow, MenuItemConstructorOptions } from "electron"
+import { app, Menu, BrowserWindow, MenuItemConstructorOptions } from "electron"
 
-export function createApplicationMenu(mainWindow: BrowserWindow) {
+interface ApplicationMenuActions {
+  reload(): void
+  forceReload(): void
+}
+
+let workspaceActionsRequested = false
+let applicationMenu: Menu | null = null
+let localMainWindow: BrowserWindow | null = null
+
+function updateWorkspaceMenuState() {
+  const enabled = workspaceActionsRequested && BrowserWindow.getFocusedWindow() === localMainWindow
+  for (const id of ["open-workspace-folder", "open-workspace-terminal", "open-workspace-editor"]) {
+    const item = applicationMenu?.getMenuItemById(id)
+    if (item) item.enabled = enabled
+  }
+}
+
+export function setWorkspaceMenuEnabled(enabled: boolean) {
+  workspaceActionsRequested = enabled
+  updateWorkspaceMenuState()
+}
+
+export function createApplicationMenu(mainWindow: BrowserWindow, actions: ApplicationMenuActions) {
+  localMainWindow = mainWindow
   const isMac = process.platform === "darwin"
+  const sendCommand = (id: string) => () => {
+    if (id.startsWith("open-workspace-") && BrowserWindow.getFocusedWindow() !== mainWindow) return
+    mainWindow.webContents.send("menu:action", id)
+  }
 
   const template: MenuItemConstructorOptions[] = [
     ...(isMac
@@ -26,9 +53,20 @@ export function createApplicationMenu(mainWindow: BrowserWindow) {
         {
           label: "New Instance",
           accelerator: "CmdOrCtrl+N",
-          click: () => {
-            mainWindow.webContents.send("menu:newInstance")
-          },
+          click: sendCommand("new-instance"),
+        },
+        { type: "separator" as const },
+        { id: "open-workspace-folder", label: "Open Project Folder", click: sendCommand("open-workspace-folder") },
+        { id: "open-workspace-terminal", label: "Open Terminal Here", click: sendCommand("open-workspace-terminal") },
+        {
+          id: "open-workspace-editor",
+          label: "Open Project In",
+          submenu: [
+            { label: "VS Code", click: sendCommand("open-workspace-editor-vscode") },
+            { label: "Cursor", click: sendCommand("open-workspace-editor-cursor") },
+            { label: "Zed", click: sendCommand("open-workspace-editor-zed") },
+            { label: "VSCodium", click: sendCommand("open-workspace-editor-vscodium") },
+          ],
         },
         { type: "separator" as const },
         isMac ? { role: "close" as const } : { role: "quit" as const },
@@ -51,8 +89,8 @@ export function createApplicationMenu(mainWindow: BrowserWindow) {
     {
       label: "View",
       submenu: [
-        { role: "reload" as const },
-        { role: "forceReload" as const },
+        { label: "Reload", accelerator: "CmdOrCtrl+R", click: actions.reload },
+        { label: "Force Reload", accelerator: "CmdOrCtrl+Shift+R", click: actions.forceReload },
         { role: "toggleDevTools" as const },
         { type: "separator" as const },
         { role: "resetZoom" as const },
@@ -80,5 +118,14 @@ export function createApplicationMenu(mainWindow: BrowserWindow) {
   ]
 
   const menu = Menu.buildFromTemplate(template)
+  applicationMenu = menu
   Menu.setApplicationMenu(menu)
+  updateWorkspaceMenuState()
+  mainWindow.webContents.on("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => {
+    if (!isMainFrame) return
+    workspaceActionsRequested = false
+    updateWorkspaceMenuState()
+  })
+  app.on("browser-window-focus", updateWorkspaceMenuState)
+  app.on("browser-window-blur", updateWorkspaceMenuState)
 }

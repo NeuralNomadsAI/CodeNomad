@@ -2,11 +2,12 @@ import { Show, createEffect, createMemo, createSignal, onCleanup, on, untrack } 
 import { ArrowUpDown, ChevronDown, ChevronUp, MoreHorizontal, Pause, Search, Trash, X } from "lucide-solid"
 import Kbd from "./kbd"
 import BrandedEmptyState from "./branded-empty-state"
+import LoadErrorState from "./load-error-state"
 import MessageBlock from "./message-block"
 import { getMessageAnchorId } from "./message-anchors"
 import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./message-timeline"
-import VirtualFollowList, { type VirtualFollowBottomIntent, type VirtualFollowListApi, type VirtualFollowListState, type VirtualFollowScrollSnapshot } from "./virtual-follow-list"
-import { isSnapshotAutoFollowing } from "./virtual-follow-behavior"
+import VirtualFollowList, { type VirtualExplicitBottomPinIntent, type VirtualFollowListApi, type VirtualFollowListState, type VirtualFollowScrollSnapshot } from "./virtual-follow-list"
+import { isScrollRestoreGenerationCurrent, isSnapshotAutoFollowing } from "./virtual-follow-behavior"
 import { useConfig } from "../stores/preferences"
 import { getSessionInfo } from "../stores/sessions"
 import { messageStoreBus } from "../stores/message-v2/bus"
@@ -20,11 +21,12 @@ import type { DeleteHoverState } from "../types/delete-hover"
 import { partHasRenderableText } from "../types/message"
 import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
 import { getPartCharCount } from "../lib/token-utils"
+import { getMessageSelectionActionPosition } from "../lib/message-selection-position"
 import { buildSessionSearchMatches } from "../lib/session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
-import { resolveThinkingExpansionDefault } from "./tool-call/tool-registry"
+import { resolveThinkingExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
+import { collectToolDeletionCompanionPartIds, executeBulkDeletionPlan } from "./tool-deletion-companions"
 
-const SCROLL_SENTINEL_MARGIN_PX = 8
 const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 const QUOTE_SELECTION_MAX_LENGTH = 2000
 const STREAMING_TEXT_HOLD_TOP_THRESHOLD_PX = 8
@@ -49,13 +51,15 @@ export interface MessageSectionProps {
   onReloadMessages?: () => void
   isActive?: boolean
   sessionStreamingActive?: boolean
-  bottomFollowIntent?: VirtualFollowBottomIntent | null
+  explicitBottomPinIntent?: VirtualExplicitBottomPinIntent | null
+  onExplicitBottomPinCancelled?: () => void
 }
 
 export default function MessageSection(props: MessageSectionProps) {
   const { preferences, updatePreferences } = useConfig()
   const { t } = useI18n()
-  const showUsagePreference = () => preferences().showUsageMetrics ?? true
+  const usageMetricsVisibility = () =>
+    preferences().showUsageMetrics ? preferences().usageMetricsExpansion : "hidden"
   const showMessageTimelinePreference = () => preferences().showMessageTimeline ?? true
   const showTimelineToolsPreference = () => preferences().showTimelineTools ?? true
   const holdLongAssistantRepliesEnabled = () => preferences().holdLongAssistantReplies ?? true
@@ -119,8 +123,8 @@ export default function MessageSection(props: MessageSectionProps) {
     const pref = preferences()
     const showThinking = pref.showThinkingBlocks ? 1 : 0
     const thinkingExpansion = resolveThinkingExpansionDefault(pref) ? "expanded" : "collapsed"
-    const showUsage = (pref.showUsageMetrics ?? true) ? 1 : 0
-    return `${showThinking}|${thinkingExpansion}|${showUsage}`
+    const usageVisibility = pref.showUsageMetrics ? pref.usageMetricsExpansion : "hidden"
+    return `${showThinking}|${thinkingExpansion}|${usageVisibility}`
   })
 
   const handleTimelineSegmentClick = (segment: TimelineSegment) => {
@@ -502,6 +506,34 @@ export default function MessageSection(props: MessageSectionProps) {
     }
     return set
   })
+  const deleteCompanionParts = createMemo(() => {
+    sessionRevision()
+    const selectedByMessage = new Map<string, Set<string>>()
+    for (const entry of deleteToolParts()) {
+      const selected = selectedByMessage.get(entry.messageId) ?? new Set<string>()
+      selected.add(entry.partId)
+      selectedByMessage.set(entry.messageId, selected)
+    }
+
+    const companions: { messageId: string; partId: string }[] = []
+    const s = store()
+    for (const [messageId, selectedToolPartIds] of selectedByMessage) {
+      const record = s.getMessage(messageId)
+      if (!record) continue
+      const partIds = collectToolDeletionCompanionPartIds(
+        record.partIds ?? [],
+        (partId) => record.parts?.[partId]?.data,
+        selectedToolPartIds,
+      )
+      for (const partId of partIds) {
+        companions.push({ messageId, partId })
+      }
+    }
+    return companions
+  })
+  const deleteCompanionPartKeys = createMemo(() =>
+    new Set(deleteCompanionParts().map((entry) => `${entry.messageId}:${entry.partId}`)),
+  )
   const isDeleteMode = createMemo(() => deleteMessageIds().size > 0 || deleteToolParts().length > 0)
   const selectedDeleteCount = createMemo(() => deleteMessageIds().size + deleteToolParts().length)
 
@@ -550,6 +582,10 @@ export default function MessageSection(props: MessageSectionProps) {
           chars = partFallbackChars.get(partId) ?? 0
         }
         total += Math.max(Math.round(chars / 4), 1)
+      }
+      for (const { messageId, partId } of deleteCompanionParts()) {
+        const part = s.getMessage(messageId)?.parts?.[partId]?.data
+        if (part) total += Math.max(Math.round(getPartCharCount(part) / 4), 1)
       }
     }
     return total
@@ -628,15 +664,22 @@ export default function MessageSection(props: MessageSectionProps) {
       }
     }
 
+    const companionParts = deleteCompanionParts()
+
     try {
-      for (const messageId of toDelete) {
-        await deleteMessage(props.instanceId, props.sessionId, messageId)
-      }
-      for (const { messageId, partId } of toolParts) {
-        if (!allowed.has(messageId)) continue
-        await deleteMessagePart(props.instanceId, props.sessionId, messageId, partId)
-      }
-      clearDeleteMode()
+      await executeBulkDeletionPlan(
+        {
+          messageIds: toDelete,
+          companionParts: companionParts.filter(({ messageId }) => allowed.has(messageId)),
+          toolParts: toolParts.filter(({ messageId }) => allowed.has(messageId)),
+        },
+        {
+          clearSelection: clearDeleteMode,
+          deleteMessage: (messageId) => deleteMessage(props.instanceId, props.sessionId, messageId),
+          deletePart: ({ messageId, partId }) =>
+            deleteMessagePart(props.instanceId, props.sessionId, messageId, partId),
+        },
+      )
     } catch (error) {
       showAlertDialog(t("messageSection.bulkDelete.failedMessage"), {
         title: t("messageSection.bulkDelete.failedTitle"),
@@ -668,6 +711,7 @@ export default function MessageSection(props: MessageSectionProps) {
   const [didRestoreScroll, setDidRestoreScroll] = createSignal(false)
   const lastGoodScrollSnapshots = new Map<string, VirtualFollowScrollSnapshot>()
   let restoringScrollSnapshot = false
+  let scrollRestoreGeneration = 0
 
   function getLastGoodScrollSnapshot(sessionId: string) {
     return lastGoodScrollSnapshots.get(sessionId) ?? store().getScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE)
@@ -681,6 +725,8 @@ export default function MessageSection(props: MessageSectionProps) {
     on(
       () => props.sessionId,
       () => {
+        scrollRestoreGeneration += 1
+        restoringScrollSnapshot = false
         setDidRestoreScroll(false)
         const snapshot = store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE)
         if (snapshot) setLastGoodScrollSnapshot(props.sessionId, snapshot)
@@ -716,6 +762,7 @@ export default function MessageSection(props: MessageSectionProps) {
 
   function persistMessageScrollSnapshot(options?: { sessionId?: string; allowCapture?: boolean; requireActive?: boolean }) {
     if (restoringScrollSnapshot) return
+    if (!didRestoreScroll()) return
 
     const sessionId = options?.sessionId ?? props.sessionId
     const allowCapture = options?.allowCapture ?? true
@@ -735,16 +782,6 @@ export default function MessageSection(props: MessageSectionProps) {
       return
     }
 
-    const element = streamElement()
-    if (!allowCapture || !canCapture) return
-    if (!element) return
-    const scrollTop = element.scrollTop
-    const maxScrollTop = Math.max(element.scrollHeight - element.clientHeight, 0)
-    const scrollRatio = maxScrollTop > 0 ? scrollTop / maxScrollTop : 0
-    const atBottom = element.scrollHeight - (element.scrollTop + element.clientHeight) <= 48
-    const snapshot = { scrollTop, scrollRatio, maxScrollTop, atBottom }
-    setLastGoodScrollSnapshot(sessionId, snapshot)
-    store().setScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE, snapshot)
   }
 
   // Persist scroll position when switching sessions. This effect's cleanup runs
@@ -752,7 +789,7 @@ export default function MessageSection(props: MessageSectionProps) {
   createEffect(() => {
     const sessionId = props.sessionId
     onCleanup(() => {
-      persistMessageScrollSnapshot({ sessionId, requireActive: false })
+      persistMessageScrollSnapshot({ sessionId, allowCapture: props.sessionId === sessionId, requireActive: false })
     })
   })
 
@@ -783,7 +820,7 @@ export default function MessageSection(props: MessageSectionProps) {
     setScrollControlsOpen(false)
   }
 
-  function openScrollControlsFromTrigger(event: PointerEvent) {
+  function openScrollControlsFromTrigger(event: MouseEvent) {
     event.preventDefault()
     event.stopPropagation()
     if (scrollControlsOpen()) return
@@ -795,7 +832,7 @@ export default function MessageSection(props: MessageSectionProps) {
     event.preventDefault()
     event.stopPropagation()
     action()
-    setScrollControlsHoverSuppressed(event.pointerType !== "mouse")
+    setScrollControlsHoverSuppressed(false)
     closeScrollControls()
   }
 
@@ -836,7 +873,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const api = listApi()
     if (!api) return
     if (props.registerScrollToBottom) {
-      props.registerScrollToBottom(() => api.scrollToBottom({ immediate: true, suppressHold: true }))
+      props.registerScrollToBottom(() => api.scrollToBottom({ immediate: true }))
       onCleanup(() => props.registerScrollToBottom?.(null))
     }
   })
@@ -859,25 +896,43 @@ export default function MessageSection(props: MessageSectionProps) {
       return
     }
 
+    const restoreSessionId = props.sessionId
+    const restoreGeneration = ++scrollRestoreGeneration
+    const isCurrentRestore = () => isScrollRestoreGenerationCurrent(
+      restoreSessionId,
+      restoreGeneration,
+      props.sessionId,
+      scrollRestoreGeneration,
+    )
     restoringScrollSnapshot = true
     api.restoreScrollSnapshot(snapshot, {
       behavior: "auto",
       fallback: () => {
+        if (!isCurrentRestore()) return
         api.setAutoScroll(true)
         api.scrollToBottom({ immediate: true })
         restoringScrollSnapshot = false
         setDidRestoreScroll(true)
       },
       onApplied: () => {
+        if (!isCurrentRestore()) return
         restoringScrollSnapshot = false
-        setLastGoodScrollSnapshot(props.sessionId, snapshot)
+        setLastGoodScrollSnapshot(restoreSessionId, snapshot)
+        setDidRestoreScroll(true)
+      },
+      onCancelled: () => {
+        if (!isCurrentRestore()) return
+        restoringScrollSnapshot = false
         setDidRestoreScroll(true)
       },
     })
   })
 
   onCleanup(() => {
-    persistMessageScrollSnapshot({ requireActive: false })
+    const allowCapture = !restoringScrollSnapshot
+    scrollRestoreGeneration += 1
+    restoringScrollSnapshot = false
+    persistMessageScrollSnapshot({ allowCapture, requireActive: false })
   })
 
   function clearQuoteSelection() {
@@ -944,15 +999,22 @@ export default function MessageSection(props: MessageSectionProps) {
       clearQuoteSelection()
       return
     }
-    const rects = range.getClientRects()
-    const anchorRect = rects.length > 0 ? rects[0] : range.getBoundingClientRect()
+    const rects = Array.from(range.getClientRects())
+    const fallbackRect = range.getBoundingClientRect()
     const shellRect = shell.getBoundingClientRect()
-    const relativeTop = Math.max(anchorRect.top - shellRect.top - 40, 8)
-    // Keep the popover within the stream shell. The quote popover currently
-    // renders 3 actions; keep enough horizontal room for the pill.
-    const maxLeft = Math.max(shell.clientWidth - 260, 8)
-    const relativeLeft = Math.min(Math.max(anchorRect.left - shellRect.left, 8), maxLeft)
-    setQuoteSelection({ text: limited, top: relativeTop, left: relativeLeft })
+    const touchOnly = Boolean(
+      window.matchMedia?.("(pointer: coarse)")?.matches
+      && !window.matchMedia?.("(any-pointer: fine)")?.matches,
+    )
+    const position = getMessageSelectionActionPosition(
+      rects,
+      fallbackRect,
+      shellRect,
+      shell.clientWidth,
+      shell.clientHeight,
+      touchOnly,
+    )
+    setQuoteSelection({ text: limited, ...position })
   }
 
   function handleStreamMouseUp() {
@@ -1264,7 +1326,7 @@ export default function MessageSection(props: MessageSectionProps) {
     if (!match || !isSearchOpen()) return
     if (match.id === lastScrolledSearchMatchId) return
     lastScrolledSearchMatchId = match.id
-    listApi()?.scrollToKey(match.messageId, { behavior: "smooth", block: "start", setAutoScroll: false })
+    listApi()?.scrollToKey(match.messageId, { behavior: "smooth", block: "start" })
   })
 
 
@@ -1367,8 +1429,6 @@ export default function MessageSection(props: MessageSectionProps) {
           getKey={(messageId) => messageId}
           getAnchorId={getMessageAnchorId}
           overscanPx={800}
-          scrollSentinelMarginPx={SCROLL_SENTINEL_MARGIN_PX}
-          suspendMeasurements={() => !isActive()}
           streamingActive={streamingActive}
           isActive={isActive}
           scrollToBottomOnActivate={() => false}
@@ -1376,7 +1436,8 @@ export default function MessageSection(props: MessageSectionProps) {
           initialAutoScroll={initialAutoScroll}
           resetKey={() => props.sessionId}
           followToken={followToken}
-          forceBottomFollowIntent={() => props.bottomFollowIntent ?? null}
+          explicitBottomPinIntent={() => props.explicitBottomPinIntent ?? null}
+          onExplicitBottomPinCancelled={props.onExplicitBottomPinCancelled}
           autoPinHoldEnabled={holdLongAssistantRepliesEnabled}
           autoPinHoldTargetKey={autoPinHoldTargetKey}
           autoPinHoldTopThresholdPx={STREAMING_TEXT_HOLD_TOP_THRESHOLD_PX}
@@ -1429,7 +1490,7 @@ export default function MessageSection(props: MessageSectionProps) {
               <button
                 type="button"
                 class="message-scroll-button message-scroll-controls-trigger"
-                onPointerUp={openScrollControlsFromTrigger}
+                onClick={openScrollControlsFromTrigger}
                 aria-label={t("messageSection.scroll.showControlsAriaLabel")}
                 title={t("messageSection.scroll.showControlsAriaLabel")}
               >
@@ -1472,7 +1533,7 @@ export default function MessageSection(props: MessageSectionProps) {
                   <button
                     type="button"
                     class="message-scroll-button"
-                    onPointerUp={(event) => runScrollControlAction(event, () => api.scrollToBottom({ suppressHold: true }))}
+                    onPointerUp={(event) => runScrollControlAction(event, () => api.scrollToBottom())}
                     aria-label={t("messageSection.scroll.toLatestAriaLabel")}
                   >
                     <span class="message-scroll-icon" aria-hidden="true">
@@ -1533,15 +1594,12 @@ export default function MessageSection(props: MessageSectionProps) {
 
               <Show when={!props.loading && props.loadError}>
                 {(loadError) => (
-                  <div class="message-load-error-state">
-                    <div class="message-load-error-card">
-                      <h3>{t("messageSection.loadError.title")}</h3>
-                      <p>{loadError()}</p>
-                      <button type="button" class="message-load-error-retry" onClick={() => props.onReloadMessages?.()}>
-                        {t("messageSection.loadError.reload")}
-                      </button>
-                    </div>
-                  </div>
+                  <LoadErrorState
+                    title={t("messageSection.loadError.title")}
+                    error={loadError()}
+                    retryLabel={t("messageSection.loadError.reload")}
+                    onRetry={() => props.onReloadMessages?.()}
+                  />
                 )}
               </Show>
             </>
@@ -1556,11 +1614,13 @@ export default function MessageSection(props: MessageSectionProps) {
               lastAssistantIndex={lastAssistantIndex}
               showThinking={() => preferences().showThinkingBlocks}
               thinkingDefaultExpanded={() => resolveThinkingExpansionDefault(preferences())}
-              showUsageMetrics={showUsagePreference}
+              usageMetricsVisibility={usageMetricsVisibility}
+              toolVisibility={(toolName) => resolveToolVisibility(preferences(), toolName)}
               deleteHover={deleteHover}
               onDeleteHoverChange={setDeleteHover}
               selectedMessageIds={selectedForDeletion}
               selectedToolPartKeys={deleteToolPartKeys}
+              selectedCompanionPartKeys={deleteCompanionPartKeys}
               onToggleSelectedMessage={setMessageSelectedForDeletion}
               onRevert={props.onRevert}
               onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}

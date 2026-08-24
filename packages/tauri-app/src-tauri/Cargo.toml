@@ -1,6 +1,6 @@
 [package]
 name = "codenomad-tauri"
-version = "0.18.0"
+version = "0.19.0"
 edition = "2021"
 license = "MIT"
 
@@ -21,15 +21,19 @@ anyhow = "1"
 which = "4"
 libc = "0.2"
 keepawake = "0.6"
+fs2 = "0.4"
+tempfile = "3"
 tauri-plugin-dialog = "2"
 dirs = "5"
 tauri-plugin-opener = "2"
 tauri-plugin-global-shortcut = "2"
 url = "2"
+uuid = { version = "1", features = ["v4"] }
 tauri-plugin-notification = "2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_UI_Shell", "Win32_Security", "Win32_System_JobObjects"] }
+webview2-com = "=0.38.2"
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "2.0.2"

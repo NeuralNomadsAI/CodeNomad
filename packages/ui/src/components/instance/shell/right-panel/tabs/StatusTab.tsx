@@ -1,20 +1,31 @@
-import { For, Show, type Accessor, type Component } from "solid-js"
+import { For, Show, createMemo, type Accessor, type Component } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk/v2"
+import {
+  DragDropProvider,
+  DragDropSensors,
+  SortableProvider,
+  closestCenter,
+  createSortable,
+  type DragEvent as SolidDndDragEvent,
+} from "@thisbeyond/solid-dnd"
 import { Accordion } from "@kobalte/core"
 import { Tooltip } from "@kobalte/core/tooltip"
 import Switch from "@suid/material/Switch"
 
-import { BellRing, ChevronDown, Info, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
+import { BellRing, ChevronDown, GripVertical, Info, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
 
 import type { Instance } from "../../../../../types/instance"
 import type { BackgroundProcess } from "../../../../../../../server/src/api-types"
 import type { Session } from "../../../../../types/session"
 
 import ContextUsagePanel from "../../../../session/context-usage-panel"
+import ProviderUsagePanel from "../../../../session/provider-usage-panel"
 import { TodoListView } from "../../../../tool-call/renderers/todo"
 import InstanceServiceStatus from "../../../../instance-service-status"
 import { togglePermissionAutoAcceptForSession } from "../../../../../stores/instances"
 import { isPermissionAutoAcceptEnabled } from "../../../../../stores/permission-auto-accept"
+import { applyRightPanelItemCustomization, type RightPanelCustomization, type RightPanelSectionModule } from "../registry"
+import { createCoreStatusSectionManifest } from "../core-plugin"
 
 interface StatusTabProps {
   t: (key: string, vars?: Record<string, any>) => string
@@ -34,7 +45,43 @@ interface StatusTabProps {
 
   expandedItems: Accessor<string[]>
   onExpandedItemsChange: (values: string[]) => void
+  customization: Accessor<RightPanelCustomization>
+  onCustomizationChange: (updater: (current: RightPanelCustomization) => RightPanelCustomization) => void
+  extraSections?: readonly RightPanelSectionModule[]
+}
 
+interface SortableStatusSectionProps {
+  section: RightPanelSectionModule
+  expanded: boolean
+  t: (key: string, vars?: Record<string, any>) => string
+}
+
+const SortableStatusSection: Component<SortableStatusSectionProps> = (props) => {
+  const sortable = createSortable(props.section.id)
+  return (
+    <div ref={sortable} class={`right-panel-section-draggable ${sortable.isActiveDraggable ? "right-panel-section-draggable-active" : ""}`}>
+      <Accordion.Item value={props.section.id} class="right-panel-accordion-item">
+        <Accordion.Header class="right-panel-accordion-header-row">
+          <Accordion.Trigger class="right-panel-accordion-trigger">
+            <span class="section-left">
+              <GripVertical class="h-3.5 w-3.5 text-tertiary" aria-hidden="true" />
+              <span class="section-label">{props.t(props.section.labelKey)}</span>
+            </span>
+            <ChevronDown class={`right-panel-accordion-chevron ${props.expanded ? "right-panel-accordion-chevron-expanded" : ""}`} />
+          </Accordion.Trigger>
+          <Tooltip openDelay={200} gutter={4} placement="top">
+            <Tooltip.Trigger as="button" type="button" class="section-info-trigger" aria-label={props.t(props.section.tooltipKey)}>
+              <Info class="section-info-icon" />
+            </Tooltip.Trigger>
+            <Tooltip.Portal>
+              <Tooltip.Content class="section-info-tooltip">{props.t(props.section.tooltipKey)}</Tooltip.Content>
+            </Tooltip.Portal>
+          </Tooltip>
+        </Accordion.Header>
+        <Accordion.Content class="right-panel-accordion-content">{props.section.render()}</Accordion.Content>
+      </Accordion.Item>
+    </div>
+  )
 }
 
 const StatusTab: Component<StatusTabProps> = (props) => {
@@ -51,12 +98,9 @@ const StatusTab: Component<StatusTabProps> = (props) => {
     }
 
     return (
-      <div class="rounded-md border border-base bg-surface-secondary px-3 py-2">
-        <div class="flex items-start justify-between gap-3">
-          <div class="min-w-0">
-            <div class="text-sm font-medium text-primary">{props.t("instanceShell.yoloMode.title")}</div>
-            <p class="mt-1 text-xs text-secondary">{props.t("instanceShell.yoloMode.description")}</p>
-          </div>
+      <div class="flex items-center justify-between gap-2 border border-base bg-surface-secondary px-3 py-2">
+        <p class="min-w-0 text-xs leading-5 text-secondary">{props.t("instanceShell.yoloMode.description")}</p>
+        <div class="-mr-2 shrink-0">
           <Switch
             checked={isPermissionAutoAcceptEnabled(props.instanceId, session.id)}
             color="warning"
@@ -172,65 +216,57 @@ const StatusTab: Component<StatusTabProps> = (props) => {
     )
   }
 
-  const statusSections = [
-    {
-      id: "yolo-mode",
-      labelKey: "instanceShell.rightPanel.sections.yoloMode",
-      tooltipKey: "instanceShell.rightPanel.sections.yoloMode.tooltip",
-      render: renderYoloModeSection,
-    },
-    {
-      id: "plan",
-      labelKey: "instanceShell.rightPanel.sections.plan",
-      tooltipKey: "instanceShell.rightPanel.sections.plan.tooltip",
-      render: renderPlanSectionContent,
-    },
-    {
-      id: "background-processes",
-      labelKey: "instanceShell.rightPanel.sections.backgroundProcesses",
-      tooltipKey: "instanceShell.rightPanel.sections.backgroundProcesses.tooltip",
-      render: renderBackgroundProcesses,
-    },
-    {
-      id: "mcp",
-      labelKey: "instanceShell.rightPanel.sections.mcp",
-      tooltipKey: "instanceShell.rightPanel.sections.mcp.tooltip",
-      render: () => (
-        <InstanceServiceStatus
-          initialInstance={props.instance}
-          sections={["mcp"]}
-          showSectionHeadings={false}
-          class="space-y-2"
-        />
+  const renderProviderUsage = () => {
+    const session = props.activeSession()
+    if (!session) {
+      return <div class="text-xs text-tertiary">{props.t("providerUsage.noSession")}</div>
+    }
+    return (
+      <div class="border border-base bg-surface-secondary px-3 py-2">
+        <ProviderUsagePanel providerId={session.model.providerId} modelId={session.model.modelId} />
+      </div>
+    )
+  }
+
+  const allStatusSections = createMemo<RightPanelSectionModule[]>(() => {
+    const sections = createCoreStatusSectionManifest({
+      renderYoloModeSection,
+      renderProviderUsage,
+      renderPlanSectionContent,
+      renderBackgroundProcesses,
+      renderMcpStatus: () => <InstanceServiceStatus initialInstance={props.instance} sections={["mcp"]} showSectionHeadings={false} class="space-y-2" />,
+      renderLspStatus: () => <InstanceServiceStatus initialInstance={props.instance} sections={["lsp"]} showSectionHeadings={false} class="space-y-2" />,
+      renderPluginStatus: () => (
+        <InstanceServiceStatus initialInstance={props.instance} sections={["plugins"]} showSectionHeadings={false} class="space-y-2" />
       ),
-    },
-    {
-      id: "lsp",
-      labelKey: "instanceShell.rightPanel.sections.lsp",
-      tooltipKey: "instanceShell.rightPanel.sections.lsp.tooltip",
-      render: () => (
-        <InstanceServiceStatus
-          initialInstance={props.instance}
-          sections={["lsp"]}
-          showSectionHeadings={false}
-          class="space-y-2"
-        />
-      ),
-    },
-    {
-      id: "plugins",
-      labelKey: "instanceShell.rightPanel.sections.plugins",
-      tooltipKey: "instanceShell.rightPanel.sections.plugins.tooltip",
-      render: () => (
-        <InstanceServiceStatus
-          initialInstance={props.instance}
-          sections={["plugins"]}
-          showSectionHeadings={false}
-          class="space-y-2"
-        />
-      ),
-    },
-  ]
+    }).statusSections ?? []
+
+    return [...sections, ...(props.extraSections ?? [])]
+  })
+  const statusSections = createMemo<RightPanelSectionModule[]>(() =>
+    applyRightPanelItemCustomization(
+      allStatusSections(),
+      props.customization().statusSectionOrder,
+      props.customization().hiddenStatusSectionIds,
+    ),
+  )
+
+  const moveSection = (sourceId: string, targetId: string) => {
+    if (!sourceId || sourceId === targetId) return
+    const ids = statusSections().map((section) => section.id)
+    const sourceIndex = ids.indexOf(sourceId)
+    const targetIndex = ids.indexOf(targetId)
+    if (sourceIndex === -1 || targetIndex === -1) return
+    const next = [...ids]
+    const [moved] = next.splice(sourceIndex, 1)
+    next.splice(targetIndex, 0, moved)
+    props.onCustomizationChange((current) => ({ ...current, statusSectionOrder: next }))
+  }
+
+  const handleSectionDragEnd = ({ draggable, droppable }: SolidDndDragEvent) => {
+    if (!droppable) return
+    moveSection(String(draggable.id), String(droppable.id))
+  }
 
   return (
     <div class="status-tab-container">
@@ -247,31 +283,15 @@ const StatusTab: Component<StatusTabProps> = (props) => {
         value={props.expandedItems()}
         onChange={props.onExpandedItemsChange}
       >
-        <For each={statusSections}>
-          {(section) => (
-            <Accordion.Item value={section.id} class="right-panel-accordion-item">
-              <Accordion.Header class="right-panel-accordion-header-row">
-                <Accordion.Trigger class="right-panel-accordion-trigger">
-                  <span class="section-left">
-                    <span class="section-label">{props.t(section.labelKey)}</span>
-                  </span>
-                  <ChevronDown
-                    class={`right-panel-accordion-chevron ${isSectionExpanded(section.id) ? "right-panel-accordion-chevron-expanded" : ""}`}
-                  />
-                </Accordion.Trigger>
-                <Tooltip openDelay={200} gutter={4} placement="top">
-                  <Tooltip.Trigger as="button" type="button" class="section-info-trigger" aria-label={props.t(section.tooltipKey)}>
-                    <Info class="section-info-icon" />
-                  </Tooltip.Trigger>
-                  <Tooltip.Portal>
-                    <Tooltip.Content class="section-info-tooltip">{props.t(section.tooltipKey)}</Tooltip.Content>
-                  </Tooltip.Portal>
-                </Tooltip>
-              </Accordion.Header>
-              <Accordion.Content class="right-panel-accordion-content">{section.render()}</Accordion.Content>
-            </Accordion.Item>
-          )}
-        </For>
+        <DragDropProvider collisionDetector={closestCenter} onDragEnd={handleSectionDragEnd}>
+          <DragDropSensors>
+            <SortableProvider ids={statusSections().map((section) => section.id)}>
+              <For each={statusSections()}>
+                {(section) => <SortableStatusSection section={section} expanded={isSectionExpanded(section.id)} t={props.t} />}
+              </For>
+            </SortableProvider>
+          </DragDropSensors>
+        </DragDropProvider>
       </Accordion.Root>
     </div>
   )

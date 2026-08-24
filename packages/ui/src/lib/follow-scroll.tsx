@@ -1,4 +1,5 @@
 import { createEffect, createSignal, onCleanup, type Accessor, type JSXElement } from "solid-js"
+import { BOTTOM_FOLLOW_EPSILON_PX, VirtualScrollController, isAutoFollowing, type ScrollControllerMetrics } from "../components/virtual-follow-behavior"
 
 const DEFAULT_SCROLL_INTENT_WINDOW_MS = 600
 const DEFAULT_SCROLL_INTENT_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Spacebar"])
@@ -6,7 +7,6 @@ const DEFAULT_SCROLL_INTENT_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "P
 interface FollowScrollOptions {
   getScrollTopSnapshot: Accessor<number>
   setScrollTopSnapshot: (next: number) => void
-  sentinelMarginPx: number
   sentinelClassName: string
   intentWindowMs?: number
   intentKeys?: ReadonlySet<string>
@@ -24,16 +24,14 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
   const [scrollContainer, setScrollContainer] = createSignal<HTMLDivElement | undefined>()
   const [bottomSentinel, setBottomSentinel] = createSignal<HTMLDivElement | null>(null)
   const [autoScroll, setAutoScroll] = createSignal(true)
-  const [bottomSentinelVisible, setBottomSentinelVisible] = createSignal(true)
+  const scrollController = new VirtualScrollController(true)
 
   let scrollContainerRef: HTMLDivElement | undefined
   let detachScrollIntentListeners: (() => void) | undefined
 
   let pendingScrollFrame: number | null = null
   let pendingAnchorScroll: number | null = null
-  let userScrollIntentUntil = 0
   let lastKnownScrollTop = options.getScrollTopSnapshot()
-  let pointerInteractionActive = false
   let suppressNextScrollHandling = false
 
   function restoreScrollPosition(forceBottom = false) {
@@ -44,8 +42,10 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
       container.scrollTop = container.scrollHeight
       lastKnownScrollTop = container.scrollTop
       options.setScrollTopSnapshot(lastKnownScrollTop)
+      scrollController.recordProgrammaticOffset(lastKnownScrollTop, true)
     } else {
       container.scrollTop = lastKnownScrollTop
+      scrollController.recordProgrammaticOffset(lastKnownScrollTop, isAtBottom(container))
     }
   }
 
@@ -55,17 +55,9 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
     options.setScrollTopSnapshot(lastKnownScrollTop)
   }
 
-  function markUserScrollIntent() {
+  function markUserScrollIntent(direction: "up" | "down" | null) {
     const now = typeof performance !== "undefined" ? performance.now() : Date.now()
-    userScrollIntentUntil = now + (options.intentWindowMs ?? DEFAULT_SCROLL_INTENT_WINDOW_MS)
-  }
-
-  function hasUserScrollIntent() {
-    if (pointerInteractionActive) {
-      return true
-    }
-    const now = typeof performance !== "undefined" ? performance.now() : Date.now()
-    return now <= userScrollIntentUntil
+    scrollController.setUserIntent(direction, now + (options.intentWindowMs ?? DEFAULT_SCROLL_INTENT_WINDOW_MS))
   }
 
   function attachScrollIntentListeners(element: HTMLDivElement) {
@@ -74,42 +66,27 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
       detachScrollIntentListeners = undefined
     }
     const intentKeys = options.intentKeys ?? DEFAULT_SCROLL_INTENT_KEYS
-    const handlePointerIntent = () => {
-      pointerInteractionActive = true
-      markUserScrollIntent()
-    }
-    const clearPointerIntent = () => {
-      pointerInteractionActive = false
+    const handlePointerIntent = (event: WheelEvent | PointerEvent | TouchEvent) => {
+      markUserScrollIntent(event instanceof WheelEvent ? (event.deltaY < 0 ? "up" : event.deltaY > 0 ? "down" : null) : null)
     }
     const handleKeyIntent = (event: KeyboardEvent) => {
       if (intentKeys.has(event.key)) {
-        markUserScrollIntent()
+        const direction =
+          event.key === "ArrowUp" || event.key === "PageUp" || event.key === "Home" || (event.shiftKey && (event.key === " " || event.key === "Spacebar"))
+            ? "up"
+            : "down"
+        markUserScrollIntent(direction)
       }
     }
     element.addEventListener("wheel", handlePointerIntent, { passive: true })
     element.addEventListener("pointerdown", handlePointerIntent)
     element.addEventListener("touchstart", handlePointerIntent, { passive: true })
     element.addEventListener("keydown", handleKeyIntent)
-    if (typeof window !== "undefined") {
-      window.addEventListener("pointerup", clearPointerIntent)
-      window.addEventListener("pointercancel", clearPointerIntent)
-      window.addEventListener("mouseup", clearPointerIntent)
-      window.addEventListener("touchend", clearPointerIntent)
-      window.addEventListener("touchcancel", clearPointerIntent)
-    }
     detachScrollIntentListeners = () => {
       element.removeEventListener("wheel", handlePointerIntent)
       element.removeEventListener("pointerdown", handlePointerIntent)
       element.removeEventListener("touchstart", handlePointerIntent)
       element.removeEventListener("keydown", handleKeyIntent)
-      if (typeof window !== "undefined") {
-        window.removeEventListener("pointerup", clearPointerIntent)
-        window.removeEventListener("pointercancel", clearPointerIntent)
-        window.removeEventListener("mouseup", clearPointerIntent)
-        window.removeEventListener("touchend", clearPointerIntent)
-        window.removeEventListener("touchcancel", clearPointerIntent)
-      }
-      pointerInteractionActive = false
     }
   }
 
@@ -126,18 +103,28 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
       pendingAnchorScroll = null
       const containerRect = container.getBoundingClientRect()
       const sentinelRect = sentinel.getBoundingClientRect()
-      const delta = sentinelRect.bottom - containerRect.bottom + options.sentinelMarginPx
-      if (Math.abs(delta) > 1) {
+      const delta = sentinelRect.bottom - containerRect.bottom
+      if (delta > 1) {
         suppressNextScrollHandling = true
         container.scrollBy({ top: delta, behavior: immediate ? "auto" : "smooth" })
       }
       lastKnownScrollTop = container.scrollTop
       options.setScrollTopSnapshot(lastKnownScrollTop)
+      scrollController.recordProgrammaticOffset(lastKnownScrollTop, isAtBottom(container))
     })
   }
 
+  function getMetrics(container: HTMLDivElement): ScrollControllerMetrics {
+    return {
+      offset: container.scrollTop,
+      scrollHeight: container.scrollHeight,
+      clientHeight: container.clientHeight,
+      sentinelMarginPx: BOTTOM_FOLLOW_EPSILON_PX,
+    }
+  }
+
   function isAtBottom(container: HTMLDivElement) {
-    return container.scrollHeight - (container.scrollTop + container.clientHeight) <= options.sentinelMarginPx
+    return container.scrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_EPSILON_PX
   }
 
   function updateFollowModeFromScroll(containerOverride?: HTMLDivElement) {
@@ -147,17 +134,8 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
       suppressNextScrollHandling = false
       return
     }
-    const isUserScroll = hasUserScrollIntent()
-    const atBottomFromScroll = isAtBottom(container)
-    const atBottom = atBottomFromScroll || bottomSentinelVisible()
-
-    if (isUserScroll || !atBottom) {
-      if (atBottom) {
-        if (!autoScroll()) setAutoScroll(true)
-      } else if (autoScroll()) {
-        setAutoScroll(false)
-      }
-    }
+    const result = scrollController.observeViewport(getMetrics(container), typeof performance !== "undefined" ? performance.now() : Date.now(), false)
+    setAutoScroll(isAutoFollowing(result.state.mode))
   }
 
   const handleScroll = (event: Event & { currentTarget: HTMLDivElement }) => {
@@ -166,7 +144,7 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
   }
 
   const registerContainer = (element: HTMLDivElement | null | undefined, config?: { disableTracking?: boolean }) => {
-    const next = element || undefined
+    const next = config?.disableTracking ? undefined : element || undefined
     if (next === scrollContainerRef) {
       return
     }
@@ -185,10 +163,13 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
 
   const restoreAfterRender = () => {
     const container = scrollContainerRef
-    if (container && hasUserScrollIntent() && !isAtBottom(container)) {
-      if (autoScroll()) {
-        setAutoScroll(false)
-      }
+    if (!container) return
+
+    const now = typeof performance !== "undefined" ? performance.now() : Date.now()
+    const result = scrollController.observeViewport(getMetrics(container), now, false)
+    setAutoScroll(isAutoFollowing(result.state.mode))
+    const hasFreshUpwardEscape = now <= result.state.userIntentUntil && result.state.userIntentDirection === "up" && result.state.mode.type === "escaped"
+    if (hasFreshUpwardEscape) {
       requestAnimationFrame(() => {
         restoreScrollPosition(false)
       })
@@ -217,24 +198,6 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
         detachScrollIntentListeners = undefined
       }
     })
-  })
-
-  createEffect(() => {
-    const container = scrollContainer()
-    const sentinel = bottomSentinel()
-    if (!container || !sentinel) return
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.target === sentinel) {
-            setBottomSentinelVisible(entry.isIntersecting)
-          }
-        })
-      },
-      { root: container, threshold: 0, rootMargin: `0px 0px ${options.sentinelMarginPx}px 0px` },
-    )
-    observer.observe(sentinel)
-    onCleanup(() => observer.disconnect())
   })
 
   onCleanup(() => {

@@ -13,6 +13,13 @@ import {
 } from "./instance-config"
 import { getLogger } from "../lib/logger"
 import { loadSpeechCapabilities, resetSpeechCapabilities } from "./speech"
+import { buildSpeechPatch } from "../lib/speech-patch"
+import {
+  normalizeModelVisibilityPreference,
+  normalizeModelVisibilityPreferences,
+  type ModelVisibilityPreference,
+  type ModelVisibilityPreferences,
+} from "../lib/model-visibility"
 
 const log = getLogger("actions")
 
@@ -31,9 +38,10 @@ export interface ModelPreference {
 
 export type DiffViewMode = "split" | "unified"
 export type ExpansionPreference = "expanded" | "collapsed"
+export type VisibilityPreference = "hidden" | ExpansionPreference
 export type ToolCallExpansionPreset = "minimal" | "balanced" | "detailed" | "everything"
 export type ToolCallExpansionPresetSelection = ToolCallExpansionPreset | "custom"
-export type ToolInputsVisibilityPreference = "hidden" | "collapsed" | "expanded"
+export type ToolInputsVisibilityPreference = VisibilityPreference
 export type ListeningMode = "local" | "all"
 export type ServerLogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR"
 export type SpeechProviderPreference = "openai-compatible"
@@ -43,7 +51,7 @@ export type SpeechTtsFormat = "mp3" | "wav" | "opus" | "aac"
 export interface ToolCallExpansionDefaults {
   preset: ToolCallExpansionPresetSelection
   thinking: ExpansionPreference
-  tools: Record<string, ExpansionPreference>
+  tools: Record<string, VisibilityPreference>
 }
 
 export interface SpeechSettings {
@@ -56,10 +64,30 @@ export interface SpeechSettings {
   ttsVoice: string
   playbackMode: SpeechPlaybackMode
   ttsFormat: SpeechTtsFormat
+  separateProviders: boolean
+  stt: {
+    apiKey?: string
+    hasApiKey: boolean
+    baseUrl?: string
+    model: string
+  }
+  tts: {
+    apiKey?: string
+    hasApiKey: boolean
+    baseUrl?: string
+    model: string
+  }
 }
 
-export type SpeechSettingsUpdate = Partial<Omit<SpeechSettings, "apiKey">> & {
+export type SpeechSettingsUpdate = Partial<Omit<SpeechSettings, "provider" | "hasApiKey" | "apiKey" | "baseUrl" | "sttModel" | "ttsModel" | "ttsVoice" | "stt" | "tts">> & {
   apiKey?: string | null
+  baseUrl?: string | null
+  sttModel?: string | null
+  ttsModel?: string | null
+  ttsVoice?: string | null
+  separateProviders?: boolean
+  stt?: { apiKey?: string | null; baseUrl?: string | null; model?: string | null }
+  tts?: { apiKey?: string | null; baseUrl?: string | null; model?: string | null }
 }
 
 export interface UiSettings {
@@ -75,11 +103,13 @@ export interface UiSettings {
   diffViewMode: DiffViewMode
   toolCallExpansionDefaults: ToolCallExpansionDefaults
   toolOutputExpansion: ExpansionPreference
-  diagnosticsExpansion: ExpansionPreference
+  diagnosticsExpansion: VisibilityPreference
   toolInputsVisibility: ToolInputsVisibilityPreference
   showUsageMetrics: boolean
+  usageMetricsExpansion: ExpansionPreference
   autoCleanupBlankSessions: boolean
   keepUnseenSubagentIdleStatus: boolean
+  modelVisibility: ModelVisibilityPreferences
 
   // OS notifications
   osNotificationsEnabled: boolean
@@ -167,8 +197,10 @@ const defaultUiSettings: UiSettings = {
   diagnosticsExpansion: "expanded",
   toolInputsVisibility: "collapsed",
   showUsageMetrics: true,
+  usageMetricsExpansion: "collapsed",
   autoCleanupBlankSessions: true,
   keepUnseenSubagentIdleStatus: false,
+  modelVisibility: {},
 
   osNotificationsEnabled: false,
   osNotificationsAllowWhenVisible: false,
@@ -180,6 +212,10 @@ function normalizeExpansionPreference(value: unknown, fallback: ExpansionPrefere
   return value === "expanded" || value === "collapsed" ? value : fallback
 }
 
+function normalizeVisibilityPreference(value: unknown, fallback: VisibilityPreference): VisibilityPreference {
+  return value === "hidden" || value === "expanded" || value === "collapsed" ? value : fallback
+}
+
 function normalizeToolCallExpansionPreset(value: unknown): ToolCallExpansionPresetSelection {
   if (value === "minimal" || value === "balanced" || value === "detailed" || value === "everything" || value === "custom") {
     return value
@@ -187,12 +223,12 @@ function normalizeToolCallExpansionPreset(value: unknown): ToolCallExpansionPres
   return defaultToolCallExpansionDefaults.preset
 }
 
-function normalizeToolCallExpansionTools(value: unknown): Record<string, ExpansionPreference> {
+function normalizeToolCallExpansionTools(value: unknown): Record<string, VisibilityPreference> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {}
-  const next: Record<string, ExpansionPreference> = {}
+  const next: Record<string, VisibilityPreference> = {}
   for (const [tool, mode] of Object.entries(value as Record<string, unknown>)) {
     if (!tool) continue
-    if (mode === "expanded" || mode === "collapsed") {
+    if (mode === "hidden" || mode === "expanded" || mode === "collapsed") {
       next[tool] = mode
     }
   }
@@ -205,7 +241,7 @@ function normalizeToolCallExpansionDefaults(input: unknown, legacySettings: Part
     : undefined
   const legacyThinking = normalizeExpansionPreference(
     legacySettings.thinkingBlocksExpansion,
-    defaultToolCallExpansionDefaults.thinking,
+    "collapsed",
   )
 
   return {
@@ -223,10 +259,24 @@ const defaultSpeechSettings: SpeechSettings = {
   ttsVoice: "alloy",
   playbackMode: "streaming",
   ttsFormat: "mp3",
+  separateProviders: false,
+  stt: {
+    hasApiKey: false,
+    model: "gpt-4o-mini-transcribe",
+  },
+  tts: {
+    hasApiKey: false,
+    model: "gpt-4o-mini-tts",
+  },
 }
 
 function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
   const sanitized = input ?? {}
+  const toolCallExpansionDefaults = normalizeToolCallExpansionDefaults(sanitized.toolCallExpansionDefaults, sanitized)
+  const usageMetricsFallback =
+    toolCallExpansionDefaults.preset === "minimal" || toolCallExpansionDefaults.preset === "balanced"
+      ? "collapsed"
+      : "expanded"
   return {
     showThinkingBlocks: sanitized.showThinkingBlocks ?? defaultUiSettings.showThinkingBlocks,
     showKeyboardShortcutHints:
@@ -239,17 +289,25 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     showPromptVoiceInput: sanitized.showPromptVoiceInput ?? defaultUiSettings.showPromptVoiceInput,
     locale: sanitized.locale ?? defaultUiSettings.locale,
     diffViewMode: sanitized.diffViewMode ?? defaultUiSettings.diffViewMode,
-    toolCallExpansionDefaults: normalizeToolCallExpansionDefaults(sanitized.toolCallExpansionDefaults, sanitized),
+    toolCallExpansionDefaults,
     toolOutputExpansion: sanitized.toolOutputExpansion ?? defaultUiSettings.toolOutputExpansion,
-    diagnosticsExpansion: sanitized.diagnosticsExpansion ?? defaultUiSettings.diagnosticsExpansion,
+    diagnosticsExpansion: normalizeVisibilityPreference(
+      sanitized.diagnosticsExpansion,
+      defaultUiSettings.diagnosticsExpansion,
+    ),
     toolInputsVisibility:
       sanitized.toolInputsVisibility === "hidden" || sanitized.toolInputsVisibility === "collapsed" || sanitized.toolInputsVisibility === "expanded"
         ? sanitized.toolInputsVisibility
         : defaultUiSettings.toolInputsVisibility,
     showUsageMetrics: sanitized.showUsageMetrics ?? defaultUiSettings.showUsageMetrics,
+    usageMetricsExpansion: normalizeExpansionPreference(
+      sanitized.usageMetricsExpansion,
+      usageMetricsFallback,
+    ),
     autoCleanupBlankSessions: sanitized.autoCleanupBlankSessions ?? defaultUiSettings.autoCleanupBlankSessions,
     keepUnseenSubagentIdleStatus:
       sanitized.keepUnseenSubagentIdleStatus ?? defaultUiSettings.keepUnseenSubagentIdleStatus,
+    modelVisibility: normalizeModelVisibilityPreferences(sanitized.modelVisibility),
     osNotificationsEnabled: sanitized.osNotificationsEnabled ?? defaultUiSettings.osNotificationsEnabled,
     osNotificationsAllowWhenVisible:
       sanitized.osNotificationsAllowWhenVisible ?? defaultUiSettings.osNotificationsAllowWhenVisible,
@@ -269,19 +327,21 @@ function normalizeRecord(value: unknown): Record<string, string> {
 
 function normalizeSpeechSettings(input?: Partial<SpeechSettings> | null): SpeechSettings {
   const sanitized = input ?? {}
+  const sttModel =
+    typeof sanitized.sttModel === "string" && sanitized.sttModel.trim()
+      ? sanitized.sttModel.trim()
+      : defaultSpeechSettings.sttModel
+  const ttsModel =
+    typeof sanitized.ttsModel === "string" && sanitized.ttsModel.trim()
+      ? sanitized.ttsModel.trim()
+      : defaultSpeechSettings.ttsModel
   return {
     provider: sanitized.provider === "openai-compatible" ? sanitized.provider : defaultSpeechSettings.provider,
     apiKey: typeof sanitized.apiKey === "string" && sanitized.apiKey.trim() ? sanitized.apiKey.trim() : undefined,
     hasApiKey: sanitized.hasApiKey === true || (typeof sanitized.apiKey === "string" && sanitized.apiKey.trim().length > 0),
     baseUrl: typeof sanitized.baseUrl === "string" && sanitized.baseUrl.trim() ? sanitized.baseUrl.trim() : undefined,
-    sttModel:
-      typeof sanitized.sttModel === "string" && sanitized.sttModel.trim()
-        ? sanitized.sttModel.trim()
-        : defaultSpeechSettings.sttModel,
-    ttsModel:
-      typeof sanitized.ttsModel === "string" && sanitized.ttsModel.trim()
-        ? sanitized.ttsModel.trim()
-        : defaultSpeechSettings.ttsModel,
+    sttModel,
+    ttsModel,
     ttsVoice:
       typeof sanitized.ttsVoice === "string" && sanitized.ttsVoice.trim()
         ? sanitized.ttsVoice.trim()
@@ -294,6 +354,25 @@ function normalizeSpeechSettings(input?: Partial<SpeechSettings> | null): Speech
       sanitized.ttsFormat === "wav" || sanitized.ttsFormat === "opus" || sanitized.ttsFormat === "aac" || sanitized.ttsFormat === "mp3"
         ? sanitized.ttsFormat
         : defaultSpeechSettings.ttsFormat,
+    separateProviders: sanitized.separateProviders === true,
+    stt: {
+      apiKey: typeof sanitized.stt?.apiKey === "string" && sanitized.stt.apiKey.trim() ? sanitized.stt.apiKey.trim() : undefined,
+      hasApiKey: sanitized.stt?.hasApiKey === true || (typeof sanitized.stt?.apiKey === "string" && sanitized.stt.apiKey.trim().length > 0),
+      baseUrl: typeof sanitized.stt?.baseUrl === "string" && sanitized.stt.baseUrl.trim() ? sanitized.stt.baseUrl.trim() : undefined,
+      model:
+        typeof sanitized.stt?.model === "string" && sanitized.stt.model.trim()
+          ? sanitized.stt.model.trim()
+          : sttModel,
+    },
+    tts: {
+      apiKey: typeof sanitized.tts?.apiKey === "string" && sanitized.tts.apiKey.trim() ? sanitized.tts.apiKey.trim() : undefined,
+      hasApiKey: sanitized.tts?.hasApiKey === true || (typeof sanitized.tts?.apiKey === "string" && sanitized.tts.apiKey.trim().length > 0),
+      baseUrl: typeof sanitized.tts?.baseUrl === "string" && sanitized.tts.baseUrl.trim() ? sanitized.tts.baseUrl.trim() : undefined,
+      model:
+        typeof sanitized.tts?.model === "string" && sanitized.tts.model.trim()
+          ? sanitized.tts.model.trim()
+          : ttsModel,
+    },
   }
 }
 
@@ -400,13 +479,16 @@ function getModelKey(model: { providerId: string; modelId: string }): string {
   return `${model.providerId}/${model.modelId}`
 }
 
-function buildRecentFolderList(folderPath: string, source: RecentFolder[]): RecentFolder[] {
-  const existing = source.find((f) => f.path === folderPath)
-  const folders = source.filter((f) => f.path !== folderPath)
+function buildRecentFolderList(folderPath: string, source: RecentFolder[], aliasPath?: string): RecentFolder[] {
+  const matchingPaths = new Set([folderPath, aliasPath].filter((value): value is string => Boolean(value)))
+  const aliasEntry = aliasPath ? source.find((folder) => folder.path === aliasPath) : undefined
+  const canonicalEntry = source.find((folder) => folder.path === folderPath)
+  const projectName = aliasEntry?.projectName ?? canonicalEntry?.projectName
+  const folders = source.filter((folder) => !matchingPaths.has(folder.path))
   folders.unshift({
     path: folderPath,
     lastAccessed: Date.now(),
-    ...(existing?.projectName ? { projectName: existing.projectName } : {}),
+    ...(projectName ? { projectName } : {}),
   })
   return folders.slice(0, MAX_RECENT_FOLDERS)
 }
@@ -543,12 +625,77 @@ async function patchStateOwner(owner: string, patch: unknown) {
 function updateUiSettings(updates: Partial<UiSettings>) {
   const current = uiConfigBucket()
   const nextSettings = normalizeUiSettings({ ...(current.settings ?? {}), ...updates })
-  const patch = { settings: nextSettings }
+  const patch = {
+    settings: Object.fromEntries(
+      Object.keys(updates).map((key) => [key, nextSettings[key as keyof UiSettings]]),
+    ),
+  }
   void patchConfigOwner("ui", patch).catch((error) => log.error("Failed to patch ui settings", error))
 }
 
 function updatePreferences(updates: Partial<UiSettings>): void {
   updateUiSettings(updates)
+}
+
+const modelVisibilityWriteQueues = new Map<string, Promise<void>>()
+let modelVisibilityWriteQueue = Promise.resolve()
+const [pendingModelVisibility, setPendingModelVisibility] = createSignal(new Map<string, ModelVisibilityPreference>())
+const [modelVisibilityWriteFailures, setModelVisibilityWriteFailures] = createSignal(new Set<string>())
+
+function getProviderModelVisibilityPreference(providerId: string): ModelVisibilityPreference {
+  return pendingModelVisibility().get(providerId)
+    ?? normalizeModelVisibilityPreference(preferences().modelVisibility[providerId])
+}
+
+function providerModelVisibilitySaveFailed(providerId: string): boolean {
+  return modelVisibilityWriteFailures().has(providerId)
+}
+
+async function setProviderModelVisibility(providerId: string, preference: ModelVisibilityPreference): Promise<void> {
+  if (!providerId) return
+  const normalized = normalizeModelVisibilityPreference(preference)
+  setPendingModelVisibility((current) => new Map(current).set(providerId, normalized))
+  setModelVisibilityWriteFailures((current) => {
+    const next = new Set(current)
+    next.delete(providerId)
+    return next
+  })
+  const previous = modelVisibilityWriteQueue
+  const write = previous
+    .catch(() => undefined)
+    .then(() => patchConfigOwner("ui", {
+      settings: {
+        modelVisibility: {
+          [providerId]: normalized,
+        },
+      },
+    }))
+
+  modelVisibilityWriteQueue = write
+  modelVisibilityWriteQueues.set(providerId, write)
+  void write.then(
+    () => {
+      if (modelVisibilityWriteQueues.get(providerId) !== write) return
+      modelVisibilityWriteQueues.delete(providerId)
+      setPendingModelVisibility((current) => {
+        const next = new Map(current)
+        next.delete(providerId)
+        return next
+      })
+    },
+    (error) => {
+      log.error("Failed to update provider model visibility", error)
+      if (modelVisibilityWriteQueues.get(providerId) !== write) return
+      modelVisibilityWriteQueues.delete(providerId)
+      setPendingModelVisibility((current) => {
+        const next = new Map(current)
+        next.delete(providerId)
+        return next
+      })
+      setModelVisibilityWriteFailures((current) => new Set(current).add(providerId))
+    },
+  )
+  await write
 }
 
 function setThemePreference(preference: ThemePreference): void {
@@ -593,9 +740,9 @@ function addEnvironmentVariable(key: string, value: string, secure: boolean = tr
 }
 
 function removeEnvironmentVariable(key: string): void {
-  const current = serverSettings().environmentVariables
-  const { [key]: removed, ...rest } = current
-  updateEnvironmentVariables(rest)
+  void patchConfigOwner("server", { environmentVariables: { [key]: null } }).catch((error) =>
+    log.error("Failed to remove environment variable", error),
+  )
 }
 
 function isSecureEnvVar(key: string): boolean {
@@ -630,18 +777,7 @@ function updateLogLevel(level: ServerLogLevel): void {
 }
 
 async function updateSpeechSettings(updates: SpeechSettingsUpdate): Promise<void> {
-  const apiKeyPatch = updates.apiKey
-  const { apiKey: _apiKey, ...restUpdates } = updates
-  const next = normalizeSpeechSettings({
-    ...serverSettings().speech,
-    ...restUpdates,
-    ...(apiKeyPatch === null ? {} : { apiKey: apiKeyPatch }),
-  })
-  const { hasApiKey: _hasApiKey, ...persistedSpeech } = next
-  const patch = {
-    ...persistedSpeech,
-    ...(apiKeyPatch === null ? { apiKey: null } : {}),
-  }
+  const patch = buildSpeechPatch(updates)
   try {
     await patchConfigOwner("server", { speech: patch })
   } catch (error) {
@@ -711,9 +847,9 @@ function removeRemoteServerProfile(id: string): void {
   void patchStateOwner("ui", { remoteServers: next }).catch((error) => log.error("Failed to remove remote server", error))
 }
 
-function recordWorkspaceLaunch(folderPath: string, binaryPath?: string): void {
+function recordWorkspaceLaunch(folderPath: string, binaryPath?: string, aliasPath?: string): void {
   const targetBinary = binaryPath && binaryPath.trim().length > 0 ? binaryPath : serverSettings().opencodeBinary
-  const nextFolders = buildRecentFolderList(folderPath, recentFolders())
+  const nextFolders = buildRecentFolderList(folderPath, recentFolders(), aliasPath)
   const nextBinaries = buildBinaryList(targetBinary, undefined, opencodeBinaries())
 
   void patchStateOwner("ui", { recentFolders: nextFolders, opencodeBinaries: nextBinaries }).catch((error) =>
@@ -779,11 +915,11 @@ function setDiffViewMode(mode: DiffViewMode): void {
   updateUiSettings({ diffViewMode: mode })
 }
 
-function setToolOutputExpansion(mode: ExpansionPreference): void {
+function setToolOutputExpansion(mode: VisibilityPreference): void {
   const current = preferences()
-  if (current.toolOutputExpansion === mode && current.toolCallExpansionDefaults.tools.other === mode) return
+  if (current.toolCallExpansionDefaults.tools.other === mode) return
   updateUiSettings({
-    toolOutputExpansion: mode,
+    toolOutputExpansion: mode === "hidden" ? current.toolOutputExpansion : mode,
     toolCallExpansionDefaults: {
       ...current.toolCallExpansionDefaults,
       preset: "custom",
@@ -795,7 +931,7 @@ function setToolOutputExpansion(mode: ExpansionPreference): void {
   })
 }
 
-function setDiagnosticsExpansion(mode: ExpansionPreference): void {
+function setDiagnosticsExpansion(mode: VisibilityPreference): void {
   if (preferences().diagnosticsExpansion === mode) return
   updateUiSettings({ diagnosticsExpansion: mode })
 }
@@ -883,6 +1019,9 @@ interface ConfigContextValue {
   useTauriNativeEventTransport: typeof useTauriNativeEventTransport
   setUseTauriNativeEventTransport: typeof setUseTauriNativeEventTransport
   updatePreferences: typeof updatePreferences
+  setProviderModelVisibility: typeof setProviderModelVisibility
+  getProviderModelVisibilityPreference: typeof getProviderModelVisibilityPreference
+  providerModelVisibilitySaveFailed: typeof providerModelVisibilitySaveFailed
   themePreference: typeof themePreference
   setThemePreference: typeof setThemePreference
 
@@ -946,6 +1085,9 @@ const configContextValue: ConfigContextValue = {
   useTauriNativeEventTransport,
   setUseTauriNativeEventTransport,
   updatePreferences,
+  setProviderModelVisibility,
+  getProviderModelVisibilityPreference,
+  providerModelVisibilitySaveFailed,
   themePreference,
   setThemePreference,
   serverSettings,
@@ -1043,6 +1185,9 @@ export {
   themePreference,
   setThemePreference,
   updatePreferences,
+  setProviderModelVisibility,
+  getProviderModelVisibilityPreference,
+  providerModelVisibilitySaveFailed,
   setListeningMode,
   updateEnvironmentVariables,
   addEnvironmentVariable,

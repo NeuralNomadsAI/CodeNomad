@@ -24,13 +24,18 @@ import type {
 } from "@opencode-ai/sdk/v2"
 import type { LegacyPermissionAskedEvent, LegacyPermissionRepliedEvent } from "../types/permission"
 import { serverEvents } from "./server-events"
+import type { WorkspaceEventTransportStatus } from "./event-transport"
 import type {
   BackgroundProcess,
   InstanceStreamEvent,
-  InstanceStreamStatus,
   WorkspaceEventPayload,
 } from "../../../server/src/api-types"
 import { getLogger } from "./logger"
+import {
+  deriveDisplayConnectionStatus,
+  seedConnectionStatusIfMissing,
+  type ConnectionStatus,
+} from "./connection-status"
 
 const log = getLogger("sse")
 
@@ -68,7 +73,24 @@ interface ServerInstanceDisposedEvent {
   }
 }
 
+export interface WorktreeReadyEvent {
+  type: "worktree.ready"
+  directory?: string
+  properties: {
+    name: string
+    branch?: string
+  }
+}
+
 type EventSessionCreated = Omit<EventSessionUpdated, "type"> & { type: "session.created" }
+export interface EventSessionDeleted {
+  type: "session.deleted"
+  properties?: {
+    info?: { id?: string }
+    id?: string
+    sessionID?: string
+  }
+}
 
 type SSEEvent =
   | MessageUpdateEvent
@@ -78,6 +100,7 @@ type SSEEvent =
   | MessagePartDeltaEvent
   | EventSessionCreated
   | EventSessionUpdated
+  | EventSessionDeleted
   | EventSessionCompacted
   | EventSessionError
   | EventSessionIdle
@@ -96,14 +119,16 @@ type SSEEvent =
   | BackgroundProcessUpdatedEvent
   | BackgroundProcessRemovedEvent
   | ServerInstanceDisposedEvent
+  | WorktreeReadyEvent
   | { type: string; properties?: Record<string, unknown> }
 
-type ConnectionStatus = InstanceStreamStatus
-
 const [connectionStatus, setConnectionStatus] = createSignal<Map<string, ConnectionStatus>>(new Map())
+const [transportStatus, setTransportStatus] = createSignal<WorkspaceEventTransportStatus>("connecting")
 
 class SSEManager {
   constructor() {
+    log.info("sseManager initialized: listening for SSE disconnect and reconnect")
+
     serverEvents.on("instance.eventStatus", (event) => {
       const payload = event as InstanceStatusPayload
       this.updateConnectionStatus(payload.instanceId, payload.status)
@@ -121,10 +146,19 @@ class SSEManager {
       this.updateConnectionStatus(payload.instanceId, "connected")
       this.handleEvent(payload.instanceId, payload.event as SSEEvent)
     })
+
+    serverEvents.onTransportStatus((status) => {
+      log.info("SSE transport status changed", { status })
+      setTransportStatus(status)
+    })
   }
 
   seedStatus(instanceId: string, status: ConnectionStatus) {
     this.updateConnectionStatus(instanceId, status)
+  }
+
+  seedStatusIfMissing(instanceId: string, status: ConnectionStatus) {
+    setConnectionStatus((prev) => seedConnectionStatusIfMissing(prev, instanceId, status))
   }
 
   private handleEvent(instanceId: string, event: SSEEvent | InstanceStreamEvent): void {
@@ -156,6 +190,9 @@ class SSEManager {
         break
       case "session.created":
         this.onSessionUpdate?.(instanceId, event as EventSessionUpdated)
+        break
+      case "session.deleted":
+        this.onSessionDeleted?.(instanceId, event as EventSessionDeleted)
         break
       case "session.compacted":
         this.onSessionCompacted?.(instanceId, event as EventSessionCompacted)
@@ -211,6 +248,16 @@ class SSEManager {
       case "server.instance.disposed":
         this.onInstanceDisposed?.(instanceId, event as ServerInstanceDisposedEvent)
         break
+      case "worktree.ready":
+        try {
+          const result = this.onWorktreeReady?.(instanceId, event as WorktreeReadyEvent)
+          void result?.catch((error) => {
+            log.warn("Failed to handle worktree ready event", { instanceId, error })
+          })
+        } catch (error) {
+          log.warn("Failed to handle worktree ready event", { instanceId, error })
+        }
+        break
       default:
         log.warn("Unknown SSE event type", { type: event.type })
     }
@@ -230,6 +277,7 @@ class SSEManager {
   onMessagePartDelta?: (instanceId: string, event: MessagePartDeltaEvent) => void
   onMessagePartRemoved?: (instanceId: string, event: MessagePartRemovedEvent) => void
   onSessionUpdate?: (instanceId: string, event: EventSessionUpdated) => void
+  onSessionDeleted?: (instanceId: string, event: EventSessionDeleted) => void
   onSessionCompacted?: (instanceId: string, event: EventSessionCompacted) => void
   onSessionError?: (instanceId: string, event: EventSessionError) => void
   onTuiToast?: (instanceId: string, event: TuiToastEvent) => void
@@ -243,10 +291,11 @@ class SSEManager {
   onBackgroundProcessUpdated?: (instanceId: string, event: BackgroundProcessUpdatedEvent) => void
   onBackgroundProcessRemoved?: (instanceId: string, event: BackgroundProcessRemovedEvent) => void
   onInstanceDisposed?: (instanceId: string, event: ServerInstanceDisposedEvent) => void
+  onWorktreeReady?: (instanceId: string, event: WorktreeReadyEvent) => void | Promise<void>
   onConnectionLost?: (instanceId: string, reason: string) => void | Promise<void>
 
   getStatus(instanceId: string): ConnectionStatus | null {
-    return connectionStatus().get(instanceId) ?? null
+    return deriveDisplayConnectionStatus(connectionStatus().get(instanceId) ?? null, transportStatus())
   }
 
   getStatuses() {

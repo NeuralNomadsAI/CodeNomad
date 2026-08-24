@@ -17,10 +17,11 @@ describe("workspace search cache", () => {
     const workspacePath = "/tmp/workspace"
     const startTime = 1_000
 
-    refreshWorkspaceCandidates(workspacePath, () => [createEntry("file-a")], startTime)
+    refreshWorkspaceCandidates(workspacePath, "query-a", () => [createEntry("file-a")], startTime)
 
     const beforeExpiry = getWorkspaceCandidates(
       workspacePath,
+      "query-a",
       startTime + WORKSPACE_CANDIDATE_CACHE_TTL_MS - 1,
     )
     assert.ok(beforeExpiry)
@@ -29,6 +30,7 @@ describe("workspace search cache", () => {
 
     const afterExpiry = getWorkspaceCandidates(
       workspacePath,
+      "query-a",
       startTime + WORKSPACE_CANDIDATE_CACHE_TTL_MS + 1,
     )
     assert.equal(afterExpiry, undefined)
@@ -37,15 +39,31 @@ describe("workspace search cache", () => {
   it("replaces cached entries when manually refreshed", () => {
     const workspacePath = "/tmp/workspace"
 
-    refreshWorkspaceCandidates(workspacePath, () => [createEntry("file-a")], 5_000)
-    const initial = getWorkspaceCandidates(workspacePath, 5_001)
+    refreshWorkspaceCandidates(workspacePath, "query-a", () => [createEntry("file-a")], 5_000)
+    const initial = getWorkspaceCandidates(workspacePath, "query-a", 5_001)
     assert.ok(initial)
     assert.equal(initial[0].name, "file-a")
 
-    refreshWorkspaceCandidates(workspacePath, () => [createEntry("file-b")], 6_000)
-    const refreshed = getWorkspaceCandidates(workspacePath, 6_001)
+    refreshWorkspaceCandidates(workspacePath, "query-a", () => [createEntry("file-b")], 6_000)
+    const refreshed = getWorkspaceCandidates(workspacePath, "query-a", 6_001)
     assert.ok(refreshed)
     assert.equal(refreshed[0].name, "file-b")
+  })
+
+  it("does not reuse candidates across query scopes", () => {
+    const workspacePath = "/tmp/workspace"
+
+    refreshWorkspaceCandidates(workspacePath, "query-a", () => [createEntry("file-a")], 5_000)
+    assert.equal(getWorkspaceCandidates(workspacePath, "query-a", 5_001)?.[0].name, "file-a")
+    assert.equal(getWorkspaceCandidates(workspacePath, "query-b", 5_001), undefined)
+
+    refreshWorkspaceCandidates(workspacePath, "query-b", () => [createEntry("file-b")], 5_000)
+    assert.equal(getWorkspaceCandidates(workspacePath, "query-a", 5_001), undefined)
+    assert.equal(getWorkspaceCandidates(workspacePath, "query-b", 5_001)?.[0].name, "file-b")
+
+    clearWorkspaceSearchCache(workspacePath)
+    assert.equal(getWorkspaceCandidates(workspacePath, "query-a", 5_001), undefined)
+    assert.equal(getWorkspaceCandidates(workspacePath, "query-b", 5_001), undefined)
   })
 })
 

@@ -1,5 +1,5 @@
-import { spawn, spawnSync, type ChildProcess } from "child_process"
-import { app, utilityProcess, type UtilityProcess } from "electron"
+import { spawn, type ChildProcess } from "child_process"
+import { app } from "electron"
 import { createRequire } from "module"
 import { EventEmitter } from "events"
 import { existsSync, readFileSync } from "fs"
@@ -8,6 +8,16 @@ import path from "path"
 import { fileURLToPath } from "url"
 import { parse as parseYaml } from "yaml"
 import { ensureManagedNodeBinary } from "./managed-node"
+import { getProcessStartIdentityAsync } from "./client-state-process-identity"
+import {
+  CLI_STOP_DEADLINE_MS,
+  captureInitialProcessTree,
+  captureProcessTree,
+  forceCapturedProcessTree,
+  mergeCapturedProcessTrees,
+  stopManagedChild,
+} from "./process-stop"
+import { SerializedLifecycle } from "./serialized-lifecycle"
 import { buildUserShellCommand, getUserShellEnv, supportsUserShell } from "./user-shell"
 
 const nodeRequire = createRequire(import.meta.url)
@@ -15,8 +25,9 @@ const mainFilename = fileURLToPath(import.meta.url)
 const mainDirname = path.dirname(mainFilename)
 
 const BOOTSTRAP_TOKEN_PREFIX = "CODENOMAD_BOOTSTRAP_TOKEN:"
+const SERVER_SHUTDOWN_COMPLETE = "CODENOMAD_SHUTDOWN_STATUS:complete"
+const SERVER_SHUTDOWN_INCOMPLETE = "CODENOMAD_SHUTDOWN_STATUS:incomplete"
 const SESSION_COOKIE_NAME_PREFIX = "codenomad_session"
-
 type CliState = "starting" | "ready" | "error" | "stopped"
 type ListeningMode = "local" | "all"
 
@@ -44,9 +55,6 @@ interface CliEntryResolution {
   nodeBinaryPath: string
   nodeArgs?: string[]
 }
-
-type ManagedChild = ChildProcess | UtilityProcess
-type ChildLaunchMode = "spawn" | "utility"
 
 const DEFAULT_CONFIG_PATH = "~/.config/codenomad/config.json"
 
@@ -127,18 +135,42 @@ export declare interface CliProcessManager {
 }
 
 export class CliProcessManager extends EventEmitter {
-  private child?: ManagedChild
-  private childLaunchMode: ChildLaunchMode = "spawn"
+  private child?: ChildProcess
+  private childStartIdentity?: Promise<string | undefined>
   private status: CliStatus = { state: "stopped" }
   private stdoutBuffer = ""
   private stderrBuffer = ""
   private bootstrapToken: string | null = null
   private authCookieName = `${SESSION_COOKIE_NAME_PREFIX}_${process.pid}_${Date.now()}`
   private requestedStop = false
+  private shutdownStatus: "complete" | "incomplete" | null = null
+  private lifecycle = new SerializedLifecycle()
 
-  async start(options: StartOptions): Promise<CliStatus> {
+  start(options: StartOptions): Promise<CliStatus> {
+    return this.lifecycle.enqueue(() => this.startNow(options))
+  }
+
+  restart(options: StartOptions): Promise<CliStatus> {
+    return this.lifecycle.enqueue(async () => {
+      await this.stopNow()
+      if (this.lifecycle.stopped) throw new Error("CLI process manager is shutting down")
+      return this.startNow(options)
+    })
+  }
+
+  stop(): Promise<void> {
+    return this.lifecycle.enqueue(() => this.stopNow())
+  }
+
+  shutdown(): Promise<void> {
+    return this.lifecycle.stop(() => this.stopNow())
+  }
+
+  private async startNow(options: StartOptions): Promise<CliStatus> {
+    if (this.lifecycle.stopped) throw new Error("CLI process manager is shutting down")
     if (this.child) {
-      await this.stop()
+      await this.stopNow()
+      if (this.child) throw new Error("CLI process did not exit before restart")
     }
 
     this.stdoutBuffer = ""
@@ -146,6 +178,8 @@ export class CliProcessManager extends EventEmitter {
     this.bootstrapToken = null
     this.authCookieName = `${SESSION_COOKIE_NAME_PREFIX}_${process.pid}_${Date.now()}`
     this.requestedStop = false
+    this.shutdownStatus = null
+    this.childStartIdentity = undefined
     this.updateStatus({ state: "starting", port: undefined, pid: undefined, url: undefined, error: undefined })
 
     const listeningMode = this.resolveListeningMode()
@@ -153,63 +187,32 @@ export class CliProcessManager extends EventEmitter {
     const args = this.buildCliArgs(options, host)
     const cliEntry = await this.resolveCliEntry(options)
 
-    let child: ManagedChild
+    console.info(
+      `[cli] launching CodeNomad CLI (${options.dev ? "dev" : "prod"}) using ${cliEntry.runner} at ${cliEntry.entry} (host=${host})`,
+    )
 
-    if (this.shouldUsePackagedShellSupervisor(options)) {
-      const runtimePath = this.resolveShellNodeCommand()
-      const entryPath = this.resolveBundledProdEntry()
-      const supervisorPath = this.resolveCliSupervisorPath()
-      const shellEnv = supportsUserShell() ? getUserShellEnv() : { ...process.env }
-      const shellTarget = this.buildCommand(cliEntry, args)
-      const shellCommand = buildUserShellCommand(`exec ${shellTarget}`)
-      const supervisorPayload = JSON.stringify({
-        command: shellCommand.command,
-        args: shellCommand.args,
-        cwd: process.cwd(),
-      })
+    const env = supportsUserShell() ? getUserShellEnv() : { ...process.env }
+    env.ELECTRON_RUN_AS_NODE = "1"
 
-      console.info(
-        `[cli] launching CodeNomad CLI (${options.dev ? "dev" : "prod"}) via utility supervisor using node at ${runtimePath} (host=${host})`,
-      )
-      console.info(`[cli] utility supervisor: ${supervisorPath}`)
-      console.info(`[cli] shell command: ${shellCommand.command} ${shellCommand.args.join(" ")}`)
+    const spawnDetails = supportsUserShell()
+      ? buildUserShellCommand(`ELECTRON_RUN_AS_NODE=1 exec ${this.buildCommand(cliEntry, args)}`)
+      : this.buildDirectSpawn(cliEntry, args)
 
-      child = utilityProcess.fork(supervisorPath, [supervisorPayload], {
-        env: { ...shellEnv, ELECTRON_RUN_AS_NODE: "1" },
-        stdio: "pipe",
-        serviceName: "CodeNomad CLI Supervisor",
-      })
-      this.childLaunchMode = "utility"
-    } else {
-      console.info(
-        `[cli] launching CodeNomad CLI (${options.dev ? "dev" : "prod"}) using ${cliEntry.runner} at ${cliEntry.entry} (host=${host})`,
-      )
+    const child = spawn(spawnDetails.command, spawnDetails.args, {
+      cwd: process.cwd(),
+      stdio: ["pipe", "pipe", "pipe"],
+      env,
+      shell: false,
+      detached: process.platform !== "win32",
+    })
 
-      const env = supportsUserShell() ? getUserShellEnv() : { ...process.env }
-      env.ELECTRON_RUN_AS_NODE = "1"
-
-      const spawnDetails = supportsUserShell()
-        ? buildUserShellCommand(`ELECTRON_RUN_AS_NODE=1 exec ${this.buildCommand(cliEntry, args)}`)
-        : this.buildDirectSpawn(cliEntry, args)
-
-      const detached = process.platform !== "win32"
-      child = spawn(spawnDetails.command, spawnDetails.args, {
-        cwd: process.cwd(),
-        stdio: ["ignore", "pipe", "pipe"],
-        env,
-        shell: false,
-        detached,
-      })
-
-      console.info(`[cli] spawn command: ${spawnDetails.command} ${spawnDetails.args.join(" ")}`)
-      this.childLaunchMode = "spawn"
-    }
-
-    if (this.childLaunchMode === "spawn" && !child.pid) {
+    console.info(`[cli] spawn command: ${spawnDetails.command} ${spawnDetails.args.join(" ")}`)
+    if (!child.pid) {
       console.error("[cli] spawn failed: no pid")
     }
 
     this.child = child
+    this.childStartIdentity = child.pid ? getProcessStartIdentityAsync(child.pid, 1_500) : Promise.resolve(undefined)
     this.updateStatus({ pid: child.pid ?? undefined })
 
     const stdout = child.stdout as NodeJS.ReadableStream | undefined
@@ -223,48 +226,25 @@ export class CliProcessManager extends EventEmitter {
       this.handleStream(data.toString(), "stderr")
     })
 
-    if (this.childLaunchMode === "utility") {
-      const utilityChild = child as UtilityProcess
+    child.on("error", (error) => {
+      console.error("[cli] failed to start CLI:", error)
+      this.updateStatus({ state: "error", error: error.message })
+      this.emit("error", error)
+    })
 
-      utilityChild.on("error", (error) => {
-        const message = this.describeUtilityProcessError(error)
-        console.error("[cli] utility supervisor failed:", error)
-        this.updateStatus({ state: "error", error: message })
-        this.emit("error", new Error(message))
-      })
-
-      utilityChild.on("exit", (code) => {
-        const failed = this.status.state !== "ready"
-        const error = failed ? this.status.error ?? `CLI exited with code ${code ?? 0}` : undefined
-        console.info(`[cli] exit (code=${code ?? ""})${error ? ` error=${error}` : ""}`)
-        this.updateStatus({ state: failed ? "error" : "stopped", error })
-        if (failed && error) {
-          this.emit("error", new Error(error))
-        }
-        this.emit("exit", this.status)
-        this.child = undefined
-      })
-    } else {
-      const spawnedChild = child as ChildProcess
-
-      spawnedChild.on("error", (error) => {
-        console.error("[cli] failed to start CLI:", error)
-        this.updateStatus({ state: "error", error: error.message })
-        this.emit("error", error)
-      })
-
-      spawnedChild.on("exit", (code, signal) => {
-        const failed = this.status.state !== "ready"
-        const error = failed ? this.status.error ?? `CLI exited with code ${code ?? 0}${signal ? ` (${signal})` : ""}` : undefined
-        console.info(`[cli] exit (code=${code}, signal=${signal || ""})${error ? ` error=${error}` : ""}`)
-        this.updateStatus({ state: failed ? "error" : "stopped", error })
-        if (failed && error) {
-          this.emit("error", new Error(error))
-        }
-        this.emit("exit", this.status)
-        this.child = undefined
-      })
-    }
+    child.on("exit", (code, signal) => {
+      if (this.child !== child) return
+      const failed = this.status.state !== "ready"
+      const error = failed ? this.status.error ?? `CLI exited with code ${code ?? 0}${signal ? ` (${signal})` : ""}` : undefined
+      console.info(`[cli] exit (code=${code}, signal=${signal || ""})${error ? ` error=${error}` : ""}`)
+      this.updateStatus({ state: failed ? "error" : "stopped", error })
+      if (failed && error) {
+        this.emit("error", new Error(error))
+      }
+      this.emit("exit", this.status)
+      this.child = undefined
+      this.childStartIdentity = undefined
+    })
 
     return new Promise<CliStatus>((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -284,18 +264,14 @@ export class CliProcessManager extends EventEmitter {
     })
   }
 
-  async stop(): Promise<void> {
+  private async stopNow(): Promise<void> {
     const child = this.child
     if (!child) {
       this.updateStatus({ state: "stopped" })
       return
     }
 
-    if (this.childLaunchMode === "utility") {
-      return this.stopUtilityChild(child as UtilityProcess)
-    }
-
-    const spawnedChild = child as ChildProcess
+    const spawnedChild = child
 
     this.requestedStop = true
 
@@ -308,138 +284,64 @@ export class CliProcessManager extends EventEmitter {
 
     const isAlreadyExited = () => spawnedChild.exitCode !== null || spawnedChild.signalCode !== null
 
-    const tryKillPosixGroup = (signal: NodeJS.Signals) => {
-      try {
-        // Negative PID targets the process group (POSIX).
-        process.kill(-pid, signal)
-        return true
-      } catch (error) {
-        const err = error as NodeJS.ErrnoException
-        if (err?.code === "ESRCH") {
-          return true
-        }
-        return false
-      }
+    const deadlineAt = Date.now() + CLI_STOP_DEADLINE_MS
+    const spawnedIdentity = this.childStartIdentity ?? Promise.resolve(undefined)
+    const { tree: initialCapture, rootStartIdentity } = await captureInitialProcessTree(
+      pid,
+      process.platform,
+      undefined,
+      () => spawnedIdentity,
+      deadlineAt,
+    )
+    let processTree = rootStartIdentity
+      ? mergeCapturedProcessTrees(undefined, initialCapture, pid, rootStartIdentity)
+      : initialCapture
+    let enforcement: Promise<boolean> | null = null
+    const forceProcessTree = (enforcementDeadline = deadlineAt) => {
+      if (enforcement) return enforcement
+      enforcement = (async () => {
+        const latest = await captureProcessTree(pid, process.platform, undefined, Math.min(1_500, enforcementDeadline - Date.now()))
+        processTree = mergeCapturedProcessTrees(processTree, latest, pid, rootStartIdentity)
+        return processTree ? forceCapturedProcessTree(processTree, undefined, undefined, process.kill, { deadlineAt: enforcementDeadline }) : false
+      })().finally(() => { enforcement = null })
+      return enforcement
     }
 
-    const tryKillSinglePid = (signal: NodeJS.Signals) => {
-      try {
-        process.kill(pid, signal)
-        return true
-      } catch (error) {
-        const err = error as NodeJS.ErrnoException
-        if (err?.code === "ESRCH") {
-          return true
-        }
-        return false
-      }
-    }
-
-    const tryTaskkill = (force: boolean) => {
-      const args = ["/PID", String(pid), "/T"]
-      if (force) {
-        args.push("/F")
-      }
-
-      try {
-        const result = spawnSync("taskkill", args, { encoding: "utf8" })
-        const exitCode = result.status
-        if (exitCode === 0) {
-          return true
-        }
-
-        // If the PID is already gone, treat it as success.
-        const stderr = (result.stderr ?? "").toString().toLowerCase()
-        const stdout = (result.stdout ?? "").toString().toLowerCase()
-        const combined = `${stdout}\n${stderr}`
-        if (combined.includes("not found") || combined.includes("no running instance")) {
-          return true
-        }
-        return false
-      } catch {
-        return false
-      }
-    }
-
-    const sendStopSignal = (signal: NodeJS.Signals) => {
-      if (process.platform === "win32") {
-        tryTaskkill(signal === "SIGKILL")
-        return
-      }
-
-      // Prefer process-group signaling so wrapper launchers (shell/tsx) don't outlive Electron.
-      const groupOk = tryKillPosixGroup(signal)
-      if (!groupOk) {
-        tryKillSinglePid(signal)
-      }
-    }
-
-    return new Promise((resolve) => {
-      const killTimeout = setTimeout(() => {
-        console.warn(
-          `[cli] stop timed out after 30000ms; sending SIGKILL (pid=${child.pid ?? "unknown"})`,
-        )
-        sendStopSignal("SIGKILL")
-      }, 30000)
-
-      spawnedChild.on("exit", () => {
-        clearTimeout(killTimeout)
-        this.child = undefined
-        console.info("[cli] CLI process exited")
-        this.updateStatus({ state: "stopped" })
-        resolve()
+    let forceConfirmed = false
+    const enforceIncompleteCleanup = () => {
+      void forceProcessTree().then((confirmed) => {
+        forceConfirmed = confirmed
+        if (!confirmed) console.warn(`[cli] immediate enforcement after incomplete cleanup was not confirmed (pid=${pid})`)
+      }, (error) => {
+        console.warn(`[cli] immediate enforcement after incomplete cleanup failed (pid=${pid})`, error)
+        forceConfirmed = false
       })
+    }
+    this.once("shutdownIncomplete", enforceIncompleteCleanup)
 
-      if (isAlreadyExited()) {
-        clearTimeout(killTimeout)
-        this.child = undefined
-        this.updateStatus({ state: "stopped" })
-        resolve()
-        return
-      }
-
-      sendStopSignal("SIGTERM")
-    })
-  }
-
-  private stopUtilityChild(child: UtilityProcess): Promise<void> {
-    this.requestedStop = true
-
-    const pid = child.pid
-    if (!pid) {
+    try {
+      await stopManagedChild({
+        child: spawnedChild,
+        isExited: isAlreadyExited,
+        force: async (forceDeadline) => forceConfirmed || await forceProcessTree(forceDeadline),
+        isCleanupComplete: () => this.shutdownStatus === "complete",
+        deadlineMs: CLI_STOP_DEADLINE_MS,
+        deadlineAt,
+        forceReserveMs: 5_000,
+        warn: (message, error) => console.warn(`[cli] ${message} (pid=${pid})`, error ?? ""),
+      })
+    } finally {
+      this.off("shutdownIncomplete", enforceIncompleteCleanup)
+    }
+    if (this.shutdownStatus !== "complete") {
+      console.warn(`[cli] CLI exited without a complete graceful-shutdown handshake (status=${this.shutdownStatus ?? "missing"})`)
+    }
+    console.info("[cli] CLI process exited")
+    if (this.child === spawnedChild) {
       this.child = undefined
+      this.childStartIdentity = undefined
       this.updateStatus({ state: "stopped" })
-      return Promise.resolve()
     }
-
-    return new Promise((resolve) => {
-      const killTimeout = setTimeout(() => {
-        console.warn(`[cli] stop timed out after 30000ms; sending SIGKILL (pid=${pid})`)
-        try {
-          process.kill(pid, "SIGKILL")
-        } catch {
-          // no-op
-        }
-      }, 30000)
-
-      child.once("exit", () => {
-        clearTimeout(killTimeout)
-        this.child = undefined
-        console.info("[cli] CLI process exited")
-        this.updateStatus({ state: "stopped" })
-        resolve()
-      })
-
-      if (child.pid === undefined) {
-        clearTimeout(killTimeout)
-        this.child = undefined
-        this.updateStatus({ state: "stopped" })
-        resolve()
-        return
-      }
-
-      child.kill()
-    })
   }
 
   getStatus(): CliStatus {
@@ -455,26 +357,23 @@ export class CliProcessManager extends EventEmitter {
   }
 
   private handleTimeout() {
-    if (this.child) {
-      const pid = this.child.pid
-      if (this.childLaunchMode === "utility") {
-        if (pid) {
-          try {
-            process.kill(pid, "SIGKILL")
-          } catch {
-            // no-op
+    const timedOutChild = this.child
+    if (timedOutChild) {
+      const pid = timedOutChild.pid
+      if (pid) {
+        const deadlineAt = Date.now() + 5_000
+        const spawnedIdentity = this.childStartIdentity ?? Promise.resolve(undefined)
+        void captureInitialProcessTree(pid, process.platform, undefined, () => spawnedIdentity, deadlineAt).then(async ({ tree, rootStartIdentity }) => {
+          const latest = await captureProcessTree(pid, process.platform, undefined, Math.min(1_500, deadlineAt - Date.now()))
+          const processTree = mergeCapturedProcessTrees(tree, latest, pid, rootStartIdentity)
+          const forced = processTree ? await forceCapturedProcessTree(processTree, undefined, undefined, process.kill, { deadlineAt }) : false
+          if (!forced) console.warn(`[cli] startup-timeout process tree cleanup was not confirmed (pid=${pid})`)
+          else if (this.child === timedOutChild) {
+            this.child = undefined
+            this.childStartIdentity = undefined
           }
-        }
-      } else if (pid && process.platform !== "win32") {
-        try {
-          process.kill(-pid, "SIGKILL")
-        } catch {
-          ;(this.child as ChildProcess).kill("SIGKILL")
-        }
-      } else {
-        ;(this.child as ChildProcess).kill("SIGKILL")
+        }).catch((error) => console.warn(`[cli] startup-timeout process tree cleanup failed (pid=${pid})`, error))
       }
-      this.child = undefined
     }
     this.updateStatus({ state: "error", error: "CLI did not start in time" })
     this.emit("error", new Error("CLI did not start in time"))
@@ -505,6 +404,19 @@ export class CliProcessManager extends EventEmitter {
       const trimmed = line.trim()
       if (!trimmed) continue
 
+      if (trimmed === SERVER_SHUTDOWN_COMPLETE) {
+        if (this.shutdownStatus === "incomplete") continue
+        this.shutdownStatus = "complete"
+        console.info("[cli] server confirmed graceful shutdown")
+        continue
+      }
+      if (trimmed === SERVER_SHUTDOWN_INCOMPLETE) {
+        if (this.shutdownStatus === "incomplete") continue
+        this.shutdownStatus = "incomplete"
+        console.warn("[cli] server reported incomplete cleanup; requesting final process-tree enforcement")
+        this.emit("shutdownIncomplete")
+        continue
+      }
       if (trimmed.startsWith(BOOTSTRAP_TOKEN_PREFIX)) {
         const token = trimmed.slice(BOOTSTRAP_TOKEN_PREFIX.length).trim()
         if (token && !this.bootstrapToken) {
@@ -661,57 +573,4 @@ export class CliProcessManager extends EventEmitter {
     throw new Error("Unable to locate the packaged CodeNomad server entrypoint (dist/bin.js). Rebuild the desktop bundle.")
   }
 
-  private shouldUsePackagedShellSupervisor(options: StartOptions): boolean {
-    return false
-  }
-
-  private resolveCliSupervisorPath(): string {
-    const candidates = [
-      path.join(process.resourcesPath, "cli-supervisor.cjs"),
-      path.join(mainDirname, "../resources/cli-supervisor.cjs"),
-    ]
-
-    for (const candidate of candidates) {
-      if (existsSync(candidate)) {
-        return candidate
-      }
-    }
-
-    throw new Error("Unable to locate CodeNomad CLI supervisor script.")
-  }
-
-  private resolveShellNodeCommand(): string {
-    const configured = process.env.NODE_BINARY?.trim()
-    return configured && configured.length > 0 ? configured : "node"
-  }
-
-  private resolveBundledProdEntry(): string {
-    const candidates = [
-      path.join(process.resourcesPath, "server", "dist", "bin.js"),
-      path.join(mainDirname, "../resources/server/dist/bin.js"),
-    ]
-
-    for (const candidate of candidates) {
-      if (existsSync(candidate)) {
-        return candidate
-      }
-    }
-
-    throw new Error("Unable to locate bundled CodeNomad CLI build in app resources.")
-  }
-
-  private describeUtilityProcessError(error: unknown): string {
-    if (error instanceof Error && error.message) {
-      return error.message
-    }
-
-    if (error && typeof error === "object") {
-      const typed = error as { type?: unknown; location?: unknown }
-      if (typeof typed.type === "string") {
-        return typeof typed.location === "string" ? `${typed.type} at ${typed.location}` : typed.type
-      }
-    }
-
-    return String(error)
-  }
 }

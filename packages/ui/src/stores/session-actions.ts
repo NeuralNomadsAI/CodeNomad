@@ -4,7 +4,7 @@ import { getRootClient } from "./opencode-client"
 import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 
 import { addRecentModelPreference, getModelThinkingSelection, setAgentModelPreference } from "./preferences"
-import { providers, sessions, withSession } from "./session-state"
+import { beginSessionGenerationAdmission, providers, sessions, withSession } from "./session-state"
 import { getDefaultModel, isModelValid } from "./session-models"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { messageStoreBus } from "./message-v2/bus"
@@ -185,11 +185,20 @@ async function sendMessage(
     clientPromptDisplayMetadata: preparedPrompt.displayMetadata,
   })
 
+  // Preserve the optimistic bubble only while promptAsync is unresolved.
+  store.markSendPending(messageId)
+
   withSession(instanceId, sessionId, () => {
     /* trigger reactivity for legacy session data */
   })
 
   const requestBody = {
+    // Send the optimistic message id so the server confirms THIS send under
+    // the same id. Hydration then reconciles by identity (same id in the
+    // snapshot) instead of content matching, and the SSE echo updates the
+    // existing record in place — no duplicate bubble, no ambiguity between
+    // identical texts.
+    messageID: messageId,
     parts: requestParts,
     ...(session.agent && { agent: session.agent }),
     ...(session.model.providerId &&
@@ -216,15 +225,24 @@ async function sendMessage(
   try {
     log.info("session.promptAsync", { instanceId, sessionId, requestBody })
     const workspacePayload = await getSessionWorkspacePayload(instanceId, sessionId)
-    await requestData(
-      client.session.promptAsync({
-        sessionID: sessionId,
-        ...workspacePayload,
-        ...(requestBody as any),
-      }),
-      "session.promptAsync",
-    )
+    const admission = beginSessionGenerationAdmission(instanceId, sessionId)
+    try {
+      await requestData(
+        client.session.promptAsync({
+          sessionID: sessionId,
+          ...workspacePayload,
+          ...(requestBody as any),
+        }),
+        "session.promptAsync",
+      )
+      admission.complete()
+      store.acceptSend(messageId)
+    } catch (error) {
+      admission.rollback()
+      throw error
+    }
   } catch (error) {
+    store.failSend(messageId)
     log.error("Failed to send prompt", error)
     throw error
   }
@@ -271,14 +289,22 @@ async function executeCustomCommand(
     if (variant) body.variant = variant
   }
 
-  await requestData(
-    client.session.command({
-      sessionID: sessionId,
-      ...(await getSessionWorkspacePayload(instanceId, sessionId)),
-      ...(body as any),
-    }),
-    "session.command",
-  )
+  const workspacePayload = await getSessionWorkspacePayload(instanceId, sessionId)
+  const admission = beginSessionGenerationAdmission(instanceId, sessionId)
+  try {
+    await requestData(
+      client.session.command({
+        sessionID: sessionId,
+        ...workspacePayload,
+        ...(body as any),
+      }),
+      "session.command",
+    )
+    admission.complete()
+  } catch (error) {
+    admission.rollback()
+    throw error
+  }
 }
 
 async function runShellCommand(instanceId: string, sessionId: string, command: string): Promise<void> {
@@ -296,15 +322,23 @@ async function runShellCommand(instanceId: string, sessionId: string, command: s
 
   const agent = session.agent || "build"
 
-  await requestData(
-    client.session.shell({
-      sessionID: sessionId,
-      ...(await getSessionWorkspacePayload(instanceId, sessionId)),
-      agent,
-      command,
-    }),
-    "session.shell",
-  )
+  const workspacePayload = await getSessionWorkspacePayload(instanceId, sessionId)
+  const admission = beginSessionGenerationAdmission(instanceId, sessionId)
+  try {
+    await requestData(
+      client.session.shell({
+        sessionID: sessionId,
+        ...workspacePayload,
+        agent,
+        command,
+      }),
+      "session.shell",
+    )
+    admission.complete()
+  } catch (error) {
+    admission.rollback()
+    throw error
+  }
 }
 
 async function abortSession(instanceId: string, sessionId: string): Promise<void> {

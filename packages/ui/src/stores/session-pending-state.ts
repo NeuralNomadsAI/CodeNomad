@@ -1,0 +1,24 @@
+type SessionPendingState = {
+  id: string
+  pendingPermission?: boolean
+  pendingQuestion?: boolean
+}
+
+export function applySessionPendingState<T extends SessionPendingState>(
+  sessions: Map<string, T>,
+  permissionSessionIds: ReadonlySet<string>,
+  questionSessionIds: ReadonlySet<string>,
+): Map<string, T> {
+  let next = sessions
+
+  for (const [sessionId, session] of sessions) {
+    const pendingPermission = permissionSessionIds.has(sessionId)
+    const pendingQuestion = questionSessionIds.has(sessionId)
+    if (session.pendingPermission === pendingPermission && session.pendingQuestion === pendingQuestion) continue
+
+    if (next === sessions) next = new Map(sessions)
+    next.set(sessionId, { ...session, pendingPermission, pendingQuestion })
+  }
+
+  return next
+}

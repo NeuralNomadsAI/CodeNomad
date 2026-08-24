@@ -1,5 +1,6 @@
-import { marked } from "marked"
+import { marked, type Tokenizer, type Tokens } from "marked"
 import markedKatex from "marked-katex-extension"
+import katex from "katex"
 import { getLogger } from "./logger"
 import { tGlobal } from "./i18n"
 import type { Highlighter } from "shiki/bundle/full"
@@ -13,14 +14,42 @@ let currentTheme: "light" | "dark" = "light"
 let isInitialized = false
 let highlightSuppressed = false
 let escapeRawHtmlEnabled = false
+let defaultCodeBlockWrapEnabled = true
 let rendererSetup = false
 let shikiModulePromise: Promise<typeof import("shiki/bundle/full")> | null = null
 let bundledLanguagesCache: typeof import("shiki/bundle/full")["bundledLanguages"] | null = null
+const codeBlockRenderOccurrences = new Map<string, number>()
 
-// Math rendering is handled by marked-katex-extension (registered in setupRenderer).
-// Delimiter rules, boundaries, CJK punctuation, and block/inline rendering are
-// all delegated to the maintained extension so we avoid ~200 lines of fragile
-// hand-rolled tokenizer code.
+// Dollar-delimited math is handled by marked-katex-extension; bracket delimiters
+// use the small parser-native rules registered in setupRenderer.
+
+const BRACKET_DISPLAY_MATH_RULE = /^\\\[([\s\S]+?)\\\]/
+
+// Find a complete line-start display delimiter while skipping inline code spans.
+function findBracketDisplayStart(src: string): number {
+  const codeRule = marked.Lexer.rules.inline.gfm.code
+  let index = 0
+
+  while (index < src.length) {
+    const code = codeRule.exec(src.slice(index))
+    let precedingBackslashes = 0
+    for (let cursor = index - 1; src[cursor] === "\\"; cursor--) {
+      precedingBackslashes++
+    }
+    if (code?.index === 0 && precedingBackslashes % 2 === 0) {
+      index += code[0].length
+      continue
+    }
+
+    const bracketMath = BRACKET_DISPLAY_MATH_RULE.exec(src.slice(index))
+    if ((index === 0 || src[index - 1] === "\n") && bracketMath?.[1].trim()) {
+      return index
+    }
+    index++
+  }
+
+  return -1
+}
 
 const ALLOWED_RAW_HTML_TAGS = new Set([
   "a",
@@ -149,6 +178,19 @@ function sanitizeRawHtmlFragment(html: string): string {
   }
 
   return template.innerHTML
+}
+
+function hashString(value: string): string {
+  let hash = 2166136261
+  for (let index = 0; index < value.length; index++) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0).toString(16)
+}
+
+function resetCodeBlockRenderState() {
+  codeBlockRenderOccurrences.clear()
 }
 
 // Track loaded languages and queue for on-demand loading
@@ -386,6 +428,92 @@ function setupRenderer(isDark: boolean) {
     strict: "ignore",
   }))
 
+  marked.use({
+    extensions: [
+      {
+        name: "inlineBracketMath",
+        level: "inline",
+        // Find unescaped inline bracket math without scanning beyond the next line.
+        start(src: string) {
+          return src.search(/(?<!\\)\\\(/)
+        },
+        // Tokenize non-empty inline math delimited by \( and \).
+        tokenizer(src: string) {
+          const escaped = /^\\\\\(([^\n]+?)\\\)/.exec(src)
+          if (escaped) {
+            return {
+              type: "inlineBracketMath",
+              raw: escaped[0],
+              text: escaped[0],
+              escaped: true,
+            }
+          }
+
+          const match = /^\\\(([^\n]+?)\\\)/.exec(src)
+          if (!match) return
+
+          return {
+            type: "inlineBracketMath",
+            raw: match[0],
+            text: match[1],
+          }
+        },
+        // Render inline bracket math with the existing KaTeX error policy.
+        renderer(token: Tokens.Generic) {
+          if (token.escaped) return escapeHtml(token.raw)
+
+          return katex.renderToString(token.text, {
+            throwOnError: false,
+            strict: "ignore",
+            displayMode: false,
+          })
+        },
+      },
+      {
+        name: "blockBracketMath",
+        level: "block",
+        // Tokenize non-empty display math delimited by \[ and \], across lines.
+        tokenizer(src: string) {
+          const match = BRACKET_DISPLAY_MATH_RULE.exec(src)
+          if (!match || !match[1].trim()) return
+
+          return {
+            type: "blockBracketMath",
+            raw: match[0],
+            text: match[1],
+          }
+        },
+        // Render display bracket math with the existing KaTeX error policy.
+        renderer(token: Tokens.Generic) {
+          return katex.renderToString(token.text, {
+            throwOnError: false,
+            strict: "ignore",
+            displayMode: true,
+          })
+        },
+      },
+    ],
+    tokenizer: {
+      // Split a paragraph before a valid display delimiter so the block lexer can consume it.
+      paragraph(this: Tokenizer, src: string) {
+        const cap = this.rules.block.paragraph.exec(src)
+        if (!cap) return false
+
+        const bracketStart = findBracketDisplayStart(cap[0])
+        if (bracketStart <= 0) return false
+
+        const raw = cap[0].slice(0, bracketStart)
+        const text = raw.endsWith("\n") ? raw.slice(0, -1) : raw
+        return {
+          type: "paragraph",
+          raw,
+          text,
+          tokens: this.lexer.inline(text),
+        }
+      },
+    },
+  })
+
   const renderer = new marked.Renderer()
 
   renderer.code = (code: string, lang: string | undefined) => {
@@ -394,29 +522,50 @@ function setupRenderer(isDark: boolean) {
 
     // Use "text" as default when no language is specified
     const resolvedLang = lang && lang.trim() ? lang.trim() : "text"
+    const occurrenceBaseKey = `${resolvedLang}\u0000${decodedCode}`
+    const occurrence = codeBlockRenderOccurrences.get(occurrenceBaseKey) ?? 0
+    codeBlockRenderOccurrences.set(occurrenceBaseKey, occurrence + 1)
+    const codeBlockKey = hashString(`${occurrenceBaseKey}\u0000${occurrence}`)
     const escapedLang = escapeHtml(resolvedLang)
     const copyLabel = escapeHtml(tGlobal("markdown.copy"))
+    const defaultWrapEnabled = defaultCodeBlockWrapEnabled
+    const wrapLabel = escapeHtml(tGlobal(defaultWrapEnabled ? "markdown.codeBlock.wrap.disable" : "markdown.codeBlock.wrap.enable"))
+    const wrapActiveClass = defaultWrapEnabled ? " active" : ""
+    const wrapPressed = defaultWrapEnabled ? "true" : "false"
 
     const header = `
  <div class="code-block-header">
    <span class="code-block-language">${escapedLang}</span>
-   <button class="code-block-copy" data-code="${encodedCode}">
-    <svg class="copy-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-     </svg>
-    <span class="copy-text">${copyLabel}</span>
-   </button>
- </div>
- `.trim()
+   <span class="code-block-actions">
+    <button type="button" class="code-block-wrap${wrapActiveClass}" data-code-block-key="${codeBlockKey}" aria-pressed="${wrapPressed}" aria-label="${wrapLabel}" title="${wrapLabel}">
+     <svg class="wrap-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+       <path d="M3 6h18"></path>
+       <path d="M3 12h15a3 3 0 1 1 0 6h-4"></path>
+       <path d="m16 16-2 2 2 2"></path>
+       <path d="M3 18h7"></path>
+      </svg>
+     <span class="wrap-text">${wrapLabel}</span>
+    </button>
+    <button type="button" class="code-block-copy" data-code="${encodedCode}">
+     <svg class="copy-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+       <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+       <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+      </svg>
+     <span class="copy-text">${copyLabel}</span>
+    </button>
+   </span>
+  </div>
+  `.trim()
+
+    const renderCodeBlock = (body: string) => `<div class="markdown-code-block" data-language="${escapedLang}" data-code="${encodedCode}" data-code-block-key="${codeBlockKey}" data-wrap-lines="${defaultWrapEnabled ? "true" : "false"}">${header}${body}</div>`
 
     if (highlightSuppressed) {
-      return `<div class="markdown-code-block" data-language="${escapedLang}" data-code="${encodedCode}">${header}<pre><code class="language-${escapedLang}">${escapeHtml(decodedCode)}</code></pre></div>`
+      return renderCodeBlock(`<pre><code class="language-${escapedLang}">${escapeHtml(decodedCode)}</code></pre>`)
     }
 
     // Skip highlighting for "text" language or when highlighter is not available
     if (resolvedLang === "text" || !highlighter) {
-      return `<div class="markdown-code-block" data-language="${escapedLang}" data-code="${encodedCode}">${header}<pre><code>${escapeHtml(decodedCode)}</code></pre></div>`
+      return renderCodeBlock(`<pre><code>${escapeHtml(decodedCode)}</code></pre>`)
     }
 
     // Resolve language and check if it's loaded
@@ -425,23 +574,23 @@ function setupRenderer(isDark: boolean) {
 
     // Skip highlighting for "text" aliases
     if (langKey === "text" || raw === "text") {
-      return `<div class="markdown-code-block" data-language="${escapedLang}" data-code="${encodedCode}">${header}<pre><code class="language-${escapedLang}">${escapeHtml(decodedCode)}</code></pre></div>`
+      return renderCodeBlock(`<pre><code class="language-${escapedLang}">${escapeHtml(decodedCode)}</code></pre>`)
     }
 
     // Use highlighting if language is loaded, otherwise fall back to plain code
     if (loadedLanguages.has(langKey)) {
       try {
-         const html = highlighter!.codeToHtml(decodedCode, {
-           lang: langKey,
-           theme: currentTheme === "dark" ? "github-dark" : "github-light-high-contrast",
-         })
-        return `<div class="markdown-code-block" data-language="${escapedLang}" data-code="${encodedCode}">${header}${html}</div>`
+        const html = highlighter!.codeToHtml(decodedCode, {
+          lang: langKey,
+          theme: currentTheme === "dark" ? "github-dark" : "github-light-high-contrast",
+        })
+        return renderCodeBlock(html)
       } catch {
         // Fall through to plain code if highlighting fails
       }
     }
 
-    return `<div class="markdown-code-block" data-language="${escapedLang}" data-code="${encodedCode}">${header}<pre><code class="language-${escapedLang}">${escapeHtml(decodedCode)}</code></pre></div>`
+    return renderCodeBlock(`<pre><code class="language-${escapedLang}">${escapeHtml(decodedCode)}</code></pre>`)
   }
 
   renderer.link = (href: string, title: string | null | undefined, text: string) => {
@@ -486,6 +635,7 @@ export async function renderMarkdown(
   options?: {
     suppressHighlight?: boolean
     escapeRawHtml?: boolean
+    defaultCodeBlockWrap?: boolean
   },
 ): Promise<string> {
   if (!isInitialized) {
@@ -495,6 +645,7 @@ export async function renderMarkdown(
 
   const suppressHighlight = options?.suppressHighlight ?? false
   const escapeRawHtml = options?.escapeRawHtml ?? false
+  const defaultCodeBlockWrap = options?.defaultCodeBlockWrap ?? true
   const decoded = decodeHtmlEntities(content)
 
   if (!suppressHighlight) {
@@ -504,15 +655,20 @@ export async function renderMarkdown(
 
   const previousSuppressed = highlightSuppressed
   const previousEscapeRawHtml = escapeRawHtmlEnabled
+  const previousDefaultCodeBlockWrap = defaultCodeBlockWrapEnabled
   highlightSuppressed = suppressHighlight
   escapeRawHtmlEnabled = escapeRawHtml
+  defaultCodeBlockWrapEnabled = defaultCodeBlockWrap
 
   try {
     // Proceed to parse immediately - highlighting will be available on next render
+    resetCodeBlockRenderState()
     return marked.parse(decoded) as Promise<string>
   } finally {
+    resetCodeBlockRenderState()
     highlightSuppressed = previousSuppressed
     escapeRawHtmlEnabled = previousEscapeRawHtml
+    defaultCodeBlockWrapEnabled = previousDefaultCodeBlockWrap
   }
 }
 

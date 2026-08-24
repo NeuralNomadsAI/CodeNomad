@@ -17,10 +17,8 @@ export const folderSelectionMessages = {
   "folderSelection.recent.rename": "重命名工作区",
   "folderSelection.recent.remove": "从最近列表移除",
   "folderSelection.recent.openBadge": "已打开",
-  "folderSelection.recent.alreadyOpenTitle": "项目已打开",
-  "folderSelection.recent.alreadyOpenMessage": "选择如何打开此文件夹。",
+  "folderSelection.recent.openNewInstance": "打开新实例",
   "folderSelection.recent.switchToOpenProject": "切换到已打开的项目",
-  "folderSelection.recent.openAnotherInstance": "打开另一个实例",
 
   "folderSelection.browse.title": "浏览文件夹",
   "folderSelection.browse.subtitle": "选择你电脑上的任意文件夹",

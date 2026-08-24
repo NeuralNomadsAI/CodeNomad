@@ -254,11 +254,17 @@ session-sidebar-controls .selector-trigger-primary {
 
 .session-list {
   @apply flex-1;
+  overflow-anchor: none;
+  overscroll-behavior-y: contain;
 }
 
 .session-list-item {
-  @apply border-b last:border-b-0;
+  @apply border-b;
   border-color: var(--border-base);
+}
+
+.session-list-item-last {
+  border-bottom: 0;
 }
 
 .session-item-base {
@@ -268,36 +274,36 @@ session-sidebar-controls .selector-trigger-primary {
 }
 
 
-.session-item-base.session-item-child {
-  padding-inline-start: 2.25rem;
+.session-item-base.session-item-nested {
+  padding-inline-start: var(--session-indent);
   position: relative;
 }
 
-.session-item-base.session-item-child::before {
+.session-item-base.session-item-nested::before {
   content: "";
   position: absolute;
   top: 0;
   bottom: 0;
-  inset-inline-start: 1.125rem;
+  inset-inline-start: var(--session-connector-offset);
   width: 1px;
   background-color: var(--text-secondary);
-  opacity: 0.95;
+  opacity: 0.65;
   pointer-events: none;
 }
 
-.session-item-base.session-item-child.session-item-child-last::before {
+.session-item-base.session-item-nested.session-item-child-last::before {
   bottom: 50%;
 }
 
-.session-item-base.session-item-child::after {
+.session-item-base.session-item-nested::after {
   content: "";
   position: absolute;
   top: 50%;
-  inset-inline-start: 1.125rem;
+  inset-inline-start: var(--session-connector-offset);
   width: 0.875rem;
   height: 1px;
   background-color: var(--text-secondary);
-  opacity: 0.95;
+  opacity: 0.65;
   transform: translateY(-0.5px);
   pointer-events: none;
 }
@@ -459,7 +465,8 @@ session-sidebar-controls .selector-trigger-primary {
 .status-indicator.session-status.session-working,
 .status-indicator.session-status.session-retrying,
 .status-indicator.session-status.session-compacting,
-.status-indicator.session-status.session-idle {
+.status-indicator.session-status.session-idle,
+.status-indicator.session-status.session-interrupted {
   font-weight: var(--font-weight-medium);
 }
 
@@ -481,6 +488,11 @@ session-sidebar-controls .selector-trigger-primary {
 .status-indicator.session-status.session-idle {
   color: var(--session-status-idle-fg);
   --session-status-dot: var(--session-status-idle-fg);
+}
+
+.status-indicator.session-status.session-interrupted {
+  color: var(--status-warning);
+  --session-status-dot: var(--status-warning);
 }
 
 .status-indicator.session-status.session-idle.session-status-fading {
@@ -515,6 +527,10 @@ session-sidebar-controls .selector-trigger-primary {
 
 .status-indicator.session-status.session-idle.session-status-list {
   background-color: var(--session-status-idle-bg);
+}
+
+.status-indicator.session-status.session-interrupted.session-status-list {
+  background-color: color-mix(in srgb, var(--status-warning) 12%, transparent);
 }
 
 .status-indicator.session-status.session-permission.session-status-list {

@@ -53,7 +53,7 @@ const ContextUsagePanel: Component<ContextUsagePanelProps> = (props) => {
     return value > 0 ? value : 0
   })
 
-  const costDisplay = createMemo(() => `$${costValue().toFixed(2)}`)
+  const costDisplay = createMemo(() => info().isSubscriptionModel ? t("contextUsagePanel.included") : `$${costValue().toFixed(2)}`)
 
   return (
     <div class={`session-context-panel px-4 py-2 ${props.class ?? ""}`}>

@@ -5,6 +5,7 @@ import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
 import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
+import { splitDisplayPath } from "./unified-picker-path"
 const log = getLogger("actions")
 
 
@@ -114,6 +115,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     setTimeout(() => {
       if (scrollContainerRef) {
         scrollContainerRef.scrollTop = 0
+        scrollContainerRef.scrollLeft = 0
       }
     }, 0)
   }
@@ -443,7 +445,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     <Show when={props.open}>
       <div
         ref={containerRef}
-        class="dropdown-surface bottom-full left-0 mb-1 max-w-md"
+        class="dropdown-surface bottom-full left-0 mb-1"
       >
         <div class="dropdown-header">
           <div class="dropdown-header-title">
@@ -456,7 +458,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
           </div>
         </div>
 
-        <div ref={scrollContainerRef} class="dropdown-content max-h-60">
+        <div ref={scrollContainerRef} class="dropdown-content max-h-60 overflow-x-auto">
           <Show when={(mode() === "command" ? commandCount() === 0 : agentCount() === 0 && fileCount() === 0)}>
             <div class="dropdown-empty">{t("unifiedPicker.empty")}</div>
           </Show>
@@ -585,6 +587,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                   (item) => item.type === "file" && item.file.relativePath === file.relativePath,
                 )
                 const isFolder = file.isDirectory
+                const displayPath = splitDisplayPath(file.path)
                 return (
                   <div
                     class={`dropdown-item py-1.5 ${
@@ -593,7 +596,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                     data-picker-selected={itemIndex === selectedIndex()}
                     onClick={() => props.onSelect({ type: "file", file }, "click")}
                   >
-                    <div class="flex items-center gap-2 text-sm">
+                    <div class="flex min-w-full w-max items-center gap-2 text-sm">
                       <Show
                         when={isFolder}
                         fallback={
@@ -616,7 +619,20 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                           />
                         </svg>
                       </Show>
-                      <span class="truncate">{file.path}</span>
+                      <span class="min-w-0 flex-1" title={file.path}>
+                        <span class="sr-only">{file.path}</span>
+                        <span aria-hidden="true">
+                          <span class="block whitespace-nowrap">
+                            {displayPath.name}
+                          </span>
+                          <Show when={displayPath.parent}>
+                            <span class="block whitespace-nowrap text-[11px]" style="color: var(--text-muted)">{displayPath.parent}/</span>
+                          </Show>
+                          <Show when={displayPath.directory && displayPath.directory !== displayPath.parent}>
+                            <span class="block whitespace-nowrap text-[10px]" style="color: var(--text-muted)">{displayPath.directory}</span>
+                          </Show>
+                        </span>
+                      </span>
                     </div>
                   </div>
                 )

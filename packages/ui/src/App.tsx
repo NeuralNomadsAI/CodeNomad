@@ -18,6 +18,9 @@ import { initGithubStars } from "./stores/github-stars"
 
 import { useCommands } from "./lib/hooks/use-commands"
 import { useAppLifecycle } from "./lib/hooks/use-app-lifecycle"
+import { useAppSessionRestore } from "./lib/hooks/use-app-session-restore"
+import { loadedRestorableSession } from "./stores/client-state"
+import { shouldShowAppHomeOverlay, shouldShowEmptyAppHome } from "./stores/app-session-restore-gate"
 import { getLogger } from "./lib/logger"
 import { launchError, showLaunchError, clearLaunchError } from "./stores/launch-errors"
 import { formatLaunchErrorMessage, isMissingBinaryMessage } from "./lib/launch-errors"
@@ -25,33 +28,39 @@ import { initReleaseNotifications } from "./stores/releases"
 import { isTauriHost, isWebHost, runtimeEnv } from "./lib/runtime-env"
 import { useI18n } from "./lib/i18n"
 import { setWakeLockDesired } from "./lib/native/wake-lock"
+import { resolveResolvable } from "./lib/commands"
+import { setWorkspaceMenuEnabled } from "./lib/workspace-open"
 import {
   isSelectingFolder,
   setIsSelectingFolder,
   showFolderSelection,
   setShowFolderSelection,
 } from "./stores/ui"
-import { useConfig } from "./stores/preferences"
+import { recentFolders, useConfig } from "./stores/preferences"
 import {
   createInstance,
-  getExistingInstanceForFolder,
   instances,
   stopInstance,
   disconnectedInstance,
   acknowledgeDisconnectedInstance,
+  syncPendingRequests,
 } from "./stores/instances"
 import {
   getSessions,
+  getSessionRoot,
   activeSessionId,
   setActiveParentSession,
   clearActiveParentSession,
   createSession,
   fetchSessions,
+  loadMessages,
   updateSessionAgent,
   updateSessionModel,
 } from "./stores/sessions"
+import { useForegroundRefresh } from "./lib/hooks/use-foreground-refresh"
+import { messagesLoaded, invalidateSessionMessageLoad } from "./stores/session-state"
 
-import { hasWakeLockEligibleWork } from "./stores/session-status"
+import { hasWakeLockEligibleWork, getSessionStatus } from "./stores/session-status"
 import { openSettings } from "./stores/settings-screen"
 import {
   closeSidecarTab,
@@ -65,15 +74,38 @@ import {
   ensureActiveAppTab,
   getAdjacentAppTabId,
   getAppTabById,
+  markAppTabUserInteraction,
   moveAppTab,
   selectAppTab,
   selectInstanceTab,
   selectSidecarTab,
 } from "./stores/app-tabs"
-
 const log = getLogger("actions")
+const FOREGROUND_REFRESH_TIMEOUT_MS = 10_000
+
+async function withForegroundRefreshTimeout<T>(
+  promise: Promise<T>,
+  label: string,
+  onTimeout?: () => void,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          onTimeout?.()
+          reject(new Error(`${label} timed out`))
+        }, FOREGROUND_REFRESH_TIMEOUT_MS)
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
 
 const App: Component = () => {
+  useAppSessionRestore()
   const { t } = useI18n()
   const {
     preferences,
@@ -99,11 +131,6 @@ const App: Component = () => {
   const [escapeInDebounce, setEscapeInDebounce] = createSignal(false)
   const [instanceTabBarHeight, setInstanceTabBarHeight] = createSignal(0)
   const [sidecarPickerOpen, setSidecarPickerOpen] = createSignal(false)
-  const [alreadyOpenFolderChoice, setAlreadyOpenFolderChoice] = createSignal<{
-    folderPath: string
-    binaryPath: string
-    instanceId: string
-  } | null>(null)
   const phoneQuery = useMediaQuery("(max-width: 767px)")
   const isPhoneLayout = createMemo(() => phoneQuery())
 
@@ -258,6 +285,105 @@ const App: Component = () => {
     return activeSessionId().get(instance.id) || null
   })
 
+  useForegroundRefresh({
+    onRefresh: async () => {
+      // The SSE transport is global: a reconnect can mean missed events for
+      // EVERY loaded workspace/session, not just the one on screen. So we:
+      //  1. Re-fetch the session list for every instance (status/titles).
+      //  2. Force-reload whatever session is active AFTER the fetch settles
+      //     (so a session switch during the await still lands on the right
+      //     one), since it's the one the user is looking at.
+      //  3. Invalidate the loaded flag for every other loaded session so it
+      //     re-fetches lazily on next activation instead of returning stale
+      //     content (a non-forced load short-circuits once "loaded").
+      const instanceIds = Array.from(instances().values())
+        .filter((instance) => instance.status === "ready" && Boolean(instance.client))
+        .map((instance) => instance.id)
+      const sessionListResults = await Promise.allSettled(
+        instanceIds.map((id) => {
+          let invalidateSessions = () => {}
+          let invalidatePendingRequests = () => {}
+          return withForegroundRefreshTimeout(
+            Promise.all([
+              fetchSessions(id, {
+                strictStatus: true,
+                registerInvalidation: (invalidate) => { invalidateSessions = invalidate },
+              }),
+              syncPendingRequests(id, (invalidate) => { invalidatePendingRequests = invalidate }),
+            ]),
+            `Foreground refresh for ${id}`,
+            () => {
+              invalidateSessions()
+              invalidatePendingRequests()
+            },
+          )
+        }),
+      )
+      const failedInstanceIds: string[] = []
+      sessionListResults.forEach((result, i) => {
+        if (result.status === "rejected") {
+          failedInstanceIds.push(instanceIds[i])
+          log.error("Foreground refresh: fetchSessions failed", { instanceId: instanceIds[i], error: result.reason })
+        }
+      })
+
+      const activeInst = activeInstance()
+      const activeSession = activeSessionIdForInstance()
+      const hasActive = Boolean(
+        activeInst?.status === "ready" && activeInst.client && activeSession && activeSession !== "info",
+      )
+      const canReloadActive = hasActive && !failedInstanceIds.includes(activeInst!.id)
+
+      // Invalidate every loaded session except the active one (force-reloaded
+      // below). Snapshot the map first; invalidate mutates it via setState.
+      for (const [instId, sessionSet] of messagesLoaded().entries()) {
+        for (const sId of sessionSet) {
+          if (canReloadActive && instId === activeInst!.id && sId === activeSession) continue
+          invalidateSessionMessageLoad(instId, sId)
+        }
+      }
+
+      let activeReloadFailed = false
+      if (canReloadActive) {
+        const statusBefore = getSessionStatus(activeInst!.id, activeSession!)
+        try {
+          let invalidateMessages = () => {}
+          await withForegroundRefreshTimeout(
+            loadMessages(activeInst!.id, activeSession!, {
+              force: true,
+              registerInvalidation: (invalidate) => { invalidateMessages = invalidate },
+            }),
+            `Active-session refresh for ${activeInst!.id}:${activeSession!}`,
+            () => invalidateMessages(),
+          )
+        } catch (error) {
+          activeReloadFailed = true
+          log.error("Foreground refresh: active session reload failed", {
+            instanceId: activeInst!.id,
+            sessionId: activeSession,
+            error,
+          })
+        }
+        const statusAfter = getSessionStatus(activeInst!.id, activeSession!)
+        log.info("Foreground refresh: active session reloaded", {
+          instanceId: activeInst!.id,
+          sessionId: activeSession,
+          statusBefore,
+          statusAfter,
+        })
+      }
+
+      // Report failure so the hook keeps its dirty latch and retries on the
+      // next reconnect instead of treating a partial recovery as success.
+      if (failedInstanceIds.length > 0 || activeReloadFailed) {
+        throw new Error(
+          `Foreground refresh incomplete: ${failedInstanceIds.length} session-list fetch(es) failed` +
+            (activeReloadFailed ? ", active session reload failed" : ""),
+        )
+      }
+    },
+  })
+
   const launchErrorPath = () => {
     const value = launchError()?.binaryPath
     if (!value) return "opencode"
@@ -280,31 +406,35 @@ const App: Component = () => {
     if (!folderPath) {
       return
     }
+
     const selectedBinary = binaryPath || serverSettings().opencodeBinary || "opencode"
     const projectName = getProjectNameForFolder(folderPath)
-    recordWorkspaceLaunch(folderPath, selectedBinary)
     clearLaunchError()
-
-    if (!options?.forceNew) {
-      const existingInstance = getExistingInstanceForFolder(folderPath)
-      if (existingInstance) {
-        setAlreadyOpenFolderChoice({ folderPath, binaryPath: selectedBinary, instanceId: existingInstance.id })
-        return
-      }
-    }
 
     setIsSelectingFolder(true)
     try {
-      const instanceId = await createInstance(folderPath, selectedBinary, projectName)
-      selectInstanceTab(instanceId)
+      const result = await createInstance(folderPath, selectedBinary, projectName, { forceNew: options?.forceNew })
+      recordWorkspaceLaunch(instances().get(result.instanceId)?.folder ?? folderPath, selectedBinary, folderPath)
+      if (result.reused) {
+        selectInstanceTab(result.instanceId)
+        setShowFolderSelection(false)
+        log.info("Selected reused instance", { instanceId: result.instanceId, folderPath })
+        return
+      }
+
+      selectInstanceTab(result.instanceId)
       setShowFolderSelection(false)
 
       log.info("Created instance", {
-        instanceId,
-        port: instances().get(instanceId)?.port,
+        instanceId: result.instanceId,
+        port: instances().get(result.instanceId)?.port,
       })
     } catch (error) {
-      const message = formatLaunchErrorMessage(error, t("app.launchError.fallbackMessage"))
+      const message = formatLaunchErrorMessage(
+        error,
+        t("app.launchError.fallbackMessage"),
+        t("app.launchError.invalidConfig"),
+      )
       const missingBinary = isMissingBinaryMessage(message)
       showLaunchError({ source: "create", message, binaryPath: selectedBinary, missingBinary })
       log.error("Failed to create instance", error)
@@ -313,24 +443,13 @@ const App: Component = () => {
     }
   }
 
-  function dismissAlreadyOpenFolderChoice() {
-    setAlreadyOpenFolderChoice(null)
-  }
-
-  function switchToAlreadyOpenFolder() {
-    const choice = alreadyOpenFolderChoice()
-    if (!choice) return
-    setAlreadyOpenFolderChoice(null)
-    selectInstanceTab(choice.instanceId)
+  function handleSelectExistingInstance(instanceId: string, recentPath: string, binaryPath: string) {
+    const instance = instances().get(instanceId)
+    if (!instance) return
+    recordWorkspaceLaunch(instance.folder, binaryPath, recentPath)
+    selectInstanceTab(instanceId)
     setShowFolderSelection(false)
-    log.info("Selected existing instance", { instanceId: choice.instanceId, folderPath: choice.folderPath })
-  }
-
-  function openAnotherFolderInstance() {
-    const choice = alreadyOpenFolderChoice()
-    if (!choice) return
-    setAlreadyOpenFolderChoice(null)
-    void handleSelectFolder(choice.folderPath, choice.binaryPath, { forceNew: true })
+    log.info("Selected existing instance", { instanceId, folderPath: instance.folder })
   }
 
   function handleLaunchErrorClose() {
@@ -408,12 +527,8 @@ const App: Component = () => {
       return
     }
 
-    const parentSessionId = session.parentId ?? session.id
-    const parentSession = sessions.find((s) => s.id === parentSessionId)
-
-    if (!parentSession || parentSession.parentId !== null) {
-      return
-    }
+    const parentSession = getSessionRoot(instanceId, sessionId)
+    if (!parentSession) return
 
     clearActiveParentSession(instanceId)
 
@@ -427,6 +542,7 @@ const App: Component = () => {
   async function handleCloseAppTab(tabId: string) {
     const tab = getAppTabById(tabId)
     if (!tab) return
+    markAppTabUserInteraction()
 
     const fallbackTabId = activeAppTabId() === tabId ? getAdjacentAppTabId(tabId) : activeAppTabId()
 
@@ -494,26 +610,42 @@ const App: Component = () => {
     getActiveSessionIdForInstance: activeSessionIdForInstance,
   })
 
-  // Listen for Tauri menu events
+  // Native menus execute the same commands as the command palette.
   onMount(() => {
+    const executeMenuAction = (action: unknown) => {
+      if (typeof action !== "string") return
+      const command = paletteCommands().find((candidate) => candidate.id === action)
+      if (command && !(command.disabled && resolveResolvable(command.disabled))) executeCommand(command)
+    }
+
     if (isTauriHost()) {
       const tauriBridge = (window as { __TAURI__?: { event?: { listen: (event: string, handler: (event: { payload: unknown }) => void) => Promise<() => void> } } }).__TAURI__
       if (tauriBridge?.event) {
         let unlistenMenu: (() => void) | null = null
-        
-        tauriBridge.event.listen("menu:newInstance", () => {
-          handleNewInstanceRequest()
+
+        tauriBridge.event.listen("menu:action", (event) => {
+          executeMenuAction(event.payload)
         }).then((unlisten) => {
           unlistenMenu = unlisten
         }).catch((error) => {
-          log.error("Failed to listen for menu:newInstance event", error)
+          log.error("Failed to listen for native menu actions", error)
         })
 
         onCleanup(() => {
           unlistenMenu?.()
         })
       }
+      return
     }
+
+    const unsubscribe = window.electronAPI?.onMenuAction?.(executeMenuAction)
+    onCleanup(() => unsubscribe?.())
+  })
+
+  createEffect(() => {
+    void setWorkspaceMenuEnabled(Boolean(activeInstance())).catch((error) => {
+      log.warn("Failed to update native workspace menu state", error)
+    })
   })
 
   return (
@@ -542,7 +674,7 @@ const App: Component = () => {
                    <p class="text-xs font-medium text-muted uppercase tracking-wide mb-1">{t("app.launchError.binaryPathLabel")}</p>
                    <p class="text-sm font-mono text-primary break-all">{launchErrorPath()}</p>
                  </div>
- 
+
                  <Show when={launchErrorMessage()}>
                    <div class="rounded-lg border border-base bg-surface-secondary p-4 flex flex-col gap-2 flex-1 min-h-0">
                      <p class="text-xs font-medium text-muted uppercase tracking-wide">{t("app.launchError.errorOutputLabel")}</p>
@@ -645,18 +777,22 @@ const App: Component = () => {
             </>
           }
         >
-          <FolderSelectionView
-            onSelectFolder={handleSelectFolder}
-            isLoading={isSelectingFolder()}
-            onOpenSidecar={handleOpenSidecarPicker}
-          />
+          <Show when={shouldShowEmptyAppHome(loadedRestorableSession())}>
+            <FolderSelectionView
+              onSelectFolder={handleSelectFolder}
+              onSelectExistingInstance={handleSelectExistingInstance}
+              isLoading={isSelectingFolder()}
+              onOpenSidecar={handleOpenSidecarPicker}
+            />
+          </Show>
         </Show>
 
-        <Show when={showFolderSelection()}>
+        <Show when={shouldShowAppHomeOverlay(showFolderSelection(), appTabs().length)}>
           <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
             <div class="w-full h-full relative">
               <FolderSelectionView
                 onSelectFolder={handleSelectFolder}
+                onSelectExistingInstance={handleSelectExistingInstance}
                 isLoading={isSelectingFolder()}
                 onOpenSidecar={handleOpenSidecarPicker}
                 onClose={() => {
@@ -667,34 +803,9 @@ const App: Component = () => {
             </div>
           </div>
         </Show>
- 
+
         <SettingsScreen />
         <SideCarPickerDialog open={sidecarPickerOpen()} onClose={() => setSidecarPickerOpen(false)} onOpenSidecar={handleOpenSidecar} />
-        <Show when={alreadyOpenFolderChoice()}>
-          <Dialog open modal onOpenChange={(open) => !open && dismissAlreadyOpenFolderChoice()}>
-            <Dialog.Portal>
-              <Dialog.Overlay class="modal-overlay z-[60]" />
-              <Dialog.Content class="modal-surface fixed left-1/2 top-1/2 z-[1310] w-full max-w-sm -translate-x-1/2 -translate-y-1/2 p-6 border border-base shadow-2xl" tabIndex={-1}>
-                <Dialog.Title class="text-lg font-semibold text-primary">
-                  {t("folderSelection.recent.alreadyOpenTitle")}
-                </Dialog.Title>
-                <Dialog.Description class="text-sm text-secondary mt-1">
-                  {t("folderSelection.recent.alreadyOpenMessage")}
-                </Dialog.Description>
-
-                <div class="mt-6 flex justify-end gap-3">
-                  <button type="button" class="button-secondary" onClick={openAnotherFolderInstance}>
-                    {t("folderSelection.recent.openAnotherInstance")}
-                  </button>
-                  <button type="button" class="button-primary" onClick={switchToAlreadyOpenFolder}>
-                    {t("folderSelection.recent.switchToOpenProject")}
-                  </button>
-                </div>
-              </Dialog.Content>
-            </Dialog.Portal>
-          </Dialog>
-        </Show>
- 
         <AlertDialog />
 
         <Toaster

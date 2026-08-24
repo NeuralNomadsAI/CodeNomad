@@ -56,14 +56,14 @@ bun run build:win-arm64
 ### Linux
 
 ```bash
-# x64 (64-bit)
-bun run build:linux
+# Portable Electron archive (x64)
+npm run build:linux --workspace @neuralnomads/codenomad-electron-app
 
-# ARM64
-bun run build:linux-arm64
+# Tauri Debian package (x64)
+npm exec --workspace @codenomad/tauri-app -- tauri build --bundles deb
 ```
 
-**Output formats:** `.AppImage`, `.deb`, `.tar.gz`
+**Release formats:** Electron `.tar.gz` portable archive and Tauri `.deb` installer.
 
 ### Build All Platforms
 
@@ -83,27 +83,29 @@ The build script performs these steps:
 
 ## Output
 
-Binaries are generated in the `release/` directory:
+Build artifacts are generated in package-specific output directories:
 
 ```
-release/
-├── CodeNomad-0.1.0-mac-universal.dmg
-├── CodeNomad-0.1.0-mac-universal.zip
-├── CodeNomad-0.1.0-win-x64.exe
-├── CodeNomad-0.1.0-linux-x64.AppImage
-└── ...
+packages/electron-app/release/
+└── CodeNomad-Electron-linux-x64-0.18.0.tar.gz
+
+packages/tauri-app/target/release/bundle/deb/
+└── CodeNomad_0.18.0_amd64.deb
 ```
 
 ## File Naming Convention
 
 ```
-CodeNomad-{version}-{os}-{arch}.{ext}
+CodeNomad-Electron-{os}-{arch}-{version}.{ext}
+CodeNomad-Tauri-{os}-{arch}-{version}.{ext}
 ```
 
-- **version**: From package.json (e.g., `0.1.0`)
-- **os**: `mac`, `win`, `linux`
+- **version**: From package.json (e.g., `0.18.0`)
+- **os**: `macos`, `windows`, `linux`
 - **arch**: `x64`, `arm64`, `universal`
-- **ext**: `dmg`, `zip`, `exe`, `AppImage`, `deb`, `tar.gz`
+- **ext**: `dmg`, `zip`, `exe`, `deb`, `tar.gz`
+
+The Tauri build directory uses Tauri's native Debian filename. CI renames the package to the convention above when preparing release assets.
 
 ## Platform Requirements
 
@@ -121,9 +123,9 @@ CodeNomad-{version}-{os}-{arch}.{ext}
 
 ### Linux
 
-- **Build on:** Any platform
-- **Run on:** Ubuntu 18.04+, Debian 10+, Fedora 32+, Arch
-- **Dependencies:** Varies by distro
+- **Build on:** Linux x64
+- **Electron portable:** extract the tar.gz and run the `CodeNomad` executable
+- **Tauri deb:** built and installation-tested on Ubuntu 24.04; older distributions are not yet guaranteed
 
 ## Troubleshooting
 
@@ -136,13 +138,7 @@ xcode-select --install
 
 ### Build fails on Linux
 
-```bash
-# Install dependencies (Debian/Ubuntu)
-sudo apt-get install -y rpm
-
-# Install dependencies (Fedora)
-sudo dnf install -y rpm-build
-```
+Install the Electron and Tauri build dependencies documented by their upstream projects. Release builds currently target Linux x64 and produce an Electron portable archive plus a Tauri Debian package.
 
 ### "electron-builder not found"
 

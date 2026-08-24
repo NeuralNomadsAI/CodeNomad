@@ -1,6 +1,11 @@
 import { createEffect, createSignal, on, onCleanup, onMount, type Accessor } from "solid-js"
 import { addToHistory, getHistory } from "../../stores/message-history"
-import { clearSessionDraftPrompt, getSessionDraftPrompt, setSessionDraftPrompt } from "../../stores/sessions"
+import {
+  clearSessionDraftPrompt,
+  getSessionDraftPrompt,
+  onSessionDraftHydrated,
+  setSessionDraftPrompt,
+} from "../../stores/sessions"
 import { getLogger } from "../../lib/logger"
 
 const log = getLogger("actions")
@@ -71,6 +76,18 @@ export function usePromptState(options: PromptStateOptions): PromptState {
     setHistoryDraft(null)
   }
 
+  const stopListeningForDraftHydration = onSessionDraftHydrated((instanceId, sessionId, draft) => {
+    if (instanceId !== options.instanceId() || sessionId !== options.sessionId()) return
+    if (historyIndex() !== -1) {
+      setHistoryDraft(draft)
+      return
+    }
+    setPromptInternal(draft)
+    setDraftLoadedNonce((prev) => prev + 1)
+    options.onSessionDraftLoaded?.(draft)
+  })
+  onCleanup(stopListeningForDraftHydration)
+
   createEffect(
     on(
       () => `${options.instanceId()}:${options.sessionId()}`,
@@ -80,13 +97,14 @@ export function usePromptState(options: PromptStateOptions): PromptState {
 
         onCleanup(() => {
           // Persist the previous session's draft when switching sessions.
-          setSessionDraftPrompt(instanceId, sessionId, prompt())
+          if (prompt() !== getSessionDraftPrompt(instanceId, sessionId)) {
+            setSessionDraftPrompt(instanceId, sessionId, prompt())
+          }
         })
 
         const storedPrompt = getSessionDraftPrompt(instanceId, sessionId)
 
         setPromptInternal(storedPrompt)
-        setSessionDraftPrompt(instanceId, sessionId, storedPrompt)
 
         resetHistoryNavigation()
 

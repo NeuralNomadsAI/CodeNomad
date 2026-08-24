@@ -1,4 +1,5 @@
 import type { Attachment, FileSource, TextSource } from "../types/attachment"
+import { createAttachmentPlaceholderRegex } from "./attachment-placeholders"
 
 export type PromptDisplaySegmentKind = "inline" | "pasted"
 
@@ -21,15 +22,12 @@ export interface PreparedPromptDisplayText {
   displayMetadata?: PromptDisplayMetadata
 }
 
-const PASTED_PLACEHOLDER_REGEX = /\[\s*pasted\s*#\s*(\d+)\s*\]/gi
-
 function normalizeLineEndings(text: string): string {
   return text.replace(/\r\n?/g, "\n")
 }
 
 function hasPastedPlaceholders(text: string): boolean {
-  PASTED_PLACEHOLDER_REGEX.lastIndex = 0
-  return PASTED_PLACEHOLDER_REGEX.test(text)
+  return createAttachmentPlaceholderRegex("pasted").test(text)
 }
 
 function pushInlineSegment(segments: PromptDisplaySegment[], text: string): void {
@@ -120,7 +118,7 @@ export function resolvePastedPlaceholders(prompt: string, attachments: Attachmen
     return result
   }
 
-  return result.replace(PASTED_PLACEHOLDER_REGEX, (fullMatch, counter: string) => {
+  return result.replace(createAttachmentPlaceholderRegex("pasted"), (fullMatch, counter: string) => {
     const replacement = lookup.get(counter)
     return typeof replacement === "string" ? replacement : fullMatch
   })
@@ -137,14 +135,12 @@ export function preparePromptDisplayText(prompt: string, attachments: Attachment
     return { promptToSend: resolvedBase }
   }
 
-  PASTED_PLACEHOLDER_REGEX.lastIndex = 0
-
   const segments: PromptDisplaySegment[] = []
   let lastIndex = 0
   let foundResolvablePlaceholder = false
   let failed = false
 
-  for (const match of resolvedBase.matchAll(PASTED_PLACEHOLDER_REGEX)) {
+  for (const match of resolvedBase.matchAll(createAttachmentPlaceholderRegex("pasted"))) {
     const start = match.index ?? 0
     const counter = match[1]
     const replacement = lookup.get(counter)

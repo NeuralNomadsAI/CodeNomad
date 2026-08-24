@@ -1,12 +1,13 @@
 export const appMessages = {
   "app.launchError.title": "לא ניתן להפעיל את OpenCode",
-  "app.launchError.description": "לא הצלחנו להפעיל את קובץ ה-OpenCode שנבחר. בדוק את פלט השגיאה למטה או בחר קובץ בינארי אחר מהגדרות OpenCode.",
+  "app.launchError.description": "OpenCode לא הצליח להפעיל את סביבת העבודה הזו. בדוק את פלט השגיאה למטה או את הגדרות OpenCode.",
   "app.launchError.binaryPathLabel": "נתיב הקובץ הבינארי",
   "app.launchError.errorOutputLabel": "פלט שגיאה",
   "app.launchError.openAdvancedSettings": "פתח הגדרות OpenCode",
   "app.launchError.close": "סגור",
   "app.launchError.closeTitle": "סגור (Esc)",
   "app.launchError.fallbackMessage": "הפעלת סביבת העבודה נכשלה",
+  "app.launchError.invalidConfig": "תצורת OpenCode אינה תקינה",
 
   "app.stopInstance.confirmMessage": "לעצור את מופע OpenCode? פעולה זו תעצור את השרת.",
   "app.stopInstance.title": "עצור מופע",

@@ -226,7 +226,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
 
               <button
                 class="new-tab-button"
-                onClick={() => openSettings("appearance")}
+                onClick={() => openSettings("general")}
                 title={t("settings.open.title")}
                 aria-label={t("settings.open.ariaLabel")}
               >

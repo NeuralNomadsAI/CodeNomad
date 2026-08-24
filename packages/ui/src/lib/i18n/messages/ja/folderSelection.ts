@@ -17,10 +17,8 @@ export const folderSelectionMessages = {
   "folderSelection.recent.rename": "ワークスペース名を変更",
   "folderSelection.recent.remove": "履歴から削除",
   "folderSelection.recent.openBadge": "開いています",
-  "folderSelection.recent.alreadyOpenTitle": "プロジェクトはすでに開いています",
-  "folderSelection.recent.alreadyOpenMessage": "このフォルダの開き方を選択してください。",
+  "folderSelection.recent.openNewInstance": "新しいインスタンスを開く",
   "folderSelection.recent.switchToOpenProject": "開いているプロジェクトに切り替え",
-  "folderSelection.recent.openAnotherInstance": "別のインスタンスを開く",
 
   "folderSelection.browse.title": "フォルダを参照",
   "folderSelection.browse.subtitle": "コンピュータ上の任意のフォルダを選択",

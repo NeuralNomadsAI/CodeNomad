@@ -1,70 +1,79 @@
-import {
-  Show,
-  Suspense,
-  createEffect,
-  createMemo,
-  createSignal,
-  lazy,
-  onCleanup,
-  type Accessor,
-  type Component,
-} from "solid-js"
+import { For, Show, Suspense, createEffect, createMemo, createSignal, createUniqueId, type Accessor, type Component } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk/v2"
-import type { FileContent, FileNode } from "@opencode-ai/sdk/v2/client"
+import {
+  DragDropProvider,
+  DragDropSensors,
+  SortableProvider,
+  closestCenter,
+  createSortable,
+  type DragEvent as SolidDndDragEvent,
+} from "@thisbeyond/solid-dnd"
 import IconButton from "@suid/material/IconButton"
 import MenuOpenIcon from "@suid/icons-material/MenuOpen"
 import PushPinIcon from "@suid/icons-material/PushPin"
 import PushPinOutlinedIcon from "@suid/icons-material/PushPinOutlined"
+import { Settings2 } from "lucide-solid"
 
 import type { Instance } from "../../../../types/instance"
 import type { BackgroundProcess } from "../../../../../../server/src/api-types"
 import type { Session } from "../../../../types/session"
 import type { PromptInputApi } from "../../../prompt-input/types"
 import type { DrawerViewState } from "../types"
-import type { DiffContextMode, DiffViewMode, DiffWordWrapMode, RightPanelTab } from "./types"
+import type { RightPanelTab } from "./types"
 
+import { readClientLayoutValue, writeClientLayoutValue } from "../../../../stores/client-state"
+import { RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY, RIGHT_PANEL_TAB_STORAGE_KEY, readStoredRightPanelTab } from "../storage"
 import {
-  getDefaultWorktreeSlug,
-  getGitRepoStatus,
-  getWorktreeSlugForSession,
-  getWorktrees,
-} from "../../../../stores/worktrees"
-import { getRootClient } from "../../../../stores/opencode-client"
-import { getOpenCodeWorkspaceIdForWorktree } from "../../../../stores/opencode-workspaces"
-import { requestData } from "../../../../lib/opencode-api"
-import { serverApi } from "../../../../lib/api-client"
-import { showConfirmDialog } from "../../../../stores/alerts"
-import { showToastNotification } from "../../../../lib/notifications"
-import { useGlobalPointerDrag } from "../useGlobalPointerDrag"
-import { useGitChanges } from "./useGitChanges"
-import {
-  RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY,
-  RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY,
-  RIGHT_PANEL_CHANGES_DIFF_WORD_WRAP_KEY,
-  RIGHT_PANEL_FILES_WORD_WRAP_KEY,
-  RIGHT_PANEL_FILES_LIST_OPEN_NONPHONE_KEY,
-  RIGHT_PANEL_FILES_LIST_OPEN_PHONE_KEY,
-  RIGHT_PANEL_FILES_SPLIT_WIDTH_KEY,
-  RIGHT_PANEL_GIT_CHANGES_LIST_OPEN_NONPHONE_KEY,
-  RIGHT_PANEL_GIT_CHANGES_LIST_OPEN_PHONE_KEY,
-  RIGHT_PANEL_GIT_CHANGES_STAGED_OPEN_NONPHONE_KEY,
-  RIGHT_PANEL_GIT_CHANGES_STAGED_OPEN_PHONE_KEY,
-  RIGHT_PANEL_GIT_CHANGES_SPLIT_WIDTH_KEY,
-  RIGHT_PANEL_GIT_CHANGES_UNSTAGED_OPEN_NONPHONE_KEY,
-  RIGHT_PANEL_GIT_CHANGES_UNSTAGED_OPEN_PHONE_KEY,
-  RIGHT_PANEL_TAB_STORAGE_KEY,
-  readStoredBool,
-  readStoredEnum,
-  readStoredPanelWidth,
-  readStoredRightPanelTab,
-} from "../storage"
-
-const LazyGitChangesTab = lazy(() => import("./tabs/GitChangesTab"))
-const LazyFilesTab = lazy(() => import("./tabs/FilesTab"))
-const LazyStatusTab = lazy(() => import("./tabs/StatusTab"))
+  applyRightPanelItemCustomization,
+  collectRightPanelItems,
+  parseRightPanelCustomization,
+  setRightPanelItemHidden,
+  type RightPanelCustomization,
+  type RightPanelItem,
+  type RightPanelSectionModule,
+  type RightPanelTabModule,
+} from "./registry"
+import { createCoreRightPanelRuntime } from "./core-runtime"
+import { loadRightPanelPluginManifests, type RightPanelPluginLoadError } from "./plugin-manifest"
+import { RIGHT_PANEL_PLUGIN_MANIFESTS } from "./plugins"
+import { CORE_STATUS_SECTION_ITEMS } from "./tabs/status-sections"
 
 function RightPanelTabFallback() {
   return <div class="flex-1 min-h-0" />
+}
+
+interface SortableRightPanelTabProps {
+  tab: RightPanelTabModule
+  active: boolean
+  tabId: string
+  panelId: string
+  label: string
+  dragTitle: string
+  tabIndex: number
+  onSelect: () => void
+  onKeyDown: (event: KeyboardEvent) => void
+}
+
+const SortableRightPanelTab: Component<SortableRightPanelTabProps> = (props) => {
+  const sortable = createSortable(props.tab.id)
+  return (
+    <div ref={sortable} class={`right-panel-tab-draggable ${sortable.isActiveDraggable ? "right-panel-tab-draggable-active" : ""}`}>
+      <button
+        type="button"
+        role="tab"
+        id={props.tabId}
+        class={`right-panel-tab ${props.active ? "right-panel-tab-active" : "right-panel-tab-inactive"}`}
+        aria-selected={props.active}
+        aria-controls={props.panelId}
+        tabIndex={props.tabIndex}
+        title={props.dragTitle}
+        onClick={props.onSelect}
+        onKeyDown={props.onKeyDown}
+      >
+        <span class="tab-label">{props.label}</span>
+      </button>
+    </div>
+  )
 }
 
 interface RightPanelProps {
@@ -97,569 +106,144 @@ interface RightPanelProps {
 
 const RightPanel: Component<RightPanelProps> = (props) => {
   const [rightPanelTab, setRightPanelTab] = createSignal<RightPanelTab>(readStoredRightPanelTab("git-changes"))
-  const defaultStatusSectionIds = ["yolo-mode", "plan", "background-processes", "mcp", "lsp", "plugins"]
+  const defaultStatusSectionIds = CORE_STATUS_SECTION_ITEMS.map((section) => section.id)
   const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>(defaultStatusSectionIds)
-
-  const [browserPath, setBrowserPath] = createSignal(".")
-  const [browserEntries, setBrowserEntries] = createSignal<FileNode[] | null>(null)
-  const [browserLoading, setBrowserLoading] = createSignal(false)
-  const [browserError, setBrowserError] = createSignal<string | null>(null)
-  const [browserSelectedPath, setBrowserSelectedPath] = createSignal<string | null>(null)
-  const [browserSelectedContent, setBrowserSelectedContent] = createSignal<string | null>(null)
-  const [browserSelectedLoading, setBrowserSelectedLoading] = createSignal(false)
-  const [browserSelectedError, setBrowserSelectedError] = createSignal<string | null>(null)
-  const [browserSelectedDirty, setBrowserSelectedDirty] = createSignal(false)
-  const [browserSelectedSaving, setBrowserSelectedSaving] = createSignal(false)
-  const [browserSelectedOriginalContent, setBrowserSelectedOriginalContent] = createSignal<string | null>(null)
-
-  const [diffViewMode, setDiffViewMode] = createSignal<DiffViewMode>(
-    readStoredEnum(RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY, ["split", "unified"] as const) ?? "unified",
+  const [rightPanelCustomizationOpen, setRightPanelCustomizationOpen] = createSignal(false)
+  const [rightPanelCustomization, setRightPanelCustomization] = createSignal<RightPanelCustomization>(
+    parseRightPanelCustomization(readClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY)),
   )
-  const [diffContextMode, setDiffContextMode] = createSignal<DiffContextMode>(
-    readStoredEnum(RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY, ["expanded", "collapsed"] as const) ?? "collapsed",
-  )
-  const [diffWordWrapMode, setDiffWordWrapMode] = createSignal<DiffWordWrapMode>(
-    readStoredEnum(RIGHT_PANEL_CHANGES_DIFF_WORD_WRAP_KEY, ["on", "off"] as const) ?? "on",
-  )
-  const [filesWordWrapMode, setFilesWordWrapMode] = createSignal<DiffWordWrapMode>(
-    readStoredEnum(RIGHT_PANEL_FILES_WORD_WRAP_KEY, ["on", "off"] as const) ?? "off",
-  )
-
-  const [filesSplitWidth, setFilesSplitWidth] = createSignal(320)
-  const [gitChangesSplitWidth, setGitChangesSplitWidth] = createSignal(320)
-  const [activeSplitResize, setActiveSplitResize] = createSignal<"git-changes" | "files" | null>(null)
-  const [splitResizeStartX, setSplitResizeStartX] = createSignal(0)
-  const [splitResizeStartWidth, setSplitResizeStartWidth] = createSignal(0)
-
-  const [filesListOpen, setFilesListOpen] = createSignal(true)
-  const [filesListTouched, setFilesListTouched] = createSignal(false)
-  const [gitChangesListOpen, setGitChangesListOpen] = createSignal(true)
-  const [gitChangesListTouched, setGitChangesListTouched] = createSignal(false)
-  const [gitStagedOpen, setGitStagedOpen] = createSignal(true)
-  const [gitUnstagedOpen, setGitUnstagedOpen] = createSignal(true)
-
-  const listLayoutKey = createMemo(() => (props.isPhoneLayout() ? "phone" : "nonphone"))
-
-  const listOpenStorageKey = (tab: "git-changes" | "files") => {
-    const layout = listLayoutKey()
-    if (tab === "git-changes") {
-      return layout === "phone"
-        ? RIGHT_PANEL_GIT_CHANGES_LIST_OPEN_PHONE_KEY
-        : RIGHT_PANEL_GIT_CHANGES_LIST_OPEN_NONPHONE_KEY
-    }
-    return layout === "phone" ? RIGHT_PANEL_FILES_LIST_OPEN_PHONE_KEY : RIGHT_PANEL_FILES_LIST_OPEN_NONPHONE_KEY
-  }
-
-  const gitSectionStorageKey = (section: "staged" | "unstaged") => {
-    const layout = listLayoutKey()
-    if (section === "staged") {
-      return layout === "phone"
-        ? RIGHT_PANEL_GIT_CHANGES_STAGED_OPEN_PHONE_KEY
-        : RIGHT_PANEL_GIT_CHANGES_STAGED_OPEN_NONPHONE_KEY
-    }
-    return layout === "phone"
-      ? RIGHT_PANEL_GIT_CHANGES_UNSTAGED_OPEN_PHONE_KEY
-      : RIGHT_PANEL_GIT_CHANGES_UNSTAGED_OPEN_NONPHONE_KEY
-  }
-
-  const persistListOpen = (tab: "git-changes" | "files", value: boolean) => {
-    if (typeof window === "undefined") return
-    window.localStorage.setItem(listOpenStorageKey(tab), value ? "true" : "false")
-  }
-
-  const persistGitSectionOpen = (section: "staged" | "unstaged", value: boolean) => {
-    if (typeof window === "undefined") return
-    window.localStorage.setItem(gitSectionStorageKey(section), value ? "true" : "false")
-  }
+  const tabGroupId = `right-panel-${createUniqueId()}`
+  const tabId = (id: string) => `${tabGroupId}-tab-${id}`
+  const tabPanelId = (id: string) => `${tabGroupId}-panel-${id}`
 
   createEffect(() => {
-    // Refresh persisted visibility when layout changes (phone vs non-phone).
-    const layout = listLayoutKey()
-    layout
-
-    const filesPersisted = readStoredBool(listOpenStorageKey("files"))
-    if (filesPersisted !== null) {
-      setFilesListOpen(filesPersisted)
-      setFilesListTouched(true)
-    } else {
-      setFilesListOpen(true)
-      setFilesListTouched(false)
-    }
-
-    const gitPersisted = readStoredBool(listOpenStorageKey("git-changes"))
-    if (gitPersisted !== null) {
-      setGitChangesListOpen(gitPersisted)
-      setGitChangesListTouched(true)
-    } else {
-      setGitChangesListOpen(true)
-      setGitChangesListTouched(false)
-    }
-
-    const stagedPersisted = readStoredBool(gitSectionStorageKey("staged"))
-    setGitStagedOpen(stagedPersisted ?? true)
-
-    const unstagedPersisted = readStoredBool(gitSectionStorageKey("unstaged"))
-    setGitUnstagedOpen(unstagedPersisted ?? true)
+    writeClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY, rightPanelTab())
   })
-
-  createEffect(() => {
-    // Default behavior: when nothing is selected, keep the file list open.
-    // Once the user explicitly toggles it, we stop auto-opening.
-    if (rightPanelTab() !== "files") return
-    if (filesListTouched()) return
-    if (!browserSelectedPath()) {
-      setFilesListOpen(true)
-    }
-  })
-
-  createEffect(() => {
-    if (typeof window === "undefined") return
-    window.localStorage.setItem(RIGHT_PANEL_TAB_STORAGE_KEY, rightPanelTab())
-  })
-
-  createEffect(() => {
-    if (typeof window === "undefined") return
-    window.localStorage.setItem(RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY, diffViewMode())
-  })
-
-  createEffect(() => {
-    if (typeof window === "undefined") return
-    window.localStorage.setItem(RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY, diffContextMode())
-  })
-
-  createEffect(() => {
-    if (typeof window === "undefined") return
-    window.localStorage.setItem(RIGHT_PANEL_CHANGES_DIFF_WORD_WRAP_KEY, diffWordWrapMode())
-  })
-
-  createEffect(() => {
-    if (typeof window === "undefined") return
-    window.localStorage.setItem(RIGHT_PANEL_FILES_WORD_WRAP_KEY, filesWordWrapMode())
-  })
-
-  const clampSplitWidth = (value: number) => {
-    const min = 200
-    const maxByDrawer = Math.max(min, Math.floor(props.rightDrawerWidth() * 0.65))
-    const max = Math.min(560, maxByDrawer)
-    return Math.min(max, Math.max(min, Math.floor(value)))
-  }
-
-  const [splitWidthsInitialized, setSplitWidthsInitialized] = createSignal(false)
-
-  createEffect(() => {
-    if (splitWidthsInitialized()) return
-    if (!props.rightDrawerWidthInitialized()) return
-    setSplitWidthsInitialized(true)
-    setFilesSplitWidth(clampSplitWidth(readStoredPanelWidth(RIGHT_PANEL_FILES_SPLIT_WIDTH_KEY, 320)))
-    setGitChangesSplitWidth(clampSplitWidth(readStoredPanelWidth(RIGHT_PANEL_GIT_CHANGES_SPLIT_WIDTH_KEY, 320)))
-  })
-
-  const persistSplitWidth = (mode: "git-changes" | "files", width: number) => {
-    if (typeof window === "undefined") return
-    const key = mode === "git-changes" ? RIGHT_PANEL_GIT_CHANGES_SPLIT_WIDTH_KEY : RIGHT_PANEL_FILES_SPLIT_WIDTH_KEY
-    window.localStorage.setItem(key, String(width))
-  }
-
-  function stopSplitResize() {
-    setActiveSplitResize(null)
-    if (typeof document === "undefined") return
-    splitPointerDrag.stop()
-  }
-
-  function splitMouseMove(event: MouseEvent) {
-    const mode = activeSplitResize()
-    if (!mode) return
-    event.preventDefault()
-    const isRtl = typeof document !== "undefined" && document.documentElement.dir === "rtl"
-    const delta = (event.clientX - splitResizeStartX()) * (isRtl ? -1 : 1)
-    const next = clampSplitWidth(splitResizeStartWidth() + delta)
-    if (mode === "git-changes") setGitChangesSplitWidth(next)
-    else setFilesSplitWidth(next)
-  }
-
-  function splitMouseUp() {
-    const mode = activeSplitResize()
-    if (mode) {
-      const width = mode === "git-changes" ? gitChangesSplitWidth() : filesSplitWidth()
-      persistSplitWidth(mode, width)
-    }
-    stopSplitResize()
-  }
-
-  function splitTouchMove(event: TouchEvent) {
-    const mode = activeSplitResize()
-    if (!mode) return
-    const touch = event.touches[0]
-    if (!touch) return
-    event.preventDefault()
-    const isRtl = typeof document !== "undefined" && document.documentElement.dir === "rtl"
-    const delta = (touch.clientX - splitResizeStartX()) * (isRtl ? -1 : 1)
-    const next = clampSplitWidth(splitResizeStartWidth() + delta)
-    if (mode === "git-changes") setGitChangesSplitWidth(next)
-    else setFilesSplitWidth(next)
-  }
-
-  function splitTouchEnd() {
-    const mode = activeSplitResize()
-    if (mode) {
-      const width = mode === "git-changes" ? gitChangesSplitWidth() : filesSplitWidth()
-      persistSplitWidth(mode, width)
-    }
-    stopSplitResize()
-  }
-
-  const splitPointerDrag = useGlobalPointerDrag({
-    onMouseMove: splitMouseMove,
-    onMouseUp: splitMouseUp,
-    onTouchMove: splitTouchMove,
-    onTouchEnd: splitTouchEnd,
-  })
-
-  const startSplitResize = (mode: "git-changes" | "files", clientX: number) => {
-    if (typeof document === "undefined") return
-    setActiveSplitResize(mode)
-    setSplitResizeStartX(clientX)
-    setSplitResizeStartWidth(mode === "git-changes" ? gitChangesSplitWidth() : filesSplitWidth())
-    splitPointerDrag.start()
-  }
-
-  const handleSplitResizeMouseDown = (mode: "git-changes" | "files") => (event: MouseEvent) => {
-    event.preventDefault()
-    startSplitResize(mode, event.clientX)
-  }
-
-  const handleSplitResizeTouchStart = (mode: "git-changes" | "files") => (event: TouchEvent) => {
-    const touch = event.touches[0]
-    if (!touch) return
-    event.preventDefault()
-    startSplitResize(mode, touch.clientX)
-  }
-
-  onCleanup(() => {
-    stopSplitResize()
-  })
-
-  const worktreeSlugForViewer = createMemo(() => {
-    const sessionId = props.activeSessionId()
-    if (sessionId && sessionId !== "info") {
-      return getWorktreeSlugForSession(props.instanceId, sessionId)
-    }
-    return getDefaultWorktreeSlug(props.instanceId)
-  })
-
-  const gitChangesWorktreeSlug = createMemo(() => {
-    if (getGitRepoStatus(props.instanceId) === false) return null
-    const slug = worktreeSlugForViewer().trim()
-    return slug ? slug : null
-  })
-
-  const gitChangesWorktree = createMemo(() => {
-    const slug = gitChangesWorktreeSlug()
-    if (!slug) return null
-    return getWorktrees(props.instanceId).find((worktree) => worktree.slug === slug) ?? null
-  })
-
-  const gitChangesBranchLabel = createMemo(() => {
-    const branch = gitChangesWorktree()?.branch?.trim()
-    return branch || null
-  })
-
-  const browserClient = createMemo(() => getRootClient(props.instanceId))
-  const fileWorkspacePayload = async () => {
-    const workspace = await getOpenCodeWorkspaceIdForWorktree(props.instanceId, worktreeSlugForViewer())
-    return workspace ? { workspace } : {}
-  }
-
-  const {
-    gitStatusEntries,
-    gitStatusLoading,
-    gitStatusError,
-    gitSelectedItemId,
-    gitBulkSelectedItemIds,
-    gitSelectedLoading,
-    gitSelectedError,
-    gitSelectedBefore,
-    gitSelectedAfter,
-    gitCommitMessage,
-    gitCommitSubmitting,
-    gitMostChangedItemId,
-    setGitCommitMessage,
-    handleGitRowClick,
-    refreshGitStatus,
-    insertGitChangeContext,
-    submitGitCommit,
-    stageGitFile,
-    unstageGitFile,
-  } = useGitChanges({
-    t: props.t,
-    instanceId: props.instanceId,
-    rightPanelTab,
-    worktreeSlug: worktreeSlugForViewer,
-    isPhoneLayout: props.isPhoneLayout,
-    promptInputApi: props.promptInputApi,
-    closeGitList: () => setGitChangesListOpen(false),
-  })
-
-  createEffect(() => {
-    worktreeSlugForViewer()
-    setBrowserPath(".")
-    setBrowserEntries(null)
-    setBrowserError(null)
-    setBrowserSelectedPath(null)
-    setBrowserSelectedContent(null)
-    setBrowserSelectedError(null)
-    setBrowserSelectedLoading(false)
-  })
-
-  const normalizeBrowserPath = (input: string) => {
-    const raw = String(input || ".").trim()
-    if (!raw || raw === "./") return "."
-    const cleaned = raw.replace(/\\/g, "/").replace(/\/+$/, "")
-    return cleaned === "" ? "." : cleaned
-  }
-
-  const getParentPath = (path: string): string | null => {
-    const current = normalizeBrowserPath(path)
-    if (current === ".") return null
-    const parts = current.split("/").filter(Boolean)
-    parts.pop()
-    return parts.length ? parts.join("/") : "."
-  }
-
-  const loadBrowserEntries = async (path: string) => {
-    const normalized = normalizeBrowserPath(path)
-    setBrowserLoading(true)
-    setBrowserError(null)
-    try {
-      const nodes = await requestData<FileNode[]>(browserClient().file.list({ path: normalized, ...(await fileWorkspacePayload()) }), "file.list")
-      setBrowserPath(normalized)
-      setBrowserEntries(Array.isArray(nodes) ? nodes : [])
-    } catch (error) {
-      setBrowserError(error instanceof Error ? error.message : "Failed to load files")
-      setBrowserEntries([])
-    } finally {
-      setBrowserLoading(false)
-    }
-  }
-
-  const openBrowserFile = async (path: string) => {
-    setBrowserSelectedPath(path)
-    setBrowserSelectedLoading(true)
-    setBrowserSelectedError(null)
-    setBrowserSelectedContent(null)
-    setBrowserSelectedDirty(false)
-    setBrowserSelectedOriginalContent(null)
-
-    // Phone: treat file selection as a commit action and close the overlay.
-    if (props.isPhoneLayout()) {
-      setFilesListOpen(false)
-    }
-    try {
-      const content = await requestData<FileContent>(browserClient().file.read({ path, ...(await fileWorkspacePayload()) }), "file.read")
-      const type = (content as any)?.type
-      const encoding = (content as any)?.encoding
-      if (type && type !== "text") {
-        throw new Error("Binary file cannot be displayed")
-      }
-      if (encoding === "base64") {
-        throw new Error("Binary file cannot be displayed")
-      }
-      const text = (content as any)?.content
-      if (typeof text !== "string") {
-        throw new Error("Unsupported file type")
-      }
-      setBrowserSelectedContent(text)
-      setBrowserSelectedOriginalContent(text) // Track original content for conflict detection
-    } catch (error) {
-      setBrowserSelectedError(error instanceof Error ? error.message : "Failed to read file")
-    } finally {
-      setBrowserSelectedLoading(false)
-    }
-  }
-
-  const saveBrowserFile = async (content: string): Promise<boolean> => {
-    const path = browserSelectedPath()
-    if (!path) return false
-
-    // Check for conflict: agent edited file while user was editing
-    const originalContent = browserSelectedOriginalContent()
-    if (originalContent !== null) {
-      try {
-        const currentDiskContent = await requestData<FileContent>(
-          browserClient().file.read({ path, ...(await fileWorkspacePayload()) }),
-          "file.read",
-        )
-        const diskContent = (currentDiskContent as any)?.content
-
-        // If disk content differs from what we originally loaded (agent edit)
-        // AND differs from user's current edits, we have a conflict
-        if (diskContent !== originalContent && diskContent !== content) {
-          const confirmed = await showConfirmDialog(
-            props.t("instanceShell.rightPanel.actions.conflict.message", { path }),
-            {
-              variant: "warning",
-              confirmLabel: props.t("instanceShell.rightPanel.actions.conflict.confirmLabel"),
-              cancelLabel: props.t("instanceShell.rightPanel.actions.conflict.cancelLabel"),
-              dismissible: false,
-            },
-          )
-          if (!confirmed) {
-            return false
-          }
-          // User chose to overwrite, proceed with save
-        }
-      } catch {
-        // If we can't check for conflict, proceed with save
-      }
-    }
-
-    setBrowserSelectedSaving(true)
-    try {
-      await serverApi.writeWorkspaceFile(props.instanceId, path, content, { worktree: worktreeSlugForViewer() })
-      setBrowserSelectedContent(content)
-      setBrowserSelectedOriginalContent(content) // Update original to match saved
-      setBrowserSelectedDirty(false)
-      showToastNotification({
-        message: props.t("instanceShell.rightPanel.toast.saveSuccess"),
-        variant: "success",
-      })
-      return true
-    } catch (error) {
-      setBrowserSelectedError(error instanceof Error ? error.message : "Failed to save file")
-      showToastNotification({
-        message: props.t("instanceShell.rightPanel.toast.saveError"),
-        variant: "error",
-      })
-      return false
-    } finally {
-      setBrowserSelectedSaving(false)
-    }
-  }
-
-  const handleBrowserFileChange = (content: string) => {
-    setBrowserSelectedContent(content)
-    setBrowserSelectedDirty(true)
-  }
-
-  const handleOpenBrowserFileRequest = async (path: string) => {
-    if (browserSelectedDirty()) {
-      const confirmed = await showConfirmDialog(
-        props.t("instanceShell.rightPanel.actions.saveConfirm.message", { path: browserSelectedPath() || "" }),
-        {
-          variant: "warning",
-          confirmLabel: props.t("instanceShell.rightPanel.actions.saveConfirm.confirmLabel"),
-          cancelLabel: props.t("instanceShell.rightPanel.actions.saveConfirm.cancelLabel"),
-          dismissible: false,
-        },
-      )
-      if (confirmed) {
-        const saveSuccess = await saveBrowserFile(browserSelectedContent() || "")
-        if (!saveSuccess) {
-          // Save failed - stay on current file, error toast already shown
-          return
-        }
-      } else {
-        // User chose not to save - clear dirty state and discard edits
-        setBrowserSelectedDirty(false)
-      }
-    }
-    await openBrowserFile(path)
-  }
-
-  createEffect(() => {
-    if (rightPanelTab() !== "files") return
-    if (browserLoading()) return
-    if (browserEntries() !== null) return
-    void loadBrowserEntries(browserPath())
-  })
-
-  createEffect(() => {
-    if (rightPanelTab() === "files") return
-    setBrowserSelectedContent(null)
-    setBrowserSelectedLoading(false)
-    setBrowserSelectedError(null)
-    setBrowserSelectedDirty(false)
-  })
-
-  const toggleFilesList = () => {
-    setFilesListTouched(true)
-    setFilesListOpen((current) => {
-      const next = !current
-      persistListOpen("files", next)
-      return next
-    })
-  }
-
-  const toggleGitList = () => {
-    setGitChangesListTouched(true)
-    setGitChangesListOpen((current) => {
-      const next = !current
-      persistListOpen("git-changes", next)
-      return next
-    })
-  }
-
-  const refreshFilesTab = async () => {
-    // Prompt for confirmation if file has unsaved changes
-    if (browserSelectedDirty()) {
-      const confirmed = await showConfirmDialog(
-        props.t("instanceShell.rightPanel.actions.refreshDirty.message"),
-        {
-          variant: "warning",
-          confirmLabel: props.t("instanceShell.rightPanel.actions.refreshDirty.confirmLabel"),
-          cancelLabel: props.t("instanceShell.rightPanel.actions.refreshDirty.cancelLabel"),
-          dismissible: false,
-        },
-      )
-      if (!confirmed) {
-        return
-      }
-    }
-
-    void loadBrowserEntries(browserPath())
-    const selected = browserSelectedPath()
-    if (selected) {
-      // Refresh file content without altering overlay state.
-      setBrowserSelectedLoading(true)
-      setBrowserSelectedError(null)
-      try {
-        const content = await requestData<FileContent>(browserClient().file.read({ path: selected, ...(await fileWorkspacePayload()) }), "file.read")
-        const type = (content as any)?.type
-        const encoding = (content as any)?.encoding
-        if (type && type !== "text") {
-          throw new Error("Binary file cannot be displayed")
-        }
-        if (encoding === "base64") {
-          throw new Error("Binary file cannot be displayed")
-        }
-        const text = (content as any)?.content
-        if (typeof text !== "string") {
-          throw new Error("Unsupported file type")
-        }
-        setBrowserSelectedContent(text)
-        setBrowserSelectedOriginalContent(text) // Update original content after refresh
-        setBrowserSelectedDirty(false) // Clear dirty after refresh
-      } catch (error) {
-        setBrowserSelectedError(error instanceof Error ? error.message : "Failed to read file")
-      } finally {
-        setBrowserSelectedLoading(false)
-      }
-    }
-  }
-
-  const browserParentPath = createMemo(() => getParentPath(browserPath()))
-  const browserScopeKey = createMemo(() => `${props.instanceId}:${worktreeSlugForViewer()}`)
-  const gitScopeKey = createMemo(() => `${props.instanceId}:git:${worktreeSlugForViewer()}`)
 
   const handleAccordionChange = (values: string[]) => {
     setRightPanelExpandedItems(values)
   }
 
-  const tabClass = (tab: RightPanelTab) =>
-    `right-panel-tab ${rightPanelTab() === tab ? "right-panel-tab-active" : "right-panel-tab-inactive"}`
+  const updateRightPanelCustomization = (updater: (current: RightPanelCustomization) => RightPanelCustomization) => {
+    const next = updater(rightPanelCustomization())
+    setRightPanelCustomization(next)
+    writeClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY, JSON.stringify(next))
+  }
+
+  const moveTab = (sourceId: string, targetId: string) => {
+    if (!sourceId || sourceId === targetId) return
+    const visibleIds = visibleRightPanelTabs().map((tab) => tab.id)
+    const sourceIndex = visibleIds.indexOf(sourceId)
+    const targetIndex = visibleIds.indexOf(targetId)
+    if (sourceIndex === -1 || targetIndex === -1) return
+    const nextVisibleIds = [...visibleIds]
+    const [moved] = nextVisibleIds.splice(sourceIndex, 1)
+    nextVisibleIds.splice(targetIndex, 0, moved)
+    const allIds = allRightPanelTabs().map((tab) => tab.id)
+    updateRightPanelCustomization((current) => ({
+      ...current,
+      tabOrder: [...nextVisibleIds, ...allIds.filter((id) => !nextVisibleIds.includes(id))],
+    }))
+  }
+
+  const handleTabDragEnd = ({ draggable, droppable }: SolidDndDragEvent) => {
+    if (!droppable) return
+    moveTab(String(draggable.id), String(droppable.id))
+  }
+
+  const openRightPanelTab = (tabId: string) => {
+    updateRightPanelCustomization((current) => ({
+      ...current,
+      hiddenTabIds: current.hiddenTabIds.filter((id) => id !== tabId),
+    }))
+    setRightPanelTab(tabId)
+  }
+
+  const handleTabKeyDown = (event: KeyboardEvent, currentTabId: string) => {
+    const tabs = visibleRightPanelTabs()
+    const index = tabs.findIndex((tab) => tab.id === currentTabId)
+    if (index === -1) return
+
+    let target: RightPanelTabModule | undefined
+    if (event.key === "ArrowLeft") target = tabs[(index - 1 + tabs.length) % tabs.length]
+    if (event.key === "ArrowRight") target = tabs[(index + 1) % tabs.length]
+    if (event.key === "Home") target = tabs[0]
+    if (event.key === "End") target = tabs[tabs.length - 1]
+    if (!target) return
+
+    event.preventDefault()
+    setRightPanelTab(target.id)
+    queueMicrotask(() => document.getElementById(tabId(target.id))?.focus())
+  }
+
+  const rightPanelPluginRuntime = loadRightPanelPluginManifests(
+    [
+      createCoreRightPanelRuntime({
+        t: props.t,
+        instanceId: props.instanceId,
+        instance: props.instance,
+        activeSessionId: props.activeSessionId,
+        activeSession: props.activeSession,
+        latestTodoState: props.latestTodoState,
+        backgroundProcessList: props.backgroundProcessList,
+        onOpenBackgroundOutput: props.onOpenBackgroundOutput,
+        onStopBackgroundProcess: props.onStopBackgroundProcess,
+        onTerminateBackgroundProcess: props.onTerminateBackgroundProcess,
+        isPhoneLayout: props.isPhoneLayout,
+        rightDrawerWidth: props.rightDrawerWidth,
+        rightDrawerWidthInitialized: props.rightDrawerWidthInitialized,
+        promptInputApi: props.promptInputApi,
+        rightPanelTab,
+        expandedItems: rightPanelExpandedItems,
+        onExpandedItemsChange: handleAccordionChange,
+        customization: rightPanelCustomization,
+        onCustomizationChange: updateRightPanelCustomization,
+        extraStatusSections: () => extraStatusSections(),
+      }),
+      ...RIGHT_PANEL_PLUGIN_MANIFESTS,
+    ],
+    {
+      instanceId: props.instanceId,
+      t: props.t,
+      activeSessionId: props.activeSessionId,
+      isTabActive: (tabId) => rightPanelTab() === tabId,
+      openTab: openRightPanelTab,
+      reportAttention: () => undefined,
+    },
+  )
+
+  const rightPanelModules = createMemo(() => rightPanelPluginRuntime.modules)
+  const rightPanelPluginErrors = createMemo(() => rightPanelPluginRuntime.errors)
+  const allRightPanelTabs = createMemo(() => collectRightPanelItems<RightPanelTabModule>(rightPanelModules(), "tabs"))
+  const visibleRightPanelTabs = createMemo(() =>
+    applyRightPanelItemCustomization(
+      allRightPanelTabs(),
+      rightPanelCustomization().tabOrder,
+      rightPanelCustomization().hiddenTabIds,
+    ),
+  )
+  const orderedRightPanelTabs = createMemo(() => applyRightPanelItemCustomization(allRightPanelTabs(), rightPanelCustomization().tabOrder, []))
+  const extraStatusSections = createMemo(() => collectRightPanelItems<RightPanelSectionModule>(rightPanelModules(), "statusSections"))
+  const allStatusSections = createMemo<RightPanelItem[]>(() => [...CORE_STATUS_SECTION_ITEMS, ...extraStatusSections()])
+  const orderedStatusSections = createMemo(() => applyRightPanelItemCustomization(allStatusSections(), rightPanelCustomization().statusSectionOrder, []))
+  const visibleStatusSections = createMemo(() =>
+    applyRightPanelItemCustomization(
+      allStatusSections(),
+      rightPanelCustomization().statusSectionOrder,
+      rightPanelCustomization().hiddenStatusSectionIds,
+    ),
+  )
+  const activeRightPanelTab = createMemo(() => visibleRightPanelTabs().find((tab) => tab.id === rightPanelTab()) ?? visibleRightPanelTabs()[0])
+
+  createEffect(() => {
+    const active = activeRightPanelTab()
+    if (active && active.id !== rightPanelTab()) {
+      setRightPanelTab(active.id)
+    }
+  })
 
   return (
-    <div class="flex flex-col h-full" ref={props.setContentEl}>
+    <div class="relative flex flex-col h-full" ref={props.setContentEl}>
       <div class="right-panel-tab-bar">
         <div class="tab-container">
           <div class="tab-strip-shortcuts text-primary">
@@ -684,37 +268,41 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                 {props.rightPinned() ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
               </IconButton>
             </Show>
+            <IconButton
+              size="small"
+              color="inherit"
+              aria-label={props.t("instanceShell.rightPanel.customize.toggle")}
+              title={props.t("instanceShell.rightPanel.customize.toggle")}
+              aria-expanded={rightPanelCustomizationOpen()}
+              onClick={() => setRightPanelCustomizationOpen((open) => !open)}
+            >
+              <Settings2 class="h-4 w-4" />
+            </IconButton>
           </div>
           <div class="tab-scroll">
             <div class="tab-strip">
-              <div class="tab-strip-tabs" role="tablist" aria-label={props.t("instanceShell.rightPanel.tabs.ariaLabel")}> 
-                <button
-                  type="button"
-                  role="tab"
-                  class={tabClass("git-changes")}
-                  aria-selected={rightPanelTab() === "git-changes"}
-                  onClick={() => setRightPanelTab("git-changes")}
-                >
-                  <span class="tab-label">{props.t("instanceShell.rightPanel.tabs.gitChanges")}</span>
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  class={tabClass("files")}
-                  aria-selected={rightPanelTab() === "files"}
-                  onClick={() => setRightPanelTab("files")}
-                >
-                  <span class="tab-label">{props.t("instanceShell.rightPanel.tabs.files")}</span>
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  class={tabClass("status")}
-                  aria-selected={rightPanelTab() === "status"}
-                  onClick={() => setRightPanelTab("status")}
-                >
-                  <span class="tab-label">{props.t("instanceShell.rightPanel.tabs.status")}</span>
-                </button>
+              <div class="tab-strip-tabs" role="tablist" aria-label={props.t("instanceShell.rightPanel.tabs.ariaLabel")}>
+                <DragDropProvider collisionDetector={closestCenter} onDragEnd={handleTabDragEnd}>
+                  <DragDropSensors>
+                    <SortableProvider ids={visibleRightPanelTabs().map((tab) => tab.id)}>
+                      <For each={visibleRightPanelTabs()}>
+                        {(tab) => (
+                          <SortableRightPanelTab
+                            tab={tab}
+                            active={rightPanelTab() === tab.id}
+                            tabId={tabId(tab.id)}
+                            panelId={tabPanelId(tab.id)}
+                            label={props.t(tab.labelKey)}
+                            dragTitle={props.t("instanceShell.rightPanel.customize.dragToReorder")}
+                            tabIndex={rightPanelTab() === tab.id ? 0 : -1}
+                            onSelect={() => setRightPanelTab(tab.id)}
+                            onKeyDown={(event) => handleTabKeyDown(event, tab.id)}
+                          />
+                        )}
+                      </For>
+                    </SortableProvider>
+                  </DragDropSensors>
+                </DragDropProvider>
               </div>
 
               <div class="tab-strip-spacer" />
@@ -723,111 +311,98 @@ const RightPanel: Component<RightPanelProps> = (props) => {
         </div>
       </div>
 
+      <Show when={rightPanelCustomizationOpen()}>
+        <div class="right-panel-customization-popover" role="dialog" aria-label={props.t("instanceShell.rightPanel.customize.title")}>
+          <div class="right-panel-customization-grid">
+            <For each={orderedRightPanelTabs()}>
+              {(tab) => {
+                const label = () => props.t(tab.labelKey)
+                const visible = () => tab.alwaysVisible || !rightPanelCustomization().hiddenTabIds.includes(tab.id)
+                return (
+                  <>
+                    <div class="right-panel-customization-row">
+                      <label class="right-panel-customization-label">
+                        <input
+                          type="checkbox"
+                          checked={visible()}
+                          disabled={tab.alwaysVisible}
+                          onChange={(event) =>
+                            updateRightPanelCustomization((current) => ({
+                              ...current,
+                              hiddenTabIds: setRightPanelItemHidden(current.hiddenTabIds, tab.id, !event.currentTarget.checked),
+                            }))
+                          }
+                        />
+                        <span>{label()}</span>
+                      </label>
+                    </div>
+                    <Show when={tab.id === "status"}>
+                      <For each={orderedStatusSections()}>
+                        {(section) => {
+                          const sectionLabel = () => props.t(section.labelKey)
+                          const sectionVisible = () => !rightPanelCustomization().hiddenStatusSectionIds.includes(section.id)
+                          const disableHide = () => sectionVisible() && visibleStatusSections().length <= 1
+                          return (
+                            <div class="right-panel-customization-row right-panel-customization-row-indent">
+                              <label class="right-panel-customization-label">
+                                <input
+                                  type="checkbox"
+                                  checked={sectionVisible()}
+                                  disabled={disableHide()}
+                                  onChange={(event) =>
+                                    updateRightPanelCustomization((current) => ({
+                                      ...current,
+                                      hiddenStatusSectionIds: setRightPanelItemHidden(
+                                        current.hiddenStatusSectionIds,
+                                        section.id,
+                                        !event.currentTarget.checked,
+                                      ),
+                                    }))
+                                  }
+                                />
+                                <span>{sectionLabel()}</span>
+                              </label>
+                            </div>
+                          )
+                        }}
+                      </For>
+                    </Show>
+                  </>
+                )
+              }}
+            </For>
+
+            <Show when={rightPanelPluginErrors().length > 0}>
+              <For each={rightPanelPluginErrors()}>
+                {(error: RightPanelPluginLoadError) => (
+                  <div class="right-panel-customization-row">
+                    <span class="right-panel-customization-label">
+                      {props.t("instanceShell.rightPanel.customize.moduleUnavailable", {
+                        module: error.displayNameKey ? props.t(error.displayNameKey) : error.pluginId,
+                      })}
+                    </span>
+                  </div>
+                )}
+              </For>
+            </Show>
+          </div>
+          <button
+            type="button"
+            class="right-panel-customization-button mt-2 w-full"
+            onClick={() => updateRightPanelCustomization(() => parseRightPanelCustomization(null))}
+          >
+            {props.t("instanceShell.rightPanel.customize.reset")}
+          </button>
+        </div>
+      </Show>
+
       <div class="flex-1 overflow-y-auto">
-        <Show when={rightPanelTab() === "git-changes"}>
-          <Suspense fallback={<RightPanelTabFallback />}>
-            <LazyGitChangesTab
-              t={props.t}
-              activeSessionId={props.activeSessionId}
-              entries={gitStatusEntries}
-              statusLoading={gitStatusLoading}
-              statusError={gitStatusError}
-              selectedItemId={gitSelectedItemId}
-              selectedBulkItemIds={gitBulkSelectedItemIds}
-              selectedLoading={gitSelectedLoading}
-              selectedError={gitSelectedError}
-              selectedBefore={gitSelectedBefore}
-              selectedAfter={gitSelectedAfter}
-              mostChangedItemId={gitMostChangedItemId}
-              scopeKey={gitScopeKey}
-              diffViewMode={diffViewMode}
-              diffContextMode={diffContextMode}
-              diffWordWrapMode={diffWordWrapMode}
-              onViewModeChange={setDiffViewMode}
-              onContextModeChange={setDiffContextMode}
-              onWordWrapModeChange={setDiffWordWrapMode}
-              onRowClick={handleGitRowClick}
-              onRefresh={() => void refreshGitStatus()}
-              onInsertContext={insertGitChangeContext}
-              onStageFile={stageGitFile}
-              onUnstageFile={unstageGitFile}
-              commitMessage={gitCommitMessage}
-              commitSubmitting={gitCommitSubmitting}
-              onCommitMessageInput={setGitCommitMessage}
-              onSubmitCommit={() => void submitGitCommit()}
-              branchLabel={gitChangesBranchLabel}
-              stagedOpen={gitStagedOpen}
-              unstagedOpen={gitUnstagedOpen}
-              onToggleStagedOpen={() => {
-                const next = !gitStagedOpen()
-                setGitStagedOpen(next)
-                persistGitSectionOpen("staged", next)
-              }}
-              onToggleUnstagedOpen={() => {
-                const next = !gitUnstagedOpen()
-                setGitUnstagedOpen(next)
-                persistGitSectionOpen("unstaged", next)
-              }}
-              listOpen={gitChangesListOpen}
-              onToggleList={toggleGitList}
-              splitWidth={gitChangesSplitWidth}
-              onResizeMouseDown={handleSplitResizeMouseDown("git-changes")}
-              onResizeTouchStart={handleSplitResizeTouchStart("git-changes")}
-              isPhoneLayout={props.isPhoneLayout}
-            />
-          </Suspense>
-        </Show>
-
-        <Show when={rightPanelTab() === "files"}>
-          <Suspense fallback={<RightPanelTabFallback />}>
-            <LazyFilesTab
-              t={props.t}
-              browserPath={browserPath}
-              browserEntries={browserEntries}
-              browserLoading={browserLoading}
-              browserError={browserError}
-              browserSelectedPath={browserSelectedPath}
-              browserSelectedContent={browserSelectedContent}
-              browserSelectedLoading={browserSelectedLoading}
-              browserSelectedError={browserSelectedError}
-              browserSelectedDirty={browserSelectedDirty}
-              browserSelectedSaving={browserSelectedSaving}
-              wordWrapMode={filesWordWrapMode}
-              parentPath={browserParentPath}
-              scopeKey={browserScopeKey}
-              onLoadEntries={(path: string) => void loadBrowserEntries(path)}
-              onRequestOpenFile={(path: string) => void handleOpenBrowserFileRequest(path)}
-              onRefresh={() => void refreshFilesTab()}
-              onSave={(content: string) => void saveBrowserFile(content)}
-              onContentChange={(content: string) => handleBrowserFileChange(content)}
-              onWordWrapModeChange={setFilesWordWrapMode}
-              listOpen={filesListOpen}
-              onToggleList={toggleFilesList}
-              splitWidth={filesSplitWidth}
-              onResizeMouseDown={handleSplitResizeMouseDown("files")}
-              onResizeTouchStart={handleSplitResizeTouchStart("files")}
-              isPhoneLayout={props.isPhoneLayout}
-            />
-          </Suspense>
-        </Show>
-
-        <Show when={rightPanelTab() === "status"}>
-          <Suspense fallback={<RightPanelTabFallback />}>
-            <LazyStatusTab
-              t={props.t}
-              instanceId={props.instanceId}
-              instance={props.instance}
-              activeSessionId={props.activeSessionId}
-              activeSession={props.activeSession}
-              latestTodoState={props.latestTodoState}
-              backgroundProcessList={props.backgroundProcessList}
-              onOpenBackgroundOutput={props.onOpenBackgroundOutput}
-              onStopBackgroundProcess={props.onStopBackgroundProcess}
-              onTerminateBackgroundProcess={props.onTerminateBackgroundProcess}
-              expandedItems={rightPanelExpandedItems}
-              onExpandedItemsChange={handleAccordionChange}
-            />
-          </Suspense>
+        <Show keyed when={activeRightPanelTab()}>
+          {(tab) => (
+            <div id={tabPanelId(tab.id)} role="tabpanel" aria-labelledby={tabId(tab.id)} class="h-full min-h-0">
+              <Suspense fallback={<RightPanelTabFallback />}>{tab.render()}</Suspense>
+            </div>
+          )}
         </Show>
       </div>
     </div>

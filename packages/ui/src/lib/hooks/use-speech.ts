@@ -105,7 +105,7 @@ export function useSpeech(options: UseSpeechOptions) {
 
   const canUseSpeech = () => {
     const capabilities = speechCapabilities()
-    if (!isSupported() || !capabilities?.available || !capabilities?.configured || !capabilities?.supportsTts) {
+    if (!isSupported() || !capabilities?.available || !capabilities?.ttsConfigured || !capabilities?.supportsTts) {
       return false
     }
     return getSpeechPlaybackSupport({
@@ -136,7 +136,7 @@ export function useSpeech(options: UseSpeechOptions) {
     }
 
     const capabilities = (await loadSpeechCapabilities()) ?? speechCapabilities()
-    if (!capabilities?.available || !capabilities?.configured || !capabilities?.supportsTts) {
+    if (!capabilities?.available || !capabilities?.ttsConfigured || !capabilities?.supportsTts) {
       showAlertDialog(t("messageItem.actions.speak.error.unavailable"), {
         title: t("messageItem.actions.speak.error.title"),
         variant: "error",

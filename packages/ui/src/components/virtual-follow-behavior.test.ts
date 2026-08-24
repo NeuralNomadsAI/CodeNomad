@@ -2,82 +2,50 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import {
+  ANCHOR_RESTORE_MAX_FRAMES,
+  ANCHOR_RESTORE_STABLE_FRAMES,
+  AnchorRestoreStabilizer,
+  BOTTOM_FOLLOW_EPSILON_PX,
+  ScrollRestoreTokenGuard,
   VirtualScrollController,
   isAtBottom,
   isAutoFollowing,
+  isScrollRestoreGenerationCurrent,
+  isSnapshotAutoFollowing,
   resolveAutoPinHoldElement,
-  shouldSuspendAutoPinToBottomForHold,
+  restoreFollowModeFromSnapshot,
+  selectTopViewportAnchor,
   transitionFollowMode,
   type FollowMode,
   type ScrollControllerMetrics,
 } from "./virtual-follow-behavior.ts"
 
-const userScroll = (direction: "up" | "down" | null, atBottom: boolean, canPinToBottom = false) =>
-  ({ type: "user-scroll", direction, atBottom, canPinToBottom }) as const
+const userScroll = (direction: "up" | "down" | null, atBottom: boolean) =>
+  ({ type: "user-scroll", direction, atBottom }) as const
 
-function metrics(offset: number, scrollHeight = 3000, clientHeight = 600): ScrollControllerMetrics {
-  return {
-    offset,
-    scrollHeight,
-    clientHeight,
-    sentinelMarginPx: 48,
-  }
+function metrics(offset: number, scrollHeight = 3000, clientHeight = 600, sentinelMarginPx = BOTTOM_FOLLOW_EPSILON_PX): ScrollControllerMetrics {
+  return { offset, scrollHeight, clientHeight, sentinelMarginPx }
 }
 
 describe("virtual follow behavior", () => {
-  it("escapes follow on upward user scroll", () => {
-    const next = transitionFollowMode({ type: "following" }, userScroll("up", false))
+  it("escapes follow on any upward user intent", () => {
+    const next = transitionFollowMode({ type: "following" }, userScroll("up", true))
 
     assert.deepEqual(next.mode, { type: "escaped" })
     assert.deepEqual(next.effect, { type: "none" })
   })
 
-  it("does not rejoin follow when escaped user scrolls down above bottom without pin permission", () => {
+  it("does not rejoin follow from downward movement above the exact bottom", () => {
     const next = transitionFollowMode({ type: "escaped" }, userScroll("down", false))
 
     assert.deepEqual(next.mode, { type: "escaped" })
     assert.deepEqual(next.effect, { type: "none" })
   })
 
-  it("does not rejoin follow above bottom even with pin permission", () => {
-    const next = transitionFollowMode({ type: "escaped" }, userScroll("down", false, true))
-
-    assert.deepEqual(next.mode, { type: "escaped" })
-    assert.deepEqual(next.effect, { type: "none" })
-  })
-
-  it("rejoins follow when escaped user scrolls to the bottom", () => {
+  it("rejoins follow only at the exact bottom", () => {
     const next = transitionFollowMode({ type: "escaped" }, userScroll("down", true))
 
     assert.deepEqual(next.mode, { type: "following" })
-    assert.deepEqual(next.effect, { type: "none" })
-  })
-
-  it("keeps hold latched when the user scrolls down above bottom", () => {
-    const next = transitionFollowMode({ type: "holding", key: "message-1" }, userScroll("down", false, true))
-
-    assert.deepEqual(next.mode, { type: "holding", key: "message-1" })
-    assert.deepEqual(next.effect, { type: "none" })
-  })
-
-  it("does not rejoin follow for directionless scroll above bottom", () => {
-    const next = transitionFollowMode({ type: "escaped" }, userScroll(null, false, true))
-
-    assert.deepEqual(next.mode, { type: "escaped" })
-    assert.deepEqual(next.effect, { type: "none" })
-  })
-
-  it("does not rejoin follow on upward scroll at bottom", () => {
-    const next = transitionFollowMode({ type: "escaped" }, userScroll("up", true, true))
-
-    assert.deepEqual(next.mode, { type: "escaped" })
-    assert.deepEqual(next.effect, { type: "none" })
-  })
-
-  it("keeps hold latched for directionless user scroll away from bottom", () => {
-    const next = transitionFollowMode({ type: "holding", key: "message-1" }, userScroll(null, false, true))
-
-    assert.deepEqual(next.mode, { type: "holding", key: "message-1" })
     assert.deepEqual(next.effect, { type: "none" })
   })
 
@@ -86,186 +54,52 @@ describe("virtual follow behavior", () => {
     const following = transitionFollowMode({ type: "following" }, { type: "content-grew", canPinToBottom: true })
 
     assert.deepEqual(escaped.effect, { type: "none" })
-    assert.deepEqual(following.effect, { type: "scroll-bottom", immediate: true, suppressHold: false })
+    assert.deepEqual(following.effect, { type: "scroll-bottom", immediate: true })
   })
 
-  it("does not align or pin while held content grows", () => {
-    const next = transitionFollowMode({ type: "holding", key: "message-1" }, { type: "content-grew", canPinToBottom: true })
-
-    assert.deepEqual(next.mode, { type: "holding", key: "message-1" })
-    assert.deepEqual(next.effect, { type: "none" })
-  })
-
-  it("enters hold mode for a valid hold candidate", () => {
-    const next = transitionFollowMode({ type: "following" }, { type: "hold-candidate", key: "message-1", shouldHold: true })
-
-    assert.deepEqual(next.mode, { type: "holding", key: "message-1" })
-    assert.deepEqual(next.effect, { type: "align-hold", key: "message-1" })
-  })
-
-  it("keeps hold latched when the hold target disappears", () => {
-    const next = transitionFollowMode({ type: "holding", key: "message-1" }, { type: "hold-target-changed", key: null, canPinToBottom: true })
-
-    assert.deepEqual(next.mode, { type: "holding", key: "message-1" })
-    assert.deepEqual(next.effect, { type: "none" })
-  })
-
-  it("keeps hold latched when a later hold target is reported", () => {
-    const next = transitionFollowMode({ type: "holding", key: "message-1" }, { type: "hold-target-changed", key: "message-2", canPinToBottom: true })
-
-    assert.deepEqual(next.mode, { type: "holding", key: "message-1" })
-    assert.deepEqual(next.effect, { type: "none" })
-  })
-
-  it("explicit bottom jumps leave hold and suppress the next hold", () => {
-    const next = transitionFollowMode({ type: "holding", key: "message-1" }, { type: "jump-bottom", immediate: true, explicit: true })
+  it("does not pin content growth when the integration gate is closed", () => {
+    const next = transitionFollowMode({ type: "following" }, { type: "content-grew", canPinToBottom: false })
 
     assert.deepEqual(next.mode, { type: "following" })
-    assert.deepEqual(next.effect, { type: "scroll-bottom", immediate: true, suppressHold: true })
-  })
-
-  it("prompt submission overrides a stale hold latch and returns to bottom follow", () => {
-    const controller = new VirtualScrollController(true)
-    controller.holdCandidate("old-assistant-answer", true)
-
-    const result = controller.jumpBottom(true, true)
-
-    assert.deepEqual(result.state.mode, { type: "following" })
-    assert.deepEqual(result.effect, { type: "scroll-bottom", immediate: true, suppressHold: true })
-    assert.equal(controller.isAutoFollowing(), true)
-  })
-
-  it("clears an existing hold latch when hold targeting is disabled", () => {
-    const controller = new VirtualScrollController(true)
-    controller.holdCandidate("old-assistant-answer", true)
-
-    const result = controller.clearHold(true, true, true)
-
-    assert.deepEqual(result.state.mode, { type: "following" })
-    assert.deepEqual(result.effect, { type: "scroll-bottom", immediate: true, suppressHold: true })
-  })
-
-  it("keeps submitted prompt content growth in bottom-follow after clearing stale hold", () => {
-    const controller = new VirtualScrollController(true)
-    controller.holdCandidate("old-assistant-answer", true)
-    controller.jumpBottom(true, true)
-
-    const result = controller.contentRendered(metrics(2400), true)
-
-    assert.deepEqual(result.state.mode, { type: "following" })
-    assert.deepEqual(result.effect, { type: "scroll-bottom", immediate: true, suppressHold: false })
-  })
-
-  it("ignores stale previous assistant hold target changes after a submit bottom jump", () => {
-    const controller = new VirtualScrollController(true)
-    controller.holdCandidate("previous-assistant-answer", true)
-    controller.jumpBottom(true, true)
-
-    const targetChanged = controller.holdTargetChanged("previous-assistant-answer", true)
-    const contentRendered = controller.contentRendered(metrics(2400), true)
-
-    assert.deepEqual(targetChanged.state.mode, { type: "following" })
-    assert.deepEqual(targetChanged.effect, { type: "none" })
-    assert.deepEqual(contentRendered.state.mode, { type: "following" })
-    assert.deepEqual(contentRendered.effect, { type: "scroll-bottom", immediate: true, suppressHold: false })
-  })
-
-  it("keeps escaped-mode streaming detached until actual bottom", () => {
-    const suspend = shouldSuspendAutoPinToBottomForHold({
-      externalSuspend: false,
-      activeHoldTargetKey: null,
-      eligibleHoldTargetKey: "streaming-assistant-answer",
-    })
-
-    const next = transitionFollowMode({ type: "escaped" }, userScroll("down", false, !suspend))
-
-    assert.equal(suspend, false)
-    assert.deepEqual(next.mode, { type: "escaped" })
     assert.deepEqual(next.effect, { type: "none" })
   })
 
-  it("keeps auto-pin suspended while a hold target is actively latched", () => {
-    const suspend = shouldSuspendAutoPinToBottomForHold({
-      externalSuspend: false,
-      activeHoldTargetKey: "streaming-assistant-answer",
-      eligibleHoldTargetKey: "streaming-assistant-answer",
-    })
+  it("explicit bottom jumps enter follow mode", () => {
+    const next = transitionFollowMode({ type: "escaped" }, { type: "jump-bottom", immediate: true, explicit: true })
 
-    const next = transitionFollowMode({ type: "holding", key: "streaming-assistant-answer" }, userScroll("down", false, !suspend))
-
-    assert.equal(suspend, true)
-    assert.deepEqual(next.mode, { type: "holding", key: "streaming-assistant-answer" })
-    assert.deepEqual(next.effect, { type: "none" })
+    assert.deepEqual(next.mode, { type: "following" })
+    assert.deepEqual(next.effect, { type: "scroll-bottom", immediate: true })
   })
 
-  it("key jumps can opt into follow or escape mode", () => {
-    const follow = transitionFollowMode({ type: "escaped" }, { type: "jump-key", key: "a", block: "start", smooth: false, followAfter: true })
-    const escape = transitionFollowMode({ type: "following" }, { type: "jump-key", key: "b", block: "center", smooth: true, followAfter: false })
+  it("explicit bottom jumps override stale upward user intent", () => {
+    const controller = new VirtualScrollController(false)
+    controller.recordProgrammaticOffset(2200, false)
+    controller.setUserIntent("up", 700)
 
-    assert.deepEqual(follow.mode, { type: "following" })
-    assert.deepEqual(escape.mode, { type: "escaped" })
+    const jump = controller.jumpBottom(true, true)
+    const observed = controller.observeViewport(metrics(2400), 100, true)
+
+    assert.deepEqual(jump.state.mode, { type: "following" })
+    assert.deepEqual(observed.state.mode, { type: "following" })
   })
 
-  it("derives auto-follow from modes", () => {
+  it("key jumps always escape follow mode", () => {
+    const fromEscaped = transitionFollowMode({ type: "escaped" }, { type: "jump-key", key: "a", block: "start", smooth: false })
+    const fromFollowing = transitionFollowMode({ type: "following" }, { type: "jump-key", key: "b", block: "center", smooth: true })
+
+    assert.deepEqual(fromEscaped.mode, { type: "escaped" })
+    assert.deepEqual(fromFollowing.mode, { type: "escaped" })
+  })
+
+  it("derives auto-follow from the two modes", () => {
     const modes: Array<[FollowMode, boolean]> = [
       [{ type: "following" }, true],
-      [{ type: "holding", key: "message-1" }, false],
       [{ type: "escaped" }, false],
     ]
 
     for (const [mode, expected] of modes) {
       assert.equal(isAutoFollowing(mode), expected)
     }
-  })
-
-  it("pins content growth instead of escaping on transient upward render movement", () => {
-    const controller = new VirtualScrollController(true)
-    controller.recordProgrammaticOffset(2400, true)
-
-    const result = controller.contentRendered(metrics(2200), true)
-
-    assert.deepEqual(result.state.mode, { type: "following" })
-    assert.deepEqual(result.effect, { type: "scroll-bottom", immediate: true, suppressHold: false })
-  })
-
-  it("does not align or pin when held content renders", () => {
-    const controller = new VirtualScrollController(true)
-    controller.holdCandidate("message-1", true)
-
-    const result = controller.contentRendered(metrics(2200), true)
-
-    assert.deepEqual(result.state.mode, { type: "holding", key: "message-1" })
-    assert.deepEqual(result.effect, { type: "none" })
-  })
-
-  it("does not resume or snap when a held target disappears", () => {
-    const controller = new VirtualScrollController(true)
-    controller.holdCandidate("message-1", true)
-
-    const result = controller.holdTargetChanged(null, true)
-
-    assert.deepEqual(result.state.mode, { type: "holding", key: "message-1" })
-    assert.deepEqual(result.effect, { type: "none" })
-  })
-
-  it("lets fresh user upward movement escape even during a programmatic window", () => {
-    const controller = new VirtualScrollController(true)
-    controller.recordProgrammaticOffset(2400, true)
-    controller.setUserIntent("up", 700)
-
-    const result = controller.observeViewport(metrics(2200), 100, true)
-
-    assert.deepEqual(result.state.mode, { type: "escaped" })
-  })
-
-  it("does not escape for owned programmatic upward movement", () => {
-    const controller = new VirtualScrollController(true)
-    controller.recordProgrammaticOffset(2400, true)
-
-    const result = controller.observeViewport(metrics(2200), 100, true)
-
-    assert.deepEqual(result.state.mode, { type: "following" })
-    assert.deepEqual(result.effect, { type: "none" })
   })
 
   it("does not resume follow on directionless scroll above bottom", () => {
@@ -289,18 +123,7 @@ describe("virtual follow behavior", () => {
     assert.deepEqual(result.effect, { type: "none" })
   })
 
-  it("does not magnet to bottom above bottom even with integration pin permission", () => {
-    const controller = new VirtualScrollController(false)
-    controller.recordProgrammaticOffset(2100, false)
-    controller.setUserIntent("down", 700)
-
-    const result = controller.observeViewport(metrics(2220), 100, false, true)
-
-    assert.deepEqual(result.state.mode, { type: "escaped" })
-    assert.deepEqual(result.effect, { type: "none" })
-  })
-
-  it("resumes follow only when downward movement reaches actual bottom", () => {
+  it("resumes follow only when downward movement reaches exact bottom", () => {
     const controller = new VirtualScrollController(false)
     controller.recordProgrammaticOffset(2300, false)
     controller.setUserIntent("down", 700)
@@ -311,31 +134,33 @@ describe("virtual follow behavior", () => {
     assert.deepEqual(result.effect, { type: "none" })
   })
 
-  it("keeps hold latched until downward movement reaches actual bottom", () => {
+  it("lets fresh user upward movement escape even during a programmatic window", () => {
     const controller = new VirtualScrollController(true)
-    controller.holdCandidate("message-1", true)
-    controller.recordProgrammaticOffset(2100, false)
-    controller.setUserIntent("down", 700)
+    controller.recordProgrammaticOffset(2400, true)
+    controller.setUserIntent("up", 700)
 
-    const nearBottom = controller.observeViewport(metrics(2220), 100, false, true)
-
-    assert.deepEqual(nearBottom.state.mode, { type: "holding", key: "message-1" })
-    assert.deepEqual(nearBottom.effect, { type: "none" })
-
-    controller.setUserIntent("down", 800)
-    const atBottom = controller.observeViewport(metrics(2400), 200, false, true)
-
-    assert.deepEqual(atBottom.state.mode, { type: "following" })
-    assert.deepEqual(atBottom.effect, { type: "none" })
-  })
-
-  it("still escapes follow on upward movement at bottom", () => {
-    const controller = new VirtualScrollController(true)
-    controller.recordProgrammaticOffset(1200, false)
-
-    const result = controller.observeViewport(metrics(1100), 100, false)
+    const result = controller.observeViewport(metrics(2200), 100, true)
 
     assert.deepEqual(result.state.mode, { type: "escaped" })
+  })
+
+  it("keeps fresh upward intent escaped even if a programmatic scroll later moves down to bottom", () => {
+    const controller = new VirtualScrollController(false)
+    controller.recordProgrammaticOffset(2200, false)
+    controller.setUserIntent("up", 700)
+
+    const result = controller.observeViewport(metrics(2400), 100, true)
+
+    assert.deepEqual(result.state.mode, { type: "escaped" })
+  })
+
+  it("does not escape for owned programmatic upward movement", () => {
+    const controller = new VirtualScrollController(true)
+    controller.recordProgrammaticOffset(2400, true)
+
+    const result = controller.observeViewport(metrics(2200), 100, true)
+
+    assert.deepEqual(result.state.mode, { type: "following" })
     assert.deepEqual(result.effect, { type: "none" })
   })
 
@@ -349,38 +174,165 @@ describe("virtual follow behavior", () => {
     assert.deepEqual(result.effect, { type: "none" })
   })
 
-  it("does not pin content growth when the integration gate is closed", () => {
-    const controller = new VirtualScrollController(true)
+  it("uses a small bottom follow tolerance", () => {
+    const bottomOffset = 2400
 
-    const result = controller.contentRendered(metrics(2400), false)
-
-    assert.deepEqual(result.state.mode, { type: "following" })
-    assert.deepEqual(result.effect, { type: "none" })
+    assert.equal(isAtBottom(metrics(bottomOffset - BOTTOM_FOLLOW_EPSILON_PX - 0.1)), false)
+    assert.equal(isAtBottom(metrics(bottomOffset - BOTTOM_FOLLOW_EPSILON_PX)), true)
+    assert.equal(isAtBottom(metrics(bottomOffset)), true)
   })
 
-  it("blocks pre-pin upward reconciliation while restoring", () => {
-    const controller = new VirtualScrollController(true)
-    controller.recordProgrammaticOffset(2400, true)
-    controller.setRestoring(true)
+  it("treats fractional distance inside the tolerance as at-bottom", () => {
+    const bottomOffset = 2400
 
-    const result = controller.beforeBottomPin(metrics(2200))
-
-    assert.deepEqual(result.state.mode, { type: "following" })
-    assert.deepEqual(result.effect, { type: "none" })
+    assert.equal(isAtBottom(metrics(bottomOffset - BOTTOM_FOLLOW_EPSILON_PX - 0.5)), false)
+    assert.equal(isAtBottom(metrics(bottomOffset - 0.5)), true)
   })
 
-  it("distinguishes close-to-bottom from at-bottom metrics", () => {
-    const closeButNotAtBottom = metrics(2351)
-
-    assert.equal(isAtBottom(closeButNotAtBottom), false)
+  it("does not restore follow from an off-bottom snapshot", () => {
+    assert.equal(isSnapshotAutoFollowing({ atBottom: false, followModeType: "following" }), false)
+    assert.deepEqual(restoreFollowModeFromSnapshot({ atBottom: false, followModeType: "following" }), { type: "escaped" })
   })
 
-  it("excludes reasoning-only hold targets while preserving Assistant text eligibility", () => {
+  it("keeps hold element resolution as a DOM concern", () => {
     const itemWrapper = { id: "message-wrapper" } as unknown as HTMLElement
     const assistantAnswerText = { id: "assistant-answer-text" } as unknown as HTMLElement
 
     assert.equal(resolveAutoPinHoldElement(itemWrapper, "message-1", () => null), null)
     assert.equal(resolveAutoPinHoldElement(itemWrapper, "message-1", () => assistantAnswerText), assistantAnswerText)
     assert.equal(resolveAutoPinHoldElement(itemWrapper, "message-1", () => undefined), itemWrapper)
+  })
+
+  it("selects the item crossing the viewport top instead of the nearest item top", () => {
+    const anchor = selectTopViewportAnchor([
+      { key: "crossing", top: -80, bottom: 120 },
+      { key: "below", top: 2, bottom: 102 },
+    ], 0, 600)
+
+    assert.equal(anchor?.key, "crossing")
+  })
+
+  it("keeps waiting for an existing anchor that mounts after six frames", () => {
+    const stabilizer = new AnchorRestoreStabilizer()
+    let result
+
+    for (let frame = 1; frame <= 7; frame += 1) {
+      result = stabilizer.nextFrame({ targetExists: true, mounted: false })
+      assert.equal(result.type, "retry")
+    }
+    for (let frame = 8; frame <= 12; frame += 1) {
+      result = stabilizer.nextFrame({ targetExists: true, mounted: false })
+    }
+
+    assert.deepEqual(result, { type: "retry", reissueIndex: true })
+  })
+
+  it("resets stable frame counting after an anchor offset correction", () => {
+    const stabilizer = new AnchorRestoreStabilizer()
+    for (let frame = 0; frame < ANCHOR_RESTORE_STABLE_FRAMES - 2; frame += 1) {
+      assert.equal(stabilizer.nextFrame({ targetExists: true, mounted: true, delta: 0.5 }).type, "retry")
+    }
+
+    assert.deepEqual(stabilizer.nextFrame({ targetExists: true, mounted: true, delta: 4 }), {
+      type: "correct",
+      delta: 4,
+      finishAfterCorrection: false,
+    })
+    assert.equal(stabilizer.snapshot().stableFrames, 0)
+    for (let frame = 0; frame < ANCHOR_RESTORE_STABLE_FRAMES - 1; frame += 1) {
+      assert.equal(stabilizer.nextFrame({ targetExists: true, mounted: true, delta: 0 }).type, "retry")
+    }
+    assert.equal(stabilizer.nextFrame({ targetExists: true, mounted: true, delta: 0 }).type, "finish")
+  })
+
+  it("restarts anchor stabilization when content grows", () => {
+    const stabilizer = new AnchorRestoreStabilizer()
+    for (let frame = 0; frame < ANCHOR_RESTORE_STABLE_FRAMES - 1; frame += 1) {
+      stabilizer.nextFrame({ targetExists: true, mounted: true, delta: 0 })
+    }
+
+    stabilizer.restartStability()
+
+    assert.equal(stabilizer.nextFrame({ targetExists: true, mounted: true, delta: 0 }).type, "retry")
+    assert.equal(stabilizer.snapshot().stableFrames, 1)
+  })
+
+  it("finishes a mounted anchor at the frame bound instead of ratio fallback", () => {
+    const stabilizer = new AnchorRestoreStabilizer()
+    let result
+    for (let frame = 1; frame <= ANCHOR_RESTORE_MAX_FRAMES; frame += 1) {
+      stabilizer.restartStability()
+      result = stabilizer.nextFrame({ targetExists: true, mounted: true, delta: 0 })
+    }
+
+    assert.deepEqual(result, { type: "finish" })
+  })
+
+  it("requests one final mounted-anchor correction at the frame bound", () => {
+    const stabilizer = new AnchorRestoreStabilizer()
+    for (let frame = 1; frame < ANCHOR_RESTORE_MAX_FRAMES; frame += 1) {
+      stabilizer.restartStability()
+      stabilizer.nextFrame({ targetExists: true, mounted: true, delta: 0 })
+    }
+
+    assert.deepEqual(stabilizer.nextFrame({ targetExists: true, mounted: true, delta: 6 }), {
+      type: "correct",
+      delta: 6,
+      finishAfterCorrection: true,
+    })
+  })
+
+  it("ratio-fallbacks at the frame bound only when an existing anchor never mounts", () => {
+    const stabilizer = new AnchorRestoreStabilizer()
+    let result
+    for (let frame = 1; frame < ANCHOR_RESTORE_MAX_FRAMES; frame += 1) {
+      result = stabilizer.nextFrame({ targetExists: true, mounted: false })
+    }
+
+    assert.equal(result?.type, "retry")
+    assert.equal(stabilizer.snapshot().elapsedFrames, ANCHOR_RESTORE_MAX_FRAMES - 1)
+    result = stabilizer.nextFrame({ targetExists: true, mounted: false })
+    assert.deepEqual(result, { type: "fallback" })
+    assert.equal(stabilizer.snapshot().elapsedFrames, ANCHOR_RESTORE_MAX_FRAMES)
+  })
+
+  it("fallbacks when a previously mounted anchor is unmounted at the strict frame bound", () => {
+    const stabilizer = new AnchorRestoreStabilizer()
+    stabilizer.nextFrame({ targetExists: true, mounted: true, delta: 4 })
+    let result
+    for (let frame = 2; frame <= ANCHOR_RESTORE_MAX_FRAMES; frame += 1) {
+      result = stabilizer.nextFrame({ targetExists: true, mounted: false })
+    }
+
+    assert.deepEqual(result, { type: "fallback" })
+    assert.equal(stabilizer.snapshot().elapsedFrames, ANCHOR_RESTORE_MAX_FRAMES)
+  })
+
+  it("invalidates deferred at-bottom and pixel-only restore finishes on cancellation", () => {
+    for (const path of ["at-bottom", "pixel-only"]) {
+      const guard = new ScrollRestoreTokenGuard()
+      const token = guard.begin()
+      let cancelled = false
+      let restoredOldMode = false
+      const finish = () => {
+        if (guard.isCurrent(token)) restoredOldMode = true
+      }
+      const cancel = () => {
+        guard.invalidate()
+        cancelled = true
+      }
+
+      cancel()
+      finish()
+
+      assert.equal(cancelled, true, path)
+      assert.equal(restoredOldMode, false, path)
+    }
+  })
+
+  it("rejects stale applied or cancellation callbacks from another session generation", () => {
+    assert.equal(isScrollRestoreGenerationCurrent("session-a", 3, "session-a", 3), true)
+    assert.equal(isScrollRestoreGenerationCurrent("session-a", 3, "session-b", 4), false)
+    assert.equal(isScrollRestoreGenerationCurrent("session-a", 3, "session-a", 4), false)
   })
 })

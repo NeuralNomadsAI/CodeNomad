@@ -2,7 +2,11 @@ import { batch as solidBatch } from "solid-js"
 import type { WorkspaceEventPayload, WorkspaceEventType } from "../../../server/src/api-types"
 import { serverApi } from "./api-client"
 import { getClientIdentity } from "./client-identity"
-import { connectWorkspaceEvents, type WorkspaceEventConnection } from "./event-transport"
+import {
+  connectWorkspaceEvents,
+  type WorkspaceEventConnection,
+  type WorkspaceEventTransportStatus,
+} from "./event-transport"
 import { getLogger } from "./logger"
 import { retryWithBackoff, isRetryableError } from "./retry-utils"
 
@@ -21,6 +25,7 @@ function logSse(message: string, context?: Record<string, unknown>) {
 class ServerEvents {
   private handlers = new Map<WorkspaceEventType | "*", Set<(event: WorkspaceEventPayload) => void>>()
   private openHandlers = new Set<() => void>()
+  private statusHandlers = new Set<(status: WorkspaceEventTransportStatus) => void>()
   private connection: WorkspaceEventConnection | null = null
   private connectGeneration = 0
   private retryDelay = RETRY_BASE_DELAY
@@ -35,6 +40,7 @@ class ServerEvents {
     this.clearReconnectTimer()
 
     if (this.connection) {
+      this.emitTransportStatus("disconnected")
       this.connection.disconnect()
       this.connection = null
     }
@@ -43,12 +49,20 @@ class ServerEvents {
 
     try {
       const connection = await connectWorkspaceEvents({
-        onBatch: (events) => this.dispatchBatch(events),
+        onBatch: (events) => {
+          if (generation === this.connectGeneration) this.dispatchBatch(events)
+        },
         onError: () => {
           if (generation !== this.connectGeneration) {
             return
           }
           this.scheduleReconnect()
+        },
+        onStatus: (status) => {
+          if (generation !== this.connectGeneration) {
+            return
+          }
+          this.emitTransportStatus(status)
         },
         onOpen: () => {
           if (generation !== this.connectGeneration) {
@@ -59,6 +73,9 @@ class ServerEvents {
           this.openHandlers.forEach((handler) => handler())
         },
         onPing: (payload) => {
+          if (generation !== this.connectGeneration) {
+            return
+          }
           const identity = getClientIdentity()
           const pongPayload = { ...identity, pingTs: payload.ts }
 
@@ -100,10 +117,14 @@ class ServerEvents {
       return
     }
 
+    this.connectGeneration += 1
+
     if (this.connection) {
       this.connection.disconnect()
       this.connection = null
     }
+
+    this.emitTransportStatus("disconnected")
 
     logSse("Events stream disconnected, scheduling reconnect", { delayMs: this.retryDelay })
     this.retryTimer = setTimeout(() => {
@@ -140,6 +161,10 @@ class ServerEvents {
     })
   }
 
+  private emitTransportStatus(status: WorkspaceEventTransportStatus) {
+    this.statusHandlers.forEach((handler) => handler(status))
+  }
+
   on(type: WorkspaceEventType | "*", handler: (event: WorkspaceEventPayload) => void): () => void {
     if (!this.handlers.has(type)) {
       this.handlers.set(type, new Set())
@@ -154,11 +179,17 @@ class ServerEvents {
     return () => this.openHandlers.delete(handler)
   }
 
+  onTransportStatus(handler: (status: WorkspaceEventTransportStatus) => void): () => void {
+    this.statusHandlers.add(handler)
+    return () => this.statusHandlers.delete(handler)
+  }
+
   restart(reason = "manual restart"): void {
     this.retryDelay = RETRY_BASE_DELAY
     this.clearReconnectTimer()
 
     if (this.connection) {
+      this.emitTransportStatus("disconnected")
       this.connection.disconnect()
       this.connection = null
     }

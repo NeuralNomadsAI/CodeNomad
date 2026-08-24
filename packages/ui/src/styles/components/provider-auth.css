@@ -12,6 +12,19 @@
   border-radius: 0;
 }
 
+.providers-manager-embedded {
+  position: static;
+  transform: none;
+  width: 100%;
+  max-height: none;
+  border: 1px solid var(--border-base);
+  background: var(--surface-base);
+}
+
+.providers-manager-embedded .providers-manager-body {
+  overflow: visible;
+}
+
 .providers-manager-header {
   display: flex;
   align-items: flex-start;
@@ -77,7 +90,7 @@
 
 .providers-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
   gap: 0.875rem;
 }
 
@@ -196,6 +209,11 @@
   margin-top: 1.25rem;
   padding-top: 0.875rem;
   border-top: 1px solid color-mix(in oklab, var(--border-base) 70%, transparent);
+}
+
+.providers-card-footer .selector-button {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .providers-disconnect-button {
@@ -336,6 +354,12 @@
     width: 100vw;
     max-height: 100dvh;
     height: 100dvh;
+  }
+
+  .providers-manager-embedded {
+    width: 100%;
+    max-height: none;
+    height: auto;
   }
 
   .providers-connect-bar,

@@ -93,6 +93,11 @@ jobs:
               return;
             }
 
+            if (matchedRun.conclusion !== 'success') {
+              core.setFailed(`PR Build Validation run ${matchedRun.id} concluded ${matchedRun.conclusion}.`);
+              return;
+            }
+
             const artifacts = await github.paginate(
               github.rest.actions.listWorkflowRunArtifacts,
               { owner, repo, run_id: matchedRun.id, per_page: 100 }

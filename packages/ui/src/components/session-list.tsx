@@ -1,9 +1,11 @@
-import { Component, For, Show, createSignal, createMemo, createEffect, JSX, onCleanup } from "solid-js"
+import { Component, Show, createSignal, createMemo, createEffect, JSX, on, onCleanup } from "solid-js"
+import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 import type { SessionStatus } from "../types/session"
 import type { SessionThread } from "../stores/session-state"
 import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../stores/session-status"
 import { Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronDown, Search, Square, CheckSquare, MinusSquare, Split, RotateCw } from "lucide-solid"
 import KeyboardHint from "./keyboard-hint"
+import LoadErrorState from "./load-error-state"
 import SessionRenameDialog from "./session-rename-dialog"
 import { keyboardRegistry } from "../lib/keyboard-registry"
 import { showToastNotification } from "../lib/notifications"
@@ -11,27 +13,31 @@ import { useI18n } from "../lib/i18n"
 import { showConfirmDialog } from "../stores/alerts"
 import {
   deleteSession,
-  ensureSessionParentExpanded,
+  ensureSessionAncestorsExpanded,
   getVisibleSessionIds,
-  isSessionParentExpanded,
+  isSessionExpanded,
   loadMessages,
   loading,
   renameSession,
   sessions as sessionStateSessions,
   setActiveSessionFromList,
-  toggleSessionParentExpanded,
+  toggleSessionExpanded,
   loadMoreSessions,
   searchSessions,
   getSessionHasMore,
+  getSessionListError,
   clearSessionSearch,
+  fetchSessions,
   getSessionSearchQuery,
   getSessionSearchThreads,
   isSessionSearchLoading,
 } from "../stores/sessions"
 import { getGitRepoStatus, getWorktreeSlugForParentSession } from "../stores/worktrees"
+import { collectSessionThreadIds, findSessionThread, flattenVisibleSessionThreads, sortSessionIdsDeepestFirst } from "../stores/session-tree"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
 import { useConfig } from "../stores/preferences"
+import { isSessionListViewportAttached, shouldRenderSessionRows } from "./session-list-visibility"
 const log = getLogger("session")
 
 
@@ -65,6 +71,29 @@ const SessionList: Component<SessionListProps> = (props) => {
   const [selectedSessionIds, setSelectedSessionIds] = createSignal<Set<string>>(new Set())
   const [reloadingSessionIds, setReloadingSessionIds] = createSignal<Set<string>>(new Set())
   const [now, setNow] = createSignal(Date.now())
+  const [listEl, setListEl] = createSignal<HTMLDivElement>()
+  const [listViewportAttached, setListViewportAttached] = createSignal(false)
+  const [virtualizerHandle, setVirtualizerHandle] = createSignal<VirtualizerHandle>()
+  const [focusedSessionId, setFocusedSessionId] = createSignal<string>()
+  let attachmentFrame: number | undefined
+
+  const setListElement = (element: HTMLDivElement) => {
+    setListEl(element)
+    const detectAttachment = () => {
+      if (isSessionListViewportAttached(element)) {
+        attachmentFrame = undefined
+        setListViewportAttached(true)
+        return
+      }
+      setListViewportAttached(false)
+      if (typeof requestAnimationFrame !== "undefined") attachmentFrame = requestAnimationFrame(detectAttachment)
+    }
+    detectAttachment()
+  }
+
+  onCleanup(() => {
+    if (attachmentFrame !== undefined) cancelAnimationFrame(attachmentFrame)
+  })
 
   createEffect(() => {
     if (typeof window === "undefined") return
@@ -82,6 +111,13 @@ const SessionList: Component<SessionListProps> = (props) => {
   const isFetchingSessions = createMemo(() => {
     return loading().fetchingSessions.get(props.instanceId) ?? false
   })
+  const sessionListError = createMemo(() => getSessionListError(props.instanceId))
+
+  const handleRetrySessions = () => {
+    void fetchSessions(props.instanceId, { reset: true }).catch((error) => {
+      log.error("Failed to retry session list:", error)
+    })
+  }
 
   createEffect(() => {
     const el = sentinelEl()
@@ -96,7 +132,7 @@ const SessionList: Component<SessionListProps> = (props) => {
           })
         }
       },
-      { root: el.parentElement ?? null, rootMargin: "0px 0px 200px 0px" }
+      { root: listEl() ?? null, rootMargin: "0px 0px 200px 0px" }
     )
 
     observer.observe(el)
@@ -150,6 +186,16 @@ const SessionList: Component<SessionListProps> = (props) => {
     return sessionId.toLowerCase().includes(query)
   }
 
+  const filterThreadTree = (thread: SessionThread, query: string): SessionThread | null => {
+    const matchingChildren: SessionThread[] = []
+    for (const child of thread.children) {
+      const filteredChild = filterThreadTree(child, query)
+      if (filteredChild !== null) matchingChildren.push(filteredChild)
+    }
+    if (!sessionMatchesQuery(thread.session.id, query) && matchingChildren.length === 0) return null
+    return { ...thread, children: matchingChildren }
+  }
+
   const filteredThreads = createMemo<SessionThread[]>(() => {
     const query = normalizedQuery()
     if (!query) return props.threads
@@ -160,29 +206,46 @@ const SessionList: Component<SessionListProps> = (props) => {
       return getSessionSearchThreads(props.instanceId)
     }
 
-    const next: SessionThread[] = []
+    const result: SessionThread[] = []
     for (const thread of props.threads) {
-      const parentMatches = sessionMatchesQuery(thread.parent.id, query)
-      const matchingChildren = thread.children.filter((child) => sessionMatchesQuery(child.id, query))
-
-      if (!parentMatches && matchingChildren.length === 0) continue
-
-      next.push({
-        parent: thread.parent,
-        children: matchingChildren,
-        latestUpdated: thread.latestUpdated,
-      })
+      const filtered = filterThreadTree(thread, query)
+      if (filtered !== null) result.push(filtered)
     }
+    return result
+  })
 
-    return next
+  const visibleProjection = createMemo(() => {
+    const expandAll = Boolean(normalizedQuery())
+    const rows = flattenVisibleSessionThreads(
+      filteredThreads(),
+      (sessionId) => expandAll || isSessionExpanded(props.instanceId, sessionId),
+    )
+    const ids: string[] = []
+    const rowsById = new Map<string, (typeof rows)[number]>()
+    const indexById = new Map<string, number>()
+    rows.forEach((row, index) => {
+      ids.push(row.sessionId)
+      rowsById.set(row.sessionId, row)
+      indexById.set(row.sessionId, index)
+    })
+    return { ids, rowsById, indexById }
+  })
+  const keptMountedIndexes = createMemo(() => {
+    const sessionId = focusedSessionId()
+    if (!sessionId) return undefined
+    const index = visibleProjection().indexById.get(sessionId)
+    return index === undefined ? undefined : [index]
   })
 
   const allMatchingSessionIds = createMemo<string[]>(() => {
     const ids: string[] = []
-    for (const thread of filteredThreads()) {
-      ids.push(thread.parent.id)
-      for (const child of thread.children) ids.push(child.id)
+    const collectIds = (threads: SessionThread[]) => {
+      for (const thread of threads) {
+        ids.push(thread.session.id)
+        collectIds(thread.children)
+      }
     }
+    collectIds(filteredThreads())
     return ids
   })
 
@@ -206,14 +269,13 @@ const SessionList: Component<SessionListProps> = (props) => {
     const deleting = loading().deletingSession.get(props.instanceId)
     return deleting ? deleting.has(sessionId) : false
   }
- 
 
   const selectSession = (sessionId: string) => {
     const session = sessionStateSessions().get(props.instanceId)?.get(sessionId)
     // If the user selects a child session, make sure its parent thread is expanded.
     // For parent sessions we don't force expansion; user can collapse/expand freely.
     if (session?.parentId) {
-      ensureSessionParentExpanded(props.instanceId, session.parentId)
+      ensureSessionAncestorsExpanded(props.instanceId, session.id)
     }
 
     props.onSelect(sessionId)
@@ -360,21 +422,14 @@ const SessionList: Component<SessionListProps> = (props) => {
     })
   }
 
-  const getSelectableThreadIds = (parentId: string): string[] => {
-    const query = normalizedQuery()
-    const source = query ? filteredThreads() : props.threads
-    const thread = source.find((t) => t.parent.id === parentId)
-    if (!thread) return [parentId]
-    return [thread.parent.id, ...thread.children.map((c) => c.id)]
+  const getSelectableThreadIds = (sessionId: string): string[] => {
+    const source = normalizedQuery() ? filteredThreads() : props.threads
+    const thread = findSessionThread(source, sessionId)
+    return thread ? collectSessionThreadIds([thread]) : [sessionId]
   }
 
   const getAllSessionIdsInOrder = (threads: SessionThread[]): string[] => {
-    const ids: string[] = []
-    threads.forEach((thread) => {
-      ids.push(thread.parent.id)
-      thread.children.forEach((child) => ids.push(child.id))
-    })
-    return ids
+    return collectSessionThreadIds(threads)
   }
 
   const handleToggleSelectAll = (checked: boolean) => {
@@ -433,8 +488,9 @@ const SessionList: Component<SessionListProps> = (props) => {
       }
     }
 
+    const deletionOrder = sortSessionIdsDeepestFirst(sessionStateSessions().get(props.instanceId) ?? new Map(), selected)
     let failed = 0
-    for (const sessionId of selected) {
+    for (const sessionId of deletionOrder) {
       try {
         // eslint-disable-next-line no-await-in-loop
         await deleteSession(props.instanceId, sessionId)
@@ -457,38 +513,38 @@ const SessionList: Component<SessionListProps> = (props) => {
       })
     }
   }
- 
 
   const SessionRow: Component<{
-    sessionId: string
-    isChild?: boolean
-    isLastChild?: boolean
-    hasChildren?: boolean
+    session: SessionThread["session"]
+    depth: number
+    isLastChild: boolean
+    hasChildren: boolean
     expanded?: boolean
+    isLastRow: boolean
     onToggleExpand?: () => void
   }> = (rowProps) => {
-    const session = createMemo(() => sessionStateSessions().get(props.instanceId)?.get(rowProps.sessionId))
-    if (!session()) {
-      return <></>
-    }
+    const sessionId = () => rowProps.session.id
+    const isChild = () => rowProps.depth > 0
 
     const worktreeSlug = createMemo(() => {
-      if (rowProps.isChild) return "root"
-      return getWorktreeSlugForParentSession(props.instanceId, rowProps.sessionId)
+      if (isChild()) return "root"
+      return getWorktreeSlugForParentSession(props.instanceId, sessionId())
     })
 
     const showWorktreeBadge = createMemo(() => {
-      if (rowProps.isChild) return false
+      if (isChild()) return false
       if (getGitRepoStatus(props.instanceId) === false) return false
       const slug = worktreeSlug()
       return Boolean(slug) && slug !== "root"
     })
 
-    const isActive = () => props.activeSessionId === rowProps.sessionId
-    const title = () => session()?.title || t("sessionList.session.untitled")
-    const status = () => getSessionStatus(props.instanceId, rowProps.sessionId)
-    const retry = () => getSessionRetry(props.instanceId, rowProps.sessionId)
+    const isActive = () => props.activeSessionId === sessionId()
+    const title = () => rowProps.session.title || t("sessionList.session.untitled")
+    const status = () => getSessionStatus(props.instanceId, sessionId())
+    const interrupted = () => rowProps.session.generationRecovery === "interrupted"
+    const retry = () => getSessionRetry(props.instanceId, sessionId())
     const statusLabel = () => {
+      if (interrupted()) return t("sessionList.status.interrupted")
       const retryState = retry()
       if (retryState) {
         const seconds = getRetrySeconds(retryState.next, now())
@@ -503,20 +559,22 @@ const SessionList: Component<SessionListProps> = (props) => {
           return t("sessionList.status.idle")
       }
     }
-    const needsPermission = () => Boolean(session()?.pendingPermission)
-    const needsQuestion = () => Boolean((session() as any)?.pendingQuestion)
+    const needsPermission = () => Boolean(rowProps.session.pendingPermission)
+    const needsQuestion = () => Boolean((rowProps.session as any)?.pendingQuestion)
     const needsInput = () => needsPermission() || needsQuestion()
     const statusClassName = () => {
       if (needsInput()) return "session-permission"
+      if (interrupted()) return "session-interrupted"
       const base = `session-${retry() ? "retrying" : status()}`
-      const fadeClass = getSessionIdleFadeClass(props.instanceId, rowProps.sessionId)
+      const fadeClass = getSessionIdleFadeClass(props.instanceId, sessionId())
       return fadeClass ? `${base} ${fadeClass}` : base
     }
     const showStatus = () =>
+      interrupted() ||
       needsInput() ||
       shouldShowSessionStatus(
         props.instanceId,
-        rowProps.sessionId,
+        sessionId(),
         now(),
         preferences().keepUnseenSubagentIdleStatus,
       )
@@ -535,14 +593,10 @@ const SessionList: Component<SessionListProps> = (props) => {
       })
     }
  
-    const isSelected = () => selectedSessionIds().has(rowProps.sessionId)
+    const isSelected = () => selectedSessionIds().has(sessionId())
 
     const parentGroupState = createMemo(() => {
-      if (rowProps.isChild) {
-        return { checked: isSelected(), indeterminate: false, ids: [rowProps.sessionId] }
-      }
-
-      const ids = getSelectableThreadIds(rowProps.sessionId)
+      const ids = rowProps.hasChildren ? getSelectableThreadIds(sessionId()) : [sessionId()]
       const selected = selectedSessionIds()
       const selectedInGroup = ids.reduce((count, id) => (selected.has(id) ? count + 1 : count), 0)
       return {
@@ -558,12 +612,23 @@ const SessionList: Component<SessionListProps> = (props) => {
       rowCheckboxEl.indeterminate = parentGroupState().indeterminate
     })
 
+    const nestedStyle = () => {
+      if (!isChild()) return undefined
+      const visualDepth = Math.min(rowProps.depth, 6)
+      const indent = 1.375 + visualDepth * 0.875
+      return {
+        "--session-indent": `${indent}rem`,
+        "--session-connector-offset": `${indent - 0.875}rem`,
+      }
+    }
+
     return (
-      <div class="session-list-item group">
+      <div class={`session-list-item group ${rowProps.isLastRow ? "session-list-item-last" : ""}`}>
         <button
-          class={`session-item-base ${rowProps.isChild ? `session-item-child${rowProps.isLastChild ? " session-item-child-last" : ""} session-item-border-assistant session-item-kind-assistant` : "session-item-border-user session-item-kind-user"} ${isActive() ? "session-item-active" : "session-item-inactive"}`}
-          data-session-id={rowProps.sessionId}
-          onClick={() => selectSession(rowProps.sessionId)}
+          class={`session-item-base ${isChild() ? "session-item-nested" : ""} ${isChild() && rowProps.isLastChild ? "session-item-child-last" : ""} ${isChild() ? "session-item-border-assistant session-item-kind-assistant" : "session-item-border-user session-item-kind-user"} ${isActive() ? "session-item-active" : "session-item-inactive"}`}
+          style={nestedStyle()}
+          data-session-id={sessionId()}
+          onClick={() => selectSession(sessionId())}
           title={title()}
           role="button"
           aria-selected={isActive()}
@@ -587,15 +652,17 @@ const SessionList: Component<SessionListProps> = (props) => {
                 />
               </Show>
 
-              {rowProps.isChild ? <Bot class="w-4 h-4 flex-shrink-0" /> : <User class="w-4 h-4 flex-shrink-0" />}
+              <Show when={isChild()} fallback={<User class="w-4 h-4 flex-shrink-0" />}>
+                <Bot class="w-4 h-4 flex-shrink-0" />
+              </Show>
               <span class="session-item-title session-item-title--clamp" dir="auto">{title()}</span>
             </div>
           </div>
           <div class="session-item-row session-item-meta">
             <div class="flex items-center gap-2 min-w-0">
               <Show
-                when={rowProps.hasChildren && !rowProps.isChild}
-                fallback={rowProps.isChild ? null : <span class="session-item-expander session-item-expander--spacer" aria-hidden="true" />}
+                when={rowProps.hasChildren}
+                fallback={<span class="session-item-expander session-item-expander--spacer" aria-hidden="true" />}
               >
                 <span
                   class={`session-item-expander opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
@@ -633,7 +700,7 @@ const SessionList: Component<SessionListProps> = (props) => {
             <div class="session-item-actions">
               <span
                 class={`session-item-close opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
-                onClick={(event) => copySessionId(event, rowProps.sessionId)}
+                onClick={(event) => copySessionId(event, sessionId())}
                 role="button"
                 tabIndex={0}
                 aria-label={t("sessionList.actions.copyId.ariaLabel")}
@@ -643,14 +710,14 @@ const SessionList: Component<SessionListProps> = (props) => {
               </span>
               <span
                 class={`session-item-close opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
-                onClick={(event) => handleReloadSession(event, rowProps.sessionId)}
+                onClick={(event) => handleReloadSession(event, sessionId())}
                 role="button"
                 tabIndex={0}
                 aria-label={t("sessionList.actions.reload.ariaLabel")}
                 title={t("sessionList.actions.reload.title")}
               >
                 <Show
-                  when={!isSessionReloading(rowProps.sessionId)}
+                  when={!isSessionReloading(sessionId())}
                   fallback={<RotateCw class="w-3 h-3 animate-spin" />}
                 >
                   <RotateCw class="w-3 h-3" />
@@ -660,7 +727,7 @@ const SessionList: Component<SessionListProps> = (props) => {
                 class={`session-item-close opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
                 onClick={(event) => {
                   event.stopPropagation()
-                  openRenameDialog(rowProps.sessionId)
+                  openRenameDialog(sessionId())
                 }}
                 role="button"
                 tabIndex={0}
@@ -671,14 +738,14 @@ const SessionList: Component<SessionListProps> = (props) => {
               </span>
               <span
                 class={`session-item-close opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
-                onClick={(event) => handleDeleteSession(event, rowProps.sessionId)}
+                onClick={(event) => handleDeleteSession(event, sessionId())}
                 role="button"
                 tabIndex={0}
                 aria-label={t("sessionList.actions.delete.ariaLabel")}
                 title={t("sessionList.actions.delete.title")}
               >
                 <Show
-                  when={!isSessionDeleting(rowProps.sessionId)}
+                  when={!isSessionDeleting(sessionId())}
                   fallback={
                     <svg class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
                       <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
@@ -699,76 +766,25 @@ const SessionList: Component<SessionListProps> = (props) => {
       </div>
     )
   }
- 
-  const activeParentId = createMemo(() => {
-    const activeId = props.activeSessionId
-    if (!activeId || activeId === "info") return null
 
-    const activeSession = sessionStateSessions().get(props.instanceId)?.get(activeId)
-    if (!activeSession) return null
+  createEffect(on(
+    () => [props.activeSessionId, virtualizerHandle()] as const,
+    ([activeId, handle]) => {
+      if (!activeId || activeId === "info" || !handle) return
 
-    return activeSession.parentId ?? activeSession.id
-  })
+      const scroll = () => {
+        const index = visibleProjection().indexById.get(activeId)
+        if (index !== undefined) handle.scrollToIndex(index, { align: "nearest" })
+      }
+      if (typeof requestAnimationFrame === "undefined") {
+        scroll()
+        return
+      }
 
-  createEffect(() => {
-    // Keep the active child session visible by ensuring its parent is expanded.
-    // Don't force-expanding when the active session itself is a parent lets users collapse it.
-    const activeId = props.activeSessionId
-    if (!activeId || activeId === "info") return
-    const activeSession = sessionStateSessions().get(props.instanceId)?.get(activeId)
-    if (!activeSession) return
-    if (!activeSession.parentId) return
-    const parentId = activeParentId()
-    if (!parentId) return
-    ensureSessionParentExpanded(props.instanceId, parentId)
-  })
- 
-  const listEl = createSignal<HTMLElement | null>(null)
-
-  const escapeCss = (value: string) => {
-    if (typeof CSS !== "undefined" && typeof (CSS as any).escape === "function") {
-      return (CSS as any).escape(value)
-    }
-    return value.replace(/\\/g, "\\\\").replace(/\"/g, "\\\"")
-  }
-
-  const scrollActiveIntoView = (sessionId: string) => {
-    const root = listEl[0]()
-    if (!root) return
-
-    const selector = `[data-session-id="${escapeCss(sessionId)}"]`
-
-    const scrollNow = () => {
-      const target = root.querySelector(selector) as HTMLElement | null
-      if (!target) return
-      target.scrollIntoView({ block: "nearest", inline: "nearest" })
-    }
-
-    if (typeof requestAnimationFrame === "undefined") {
-      scrollNow()
-      return
-    }
-
-    // Wait a couple frames so expand/collapse DOM settles.
-    let raf1 = 0
-    let raf2 = 0
-    raf1 = requestAnimationFrame(() => {
-      raf2 = requestAnimationFrame(() => {
-        scrollNow()
-      })
-    })
-
-    onCleanup(() => {
-      if (raf1) cancelAnimationFrame(raf1)
-      if (raf2) cancelAnimationFrame(raf2)
-    })
-  }
-
-  createEffect(() => {
-    const activeId = props.activeSessionId
-    if (!activeId || activeId === "info") return
-    scrollActiveIntoView(activeId)
-  })
+      const frame = requestAnimationFrame(scroll)
+      onCleanup(() => cancelAnimationFrame(frame))
+    },
+  ))
 
   return (
     <div
@@ -846,35 +862,73 @@ const SessionList: Component<SessionListProps> = (props) => {
         </div>
       </Show>
 
-       <div class="session-list flex-1 overflow-y-auto" ref={(el) => listEl[1](el)}>
+       <div
+         class="session-list flex-1 overflow-y-auto"
+         ref={setListElement}
+         onFocusIn={(event) => {
+           const target = event.target
+           if (!(target instanceof Element)) return
+           const row = target.closest<HTMLElement>("[data-session-id]")
+           setFocusedSessionId(row?.dataset.sessionId)
+         }}
+         onFocusOut={(event) => {
+           const nextTarget = event.relatedTarget
+           if (nextTarget instanceof Node && listEl()?.contains(nextTarget)) return
+           setFocusedSessionId(undefined)
+         }}
+       >
 
-          <Show when={filteredThreads().length > 0}>
-            <div class="session-section">
-              <For each={filteredThreads()}>
+          <Show when={sessionListError()}>
+            {(error) => (
+              <LoadErrorState
+                variant="compact"
+                title={t("sessionList.loadError.title")}
+                error={error()}
+                retryLabel={t("sessionList.loadError.retry")}
+                onRetry={handleRetrySessions}
+              />
+            )}
+          </Show>
 
-               {(thread) => {
-                 const expanded = () => (normalizedQuery() ? true : isSessionParentExpanded(props.instanceId, thread.parent.id))
-                 return (
-                   <>
-                       <SessionRow
-                         sessionId={thread.parent.id}
-                         hasChildren={thread.children.length > 0}
-                         expanded={expanded()}
-                         onToggleExpand={() => toggleSessionParentExpanded(props.instanceId, thread.parent.id)}
-                       />
+          <Show when={!sessionListError() && isFetchingSessions() && visibleProjection().ids.length === 0}>
+            <div class="flex items-center justify-center p-4 text-xs text-muted" role="status">
+              <span class="animate-pulse">{t("sessionList.loading.initial")}</span>
+            </div>
+          </Show>
 
-                     <Show when={expanded() && thread.children.length > 0}>
-                       <For each={thread.children}>
-                         {(child, index) => (
-                           <SessionRow sessionId={child.id} isChild isLastChild={index() === thread.children.length - 1} />
-                         )}
-                       </For>
+          <Show when={shouldRenderSessionRows(
+            Boolean(sessionListError()),
+            listViewportAttached() && (visibleProjection().ids.length > 0 || hasMore() || isFetchingSessions()),
+          )}>
+           <div class="session-section">
+             <Show when={visibleProjection().ids.length > 0}>
+               <Virtualizer
+                 ref={setVirtualizerHandle}
+                 data={visibleProjection().ids}
+                 scrollRef={listEl()}
+                 bufferSize={400}
+                 keepMounted={keptMountedIndexes()}
+               >
+                 {(sessionId, index) => {
+                   const row = createMemo(() => visibleProjection().rowsById.get(sessionId))
+                   return (
+                     <Show when={row()}>
+                       {(current) => (
+                         <SessionRow
+                           session={current().thread.session}
+                           depth={current().depth}
+                           hasChildren={current().hasChildren}
+                           expanded={current().expanded}
+                           onToggleExpand={() => toggleSessionExpanded(props.instanceId, sessionId)}
+                           isLastChild={current().isLastChild}
+                           isLastRow={index() === visibleProjection().ids.length - 1 && !hasMore() && !isFetchingSessions()}
+                         />
+                       )}
                      </Show>
-                   </>
-                 )
-               }}
-             </For>
-
+                   )
+                 }}
+               </Virtualizer>
+             </Show>
              <Show when={hasMore() || isFetchingSessions()}>
                <div
                  ref={(el) => setSentinelEl(el)}

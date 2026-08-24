@@ -3,10 +3,11 @@ import type {
   Preferences,
   ExpansionPreference,
   ToolInputsVisibilityPreference,
+  VisibilityPreference,
 } from "../../stores/preferences"
 import type { Command } from "../commands"
 import { tGlobal } from "../i18n"
-import { isTauriHost, isWebHost } from "../runtime-env"
+import { isLocalTauriHost, isWebHost } from "../runtime-env"
 
 export type BehaviorSettingKind = "toggle" | "enum"
 
@@ -47,8 +48,8 @@ export type BehaviorRegistryActions = {
   togglePromptSubmitOnEnter: () => void
   toggleShowPromptVoiceInput: () => void
   setDiffViewMode: (mode: "split" | "unified") => void
-  setToolOutputExpansion: (mode: ExpansionPreference) => void
-  setDiagnosticsExpansion: (mode: ExpansionPreference) => void
+  setToolOutputExpansion: (mode: VisibilityPreference) => void
+  setDiagnosticsExpansion: (mode: VisibilityPreference) => void
   setThinkingBlocksExpansion: (mode: ExpansionPreference) => void
   setToolInputsVisibility: (mode: ToolInputsVisibilityPreference) => void
 }
@@ -63,6 +64,14 @@ function splitKeywords(key: string): string[] {
 function setBooleanByToggle(getCurrent: () => boolean, toggle: () => void, next: boolean) {
   if (getCurrent() === next) return
   toggle()
+}
+
+function getToolOutputVisibility(preferences: Preferences): VisibilityPreference {
+  const defaults = preferences.toolCallExpansionDefaults
+  if (defaults.tools.other) return defaults.tools.other
+  if (defaults.preset === "minimal" || defaults.preset === "balanced") return "collapsed"
+  if (defaults.preset === "detailed" || defaults.preset === "everything") return "expanded"
+  return preferences.toolOutputExpansion ?? "expanded"
 }
 
 export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorSetting[] {
@@ -184,15 +193,25 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       id: "behavior.toolOutputsDefault",
       titleKey: "settings.behavior.toolOutputsDefault.title",
       subtitleKey: "settings.behavior.toolOutputsDefault.subtitle",
-      get: (p) => (p.toolOutputExpansion ?? "expanded") as ExpansionPreference,
+      get: getToolOutputVisibility,
       set: (next) => {
         if (updatePreferences) {
-          updatePreferences({ toolOutputExpansion: next as ExpansionPreference })
+          const mode = next as VisibilityPreference
+          const current = prefs()
+          updatePreferences({
+            toolOutputExpansion: mode === "hidden" ? current.toolOutputExpansion : mode,
+            toolCallExpansionDefaults: {
+              ...current.toolCallExpansionDefaults,
+              preset: "custom",
+              tools: { ...current.toolCallExpansionDefaults.tools, other: mode },
+            },
+          })
           return
         }
-        actions.setToolOutputExpansion(next as ExpansionPreference)
+        actions.setToolOutputExpansion(next as VisibilityPreference)
       },
       options: [
+        { value: "hidden", labelKey: "commands.common.hidden" },
         { value: "expanded", labelKey: "commands.common.expanded" },
         { value: "collapsed", labelKey: "commands.common.collapsed" },
       ],
@@ -202,15 +221,16 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       id: "behavior.diagnosticsDefault",
       titleKey: "settings.behavior.diagnosticsDefault.title",
       subtitleKey: "settings.behavior.diagnosticsDefault.subtitle",
-      get: (p) => (p.diagnosticsExpansion ?? "expanded") as ExpansionPreference,
+      get: (p) => (p.diagnosticsExpansion ?? "expanded") as VisibilityPreference,
       set: (next) => {
         if (updatePreferences) {
-          updatePreferences({ diagnosticsExpansion: next as ExpansionPreference })
+          updatePreferences({ diagnosticsExpansion: next as VisibilityPreference })
           return
         }
-        actions.setDiagnosticsExpansion(next as ExpansionPreference)
+        actions.setDiagnosticsExpansion(next as VisibilityPreference)
       },
       options: [
+        { value: "hidden", labelKey: "commands.common.hidden" },
         { value: "expanded", labelKey: "commands.common.expanded" },
         { value: "collapsed", labelKey: "commands.common.collapsed" },
       ],
@@ -282,7 +302,7 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
         }
       },
     },
-    ...(isTauriHost()
+    ...(isLocalTauriHost()
       ? [
           {
             kind: "toggle" as const,
@@ -434,16 +454,20 @@ export function getBehaviorCommands(actions: BehaviorRegistryActions): Command[]
     {
       id: "tool-output-default-visibility",
       label: () => {
-        const mode = actions.preferences().toolOutputExpansion || "expanded"
-        const state = mode === "expanded" ? tGlobal("commands.common.expanded") : tGlobal("commands.common.collapsed")
+        const mode = getToolOutputVisibility(actions.preferences())
+        const state = mode === "expanded"
+          ? tGlobal("commands.common.expanded")
+          : mode === "collapsed"
+            ? tGlobal("commands.common.collapsed")
+            : tGlobal("commands.common.hidden")
         return tGlobal("commands.toolOutputsDefault.label", { state })
       },
       description: () => tGlobal("commands.toolOutputsDefault.description"),
       category: "System",
       keywords: () => splitKeywords("commands.toolOutputsDefault.keywords"),
       action: () => {
-        const mode = actions.preferences().toolOutputExpansion || "expanded"
-        const next: ExpansionPreference = mode === "expanded" ? "collapsed" : "expanded"
+        const mode = getToolOutputVisibility(actions.preferences())
+        const next: VisibilityPreference = mode === "hidden" ? "collapsed" : mode === "collapsed" ? "expanded" : "hidden"
         actions.setToolOutputExpansion(next)
       },
     },
@@ -451,7 +475,11 @@ export function getBehaviorCommands(actions: BehaviorRegistryActions): Command[]
       id: "diagnostics-default-visibility",
       label: () => {
         const mode = actions.preferences().diagnosticsExpansion || "expanded"
-        const state = mode === "expanded" ? tGlobal("commands.common.expanded") : tGlobal("commands.common.collapsed")
+        const state = mode === "expanded"
+          ? tGlobal("commands.common.expanded")
+          : mode === "collapsed"
+            ? tGlobal("commands.common.collapsed")
+            : tGlobal("commands.common.hidden")
         return tGlobal("commands.diagnosticsDefault.label", { state })
       },
       description: () => tGlobal("commands.diagnosticsDefault.description"),
@@ -459,7 +487,7 @@ export function getBehaviorCommands(actions: BehaviorRegistryActions): Command[]
       keywords: () => splitKeywords("commands.diagnosticsDefault.keywords"),
       action: () => {
         const mode = actions.preferences().diagnosticsExpansion || "expanded"
-        const next: ExpansionPreference = mode === "expanded" ? "collapsed" : "expanded"
+        const next: VisibilityPreference = mode === "hidden" ? "collapsed" : mode === "collapsed" ? "expanded" : "hidden"
         actions.setDiagnosticsExpansion(next)
       },
     },

@@ -26,6 +26,13 @@ const localElectronAPI = {
   restartCli: () => ipcRenderer.invoke("cli:restart"),
   openDialog: (options) => ipcRenderer.invoke("dialog:open", options),
   getDirectoryPaths: (paths) => ipcRenderer.invoke("filesystem:getDirectoryPaths", paths),
+  openWorkspaceTarget: (payload) => ipcRenderer.invoke("workspace:openTarget", payload),
+  setWorkspaceMenuEnabled: (enabled) => ipcRenderer.invoke("workspace:setMenuEnabled", Boolean(enabled)),
+  onMenuAction: (callback) => {
+    const handler = (_event, action) => callback(action)
+    ipcRenderer.on("menu:action", handler)
+    return () => ipcRenderer.removeListener("menu:action", handler)
+  },
   getPathForFile: (file) => {
     try {
       return webUtils.getPathForFile(file)
@@ -37,6 +44,12 @@ const localElectronAPI = {
   setWakeLock: (enabled) => ipcRenderer.invoke("power:setWakeLock", Boolean(enabled)),
   showNotification: (payload) => ipcRenderer.invoke("notifications:show", payload),
   openRemoteWindow: (payload) => ipcRenderer.invoke("remote:openWindow", payload),
+  claimClientStateAccess: (token) => ipcRenderer.invoke("client-state:claimAccess", token),
+  loadClientState: (token) => ipcRenderer.invoke("client-state:load", token),
+  saveClientState: (token, snapshot) => ipcRenderer.invoke("client-state:save", token, snapshot),
+  setClientStateRestoreEnabled: (token, enabled) =>
+    ipcRenderer.invoke("client-state:setRestoreEnabled", token, Boolean(enabled)),
+  clearClientState: (token) => ipcRenderer.invoke("client-state:clear", token),
 }
 
 const remoteElectronAPI = {
