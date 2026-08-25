@@ -54,7 +54,7 @@ pub(crate) fn resolve_update_channel(
         return "dev".to_string();
     }
     let lower = version.to_ascii_lowercase();
-    if lower.contains("-dev-v2-") {
+    if lower.ends_with("-dev-v2") || lower.contains("-dev-v2-") {
         "dev-v2".to_string()
     } else if lower.contains("-dev.") || lower.contains("-dev-") {
         "dev".to_string()
@@ -193,6 +193,7 @@ mod tests {
         );
         assert_eq!(resolve_update_channel(None, "1.0.0", false), "dev");
         assert_eq!(resolve_update_channel(None, "1.0.0-dev.2", true), "dev");
+        assert_eq!(resolve_update_channel(None, "1.0.0-dev-v2", true), "dev-v2");
         assert_eq!(
             resolve_update_channel(None, "1.0.0-dev-v2-2", true),
             "dev-v2"

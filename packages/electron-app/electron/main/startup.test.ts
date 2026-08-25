@@ -9,6 +9,7 @@ test("update channel honors the environment, forces unpackaged dev, and only inf
   assert.equal(resolveUpdateChannel("Beta", "1.0.0-dev.2", false), "beta")
   assert.equal(resolveUpdateChannel(undefined, "1.0.0", false), "dev")
   assert.equal(resolveUpdateChannel(undefined, "1.0.0-dev-2", true), "dev")
+  assert.equal(resolveUpdateChannel(undefined, "1.0.0-dev-v2", true), "dev-v2")
   assert.equal(resolveUpdateChannel(undefined, "1.0.0-dev-v2-2", true), "dev-v2")
   assert.equal(resolveUpdateChannel(undefined, "1.0.0", true), "stable")
 })
