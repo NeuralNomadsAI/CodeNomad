@@ -963,7 +963,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   }
 
   async function handleFirstPromptSend(prompt: string, attachments: Attachment[]) {
-    await runFirstPromptSubmission((sessionId) => sendMessage(props.instance.id, sessionId, prompt, attachments))
+    await runFirstPromptSubmission(async (sessionId) => {
+      await sendMessage(props.instance.id, sessionId, prompt, attachments)
+    })
   }
 
   async function handleFirstPromptCommand(commandName: string, args: string) {

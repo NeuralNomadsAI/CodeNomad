@@ -43,6 +43,7 @@ function setup(
   const client = {
     session: {
       prompt,
+      switchAgent: async () => undefined,
       switchModel: async () => undefined,
       instructions: { entry },
     },

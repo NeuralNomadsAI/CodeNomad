@@ -6,7 +6,7 @@ This branch replaces CodeNomad's OpenCode V1 SDK, custom plugin, and per-workspa
 
 The work grew beyond an SDK swap. It also introduces location-based ownership, native Forms and Shell resources, project-wide session pagination, reconnect reconciliation, bounded virtualized timelines, multi-window desktop state, and a content-addressed restore format.
 
-Server and UI pin the same reviewed `@opencode-ai/client` beta build. The selected `opencode2` CLI is managed independently: CodeNomad's updater resolves the latest published CLI beta and installs that concrete version, while startup accepts another compatible CLI after authenticated health and API validation instead of enforcing an exact version.
+Server and UI follow the latest `@opencode-ai/client@beta` contract. The selected `opencode2` CLI is managed independently: CodeNomad's updater resolves and installs the latest published CLI beta, while startup accepts another healthy CLI instead of enforcing an exact version.
 
 The incremental comparison with official OpenCode Desktop V2, including closed findings and remaining gaps, is recorded in [`DESKTOP_V2_COMPARISON.md`](DESKTOP_V2_COMPARISON.md).
 
@@ -143,14 +143,14 @@ During stabilization, CodeNomad implements the public native V2 contract and rem
 | Delete-to-boundary / undo | `session.revert.stage` and `session.revert.clear` use V2 staged-revert semantics instead of arbitrary deletion. | Undo uses `revert.stage`. Redo/clear remains a CodeNomad UI gap, not a reason to restore V1 deletion. | Expose `revert.clear` through the existing native contract. |
 | Compaction | Native checkpoint compaction summarizes the older head and retains a server-selected recent tail controlled by `compaction.keep.tokens`. | Uses `session.compact`; there is no message-level selective compaction. CodeNomad displays the terminal summary without rendering every streamed delta. | Add scoped controls only if V2 defines scoped compaction semantics. |
 | Full-session search | Native message cursors exist, but there is no server search endpoint that returns message identity and position. | Retained through bounded cursor traversal while keeping only the 200-message resident window and collected matches. Large searches still fetch every page. | V2 exposes server search plus a rank/cursor navigation target. |
-| Queued prompt management | Native inbox list, cancel, steer, and queue operations are available. | Implemented with authoritative queue/steer switching, cancellation, safe edit replacement, draft preservation, and queue admission for follow-up prompts. | Revisit exact in-place editing if V2 adds an inbox update operation; replacement currently moves an edited prompt to the queue tail. |
+| Queued prompt management | Native inbox list, cancel, steer, and queue operations are available. | Implemented with authoritative queue/steer switching, cancellation, safe edit replacement, draft preservation, order-preserving suffix rewrites, and queue admission for follow-up prompts. | Replace suffix rewrites if V2 adds atomic inbox update and reorder operations. |
 | Background execution | Native Shell resources support listing, bounded output, and removal, but do not reproduce every custom V1 process-manager control. | Replaced the custom manager with native Shells and removed unsupported controls such as rename. | Add controls only when native Shell APIs support them. |
 | Service lifecycle | V2 uses one shared externally owned service rather than one runtime per workspace. | CodeNomad discovers or starts the service but never exposes workspace stop or stops the daemon on shutdown. | No parity work planned unless V2 changes service ownership semantics. |
 
-This table is release-facing and must remain synchronized with the open migration pull request description whenever a capability is removed, restored, or becomes available in the pinned V2 client.
+This table is release-facing and must remain synchronized with the open migration pull request description whenever a capability is removed, restored, or becomes available in the current V2 client.
 
 ## Review Notes
 
-- The generated V2 client remains experimental. Review its installed declarations and release notes whenever the pinned client advances; public `@opencode-ai/sdk` examples are not authoritative for this branch.
+- The generated V2 client remains experimental. Review its current documentation, installed declarations, and proxy/API parity whenever the beta contract changes. The SDK documentation describes an alternative embedded host; CodeNomad uses the network client.
 - Upgrade references: [OpenCode releases](https://github.com/anomalyco/opencode/releases), [OpenCode V2 documentation](https://opencode.ai/v2/docs/), and `node_modules/@opencode-ai/client/dist/promise/`.
 - This branch intentionally has no OpenCode V1 fallback or private OpenCode database.

@@ -45,7 +45,8 @@ import {
 } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
-import { applyOpenCodeDataEvent, destroyOpenCodeData, projectOpenCodeMessages } from "./opencode-data"
+import { applyOpenCodeDataEvent, destroyOpenCodeData, projectOpenCodeMessages, syncOpenCodeSessionInbox } from "./opencode-data"
+import { shellStore } from "./shells"
 import { isLatestWindow } from "./message-v2/message-window"
 import { upsertPermissionV2, removePermissionV2, removeMessageV2 } from "./message-v2/bridge"
 import {
@@ -337,7 +338,12 @@ const connectionResyncs = new TrailingResyncCoordinator(
     } catch (error) {
       sessionError = error
     }
-    await Promise.all([syncPendingRequests(instanceId), refreshVolatileInstanceState(instanceId)])
+    await Promise.all([
+      syncPendingRequests(instanceId),
+      refreshVolatileInstanceState(instanceId),
+      syncLoadedSessionInboxes(instanceId),
+      shellStore.refreshForEvent(instanceId, { type: "server.connected" }),
+    ])
     if (sessionError) throw sessionError
     const loadedMessages = messagesLoaded().get(instanceId) ?? new Set<string>()
     for (const sessionId of loadedMessages) invalidateSessionMessageLoad(instanceId, sessionId)
@@ -353,6 +359,16 @@ const connectionResyncGate = new ConnectionResyncGate()
 
 function resyncConnectedInstance(instanceId: string): void {
   void connectionResyncs.request(instanceId)
+}
+
+async function syncLoadedSessionInboxes(instanceId: string): Promise<void> {
+  const instance = instances().get(instanceId)
+  if (!instance?.client || instance.status !== "ready") return
+  const loaded = messagesLoaded().get(instanceId) ?? new Set<string>()
+  await Promise.all(Array.from(loaded, (sessionId) => {
+    const directory = sessions().get(instanceId)?.get(sessionId)?.location.directory ?? instance.folder
+    return syncOpenCodeSessionInbox(instanceId, sessionId, directory)
+  }))
 }
 
 const allInstanceRefreshTargets: readonly InstanceRefreshTarget[] = ["agents", "providers", "commands", "metadata", "filesystem"]
@@ -2085,6 +2101,7 @@ export {
   syncPendingRequests,
   invalidatePendingRequestSync,
   refreshVolatileInstanceState,
+  syncLoadedSessionInboxes,
   handleInstanceInvalidation,
   clearReloadableInstanceState,
 }

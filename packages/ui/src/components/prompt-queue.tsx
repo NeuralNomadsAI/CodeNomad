@@ -1,6 +1,6 @@
 import type { SessionInboxUser } from "@opencode-ai/client"
 import { For, Show } from "solid-js"
-import { ListEnd, Pencil, Play, Trash2, X } from "lucide-solid"
+import { ArrowDown, ArrowUp, Pencil, Play, Trash2, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 
 interface PromptQueueProps {
@@ -11,6 +11,7 @@ interface PromptQueueProps {
   onEdit: (item: SessionInboxUser) => void
   onCancelEdit: () => void
   onRemove: (item: SessionInboxUser) => void
+  onMove: (item: SessionInboxUser, direction: -1 | 1) => void
 }
 
 export default function PromptQueue(props: PromptQueueProps) {
@@ -25,16 +26,15 @@ export default function PromptQueue(props: PromptQueueProps) {
       <section class="prompt-queue" aria-label={t("promptQueue.title", { count: props.items.length })}>
         <header class="prompt-queue-header">{t("promptQueue.title", { count: props.items.length })}</header>
         <div class="prompt-queue-list">
-          <For each={props.items}>{(item) => {
+          <For each={props.items}>{(item, index) => {
             const busy = () => props.busyId === item.id
             const editing = () => props.editingId === item.id
             const attachmentCount = () => item.payload.files?.length ?? 0
-            const deliveryLabel = () => t(`promptQueue.delivery.${item.delivery}`)
             return (
               <div class="prompt-queue-row" data-delivery={item.delivery} data-editing={editing() ? "true" : undefined}>
                 <div class="prompt-queue-content">
                   <div class="prompt-queue-meta">
-                    <span>{deliveryLabel()}</span>
+                    <span>{t("promptQueue.delivery.queue")}</span>
                     <Show when={attachmentCount() > 0}>
                       <span>{t(`promptQueue.attachments.${attachmentCount() === 1 ? "one" : "other"}`, { count: attachmentCount() })}</span>
                     </Show>
@@ -45,13 +45,17 @@ export default function PromptQueue(props: PromptQueueProps) {
                   <button
                     type="button"
                     disabled={busy()}
-                    title={t(item.delivery === "queue" ? "promptQueue.actions.steer" : "promptQueue.actions.queue")}
-                    aria-label={t(item.delivery === "queue" ? "promptQueue.actions.steer" : "promptQueue.actions.queue")}
+                    title={t("promptQueue.actions.steer")}
+                    aria-label={t("promptQueue.actions.steer")}
                     onClick={() => props.onDeliveryChange(item)}
                   >
-                    <Show when={item.delivery === "queue"} fallback={<ListEnd aria-hidden="true" />}>
-                      <Play aria-hidden="true" />
-                    </Show>
+                    <Play aria-hidden="true" />
+                  </button>
+                  <button type="button" disabled={busy() || index() === 0} title={t("promptQueue.actions.moveUp")} aria-label={t("promptQueue.actions.moveUp")} onClick={() => props.onMove(item, -1)}>
+                    <ArrowUp aria-hidden="true" />
+                  </button>
+                  <button type="button" disabled={busy() || index() === props.items.length - 1} title={t("promptQueue.actions.moveDown")} aria-label={t("promptQueue.actions.moveDown")} onClick={() => props.onMove(item, 1)}>
+                    <ArrowDown aria-hidden="true" />
                   </button>
                   <Show
                     when={!editing()}

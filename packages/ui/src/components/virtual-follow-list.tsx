@@ -136,6 +136,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let pendingContentRenderedFrame: number | null = null
   let pendingExplicitBottomPinFrame: number | null = null
   let explicitBottomPinToken: string | number | null = null
+  let lastHandledExplicitBottomPinToken: string | number | null = null
   let userCancelledExplicitBottomPinToken: string | number | null = null
   let explicitBottomPinMinItemCount = 0
   let explicitBottomPinSettleFrames = 0
@@ -412,6 +413,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   function startExplicitBottomPin(intent: VirtualExplicitBottomPinIntent) {
     cancelActiveScrollRestore()
     userCancelledExplicitBottomPinToken = null
+    lastHandledExplicitBottomPinToken = intent.token
     explicitBottomPinToken = intent.token
     explicitBottomPinMinItemCount = Math.max(0, Math.floor(intent.minItemCount ?? 0))
     explicitBottomPinSettleFrames = EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES
@@ -769,12 +771,13 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   createEffect(on(explicitBottomPinIntent, (intent) => {
     if (!intent) {
+      lastHandledExplicitBottomPinToken = null
       userCancelledExplicitBottomPinToken = null
       clearExplicitBottomPin()
       return
     }
     if (intent.token === userCancelledExplicitBottomPinToken) return
-    if (intent.token === explicitBottomPinToken) return
+    if (intent.token === lastHandledExplicitBottomPinToken) return
     startExplicitBottomPin(intent)
   }))
 
@@ -795,6 +798,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     if (nextKey === lastResetKey) return
     lastResetKey = nextKey
     invalidateScrollRestore()
+    lastHandledExplicitBottomPinToken = null
     clearExplicitBottomPin()
     dispatchFollowEvent({ type: "reset", follow: initialAutoScroll() })
     pendingInitialScroll = true

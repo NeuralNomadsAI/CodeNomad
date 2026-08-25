@@ -134,7 +134,7 @@ async function sendMessage(
   prompt: string,
   attachments: Attachment[] = [],
   options: { delivery?: SessionInboxDelivery; replace?: SessionInboxUser } = {},
-): Promise<void> {
+): Promise<string> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -234,20 +234,21 @@ async function sendMessage(
 
   clearConversationPlaybackForSession(instanceId, sessionId)
 
-  store.upsertMessage({
-    id: messageId,
-    sessionId,
-    role: "user",
-    status: "sending",
-    parts: optimisticParts,
-    createdAt,
-    updatedAt: createdAt,
-    isEphemeral: true,
-    clientPromptDisplayMetadata: preparedPrompt.displayMetadata,
-  })
-
-  // Preserve the optimistic bubble only while the prompt request is unresolved.
-  store.markSendPending(messageId)
+  const projectOptimistically = options.delivery !== "queue"
+  if (projectOptimistically) {
+    store.upsertMessage({
+      id: messageId,
+      sessionId,
+      role: "user",
+      status: "sending",
+      parts: optimisticParts,
+      createdAt,
+      updatedAt: createdAt,
+      isEphemeral: true,
+      clientPromptDisplayMetadata: preparedPrompt.displayMetadata,
+    })
+    store.markSendPending(messageId)
+  }
 
   withSession(instanceId, sessionId, () => {
     /* trigger reactivity for legacy session data */
@@ -275,33 +276,38 @@ async function sendMessage(
     requestBody,
   })
 
+  let confirmedId = messageId
   try {
     log.info("session.prompt", { instanceId, sessionId, requestBody })
     const admission = beginSessionGenerationAdmission(instanceId, sessionId)
     try {
       await syncVoiceModeInstruction(client, instanceId, sessionId)
-      if (session.model.providerId && session.model.modelId) {
-        await client.session.switchModel({ sessionID: sessionId, model: getNativeModel(instanceId, session.model) })
+      if (options.delivery !== "queue") {
+        if (session.agent) await client.session.switchAgent({ sessionID: sessionId, agent: session.agent })
+        if (session.model.providerId && session.model.modelId) {
+          await client.session.switchModel({ sessionID: sessionId, model: getNativeModel(instanceId, session.model) })
+        }
       }
       const result = await client.session.prompt({ sessionID: sessionId, ...requestBody })
-      const confirmedId = result?.id || messageId
-      if (confirmedId !== messageId) store.replaceMessageId({ oldId: messageId, newId: confirmedId })
+      confirmedId = result?.id || messageId
+      if (projectOptimistically && confirmedId !== messageId) store.replaceMessageId({ oldId: messageId, newId: confirmedId })
       admission.complete()
-      store.acceptSend(confirmedId)
+      if (projectOptimistically) store.acceptSend(confirmedId)
     } catch (error) {
       admission.rollback()
       throw error
     }
   } catch (error) {
-    store.failSend(messageId)
+    if (projectOptimistically) store.failSend(messageId)
     log.error("Failed to send prompt", error)
     throw error
   }
 
   if (options.replace) {
-    // ponytail: V2 has no inbox update endpoint, so an edited item safely moves to the queue tail.
+    // V2 has no atomic inbox update, so preserve the original until its replacement is admitted.
     await client.session.inbox.cancel({ sessionID: sessionId, inboxID: options.replace.id })
   }
+  return confirmedId
 }
 
 async function executeCustomCommand(
@@ -322,30 +328,10 @@ async function executeCustomCommand(
     throw new Error("Session not found")
   }
 
-  const body: {
-    command: string
-    arguments: string
-    id: string
-    agent?: string
-    model?: { providerID: string; id: string; variant?: string }
-  } = {
-    command: commandName,
-    arguments: args,
-    id: createId("msg"),
-  }
-
-  if (session.agent) {
-    body.agent = session.agent
-  }
-
-  if (session.model.providerId && session.model.modelId) {
-    body.model = getNativeModel(instanceId, session.model)
-  }
-
   const admission = beginSessionGenerationAdmission(instanceId, sessionId)
   try {
     await syncVoiceModeInstruction(client, instanceId, sessionId)
-    await client.session.command({ sessionID: sessionId, ...body })
+    await client.session.command({ sessionID: sessionId, command: commandName, text: args, delivery: "steer" })
     admission.complete()
   } catch (error) {
     admission.rollback()
@@ -421,9 +407,11 @@ async function updateSessionAgent(instanceId: string, sessionId: string, agent: 
   })
 
   try {
-    await getRootClient(instanceId).session.switchAgent({ sessionID: sessionId, agent })
-    if (shouldApplyModel) {
-      await getRootClient(instanceId).session.switchModel({ sessionID: sessionId, model: getNativeModel(instanceId, nextModel) })
+    if (!isSessionBusy(instanceId, sessionId)) {
+      await getRootClient(instanceId).session.switchAgent({ sessionID: sessionId, agent })
+      if (shouldApplyModel) {
+        await getRootClient(instanceId).session.switchModel({ sessionID: sessionId, model: getNativeModel(instanceId, nextModel) })
+      }
     }
   } catch (error) {
     withSession(instanceId, sessionId, (current) => {
@@ -471,7 +459,9 @@ async function updateSessionModel(
 
   const nativeModel = getNativeModel(instanceId, model)
   try {
-    await getRootClient(instanceId).session.switchModel({ sessionID: sessionId, model: nativeModel })
+    if (!isSessionBusy(instanceId, sessionId)) {
+      await getRootClient(instanceId).session.switchModel({ sessionID: sessionId, model: nativeModel })
+    }
   } catch (error) {
     withSession(instanceId, sessionId, (current) => {
       if (current.model.providerId !== model.providerId || current.model.modelId !== model.modelId) return false

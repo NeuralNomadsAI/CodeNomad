@@ -2,14 +2,14 @@
 
 ## Package
 
-CodeNomad pins the same reviewed experimental `@opencode-ai/client` beta build in `packages/server/package.json` and `packages/ui/package.json`. The runtime CLI is independently updated to a concrete resolved beta version and startup validates service health and API compatibility. This is distinct from the current public `@opencode-ai/sdk` documentation.
+CodeNomad server and UI both follow the latest experimental `@opencode-ai/client@beta` contract. The runtime CLI independently follows its latest beta and startup validates service health without an exact version gate. The public `@opencode-ai/sdk` provides the same generated Promise contract through an alternative embedded host.
 
 - Promise client: `import { OpenCode } from "@opencode-ai/client"`
 - Service authentication headers: `import { Service } from "@opencode-ai/client/service"`
 - Client construction: `OpenCode.make({ baseUrl, headers?, fetch? })`
 - Declarations: `node_modules/@opencode-ai/client/dist/promise/`
 
-Do not import `@opencode-ai/sdk`; its wrapper shapes, `{ data, error }` conventions, and `createOpencodeClient()` do not apply to the experimental beta protocol.
+Do not replace the shared network service with `@opencode-ai/sdk` unless CodeNomad intentionally changes to an embedded, process-owned host.
 
 ## Used Native APIs
 

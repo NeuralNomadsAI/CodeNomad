@@ -277,7 +277,6 @@ interface MessageContentItemProps {
   messageId: string
   startPartId: string
   messageIndex: number
-  lastAssistantIndex: () => number
   onRevert?: (messageId: string) => void
   onFork?: (messageId?: string) => void
   onContentRendered?: () => void
@@ -302,14 +301,6 @@ function isVisibleContentPart(part: ClientPart): boolean {
 function MessageContentItem(props: MessageContentItemProps) {
   const record = createMemo(() => props.store().getMessage(props.messageId))
   const messageInfo = createMemo(() => props.store().getMessageInfo(props.messageId))
-
-  const isQueued = createMemo(() => {
-    const current = record()
-    if (!current) return false
-    if (current.role !== "user") return false
-    const lastAssistant = props.lastAssistantIndex()
-    return lastAssistant === -1 || props.messageIndex > lastAssistant
-  })
 
   const parts = createMemo<ClientPart[]>(() => {
     const current = record()
@@ -373,7 +364,6 @@ function MessageContentItem(props: MessageContentItemProps) {
         instanceId={props.instanceId}
         sessionId={props.sessionId}
         contentStartPartId={props.startPartId}
-        isQueued={isQueued()}
         showAgentMeta={showAgentMeta()}
         onRevert={props.onRevert}
         onFork={props.onFork}
@@ -510,7 +500,6 @@ interface MessageBlockProps {
   sessionId: string
   store: () => InstanceMessageStore
   messageIndex: number
-  lastAssistantIndex: () => number
   showThinking: () => boolean
   thinkingDefaultExpanded: () => boolean
   usageMetricsVisibility: () => VisibilityPreference
@@ -556,17 +545,12 @@ export default function MessageBlock(props: MessageBlockProps) {
     const current = record()
     if (!current) return null
 
-    const index = props.messageIndex
-    const lastAssistantIdx = props.lastAssistantIndex()
-    const isQueued = current.role === "user" && (lastAssistantIdx === -1 || index > lastAssistantIdx)
-
     const messageInfoVersion = props.store().state.messageInfoVersion[current.id] ?? 0
 
     const cacheSignature = [
       current.id,
       current.revision,
       messageInfoVersion,
-      isQueued ? 1 : 0,
       props.showThinking() ? 1 : 0,
       props.thinkingDefaultExpanded() ? 1 : 0,
       props.usageMetricsVisibility(),
@@ -782,7 +766,6 @@ export default function MessageBlock(props: MessageBlockProps) {
                     messageId={(item() as ContentDisplayItem).messageId}
                     startPartId={(item() as ContentDisplayItem).startPartId}
                     messageIndex={props.messageIndex}
-                    lastAssistantIndex={props.lastAssistantIndex}
                     onRevert={props.onRevert}
                     onFork={props.onFork}
                     onContentRendered={props.onContentRendered}

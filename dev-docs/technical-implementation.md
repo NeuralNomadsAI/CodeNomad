@@ -2,7 +2,7 @@
 
 ## OpenCode Dependency
 
-Server and UI use the same reviewed experimental `@opencode-ai/client` release. Import the generated Promise client from `@opencode-ai/client`. The runtime CLI is independently updated and startup validates service health and API compatibility without requiring the client package's exact version string. Every upgrade must review OpenCode release notes, current documentation, installed declarations, and proxy/API parity.
+Server and UI follow the latest experimental `@opencode-ai/client@beta` contract. Import the generated Promise client from `@opencode-ai/client`. The runtime CLI independently follows its latest beta and startup validates service health without requiring the client package's exact version string. Review current documentation, installed declarations, and proxy/API parity whenever the beta contract changes.
 
 Do not add `@opencode-ai/sdk`, old `{ data, error }` SDK wrappers, `createOpencodeClient()`, or a `packages/opencode-plugin` package. Verify method signatures in `node_modules/@opencode-ai/client/dist/promise/`.
 

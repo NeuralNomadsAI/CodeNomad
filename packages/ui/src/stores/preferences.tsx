@@ -186,7 +186,7 @@ const defaultUiSettings: UiSettings = {
   showMessageTimeline: true,
   showTimelineTools: true,
   holdLongAssistantReplies: true,
-  promptSubmitOnEnter: false,
+  promptSubmitOnEnter: true,
   showPromptVoiceInput: true,
   diffViewMode: "split",
   toolCallExpansionDefaults: defaultToolCallExpansionDefaults,

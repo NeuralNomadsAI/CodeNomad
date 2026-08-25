@@ -47,8 +47,10 @@ import {
   reconcilePendingSessionIndicators,
   reconcilePendingRequestLiveness,
   refreshVolatileInstanceState,
+  syncLoadedSessionInboxes,
   syncPendingRequests,
 } from "./stores/instances"
+import { shellStore } from "./stores/shells"
 import {
   getSessions,
   getSessionRoot,
@@ -330,6 +332,8 @@ const App: Component = () => {
               await Promise.all([
                 syncPendingRequests(id, (invalidate) => { invalidatePendingRequests = invalidate }),
                 refreshVolatileInstanceState(id),
+                syncLoadedSessionInboxes(id),
+                shellStore.refreshForEvent(id, { type: "server.connected" }),
               ])
               if (sessionError) throw sessionError
             })(),

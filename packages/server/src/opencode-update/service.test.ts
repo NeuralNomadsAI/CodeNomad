@@ -151,10 +151,10 @@ test("resolves the concrete beta from the registry dist-tags response", async ()
   const version = await resolveLatestOpenCodeVersion(async (url, init) => {
     assert.equal(url, "https://registry.npmjs.org/-/package/%40opencode-ai%2Fcli/dist-tags")
     assert.deepEqual(init?.headers, { Accept: "application/json" })
-    return new Response(JSON.stringify({ latest: "1.0.0", beta: "0.0.0-beta-17963" }))
+    return new Response(JSON.stringify({ latest: "1.0.0", beta: "0.0.0-beta-42" }))
   })
 
-  assert.equal(version, "0.0.0-beta-17963")
+  assert.equal(version, "0.0.0-beta-42")
 })
 
 test("rejects malformed registry dist-tags data", async () => {

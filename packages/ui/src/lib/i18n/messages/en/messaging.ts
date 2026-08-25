@@ -206,6 +206,8 @@ export const messagingMessages = {
   "promptQueue.actions.steer": "Steer now",
   "promptQueue.actions.queue": "Move to queue",
   "promptQueue.actions.edit": "Edit queued prompt",
+  "promptQueue.actions.moveUp": "Move queued prompt up",
+  "promptQueue.actions.moveDown": "Move queued prompt down",
   "promptQueue.actions.cancelEdit": "Cancel editing",
   "promptQueue.actions.remove": "Remove queued prompt",
   "promptQueue.error.title": "Queue action failed",

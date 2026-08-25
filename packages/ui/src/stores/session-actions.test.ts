@@ -80,18 +80,25 @@ afterEach(() => {
 describe("voice instruction sync", () => {
   it("syncs the enabled instruction before a slash command", async () => {
     const calls: string[] = []
+    let commandInput: unknown
     seed({ session: {
       instructions: { entry: {
         put: async () => { calls.push("put") },
         remove: async () => { calls.push("remove") },
       } },
-      command: async () => { calls.push("command") },
+      command: async (input: unknown) => { calls.push("command"); commandInput = input },
     } })
     setConversationModeEnabled(instanceId, true)
 
     await executeCustomCommand(instanceId, sessionId, "review", "")
 
     assert.deepEqual(calls, ["put", "command"])
+    assert.deepEqual(commandInput, {
+      sessionID: sessionId,
+      command: "review",
+      text: "",
+      delivery: "steer",
+    })
   })
 
   it("removes a stale instruction before a shell command", async () => {
@@ -220,6 +227,7 @@ describe("native prompt serialization", () => {
     const calls: Array<{ type: string; input: any }> = []
     seed({ session: {
       instructions: { entry: { put: async () => {}, remove: async () => {} } },
+      switchAgent: async (input: unknown) => { calls.push({ type: "agent", input }) },
       switchModel: async (input: unknown) => { calls.push({ type: "model", input }) },
       prompt: async (input: unknown) => { calls.push({ type: "prompt", input }) },
     } })
@@ -239,10 +247,14 @@ describe("native prompt serialization", () => {
     }])
 
     assert.deepEqual(calls[0], {
+      type: "agent",
+      input: { sessionID: sessionId, agent: "build" },
+    })
+    assert.deepEqual(calls[1], {
       type: "model",
       input: { sessionID: sessionId, model: { providerID: "provider", id: "old", variant: "high" } },
     })
-    assert.deepEqual(calls[1]?.input.agents, [{
+    assert.deepEqual(calls[2]?.input.agents, [{
       name: "reviewer",
       mention: { start: 4, end: 13, text: "@reviewer" },
     }])
@@ -252,7 +264,8 @@ describe("native prompt serialization", () => {
     const calls: Array<{ type: string; input: any }> = []
     seed({ session: {
       instructions: { entry: { put: async () => {}, remove: async () => {} } },
-      switchModel: async () => {},
+      switchAgent: async () => { calls.push({ type: "agent", input: undefined }) },
+      switchModel: async () => { calls.push({ type: "model", input: undefined }) },
       prompt: async (input: any) => { calls.push({ type: "prompt", input }); return { id: input.id } },
       inbox: { cancel: async (input: unknown) => { calls.push({ type: "cancel", input }) } },
     } })
@@ -279,5 +292,6 @@ describe("native prompt serialization", () => {
     assert.equal(calls[0]?.input.resume, false)
     assert.deepEqual(calls[0]?.input.agents, [{ name: "reviewer", mention: { start: 7, end: 16, text: "@reviewer" } }])
     assert.deepEqual(calls[1], { type: "cancel", input: { sessionID: sessionId, inboxID: "queued-1" } })
+    assert.equal(calls.some((call) => call.type === "agent" || call.type === "model"), false)
   })
 })

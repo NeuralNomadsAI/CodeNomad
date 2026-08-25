@@ -19,7 +19,6 @@ interface MessageItemProps {
   messageInfo?: MessageInfo
   instanceId: string
   sessionId: string
-  isQueued?: boolean
   parts: ClientPart[]
   onRevert?: (messageId: string) => void
   onFork?: (messageId?: string) => void
@@ -537,10 +536,6 @@ export default function MessageItem(props: MessageItemProps) {
 
       <div class="pt-0 whitespace-pre-wrap break-words leading-[1.1]" dir="auto">
 
-
-        <Show when={props.isQueued && isUser()}>
-          <div class="message-queued-badge">{t("messageItem.status.queued")}</div>
-        </Show>
 
         <Show when={errorMessage()}>
           <div class="message-error-block" dir="auto">⚠️ {errorMessage()}</div>

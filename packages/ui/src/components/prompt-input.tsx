@@ -533,7 +533,7 @@ export default function PromptInput(props: PromptInputProps) {
           await executeCustomCommand(props.instanceId, props.sessionId, commandName, resolvedCommandArgs)
         }
       } else {
-        await props.onSend(submitPrompt, currentAttachments, delivery ?? (props.isSessionBusy ? "queue" : "steer"))
+        await props.onSend(submitPrompt, currentAttachments, delivery ?? "steer")
       }
     } catch (error) {
       log.error("Failed to send message:", error)
@@ -737,7 +737,7 @@ export default function PromptInput(props: PromptInputProps) {
     getAttachments: attachments,
     removeAttachment: (attachmentId) => removeAttachment(props.instanceId, props.sessionId, attachmentId),
     submitOnEnter,
-    onSend: () => void handleSend(),
+    onSend: (alternate) => void handleSend(alternate && props.isSessionBusy ? "queue" : "steer"),
     selectPreviousHistory: (force) =>
       selectPreviousHistory({ force, isPickerOpen: showPicker(), getTextarea: () => textareaRef ?? null }),
     selectNextHistory: (force) =>

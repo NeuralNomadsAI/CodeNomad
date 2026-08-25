@@ -59,6 +59,7 @@ export interface MessageSectionProps {
   sessionStreamingActive?: boolean
   explicitBottomPinIntent?: VirtualExplicitBottomPinIntent | null
   onExplicitBottomPinCancelled?: () => void
+  queuedMessageIds?: ReadonlySet<string>
 }
 
 export default function MessageSection(props: MessageSectionProps) {
@@ -75,6 +76,7 @@ export default function MessageSection(props: MessageSectionProps) {
   const visibleMessageIds = createMemo(() => {
     const resolvedStore = store()
     return messageIds().filter((messageId) => {
+      if (props.queuedMessageIds?.has(messageId)) return false
       const record = resolvedStore.getMessage(messageId)
       if (!record) return false
 
@@ -141,15 +143,13 @@ export default function MessageSection(props: MessageSectionProps) {
   let searchInputRef: HTMLInputElement | undefined
 
   const messageIndexById = createMemo(() => {
-    const ids = messageIds()
+    const ids = visibleMessageIds()
     const map = new Map<string, number>()
     for (let i = 0; i < ids.length; i++) {
       map.set(ids[i], i)
     }
     return map
   })
-
-  const lastAssistantMessageId = createMemo(() => store().getLastAssistantMessageId(props.sessionId))
 
   const currentSearchMatches = createMemo(() => hasMessageSearchAuthority(searchQuery(), searchedQuery()) ? searchMatches() : [])
   const authoritativeSearchQuery = createMemo(() => hasMessageSearchAuthority(searchQuery(), searchedQuery()) ? debouncedSearchQuery() : "")
@@ -170,16 +170,10 @@ export default function MessageSection(props: MessageSectionProps) {
   })
   const searchFailed = createMemo(() => hasMessageSearchAuthority(trimmedSearchQuery(), failedSearchQuery()))
 
-  const lastAssistantIndex = createMemo(() => {
-    const messageId = lastAssistantMessageId()
-    if (!messageId) return -1
-    return messageIndexById().get(messageId) ?? -1
-  })
-
   const timelineSegmentCache = new Map<string, { revision: number; status: string; locale: string; signature: string; segments: TimelineSegment[] }>()
   const timelineSegments = createMemo(() => {
     sessionRevision()
-    const ids = messageIds()
+    const ids = visibleMessageIds()
     const resolvedStore = store()
     const activeLocale = locale()
 
@@ -1184,7 +1178,6 @@ export default function MessageSection(props: MessageSectionProps) {
               sessionId={props.sessionId}
               store={store}
               messageIndex={index}
-              lastAssistantIndex={lastAssistantIndex}
               showThinking={() => preferences().showThinkingBlocks}
               thinkingDefaultExpanded={() => resolveThinkingExpansionDefault(preferences())}
               usageMetricsVisibility={usageMetricsVisibility}

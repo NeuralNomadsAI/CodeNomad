@@ -209,6 +209,8 @@ export const messagingMessages = {
   "promptQueue.actions.steer": "Intervenir ahora",
   "promptQueue.actions.queue": "Mover a la cola",
   "promptQueue.actions.edit": "Editar prompt en cola",
+  "promptQueue.actions.moveUp": "Subir prompt en cola",
+  "promptQueue.actions.moveDown": "Bajar prompt en cola",
   "promptQueue.actions.cancelEdit": "Cancelar edición",
   "promptQueue.actions.remove": "Eliminar prompt en cola",
   "promptQueue.error.title": "Falló la acción de cola",

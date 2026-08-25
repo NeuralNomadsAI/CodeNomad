@@ -4,9 +4,9 @@
 
 This review compares:
 
-- CodeNomad `DEV-v2` at `f03a17a4`, plus the fixes recorded below.
-- Official OpenCode Desktop V2 from `anomalyco/opencode` branch `upstream/v2` at `cc15c2a488` (2026-08-20).
-- CodeNomad pins one reviewed `@opencode-ai/client` beta build; the managed CLI updater resolves the latest beta and installs that concrete version.
+- CodeNomad `DEV-v2` at `aef4452b`, plus the fixes recorded below.
+- Official OpenCode Desktop V2 from `anomalyco/opencode` branch `upstream/v2` at `bc1f67e518` (2026-08-24).
+- CodeNomad follows the latest `@opencode-ai/client@beta` contract; the managed CLI updater independently resolves and installs the latest CLI beta.
 
 The official reference is `packages/desktop` for the Electron host, `packages/app` for the shared UI, and the V2 client, protocol, schema, server, and core packages for wire behavior. The old `upstream/opencode-2-0` branch and the intermediate `desktop-v2-*` branches are historical, not the current Desktop V2 reference.
 
@@ -109,7 +109,7 @@ This is distribution hardening rather than V2 API parity. Release jobs should fa
 
 ## Beta Channel Policy
 
-CodeNomad pins the same reviewed `@opencode-ai/client` beta build in server and UI. The integrity-pinned root workspace lock is authoritative for CI and desktop server packaging; Electron selects npm optional dependencies for the requested OS/CPU target, while Tauri requires a completed root `npm ci --workspaces --include=optional` and never repairs dependencies during prebuild. The managed updater resolves the CLI beta channel for status checks, installs the concrete advertised version, and requires exact post-install version equality; startup still accepts another API-compatible CLI after authenticated validation.
+CodeNomad server and UI both follow `@opencode-ai/client@beta`. The root workspace lock keeps each build reproducible after resolving the current beta; Electron selects npm optional dependencies for the requested OS/CPU target, while Tauri requires a completed root `npm ci --workspaces --include=optional` and never repairs dependencies during prebuild. The managed updater independently follows the CLI beta channel and startup accepts another healthy CLI without an exact version gate.
 
 Generated types, proxy routes, events, plugin inventory, Forms, sessions, and real workspace behavior must be checked whenever the beta channel advances.
 

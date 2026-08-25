@@ -209,6 +209,8 @@ export const messagingMessages = {
   "promptQueue.actions.steer": "今すぐ割り込む",
   "promptQueue.actions.queue": "キューへ移動",
   "promptQueue.actions.edit": "待機中のプロンプトを編集",
+  "promptQueue.actions.moveUp": "待機中のプロンプトを上へ移動",
+  "promptQueue.actions.moveDown": "待機中のプロンプトを下へ移動",
   "promptQueue.actions.cancelEdit": "編集をキャンセル",
   "promptQueue.actions.remove": "待機中のプロンプトを削除",
   "promptQueue.error.title": "キュー操作に失敗しました",

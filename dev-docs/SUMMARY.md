@@ -165,7 +165,7 @@ dev-docs/             Development documentation
 
 ## Current OpenCode Baseline
 
-- Experimental protocol client: server and UI use the same reviewed version; the runtime `opencode2` CLI is independently updated and checked through service/API compatibility, not an exact version gate
+- Experimental protocol client: server and UI follow `@opencode-ai/client@beta`; the runtime `opencode2` CLI independently follows its latest beta without an exact version gate
 - Service: one externally owned global endpoint with a CodeNomad-pinned host or WSL identity
 - Workspaces: native locations/directories
 - Database: OpenCode's global default; configured startup environment applies only when CodeNomad starts a missing daemon

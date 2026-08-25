@@ -92,8 +92,10 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   })
 
   const attachments = createMemo(() => getAttachments(props.instanceId, props.sessionId))
-  const queuedPrompts = createMemo(() => getOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder)
+  const pendingUserPrompts = createMemo(() => getOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder)
     .filter((item): item is SessionInboxUser => item.type === "user"))
+  const queuedPrompts = createMemo(() => pendingUserPrompts().filter((item) => item.delivery === "queue"))
+  const queuedMessageIds = createMemo(() => new Set(queuedPrompts().map((item) => item.id)))
   const preview = createMemo(() => getSessionPreview(props.sessionId))
 
   const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
@@ -126,6 +128,11 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   const [submitBottomPinIntent, setSubmitBottomPinIntent] = createSignal<SessionBottomPinIntent | null>(null)
   let submitBottomPinIntentSequence = 0
 
+  function visibleMessageCount() {
+    const hidden = queuedMessageIds()
+    return messageStore().getSessionMessageIds(props.sessionId).filter((id) => !hidden.has(id)).length
+  }
+
   function shouldScrollToBottomOnActivate() {
     const current = session()
     if (!current) return true
@@ -153,7 +160,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   ) {
     submitBottomPinIntentSequence += 1
     const previous = submitBottomPinIntent()
-    const createdMessageCount = options?.createdMessageCount ?? messageStore().getSessionMessageIds(props.sessionId).length
+    const createdMessageCount = options?.createdMessageCount ?? visibleMessageCount()
     const shouldPreserveObservedStreaming = Boolean(
       options?.preserveObservedStreaming &&
       previous?.sessionId === props.sessionId &&
@@ -184,7 +191,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     const currentSession = session()
     if (!intent || !currentSession) return null
 
-    const messageCount = messageStore().getSessionMessageIds(currentSession.id).length
+    const messageCount = visibleMessageCount()
     if (shouldClearSessionBottomPinIntent(intent, {
       sessionId: currentSession.id,
       messageCount,
@@ -245,7 +252,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       return
     }
 
-    const messageCount = messageStore().getSessionMessageIds(currentSession.id).length
+    const messageCount = visibleMessageCount()
     if (shouldClearSessionBottomPinIntent(intent, {
       sessionId: currentSession.id,
       messageCount,
@@ -407,16 +414,29 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     if (!isLatestMessageWindow(props.instanceId, props.sessionId)) {
       await loadLatestMessageWindow(props.instanceId, props.sessionId)
     }
-    const messageCount = messageStore().getSessionMessageIds(props.sessionId).length
+    const editing = editingQueuedPrompt()
+    const effectiveDelivery = editing?.delivery ?? delivery
+    const messageCount = visibleMessageCount()
     const submittedExchangeTargetCount = getSubmitBottomPinTargetCount(messageCount, sessionStreamingActive())
-    const initialPinIntent = forceSubmittedExchangeToBottom(submittedExchangeTargetCount, { createdMessageCount: messageCount })
+    const initialPinIntent = effectiveDelivery === "queue"
+      ? undefined
+      : forceSubmittedExchangeToBottom(submittedExchangeTargetCount, { createdMessageCount: messageCount })
     try {
-      const editing = editingQueuedPrompt()
-      await sendMessage(props.instanceId, props.sessionId, prompt, attachments, editing
+      const queueOrder = editing ? queuedPrompts().map((item) => item.id) : []
+      const admittedId = await sendMessage(props.instanceId, props.sessionId, prompt, attachments, editing
         ? { delivery: editing.delivery, replace: editing }
         : { delivery })
-      if (editing) cancelQueuedPromptEdit()
-      const latestMessageCount = messageStore().getSessionMessageIds(props.sessionId).length
+      if (editing) {
+        cancelQueuedPromptEdit()
+        try {
+          await rewriteQueuedPrompts(queueOrder.map((id) => id === editing.id ? admittedId : id))
+        } catch (error) {
+          log.error("Failed to restore edited prompt position", error)
+          showQueueError(error)
+        }
+      }
+      if (!initialPinIntent) return
+      const latestMessageCount = visibleMessageCount()
       if (latestMessageCount < submittedExchangeTargetCount && !sessionStreamingActive()) {
         setSubmitBottomPinIntent(null)
       } else if (submitBottomPinIntent()?.token === initialPinIntent.token) {
@@ -426,7 +446,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         })
       }
     } catch (error) {
-      setSubmitBottomPinIntent(null)
+      if (initialPinIntent) setSubmitBottomPinIntent(null)
       throw error
     }
   }
@@ -455,6 +475,66 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     promptInputApi.setPromptText(queuedPromptText(item), { focus: true })
   }
 
+  function showQueueError(error: unknown) {
+    log.error("Prompt queue operation failed", error)
+    showAlertDialog(t("promptQueue.error.message"), {
+      title: t("promptQueue.error.title"),
+      variant: "error",
+    })
+  }
+
+  async function rewriteQueuedPrompts(inboxIds: string[]) {
+    const client = instances().get(props.instanceId)?.client
+    if (!client) throw new Error("Instance not ready")
+    const pending = await client.session.inbox.list({ sessionID: props.sessionId })
+    if (pending.some((item) => item.delivery === "queue" && item.type !== "user")) {
+      throw new Error("Queued control items prevent reordering")
+    }
+    const current = pending.filter((item): item is SessionInboxUser => item.type === "user" && item.delivery === "queue")
+    const ordered = inboxIds.flatMap((id) => current.filter((item) => item.id === id))
+    if (ordered.length !== current.length) throw new Error("Prompt queue changed before reordering")
+    const changed = ordered.findIndex((item, index) => item.id !== current[index]?.id)
+    if (changed < 0) return
+
+    for (const item of ordered.slice(changed)) {
+      await client.session.prompt({
+        sessionID: props.sessionId,
+        text: item.payload.text,
+        files: item.payload.files?.map((file) => ({
+          uri: `data:${file.mime};base64,${file.data}`,
+          name: file.name,
+          description: file.description,
+          mention: file.mention,
+        })),
+        agents: item.payload.agents,
+        skills: item.payload.skills,
+        metadata: item.payload.metadata,
+        delivery: "queue",
+        resume: false,
+      })
+    }
+    for (const item of current.slice(changed)) {
+      await client.session.inbox.cancel({ sessionID: props.sessionId, inboxID: item.id })
+    }
+  }
+
+  async function moveQueuedPrompt(item: SessionInboxUser, direction: -1 | 1) {
+    const ids = queuedPrompts().map((entry) => entry.id)
+    const index = ids.indexOf(item.id)
+    const target = index + direction
+    if (index < 0 || target < 0 || target >= ids.length) return
+    ;[ids[index], ids[target]] = [ids[target], ids[index]]
+    setQueueBusyId(item.id)
+    try {
+      await rewriteQueuedPrompts(ids)
+    } catch (error) {
+      showQueueError(error)
+    } finally {
+      await syncOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder).catch(() => undefined)
+      setQueueBusyId(undefined)
+    }
+  }
+
   async function manageQueuedPrompt(item: SessionInboxUser, action: "delivery" | "remove") {
     setQueueBusyId(item.id)
     try {
@@ -469,12 +549,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         await inbox.queue({ sessionID: props.sessionId, inboxID: item.id })
       }
     } catch (error) {
-      log.error("Failed to manage queued prompt", error)
-      showAlertDialog(t("promptQueue.error.message"), {
-        title: t("promptQueue.error.title"),
-        detail: error instanceof Error ? error.message : String(error),
-        variant: "error",
-      })
+      showQueueError(error)
     } finally {
       await syncOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder).catch(() => undefined)
       setQueueBusyId(undefined)
@@ -619,6 +694,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
               showSidebarToggle={props.showSidebarToggle}
               onSidebarToggle={props.onSidebarToggle}
               forceCompactStatusLayout={props.forceCompactStatusLayout}
+              queuedMessageIds={queuedMessageIds()}
               onQuoteSelection={handleQuoteSelection}
             />
           }
@@ -639,6 +715,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           onEdit={handleEditQueuedPrompt}
           onCancelEdit={cancelQueuedPromptEdit}
           onRemove={(item) => void manageQueuedPrompt(item, "remove")}
+          onMove={(item, direction) => void moveQueuedPrompt(item, direction)}
         />
 
         <Show when={attachments().length > 0}>

@@ -26,7 +26,7 @@ export type UsePromptKeyDownOptions = {
   removeAttachment: (attachmentId: string) => void
 
   submitOnEnter: Accessor<boolean>
-  onSend: () => void
+  onSend: (alternate?: boolean) => void
 
   selectPreviousHistory: (force?: boolean) => boolean
   selectNextHistory: (force?: boolean) => boolean
@@ -38,16 +38,13 @@ export function usePromptKeyDown(options: UsePromptKeyDownOptions) {
     const current = options.prompt()
     const start = textarea ? textarea.selectionStart : current.length
     const end = textarea ? textarea.selectionEnd : current.length
-    const nextValue = current.substring(0, start) + "\n" + current.substring(end)
-    const nextCursor = start + 1
-
-    options.setPrompt(nextValue)
+    options.setPrompt(current.substring(0, start) + "\n" + current.substring(end))
 
     setTimeout(() => {
       const nextTextarea = options.getTextarea()
       if (!nextTextarea) return
       nextTextarea.focus()
-      nextTextarea.setSelectionRange(nextCursor, nextCursor)
+      nextTextarea.setSelectionRange(start + 1, start + 1)
     }, 0)
   }
 
@@ -244,7 +241,13 @@ export function usePromptKeyDown(options: UsePromptKeyDownOptions) {
       }
 
       if (options.submitOnEnter()) {
-        // Swapped mode: Enter submits, Cmd/Ctrl+Enter inserts a newline.
+        if (isModified && e.shiftKey) {
+          e.preventDefault()
+          e.stopPropagation()
+          options.onSend(true)
+          return
+        }
+
         if (isModified) {
           e.preventDefault()
           e.stopPropagation()
@@ -252,7 +255,6 @@ export function usePromptKeyDown(options: UsePromptKeyDownOptions) {
           return
         }
 
-        // Shift+Enter always inserts a newline.
         if (e.shiftKey) {
           // If the picker is open, avoid selecting an item on Enter.
           if (options.isPickerOpen()) {
@@ -262,7 +264,7 @@ export function usePromptKeyDown(options: UsePromptKeyDownOptions) {
         }
 
         e.preventDefault()
-        options.onSend()
+        options.onSend(false)
         return
       }
 
@@ -272,7 +274,7 @@ export function usePromptKeyDown(options: UsePromptKeyDownOptions) {
         if (options.isPickerOpen()) {
           options.closePicker()
         }
-        options.onSend()
+        options.onSend(e.shiftKey)
         return
       }
     }
