@@ -331,6 +331,8 @@ export const settingsMessages = {
   "settings.behavior.toolInputsVisibility.subtitle": "Set default visibility for tool call input arguments.",
   "settings.behavior.usageMetrics.title": "Token usage metrics",
   "settings.behavior.usageMetrics.subtitle": "Show or hide token and cost stats for assistant messages.",
+  "settings.behavior.providerUsageCreditBalance.title": "Provider credit balance",
+  "settings.behavior.providerUsageCreditBalance.subtitle": "Show supplemental provider credit balances in the Usage panel.",
   "settings.behavior.autoCleanup.title": "Auto-cleanup blank sessions",
   "settings.behavior.autoCleanup.subtitle": "Automatically clean up blank sessions when creating new ones.",
   "settings.behavior.keepUnseenSubagentIdle.title": "Keep subagent idle markers",

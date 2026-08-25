@@ -12,7 +12,8 @@ export const AdvancedSettingsSection: Component = () => {
     getBehaviorSettings(config).filter(
       (setting) =>
         setting.id === "behavior.autoCleanupBlankSessions" ||
-        setting.id === "behavior.keepUnseenSubagentIdleStatus",
+        setting.id === "behavior.keepUnseenSubagentIdleStatus" ||
+        setting.id === "behavior.providerUsageCreditBalance",
     ),
   )
 

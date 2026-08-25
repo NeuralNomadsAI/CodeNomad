@@ -331,6 +331,8 @@ export const settingsMessages = {
   "settings.behavior.toolInputsVisibility.subtitle": "Standardsichtbarkeit für Argumente von Tool-Aufrufen festlegen.",
   "settings.behavior.usageMetrics.title": "Token-Verbrauchsmetriken",
   "settings.behavior.usageMetrics.subtitle": "Token- und Kostenstatistiken für Assistenten-Nachrichten anzeigen oder ausblenden.",
+  "settings.behavior.providerUsageCreditBalance.title": "Anbieterguthaben",
+  "settings.behavior.providerUsageCreditBalance.subtitle": "Zusätzliche Guthabenstände von Anbietern im Nutzungsbereich anzeigen.",
   "settings.behavior.autoCleanup.title": "Automatische Bereinigung leerer Sitzungen",
   "settings.behavior.autoCleanup.subtitle": "Leere Sitzungen beim Erstellen neuer Sitzungen automatisch bereinigen.",
   "settings.behavior.keepUnseenSubagentIdle.title": "Statusanzeigen von Unteragenten beibehalten",

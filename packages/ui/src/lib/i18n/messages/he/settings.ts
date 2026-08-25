@@ -330,6 +330,8 @@ export const settingsMessages = {
   "settings.behavior.toolInputsVisibility.subtitle": "הגדר נראות ברירת מחדל לארגומנטים של קריאות כלי.",
   "settings.behavior.usageMetrics.title": "מדדי שימוש בטוקנים",
   "settings.behavior.usageMetrics.subtitle": "הצג או הסתר נתוני טוקנים ועלות להודעות הסוכן.",
+  "settings.behavior.providerUsageCreditBalance.title": "יתרת קרדיטים של הספק",
+  "settings.behavior.providerUsageCreditBalance.subtitle": "הצגת יתרות קרדיטים נוספות של הספק בחלונית השימוש.",
   "settings.behavior.autoCleanup.title": "ניקוי אוטומטי של סשנים ריקים",
   "settings.behavior.autoCleanup.subtitle": "נקה אוטומטית סשנים ריקים בעת יצירת סשנים חדשים.",
   "settings.behavior.keepUnseenSubagentIdle.title": "השאר סמני idle של תתי-סוכנים",

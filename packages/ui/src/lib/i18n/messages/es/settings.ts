@@ -330,6 +330,8 @@ export const settingsMessages = {
   "settings.behavior.toolInputsVisibility.subtitle": "Establece la visibilidad por defecto de los argumentos de entrada de las llamadas de herramientas.",
   "settings.behavior.usageMetrics.title": "Métricas de uso de tokens",
   "settings.behavior.usageMetrics.subtitle": "Muestra u oculta estadísticas de tokens y costo en mensajes del asistente.",
+  "settings.behavior.providerUsageCreditBalance.title": "Saldo de créditos del proveedor",
+  "settings.behavior.providerUsageCreditBalance.subtitle": "Muestra saldos de créditos adicionales del proveedor en el panel Uso.",
   "settings.behavior.autoCleanup.title": "Limpieza automática de sesiones en blanco",
   "settings.behavior.autoCleanup.subtitle": "Limpia automáticamente las sesiones en blanco al crear nuevas.",
   "settings.behavior.keepUnseenSubagentIdle.title": "Mantener marcadores idle de subagentes",

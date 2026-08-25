@@ -1925,7 +1925,13 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
     if (sessionId && (force || event.type.startsWith("session.")) && (
       activeSessionId().get(instanceId) === sessionId
       && isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId))
-    )) projectOpenCodeMessages(instanceId, sessionId, data, preserveOmitted)
+    )) projectOpenCodeMessages(
+      instanceId,
+      sessionId,
+      data,
+      preserveOmitted,
+      force || event.type !== "session.inbox.enqueued",
+    )
   }
   const project = (data: ReturnType<typeof applyOpenCodeDataEvent>, preserveOmitted = true) => {
     projectMessages(data, preserveOmitted)

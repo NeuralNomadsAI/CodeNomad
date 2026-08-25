@@ -568,7 +568,13 @@ export function getOpenCodeMutationRevision(instanceId: string, sessionId: strin
   return mutationRevision(messageRevisionKey(instanceId, sessionId))[0]()
 }
 
-export function projectOpenCodeMessages(instanceId: string, sessionId: string, data: Data, preserveOmitted = true): void {
+export function projectOpenCodeMessages(
+  instanceId: string,
+  sessionId: string,
+  data: Data,
+  preserveOmitted = true,
+  confirmPending = true,
+): void {
   const source = data.session.message.list(sessionId).slice(-MESSAGE_WINDOW_PAGE_SIZE)
   const store = messageStoreBus.getOrCreate(instanceId)
   if (source.length) {
@@ -580,6 +586,7 @@ export function projectOpenCodeMessages(instanceId: string, sessionId: string, d
       new Map(normalized.map((item) => [item.info.id, item.info])),
       undefined,
       preserveOmitted,
+      confirmPending,
     )
   } else if (!preserveOmitted) {
     store.reconcileEmptyAuthoritativeSnapshot(sessionId)

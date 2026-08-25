@@ -103,6 +103,7 @@ export interface UiSettings {
   toolInputsVisibility: ToolInputsVisibilityPreference
   showUsageMetrics: boolean
   usageMetricsExpansion: ExpansionPreference
+  showProviderUsageCreditBalance: boolean
   autoCleanupBlankSessions: boolean
   keepUnseenSubagentIdleStatus: boolean
   modelVisibility: ModelVisibilityPreferences
@@ -194,6 +195,7 @@ const defaultUiSettings: UiSettings = {
   toolInputsVisibility: "collapsed",
   showUsageMetrics: true,
   usageMetricsExpansion: "collapsed",
+  showProviderUsageCreditBalance: false,
   autoCleanupBlankSessions: true,
   keepUnseenSubagentIdleStatus: false,
   modelVisibility: {},
@@ -300,6 +302,8 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
       sanitized.usageMetricsExpansion,
       usageMetricsFallback,
     ),
+    showProviderUsageCreditBalance:
+      sanitized.showProviderUsageCreditBalance ?? defaultUiSettings.showProviderUsageCreditBalance,
     autoCleanupBlankSessions: sanitized.autoCleanupBlankSessions ?? defaultUiSettings.autoCleanupBlankSessions,
     keepUnseenSubagentIdleStatus:
       sanitized.keepUnseenSubagentIdleStatus ?? defaultUiSettings.keepUnseenSubagentIdleStatus,

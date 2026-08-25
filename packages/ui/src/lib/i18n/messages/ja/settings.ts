@@ -330,6 +330,8 @@ export const settingsMessages = {
   "settings.behavior.toolInputsVisibility.subtitle": "ツール呼び出しの入力引数の既定の表示状態を設定します。",
   "settings.behavior.usageMetrics.title": "トークン使用量メトリクス",
   "settings.behavior.usageMetrics.subtitle": "アシスタントのメッセージにトークン数とコストの統計を表示/非表示にします。",
+  "settings.behavior.providerUsageCreditBalance.title": "プロバイダーのクレジット残高",
+  "settings.behavior.providerUsageCreditBalance.subtitle": "使用状況パネルにプロバイダーの追加クレジット残高を表示します。",
   "settings.behavior.autoCleanup.title": "空のセッションを自動クリーンアップ",
   "settings.behavior.autoCleanup.subtitle": "新しいセッション作成時に空のセッションを自動的にクリーンアップします。",
   "settings.behavior.keepUnseenSubagentIdle.title": "サブエージェントの idle マーカーを保持",

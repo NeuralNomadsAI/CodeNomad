@@ -330,6 +330,8 @@ export const settingsMessages = {
   "settings.behavior.toolInputsVisibility.subtitle": "设置工具调用输入参数的默认可见性。",
   "settings.behavior.usageMetrics.title": "令牌用量指标",
   "settings.behavior.usageMetrics.subtitle": "显示或隐藏助手消息的令牌与成本统计。",
+  "settings.behavior.providerUsageCreditBalance.title": "提供商额度余额",
+  "settings.behavior.providerUsageCreditBalance.subtitle": "在用量面板中显示提供商的额外额度余额。",
   "settings.behavior.autoCleanup.title": "自动清理空会话",
   "settings.behavior.autoCleanup.subtitle": "创建新会话时自动清理空会话。",
   "settings.behavior.keepUnseenSubagentIdle.title": "保留子智能体 idle 标记",

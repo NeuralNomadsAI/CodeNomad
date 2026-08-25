@@ -302,6 +302,16 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
         }
       },
     },
+    {
+      kind: "toggle",
+      id: "behavior.providerUsageCreditBalance",
+      titleKey: "settings.behavior.providerUsageCreditBalance.title",
+      subtitleKey: "settings.behavior.providerUsageCreditBalance.subtitle",
+      get: (p) => Boolean(p.showProviderUsageCreditBalance),
+      set: (next) => {
+        updatePreferences?.({ showProviderUsageCreditBalance: next })
+      },
+    },
     ...(isLocalTauriHost() && actions.useTauriNativeEventTransport && actions.setUseTauriNativeEventTransport
       ? [
           {

@@ -156,6 +156,7 @@ jobs:
           node --conditions=browser --import tsx --test --test-force-exit
           packages/ui/src/components/form-request-tool-target.test.ts
           packages/ui/src/components/form-request.test.ts
+          packages/ui/src/components/session/provider-usage-panel.test.ts
           packages/ui/src/lib/hooks/use-active-session-message-load.test.ts
           packages/ui/src/stores/app-tabs.test.ts
           packages/ui/src/stores/forms.test.ts

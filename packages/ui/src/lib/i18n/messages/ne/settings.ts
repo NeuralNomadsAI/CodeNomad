@@ -331,6 +331,8 @@ export const settingsMessages = {
   "settings.behavior.toolInputsVisibility.subtitle": "उपकरण कल इनपुट तर्कहरूको लागि पूर्वनिर्धारित दृश्यता सेट गर्नुहोस्।",
   "settings.behavior.usageMetrics.title": "टोकन प्रयोग मेट्रिक्स",
   "settings.behavior.usageMetrics.subtitle": "सन्देशहरूको लागि टोकन र लागत तथ्याङ्क देखाउनुहोस् वा लुकाउनुहोस्।",
+  "settings.behavior.providerUsageCreditBalance.title": "प्रदायक क्रेडिट मौज्दात",
+  "settings.behavior.providerUsageCreditBalance.subtitle": "प्रयोग प्यानलमा प्रदायकका अतिरिक्त क्रेडिट मौज्दात देखाउनुहोस्।",
   "settings.behavior.autoCleanup.title": "खाली सत्रहरू स्वतः सफा गर्नुहोस्",
   "settings.behavior.autoCleanup.subtitle": "नयाँ सत्रहरू सिर्जना गर्दा खाली सत्रहरू स्वतः सफा गर्नुहोस्।",
   "settings.behavior.keepUnseenSubagentIdle.title": "उप-एजेन्ट निष्क्रिय (idle) मार्करहरू राख्नुहोस्",

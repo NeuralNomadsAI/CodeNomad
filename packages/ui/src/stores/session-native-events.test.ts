@@ -148,4 +148,54 @@ describe("native session event reducer", () => {
       sdkManager.destroyClientsForInstance(instanceId)
     }
   })
+
+  it("keeps active work when a terminal event is stale or the session remains active", async () => {
+    const instanceId = "native-terminal-reconciliation"
+    const sessionId = "session"
+    let resolveActive!: (value: Record<string, unknown>) => void
+    const client = {
+      session: {
+        active: () => new Promise<Record<string, unknown>>((resolve) => { resolveActive = resolve }),
+      },
+    } as any
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, {
+      id: sessionId, instanceId, parentId: null, title: sessionId, agent: "build",
+      model: { providerId: "provider", modelId: "model" }, status: "working", retry: null,
+      idleSince: null, generationRecovery: null, runtimeStatusKnown: true,
+      projectID: "project", location: { directory: "/work" }, time: { created: 1, updated: 1 },
+    } as any]])))
+
+    try {
+      handleNativeSessionEvent(instanceId, {
+        id: "succeeded", created: 2, type: "session.execution.succeeded",
+        durable: { aggregateID: sessionId, seq: 1, version: 1 },
+        data: { sessionID: sessionId }, location: { directory: "/work" },
+      })
+      handleNativeSessionEvent(instanceId, {
+        id: "restarted", created: 3, type: "session.execution.started",
+        durable: { aggregateID: sessionId, seq: 2, version: 1 },
+        data: { sessionID: sessionId }, location: { directory: "/work" },
+      })
+      resolveActive({})
+      await delay(10)
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.status, "working")
+
+      client.session.active = async () => ({ [sessionId]: {} })
+      handleNativeSessionEvent(instanceId, {
+        id: "interrupted", created: 4, type: "session.execution.interrupted",
+        durable: { aggregateID: sessionId, seq: 3, version: 1 },
+        data: { sessionID: sessionId, reason: "user" }, location: { directory: "/work" },
+      })
+      await delay(10)
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.status, "working")
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.generationRecovery, null)
+    } finally {
+      setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
+      clearInstanceDeletedSessionAuthority(instanceId)
+      removeInstance(instanceId, { authoritative: false })
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
 })

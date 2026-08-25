@@ -1336,16 +1336,16 @@ async function loadMessages(
           ...(cursor ? { cursor } : { order: "desc" }),
         }, options?.signal ? { signal: options.signal } : undefined)
         if (!isCurrent()) return
-        if (response.cursor?.next === planned.seekNewer) {
+        if (response.cursor?.previous === planned.seekNewer) {
           resolvedNext = cursor
             ? { kind: "history", resumeCursor: cursor, newerCursors: [null, null] }
             : emptyLatestWindow()
           break
         }
-        const next = response.cursor?.next
-        if (!next || seen.has(next)) throw new Error(tGlobal("messageSection.loadError.detail"))
-        seen.add(next)
-        cursor = next
+        const previous = response.cursor?.previous
+        if (!previous || seen.has(previous)) throw new Error(tGlobal("messageSection.loadError.detail"))
+        seen.add(previous)
+        cursor = previous
       }
       responseAscending = false
     } else {
@@ -1355,23 +1355,20 @@ async function loadMessages(
         ...(planned.cursor ? { cursor: planned.cursor } : { order: planned.order ?? "desc" }),
       }, options?.signal ? { signal: options.signal } : undefined)
     }
-    const nextCursor = response.cursor?.next ?? undefined
-    if (planned.cursor && nextCursor === planned.cursor) {
+    const olderCursor = response.cursor?.previous ?? undefined
+    const newerCursor = response.cursor?.next ?? undefined
+    const responseCursor = intent === "oldest" || planned.forward ? newerCursor : olderCursor
+    if (planned.cursor && responseCursor === planned.cursor) {
       throw new Error("Repeated message cursor")
     }
     if (!isCurrent()) return
 
-    const latestSession = sessions().get(instanceId)?.get(sessionId)
-    if (latestSession?.runtimeStatusKnown && latestSession.status === "idle") {
-      store.retirePendingSends(sessionId)
-    }
-
     const forwardPage = intent === "oldest" || planned.forward
     const nextWindow = forwardPage
-      ? nextCursor
-        ? { ...resolvedNext, olderCursor: undefined, newerCursors: [nextCursor] }
+      ? newerCursor
+        ? { ...resolvedNext, olderCursor: undefined, newerCursors: [newerCursor] }
         : emptyLatestWindow()
-      : withOlderCursor(resolvedNext, nextCursor)
+      : withOlderCursor(resolvedNext, olderCursor)
     const hasLatestRevisionConflict = () => nextWindow.kind === "latest"
       && getOpenCodeMessageRevision(instanceId, sessionId) !== liveMessageRevision
     const apiMessages = responseAscending ? [...response.data] : [...response.data].reverse()

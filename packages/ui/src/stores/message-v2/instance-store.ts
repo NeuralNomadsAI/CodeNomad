@@ -210,7 +210,7 @@ export interface InstanceMessageStore {
   state: InstanceMessageState
   setState: SetStoreFunction<InstanceMessageState>
   addOrUpdateSession: (input: SessionUpsertInput) => void
-  hydrateMessages: (sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>, options?: { preserveOmitted?: boolean }) => void
+  hydrateMessages: (sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>, options?: { preserveOmitted?: boolean; confirmPending?: boolean }) => void
   reconcileEmptyAuthoritativeSnapshot: (sessionId: string) => void
   reconcileAuthoritativeMessageIds: (sessionId: string, authoritativeIds: ReadonlySet<string>, baselineRevisions: ReadonlyMap<string, number>) => void
   markSendPending: (messageId: string) => void
@@ -493,7 +493,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     sessionId: string,
     inputs: MessageUpsertInput[],
     infos?: Iterable<MessageInfo>,
-    options?: { preserveOmitted?: boolean },
+    options?: { preserveOmitted?: boolean; confirmPending?: boolean },
   ) {
     if (!Array.isArray(inputs) || inputs.length === 0) return
 
@@ -607,12 +607,14 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       clearRecordDisplayCacheForMessages(instanceId, omittedIds)
     }
 
-    // A send that reappears under its own id is confirmed — it is no longer in
-    // flight, so retire its pending marker.
-    serverIds.forEach((id) => {
-      pendingSendIds.delete(id)
-      if (serverIdsWithParts.has(id)) optimisticPartIdsByMessage.delete(id)
-    })
+    // Inbox admission can render before the message endpoint projects the
+    // accepted prompt. Only authoritative projection confirms the send.
+    if (options?.confirmPending !== false) {
+      serverIds.forEach((id) => {
+        pendingSendIds.delete(id)
+        if (serverIdsWithParts.has(id)) optimisticPartIdsByMessage.delete(id)
+      })
+    }
 
     if (infoList) {
       for (const info of infoList) {

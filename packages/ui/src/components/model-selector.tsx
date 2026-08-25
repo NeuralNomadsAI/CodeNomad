@@ -399,33 +399,20 @@ export default function ModelSelector(props: ModelSelectorProps) {
         }}
       >
         <ComboboxInputValue value={inputValue()} />
-        <Combobox.Control class="selector-trigger relative w-full" data-model-selector-control>
-          <div class="selector-trigger-label selector-trigger-label--stacked flex-1 min-w-0">
-            <Combobox.Input
-              ref={searchInputRef}
-              class="selector-trigger-primary selector-trigger-primary--align-left bg-transparent flex-1 min-w-0"
-              data-model-selector
-              value={inputValue()}
-              placeholder={currentModelLabel()}
-              aria-label={currentModelAccessibleLabel()}
-              onFocus={() => {
-                if (!isOpen()) searchInputRef.select()
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") queueMicrotask(restoreSelectedInput)
-              }}
-            />
-            {currentModelValue() && (
-              <span class="selector-trigger-secondary" dir="ltr">
-                {currentModelValue()!.providerId}/{currentModelValue()!.id}
+        <Combobox.Control class="relative w-full" data-model-selector-control>
+          <Combobox.Input class="sr-only" data-model-selector aria-label={currentModelAccessibleLabel()} />
+          <Combobox.Trigger class="selector-trigger" aria-label={currentModelAccessibleLabel()}>
+            <div class="selector-trigger-label selector-trigger-label--stacked flex-1 min-w-0">
+              <span class="selector-trigger-primary selector-trigger-primary--align-left">
+                {currentModelLabel()}
               </span>
-            )}
-          </div>
-          <Combobox.Trigger
-            class="selector-trigger-icon"
-            aria-label={currentModelAccessibleLabel()}
-          >
-            <Combobox.Icon>
+              {currentModelValue() && (
+                <span class="selector-trigger-secondary" dir="ltr">
+                  {currentModelValue()!.providerId}/{currentModelValue()!.id}
+                </span>
+              )}
+            </div>
+            <Combobox.Icon class="selector-trigger-icon">
               <ChevronDown class="w-3 h-3" />
             </Combobox.Icon>
           </Combobox.Trigger>
@@ -433,23 +420,37 @@ export default function ModelSelector(props: ModelSelectorProps) {
 
         <Combobox.Portal>
           <Combobox.Content class="selector-popover">
+            <div class="selector-search-container">
+              <div class="selector-input-group">
+                <Combobox.Input
+                  ref={searchInputRef}
+                  class="selector-search-input flex-1 min-w-0"
+                  value={inputValue()}
+                  placeholder={t("modelSelector.placeholder.search")}
+                  aria-label={t("modelSelector.placeholder.search")}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") queueMicrotask(restoreSelectedInput)
+                  }}
+                />
+                <button
+                  type="button"
+                  class="selector-favorites-toggle"
+                  aria-label={t("modelSelector.favoritesOnly.toggle.ariaLabel")}
+                  aria-pressed={favoritesOnlyEnabled()}
+                  disabled={!hasFavorites() || searchActive()}
+                  data-active={favoritesOnlyEnabled()}
+                  onClick={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    toggleFavoritesOnly()
+                  }}
+                >
+                  <Star class="w-4 h-4" fill={favoritesOnlyEnabled() ? "currentColor" : "none"} />
+                </button>
+              </div>
+            </div>
             <Combobox.Listbox ref={listboxRef} class="selector-listbox" />
             <div class="selector-footer">
-              <button
-                type="button"
-                class="selector-option selector-option-action w-full"
-                aria-label={t("modelSelector.favoritesOnly.toggle.ariaLabel")}
-                aria-pressed={favoritesOnlyEnabled()}
-                disabled={!hasFavorites() || searchActive()}
-                onClick={(event) => {
-                  event.preventDefault()
-                  event.stopPropagation()
-                  toggleFavoritesOnly()
-                }}
-              >
-                <Star class="w-4 h-4" fill={favoritesOnlyEnabled() ? "currentColor" : "none"} />
-                <span class="selector-option-label">{t("modelSelector.favoritesOnly.toggle.ariaLabel")}</span>
-              </button>
               <button
                 type="button"
                 class="selector-option selector-option-action w-full"

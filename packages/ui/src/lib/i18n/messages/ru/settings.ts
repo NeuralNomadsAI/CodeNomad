@@ -330,6 +330,8 @@ export const settingsMessages = {
   "settings.behavior.toolInputsVisibility.subtitle": "Задайте видимость по умолчанию для входных аргументов вызовов инструментов.",
   "settings.behavior.usageMetrics.title": "Метрики использования токенов",
   "settings.behavior.usageMetrics.subtitle": "Показывать или скрывать статистику токенов и стоимости в сообщениях ассистента.",
+  "settings.behavior.providerUsageCreditBalance.title": "Баланс кредитов провайдера",
+  "settings.behavior.providerUsageCreditBalance.subtitle": "Показывать дополнительные балансы кредитов провайдера на панели использования.",
   "settings.behavior.autoCleanup.title": "Автоочистка пустых сессий",
   "settings.behavior.autoCleanup.subtitle": "Автоматически очищать пустые сессии при создании новых.",
   "settings.behavior.keepUnseenSubagentIdle.title": "Оставлять idle-маркеры субагентов",
