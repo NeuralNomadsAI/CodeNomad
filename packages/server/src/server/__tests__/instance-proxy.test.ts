@@ -617,6 +617,20 @@ describe("instance proxy location enforcement", () => {
     assert.equal(requestCount(), 0)
   })
 
+  it("allows native inbox management for owned sessions", async () => {
+    const { app } = await harness()
+    const requests = [
+      ["GET", "/workspaces/workspace/instance/api/session/owned/inbox"],
+      ["DELETE", "/workspaces/workspace/instance/api/session/owned/inbox/prompt-1"],
+      ["POST", "/workspaces/workspace/instance/api/session/owned/inbox/prompt-1/steer"],
+      ["POST", "/workspaces/workspace/instance/api/session/owned/inbox/prompt-1/queue"],
+    ] as const
+
+    for (const [method, url] of requests) {
+      assert.equal((await app.inject({ method, url })).statusCode, 200, `${method} ${url}`)
+    }
+  })
+
   it("rejects literal and encoded dot-segment aliases before authorization", async () => {
     const { app, sessionGets, requestCount } = await harness("/other")
     for (const route of [

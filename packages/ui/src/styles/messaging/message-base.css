@@ -393,6 +393,10 @@
   color: var(--text-primary);
 }
 
+.message-compaction-card--failed {
+  color: var(--color-danger);
+}
+
 .message-compaction-row {
   @apply flex items-center gap-2;
   justify-content: center;
@@ -405,6 +409,19 @@
 
 .message-compaction-label {
   font-weight: var(--font-weight-medium);
+}
+
+.message-compaction-content {
+  padding-top: 0.5rem;
+  color: var(--text-primary);
+}
+
+.message-compaction-card--failed .message-compaction-content {
+  color: var(--color-danger);
+}
+
+.message-compaction-card--failed .markdown-body {
+  color: var(--color-danger);
 }
 
 .message-step-start {

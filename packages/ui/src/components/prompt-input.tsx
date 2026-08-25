@@ -16,7 +16,7 @@ import { getOpencodeErrorMessage } from "../lib/opencode-api"
 import { serverApi } from "../lib/api-client"
 import { isDesktopHost, isLocalWindow } from "../lib/runtime-env"
 import { preferences } from "../stores/preferences"
-import type { ExpandState, PromptInputApi, PromptInputProps, PromptInsertMode, PromptMode } from "./prompt-input/types"
+import type { ExpandState, PromptDelivery, PromptInputApi, PromptInputProps, PromptInsertMode, PromptMode } from "./prompt-input/types"
 import type { Attachment } from "../types/attachment"
 import type { FileSystemEntry } from "../../../server/src/api-types"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
@@ -263,6 +263,7 @@ export default function PromptInput(props: PromptInputProps) {
           }, 0)
         }
       },
+      getPromptText: prompt,
       focus: () => {
         const textarea = textareaRef
         if (!textarea || textarea.disabled) return
@@ -457,7 +458,7 @@ export default function PromptInput(props: PromptInputProps) {
     resizeDragState = undefined
   })
 
-  async function handleSend() {
+  async function handleSend(delivery?: PromptDelivery) {
     const text = prompt().trim()
     const currentAttachments = attachments()
     if (props.disabled || (!text && currentAttachments.length === 0)) return
@@ -523,7 +524,7 @@ export default function PromptInput(props: PromptInputProps) {
         if (props.onRunShell) {
           await props.onRunShell(submitPrompt)
         } else {
-          await props.onSend(submitPrompt, [])
+          await props.onSend(submitPrompt, [], "steer")
         }
       } else if (isKnownSlashCommand) {
         if (props.onCommand) {
@@ -532,7 +533,7 @@ export default function PromptInput(props: PromptInputProps) {
           await executeCustomCommand(props.instanceId, props.sessionId, commandName, resolvedCommandArgs)
         }
       } else {
-        await props.onSend(submitPrompt, currentAttachments)
+        await props.onSend(submitPrompt, currentAttachments, delivery ?? (props.isSessionBusy ? "queue" : "steer"))
       }
     } catch (error) {
       log.error("Failed to send message:", error)
@@ -1067,9 +1068,10 @@ export default function PromptInput(props: PromptInputProps) {
           <button
             type="button"
             class={`send-button ${mode() === "shell" ? "shell-mode" : ""}`}
-            onClick={handleSend}
+            onClick={() => void handleSend()}
             disabled={!canSend()}
-            aria-label={t("promptInput.send.ariaLabel")}
+            aria-label={t(props.isSessionBusy && mode() === "normal" ? "promptInput.send.queueAriaLabel" : "promptInput.send.ariaLabel")}
+            title={t(props.isSessionBusy && mode() === "normal" ? "promptInput.send.queueAriaLabel" : "promptInput.send.ariaLabel")}
           >
             <Show
               when={mode() === "shell"}

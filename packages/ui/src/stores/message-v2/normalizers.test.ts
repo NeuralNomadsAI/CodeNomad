@@ -120,13 +120,17 @@ describe("native session message normalization", () => {
     ])
   })
 
-  it("maps completed shell and compaction records to terminal statuses", () => {
+  it("maps shell and compaction records to display statuses and text", () => {
     const shell = normalizeSessionMessage("session", {
       id: "shell", type: "shell", shellID: "sh", command: "pwd", status: "exited", exit: 0,
       output: { output: "/repo", cursor: 5, size: 5, truncated: false }, time: { created: 1, completed: 2 },
     }).message
     const compacted = normalizeSessionMessage("session", {
       id: "compact", type: "compaction", status: "completed", reason: "manual", summary: "summary", recent: "recent",
+      time: { created: 1 },
+    }).message
+    const running = normalizeSessionMessage("session", {
+      id: "running", type: "compaction", status: "running", reason: "auto", summary: "partial", recent: "recent",
       time: { created: 1 },
     }).message
     const failed = normalizeSessionMessage("session", {
@@ -136,7 +140,11 @@ describe("native session message normalization", () => {
 
     assert.equal(shell.status, "complete")
     assert.equal(compacted.status, "complete")
+    assert.equal((compacted.parts[0] as any).text, "summary")
+    assert.equal(running.status, "sent")
+    assert.equal((running.parts[0] as any).text, "partial")
     assert.equal(failed.message.status, "error")
+    assert.equal((failed.message.parts[0] as any).text, "too large")
     assert.deepEqual(failed.info.error, {
       type: "CompactionError", message: "too large", status: 413,
       name: "CompactionError", data: { message: "too large" },

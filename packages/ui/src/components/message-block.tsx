@@ -1,8 +1,8 @@
 import { For, Index, Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, untrack, type Accessor } from "solid-js"
-import { Copy, ExternalLink, FoldVertical, Volume2 } from "lucide-solid"
+import { Copy, ExternalLink, FoldVertical, Loader2, Volume2, XCircle } from "lucide-solid"
 import MessageItem from "./message-item"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
-import type { ClientPart, MessageInfo } from "../types/message"
+import type { ClientPart, Message, MessageInfo, TextPart } from "../types/message"
 import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
 import { buildRecordDisplayData, clearRecordDisplayCacheForInstance } from "../stores/message-v2/record-display-cache"
 import type { MessageRecord } from "../stores/message-v2/types"
@@ -23,6 +23,8 @@ import type { ToolState, ToolStateCompleted, ToolStateError, ToolStateRunning } 
 import { parseReasoningSummary } from "../lib/reasoning-summary"
 import { getFormQueue } from "../stores/forms"
 import { resolveFormToolTarget } from "./form-request-tool-target"
+import { Markdown } from "./markdown"
+import { useTheme } from "../lib/theme"
 
 const USER_BORDER_COLOR = "var(--message-user-border)"
 const ASSISTANT_BORDER_COLOR = "var(--message-assistant-border)"
@@ -832,10 +834,12 @@ export default function MessageBlock(props: MessageBlockProps) {
                   <CompactionCard
                     part={(item() as CompactionDisplayItem).part}
                     messageInfo={(item() as CompactionDisplayItem).messageInfo}
+                    status={block()!.record.status}
                     borderColor={(item() as CompactionDisplayItem).accentColor}
                     instanceId={props.instanceId}
                     sessionId={props.sessionId}
                     messageId={(item() as CompactionDisplayItem).messageId}
+                    onContentRendered={props.onContentRendered}
                   />
                 </Match>
                 <Match when={item().type === "reasoning"}>
@@ -876,32 +880,66 @@ interface StepCardProps {
 interface CompactionCardProps {
   part: ClientPart
   messageInfo?: MessageInfo
+  status: Message["status"]
   borderColor?: string
   instanceId: string
   sessionId: string
   messageId: string
+  onContentRendered?: () => void
 }
 
 function CompactionCard(props: CompactionCardProps) {
   const { t } = useI18n()
+  const { isDark } = useTheme()
   const isAuto = () => Boolean((props.part as any)?.auto)
-  const label = () => (isAuto() ? t("messageBlock.compaction.autoLabel") : t("messageBlock.compaction.manualLabel"))
+  const isRunning = () => props.status === "sent" || props.status === "streaming"
+  const isFailed = () => props.status === "error"
+  const label = () => isRunning()
+    ? t("sessionList.status.compacting")
+    : isFailed()
+      ? t("commands.compactSession.alert.title")
+      : isAuto()
+        ? t("messageBlock.compaction.autoLabel")
+        : t("messageBlock.compaction.manualLabel")
   const borderColor = () => props.borderColor ?? (isAuto() ? "var(--session-status-compacting-fg)" : USER_BORDER_COLOR)
+  const content = () => isRunning() ? "" : typeof (props.part as any)?.text === "string" ? (props.part as any).text.trim() : ""
+  const markdownPart = createMemo<TextPart>(() => ({
+    id: `${props.messageId}-compaction-summary`,
+    type: "text",
+    text: content(),
+  }))
 
   const containerClass = () =>
-    `message-compaction-card ${isAuto() ? "message-compaction-card--auto" : "message-compaction-card--manual"}`
+    `message-compaction-card ${isAuto() ? "message-compaction-card--auto" : "message-compaction-card--manual"}${isFailed() ? " message-compaction-card--failed" : ""}`
 
   return (
     <div
       class={`delete-hover-scope ${containerClass()} relative`}
       style={{ "border-left": `4px solid ${borderColor()}` }}
-      role="status"
+      role={isFailed() ? "alert" : "status"}
       aria-label={t("messageBlock.compaction.ariaLabel")}
     >
       <div class="message-compaction-row">
-        <FoldVertical class="message-compaction-icon w-4 h-4" aria-hidden="true" />
+        <Show when={!isRunning()} fallback={<Loader2 class="message-compaction-icon w-4 h-4 animate-spin" aria-hidden="true" />}>
+          <Show when={!isFailed()} fallback={<XCircle class="message-compaction-icon w-4 h-4" aria-hidden="true" />}>
+            <FoldVertical class="message-compaction-icon w-4 h-4" aria-hidden="true" />
+          </Show>
+        </Show>
         <span class="message-compaction-label">{label()}</span>
       </div>
+      <Show when={content()}>
+        <div class="message-compaction-content">
+          <Markdown
+            part={markdownPart()}
+            instanceId={props.instanceId}
+            sessionId={props.sessionId}
+            isDark={isDark()}
+            size="tight"
+            escapeRawHtml
+            onRendered={props.onContentRendered}
+          />
+        </div>
+      </Show>
     </div>
   )
 }

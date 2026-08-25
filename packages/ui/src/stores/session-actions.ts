@@ -1,4 +1,4 @@
-import type { ModelRef, SessionPromptInput } from "@opencode-ai/client"
+import type { ModelRef, SessionInboxDelivery, SessionInboxUser, SessionPromptInput } from "@opencode-ai/client"
 import type { Attachment } from "../types/attachment"
 import { preparePromptDisplayText } from "../lib/prompt-display-metadata"
 import { instances } from "./instances"
@@ -133,6 +133,7 @@ async function sendMessage(
   sessionId: string,
   prompt: string,
   attachments: Attachment[] = [],
+  options: { delivery?: SessionInboxDelivery; replace?: SessionInboxUser } = {},
 ): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
@@ -151,6 +152,10 @@ async function sendMessage(
   const textPartId = createId("prt")
 
   const preparedPrompt = preparePromptDisplayText(prompt, attachments)
+  const replacedDisplayText = options.replace?.payload.metadata?.displayText
+  if (typeof replacedDisplayText === "string" && options.replace?.payload.text.startsWith(replacedDisplayText)) {
+    preparedPrompt.promptToSend += options.replace.payload.text.slice(replacedDisplayText.length)
+  }
 
   const optimisticParts: any[] = [
     {
@@ -161,8 +166,25 @@ async function sendMessage(
     },
   ]
 
-  const files: Array<{ uri: string; name?: string }> = []
-  const agents: Array<NonNullable<SessionPromptInput["agents"]>[number]> = []
+  const remapMention = (mention: { text: string } | undefined) => {
+    if (!mention) return undefined
+    const start = prompt.indexOf(mention.text)
+    return start < 0 ? undefined : { text: mention.text, start, end: start + mention.text.length }
+  }
+  const files: Array<NonNullable<SessionPromptInput["files"]>[number]> = options.replace?.payload.files?.map((file) => ({
+    uri: `data:${file.mime};base64,${file.data}`,
+    name: file.name,
+    description: file.description,
+    mention: remapMention(file.mention),
+  })) ?? []
+  const agents: Array<NonNullable<SessionPromptInput["agents"]>[number]> = options.replace?.payload.agents?.flatMap((agent) => {
+    const mention = remapMention(agent.mention)
+    return agent.mention && !mention ? [] : [{ name: agent.name, ...(mention ? { mention } : {}) }]
+  }) ?? []
+  const skills: Array<NonNullable<SessionPromptInput["skills"]>[number]> = options.replace?.payload.skills?.flatMap((skill) => {
+    const mention = remapMention(skill.mention)
+    return skill.mention && !mention ? [] : [{ id: skill.id, ...(mention ? { mention } : {}) }]
+  }) ?? []
 
   if (attachments.length > 0) {
     for (const att of attachments) {
@@ -180,7 +202,9 @@ async function sendMessage(
         })
       } else if (source.type === "agent") {
         const mention = getAgentMention(preparedPrompt.promptToSend, source.name)
-        agents.push({ name: source.name, ...(mention ? { mention } : {}) })
+        if (!agents.some((agent) => agent.name === source.name)) {
+          agents.push({ name: source.name, ...(mention ? { mention } : {}) })
+        }
       } else if (source.type === "text") {
         const display: string | undefined = att.display
         const value: unknown = source.value
@@ -239,6 +263,10 @@ async function sendMessage(
     text: preparedPrompt.promptToSend,
     ...(files.length > 0 ? { files } : {}),
     ...(agents.length > 0 ? { agents } : {}),
+    ...(skills.length > 0 ? { skills } : {}),
+    ...(options.replace ? { metadata: { ...options.replace.payload.metadata, displayText: prompt } } : {}),
+    ...(options.delivery ? { delivery: options.delivery } : {}),
+    ...(options.delivery === "queue" ? { resume: false } : {}),
   }
 
   log.info("sendMessage", {
@@ -268,6 +296,11 @@ async function sendMessage(
     store.failSend(messageId)
     log.error("Failed to send prompt", error)
     throw error
+  }
+
+  if (options.replace) {
+    // ponytail: V2 has no inbox update endpoint, so an edited item safely moves to the queue tail.
+    await client.session.inbox.cancel({ sessionID: sessionId, inboxID: options.replace.id })
   }
 }
 

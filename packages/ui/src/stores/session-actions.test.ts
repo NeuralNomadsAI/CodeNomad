@@ -247,4 +247,37 @@ describe("native prompt serialization", () => {
       mention: { start: 4, end: 13, text: "@reviewer" },
     }])
   })
+
+  it("replaces a queued prompt only after admitting its edited replacement", async () => {
+    const calls: Array<{ type: string; input: any }> = []
+    seed({ session: {
+      instructions: { entry: { put: async () => {}, remove: async () => {} } },
+      switchModel: async () => {},
+      prompt: async (input: any) => { calls.push({ type: "prompt", input }); return { id: input.id } },
+      inbox: { cancel: async (input: unknown) => { calls.push({ type: "cancel", input }) } },
+    } })
+
+    await sendMessage(instanceId, sessionId, "edited @reviewer", [], {
+      delivery: "queue",
+      replace: {
+        id: "queued-1",
+        sessionID: sessionId,
+        timeCreated: 1,
+        type: "user",
+        delivery: "queue",
+        payload: {
+          text: "original @reviewer\n\nhidden note",
+          metadata: { displayText: "original @reviewer" },
+          agents: [{ name: "reviewer", mention: { start: 9, end: 18, text: "@reviewer" } }],
+        },
+      },
+    })
+
+    assert.equal(calls[0]?.type, "prompt")
+    assert.equal(calls[0]?.input.text, "edited @reviewer\n\nhidden note")
+    assert.equal(calls[0]?.input.delivery, "queue")
+    assert.equal(calls[0]?.input.resume, false)
+    assert.deepEqual(calls[0]?.input.agents, [{ name: "reviewer", mention: { start: 7, end: 16, text: "@reviewer" } }])
+    assert.deepEqual(calls[1], { type: "cancel", input: { sessionID: sessionId, inboxID: "queued-1" } })
+  })
 })

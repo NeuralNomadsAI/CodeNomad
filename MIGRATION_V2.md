@@ -132,6 +132,23 @@ The migration deletes rather than maintains these superseded systems:
 - Message/part deletion controls and compatibility companions for operations not offered by the V2 beta protocol.
 - The server and UI dependency on `@opencode-ai/sdk` and the runtime V1 compatibility path.
 
+## V1-to-V2 Capability Decisions
+
+During stabilization, CodeNomad implements the public native V2 contract and removes V1 behavior that cannot be reproduced authoritatively. It does not use compatibility routes, private APIs, local-only transcript mutations, or a bundled OpenCode fork to simulate parity. Missing protocol capabilities are documented rather than proposed upstream until the V2 migration is complete and stable.
+
+| Capability | Native V2 availability | CodeNomad `DEV-v2` decision | Revisit or complete when |
+| --- | --- | --- | --- |
+| Individual message or part deletion | No public authoritative mutation for delivered transcript messages or parts. | Removed the V1 deletion controls. A local hide would not reduce future model context. | V2 exposes a supported mutation and verifies that subsequent model context reflects it. |
+| Bulk tool and reasoning cleanup | No native bulk operation; it depends on authoritative part deletion. | Removed transcript deletion selection and the V1 tool-companion cleanup for reasoning and `step-finish` parts. | V2 provides a native bulk operation, or safe composition of authoritative individual mutations. |
+| Delete-to-boundary / undo | `session.revert.stage` and `session.revert.clear` use V2 staged-revert semantics instead of arbitrary deletion. | Undo uses `revert.stage`. Redo/clear remains a CodeNomad UI gap, not a reason to restore V1 deletion. | Expose `revert.clear` through the existing native contract. |
+| Compaction | Native checkpoint compaction summarizes the older head and retains a server-selected recent tail controlled by `compaction.keep.tokens`. | Uses `session.compact`; there is no message-level selective compaction. CodeNomad displays the terminal summary without rendering every streamed delta. | Add scoped controls only if V2 defines scoped compaction semantics. |
+| Full-session search | Native message cursors exist, but there is no server search endpoint that returns message identity and position. | Retained through bounded cursor traversal while keeping only the 200-message resident window and collected matches. Large searches still fetch every page. | V2 exposes server search plus a rank/cursor navigation target. |
+| Queued prompt management | Native inbox list, cancel, steer, and queue operations are available. | Implemented with authoritative queue/steer switching, cancellation, safe edit replacement, draft preservation, and queue admission for follow-up prompts. | Revisit exact in-place editing if V2 adds an inbox update operation; replacement currently moves an edited prompt to the queue tail. |
+| Background execution | Native Shell resources support listing, bounded output, and removal, but do not reproduce every custom V1 process-manager control. | Replaced the custom manager with native Shells and removed unsupported controls such as rename. | Add controls only when native Shell APIs support them. |
+| Service lifecycle | V2 uses one shared externally owned service rather than one runtime per workspace. | CodeNomad discovers or starts the service but never exposes workspace stop or stops the daemon on shutdown. | No parity work planned unless V2 changes service ownership semantics. |
+
+This table is release-facing and must remain synchronized with the open migration pull request description whenever a capability is removed, restored, or becomes available in the pinned V2 client.
+
 ## Review Notes
 
 - The generated V2 client remains experimental. Review its installed declarations and release notes whenever the pinned client advances; public `@opencode-ai/sdk` examples are not authoritative for this branch.

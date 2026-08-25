@@ -1,4 +1,5 @@
 import { Show, createMemo, createEffect, createSignal, on, onCleanup, onMount, type Component } from "solid-js"
+import type { SessionInboxUser } from "@opencode-ai/client"
 import type { Session } from "../../types/session"
 import type { Attachment } from "../../types/attachment"
 import type { ClientPart } from "../../types/message"
@@ -6,7 +7,8 @@ import MessageSection from "../message-section"
 import { messageStoreBus } from "../../stores/message-v2/bus"
 import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
-import { getAttachments, removeAttachment } from "../../stores/attachments"
+import PromptQueue from "../prompt-queue"
+import { getAttachments, hydrateSessionAttachments, removeAttachment } from "../../stores/attachments"
 import { instances, waitForInstanceWorkspaceMetadataHydration } from "../../stores/instances"
 import { getMessageNextCursor, hasMoreMessages, isLatestMessageWindow, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadNewerMessageWindow, loadOldestMessageWindow, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession } from "../../stores/sessions"
 import { canMarkSessionIdleSeen } from "./session-idle-attention"
@@ -15,7 +17,7 @@ import { showAlertDialog } from "../../stores/alerts"
 import { getLogger } from "../../lib/logger"
 import { useActiveSessionMessageLoad } from "../../lib/hooks/use-active-session-message-load"
 import { useI18n } from "../../lib/i18n"
-import type { PromptInputApi, PromptInsertMode } from "../prompt-input/types"
+import type { PromptDelivery, PromptInputApi, PromptInsertMode } from "../prompt-input/types"
 import { clearConversationPlaybackForSession } from "../../stores/conversation-speech"
 import { useConfig } from "../../stores/preferences"
 import { closeSessionPreview, getSessionPreview, showSessionChat } from "../../stores/session-previews"
@@ -23,6 +25,7 @@ import { SessionPreviewView } from "../session-preview-view"
 import { isSnapshotAutoFollowing } from "../virtual-follow-behavior"
 import { getSubmitBottomPinTargetCount, resolveSessionBottomPinIntent, shouldClearSessionBottomPinIntent, type SessionBottomPinIntent } from "./session-bottom-pin-intent"
 import { focusConversationStream } from "../focus-conversation"
+import { getOpenCodeSessionInbox, syncOpenCodeSessionInbox } from "../../stores/opencode-data"
 
 const log = getLogger("session")
 
@@ -89,6 +92,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   })
 
   const attachments = createMemo(() => getAttachments(props.instanceId, props.sessionId))
+  const queuedPrompts = createMemo(() => getOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder)
+    .filter((item): item is SessionInboxUser => item.type === "user"))
   const preview = createMemo(() => getSessionPreview(props.sessionId))
 
   const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
@@ -97,6 +102,23 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   let pendingPromptText: string | null = null
   let pendingSelectionInsert: { text: string; mode: PromptInsertMode } | null = null
   let pendingCommentText: string | null = null
+  let queuedPromptEditStash: { prompt: string; attachments: Attachment[] } | null = null
+  const [editingQueuedPrompt, setEditingQueuedPrompt] = createSignal<SessionInboxUser>()
+  const [queueBusyId, setQueueBusyId] = createSignal<string>()
+
+  createEffect(on(
+    () => `${props.instanceId}:${props.sessionId}`,
+    () => void syncOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder)
+      .catch((error) => log.error("Failed to load prompt queue", error)),
+  ))
+
+  createEffect(() => {
+    const editing = editingQueuedPrompt()
+    if (!editing) return
+    const current = queuedPrompts().find((item) => item.id === editing.id)
+    if (!current) cancelQueuedPromptEdit()
+    else if (current !== editing) setEditingQueuedPrompt(current)
+  })
 
   let scrollToBottomHandle: (() => void) | undefined
   let rootRef: HTMLDivElement | undefined
@@ -381,7 +403,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     }
   }
 
-  async function handleSendMessage(prompt: string, attachments: Attachment[]) {
+  async function handleSendMessage(prompt: string, attachments: Attachment[], delivery: PromptDelivery) {
     if (!isLatestMessageWindow(props.instanceId, props.sessionId)) {
       await loadLatestMessageWindow(props.instanceId, props.sessionId)
     }
@@ -389,7 +411,11 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     const submittedExchangeTargetCount = getSubmitBottomPinTargetCount(messageCount, sessionStreamingActive())
     const initialPinIntent = forceSubmittedExchangeToBottom(submittedExchangeTargetCount, { createdMessageCount: messageCount })
     try {
-      await sendMessage(props.instanceId, props.sessionId, prompt, attachments)
+      const editing = editingQueuedPrompt()
+      await sendMessage(props.instanceId, props.sessionId, prompt, attachments, editing
+        ? { delivery: editing.delivery, replace: editing }
+        : { delivery })
+      if (editing) cancelQueuedPromptEdit()
       const latestMessageCount = messageStore().getSessionMessageIds(props.sessionId).length
       if (latestMessageCount < submittedExchangeTargetCount && !sessionStreamingActive()) {
         setSubmitBottomPinIntent(null)
@@ -402,6 +428,56 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     } catch (error) {
       setSubmitBottomPinIntent(null)
       throw error
+    }
+  }
+
+  function queuedPromptText(item: SessionInboxUser): string {
+    const display = item.payload.metadata?.displayText
+    return typeof display === "string" && display ? display : item.payload.text
+  }
+
+  function cancelQueuedPromptEdit() {
+    if (!editingQueuedPrompt()) return
+    const stash = queuedPromptEditStash
+    queuedPromptEditStash = null
+    setEditingQueuedPrompt(undefined)
+    if (!stash) return
+    hydrateSessionAttachments(props.instanceId, props.sessionId, stash.attachments)
+    promptInputApi?.setPromptText(stash.prompt, { focus: true })
+  }
+
+  function handleEditQueuedPrompt(item: SessionInboxUser) {
+    if (!promptInputApi) return
+    if (editingQueuedPrompt()) cancelQueuedPromptEdit()
+    queuedPromptEditStash = { prompt: promptInputApi.getPromptText(), attachments: [...attachments()] }
+    setEditingQueuedPrompt(item)
+    hydrateSessionAttachments(props.instanceId, props.sessionId, [])
+    promptInputApi.setPromptText(queuedPromptText(item), { focus: true })
+  }
+
+  async function manageQueuedPrompt(item: SessionInboxUser, action: "delivery" | "remove") {
+    setQueueBusyId(item.id)
+    try {
+      const inbox = instances().get(props.instanceId)?.client?.session.inbox
+      if (!inbox) throw new Error("Instance not ready")
+      if (action === "remove") {
+        await inbox.cancel({ sessionID: props.sessionId, inboxID: item.id })
+        if (editingQueuedPrompt()?.id === item.id) cancelQueuedPromptEdit()
+      } else if (item.delivery === "queue") {
+        await inbox.steer({ sessionID: props.sessionId, inboxID: item.id })
+      } else {
+        await inbox.queue({ sessionID: props.sessionId, inboxID: item.id })
+      }
+    } catch (error) {
+      log.error("Failed to manage queued prompt", error)
+      showAlertDialog(t("promptQueue.error.message"), {
+        title: t("promptQueue.error.title"),
+        detail: error instanceof Error ? error.message : String(error),
+        variant: "error",
+      })
+    } finally {
+      await syncOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder).catch(() => undefined)
+      setQueueBusyId(undefined)
     }
   }
 
@@ -554,6 +630,16 @@ export const SessionView: Component<SessionViewProps> = (props) => {
             onInsertComment={handleInsertPreviewComment}
           />
         </Show>
+
+        <PromptQueue
+          items={queuedPrompts()}
+          busyId={queueBusyId()}
+          editingId={editingQueuedPrompt()?.id}
+          onDeliveryChange={(item) => void manageQueuedPrompt(item, "delivery")}
+          onEdit={handleEditQueuedPrompt}
+          onCancelEdit={cancelQueuedPromptEdit}
+          onRemove={(item) => void manageQueuedPrompt(item, "remove")}
+        />
 
         <Show when={attachments().length > 0}>
           <PromptAttachmentsBar

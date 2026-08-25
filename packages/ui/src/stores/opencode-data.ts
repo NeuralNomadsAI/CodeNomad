@@ -568,6 +568,14 @@ export function getOpenCodeMutationRevision(instanceId: string, sessionId: strin
   return mutationRevision(messageRevisionKey(instanceId, sessionId))[0]()
 }
 
+export function getOpenCodeSessionInbox(instanceId: string, sessionId: string, directory: string) {
+  return ensureTranscript(instanceId, sessionId, directory).entry.data.session.pending.list(sessionId)
+}
+
+export async function syncOpenCodeSessionInbox(instanceId: string, sessionId: string, directory: string): Promise<void> {
+  await ensureTranscript(instanceId, sessionId, directory).entry.data.session.pending.sync(sessionId)
+}
+
 export function projectOpenCodeMessages(
   instanceId: string,
   sessionId: string,
