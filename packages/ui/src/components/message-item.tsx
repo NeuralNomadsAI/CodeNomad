@@ -604,12 +604,6 @@ export default function MessageItem(props: MessageItemProps) {
 
       <div class="pt-0 whitespace-pre-wrap break-words leading-[1.1]" dir="auto">
 
-        <Show when={props.pendingPrompt} keyed>
-          {(pending) => (
-            <div class="message-queued-badge">{t(`promptQueue.delivery.${pending.delivery}`)}</div>
-          )}
-        </Show>
-
         <Show when={errorMessage()}>
           <div class="message-error-block" dir="auto">⚠️ {errorMessage()}</div>
         </Show>
