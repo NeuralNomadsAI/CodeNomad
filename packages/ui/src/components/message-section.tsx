@@ -26,6 +26,7 @@ import { isLatestWindow, toWindowSnapshot } from "../stores/message-v2/message-w
 import { getLogger } from "../lib/logger"
 import { beginMessageHistoryTraversal, invalidateMessageHistoryTraversal } from "../stores/session-api"
 import { getOpenCodeInstanceGeneration, getOpenCodeMutationRevision } from "../stores/opencode-data"
+import type { SessionInboxUser } from "@opencode-ai/client"
 
 const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 const QUOTE_SELECTION_MAX_LENGTH = 2000
@@ -59,7 +60,11 @@ export interface MessageSectionProps {
   sessionStreamingActive?: boolean
   explicitBottomPinIntent?: VirtualExplicitBottomPinIntent | null
   onExplicitBottomPinCancelled?: () => void
-  queuedMessageIds?: ReadonlySet<string>
+  pendingPrompts?: ReadonlyMap<string, SessionInboxUser>
+  pendingPromptBusy?: boolean
+  onPendingPromptDeliveryChange?: (item: SessionInboxUser) => void
+  onPendingPromptEdit?: (item: SessionInboxUser) => void
+  onPendingPromptRemove?: (item: SessionInboxUser) => void
 }
 
 export default function MessageSection(props: MessageSectionProps) {
@@ -76,7 +81,6 @@ export default function MessageSection(props: MessageSectionProps) {
   const visibleMessageIds = createMemo(() => {
     const resolvedStore = store()
     return messageIds().filter((messageId) => {
-      if (props.queuedMessageIds?.has(messageId)) return false
       const record = resolvedStore.getMessage(messageId)
       if (!record) return false
 
@@ -792,8 +796,7 @@ export default function MessageSection(props: MessageSectionProps) {
       isLatest: () => isLatestWindow(store().getMessageWindow(sessionId)),
       loadOldest: props.onLoadOldestMessages ?? (() => Promise.resolve()),
       loadNewer: props.onLoadNewerMessages ?? (() => Promise.resolve()),
-      visit: () => buildSessionSearchMatches({ store: store(), sessionId, query, includeThinking })
-        .filter((match) => !props.queuedMessageIds?.has(match.messageId)),
+      visit: () => buildSessionSearchMatches({ store: store(), sessionId, query, includeThinking }),
     }).then((matches) => {
       if (!matches) {
         if (isCurrentSearch()) setIsSearchPending(false)
@@ -829,7 +832,6 @@ export default function MessageSection(props: MessageSectionProps) {
     const includeThinking = Boolean(preferences().showThinkingBlocks)
     const currentResidentIds = messageIds()
     const currentMatches = buildSessionSearchMatches({ store: store(), sessionId: props.sessionId, query, includeThinking })
-      .filter((match) => !props.queuedMessageIds?.has(match.messageId))
     const frame = requestAnimationFrame(() => {
       if (isSearchPending() || !hasMessageSearchAuthority(searchQuery(), query)) return
       const activeId = activeSearchMatch()?.id
@@ -1186,6 +1188,11 @@ export default function MessageSection(props: MessageSectionProps) {
               toolVisibility={(toolName) => resolveToolVisibility(preferences(), toolName)}
               onRevert={props.onRevert}
               onFork={props.onFork}
+              pendingPrompt={props.pendingPrompts?.get(messageId)}
+              pendingPromptBusy={props.pendingPromptBusy}
+              onPendingPromptDeliveryChange={props.onPendingPromptDeliveryChange}
+              onPendingPromptEdit={props.onPendingPromptEdit}
+              onPendingPromptRemove={props.onPendingPromptRemove}
               onContentRendered={handleContentRendered}
               searchQuery={authoritativeSearchQuery}
               searchResultMessageIds={searchResultMessageIds}

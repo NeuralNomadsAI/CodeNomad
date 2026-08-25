@@ -1068,12 +1068,12 @@ export default function ToolCall(props: ToolCallProps) {
         )}
       </Show>
 
-      <Show keyed when={pendingForm()}>
+      <Show when={pendingForm()}>
         {(form) => (
           <FormRequest
-            form={form}
-            onReply={(answer) => sendFormReply(props.instanceId, form.id, answer)}
-            onCancel={() => sendFormCancel(props.instanceId, form.id)}
+            form={form()}
+            onReply={(answer) => sendFormReply(props.instanceId, form().id, answer)}
+            onCancel={() => sendFormCancel(props.instanceId, form().id)}
           />
         )}
       </Show>

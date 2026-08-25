@@ -1,6 +1,7 @@
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
 import { Portal } from "solid-js/web"
-import { Copy, Split, Undo, Volume2 } from "lucide-solid"
+import { Copy, Pencil, Play, Split, Trash2, Undo, Volume2 } from "lucide-solid"
+import type { SessionInboxUser } from "@opencode-ai/client"
 import type { MessageInfo, ClientPart } from "../types/message"
 import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
@@ -22,6 +23,11 @@ interface MessageItemProps {
   parts: ClientPart[]
   onRevert?: (messageId: string) => void
   onFork?: (messageId?: string) => void
+  pendingPrompt?: SessionInboxUser
+  pendingPromptBusy?: boolean
+  onPendingPromptDeliveryChange?: (item: SessionInboxUser) => void
+  onPendingPromptEdit?: (item: SessionInboxUser) => void
+  onPendingPromptRemove?: (item: SessionInboxUser) => void
   showAgentMeta?: boolean
   contentStartPartId?: string
   onContentRendered?: () => void
@@ -388,9 +394,35 @@ export default function MessageItem(props: MessageItemProps) {
           onSelect: () => void speech.toggle(),
         })
       }
+
+      const pending = props.pendingPrompt
+      if (pending) {
+        items.push(
+          {
+            key: "pending-delivery",
+            label: t(`promptQueue.actions.${pending.delivery === "queue" ? "steer" : "queue"}`),
+            icon: pending.delivery === "queue"
+              ? <Play class="w-3.5 h-3.5" aria-hidden="true" />
+              : <Undo class="w-3.5 h-3.5" aria-hidden="true" />,
+            onSelect: () => props.onPendingPromptDeliveryChange?.(pending),
+          },
+          {
+            key: "pending-edit",
+            label: t("promptQueue.actions.edit"),
+            icon: <Pencil class="w-3.5 h-3.5" aria-hidden="true" />,
+            onSelect: () => props.onPendingPromptEdit?.(pending),
+          },
+          {
+            key: "pending-remove",
+            label: t("promptQueue.actions.remove"),
+            icon: <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />,
+            onSelect: () => props.onPendingPromptRemove?.(pending),
+          },
+        )
+      }
     }
 
-    if (isUser() && props.onFork) {
+    if (isUser() && !props.pendingPrompt && props.onFork) {
       items.push({
         key: "fork",
         label: t("messageItem.actions.fork"),
@@ -399,7 +431,7 @@ export default function MessageItem(props: MessageItemProps) {
       })
     }
 
-    if (isUser() && props.onRevert) {
+    if (isUser() && !props.pendingPrompt && props.onRevert) {
       items.push({
         key: "revert",
         label: t("messageItem.actions.revertTitle"),
@@ -474,6 +506,42 @@ export default function MessageItem(props: MessageItemProps) {
                   />
                 </Show>
 
+                <Show when={props.pendingPrompt} keyed>
+                  {(pending) => (
+                    <>
+                      <button
+                        class="message-action-button"
+                        disabled={props.pendingPromptBusy}
+                        onClick={() => props.onPendingPromptDeliveryChange?.(pending)}
+                        title={t(`promptQueue.actions.${pending.delivery === "queue" ? "steer" : "queue"}`)}
+                        aria-label={t(`promptQueue.actions.${pending.delivery === "queue" ? "steer" : "queue"}`)}
+                      >
+                        <Show when={pending.delivery === "queue"} fallback={<Undo class="w-3.5 h-3.5" aria-hidden="true" />}>
+                          <Play class="w-3.5 h-3.5" aria-hidden="true" />
+                        </Show>
+                      </button>
+                      <button
+                        class="message-action-button"
+                        disabled={props.pendingPromptBusy}
+                        onClick={() => props.onPendingPromptEdit?.(pending)}
+                        title={t("promptQueue.actions.edit")}
+                        aria-label={t("promptQueue.actions.edit")}
+                      >
+                        <Pencil class="w-3.5 h-3.5" aria-hidden="true" />
+                      </button>
+                      <button
+                        class="message-action-button"
+                        disabled={props.pendingPromptBusy}
+                        onClick={() => props.onPendingPromptRemove?.(pending)}
+                        title={t("promptQueue.actions.remove")}
+                        aria-label={t("promptQueue.actions.remove")}
+                      >
+                        <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />
+                      </button>
+                    </>
+                  )}
+                </Show>
+
               </div>
               <ActionOverflowMenu
                 items={actionMenuItems()}
@@ -536,6 +604,11 @@ export default function MessageItem(props: MessageItemProps) {
 
       <div class="pt-0 whitespace-pre-wrap break-words leading-[1.1]" dir="auto">
 
+        <Show when={props.pendingPrompt} keyed>
+          {(pending) => (
+            <div class="message-queued-badge">{t(`promptQueue.delivery.${pending.delivery}`)}</div>
+          )}
+        </Show>
 
         <Show when={errorMessage()}>
           <div class="message-error-block" dir="auto">⚠️ {errorMessage()}</div>

@@ -1,6 +1,5 @@
 @import "./messaging/message-base.css";
 @import "./messaging/prompt-input.css";
-@import "./messaging/prompt-queue.css";
 @import "./messaging/message-section.css";
 @import "./messaging/virtual-follow-list.css";
 @import "./messaging/message-selection.css";

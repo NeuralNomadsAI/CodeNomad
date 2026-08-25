@@ -7,7 +7,6 @@ import MessageSection from "../message-section"
 import { messageStoreBus } from "../../stores/message-v2/bus"
 import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
-import PromptQueue from "../prompt-queue"
 import { getAttachments, hydrateSessionAttachments, removeAttachment } from "../../stores/attachments"
 import { instances, waitForInstanceWorkspaceMetadataHydration } from "../../stores/instances"
 import { getMessageNextCursor, hasMoreMessages, isLatestMessageWindow, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadNewerMessageWindow, loadOldestMessageWindow, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession } from "../../stores/sessions"
@@ -94,8 +93,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   const attachments = createMemo(() => getAttachments(props.instanceId, props.sessionId))
   const pendingUserPrompts = createMemo(() => getOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder)
     .filter((item): item is SessionInboxUser => item.type === "user"))
-  const queuedPrompts = createMemo(() => pendingUserPrompts().filter((item) => item.delivery === "queue"))
-  const queuedMessageIds = createMemo(() => new Set(queuedPrompts().map((item) => item.id)))
+  const pendingPromptById = createMemo(() => new Map(pendingUserPrompts().map((item) => [item.id, item])))
   const preview = createMemo(() => getSessionPreview(props.sessionId))
 
   const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
@@ -117,7 +115,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   createEffect(() => {
     const editing = editingQueuedPrompt()
     if (!editing) return
-    const current = queuedPrompts().find((item) => item.id === editing.id)
+    const current = pendingPromptById().get(editing.id)
     if (!current) cancelQueuedPromptEdit()
     else if (current !== editing) setEditingQueuedPrompt(current)
   })
@@ -129,8 +127,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   let submitBottomPinIntentSequence = 0
 
   function visibleMessageCount() {
-    const hidden = queuedMessageIds()
-    return messageStore().getSessionMessageIds(props.sessionId).filter((id) => !hidden.has(id)).length
+    return messageStore().getSessionMessageIds(props.sessionId).length
   }
 
   function shouldScrollToBottomOnActivate() {
@@ -633,7 +630,11 @@ export const SessionView: Component<SessionViewProps> = (props) => {
               showSidebarToggle={props.showSidebarToggle}
               onSidebarToggle={props.onSidebarToggle}
               forceCompactStatusLayout={props.forceCompactStatusLayout}
-              queuedMessageIds={queuedMessageIds()}
+              pendingPrompts={pendingPromptById()}
+              pendingPromptBusy={Boolean(queueBusyId())}
+              onPendingPromptDeliveryChange={(item) => void manageQueuedPrompt(item, "delivery")}
+              onPendingPromptEdit={handleEditQueuedPrompt}
+              onPendingPromptRemove={(item) => void manageQueuedPrompt(item, "remove")}
               onQuoteSelection={handleQuoteSelection}
             />
           }
@@ -645,16 +646,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
             onInsertComment={handleInsertPreviewComment}
           />
         </Show>
-
-        <PromptQueue
-          items={queuedPrompts()}
-          busyId={queueBusyId()}
-          editingId={editingQueuedPrompt()?.id}
-          onDeliveryChange={(item) => void manageQueuedPrompt(item, "delivery")}
-          onEdit={handleEditQueuedPrompt}
-          onCancelEdit={cancelQueuedPromptEdit}
-          onRemove={(item) => void manageQueuedPrompt(item, "remove")}
-        />
 
         <Show when={attachments().length > 0}>
           <PromptAttachmentsBar

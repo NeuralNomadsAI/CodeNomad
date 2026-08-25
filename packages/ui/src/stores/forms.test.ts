@@ -10,7 +10,7 @@ import {
   sendFormReply,
   syncPendingRequests,
 } from "./instances.ts"
-import { formRequestOptions, getFormQueue } from "./forms.ts"
+import { addFormToQueue, clearFormQueue, formRequestOptions, getFormQueue } from "./forms.ts"
 import { getRootClient } from "./opencode-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import { sessions, setSessions } from "./session-state.ts"
@@ -24,6 +24,18 @@ const form = {
 } as any
 
 describe("form interruption lifecycle", () => {
+  it("keeps an active form object stable across duplicate sync results", () => {
+    const instanceId = "stable-form-sync"
+    try {
+      addFormToQueue(instanceId, form)
+      const active = getFormQueue(instanceId)[0]
+      addFormToQueue(instanceId, { ...form })
+      assert.strictEqual(getFormQueue(instanceId)[0], active)
+    } finally {
+      clearFormQueue(instanceId)
+    }
+  })
+
   it("marks created or restored forms as pending until reply or cancellation", () => {
     const instanceId = "form-lifecycle"
     const sessionId = "session-1"

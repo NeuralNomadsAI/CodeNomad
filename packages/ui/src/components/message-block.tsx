@@ -1,6 +1,7 @@
 import { For, Index, Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, untrack, type Accessor } from "solid-js"
 import { Copy, ExternalLink, FoldVertical, Loader2, Volume2, XCircle } from "lucide-solid"
 import MessageItem from "./message-item"
+import type { SessionInboxUser } from "@opencode-ai/client"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { ClientPart, Message, MessageInfo, TextPart } from "../types/message"
 import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
@@ -279,6 +280,11 @@ interface MessageContentItemProps {
   messageIndex: number
   onRevert?: (messageId: string) => void
   onFork?: (messageId?: string) => void
+  pendingPrompt?: SessionInboxUser
+  pendingPromptBusy?: boolean
+  onPendingPromptDeliveryChange?: (item: SessionInboxUser) => void
+  onPendingPromptEdit?: (item: SessionInboxUser) => void
+  onPendingPromptRemove?: (item: SessionInboxUser) => void
   onContentRendered?: () => void
 }
 
@@ -367,6 +373,11 @@ function MessageContentItem(props: MessageContentItemProps) {
         showAgentMeta={showAgentMeta()}
         onRevert={props.onRevert}
         onFork={props.onFork}
+        pendingPrompt={props.pendingPrompt}
+        pendingPromptBusy={props.pendingPromptBusy}
+        onPendingPromptDeliveryChange={props.onPendingPromptDeliveryChange}
+        onPendingPromptEdit={props.onPendingPromptEdit}
+        onPendingPromptRemove={props.onPendingPromptRemove}
         onContentRendered={props.onContentRendered}
       />
     </Show>
@@ -506,6 +517,11 @@ interface MessageBlockProps {
   toolVisibility: (toolName: string) => VisibilityPreference
   onRevert?: (messageId: string) => void
   onFork?: (messageId?: string) => void
+  pendingPrompt?: SessionInboxUser
+  pendingPromptBusy?: boolean
+  onPendingPromptDeliveryChange?: (item: SessionInboxUser) => void
+  onPendingPromptEdit?: (item: SessionInboxUser) => void
+  onPendingPromptRemove?: (item: SessionInboxUser) => void
   onContentRendered?: () => void
   searchQuery?: Accessor<string>
   searchResultMessageIds?: Accessor<Set<string>>
@@ -768,6 +784,11 @@ export default function MessageBlock(props: MessageBlockProps) {
                     messageIndex={props.messageIndex}
                     onRevert={props.onRevert}
                     onFork={props.onFork}
+                    pendingPrompt={props.pendingPrompt}
+                    pendingPromptBusy={props.pendingPromptBusy}
+                    onPendingPromptDeliveryChange={props.onPendingPromptDeliveryChange}
+                    onPendingPromptEdit={props.onPendingPromptEdit}
+                    onPendingPromptRemove={props.onPendingPromptRemove}
                     onContentRendered={props.onContentRendered}
                   />
                 </Match>

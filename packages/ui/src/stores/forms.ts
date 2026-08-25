@@ -13,9 +13,9 @@ export function addFormToQueue(instanceId: string, form: FormWithLocation): void
     const next = new Map(previous)
     const queue = next.get(instanceId) ?? []
     const index = queue.findIndex((item) => item.id === form.id)
+    if (index !== -1) return previous
     const updated = queue.slice()
-    if (index === -1) updated.push(form)
-    else updated[index] = form
+    updated.push(form)
     next.set(instanceId, updated)
     return next
   })
