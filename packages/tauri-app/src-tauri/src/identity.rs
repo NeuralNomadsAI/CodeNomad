@@ -54,7 +54,9 @@ pub(crate) fn resolve_update_channel(
         return "dev".to_string();
     }
     let lower = version.to_ascii_lowercase();
-    if lower.contains("-dev.") || lower.contains("-dev-") {
+    if lower.contains("-dev-v2-") {
+        "dev-v2".to_string()
+    } else if lower.contains("-dev.") || lower.contains("-dev-") {
         "dev".to_string()
     } else {
         "stable".to_string()
@@ -191,6 +193,10 @@ mod tests {
         );
         assert_eq!(resolve_update_channel(None, "1.0.0", false), "dev");
         assert_eq!(resolve_update_channel(None, "1.0.0-dev.2", true), "dev");
+        assert_eq!(
+            resolve_update_channel(None, "1.0.0-dev-v2-2", true),
+            "dev-v2"
+        );
         assert_eq!(resolve_update_channel(None, "1.0.0", true), "stable");
         let root = Path::new("/home/dev");
         let stable = resolve_scope(None, None, "1.0.0", true, root, root, Path::new("/local"));

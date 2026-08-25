@@ -102,6 +102,7 @@ export function resolveUpdateChannel(environmentChannel: string | undefined, app
   const explicit = environmentChannel?.trim().toLowerCase()
   if (explicit) return explicit.replace(/[^a-z0-9._-]+/g, "-")
   if (!packaged) return "dev"
+  if (/-dev-v2-/i.test(appVersion)) return "dev-v2"
   return /-dev(?:\.|-)/i.test(appVersion) ? "dev" : "stable"
 }
 
