@@ -29,8 +29,16 @@ describe("form interruption lifecycle", () => {
     try {
       addFormToQueue(instanceId, form)
       const active = getFormQueue(instanceId)[0]
-      addFormToQueue(instanceId, { ...form })
+      addFormToQueue(instanceId, structuredClone(form))
       assert.strictEqual(getFormQueue(instanceId)[0], active)
+
+      const changed = { ...form, title: "Updated release details" }
+      addFormToQueue(instanceId, changed)
+      assert.strictEqual(getFormQueue(instanceId)[0], changed)
+
+      const located = { ...changed, sessionID: "global", location: { directory: "/worktree" } }
+      addFormToQueue(instanceId, located)
+      assert.strictEqual(getFormQueue(instanceId)[0], located)
     } finally {
       clearFormQueue(instanceId)
     }
