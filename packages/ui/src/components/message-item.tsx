@@ -592,6 +592,10 @@ export default function MessageItem(props: MessageItemProps) {
 
       <div class="pt-0 whitespace-pre-wrap break-words leading-[1.1]" dir="auto">
 
+        <Show when={isUser() && userMenuState() === "queue"}>
+          <div class="message-queued-badge">{t("messageItem.status.queued")}</div>
+        </Show>
+
         <Show when={errorMessage()}>
           <div class="message-error-block" dir="auto">⚠️ {errorMessage()}</div>
         </Show>
@@ -696,7 +700,7 @@ export default function MessageItem(props: MessageItemProps) {
           }}
         </Show>
 
-        <Show when={props.record.status === "sending"}>
+        <Show when={isUser() && userMenuState() === "queue"}>
           <div class="message-sending">
             <span class="generating-spinner">●</span> {t("messageItem.status.sending")}
           </div>
