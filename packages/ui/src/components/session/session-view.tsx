@@ -7,7 +7,7 @@ import MessageSection from "../message-section"
 import { messageStoreBus } from "../../stores/message-v2/bus"
 import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
-import { getAttachments, hydrateSessionAttachments, removeAttachment } from "../../stores/attachments"
+import { getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances, waitForInstanceWorkspaceMetadataHydration } from "../../stores/instances"
 import { getMessageNextCursor, hasMoreMessages, isLatestMessageWindow, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadNewerMessageWindow, loadOldestMessageWindow, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession } from "../../stores/sessions"
 import { canMarkSessionIdleSeen } from "./session-idle-attention"
@@ -102,8 +102,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   let pendingPromptText: string | null = null
   let pendingSelectionInsert: { text: string; mode: PromptInsertMode } | null = null
   let pendingCommentText: string | null = null
-  let queuedPromptEditStash: { prompt: string; attachments: Attachment[] } | null = null
-  const [editingQueuedPrompt, setEditingQueuedPrompt] = createSignal<SessionInboxUser>()
   const [queueBusyId, setQueueBusyId] = createSignal<string>()
 
   createEffect(on(
@@ -111,14 +109,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     () => void syncOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder)
       .catch((error) => log.error("Failed to load prompt queue", error)),
   ))
-
-  createEffect(() => {
-    const editing = editingQueuedPrompt()
-    if (!editing) return
-    const current = pendingPromptById().get(editing.id)
-    if (!current) cancelQueuedPromptEdit()
-    else if (current !== editing) setEditingQueuedPrompt(current)
-  })
 
   let scrollToBottomHandle: (() => void) | undefined
   let rootRef: HTMLDivElement | undefined
@@ -411,18 +401,13 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     if (!isLatestMessageWindow(props.instanceId, props.sessionId)) {
       await loadLatestMessageWindow(props.instanceId, props.sessionId)
     }
-    const editing = editingQueuedPrompt()
-    const effectiveDelivery = editing?.delivery ?? delivery
     const messageCount = visibleMessageCount()
     const submittedExchangeTargetCount = getSubmitBottomPinTargetCount(messageCount, sessionStreamingActive())
-    const initialPinIntent = effectiveDelivery === "queue"
+    const initialPinIntent = delivery === "queue"
       ? undefined
       : forceSubmittedExchangeToBottom(submittedExchangeTargetCount, { createdMessageCount: messageCount })
     try {
-      await sendMessage(props.instanceId, props.sessionId, prompt, attachments, editing
-        ? { delivery: editing.delivery, replace: editing }
-        : { delivery })
-      if (editing) cancelQueuedPromptEdit()
+      await sendMessage(props.instanceId, props.sessionId, prompt, attachments, { delivery })
       if (!initialPinIntent) return
       const latestMessageCount = visibleMessageCount()
       if (latestMessageCount < submittedExchangeTargetCount && !sessionStreamingActive()) {
@@ -437,30 +422,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       if (initialPinIntent) setSubmitBottomPinIntent(null)
       throw error
     }
-  }
-
-  function queuedPromptText(item: SessionInboxUser): string {
-    const display = item.payload.metadata?.displayText
-    return typeof display === "string" && display ? display : item.payload.text
-  }
-
-  function cancelQueuedPromptEdit() {
-    if (!editingQueuedPrompt()) return
-    const stash = queuedPromptEditStash
-    queuedPromptEditStash = null
-    setEditingQueuedPrompt(undefined)
-    if (!stash) return
-    hydrateSessionAttachments(props.instanceId, props.sessionId, stash.attachments)
-    promptInputApi?.setPromptText(stash.prompt, { focus: true })
-  }
-
-  function handleEditQueuedPrompt(item: SessionInboxUser) {
-    if (!promptInputApi) return
-    if (editingQueuedPrompt()) cancelQueuedPromptEdit()
-    queuedPromptEditStash = { prompt: promptInputApi.getPromptText(), attachments: [...attachments()] }
-    setEditingQueuedPrompt(item)
-    hydrateSessionAttachments(props.instanceId, props.sessionId, [])
-    promptInputApi.setPromptText(queuedPromptText(item), { focus: true })
   }
 
   function showQueueError(error: unknown) {
@@ -478,7 +439,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       if (!inbox) throw new Error("Instance not ready")
       if (action === "remove") {
         await inbox.cancel({ sessionID: props.sessionId, inboxID: item.id })
-        if (editingQueuedPrompt()?.id === item.id) cancelQueuedPromptEdit()
       } else if (item.delivery === "queue") {
         await inbox.steer({ sessionID: props.sessionId, inboxID: item.id })
       } else {
@@ -633,7 +593,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
               pendingPrompts={pendingPromptById()}
               pendingPromptBusy={Boolean(queueBusyId())}
               onPendingPromptDeliveryChange={(item) => void manageQueuedPrompt(item, "delivery")}
-              onPendingPromptEdit={handleEditQueuedPrompt}
               onPendingPromptRemove={(item) => void manageQueuedPrompt(item, "remove")}
               onQuoteSelection={handleQuoteSelection}
             />

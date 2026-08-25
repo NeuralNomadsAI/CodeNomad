@@ -63,7 +63,6 @@ export interface MessageSectionProps {
   pendingPrompts?: ReadonlyMap<string, SessionInboxUser>
   pendingPromptBusy?: boolean
   onPendingPromptDeliveryChange?: (item: SessionInboxUser) => void
-  onPendingPromptEdit?: (item: SessionInboxUser) => void
   onPendingPromptRemove?: (item: SessionInboxUser) => void
 }
 
@@ -1191,7 +1190,6 @@ export default function MessageSection(props: MessageSectionProps) {
               pendingPrompt={props.pendingPrompts?.get(messageId)}
               pendingPromptBusy={props.pendingPromptBusy}
               onPendingPromptDeliveryChange={props.onPendingPromptDeliveryChange}
-              onPendingPromptEdit={props.onPendingPromptEdit}
               onPendingPromptRemove={props.onPendingPromptRemove}
               onContentRendered={handleContentRendered}
               searchQuery={authoritativeSearchQuery}

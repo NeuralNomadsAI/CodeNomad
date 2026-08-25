@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
 import { Portal } from "solid-js/web"
-import { Copy, Pencil, Play, Split, Trash2, Undo, Volume2 } from "lucide-solid"
+import { Copy, Play, Split, Trash2, Undo, Volume2 } from "lucide-solid"
 import type { SessionInboxUser } from "@opencode-ai/client"
 import type { MessageInfo, ClientPart } from "../types/message"
 import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
@@ -13,7 +13,7 @@ import { useSpeech } from "../lib/hooks/use-speech"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
 import { getMessageDurationMs, getMessageStartedAt } from "../lib/message-timing"
 import SpeechActionButton from "./speech-action-button"
-import { shouldShowGeneratingPlaceholder } from "../stores/message-v2/message-status"
+import { getUserMessageMenuState, shouldShowGeneratingPlaceholder } from "../stores/message-v2/message-status"
 
 interface MessageItemProps {
   record: MessageRecord
@@ -26,7 +26,6 @@ interface MessageItemProps {
   pendingPrompt?: SessionInboxUser
   pendingPromptBusy?: boolean
   onPendingPromptDeliveryChange?: (item: SessionInboxUser) => void
-  onPendingPromptEdit?: (item: SessionInboxUser) => void
   onPendingPromptRemove?: (item: SessionInboxUser) => void
   showAgentMeta?: boolean
   contentStartPartId?: string
@@ -127,6 +126,8 @@ export default function MessageItem(props: MessageItemProps) {
   })
 
   const isUser = () => props.record.role === "user"
+  const userMenuState = () => getUserMessageMenuState(props.record.status, props.pendingPrompt?.delivery)
+  const canUseHistoryActions = () => !isUser() || userMenuState() === "history"
   const createdTimestamp = () => getMessageStartedAt(props.messageInfo, props.record.createdAt) ?? props.record.createdAt
   const totalDuration = () => getMessageDurationMs(props.messageInfo, props.record.status, props.record.createdAt)
 
@@ -378,7 +379,26 @@ export default function MessageItem(props: MessageItemProps) {
   const actionMenuItems = (includePrimaryActions = false): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = []
 
-    if (includePrimaryActions) {
+    const pending = props.pendingPrompt
+    if (includePrimaryActions && pending) {
+      items.push(
+        {
+          key: "pending-delivery",
+          label: t(`promptQueue.actions.${pending.delivery === "queue" ? "steer" : "queue"}`),
+          icon: pending.delivery === "queue"
+            ? <Play class="w-3.5 h-3.5" aria-hidden="true" />
+            : <Undo class="w-3.5 h-3.5" aria-hidden="true" />,
+          onSelect: () => props.onPendingPromptDeliveryChange?.(pending),
+        },
+        {
+          key: "pending-remove",
+          label: t("promptQueue.actions.remove"),
+          icon: <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />,
+          destructive: true,
+          onSelect: () => props.onPendingPromptRemove?.(pending),
+        },
+      )
+    } else if (includePrimaryActions && canUseHistoryActions()) {
       items.push({
         key: "copy",
         label: copyLabel(),
@@ -395,34 +415,9 @@ export default function MessageItem(props: MessageItemProps) {
         })
       }
 
-      const pending = props.pendingPrompt
-      if (pending) {
-        items.push(
-          {
-            key: "pending-delivery",
-            label: t(`promptQueue.actions.${pending.delivery === "queue" ? "steer" : "queue"}`),
-            icon: pending.delivery === "queue"
-              ? <Play class="w-3.5 h-3.5" aria-hidden="true" />
-              : <Undo class="w-3.5 h-3.5" aria-hidden="true" />,
-            onSelect: () => props.onPendingPromptDeliveryChange?.(pending),
-          },
-          {
-            key: "pending-edit",
-            label: t("promptQueue.actions.edit"),
-            icon: <Pencil class="w-3.5 h-3.5" aria-hidden="true" />,
-            onSelect: () => props.onPendingPromptEdit?.(pending),
-          },
-          {
-            key: "pending-remove",
-            label: t("promptQueue.actions.remove"),
-            icon: <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />,
-            onSelect: () => props.onPendingPromptRemove?.(pending),
-          },
-        )
-      }
     }
 
-    if (isUser() && !props.pendingPrompt && props.onFork) {
+    if (isUser() && canUseHistoryActions() && props.onFork) {
       items.push({
         key: "fork",
         label: t("messageItem.actions.fork"),
@@ -431,7 +426,7 @@ export default function MessageItem(props: MessageItemProps) {
       })
     }
 
-    if (isUser() && !props.pendingPrompt && props.onRevert) {
+    if (isUser() && canUseHistoryActions() && props.onRevert) {
       items.push({
         key: "revert",
         label: t("messageItem.actions.revertTitle"),
@@ -487,23 +482,25 @@ export default function MessageItem(props: MessageItemProps) {
           >
             <Show when={isUser()}>
               <div class="message-action-group">
-                <button
-                  class="message-action-button"
-                  onClick={handleCopy}
-                  title={copyLabel()}
-                  aria-label={copyLabel()}
-                >
-                  <Copy class="w-3.5 h-3.5" aria-hidden="true" />
-                </button>
-
-                <Show when={canSpeakMessage()}>
-                  <SpeechActionButton
+                <Show when={canUseHistoryActions()}>
+                  <button
                     class="message-action-button"
-                    onClick={() => void speech.toggle()}
-                    title={speech.buttonTitle()}
-                    isLoading={speech.isLoading()}
-                    isPlaying={speech.isPlaying()}
-                  />
+                    onClick={handleCopy}
+                    title={copyLabel()}
+                    aria-label={copyLabel()}
+                  >
+                    <Copy class="w-3.5 h-3.5" aria-hidden="true" />
+                  </button>
+
+                  <Show when={canSpeakMessage()}>
+                    <SpeechActionButton
+                      class="message-action-button"
+                      onClick={() => void speech.toggle()}
+                      title={speech.buttonTitle()}
+                      isLoading={speech.isLoading()}
+                      isPlaying={speech.isPlaying()}
+                    />
+                  </Show>
                 </Show>
 
                 <Show when={props.pendingPrompt} keyed>
@@ -519,15 +516,6 @@ export default function MessageItem(props: MessageItemProps) {
                         <Show when={pending.delivery === "queue"} fallback={<Undo class="w-3.5 h-3.5" aria-hidden="true" />}>
                           <Play class="w-3.5 h-3.5" aria-hidden="true" />
                         </Show>
-                      </button>
-                      <button
-                        class="message-action-button"
-                        disabled={props.pendingPromptBusy}
-                        onClick={() => props.onPendingPromptEdit?.(pending)}
-                        title={t("promptQueue.actions.edit")}
-                        aria-label={t("promptQueue.actions.edit")}
-                      >
-                        <Pencil class="w-3.5 h-3.5" aria-hidden="true" />
                       </button>
                       <button
                         class="message-action-button"
