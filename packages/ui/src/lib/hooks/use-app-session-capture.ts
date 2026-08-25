@@ -7,6 +7,7 @@ import {
   clientStateIsPrimary, flushClientState, restorePreviousStateEnabled, updateRestorableSession,
   type RestorableSessionState, type RestorableTabState, type RestorableWorkspaceTabState,
 } from "../../stores/client-state"
+import { storage } from "../storage"
 import { normalizeWorkspacePath } from "../../stores/app-session-reconciliation"
 import {
   createRestorableSessionPreservation, createRestoredTabCommitGuard, markPreservedWorkspaceRemoved,
@@ -178,7 +179,10 @@ export function useAppSessionCapture() {
         : current
       updateRestorableSession(state)
     }
-    await flushClientState()
+    await Promise.all([
+      flushClientState(),
+      ...(nativeShutdown ? [storage.flushWrites()] : []),
+    ])
   }
   const nativeUnlisteners: Array<() => void> = []
   let nativeDisposed = false

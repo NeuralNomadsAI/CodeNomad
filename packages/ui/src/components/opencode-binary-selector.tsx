@@ -30,7 +30,6 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
     addOpenCodeBinary,
     removeOpenCodeBinary,
     serverSettings,
-    updateLastUsedBinary,
   } = useConfig()
   const [customPath, setCustomPath] = createSignal("")
   const [validating, setValidating] = createSignal(false)
@@ -157,7 +156,6 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
     if (validation.valid) {
       addOpenCodeBinary(path, validation.version)
       props.onBinaryChange(path)
-      updateLastUsedBinary(path)
       setCustomPath("")
       setValidationError(null)
     } else {
@@ -182,7 +180,6 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
     if (props.disabled) return
     if (path === props.selectedBinary) return
     props.onBinaryChange(path)
-    updateLastUsedBinary(path)
   }
 
   function handleRemoveBinary(path: string, event: Event) {
@@ -192,7 +189,6 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
 
     if (props.selectedBinary === path) {
       props.onBinaryChange("opencode2")
-      updateLastUsedBinary("opencode2")
     }
   }
 

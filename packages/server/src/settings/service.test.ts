@@ -28,7 +28,7 @@ describe("SettingsService config persistence", () => {
   it("normalizes and persists a server-owner patch once", () => {
     let writes = 0
     const service = serviceWithStore({
-      getOwner: () => ({ logLevel: "info", sidecars: [] }),
+      getOwner: () => ({ logLevel: "info", opencodeBinary: "opencode", sidecars: [] }),
       replaceOwner: (_owner: string, value: unknown) => {
         writes += 1
         return value
@@ -38,7 +38,7 @@ describe("SettingsService config persistence", () => {
 
     const result = service.mergePatchOwner("config", "server", { sidecars: [{ id: "one" }] })
     assert.equal(writes, 1)
-    assert.deepEqual(result, { logLevel: "INFO", sidecars: [{ id: "one" }] })
+    assert.deepEqual(result, { logLevel: "INFO", opencodeBinary: "opencode2", sidecars: [{ id: "one" }] })
   })
 
   it("does not report a persisted patch as failed when an event listener throws", () => {

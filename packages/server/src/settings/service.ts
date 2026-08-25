@@ -40,6 +40,9 @@ function normalizeServerConfigOwner(value: SettingsDoc): SettingsDoc {
   } else if (next.logLevel !== undefined) {
     next.logLevel = "DEBUG"
   }
+  if (next.opencodeBinary === "opencode") {
+    next.opencodeBinary = "opencode2"
+  }
   return next
 }
 

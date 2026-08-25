@@ -24,3 +24,7 @@ it("resumes capture only after native shutdown cancellation", () => {
   assert.match(capture, /listen<\{ generation: number \}>\("client-state:flush-cancelled"/)
   assert.match(capture, /if \(nativeShutdownGeneration !== payload\.generation\) return[\s\S]*nativeShutdownGeneration = null[\s\S]*schedule\(\)/)
 })
+
+it("waits for server storage writes during native shutdown", () => {
+  assert.match(capture, /nativeShutdown \? \[storage\.flushWrites\(\)\] : \[\]/)
+})

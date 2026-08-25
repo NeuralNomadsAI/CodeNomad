@@ -454,7 +454,7 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
   }
 }
 
-function normalizeServerConfig(
+export function normalizeServerConfig(
   input?: ServerConfigBucket | null,
 ): Required<Pick<ServerConfigBucket, "listeningMode" | "logLevel" | "environmentVariables" | "opencodeBinary" | "secureEnvVars">> & { speech: SpeechSettings } {
   const source = input ?? {}
@@ -463,7 +463,9 @@ function normalizeServerConfig(
     source.logLevel === "INFO" || source.logLevel === "WARN" || source.logLevel === "ERROR" || source.logLevel === "DEBUG"
       ? source.logLevel
       : "DEBUG"
-  const opencodeBinary = typeof source.opencodeBinary === "string" && source.opencodeBinary.trim() ? source.opencodeBinary : "opencode2"
+  const opencodeBinary = typeof source.opencodeBinary === "string" && source.opencodeBinary.trim() && source.opencodeBinary !== "opencode"
+    ? source.opencodeBinary
+    : "opencode2"
   const environmentVariables = normalizeRecord(source.environmentVariables)
   const secureEnvVars = normalizeSecureEnvVars(source.secureEnvVars)
   const speech = normalizeSpeechSettings(source.speech)
