@@ -209,8 +209,6 @@ export const messagingMessages = {
   "promptQueue.actions.steer": "Направить сейчас",
   "promptQueue.actions.queue": "Переместить в очередь",
   "promptQueue.actions.edit": "Изменить запрос в очереди",
-  "promptQueue.actions.moveUp": "Переместить запрос выше",
-  "promptQueue.actions.moveDown": "Переместить запрос ниже",
   "promptQueue.actions.cancelEdit": "Отменить редактирование",
   "promptQueue.actions.remove": "Удалить запрос из очереди",
   "promptQueue.error.title": "Ошибка действия с очередью",

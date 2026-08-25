@@ -792,7 +792,8 @@ export default function MessageSection(props: MessageSectionProps) {
       isLatest: () => isLatestWindow(store().getMessageWindow(sessionId)),
       loadOldest: props.onLoadOldestMessages ?? (() => Promise.resolve()),
       loadNewer: props.onLoadNewerMessages ?? (() => Promise.resolve()),
-      visit: () => buildSessionSearchMatches({ store: store(), sessionId, query, includeThinking }),
+      visit: () => buildSessionSearchMatches({ store: store(), sessionId, query, includeThinking })
+        .filter((match) => !props.queuedMessageIds?.has(match.messageId)),
     }).then((matches) => {
       if (!matches) {
         if (isCurrentSearch()) setIsSearchPending(false)
@@ -828,6 +829,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const includeThinking = Boolean(preferences().showThinkingBlocks)
     const currentResidentIds = messageIds()
     const currentMatches = buildSessionSearchMatches({ store: store(), sessionId: props.sessionId, query, includeThinking })
+      .filter((match) => !props.queuedMessageIds?.has(match.messageId))
     const frame = requestAnimationFrame(() => {
       if (isSearchPending() || !hasMessageSearchAuthority(searchQuery(), query)) return
       const activeId = activeSearchMatch()?.id

@@ -51,6 +51,7 @@ const mutationRevisions = new Map<string, ReturnType<typeof createSignal<number>
 const messageRevisions = new Map<string, number>()
 const fullDataRevisions = new Map<string, number>()
 const instanceGenerations = new Map<string, number>()
+const instanceDataRevisions = new Map<string, ReturnType<typeof createSignal<number>>>()
 let nextInstanceGeneration = 0
 
 function messageRevisionKey(instanceId: string, sessionId: string): string {
@@ -62,6 +63,15 @@ function mutationRevision(key: string): ReturnType<typeof createSignal<number>> 
   if (!revision) {
     revision = createSignal(0)
     mutationRevisions.set(key, revision)
+  }
+  return revision
+}
+
+function instanceDataRevision(instanceId: string): ReturnType<typeof createSignal<number>> {
+  let revision = instanceDataRevisions.get(instanceId)
+  if (!revision) {
+    revision = createSignal(0)
+    instanceDataRevisions.set(instanceId, revision)
   }
   return revision
 }
@@ -569,6 +579,7 @@ export function getOpenCodeMutationRevision(instanceId: string, sessionId: strin
 }
 
 export function getOpenCodeSessionInbox(instanceId: string, sessionId: string, directory: string) {
+  instanceDataRevision(instanceId)[0]()
   return ensureTranscript(instanceId, sessionId, directory).entry.data.session.pending.list(sessionId)
 }
 
@@ -622,6 +633,7 @@ export function destroyOpenCodeData(instanceId: string): void {
   for (const key of fullDataRevisions.keys()) {
     if (key.startsWith(prefix)) fullDataRevisions.delete(key)
   }
+  instanceDataRevision(instanceId)[1]((current) => current + 1)
   for (const key of mutationRevisions.keys()) {
     if (key.startsWith(prefix)) mutationRevisions.delete(key)
   }

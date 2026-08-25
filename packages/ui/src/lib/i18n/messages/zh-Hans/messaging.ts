@@ -208,8 +208,6 @@ export const messagingMessages = {
   "promptQueue.actions.steer": "立即插入",
   "promptQueue.actions.queue": "移至队列",
   "promptQueue.actions.edit": "编辑排队提示词",
-  "promptQueue.actions.moveUp": "上移排队提示词",
-  "promptQueue.actions.moveDown": "下移排队提示词",
   "promptQueue.actions.cancelEdit": "取消编辑",
   "promptQueue.actions.remove": "移除排队提示词",
   "promptQueue.error.title": "队列操作失败",

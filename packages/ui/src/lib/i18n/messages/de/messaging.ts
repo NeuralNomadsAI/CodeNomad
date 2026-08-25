@@ -206,8 +206,6 @@ export const messagingMessages = {
   "promptQueue.actions.steer": "Jetzt einschieben",
   "promptQueue.actions.queue": "In Warteschlange verschieben",
   "promptQueue.actions.edit": "Prompt bearbeiten",
-  "promptQueue.actions.moveUp": "Prompt nach oben verschieben",
-  "promptQueue.actions.moveDown": "Prompt nach unten verschieben",
   "promptQueue.actions.cancelEdit": "Bearbeitung abbrechen",
   "promptQueue.actions.remove": "Prompt entfernen",
   "promptQueue.error.title": "Warteschlangenaktion fehlgeschlagen",

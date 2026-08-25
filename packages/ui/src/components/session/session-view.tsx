@@ -422,19 +422,10 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       ? undefined
       : forceSubmittedExchangeToBottom(submittedExchangeTargetCount, { createdMessageCount: messageCount })
     try {
-      const queueOrder = editing ? queuedPrompts().map((item) => item.id) : []
-      const admittedId = await sendMessage(props.instanceId, props.sessionId, prompt, attachments, editing
+      await sendMessage(props.instanceId, props.sessionId, prompt, attachments, editing
         ? { delivery: editing.delivery, replace: editing }
         : { delivery })
-      if (editing) {
-        cancelQueuedPromptEdit()
-        try {
-          await rewriteQueuedPrompts(queueOrder.map((id) => id === editing.id ? admittedId : id))
-        } catch (error) {
-          log.error("Failed to restore edited prompt position", error)
-          showQueueError(error)
-        }
-      }
+      if (editing) cancelQueuedPromptEdit()
       if (!initialPinIntent) return
       const latestMessageCount = visibleMessageCount()
       if (latestMessageCount < submittedExchangeTargetCount && !sessionStreamingActive()) {
@@ -481,58 +472,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       title: t("promptQueue.error.title"),
       variant: "error",
     })
-  }
-
-  async function rewriteQueuedPrompts(inboxIds: string[]) {
-    const client = instances().get(props.instanceId)?.client
-    if (!client) throw new Error("Instance not ready")
-    const pending = await client.session.inbox.list({ sessionID: props.sessionId })
-    if (pending.some((item) => item.delivery === "queue" && item.type !== "user")) {
-      throw new Error("Queued control items prevent reordering")
-    }
-    const current = pending.filter((item): item is SessionInboxUser => item.type === "user" && item.delivery === "queue")
-    const ordered = inboxIds.flatMap((id) => current.filter((item) => item.id === id))
-    if (ordered.length !== current.length) throw new Error("Prompt queue changed before reordering")
-    const changed = ordered.findIndex((item, index) => item.id !== current[index]?.id)
-    if (changed < 0) return
-
-    for (const item of ordered.slice(changed)) {
-      await client.session.prompt({
-        sessionID: props.sessionId,
-        text: item.payload.text,
-        files: item.payload.files?.map((file) => ({
-          uri: `data:${file.mime};base64,${file.data}`,
-          name: file.name,
-          description: file.description,
-          mention: file.mention,
-        })),
-        agents: item.payload.agents,
-        skills: item.payload.skills,
-        metadata: item.payload.metadata,
-        delivery: "queue",
-        resume: false,
-      })
-    }
-    for (const item of current.slice(changed)) {
-      await client.session.inbox.cancel({ sessionID: props.sessionId, inboxID: item.id })
-    }
-  }
-
-  async function moveQueuedPrompt(item: SessionInboxUser, direction: -1 | 1) {
-    const ids = queuedPrompts().map((entry) => entry.id)
-    const index = ids.indexOf(item.id)
-    const target = index + direction
-    if (index < 0 || target < 0 || target >= ids.length) return
-    ;[ids[index], ids[target]] = [ids[target], ids[index]]
-    setQueueBusyId(item.id)
-    try {
-      await rewriteQueuedPrompts(ids)
-    } catch (error) {
-      showQueueError(error)
-    } finally {
-      await syncOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder).catch(() => undefined)
-      setQueueBusyId(undefined)
-    }
   }
 
   async function manageQueuedPrompt(item: SessionInboxUser, action: "delivery" | "remove") {
@@ -715,7 +654,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           onEdit={handleEditQueuedPrompt}
           onCancelEdit={cancelQueuedPromptEdit}
           onRemove={(item) => void manageQueuedPrompt(item, "remove")}
-          onMove={(item, direction) => void moveQueuedPrompt(item, direction)}
         />
 
         <Show when={attachments().length > 0}>

@@ -95,6 +95,7 @@ export default function PromptInput(props: PromptInputProps) {
   let wrapperRef: HTMLDivElement | undefined
   let fieldContainerRef: HTMLDivElement | undefined
   let resizeDragState: ResizeDragState | undefined
+  let submissionsInFlight = 0
 
   const getPlaceholder = () => {
     if (mode() === "shell") {
@@ -519,6 +520,7 @@ export default function PromptInput(props: PromptInputProps) {
       focusConversationStream(wrapperRef?.closest(".session-view"))
     }
 
+    submissionsInFlight += 1
     try {
       if (isShellMode) {
         if (props.onRunShell) {
@@ -546,6 +548,8 @@ export default function PromptInput(props: PromptInputProps) {
         textareaRef?.focus()
       }
       return
+    } finally {
+      submissionsInFlight -= 1
     }
   }
 
@@ -737,7 +741,7 @@ export default function PromptInput(props: PromptInputProps) {
     getAttachments: attachments,
     removeAttachment: (attachmentId) => removeAttachment(props.instanceId, props.sessionId, attachmentId),
     submitOnEnter,
-    onSend: (alternate) => void handleSend(alternate && props.isSessionBusy ? "queue" : "steer"),
+    onSend: (alternate) => void handleSend(alternate && (props.isSessionBusy || submissionsInFlight > 0) ? "queue" : "steer"),
     selectPreviousHistory: (force) =>
       selectPreviousHistory({ force, isPickerOpen: showPicker(), getTextarea: () => textareaRef ?? null }),
     selectNextHistory: (force) =>

@@ -209,8 +209,6 @@ export const messagingMessages = {
   "promptQueue.actions.steer": "Injecter maintenant",
   "promptQueue.actions.queue": "Remettre en file",
   "promptQueue.actions.edit": "Modifier le prompt en attente",
-  "promptQueue.actions.moveUp": "Monter le prompt en attente",
-  "promptQueue.actions.moveDown": "Descendre le prompt en attente",
   "promptQueue.actions.cancelEdit": "Annuler la modification",
   "promptQueue.actions.remove": "Retirer le prompt en attente",
   "promptQueue.error.title": "Échec de l'action sur la file",

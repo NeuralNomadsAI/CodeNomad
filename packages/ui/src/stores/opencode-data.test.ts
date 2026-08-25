@@ -1,9 +1,10 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
+import { createEffect, createRoot } from "solid-js"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { seedSessionMessagesV2 } from "./message-v2/bridge.ts"
 import { normalizeSessionMessage } from "./message-v2/normalizers.ts"
-import { applyOpenCodeDataEvent, destroyOpenCodeData, getOpenCodeMessageRevision, getOpenCodeMutationRevision, projectOpenCodeMessages } from "./opencode-data.ts"
+import { applyOpenCodeDataEvent, destroyOpenCodeData, getOpenCodeMessageRevision, getOpenCodeMutationRevision, getOpenCodeSessionInbox, projectOpenCodeMessages } from "./opencode-data.ts"
 import { emptyLatestWindow } from "./message-v2/message-window.ts"
 import { getRootClient } from "./opencode-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
@@ -991,6 +992,38 @@ describe("OpenCode data projection", () => {
     } finally {
       destroyOpenCodeData(instanceId)
       if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("rebinds inbox observers after server.connected", () => {
+    const instanceId = "opencode-data-inbox-reconnect"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    ;(client.location as any).get = async () => ({ directory: "/work" })
+    ;(client.vcs as any).get = async () => ({ location: { directory: "/work" }, data: {} })
+    ;(client.project as any).list = async () => []
+    let ids: string[] = []
+    const dispose = createRoot((dispose) => {
+      createEffect(() => {
+        ids = getOpenCodeSessionInbox(instanceId, sessionId, "/work").map((item) => item.id)
+      })
+      return dispose
+    })
+    try {
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "queued", type: "session.inbox.enqueued", created: 1,
+        data: { sessionID: sessionId, inboxID: "queued", item: { type: "user", payload: { text: "old" }, delivery: "queue" } },
+      } as any)
+      assert.deepEqual(ids, ["queued"])
+
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "connected", type: "server.connected", created: 2, data: {},
+      } as any)
+      assert.deepEqual(ids, [])
+    } finally {
+      dispose()
+      destroyOpenCodeData(instanceId)
       sdkManager.destroyClientsForInstance(instanceId)
     }
   })

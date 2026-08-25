@@ -46,7 +46,6 @@ import {
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
 import { applyOpenCodeDataEvent, destroyOpenCodeData, projectOpenCodeMessages, syncOpenCodeSessionInbox } from "./opencode-data"
-import { shellStore } from "./shells"
 import { isLatestWindow } from "./message-v2/message-window"
 import { upsertPermissionV2, removePermissionV2, removeMessageV2 } from "./message-v2/bridge"
 import {
@@ -342,7 +341,6 @@ const connectionResyncs = new TrailingResyncCoordinator(
       syncPendingRequests(instanceId),
       refreshVolatileInstanceState(instanceId),
       syncLoadedSessionInboxes(instanceId),
-      shellStore.refreshForEvent(instanceId, { type: "server.connected" }),
     ])
     if (sessionError) throw sessionError
     const loadedMessages = messagesLoaded().get(instanceId) ?? new Set<string>()
@@ -365,9 +363,13 @@ async function syncLoadedSessionInboxes(instanceId: string): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance?.client || instance.status !== "ready") return
   const loaded = messagesLoaded().get(instanceId) ?? new Set<string>()
-  await Promise.all(Array.from(loaded, (sessionId) => {
+  await Promise.all(Array.from(loaded, async (sessionId) => {
     const directory = sessions().get(instanceId)?.get(sessionId)?.location.directory ?? instance.folder
-    return syncOpenCodeSessionInbox(instanceId, sessionId, directory)
+    try {
+      await syncOpenCodeSessionInbox(instanceId, sessionId, directory)
+    } catch (error) {
+      log.warn("Failed to resync session inbox after connection", { instanceId, sessionId, error })
+    }
   }))
 }
 

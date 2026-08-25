@@ -1,6 +1,6 @@
 import type { SessionInboxUser } from "@opencode-ai/client"
 import { For, Show } from "solid-js"
-import { ArrowDown, ArrowUp, Pencil, Play, Trash2, X } from "lucide-solid"
+import { Pencil, Play, Trash2, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 
 interface PromptQueueProps {
@@ -11,7 +11,6 @@ interface PromptQueueProps {
   onEdit: (item: SessionInboxUser) => void
   onCancelEdit: () => void
   onRemove: (item: SessionInboxUser) => void
-  onMove: (item: SessionInboxUser, direction: -1 | 1) => void
 }
 
 export default function PromptQueue(props: PromptQueueProps) {
@@ -26,8 +25,8 @@ export default function PromptQueue(props: PromptQueueProps) {
       <section class="prompt-queue" aria-label={t("promptQueue.title", { count: props.items.length })}>
         <header class="prompt-queue-header">{t("promptQueue.title", { count: props.items.length })}</header>
         <div class="prompt-queue-list">
-          <For each={props.items}>{(item, index) => {
-            const busy = () => props.busyId === item.id
+          <For each={props.items}>{(item) => {
+            const busy = () => Boolean(props.busyId)
             const editing = () => props.editingId === item.id
             const attachmentCount = () => item.payload.files?.length ?? 0
             return (
@@ -50,12 +49,6 @@ export default function PromptQueue(props: PromptQueueProps) {
                     onClick={() => props.onDeliveryChange(item)}
                   >
                     <Play aria-hidden="true" />
-                  </button>
-                  <button type="button" disabled={busy() || index() === 0} title={t("promptQueue.actions.moveUp")} aria-label={t("promptQueue.actions.moveUp")} onClick={() => props.onMove(item, -1)}>
-                    <ArrowUp aria-hidden="true" />
-                  </button>
-                  <button type="button" disabled={busy() || index() === props.items.length - 1} title={t("promptQueue.actions.moveDown")} aria-label={t("promptQueue.actions.moveDown")} onClick={() => props.onMove(item, 1)}>
-                    <ArrowDown aria-hidden="true" />
                   </button>
                   <Show
                     when={!editing()}

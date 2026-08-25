@@ -206,8 +206,6 @@ export const messagingMessages = {
   "promptQueue.actions.steer": "הזרק עכשיו",
   "promptQueue.actions.queue": "העבר לתור",
   "promptQueue.actions.edit": "ערוך הנחיה בתור",
-  "promptQueue.actions.moveUp": "העבר הנחיה למעלה",
-  "promptQueue.actions.moveDown": "העבר הנחיה למטה",
   "promptQueue.actions.cancelEdit": "בטל עריכה",
   "promptQueue.actions.remove": "הסר הנחיה מהתור",
   "promptQueue.error.title": "פעולת התור נכשלה",

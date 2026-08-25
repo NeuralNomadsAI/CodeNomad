@@ -206,8 +206,6 @@ export const messagingMessages = {
   "promptQueue.actions.steer": "अहिले पठाउनुहोस्",
   "promptQueue.actions.queue": "लाममा सार्नुहोस्",
   "promptQueue.actions.edit": "लामको प्रम्प्ट सम्पादन गर्नुहोस्",
-  "promptQueue.actions.moveUp": "लामको प्रम्प्ट माथि सार्नुहोस्",
-  "promptQueue.actions.moveDown": "लामको प्रम्प्ट तल सार्नुहोस्",
   "promptQueue.actions.cancelEdit": "सम्पादन रद्द गर्नुहोस्",
   "promptQueue.actions.remove": "लामको प्रम्प्ट हटाउनुहोस्",
   "promptQueue.error.title": "लाम कार्य असफल भयो",
