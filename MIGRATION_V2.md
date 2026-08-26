@@ -6,7 +6,7 @@ This branch replaces CodeNomad's OpenCode V1 SDK, custom plugin, and per-workspa
 
 The work grew beyond an SDK swap. It also introduces location-based ownership, native Forms and Shell resources, project-wide session pagination, reconnect reconciliation, bounded virtualized timelines, multi-window desktop state, and a content-addressed restore format.
 
-Server and UI follow the latest `@opencode-ai/client@beta` contract. The selected `opencode2` CLI is managed independently: CodeNomad's updater resolves and installs the latest published CLI beta, while startup accepts another healthy CLI instead of enforcing an exact version.
+Server and UI declare `@opencode-ai/client@beta`; the root lock currently resolves `0.0.0-beta-18219`. The selected `opencode2` CLI is managed independently: CodeNomad's updater resolves and installs the latest published CLI beta, while startup accepts another healthy CLI instead of enforcing an exact version.
 
 The incremental comparison with official OpenCode Desktop V2, including closed findings and remaining gaps, is recorded in [`DESKTOP_V2_COMPARISON.md`](DESKTOP_V2_COMPARISON.md).
 
@@ -62,6 +62,7 @@ The incremental comparison with official OpenCode Desktop V2, including closed f
 - Bound instance logs and validate restore-state counts, IDs, paths, snapshots, string budgets, partition sizes, and graph sizes.
 - Reconcile only affected resources after native events or reconnects instead of periodically reloading full message history.
 - Keep optimistic prompts visible before native admission and replace temporary parts with authoritative native parts without duplicating output.
+- Keep every pending inbox prompt after delivered transcript messages in native inbox admission order. A local send pins the new prompt to the bottom, while pagination and remote updates preserve a user's escaped follow state.
 - Reduce every native compaction delta in order while keeping intermediate chunks off the renderer path; project accumulated content at the next boundary and refresh immediately when compaction starts, ends, or fails.
 
 ## Forms, Permissions, and Providers
@@ -94,7 +95,7 @@ Git status, diff, stage, unstage, commit, worktree creation, and worktree remova
 
 - Expose only reviewed method/path pairs; new upstream APIs are unavailable until explicitly allowlisted.
 - Verify workspace ownership for native locations, sessions, projects, cursors, Shell/PTY CWDs, imported session locations, and prompt file URIs before forwarding.
-- Reject encoded path traversal, foreign locations/projects, forged cursors, and browser-supplied workspace selectors.
+- Reject encoded path traversal, foreign locations/projects, forged cursors, and mismatched workspace selectors. Preserve validated native location workspace identities, including global Form headers, across the proxy.
 - Translate host/WSL paths only after ownership validation.
 - Strip CodeNomad cookies, browser authorization, forwarding headers, and incoming `x-opencode-*` headers; inject shared-service authentication server-side.
 - Block upstream cookies and authentication challenges and avoid logging unredacted secret-bearing request bodies.
@@ -143,8 +144,8 @@ During stabilization, CodeNomad implements the public native V2 contract and rem
 | Delete-to-boundary / undo | `session.revert.stage` and `session.revert.clear` use V2 staged-revert semantics instead of arbitrary deletion. | Undo uses `revert.stage`. Redo/clear remains a CodeNomad UI gap, not a reason to restore V1 deletion. | Expose `revert.clear` through the existing native contract. |
 | Compaction | Native checkpoint compaction summarizes the older head and retains a server-selected recent tail controlled by `compaction.keep.tokens`. | Uses `session.compact`; there is no message-level selective compaction. CodeNomad displays the terminal summary without rendering every streamed delta. | Add scoped controls only if V2 defines scoped compaction semantics. |
 | Full-session search | Native message cursors exist, but there is no server search endpoint that returns message identity and position. | Retained through bounded cursor traversal while keeping only the 200-message resident window and collected matches. Large searches still fetch every page. | V2 exposes server search plus a rank/cursor navigation target. |
-| Queued prompt management | Native inbox list, cancel, steer, and queue operations are available. | Implemented with authoritative steering, cancellation, safe edit replacement, draft preservation, and queue admission for follow-up prompts. | Add in-place editing and reordering when V2 exposes atomic inbox mutations; replacement currently moves an edited prompt to the queue tail. |
-| Background execution | Native Shell resources support listing, bounded output, and removal, but do not reproduce every custom V1 process-manager control. | Replaced the custom manager with native Shells and removed unsupported controls such as rename. | Add controls only when native Shell APIs support them. |
+| Queued prompt management | Native inbox list, cancel, steer, and queue operations are available. | Implements a persisted primary `steer`/`queue` preference, inverse alternate shortcut, delivery switching, cancellation with draft restoration, and ordered timeline projection. | Add in-place editing or reordering only when V2 exposes an atomic inbox mutation; neither is currently implemented. |
+| Background execution | Native `session.background` moves blocking tools out of the foreground; Shell resources separately support listing, bounded output, and removal. | Exposes `session.background` through the proxy and UI with `Ctrl/Cmd+B`, and replaces the custom process manager with native Shells. Unsupported controls such as rename remain removed. | Add controls only when the native session or Shell APIs support them. |
 | Service lifecycle | V2 uses one shared externally owned service rather than one runtime per workspace. | CodeNomad discovers or starts the service but never exposes workspace stop or stops the daemon on shutdown. | No parity work planned unless V2 changes service ownership semantics. |
 
 This table is release-facing and must remain synchronized with the open migration pull request description whenever a capability is removed, restored, or becomes available in the current V2 client.

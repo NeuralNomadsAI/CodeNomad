@@ -99,6 +99,25 @@ describe("message history pagination", () => {
     assert.notEqual(getMessageWindowPageKey(older), getMessageWindowPageKey(next))
   })
 
+  it("keeps follow escaped after positioning an older resident page", () => {
+    const source = fs.readFileSync(new URL("./message-section.tsx", import.meta.url), "utf8")
+    const start = source.indexOf("async function pageWindow(")
+    const paging = source.slice(start, source.indexOf("function messageWindowPageKey", start))
+    const position = paging.indexOf("after(api)")
+
+    assert.ok(position >= 0)
+    assert.ok(paging.indexOf('api.setAutoScroll(direction === "latest")', position) > position)
+  })
+
+  it("keeps native inbox prompts after delivered transcript messages", () => {
+    const source = fs.readFileSync(new URL("./message-section.tsx", import.meta.url), "utf8")
+    const start = source.indexOf("const visibleMessageIds")
+    const projection = source.slice(start, source.indexOf("const sessionRevision", start))
+
+    assert.match(projection, /visible\.filter\(\(messageId\) => !props\.pendingPrompts!\.has\(messageId\)\)/)
+    assert.match(projection, /Array\.from\(props\.pendingPrompts\.keys\(\)\)\.filter\(\(messageId\) => visibleSet\.has\(messageId\)\)/)
+  })
+
   it("uses a finite ceiling and leaves failed pages retryable", async () => {
     let attempts = 0
     const options = {

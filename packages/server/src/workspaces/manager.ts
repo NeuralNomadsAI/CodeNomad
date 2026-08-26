@@ -222,9 +222,41 @@ export class WorkspaceManager {
     return Boolean(hostDirectory && await this.ownsHostDirectory(record, hostDirectory))
   }
 
-  ownsLocationWorkspace(id: string, workspaceID: string): boolean {
+  async ownsLocation(id: string, location: LocationRef): Promise<boolean> {
     const record = this.workspaces.get(id)
-    return Boolean(record?.[WORKSPACE_STATE].published && record.location?.workspaceID === workspaceID)
+    if (!record?.[WORKSPACE_STATE].published) return false
+    const requested = await this.resolveOwnedWorktree(record, location.directory)
+    if (!requested) return false
+    if (!location.workspaceID) return true
+    try {
+      const candidates = record.location?.workspaceID === location.workspaceID
+        ? [record.location]
+        : (await (await this.sharedService.client(record[WORKSPACE_STATE].serviceOptions)).debug.location.list())
+          .filter((candidate) => candidate.workspaceID === location.workspaceID)
+      for (const candidate of candidates) {
+        const resolved = await this.resolveOwnedWorktree(record, candidate.directory)
+        if (resolved && canonicalWorktreeIdentity(resolved.worktreeDirectory, this.options.platform)
+          === canonicalWorktreeIdentity(requested.worktreeDirectory, this.options.platform)) return true
+      }
+      return false
+    } catch {
+      return false
+    }
+  }
+
+  async ownsLocationWorkspace(id: string, workspaceID: string): Promise<boolean> {
+    const record = this.workspaces.get(id)
+    if (!record?.[WORKSPACE_STATE].published) return false
+    if (record.location?.workspaceID === workspaceID) return true
+    try {
+      const locations = await (await this.sharedService.client(record[WORKSPACE_STATE].serviceOptions)).debug.location.list()
+      for (const location of locations) {
+        if (location.workspaceID === workspaceID && await this.ownsDirectory(id, location.directory)) return true
+      }
+      return false
+    } catch {
+      return false
+    }
   }
 
   async getServiceDirectoryForPath(id: string, directory: string): Promise<string | undefined> {

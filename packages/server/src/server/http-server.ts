@@ -9,7 +9,7 @@ import { connect as connectTls, type TLSSocket } from "tls"
 import { fetch, type Headers } from "undici"
 import type { Logger } from "../logger"
 import { WorkspaceManager } from "../workspaces/manager"
-import { isPtyNotFoundError, isSessionNotFoundError, isShellNotFoundError, type OpenCodeClient } from "@opencode-ai/client"
+import { isPtyNotFoundError, isSessionNotFoundError, isShellNotFoundError, type LocationRef, type OpenCodeClient } from "@opencode-ai/client"
 
 import type { SettingsService } from "../settings/service"
 import { FileSystemBrowser } from "../filesystem/browser"
@@ -371,7 +371,8 @@ export interface InstanceProxyWorkspaceManager {
   getWorktreeIdentityForPath(id: string, directory: string): Promise<string | undefined>
   getServicePathForPath?(id: string, candidate: string): Promise<string | undefined>
   getSharedServiceClient(): Promise<OpenCodeClient>
-  ownsLocationWorkspace(id: string, workspaceID: string): boolean
+  ownsLocation(id: string, location: LocationRef): ReturnType<WorkspaceManager["ownsLocation"]>
+  ownsLocationWorkspace(id: string, workspaceID: string): ReturnType<WorkspaceManager["ownsLocationWorkspace"]>
   ownsDirectory(id: string, directory: string): Promise<boolean>
   ownsPath(id: string, candidate: string): Promise<boolean>
 }
@@ -628,30 +629,42 @@ async function proxyWorkspaceRequest(args: {
   }
   const sessionListHasScope = request.method === "GET"
     && pathname.replace(/\/+$/, "") === "/api/session"
-    && (targetUrl.searchParams.has("cursor") || targetUrl.searchParams.has("project"))
+    && (targetUrl.searchParams.has("cursor") || targetUrl.searchParams.has("project") || targetUrl.searchParams.has("workspace"))
   const sessionListScope = await authorizeSessionList(targetUrl, request.method, workspaceManager, workspaceId)
   if (sessionListScope !== "allowed") {
     reply.code(sessionListScope === "invalid" ? 400 : 403).send({ error: "Session list does not belong to workspace" })
     return
   }
   const serviceDirectory = workspaceManager.getServiceDirectory?.(workspaceId) ?? workspace.path
-  let globalFormDirectory: string | undefined
+  let globalFormLocation: LocationRef | undefined
   if (isGlobalFormAction(pathname, request.method)) {
-    const header = request.headers["x-opencode-directory"]
-    if (Array.isArray(header)) {
+    const directoryHeader = request.headers["x-opencode-directory"]
+    const workspaceHeader = request.headers["x-opencode-workspace"]
+    if (Array.isArray(directoryHeader) || Array.isArray(workspaceHeader)) {
       reply.code(400).send({ error: "Invalid Form location" })
       return
     }
-    if (header !== undefined) {
+    let directory: string | undefined
+    if (directoryHeader !== undefined) {
       try {
-        globalFormDirectory = decodeURIComponent(header)
+        directory = decodeURIComponent(directoryHeader)
       } catch {
         reply.code(400).send({ error: "Invalid Form location" })
         return
       }
-      if (!globalFormDirectory.trim()) {
+      if (!directory.trim()) {
         reply.code(400).send({ error: "Invalid Form location" })
         return
+      }
+    }
+    if (workspaceHeader !== undefined && !workspaceHeader.trim()) {
+      reply.code(400).send({ error: "Invalid Form location" })
+      return
+    }
+    if (directory !== undefined || workspaceHeader !== undefined) {
+      globalFormLocation = {
+        directory: directory ?? workspace.path,
+        ...(workspaceHeader ? { workspaceID: workspaceHeader } : {}),
       }
     }
   }
@@ -661,13 +674,19 @@ async function proxyWorkspaceRequest(args: {
     stripLocationSelectors(targetUrl, request.body, workspace.path, serviceDirectory),
     serviceDirectory,
   )
-  const requestLocations = readRequestDirectories(targetUrl, imported.body)
-  if (globalFormDirectory) requestLocations.directories.push(globalFormDirectory)
+  const requestLocations = readRequestDirectories(targetUrl, imported.body, workspace.path)
+  if (globalFormLocation) {
+    requestLocations.directories.push(globalFormLocation.directory)
+    requestLocations.locations.push(globalFormLocation)
+  }
   requestLocations.directories.push(...imported.directories)
+  requestLocations.locations.push(...imported.locations)
   requestLocations.invalid ||= imported.invalid
   readNativeCwd(targetUrl, imported.body, requestLocations)
   const promptFiles = readPromptFilePaths(pathname, request.method, imported.body)
-  if (requestLocations.invalid || !(await allDirectoriesOwned(workspaceManager, workspaceId, requestLocations.directories))) {
+  if (requestLocations.invalid
+    || !(await allDirectoriesOwned(workspaceManager, workspaceId, requestLocations.directories))
+    || !(await allLocationsOwned(workspaceManager, workspaceId, requestLocations.locations))) {
     reply.code(requestLocations.invalid ? 400 : 403).send({ error: "Location does not belong to workspace" })
     return
   }
@@ -801,8 +820,9 @@ async function proxyWorkspaceRequest(args: {
       ...(body !== request.body ? { body } : {}),
       rewriteRequestHeaders: (_originalRequest, headers) => {
         const outgoingHeaders = sanitizeInstanceProxyRequestHeaders(headers, instanceAuthHeader)
-        if (globalFormDirectory) {
-          outgoingHeaders["x-opencode-directory"] = encodeURIComponent(translatedDirectories.get(globalFormDirectory)!)
+        if (globalFormLocation) {
+          outgoingHeaders["x-opencode-directory"] = encodeURIComponent(translatedDirectories.get(globalFormLocation.directory)!)
+          if (globalFormLocation.workspaceID) outgoingHeaders["x-opencode-workspace"] = globalFormLocation.workspaceID
         }
 
         if (logger.isLevelEnabled("trace")) {
@@ -857,8 +877,13 @@ function appendIncomingQuery(targetUrl: URL, incomingUrl: string): URL {
   return targetUrl
 }
 
-function readRequestDirectories(targetUrl: URL, body: unknown): { directories: string[]; invalid: boolean } {
+function readRequestDirectories(
+  targetUrl: URL,
+  body: unknown,
+  defaultDirectory: string,
+): { directories: string[]; locations: LocationRef[]; invalid: boolean } {
   const directories: string[] = []
+  const locations: LocationRef[] = []
   let invalid = false
   for (const key of ["location[directory]", "directory"]) {
     for (const value of targetUrl.searchParams.getAll(key)) {
@@ -866,6 +891,16 @@ function readRequestDirectories(targetUrl: URL, body: unknown): { directories: s
       else invalid = true
     }
   }
+  const queryWorkspaces = targetUrl.searchParams.getAll("location[workspace]")
+  const queryDirectories = targetUrl.searchParams.getAll("location[directory]")
+  if (queryWorkspaces.length > 1 || queryDirectories.length > 1) invalid = true
+  if (queryWorkspaces.length === 1) {
+    const workspaceID = queryWorkspaces[0]
+    if (!workspaceID.trim()) invalid = true
+    else locations.push({ directory: queryDirectories[0] ?? defaultDirectory, workspaceID })
+  }
+  if (targetUrl.pathname.replace(/\/+$/, "") !== "/api/session" && targetUrl.searchParams.has("workspace")) invalid = true
+  if (targetUrl.searchParams.has("workspaceID") || targetUrl.searchParams.has("location[workspaceID]")) invalid = true
 
   if (body && typeof body === "object" && !Array.isArray(body) && !Buffer.isBuffer(body)) {
     const input = body as Record<string, unknown>
@@ -876,21 +911,35 @@ function readRequestDirectories(targetUrl: URL, body: unknown): { directories: s
     if ("location" in input) {
       const location = input.location
       if (location && typeof location === "object" && !Array.isArray(location)) {
-        const directory = (location as Record<string, unknown>).directory
+        const source = location as Record<string, unknown>
+        const directory = source.directory
         if (typeof directory === "string" && directory.trim()) directories.push(directory)
         else invalid = true
+        if (source.workspace !== undefined) invalid = true
+        if (source.workspaceID !== undefined) {
+          if (typeof source.workspaceID === "string" && source.workspaceID.trim() && typeof directory === "string" && directory.trim()) {
+            locations.push({ directory, workspaceID: source.workspaceID })
+          } else invalid = true
+        }
       } else if (location !== null && location !== undefined) {
         invalid = true
       }
     }
+    if (/^\/api\/session\/[^/]+\/move\/?$/.test(targetUrl.pathname) && "workspaceID" in input) {
+      if (typeof input.workspaceID === "string" && input.workspaceID.trim() && typeof input.directory === "string" && input.directory.trim()) {
+        locations.push({ directory: input.directory, workspaceID: input.workspaceID })
+      } else invalid = true
+    } else if ("workspaceID" in input) {
+      invalid = true
+    }
   }
-  return { directories, invalid }
+  return { directories, locations, invalid }
 }
 
 function readNativeCwd(
   targetUrl: URL,
   body: unknown,
-  locations: { directories: string[]; invalid: boolean },
+  locations: { directories: string[]; locations: LocationRef[]; invalid: boolean },
 ) {
   if (!/^\/api\/(?:shell|pty)\/?$/.test(targetUrl.pathname) || !body || typeof body !== "object" || Array.isArray(body) || Buffer.isBuffer(body)) return
   const input = body as Record<string, unknown>
@@ -939,6 +988,11 @@ export function redactSecrets(value: unknown): unknown {
 
 async function allDirectoriesOwned(manager: InstanceProxyWorkspaceManager, workspaceId: string, directories: string[]) {
   return (await Promise.all(directories.map((directory) => manager.ownsDirectory(workspaceId, directory)))).every(Boolean)
+}
+
+async function allLocationsOwned(manager: InstanceProxyWorkspaceManager, workspaceId: string, locations: LocationRef[]) {
+  const unique = new Map(locations.map((location) => [`${location.directory}\0${location.workspaceID ?? ""}`, location]))
+  return (await Promise.all([...unique.values()].map((location) => manager.ownsLocation(workspaceId, location)))).every(Boolean)
 }
 
 async function allPathsOwned(manager: InstanceProxyWorkspaceManager, workspaceId: string, paths: string[]) {
@@ -990,18 +1044,30 @@ async function authorizeSessionList(
   if (cursors.length === 1) {
     const scope = decodeSessionListCursor(cursors[0])
     if (!scope) return "invalid"
-    for (const key of ["directory", "location[directory]", "project", "subpath"]) targetUrl.searchParams.delete(key)
+    for (const key of ["directory", "workspace", "location[directory]", "location[workspace]", "project", "subpath"]) {
+      targetUrl.searchParams.delete(key)
+    }
     return ownsSessionListScope(manager, workspaceId, scope)
   }
 
   const projects = targetUrl.searchParams.getAll("project")
   const subpaths = targetUrl.searchParams.getAll("subpath")
-  if (projects.length > 1 || subpaths.length > 1 || (subpaths.length && !projects.length)) return "invalid"
-  if (!projects.length) return "allowed"
+  const workspaces = targetUrl.searchParams.getAll("workspace")
+  const directories = targetUrl.searchParams.getAll("directory")
+  if (projects.length > 1 || subpaths.length > 1 || workspaces.length > 1 || directories.length > 1
+    || (subpaths.length && !projects.length)) return "invalid"
+  const workspace = workspaces[0]
+  const directory = directories[0]
+  if ((workspace !== undefined && !workspace.trim()) || (directory !== undefined && !directory.trim())) return "invalid"
+  if (!projects.length) {
+    if (workspace && directory) return ownsSessionListScope(manager, workspaceId, { workspace, directory })
+    if (workspace) return ownsSessionListScope(manager, workspaceId, { workspace })
+    return "allowed"
+  }
   const project = projects[0]
   const subpath = subpaths[0]
   if (!project || (subpath !== undefined && !isSafeRelativePath(subpath))) return "invalid"
-  return ownsSessionListScope(manager, workspaceId, { project, subpath })
+  return ownsSessionListScope(manager, workspaceId, { ...(workspace ? { workspace } : {}), project, subpath })
 }
 
 type SessionListScope = {
@@ -1053,9 +1119,13 @@ async function ownsSessionListScope(
   workspaceId: string,
   scope: SessionListScope,
 ): Promise<"allowed" | "foreign"> {
-  if (scope.workspace && !manager.ownsLocationWorkspace(workspaceId, scope.workspace)) return "foreign"
-  if (scope.directory) return await manager.ownsDirectory(workspaceId, scope.directory) ? "allowed" : "foreign"
-  if (!scope.project) return scope.workspace ? "allowed" : "foreign"
+  if (scope.directory) {
+    const owned = scope.workspace
+      ? await manager.ownsLocation(workspaceId, { directory: scope.directory, workspaceID: scope.workspace })
+      : await manager.ownsDirectory(workspaceId, scope.directory)
+    return owned ? "allowed" : "foreign"
+  }
+  if (!scope.project) return scope.workspace && await manager.ownsLocationWorkspace(workspaceId, scope.workspace) ? "allowed" : "foreign"
   const project = (await (await manager.getSharedServiceClient()).project.list()).find((candidate) => candidate.id === scope.project)
   if (!project) return "foreign"
   const directory = scope.subpath === undefined
@@ -1063,7 +1133,10 @@ async function ownsSessionListScope(
     : /^[A-Za-z]:[\\/]|^\\\\/.test(project.canonical)
       ? path.win32.resolve(project.canonical, scope.subpath)
       : path.posix.resolve(project.canonical, scope.subpath)
-  return await manager.ownsDirectory(workspaceId, directory) ? "allowed" : "foreign"
+  const owned = scope.workspace
+    ? await manager.ownsLocation(workspaceId, { directory, workspaceID: scope.workspace })
+    : await manager.ownsDirectory(workspaceId, directory)
+  return owned ? "allowed" : "foreign"
 }
 
 function getPtyRouteId(pathname: string): string | null {
@@ -1105,7 +1178,8 @@ function hasDotSegment(value: string): boolean {
 function isAllowedInstanceApiRoute(method: string, pathname: string): boolean {
   const route = pathname.replace(/\/+$/, "")
   const allowed: Array<[string, RegExp]> = [
-    ["GET", /^\/api\/(?:agent|command|config|integration|location|mcp|model|plugin|provider)$/],
+    ["GET", /^\/api\/(?:agent|command|config|integration|location|mcp|model|plugin|provider|reference|skill)$/],
+    ["GET", /^\/api\/(?:mcp\/resource|websearch\/provider)$/],
     ["GET", /^\/api\/agent\/[^/]+$/],
     ["GET", /^\/api\/model\/default$/],
     ["GET", /^\/api\/(?:permission|question)\/request$/],
@@ -1130,9 +1204,10 @@ function isAllowedInstanceApiRoute(method: string, pathname: string): boolean {
     ["POST", /^\/api\/session(?:\/import)?$/],
     ["GET", /^\/api\/session\/[^/]+(?:\/message(?:\/[^/]+)?)?$/],
     ["GET", /^\/api\/session\/[^/]+\/inbox$/],
+    ["GET", /^\/api\/session\/[^/]+\/(?:permission|form)$/],
     ["DELETE", /^\/api\/session\/[^/]+$/],
     ["DELETE", /^\/api\/session\/[^/]+\/inbox\/[^/]+$/],
-    ["POST", /^\/api\/session\/[^/]+\/(?:agent|model|rename|move|prompt|command|shell|compact|interrupt|fork)$/],
+    ["POST", /^\/api\/session\/[^/]+\/(?:agent|model|rename|move|prompt|command|shell|compact|interrupt|background|fork)$/],
     ["POST", /^\/api\/session\/[^/]+\/inbox\/[^/]+\/(?:steer|queue)$/],
     ["POST", /^\/api\/session\/[^/]+\/revert\/stage$/],
     ["PUT", /^\/api\/session\/[^/]+\/instructions\/entries\/[^/]+$/],
@@ -1202,9 +1277,6 @@ function stripLocationSelectors(targetUrl: URL, body: unknown, workspaceDirector
       for (const value of values) targetUrl.searchParams.append(key, value === workspaceDirectory ? serviceDirectory : value)
     }
   }
-  for (const key of ["workspace", "workspaceID", "location[workspace]", "location[workspaceID]"]) {
-    targetUrl.searchParams.delete(key)
-  }
   if (!body || typeof body !== "object" || Array.isArray(body) || Buffer.isBuffer(body)) return body
   const input = body as Record<string, unknown>
   const canonicalInput = { ...input }
@@ -1213,7 +1285,7 @@ function stripLocationSelectors(targetUrl: URL, body: unknown, workspaceDirector
   }
   const location = input.location
   if (!location || typeof location !== "object" || Array.isArray(location) || Buffer.isBuffer(location)) return canonicalInput
-  const { workspace: _workspace, workspaceID: _workspaceID, ...canonicalLocation } = location as Record<string, unknown>
+  const canonicalLocation = { ...(location as Record<string, unknown>) }
   if (canonicalLocation.directory === workspaceDirectory) canonicalLocation.directory = serviceDirectory
   return { ...canonicalInput, location: canonicalLocation }
 }
@@ -1285,7 +1357,7 @@ function replacePromptFileUris(body: unknown, replacements: ReadonlyMap<string, 
 }
 
 function prepareSessionImport(pathname: string, method: string, body: unknown, directory: string) {
-  const result = { body, directories: [] as string[], invalid: false }
+  const result = { body, directories: [] as string[], locations: [] as LocationRef[], invalid: false }
   if (pathname !== "/api/session/import" || method !== "POST") return result
   if (!body || typeof body !== "object" || Array.isArray(body) || Buffer.isBuffer(body)) {
     result.invalid = true
@@ -1306,8 +1378,17 @@ function prepareSessionImport(pathname: string, method: string, body: unknown, d
     }
     const location = value as Record<string, unknown>
     if (location.directory === null || location.directory === undefined) location.directory = directory
-    if (typeof location.directory === "string" && location.directory.trim()) result.directories.push(location.directory)
-    else result.invalid = true
+    if (typeof location.directory !== "string" || !location.directory.trim()) {
+      result.invalid = true
+      return
+    }
+    result.directories.push(location.directory)
+    if (location.workspace !== undefined) result.invalid = true
+    if (location.workspaceID !== undefined) {
+      if (typeof location.workspaceID === "string" && location.workspaceID.trim()) {
+        result.locations.push({ directory: location.directory, workspaceID: location.workspaceID })
+      } else result.invalid = true
+    }
   }
 
   addLocation(input, "location")

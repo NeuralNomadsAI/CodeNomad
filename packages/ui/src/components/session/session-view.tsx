@@ -403,12 +403,9 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     }
     const messageCount = visibleMessageCount()
     const submittedExchangeTargetCount = getSubmitBottomPinTargetCount(messageCount, sessionStreamingActive())
-    const initialPinIntent = delivery === "queue"
-      ? undefined
-      : forceSubmittedExchangeToBottom(submittedExchangeTargetCount, { createdMessageCount: messageCount })
+    const initialPinIntent = forceSubmittedExchangeToBottom(submittedExchangeTargetCount, { createdMessageCount: messageCount })
     try {
       await sendMessage(props.instanceId, props.sessionId, prompt, attachments, { delivery })
-      if (!initialPinIntent) return
       const latestMessageCount = visibleMessageCount()
       if (latestMessageCount < submittedExchangeTargetCount && !sessionStreamingActive()) {
         setSubmitBottomPinIntent(null)
@@ -419,7 +416,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         })
       }
     } catch (error) {
-      if (initialPinIntent) setSubmitBottomPinIntent(null)
+      setSubmitBottomPinIntent(null)
       throw error
     }
   }
@@ -468,6 +465,20 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       showAlertDialog(t("sessionView.alerts.abortFailed.message"), {
         title: t("sessionView.alerts.abortFailed.title"),
         detail: error instanceof Error ? error.message : String(error),
+        variant: "error",
+      })
+    }
+  }
+
+  async function handleBackgroundSession() {
+    const client = instances().get(props.instanceId)?.client
+    if (!client) return
+    try {
+      await client.session.background({ sessionID: props.sessionId })
+    } catch (error) {
+      log.error("Failed to move blocking tools to background", error)
+      showAlertDialog(t("promptInput.background.error.message"), {
+        title: t("promptInput.background.error.title"),
         variant: "error",
       })
     }
@@ -632,6 +643,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           isSessionBusy={sessionBusy()}
           disabled={sessionNeedsInput()}
           onAbortSession={handleAbortSession}
+          onBackgroundSession={handleBackgroundSession}
           registerPromptInputApi={registerPromptInputApi}
         />
       </div>

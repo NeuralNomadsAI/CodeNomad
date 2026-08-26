@@ -6,6 +6,7 @@ import { usePromptKeyDown } from "./usePromptKeyDown.ts"
 function setup(submitOnEnter = true) {
   let prompt = "hello"
   const sends: Array<boolean | undefined> = []
+  let backgrounds = 0
   const textarea = {
     selectionStart: prompt.length,
     selectionEnd: prompt.length,
@@ -30,6 +31,10 @@ function setup(submitOnEnter = true) {
     removeAttachment: () => {},
     submitOnEnter: () => submitOnEnter,
     onSend: (alternate) => sends.push(alternate),
+    onBackground: () => {
+      backgrounds += 1
+      return true
+    },
     selectPreviousHistory: () => false,
     selectNextHistory: () => false,
   })
@@ -39,7 +44,7 @@ function setup(submitOnEnter = true) {
     stopPropagation() {},
     ...input,
   } as KeyboardEvent)
-  return { press, sends, prompt: () => prompt }
+  return { press, sends, backgrounds: () => backgrounds, prompt: () => prompt }
 }
 
 describe("prompt submit shortcuts", () => {
@@ -61,5 +66,12 @@ describe("prompt submit shortcuts", () => {
     const input = setup(false)
     input.press({ ctrlKey: true, shiftKey: true })
     assert.deepEqual(input.sends, [true])
+  })
+
+  it("moves blocking session work to the background on Mod+B", () => {
+    const input = setup()
+    input.press({ key: "b", ctrlKey: true })
+    assert.equal(input.backgrounds(), 1)
+    assert.deepEqual(input.sends, [])
   })
 })

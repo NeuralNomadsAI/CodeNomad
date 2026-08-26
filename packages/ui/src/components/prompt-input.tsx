@@ -1,9 +1,9 @@
 import { Suspense, createEffect, createSignal, lazy, on, onCleanup, onMount, Show } from "solid-js"
-import { ArrowBigUp, ArrowBigDown, Loader2, Mic, Paperclip, Volume2, X } from "lucide-solid"
+import { ArrowBigUp, ArrowBigDown, Loader2, Mic, Minimize2, Paperclip, Volume2, X } from "lucide-solid"
 import ExpandButton from "./expand-button"
 import { clearAttachments, removeAttachment } from "../stores/attachments"
 import { createPastedPlaceholderRegex, pastedDisplayCounterRegex } from "./prompt-input/attachmentPlaceholders"
-import { preparePromptSubmission } from "./prompt-input/submitPrompt"
+import { preparePromptSubmission, resolvePromptDelivery } from "./prompt-input/submitPrompt"
 import { focusConversationStream } from "./focus-conversation"
 import Kbd from "./kbd"
 import { getActiveInstance } from "../stores/instances"
@@ -459,10 +459,17 @@ export default function PromptInput(props: PromptInputProps) {
     resizeDragState = undefined
   })
 
+  const promptDelivery = (alternate = false) => resolvePromptDelivery(
+    Boolean(props.isSessionBusy || submissionsInFlight > 0),
+    preferences().followUpBehavior,
+    alternate,
+  )
+
   async function handleSend(delivery?: PromptDelivery) {
     const text = prompt().trim()
     const currentAttachments = attachments()
     if (props.disabled || (!text && currentAttachments.length === 0)) return
+    const resolvedDelivery = delivery ?? promptDelivery()
 
     const isShellMode = mode() === "shell"
 
@@ -535,7 +542,7 @@ export default function PromptInput(props: PromptInputProps) {
           await executeCustomCommand(props.instanceId, props.sessionId, commandName, resolvedCommandArgs)
         }
       } else {
-        await props.onSend(submitPrompt, currentAttachments, delivery ?? "steer")
+        await props.onSend(submitPrompt, currentAttachments, resolvedDelivery)
       }
     } catch (error) {
       log.error("Failed to send message:", error)
@@ -556,6 +563,14 @@ export default function PromptInput(props: PromptInputProps) {
   function handleAbort() {
     if (!props.onAbortSession || !props.isSessionBusy) return
     void props.onAbortSession()
+  }
+
+  const canBackground = () => Boolean(props.isSessionBusy && props.onBackgroundSession)
+
+  function handleBackground() {
+    if (!canBackground()) return false
+    void props.onBackgroundSession?.()
+    return true
   }
 
   function handleExpandToggle(nextState: "normal" | "expanded") {
@@ -741,7 +756,8 @@ export default function PromptInput(props: PromptInputProps) {
     getAttachments: attachments,
     removeAttachment: (attachmentId) => removeAttachment(props.instanceId, props.sessionId, attachmentId),
     submitOnEnter,
-    onSend: (alternate) => void handleSend(alternate && (props.isSessionBusy || submissionsInFlight > 0) ? "queue" : "steer"),
+    onSend: (alternate) => void handleSend(promptDelivery(Boolean(alternate))),
+    onBackground: handleBackground,
     selectPreviousHistory: (force) =>
       selectPreviousHistory({ force, isPickerOpen: showPicker(), getTextarea: () => textareaRef ?? null }),
     selectNextHistory: (force) =>
@@ -1069,13 +1085,24 @@ export default function PromptInput(props: PromptInputProps) {
               <rect x="4" y="4" width="12" height="12" rx="2" />
             </svg>
           </button>
+          <Show when={canBackground()}>
+            <button
+              type="button"
+              class="prompt-voice-button"
+              onClick={() => handleBackground()}
+              aria-label={t("promptInput.background.title")}
+              title={t("promptInput.background.title")}
+            >
+              <Minimize2 class="h-4 w-4" aria-hidden="true" />
+            </button>
+          </Show>
           <button
             type="button"
             class={`send-button ${mode() === "shell" ? "shell-mode" : ""}`}
             onClick={() => void handleSend()}
             disabled={!canSend()}
-            aria-label={t(props.isSessionBusy && mode() === "normal" ? "promptInput.send.queueAriaLabel" : "promptInput.send.ariaLabel")}
-            title={t(props.isSessionBusy && mode() === "normal" ? "promptInput.send.queueAriaLabel" : "promptInput.send.ariaLabel")}
+            aria-label={t(mode() === "normal" && promptDelivery() === "queue" ? "promptInput.send.queueAriaLabel" : "promptInput.send.ariaLabel")}
+            title={t(mode() === "normal" && promptDelivery() === "queue" ? "promptInput.send.queueAriaLabel" : "promptInput.send.ariaLabel")}
           >
             <Show
               when={mode() === "shell"}

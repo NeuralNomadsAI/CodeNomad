@@ -33,5 +33,6 @@ export interface PromptInputProps {
   escapeInDebounce?: boolean
   isSessionBusy?: boolean
   onAbortSession?: () => Promise<void>
+  onBackgroundSession?: () => Promise<void>
   registerPromptInputApi?: (api: PromptInputApi) => void | (() => void)
 }

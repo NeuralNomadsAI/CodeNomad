@@ -1,9 +1,19 @@
 import assert from "node:assert/strict"
+import fs from "node:fs"
 import { describe, it } from "node:test"
 
 import { getSubmitBottomPinTargetCount, resolveSessionBottomPinIntent, shouldClearSessionBottomPinIntent } from "./session-bottom-pin-intent.ts"
 
 describe("session bottom pin intent", () => {
+  it("starts a bottom pin for every locally submitted prompt, including queue delivery", () => {
+    const source = fs.readFileSync(new URL("./session-view.tsx", import.meta.url), "utf8")
+    const start = source.indexOf("async function handleSendMessage(")
+    const submit = source.slice(start, source.indexOf("function showQueueError", start))
+
+    assert.match(submit, /const initialPinIntent = forceSubmittedExchangeToBottom/)
+    assert.doesNotMatch(submit, /delivery === "queue"/)
+  })
+
   it("targets only the queued user prompt when submitting during active streaming", () => {
     assert.equal(getSubmitBottomPinTargetCount(10, true), 11)
     assert.equal(getSubmitBottomPinTargetCount(10, false), 12)

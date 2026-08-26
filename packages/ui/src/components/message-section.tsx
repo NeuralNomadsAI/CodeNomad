@@ -79,7 +79,7 @@ export default function MessageSection(props: MessageSectionProps) {
   const messageIds = createMemo(() => store().getSessionMessageIds(props.sessionId))
   const visibleMessageIds = createMemo(() => {
     const resolvedStore = store()
-    return messageIds().filter((messageId) => {
+    const visible = messageIds().filter((messageId) => {
       const record = resolvedStore.getMessage(messageId)
       if (!record) return false
 
@@ -103,6 +103,12 @@ export default function MessageSection(props: MessageSectionProps) {
       const timeInfo = info.time as { created: number; completed?: number } | undefined
       return Boolean(timeInfo && (timeInfo.completed === undefined || timeInfo.completed === 0))
     })
+    if (!props.pendingPrompts?.size) return visible
+    const visibleSet = new Set(visible)
+    return [
+      ...visible.filter((messageId) => !props.pendingPrompts!.has(messageId)),
+      ...Array.from(props.pendingPrompts.keys()).filter((messageId) => visibleSet.has(messageId)),
+    ]
   })
 
   const sessionRevision = createMemo(() => store().getSessionRevision(props.sessionId))
@@ -723,6 +729,7 @@ export default function MessageSection(props: MessageSectionProps) {
       await waitTwoFrames()
       if (!isCurrent()) return
       after(api)
+      api.setAutoScroll(direction === "latest")
       api.notifyContentRendered()
     } catch (error) {
       if (isCurrent()) {

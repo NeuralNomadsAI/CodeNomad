@@ -135,7 +135,9 @@ async function harness(
       return pathMappings[candidate] ?? candidate
     },
     getSharedServiceClient: async () => client,
-    ownsLocationWorkspace: (_id, workspaceID) => workspaceID === "owned-location",
+    ownsLocation: async (_id, location) => owned.has(location.directory)
+      && (!location.workspaceID || location.workspaceID === (location.directory.includes("worktree") ? "worktree-location" : "owned-location")),
+    ownsLocationWorkspace: async (_id, workspaceID) => workspaceID === "owned-location" || workspaceID === "worktree-location",
     ownsDirectory: async (_id, directory) => owned.has(directory),
     ownsPath: async (_id, candidate) => {
       pathOwnershipChecks.push(candidate)
@@ -189,6 +191,37 @@ describe("instance proxy location enforcement", () => {
     assert.equal(queryResponse.statusCode, 403)
     assert.equal(requestCount(), 0)
     assert.doesNotMatch(bodyResponse.body, /internal-secret/)
+  })
+
+  it("preserves owned native workspace selectors and rejects mismatched pairs", async () => {
+    const { app, requestCount } = await harness()
+    const query = await app.inject({
+      method: "GET",
+      url: "/workspaces/workspace/instance/api/model?location%5Bdirectory%5D=%2Frepo%2Fworktree&location%5Bworkspace%5D=worktree-location",
+    })
+    assert.equal(query.statusCode, 200)
+    assert.match(JSON.parse(query.body).url, /location%5Bworkspace%5D=worktree-location/)
+
+    const create = await app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/session",
+      payload: { location: { directory: "/repo", workspaceID: "owned-location" } },
+    })
+    assert.equal(create.statusCode, 200)
+    assert.equal(JSON.parse(create.body).body.location.workspaceID, "owned-location")
+
+    const foreign = await app.inject({
+      method: "GET",
+      url: "/workspaces/workspace/instance/api/model?location%5Bdirectory%5D=%2Frepo%2Fworktree&location%5Bworkspace%5D=owned-location",
+    })
+    assert.equal(foreign.statusCode, 403)
+
+    const unsupported = await app.inject({
+      method: "GET",
+      url: "/workspaces/workspace/instance/api/model?workspace=owned-location",
+    })
+    assert.equal(unsupported.statusCode, 400)
+    assert.equal(requestCount(), 2)
   })
 
   it("rejects session admission while a worktree deletion is pending", async () => {
@@ -357,12 +390,13 @@ describe("instance proxy location enforcement", () => {
     const ownedCursor = cursor({ directory: "/repo/worktree", anchor: { id: "session-1", time: 1, direction: "next" } })
     const response = await app.inject({
       method: "GET",
-      url: `/workspaces/workspace/instance/api/session?cursor=${ownedCursor}&directory=%2Fother`,
+      url: `/workspaces/workspace/instance/api/session?cursor=${ownedCursor}&directory=%2Fother&workspace=foreign-location`,
     })
     assert.equal(response.statusCode, 200)
     const upstreamUrl = JSON.parse(response.body).url as string
     assert.match(upstreamUrl, new RegExp(`cursor=${ownedCursor}`))
     assert.doesNotMatch(upstreamUrl, /directory=/)
+    assert.doesNotMatch(upstreamUrl, /workspace=/)
 
     const forgedCursor = cursor({ directory: "/other", anchor: { id: "session-1", time: 1, direction: "next" } })
     assert.equal((await app.inject({
@@ -503,14 +537,14 @@ describe("instance proxy location enforcement", () => {
     assert.deepEqual(sessionGets, ["global"])
   })
 
-  it("forwards a validated global Form root location instead of browser routing headers", async () => {
+  it("forwards a validated global Form root location and workspace", async () => {
     const { app } = await harness("/repo/worktree", {}, {}, "/repo", "/srv/repo")
     const response = await app.inject({
       method: "POST",
       url: "/workspaces/workspace/instance/api/session/global/form/form-1/reply",
       headers: {
         "x-opencode-directory": encodeURIComponent("/repo"),
-        "x-opencode-workspace": "untrusted-workspace",
+        "x-opencode-workspace": "owned-location",
       },
       payload: { answers: {} },
     })
@@ -518,7 +552,7 @@ describe("instance proxy location enforcement", () => {
     assert.equal(response.statusCode, 200)
     const upstream = JSON.parse(response.body)
     assert.equal(upstream.headers["x-opencode-directory"], encodeURIComponent("/srv/repo"))
-    assert.equal(upstream.headers["x-opencode-workspace"], undefined)
+    assert.equal(upstream.headers["x-opencode-workspace"], "owned-location")
   })
 
   it("translates and forwards a validated global Form worktree location", async () => {
@@ -553,6 +587,15 @@ describe("instance proxy location enforcement", () => {
       headers: { "x-opencode-directory": "%ZZ" },
       payload: { answers: {} },
     })).statusCode, 400)
+    assert.equal((await app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/session/global/form/form-1/reply",
+      headers: {
+        "x-opencode-directory": encodeURIComponent("/repo"),
+        "x-opencode-workspace": "foreign-location",
+      },
+      payload: { answers: {} },
+    })).statusCode, 403)
     assert.equal(requestCount(), 0)
   })
 
@@ -617,10 +660,17 @@ describe("instance proxy location enforcement", () => {
     assert.equal(requestCount(), 0)
   })
 
-  it("allows native inbox management for owned sessions", async () => {
+  it("allows native pending-state management for owned sessions", async () => {
     const { app } = await harness()
     const requests = [
       ["GET", "/workspaces/workspace/instance/api/session/owned/inbox"],
+      ["GET", "/workspaces/workspace/instance/api/session/owned/permission"],
+      ["GET", "/workspaces/workspace/instance/api/session/owned/form"],
+      ["POST", "/workspaces/workspace/instance/api/session/owned/background"],
+      ["GET", "/workspaces/workspace/instance/api/skill"],
+      ["GET", "/workspaces/workspace/instance/api/reference"],
+      ["GET", "/workspaces/workspace/instance/api/mcp/resource"],
+      ["GET", "/workspaces/workspace/instance/api/websearch/provider"],
       ["DELETE", "/workspaces/workspace/instance/api/session/owned/inbox/prompt-1"],
       ["POST", "/workspaces/workspace/instance/api/session/owned/inbox/prompt-1/steer"],
       ["POST", "/workspaces/workspace/instance/api/session/owned/inbox/prompt-1/queue"],

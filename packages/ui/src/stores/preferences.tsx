@@ -33,6 +33,7 @@ export interface ModelPreference {
 }
 
 export type DiffViewMode = "split" | "unified"
+export type FollowUpBehavior = "steer" | "queue"
 export type ExpansionPreference = "expanded" | "collapsed"
 export type VisibilityPreference = "hidden" | ExpansionPreference
 export type ToolCallExpansionPreset = "minimal" | "balanced" | "detailed" | "everything"
@@ -94,6 +95,7 @@ export interface UiSettings {
   showTimelineTools: boolean
   holdLongAssistantReplies: boolean
   promptSubmitOnEnter: boolean
+  followUpBehavior: FollowUpBehavior
   showPromptVoiceInput: boolean
   locale?: string
   diffViewMode: DiffViewMode
@@ -187,6 +189,7 @@ const defaultUiSettings: UiSettings = {
   showTimelineTools: true,
   holdLongAssistantReplies: true,
   promptSubmitOnEnter: true,
+  followUpBehavior: "steer",
   showPromptVoiceInput: true,
   diffViewMode: "split",
   toolCallExpansionDefaults: defaultToolCallExpansionDefaults,
@@ -284,6 +287,10 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     showTimelineTools: sanitized.showTimelineTools ?? defaultUiSettings.showTimelineTools,
     holdLongAssistantReplies: sanitized.holdLongAssistantReplies ?? defaultUiSettings.holdLongAssistantReplies,
     promptSubmitOnEnter: sanitized.promptSubmitOnEnter ?? defaultUiSettings.promptSubmitOnEnter,
+    followUpBehavior:
+      sanitized.followUpBehavior === "queue" || sanitized.followUpBehavior === "steer"
+        ? sanitized.followUpBehavior
+        : defaultUiSettings.followUpBehavior,
     showPromptVoiceInput: sanitized.showPromptVoiceInput ?? defaultUiSettings.showPromptVoiceInput,
     locale: sanitized.locale ?? defaultUiSettings.locale,
     diffViewMode: sanitized.diffViewMode ?? defaultUiSettings.diffViewMode,

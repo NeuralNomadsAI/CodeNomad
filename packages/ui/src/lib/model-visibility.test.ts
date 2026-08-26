@@ -83,6 +83,7 @@ test("model picker delegates keyboard selection to its accessible Kobalte input"
   const search = source.slice(source.indexOf('<div class="selector-search-container">'), source.indexOf("<Combobox.Listbox"))
   assert.match(search, /<Combobox\.Input[\s\S]{0,300}value=\{inputValue\(\)\}/)
   assert.match(search, /class="selector-input-group"[\s\S]*class="selector-favorites-toggle"/)
+  assert.match(search, /title=\{favoritesToggleLabel\(\)\}/)
   assert.match(search, /aria-pressed=\{favoritesOnlyEnabled\(\)\}[\s\S]*disabled=\{!hasFavorites\(\) \|\| searchActive\(\)\}[\s\S]*data-active=\{favoritesOnlyEnabled\(\)\}/)
   assert.doesNotMatch(search, /<input\b/)
   assert.match(source, /onKeyDown=\{\(event\) => \{\s*if \(event\.key === "Escape"\) queueMicrotask\(restoreSelectedInput\)/)
@@ -105,6 +106,7 @@ test("model picker delegates keyboard selection to its accessible Kobalte input"
   assert.match(source, /closePicker\(\)\s*setProvidersModalOpen\(true\)/)
   const footer = source.slice(source.indexOf('<div class="selector-footer">'), source.indexOf("</Combobox.Content>"))
   assert.doesNotMatch(footer, /toggleFavoritesOnly/)
+  assert.doesNotMatch(footer, /favoritesOnly\.showAll/)
 })
 
 test("provider auth keeps its catalog location across deferred operation steps", () => {

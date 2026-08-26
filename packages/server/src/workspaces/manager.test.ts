@@ -31,6 +31,7 @@ class ControlledSharedService {
   afterValidation?: () => void
   headerFailures = 0
   validationCalls: Array<{ location: LocationRef; options?: OpenCodeSharedServiceOptions }> = []
+  debugLocations: LocationRef[] = []
   shutdownCalls = 0
   shutdownGate?: ReturnType<typeof deferred<void>>
   shutdownTimeouts: number[] = []
@@ -44,7 +45,7 @@ class ControlledSharedService {
   }
 
   async client() {
-    return {} as OpenCodeClient
+    return { debug: { location: { list: async () => this.debugLocations } } } as OpenCodeClient
   }
 
   async headers() {
@@ -118,6 +119,21 @@ function createHarness(service = new ControlledSharedService(), overrides: Recor
 }
 
 describe("workspace manager shared service lifecycle", () => {
+  it("validates native workspace identity against an owned directory", async () => {
+    const service = new ControlledSharedService()
+    service.debugLocations = [
+      { directory: process.cwd(), workspaceID: "worktree-location" },
+      { directory: path.join(path.parse(process.cwd()).root, "__codenomad_foreign__"), workspaceID: "mismatch-location" },
+    ]
+    const { manager } = createHarness(service)
+    const workspace = await manager.create(process.cwd())
+
+    assert.equal(await manager.ownsLocation(workspace.workspace.id, { directory: process.cwd(), workspaceID: "location-1" }), true)
+    assert.equal(await manager.ownsLocation(workspace.workspace.id, { directory: process.cwd(), workspaceID: "foreign" }), false)
+    assert.equal(await manager.ownsLocation(workspace.workspace.id, { directory: process.cwd(), workspaceID: "mismatch-location" }), false)
+    assert.equal(await manager.ownsLocationWorkspace(workspace.workspace.id, "worktree-location"), true)
+  })
+
   it("distinguishes WSL service paths from Windows host paths", () => {
     assert.equal(isWindowsHostPath("/mnt/d/repo"), false)
     assert.equal(isWindowsHostPath("D:\\repo"), true)

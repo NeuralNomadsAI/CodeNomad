@@ -4,11 +4,11 @@
 
 This review compares:
 
-- CodeNomad `DEV-v2` at `aef4452b`, plus the fixes recorded below.
-- Official OpenCode Desktop V2 from `anomalyco/opencode` branch `upstream/v2` at `bc1f67e518` (2026-08-24).
-- CodeNomad follows the latest `@opencode-ai/client@beta` contract; the managed CLI updater independently resolves and installs the latest CLI beta.
+- CodeNomad `DEV-v2` through the fixes accompanying this document.
+- Official OpenCode Desktop V2 from `anomalyco/opencode` branch `upstream/beta` at `eb1ac54d73` (2026-08-25).
+- CodeNomad declares `@opencode-ai/client@beta`; the reviewed root lock resolves `0.0.0-beta-18219`. The managed CLI updater independently resolves and installs the latest CLI beta.
 
-The official reference is `packages/desktop` for the Electron host, `packages/app` for the shared UI, and the V2 client, protocol, schema, server, and core packages for wire behavior. The old `upstream/opencode-2-0` branch and the intermediate `desktop-v2-*` branches are historical, not the current Desktop V2 reference.
+The official reference is `packages/desktop` for the Electron host, `packages/app` for the shared UI, and the V2 client, protocol, schema, server, and core packages for wire behavior. Older `v2`, `opencode-2-0`, and intermediate `desktop-v2-*` branches are historical, not the current Desktop V2 reference.
 
 This is an incremental review. It does not repeat issues already closed by CodeNomad parity commits including `4b96f462`, `4359b4bf`, `249a96e7`, `ef70a8b7`, `affdb96f`, `e1987b9c`, `5484f9c9`, `b5f3fc6e`, `2c9ced63`, and `db0464f7`.
 
@@ -16,7 +16,7 @@ This is an incremental review. It does not repeat issues already closed by CodeN
 
 CodeNomad implements the important V2 architecture rather than emulating the V1 desktop model. It uses the native client contract, locations, shared service, sessions, messages, Forms, permissions, providers, Shells, worktrees, and event stream. Its multi-window and cross-host restore implementation is broader than the official Electron-only desktop implementation.
 
-The comparison found five concrete CodeNomad defects and one obsolete configuration block. All six are fixed in the commits accompanying this document. The remaining differences are scoped workflow defects, release hardening, or optional Desktop features. None requires restoring V1 code or replacing native V2 cursors.
+The comparison and subsequent beta-contract audit found concrete CodeNomad defects in pagination, navigation, model projection, inbox delivery, follow behavior, background control, location selectors, and proxy route coverage. Those defects are fixed in the commits accompanying this document. The remaining differences are scoped workflow defects, release hardening, or optional Desktop features. None requires restoring V1 code or replacing native V2 cursors.
 
 ## Closed Findings
 
@@ -72,12 +72,14 @@ The review reconfirmed these areas and found no current incompatibility:
 - Multiple logical CodeNomad workspaces over one native location, including duplicate-folder instances.
 - Project-wide session inventory with directory scoping for native `global` projects, native session and message cursors, replace-in-place resident history windows, and ancestor hydration.
 - Optimistic prompt admission with client-minted identity and authoritative event reconciliation.
+- Native inbox queue/steer delivery with a persisted primary preference, inverse alternate shortcut, cancellation, and pending prompts ordered at the transcript tail.
+- User-controlled follow state across older-page positioning and remote updates, with bottom pinning reserved for a local send.
 - Native Forms, permissions, provider authentication, commands, agents, variants, attachments, and instructions.
 - One upstream event stream with reconnect generation fencing and targeted authoritative refresh.
-- Native background Shell listing, bounded output, removal, and ownership-checked Shell/PTY proxy routes.
+- Native `session.background` control plus background Shell listing, bounded output, removal, and ownership-checked Shell/PTY proxy routes.
 - Root/worktree location ownership, physical-identity mutation fencing and session evacuation before worktree deletion, and WSL translation.
 - Independent multi-window tabs and content-addressed restore state across Electron and Tauri.
-- Strict proxy route allowlisting, traversal protection, selector stripping, authentication isolation, and location ownership checks.
+- Strict proxy route allowlisting, traversal protection, validated native workspace selectors, authentication isolation, and location ownership checks.
 
 Service stop removal is intentional: CodeNomad does not own the shared daemon. Upstream session sharing is disabled, so its absence is not a parity gap. Upstream's temporary SSE heartbeat change was reverted and requires no CodeNomad change.
 

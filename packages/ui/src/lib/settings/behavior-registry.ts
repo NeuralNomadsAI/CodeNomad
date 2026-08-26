@@ -2,6 +2,7 @@ import type { Accessor } from "solid-js"
 import type {
   Preferences,
   ExpansionPreference,
+  FollowUpBehavior,
   ToolInputsVisibilityPreference,
   VisibilityPreference,
 } from "../../stores/preferences"
@@ -343,6 +344,18 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
           next,
         )
       },
+    },
+    {
+      kind: "enum",
+      id: "behavior.followUpBehavior",
+      titleKey: "settings.behavior.followUpBehavior.title",
+      subtitleKey: "settings.behavior.followUpBehavior.subtitle",
+      get: (p) => p.followUpBehavior,
+      set: (next) => updatePreferences?.({ followUpBehavior: next as FollowUpBehavior }),
+      options: [
+        { value: "steer", labelKey: "settings.behavior.followUpBehavior.option.steer" },
+        { value: "queue", labelKey: "settings.behavior.followUpBehavior.option.queue" },
+      ],
     },
     {
       kind: "toggle",

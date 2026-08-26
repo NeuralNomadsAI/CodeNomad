@@ -27,6 +27,7 @@ export type UsePromptKeyDownOptions = {
 
   submitOnEnter: Accessor<boolean>
   onSend: (alternate?: boolean) => void
+  onBackground?: () => boolean
 
   selectPreviousHistory: (force?: boolean) => boolean
   selectNextHistory: (force?: boolean) => boolean
@@ -55,6 +56,12 @@ export function usePromptKeyDown(options: UsePromptKeyDownOptions) {
     const currentText = options.prompt()
     const cursorAtBufferStart = textarea.selectionStart === 0 && textarea.selectionEnd === 0
     const isShellMode = options.mode() === "shell"
+
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "b" && options.onBackground?.()) {
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
 
     if (!isShellMode && e.key === "!" && cursorAtBufferStart && currentText.length === 0 && !textarea.disabled) {
       e.preventDefault()

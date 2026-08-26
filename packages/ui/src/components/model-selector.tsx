@@ -292,12 +292,9 @@ export default function ModelSelector(props: ModelSelectorProps) {
     setManualAll(false)
   }
 
-  const showAllModels = () => {
-    setManualAll(true)
-    setExplicitFavorites(false)
-    setAutoFavoritesEligibleAtOpen(false)
-    setTimeout(() => searchInputRef?.focus(), 0)
-  }
+  const favoritesToggleLabel = () => t(favoritesOnlyEnabled()
+    ? "modelSelector.favoritesOnly.showAll"
+    : "modelSelector.favoritesOnly.toggle.ariaLabel")
 
   return (
     <div class="sidebar-selector">
@@ -435,7 +432,8 @@ export default function ModelSelector(props: ModelSelectorProps) {
                 <button
                   type="button"
                   class="selector-favorites-toggle"
-                  aria-label={t("modelSelector.favoritesOnly.toggle.ariaLabel")}
+                  aria-label={favoritesToggleLabel()}
+                  title={favoritesToggleLabel()}
                   aria-pressed={favoritesOnlyEnabled()}
                   disabled={!hasFavorites() || searchActive()}
                   data-active={favoritesOnlyEnabled()}
@@ -471,26 +469,6 @@ export default function ModelSelector(props: ModelSelectorProps) {
               >
                 <PlugZap class="w-4 h-4" />
                 <span class="selector-option-label">{t("modelSelector.manageProviders")}</span>
-              </button>
-              <button
-                type="button"
-                class="selector-option selector-option-action w-full"
-                style={{ display: favoritesOnlyEnabled() && !searchActive() ? "flex" : "none" }}
-                onMouseDown={(event) => {
-                  event.preventDefault()
-                  event.stopPropagation()
-                }}
-                onPointerDown={(event) => {
-                  event.preventDefault()
-                  event.stopPropagation()
-                }}
-                onClick={(event) => {
-                  event.preventDefault()
-                  event.stopPropagation()
-                  showAllModels()
-                }}
-              >
-                <span class="selector-option-label">{t("modelSelector.favoritesOnly.showAll")}</span>
               </button>
             </div>
           </Combobox.Content>

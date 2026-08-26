@@ -26,6 +26,7 @@ export const GeneralSettingsSection: Component = () => {
         setting.id === "behavior.messageTimeline" ||
         setting.id === "behavior.timelineToolCalls" ||
         setting.id === "behavior.diffViewMode" ||
+        setting.id === "behavior.followUpBehavior" ||
         setting.id === "behavior.promptSubmitOnEnter",
     ),
     {
