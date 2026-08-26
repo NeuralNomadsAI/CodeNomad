@@ -134,51 +134,6 @@ const [activeInstanceId, setActiveInstanceId] = createSignal<string | null>(null
 const [instanceLogs, setInstanceLogs] = createSignal<Map<string, LogEntry[]>>(new Map())
 const [logStreamingState, setLogStreamingState] = createSignal<Map<string, boolean>>(new Map())
 
-const STREAMING_PROJECTION_INTERVAL_MS = 250
-const pendingStreamingProjections = new Map<string, {
-  timeout: ReturnType<typeof setTimeout>
-  project: () => void
-}>()
-
-function streamingProjectionKey(instanceId: string, sessionId: string): string {
-  return `${instanceId}\0${sessionId}`
-}
-
-function scheduleStreamingProjection(instanceId: string, sessionId: string, project: () => void): void {
-  const key = streamingProjectionKey(instanceId, sessionId)
-  const pending = pendingStreamingProjections.get(key)
-  if (pending) {
-    pending.project = project
-    return
-  }
-
-  const next = {
-    project,
-    timeout: setTimeout(() => {
-      pendingStreamingProjections.delete(key)
-      next.project()
-    }, STREAMING_PROJECTION_INTERVAL_MS),
-  }
-  pendingStreamingProjections.set(key, next)
-}
-
-function cancelStreamingProjection(instanceId: string, sessionId: string): void {
-  const key = streamingProjectionKey(instanceId, sessionId)
-  const pending = pendingStreamingProjections.get(key)
-  if (!pending) return
-  clearTimeout(pending.timeout)
-  pendingStreamingProjections.delete(key)
-}
-
-function clearStreamingProjections(instanceId: string): void {
-  const prefix = `${instanceId}\0`
-  for (const [key, pending] of pendingStreamingProjections) {
-    if (!key.startsWith(prefix)) continue
-    clearTimeout(pending.timeout)
-    pendingStreamingProjections.delete(key)
-  }
-}
-
 // Interruption queues per instance
 const [permissionQueues, setPermissionQueues] = createSignal<Map<string, PermissionRequest[]>>(new Map())
 const [activePermissionId, setActivePermissionId] = createSignal<Map<string, string | null>>(new Map())
@@ -1257,7 +1212,6 @@ function updateInstance(id: string, updates: Partial<Instance>) {
     clearSessionCatalogState(id)
     clearCommands(id)
     clearInstanceMetadata(id)
-    clearStreamingProjections(id)
     volatileInstanceRefreshes.delete(id)
     for (const sessionId of sessions().get(id)?.keys() ?? []) invalidateSessionMessageLoad(id, sessionId)
   }
@@ -1321,7 +1275,6 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   clearSettledForms(id)
   clearPendingFormQueue(id)
   clearInstanceMetadata(id)
-  clearStreamingProjections(id)
   clearPermissionAutoAcceptForInstance(id)
   clearSyncedYoloSessionsForInstance(id)
   initialHydrations.delete(id)
@@ -1985,18 +1938,7 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
     : event.type === "form.created"
       ? event.data.form.sessionID
       : undefined
-  const isStreamingDelta = event.type.startsWith("session.") && event.type.endsWith(".delta")
-  if (event.type === "server.connected") clearStreamingProjections(instanceId)
-  if (sessionId && event.type.startsWith("session.") && !isStreamingDelta) {
-    cancelStreamingProjection(instanceId, sessionId)
-  }
   const projectMessages = (data: ReturnType<typeof applyOpenCodeDataEvent>, preserveOmitted = true, force = false) => {
-    if (isStreamingDelta && !force) {
-      if (sessionId) {
-        scheduleStreamingProjection(instanceId, sessionId, () => projectMessages(data, preserveOmitted, true))
-      }
-      return
-    }
     if (sessionId && (force || event.type.startsWith("session.")) && (
       activeSessionId().get(instanceId) === sessionId
       && isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId))

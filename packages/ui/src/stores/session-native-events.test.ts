@@ -10,7 +10,7 @@ import { clearInstanceDeletedSessionAuthority, sessions, setActiveSession, setSe
 const delay = (duration: number) => new Promise<void>((resolve) => setTimeout(resolve, duration))
 
 describe("native session event reducer", () => {
-  it("throttles all streamed deltas and keeps terminal state authoritative", async () => {
+  it("projects text and compaction deltas immediately and keeps terminal state authoritative", () => {
     const instanceId = "native-compaction-delta"
     const sessionId = "session"
     const client = { session: { active: async () => ({}) } } as any
@@ -58,10 +58,6 @@ describe("native session event reducer", () => {
       const assistantText = () => store.getMessage("assistant")?.partIds
         .map((partId) => store.getMessage("assistant")?.parts[partId].data)
         .find((part) => part?.type === "text")?.text
-      assert.equal(assistantText(), "")
-      assert.equal((store.getMessage("compact")?.parts.compact?.data as any)?.text, "")
-
-      await delay(300)
       assert.equal(assistantText(), "hello world")
       assert.equal((store.getMessage("compact")?.parts.compact?.data as any)?.text, "firstsecond")
 
@@ -69,6 +65,7 @@ describe("native session event reducer", () => {
         id: "delta-3", type: "session.compaction.delta", created: 8,
         data: { sessionID: sessionId, text: "stale" },
       } as any)
+      assert.equal((store.getMessage("compact")?.parts.compact?.data as any)?.text, "firstsecondstale")
       handleInstanceInvalidation(instanceId, {
         id: "ended", type: "session.compaction.ended", created: 9,
         data: { sessionID: sessionId, reason: "manual", text: "final", recent: "" },
@@ -76,8 +73,6 @@ describe("native session event reducer", () => {
 
       assert.equal((store.getMessage("compact")?.parts.compact?.data as any)?.text, "final")
       assert.equal(store.getMessage("compact")?.status, "complete")
-      await delay(300)
-      assert.equal((store.getMessage("compact")?.parts.compact?.data as any)?.text, "final")
     } finally {
       messageStoreBus.unregisterInstance(instanceId)
       setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })

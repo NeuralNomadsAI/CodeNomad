@@ -54,8 +54,8 @@
   --prompt-input-compact-control-fit-height: calc(
     var(--prompt-input-clear-control-top) + var(--prompt-input-inline-control-size) + var(--prompt-input-inline-control-bottom-gap)
   );
-  @apply grid items-stretch;
-  grid-template-columns: minmax(0, 1fr) 72px 64px;
+  @apply grid items-start;
+  grid-template-columns: minmax(0, 1fr) 72px auto;
   gap: 0;
   padding: 0;
 }
@@ -73,10 +73,12 @@
 }
 
 .prompt-input-primary-actions {
-  @apply flex flex-col items-center;
-  align-self: stretch;
-  justify-content: space-between;
-  width: 100%;
+  @apply flex flex-row items-center;
+  align-self: start;
+  justify-content: flex-end;
+  width: auto;
+  min-width: 9rem;
+  height: auto;
   gap: 0.5rem;
   padding: 0.5rem 0.25rem;
   border-inline-start: 1px solid var(--border-base);
@@ -519,6 +521,7 @@
   align-items: center;
   justify-content: flex-end;
   width: auto;
+  min-width: 0;
   height: auto;
   padding: 0.25rem 0.5rem 0.5rem 0;
   border-inline-start: none;

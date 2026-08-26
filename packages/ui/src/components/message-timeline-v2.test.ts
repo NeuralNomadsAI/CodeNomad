@@ -30,16 +30,20 @@ describe("V2 timeline projection", () => {
     assert.notEqual(getTimelineRecordSignature(provisional), getTimelineRecordSignature(authoritative))
   })
 
-  it("invalidates each projected stream update and terminal state change", () => {
+  it("groups streamed text uniformly but invalidates tool and terminal state changes", () => {
     const shortText = record([{ id: "text", type: "text", text: "a" }])
-    const updatedText = record([{ id: "text", type: "text", text: "a longer streamed value", revision: 20 }])
+    const sameBucketText = record([{ id: "text", type: "text", text: "a longer streamed value", revision: 20 }])
+    const nextBucketText = record([{ id: "text", type: "text", text: "a".repeat(129), revision: 40 }])
     const shortCompaction = record([{ id: "compaction", type: "compaction", text: "a" }])
-    const updatedCompaction = record([{ id: "compaction", type: "compaction", text: "a longer streamed value", revision: 20 }])
+    const sameBucketCompaction = record([{ id: "compaction", type: "compaction", text: "a longer streamed value", revision: 20 }])
+    const nextBucketCompaction = record([{ id: "compaction", type: "compaction", text: "a".repeat(129), revision: 40 }])
     const firstTool = record([{ id: "tool", type: "tool", revision: 1 }])
     const updatedTool = record([{ id: "tool", type: "tool", revision: 2 }])
 
-    assert.notEqual(getTimelineRecordSignature(shortText), getTimelineRecordSignature(updatedText))
-    assert.notEqual(getTimelineRecordSignature(shortCompaction), getTimelineRecordSignature(updatedCompaction))
+    assert.equal(getTimelineRecordSignature(shortText), getTimelineRecordSignature(sameBucketText))
+    assert.notEqual(getTimelineRecordSignature(sameBucketText), getTimelineRecordSignature(nextBucketText))
+    assert.equal(getTimelineRecordSignature(shortCompaction), getTimelineRecordSignature(sameBucketCompaction))
+    assert.notEqual(getTimelineRecordSignature(sameBucketCompaction), getTimelineRecordSignature(nextBucketCompaction))
     assert.notEqual(getTimelineRecordSignature(firstTool), getTimelineRecordSignature(updatedTool))
     const streaming = record([{ id: "text", type: "text", text: "partial" }])
     const complete = { ...record([{ id: "text", type: "text", text: "final response" }]), status: "complete" as const }
