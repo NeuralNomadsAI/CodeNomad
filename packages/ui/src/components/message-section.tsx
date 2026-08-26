@@ -27,6 +27,9 @@ import { getLogger } from "../lib/logger"
 import { beginMessageHistoryTraversal, invalidateMessageHistoryTraversal } from "../stores/session-api"
 import { getOpenCodeInstanceGeneration, getOpenCodeMutationRevision } from "../stores/opencode-data"
 import type { SessionInboxUser } from "@opencode-ai/client"
+import { getFormQueue } from "../stores/forms"
+import { resolveFormToolTarget } from "./form-request-tool-target"
+import { getTechnicalGroupKind, isTechnicalGroupingVisiblePart, isVisibleStepFinish, projectTranscriptTechnicalGroups, technicalPartKey } from "../lib/message-part-grouping"
 
 const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 const QUOTE_SELECTION_MAX_LENGTH = 2000
@@ -112,6 +115,78 @@ export default function MessageSection(props: MessageSectionProps) {
   })
 
   const sessionRevision = createMemo(() => store().getSessionRevision(props.sessionId))
+  const pendingFormToolTargets = createMemo(() => new Set(getFormQueue(props.instanceId)
+    .filter((form) => form.sessionID === props.sessionId)
+    .flatMap((form) => {
+      const target = resolveFormToolTarget(form, store())
+      return target ? [technicalPartKey(target.messageId, target.partId)] : []
+    })))
+  const technicalGroupProjection = createMemo(() => {
+    sessionRevision()
+    const resolvedStore = store()
+    const pendingForms = pendingFormToolTargets()
+    const items = visibleMessageIds().flatMap((messageId) => {
+      const record = resolvedStore.getMessage(messageId)
+      if (!record) return []
+      if (record.role === "user") return [null]
+      const completed = record.status === "complete" || record.status === "error"
+      const infoRevision = resolvedStore.state.messageInfoVersion[messageId] ?? 0
+      const messageInfo = resolvedStore.getMessageInfo(messageId)
+      return buildRecordDisplayData(props.instanceId, record).orderedParts.flatMap((part) => {
+        if (part.type === "step-finish") {
+          return isVisibleStepFinish(part, messageInfo, usageMetricsVisibility() !== "hidden") ? [null] : []
+        }
+        if (!isTechnicalGroupingVisiblePart(part)) return []
+        const partId = typeof part.id === "string" ? part.id : ""
+        const kind = getTechnicalGroupKind(part)
+        const pending = part.type === "tool" && Boolean(
+          part.pendingPermission?.active
+          || (partId && resolvedStore.getPermissionState(messageId, partId)?.active)
+          || (partId && pendingForms.has(technicalPartKey(messageId, partId)))
+        )
+        if (part.type === "tool" && resolveToolVisibility(preferences(), part.tool) === "hidden" && !pending) return []
+        if (!kind || !partId) return [null]
+        if (kind === "exploration" && pending) return [null]
+        return [{
+          messageId,
+          partId,
+          part,
+          completed,
+          revision: `${record.revision}:${record.parts[partId]?.revision ?? 0}:${infoRevision}`,
+        }]
+      })
+    })
+    return projectTranscriptTechnicalGroups(items)
+  })
+  const technicalGroupForPart = (messageId: string, partId: string) => technicalGroupProjection().byPartKey.get(technicalPartKey(messageId, partId))
+  const technicalGroupingSignature = (messageId: string) => {
+    const resolvedStore = store()
+    const record = resolvedStore.getMessage(messageId)
+    if (!record) return ""
+    const groups = Array.from(new Set(record.partIds.flatMap((partId) => {
+      const group = technicalGroupForPart(messageId, partId)
+      return group ? [group.signature] : []
+    }))).join(";")
+    const pendingForms = pendingFormToolTargets()
+    const tools = record.partIds.flatMap((partId) => {
+      const part = record.parts[partId]?.data
+      if (part?.type !== "tool") return []
+      const pending = Boolean(
+        part.pendingPermission?.active
+        || resolvedStore.getPermissionState(messageId, partId)?.active
+        || pendingForms.has(technicalPartKey(messageId, partId))
+      )
+      return [`${partId}:${resolveToolVisibility(preferences(), part.tool)}:${pending ? 1 : 0}`]
+    }).join(";")
+    return `${groups}|${tools}`
+  }
+  const [technicalGroupExpansion, setTechnicalGroupExpansion] = createSignal(new Map<string, boolean>())
+  const isTechnicalGroupExpanded = (groupId: string, defaultExpanded: boolean) => technicalGroupExpansion().get(groupId) ?? defaultExpanded
+  const setTechnicalGroupExpanded = (groupId: string, expanded: boolean) => setTechnicalGroupExpansion((current) => {
+    const next = new Map(current)
+    next.set(groupId, expanded)
+    return next
+  })
 
   const preferenceSignature = createMemo(() => {
     const pref = preferences()
@@ -1202,6 +1277,11 @@ export default function MessageSection(props: MessageSectionProps) {
               searchQuery={authoritativeSearchQuery}
               searchResultMessageIds={searchResultMessageIds}
               activeSearchMatch={activeSearchMatch}
+              pendingFormToolTargets={pendingFormToolTargets}
+              technicalGroupForPart={technicalGroupForPart}
+              technicalGroupingSignature={() => technicalGroupingSignature(messageId)}
+              isTechnicalGroupExpanded={isTechnicalGroupExpanded}
+              setTechnicalGroupExpanded={setTechnicalGroupExpanded}
             />
           )}
           renderOverlay={() => (

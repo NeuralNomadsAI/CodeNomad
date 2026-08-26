@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { groupTechnicalParts, segmentExplorationItems } from "./message-part-grouping.ts"
+import { groupTechnicalParts, isTechnicalGroupingVisiblePart, isVisibleStepFinish, projectTranscriptTechnicalGroups, segmentExplorationItems, technicalPartKey } from "./message-part-grouping.ts"
 import type { ClientPart } from "../types/message.ts"
 
 const part = (id: string, type: ClientPart["type"], tool?: string) => ({ id, type, ...(tool ? { tool } : {}) }) as ClientPart
@@ -39,5 +39,57 @@ describe("message technical part grouping", () => {
       { kind: "pending", item: "grep" },
       { kind: "group", items: ["glob"] },
     ])
+  })
+
+  it("groups technical parts across assistant messages until a visible boundary", () => {
+    const item = (messageId: string, value: ClientPart, completed = true) => ({
+      messageId,
+      partId: value.id!,
+      part: value,
+      completed,
+      revision: "1",
+    })
+    const reasoning1 = part("r1", "reasoning")
+    const reasoning2 = part("r2", "reasoning")
+    const read = part("read", "tool", "read")
+    const grep = part("grep", "tool", "grep")
+    const glob = part("glob", "tool", "glob")
+    const projection = projectTranscriptTechnicalGroups([
+      item("assistant-1", reasoning1),
+      item("assistant-2", reasoning2),
+      item("assistant-2", read),
+      item("assistant-3", grep),
+      null,
+      item("assistant-4", glob, false),
+    ])
+
+    assert.deepEqual(projection.groups.map((group) => [
+      group.kind,
+      group.parts.map((entry) => technicalPartKey(entry.messageId, entry.partId)),
+      group.completed,
+    ]), [
+      ["reasoning", ["assistant-1:r1", "assistant-2:r2"], true],
+      ["exploration", ["assistant-2:read", "assistant-3:grep"], true],
+      ["exploration", ["assistant-4:glob"], false],
+    ])
+    assert.equal(projection.byPartKey.get("assistant-3:grep"), projection.groups[1])
+    assert.deepEqual(
+      groupTechnicalParts([read, grep], (value) => projection.byPartKey.get(technicalPartKey(
+        value === read ? "assistant-2" : "assistant-3",
+        value.id!,
+      ))?.id).map((group) => group.kind),
+      ["exploration"],
+    )
+    assert.equal(groupTechnicalParts([read, glob], (value) => value.id).length, 2)
+  })
+
+  it("ignores invisible step lifecycle parts", () => {
+    const start = part("start", "step-start")
+    const finish = part("finish", "step-finish")
+    assert.equal(isTechnicalGroupingVisiblePart(start), false)
+    assert.equal(isTechnicalGroupingVisiblePart(finish), false)
+    assert.equal(isVisibleStepFinish(finish, undefined, true), false)
+    assert.equal(isVisibleStepFinish({ ...finish, tokens: { input: 1 } } as ClientPart, undefined, true), true)
+    assert.equal(isVisibleStepFinish({ ...finish, tokens: { input: 1 } } as ClientPart, undefined, false), false)
   })
 })

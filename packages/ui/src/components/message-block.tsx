@@ -28,7 +28,7 @@ import { showAlertDialog } from "../stores/alerts"
 import { resolveFormToolTarget } from "./form-request-tool-target"
 import { Markdown } from "./markdown"
 import { useTheme } from "../lib/theme"
-import { groupTechnicalParts, segmentExplorationItems } from "../lib/message-part-grouping"
+import { groupTechnicalParts, isTechnicalGroupingVisiblePart, isVisibleStepFinish, segmentExplorationItems, technicalPartKey, type TranscriptTechnicalGroup } from "../lib/message-part-grouping"
 
 const USER_BORDER_COLOR = "var(--message-user-border)"
 const ASSISTANT_BORDER_COLOR = "var(--message-assistant-border)"
@@ -60,38 +60,6 @@ function extractTaskSessionId(state: ToolState | undefined): string {
   const metadata = (state as unknown as { metadata?: Record<string, unknown> }).metadata ?? {}
   const directId = metadata?.sessionId ?? metadata?.sessionID
   return typeof directId === "string" ? directId : ""
-}
-
-function reasoningHasRenderableContent(part: ClientPart): boolean {
-  if (!part || part.type !== "reasoning") {
-    return false
-  }
-  const checkSegment = (segment: unknown): boolean => {
-    if (typeof segment === "string") {
-      return segment.trim().length > 0
-    }
-    if (segment && typeof segment === "object") {
-      const candidate = segment as { text?: unknown; value?: unknown; content?: unknown[] }
-      if (typeof candidate.text === "string" && candidate.text.trim().length > 0) {
-        return true
-      }
-      if (typeof candidate.value === "string" && candidate.value.trim().length > 0) {
-        return true
-      }
-      if (Array.isArray(candidate.content)) {
-        return candidate.content.some((entry) => checkSegment(entry))
-      }
-    }
-    return false
-  }
-
-  if (checkSegment((part as any).text)) {
-    return true
-  }
-  if (Array.isArray((part as any).content)) {
-    return (part as any).content.some((entry: unknown) => checkSegment(entry))
-  }
-  return false
 }
 
 interface TaskSessionLocation {
@@ -532,6 +500,7 @@ type ReasoningDisplayItem = {
   completed: boolean
   showAgentMeta?: boolean
   defaultExpanded: boolean
+  technicalGroup?: TranscriptTechnicalGroup
 }
 
 type ExplorationDisplayItem = {
@@ -539,6 +508,7 @@ type ExplorationDisplayItem = {
   key: string
   tools: ToolDisplayItem[]
   completed: boolean
+  technicalGroup?: TranscriptTechnicalGroup
 }
 
 type CompactionDisplayItem = {
@@ -578,6 +548,11 @@ interface MessageBlockProps {
   searchQuery?: Accessor<string>
   searchResultMessageIds?: Accessor<Set<string>>
   activeSearchMatch?: Accessor<SessionSearchMatch | null>
+  pendingFormToolTargets?: Accessor<ReadonlySet<string>>
+  technicalGroupForPart?: (messageId: string, partId: string) => TranscriptTechnicalGroup | undefined
+  technicalGroupingSignature?: Accessor<string>
+  isTechnicalGroupExpanded?: (groupId: string, defaultExpanded: boolean) => boolean
+  setTechnicalGroupExpanded?: (groupId: string, expanded: boolean) => void
 }
 
 export default function MessageBlock(props: MessageBlockProps) {
@@ -589,6 +564,13 @@ export default function MessageBlock(props: MessageBlockProps) {
   const isSearchResult = () => Boolean(props.searchResultMessageIds?.().has(props.messageId))
   const activeSearchMatch = () => props.activeSearchMatch?.() ?? null
   const isActiveSearchResult = () => activeSearchMatch()?.messageId === props.messageId
+  const localPendingFormToolTargets = createMemo(() => new Set(getFormQueue(props.instanceId)
+    .filter((form) => form.sessionID === props.sessionId)
+    .flatMap((form) => {
+      const target = resolveFormToolTarget(form, props.store())
+      return target ? [technicalPartKey(target.messageId, target.partId)] : []
+    })))
+  const pendingFormToolTargets = () => props.pendingFormToolTargets?.() ?? localPendingFormToolTargets()
   let lastInlineScrolledSearchMatchId: string | null = null
 
   createEffect(() => {
@@ -622,6 +604,7 @@ export default function MessageBlock(props: MessageBlockProps) {
       props.showThinking() ? 1 : 0,
       props.thinkingDefaultExpanded() ? 1 : 0,
       props.usageMetricsVisibility(),
+      props.technicalGroupingSignature?.() ?? "",
     ].join("|")
 
     const cachedBlock = sessionCache.messageBlocks.get(current.id)
@@ -685,12 +668,21 @@ export default function MessageBlock(props: MessageBlockProps) {
     }
 
     const displayParts = orderedParts.filter((part) => {
-      if (!isSupportedPartType(part)) return false
-      if (part.type === "reasoning") return reasoningHasRenderableContent(part)
-      if (isContentPartType(part.type)) return isVisibleContentPart(part)
-      return true
+      if (part.type === "step-finish") {
+        return isVisibleStepFinish(part, info, props.usageMetricsVisibility() !== "hidden")
+      }
+      if (!isTechnicalGroupingVisiblePart(part)) return false
+      if (part.type !== "tool" || !props.technicalGroupForPart || props.toolVisibility(part.tool) !== "hidden") return true
+      return Boolean(
+        part.pendingPermission?.active
+        || (part.id && props.store().getPermissionState(current.id, part.id)?.active)
+        || (part.id && pendingFormToolTargets().has(technicalPartKey(current.id, part.id)))
+      )
     })
-    const groupedParts = groupTechnicalParts(displayParts)
+    const groupedParts = groupTechnicalParts(displayParts, (part) => {
+      const partId = typeof part.id === "string" ? part.id : ""
+      return partId ? props.technicalGroupForPart?.(current.id, partId)?.id : undefined
+    })
 
     groupedParts.forEach((group, groupIndex) => {
       if (group.kind === "exploration") {
@@ -700,11 +692,13 @@ export default function MessageBlock(props: MessageBlockProps) {
           return item ? [item] : []
         })
         if (tools.length > 0) {
+          const technicalGroup = group.groupId ? props.technicalGroupForPart?.(current.id, tools[0].partId) : undefined
           items.push({
             type: "exploration",
             key: `${tools[0].key}:exploration`,
             tools,
-            completed: groupIndex < groupedParts.length - 1 || current.status === "complete" || current.status === "error",
+            completed: technicalGroup?.completed ?? (groupIndex < groupedParts.length - 1 || current.status === "complete" || current.status === "error"),
+            technicalGroup,
           })
         }
         lastAccentColor = NO_STEP_BORDER
@@ -725,15 +719,17 @@ export default function MessageBlock(props: MessageBlockProps) {
             }] : []
           })
           if (reasoningParts.length > 0) {
+            const technicalGroup = group.groupId ? props.technicalGroupForPart?.(current.id, reasoningParts[0].partId) : undefined
             const showAgentMeta = current.role === "assistant" && !agentMetaAttached
             if (showAgentMeta) agentMetaAttached = true
             items.push({
               type: "reasoning",
               key: `${current.id}:${reasoningParts[0].partId}:reasoning`,
               parts: reasoningParts,
-              completed: groupIndex < groupedParts.length - 1 || current.status === "complete" || current.status === "error",
+              completed: technicalGroup?.completed ?? (groupIndex < groupedParts.length - 1 || current.status === "complete" || current.status === "error"),
               showAgentMeta,
               defaultExpanded: props.thinkingDefaultExpanded(),
+              technicalGroup,
             })
             lastAccentColor = ASSISTANT_BORDER_COLOR
           }
@@ -823,18 +819,30 @@ export default function MessageBlock(props: MessageBlockProps) {
     return pendingFormToolTargets().has(`${item.messageId}:${item.partId}`)
   }
 
+  const technicalGroupStartsHere = (group: TranscriptTechnicalGroup | undefined) => !group || group.parts[0]?.messageId === props.messageId
+  const technicalGroupTools = (group: TranscriptTechnicalGroup | undefined) => group?.parts.flatMap((item) => item.part.type === "tool"
+    ? [{ type: "tool" as const, key: technicalPartKey(item.messageId, item.partId), messageId: item.messageId, partId: item.partId }]
+    : []) ?? []
+  const technicalGroupReasoning = (group: TranscriptTechnicalGroup | undefined) => group?.parts.flatMap((item) => {
+    if (item.part.type !== "reasoning") return []
+    const sourceRecord = props.store().getMessage(item.messageId)
+    const sourceInfo = props.store().getMessageInfo(item.messageId)
+    const orderedParts = sourceRecord ? buildRecordDisplayData(props.instanceId, sourceRecord).orderedParts : []
+    return [{
+      part: item.part,
+      messageInfo: sourceInfo,
+      durationMs: inferReasoningDurationMs(orderedParts, item.part, sourceInfo, sourceRecord?.status),
+      messageId: item.messageId,
+      partId: item.partId,
+    }]
+  }) ?? []
+
   const isDisplayItemVisible = (item: MessageBlockItem) => {
     if (item.type === "tool") return isToolDisplayItemVisible(item)
-    if (item.type === "exploration") return item.tools.some(isToolDisplayItemVisible)
+    if (item.type === "exploration") return (item.technicalGroup ? technicalGroupTools(item.technicalGroup) : item.tools).some(isToolDisplayItemVisible)
     return true
   }
 
-  const pendingFormToolTargets = createMemo(() => new Set(getFormQueue(props.instanceId)
-    .filter((form) => form.sessionID === props.sessionId)
-    .flatMap((form) => {
-      const target = resolveFormToolTarget(form, props.store())
-      return target ? [`${target.messageId}:${target.partId}`] : []
-    })))
   const visibleItemKeys = createMemo(() => new Set((block()?.items ?? [])
     .filter(isDisplayItemVisible)
     .map((item) => item.key)))
@@ -892,12 +900,22 @@ export default function MessageBlock(props: MessageBlockProps) {
                   <Show when={visibleItemKeys().has((item() as ExplorationDisplayItem).key)}>
                     <ExplorationGroup
                       tools={(item() as ExplorationDisplayItem).tools.filter(isToolDisplayItemVisible)}
+                      summaryTools={(item() as ExplorationDisplayItem).technicalGroup
+                        ? technicalGroupTools((item() as ExplorationDisplayItem).technicalGroup).filter(isToolDisplayItemVisible)
+                        : undefined}
                       completed={(item() as ExplorationDisplayItem).completed}
                       instanceId={props.instanceId}
                       sessionId={props.sessionId}
                       store={props.store}
                       pendingFormToolTargets={pendingFormToolTargets()}
                       activePartId={activeSearchMatch()?.partId}
+                      showHeader={technicalGroupStartsHere((item() as ExplorationDisplayItem).technicalGroup)}
+                      expanded={(item() as ExplorationDisplayItem).technicalGroup
+                        ? () => props.isTechnicalGroupExpanded?.((item() as ExplorationDisplayItem).technicalGroup!.id, false) ?? false
+                        : undefined}
+                      onExpandedChange={(item() as ExplorationDisplayItem).technicalGroup
+                        ? (expanded) => props.setTechnicalGroupExpanded?.((item() as ExplorationDisplayItem).technicalGroup!.id, expanded)
+                        : undefined}
                       onContentRendered={props.onContentRendered}
                     />
                   </Show>
@@ -941,6 +959,9 @@ export default function MessageBlock(props: MessageBlockProps) {
                 <Match when={item().type === "reasoning"}>
                   <ReasoningGroupCard
                     parts={(item() as ReasoningDisplayItem).parts}
+                    summaryParts={(item() as ReasoningDisplayItem).technicalGroup
+                      ? technicalGroupReasoning((item() as ReasoningDisplayItem).technicalGroup)
+                      : undefined}
                     completed={(item() as ReasoningDisplayItem).completed}
                     instanceId={props.instanceId}
                     sessionId={props.sessionId}
@@ -949,6 +970,16 @@ export default function MessageBlock(props: MessageBlockProps) {
                     defaultExpanded={(item() as ReasoningDisplayItem).defaultExpanded}
                     onContentRendered={props.onContentRendered}
                     activePartId={activeSearchMatch()?.partId}
+                    showHeader={technicalGroupStartsHere((item() as ReasoningDisplayItem).technicalGroup)}
+                    expanded={(item() as ReasoningDisplayItem).technicalGroup
+                      ? () => props.isTechnicalGroupExpanded?.(
+                          (item() as ReasoningDisplayItem).technicalGroup!.id,
+                          (item() as ReasoningDisplayItem).defaultExpanded,
+                        ) ?? false
+                      : undefined}
+                    onExpandedChange={(item() as ReasoningDisplayItem).technicalGroup
+                      ? (expanded) => props.setTechnicalGroupExpanded?.((item() as ReasoningDisplayItem).technicalGroup!.id, expanded)
+                      : undefined}
                   />
                 </Match>
               </Switch>
@@ -961,18 +992,22 @@ export default function MessageBlock(props: MessageBlockProps) {
 
 interface ExplorationGroupProps {
   tools: ToolDisplayItem[]
+  summaryTools?: ToolDisplayItem[]
   completed: boolean
   instanceId: string
   sessionId: string
   store: () => InstanceMessageStore
-  pendingFormToolTargets: Set<string>
+  pendingFormToolTargets: ReadonlySet<string>
   activePartId?: string
+  showHeader?: boolean
+  expanded?: Accessor<boolean>
+  onExpandedChange?: (expanded: boolean) => void
   onContentRendered?: () => void
 }
 
 function ExplorationGroup(props: ExplorationGroupProps) {
   const { t } = useI18n()
-  const [expanded, setExpanded] = createSignal(new Set<string>())
+  const [localExpanded, setLocalExpanded] = createSignal(new Set<string>())
 
   const isPending = (item: ToolDisplayItem) => {
     const part = props.store().getMessage(item.messageId)?.parts[item.partId]?.data
@@ -1001,19 +1036,25 @@ function ExplorationGroup(props: ExplorationGroupProps) {
     return t(completed(items) ? "messageBlock.exploration.completed" : "messageBlock.exploration.active", { tools: names.join(", ") })
   }
 
-  const toggle = (key: string) => setExpanded((current) => {
-    const next = new Set(current)
-    if (next.has(key)) next.delete(key)
-    else next.add(key)
-    return next
-  })
+  const expanded = (key: string) => props.expanded?.() ?? localExpanded().has(key)
+  const setExpanded = (key: string, value: boolean) => {
+    if (props.onExpandedChange) {
+      props.onExpandedChange(value)
+      return
+    }
+    setLocalExpanded((current) => {
+      const next = new Set(current)
+      if (value) next.add(key)
+      else next.delete(key)
+      return next
+    })
+  }
+  const toggle = (key: string) => setExpanded(key, !expanded(key))
 
   createEffect(() => {
     const segment = segments().find((item) => item.kind === "group" && item.items.some((tool) => tool.partId === props.activePartId))
     const key = segment?.kind === "group" ? segment.items[0]?.key : undefined
-    if (key && !expanded().has(key)) {
-      setExpanded((current) => new Set(current).add(key))
-    }
+    if (key && !expanded(key)) setExpanded(key, true)
   })
 
   const renderTool = (item: ToolDisplayItem) => (
@@ -1031,22 +1072,36 @@ function ExplorationGroup(props: ExplorationGroupProps) {
 
   return (
     <div class="message-technical-group message-exploration-group">
+      <Show when={props.showHeader !== false && props.summaryTools?.length}>
+        <button
+          type="button"
+          class="message-technical-group-toggle"
+          aria-expanded={expanded(props.summaryTools![0].key)}
+          onClick={() => toggle(props.summaryTools![0].key)}
+        >
+          <span class="message-technical-group-disclosure" aria-hidden="true">{expanded(props.summaryTools![0].key) ? "▼" : "▶"}</span>
+          <Show when={!completed(props.summaryTools!)}><Loader2 class="message-technical-group-spinner w-3.5 h-3.5 animate-spin" aria-hidden="true" /></Show>
+          <span class="message-technical-group-title">{label(props.summaryTools!)}</span>
+        </button>
+      </Show>
       <For each={segments()}>{(segment) => segment.kind === "pending"
         ? renderTool(segment.item)
         : (() => {
           const key = segment.items[0].key
           return <>
-            <button
-              type="button"
-              class="message-technical-group-toggle"
-              aria-expanded={expanded().has(key)}
-              onClick={() => toggle(key)}
-            >
-              <span class="message-technical-group-disclosure" aria-hidden="true">{expanded().has(key) ? "▼" : "▶"}</span>
-              <Show when={!completed(segment.items)}><Loader2 class="message-technical-group-spinner w-3.5 h-3.5 animate-spin" aria-hidden="true" /></Show>
-              <span class="message-technical-group-title">{label(segment.items)}</span>
-            </button>
-            <Show when={expanded().has(key)}>
+            <Show when={props.showHeader !== false && !props.summaryTools}>
+              <button
+                type="button"
+                class="message-technical-group-toggle"
+                aria-expanded={expanded(key)}
+                onClick={() => toggle(key)}
+              >
+                <span class="message-technical-group-disclosure" aria-hidden="true">{expanded(key) ? "▼" : "▶"}</span>
+                <Show when={!completed(props.summaryTools ?? segment.items)}><Loader2 class="message-technical-group-spinner w-3.5 h-3.5 animate-spin" aria-hidden="true" /></Show>
+                <span class="message-technical-group-title">{label(props.summaryTools ?? segment.items)}</span>
+              </button>
+            </Show>
+            <Show when={expanded(key)}>
               <div class="message-technical-group-parts">
                 <For each={segment.items}>{renderTool}</For>
               </div>
@@ -1326,6 +1381,7 @@ function reasoningDurationTitle(t: I18nContextValue["t"], durationMs?: number) {
 
 function ReasoningGroupCard(props: {
   parts: ReasoningDisplayPart[]
+  summaryParts?: ReasoningDisplayPart[]
   completed: boolean
   instanceId: string
   sessionId: string
@@ -1334,44 +1390,54 @@ function ReasoningGroupCard(props: {
   defaultExpanded?: boolean
   onContentRendered?: () => void
   activePartId?: string
+  showHeader?: boolean
+  expanded?: Accessor<boolean>
+  onExpandedChange?: (expanded: boolean) => void
 }) {
   const { t, locale } = useI18n()
-  const [expanded, setExpanded] = createSignal(Boolean(props.defaultExpanded))
-  const totalDuration = createMemo(() => props.parts.reduce((total, item) => total + (item.durationMs ?? 0), 0))
+  const [localExpanded, setLocalExpanded] = createSignal(Boolean(props.defaultExpanded))
+  const expanded = () => props.expanded?.() ?? localExpanded()
+  const setExpanded = (value: boolean) => props.onExpandedChange ? props.onExpandedChange(value) : setLocalExpanded(value)
+  const summaryParts = () => props.summaryParts ?? props.parts
+  const totalDuration = createMemo(() => summaryParts().reduce((total, item) => total + (item.durationMs ?? 0), 0))
   const latestTitle = createMemo(() => {
-    const latest = props.parts.at(-1)
+    const latest = summaryParts().at(-1)
     return latest ? parseReasoningSummary(getReasoningText(latest.part)).title ?? "" : ""
   })
 
-  createEffect(() => setExpanded(Boolean(props.defaultExpanded)))
+  createEffect(() => {
+    if (!props.expanded) setExpanded(Boolean(props.defaultExpanded))
+  })
   createEffect(() => {
     if (props.activePartId && props.parts.some((item) => item.partId === props.activePartId)) setExpanded(true)
   })
 
   return (
     <div class="message-technical-group message-reasoning-group">
-      <button
-        type="button"
-        class="message-technical-group-toggle"
-        aria-expanded={expanded()}
-        aria-label={expanded() ? t("messageBlock.reasoning.collapseAriaLabel") : t("messageBlock.reasoning.expandAriaLabel")}
-        onClick={() => setExpanded((value) => !value)}
-      >
-        <span class="message-technical-group-disclosure" aria-hidden="true">{expanded() ? "▼" : "▶"}</span>
-        <Show when={!props.completed}><Loader2 class="message-technical-group-spinner w-3.5 h-3.5 animate-spin" aria-hidden="true" /></Show>
-        <span class="message-reasoning-type">
-          {t(props.completed ? "messageBlock.reasoning.thoughtLabel" : "messageBlock.reasoning.thinkingLabel")}
-        </span>
-        <span class="message-technical-group-title">{latestTitle() || t("messageBlock.reasoning.thoughtsFallback")}</span>
-        <Show when={props.parts.length > 1}>
-          <span class="message-technical-group-meta">
-            · {t(`messageBlock.reasoning.steps.${props.parts.length === 1 ? "one" : "other"}`, { count: String(props.parts.length) })}
+      <Show when={props.showHeader !== false}>
+        <button
+          type="button"
+          class="message-technical-group-toggle"
+          aria-expanded={expanded()}
+          aria-label={expanded() ? t("messageBlock.reasoning.collapseAriaLabel") : t("messageBlock.reasoning.expandAriaLabel")}
+          onClick={() => setExpanded(!expanded())}
+        >
+          <span class="message-technical-group-disclosure" aria-hidden="true">{expanded() ? "▼" : "▶"}</span>
+          <Show when={!props.completed}><Loader2 class="message-technical-group-spinner w-3.5 h-3.5 animate-spin" aria-hidden="true" /></Show>
+          <span class="message-reasoning-type">
+            {t(props.completed ? "messageBlock.reasoning.thoughtLabel" : "messageBlock.reasoning.thinkingLabel")}
           </span>
-        </Show>
-        <Show when={totalDuration() > 0}>
-          <span class="message-technical-group-meta">· {formatElapsedClock(totalDuration(), locale())}</span>
-        </Show>
-      </button>
+          <span class="message-technical-group-title">{latestTitle() || t("messageBlock.reasoning.thoughtsFallback")}</span>
+          <Show when={summaryParts().length > 1}>
+            <span class="message-technical-group-meta">
+              · {t(`messageBlock.reasoning.steps.${summaryParts().length === 1 ? "one" : "other"}`, { count: String(summaryParts().length) })}
+            </span>
+          </Show>
+          <Show when={totalDuration() > 0}>
+            <span class="message-technical-group-meta">· {formatElapsedClock(totalDuration(), locale())}</span>
+          </Show>
+        </button>
+      </Show>
       <Show when={expanded()}>
         <div class="message-technical-group-parts message-reasoning-group-parts">
           <For each={props.parts}>
