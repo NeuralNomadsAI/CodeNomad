@@ -1,5 +1,5 @@
 import { For, Index, Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, untrack, type Accessor } from "solid-js"
-import { Copy, ExternalLink, FoldVertical, Loader2, Volume2, XCircle } from "lucide-solid"
+import { Copy, ExternalLink, FoldVertical, Loader2, Trash2, Volume2, XCircle } from "lucide-solid"
 import MessageItem from "./message-item"
 import type { SessionInboxUser } from "@opencode-ai/client"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
@@ -11,10 +11,10 @@ import { messageStoreBus } from "../stores/message-v2/bus"
 import { formatTokenTotal } from "../lib/formatters"
 import { ensureSessionAncestorsExpanded, sessions, setActiveSessionFromList } from "../stores/sessions"
 import { selectInstanceTab } from "../stores/app-tabs"
-import { useI18n } from "../lib/i18n"
+import { useI18n, type I18nContextValue } from "../lib/i18n"
 import { useSpeech } from "../lib/hooks/use-speech"
 import { createFollowScroll } from "../lib/follow-scroll"
-import { inferReasoningDurationMs } from "../lib/message-timing"
+import { formatElapsedClock, inferReasoningDurationMs } from "../lib/message-timing"
 import type { SessionSearchMatch } from "../lib/session-search"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
 import { copyToClipboard } from "../lib/clipboard"
@@ -23,9 +23,12 @@ import type { VisibilityPreference } from "../stores/preferences"
 import type { ToolState, ToolStateCompleted, ToolStateError, ToolStateRunning } from "../types/tool-state"
 import { parseReasoningSummary } from "../lib/reasoning-summary"
 import { getFormQueue } from "../stores/forms"
+import { deleteMessagePart } from "../stores/session-actions"
+import { showAlertDialog } from "../stores/alerts"
 import { resolveFormToolTarget } from "./form-request-tool-target"
 import { Markdown } from "./markdown"
 import { useTheme } from "../lib/theme"
+import { groupTechnicalParts } from "../lib/message-part-grouping"
 
 const USER_BORDER_COLOR = "var(--message-user-border)"
 const ASSISTANT_BORDER_COLOR = "var(--message-assistant-border)"
@@ -330,6 +333,16 @@ function MessageContentItem(props: MessageContentItemProps) {
 
   const visibleParts = createMemo(() => parts().filter((part) => isVisibleContentPart(part)))
 
+  const isFinalAssistantTextBlock = createMemo(() => {
+    const current = record()
+    if (current?.role !== "assistant") return false
+    const lastTextPartId = [...current.partIds].reverse().find((partId) => {
+      const part = current.parts[partId]?.data
+      return part?.type === "text" && isVisibleContentPart(part)
+    })
+    return Boolean(lastTextPartId && visibleParts().some((part) => part.id === lastTextPartId))
+  })
+
   const showAgentMeta = createMemo(() => {
     const current = record()
     if (!current) return false
@@ -369,6 +382,7 @@ function MessageContentItem(props: MessageContentItemProps) {
         instanceId={props.instanceId}
         sessionId={props.sessionId}
         contentStartPartId={props.startPartId}
+        showTechnicalCleanup={isFinalAssistantTextBlock()}
         showAgentMeta={showAgentMeta()}
         onRevert={props.onRevert}
         onFork={props.onFork}
@@ -393,6 +407,8 @@ interface ToolCallItemProps {
 
 function ToolCallItem(props: ToolCallItemProps) {
   const { t } = useI18n()
+  const [deleting, setDeleting] = createSignal(false)
+  const [deleteHovered, setDeleteHovered] = createSignal(false)
 
   const record = createMemo(() => props.store().getMessage(props.messageId))
   const messageInfo = createMemo(() => props.store().getMessageInfo(props.messageId))
@@ -429,6 +445,22 @@ function ToolCallItem(props: ToolCallItemProps) {
     navigateToTaskSession(location)
   }
 
+  const handleDelete = async () => {
+    if (deleting() || record()?.status !== "complete") return
+    setDeleting(true)
+    try {
+      await deleteMessagePart(props.instanceId, props.sessionId, props.messageId, props.partId)
+    } catch (error) {
+      showAlertDialog(t("messagePart.actions.deleteFailedMessage"), {
+        title: t("messagePart.actions.deleteFailedTitle"),
+        detail: error instanceof Error ? error.message : String(error),
+        variant: "error",
+      })
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   const actionMenuItems = (): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = []
 
@@ -442,12 +474,23 @@ function ToolCallItem(props: ToolCallItemProps) {
       })
     }
 
+    items.push({
+      key: "delete-part",
+      label: deleting() ? t("messagePart.actions.deleting") : t("messagePart.actions.delete"),
+      icon: <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />,
+      destructive: true,
+      disabled: deleting() || record()?.status !== "complete",
+      onMouseEnter: () => setDeleteHovered(true),
+      onMouseLeave: () => setDeleteHovered(false),
+      onSelect: handleDelete,
+    })
+
     return items
   }
 
   return (
     <Show when={Boolean(toolPart())}>
-      <div>
+      <div class="delete-hover-scope" data-delete-part-hover={deleteHovered() ? "true" : undefined}>
         <Suspense fallback={<ToolCallFallback />}>
           <LazyToolCall
             toolCall={toolPart()!}
@@ -474,16 +517,28 @@ interface StepDisplayItem {
   accentColor?: string
 }
 
-type ReasoningDisplayItem = {
-  type: "reasoning"
-  key: string
+interface ReasoningDisplayPart {
   part: ClientPart
   messageInfo?: MessageInfo
   durationMs?: number
-  showAgentMeta?: boolean
-  defaultExpanded: boolean
   messageId: string
   partId: string
+}
+
+type ReasoningDisplayItem = {
+  type: "reasoning"
+  key: string
+  parts: ReasoningDisplayPart[]
+  completed: boolean
+  showAgentMeta?: boolean
+  defaultExpanded: boolean
+}
+
+type ExplorationDisplayItem = {
+  type: "exploration"
+  key: string
+  tools: ToolDisplayItem[]
+  completed: boolean
 }
 
 type CompactionDisplayItem = {
@@ -496,7 +551,7 @@ type CompactionDisplayItem = {
   partId: string
 }
 
-type MessageBlockItem = ContentDisplayItem | ToolDisplayItem | StepDisplayItem | ReasoningDisplayItem | CompactionDisplayItem
+type MessageBlockItem = ContentDisplayItem | ToolDisplayItem | ExplorationDisplayItem | StepDisplayItem | ReasoningDisplayItem | CompactionDisplayItem
 
 interface MessageDisplayBlock {
   record: MessageRecord
@@ -616,35 +671,82 @@ export default function MessageBlock(props: MessageBlockProps) {
       pendingParts = []
     }
 
-    orderedParts.forEach((part, partIndex) => {
-      if (!isSupportedPartType(part)) {
+    const toolItem = (part: ToolCallPart) => {
+      const partId = part.id
+      if (!partId) return
+      const key = `${current.id}:${partId}`
+      let item = sessionCache.toolItems.get(key)
+      if (!item) {
+        item = { type: "tool", key, messageId: current.id, partId }
+        sessionCache.toolItems.set(key, item)
+      }
+      blockToolKeys.push(key)
+      return item
+    }
+
+    const displayParts = orderedParts.filter((part) => {
+      if (!isSupportedPartType(part)) return false
+      if (part.type === "reasoning") return reasoningHasRenderableContent(part)
+      if (isContentPartType(part.type)) return isVisibleContentPart(part)
+      return true
+    })
+    const groupedParts = groupTechnicalParts(displayParts)
+
+    groupedParts.forEach((group, groupIndex) => {
+      if (group.kind === "exploration") {
+        flushContent()
+        const tools = group.parts.flatMap((part) => {
+          const item = toolItem(part as ToolCallPart)
+          return item ? [item] : []
+        })
+        if (tools.length > 0) {
+          items.push({
+            type: "exploration",
+            key: `${tools[0].key}:exploration`,
+            tools,
+            completed: groupIndex < groupedParts.length - 1 || current.status === "complete" || current.status === "error",
+          })
+        }
+        lastAccentColor = NO_STEP_BORDER
         return
       }
+
+      if (group.kind === "reasoning") {
+        flushContent()
+        if (props.showThinking()) {
+          const reasoningParts = group.parts.flatMap((part) => {
+            const partId = part.id ?? ""
+            return partId ? [{
+              part,
+              messageInfo: info,
+              durationMs: inferReasoningDurationMs(orderedParts, part, info, current.status),
+              messageId: current.id,
+              partId,
+            }] : []
+          })
+          if (reasoningParts.length > 0) {
+            const showAgentMeta = current.role === "assistant" && !agentMetaAttached
+            if (showAgentMeta) agentMetaAttached = true
+            items.push({
+              type: "reasoning",
+              key: `${current.id}:${reasoningParts[0].partId}:reasoning`,
+              parts: reasoningParts,
+              completed: groupIndex < groupedParts.length - 1 || current.status === "complete" || current.status === "error",
+              showAgentMeta,
+              defaultExpanded: props.thinkingDefaultExpanded(),
+            })
+            lastAccentColor = ASSISTANT_BORDER_COLOR
+          }
+        }
+        return
+      }
+
+      const part = group.part
+      const partIndex = orderedParts.indexOf(part)
       if (part.type === "tool") {
         flushContent()
-        const partId = part.id
-        if (!partId) {
-          // Tool parts are required to have ids; if one slips through, skip rendering
-          // to avoid unstable keys and accidental remount cascades.
-          return
-        }
-        const key = `${current.id}:${partId}`
-        let toolItem = sessionCache.toolItems.get(key)
-        if (!toolItem) {
-          toolItem = {
-            type: "tool",
-            key,
-            messageId: current.id,
-            partId,
-          }
-          sessionCache.toolItems.set(key, toolItem)
-        } else {
-          toolItem.key = key
-          toolItem.messageId = current.id
-          toolItem.partId = partId
-        }
-        items.push(toolItem)
-        blockToolKeys.push(key)
+        const item = toolItem(part as ToolCallPart)
+        if (item) items.push(item)
         lastAccentColor = NO_STEP_BORDER
         return
       }
@@ -683,31 +785,6 @@ export default function MessageBlock(props: MessageBlockProps) {
         return
       }
 
-      if (part.type === "reasoning") {
-        flushContent()
-        if (props.showThinking() && reasoningHasRenderableContent(part)) {
-          const partId = part.id ?? ""
-          const key = `${current.id}:${partId || partIndex}:reasoning`
-          const showAgentMeta = current.role === "assistant" && !agentMetaAttached
-          if (showAgentMeta) {
-            agentMetaAttached = true
-          }
-          items.push({
-            type: "reasoning",
-            key,
-            part,
-            messageInfo: info,
-            durationMs: inferReasoningDurationMs(orderedParts, part, info, current.status),
-            showAgentMeta,
-            defaultExpanded: props.thinkingDefaultExpanded(),
-            messageId: current.id,
-            partId,
-          })
-          lastAccentColor = ASSISTANT_BORDER_COLOR
-        }
-        return
-      }
-
       pendingParts.push(part)
     })
 
@@ -736,8 +813,7 @@ export default function MessageBlock(props: MessageBlockProps) {
     return resultBlock
   })
 
-  const isDisplayItemVisible = (item: MessageBlockItem) => {
-    if (item.type !== "tool") return true
+  const isToolDisplayItemVisible = (item: ToolDisplayItem) => {
     const part = props.store().getMessage(item.messageId)?.parts[item.partId]?.data
     if (part?.type !== "tool" || props.toolVisibility(part.tool || "") !== "hidden") return true
     if (
@@ -745,6 +821,12 @@ export default function MessageBlock(props: MessageBlockProps) {
       props.store().getPermissionState(item.messageId, item.partId)?.active
     ) return true
     return pendingFormToolTargets().has(`${item.messageId}:${item.partId}`)
+  }
+
+  const isDisplayItemVisible = (item: MessageBlockItem) => {
+    if (item.type === "tool") return isToolDisplayItemVisible(item)
+    if (item.type === "exploration") return item.tools.some(isToolDisplayItemVisible)
+    return true
   }
 
   const pendingFormToolTargets = createMemo(() => new Set(getFormQueue(props.instanceId)
@@ -806,6 +888,20 @@ export default function MessageBlock(props: MessageBlockProps) {
                     </div>
                   </Show>
                 </Match>
+                <Match when={item().type === "exploration"}>
+                  <Show when={visibleItemKeys().has((item() as ExplorationDisplayItem).key)}>
+                    <ExplorationGroup
+                      tools={(item() as ExplorationDisplayItem).tools.filter(isToolDisplayItemVisible)}
+                      completed={(item() as ExplorationDisplayItem).completed}
+                      instanceId={props.instanceId}
+                      sessionId={props.sessionId}
+                      store={props.store}
+                      pendingFormToolTargets={pendingFormToolTargets()}
+                      activePartId={activeSearchMatch()?.partId}
+                      onContentRendered={props.onContentRendered}
+                    />
+                  </Show>
+                </Match>
                 <Match when={item().type === "step-start"}>
                   <StepCard
                     kind="start"
@@ -843,17 +939,16 @@ export default function MessageBlock(props: MessageBlockProps) {
                   />
                 </Match>
                 <Match when={item().type === "reasoning"}>
-                  <ReasoningCard
-                    part={(item() as ReasoningDisplayItem).part}
-                    messageInfo={(item() as ReasoningDisplayItem).messageInfo}
-                    durationMs={(item() as ReasoningDisplayItem).durationMs}
+                  <ReasoningGroupCard
+                    parts={(item() as ReasoningDisplayItem).parts}
+                    completed={(item() as ReasoningDisplayItem).completed}
                     instanceId={props.instanceId}
                     sessionId={props.sessionId}
-                    messageId={(item() as ReasoningDisplayItem).messageId}
+                    status={block()!.record.status}
                     showAgentMeta={(item() as ReasoningDisplayItem).showAgentMeta}
                     defaultExpanded={(item() as ReasoningDisplayItem).defaultExpanded}
                     onContentRendered={props.onContentRendered}
-                    forceExpanded={activeSearchMatch()?.partId === (item() as ReasoningDisplayItem).partId}
+                    activePartId={activeSearchMatch()?.partId}
                   />
                 </Match>
               </Switch>
@@ -861,6 +956,90 @@ export default function MessageBlock(props: MessageBlockProps) {
         </Index>
       </div>
     </Show>
+  )
+}
+
+interface ExplorationGroupProps {
+  tools: ToolDisplayItem[]
+  completed: boolean
+  instanceId: string
+  sessionId: string
+  store: () => InstanceMessageStore
+  pendingFormToolTargets: Set<string>
+  activePartId?: string
+  onContentRendered?: () => void
+}
+
+function ExplorationGroup(props: ExplorationGroupProps) {
+  const { t } = useI18n()
+  const [expanded, setExpanded] = createSignal(false)
+
+  const isPending = (item: ToolDisplayItem) => {
+    const part = props.store().getMessage(item.messageId)?.parts[item.partId]?.data
+    return Boolean(
+      part?.pendingPermission?.active ||
+      props.store().getPermissionState(item.messageId, item.partId)?.active ||
+      props.pendingFormToolTargets.has(`${item.messageId}:${item.partId}`),
+    )
+  }
+  const grouped = createMemo(() => props.tools.filter((item) => !isPending(item)))
+  const pending = createMemo(() => props.tools.filter(isPending))
+  const completed = createMemo(() => props.completed || grouped().every((item) => {
+    const part = props.store().getMessage(item.messageId)?.parts[item.partId]?.data
+    const status = part?.type === "tool" ? part.state?.status : undefined
+    return status === "completed" || status === "error"
+  }))
+  const label = createMemo(() => {
+    const counts = grouped().reduce((result, item) => {
+      const part = props.store().getMessage(item.messageId)?.parts[item.partId]?.data
+      const name = part?.type === "tool" && part.tool.toLowerCase() === "read" ? "read" : "search"
+      result[name] += 1
+      return result
+    }, { read: 0, search: 0 })
+    const tools = (["read", "search"] as const).flatMap((name) => counts[name] > 0
+      ? [t(`messageBlock.exploration.${name}.${counts[name] === 1 ? "one" : "other"}`, { count: String(counts[name]) })]
+      : [])
+    return t(completed() ? "messageBlock.exploration.completed" : "messageBlock.exploration.active", { tools: tools.join(", ") })
+  })
+
+  createEffect(() => {
+    if (props.activePartId && grouped().some((item) => item.partId === props.activePartId)) setExpanded(true)
+  })
+
+  const renderTool = (item: ToolDisplayItem) => (
+    <div class="tool-call-message" data-key={item.key} data-part-id={item.partId}>
+      <ToolCallItem
+        instanceId={props.instanceId}
+        sessionId={props.sessionId}
+        store={props.store}
+        messageId={item.messageId}
+        partId={item.partId}
+        onContentRendered={props.onContentRendered}
+      />
+    </div>
+  )
+
+  return (
+    <div class="message-technical-group message-exploration-group">
+      <Show when={grouped().length > 0}>
+        <button
+          type="button"
+          class="message-technical-group-toggle"
+          aria-expanded={expanded()}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          <span class="message-technical-group-disclosure" aria-hidden="true">{expanded() ? "▼" : "▶"}</span>
+          <Show when={!completed()}><Loader2 class="message-technical-group-spinner w-3.5 h-3.5 animate-spin" aria-hidden="true" /></Show>
+          <span class="message-technical-group-title">{label()}</span>
+        </button>
+        <Show when={expanded()}>
+          <div class="message-technical-group-parts">
+            <For each={grouped()}>{renderTool}</For>
+          </div>
+        </Show>
+      </Show>
+      <For each={pending()}>{renderTool}</For>
+    </div>
   )
 }
 
@@ -1101,6 +1280,108 @@ function formatCostValue(value: number) {
   return `$${value.toFixed(2)}`
 }
 
+function getReasoningText(part: ClientPart) {
+  const stringify = (segment: unknown): string => {
+    if (typeof segment === "string") return segment
+    if (!segment || typeof segment !== "object") return ""
+    const value = segment as { text?: unknown; value?: unknown; content?: unknown[] }
+    return [
+      typeof value.text === "string" ? value.text : "",
+      typeof value.value === "string" ? value.value : "",
+      Array.isArray(value.content) ? value.content.map(stringify).join("\n") : "",
+    ].filter((item) => item.trim()).join("\n")
+  }
+  const text = stringify((part as any).text)
+  if (text.trim()) return text
+  const content = (part as any).content
+  return Array.isArray(content) ? content.map(stringify).join("\n") : ""
+}
+
+function reasoningDurationTitle(t: I18nContextValue["t"], durationMs?: number) {
+  if (typeof durationMs !== "number" || !Number.isFinite(durationMs) || durationMs <= 0) {
+    return t("messageBlock.reasoning.thoughtsFallback")
+  }
+  const seconds = Math.max(1, Math.round(durationMs / 1000))
+  if (seconds < 60) return t(`messageBlock.reasoning.thoughtFor.seconds.${seconds === 1 ? "one" : "other"}`, { count: String(seconds) })
+  const minutes = Math.max(1, Math.round(seconds / 60))
+  if (minutes < 60) return t(`messageBlock.reasoning.thoughtFor.minutes.${minutes === 1 ? "one" : "other"}`, { count: String(minutes) })
+  const hours = Math.max(1, Math.round(minutes / 60))
+  return t(`messageBlock.reasoning.thoughtFor.hours.${hours === 1 ? "one" : "other"}`, { count: String(hours) })
+}
+
+function ReasoningGroupCard(props: {
+  parts: ReasoningDisplayPart[]
+  completed: boolean
+  instanceId: string
+  sessionId: string
+  status: MessageRecord["status"]
+  showAgentMeta?: boolean
+  defaultExpanded?: boolean
+  onContentRendered?: () => void
+  activePartId?: string
+}) {
+  const { t, locale } = useI18n()
+  const [expanded, setExpanded] = createSignal(Boolean(props.defaultExpanded))
+  const totalDuration = createMemo(() => props.parts.reduce((total, item) => total + (item.durationMs ?? 0), 0))
+  const latestTitle = createMemo(() => {
+    const latest = props.parts.at(-1)
+    return latest ? parseReasoningSummary(getReasoningText(latest.part)).title ?? "" : ""
+  })
+
+  createEffect(() => setExpanded(Boolean(props.defaultExpanded)))
+  createEffect(() => {
+    if (props.activePartId && props.parts.some((item) => item.partId === props.activePartId)) setExpanded(true)
+  })
+
+  return (
+    <div class="message-technical-group message-reasoning-group">
+      <button
+        type="button"
+        class="message-technical-group-toggle"
+        aria-expanded={expanded()}
+        aria-label={expanded() ? t("messageBlock.reasoning.collapseAriaLabel") : t("messageBlock.reasoning.expandAriaLabel")}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <span class="message-technical-group-disclosure" aria-hidden="true">{expanded() ? "▼" : "▶"}</span>
+        <Show when={!props.completed}><Loader2 class="message-technical-group-spinner w-3.5 h-3.5 animate-spin" aria-hidden="true" /></Show>
+        <span class="message-reasoning-type">
+          {t(props.completed ? "messageBlock.reasoning.thoughtLabel" : "messageBlock.reasoning.thinkingLabel")}
+        </span>
+        <span class="message-technical-group-title">{latestTitle() || t("messageBlock.reasoning.thoughtsFallback")}</span>
+        <Show when={props.parts.length > 1}>
+          <span class="message-technical-group-meta">
+            · {t(`messageBlock.reasoning.steps.${props.parts.length === 1 ? "one" : "other"}`, { count: String(props.parts.length) })}
+          </span>
+        </Show>
+        <Show when={totalDuration() > 0}>
+          <span class="message-technical-group-meta">· {formatElapsedClock(totalDuration(), locale())}</span>
+        </Show>
+      </button>
+      <Show when={expanded()}>
+        <div class="message-technical-group-parts message-reasoning-group-parts">
+          <For each={props.parts}>
+            {(item) => (
+              <ReasoningCard
+                part={item.part}
+                messageInfo={item.messageInfo}
+                durationMs={item.durationMs}
+                instanceId={props.instanceId}
+                sessionId={props.sessionId}
+                messageId={item.messageId}
+                status={props.status}
+                showAgentMeta={props.showAgentMeta}
+                defaultExpanded
+                onContentRendered={props.onContentRendered}
+                forceExpanded={props.activePartId === item.partId}
+              />
+            )}
+          </For>
+        </div>
+      </Show>
+    </div>
+  )
+}
+
 interface ReasoningCardProps {
   part: ClientPart
   messageInfo?: MessageInfo
@@ -1108,6 +1389,7 @@ interface ReasoningCardProps {
   instanceId: string
   sessionId: string
   messageId: string
+  status: MessageRecord["status"]
   showAgentMeta?: boolean
   defaultExpanded?: boolean
   onContentRendered?: () => void
@@ -1184,6 +1466,8 @@ function ReasoningCard(props: ReasoningCardProps) {
   const { t } = useI18n()
   const [expanded, setExpanded] = createSignal(Boolean(props.defaultExpanded))
   const [scrollTopSnapshot, setScrollTopSnapshot] = createSignal(0)
+  const [deleting, setDeleting] = createSignal(false)
+  const [deleteHovered, setDeleteHovered] = createSignal(false)
 
   createEffect(() => {
     setExpanded(Boolean(props.defaultExpanded))
@@ -1210,70 +1494,13 @@ function ReasoningCard(props: ReasoningCardProps) {
     return modelID
   }
 
-  const reasoningText = () => {
-    const part = props.part as any
-    if (!part) return ""
-
-    const stringifySegment = (segment: unknown): string => {
-      if (typeof segment === "string") {
-        return segment
-      }
-      if (segment && typeof segment === "object") {
-        const obj = segment as { text?: unknown; value?: unknown; content?: unknown[] }
-        const pieces: string[] = []
-        if (typeof obj.text === "string") {
-          pieces.push(obj.text)
-        }
-        if (typeof obj.value === "string") {
-          pieces.push(obj.value)
-        }
-        if (Array.isArray(obj.content)) {
-          pieces.push(obj.content.map((entry) => stringifySegment(entry)).join("\n"))
-        }
-        return pieces.filter((piece) => piece && piece.trim().length > 0).join("\n")
-      }
-      return ""
-    }
-
-    const textValue = stringifySegment(part.text)
-    if (textValue.trim().length > 0) {
-      return textValue
-    }
-    if (Array.isArray(part.content)) {
-      return part.content.map((entry: unknown) => stringifySegment(entry)).join("\n")
-    }
-    return ""
-  }
+  const reasoningText = () => getReasoningText(props.part)
 
   const reasoningSummary = createMemo(() => parseReasoningSummary(reasoningText()))
   const reasoningBody = () => reasoningSummary().body
   const extractedTitle = () => reasoningSummary().title ?? ""
 
-  const thoughtDurationTitle = () => {
-    const duration = props.durationMs
-    if (typeof duration !== "number" || !Number.isFinite(duration) || duration <= 0) {
-      return t("messageBlock.reasoning.thoughtsFallback")
-    }
-
-    const seconds = Math.max(1, Math.round(duration / 1000))
-    if (seconds < 60) {
-      return seconds === 1
-        ? t("messageBlock.reasoning.thoughtFor.seconds.one", { count: String(seconds) })
-        : t("messageBlock.reasoning.thoughtFor.seconds.other", { count: String(seconds) })
-    }
-
-    const minutes = Math.max(1, Math.round(seconds / 60))
-    if (minutes < 60) {
-      return minutes === 1
-        ? t("messageBlock.reasoning.thoughtFor.minutes.one", { count: String(minutes) })
-        : t("messageBlock.reasoning.thoughtFor.minutes.other", { count: String(minutes) })
-    }
-
-    const hours = Math.max(1, Math.round(minutes / 60))
-    return hours === 1
-      ? t("messageBlock.reasoning.thoughtFor.hours.one", { count: String(hours) })
-      : t("messageBlock.reasoning.thoughtFor.hours.other", { count: String(hours) })
-  }
+  const thoughtDurationTitle = () => reasoningDurationTitle(t, props.durationMs)
 
   const reasoningTitle = () => extractedTitle() || thoughtDurationTitle()
 
@@ -1303,6 +1530,23 @@ function ReasoningCard(props: ReasoningCardProps) {
     await copyToClipboard(text)
   }
 
+  const handleDelete = async () => {
+    const partId = typeof props.part.id === "string" ? props.part.id : ""
+    if (!partId || deleting() || props.status !== "complete") return
+    setDeleting(true)
+    try {
+      await deleteMessagePart(props.instanceId, props.sessionId, props.messageId, partId)
+    } catch (error) {
+      showAlertDialog(t("messagePart.actions.deleteFailedMessage"), {
+        title: t("messagePart.actions.deleteFailedTitle"),
+        detail: error instanceof Error ? error.message : String(error),
+        variant: "error",
+      })
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   const actionMenuItems = (includePrimaryActions = false): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = []
 
@@ -1324,6 +1568,17 @@ function ReasoningCard(props: ReasoningCardProps) {
       }
     }
 
+    items.push({
+      key: "delete-part",
+      label: deleting() ? t("messagePart.actions.deleting") : t("messagePart.actions.delete"),
+      icon: <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />,
+      destructive: true,
+      disabled: deleting() || props.status !== "complete",
+      onMouseEnter: () => setDeleteHovered(true),
+      onMouseLeave: () => setDeleteHovered(false),
+      onSelect: handleDelete,
+    })
+
     return items
   }
 
@@ -1331,6 +1586,7 @@ function ReasoningCard(props: ReasoningCardProps) {
     <div
       class="delete-hover-scope message-reasoning-card"
       data-part-id={typeof (props.part as any)?.id === "string" ? (props.part as any).id : undefined}
+      data-delete-part-hover={deleteHovered() ? "true" : undefined}
     >
       <div class="message-reasoning-header">
         <button

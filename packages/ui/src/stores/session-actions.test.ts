@@ -5,10 +5,21 @@ import { serverApi } from "../lib/api-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import type { Session } from "../types/session.ts"
 import { addInstance, removeInstance } from "./instances.ts"
-import { abortSession, executeCustomCommand, runShellCommand, sendMessage, updateSessionAgent, updateSessionModel } from "./session-actions.ts"
+import {
+  abortSession,
+  deleteMessagePart,
+  executeCustomCommand,
+  executeSessionTechnicalPartDeletion,
+  planSessionTechnicalPartDeletion,
+  runShellCommand,
+  sendMessage,
+  updateSessionAgent,
+  updateSessionModel,
+} from "./session-actions.ts"
 import { setConversationModeEnabled } from "./conversation-speech.ts"
 import { getModelThinkingSelection, setModelThinkingSelection } from "./preferences"
 import { sessions, setProviders, setSessions } from "./session-state.ts"
+import { messageStoreBus } from "./message-v2/bus.ts"
 
 const instanceId = "session-actions"
 const sessionId = "session"
@@ -155,6 +166,104 @@ describe("session interruption", () => {
     await abortSession(instanceId, sessionId)
 
     assert.deepEqual(interrupted.sort(), ["child-working", "grandchild-working", sessionId].sort())
+  })
+})
+
+describe("native message content mutation", () => {
+  it("removes one completed assistant part through messageUpdate", async () => {
+    const messageId = "assistant-message"
+    const content = [
+      { type: "reasoning", text: "thinking", time: { created: 1, completed: 2 } },
+      {
+        type: "tool",
+        id: "tool-1",
+        name: "bash",
+        state: { status: "completed", input: {}, content: [{ type: "text", text: "ok" }] },
+        time: { created: 2, completed: 3 },
+      },
+      { type: "text", text: "done" },
+    ]
+    let updateInput: any
+    seed({ session: {
+      message: async () => ({
+        id: messageId,
+        type: "assistant",
+        agent: "build",
+        model: { providerID: "provider", id: "old" },
+        time: { created: 1, completed: 3 },
+        content,
+      }),
+      messageUpdate: async (input: any) => { updateInput = input },
+    } })
+    const store = messageStoreBus.getOrCreate(instanceId)
+    store.upsertMessage({
+      id: messageId,
+      sessionId,
+      role: "assistant",
+      status: "complete",
+      parts: [
+        { id: `${messageId}-reasoning-0`, type: "reasoning", text: "thinking" },
+        { id: "tool-1", type: "tool", tool: "bash" },
+        { id: `${messageId}-text-2`, type: "text", text: "done" },
+      ],
+    })
+
+    await deleteMessagePart(instanceId, sessionId, messageId, "tool-1")
+
+    assert.deepEqual(updateInput, {
+      sessionID: sessionId,
+      messageID: messageId,
+      content: [content[0], content[2]],
+    })
+    assert.equal(store.getMessage(messageId)?.parts["tool-1"], undefined)
+  })
+
+  it("plans every completed response and re-reads it before session cleanup", async () => {
+    const text = (value: string) => ({ type: "text", text: value })
+    const reasoning = { type: "reasoning", text: "thinking", time: { created: 1, completed: 2 } }
+    const tool = {
+      type: "tool",
+      id: "tool-1",
+      name: "bash",
+      state: { status: "completed", input: {}, content: [text("ok")] },
+      time: { created: 2, completed: 3 },
+    }
+    const messages = new Map<string, any>([
+      ["assistant-1", { id: "assistant-1", type: "assistant", time: { created: 1, completed: 3 }, content: [reasoning, text("first")] }],
+      ["assistant-active", { id: "assistant-active", type: "assistant", time: { created: 4 }, content: [tool] }],
+      ["assistant-2", { id: "assistant-2", type: "assistant", time: { created: 5, completed: 7 }, content: [tool, text("second")] }],
+    ])
+    const updates: any[] = []
+    let page = 0
+    seed({
+      message: { list: async () => {
+        page += 1
+        return page === 1
+          ? { data: [messages.get("assistant-1"), messages.get("assistant-active")], cursor: { next: "page-2" } }
+          : { data: [messages.get("assistant-2")], cursor: {} }
+      } },
+      session: {
+        message: async ({ messageID }: { messageID: string }) => messages.get(messageID),
+        messageUpdate: async (input: any) => { updates.push(input) },
+      },
+    })
+
+    const plan = await planSessionTechnicalPartDeletion(instanceId, sessionId)
+    messages.get("assistant-1").content = [reasoning, text("updated")]
+    const failed = await executeSessionTechnicalPartDeletion(plan)
+
+    assert.deepEqual(plan, {
+      instanceId,
+      sessionId,
+      toolCount: 1,
+      reasoningCount: 1,
+      messageIds: ["assistant-1", "assistant-2"],
+    })
+    assert.equal(failed, 0)
+    assert.deepEqual(updates, [
+      { sessionID: sessionId, messageID: "assistant-1", content: [text("updated")] },
+      { sessionID: sessionId, messageID: "assistant-2", content: [text("second")] },
+    ])
   })
 })
 

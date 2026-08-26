@@ -10,6 +10,7 @@ import { isSessionBusy } from "./session-status"
 import { getDefaultModel, isModelValid } from "./session-models"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { messageStoreBus } from "./message-v2/bus"
+import { removeMessagePartV2 } from "./message-v2/bridge"
 import { getLogger } from "../lib/logger"
 import { clearConversationPlaybackForSession, isConversationModeEnabled } from "./conversation-speech"
 
@@ -518,10 +519,110 @@ async function compactSession(instanceId: string, sessionId: string): Promise<vo
   await getRootClient(instanceId).session.compact({ sessionID: sessionId })
 }
 
+async function deleteMessagePart(instanceId: string, sessionId: string, messageId: string, partId: string): Promise<void> {
+  const record = messageStoreBus.getOrCreate(instanceId).getMessage(messageId)
+  const partIndex = record?.partIds.indexOf(partId) ?? -1
+  const part = partIndex >= 0 ? record?.parts[partId]?.data : undefined
+  if (record?.sessionId !== sessionId || record.role !== "assistant" || record.status !== "complete"
+    || (part?.type !== "tool" && part?.type !== "reasoning")) {
+    throw new Error("Message part is not deletable")
+  }
+
+  const client = getRootClient(instanceId)
+  const message = await client.session.message({ sessionID: sessionId, messageID: messageId })
+  if (message.type !== "assistant" || !message.time.completed) {
+    throw new Error("Message content changed before deletion")
+  }
+  const target = message.content[partIndex]
+  if (target?.type !== part.type
+    || (target.type === "tool" && target.id !== partId)) {
+    throw new Error("Message content changed before deletion")
+  }
+
+  await client.session.messageUpdate({
+    sessionID: sessionId,
+    messageID: messageId,
+    content: message.content.filter((_, index) => index !== partIndex),
+  })
+  removeMessagePartV2(instanceId, messageId, partId, sessionId)
+}
+
+function removeLocalTechnicalParts(instanceId: string, sessionId: string, messageId: string): void {
+  const record = messageStoreBus.getOrCreate(instanceId).getMessage(messageId)
+  for (const partId of record?.partIds ?? []) {
+    const type = record?.parts[partId]?.data.type
+    if (type === "tool" || type === "reasoning") removeMessagePartV2(instanceId, messageId, partId, sessionId)
+  }
+}
+
+async function deleteMessageTechnicalParts(instanceId: string, sessionId: string, messageId: string): Promise<void> {
+  const client = getRootClient(instanceId)
+  const message = await client.session.message({ sessionID: sessionId, messageID: messageId })
+  if (message.type !== "assistant" || !message.time.completed) throw new Error("Message is not complete")
+  const content = message.content.filter((part) => part.type !== "tool" && part.type !== "reasoning")
+  if (content.length === message.content.length) return
+  await client.session.messageUpdate({ sessionID: sessionId, messageID: messageId, content })
+  removeLocalTechnicalParts(instanceId, sessionId, messageId)
+}
+
+export interface SessionTechnicalPartDeletionPlan {
+  instanceId: string
+  sessionId: string
+  toolCount: number
+  reasoningCount: number
+  messageIds: string[]
+}
+
+async function planSessionTechnicalPartDeletion(instanceId: string, sessionId: string): Promise<SessionTechnicalPartDeletionPlan> {
+  const client = getRootClient(instanceId)
+  const messageIds: string[] = []
+  const seenCursors = new Set<string>()
+  let cursor: string | undefined
+  let toolCount = 0
+  let reasoningCount = 0
+
+  for (;;) {
+    const response = await client.message.list({ sessionID: sessionId, limit: 200, ...(cursor ? { cursor } : { order: "asc" }) })
+    for (const message of response.data) {
+      if (message.type !== "assistant" || !message.time.completed) continue
+      const tools = message.content.filter((part) => part.type === "tool").length
+      const reasoning = message.content.filter((part) => part.type === "reasoning").length
+      if (tools + reasoning === 0) continue
+      toolCount += tools
+      reasoningCount += reasoning
+      messageIds.push(message.id)
+    }
+
+    const next = response.cursor?.next ?? undefined
+    if (!next) break
+    if (seenCursors.has(next)) throw new Error("Repeated message cursor")
+    seenCursors.add(next)
+    cursor = next
+  }
+
+  return { instanceId, sessionId, toolCount, reasoningCount, messageIds }
+}
+
+async function executeSessionTechnicalPartDeletion(plan: SessionTechnicalPartDeletionPlan): Promise<number> {
+  let failed = 0
+  for (const messageId of plan.messageIds) {
+    try {
+      await deleteMessageTechnicalParts(plan.instanceId, plan.sessionId, messageId)
+    } catch {
+      failed += 1
+    }
+  }
+  return failed
+}
+
 export {
   abortSession,
   executeCustomCommand,
   compactSession,
+  deleteMessagePart,
+  deleteMessageTechnicalParts,
+  executeSessionTechnicalPartDeletion,
+  planSessionTechnicalPartDeletion,
   renameSession,
   moveSession,
   runShellCommand,

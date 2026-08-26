@@ -14,6 +14,8 @@ import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overfl
 import { getMessageDurationMs, getMessageStartedAt } from "../lib/message-timing"
 import SpeechActionButton from "./speech-action-button"
 import { getUserMessageMenuState, shouldShowGeneratingPlaceholder } from "../stores/message-v2/message-status"
+import { deleteMessageTechnicalParts } from "../stores/session-actions"
+import { showAlertDialog, showConfirmDialog } from "../stores/alerts"
 
 interface MessageItemProps {
   record: MessageRecord
@@ -29,12 +31,14 @@ interface MessageItemProps {
   onPendingPromptRemove?: (item: SessionInboxUser) => void
   showAgentMeta?: boolean
   contentStartPartId?: string
+  showTechnicalCleanup?: boolean
   onContentRendered?: () => void
 }
 
 export default function MessageItem(props: MessageItemProps) {
   const { t } = useI18n()
   const [copied, setCopied] = createSignal(false)
+  const [deletingTechnicalParts, setDeletingTechnicalParts] = createSignal(false)
 
   type ImagePreviewState = {
     url: string
@@ -301,6 +305,44 @@ export default function MessageItem(props: MessageItemProps) {
     setTimeout(() => setCopied(false), 2000)
   }
 
+  const technicalPartCounts = () => {
+    let tools = 0
+    let reasoning = 0
+    for (const partId of props.record.partIds) {
+      const type = props.record.parts[partId]?.data.type
+      if (type === "tool") tools += 1
+      if (type === "reasoning") reasoning += 1
+    }
+    return { tools, reasoning }
+  }
+
+  const handleDeleteTechnicalParts = async () => {
+    if (deletingTechnicalParts() || props.record.status !== "complete") return
+    const counts = technicalPartCounts()
+    if (counts.tools + counts.reasoning === 0) return
+    const confirmed = await showConfirmDialog(t("messageItem.actions.deleteTechnicalParts.confirmMessage", {
+      toolCount: counts.tools,
+      reasoningCount: counts.reasoning,
+    }), {
+      title: t("messageItem.actions.deleteTechnicalParts.confirmTitle"),
+      confirmLabel: t("messageItem.actions.deleteTechnicalParts.confirmLabel"),
+      variant: "warning",
+    })
+    if (!confirmed) return
+    setDeletingTechnicalParts(true)
+    try {
+      await deleteMessageTechnicalParts(props.instanceId, props.sessionId, props.record.id)
+    } catch (error) {
+      showAlertDialog(t("messageItem.actions.deleteTechnicalParts.failedMessage"), {
+        title: t("messageItem.actions.deleteTechnicalParts.failedTitle"),
+        detail: error instanceof Error ? error.message : String(error),
+        variant: "error",
+      })
+    } finally {
+      setDeletingTechnicalParts(false)
+    }
+  }
+
   if (!hasContent() && !isGenerating()) {
     return null
   }
@@ -432,6 +474,20 @@ export default function MessageItem(props: MessageItemProps) {
         label: t("messageItem.actions.revertTitle"),
         icon: <Undo class="w-3.5 h-3.5" aria-hidden="true" />,
         onSelect: handleRevert,
+      })
+    }
+
+    const counts = technicalPartCounts()
+    if (!isUser() && props.showTechnicalCleanup && props.record.status === "complete" && counts.tools + counts.reasoning > 0) {
+      items.push({
+        key: "delete-technical-parts",
+        label: deletingTechnicalParts()
+          ? t("messagePart.actions.deleting")
+          : t("messageItem.actions.deleteTechnicalParts"),
+        icon: <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />,
+        destructive: true,
+        disabled: deletingTechnicalParts(),
+        onSelect: handleDeleteTechnicalParts,
       })
     }
 

@@ -11,7 +11,7 @@ import { activeInstanceId } from "../../stores/instances"
 import { selectNextAppTab, selectPreviousAppTab } from "../../stores/app-tabs"
 import type { ClientPart, MessageInfo } from "../../types/message"
 import { getSessions, getVisibleSessionIds, setActiveSession, setActiveSessionFromList } from "../../stores/sessions"
-import { showAlertDialog } from "../../stores/alerts"
+import { showAlertDialog, showConfirmDialog } from "../../stores/alerts"
 import type { Instance } from "../../types/instance"
 import type { MessageRecord } from "../../stores/message-v2/types"
 import { messageStoreBus } from "../../stores/message-v2/bus"
@@ -22,6 +22,7 @@ import { tGlobal } from "../i18n"
 import { registerBehaviorCommands } from "../settings/behavior-registry"
 import { canOpenWorkspacePaths, openWorkspacePath, type WorkspaceEditor, type WorkspaceOpenTarget } from "../workspace-open"
 import { getDefaultWorktreeSlug, getWorktreeSlugForSession } from "../../stores/worktrees"
+import { executeSessionTechnicalPartDeletion, planSessionTechnicalPartDeletion } from "../../stores/session-actions"
 
 const log = getLogger("actions")
 
@@ -336,6 +337,54 @@ export function useCommands(options: UseCommandsOptions) {
           })
         }
 
+      },
+    })
+
+    commandRegistry.register({
+      id: "remove-session-tools-and-reasoning",
+      label: () => tGlobal("commands.removeSessionTechnicalParts.label"),
+      description: () => tGlobal("commands.removeSessionTechnicalParts.description"),
+      category: "Session",
+      keywords: () => splitKeywords("commands.removeSessionTechnicalParts.keywords"),
+      disabled: () => {
+        const sessionId = activeSessionIdForInstance()
+        return !activeInstance() || !sessionId || sessionId === "info"
+      },
+      action: async () => {
+        const instance = activeInstance()
+        const sessionId = activeSessionIdForInstance()
+        if (!instance || !sessionId || sessionId === "info") return
+        try {
+          const plan = await planSessionTechnicalPartDeletion(instance.id, sessionId)
+          if (plan.messageIds.length === 0) {
+            showAlertDialog(tGlobal("commands.removeSessionTechnicalParts.empty.message"), {
+              title: tGlobal("commands.removeSessionTechnicalParts.empty.title"),
+              variant: "info",
+            })
+            return
+          }
+          const confirmed = await showConfirmDialog(tGlobal("commands.removeSessionTechnicalParts.confirm.message", {
+            toolCount: plan.toolCount,
+            reasoningCount: plan.reasoningCount,
+          }), {
+            title: tGlobal("commands.removeSessionTechnicalParts.confirm.title"),
+            confirmLabel: tGlobal("commands.removeSessionTechnicalParts.confirm.label"),
+            variant: "warning",
+          })
+          if (!confirmed) return
+          const failed = await executeSessionTechnicalPartDeletion(plan)
+          if (failed > 0) {
+            showAlertDialog(tGlobal("commands.removeSessionTechnicalParts.failed.message", { count: failed }), {
+              title: tGlobal("commands.removeSessionTechnicalParts.failed.title"),
+              variant: "error",
+            })
+          }
+        } catch (error) {
+          showAlertDialog(error instanceof Error ? error.message : String(error), {
+            title: tGlobal("commands.removeSessionTechnicalParts.failed.title"),
+            variant: "error",
+          })
+        }
       },
     })
 
