@@ -121,7 +121,7 @@ Then open a pull request on GitHub targeting the `dev` branch.
 | `packages/ui/src/components/tool-call.tsx` | Tool call rendering |
 | `packages/ui/src/components/message-block.tsx` | Message display blocks |
 | `packages/ui/src/components/session/session-view.tsx` | Main session view |
-| `packages/ui/src/lib/i18n/messages/` | Translation files (en, es, fr, ja, ru, he, zh-Hans) |
+| `packages/ui/src/lib/i18n/messages/` | Translation files (en, es, fr, ja, ru, he, zh-Hans, de, ne, tr) |
 
 > For a comprehensive map of all six functional areas (server, UI, desktop, speech/audio, build, Cloudflare), SDK integration patterns, and feature traces, load the `codenomad-architecture-guide` skill:  
 > `.opencode/skills/codenomad-architecture-guide/SKILL.md`
