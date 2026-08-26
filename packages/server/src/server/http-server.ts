@@ -9,7 +9,7 @@ import { connect as connectTls, type TLSSocket } from "tls"
 import { fetch, type Headers } from "undici"
 import type { Logger } from "../logger"
 import { WorkspaceManager } from "../workspaces/manager"
-import { isPtyNotFoundError, isSessionNotFoundError, isShellNotFoundError, type LocationRef, type OpenCodeClient } from "@opencode-ai/client"
+import { isInvalidRequestError, isPtyNotFoundError, isSessionNotFoundError, isShellNotFoundError, type LocationRef, type OpenCodeClient } from "@opencode-ai/client"
 
 import type { SettingsService } from "../settings/service"
 import { FileSystemBrowser } from "../filesystem/browser"
@@ -786,6 +786,10 @@ async function proxyWorkspaceRequest(args: {
     try {
       session = await (await workspaceManager.getSharedServiceClient()).session.get({ sessionID: sessionId })
     } catch (error) {
+      if (isInvalidRequestError(error)) {
+        reply.code(400).send({ error: "Invalid session ID" })
+        return
+      }
       if (isSessionNotFoundError(error)) {
         reply.code(404).send({ error: "Session not found" })
         return

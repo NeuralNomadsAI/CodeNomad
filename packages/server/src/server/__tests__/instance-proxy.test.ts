@@ -627,6 +627,21 @@ describe("instance proxy location enforcement", () => {
     assert.equal(requestCount(), 0)
   })
 
+  it("returns a client error when a double-encoded session ID is invalid upstream", async () => {
+    const invalid = Object.assign(new Error("invalid session ID"), { _tag: "InvalidRequestError" })
+    const { app, sessionGets, requestCount } = await harness("/repo/worktree", {}, {
+      "foreign%25session": invalid,
+    })
+    const response = await app.inject({
+      method: "GET",
+      url: "/workspaces/workspace/instance/api/session/foreign%2525session",
+    })
+
+    assert.equal(response.statusCode, 400)
+    assert.deepEqual(sessionGets, ["foreign%25session"])
+    assert.equal(requestCount(), 0)
+  })
+
   it("filters active sessions to the workspace without failing on stale ids", async () => {
     const active = { owned: { type: "running" as const }, foreign: { type: "running" as const }, stale: { type: "running" as const } }
     const { app, sessionGets, requestCount } = await harness("/repo/worktree", active, {
