@@ -1,7 +1,7 @@
 export const settingsMessages = {
   "instanceServiceStatus.sections.lsp": "LSP Sunucuları",
   "instanceServiceStatus.sections.mcp": "MCP Sunucuları",
-  "instanceServiceStatus.sections.plugins": "Plugin'ler",
+  "instanceServiceStatus.sections.plugins": "Eklentiler",
   "instanceServiceStatus.lsp.loading": "LSP sunucuları yükleniyor...",
   "instanceServiceStatus.lsp.empty": "LSP sunucusu bulunamadı.",
   "instanceServiceStatus.lsp.status.connected": "Bağlandı",
@@ -9,7 +9,7 @@ export const settingsMessages = {
   "instanceServiceStatus.mcp.loading": "MCP sunucuları yükleniyor...",
   "instanceServiceStatus.mcp.empty": "Algılanan MCP sunucusu yok.",
   "instanceServiceStatus.mcp.toggleAriaLabel": "{name} MCP sunucusunu aç/kapat",
-  "instanceServiceStatus.plugins.loading": "Plugin'ler yükleniyor...",
+  "instanceServiceStatus.plugins.loading": "Eklentiler yükleniyor...",
   "instanceServiceStatus.plugins.empty": "Yapılandırılmış plugin yok.",
   "permissionBanner.pendingRequests.one": "{count} bekleyen istek",
   "permissionBanner.pendingRequests.other": "{count} bekleyen istek",

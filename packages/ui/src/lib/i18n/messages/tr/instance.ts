@@ -123,7 +123,7 @@ export const instanceMessages = {
   "instanceShell.rightPanel.sections.mcp.tooltip": "Agent'ın yeteneklerini harici araçlar ve hizmetlerle genişleten Model Context Protocol sunucuları.",
   "instanceShell.rightPanel.sections.lsp": "LSP Sunucuları",
   "instanceShell.rightPanel.sections.lsp.tooltip": "Kod zekası, tanılama ve dile özgü özellikler sağlayan Language Server Protocol sunucuları.",
-  "instanceShell.rightPanel.sections.plugins": "Plugin'ler",
+  "instanceShell.rightPanel.sections.plugins": "Eklentiler",
   "instanceShell.rightPanel.sections.plugins.tooltip": "UI ve sunucu davranışını özelleştiren, MCP ve LSP'nin ötesinde özellikler ekleyen plugin'ler.",
   "instanceShell.gitChanges.noSessionSelected": "Git değişikliklerini görüntülemek için bir session seçin.",
   "instanceShell.gitChanges.loading": "Git değişiklikleri yükleniyor...",
