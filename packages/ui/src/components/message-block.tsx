@@ -902,7 +902,7 @@ function CompactionCard(props: CompactionCardProps) {
         ? t("messageBlock.compaction.autoLabel")
         : t("messageBlock.compaction.manualLabel")
   const borderColor = () => props.borderColor ?? (isAuto() ? "var(--session-status-compacting-fg)" : USER_BORDER_COLOR)
-  const content = () => isRunning() ? "" : typeof (props.part as any)?.text === "string" ? (props.part as any).text.trim() : ""
+  const content = () => typeof (props.part as any)?.text === "string" ? (props.part as any).text.trim() : ""
   const markdownPart = createMemo<TextPart>(() => ({
     id: `${props.messageId}-compaction-summary`,
     type: "text",

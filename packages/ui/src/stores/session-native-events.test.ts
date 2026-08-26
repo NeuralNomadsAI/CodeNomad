@@ -10,7 +10,7 @@ import { clearInstanceDeletedSessionAuthority, sessions, setActiveSession, setSe
 const delay = (duration: number) => new Promise<void>((resolve) => setTimeout(resolve, duration))
 
 describe("native session event reducer", () => {
-  it("keeps compaction deltas in the reducer without projecting each one", () => {
+  it("throttles compaction projections and keeps the terminal summary authoritative", async () => {
     const instanceId = "native-compaction-delta"
     const sessionId = "session"
     const client = { session: { active: async () => ({}) } } as any
@@ -41,12 +41,13 @@ describe("native session event reducer", () => {
       const store = messageStoreBus.getOrCreate(instanceId)
       assert.equal((store.getMessage("compact")?.parts.compact?.data as any)?.text, "")
 
-      handleInstanceInvalidation(instanceId, {
-        id: "usage", type: "session.usage.updated", created: 4,
-        data: { sessionID: sessionId, cost: 0, tokens: {} },
-      } as any)
+      await delay(300)
       assert.equal((store.getMessage("compact")?.parts.compact?.data as any)?.text, "firstsecond")
 
+      handleInstanceInvalidation(instanceId, {
+        id: "delta-3", type: "session.compaction.delta", created: 4,
+        data: { sessionID: sessionId, text: "stale" },
+      } as any)
       handleInstanceInvalidation(instanceId, {
         id: "ended", type: "session.compaction.ended", created: 5,
         data: { sessionID: sessionId, reason: "manual", text: "final", recent: "" },
@@ -54,6 +55,8 @@ describe("native session event reducer", () => {
 
       assert.equal((store.getMessage("compact")?.parts.compact?.data as any)?.text, "final")
       assert.equal(store.getMessage("compact")?.status, "complete")
+      await delay(300)
+      assert.equal((store.getMessage("compact")?.parts.compact?.data as any)?.text, "final")
     } finally {
       messageStoreBus.unregisterInstance(instanceId)
       setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
