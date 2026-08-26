@@ -134,19 +134,19 @@ const [activeInstanceId, setActiveInstanceId] = createSignal<string | null>(null
 const [instanceLogs, setInstanceLogs] = createSignal<Map<string, LogEntry[]>>(new Map())
 const [logStreamingState, setLogStreamingState] = createSignal<Map<string, boolean>>(new Map())
 
-const COMPACTION_PROJECTION_INTERVAL_MS = 250
-const pendingCompactionProjections = new Map<string, {
+const STREAMING_PROJECTION_INTERVAL_MS = 250
+const pendingStreamingProjections = new Map<string, {
   timeout: ReturnType<typeof setTimeout>
   project: () => void
 }>()
 
-function compactionProjectionKey(instanceId: string, sessionId: string): string {
+function streamingProjectionKey(instanceId: string, sessionId: string): string {
   return `${instanceId}\0${sessionId}`
 }
 
-function scheduleCompactionProjection(instanceId: string, sessionId: string, project: () => void): void {
-  const key = compactionProjectionKey(instanceId, sessionId)
-  const pending = pendingCompactionProjections.get(key)
+function scheduleStreamingProjection(instanceId: string, sessionId: string, project: () => void): void {
+  const key = streamingProjectionKey(instanceId, sessionId)
+  const pending = pendingStreamingProjections.get(key)
   if (pending) {
     pending.project = project
     return
@@ -155,27 +155,27 @@ function scheduleCompactionProjection(instanceId: string, sessionId: string, pro
   const next = {
     project,
     timeout: setTimeout(() => {
-      pendingCompactionProjections.delete(key)
+      pendingStreamingProjections.delete(key)
       next.project()
-    }, COMPACTION_PROJECTION_INTERVAL_MS),
+    }, STREAMING_PROJECTION_INTERVAL_MS),
   }
-  pendingCompactionProjections.set(key, next)
+  pendingStreamingProjections.set(key, next)
 }
 
-function cancelCompactionProjection(instanceId: string, sessionId: string): void {
-  const key = compactionProjectionKey(instanceId, sessionId)
-  const pending = pendingCompactionProjections.get(key)
+function cancelStreamingProjection(instanceId: string, sessionId: string): void {
+  const key = streamingProjectionKey(instanceId, sessionId)
+  const pending = pendingStreamingProjections.get(key)
   if (!pending) return
   clearTimeout(pending.timeout)
-  pendingCompactionProjections.delete(key)
+  pendingStreamingProjections.delete(key)
 }
 
-function clearCompactionProjections(instanceId: string): void {
+function clearStreamingProjections(instanceId: string): void {
   const prefix = `${instanceId}\0`
-  for (const [key, pending] of pendingCompactionProjections) {
+  for (const [key, pending] of pendingStreamingProjections) {
     if (!key.startsWith(prefix)) continue
     clearTimeout(pending.timeout)
-    pendingCompactionProjections.delete(key)
+    pendingStreamingProjections.delete(key)
   }
 }
 
@@ -1257,7 +1257,7 @@ function updateInstance(id: string, updates: Partial<Instance>) {
     clearSessionCatalogState(id)
     clearCommands(id)
     clearInstanceMetadata(id)
-    clearCompactionProjections(id)
+    clearStreamingProjections(id)
     volatileInstanceRefreshes.delete(id)
     for (const sessionId of sessions().get(id)?.keys() ?? []) invalidateSessionMessageLoad(id, sessionId)
   }
@@ -1321,7 +1321,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   clearSettledForms(id)
   clearPendingFormQueue(id)
   clearInstanceMetadata(id)
-  clearCompactionProjections(id)
+  clearStreamingProjections(id)
   clearPermissionAutoAcceptForInstance(id)
   clearSyncedYoloSessionsForInstance(id)
   initialHydrations.delete(id)
@@ -1985,14 +1985,15 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
     : event.type === "form.created"
       ? event.data.form.sessionID
       : undefined
-  if (event.type === "server.connected") clearCompactionProjections(instanceId)
-  if (sessionId && event.type.startsWith("session.") && event.type !== "session.compaction.delta") {
-    cancelCompactionProjection(instanceId, sessionId)
+  const isStreamingDelta = event.type.startsWith("session.") && event.type.endsWith(".delta")
+  if (event.type === "server.connected") clearStreamingProjections(instanceId)
+  if (sessionId && event.type.startsWith("session.") && !isStreamingDelta) {
+    cancelStreamingProjection(instanceId, sessionId)
   }
   const projectMessages = (data: ReturnType<typeof applyOpenCodeDataEvent>, preserveOmitted = true, force = false) => {
-    if (event.type === "session.compaction.delta" && !force) {
+    if (isStreamingDelta && !force) {
       if (sessionId) {
-        scheduleCompactionProjection(instanceId, sessionId, () => projectMessages(data, preserveOmitted, true))
+        scheduleStreamingProjection(instanceId, sessionId, () => projectMessages(data, preserveOmitted, true))
       }
       return
     }

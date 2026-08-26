@@ -10,7 +10,7 @@ import { clearInstanceDeletedSessionAuthority, sessions, setActiveSession, setSe
 const delay = (duration: number) => new Promise<void>((resolve) => setTimeout(resolve, duration))
 
 describe("native session event reducer", () => {
-  it("throttles compaction projections and keeps the terminal summary authoritative", async () => {
+  it("throttles all streamed deltas and keeps terminal state authoritative", async () => {
     const instanceId = "native-compaction-delta"
     const sessionId = "session"
     const client = { session: { active: async () => ({}) } } as any
@@ -26,30 +26,51 @@ describe("native session event reducer", () => {
 
     try {
       handleInstanceInvalidation(instanceId, {
-        id: "compact", type: "session.compaction.started", created: 1,
+        id: "assistant", type: "session.step.started", created: 1,
+        data: { sessionID: sessionId, assistantMessageID: "assistant", agent: "build", model: { providerID: "provider", id: "model" } },
+      } as any)
+      handleInstanceInvalidation(instanceId, {
+        id: "text", type: "session.text.started", created: 2,
+        data: { sessionID: sessionId, assistantMessageID: "assistant" },
+      } as any)
+      handleInstanceInvalidation(instanceId, {
+        id: "compact", type: "session.compaction.started", created: 3,
         data: { sessionID: sessionId, inputID: "compact", reason: "manual", recent: "" },
       } as any)
       handleInstanceInvalidation(instanceId, {
-        id: "delta-1", type: "session.compaction.delta", created: 2,
+        id: "text-delta-1", type: "session.text.delta", created: 4,
+        data: { sessionID: sessionId, assistantMessageID: "assistant", ordinal: 0, delta: "hello" },
+      } as any)
+      handleInstanceInvalidation(instanceId, {
+        id: "delta-1", type: "session.compaction.delta", created: 5,
         data: { sessionID: sessionId, text: "first" },
       } as any)
       handleInstanceInvalidation(instanceId, {
-        id: "delta-2", type: "session.compaction.delta", created: 3,
+        id: "text-delta-2", type: "session.text.delta", created: 6,
+        data: { sessionID: sessionId, assistantMessageID: "assistant", ordinal: 0, delta: " world" },
+      } as any)
+      handleInstanceInvalidation(instanceId, {
+        id: "delta-2", type: "session.compaction.delta", created: 7,
         data: { sessionID: sessionId, text: "second" },
       } as any)
 
       const store = messageStoreBus.getOrCreate(instanceId)
+      const assistantText = () => store.getMessage("assistant")?.partIds
+        .map((partId) => store.getMessage("assistant")?.parts[partId].data)
+        .find((part) => part?.type === "text")?.text
+      assert.equal(assistantText(), "")
       assert.equal((store.getMessage("compact")?.parts.compact?.data as any)?.text, "")
 
       await delay(300)
+      assert.equal(assistantText(), "hello world")
       assert.equal((store.getMessage("compact")?.parts.compact?.data as any)?.text, "firstsecond")
 
       handleInstanceInvalidation(instanceId, {
-        id: "delta-3", type: "session.compaction.delta", created: 4,
+        id: "delta-3", type: "session.compaction.delta", created: 8,
         data: { sessionID: sessionId, text: "stale" },
       } as any)
       handleInstanceInvalidation(instanceId, {
-        id: "ended", type: "session.compaction.ended", created: 5,
+        id: "ended", type: "session.compaction.ended", created: 9,
         data: { sessionID: sessionId, reason: "manual", text: "final", recent: "" },
       } as any)
 
