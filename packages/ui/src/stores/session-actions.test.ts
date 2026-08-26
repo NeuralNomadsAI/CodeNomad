@@ -170,7 +170,7 @@ describe("session interruption", () => {
 })
 
 describe("native message content mutation", () => {
-  it("removes one completed assistant part through messageUpdate", async () => {
+  it("removes one terminal assistant part through messageUpdate without racing the server projection", async () => {
     const messageId = "assistant-message"
     const content = [
       { type: "reasoning", text: "thinking", time: { created: 1, completed: 2 } },
@@ -200,7 +200,7 @@ describe("native message content mutation", () => {
       id: messageId,
       sessionId,
       role: "assistant",
-      status: "complete",
+      status: "error",
       parts: [
         { id: `${messageId}-reasoning-0`, type: "reasoning", text: "thinking" },
         { id: "tool-1", type: "tool", tool: "bash" },
@@ -215,7 +215,7 @@ describe("native message content mutation", () => {
       messageID: messageId,
       content: [content[0], content[2]],
     })
-    assert.equal(store.getMessage(messageId)?.parts["tool-1"], undefined)
+    assert.ok(store.getMessage(messageId)?.parts["tool-1"])
   })
 
   it("plans every completed response and re-reads it before session cleanup", async () => {

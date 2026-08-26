@@ -28,7 +28,7 @@ import { showAlertDialog } from "../stores/alerts"
 import { resolveFormToolTarget } from "./form-request-tool-target"
 import { Markdown } from "./markdown"
 import { useTheme } from "../lib/theme"
-import { groupTechnicalParts } from "../lib/message-part-grouping"
+import { groupTechnicalParts, segmentExplorationItems } from "../lib/message-part-grouping"
 
 const USER_BORDER_COLOR = "var(--message-user-border)"
 const ASSISTANT_BORDER_COLOR = "var(--message-assistant-border)"
@@ -446,7 +446,7 @@ function ToolCallItem(props: ToolCallItemProps) {
   }
 
   const handleDelete = async () => {
-    if (deleting() || record()?.status !== "complete") return
+    if (deleting() || (record()?.status !== "complete" && record()?.status !== "error")) return
     setDeleting(true)
     try {
       await deleteMessagePart(props.instanceId, props.sessionId, props.messageId, props.partId)
@@ -479,7 +479,7 @@ function ToolCallItem(props: ToolCallItemProps) {
       label: deleting() ? t("messagePart.actions.deleting") : t("messagePart.actions.delete"),
       icon: <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />,
       destructive: true,
-      disabled: deleting() || record()?.status !== "complete",
+      disabled: deleting() || (record()?.status !== "complete" && record()?.status !== "error"),
       onMouseEnter: () => setDeleteHovered(true),
       onMouseLeave: () => setDeleteHovered(false),
       onSelect: handleDelete,
@@ -972,7 +972,7 @@ interface ExplorationGroupProps {
 
 function ExplorationGroup(props: ExplorationGroupProps) {
   const { t } = useI18n()
-  const [expanded, setExpanded] = createSignal(false)
+  const [expanded, setExpanded] = createSignal(new Set<string>())
 
   const isPending = (item: ToolDisplayItem) => {
     const part = props.store().getMessage(item.messageId)?.parts[item.partId]?.data
@@ -982,28 +982,38 @@ function ExplorationGroup(props: ExplorationGroupProps) {
       props.pendingFormToolTargets.has(`${item.messageId}:${item.partId}`),
     )
   }
-  const grouped = createMemo(() => props.tools.filter((item) => !isPending(item)))
-  const pending = createMemo(() => props.tools.filter(isPending))
-  const completed = createMemo(() => props.completed || grouped().every((item) => {
+  const segments = createMemo(() => segmentExplorationItems(props.tools, isPending))
+  const completed = (items: ToolDisplayItem[]) => props.completed || items.every((item) => {
     const part = props.store().getMessage(item.messageId)?.parts[item.partId]?.data
     const status = part?.type === "tool" ? part.state?.status : undefined
     return status === "completed" || status === "error"
-  }))
-  const label = createMemo(() => {
-    const counts = grouped().reduce((result, item) => {
+  })
+  const label = (items: ToolDisplayItem[]) => {
+    const counts = items.reduce((result, item) => {
       const part = props.store().getMessage(item.messageId)?.parts[item.partId]?.data
       const name = part?.type === "tool" && part.tool.toLowerCase() === "read" ? "read" : "search"
       result[name] += 1
       return result
     }, { read: 0, search: 0 })
-    const tools = (["read", "search"] as const).flatMap((name) => counts[name] > 0
+    const names = (["read", "search"] as const).flatMap((name) => counts[name] > 0
       ? [t(`messageBlock.exploration.${name}.${counts[name] === 1 ? "one" : "other"}`, { count: String(counts[name]) })]
       : [])
-    return t(completed() ? "messageBlock.exploration.completed" : "messageBlock.exploration.active", { tools: tools.join(", ") })
+    return t(completed(items) ? "messageBlock.exploration.completed" : "messageBlock.exploration.active", { tools: names.join(", ") })
+  }
+
+  const toggle = (key: string) => setExpanded((current) => {
+    const next = new Set(current)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    return next
   })
 
   createEffect(() => {
-    if (props.activePartId && grouped().some((item) => item.partId === props.activePartId)) setExpanded(true)
+    const segment = segments().find((item) => item.kind === "group" && item.items.some((tool) => tool.partId === props.activePartId))
+    const key = segment?.kind === "group" ? segment.items[0]?.key : undefined
+    if (key && !expanded().has(key)) {
+      setExpanded((current) => new Set(current).add(key))
+    }
   })
 
   const renderTool = (item: ToolDisplayItem) => (
@@ -1021,24 +1031,29 @@ function ExplorationGroup(props: ExplorationGroupProps) {
 
   return (
     <div class="message-technical-group message-exploration-group">
-      <Show when={grouped().length > 0}>
-        <button
-          type="button"
-          class="message-technical-group-toggle"
-          aria-expanded={expanded()}
-          onClick={() => setExpanded((value) => !value)}
-        >
-          <span class="message-technical-group-disclosure" aria-hidden="true">{expanded() ? "▼" : "▶"}</span>
-          <Show when={!completed()}><Loader2 class="message-technical-group-spinner w-3.5 h-3.5 animate-spin" aria-hidden="true" /></Show>
-          <span class="message-technical-group-title">{label()}</span>
-        </button>
-        <Show when={expanded()}>
-          <div class="message-technical-group-parts">
-            <For each={grouped()}>{renderTool}</For>
-          </div>
-        </Show>
-      </Show>
-      <For each={pending()}>{renderTool}</For>
+      <For each={segments()}>{(segment) => segment.kind === "pending"
+        ? renderTool(segment.item)
+        : (() => {
+          const key = segment.items[0].key
+          return <>
+            <button
+              type="button"
+              class="message-technical-group-toggle"
+              aria-expanded={expanded().has(key)}
+              onClick={() => toggle(key)}
+            >
+              <span class="message-technical-group-disclosure" aria-hidden="true">{expanded().has(key) ? "▼" : "▶"}</span>
+              <Show when={!completed(segment.items)}><Loader2 class="message-technical-group-spinner w-3.5 h-3.5 animate-spin" aria-hidden="true" /></Show>
+              <span class="message-technical-group-title">{label(segment.items)}</span>
+            </button>
+            <Show when={expanded().has(key)}>
+              <div class="message-technical-group-parts">
+                <For each={segment.items}>{renderTool}</For>
+              </div>
+            </Show>
+          </>
+        })()
+      }</For>
     </div>
   )
 }
@@ -1532,7 +1547,7 @@ function ReasoningCard(props: ReasoningCardProps) {
 
   const handleDelete = async () => {
     const partId = typeof props.part.id === "string" ? props.part.id : ""
-    if (!partId || deleting() || props.status !== "complete") return
+    if (!partId || deleting() || (props.status !== "complete" && props.status !== "error")) return
     setDeleting(true)
     try {
       await deleteMessagePart(props.instanceId, props.sessionId, props.messageId, partId)
@@ -1573,7 +1588,7 @@ function ReasoningCard(props: ReasoningCardProps) {
       label: deleting() ? t("messagePart.actions.deleting") : t("messagePart.actions.delete"),
       icon: <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />,
       destructive: true,
-      disabled: deleting() || props.status !== "complete",
+      disabled: deleting() || (props.status !== "complete" && props.status !== "error"),
       onMouseEnter: () => setDeleteHovered(true),
       onMouseLeave: () => setDeleteHovered(false),
       onSelect: handleDelete,

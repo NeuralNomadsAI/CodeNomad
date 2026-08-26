@@ -317,7 +317,7 @@ export default function MessageItem(props: MessageItemProps) {
   }
 
   const handleDeleteTechnicalParts = async () => {
-    if (deletingTechnicalParts() || props.record.status !== "complete") return
+    if (deletingTechnicalParts() || (props.record.status !== "complete" && props.record.status !== "error")) return
     const counts = technicalPartCounts()
     if (counts.tools + counts.reasoning === 0) return
     const confirmed = await showConfirmDialog(t("messageItem.actions.deleteTechnicalParts.confirmMessage", {
@@ -478,7 +478,7 @@ export default function MessageItem(props: MessageItemProps) {
     }
 
     const counts = technicalPartCounts()
-    if (!isUser() && props.showTechnicalCleanup && props.record.status === "complete" && counts.tools + counts.reasoning > 0) {
+    if (!isUser() && props.showTechnicalCleanup && (props.record.status === "complete" || props.record.status === "error") && counts.tools + counts.reasoning > 0) {
       items.push({
         key: "delete-technical-parts",
         label: deletingTechnicalParts()

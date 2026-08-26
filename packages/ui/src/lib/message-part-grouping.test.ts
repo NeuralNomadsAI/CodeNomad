@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { groupTechnicalParts } from "./message-part-grouping.ts"
+import { groupTechnicalParts, segmentExplorationItems } from "./message-part-grouping.ts"
 import type { ClientPart } from "../types/message.ts"
 
 const part = (id: string, type: ClientPart["type"], tool?: string) => ({ id, type, ...(tool ? { tool } : {}) }) as ClientPart
@@ -28,6 +28,16 @@ describe("message technical part grouping", () => {
       ["exploration", ["glob"]],
       ["part", "text"],
       ["reasoning", ["r3"]],
+    ])
+  })
+
+  it("keeps pending exploration tools in place and splits surrounding groups", () => {
+    const segments = segmentExplorationItems(["read", "grep", "glob"], (item) => item === "grep")
+
+    assert.deepEqual(segments, [
+      { kind: "group", items: ["read"] },
+      { kind: "pending", item: "grep" },
+      { kind: "group", items: ["glob"] },
     ])
   })
 })

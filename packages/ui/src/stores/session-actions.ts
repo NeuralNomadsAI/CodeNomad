@@ -10,7 +10,6 @@ import { isSessionBusy } from "./session-status"
 import { getDefaultModel, isModelValid } from "./session-models"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { messageStoreBus } from "./message-v2/bus"
-import { removeMessagePartV2 } from "./message-v2/bridge"
 import { getLogger } from "../lib/logger"
 import { clearConversationPlaybackForSession, isConversationModeEnabled } from "./conversation-speech"
 
@@ -523,7 +522,7 @@ async function deleteMessagePart(instanceId: string, sessionId: string, messageI
   const record = messageStoreBus.getOrCreate(instanceId).getMessage(messageId)
   const partIndex = record?.partIds.indexOf(partId) ?? -1
   const part = partIndex >= 0 ? record?.parts[partId]?.data : undefined
-  if (record?.sessionId !== sessionId || record.role !== "assistant" || record.status !== "complete"
+  if (record?.sessionId !== sessionId || record.role !== "assistant" || !["complete", "error"].includes(record.status)
     || (part?.type !== "tool" && part?.type !== "reasoning")) {
     throw new Error("Message part is not deletable")
   }
@@ -544,15 +543,6 @@ async function deleteMessagePart(instanceId: string, sessionId: string, messageI
     messageID: messageId,
     content: message.content.filter((_, index) => index !== partIndex),
   })
-  removeMessagePartV2(instanceId, messageId, partId, sessionId)
-}
-
-function removeLocalTechnicalParts(instanceId: string, sessionId: string, messageId: string): void {
-  const record = messageStoreBus.getOrCreate(instanceId).getMessage(messageId)
-  for (const partId of record?.partIds ?? []) {
-    const type = record?.parts[partId]?.data.type
-    if (type === "tool" || type === "reasoning") removeMessagePartV2(instanceId, messageId, partId, sessionId)
-  }
 }
 
 async function deleteMessageTechnicalParts(instanceId: string, sessionId: string, messageId: string): Promise<void> {
@@ -562,7 +552,6 @@ async function deleteMessageTechnicalParts(instanceId: string, sessionId: string
   const content = message.content.filter((part) => part.type !== "tool" && part.type !== "reasoning")
   if (content.length === message.content.length) return
   await client.session.messageUpdate({ sessionID: sessionId, messageID: messageId, content })
-  removeLocalTechnicalParts(instanceId, sessionId, messageId)
 }
 
 export interface SessionTechnicalPartDeletionPlan {
