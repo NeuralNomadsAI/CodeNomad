@@ -118,15 +118,27 @@ function createTokenLimitProvider(input: { id: string; name: string; aliases: re
         const payload = await fetchJson(input.url, { headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" } })
         const windows: Record<string, ReturnType<typeof toUsageWindow>> = {}
         for (const limit of Array.isArray(payload?.data?.limits) ? payload.data.limits : []) {
-          if (limit?.type !== "TOKENS_LIMIT" && limit?.type !== "TIME_LIMIT") continue
-          const duration = toNumber(limit.number)
-          const seconds = limit.type === "TIME_LIMIT" ? 30 * 86_400 : limit.unit === 3 && duration ? duration * 3600 : null
-          const label = limit.type === "TIME_LIMIT" ? "mcp-tools" : resolveWindowLabel(seconds)
-          windows[label] = toUsageWindow({
-            usedPercent: toNumber(limit.percentage),
-            windowSeconds: seconds,
-            resetAt: toTimestamp(limit.nextResetTime),
-          })
+          const number = toNumber(limit?.number)
+          if (limit && (limit.type === "TOKENS_LIMIT" || limit.type === "TIME_LIMIT")) {
+            const seconds = limit.type === "TIME_LIMIT" ? 30 * 86_400 : limit.unit === 3 && number ? number * 3600 : null
+            const label = limit.type === "TIME_LIMIT" ? "mcp-tools" : resolveWindowLabel(seconds)
+            windows[label] = toUsageWindow({
+              usedPercent: toNumber(limit.percentage),
+              windowSeconds: seconds,
+              resetAt: toTimestamp(limit.nextResetTime),
+            })
+          } else if (limit) {
+            const usedPercent = toNumber(limit.percentage)
+            const remaining = toNumber(limit.remaining)
+            const allowance = toNumber(limit.usage)
+            if (usedPercent === null && (remaining === null || allowance === null)) continue
+            const seconds = limit.unit === 3 && number ? number * 3600 : null
+            windows[resolveWindowLabel(seconds)] = toUsageWindow({
+              usedPercent: usedPercent ?? (allowance !== null && allowance > 0 && remaining !== null ? ((allowance - remaining) / allowance) * 100 : null),
+              windowSeconds: seconds,
+              resetAt: toTimestamp(limit.nextResetTime),
+            })
+          }
         }
         return { windows }
       })
