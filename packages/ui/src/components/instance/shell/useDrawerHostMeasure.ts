@@ -1,17 +1,15 @@
-import { createEffect, createSignal, type Accessor } from "solid-js"
+import { createEffect, createSignal, onCleanup, type Accessor } from "solid-js"
 
 type DrawerHostMeasure = {
   setDrawerHost: (element: HTMLElement) => void
   drawerContainer: () => HTMLElement | undefined
+  drawerHostWidth: Accessor<number>
   measureDrawerHost: () => void
-  floatingTopPx: () => string
-  floatingHeight: () => string
 }
 
-export function useDrawerHostMeasure(tabBarOffset: Accessor<number>): DrawerHostMeasure {
+export function useDrawerHostMeasure(): DrawerHostMeasure {
   const [drawerHost, setDrawerHost] = createSignal<HTMLElement | null>(null)
-  const [floatingDrawerTop, setFloatingDrawerTop] = createSignal(0)
-  const [floatingDrawerHeight, setFloatingDrawerHeight] = createSignal(0)
+  const [drawerHostWidth, setDrawerHostWidth] = createSignal(typeof window === "undefined" ? 0 : window.innerWidth)
 
   const storeDrawerHost = (element: HTMLElement) => {
     setDrawerHost(element)
@@ -22,14 +20,15 @@ export function useDrawerHostMeasure(tabBarOffset: Accessor<number>): DrawerHost
     const host = drawerHost()
     if (!host) return
     const rect = host.getBoundingClientRect()
-    setFloatingDrawerTop(rect.top)
-    setFloatingDrawerHeight(Math.max(0, rect.height))
+    setDrawerHostWidth(rect.width)
   }
 
   createEffect(() => {
-    tabBarOffset()
-    if (typeof window === "undefined") return
-    requestAnimationFrame(() => measureDrawerHost())
+    const host = drawerHost()
+    if (!host || typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(measureDrawerHost)
+    observer.observe(host)
+    onCleanup(() => observer.disconnect())
   })
 
   const drawerContainer = () => {
@@ -41,25 +40,10 @@ export function useDrawerHostMeasure(tabBarOffset: Accessor<number>): DrawerHost
     return undefined
   }
 
-  const fallbackDrawerTop = () => tabBarOffset()
-  const floatingTop = () => {
-    const measured = floatingDrawerTop()
-    if (measured > 0) return measured
-    return fallbackDrawerTop()
-  }
-
-  const floatingTopPx = () => `${floatingTop()}px`
-  const floatingHeight = () => {
-    const measured = floatingDrawerHeight()
-    if (measured > 0) return `${measured}px`
-    return `calc(100% - ${floatingTop()}px)`
-  }
-
   return {
     setDrawerHost: storeDrawerHost,
     drawerContainer,
+    drawerHostWidth,
     measureDrawerHost,
-    floatingTopPx,
-    floatingHeight,
   }
 }

@@ -26,12 +26,13 @@
   pointer-events: none;
 }
 
-.session-center-column[data-session-center-width="narrow"] .message-layout--with-timeline {
-  grid-template-columns: minmax(0, 1fr) 40px;
+.session-center-column[data-session-header-density="4"] .message-layout--with-timeline {
+  grid-template-columns: minmax(0, 1fr);
 }
 
-.session-center-column[data-session-center-width="narrow"] .message-layout--with-timeline::after {
-  inset-inline-end: 40px;
+.session-center-column[data-session-header-density="4"] .message-layout--with-timeline::after,
+.session-center-column[data-session-header-density="4"] .message-timeline-sidebar {
+  display: none;
 }
 
 .message-stream-shell {

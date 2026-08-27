@@ -154,7 +154,7 @@ const App: Component = () => {
   }
 
   const enterMobileFullscreen = async () => {
-    if (!isPhoneLayout()) return
+    if (runtimeEnv.platform !== "mobile") return
     setMobileFullscreenMode(true)
     if (!fullscreenSupported()) return
     try {
@@ -229,13 +229,6 @@ const App: Component = () => {
       setMobileFullscreenMode(false)
     }
     lastBrowserFullscreen = active
-  })
-
-  // If we leave phone layout (rotation / resize), restore chrome.
-  createEffect(() => {
-    if (!isPhoneLayout() && mobileFullscreenMode()) {
-      void exitMobileFullscreen()
-    }
   })
 
   createEffect(() => {
@@ -730,7 +723,7 @@ const App: Component = () => {
         </Dialog.Portal>
       </Dialog>
       <div class="h-screen w-screen flex flex-col" style={{ height: "100dvh", "padding-bottom": "var(--keyboard-offset, 0px)" }}>
-        <Show when={isPhoneLayout() && mobileFullscreenMode()}>
+        <Show when={mobileFullscreenMode()}>
           <div class="mobile-fullscreen-exit-wrapper">
             <button
               type="button"
@@ -747,7 +740,7 @@ const App: Component = () => {
           when={appTabs().length === 0}
           fallback={
             <>
-              <Show when={!isPhoneLayout() || !mobileFullscreenMode()}>
+              <Show when={!mobileFullscreenMode()}>
                 <InstanceTabs
                   tabs={appTabs()}
                   activeTabId={activeAppTabId()}
@@ -781,8 +774,8 @@ const App: Component = () => {
                           handleSidebarAgentChange={(sessionId, agent) => handleSidebarAgentChange(tab.instance.id, sessionId, agent)}
                           handleSidebarModelChange={(sessionId, model) => handleSidebarModelChange(tab.instance.id, sessionId, model)}
                           onExecuteCommand={executeCommand}
-                          tabBarOffset={isPhoneLayout() && mobileFullscreenMode() ? 0 : instanceTabBarHeight()}
-                          mobileFullscreenMode={isPhoneLayout() && mobileFullscreenMode()}
+                          tabBarOffset={mobileFullscreenMode() ? 0 : instanceTabBarHeight()}
+                          mobileFullscreenMode={mobileFullscreenMode()}
                           onEnterMobileFullscreen={() => void enterMobileFullscreen()}
                           onExitMobileFullscreen={() => void exitMobileFullscreen()}
                         />

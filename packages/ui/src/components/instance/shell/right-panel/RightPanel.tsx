@@ -10,14 +10,11 @@ import {
 } from "@thisbeyond/solid-dnd"
 import IconButton from "@suid/material/IconButton"
 import MenuOpenIcon from "@suid/icons-material/MenuOpen"
-import PushPinIcon from "@suid/icons-material/PushPin"
-import PushPinOutlinedIcon from "@suid/icons-material/PushPinOutlined"
 import { Settings2 } from "lucide-solid"
 
 import type { Instance } from "../../../../types/instance"
 import type { Session } from "../../../../types/session"
 import type { PromptInputApi } from "../../../prompt-input/types"
-import type { DrawerViewState } from "../types"
 import type { RightPanelTab } from "./types"
 
 import { readClientLayoutValue, writeClientLayoutValue } from "../../../../stores/client-state"
@@ -89,11 +86,7 @@ interface RightPanelProps {
   isPhoneLayout: Accessor<boolean>
   rightDrawerWidth: Accessor<number>
   rightDrawerWidthInitialized: Accessor<boolean>
-  rightDrawerState: Accessor<DrawerViewState>
-  rightPinned: Accessor<boolean>
   onCloseRightDrawer: () => void
-  onPinRightDrawer: () => void
-  onUnpinRightDrawer: () => void
   promptInputApi: Accessor<PromptInputApi | null>
 
   setContentEl: (el: HTMLElement | null) => void
@@ -238,27 +231,15 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       <div class="right-panel-tab-bar">
         <div class="tab-container">
           <div class="tab-strip-shortcuts text-primary">
-            <Show when={props.rightDrawerState() === "floating-open"}>
-              <IconButton
-                size="small"
-                color="inherit"
-                aria-label={props.t("instanceShell.rightDrawer.toggle.close")}
-                title={props.t("instanceShell.rightDrawer.toggle.close")}
-                onClick={props.onCloseRightDrawer}
-              >
-                <MenuOpenIcon fontSize="small" sx={{ transform: "scaleX(-1)" }} />
-              </IconButton>
-            </Show>
-            <Show when={!props.isPhoneLayout()}>
-              <IconButton
-                size="small"
-                color="inherit"
-                aria-label={props.rightPinned() ? props.t("instanceShell.rightDrawer.unpin") : props.t("instanceShell.rightDrawer.pin")}
-                onClick={() => (props.rightPinned() ? props.onUnpinRightDrawer() : props.onPinRightDrawer())}
-              >
-                {props.rightPinned() ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
-              </IconButton>
-            </Show>
+            <IconButton
+              size="small"
+              color="inherit"
+              aria-label={props.t("instanceShell.rightDrawer.toggle.close")}
+              title={props.t("instanceShell.rightDrawer.toggle.close")}
+              onClick={props.onCloseRightDrawer}
+            >
+              <MenuOpenIcon fontSize="small" sx={{ transform: "scaleX(-1)" }} />
+            </IconButton>
             <IconButton
               size="small"
               color="inherit"

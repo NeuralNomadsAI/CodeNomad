@@ -1,4 +1,4 @@
-import { createSignal, Show, createEffect, createMemo, onCleanup, type Accessor, type JSXElement } from "solid-js"
+import { For, createSignal, Show, createEffect, createMemo, onCleanup, type Accessor, type JSXElement } from "solid-js"
 import { ArrowRightSquare, Check, Copy, Hourglass, Loader2, Volume2, WrapText, XCircle } from "lucide-solid"
 import { stringify as stringifyYaml } from "yaml"
 import { messageStoreBus } from "../stores/message-v2/bus"
@@ -1005,12 +1005,26 @@ export default function ToolCall(props: ToolCallProps) {
           {(action) => <span class="tool-call-header-action">{action()}</span>}
         </Show>
 
-        <ActionOverflowMenu
-          items={actionMenuItems()}
-          label={t("messageItem.actions.more")}
-          triggerClass="tool-call-header-icon-button tool-call-header-copy action-overflow-wide"
-          minItems={1}
-        />
+        <For each={actionMenuItems()}>
+          {(item) => (
+            <button
+              type="button"
+              class="tool-call-header-icon-button tool-call-header-copy"
+              disabled={item.disabled}
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                void item.onSelect()
+              }}
+              onPointerEnter={() => item.onMouseEnter?.()}
+              onPointerLeave={() => item.onMouseLeave?.()}
+              aria-label={item.label}
+              title={item.label}
+            >
+              {item.icon}
+            </button>
+          )}
+        </For>
         <ActionOverflowMenu
           items={actionMenuItems(true)}
           label={t("messageItem.actions.more")}

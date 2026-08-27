@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
 import { Portal } from "solid-js/web"
-import { Copy, Play, Split, Trash2, Undo, Volume2 } from "lucide-solid"
+import { Copy, Eraser, Play, Split, Trash2, Undo, Volume2 } from "lucide-solid"
 import type { SessionInboxUser } from "@opencode-ai/client"
 import type { MessageInfo, ClientPart } from "../types/message"
 import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
@@ -484,7 +484,7 @@ export default function MessageItem(props: MessageItemProps) {
         label: deletingTechnicalParts()
           ? t("messagePart.actions.deleting")
           : t("messageItem.actions.deleteTechnicalParts"),
-        icon: <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />,
+        icon: <Eraser class="w-3.5 h-3.5" aria-hidden="true" />,
         destructive: true,
         disabled: deletingTechnicalParts(),
         onSelect: handleDeleteTechnicalParts,
@@ -493,6 +493,24 @@ export default function MessageItem(props: MessageItemProps) {
 
     return items
   }
+
+  const renderSecondaryActions = () => (
+    <For each={actionMenuItems()}>
+      {(item) => (
+        <button
+          class="message-action-button"
+          disabled={item.disabled}
+          onClick={() => void item.onSelect()}
+          onPointerEnter={() => item.onMouseEnter?.()}
+          onPointerLeave={() => item.onMouseLeave?.()}
+          title={item.label}
+          aria-label={item.label}
+        >
+          {item.icon}
+        </button>
+      )}
+    </For>
+  )
 
 
   return (
@@ -586,6 +604,8 @@ export default function MessageItem(props: MessageItemProps) {
                   )}
                 </Show>
 
+                {renderSecondaryActions()}
+                {renderSecondaryActions()}
               </div>
               <ActionOverflowMenu
                 items={actionMenuItems()}
